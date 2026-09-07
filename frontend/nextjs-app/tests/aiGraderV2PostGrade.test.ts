@@ -8,6 +8,8 @@ import { createCompletedCardHandler } from "../pages/api/admin/ai-grader-v2/comp
 import { createCompletedCardLabelHandler } from "../pages/api/admin/ai-grader-v2/completed/[sessionId]/label";
 
 const SESSION_ID = "speedster-session-0001";
+const UPLOAD_CHECKSUM = "a".repeat(64);
+const UPLOAD_BYTES = 42;
 const admin = async () => ({ user: { id: "admin-2" } });
 const completed = {
   id: SESSION_ID,
@@ -108,19 +110,31 @@ test("slab plan uses the card owner's stable storage namespace", async () => {
     async findSession() { return completed; },
     async findLabel() { return null; },
     async updateSlabKey() { throw new Error("not used"); },
-    async presignUpload(key) { signedKey = key; return `https://upload.example/${key}`; },
+    async presignUpload(input) {
+      signedKey = input.storageKey;
+      assert.equal(input.checksumSha256, UPLOAD_CHECKSUM);
+      return `https://upload.example/${input.storageKey}`;
+    },
     async presignRead(key) { return `https://read.example/${key}`; },
     storageReady: () => true,
   });
   const { state, res } = response();
-  await handler(request("POST", { action: "SLAB_PLAN", side: "FRONT", contentType: "image/jpeg" }), res);
+  await handler(request("POST", {
+    action: "SLAB_PLAN",
+    side: "FRONT",
+    contentType: "image/jpeg",
+    byteSize: UPLOAD_BYTES,
+    checksumSha256: UPLOAD_CHECKSUM,
+  }), res);
   assert.equal(state.status, 200);
-  assert.equal(signedKey, `ai-grader-v2/admin-1/${SESSION_ID}/slab/front.jpg`);
+  assert.equal(signedKey, `ai-grader-v2/admin-1/${SESSION_ID}/slab/front/sha256-${UPLOAD_CHECKSUM}.jpg`);
+  assert.equal((state.body as any).uploadHeaders["x-amz-acl"], "private");
+  assert.equal((state.body as any).checksumSha256, UPLOAD_CHECKSUM);
 });
 
 test("slab completion accepts only the exact planned card side and returns refreshed state", async () => {
   let saved = "";
-  const key = `ai-grader-v2/admin-1/${SESSION_ID}/slab/back.webp`;
+  const key = `ai-grader-v2/admin-1/${SESSION_ID}/slab/back/sha256-${UPLOAD_CHECKSUM}.webp`;
   const handler = createCompletedCardHandler({
     ...cardActions,
     requireAdminSession: admin,
@@ -132,12 +146,33 @@ test("slab completion accepts only the exact planned card side and returns refre
       saved = storageKey;
       return { ...completed, slabBackKey: storageKey };
     },
-    async presignUpload(storageKey) { return `https://upload.example/${storageKey}`; },
+    async presignUpload(input) { return `https://upload.example/${input.storageKey}`; },
     async presignRead(storageKey) { return `https://read.example/${storageKey}`; },
+    async verifyObject(input) {
+      assert.deepEqual(input, {
+        storageKey: key,
+        expectedByteSize: UPLOAD_BYTES,
+        expectedChecksumSha256: UPLOAD_CHECKSUM,
+      });
+      return {
+        ok: true,
+        byteSize: UPLOAD_BYTES,
+        contentType: "image/webp",
+        checksumSha256: UPLOAD_CHECKSUM,
+        checksumSource: "server_stream" as const,
+      };
+    },
     storageReady: () => true,
   });
   const { state, res } = response();
-  await handler(request("POST", { action: "SLAB_COMPLETE", side: "BACK", storageKey: key }), res);
+  await handler(request("POST", {
+    action: "SLAB_COMPLETE",
+    side: "BACK",
+    storageKey: key,
+    contentType: "image/webp",
+    byteSize: UPLOAD_BYTES,
+    checksumSha256: UPLOAD_CHECKSUM,
+  }), res);
   assert.equal(state.status, 200);
   assert.equal(saved, key);
   const body = state.body as { card: { slabPhotos: { back: string } } };
@@ -161,6 +196,9 @@ test("slab completion rejects a cross-card or cross-side object key", async () =
     action: "SLAB_COMPLETE",
     side: "FRONT",
     storageKey: `ai-grader-v2/admin-1/${SESSION_ID}/slab/back.jpg`,
+    contentType: "image/jpeg",
+    byteSize: UPLOAD_BYTES,
+    checksumSha256: UPLOAD_CHECKSUM,
   }), res);
   assert.equal(state.status, 400);
   assert.equal(updates, 0);

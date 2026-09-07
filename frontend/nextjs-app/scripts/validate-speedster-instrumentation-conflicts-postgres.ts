@@ -109,8 +109,9 @@ async function main() {
     assert.deepEqual([...concurrentResults].sort(), [0, 1]);
     assert.equal(await prisma.aiGraderV2InstrumentationEvent.count({ where: { eventKey: concurrentEventKey } }), 1);
   } finally {
-    await prisma.aiGraderV2InstrumentationEvent.deleteMany({ where: { sessionId } });
-    await prisma.aiGraderV2Session.deleteMany({ where: { id: sessionId } });
+    // This validator is permitted only against the uniquely named disposable
+    // database checked above. Append-only evidence is intentionally not
+    // deleted; the enclosing disposable-database teardown removes the volume.
     await prisma.$disconnect();
   }
 

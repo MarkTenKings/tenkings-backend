@@ -6,7 +6,14 @@ import type {
   SpeedsterReviewFinding,
   SpeedsterSourceMeasuredDefect,
 } from "../lib/ai-grader-v2/contracts";
-import { parseSpeedsterTraceRleV1 } from "../lib/ai-grader-v2/trace-codec";
+import {
+  encodeSpeedsterTraceRleV1,
+  parseSpeedsterTraceRleV1,
+} from "../lib/ai-grader-v2/trace-codec";
+import {
+  parsePersistedSpeedsterReviewFindings,
+  parseSpeedsterReviewFindings,
+} from "../lib/ai-grader-v2/review-findings";
 import {
   calculateSpeedsterReview,
   completeSpeedsterReview,
@@ -488,6 +495,54 @@ test("remeasurement keeps fresh legacy contours and fresh source measurement reg
   assert.equal("measurement" in sources[0], false);
   assert.ok("measurementRegions" in sources[0]);
   assert.deepEqual(sources[0].measurementRegions, freshRegions);
+});
+
+test("source remeasurement drops legacy detector-mask authority and persisted exact duplicates repair safely", async () => {
+  const detectorFinding = { ...defect, detectorMask: finalTrace };
+  const measuredSource = {
+    ...detectorFinding,
+    finalTrace,
+    traceProvenance,
+    measurementRegions: [{
+      zone: defect.zone,
+      canonicalContour: defect.canonicalContour,
+      measurement: { ...defect.measurement, pixelCount: 1 },
+    }],
+  } as unknown as SpeedsterSourceMeasuredDefect;
+  delete (measuredSource as unknown as Record<string, unknown>).zone;
+  delete (measuredSource as unknown as Record<string, unknown>).canonicalContour;
+  delete (measuredSource as unknown as Record<string, unknown>).measurement;
+  delete (measuredSource as unknown as Record<string, unknown>).detectorMask;
+
+  const remeasured = await remeasureSpeedsterReviewAction({
+    defects: [detectorFinding],
+    action: { type: "CHANGE_TYPE", defectId: detectorFinding.id, defectType: "VISIBLE_WHITENING" },
+    measure: async () => ({ defects: [measuredSource] }),
+  });
+  assert.equal("detectorMask" in remeasured[0], false);
+  assert.equal("zone" in remeasured[0], false);
+  assert.equal("measurementRegions" in remeasured[0], true);
+
+  const persistedMixedShape = { ...remeasured[0], detectorMask: finalTrace };
+  assert.throws(
+    () => parseSpeedsterReviewFindings([persistedMixedShape]),
+    /trace source must own only measurement-region children/i,
+  );
+  const [repaired] = parsePersistedSpeedsterReviewFindings([persistedMixedShape]);
+  assert.equal("detectorMask" in repaired, false);
+  if (!("measurementRegions" in repaired)) assert.fail("expected repaired source finding");
+  assert.deepEqual(repaired.finalTrace, finalTrace);
+
+  const conflictingPixels = new Uint8Array(finalTrace.width * finalTrace.height);
+  conflictingPixels[0] = 1;
+  const conflictingDetectorMask = {
+    ...persistedMixedShape,
+    detectorMask: encodeSpeedsterTraceRleV1(conflictingPixels),
+  };
+  assert.throws(
+    () => parsePersistedSpeedsterReviewFindings([conflictingDetectorMask]),
+    /conflicting detector-mask authority/i,
+  );
 });
 
 test("new trace Save measures one final-RLE mark and invalid trace leaves findings untouched", async () => {

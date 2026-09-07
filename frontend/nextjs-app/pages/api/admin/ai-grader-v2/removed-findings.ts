@@ -15,7 +15,7 @@ import {
   type SpeedsterInspectionFrame,
 } from "../../../../lib/ai-grader-v2/inspection-frame";
 import {
-  parseSpeedsterReviewFindings,
+  parsePersistedSpeedsterReviewFindings,
   speedsterFindingRegions,
 } from "../../../../lib/ai-grader-v2/review-findings";
 import { SPEEDSTER_REVIEW_VIEW_TYPES } from "../../../../lib/ai-grader-v2/review-image-urls";
@@ -181,7 +181,7 @@ function savedHumanRemovedFindings(reviewedDefects: Prisma.JsonValue) {
   try {
     return {
       dataStatus: "AVAILABLE" as const,
-      findings: parseSpeedsterReviewFindings(reviewedDefects)
+      findings: parsePersistedSpeedsterReviewFindings(reviewedDefects)
         .filter((finding) => finding.reviewResult === "REMOVED"),
     };
   } catch {
@@ -291,7 +291,7 @@ function zoneLabel(decision: AuditFilterDecision, side: SpeedsterCardSide) {
 function filterFindingProjection(decision: AuditFilterDecision) {
   let finding: SpeedsterReviewFinding;
   try {
-    [finding] = parseSpeedsterReviewFindings([decision.findingSnapshot]);
+    [finding] = parsePersistedSpeedsterReviewFindings([decision.findingSnapshot]);
   } catch {
     const side = decision.sourceViewId.startsWith("BACK:") ? "BACK" as const : "FRONT" as const;
     return {

@@ -44,7 +44,7 @@ Each service ships with a template `.env.docker` holding container-friendly defa
    - set `PORT` only if you need to expose a different container port (Traefik defaults assume 8080 for services, 3000 for frontend)
    - configure Twilio credentials (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID`) for the auth service
    - supply Stripe keys (`STRIPE_SECRET_KEY`) and `HOUSE_USER_EMAIL` for the pack service to process card payments and transfer instant buybacks into TenKings' house account
-   - set `OPERATOR_API_KEY` for the wallet service and mirror the value as `NEXT_PUBLIC_OPERATOR_KEY` in the frontend so operator tooling can authenticate administrative ledger adjustments
+   - set `OPERATOR_API_KEY` for the wallet service and the frontend server runtime so authenticated proxy routes can make administrative ledger adjustments; never expose the key through a `NEXT_PUBLIC_` variable
    - provision Mux credentials (`MUX_TOKEN_ID`, `MUX_TOKEN_SECRET`) plus a signing secret (`MUX_WEBHOOK_SECRET`) so kiosk sessions can open live streams and consume webhooks
    - optionally set `MUX_SIMULCAST_TARGETS` with a JSON array of `{ "url": "rtmp://…", "streamKey": "..." }` entries to push each live rip to YouTube, TikTok, etc.
    - configure OCR/LLM in Next.js with `GOOGLE_VISION_API_KEY`, `OPENAI_API_KEY`, `OCR_LLM_MODEL` (recommended `gpt-5`), and optional `OCR_LLM_FALLBACK_MODEL` (recommended `gpt-5-mini`)

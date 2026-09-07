@@ -50,6 +50,10 @@ type SpeedsterCommittedCaptureRecovery = Readonly<{
   };
   browserDraft: SpeedsterCaptureRegistrationDraft;
 }>;
+type CaptureMapAuthorityBlock = Readonly<{
+  status: "LOOKUP_FAILED" | "INTEGRITY_ERROR";
+  message: string;
+}>;
 
 type MappedCardRevision = Readonly<{
   scope: "FAMILY" | "EXACT";
@@ -74,9 +78,17 @@ type MappedSourceCard = Readonly<{
   revisions: readonly MappedCardRevision[];
 }>;
 
+type MappedSourceCardIncident = Readonly<{
+  mapId: string;
+  currentRevisionId: string | null;
+  code: string;
+  message: string;
+}>;
+
 type MappedCardLibraryState = Readonly<{
   ownerAuthKey: string | null;
   cards: readonly MappedSourceCard[];
+  incidents: readonly MappedSourceCardIncident[];
   loading: boolean;
   error: string | null;
 }>;
@@ -192,10 +204,12 @@ export default function CardMapsPage() {
   const [draftIdentity, setDraftIdentity] = useState<SpeedsterSessionIdentity | null>(null);
   const [map, setMap] = useState<SpeedsterTrainMapState | null>(null);
   const [captureMapLookupFailed, setCaptureMapLookupFailed] = useState(false);
+  const [captureMapAuthorityBlock, setCaptureMapAuthorityBlock] = useState<CaptureMapAuthorityBlock | null>(null);
   const [source, setSource] = useState<SpeedsterTrainSource | null>(null);
   const [mappedCardLibrary, setMappedCardLibrary] = useState<MappedCardLibraryState>({
     ownerAuthKey: null,
     cards: [],
+    incidents: [],
     loading: false,
     error: null,
   });
@@ -218,12 +232,59 @@ export default function CardMapsPage() {
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
     [session?.user.id, session?.user.phone],
   );
+  const resolveCaptureMapAuthority = useCallback(async (draftSessionId: string) => {
+    if (!session?.token) throw new Error("Card Map authority cannot resolve without an authenticated admin session.");
+    let response: Response;
+    try {
+      response = await fetch(
+        `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(draftSessionId)}/map-authority`,
+        {
+          method: "POST",
+          headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+          body: JSON.stringify({ action: "RESOLVE_LOOKUP" }),
+          cache: "no-store",
+        },
+      );
+    } catch {
+      const message = "Card Map authority could not reach Ten Kings. Source capture remains blocked; retry the exact lookup.";
+      setMap({ status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null });
+      setCaptureMapLookupFailed(true);
+      setCaptureMapAuthorityBlock({ status: "LOOKUP_FAILED", message });
+      setWorkflowError(message);
+      setMessage(message);
+      return false;
+    }
+    const payload = await response.json().catch(() => ({})) as {
+      map?: SpeedsterTrainMapState;
+      authority?: { status?: string; message?: string };
+      message?: string;
+    };
+    if (!response.ok || !payload.map) {
+      const status = payload.authority?.status === "INTEGRITY_ERROR" ? "INTEGRITY_ERROR" as const : "LOOKUP_FAILED" as const;
+      const message = payload.authority?.message ?? payload.message ?? "Card Map authority could not be resolved.";
+      setMap({ status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null });
+      setCaptureMapLookupFailed(status === "LOOKUP_FAILED");
+      setCaptureMapAuthorityBlock({ status, message });
+      setWorkflowError(message);
+      setMessage(message);
+      return false;
+    }
+    setMap(payload.map);
+    setCaptureMapLookupFailed(false);
+    setCaptureMapAuthorityBlock(null);
+    setWorkflowError(null);
+    setMessage(`${mapAction(payload.map)} · Add this card's exact Front and Back source images; the final save creates both maps.`);
+    return true;
+  }, [session?.token]);
   const mappedCardsAuthKey = isAdmin && session?.token && !sessionId
     ? `${session.user.id}\u0000${session.token}`
     : null;
   const mappedCards = mappedCardLibrary.ownerAuthKey === mappedCardsAuthKey
     ? mappedCardLibrary.cards
     : EMPTY_MAPPED_SOURCE_CARDS;
+  const mappedCardIncidents = mappedCardLibrary.ownerAuthKey === mappedCardsAuthKey
+    ? mappedCardLibrary.incidents
+    : [];
   const mappedCardsLoading = Boolean(mappedCardsAuthKey) && (
     mappedCardLibrary.ownerAuthKey !== mappedCardsAuthKey || mappedCardLibrary.loading
   );
@@ -242,12 +303,12 @@ export default function CardMapsPage() {
     const token = session?.token;
     const ownerAuthKey = isAdmin && token && !sessionId ? `${session.user.id}\u0000${token}` : null;
     if (!token || !ownerAuthKey) {
-      setMappedCardLibrary({ ownerAuthKey: null, cards: [], loading: false, error: null });
+      setMappedCardLibrary({ ownerAuthKey: null, cards: [], incidents: [], loading: false, error: null });
       return;
     }
     const controller = new AbortController();
     mappedCardsAbortController.current = controller;
-    setMappedCardLibrary({ ownerAuthKey, cards: [], loading: true, error: null });
+    setMappedCardLibrary({ ownerAuthKey, cards: [], incidents: [], loading: true, error: null });
     try {
       const response = await fetch("/api/admin/ai-grader-v2/maps/list", {
         headers: buildAdminHeaders(token),
@@ -256,18 +317,20 @@ export default function CardMapsPage() {
       });
       const payload = await response.json().catch(() => ({})) as {
         cards?: readonly MappedSourceCard[];
+        incidents?: readonly MappedSourceCardIncident[];
         message?: string;
       };
-      if (!response.ok || !Array.isArray(payload.cards)) {
+      if (!response.ok || !Array.isArray(payload.cards) || !Array.isArray(payload.incidents)) {
         throw new Error(payload.message ?? "Existing Card Maps could not be loaded.");
       }
       if (requestGeneration !== mappedCardsRequestGeneration.current || controller.signal.aborted) return;
-      setMappedCardLibrary({ ownerAuthKey, cards: payload.cards, loading: false, error: null });
+      setMappedCardLibrary({ ownerAuthKey, cards: payload.cards, incidents: payload.incidents, loading: false, error: null });
     } catch (error) {
       if (requestGeneration !== mappedCardsRequestGeneration.current || controller.signal.aborted) return;
       setMappedCardLibrary({
         ownerAuthKey,
         cards: [],
+        incidents: [],
         loading: false,
         error: toCardMapOperatorMessage(
           error instanceof Error ? error.message : "Existing Card Maps could not be loaded.",
@@ -393,9 +456,8 @@ export default function CardMapsPage() {
           sessionPayload.session.cardProfile,
           sessionPayload.session.identity,
         );
-        let restoredMap: SpeedsterTrainMapState;
-        let restoredMapLookupFailed = false;
-        try {
+        let restoredMap: SpeedsterTrainMapState | null = null;
+        if (committed) {
           const mapResponse = await fetch(
             `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(captureDraftId)}&scope=EFFECTIVE`,
             { headers: buildAdminHeaders(session.token!), cache: "no-store" },
@@ -408,24 +470,29 @@ export default function CardMapsPage() {
             throw new Error(mapPayload.message ?? "The Card Map binding for this preserved draft is unavailable.");
           }
           restoredMap = mapPayload.map;
-        } catch {
-          restoredMapLookupFailed = true;
-          restoredMap = { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null };
         }
         if (cancelled) return;
         setDraft(sessionPayload.session);
         setDraftIdentity(restoredIdentity);
-        setMap(restoredMap);
-        setCaptureMapLookupFailed(restoredMapLookupFailed);
+        let authorityResolved = false;
+        if (committed) {
+          setMap(restoredMap);
+          setCaptureMapLookupFailed(false);
+          setCaptureMapAuthorityBlock(null);
+          authorityResolved = true;
+        } else {
+          authorityResolved = await resolveCaptureMapAuthority(captureDraftId);
+        }
+        if (cancelled) return;
         if (committed && committedBrowserDraft) {
           setCommittedCaptureRecovery({
             session: sessionPayload.session as SpeedsterCommittedCaptureRecovery["session"],
             browserDraft: committedBrowserDraft,
           });
           setMessage("Server save is verified as committed and exactly matches the preserved Card Maps Front/Back capture and map binding. Choose Continue to authoring or keep the browser draft; nothing was cleared automatically.");
-        } else setMessage(restoredMapLookupFailed
-          ? "Preserved Card Maps capture loaded, but Card Map lookup failed. Resume remains strict and explicit; no map authority was guessed."
-          : "Preserved Card Maps capture loaded. Choose Resume or Discard; nothing was applied automatically.");
+        } else if (authorityResolved) {
+          setMessage("Preserved Card Maps capture and durable authority loaded. Choose Resume or Discard; nothing was applied automatically.");
+        }
       } catch (error) {
         if (!cancelled) {
           const failure = toCardMapOperatorMessage(
@@ -439,7 +506,7 @@ export default function CardMapsPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [captureDraftId, draft, isAdmin, router.isReady, session?.token, sessionId, source]);
+  }, [captureDraftId, draft, isAdmin, resolveCaptureMapAuthority, router.isReady, session?.token, sessionId, source]);
 
   const updateIdentity = (field: keyof HumanGradeLabelEditorValue, value: string) => {
     setIdentity((current) => field === "cardType"
@@ -486,26 +553,14 @@ export default function CardMapsPage() {
         if (payload.fields) setFieldErrors(payload.fields);
         throw new Error(payload.message ?? "CARD MAP source could not be created.");
       }
-      const mapResponse = await fetch(
-        `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(payload.session.id)}&scope=EFFECTIVE`,
-        { headers: buildAdminHeaders(session.token), cache: "no-store" },
-      );
-      const mapPayload = await mapResponse.json().catch(() => ({})) as {
-        map?: SpeedsterTrainMapState;
-        message?: string;
-      };
-      if (!mapResponse.ok || !mapPayload.map) {
-        throw new Error(mapPayload.message ?? "Current Card Map baseline could not be loaded.");
-      }
       setDraft(payload.session);
       setDraftIdentity(exactIdentity);
-      setMap(mapPayload.map);
       void router.replace(
         { pathname: "/card-maps", query: { captureDraftId: payload.session.id }, hash: "new-card-map" },
         undefined,
         { shallow: true },
       );
-      setMessage(`${mapAction(mapPayload.map)} · Add this card's exact Front and Back source images; the final save creates both maps.`);
+      await resolveCaptureMapAuthority(payload.session.id);
     } catch (error) {
       if (error instanceof SpeedsterIdentityValidationError) setFieldErrors(error.fields);
       const failure = toCardMapOperatorMessage(
@@ -837,6 +892,22 @@ export default function CardMapsPage() {
               </div>
             ) : null}
 
+            {!mappedCardsError && mappedCardIncidents.length ? (
+              <div className={styles.libraryError} role="alert" aria-label="Quarantined Card Map rows">
+                <p>
+                  <strong>{mappedCardIncidents.length} CARD MAP {mappedCardIncidents.length === 1 ? "ROW" : "ROWS"} QUARANTINED</strong>
+                  {" "}Valid rows remain available. Quarantined rows are not runtime-eligible and require incident repair.
+                </p>
+                <ul>
+                  {mappedCardIncidents.map((incident) => (
+                    <li key={`${incident.mapId}:${incident.currentRevisionId ?? "missing"}`}>
+                      {incident.code} · map {incident.mapId} · revision {incident.currentRevisionId ?? "missing"} · {incident.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
             {!mappedCardsLoading && !mappedCardsError && visibleMappedCards.length === 0 ? (
               <div className={styles.libraryEmpty}>
                 <strong>{mappedCards.length ? "NO MATCHING CARD MAPS" : "NO CARD MAPS YET"}</strong>
@@ -950,23 +1021,34 @@ export default function CardMapsPage() {
                 {workflowError ? <p className={styles.localError} role="alert">{workflowError}</p> : null}
               </>
             ) : map ? (
-              <div className={styles.mapState} role="status">
-                <strong>{mapAction(map)}</strong>
-                <span>{map.status === "LOADED"
-                  ? `${map.scope ?? "Existing"} revision ${map.revision?.version} loaded as the editing baseline.`
-                  : "Ready for first Family + Exact creation after Front/Back source capture."}</span>
+              <div className={styles.mapState} role={captureMapAuthorityBlock ? "alert" : "status"}>
+                <strong>{captureMapAuthorityBlock ? "CARD MAP AUTHORITY BLOCKED" : mapAction(map)}</strong>
+                <span>{captureMapAuthorityBlock
+                  ? `${captureMapAuthorityBlock.message} No source capture or mapless authoring can begin while this blocker is active.`
+                  : map.status === "LOADED"
+                    ? `${map.scope ?? "Existing"} revision ${map.revision?.version} loaded as the editing baseline.`
+                    : "Ready for first Family + Exact creation after Front/Back source capture."}</span>
+                {captureMapAuthorityBlock ? (
+                  <button type="button" disabled={working} onClick={() => {
+                    setWorking(true);
+                    void resolveCaptureMapAuthority(draft.id).finally(() => setWorking(false));
+                  }}>
+                    {working ? "RETRYING EXACT CARD MAP AUTHORITY…" : "RETRY CARD MAP AUTHORITY"}
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </section>
         ) : null}
 
-        {!sessionId && draft && map && !source && !committedCaptureRecovery ? (
+        {!sessionId && draft && map && !captureMapAuthorityBlock && !source && !committedCaptureRecovery ? (
           <CaptureWorkspace
             token={session.token}
             sessionId={draft.id}
             cardProfile={draft.cardProfile}
             draftSurface="CARD_MAPS"
             activeMapRevisionId={map.revision?.revisionId ?? null}
+            activeMapRevisionHash={map.revision?.revisionHash ?? null}
             activeMapScope={map.status === "LOADED" ? map.scope ?? null : null}
             activeMapName={map.status === "LOADED" ? map.name ?? null : null}
             mapBindingStatus={map.status === "LOADED" ? "LOADED"

@@ -30,6 +30,7 @@ type ReviewWorkspaceProps = {
   defects: readonly SpeedsterReviewFinding[];
   mapRegistrations?: Readonly<Record<SpeedsterCardSide, SpeedsterMapRegistration>>;
   grade: ReturnType<typeof calculateSpeedsterGrade>;
+  busy: boolean;
   canUndo: boolean;
   onRemoveDefects: (defectIds: readonly string[]) => boolean | Promise<boolean>;
   onUndo: () => void;
@@ -53,6 +54,7 @@ export function ReviewWorkspace({
   defects,
   mapRegistrations,
   grade,
+  busy,
   canUndo,
   onRemoveDefects,
   onUndo,
@@ -70,7 +72,7 @@ export function ReviewWorkspace({
       <header className={styles.header}>
         <div><span>03 · HUMAN REVIEW</span><h1>Review only what needs attention.</h1></div>
         <div className={styles.sides}>
-          {canUndo ? <button type="button" onClick={onUndo}>Undo remove</button> : null}
+          {canUndo ? <button type="button" disabled={busy} onClick={onUndo}>Undo remove</button> : null}
           {(["FRONT", "BACK"] as const).map((value) => (
             <button
               type="button"
@@ -93,6 +95,7 @@ export function ReviewWorkspace({
         defects={defects}
         mapRegistration={mapRegistrations?.[side]}
         readOnly={false}
+        busy={busy}
         onRemoveDefects={onRemoveDefects}
         onDefectTypeChange={onDefectTypeChange}
         onTraceProposal={onTraceProposal}
@@ -102,8 +105,8 @@ export function ReviewWorkspace({
       />
 
       <GradeSummary grade={grade} />
-      <button type="button" className={styles.complete} onClick={onComplete}>
-        Complete grade <span aria-hidden="true">→</span>
+      <button type="button" className={styles.complete} disabled={busy} onClick={onComplete}>
+        {busy ? "Saving review…" : "Complete grade"} <span aria-hidden="true">→</span>
       </button>
     </section>
   );

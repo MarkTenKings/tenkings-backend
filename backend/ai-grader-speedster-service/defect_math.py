@@ -153,6 +153,11 @@ def _finding_instrumentation_provenance(primary: dict, source_members: List[dict
                     member.get("rankingConfidence", member["confidence"])
                 ),
                 **(
+                    {"rawCandidateId": member["rawCandidateId"]}
+                    if member.get("rawCandidateId") is not None
+                    else {}
+                ),
+                **(
                     {"memoryProposal": member["memoryProposal"]}
                     if member.get("memoryProposal") is not None
                     else {}
@@ -299,6 +304,11 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
                         {
                             "proposalId": primary.get("id"),
                             "zone": zone_name,
+                            # Keep the exact post-fusion, post-material, per-zone
+                            # pixel authority in memory until the wire serializer
+                            # binds it to canonical RLE bytes. The contour remains
+                            # a display/legacy compatibility projection only.
+                            "canonicalMask": measured.copy(),
                             "canonicalContours": _normalized_contours(measured),
                             "sourceViewId": primary["sourceViewId"],
                             "supportingViewIds": supporting_views,

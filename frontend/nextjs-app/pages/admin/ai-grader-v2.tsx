@@ -38,8 +38,7 @@ import type {
   SpeedsterDefectType,
   SpeedsterReviewFinding,
 } from "../../lib/ai-grader-v2/contracts";
-import { toCardMapOperatorMessage } from "../../lib/ai-grader-v2/card-map-copy";
-import { speedsterImageService } from "../../lib/ai-grader-v2/image-service";
+import { runSpeedsterImageRequest, speedsterImageService } from "../../lib/ai-grader-v2/image-service";
 import {
   SPEEDSTER_REVIEW_IMAGE_REFRESH_INTERVAL_MS,
   createCoalescedReviewImageRefresh,
@@ -89,6 +88,11 @@ type SpeedsterCompletion = {
     harvest: { admittedLessons: number; skippedLessons: number };
   };
 };
+type SpeedsterMapAuthorityBlock = Readonly<{
+  status: "LOOKUP_FAILED" | "INTEGRITY_ERROR" | "REGISTRATION_BLOCKED";
+  message: string;
+  attemptId?: string;
+}>;
 type SpeedsterClientInstrumentationDetails = Readonly<{
   side?: "FRONT" | "BACK";
   findingIds?: readonly string[];
@@ -96,16 +100,20 @@ type SpeedsterClientInstrumentationDetails = Readonly<{
   startBasis?: "FIRST_SPEEDSTER_INTERACTION";
   lowerBound?: boolean;
   automaticGeometryCount?: number;
+  geometryExecutionMode?: "PARALLEL_SIDE_PIPELINES_V1";
+  frontUploadDurationMs?: number;
+  backUploadDurationMs?: number;
+  frontGeometryDurationMs?: number;
+  backGeometryDurationMs?: number;
   photoSource?: "IPHONE" | "LOCAL" | "MIXED";
   mapAppliedScope?: "EXACT" | "FAMILY" | "NONE";
   mapName?: string;
   mapRevisionId?: string;
   mapFailureCode?: "LOOKUP_FAILED" | "REGISTRATION_FAILED";
-  registrationDecision?: "RETRY_FAILED_SIDE" | "CONTINUE_WITHOUT_CARD_MAP";
-  mapAuthorityDecision?: "ABANDON_OBSOLETE_MAP_AUTHORITY";
+  registrationDecision?: "RETRY_FAILED_SIDE";
   mapAuthorityOperationId?: string;
   mapAuthorityDecisionId?: string;
-  obsoleteMapBindingStatus?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR";
+  obsoleteMapBindingStatus?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR" | "HUMAN_REVIEW_WITHOUT_MAP";
   obsoleteMapRevisionId?: string;
   obsoleteMapScope?: "EXACT" | "FAMILY";
   obsoleteMapName?: string;
@@ -140,6 +148,8 @@ export default function AiGraderV2AdminPage() {
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
   const [mapState, setMapState] = useState<SpeedsterTrainMapState | null>(null);
   const [mapLookupFailed, setMapLookupFailed] = useState(false);
+  const [mapHumanReviewWithoutMap, setMapHumanReviewWithoutMap] = useState(false);
+  const [mapAuthorityBlock, setMapAuthorityBlock] = useState<SpeedsterMapAuthorityBlock | null>(null);
   const [capture, setCapture] = useState<SpeedsterCaptureBundle | null>(null);
   const [defects, setDefects] = useState<SpeedsterReviewFinding[] | null>(null);
   const [lastRemovedDefectIds, setLastRemovedDefectIds] = useState<string[]>([]);
@@ -188,11 +198,132 @@ export default function AiGraderV2AdminPage() {
   const nextReadyRecorded = useRef(false);
   const reviewRenderedRecorded = useRef(false);
   const captureSaveInFlight = useRef(false);
+  const reviewMutationInFlight = useRef(false);
+  const mapHumanReviewDecision = useRef<Readonly<{
+    sessionId: string;
+    blockerAttemptId: string | null;
+    decisionId: string;
+  }> | null>(null);
 
   const beginCycle = useCallback(() => {
     if (cycleStartedAt.current === null) cycleStartedAt.current = Date.now();
     return cycleStartedAt.current;
   }, []);
+
+  const resolveMapAuthority = useCallback(async (sessionId: string) => {
+    if (!session?.token) throw new Error("Card Map authority cannot resolve without an authenticated admin session.");
+    let response: Response;
+    let payload: {
+      map?: SpeedsterTrainMapState;
+      authority?: {
+        status?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR" | "REGISTRATION_BLOCKED" | "HUMAN_REVIEW_WITHOUT_MAP";
+        message?: string;
+        attemptId?: string;
+      };
+      message?: string;
+    };
+    try {
+      ({ response, payload } = await runSpeedsterImageRequest(
+        "Card Map authority lookup",
+        {},
+        async (signal) => {
+          const response = await fetch(
+            `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(sessionId)}/map-authority`,
+            {
+              method: "POST",
+              headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+              body: JSON.stringify({ action: "RESOLVE_LOOKUP" }),
+              cache: "no-store",
+              signal,
+            },
+          );
+          const payload = await response.json().catch(() => ({}));
+          return { response, payload };
+        },
+      ));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Card Map authority could not reach Ten Kings.";
+      const message = `${detail} Capture remains blocked and all preserved work is unchanged; retry the exact lookup.`;
+      setMapState({ status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null });
+      setMapLookupFailed(true);
+      setMapHumanReviewWithoutMap(false);
+      setMapAuthorityBlock({ status: "LOOKUP_FAILED", message });
+      setMessage(message);
+      return false;
+    }
+    if (!response.ok || !payload.map) {
+      const status = payload.authority?.status === "INTEGRITY_ERROR"
+        ? "INTEGRITY_ERROR" as const
+        : payload.authority?.status === "REGISTRATION_BLOCKED"
+          ? "REGISTRATION_BLOCKED" as const
+          : "LOOKUP_FAILED" as const;
+      const message = payload.authority?.message
+        ?? payload.message
+        ?? "Card Map authority could not be resolved. Capture remains blocked.";
+      setMapState({ status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null });
+      setMapLookupFailed(status === "LOOKUP_FAILED");
+      setMapHumanReviewWithoutMap(false);
+      setMapAuthorityBlock({ status, message, ...(payload.authority?.attemptId ? { attemptId: payload.authority.attemptId } : {}) });
+      setMessage(message);
+      return false;
+    }
+    setMapState(payload.map);
+    setMapLookupFailed(false);
+    setMapHumanReviewWithoutMap(payload.authority?.status === "HUMAN_REVIEW_WITHOUT_MAP");
+    setMapAuthorityBlock(null);
+    setMessage(payload.authority?.status === "HUMAN_REVIEW_WITHOUT_MAP"
+      ? "Human review without a Card Map is durably authorized. The original lookup or registration failure remains recorded."
+      : payload.authority?.status === "REGISTRATION_BLOCKED"
+      ? "The durable Card Map registration blocker was reloaded. Resume the preserved work, retry the same exact revision, or explicitly choose recorded human review without a map."
+      : payload.map.status === "LOADED"
+        ? `${payload.map.scope ?? "EXACT"} CARD MAP · ${payload.map.name ?? "Card map"} · revision ${payload.map.revision?.version} loaded.`
+      : "No eligible Exact or Family CARD MAP exists. Human review is authorized by the durable NO_MAP resolution; nothing was guessed.");
+    return true;
+  }, [session?.token]);
+
+  const continueWithoutMap = useCallback(async (sessionId: string) => {
+    if (!session?.token) throw new Error("Card Map authority cannot change without an authenticated admin session.");
+    const blockerAttemptId = mapAuthorityBlock?.attemptId ?? null;
+    if (mapHumanReviewDecision.current?.sessionId !== sessionId
+      || mapHumanReviewDecision.current.blockerAttemptId !== blockerAttemptId) {
+      mapHumanReviewDecision.current = {
+        sessionId,
+        blockerAttemptId,
+        decisionId: crypto.randomUUID(),
+      };
+    }
+    const decisionId = mapHumanReviewDecision.current.decisionId;
+    const { response, payload } = await runSpeedsterImageRequest(
+      "Card Map human-review decision",
+      {},
+      async (signal) => {
+        const response = await fetch(
+          `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(sessionId)}/map-authority`,
+          {
+            method: "POST",
+            headers: buildAdminHeaders(session.token!, { "Content-Type": "application/json" }),
+            body: JSON.stringify({ action: "CONTINUE_WITHOUT_MAP", decisionId }),
+            cache: "no-store",
+            signal,
+          },
+        );
+        const payload = await response.json().catch(() => ({})) as {
+          authority?: { status?: string; message?: string };
+          map?: SpeedsterTrainMapState;
+          message?: string;
+        };
+        return { response, payload };
+      },
+    );
+    if (!response.ok || payload.authority?.status !== "HUMAN_REVIEW_WITHOUT_MAP" || !payload.map) {
+      throw new Error(payload.message ?? payload.authority?.message ?? "Human-review continuation was not recorded.");
+    }
+    setMapState(payload.map);
+    setMapLookupFailed(false);
+    setMapHumanReviewWithoutMap(true);
+    setMapAuthorityBlock(null);
+    setMessage("Human review without a Card Map is now durably recorded. No map, fallback map, or guessed zones will be applied.");
+  }, [mapAuthorityBlock?.attemptId, session?.token]);
 
   useEffect(() => {
     if (!router.isReady || !captureDraftId || !session?.token || !isAdmin || draft || capture) return;
@@ -233,9 +364,10 @@ export default function AiGraderV2AdminPage() {
             throw new Error("The server reports CAPTURED, but its exact capture/map binding does not match the preserved browser draft. Nothing was cleared or resumed; inspect the conflicting evidence.");
           }
         }
-        let restoredMap: SpeedsterTrainMapState;
-        let restoredMapLookupFailed = false;
-        try {
+        if (cancelled) return;
+        setDraft(sessionPayload.session);
+        let authorityResolved = false;
+        if (committed) {
           const mapResponse = await fetch(
             `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(captureDraftId)}&scope=EFFECTIVE`,
             { headers: buildAdminHeaders(session.token!), cache: "no-store" },
@@ -245,26 +377,25 @@ export default function AiGraderV2AdminPage() {
             message?: string;
           };
           if (!mapResponse.ok || !mapPayload.map) {
-            throw new Error(mapPayload.message ?? "The Card Map binding for this preserved draft is unavailable.");
+            throw new Error(mapPayload.message ?? "The committed Card Map binding could not be reconciled.");
           }
-          restoredMap = mapPayload.map;
-        } catch {
-          restoredMapLookupFailed = true;
-          restoredMap = { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null };
+          setMapState(mapPayload.map);
+          setMapLookupFailed(false);
+          setMapAuthorityBlock(null);
+          authorityResolved = true;
+        } else {
+          authorityResolved = await resolveMapAuthority(captureDraftId);
         }
         if (cancelled) return;
-        setDraft(sessionPayload.session);
-        setMapState(restoredMap);
-        setMapLookupFailed(restoredMapLookupFailed);
         if (committed && committedBrowserDraft) {
           setCommittedCaptureRecovery({
             session: sessionPayload.session as SpeedsterCommittedCaptureRecovery["session"],
             browserDraft: committedBrowserDraft,
           });
           setMessage("Server save is verified as committed and exactly matches the preserved Front/Back capture and map binding. Choose Continue to review or keep the browser draft; nothing was cleared automatically.");
-        } else setMessage(restoredMapLookupFailed
-          ? "Preserved capture session loaded, but Card Map lookup failed. The browser draft remains bound to that failure state; choose Resume only if it validates, or explicitly Discard."
-          : "Preserved capture session loaded. Choose Resume or Discard in the capture workspace; nothing was applied automatically.");
+        } else if (authorityResolved) {
+          setMessage("Preserved capture session and durable Card Map authority loaded. Choose Resume or Discard in the capture workspace; nothing was applied automatically.");
+        }
       } catch (error) {
         if (!cancelled) setMessage(error instanceof Error ? error.message : "Preserved capture session could not be loaded.");
       } finally {
@@ -272,7 +403,7 @@ export default function AiGraderV2AdminPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [capture, captureDraftId, draft, isAdmin, router.isReady, session?.token]);
+  }, [capture, captureDraftId, draft, isAdmin, resolveMapAuthority, router.isReady, session?.token]);
 
   const recordInstrumentation = useCallback((input: {
     eventId?: string;
@@ -469,33 +600,7 @@ export default function AiGraderV2AdminPage() {
         endedAtMs,
         details: { startBasis: "FIRST_SPEEDSTER_INTERACTION", lowerBound: true, outcome: "SUCCEEDED" },
       });
-      const mapResponse = await fetch(
-        `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(payload.session.id)}&scope=EFFECTIVE`,
-        { headers: buildAdminHeaders(session.token), cache: "no-store" },
-      );
-      const mapPayload = (await mapResponse.json().catch(() => ({}))) as {
-        map?: SpeedsterTrainMapState;
-        message?: string;
-      };
-      if (!mapResponse.ok || !mapPayload.map) {
-        const failure = toCardMapOperatorMessage(mapPayload.message ?? "CARD MAP lookup failed.");
-        setMapState({ status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null });
-        setMapLookupFailed(true);
-        recordInstrumentation({
-          sessionId: payload.session.id,
-          eventType: "WORKFLOW_ERROR",
-          startedAtMs: endedAtMs,
-          endedAtMs: Date.now(),
-          details: { errorCode: "CARD_MAP_LOOKUP_FAILED", mapAppliedScope: "NONE" },
-        });
-        setMessage(`${failure} Continuing with normal human review; no map will be applied.`);
-        return;
-      }
-      setMapState(mapPayload.map);
-      setMapLookupFailed(false);
-      setMessage(mapPayload.map.status === "LOADED"
-        ? `${mapPayload.map.scope ?? "EXACT"} CARD MAP · ${mapPayload.map.name ?? "Card map"} · revision ${mapPayload.map.revision?.version} loaded.`
-        : "No applicable CARD MAP exists. Normal human review will apply; nothing will be guessed.");
+      await resolveMapAuthority(payload.session.id);
     } catch (error) {
       const failure = error instanceof Error ? error.message : "Speedster card could not be created.";
       setMessage(failure);
@@ -766,10 +871,16 @@ export default function AiGraderV2AdminPage() {
     successMessage: string,
     fallbackErrorMessage: string,
   ): Promise<SpeedsterReviewRemeasurementResult> => {
-    if (!session?.token || !draft || !capture || !defects || working) {
+    if (!session?.token || !draft || !capture || !defects) {
       return { applied: false, message: fallbackErrorMessage };
     }
+    if (working || reviewMutationInFlight.current) {
+      const message = "The current review change is still saving. Wait for it to finish before the next action.";
+      setMessage(message);
+      return { applied: false, message };
+    }
     const startedAtMs = Date.now();
+    reviewMutationInFlight.current = true;
     setWorking(true);
     setMessage(pendingMessage);
     try {
@@ -823,6 +934,7 @@ export default function AiGraderV2AdminPage() {
       setMessage(failureMessage);
       return { applied: false, message: failureMessage };
     } finally {
+      reviewMutationInFlight.current = false;
       setWorking(false);
     }
   };
@@ -911,8 +1023,13 @@ export default function AiGraderV2AdminPage() {
   };
 
   const completeGrade = async () => {
-    if (!session?.token || !draft || !review || working) return;
+    if (!session?.token || !draft || !review) return;
+    if (working || reviewMutationInFlight.current) {
+      setMessage("The current review change is still saving. Complete the grade after it finishes.");
+      return;
+    }
     const startedAtMs = Date.now();
+    reviewMutationInFlight.current = true;
     setWorking(true);
     recordInstrumentation({
       sessionId: draft.id,
@@ -963,6 +1080,7 @@ export default function AiGraderV2AdminPage() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Speedster grade could not be completed.");
     } finally {
+      reviewMutationInFlight.current = false;
       setWorking(false);
     }
   };
@@ -982,6 +1100,7 @@ export default function AiGraderV2AdminPage() {
           <nav>
             <Link href="/card-maps">Card Maps</Link>
             <Link href="/admin/ai-grader-v2/completed">Completed cards</Link>
+            <Link href="/admin/ai-grader-v2/learning-blueprint">Learning Blueprint</Link>
             <Link href="/admin">Admin Home</Link>
           </nav>
         </header>
@@ -1039,23 +1158,45 @@ export default function AiGraderV2AdminPage() {
         ) : null}
 
         {draft && mapState && !capture ? (
-          <section className={styles.statusPanel}>
-            <span>{mapState.status === "LOADED" ? `${mapState.scope ?? "EXACT"} CARD MAP`
-              : mapLookupFailed ? "CARD MAP LOOKUP FAILED"
-                : mapState.status === "INTEGRITY_ERROR" ? "CARD MAP INTEGRITY ERROR"
+          <section className={styles.statusPanel} role={mapAuthorityBlock ? "alert" : undefined}>
+            <span>{mapAuthorityBlock?.status === "INTEGRITY_ERROR" ? "CARD MAP INTEGRITY BLOCKED"
+              : mapAuthorityBlock ? "CARD MAP LOOKUP BLOCKED"
+                : mapState.status === "LOADED" ? `${mapState.scope ?? "EXACT"} CARD MAP`
                   : "NO CARD MAP · MANUAL"}</span>
             <h2>{mapState.status === "LOADED"
               ? mapState.name || `Loaded revision ${mapState.revision?.version}`
-              : mapLookupFailed ? "Preserved draft requires explicit review"
+              : mapAuthorityBlock ? "Capture is stopped until authority resolves"
                 : mapState.status === "INTEGRITY_ERROR" ? "Preserved draft is integrity-bound"
                   : "Normal human review"}</h2>
-            <p>{mapState.status === "LOADED"
+            <p>{mapAuthorityBlock
+              ? `${mapAuthorityBlock.message} No photos, geometry, or mapless capture can begin while this blocker is active.`
+              : mapState.status === "LOADED"
               ? `r${mapState.revision?.version} · ${mapState.revision?.revisionHash.slice(0, 12)} · This selected map will register to the card's physical geometry.`
-              : mapLookupFailed
-                ? "Map authority was not guessed. Strict draft validation may offer Resume; otherwise fresh capture stays blocked until explicit Discard."
-                : mapState.status === "INTEGRITY_ERROR"
+              : mapState.status === "INTEGRITY_ERROR"
                   ? "The invalid map was not applied. The preserved browser draft remains auditable and requires an explicit Resume or Discard choice."
-                  : "No fuzzy, nearby, or fallback map will be guessed. Existing Speedster review remains unchanged."}</p>
+                  : "The authoritative lookup recorded NO_MAP. No fuzzy, nearby, or fallback map was guessed."}</p>
+            {mapAuthorityBlock ? (
+              <>
+                <button type="button" disabled={working} onClick={() => {
+                  setWorking(true);
+                  void resolveMapAuthority(draft.id).finally(() => setWorking(false));
+                }}>
+                  {working ? "RETRYING EXACT CARD MAP AUTHORITY…" : "RETRY CARD MAP AUTHORITY"}
+                </button>
+                {mapAuthorityBlock.status !== "INTEGRITY_ERROR" && mapAuthorityBlock.attemptId ? (
+                  <button type="button" disabled={working} onClick={() => {
+                    setWorking(true);
+                    void continueWithoutMap(draft.id)
+                      .catch((error) => setMessage(error instanceof Error ? error.message : "Human-review continuation was not recorded."))
+                      .finally(() => setWorking(false));
+                  }}>
+                    CONTINUE WITHOUT CARD MAP · HUMAN REVIEW
+                  </button>
+                ) : mapAuthorityBlock.status !== "INTEGRITY_ERROR" ? (
+                  <p>The server has not yet confirmed a durable Card Map failure. Retry authority first; human-review continuation becomes available after that evidence is recorded.</p>
+                ) : null}
+              </>
+            ) : null}
           </section>
         ) : null}
 
@@ -1071,17 +1212,19 @@ export default function AiGraderV2AdminPage() {
           />
         ) : null}
 
-        {draft && !capture && mapState && !committedCaptureRecovery ? (
+        {draft && !capture && mapState && !mapAuthorityBlock && !committedCaptureRecovery ? (
           <CaptureWorkspace
             token={session.token}
             sessionId={draft.id}
             cardProfile={draft.cardProfile}
             draftSurface="AI_GRADER"
             activeMapRevisionId={mapState.status === "LOADED" ? mapState.revision?.revisionId ?? null : null}
+            activeMapRevisionHash={mapState.status === "LOADED" ? mapState.revision?.revisionHash ?? null : null}
             activeMapScope={mapState.status === "LOADED" ? mapState.scope ?? "EXACT" : null}
             activeMapName={mapState.status === "LOADED" ? mapState.name ?? "Card map" : null}
             mapBindingStatus={mapState.status === "LOADED" ? "LOADED"
               : mapState.status === "INTEGRITY_ERROR" ? "INTEGRITY_ERROR"
+                : mapHumanReviewWithoutMap ? "HUMAN_REVIEW_WITHOUT_MAP"
                 : mapLookupFailed ? "LOOKUP_FAILED" : "NO_MAP"}
             mapLookupFailed={mapLookupFailed}
             onReady={saveCapture}
@@ -1096,8 +1239,10 @@ export default function AiGraderV2AdminPage() {
         {capture && defects === null ? (
           <section className={styles.statusPanel}>
             <span>03 · SAM 3</span>
-            <h2>Scanning FRONT, then BACK.</h2>
-            <p>A successful side is retained while the next side runs. Every finding lands on one measured card map.</p>
+            <h2>{initializeFailed ? "Server scan failed." : "Scanning FRONT, then BACK."}</h2>
+            <p>{initializeFailed
+              ? "The scan stopped. Your capture, geometry, Card Map work, and any successful side checkpoint remain preserved."
+              : "A successful side is retained while the next side runs. Every finding lands on one measured card map."}</p>
             {initializeFailed ? (
               <button type="button" disabled={working} onClick={() => {
                 if (working) return;
@@ -1128,6 +1273,7 @@ export default function AiGraderV2AdminPage() {
               ? { FRONT: capture.front.mapRegistration, BACK: capture.back.mapRegistration }
               : undefined}
             grade={review.grade}
+            busy={working}
             canUndo={lastRemovedDefectIds.length > 0}
             onRemoveDefects={async (defectIds) => {
               if (defectIds.length === 0 || defectIds.some((defectId) =>

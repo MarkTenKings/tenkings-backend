@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+import traceback
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
@@ -19,9 +20,7 @@ from card_geometry import (
     INSPECTION_WIDTH,
     PX_PER_MM,
     boundary_subtracted_anomaly_mask,
-    detect_card_quad,
     detector_material_mask,
-    printed_border_quad,
     MapRegistrationFailure,
     MAP_REGISTRATION_ALGORITHM_VERSION,
     register_map_design,
@@ -29,13 +28,21 @@ from card_geometry import (
     warp_to_inspection_map,
 )
 from color_geometry import (
+    ENGINE_VERSION as COLOR_GEOMETRY_ENGINE_VERSION,
+    POLICY_PROVENANCE as COLOR_GEOMETRY_POLICY_PROVENANCE,
     engine_error_result,
     propose_physical_outer,
     propose_printed_frame,
     serialize_proposal,
 )
 from defect_math import GRID_HEIGHT, GRID_WIDTH
-from sam3_detector import DETECTOR_VERSION, detect_views, get_processor, measure_marks
+from sam3_detector import (
+    DETECTOR_VERSION,
+    detect_views,
+    get_detector_identity,
+    get_processor,
+    measure_marks,
+)
 from trace_rle import decode_trace_rle, encode_trace_rle
 
 
@@ -53,6 +60,15 @@ app = FastAPI(lifespan=lifespan)
 TARGET_WIDTH = GRID_WIDTH
 TARGET_HEIGHT = GRID_HEIGHT
 
+# Repeated OpenCV evaluation on load-balanced workers can move a tracked point
+# by roughly a pixel without changing any categorical or correspondence
+# authority. These limits are intentionally much smaller than an operator drag,
+# while the immutable binding, integer counts, statuses, and human geometry are
+# still checked exactly.
+MAP_REGISTRATION_RESCUE_POINT_TOLERANCE = 1e-3
+MAP_REGISTRATION_RESCUE_UNIT_TOLERANCE = 1e-3
+MAP_REGISTRATION_RESCUE_PIXEL_TOLERANCE = 1e-2
+
 
 class ImageInput(BaseModel):
     imageUrl: Optional[str] = None
@@ -60,9 +76,7 @@ class ImageInput(BaseModel):
 
 
 class GeometryRequest(ImageInput):
-    # Optional only for a backend-first rolling release. The authenticated web
-    # path requires it before color authority is issued.
-    matColor: Optional[str] = None
+    matColor: str
 
 
 class Point(BaseModel):
@@ -103,15 +117,14 @@ class PreparedUploads(BaseModel):
 
 class PrepareRequest(RectifyRequest):
     outputUploads: PreparedUploads
-    # Optional only for compatibility with the previously deployed web client.
-    matColor: Optional[str] = None
+    matColor: str
 
 
 class PrepareResponse(BaseModel):
     width: int
     height: int
     transform: List[float]
-    borders: List[Point]
+    borders: Optional[List[Point]]
     detectedBorders: List[str]
     inspectionFrame: dict
     colorGeometry: Optional[dict] = None
@@ -145,6 +158,230 @@ class MapRegistrationRequest(BaseModel):
     lessonCandidates: List[MapRegistrationLessonCandidate] = Field(default_factory=list, max_length=3)
     correctedAnchors: Optional[List[MapRegistrationAnchor]] = None
     automaticFailure: Optional[dict] = None
+
+
+def _strict_nonnegative_integer(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _bounded_float_equal(first, second, *, tolerance, minimum=None, maximum=None):
+    if not isinstance(first, (int, float)) or isinstance(first, bool):
+        return False
+    if not isinstance(second, (int, float)) or isinstance(second, bool):
+        return False
+    first_value = float(first)
+    second_value = float(second)
+    if not np.isfinite(first_value) or not np.isfinite(second_value):
+        return False
+    if minimum is not None and (first_value < minimum or second_value < minimum):
+        return False
+    if maximum is not None and (first_value > maximum or second_value > maximum):
+        return False
+    return abs(first_value - second_value) <= tolerance
+
+
+def _bounded_nullable_float_equal(first, second, *, tolerance, minimum=None, maximum=None):
+    if first is None or second is None:
+        return first is None and second is None
+    return _bounded_float_equal(
+        first,
+        second,
+        tolerance=tolerance,
+        minimum=minimum,
+        maximum=maximum,
+    )
+
+
+def _bounded_point_equal(first, second, *, tolerance, require_unit_grid=False):
+    if first is None or second is None:
+        return first is None and second is None
+    if not isinstance(first, dict) or not isinstance(second, dict):
+        return False
+    minimum = 0.0 if require_unit_grid else None
+    maximum = 1.0 if require_unit_grid else None
+    return (
+        set(first) == {"x", "y"}
+        and set(second) == {"x", "y"}
+        and _bounded_float_equal(
+            first["x"],
+            second["x"],
+            tolerance=tolerance,
+            minimum=minimum,
+            maximum=maximum,
+        )
+        and _bounded_float_equal(
+            first["y"],
+            second["y"],
+            tolerance=tolerance,
+            minimum=minimum,
+            maximum=maximum,
+        )
+    )
+
+
+def _registration_failure_stable_fields(failure):
+    if not isinstance(failure, dict):
+        return None
+    best = failure.get("bestCandidate")
+    binding = failure.get("binding")
+    candidate_ids = failure.get("candidateIds")
+    if not isinstance(best, dict) or not isinstance(binding, dict):
+        return None
+    if not isinstance(candidate_ids, list) or not all(isinstance(item, str) for item in candidate_ids):
+        return None
+    candidate_count = failure.get("candidateCount")
+    if not _strict_nonnegative_integer(candidate_count) or candidate_count != len(candidate_ids):
+        return None
+    binding_candidates = binding.get("candidates")
+    if not isinstance(binding_candidates, list) or len(binding_candidates) != candidate_count:
+        return None
+    if any(
+        not isinstance(candidate, dict)
+        or set(candidate) != {"candidateId", "referenceInspectionSha256"}
+        or not isinstance(candidate["candidateId"], str)
+        or not isinstance(candidate["referenceInspectionSha256"], str)
+        for candidate in binding_candidates
+    ):
+        return None
+    if [candidate["candidateId"] for candidate in binding_candidates] != candidate_ids:
+        return None
+    if set(binding) != {
+        "side",
+        "mapRevisionId",
+        "currentInspectionSha256",
+        "currentPhysicalQuadSha256",
+        "candidates",
+    }:
+        return None
+    if any(
+        not isinstance(binding.get(field), str)
+        for field in (
+            "side",
+            "mapRevisionId",
+            "currentInspectionSha256",
+            "currentPhysicalQuadSha256",
+        )
+    ):
+        return None
+    anchors = best.get("anchors")
+    if not isinstance(anchors, list) or len(anchors) != 4:
+        return None
+    stable_anchors = []
+    for anchor in anchors:
+        if not isinstance(anchor, dict):
+            return None
+        if not isinstance(anchor.get("anchorId"), str) or not isinstance(anchor.get("status"), str):
+            return None
+        expected_point = anchor.get("expectedPoint")
+        if not isinstance(expected_point, dict) or set(expected_point) != {"x", "y"}:
+            return None
+        if not _bounded_point_equal(
+            expected_point,
+            expected_point,
+            tolerance=0.0,
+            require_unit_grid=True,
+        ):
+            return None
+        stable_anchors.append(
+            {
+                "anchorId": anchor["anchorId"],
+                "expectedPoint": expected_point,
+                "status": anchor["status"],
+            }
+        )
+    integer_fields = ("featureCount", "usableFeatureCount", "inlierCount")
+    if any(not _strict_nonnegative_integer(best.get(field)) for field in integer_fields):
+        return None
+    count_vectors = ("perAnchorFeatureCounts", "perAnchorInlierCounts")
+    if any(
+        not isinstance(best.get(field), list)
+        or len(best[field]) != 4
+        or any(not _strict_nonnegative_integer(value) for value in best[field])
+        for field in count_vectors
+    ):
+        return None
+    if type(failure.get("accepted")) is not bool or type(best.get("accepted")) is not bool:
+        return None
+    stable_strings = (
+        failure.get("algorithmVersion"),
+        failure.get("policyVersion"),
+        failure.get("failureCode"),
+        failure.get("message"),
+        best.get("candidateId"),
+        best.get("provenance"),
+        best.get("failureCode"),
+        best.get("message"),
+    )
+    if any(not isinstance(value, str) for value in stable_strings):
+        return None
+    return {
+        "algorithmVersion": failure["algorithmVersion"],
+        "policyVersion": failure["policyVersion"],
+        "accepted": failure["accepted"],
+        "failureCode": failure["failureCode"],
+        "message": failure["message"],
+        "candidateCount": candidate_count,
+        "candidateIds": candidate_ids,
+        "binding": binding,
+        "bestCandidate": {
+            "candidateId": best["candidateId"],
+            "provenance": best["provenance"],
+            "accepted": best["accepted"],
+            "failureCode": best["failureCode"],
+            "message": best["message"],
+            "anchors": stable_anchors,
+            "featureCount": best["featureCount"],
+            "usableFeatureCount": best["usableFeatureCount"],
+            "inlierCount": best["inlierCount"],
+            "perAnchorFeatureCounts": best["perAnchorFeatureCounts"],
+            "perAnchorInlierCounts": best["perAnchorInlierCounts"],
+        },
+    }
+
+
+def _registration_rescue_diagnostics_match(submitted, recomputed):
+    submitted_stable = _registration_failure_stable_fields(submitted)
+    recomputed_stable = _registration_failure_stable_fields(recomputed)
+    if submitted_stable is None or recomputed_stable is None or submitted_stable != recomputed_stable:
+        return False
+    submitted_best = submitted["bestCandidate"]
+    recomputed_best = recomputed["bestCandidate"]
+    if not _bounded_float_equal(
+        submitted_best.get("inlierFraction"),
+        recomputed_best.get("inlierFraction"),
+        tolerance=MAP_REGISTRATION_RESCUE_UNIT_TOLERANCE,
+        minimum=0.0,
+        maximum=1.0,
+    ):
+        return False
+    for field in ("medianReprojectionErrorPx", "maxReprojectionErrorPx"):
+        if not _bounded_nullable_float_equal(
+            submitted_best.get(field),
+            recomputed_best.get(field),
+            tolerance=MAP_REGISTRATION_RESCUE_PIXEL_TOLERANCE,
+            minimum=0.0,
+        ):
+            return False
+    for submitted_anchor, recomputed_anchor in zip(
+        submitted_best["anchors"],
+        recomputed_best["anchors"],
+    ):
+        if not _bounded_float_equal(
+            submitted_anchor.get("score"),
+            recomputed_anchor.get("score"),
+            tolerance=MAP_REGISTRATION_RESCUE_UNIT_TOLERANCE,
+            minimum=0.0,
+            maximum=1.0,
+        ):
+            return False
+        for field in ("trackedPoint", "locatedPoint"):
+            if not _bounded_point_equal(
+                submitted_anchor.get(field),
+                recomputed_anchor.get(field),
+                tolerance=MAP_REGISTRATION_RESCUE_POINT_TOLERANCE,
+            ):
+                return False
+    return True
 
 
 class CanonicalView(ImageInput):
@@ -237,6 +474,55 @@ def _trace_proposal_error_detail(error: Exception, request_trace_id: Optional[st
     return detail
 
 
+def _detect_failure_detail(
+    error: Exception,
+    request: DetectRequest,
+    stage: str,
+    duration_ms: float,
+    view_id: Optional[str],
+    status_code: int,
+):
+    message = re.sub(
+        r"https?://\S+",
+        "[redacted-url]",
+        str(error),
+        flags=re.IGNORECASE,
+    )
+    message = re.sub(
+        r"\b(?:Bearer\s+)?(?:sk|sess|proj)-[A-Za-z0-9_-]{8,}\b",
+        "[redacted-credential]",
+        message,
+        flags=re.IGNORECASE,
+    )
+    message = " ".join(message.split())[:300] or "Detector request failed without an exception message."
+    extracted = traceback.extract_tb(error.__traceback__)
+    frames = [
+        {
+            "file": frame.filename[-240:],
+            "line": int(frame.lineno),
+            "function": frame.name[:160],
+        }
+        for frame in extracted[-40:]
+    ]
+    return {
+        "version": "speedster-detect-failure-v1",
+        "code": (
+            "SPEEDSTER_DETECT_INVALID_INPUT"
+            if status_code == 400
+            else "SPEEDSTER_DETECT_FAILED"
+        ),
+        "stage": stage,
+        "side": request.side,
+        "requestTraceId": request.requestTraceId,
+        "exceptionType": type(error).__name__[:128],
+        "message": message,
+        "durationMs": round(duration_ms, 3),
+        "stack": frames,
+        "stackTruncated": len(extracted) > len(frames),
+        **({"viewId": view_id[:180]} if view_id else {}),
+    }
+
+
 def load_image(image_url: Optional[str], image_base64: Optional[str]) -> np.ndarray:
     if image_base64:
         encoded = image_base64.split(",", 1)[-1]
@@ -259,6 +545,11 @@ def normalized_points(points: np.ndarray, width: int, height: int) -> List[Point
 
 
 def rectify(image: np.ndarray, corners: List[Point]):
+    if len(corners) != 4:
+        raise ValueError("Physical card geometry requires exactly four perimeter points")
+    normalized = np.array([[point.x, point.y] for point in corners], dtype=np.float64)
+    if not np.all(np.isfinite(normalized)) or np.any(normalized < 0) or np.any(normalized > 1):
+        raise ValueError("Physical card geometry must remain inside the exact source image")
     height, width = image.shape[:2]
     source = np.array(
         [[point.x * width, point.y * height] for point in corners],
@@ -304,7 +595,13 @@ def upload_webp(upload_url: str, image: np.ndarray):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "detectorVersion": DETECTOR_VERSION}
+    return {
+        "ok": True,
+        "detectorVersion": DETECTOR_VERSION,
+        "detectorIdentity": get_detector_identity(),
+        "colorGeometryEngineVersion": COLOR_GEOMETRY_ENGINE_VERSION,
+        "colorGeometryPolicyProvenance": COLOR_GEOMETRY_POLICY_PROVENANCE,
+    }
 
 
 @app.get("/ping")
@@ -320,21 +617,18 @@ def geometry(request: GeometryRequest):
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     height, width = image.shape[:2]
-    color_geometry = None
-    if request.matColor is not None:
-        try:
-            color_geometry = propose_physical_outer(image, request.matColor)
-        except Exception as error:
-            LOGGER.warning(
-                "color_geometry_failed mode=PHYSICAL_OUTER errorType=%s",
-                type(error).__name__,
-            )
-            color_geometry = engine_error_result("PHYSICAL_OUTER", request.matColor)
-    corners = (
-        color_geometry["proposal"]
-        if color_geometry and color_geometry["outcome"] == "ACCEPTED"
-        else detect_card_quad(image)
-    )
+    try:
+        color_geometry = propose_physical_outer(image, request.matColor)
+    except Exception as error:
+        LOGGER.warning(
+            "color_geometry_failed mode=PHYSICAL_OUTER errorType=%s",
+            type(error).__name__,
+        )
+        color_geometry = engine_error_result("PHYSICAL_OUTER", request.matColor)
+    if color_geometry and color_geometry["outcome"] == "ACCEPTED":
+        corners = color_geometry["proposal"]
+    else:
+        corners = None
     return {
         "width": width,
         "height": height,
@@ -389,23 +683,20 @@ def prepare_image(request: PrepareRequest):
     try:
         image = load_image(request.imageUrl, request.imageBase64)
         rectified, transform = rectify(image, request.corners)
-        color_geometry = None
-        if request.matColor is not None:
-            try:
-                color_geometry = propose_printed_frame(rectified, request.matColor)
-            except Exception as error:
-                LOGGER.warning(
-                    "color_geometry_failed mode=PRINTED_FRAME errorType=%s",
-                    type(error).__name__,
-                )
-                color_geometry = engine_error_result("PRINTED_FRAME", request.matColor)
+        try:
+            color_geometry = propose_printed_frame(rectified, request.matColor)
+        except Exception as error:
+            LOGGER.warning(
+                "color_geometry_failed mode=PRINTED_FRAME errorType=%s",
+                type(error).__name__,
+            )
+            color_geometry = engine_error_result("PRINTED_FRAME", request.matColor)
         if color_geometry and color_geometry["outcome"] == "ACCEPTED":
             borders = color_geometry["proposal"]
             detected_borders = ["top", "right", "bottom", "left"]
         else:
-            # Deliberately preserve today's default/manual proposal on every
-            # non-accepted color outcome.
-            borders, detected_borders, _ = printed_border_quad(rectified)
+            borders = None
+            detected_borders = []
         if request.outputUploads.inspection:
             height, width = image.shape[:2]
             source = np.array(
@@ -456,7 +747,11 @@ def prepare_image(request: PrepareRequest):
         "width": TARGET_WIDTH,
         "height": TARGET_HEIGHT,
         "transform": transform.reshape(-1).tolist(),
-        "borders": normalized_points(borders, TARGET_WIDTH, TARGET_HEIGHT),
+        "borders": (
+            normalized_points(borders, TARGET_WIDTH, TARGET_HEIGHT)
+            if borders is not None
+            else None
+        ),
         "detectedBorders": detected_borders,
         "inspectionFrame": frame,
         "colorGeometry": serialize_proposal(color_geometry, TARGET_WIDTH, TARGET_HEIGHT) if color_geometry else None,
@@ -526,8 +821,17 @@ def map_registration(request: MapRegistrationRequest):
                 **registered["automaticFailure"],
                 "binding": binding,
             }
-        if request.correctedAnchors is not None and registered.get("automaticFailure") != request.automaticFailure:
-            raise ValueError("Map registration rescue diagnostics do not match the server recomputation")
+        if request.correctedAnchors is not None:
+            if not _registration_rescue_diagnostics_match(
+                request.automaticFailure,
+                registered.get("automaticFailure"),
+            ):
+                raise ValueError("Map registration rescue diagnostics do not match the server recomputation")
+            # The web authority deliberately requires the exact diagnostics it
+            # submitted before it persists the lesson and signs the successful
+            # registration. Re-emit those verified bytes, not volatile OpenCV
+            # floats from this worker's independent recomputation.
+            registered["automaticFailure"] = request.automaticFailure
         return {
             "version": MAP_REGISTRATION_ALGORITHM_VERSION,
             "side": request.side,
@@ -553,10 +857,13 @@ def map_registration(request: MapRegistrationRequest):
 @app.post("/detect")
 def detect(request: DetectRequest):
     request_started = time.perf_counter()
+    failure_stage = "IMAGE_LOAD"
+    failure_view_id = None
     try:
         views = []
         image_loads = []
         for view in request.views:
+            failure_view_id = view.id
             load_started = time.perf_counter()
             image = load_image(view.imageUrl, view.imageBase64)
             image_loads.append(
@@ -570,6 +877,8 @@ def detect(request: DetectRequest):
                 }
             )
             views.append((view.id, image))
+        failure_stage = "DETECTOR_EXECUTION"
+        failure_view_id = None
         detection_started = time.perf_counter()
         result = detect_views(
             views,
@@ -582,6 +891,7 @@ def detect(request: DetectRequest):
         detector_duration_ms = round(
             (time.perf_counter() - detection_started) * 1000, 3
         )
+        failure_stage = "RESPONSE_ASSEMBLY"
         instrumentation = {
             **result.get("instrumentation", {}),
             "version": "speedster-service-timing-v1",
@@ -601,20 +911,43 @@ def detect(request: DetectRequest):
             "speedster_detect_timing %s",
             json.dumps(instrumentation, separators=(",", ":"), sort_keys=True),
         )
+        # Validate the exact response while this request's stage and trace are
+        # still available. FastAPI's later serializer cannot otherwise attach
+        # deterministic failure evidence to this detector attempt.
+        json.dumps(result, allow_nan=False, separators=(",", ":"), sort_keys=True)
         return result
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    except Exception as error:
-        LOGGER.exception(
-            "speedster_detect_timing_failed side=%s requestTraceId=%s durationMs=%.3f",
-            request.side,
-            request.requestTraceId,
-            (time.perf_counter() - request_started) * 1000,
+        duration_ms = (time.perf_counter() - request_started) * 1000
+        detail = _detect_failure_detail(
+            error,
+            request,
+            failure_stage,
+            duration_ms,
+            failure_view_id,
+            400,
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"{type(error).__name__}: {error}",
-        ) from error
+        LOGGER.warning(
+            "speedster_detect_failed %s",
+            json.dumps(detail, separators=(",", ":"), sort_keys=True),
+        )
+        raise HTTPException(status_code=400, detail=detail) from error
+    except Exception as error:
+        duration_ms = (time.perf_counter() - request_started) * 1000
+        detail = _detect_failure_detail(
+            error,
+            request,
+            failure_stage,
+            duration_ms,
+            failure_view_id,
+            500,
+        )
+        # One structured line survives providers that discard multiline Python
+        # tracebacks. It contains no locals, image URLs, or credentials.
+        LOGGER.error(
+            "speedster_detect_failed %s",
+            json.dumps(detail, separators=(",", ":"), sort_keys=True),
+        )
+        raise HTTPException(status_code=500, detail=detail) from error
 
 
 def _validated_card_bounds(

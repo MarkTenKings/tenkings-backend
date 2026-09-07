@@ -14,7 +14,14 @@ import {
   type SpeedsterSessionIdentity,
 } from "../../../../../lib/ai-grader-v2/identity";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
-import { getStorageMode, presignReadUrl, presignUploadUrl } from "../../../../../lib/server/storage";
+import {
+  AI_GRADER_STORAGE_MAX_OBJECT_BYTES,
+  getStorageMode,
+  presignPrivateSpeedsterUploadUrl,
+  presignReadUrl,
+  sha256HexToBase64,
+  verifyStorageObjectIntegrity,
+} from "../../../../../lib/server/storage";
 
 const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
 const EXTENSIONS = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" } as const;
@@ -23,11 +30,16 @@ const actionSchema = z.discriminatedUnion("action", [
     action: z.literal("SLAB_PLAN"),
     side: z.enum(["FRONT", "BACK"]),
     contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+    byteSize: z.number().int().positive().max(AI_GRADER_STORAGE_MAX_OBJECT_BYTES),
+    checksumSha256: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict(),
   z.object({
     action: z.literal("SLAB_COMPLETE"),
     side: z.enum(["FRONT", "BACK"]),
     storageKey: z.string().min(1).max(500),
+    contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+    byteSize: z.number().int().positive().max(AI_GRADER_STORAGE_MAX_OBJECT_BYTES),
+    checksumSha256: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict(),
   z.object({
     action: z.literal("UPDATE_IDENTITY"),
@@ -99,8 +111,13 @@ type Dependencies = {
     sessionId: string;
     reason: string;
   }) => void;
-  presignUpload: typeof presignUploadUrl;
+  presignUpload: (input: {
+    storageKey: string;
+    contentType: string;
+    checksumSha256: string;
+  }) => Promise<string>;
   presignRead: typeof presignReadUrl;
+  verifyObject?: typeof verifyStorageObjectIntegrity;
   storageReady: () => boolean;
 };
 
@@ -109,8 +126,12 @@ const sessionIdFrom = (req: NextApiRequest) => {
   return typeof value === "string" && SESSION_ID.test(value) ? value : null;
 };
 
-const slabKey = (session: CompletedSession, side: "FRONT" | "BACK", extension: string) =>
-  `ai-grader-v2/${session.createdByUserId}/${session.id}/slab/${side.toLowerCase()}.${extension}`;
+const slabKey = (
+  session: CompletedSession,
+  side: "FRONT" | "BACK",
+  extension: string,
+  checksumSha256: string,
+) => `ai-grader-v2/${session.createdByUserId}/${session.id}/slab/${side.toLowerCase()}/sha256-${checksumSha256}.${extension}`;
 
 const identityRecord = (value: Prisma.JsonValue): Record<string, Prisma.JsonValue> =>
   value && typeof value === "object" && !Array.isArray(value)
@@ -259,8 +280,12 @@ const dependencies: Dependencies = {
     await prisma.$transaction((tx) => voidCard(tx, cardId, reason, adminId));
   },
   logAdminAction: (entry) => console.info("[TenKingsV2] admin_card_action", entry),
-  presignUpload: presignUploadUrl,
+  presignUpload: (input) => presignPrivateSpeedsterUploadUrl({
+    ...input,
+    requireAclHeader: true,
+  }),
   presignRead: presignReadUrl,
+  verifyObject: verifyStorageObjectIntegrity,
   storageReady: () => getStorageMode() === "s3",
 };
 
@@ -272,6 +297,7 @@ export function createCompletedCardHandler(deps: Dependencies = dependencies) {
     }
     try {
       const adminSession = await deps.requireAdminSession(req);
+      res.setHeader("Cache-Control", "private, no-store, max-age=0");
       const sessionId = sessionIdFrom(req);
       if (!sessionId) return res.status(400).json({ message: "Invalid Speedster session ID" });
       const session = await deps.findSession(sessionId);
@@ -355,18 +381,49 @@ export function createCompletedCardHandler(deps: Dependencies = dependencies) {
       if (!deps.storageReady()) throw new Error("Speedster slab photos require configured object storage");
 
       if (parsed.data.action === "SLAB_PLAN") {
-        const storageKey = slabKey(session, parsed.data.side, EXTENSIONS[parsed.data.contentType]);
+        const storageKey = slabKey(
+          session,
+          parsed.data.side,
+          EXTENSIONS[parsed.data.contentType],
+          parsed.data.checksumSha256,
+        );
         return res.status(200).json({
           storageKey,
-          uploadUrl: await deps.presignUpload(storageKey, parsed.data.contentType),
+          uploadUrl: await deps.presignUpload({
+            storageKey,
+            contentType: parsed.data.contentType,
+            checksumSha256: parsed.data.checksumSha256,
+          }),
+          uploadMethod: "PUT",
+          uploadHeaders: {
+            "Content-Type": parsed.data.contentType,
+            "x-amz-acl": "private",
+            "x-amz-checksum-sha256": sha256HexToBase64(parsed.data.checksumSha256),
+          },
+          byteSize: parsed.data.byteSize,
+          checksumSha256: parsed.data.checksumSha256,
         });
       }
 
       const completedAction = parsed.data;
-      const expectedPrefix = slabKey(session, completedAction.side, "").slice(0, -1);
       const completedStorageKey = completedAction.storageKey;
-      if (!Object.values(EXTENSIONS).some((extension) => completedStorageKey === `${expectedPrefix}.${extension}`)) {
+      if (completedStorageKey !== slabKey(
+        session,
+        completedAction.side,
+        EXTENSIONS[completedAction.contentType],
+        completedAction.checksumSha256,
+      )) {
         return res.status(400).json({ message: "Slab photo does not match this card and side" });
+      }
+      if (!deps.verifyObject) throw new Error("Speedster slab upload verification is unavailable");
+      const integrity = await deps.verifyObject({
+        storageKey: completedStorageKey,
+        expectedByteSize: completedAction.byteSize,
+        expectedChecksumSha256: completedAction.checksumSha256,
+      });
+      if (!integrity.ok
+        || integrity.contentType?.trim().toLowerCase() !== completedAction.contentType.toLowerCase()) {
+        return res.status(409).json({ message: "Slab photo did not match its exact upload plan" });
       }
       const updated = await deps.updateSlabKey(session.id, completedAction.side, completedStorageKey);
       return res.status(200).json({ card: await publicState(updated, label, deps.presignRead) });

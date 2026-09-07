@@ -1,0 +1,202 @@
+.page {
+  --paper: #f7f6f2;
+  --ink: #161616;
+  --muted: #686660;
+  --line: #ddd9cf;
+  min-height: 100vh;
+  color: var(--ink);
+  background: var(--paper);
+  padding: 32px clamp(18px, 3vw, 48px) 22px;
+}
+
+.hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+  max-width: 1900px;
+  margin: 0 auto 24px;
+}
+
+.hero > div { max-width: 980px; }
+.hero span, .lessonTrail header span { color: #b86508; font-size: 12px; font-weight: 900; letter-spacing: .16em; }
+.hero h1 { margin: 5px 0 6px; font-size: clamp(32px, 4vw, 54px); line-height: 1; letter-spacing: -.045em; }
+.hero p { margin: 0; color: var(--muted); font-size: 17px; line-height: 1.45; }
+.hero nav { display: flex; gap: 10px; flex-wrap: wrap; }
+.hero nav a, .loadMore {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  color: #292824;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  gap: 12px;
+  max-width: 1900px;
+  margin: 0 auto 20px;
+}
+
+.summaryGrid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 102px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255,255,255,.82);
+}
+
+.summaryGrid strong { font-size: 32px; line-height: 1; }
+.summaryGrid span { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; font-weight: 700; }
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(250px, 330px) minmax(0, 1fr);
+  gap: 18px;
+  max-width: 1900px;
+  margin: 0 auto;
+}
+
+.cardRail, .blueprint {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255,255,255,.74);
+  box-shadow: 0 12px 34px rgba(35,30,20,.05);
+}
+
+.cardRail { align-self: start; position: sticky; top: 18px; padding: 16px; }
+.cardRail header { padding: 3px 4px 12px; }
+.cardRail h2 { margin: 0; font-size: 21px; }
+.cardRail p { margin: 4px 0 0; color: #858078; font-size: 13px; }
+.cardList { display: flex; max-height: 900px; overflow-y: auto; flex-direction: column; gap: 10px; padding: 2px; }
+
+.cardChoice {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  min-height: 116px;
+  border: 1px solid #dedbd3;
+  border-radius: 14px;
+  background: #fff;
+  color: #24231f;
+  padding: 16px 58px 13px 16px;
+  text-align: left;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+.cardChoice:hover { border-color: #a9a49a; transform: translateY(-1px); }
+.cardChoiceSelected { box-shadow: 0 0 0 2px rgba(47,128,237,.12); }
+.cardA { border-color: #f06b3a; background: #fff3ed; }
+.cardB { border-color: #2f80ed; background: #edf5ff; }
+.cardChoice strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 17px; white-space: nowrap; }
+.cardChoice small, .cardChoice time { max-width: 100%; overflow: hidden; color: #77736b; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.grade { position: absolute; top: 14px; right: 13px; border-radius: 10px; background: #f3f1eb; padding: 6px 9px; font-size: 18px; font-weight: 900; }
+.cardTag { position: absolute; top: -9px; right: 8px; border-radius: 999px; background: #171717; color: white; padding: 3px 8px; font-size: 10px; font-weight: 900; letter-spacing: .08em; }
+.cardA .cardTag { background: #f06432; }
+.cardB .cardTag { background: #2f80ed; }
+.correctionPill, .nonePill { margin-top: 5px; border-radius: 999px; padding: 4px 8px; font-size: 11px; font-weight: 800; }
+.correctionPill { color: #c34d24; background: #ffe2d7; }
+.nonePill { color: #77736b; background: #eceae6; }
+.loadMore { width: 100%; margin-top: 12px; cursor: pointer; }
+
+.blueprint { min-width: 0; padding: 16px; }
+.controls { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; background: white; padding: 7px 10px; color: #57534d; font-size: 12px; font-weight: 700; }
+.blueDot, .greenDot, .redDot, .amberDot, .grayDot { display: inline-block; width: 11px; height: 11px; flex: 0 0 auto; border-radius: 50%; }
+.blueDot { background: #2f80ed; }
+.greenDot { background: #0da51c; }
+.redDot { background: #dc3f44; }
+.amberDot { background: #f2a20d; }
+.grayDot { background: #98958f; }
+.orangeBox { display: inline-block; width: 13px; height: 13px; flex: 0 0 auto; border: 2px dashed #f06432; border-radius: 3px; }
+.toggles { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.toggles > div { display: inline-flex; overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: white; }
+.toggles button { border: 0; border-right: 1px solid var(--line); background: transparent; color: #66615a; padding: 8px 11px; font-size: 12px; font-weight: 800; cursor: pointer; }
+.toggles button:last-child { border-right: 0; }
+.toggles .activeToggle { background: #181818; color: white; }
+
+.comparisonGrid { display: grid; grid-template-columns: minmax(0, 1fr) 86px minmax(0, 1fr); align-items: center; gap: 12px; }
+.comparisonCard { min-width: 0; align-self: stretch; border: 1px solid var(--line); border-radius: 16px; background: white; padding: 14px; }
+.comparisonCard > header { min-height: 92px; }
+.comparisonCard h2 { margin: 8px 0 2px; font-size: 19px; }
+.comparisonCard header p { margin: 0; color: #77736b; font-size: 12px; }
+.orangeLabel, .blueLabel { display: inline-block; border-radius: 7px; padding: 4px 8px; font-size: 11px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.orangeLabel { color: #dc5528; background: #ffebe3; }
+.blueLabel { color: #286fc3; background: #e7f1ff; }
+
+.canvasFrame { position: relative; width: min(100%, 510px); margin: 0 auto; overflow: hidden; border: 1px solid #d8d5cc; border-radius: 15px; background: #f0efeb; box-shadow: inset 0 0 0 8px rgba(255,255,255,.68); }
+.canvasFrame img, .canvasFrame canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: fill; }
+.canvasFrame canvas { pointer-events: none; }
+.noImage { display: grid; width: min(100%, 510px); min-height: 430px; margin: 0 auto; place-items: center; border: 1px dashed #c7c3ba; border-radius: 15px; background: #f4f2ed; color: #77736b; padding: 30px; text-align: center; }
+.evidenceNotes { display: flex; flex-wrap: wrap; gap: 7px 15px; margin-top: 12px; color: #5e5a53; font-size: 12px; }
+.evidenceNotes span { display: inline-flex; align-items: center; gap: 6px; }
+.cardVerdicts { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.cardVerdicts span, .trailHeading > span { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 5px 9px; font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.used { color: #087d15; background: #e0f5df; }
+.unproven { color: #8a5a00; background: #fff0d2; }
+.notTested { color: #6e6b65; background: #ecebe8; }
+.warning { margin-top: 10px; border-radius: 9px; background: #fff7e8; color: #7b5d21; padding: 8px 10px; font-size: 11px; }
+.warning p { margin: 5px 0 0; }
+.evidenceGap { margin: 9px 0 0; border-radius: 9px; background: #fff0d2; color: #7a5000; padding: 8px 10px; font-size: 11px; font-weight: 700; line-height: 1.4; }
+
+.nextScanArrow { display: flex; flex-direction: column; align-items: center; color: #77736b; text-align: center; }
+.nextScanArrow span { font-size: 10px; font-weight: 900; letter-spacing: .12em; }
+.nextScanArrow b { color: #55514b; font-size: 42px; line-height: 1; }
+.nextScanArrow small { font-size: 11px; }
+
+.lessonTrail { margin-top: 18px; }
+.lessonTrail > header { display: flex; justify-content: space-between; align-items: flex-end; gap: 18px; margin: 0 2px 11px; }
+.lessonTrail h2 { margin: 3px 0 0; font-size: 24px; }
+.lessonTrail header p { max-width: 510px; margin: 0; color: #77736b; font-size: 12px; text-align: right; }
+.trailRow { margin-top: 10px; border: 1px solid var(--line); border-radius: 14px; background: white; padding: 14px 16px; }
+.trailHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.trailHeading small { color: #858078; font-size: 10px; font-weight: 800; letter-spacing: .09em; }
+.trailHeading h3 { margin: 3px 0 0; font-size: 16px; }
+.steps { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.steps > b { color: #aaa69f; }
+.stepProven, .stepUnknown { display: inline-flex; border-radius: 9px; padding: 7px 10px; font-size: 12px; font-weight: 800; }
+.stepProven { color: #087d15; background: #e0f5df; }
+.stepUnknown { color: #8a5a00; background: #fff0d2; }
+.reason, .detail { margin: 9px 0 0; color: #5f5b54; font-size: 12px; line-height: 1.45; }
+.detail { color: #087d15; font-weight: 700; }
+.emptyState, .emptyTrail { display: grid; min-height: 360px; place-content: center; border: 1px dashed #cbc7bd; border-radius: 15px; background: #faf9f6; color: #68645d; padding: 30px; text-align: center; }
+.emptyState strong { color: #222; font-size: 20px; }
+.emptyState p { max-width: 500px; margin: 8px auto 0; }
+.retryButton { justify-self: center; margin-top: 14px; border: 1px solid #aaa59b; border-radius: 10px; background: white; color: #292824; padding: 9px 14px; font-size: 12px; font-weight: 900; cursor: pointer; }
+.emptyTrail { min-height: 100px; }
+.readOnlyNote { max-width: 1900px; margin: 18px auto 0; color: #858078; font-size: 12px; text-align: center; }
+.center { display: grid; min-height: 100vh; place-items: center; color: white; }
+.center button { border: 1px solid #666; border-radius: 10px; background: white; color: black; padding: 10px 14px; }
+
+@media (max-width: 1180px) {
+  .summaryGrid { grid-template-columns: repeat(3, 1fr); }
+  .workspace { grid-template-columns: 260px minmax(0, 1fr); }
+  .comparisonGrid { grid-template-columns: 1fr; }
+  .nextScanArrow { flex-direction: row; justify-content: center; gap: 8px; padding: 2px; }
+  .nextScanArrow b { transform: rotate(90deg); font-size: 30px; }
+}
+
+@media (max-width: 820px) {
+  .page { padding: 22px 12px; }
+  .hero, .controls, .lessonTrail > header { align-items: stretch; flex-direction: column; }
+  .hero nav, .toggles { justify-content: flex-start; }
+  .summaryGrid { grid-template-columns: repeat(2, 1fr); }
+  .workspace { grid-template-columns: 1fr; }
+  .cardRail { position: static; }
+  .cardList { max-height: 390px; }
+  .lessonTrail header p { text-align: left; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cardChoice { transition: none; }
+}

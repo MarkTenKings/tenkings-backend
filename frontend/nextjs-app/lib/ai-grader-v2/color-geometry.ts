@@ -1,15 +1,43 @@
 import { sanitizeSpeedsterUnitQuad } from "./geometry";
 import type { SpeedsterCardSide, SpeedsterQuad } from "./contracts";
 
-export const SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION = "speedster-color-geometry-v1" as const;
+export const SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION = "speedster-color-geometry-v2" as const;
 export const SPEEDSTER_COLOR_GEOMETRY_AUTHORITY = "PROPOSER_ONLY" as const;
+
+export type SpeedsterColorGeometryEngineVersion = typeof SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION;
+export type SpeedsterColorGeometryPolicyProvenance = "OWNER_APPROVED_VISIBLE_OUTLINE_V2";
 
 export type SpeedsterColorGeometryMode = "PHYSICAL_OUTER" | "PRINTED_FRAME";
 export type SpeedsterColorGeometryOutcome = "ACCEPTED" | "INSUFFICIENT_EVIDENCE" | "NOT_APPLICABLE" | "ABSTAIN";
 export type SpeedsterMatColor = "BLACK" | "WHITE" | "MAGENTA";
 export type SpeedsterColorGeometrySideName = "top" | "right" | "bottom" | "left";
+export type SpeedsterPhysicalGeometryPlacement =
+  | "AUTO_ACCEPTED"
+  | "LESSON_REUSED"
+  | "DIAGNOSTIC_DRAFT"
+  | "MANUAL_EMPTY";
 
-const SPEEDSTER_COLOR_GEOMETRY_V1_POLICY = {
+export type SpeedsterPhysicalGeometryLearning = Readonly<{
+  version: "speedster-physical-geometry-learning-v1";
+  scanEventKey: string;
+  targetSessionId: string;
+  side: SpeedsterCardSide;
+  mapId: string;
+  activeMapRevisionId: string;
+  sourceImageSha256: string;
+  baseProposalSha256: string | null;
+  usedLesson: Readonly<{
+    lessonKey: string;
+    evidenceId: string;
+    sourceSessionId: string;
+    mapId: string;
+    mapRevisionId: string;
+    reasonCode: "EXACT_SOURCE_AND_BASE_PROPOSAL_MATCH";
+    suggestedQuad: SpeedsterQuad;
+  }> | null;
+}>;
+
+const SPEEDSTER_COLOR_GEOMETRY_POLICY = {
   PHYSICAL_OUTER: { contrastFloorDeltaE: 18, minimumSideSupport: 0.7, ambiguityRatio: 0.92 },
   PRINTED_FRAME: { contrastFloorDeltaE: 12, minimumSideSupport: 0.55, ambiguityRatio: 0.9 },
 } as const;
@@ -24,11 +52,44 @@ export type SpeedsterColorGeometrySideEvidence = Readonly<{
   ambiguous: boolean;
 }>;
 
+export type SpeedsterColorGeometryRejectedGate = Readonly<{
+  code:
+    | "SIDE_MEDIAN_CONTRAST_BELOW_FLOOR"
+    | "SIDE_SUPPORT_BELOW_FLOOR"
+    | "SIDE_OUTSIDE_MAT_SUPPORT_BELOW_FLOOR"
+    | "SIDE_INSIDE_NON_MAT_SUPPORT_BELOW_FLOOR"
+    | "DARK_EDGE_LIGHTNESS_AMBIGUOUS"
+    | "FRAME_COVERAGE_BELOW_FLOOR"
+    | "RUNNER_UP_AMBIGUOUS";
+  side: SpeedsterColorGeometrySideName | null;
+  metric:
+    | "medianContrastDeltaE"
+    | "supportFraction"
+    | "outsideMatSupportFraction"
+    | "insideNonMatSupportFraction"
+    | "medianLightnessContrast"
+    | "frameCoverage"
+    | "runnerUpScoreRatio";
+  observed: number;
+  threshold: number;
+  comparison: "GTE" | "LT";
+}>;
+
+export type SpeedsterColorGeometryDiagnosticCandidate = Readonly<{
+  version: "speedster-color-geometry-diagnostic-candidate-v1";
+  authority: "HUMAN_DRAFT_ONLY";
+  quad: SpeedsterQuad;
+  rank: number;
+  contourScore: number;
+  frameCoverage: number;
+  rejectedGates: readonly SpeedsterColorGeometryRejectedGate[];
+}>;
+
 export type SpeedsterColorGeometryProposal = Readonly<{
   version: "speedster-color-geometry-proposal-v1";
-  engineVersion: typeof SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION;
+  engineVersion: SpeedsterColorGeometryEngineVersion;
   authority: typeof SPEEDSTER_COLOR_GEOMETRY_AUTHORITY;
-  policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED";
+  policyProvenance: SpeedsterColorGeometryPolicyProvenance;
   mode: SpeedsterColorGeometryMode;
   outcome: SpeedsterColorGeometryOutcome;
   matColor: SpeedsterMatColor;
@@ -46,6 +107,7 @@ export type SpeedsterColorGeometryProposal = Readonly<{
     recommendedMat: SpeedsterMatColor | null;
     message: string;
   }> | null;
+  diagnosticCandidate?: SpeedsterColorGeometryDiagnosticCandidate | null;
 }>;
 
 export type SpeedsterColorGeometryCaptureEvidence = Readonly<{
@@ -56,6 +118,7 @@ export type SpeedsterColorGeometryCaptureEvidence = Readonly<{
   result: SpeedsterColorGeometryProposal;
   serverReceipt: string;
   confirmedQuad: SpeedsterQuad;
+  physicalGeometryLearning?: SpeedsterPhysicalGeometryLearning;
 }>;
 
 const record = (value: unknown): Record<string, unknown> | null => (
@@ -73,6 +136,81 @@ const integer = (value: unknown, maximum: number) => (
     ? value as number
     : null
 );
+const SHA256_HEX = /^[a-f0-9]{64}$/;
+
+function boundedText(value: unknown, minimum = 1, maximum = 300): string | null {
+  return typeof value === "string" && value.length >= minimum && value.length <= maximum
+    ? value
+    : null;
+}
+
+export function parseSpeedsterPhysicalGeometryLearning(
+  value: unknown,
+  expected?: Readonly<{ targetSessionId?: string; side?: SpeedsterCardSide }>,
+): SpeedsterPhysicalGeometryLearning | null {
+  const candidate = record(value);
+  if (!candidate || Object.keys(candidate).sort().join("\0") !== [
+    "activeMapRevisionId", "baseProposalSha256", "mapId", "scanEventKey", "side",
+    "sourceImageSha256", "targetSessionId", "usedLesson", "version",
+  ].sort().join("\0")
+    || candidate.version !== "speedster-physical-geometry-learning-v1"
+    || (candidate.side !== "FRONT" && candidate.side !== "BACK")
+    || !boundedText(candidate.targetSessionId, 1, 100)
+    || !boundedText(candidate.mapId, 1, 100)
+    || !boundedText(candidate.activeMapRevisionId, 1, 100)
+    || !boundedText(candidate.scanEventKey, 20, 300)
+    || !String(candidate.scanEventKey).startsWith(`${candidate.targetSessionId}:physical-geometry-lessons:`)
+    || typeof candidate.sourceImageSha256 !== "string" || !SHA256_HEX.test(candidate.sourceImageSha256)
+    || candidate.baseProposalSha256 !== null
+      && (typeof candidate.baseProposalSha256 !== "string" || !SHA256_HEX.test(candidate.baseProposalSha256))
+    || expected?.targetSessionId && candidate.targetSessionId !== expected.targetSessionId
+    || expected?.side && candidate.side !== expected.side) return null;
+  if (candidate.usedLesson === null) {
+    return {
+      version: "speedster-physical-geometry-learning-v1",
+      scanEventKey: candidate.scanEventKey as string,
+      targetSessionId: candidate.targetSessionId as string,
+      side: candidate.side,
+      mapId: candidate.mapId as string,
+      activeMapRevisionId: candidate.activeMapRevisionId as string,
+      sourceImageSha256: candidate.sourceImageSha256,
+      baseProposalSha256: candidate.baseProposalSha256 as string | null,
+      usedLesson: null,
+    };
+  }
+  const used = record(candidate.usedLesson);
+  if (!used || Object.keys(used).sort().join("\0") !== [
+    "evidenceId", "lessonKey", "mapId", "mapRevisionId", "reasonCode",
+    "sourceSessionId", "suggestedQuad",
+  ].sort().join("\0")
+    || typeof used.lessonKey !== "string" || !SHA256_HEX.test(used.lessonKey)
+    || !boundedText(used.evidenceId, 1, 100)
+    || !boundedText(used.sourceSessionId, 1, 100)
+    || used.mapId !== candidate.mapId
+    || used.mapRevisionId !== candidate.activeMapRevisionId
+    || used.reasonCode !== "EXACT_SOURCE_AND_BASE_PROPOSAL_MATCH") return null;
+  const suggestedQuad = sanitizeSpeedsterUnitQuad(used.suggestedQuad);
+  if (!suggestedQuad) return null;
+  return {
+    version: "speedster-physical-geometry-learning-v1",
+    scanEventKey: candidate.scanEventKey as string,
+    targetSessionId: candidate.targetSessionId as string,
+    side: candidate.side,
+    mapId: candidate.mapId as string,
+    activeMapRevisionId: candidate.activeMapRevisionId as string,
+    sourceImageSha256: candidate.sourceImageSha256,
+    baseProposalSha256: candidate.baseProposalSha256 as string | null,
+    usedLesson: {
+      lessonKey: used.lessonKey,
+      evidenceId: used.evidenceId as string,
+      sourceSessionId: used.sourceSessionId as string,
+      mapId: used.mapId as string,
+      mapRevisionId: used.mapRevisionId as string,
+      reasonCode: "EXACT_SOURCE_AND_BASE_PROPOSAL_MATCH",
+      suggestedQuad,
+    },
+  };
+}
 
 export function parseSpeedsterColorGeometryProposal(
   value: unknown,
@@ -83,7 +221,7 @@ export function parseSpeedsterColorGeometryProposal(
     || candidate.version !== "speedster-color-geometry-proposal-v1"
     || candidate.engineVersion !== SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION
     || candidate.authority !== SPEEDSTER_COLOR_GEOMETRY_AUTHORITY
-    || candidate.policyProvenance !== "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED"
+    || candidate.policyProvenance !== "OWNER_APPROVED_VISIBLE_OUTLINE_V2"
     || !["PHYSICAL_OUTER", "PRINTED_FRAME"].includes(String(candidate.mode))
     || !["ACCEPTED", "INSUFFICIENT_EVIDENCE", "NOT_APPLICABLE", "ABSTAIN"].includes(String(candidate.outcome))
     || !["BLACK", "WHITE", "MAGENTA"].includes(String(candidate.matColor))
@@ -97,7 +235,7 @@ export function parseSpeedsterColorGeometryProposal(
   }
   const contrastFloorDeltaE = finite(candidate.contrastFloorDeltaE, 0.1, 200);
   const minimumSideSupport = finite(candidate.minimumSideSupport, 0.01, 1);
-  const fixedPolicy = SPEEDSTER_COLOR_GEOMETRY_V1_POLICY[candidate.mode as SpeedsterColorGeometryMode];
+  const fixedPolicy = SPEEDSTER_COLOR_GEOMETRY_POLICY[candidate.mode as SpeedsterColorGeometryMode];
   const sideEvidenceValue = record(candidate.sideEvidence);
   const ambiguityValue = record(candidate.ambiguity);
   if (contrastFloorDeltaE === null || minimumSideSupport === null
@@ -147,7 +285,7 @@ export function parseSpeedsterColorGeometryProposal(
     && runnerUpScoreRatio >= fixedPolicy.ambiguityRatio;
   if ((ambiguityCandidateCount > 1) !== (runnerUpScoreRatio !== null)
     || ambiguityValue.ambiguous !== ratioImpliesAmbiguity) {
-    throw new Error("Color geometry ambiguity evidence contradicts the fixed v1 threshold.");
+    throw new Error("Color geometry ambiguity evidence contradicts the fixed threshold.");
   }
   const advisoryValue = candidate.advisory === null ? null : record(candidate.advisory);
   if (candidate.advisory !== null && (!advisoryValue
@@ -157,31 +295,85 @@ export function parseSpeedsterColorGeometryProposal(
       && !["BLACK", "WHITE", "MAGENTA"].includes(String(advisoryValue.recommendedMat)))) {
     throw new Error("Color geometry advisory is malformed.");
   }
-  if (candidate.outcome === "ACCEPTED" && (
+  const diagnosticValue = candidate.diagnosticCandidate === null || candidate.diagnosticCandidate === undefined
+    ? null
+    : record(candidate.diagnosticCandidate);
+  let diagnosticCandidate: SpeedsterColorGeometryDiagnosticCandidate | null = null;
+  if (diagnosticValue) {
+    const quad = sanitizeSpeedsterUnitQuad(diagnosticValue.quad);
+    const rank = integer(diagnosticValue.rank, 4);
+    const contourScore = finite(diagnosticValue.contourScore, 0, 1e18);
+    const frameCoverage = finite(diagnosticValue.frameCoverage, 0, 1);
+    const gateValues = Array.isArray(diagnosticValue.rejectedGates)
+      ? diagnosticValue.rejectedGates
+      : null;
+    const gates = gateValues?.map((value) => {
+      const gate = record(value);
+      const observed = gate ? finite(gate.observed, 0, 1e9) : null;
+      const threshold = gate ? finite(gate.threshold, 0, 1e9) : null;
+      const code = gate?.code;
+      const metric = gate?.metric;
+      const side = gate?.side;
+      const comparison = gate?.comparison;
+      const validIdentity = (
+        code === "SIDE_MEDIAN_CONTRAST_BELOW_FLOOR" && metric === "medianContrastDeltaE"
+        || code === "SIDE_SUPPORT_BELOW_FLOOR" && metric === "supportFraction"
+        || code === "SIDE_OUTSIDE_MAT_SUPPORT_BELOW_FLOOR" && metric === "outsideMatSupportFraction"
+        || code === "SIDE_INSIDE_NON_MAT_SUPPORT_BELOW_FLOOR" && metric === "insideNonMatSupportFraction"
+        || code === "DARK_EDGE_LIGHTNESS_AMBIGUOUS" && metric === "medianLightnessContrast"
+        || code === "FRAME_COVERAGE_BELOW_FLOOR" && metric === "frameCoverage"
+        || code === "RUNNER_UP_AMBIGUOUS" && metric === "runnerUpScoreRatio"
+      );
+      const globalGate = code === "FRAME_COVERAGE_BELOW_FLOOR" || code === "RUNNER_UP_AMBIGUOUS";
+      if (!gate || !validIdentity || observed === null || threshold === null
+        || !["GTE", "LT"].includes(String(comparison))
+        || (globalGate ? side !== null : !["top", "right", "bottom", "left"].includes(String(side)))) {
+        return null;
+      }
+      return { code, metric, side, observed, threshold, comparison } as SpeedsterColorGeometryRejectedGate;
+    }) ?? null;
+    if (candidate.mode !== "PHYSICAL_OUTER" || candidate.outcome === "ACCEPTED"
+      || diagnosticValue.version !== "speedster-color-geometry-diagnostic-candidate-v1"
+      || diagnosticValue.authority !== "HUMAN_DRAFT_ONLY" || !quad || rank === null || rank < 1
+      || contourScore === null || frameCoverage === null || !gates || gates.length < 1
+      || gates.length > 32 || gates.some((gate) => gate === null)) {
+      throw new Error("Color geometry diagnostic candidate is malformed.");
+    }
+    diagnosticCandidate = {
+      version: "speedster-color-geometry-diagnostic-candidate-v1",
+      authority: "HUMAN_DRAFT_ONLY",
+      quad,
+      rank,
+      contourScore,
+      frameCoverage,
+      rejectedGates: gates as readonly SpeedsterColorGeometryRejectedGate[],
+    };
+  } else if (candidate.diagnosticCandidate !== null && candidate.diagnosticCandidate !== undefined) {
+    throw new Error("Color geometry diagnostic candidate is malformed.");
+  }
+  const currentPhysicalOutline = candidate.mode === "PHYSICAL_OUTER";
+  const acceptedEvidenceInvalid = candidate.outcome === "ACCEPTED" && (
     ambiguityCandidateCount < 1
-    || ambiguityValue.ambiguous
-    || ratioImpliesAmbiguity
     || advisoryValue !== null
-    || Object.values(sideEvidence).some((side) => (
-      side.sampleCount < 1
-      || side.candidateCount < 1
-      || side.medianContrastDeltaE < fixedPolicy.contrastFloorDeltaE
-      || side.supportFraction < fixedPolicy.minimumSideSupport
-      || side.ambiguous
-    ))
-    || candidate.mode === "PHYSICAL_OUTER" && candidate.matColor === "BLACK"
-      && Object.values(sideEvidence).some((side) => (
-        side.medianLightnessContrast === undefined
-        || side.medianLightnessContrast < 20
+    || Object.values(sideEvidence).some((side) => side.sampleCount < 1 || side.candidateCount < 1)
+    || !currentPhysicalOutline && (
+      ambiguityValue.ambiguous
+      || ratioImpliesAmbiguity
+      || Object.values(sideEvidence).some((side) => (
+        side.medianContrastDeltaE < fixedPolicy.contrastFloorDeltaE
+        || side.supportFraction < fixedPolicy.minimumSideSupport
+        || side.ambiguous
       ))
-  )) {
-    throw new Error("Accepted color geometry violates the fixed v1 acceptance policy.");
+    )
+  );
+  if (acceptedEvidenceInvalid) {
+    throw new Error("Accepted color geometry violates its declared engine policy.");
   }
   return {
     version: "speedster-color-geometry-proposal-v1",
     engineVersion: SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION,
     authority: SPEEDSTER_COLOR_GEOMETRY_AUTHORITY,
-    policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED",
+    policyProvenance: "OWNER_APPROVED_VISIBLE_OUTLINE_V2",
     mode: candidate.mode as SpeedsterColorGeometryMode,
     outcome: candidate.outcome as SpeedsterColorGeometryOutcome,
     matColor: candidate.matColor as SpeedsterMatColor,
@@ -199,6 +391,7 @@ export function parseSpeedsterColorGeometryProposal(
       recommendedMat: advisoryValue.recommendedMat as SpeedsterMatColor | null,
       message: advisoryValue.message as string,
     } : null,
+    ...(candidate.diagnosticCandidate === undefined ? {} : { diagnosticCandidate }),
   };
 }
 
@@ -219,11 +412,24 @@ export function speedsterColorPhysicalDraft(
     : unchangedManualDraft;
 }
 
+/** Preserve provenance when selecting the first editable physical-card draft. */
+export function speedsterColorPhysicalDraftState(
+  color: SpeedsterColorGeometryProposal,
+): Readonly<{ quad: SpeedsterQuad | null; placement: SpeedsterPhysicalGeometryPlacement }> {
+  if (color.mode === "PHYSICAL_OUTER" && color.outcome === "ACCEPTED" && color.proposal) {
+    return { quad: color.proposal, placement: "AUTO_ACCEPTED" };
+  }
+  if (color.mode === "PHYSICAL_OUTER" && color.diagnosticCandidate) {
+    return { quad: color.diagnosticCandidate.quad, placement: "DIAGNOSTIC_DRAFT" };
+  }
+  return { quad: null, placement: "MANUAL_EMPTY" };
+}
+
 /** An accepted printed frame may seed the first editable CenteringAssist draft. */
 export function speedsterColorCenteringDraft(
   color: SpeedsterColorGeometryProposal,
-  unchangedManualDraft: SpeedsterQuad,
-): SpeedsterQuad {
+  unchangedManualDraft: SpeedsterQuad | null,
+): SpeedsterQuad | null {
   return color.mode === "PRINTED_FRAME" && color.outcome === "ACCEPTED" && color.proposal
     ? color.proposal
     : unchangedManualDraft;

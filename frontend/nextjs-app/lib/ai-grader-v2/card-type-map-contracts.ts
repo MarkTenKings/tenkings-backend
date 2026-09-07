@@ -20,6 +20,7 @@ export const SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2 = "speedster-map-filter-auth
 export const SPEEDSTER_MAP_FILTER_RULE_ID = "human-zone-full-contour-containment-v1" as const;
 export const SPEEDSTER_MAP_FILTER_RULE_ID_V2 = "human-authorized-padded-zone-full-contour-v2" as const;
 export const SPEEDSTER_MAP_ZONE_OVERLAP_METHOD = "candidate-contour-segment-containment-v1" as const;
+export const SPEEDSTER_MAP_ZONE_MASK_OVERLAP_METHOD = "candidate-canonical-mask-pixel-containment-v1" as const;
 export const SPEEDSTER_MAP_FILTER_PADDING_MM = 0.6 as const;
 export const SPEEDSTER_POKEMON_FAMILY_KEY_VERSION_V2 = "v2" as const;
 
@@ -254,13 +255,22 @@ export type SpeedsterMapRegistrationFailure = Readonly<{
   }>;
 }>;
 
-export type SpeedsterMapZoneOverlap = Readonly<{
-  method: typeof SPEEDSTER_MAP_ZONE_OVERLAP_METHOD;
-  coveredVertices: number;
-  totalVertices: number;
-  ratio: number;
-  fullyContained: boolean;
-}>;
+export type SpeedsterMapZoneOverlap =
+  | Readonly<{
+      method: typeof SPEEDSTER_MAP_ZONE_OVERLAP_METHOD;
+      coveredVertices: number;
+      totalVertices: number;
+      ratio: number;
+      fullyContained: boolean;
+    }>
+  | Readonly<{
+      method: typeof SPEEDSTER_MAP_ZONE_MASK_OVERLAP_METHOD;
+      maskSha256: string;
+      coveredPixels: number;
+      totalPixels: number;
+      ratio: number;
+      fullyContained: boolean;
+    }>;
 
 export type SpeedsterFilterDecisionEvidence = Readonly<{
   finding: SpeedsterReviewFinding;

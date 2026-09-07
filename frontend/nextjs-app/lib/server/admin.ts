@@ -8,6 +8,11 @@ import {
   validateFreshAdminSession,
   type AdminSession,
 } from "./adminSessionAuthority";
+import {
+  matchesServerOperatorKey,
+  resolveServerOperatorAuthority,
+  type ServerOperatorCapability,
+} from "./serverOperatorAuthority";
 
 export type { AdminSession } from "./adminSessionAuthority";
 
@@ -92,47 +97,11 @@ export async function lookupViaAuthService(
 }
 
 export async function requireAdminSession(req: NextApiRequest): Promise<AdminSession> {
-  const operatorKeyHeader = req.headers["x-operator-key"];
-  const operatorKey = process.env.OPERATOR_API_KEY ?? process.env.NEXT_PUBLIC_OPERATOR_KEY;
-  if (operatorKey && typeof operatorKeyHeader === "string" && operatorKeyHeader === operatorKey) {
-    const operatorUserId = process.env.OPERATOR_USER_ID;
-    const operatorUserPhone = process.env.OPERATOR_USER_PHONE ?? process.env.NEXT_PUBLIC_ADMIN_PHONES;
-
-    let operatorUser = null;
-
-    if (operatorUserId) {
-      operatorUser = await prisma.user.findUnique({ where: { id: operatorUserId } });
-    }
-
-    if (!operatorUser && operatorUserPhone) {
-      const normalizedPhone = operatorUserPhone
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean)
-        .map((value) => (value.startsWith("+") ? value : `+1${value}`))[0];
-
-      if (normalizedPhone) {
-        operatorUser = await prisma.user.findFirst({ where: { phone: normalizedPhone } });
-      }
-    }
-
-    if (!operatorUser) {
-      throw new HttpError(403, "Configured operator user not found");
-    }
-
-    return {
-      sessionId: `operator-key:${operatorUser.id}`,
-      tokenHash: "operator-key",
-      authority: "operator-key",
-      user: {
-        id: operatorUser.id,
-        phone: operatorUser.phone,
-        displayName: operatorUser.displayName,
-      },
-    };
-  }
-
   const token = extractToken(req);
+  return requireAdminSessionForToken(token);
+}
+
+async function requireAdminSessionForToken(token: string): Promise<AdminSession> {
   const viaAuthService = await lookupViaAuthService(token);
   if (viaAuthService) {
     const adminById = hasAdminAccess(viaAuthService.user.id);
@@ -179,6 +148,40 @@ export async function requireAdminSession(req: NextApiRequest): Promise<AdminSes
       displayName: user.displayName,
     },
   };
+}
+
+export async function requireAdminSessionOrOperatorCapability(
+  req: NextApiRequest,
+  requiredCapability: ServerOperatorCapability,
+): Promise<AdminSession> {
+  const operatorKeyHeader = req.headers["x-operator-key"];
+  if (operatorKeyHeader !== undefined) {
+    const operatorAuthority = resolveServerOperatorAuthority();
+    if (!operatorAuthority
+      || !operatorAuthority.capabilities.includes(requiredCapability)
+      || typeof operatorKeyHeader !== "string"
+      || !matchesServerOperatorKey(operatorKeyHeader, operatorAuthority.operatorKey)) {
+      throw new HttpError(401, "Invalid operator authority");
+    }
+    const operatorUser = await prisma.user.findUnique({
+      where: { id: operatorAuthority.operatorUserId },
+    });
+    if (!operatorUser
+      || (!hasAdminAccess(operatorUser.id) && !hasAdminPhoneAccess(operatorUser.phone))) {
+      throw new HttpError(403, "Configured operator authority is not an admin");
+    }
+    return {
+      sessionId: `operator-key:${operatorUser.id}`,
+      tokenHash: "operator-key",
+      authority: "operator-key",
+      user: {
+        id: operatorUser.id,
+        phone: operatorUser.phone,
+        displayName: operatorUser.displayName,
+      },
+    };
+  }
+  return requireAdminSession(req);
 }
 export const FRESH_HUMAN_ADMIN_SESSION_MAX_AGE_MS = 15 * 60 * 1000;
 

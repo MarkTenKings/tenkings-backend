@@ -156,6 +156,19 @@
   fill: var(--gold-bright);
 }
 
+.manualPointRing {
+  fill: rgba(217, 172, 80, 0.2);
+  stroke: var(--gold-bright);
+  stroke-width: 2;
+}
+
+.manualPointLabel {
+  fill: var(--gold-bright);
+  font-size: 24px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
 .imageMetric {
   position: absolute;
   z-index: 2;

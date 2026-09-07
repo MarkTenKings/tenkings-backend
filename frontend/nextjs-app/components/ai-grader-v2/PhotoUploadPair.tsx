@@ -21,9 +21,7 @@ type PhotoUploadPairProps = {
   onRetake: () => void;
   onSwap: () => void;
   matColors: Readonly<Record<SpeedsterCardSide, SpeedsterMatColor>>;
-  matConfirmations: Readonly<Record<SpeedsterCardSide, boolean>>;
   onMatColorChange: (side: SpeedsterCardSide, matColor: SpeedsterMatColor) => void;
-  onMatConfirm: (side: SpeedsterCardSide) => void;
   lockedSide?: SpeedsterCardSide | null;
   allowSwap?: boolean;
   disabled?: boolean;
@@ -119,9 +117,7 @@ export default function PhotoUploadPair({
   onRetake,
   onSwap,
   matColors,
-  matConfirmations,
   onMatColorChange,
-  onMatConfirm,
   lockedSide = null,
   allowSwap = true,
   disabled = false,
@@ -163,7 +159,7 @@ export default function PhotoUploadPair({
             />
             <div className={styles.matControls}>
               <fieldset className={styles.matSelector} disabled={disabled || lockedSide === side}>
-                <legend>{side} MAT · {matConfirmations[side] ? "OPERATOR CONFIRMED" : "SUGGESTED DEFAULT · CONFIRM"}</legend>
+                <legend>{side} MAT · OPTIONAL DIAGNOSTIC LABEL · NEVER A CORNER GATE</legend>
                 {(["BLACK", "WHITE", "MAGENTA"] as const).map((matColor) => (
                   <label key={matColor}>
                     <input
@@ -178,18 +174,6 @@ export default function PhotoUploadPair({
                   </label>
                 ))}
               </fieldset>
-              {matConfirmations[side] ? (
-                <p className={styles.matConfirmation}>{side} {matColors[side]} mat · operator confirmed</p>
-              ) : (
-                <button
-                  type="button"
-                  className={styles.matConfirm}
-                  disabled={disabled || lockedSide === side}
-                  onClick={() => onMatConfirm(side)}
-                >
-                  Confirm {side === "FRONT" ? "Front" : "Back"} {matColors[side]} mat
-                </button>
-              )}
             </div>
           </div>
         ))}

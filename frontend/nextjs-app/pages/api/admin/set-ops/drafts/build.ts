@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { z } from "zod";
 import { prisma, SetAuditStatus, SetIngestionJobStatus, type Prisma } from "@tenkings/database";
 import { normalizeSetLabel } from "@tenkings/shared";
-import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../../lib/server/admin";
+import { requireAdminSessionOrOperatorCapability, toErrorResponse, type AdminSession } from "../../../../../lib/server/admin";
 import {
   canPerformSetOpsRole,
   roleDeniedMessage,
@@ -58,7 +58,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   let admin: AdminSession | null = null;
 
   try {
-    admin = await requireAdminSession(req);
+    admin = await requireAdminSessionOrOperatorCapability(req, "set-ops:batch-import");
 
     if (!canPerformSetOpsRole(admin, "reviewer")) {
       await writeSetOpsAuditEvent({

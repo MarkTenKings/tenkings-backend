@@ -13,8 +13,10 @@ import { parseSpeedsterInspectionFrame, type SpeedsterInspectionFrame } from "./
 import type { SpeedsterCenteringBorders } from "./scoring";
 import {
   parseSpeedsterColorGeometryProposal,
+  parseSpeedsterPhysicalGeometryLearning,
   type SpeedsterColorGeometryProposal,
   type SpeedsterMatColor,
+  type SpeedsterPhysicalGeometryLearning,
 } from "./color-geometry";
 
 export const SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION = "speedster-capture-registration-draft-v1" as const;
@@ -25,7 +27,7 @@ export const SPEEDSTER_CAPTURE_REGISTRATION_RECEIPT_MAX_AGE_MS = 24 * 60 * 60 * 
 const SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 export type SpeedsterCaptureDraftSurface = "AI_GRADER" | "CARD_MAPS";
-export type SpeedsterCaptureDraftMapBindingStatus = "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR";
+export type SpeedsterCaptureDraftMapBindingStatus = "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR" | "HUMAN_REVIEW_WITHOUT_MAP";
 export type SpeedsterCaptureDurableStage =
   | "MAP_REGISTRATION_INTERRUPTED"
   | "MAP_REGISTRATION_RESCUE"
@@ -53,7 +55,7 @@ type SpeedsterCaptureDraftSideBase = Readonly<{
   inspectionFrame: SpeedsterInspectionFrame;
   transform: readonly number[];
   viewStorageKeys: Readonly<Record<"NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL", string>>;
-  proposedCentering: SpeedsterQuad;
+  proposedCentering: SpeedsterQuad | null;
   detectedBorders: readonly ("top" | "right" | "bottom" | "left")[];
   centering?: Readonly<{
     side: SpeedsterCardSide;
@@ -69,6 +71,7 @@ export type SpeedsterCaptureDraftSideV2 = SpeedsterCaptureDraftSideBase & Readon
   matColor: SpeedsterMatColor;
   physicalColorGeometry: SpeedsterColorGeometryProposal;
   physicalColorGeometryReceipt: string;
+  physicalGeometryLearning?: SpeedsterPhysicalGeometryLearning;
   printedColorGeometry: SpeedsterColorGeometryProposal;
   printedColorGeometryReceipt: string;
 }>;
@@ -410,11 +413,15 @@ function sideState(
     "transform", "viewStorageKeys",
     ...(version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2 ? colorKeys : []),
   ];
-  if (!isRecord(value) || !hasExactKeys(value, requiredKeys, ["centering", "mapRegistration"])) return null;
+  if (!isRecord(value) || !hasExactKeys(value, requiredKeys, [
+    "centering",
+    "mapRegistration",
+    ...(version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2 ? ["physicalGeometryLearning"] : []),
+  ])) return null;
   const corners = quad(value.corners);
-  const proposedCentering = quad(value.proposedCentering);
+  const proposedCentering = value.proposedCentering === null ? null : quad(value.proposedCentering);
   const inspectionFrame = parseSpeedsterInspectionFrame(value.inspectionFrame);
-  if (!corners || !proposedCentering || !inspectionFrame || typeof value.automaticGeometry !== "boolean"
+  if (!corners || (value.proposedCentering !== null && !proposedCentering) || !inspectionFrame || typeof value.automaticGeometry !== "boolean"
     || !storageKey(value.originalStorageKey) || !storageKey(value.rectifiedStorageKey)
     || !storageKey(value.inspectionStorageKey) || !Array.isArray(value.transform)
     || value.transform.length < 6 || value.transform.length > 16
@@ -431,7 +438,7 @@ function sideState(
   if (value.mapRegistration !== undefined && !mapRegistration) return null;
   let colorFields: Pick<SpeedsterCaptureDraftSideV2,
     "matColor" | "physicalColorGeometry" | "physicalColorGeometryReceipt"
-    | "printedColorGeometry" | "printedColorGeometryReceipt"> | undefined;
+    | "printedColorGeometry" | "printedColorGeometryReceipt" | "physicalGeometryLearning"> | undefined;
   if (version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2) {
     const matColor = value.matColor === "BLACK" || value.matColor === "WHITE" || value.matColor === "MAGENTA"
       ? value.matColor
@@ -440,6 +447,14 @@ function sideState(
     const printedReceipt = text(value.printedColorGeometryReceipt, 8192, 20);
     if (!matColor || !physicalReceipt || !printedReceipt) return null;
     try {
+      const physicalGeometryLearning = value.physicalGeometryLearning === undefined
+        ? undefined
+        : parseSpeedsterPhysicalGeometryLearning(value.physicalGeometryLearning, {
+            targetSessionId: sessionId,
+            side,
+          }) ?? null;
+      if (physicalGeometryLearning === null || physicalGeometryLearning?.usedLesson === null
+        || (physicalGeometryLearning && physicalGeometryLearning.activeMapRevisionId !== revisionId)) return null;
       colorFields = {
         matColor,
         physicalColorGeometry: parseSpeedsterColorGeometryProposal(value.physicalColorGeometry, {
@@ -447,6 +462,7 @@ function sideState(
           matColor,
         }),
         physicalColorGeometryReceipt: physicalReceipt,
+        ...(physicalGeometryLearning ? { physicalGeometryLearning } : {}),
         printedColorGeometry: parseSpeedsterColorGeometryProposal(value.printedColorGeometry, {
           mode: "PRINTED_FRAME",
           matColor,
@@ -504,7 +520,7 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     || value.surface !== binding.surface || value.sessionId !== binding.sessionId
     || value.cardProfile !== binding.cardProfile || value.mapBindingStatus !== binding.mapBindingStatus
     || value.activeMapRevisionId !== binding.activeMapRevisionId || value.activeMapScope !== binding.activeMapScope
-    || !["LOADED", "NO_MAP", "LOOKUP_FAILED", "INTEGRITY_ERROR"].includes(String(value.mapBindingStatus))
+    || !["LOADED", "NO_MAP", "LOOKUP_FAILED", "INTEGRITY_ERROR", "HUMAN_REVIEW_WITHOUT_MAP"].includes(String(value.mapBindingStatus))
     || (value.mapBindingStatus === "LOADED"
       ? (typeof value.activeMapRevisionId !== "string" || !text(value.activeMapRevisionId, 200)
         || (value.activeMapScope !== "EXACT" && value.activeMapScope !== "FAMILY"))
@@ -586,11 +602,18 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
       && preparedGenerations.every((generation) => generation === originalGeneration);
   })();
   const loadedCenteringRegistrationIsCoherent = registeredSides.length === 2
-    ? recordedFailureSides.length === 0 && value.mapRegistrationFailed === false && value.mapAuthorityAbandoned === false
-    : registeredSides.length === 0 && (
-      (recordedFailureSides.length > 0 && value.mapRegistrationFailed === true && value.mapAuthorityAbandoned === false)
-      || (recordedFailureSides.length === 0 && value.mapRegistrationFailed === false && value.mapAuthorityAbandoned === true)
-    );
+    && recordedFailureSides.length === 0
+    && value.mapRegistrationFailed === false
+    && value.mapAuthorityAbandoned === false;
+  const humanReviewCenteringIsCoherent = centeringStage
+    && registeredSides.length === 0
+    && !unresolved
+    && value.mapAuthorityAbandoned === true
+    && ((value.mapRegistrationFailed === true && recordedFailureSides.length > 0)
+      || (value.mapRegistrationFailed === false && recordedFailureSides.length === 0));
+  const loadedHumanReviewTransitionIsCoherent = humanReviewCenteringIsCoherent
+    && value.mapRegistrationFailed === true
+    && recordedFailureSides.length > 0;
   if ((value.stage === "MAP_REGISTRATION_INTERRUPTED" && !(interruptions.FRONT || interruptions.BACK))
     || (value.stage === "MAP_REGISTRATION_RESCUE" && !(failures.FRONT || failures.BACK))
     || (value.stage === "MAP_REGISTRATION_INTERRUPTED"
@@ -612,10 +635,14 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     || !recaptureIsCoherent
     || (value.mapBindingStatus !== "LOADED" && (unresolved || registeredSides.length > 0
       || value.stage === "MAP_REGISTRATION_INTERRUPTED" || value.stage === "MAP_REGISTRATION_RESCUE"))
-    || (value.mapAuthorityAbandoned && (registeredSides.length > 0 || unresolved
-      || recordedFailureSides.length > 0 || value.mapRegistrationFailed))
-    || (centeringStage && value.mapBindingStatus === "LOADED" && !loadedCenteringRegistrationIsCoherent)
+    || (value.mapBindingStatus === "LOADED" && value.mapAuthorityAbandoned && !loadedHumanReviewTransitionIsCoherent)
+    || (value.mapBindingStatus === "HUMAN_REVIEW_WITHOUT_MAP" && !humanReviewCenteringIsCoherent)
+    || (!["LOADED", "HUMAN_REVIEW_WITHOUT_MAP"].includes(String(value.mapBindingStatus))
+      && value.mapAuthorityAbandoned)
+    || (centeringStage && value.mapBindingStatus === "LOADED"
+      && !loadedCenteringRegistrationIsCoherent && !loadedHumanReviewTransitionIsCoherent)
     || (centeringStage && value.mapBindingStatus !== "LOADED"
+      && value.mapBindingStatus !== "HUMAN_REVIEW_WITHOUT_MAP"
       && (recordedFailureSides.length > 0 || value.mapRegistrationFailed))
     || (provisional.FRONT && front.mapRegistration && !sameJsonValue(provisional.FRONT, front.mapRegistration))
     || (provisional.BACK && back.mapRegistration && !sameJsonValue(provisional.BACK, back.mapRegistration))
@@ -675,7 +702,7 @@ export function readSpeedsterCaptureRegistrationDraftForCommittedSession(
   let value: unknown;
   try { value = JSON.parse(serialized); } catch { return null; }
   if (!isRecord(value)
-    || !["LOADED", "NO_MAP", "LOOKUP_FAILED", "INTEGRITY_ERROR"].includes(String(value.mapBindingStatus))) return null;
+    || !["LOADED", "NO_MAP", "LOOKUP_FAILED", "INTEGRITY_ERROR", "HUMAN_REVIEW_WITHOUT_MAP"].includes(String(value.mapBindingStatus))) return null;
   const activeMapRevisionId = typeof value.activeMapRevisionId === "string"
     ? value.activeMapRevisionId
     : value.activeMapRevisionId === null ? null : undefined;

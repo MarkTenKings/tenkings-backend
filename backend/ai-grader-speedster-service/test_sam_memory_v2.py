@@ -7,7 +7,9 @@ from sam_memory_v2 import (
     MEMORY_PROPOSAL_SIMILARITY_THRESHOLD,
     POLICY_MARGIN,
     POLICY_TAU,
+    all_exemplars_v2,
     decide_candidate_v2,
+    lesson_reference_v2,
     normalize_source_view,
     prepare_bank_v2,
     smart_mark_proposal_seeds_v2,
@@ -234,6 +236,122 @@ class SamMemoryV2Tests(unittest.TestCase):
         self.assertEqual(seeds[0][1].session_id, "human-smart-mark")
         self.assertEqual(MEMORY_PROPOSAL_SIMILARITY_THRESHOLD, 0.90)
         self.assertEqual(MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE, 3)
+
+    def test_candidate_decision_accounts_for_every_eligible_lesson_without_changing_policy(self):
+        prepared = prepare_bank_v2(
+            bank(
+                exemplar("POSITIVE", session_id="positive-winner"),
+                exemplar("POSITIVE", session_id="positive-tie-loser"),
+                exemplar("NEGATIVE", session_id="negative-winner"),
+            )
+        )
+        self.assertIsNotNone(prepared)
+
+        result = decide_candidate_v2(
+            prepared,
+            fingerprint=UNIT,
+            defect_type="VISIBLE_WHITENING",
+            source_view_id="FRONT:ORIGINAL",
+            raw_confidence=0.96,
+            session_id="current-session",
+            trace_id="trace-lesson-ledger",
+        )
+
+        observations = result["lessonObservations"]
+        self.assertEqual(len(observations), 5)
+        by_key = {}
+        for entry in observations:
+            by_key.setdefault(entry["lessonKey"], []).append(entry)
+        positive_entries = prepared.exemplars[
+            ("VISIBLE_WHITENING", "POSITIVE", "ORIGINAL")
+        ]
+        negative_entry = prepared.exemplars[
+            ("VISIBLE_WHITENING", "NEGATIVE", "ORIGINAL")
+        ][0]
+        self.assertEqual(
+            {
+                entry["reasonCode"]
+                for entry in by_key[
+                    lesson_reference_v2(positive_entries[0])["lessonKey"]
+                ]
+            },
+            {
+                "CLASSIFIER_GENTLE_POSITIVE_MAX",
+                "CLASSIFIER_EXPLICIT_POSITIVE_MARGIN_CHECK",
+                "CLASSIFIER_EXPLICIT_POSITIVE_PROTECTION",
+            },
+        )
+        self.assertEqual(
+            by_key[lesson_reference_v2(positive_entries[1])["lessonKey"]][0]["reasonCode"],
+            "NOT_SELECTED_AS_MAX_EXEMPLAR",
+        )
+        self.assertEqual(
+            by_key[lesson_reference_v2(negative_entry)["lessonKey"]][0]["status"],
+            "USED",
+        )
+        self.assertEqual(result["diagnostic"]["action"], "protected")
+        self.assertEqual(result["adjustment"], 0.0)
+
+    def test_failed_positive_protection_is_logged_as_margin_use_not_protection(self):
+        prepared = prepare_bank_v2(
+            bank(
+                exemplar(
+                    "POSITIVE",
+                    fingerprint=[0.8, 0.6] + [0.0] * 30,
+                    session_id="positive-too-weak",
+                ),
+                exemplar("NEGATIVE", session_id="negative-veto"),
+            )
+        )
+
+        result = decide_candidate_v2(
+            prepared,
+            fingerprint=UNIT,
+            defect_type="VISIBLE_WHITENING",
+            source_view_id="FRONT:ORIGINAL",
+            raw_confidence=0.96,
+        )
+        positive_key = lesson_reference_v2(
+            prepared.exemplars[
+                ("VISIBLE_WHITENING", "POSITIVE", "ORIGINAL")
+            ][0]
+        )["lessonKey"]
+        positive_reasons = {
+            observation["reasonCode"]
+            for observation in result["lessonObservations"]
+            if observation["lessonKey"] == positive_key
+        }
+
+        self.assertEqual(result["diagnostic"]["action"], "vetoed")
+        self.assertIn(
+            "CLASSIFIER_EXPLICIT_POSITIVE_MARGIN_CHECK",
+            positive_reasons,
+        )
+        self.assertNotIn(
+            "CLASSIFIER_EXPLICIT_POSITIVE_PROTECTION",
+            positive_reasons,
+        )
+
+    def test_lesson_key_matches_the_cross_stack_contract(self):
+        source = exemplar(
+            "POSITIVE",
+            session_id="source-session-1",
+            provenance="SMART_MARK_POSITIVE",
+        )
+        source.update(
+            {
+                "completedAt": "2026-08-20T12:00:00.000Z",
+                "completionOrder": 7,
+                "proposalOrder": 2,
+            }
+        )
+        prepared = prepare_bank_v2(bank(source))
+        lesson = all_exemplars_v2(prepared)[0]
+
+        self.assertEqual(
+            lesson_reference_v2(lesson)["lessonKey"],
+            "7b97f37dd9968fbee11bb4bb53008e3b3d6679723e546d7dfce5e89904c7dc74",
+        )
 
 
 if __name__ == "__main__":

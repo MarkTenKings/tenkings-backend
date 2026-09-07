@@ -60,6 +60,7 @@ export default function CompletedSpeedsterCardsPage() {
         <header className={styles.hero}>
           <div><span>TEN KINGS · POST GRADING</span><h1>Completed cards.</h1><p>{message}</p></div>
           <nav>
+            <Link href="/admin/ai-grader-v2/learning-blueprint">Learning Blueprint</Link>
             <Link href="/admin/ai-grader-v2/removed-findings">Removed defects</Link>
             <Link href="/card-maps">Card Maps</Link>
             <Link href="/admin/ai-grader-v2">New card</Link>

@@ -15,6 +15,7 @@ import {
   fetchSpeedsterPreparedRectifiedImageUrl,
   SPEEDSTER_PREPARED_IMAGE_REFRESH_INTERVAL_MS,
 } from "../../lib/ai-grader-v2/prepared-image-urls";
+import { fetchSpeedsterOriginalImageUrl } from "../../lib/ai-grader-v2/original-image-urls";
 import {
   SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_CURRENT_VERSION,
   SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION,
@@ -33,12 +34,15 @@ import {
 } from "../../lib/ai-grader-v2/capture-registration-draft";
 import {
   speedsterColorCenteringDraft,
-  speedsterColorPhysicalDraft,
+  speedsterColorPhysicalDraftState,
   type SpeedsterColorGeometryCaptureEvidence,
   type SpeedsterColorGeometryProposal,
   type SpeedsterMatColor,
+  type SpeedsterPhysicalGeometryLearning,
+  type SpeedsterPhysicalGeometryPlacement,
 } from "../../lib/ai-grader-v2/color-geometry";
 import {
+  runSpeedsterImageRequest,
   speedsterImageService,
   SpeedsterMapRegistrationError,
   SpeedsterMapRegistrationRequestError,
@@ -86,6 +90,7 @@ const captureDraftBindingLabel = (draft: SpeedsterCaptureRegistrationDraft) => {
   }
   if (draft.mapBindingStatus === "LOOKUP_FAILED") return "Card Map lookup failed · no map authority applied";
   if (draft.mapBindingStatus === "INTEGRITY_ERROR") return "Card Map integrity error · no map authority applied";
+  if (draft.mapBindingStatus === "HUMAN_REVIEW_WITHOUT_MAP") return "Explicit human review · failed Card Map not applied";
   return "No applicable Card Map · manual geometry";
 };
 
@@ -150,6 +155,7 @@ type CaptureWorkspaceProps = {
   cardProfile: SpeedsterCardProfile;
   draftSurface?: SpeedsterCaptureDraftSurface;
   activeMapRevisionId?: string | null;
+  activeMapRevisionHash?: string | null;
   activeMapScope?: SpeedsterMapScope | null;
   activeMapName?: string | null;
   mapBindingStatus?: SpeedsterCaptureDraftMapBindingStatus;
@@ -181,13 +187,17 @@ export type SpeedsterCaptureInstrumentationEvent = Readonly<{
   details?: Readonly<{
     side?: SpeedsterCardSide;
     automaticGeometryCount?: number;
+    geometryExecutionMode?: "PARALLEL_SIDE_PIPELINES_V1";
+    frontUploadDurationMs?: number;
+    backUploadDurationMs?: number;
+    frontGeometryDurationMs?: number;
+    backGeometryDurationMs?: number;
     photoSource?: "IPHONE" | "LOCAL" | "MIXED";
     mapAppliedScope?: SpeedsterMapScope | "NONE";
     mapName?: string;
     mapRevisionId?: string;
     mapFailureCode?: "LOOKUP_FAILED" | "REGISTRATION_FAILED";
-    registrationDecision?: "RETRY_FAILED_SIDE" | "CONTINUE_WITHOUT_CARD_MAP";
-    mapAuthorityDecision?: "ABANDON_OBSOLETE_MAP_AUTHORITY";
+    registrationDecision?: "RETRY_FAILED_SIDE";
     mapAuthorityOperationId?: string;
     mapAuthorityDecisionId?: string;
     obsoleteMapBindingStatus?: SpeedsterCaptureDraftMapBindingStatus;
@@ -214,8 +224,9 @@ export type SpeedsterCaptureInstrumentationEvent = Readonly<{
 type SideState = {
   originalStorageKey: string;
   sourceUrl: string;
-  corners: SpeedsterQuad;
+  corners: SpeedsterQuad | null;
   automaticGeometry: boolean;
+  geometryPlacement: SpeedsterPhysicalGeometryPlacement | "HUMAN_EDITED";
   geometryDiagnostic: SpeedsterGeometryAttemptDiagnostic;
   rectifiedUrl?: string;
   rectifiedImageRevision?: number;
@@ -226,13 +237,14 @@ type SideState = {
   transform?: readonly number[];
   views?: SpeedsterPreparedSide["views"];
   viewStorageKeys?: SpeedsterPreparedSide["viewStorageKeys"];
-  proposedCentering?: SpeedsterQuad;
+  proposedCentering?: SpeedsterQuad | null;
   detectedBorders?: readonly ("top" | "right" | "bottom" | "left")[];
   centering?: CenteringAssistResult;
   mapRegistration?: SpeedsterMapRegistration;
   matColor: SpeedsterMatColor;
   physicalColorGeometry: SpeedsterColorGeometryProposal;
   physicalColorGeometryReceipt: string;
+  physicalGeometryLearning?: SpeedsterPhysicalGeometryLearning;
   printedColorGeometry?: SpeedsterColorGeometryProposal;
   printedColorGeometryReceipt?: string;
 };
@@ -358,40 +370,20 @@ function registrationFailureEvidence(
   return evidence;
 }
 
-const CARD_ASPECT = 63.5 / 88.9;
-
-function manualStartQuad(width: number, height: number): SpeedsterQuad {
-  const frameAspect = width / height;
-  const widthFraction = frameAspect > CARD_ASPECT ? 0.9 * CARD_ASPECT / frameAspect : 0.9;
-  const heightFraction = frameAspect > CARD_ASPECT ? 0.9 : 0.9 * frameAspect / CARD_ASPECT;
-  const left = (1 - widthFraction) / 2;
-  const top = (1 - heightFraction) / 2;
-  const right = 1 - left;
-  const bottom = 1 - top;
-  return [
-    { x: left, y: top },
-    { x: right, y: top },
-    { x: right, y: bottom },
-    { x: left, y: bottom },
-  ];
-}
-
 function withMapRegistration(value: SideState, registration: SpeedsterMapRegistration): SideState {
-  const mapCenteringDraft: SpeedsterQuad = registration.projectedDesignBoundary.kind === "QUAD"
+  const mapCenteringDraft: SpeedsterQuad | null = registration.projectedDesignBoundary.kind === "QUAD"
     ? registration.projectedDesignBoundary.points
-    : [
-        { x: 0, y: 0 },
-        { x: 1, y: 0 },
-        { x: 1, y: 1 },
-        { x: 0, y: 1 },
-      ];
+    : null;
   const colorCanSeedCentering = value.printedColorGeometry?.outcome === "ACCEPTED";
+  const proposedCentering = colorCanSeedCentering && value.proposedCentering
+    ? value.proposedCentering
+    : mapCenteringDraft;
   return {
     ...value,
     // Color is only a CenteringAssist draft. Registration remains independently
     // server-derived and still owns projected zones/filter policy.
-    proposedCentering: colorCanSeedCentering ? value.proposedCentering : mapCenteringDraft,
-    detectedBorders: colorCanSeedCentering || registration.projectedDesignBoundary.kind === "QUAD"
+    proposedCentering,
+    detectedBorders: proposedCentering && (colorCanSeedCentering || registration.projectedDesignBoundary.kind === "QUAD")
       ? ["top", "right", "bottom", "left"]
       : [],
     mapRegistration: registration,
@@ -399,8 +391,8 @@ function withMapRegistration(value: SideState, registration: SpeedsterMapRegistr
 }
 
 function durableCaptureSide(value: SideState): SpeedsterCaptureDraftSideV2 | null {
-  if (!value.rectifiedStorageKey || !value.inspectionStorageKey || !value.inspectionFrame
-    || !value.transform || !value.viewStorageKeys || !value.proposedCentering || !value.detectedBorders
+  if (!value.corners || !value.rectifiedStorageKey || !value.inspectionStorageKey || !value.inspectionFrame
+    || !value.transform || !value.viewStorageKeys || value.proposedCentering === undefined || !value.detectedBorders
     || !value.printedColorGeometry || !value.printedColorGeometryReceipt) return null;
   return {
     originalStorageKey: value.originalStorageKey,
@@ -417,6 +409,7 @@ function durableCaptureSide(value: SideState): SpeedsterCaptureDraftSideV2 | nul
     matColor: value.matColor,
     physicalColorGeometry: value.physicalColorGeometry,
     physicalColorGeometryReceipt: value.physicalColorGeometryReceipt,
+    ...(value.physicalGeometryLearning ? { physicalGeometryLearning: value.physicalGeometryLearning } : {}),
     printedColorGeometry: value.printedColorGeometry,
     printedColorGeometryReceipt: value.printedColorGeometryReceipt,
     ...(value.centering ? { centering: value.centering } : {}),
@@ -428,6 +421,12 @@ function restoredCaptureSide(value: SpeedsterCaptureDraftSideV2, rectifiedUrl: s
   return {
     ...value,
     sourceUrl: "",
+    geometryPlacement: value.physicalGeometryLearning?.usedLesson
+      && JSON.stringify(value.corners) === JSON.stringify(value.physicalGeometryLearning.usedLesson.suggestedQuad)
+      ? "LESSON_REUSED"
+      : value.automaticGeometry
+        ? "AUTO_ACCEPTED"
+        : "HUMAN_EDITED",
     rectifiedUrl,
     rectifiedImageRevision: 0,
     inspectionUrl: "",
@@ -485,6 +484,7 @@ export function CaptureWorkspace({
   cardProfile,
   draftSurface = "AI_GRADER",
   activeMapRevisionId = null,
+  activeMapRevisionHash = null,
   activeMapScope = null,
   activeMapName = null,
   mapBindingStatus: requestedMapBindingStatus,
@@ -503,14 +503,8 @@ export function CaptureWorkspace({
     FRONT: "BLACK",
     BACK: "WHITE",
   });
-  const [matConfirmations, setMatConfirmations] = useState<Readonly<Record<SpeedsterCardSide, boolean>>>({
-    FRONT: false,
-    BACK: false,
-  });
   const [recaptureSide, setRecaptureSide] = useState<SpeedsterCardSide | null>(null);
   const [iphonePairingUrl, setIphonePairingUrl] = useState<string>();
-  const [legacyIphonePairChoiceRequired, setLegacyIphonePairChoiceRequired] = useState<number | null>(null);
-  const [acceptedLegacyIphoneReadyVersion, setAcceptedLegacyIphoneReadyVersion] = useState<number | null>(null);
   const iphoneVersion = useRef(0);
   const [front, setFront] = useState<SideState | null>(null);
   const [back, setBack] = useState<SideState | null>(null);
@@ -563,6 +557,49 @@ export function CaptureWorkspace({
   const captureWorkspaceMounted = useRef(true);
   const currentCaptureDraftBinding = useRef("");
 
+  const persistRegistrationBlock = useCallback(async (
+    operationId: string,
+    failures: readonly RegistrationFailureEvidence[],
+  ) => {
+    if (!activeMapRevisionId || !activeMapRevisionHash || !activeMapScope || failures.length === 0) {
+      setCaptureDraftError("Card Map registration stopped, but its exact revision evidence is unavailable. No continuation is allowed; retain this page and retry after authority is restored.");
+      return false;
+    }
+    try {
+      const { response, payload } = await runSpeedsterImageRequest(
+        "Card Map registration blocker recording",
+        { timeoutMs: imageRequestTimeoutMs },
+        async (signal) => {
+          const response = await fetch(
+            `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(sessionId)}/map-authority`,
+            {
+              method: "POST",
+              headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
+              body: JSON.stringify({
+                action: "BLOCK_REGISTRATION",
+                mapRevisionId: activeMapRevisionId,
+                mapRevisionHash: activeMapRevisionHash,
+                mapScope: activeMapScope,
+                operationId,
+                failures,
+              }),
+              cache: "no-store",
+              signal,
+            },
+          );
+          const payload = await response.json().catch(() => ({})) as { message?: string };
+          return { response, payload };
+        },
+      );
+      if (!response.ok) throw new Error(payload.message ?? "Card Map registration blocker could not be recorded.");
+      setCaptureDraftError(null);
+      return true;
+    } catch (error) {
+      setCaptureDraftError(`${error instanceof Error ? error.message : "Card Map registration blocker could not be recorded."} The failure remains blocked in this browser; do not reload until Retry succeeds.`);
+      return false;
+    }
+  }, [activeMapRevisionHash, activeMapRevisionId, activeMapScope, imageRequestTimeoutMs, sessionId, token]);
+
   currentSessionId.current = sessionId;
   currentCaptureDraftBinding.current = captureDraftBindingKey({
     surface: draftSurface,
@@ -583,7 +620,7 @@ export function CaptureWorkspace({
     stageStartedAt.current = Date.now();
     frontGeometryTiming.current = null;
     mapRegistrationFailed.current = false;
-    mapAuthorityAbandoned.current = false;
+    mapAuthorityAbandoned.current = mapBindingStatus === "HUMAN_REVIEW_WITHOUT_MAP";
     registrationFailureSides.current = {};
     captureActionInFlight.current = false;
     registrationActionInFlight.current = false;
@@ -592,10 +629,7 @@ export function CaptureWorkspace({
     setFrontPhoto(null);
     setBackPhoto(null);
     setMatColors({ FRONT: "BLACK", BACK: "WHITE" });
-    setMatConfirmations({ FRONT: false, BACK: false });
     setRecaptureSide(null);
-    setLegacyIphonePairChoiceRequired(null);
-    setAcceptedLegacyIphoneReadyVersion(null);
     setFront(null);
     setBack(null);
     setStage("PHOTOS");
@@ -642,9 +676,26 @@ export function CaptureWorkspace({
               sessionId,
               cardProfile,
             });
-            if (selfBound) {
+            if (selfBound && selfBound.version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION
+              && mapBindingStatus === "HUMAN_REVIEW_WITHOUT_MAP"
+              && selfBound.mapAuthorityAbandoned) {
+              const humanReviewDraft: SpeedsterCaptureRegistrationDraft = {
+                ...selfBound,
+                mapBindingStatus: "HUMAN_REVIEW_WITHOUT_MAP",
+                activeMapRevisionId: null,
+                activeMapScope: null,
+                activeMapName: null,
+                front: { ...selfBound.front, mapRegistration: undefined },
+                back: { ...selfBound.back, mapRegistration: undefined },
+                provisional: {},
+                registrationRecordedAtMs: {},
+              };
+              writeSpeedsterCaptureRegistrationDraft(window.localStorage, humanReviewDraft);
+              setPendingCaptureDraft(humanReviewDraft);
+              setMessage("The preserved work was rebound to its durable human-review-without-map decision. Choose Resume or Discard; no map will be applied.");
+            } else if (selfBound) {
               setMapMismatchedCaptureDraft(selfBound);
-              setCaptureDraftError("The preserved draft belongs to a different Card Map revision or lookup state. Its old map authority was not applied. Choose whether to preserve the photos and geometry while explicitly abandoning every old registration receipt, or discard the draft.");
+              setCaptureDraftError("The preserved draft belongs to a different Card Map revision or lookup state. Its old map authority was not applied. Keep the unchanged draft for incident review, or explicitly discard it and restart against the current exact revision.");
             } else {
               setInvalidCaptureDraftPresent(true);
               setCaptureDraftError("A preserved capture draft exists but failed strict session validation. Fresh capture is blocked; the draft remains stored until you explicitly discard it.");
@@ -725,11 +776,8 @@ export function CaptureWorkspace({
     if (recommendedMat) {
       setMatColors((current) => ({ ...current, [side]: recommendedMat }));
     }
-    setMatConfirmations((current) => ({ ...current, [side]: Boolean(recommendedMat) }));
     side === "FRONT" ? setFront(null) : setBack(null);
     setRecaptureSide(side);
-    setLegacyIphonePairChoiceRequired(null);
-    setAcceptedLegacyIphoneReadyVersion(null);
     setRegistrationRescue(null);
     setRegistrationInterruption(null);
     currentRegistrationOperationId.current = null;
@@ -830,6 +878,37 @@ export function CaptureWorkspace({
     void refreshPreparedImage(side, storageKey).catch(() => undefined);
   }, [handlePreparedImageError, refreshPreparedImage]);
 
+  const refreshOriginalImage = useCallback(async (side: SpeedsterCardSide) => {
+    const current = side === "FRONT" ? front : back;
+    if (!current || working || captureActionInFlight.current) return;
+    const storageKey = current.originalStorageKey;
+    const requestSessionId = sessionId;
+    setWorking(true);
+    setWorkflowError(null);
+    setMessage(`Refreshing the exact ${side.toLowerCase()} source URL without changing its storage identity.`);
+    try {
+      const imageUrl = await fetchSpeedsterOriginalImageUrl({
+        token,
+        sessionId,
+        side,
+        storageKey,
+        timeoutMs: imageRequestTimeoutMs,
+      });
+      if (currentSessionId.current !== requestSessionId) return;
+      const install = (value: SideState | null) => value?.originalStorageKey === storageKey
+        ? { ...value, sourceUrl: imageUrl }
+        : value;
+      side === "FRONT" ? setFront(install) : setBack(install);
+      setMessage(`The exact ${side.toLowerCase()} source URL was refreshed. Confirm only after the image is visibly rendered.`);
+    } catch (error) {
+      if (currentSessionId.current === requestSessionId) {
+        setWorkflowError(`${error instanceof Error ? error.message : `The ${side.toLowerCase()} source URL could not be refreshed.`} Existing geometry remains unchanged.`);
+      }
+    } finally {
+      if (currentSessionId.current === requestSessionId) setWorking(false);
+    }
+  }, [back, front, imageRequestTimeoutMs, sessionId, token, working]);
+
   const markPreparedImageReady = useCallback((side: SpeedsterCardSide) => {
     preparedImageAutomaticRetryUsed.current[side] = false;
     setPreparedImageRefresh((current) => current[side].error ? ({
@@ -858,10 +937,6 @@ export function CaptureWorkspace({
     source: "MATCHED" | "MAP_MISMATCHED",
   ) => {
     if (draft.version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION || working) return;
-    if (!matConfirmations.FRONT || !matConfirmations.BACK) {
-      setCaptureDraftError("Confirm the actual Front and Back mat colors before recovering Color Geometry evidence. No preserved work was changed.");
-      return;
-    }
     const originatingSessionId = sessionId;
     activeImageRequest.current?.abort();
     const controller = new AbortController();
@@ -929,12 +1004,12 @@ export function CaptureWorkspace({
         setWorking(false);
       }
     }
-  }, [imageRequestTimeoutMs, matColors, matConfirmations, sessionId, token, working]);
+  }, [imageRequestTimeoutMs, matColors, sessionId, token, working]);
 
   const recoverExpiredColorGeometry = useCallback(async () => {
     const target = colorGeometryRecoveryTarget;
     const current = target?.side === "FRONT" ? front : target?.side === "BACK" ? back : null;
-    if (!target || !current || !front || !back || working) return;
+    if (!target || !current || !current.corners || !front || !back || working) return;
     activeImageRequest.current?.abort();
     const controller = new AbortController();
     activeImageRequest.current = controller;
@@ -956,6 +1031,7 @@ export function CaptureWorkspace({
             ...current,
             physicalColorGeometry: recovered.colorGeometry,
             physicalColorGeometryReceipt: recovered.colorGeometryReceipt,
+            physicalGeometryLearning: undefined,
           }
         : {
             ...current,
@@ -979,116 +1055,6 @@ export function CaptureWorkspace({
       }
     }
   }, [back, colorGeometryRecoveryTarget, front, imageRequestTimeoutMs, sessionId, token, working]);
-
-  const resumeGeometryWithoutObsoleteMap = useCallback(async () => {
-    const draft = mapMismatchedCaptureDraft;
-    if (!draft || working) return;
-    if (draft.version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION) {
-      setCaptureDraftError("This preserved v1 draft predates Color Geometry receipts. Its photos, confirmed quads, and obsolete map evidence remain intact; explicitly recover its Color evidence before resuming without map authority.");
-      return;
-    }
-    const originatingSessionId = sessionId;
-    setWorking(true);
-    setCaptureDraftError(null);
-    setMessage("Refreshing prepared images before preserving geometry without the obsolete Card Map authority.");
-    try {
-      const [frontUrl, backUrl] = await Promise.all([
-        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "FRONT", storageKey: draft.front.rectifiedStorageKey }),
-        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "BACK", storageKey: draft.back.rectifiedStorageKey }),
-      ]);
-      if (!captureWorkspaceMounted.current || currentSessionId.current !== originatingSessionId) return;
-      const decisionId = draft.decisionIds.abandonObsoleteMap;
-      const operationId = draft.operationId;
-      const surfaceAuditWarning = (failure: "UNAVAILABLE" | "FAILED" | "TIMED_OUT") => {
-        if (!captureWorkspaceMounted.current || currentSessionId.current !== originatingSessionId) return;
-        setAuditReconciliationNotices((current) => {
-          const noticeId = `map-authority-decision:${operationId}:${decisionId}`;
-          if (current.some((candidate) => candidate.noticeId === noticeId)) return current;
-          const explanation = failure === "UNAVAILABLE"
-            ? "reporter is unavailable"
-            : failure === "TIMED_OUT"
-              ? `write was not confirmed within ${decisionAuditConfirmationTimeoutMs} ms`
-              : "write failed";
-          return [...current, {
-            noticeId,
-            message: `Map-authority decision audit ${explanation} for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`,
-          }];
-        });
-      };
-      if (!onInstrumentationEvent) {
-        surfaceAuditWarning("UNAVAILABLE");
-      } else {
-        const atMs = Date.now();
-        let result: void | boolean | Promise<void | boolean>;
-        try {
-          result = onInstrumentationEvent({
-            eventId: decisionId,
-            eventType: "MAP_AUTHORITY_OPERATOR_DECISION",
-            startedAtMs: atMs,
-            endedAtMs: atMs,
-            details: {
-              mapAuthorityDecision: "ABANDON_OBSOLETE_MAP_AUTHORITY",
-              mapAuthorityOperationId: operationId,
-              mapAuthorityDecisionId: decisionId,
-              mapAppliedScope: "NONE",
-              obsoleteMapBindingStatus: draft.mapBindingStatus,
-              ...(draft.activeMapRevisionId ? { obsoleteMapRevisionId: draft.activeMapRevisionId } : {}),
-              ...(draft.activeMapScope ? { obsoleteMapScope: draft.activeMapScope } : {}),
-              ...(draft.activeMapName ? { obsoleteMapName: draft.activeMapName } : {}),
-            },
-          });
-        } catch {
-          surfaceAuditWarning("FAILED");
-          result = undefined;
-        }
-        if (result !== undefined) {
-          void settleSpeedsterRegistrationDecisionAuditConfirmation(
-            result,
-            decisionAuditConfirmationTimeoutMs,
-          ).then((outcome) => {
-            if (outcome !== "CONFIRMED") surfaceAuditWarning(outcome === "TIMED_OUT" ? "TIMED_OUT" : "FAILED");
-          });
-        }
-      }
-      const stripRegistration = (side: SpeedsterCaptureDraftSideV2): SpeedsterCaptureDraftSideV2 => {
-        const { mapRegistration: _mapRegistration, ...withoutRegistration } = side;
-        return withoutRegistration;
-      };
-      const frontDraft = stripRegistration(draft.front);
-      const backDraft = stripRegistration(draft.back);
-      setFront(restoredCaptureSide(frontDraft, frontUrl));
-      setBack(restoredCaptureSide(backDraft, backUrl));
-      setCornerShape(draft.cornerShape);
-      setRegistrationInterruption(null);
-      setRegistrationRescue(null);
-      setCorrectedAnchorDrafts({});
-      registrationRecordedAtMs.current = {};
-      registrationFailureSides.current = {};
-      mapRegistrationFailed.current = false;
-      mapAuthorityAbandoned.current = true;
-      currentRegistrationOperationId.current = crypto.randomUUID();
-      captureDraftDecisionIds.current = {
-        continue: crypto.randomUUID(),
-        abandonObsoleteMap: crypto.randomUUID(),
-        retry: {},
-      };
-      captureDraftCreatedAtMs.current = draft.createdAtMs;
-      const bothCentered = Boolean(frontDraft.centering && backDraft.centering);
-      setCaptureSaveFailed(bothCentered);
-      setStage(frontDraft.centering ? "BACK_CENTERING" : "FRONT_CENTERING");
-      setMapRegistrationNotice("Obsolete Card Map authority explicitly abandoned. Front + Back photos, physical geometry, and centering were preserved; no old receipt or current map was applied.");
-      setMapMismatchedCaptureDraft(null);
-      setPendingCaptureDraft(null);
-      setInvalidCaptureDraftPresent(false);
-      setMessage(bothCentered
-        ? "Geometry recovered without Card Map authority. Confirm Retry save to preserve the verified Front + Back capture manually."
-        : "Geometry recovered without Card Map authority. Continue the remaining centering review; no registration was reused.");
-    } catch (error) {
-      setCaptureDraftError(`${error instanceof Error ? error.message : "Prepared images could not be refreshed."} The original draft remains intact; no map authority or geometry was changed.`);
-    } finally {
-      if (captureWorkspaceMounted.current && currentSessionId.current === originatingSessionId) setWorking(false);
-    }
-  }, [decisionAuditConfirmationTimeoutMs, mapMismatchedCaptureDraft, onInstrumentationEvent, sessionId, token, working]);
 
   const resumePreservedCaptureDraft = useCallback(async () => {
     const draft = pendingCaptureDraft;
@@ -1138,7 +1104,7 @@ export function CaptureWorkspace({
           const candidate = provisional[side] ?? (side === "FRONT" ? frontDraft.mapRegistration : backDraft.mapRegistration);
           if (!candidate || !expiredRegistrationSides.has(side)) continue;
           interruptions[side] = {
-            message: `The preserved ${side.toLowerCase()} registration receipt is older than 24 hours. Re-register this side or explicitly continue without Card Map.`,
+            message: `The preserved ${side.toLowerCase()} registration receipt is older than 24 hours. Re-register this side, or explicitly continue through human review without applying the map.`,
             failure: {
               version: "speedster-map-registration-error-v1",
               source: "CLIENT_PROTOCOL",
@@ -1173,7 +1139,11 @@ export function CaptureWorkspace({
           },
         };
         stage = "MAP_REGISTRATION_INTERRUPTED";
-        setCaptureDraftError("The draft was resumed, but one or more registration receipts expired. No map was applied. Re-register every listed side or explicitly Continue without Card Map.");
+        await persistRegistrationBlock(
+          draft.operationId,
+          registrationFailureEvidence(interruptions, draft.failures, draft.failureRequestIds),
+        );
+        setCaptureDraftError("The draft was resumed, but one or more registration receipts expired. No map was applied. Re-register every listed side, or explicitly continue through human review without the map.");
       } else if (draft.stage === "MAP_REGISTRATION_INTERRUPTED") {
         interruption = {
           interruptions: draft.interruptions,
@@ -1215,7 +1185,7 @@ export function CaptureWorkspace({
       setMapRegistrationNotice(draft.notice);
       setPendingCaptureDraft(null);
       setMessage(stage === "MAP_REGISTRATION_INTERRUPTED"
-        ? "Preserved draft resumed. Resolve every listed side or explicitly continue without Card Map."
+        ? "Preserved draft resumed. Retry the listed side, or explicitly continue through human review without applying the map."
         : stage === "MAP_REGISTRATION_RESCUE"
           ? "Preserved anchor-rescue draft resumed. Confirm the retained handle positions when ready."
           : "Preserved prepared-card draft resumed. Confirm the printed-border geometry.");
@@ -1233,7 +1203,7 @@ export function CaptureWorkspace({
         && currentCaptureDraftBinding.current === originatingBinding
         && currentSessionId.current === originatingSessionId) setWorking(false);
     }
-  }, [pendingCaptureDraft, sessionId, token, working]);
+  }, [pendingCaptureDraft, persistRegistrationBlock, sessionId, token, working]);
 
   useEffect(() => {
     if (typeof window === "undefined" || pendingCaptureDraft
@@ -1327,36 +1297,21 @@ export function CaptureWorkspace({
     const poll = async () => {
       try {
         const response = await fetch(
-          `/api/admin/ai-grader-v2/iphone-capture?sessionId=${encodeURIComponent(sessionId)}${acceptedLegacyIphoneReadyVersion === null
-            ? ""
-            : `&acceptLegacyReadyVersion=${acceptedLegacyIphoneReadyVersion}`}`,
+          `/api/admin/ai-grader-v2/iphone-capture?sessionId=${encodeURIComponent(sessionId)}`,
           { headers: buildAdminHeaders(token), cache: "no-store" },
         );
         const payload = (await response.json().catch(() => ({}))) as {
           readyVersion?: number;
-          storageGeneration?: "VERSIONED" | "LEGACY";
-          legacyPairAvailable?: boolean;
+          storageGeneration?: "VERSIONED";
           front?: { storageKey: string; readUrl: string };
           back?: { storageKey: string; readUrl: string };
           message?: string;
         };
         if (!response.ok) {
-          if (response.status === 409 && payload.storageGeneration === "LEGACY"
-            && payload.legacyPairAvailable === true && Number.isSafeInteger(payload.readyVersion)
-            && (payload.readyVersion ?? 0) > 0) {
-            setLegacyIphonePairChoiceRequired(payload.readyVersion!);
-            setMessage(`${payload.message ?? "A legacy iPhone pair is available."} Nothing was selected. Choose explicitly whether to use that exact pair.`);
-            return;
-          }
           throw new Error(payload.message ?? "iPhone capture status check failed.");
         }
-        if (payload.storageGeneration === "LEGACY" && payload.readyVersion
-          && acceptedLegacyIphoneReadyVersion !== payload.readyVersion) {
-          if (!stopped) {
-            setLegacyIphonePairChoiceRequired(payload.readyVersion);
-            setMessage(`A legacy iPhone pair was disclosed for ready version ${payload.readyVersion}, but this client has not explicitly accepted that exact version. Nothing was selected.`);
-          }
-          return;
+        if (payload.readyVersion && payload.storageGeneration !== "VERSIONED") {
+          throw new Error("A non-versioned iPhone capture pair was rejected. Capture a new Front + Back pair with the current Shortcut.");
         }
         if (
           !stopped
@@ -1366,19 +1321,16 @@ export function CaptureWorkspace({
           && payload.back
         ) {
           iphoneVersion.current = payload.readyVersion;
-          setLegacyIphonePairChoiceRequired(null);
           if (recaptureSide === "FRONT") {
             setFrontPhoto({ kind: "IPHONE", ...payload.front, captureVersion: payload.readyVersion });
-            setMessage("Fresh Front received. The retained Back remains unchanged; confirm the Front mat, then rerun Front geometry.");
+            setMessage("Fresh Front received. The retained Back remains unchanged; rerun Front geometry.");
           } else if (recaptureSide === "BACK") {
             setBackPhoto({ kind: "IPHONE", ...payload.back, captureVersion: payload.readyVersion });
-            setMessage("Fresh Back received. The retained Front remains unchanged; confirm the Back mat, then rerun Back geometry.");
+            setMessage("Fresh Back received. The retained Front remains unchanged; rerun Back geometry.");
           } else {
             setFrontPhoto({ kind: "IPHONE", ...payload.front, captureVersion: payload.readyVersion });
             setBackPhoto({ kind: "IPHONE", ...payload.back, captureVersion: payload.readyVersion });
-            setMessage(payload.storageGeneration === "LEGACY"
-              ? "Legacy iPhone front + back pair received and disclosed. Swap them if needed, confirm each actual mat, then set geometry. The next Shortcut capture will use non-overwriting versioned storage."
-              : "iPhone front + back received. Swap them if needed, confirm each actual mat, then set geometry.");
+            setMessage("Current versioned iPhone front + back received. Swap them if needed, then set geometry.");
           }
         }
       } catch (error) {
@@ -1417,11 +1369,10 @@ export function CaptureWorkspace({
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [acceptedLegacyIphoneReadyVersion, captureDraftHydratedSessionId, invalidCaptureDraftPresent, mapMismatchedCaptureDraft, pendingCaptureDraft, recaptureSide, sessionId, stage, token, working]);
+  }, [captureDraftHydratedSessionId, invalidCaptureDraftPresent, mapMismatchedCaptureDraft, pendingCaptureDraft, recaptureSide, sessionId, stage, token, working]);
 
   const beginGeometry = async () => {
-    if (!frontPhoto || !backPhoto || !matConfirmations.FRONT || !matConfirmations.BACK
-      || working || captureActionInFlight.current
+    if (!frontPhoto || !backPhoto || working || captureActionInFlight.current
       || captureDraftHydratedSessionId !== sessionId || pendingCaptureDraft
       || mapMismatchedCaptureDraft || invalidCaptureDraftPresent) return;
     captureActionInFlight.current = true;
@@ -1464,6 +1415,11 @@ export function CaptureWorkspace({
           );
           if (activeImageRequest.current !== controller) throw new Error("A newer Set geometry attempt replaced this request.");
           const corners = sanitizeSpeedsterUnitQuad(geometry.corners);
+          const colorAccepted = geometry.colorGeometry.outcome === "ACCEPTED";
+          if (colorAccepted !== Boolean(corners)
+            || (colorAccepted && JSON.stringify(corners) !== JSON.stringify(geometry.colorGeometry.proposal))) {
+            throw new Error("Physical geometry corners contradict the Color outcome authority. No automatic geometry was applied.");
+          }
           return {
             geometry,
             corners,
@@ -1492,17 +1448,29 @@ export function CaptureWorkspace({
         uploaded: Readonly<{ storageKey: string; readUrl: string }>,
         result: Awaited<ReturnType<typeof requestGeometry>>,
       ): SideState => {
-        const fallbackDraft = result.corners ?? manualStartQuad(result.geometry.width, result.geometry.height);
-        const corners = speedsterColorPhysicalDraft(result.geometry.colorGeometry, fallbackDraft);
+        const draft = speedsterColorPhysicalDraftState(result.geometry.colorGeometry);
+        const learnedQuad = sanitizeSpeedsterUnitQuad(
+          result.geometry.physicalGeometryLearning?.usedLesson?.suggestedQuad,
+        );
+        const corners = learnedQuad ?? result.corners ?? draft.quad;
+        const geometryPlacement = learnedQuad
+          ? "LESSON_REUSED"
+          : result.corners
+            ? "AUTO_ACCEPTED"
+            : draft.placement;
         return {
           originalStorageKey: uploaded.storageKey,
           sourceUrl: uploaded.readUrl,
           corners,
-          automaticGeometry: result.corners !== null || corners !== fallbackDraft,
+          automaticGeometry: geometryPlacement === "AUTO_ACCEPTED",
+          geometryPlacement,
           geometryDiagnostic: result.diagnostic,
           matColor: matColors[side],
           physicalColorGeometry: result.geometry.colorGeometry,
           physicalColorGeometryReceipt: result.geometry.colorGeometryReceipt,
+          ...(result.geometry.physicalGeometryLearning?.usedLesson
+            ? { physicalGeometryLearning: result.geometry.physicalGeometryLearning }
+            : {}),
         };
       };
       if (recaptureSide) {
@@ -1527,11 +1495,24 @@ export function CaptureWorkspace({
         setMessage(`${recaptureSide === "FRONT" ? "Front" : "Back"} geometry was recomputed from the replacement image. The completed sibling side and its receipts/evidence remain retained.`);
         return;
       }
-      const uploadedFront = await uploadPhoto("FRONT", frontPhoto);
-      const frontResult = await requestGeometry("FRONT", uploadedFront.readUrl, uploadedFront.storageKey);
-      const uploadedBack = await uploadPhoto("BACK", backPhoto);
-      const backResult = await requestGeometry("BACK", uploadedBack.readUrl, uploadedBack.storageKey);
+      const runSidePipeline = async (side: SpeedsterCardSide, photo: SpeedsterOriginalPhoto) => {
+        const uploadStartedAtMs = Date.now();
+        const uploaded = await uploadPhoto(side, photo);
+        const uploadEndedAtMs = Date.now();
+        const result = await requestGeometry(side, uploaded.readUrl, uploaded.storageKey);
+        return {
+          uploaded,
+          result,
+          uploadDurationMs: uploadEndedAtMs - uploadStartedAtMs,
+        };
+      };
+      const [frontPipeline, backPipeline] = await Promise.all([
+        runSidePipeline("FRONT", frontPhoto),
+        runSidePipeline("BACK", backPhoto),
+      ]);
       if (activeImageRequest.current !== controller) return;
+      const { uploaded: uploadedFront, result: frontResult } = frontPipeline;
+      const { uploaded: uploadedBack, result: backResult } = backPipeline;
       setFront(toSideState("FRONT", uploadedFront, frontResult));
       setBack(toSideState("BACK", uploadedBack, backResult));
       setStage("FRONT_GEOMETRY");
@@ -1541,7 +1522,14 @@ export function CaptureWorkspace({
         eventType: "GEOMETRY_PROPOSED",
         startedAtMs,
         endedAtMs: Date.now(),
-        details: { automaticGeometryCount: automaticCount },
+        details: {
+          automaticGeometryCount: automaticCount,
+          geometryExecutionMode: "PARALLEL_SIDE_PIPELINES_V1",
+          frontUploadDurationMs: frontPipeline.uploadDurationMs,
+          backUploadDurationMs: backPipeline.uploadDurationMs,
+          frontGeometryDurationMs: frontResult.diagnostic.durationMs,
+          backGeometryDurationMs: backResult.diagnostic.durationMs,
+        },
       });
       setMessage(automaticCount === 2
         ? "Both physical cards found. Move only points that need correction."
@@ -1643,6 +1631,85 @@ export function CaptureWorkspace({
       : "Confirm the printed-border geometry.");
   };
 
+  const continueRegistrationWithoutMap = async () => {
+    if (working || !front || !back || (!registrationInterruption && !registrationRescue)) return;
+    const failures = registrationInterruption
+      ? registrationFailureEvidence(
+          registrationInterruption.interruptions,
+          registrationInterruption.failures,
+          registrationInterruption.failureRequestIds,
+        )
+      : registrationRescue
+        ? registrationFailureEvidence({}, registrationRescue.failures, registrationRescue.failureRequestIds)
+        : [];
+    if (failures.length === 0) {
+      setWorkflowError("No durable Card Map failure is available for human-review continuation.");
+      return;
+    }
+    const decisionId = registrationInterruption?.decisionIds.continue
+      ?? registrationRescue?.continueDecisionId
+      ?? crypto.randomUUID();
+    const operationId = registrationInterruption?.operationId
+      ?? registrationRescue?.operationId
+      ?? currentRegistrationOperationId.current;
+    setWorking(true);
+    setWorkflowError(null);
+    try {
+      const { response, payload } = await runSpeedsterImageRequest(
+        "Card Map human-review decision",
+        { timeoutMs: imageRequestTimeoutMs },
+        async (signal) => {
+          const response = await fetch(
+            `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(sessionId)}/map-authority`,
+            {
+              method: "POST",
+              headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
+              body: JSON.stringify({ action: "CONTINUE_WITHOUT_MAP", decisionId }),
+              cache: "no-store",
+              signal,
+            },
+          );
+          const payload = await response.json().catch(() => ({})) as {
+            authority?: { status?: string; message?: string };
+            message?: string;
+          };
+          return { response, payload };
+        },
+      );
+      if (!response.ok || payload.authority?.status !== "HUMAN_REVIEW_WITHOUT_MAP") {
+        throw new Error(payload.message ?? payload.authority?.message ?? "Human-review continuation was not recorded.");
+      }
+      mapAuthorityAbandoned.current = true;
+      registrationRecordedAtMs.current = {};
+      const failureSides = Object.fromEntries(failures.map(({ side }) => [side, true])) as Partial<Record<SpeedsterCardSide, true>>;
+      onInstrumentationEvent?.({
+        eventId: decisionId,
+        eventType: "MAP_AUTHORITY_OPERATOR_DECISION",
+        startedAtMs: Date.now(),
+        endedAtMs: Date.now(),
+        details: {
+          mapAppliedScope: "NONE",
+          mapAuthorityDecisionId: decisionId,
+          ...(operationId ? { mapAuthorityOperationId: operationId } : {}),
+          registrationFailedSides: failures.map(({ side }) => side),
+          registrationFailures: failures,
+        },
+      });
+      finishMapRegistrationFlow({
+        frontState: { ...front, mapRegistration: undefined },
+        backState: { ...back, mapRegistration: undefined },
+        provisional: {},
+        failureSides,
+        notice: "HUMAN REVIEW · Card Map failure retained · no map or projected zones applied.",
+      });
+      setMessage("Card Map failure is preserved. Continue with human centering; no map, fallback map, or guessed zones will be applied.");
+    } catch (error) {
+      setWorkflowError(`${error instanceof Error ? error.message : "Human-review continuation was not recorded."} All photos, geometry, and registration evidence remain preserved.`);
+    } finally {
+      setWorking(false);
+    }
+  };
+
   const appendAuditReconciliationNotice = (notice: AuditReconciliationNotice) => {
     setAuditReconciliationNotices((current) => (
       current.some(({ noticeId }) => noticeId === notice.noticeId)
@@ -1672,6 +1739,11 @@ export function CaptureWorkspace({
   const confirmGeometry = async (side: SpeedsterCardSide) => {
     const current = side === "FRONT" ? front : back;
     if (!current || working || captureActionInFlight.current) return;
+    const currentCorners = sanitizeSpeedsterUnitQuad(current.corners);
+    if (!currentCorners) {
+      setWorkflowError(`Place all four ${side === "FRONT" ? "Front" : "Back"} physical corners before confirming geometry.`);
+      return;
+    }
     captureActionInFlight.current = true;
     activeImageRequest.current?.abort();
     const controller = new AbortController();
@@ -1680,6 +1752,19 @@ export function CaptureWorkspace({
     setWorkflowError(null);
     setMessage(`Preparing the ${side.toLowerCase()} card map.`);
     try {
+      const freshSourceUrl = await fetchSpeedsterOriginalImageUrl({
+        token,
+        sessionId,
+        side,
+        storageKey: current.originalStorageKey,
+        signal: controller.signal,
+        timeoutMs: imageRequestTimeoutMs,
+      });
+      if (activeImageRequest.current !== controller) return;
+      const installSourceUrl = (value: SideState | null) => value?.originalStorageKey === current.originalStorageKey
+        ? { ...value, sourceUrl: freshSourceUrl }
+        : value;
+      side === "FRONT" ? setFront(installSourceUrl) : setBack(installSourceUrl);
       const outputPlan = await planSpeedsterPreparedOutputs({
         token,
         sessionId,
@@ -1690,19 +1775,20 @@ export function CaptureWorkspace({
       });
       const prepared = await speedsterImageService.prepare(
         token,
-        current.sourceUrl,
+        freshSourceUrl,
         {
           sessionId,
           side,
           sourceImageStorageKey: current.originalStorageKey,
         },
-        current.corners,
+        currentCorners,
         current.matColor,
         { signal: controller.signal, timeoutMs: imageRequestTimeoutMs },
       );
       if (activeImageRequest.current !== controller) return;
       const next: SideState = {
         ...current,
+        sourceUrl: freshSourceUrl,
         rectifiedUrl: outputPlan.RECTIFIED.readUrl,
         rectifiedImageRevision: 0,
         rectifiedStorageKey: outputPlan.RECTIFIED.storageKey,
@@ -1745,7 +1831,7 @@ export function CaptureWorkspace({
             speedsterImageService.registerMap(token, {
               sessionId,
               side,
-              currentPhysicalQuad: current.corners,
+              currentPhysicalQuad: currentCorners,
               currentOriginalStorageKey: next.originalStorageKey,
               currentInspectionStorageKey: next.inspectionStorageKey!,
               orchestration: {
@@ -1782,6 +1868,14 @@ export function CaptureWorkspace({
           } else {
             const targetState = { ...next, mapRegistration: undefined };
             side === "FRONT" ? setFront(targetState) : setBack(targetState);
+            const durableFailureEvidence = result.reason instanceof SpeedsterMapRegistrationError
+              ? registrationFailureEvidence(
+                  {},
+                  { [side]: result.reason.failure },
+                  result.reason.requestId ? { [side]: result.reason.requestId } : {},
+                )
+              : registrationFailureEvidence({ [side]: registrationInterruptionFrom(result.reason) }, {}, {});
+            await persistRegistrationBlock(operationId, durableFailureEvidence);
             if (result.reason instanceof SpeedsterMapRegistrationError) {
               setRegistrationRescue({
                 failures: { [side]: result.reason.failure },
@@ -1812,7 +1906,7 @@ export function CaptureWorkspace({
               });
               setStage("MAP_REGISTRATION_INTERRUPTED");
               setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} registration is interrupted only on replacement ${side}. The ${siblingSide} registration remains retained and is not rerun.`);
-              setMessage("Choose Retry failed side or Continue without Card Map. Nothing happens silently.");
+              setMessage("Retry the failed side. Card Map authority remains blocked and cannot fall back to mapless review.");
             }
             return;
           }
@@ -1844,9 +1938,10 @@ export function CaptureWorkspace({
         return;
       }
 
-      if (!front?.rectifiedUrl || !front.proposedCentering) {
+      if (!front?.rectifiedUrl || !front.proposedCentering || !front.corners) {
         throw new Error("Front geometry must be prepared before Back geometry.");
       }
+      const frontCorners = front.corners;
       let finalFront: SideState = { ...front, mapRegistration: undefined };
       let finalBack: SideState = { ...next, mapRegistration: undefined };
       let frontRegistration: SpeedsterMapRegistration | undefined;
@@ -1874,13 +1969,13 @@ export function CaptureWorkspace({
           return registration;
         });
         const initialResults = await Promise.allSettled([
-          registerSide("FRONT", front.corners, front.inspectionStorageKey!, {
+          registerSide("FRONT", frontCorners, front.inspectionStorageKey!, {
             operationId,
             attemptNumber: 1,
             trigger: "INITIAL",
             successfulSiblingPreservedAtAttemptStart: false,
           }),
-          registerSide("BACK", current.corners, next.inspectionStorageKey!, {
+          registerSide("BACK", currentCorners, next.inspectionStorageKey!, {
             operationId,
             attemptNumber: 1,
             trigger: "INITIAL",
@@ -1913,7 +2008,7 @@ export function CaptureWorkspace({
             const sibling = candidate === "FRONT" ? initialResults[1] : initialResults[0];
             return registerSide(
               candidate,
-              candidate === "FRONT" ? front.corners : current.corners,
+              candidate === "FRONT" ? frontCorners : currentCorners,
               candidate === "FRONT" ? front.inspectionStorageKey! : next.inspectionStorageKey!,
               {
               operationId,
@@ -1977,6 +2072,10 @@ export function CaptureWorkspace({
               ? { BACK: registrationInterruptionFrom(backResult.reason) }
               : {}),
           };
+          await persistRegistrationBlock(
+            operationId,
+            registrationFailureEvidence(interruptions, failures, failureRequestIds),
+          );
           if (interruptions.FRONT || interruptions.BACK) {
             setFront(finalFront);
             setBack(finalBack);
@@ -1991,7 +2090,7 @@ export function CaptureWorkspace({
             });
             setStage("MAP_REGISTRATION_INTERRUPTED");
             setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} registration is interrupted. Completed side work and valid anchor diagnostics are retained provisionally; no map is applied.`);
-            setMessage("Choose Retry failed side or Continue without Card Map. Nothing happens silently.");
+            setMessage("Retry or correct every failed side. Card Map authority remains blocked and cannot fall back to mapless review.");
             return;
           }
           if (failures.FRONT || failures.BACK) {
@@ -2043,26 +2142,17 @@ export function CaptureWorkspace({
 
   const finishRegistrationRescue = (
     provisional: RegistrationRescueState["provisional"],
-    failed: boolean,
     exactAttemptNumbers: Partial<Record<SpeedsterCardSide, number>> = registrationRescue?.attemptNumbers ?? {},
   ) => {
     if (!front || !back) return;
-    const failedSides: Partial<Record<SpeedsterCardSide, true>> = failed ? {
-      ...(registrationRescue?.failures.FRONT ? { FRONT: true as const } : {}),
-      ...(registrationRescue?.failures.BACK ? { BACK: true as const } : {}),
-    } : {};
-    const abandonedSides = (["FRONT", "BACK"] as const).filter((side) => failedSides[side]);
     const touchedSides = (["FRONT", "BACK"] as const).filter((side) => (
-      exactAttemptNumbers[side] !== undefined || failedSides[side]
+      exactAttemptNumbers[side] !== undefined
     ));
     finishMapRegistrationFlow({
       frontState: front,
       backState: back,
-      provisional: failed ? {} : provisional,
-      failureSides: failedSides,
-      notice: failed
-        ? `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was not applied by operator choice. ${abandonedSides.join(" + ")} unresolved Card Map work was explicitly abandoned; continuing with normal human review.`
-        : `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was human-corrected, server-validated, and is ready for Front + Back application.`,
+      provisional,
+      notice: `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was human-corrected, server-validated, and is ready for Front + Back application.`,
       ...(recaptureSide ? {
         resumeCenteringSide: recaptureSide,
         instrumentationSides: touchedSides,
@@ -2074,7 +2164,7 @@ export function CaptureWorkspace({
   const recordRegistrationDecision = (
     decisionId: string,
     operationId: string,
-    decision: "RETRY_FAILED_SIDE" | "CONTINUE_WITHOUT_CARD_MAP",
+    decision: "RETRY_FAILED_SIDE",
     failureEvidence: readonly RegistrationFailureEvidence[],
   ) => {
     const originatingSessionId = sessionId;
@@ -2139,6 +2229,7 @@ export function CaptureWorkspace({
 
   const retryInterruptedRegistration = async (side: SpeedsterCardSide) => {
     if (!registrationInterruption || !front || !back || working || registrationActionInFlight.current) return;
+    if (!front.corners || !back.corners) return;
     if (!registrationInterruption.interruptions[side]) return;
     const priorInterruption = registrationInterruption.interruptions[side]!;
     const decisionId = registrationInterruption.decisionIds.retry[side]!;
@@ -2193,6 +2284,14 @@ export function CaptureWorkspace({
         attemptNumbers,
         decisionIds: registrationDecisionIds(interruptions),
       };
+      const remainingFailureEvidence = registrationFailureEvidence(
+        interruptions,
+        nextState.failures,
+        nextState.failureRequestIds,
+      );
+      if (remainingFailureEvidence.length) {
+        await persistRegistrationBlock(nextState.operationId, remainingFailureEvidence);
+      }
       if (interruptions.FRONT || interruptions.BACK) {
         setRegistrationInterruption(nextState);
         setMessage("That side registered successfully and remains provisional. Resolve the remaining failed side.");
@@ -2253,7 +2352,7 @@ export function CaptureWorkspace({
       };
       if (interruptions.FRONT || interruptions.BACK) {
         setRegistrationInterruption(nextState);
-        setMessage("The failed side is still interrupted. Retry it again manually or Continue without Card Map.");
+        setMessage("The failed side is still interrupted. Retry it again, or explicitly continue through human review without applying the map.");
       } else {
         setRegistrationInterruption(null);
         setRegistrationRescue({
@@ -2281,45 +2380,12 @@ export function CaptureWorkspace({
     }
   };
 
-  const continueWithoutCardMap = () => {
-    if (!registrationInterruption || !front || !back || registrationActionInFlight.current) return;
-    registrationActionInFlight.current = true;
-    const failedSides = (["FRONT", "BACK"] as const).filter((side) => (
-      registrationInterruption.interruptions[side] || registrationInterruption.failures[side]
-    ));
-    const evidence = registrationFailureEvidence(
-      registrationInterruption.interruptions,
-      registrationInterruption.failures,
-      registrationInterruption.failureRequestIds,
-      failedSides,
-    );
-    recordRegistrationDecision(
-      registrationInterruption.decisionIds.continue,
-      registrationInterruption.operationId,
-      "CONTINUE_WITHOUT_CARD_MAP",
-      evidence,
-    );
-    finishMapRegistrationFlow({
-      frontState: front,
-      backState: back,
-      provisional: {},
-      failureSides: Object.fromEntries(failedSides.map((side) => [side, true])) as Partial<Record<SpeedsterCardSide, true>>,
-      notice: `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was not applied by operator choice. ${failedSides.join(" + ")} unresolved Card Map work was explicitly abandoned; continuing with normal human review.`,
-      ...(recaptureSide ? {
-        resumeCenteringSide: recaptureSide,
-        instrumentationSides: (["FRONT", "BACK"] as const).filter((side) => (
-          registrationInterruption.attemptNumbers[side] !== undefined || failedSides.includes(side)
-        )),
-        instrumentationStartedAtMs: stageStartedAt.current,
-      } : {}),
-    });
-  };
-
   const confirmRegistrationRescue = async (
     side: SpeedsterCardSide,
     correctedAnchors: readonly Readonly<{ anchorId: string; point: { x: number; y: number } }>[],
   ) => {
     if (!registrationRescue || working || !front || !back || registrationActionInFlight.current) return;
+    if (!front.corners || !back.corners) return;
     const failure = registrationRescue.failures[side];
     if (!failure) return;
     const attemptNumber = (registrationRescue.attemptNumbers[side] ?? 0) + 1;
@@ -2377,12 +2443,16 @@ export function CaptureWorkspace({
         });
         setMessage("That side is saved. Correct the remaining side; neither map side is applied yet.");
       } else {
-        finishRegistrationRescue(provisional, false, attemptNumbers);
+        finishRegistrationRescue(provisional, attemptNumbers);
       }
     } catch (error) {
       if (activeImageRequest.current !== controller) return;
       surfaceRegistrationAuditWarning(registrationRescue.operationId, [error]);
       setRegistrationRescue({ ...registrationRescue, attemptNumbers });
+      await persistRegistrationBlock(
+        registrationRescue.operationId,
+        registrationFailureEvidence({}, registrationRescue.failures, registrationRescue.failureRequestIds),
+      );
       setMessage(`The corrected ${side.toLowerCase()} anchors were not saved. Your positions are preserved; retry.`);
       throw error;
     } finally {
@@ -2429,8 +2499,10 @@ export function CaptureWorkspace({
     }
     const finalBack = back ? { ...back, centering: result } : null;
     setBack(finalBack);
-    if (!front?.centering || !finalBack) return;
-    const toPreparedSide = (side: SpeedsterCardSide, value: SideState): SpeedsterPreparedSide => ({
+    if (!front?.centering || !front.corners || !finalBack?.corners) return;
+    const toPreparedSide = (side: SpeedsterCardSide, value: SideState): SpeedsterPreparedSide => {
+      if (!value.corners) throw new Error(`${side} physical geometry is incomplete.`);
+      return ({
       side,
       originalStorageKey: value.originalStorageKey,
       sourceUrl: value.sourceUrl,
@@ -2454,6 +2526,10 @@ export function CaptureWorkspace({
           result: value.physicalColorGeometry,
           serverReceipt: value.physicalColorGeometryReceipt,
           confirmedQuad: value.corners,
+          ...(value.physicalGeometryLearning?.usedLesson
+            && value.mapRegistration?.mapRevisionId === value.physicalGeometryLearning.activeMapRevisionId
+            ? { physicalGeometryLearning: value.physicalGeometryLearning }
+            : {}),
         },
         {
           side,
@@ -2466,7 +2542,8 @@ export function CaptureWorkspace({
         },
       ],
       ...(value.mapRegistration ? { mapRegistration: value.mapRegistration } : {}),
-    });
+      });
+    };
     const bundle = {
       sessionId,
       cardProfile,
@@ -2646,32 +2723,14 @@ export function CaptureWorkspace({
       {mapMismatchedCaptureDraft ? (
         <section className={styles.registrationInterruption} aria-label="Preserved capture draft Card Map mismatch">
           <header>
-            <span>CAPTURE DRAFT · CARD MAP CHANGED · EXPLICIT CHOICE</span>
-            <h2>Keep the physical capture work without reusing obsolete map authority.</h2>
+            <span>CAPTURE DRAFT · CARD MAP CHANGED · BLOCKED</span>
+            <h2>The preserved work cannot continue under obsolete map authority.</h2>
           </header>
           <p>
-            The old revision, receipts, projected zones, and registration decisions will be stripped only if you choose geometry recovery.
-            Front + Back storage evidence, corners, transforms, and completed centering remain preserved.
+            Front + Back storage evidence, corners, transforms, completed centering, old revision, receipts, projected zones, and registration decisions remain preserved.
+            Keep this draft for incident review, or explicitly discard it and restart against the current exact revision.
           </p>
-          {mapMismatchedCaptureDraft.version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION ? (
-            <LegacyColorRecoveryControls
-              matColors={matColors}
-              matConfirmations={matConfirmations}
-              disabled={working}
-              onMatColorChange={(side, matColor) => {
-                setMatColors((current) => ({ ...current, [side]: matColor }));
-                setMatConfirmations((current) => ({ ...current, [side]: false }));
-              }}
-              onMatConfirm={(side, confirmed) => setMatConfirmations((current) => ({ ...current, [side]: confirmed }))}
-              onRecover={() => void recoverLegacyColorGeometry(mapMismatchedCaptureDraft, "MAP_MISMATCHED")}
-            />
-          ) : null}
           <div className={styles.interruptionActions}>
-            {mapMismatchedCaptureDraft.version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION ? (
-              <button type="button" onClick={() => void resumeGeometryWithoutObsoleteMap()} disabled={working}>
-                {working ? "Refreshing prepared images…" : "Resume geometry without old Card Map"}
-              </button>
-            ) : null}
             <button type="button" onClick={discardPreservedCaptureDraft} disabled={working}>
               Discard preserved draft
             </button>
@@ -2690,13 +2749,8 @@ export function CaptureWorkspace({
           {pendingCaptureDraft.version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION ? (
             <LegacyColorRecoveryControls
               matColors={matColors}
-              matConfirmations={matConfirmations}
               disabled={working}
-              onMatColorChange={(side, matColor) => {
-                setMatColors((current) => ({ ...current, [side]: matColor }));
-                setMatConfirmations((current) => ({ ...current, [side]: false }));
-              }}
-              onMatConfirm={(side, confirmed) => setMatConfirmations((current) => ({ ...current, [side]: confirmed }))}
+              onMatColorChange={(side, matColor) => setMatColors((current) => ({ ...current, [side]: matColor }))}
               onRecover={() => void recoverLegacyColorGeometry(pendingCaptureDraft, "MATCHED")}
             />
           ) : null}
@@ -2744,39 +2798,13 @@ export function CaptureWorkspace({
               setFrontPhoto(backPhoto);
               setBackPhoto(frontPhoto);
               setMatColors({ FRONT: matColors.BACK, BACK: matColors.FRONT });
-              setMatConfirmations({ FRONT: matConfirmations.BACK, BACK: matConfirmations.FRONT });
             }}
             matColors={matColors}
-            matConfirmations={matConfirmations}
-            onMatColorChange={(side, matColor) => {
-              setMatColors((current) => ({ ...current, [side]: matColor }));
-              setMatConfirmations((current) => ({ ...current, [side]: true }));
-            }}
-            onMatConfirm={(side) => setMatConfirmations((current) => ({ ...current, [side]: true }))}
+            onMatColorChange={(side, matColor) => setMatColors((current) => ({ ...current, [side]: matColor }))}
             lockedSide={recaptureSide === "FRONT" ? "BACK" : recaptureSide === "BACK" ? "FRONT" : null}
             allowSwap={!recaptureSide}
             disabled={working}
           />
-          {legacyIphonePairChoiceRequired !== null ? (
-            <section className={styles.registrationInterruption} aria-label="Legacy iPhone pair explicit choice">
-              <strong>LEGACY IPHONE PAIR · EXPLICIT CHOICE</strong>
-              <p>
-                A complete fixed-key legacy Front + Back pair is available for ready version {legacyIphonePairChoiceRequired}.
-                Nothing has been selected. Use it only if this exact ready version is the pair you intend to grade.
-              </p>
-              <button
-                type="button"
-                disabled={working}
-                onClick={() => {
-                  setAcceptedLegacyIphoneReadyVersion(legacyIphonePairChoiceRequired);
-                  setLegacyIphonePairChoiceRequired(null);
-                  setMessage(`Explicitly loading legacy iPhone Front + Back for ready version ${legacyIphonePairChoiceRequired}.`);
-                }}
-              >
-                Use legacy pair for ready version {legacyIphonePairChoiceRequired}
-              </button>
-            </section>
-          ) : null}
           {recaptureSide ? (
             <p role="note">
               Targeted mat recapture uses only the unlocked local file slot. The paired iPhone Shortcut always captures Front + Back, so it is unavailable here and cannot replace the retained sibling evidence.
@@ -2785,11 +2813,11 @@ export function CaptureWorkspace({
           <button
             type="button"
             onClick={() => void beginGeometry()}
-            disabled={!frontPhoto || !backPhoto || !matConfirmations.FRONT || !matConfirmations.BACK || working}
+            disabled={!frontPhoto || !backPhoto || working}
           >
             {working
               ? "Preparing…"
-              : frontPhoto && backPhoto && matConfirmations.FRONT && matConfirmations.BACK
+              : frontPhoto && backPhoto
                 ? workflowError
                   ? `Retry ${recaptureSide ? `${recaptureSide === "FRONT" ? "Front" : "Back"} ` : ""}set geometry →`
                   : recaptureSide
@@ -2799,7 +2827,7 @@ export function CaptureWorkspace({
                   ? recaptureSide
                     ? `Add replacement ${recaptureSide === "FRONT" ? "Front" : "Back"} photo to continue`
                     : "Add both photos to continue"
-                  : "Confirm both mats to continue"}
+                  : "Add both photos to continue"}
           </button>
         </div>
       ) : null}
@@ -2816,15 +2844,16 @@ export function CaptureWorkspace({
           imageUrl={activeGeometry.sourceUrl}
           side={activeSide}
           proposedQuad={activeGeometry.corners}
-          automaticPlacement={activeGeometry.automaticGeometry}
+          placement={activeGeometry.geometryPlacement}
           diagnostic={activeGeometry.geometryDiagnostic}
           cornerShape={cornerShape}
           onQuadChange={(corners) => activeSide === "FRONT"
-            ? setFront((current) => current ? { ...current, corners } : current)
-            : setBack((current) => current ? { ...current, corners } : current)}
+            ? setFront((current) => current ? { ...current, corners, automaticGeometry: false, geometryPlacement: "HUMAN_EDITED" } : current)
+            : setBack((current) => current ? { ...current, corners, automaticGeometry: false, geometryPlacement: "HUMAN_EDITED" } : current)}
           onCornerShapeChange={setCornerShape}
           onContinue={() => void confirmGeometry(activeSide)}
           onImageError={setWorkflowError}
+          onRefreshImage={() => void refreshOriginalImage(activeSide)}
           disabled={working}
         />
         </>
@@ -2836,7 +2865,7 @@ export function CaptureWorkspace({
             <span>CARD MAP · ACTION REQUIRED</span>
             <h2>{interruptionFailureEvidence.map(({ side }) => side).join(" + ")} registration is unresolved.</h2>
           </header>
-          <p role="alert">Resolve each listed side, or explicitly continue without any Card Map.</p>
+          <p role="alert">Retry each listed side, or explicitly continue through human review without applying the failed map.</p>
           <p>
             Any completed sibling registration and valid anchor diagnostics are retained provisionally.
             No Card Map side is authoritative until Front + Back both validate.
@@ -2863,14 +2892,10 @@ export function CaptureWorkspace({
               )}
             </div>
           ))}
-          <p>
-            Continue without Card Map abandons all unresolved sides: {interruptionFailureEvidence.map(({ side }) => side).join(" + ")}.
-          </p>
-          <div className={styles.interruptionActions}>
-            <button type="button" onClick={continueWithoutCardMap} disabled={working}>
-              Continue without Card Map
-            </button>
-          </div>
+          <p>The map remains unapplied unless every side validates. Human review is a separate, durable operator decision.</p>
+          <button type="button" onClick={() => void continueRegistrationWithoutMap()} disabled={working}>
+            CONTINUE WITHOUT CARD MAP · HUMAN REVIEW
+          </button>
         </section>
       ) : null}
 
@@ -2886,7 +2911,10 @@ export function CaptureWorkspace({
                 <span>{evidence.requestId ? `Request ${evidence.requestId}` : "No HTTP request ID was returned."}</span>
               </div>
             ))}
-            <p>Continue without Card Map abandons all unresolved sides: {rescueFailureEvidence.map(({ side }) => side).join(" + ")}.</p>
+            <p>Correct every unresolved side. The exact map remains blocked until Front + Back both validate.</p>
+            <button type="button" onClick={() => void continueRegistrationWithoutMap()} disabled={working}>
+              CONTINUE WITHOUT CARD MAP · HUMAN REVIEW
+            </button>
           </section>
           <MapRegistrationRescue
             key={`${rescueSide}:${registrationRescue.failures[rescueSide]?.failureCode}`}
@@ -2903,17 +2931,6 @@ export function CaptureWorkspace({
               [rescueSide]: anchors,
             }))}
             onConfirm={(anchors) => confirmRegistrationRescue(rescueSide, anchors)}
-            onContinueManual={() => {
-              if (registrationActionInFlight.current) return;
-              registrationActionInFlight.current = true;
-              recordRegistrationDecision(
-                registrationRescue.continueDecisionId,
-                registrationRescue.operationId,
-                "CONTINUE_WITHOUT_CARD_MAP",
-                rescueFailureEvidence,
-              );
-              finishRegistrationRescue(registrationRescue.provisional, true);
-            }}
             onImageError={() => handlePreparedImageError(rescueSide, (rescueSide === "FRONT" ? front : back)?.rectifiedStorageKey)}
             onImageReady={() => markPreparedImageReady(rescueSide)}
             onRetryImage={() => retryPreparedImage(rescueSide, (rescueSide === "FRONT" ? front : back)?.rectifiedStorageKey)}
@@ -2939,7 +2956,7 @@ export function CaptureWorkspace({
         </section>
       ) : null}
 
-      {activeCentering?.rectifiedUrl && activeCentering.proposedCentering ? (
+      {activeCentering?.rectifiedUrl && activeCentering.proposedCentering !== undefined ? (
         <>
         <ColorGeometryStatus
           proposal={activeCentering.physicalColorGeometry}
@@ -2981,24 +2998,20 @@ export type { CaptureWorkspaceProps };
 
 function LegacyColorRecoveryControls({
   matColors,
-  matConfirmations,
   disabled,
   onMatColorChange,
-  onMatConfirm,
   onRecover,
 }: Readonly<{
   matColors: Readonly<Record<SpeedsterCardSide, SpeedsterMatColor>>;
-  matConfirmations: Readonly<Record<SpeedsterCardSide, boolean>>;
   disabled: boolean;
   onMatColorChange: (side: SpeedsterCardSide, matColor: SpeedsterMatColor) => void;
-  onMatConfirm: (side: SpeedsterCardSide, confirmed: boolean) => void;
   onRecover: () => void;
 }>) {
   return (
     <fieldset disabled={disabled}>
       <legend>Legacy draft Color Geometry recovery</legend>
       <p>
-        This v1 draft predates Color Geometry receipts. Choose and explicitly confirm each actual mat.
+        This v1 draft predates Color Geometry receipts. The mat label is retained only as diagnostic evidence; it cannot accept or reject corners.
         Recovery reads the existing original images only; it does not upload, recapture, rewrite prepared artifacts, move handles, or apply Card Map authority.
       </p>
       {(["FRONT", "BACK"] as const).map((side) => (
@@ -3015,20 +3028,11 @@ function LegacyColorRecoveryControls({
               <option value="MAGENTA">Magenta</option>
             </select>
           </label>
-          <label>
-            <input
-              type="checkbox"
-              aria-label={`Confirm preserved ${side === "FRONT" ? "Front" : "Back"} ${matColors[side]} mat`}
-              checked={matConfirmations[side]}
-              onChange={(event) => onMatConfirm(side, event.target.checked)}
-            />
-            Confirm the preserved {side === "FRONT" ? "Front" : "Back"} photo used this {matColors[side].toLowerCase()} mat
-          </label>
         </div>
       ))}
       <button
         type="button"
-        disabled={disabled || !matConfirmations.FRONT || !matConfirmations.BACK}
+        disabled={disabled}
         onClick={onRecover}
       >
         {disabled ? "Recovering Color evidence…" : "Recover Color evidence and reconfirm all four preserved quads"}
@@ -3051,13 +3055,35 @@ function ColorGeometryStatus({
   disabled?: boolean;
 }>) {
   const accepted = proposal.outcome === "ACCEPTED";
+  const diagnostic = proposal.mode === "PHYSICAL_OUTER" ? proposal.diagnosticCandidate : null;
   const canRecapture = proposal.mode === "PHYSICAL_OUTER" && proposal.advisory && side && onChangeMatRecapture;
   return (
     <div className={`${accepted ? styles.colorAccepted : styles.colorFallback} ${styles.colorStatus}`} role="status">
       <span>
-        COLOR {proposal.mode.replace("_", " ")} · {proposal.outcome.replaceAll("_", " ")} · {proposal.matColor} MAT
-        {proposal.advisory ? ` — ${proposal.advisory.message}` : " — Draft requires human confirmation."}
+        {proposal.mode === "PHYSICAL_OUTER" && accepted
+          ? "PHYSICAL OUTLINE FOUND · REVIEW AND CONFIRM"
+          : `COLOR ${proposal.mode.replace("_", " ")} · ${proposal.outcome.replaceAll("_", " ")}`}
+        {proposal.advisory
+          ? ` · ${proposal.advisory.message}`
+          : proposal.mode === "PHYSICAL_OUTER"
+            ? " · Mat and percentage diagnostics never hide this outline."
+            : " · Draft requires human confirmation."}
       </span>
+      {diagnostic && !accepted ? (
+        <div className={styles.colorDiagnostic} role="note">
+          <strong>NOT AUTO-ACCEPTED · HUMAN REVIEW ONLY</strong>
+          <span>
+            Candidate rank {diagnostic.rank} · frame coverage {diagnostic.frameCoverage.toFixed(4)} · contour score {diagnostic.contourScore.toFixed(2)}
+          </span>
+          <ul>
+            {diagnostic.rejectedGates.map((gate) => (
+              <li key={`${gate.code}:${gate.side ?? "global"}`}>
+                {gate.side ? `${gate.side.toUpperCase()} · ` : ""}{gate.metric}: {gate.observed.toFixed(4)}; requires {gate.comparison === "GTE" ? "≥" : "<"} {gate.threshold.toFixed(4)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {proposal.mode === "PHYSICAL_OUTER" && proposal.advisory && !onChangeMatRecapture ? (
         <span>{recaptureLockedReason ?? "One-side mat recapture unlocks after both sides are prepared and registered so completed sibling evidence can be retained."}</span>
       ) : null}

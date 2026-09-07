@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { SetAuditStatus, SetDatasetType, prisma } from "@tenkings/database";
 import { normalizeSetLabel } from "@tenkings/shared";
-import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../../lib/server/admin";
+import { requireAdminSessionOrOperatorCapability, toErrorResponse, type AdminSession } from "../../../../../lib/server/admin";
 import {
   canPerformSetOpsRole,
   roleDeniedMessage,
@@ -64,7 +64,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   const attemptedSetId = normalizeSetLabel(typeof req.query.setId === "string" ? req.query.setId : "");
 
   try {
-    admin = await requireAdminSession(req);
+    admin = await requireAdminSessionOrOperatorCapability(req, "set-ops:batch-import");
 
     if (!canPerformSetOpsRole(admin, "reviewer")) {
       await writeSetOpsAuditEvent({

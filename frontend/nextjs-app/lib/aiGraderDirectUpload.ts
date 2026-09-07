@@ -1,4 +1,10 @@
-export type AiGraderDirectUploadPurpose = "ocr" | "publish" | "slab-photo" | "design-reference";
+export type AiGraderDirectUploadPurpose =
+  | "ocr"
+  | "publish"
+  | "slab-photo"
+  | "design-reference"
+  | "speedster-original"
+  | "speedster-slab-photo";
 export type AiGraderDirectUploadErrorCode = "invalid_plan" | "network" | "http";
 
 export class AiGraderDirectUploadError extends Error {
@@ -21,6 +27,12 @@ export class AiGraderDirectUploadError extends Error {
 
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/i;
 const SHA256_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
+
+export async function sha256BrowserBlob(blob: Blob) {
+  const bytes = await blob.arrayBuffer();
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
+}
 
 function checksumBase64ToHex(value: string) {
   const normalized = value.trim();
@@ -87,6 +99,7 @@ export async function uploadAiGraderArtifactDirectly(
     contentType: string;
     checksumSha256: string;
     body: BodyInit;
+    signal?: AbortSignal;
   },
   fetchImpl: typeof fetch = fetch,
 ) {
@@ -105,6 +118,10 @@ export async function uploadAiGraderArtifactDirectly(
     input.contentType,
     input.checksumSha256,
   );
+  if ((input.purpose === "speedster-original" || input.purpose === "speedster-slab-photo")
+    && uploadHeaders["x-amz-acl"] !== "private") {
+    throw new AiGraderDirectUploadError("invalid_plan");
+  }
   let response: Response;
   try {
     response = await fetchImpl(input.uploadUrl, {
@@ -113,6 +130,7 @@ export async function uploadAiGraderArtifactDirectly(
       credentials: "omit",
       headers: uploadHeaders,
       body: input.body,
+      signal: input.signal,
     });
   } catch {
     throw new AiGraderDirectUploadError("network");

@@ -1,7 +1,7 @@
 # Ten Kings Master Product Context
 
-last_verified_at: 2026-08-11
-verified_by: Codex from current code, Production runtime/API/database evidence, and the owner-approved atomic FAMILY + EXACT Card Map correction, in addition to the retained protected-main and Mathematical Calibration V1 evidence below
+last_verified_at: 2026-08-18
+verified_by: Codex from current code, Production runtime/API/database evidence, the owner-approved atomic FAMILY + EXACT Card Map correction, and the 2026-08-18 Color Geometry release-skew incident evidence, in addition to the retained protected-main and Mathematical Calibration V1 evidence below
 v2_blueprint_approved_at: 2026-08-06
 v2_blueprint_approved_by: Mark Thomas
 repo_root_workstation: C:\TenKings\repos\tenkings-rip-it-live
@@ -34,6 +34,8 @@ If docs conflict with evidence, update docs in the same session.
 - Do not duplicate the full blueprint into context or handoff files; link to the canonical document so there is only one editable copy.
 
 ## Product Summary
+
+- Color Geometry is forward-only on `speedster-color-geometry-v2`. Retired Color Geometry engine artifacts are historical audit evidence only: they cannot be parsed, signed, selected, deployed, or used as a runtime rollback. Any incompatible web/worker cutover requires a no-traffic maintenance gate and roll-forward repair to the approved current engine.
 Ten Kings is a hybrid physical-digital collectibles platform with:
 - Mystery packs and card-level QR identity (`tkp_...`, `tkc_...`)
 - Web + kiosk live rip workflows
@@ -146,7 +148,7 @@ Behavior:
 - Capture quality and card condition are separate in V1. Focus, clipping, exposure, darkness, common-mode/specular glare, and directional coverage select or exclude evidence, lower confidence, or require recapture; they never deduct physical-condition points or add sharpness points. Surface candidates are measured only on valid pixels after flat-field correction and common-mode removal. Calibrated illumination-pattern or glare overlap is shown as a limitation mask with zero card deduction, while supported directional defects remain measurable from alternate channels. Fully obscured evidence is insufficient, never a false 10.
 - Approximate Leimac direction vectors are transformed by the same authoritative deskew into normalized card coordinates. Missing or incoherent transform provenance suppresses directional normal/relief output; raw dark controls are not mixed with normalized pixels without registered coordinate and dimension parity.
 - Public defect findings produced by the normalized path use canonical `1200x1680` card pixels as their only projection source, convert once to bounded normalized fractions, and bind to the exact raw-source and normalized-artifact hashes. They must not be inverse-rotated through raw/display coordinates a second time. Legacy source-display projection is retained only for older non-normalized evidence; findings remain side-scoped and absent when candidates or coherent geometry are absent.
-- Failed or stale geometry remains unavailable. No manual geometry or fixture rectangle may substitute for automatic detection.
+- Failed or stale automatic geometry remains unavailable and no fixture rectangle or invented coordinates may substitute for detection. A visibly rendered, exact-source image may enter a separate explicit four-corner human-authoring state; those deliberate human points are authoritative and must never be represented as automatic geometry.
 - Do not claim five seconds per side from software/mock timing. The last supervised Dell control measured about `9442 ms` front and `9243 ms` back; image writes were the largest measured stage. A new hardware comparison requires Mark's explicit approval.
 - Stabilize prod `/admin/variant-ref-qa` behavior and counts
 - Ensure set/parallel label normalization is correct

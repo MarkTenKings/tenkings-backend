@@ -2,9 +2,10 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
-import { presignReadUrl, presignUploadUrl } from "../../../../../lib/server/storage";
+import { presignPrivateSpeedsterUploadUrl, presignReadUrl } from "../../../../../lib/server/storage";
 import { sanitizeSpeedsterUnitQuad } from "../../../../../lib/ai-grader-v2/geometry";
 import {
+  parsePersistedSpeedsterReviewFindings,
   parseSpeedsterReviewFindings,
   stripSpeedsterFindingPrivateFields,
 } from "../../../../../lib/ai-grader-v2/review-findings";
@@ -51,6 +52,11 @@ import {
   issueSpeedsterColorGeometryReceipt,
   type SpeedsterColorGeometryReceiptBinding,
 } from "../../../../../lib/server/speedsterColorGeometryAuthority";
+import {
+  recordSpeedsterPhysicalGeometryLessonScan,
+  SPEEDSTER_PHYSICAL_GEOMETRY_MAX_LESSONS,
+  type SpeedsterPhysicalGeometryLessonRow,
+} from "../../../../../lib/server/speedsterPhysicalGeometryLessons";
 import {
   isAuthorizedSpeedsterOriginalStorageKey,
   isAuthorizedSpeedsterPreparedStorageKeys,
@@ -238,6 +244,11 @@ type TraceEvidenceDependencies = {
   hashMapEvidence?: typeof hashSpeedsterMapStorageEvidence;
   loadRegistrationLessons?: typeof loadVerifiedSpeedsterRegistrationLessonCandidates;
   snapshotRegistrationEvidence?: typeof ensureSpeedsterRegistrationLessonEvidenceSnapshot;
+  loadPhysicalGeometryLessons?: (input: Readonly<{
+    createdByUserId: string;
+    mapId: string;
+    side: "FRONT" | "BACK";
+  }>) => Promise<readonly SpeedsterPhysicalGeometryLessonRow[]>;
 };
 
 const traceEvidenceDependencies: TraceEvidenceDependencies = {
@@ -246,7 +257,10 @@ const traceEvidenceDependencies: TraceEvidenceDependencies = {
     select: { capture: true, reviewedDefects: true },
   }),
   presignRead: presignReadUrl,
-  presignUpload: presignUploadUrl,
+  presignUpload: (storageKey, contentType) => presignPrivateSpeedsterUploadUrl({
+    storageKey,
+    contentType,
+  }),
   findOwnedMapSession: (sessionId, createdByUserId) => prisma.aiGraderV2Session.findFirst({
     where: { id: sessionId, createdByUserId },
     select: {
@@ -261,6 +275,51 @@ const traceEvidenceDependencies: TraceEvidenceDependencies = {
   hashMapEvidence: hashSpeedsterMapStorageEvidence,
   loadRegistrationLessons: loadVerifiedSpeedsterRegistrationLessonCandidates,
   snapshotRegistrationEvidence: ensureSpeedsterRegistrationLessonEvidenceSnapshot,
+  loadPhysicalGeometryLessons: async (input) => {
+    const rows = await prisma.aiGraderV2ColorGeometryEvidence.findMany({
+      where: {
+        createdByUserId: input.createdByUserId,
+        side: input.side,
+        mode: "PHYSICAL_OUTER",
+        outcome: "ACCEPTED",
+        proposalChanged: true,
+        session: {
+          is: {
+            workflowState: "COMPLETED",
+            mapRevision: { is: { mapId: input.mapId } },
+          },
+        },
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: SPEEDSTER_PHYSICAL_GEOMETRY_MAX_LESSONS + 1,
+      select: {
+        id: true,
+        sessionId: true,
+        side: true,
+        mode: true,
+        matColor: true,
+        outcome: true,
+        engineVersion: true,
+        policyProvenance: true,
+        sourceImageSha256: true,
+        proposal: true,
+        confirmedQuad: true,
+        proposalChanged: true,
+        createdAt: true,
+        session: { select: { mapRevisionId: true, mapRevision: { select: { mapId: true } } } },
+      },
+    });
+    return rows.map(({ session, ...row }) => {
+      if (!session.mapRevisionId || session.mapRevision?.mapId !== input.mapId) {
+        throw new Error("Physical geometry lesson source lost its exact map binding.");
+      }
+      return {
+        ...row,
+        mapId: session.mapRevision.mapId,
+        mapRevisionId: session.mapRevisionId,
+      };
+    });
+  },
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -293,15 +352,11 @@ export function parseSpeedsterMapRegistrationOrchestration(value: unknown) {
 export function resolveSpeedsterMapRegistrationOrchestration(
   value: unknown,
   mode: "AUTOMATIC" | "HUMAN_RESCUE",
-  requestId: string,
+  _requestId: string,
 ) {
-  if (value === undefined) return {
-    operationId: requestId,
-    attemptNumber: mode === "HUMAN_RESCUE" ? 2 : 1,
-    trigger: mode === "HUMAN_RESCUE" ? "HUMAN_RESCUE" as const : "INITIAL" as const,
-    successfulSiblingPreservedAtAttemptStart: false,
-    orchestrationMetadataSource: "SERVER_STALE_CLIENT_COMPATIBILITY" as const,
-  };
+  if (value === undefined) {
+    throw new Error("This Speedster client is stale. Refresh the page before current-engine Card Map registration; no compatibility geometry was synthesized.");
+  }
   const orchestration = parseSpeedsterMapRegistrationOrchestration(value);
   if ((mode === "HUMAN_RESCUE") !== (orchestration.trigger === "HUMAN_RESCUE")
     || (orchestration.trigger === "INITIAL" && (
@@ -319,9 +374,18 @@ export function sanitizeSpeedsterGeometryPayload(
   expected?: Readonly<{ mode: SpeedsterColorGeometryMode; matColor: SpeedsterMatColor }>,
 ): unknown {
   if (!isRecord(payload)) return payload;
-  const corners = sanitizeSpeedsterUnitQuad(payload.corners);
+  if (!Object.prototype.hasOwnProperty.call(payload, "corners")) {
+    throw new Error("Speedster physical geometry omitted its corner authority.");
+  }
+  const corners = payload.corners === null ? null : sanitizeSpeedsterUnitQuad(payload.corners);
+  if (payload.corners !== null && !corners) {
+    throw new Error("Speedster physical geometry returned an invalid perimeter quad.");
+  }
   if (!expected) return { ...payload, corners };
   const colorGeometry = parseSpeedsterColorGeometryProposal(payload.colorGeometry, expected);
+  if ((colorGeometry.outcome === "ACCEPTED") !== Boolean(corners)) {
+    throw new Error("Speedster physical geometry corners contradict the Color outcome authority.");
+  }
   if (colorGeometry.outcome === "ACCEPTED"
     && JSON.stringify(corners) !== JSON.stringify(colorGeometry.proposal)) {
     throw new Error("Speedster physical geometry does not match its accepted color proposal.");
@@ -338,8 +402,8 @@ export function sanitizeSpeedsterPreparePayload(
   expected: Readonly<{ matColor: SpeedsterMatColor }>,
 ): unknown {
   if (!isRecord(payload)) return payload;
-  const borders = sanitizeSpeedsterUnitQuad(payload.borders);
-  if (!borders) throw new Error("Speedster prepare returned malformed centering geometry.");
+  const borders = payload.borders === null ? null : sanitizeSpeedsterUnitQuad(payload.borders);
+  if (payload.borders !== null && !borders) throw new Error("Speedster prepare returned malformed centering geometry.");
   const colorGeometry = parseSpeedsterColorGeometryProposal(payload.colorGeometry, {
     mode: "PRINTED_FRAME",
     matColor: expected.matColor,
@@ -347,6 +411,9 @@ export function sanitizeSpeedsterPreparePayload(
   if (colorGeometry.outcome === "ACCEPTED"
     && JSON.stringify(borders) !== JSON.stringify(colorGeometry.proposal)) {
     throw new Error("Speedster centering geometry does not match its accepted color proposal.");
+  }
+  if (colorGeometry.outcome !== "ACCEPTED" && borders !== null) {
+    throw new Error("Speedster prepare returned hidden centering fallback geometry.");
   }
   return {
     ...payload,
@@ -360,9 +427,10 @@ export function sanitizeSpeedsterColorGeometryPayload(
   expected: Readonly<{ mode: SpeedsterColorGeometryMode; matColor: SpeedsterMatColor }>,
 ): unknown {
   if (!isRecord(payload)) return payload;
+  const colorGeometry = parseSpeedsterColorGeometryProposal(payload.colorGeometry, expected);
   return {
     ...payload,
-    colorGeometry: parseSpeedsterColorGeometryProposal(payload.colorGeometry, expected),
+    colorGeometry,
   };
 }
 
@@ -643,6 +711,51 @@ export async function speedsterServiceBody(
       matColor,
     };
     if (action === "geometry") {
+      let physicalGeometryLessonContext: Readonly<{
+        targetSessionId: string;
+        createdByUserId: string;
+        side: "FRONT" | "BACK";
+        mapId: string;
+        activeMapRevisionId: string;
+        matColor: SpeedsterMatColor;
+        sourceImageSha256: string;
+        rows: readonly SpeedsterPhysicalGeometryLessonRow[];
+      }> | undefined;
+      const loadActiveMap = evidenceDeps.loadActiveMap ?? traceEvidenceDependencies.loadActiveMap;
+      const loadPhysicalGeometryLessons = evidenceDeps.loadPhysicalGeometryLessons
+        ?? (evidenceDeps === traceEvidenceDependencies
+          ? traceEvidenceDependencies.loadPhysicalGeometryLessons
+          : undefined);
+      if (loadActiveMap && loadPhysicalGeometryLessons
+        && (session.cardProfile === "SPORTS" || session.cardProfile === "POKEMON")) {
+        try {
+          const identity = canonicalizeSpeedsterSessionIdentity(session.cardProfile, session.identity);
+          const selectedMap = await loadActiveMap({ cardProfile: session.cardProfile, identity });
+          if (selectedMap) {
+            physicalGeometryLessonContext = {
+              targetSessionId: sessionId,
+              createdByUserId,
+              side,
+              mapId: selectedMap.revision.mapId,
+              activeMapRevisionId: selectedMap.revision.revisionId,
+              matColor,
+              sourceImageSha256,
+              rows: await loadPhysicalGeometryLessons({
+                createdByUserId,
+                mapId: selectedMap.revision.mapId,
+                side,
+              }),
+            };
+          }
+        } catch (error) {
+          console.warn(JSON.stringify({
+            event: "SPEEDSTER_PHYSICAL_GEOMETRY_LESSON_CONTEXT_UNAVAILABLE",
+            sessionId,
+            side,
+            reason: error instanceof Error ? error.message : "UNKNOWN",
+          }));
+        }
+      }
       return {
         ...base,
         colorGeometryAuthorityBinding: {
@@ -654,6 +767,7 @@ export async function speedsterServiceBody(
           matColor,
           physicalQuadSha256: null,
         },
+        ...(physicalGeometryLessonContext ? { physicalGeometryLessonContext } : {}),
       };
     }
     const corners = sanitizeSpeedsterUnitQuad(body.corners);
@@ -933,7 +1047,7 @@ export async function speedsterServiceBody(
     const persistedSide = capture && isRecord(capture[side.toLowerCase()])
       ? capture[side.toLowerCase()] as Record<string, unknown>
       : null;
-    const reviewedDefects = parseSpeedsterReviewFindings(owned.reviewedDefects ?? []);
+    const reviewedDefects = parsePersistedSpeedsterReviewFindings(owned.reviewedDefects ?? []);
     const findingId = proposal.findingId === null
       ? null
       : typeof proposal.findingId === "string" && proposal.findingId.trim()
@@ -1134,12 +1248,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const colorGeometryAuthorityBinding = isRecord(serviceRequestBody.colorGeometryAuthorityBinding)
       ? serviceRequestBody.colorGeometryAuthorityBinding
       : undefined;
+    const physicalGeometryLessonContext = isRecord(serviceRequestBody.physicalGeometryLessonContext)
+      ? serviceRequestBody.physicalGeometryLessonContext
+      : undefined;
     const {
       lessonEvidenceStorageKey: _privateLessonEvidenceStorageKey,
       lessonMapMatchKeyHash: _privateLessonMapMatchKeyHash,
       lessonMapScope: _privateLessonMapScope,
       lessonExactMatchKeyHash: _privateLessonExactMatchKeyHash,
       colorGeometryAuthorityBinding: _privateColorGeometryAuthorityBinding,
+      physicalGeometryLessonContext: _privatePhysicalGeometryLessonContext,
       ...upstreamServiceRequestBody
     } = serviceRequestBody;
     const upstreamInput = {
@@ -1288,6 +1406,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ...(safePayload as Record<string, unknown>),
         colorGeometryReceipt: issueSpeedsterColorGeometryReceipt(receiptBinding),
       };
+      if (action === "geometry" && physicalGeometryLessonContext) {
+        try {
+          const evaluated = await recordSpeedsterPhysicalGeometryLessonScan(prisma, {
+            targetSessionId: physicalGeometryLessonContext.targetSessionId as string,
+            createdByUserId: physicalGeometryLessonContext.createdByUserId as string,
+            side: physicalGeometryLessonContext.side as "FRONT" | "BACK",
+            mapId: physicalGeometryLessonContext.mapId as string,
+            activeMapRevisionId: physicalGeometryLessonContext.activeMapRevisionId as string,
+            matColor: physicalGeometryLessonContext.matColor as SpeedsterMatColor,
+            sourceImageSha256: physicalGeometryLessonContext.sourceImageSha256 as string,
+            currentProposal: result as ReturnType<typeof parseSpeedsterColorGeometryProposal>,
+            rows: physicalGeometryLessonContext.rows as unknown as readonly SpeedsterPhysicalGeometryLessonRow[],
+          });
+          safePayload = {
+            ...(safePayload as Record<string, unknown>),
+            physicalGeometryLearning: evaluated.learning,
+          };
+        } catch (error) {
+          console.warn(JSON.stringify({
+            event: "SPEEDSTER_PHYSICAL_GEOMETRY_LESSON_APPLICATION_FAILED_CLOSED",
+            sessionId: requestedSessionId,
+            side: requestedSide,
+            reason: error instanceof Error ? error.message : "UNKNOWN",
+          }));
+          safePayload = {
+            ...(safePayload as Record<string, unknown>),
+            physicalGeometryLearningWarning: {
+              status: "UNAVAILABLE",
+              reasonCode: "LESSON_AUDIT_NOT_RECORDED",
+            },
+          };
+        }
+      }
     }
     if (action === "map-registration" && response.ok && req.body?.rescue === true) {
       const registration = safePayload as ReturnType<typeof parseSpeedsterMapRegistration>;

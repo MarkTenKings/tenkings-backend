@@ -59,6 +59,12 @@
   min-height: 58px;
 }
 
+.sides button:disabled,
+.complete:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
 @media (max-width: 720px) {
   .header { align-items: flex-start; flex-direction: column; }
   .complete { justify-self: stretch; }

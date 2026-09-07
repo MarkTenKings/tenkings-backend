@@ -2036,18 +2036,19 @@ test("mapped-source library groups current Family and Exact maps without consult
   const owned = await listSpeedsterMappedSourceCards("admin-1", {
     async findCurrentMaps() { return currentMaps; },
   });
-  assert.equal(owned.length, 1);
-  assert.equal(owned[0].sourceSessionId, SESSION_ID);
-  assert.deepEqual(owned[0].identity, identity);
-  assert.deepEqual(owned[0].revisions.map(({ scope }) => scope), ["EXACT", "FAMILY"]);
-  assert.deepEqual(owned[0].revisions.map(({ keyGeneration }) => keyGeneration), ["EXACT_FROZEN", "FAMILY_CURRENT"]);
-  assert.equal(owned[0].revisions[0].revisionHash, exactRevision.revisionHash);
-  assert.equal(owned[0].revisions[1].revisionHash, familyRevision.revisionHash);
+  assert.equal(owned.cards.length, 1);
+  assert.equal(owned.incidents.length, 0);
+  assert.equal(owned.cards[0].sourceSessionId, SESSION_ID);
+  assert.deepEqual(owned.cards[0].identity, identity);
+  assert.deepEqual(owned.cards[0].revisions.map(({ scope }) => scope), ["EXACT", "FAMILY"]);
+  assert.deepEqual(owned.cards[0].revisions.map(({ keyGeneration }) => keyGeneration), ["EXACT_FROZEN", "FAMILY_CURRENT"]);
+  assert.equal(owned.cards[0].revisions[0].revisionHash, exactRevision.revisionHash);
+  assert.equal(owned.cards[0].revisions[1].revisionHash, familyRevision.revisionHash);
 
   const hidden = await listSpeedsterMappedSourceCards("admin-2", {
     async findCurrentMaps() { return currentMaps; },
   });
-  assert.deepEqual(hidden, []);
+  assert.deepEqual(hidden, { cards: [], incidents: [] });
 
   const shared = await listSpeedsterMappedSourceCards("admin-2", {
     async findCurrentMaps() {
@@ -2060,7 +2061,7 @@ test("mapped-source library groups current Family and Exact maps without consult
       }));
     },
   });
-  assert.equal(shared.length, 1);
+  assert.equal(shared.cards.length, 1);
 });
 
 test("mapped-source library exposes legacy eligibility and deterministically prefers the live V2 Family revision", async () => {
@@ -2090,7 +2091,7 @@ test("mapped-source library exposes legacy eligibility and deterministically pre
     normalizedIdentity: v2Key,
     displayIdentity: legacyPokemonIdentity,
   })));
-  const cards = await listSpeedsterMappedSourceCards("admin-1", {
+  const library = await listSpeedsterMappedSourceCards("admin-1", {
     async findCurrentMaps() {
       return [legacy, v2].map((revision) => ({
         id: revision.mapId,
@@ -2100,8 +2101,9 @@ test("mapped-source library exposes legacy eligibility and deterministically pre
       }));
     },
   });
-  assert.equal(cards.length, 1);
-  assert.deepEqual(cards[0].revisions.map((revision) => ({
+  assert.equal(library.cards.length, 1);
+  assert.equal(library.incidents.length, 0);
+  assert.deepEqual(library.cards[0].revisions.map((revision) => ({
     generation: revision.keyGeneration,
     eligible: revision.runtimeEligible,
     layoutType: revision.layoutType,
@@ -2111,7 +2113,7 @@ test("mapped-source library exposes legacy eligibility and deterministically pre
   ]);
 });
 
-test("mapped-source library fails closed when current source identity diverges from immutable revision provenance", async () => {
+test("mapped-source library quarantines incoherent rows without hiding valid rows", async () => {
   const exactRevision = { ...record(), id: "exact-current" };
   const familyRevision = { ...record(familyPayload()), id: "family-current" };
   const sourceSession = {
@@ -2122,18 +2124,33 @@ test("mapped-source library fails closed when current source identity diverges f
     identity: { ...identity, playerName: "Corrected Player" },
   };
 
-  await assert.rejects(() => listSpeedsterMappedSourceCards("admin-1", {
+  const exactLibrary = await listSpeedsterMappedSourceCards("admin-1", {
     async findCurrentMaps() {
-      return [{
-        id: exactRevision.mapId,
-        matchKeyHash: exactRevision.matchKeyHash,
-        currentRevisionId: exactRevision.id,
-        currentRevision: { ...exactRevision, sourceSession },
-      }];
+      return [
+        {
+          id: exactRevision.mapId,
+          matchKeyHash: exactRevision.matchKeyHash,
+          currentRevisionId: exactRevision.id,
+          currentRevision: { ...exactRevision, sourceSession },
+        },
+        {
+          id: familyRevision.mapId,
+          matchKeyHash: familyRevision.matchKeyHash,
+          currentRevisionId: familyRevision.id,
+          currentRevision: {
+            ...familyRevision,
+            sourceSession: { ...sourceSession, identity },
+          },
+        },
+      ];
     },
-  }), /Pinned map does not apply/);
+  });
+  assert.equal(exactLibrary.cards.length, 1, "the valid Family row remains visible");
+  assert.equal(exactLibrary.incidents.length, 1);
+  assert.equal(exactLibrary.incidents[0].mapId, exactRevision.mapId);
+  assert.match(exactLibrary.incidents[0].message, /Pinned map does not apply/);
 
-  await assert.rejects(() => listSpeedsterMappedSourceCards("admin-1", {
+  const familyLibrary = await listSpeedsterMappedSourceCards("admin-1", {
     async findCurrentMaps() {
       return [{
         id: familyRevision.mapId,
@@ -2142,7 +2159,10 @@ test("mapped-source library fails closed when current source identity diverges f
         currentRevision: { ...familyRevision, sourceSession },
       }];
     },
-  }), /immutable revision provenance/);
+  });
+  assert.equal(familyLibrary.cards.length, 0);
+  assert.equal(familyLibrary.incidents.length, 1);
+  assert.match(familyLibrary.incidents[0].message, /immutable revision provenance/);
 });
 
 test("map API exposes the admin-only mapped-source library with no-store caching", async () => {
@@ -2159,7 +2179,7 @@ test("map API exposes the admin-only mapped-source library with no-store caching
     async requireAdminSession() { return { user: { id: "admin-1" } }; },
     async findSourceSession() { throw new Error("completed-card/session listing must not run"); },
     async loadActiveMap() { throw new Error("not used"); },
-    async listMappedCards(adminId) { listedFor = adminId; return cards; },
+    async listMappedCards(adminId) { listedFor = adminId; return { cards, incidents: [] }; },
     async listRevisions() { throw new Error("not used"); },
     async saveDualRevisions() { throw new Error("not used"); },
     async restoreRevision() { throw new Error("not used"); },
@@ -2170,7 +2190,7 @@ test("map API exposes the admin-only mapped-source library with no-store caching
   assert.equal(result.state.status, 200);
   assert.equal(result.state.headers["Cache-Control"], "no-store");
   assert.equal(listedFor, "admin-1");
-  assert.deepEqual(result.state.body, { cards });
+  assert.deepEqual(result.state.body, { cards, incidents: [] });
 });
 
 test("map API keeps mapped-source integrity failures no-store", async () => {

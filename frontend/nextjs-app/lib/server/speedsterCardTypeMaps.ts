@@ -239,6 +239,18 @@ export type SpeedsterMappedSourceCard = Readonly<{
   revisions: readonly SpeedsterMappedCardRevisionSummary[];
 }>;
 
+export type SpeedsterMappedSourceCardIncident = Readonly<{
+  mapId: string;
+  currentRevisionId: string | null;
+  code: string;
+  message: string;
+}>;
+
+export type SpeedsterMappedSourceCardList = Readonly<{
+  cards: readonly SpeedsterMappedSourceCard[];
+  incidents: readonly SpeedsterMappedSourceCardIncident[];
+}>;
+
 export type SpeedsterMappedSourceCardListDependencies = Readonly<{
   findCurrentMaps: () => Promise<readonly CurrentMappedCardRecord[]>;
 }>;
@@ -1351,7 +1363,7 @@ function assertHistoricalRevisionSourceIdentity(
 export async function listSpeedsterMappedSourceCards(
   adminId: string,
   deps: SpeedsterMappedSourceCardListDependencies = defaultMappedSourceCardListDependencies,
-): Promise<readonly SpeedsterMappedSourceCard[]> {
+): Promise<SpeedsterMappedSourceCardList> {
   const maps = await deps.findCurrentMaps();
   const cards = new Map<string, {
     sourceSessionId: string;
@@ -1361,76 +1373,86 @@ export async function listSpeedsterMappedSourceCards(
     lastMappedAt: string;
     revisions: SpeedsterMappedCardRevisionSummary[];
   }>();
+  const incidents: SpeedsterMappedSourceCardIncident[] = [];
 
   for (const map of maps) {
-    if (!map.currentRevisionId || !map.currentRevision) {
-      throw new SpeedsterMapIntegrityError("Card Map library encountered a missing current revision.");
-    }
-    const source = map.currentRevision.sourceSession;
-    if (source.createdByUserId !== adminId && source.workflowState !== "COMPLETED") continue;
-    if (source.cardProfile !== "SPORTS" && source.cardProfile !== "POKEMON") {
-      throw new SpeedsterMapIntegrityError("Card Map library source category is unsupported.");
-    }
-    if (source.workflowState !== "CAPTURED" && source.workflowState !== "COMPLETED") {
-      throw new SpeedsterMapIntegrityError("Card Map library source is not editable.");
-    }
-    if (map.currentRevisionId !== map.currentRevision.id || map.id !== map.currentRevision.mapId) {
-      throw new SpeedsterMapIntegrityError("Card Map library encountered an invalid current-revision relationship.");
-    }
-    const revision = validateSpeedsterLoadedMapRevision(map.currentRevision, {
-      matchKeyHash: map.matchKeyHash,
-      mapRevisionId: map.currentRevisionId,
-    });
-    if (revision.sourceSessionId !== source.id || revision.matchKey.category !== source.cardProfile) {
-      throw new SpeedsterMapIntegrityError("Card Map library revision provenance is inconsistent.");
-    }
-    let identity: SpeedsterSessionIdentity;
     try {
-      identity = canonicalizeSpeedsterSessionIdentity(source.cardProfile, source.identity);
-    } catch {
-      throw new SpeedsterMapIntegrityError("Card Map library source identity is malformed.");
+      if (!map.currentRevisionId || !map.currentRevision) {
+        throw new SpeedsterMapIntegrityError("Card Map library encountered a missing current revision.");
+      }
+      const source = map.currentRevision.sourceSession;
+      if (source.createdByUserId !== adminId && source.workflowState !== "COMPLETED") continue;
+      if (source.cardProfile !== "SPORTS" && source.cardProfile !== "POKEMON") {
+        throw new SpeedsterMapIntegrityError("Card Map library source category is unsupported.");
+      }
+      if (source.workflowState !== "CAPTURED" && source.workflowState !== "COMPLETED") {
+        throw new SpeedsterMapIntegrityError("Card Map library source is not editable.");
+      }
+      if (map.currentRevisionId !== map.currentRevision.id || map.id !== map.currentRevision.mapId) {
+        throw new SpeedsterMapIntegrityError("Card Map library encountered an invalid current-revision relationship.");
+      }
+      const revision = validateSpeedsterLoadedMapRevision(map.currentRevision, {
+        matchKeyHash: map.matchKeyHash,
+        mapRevisionId: map.currentRevisionId,
+      });
+      if (revision.sourceSessionId !== source.id || revision.matchKey.category !== source.cardProfile) {
+        throw new SpeedsterMapIntegrityError("Card Map library revision provenance is inconsistent.");
+      }
+      let identity: SpeedsterSessionIdentity;
+      try {
+        identity = canonicalizeSpeedsterSessionIdentity(source.cardProfile, source.identity);
+      } catch {
+        throw new SpeedsterMapIntegrityError("Card Map library source identity is malformed.");
+      }
+      assertHistoricalRevisionSourceIdentity(revision, source.cardProfile, identity);
+      if (!isDeepStrictEqual(revision.displayIdentity, identity)) {
+        throw new SpeedsterMapIntegrityError("Card Map library source identity does not match immutable revision provenance.");
+      }
+      const createdAt = revision.createdAt.toISOString();
+      const existing = cards.get(source.id) ?? {
+        sourceSessionId: source.id,
+        cardProfile: source.cardProfile,
+        workflowState: source.workflowState,
+        identity,
+        lastMappedAt: createdAt,
+        revisions: [],
+      };
+      existing.lastMappedAt = existing.lastMappedAt > createdAt ? existing.lastMappedAt : createdAt;
+      existing.revisions.push({
+        scope: speedsterMapScopeForKey(revision.matchKey),
+        keyGeneration: speedsterMapScopeForKey(revision.matchKey) === "EXACT"
+          ? "EXACT_FROZEN"
+          : revision.matchKey.category === "SPORTS"
+            ? "FAMILY_CURRENT"
+            : isSpeedsterPokemonFamilyKeyV2(revision.matchKey)
+              ? "FAMILY_V2"
+              : "FAMILY_LEGACY",
+        layoutType: isSpeedsterPokemonFamilyKeyV2(revision.matchKey) ? revision.matchKey.layoutType : null,
+        runtimeEligible: !(
+          speedsterMapScopeForKey(revision.matchKey) === "FAMILY"
+          && revision.matchKey.category === "POKEMON"
+          && !isSpeedsterPokemonFamilyKeyV2(revision.matchKey)
+        ),
+        mapId: revision.mapId,
+        revisionId: revision.revisionId,
+        version: revision.version,
+        revisionHash: revision.revisionHash,
+        mapSchemaVersion: revision.mapSchemaVersion,
+        filterPolicyVersion: revision.filterPolicyVersion,
+        createdAt,
+      });
+      cards.set(source.id, existing);
+    } catch (error) {
+      incidents.push({
+        mapId: map.id,
+        currentRevisionId: map.currentRevisionId,
+        code: error instanceof SpeedsterMapIntegrityError ? error.code : "CARD_MAP_LIBRARY_ROW_INVALID",
+        message: error instanceof Error ? error.message : "Card Map library row is invalid.",
+      });
     }
-    assertHistoricalRevisionSourceIdentity(revision, source.cardProfile, identity);
-    if (!isDeepStrictEqual(revision.displayIdentity, identity)) {
-      throw new SpeedsterMapIntegrityError("Card Map library source identity does not match immutable revision provenance.");
-    }
-    const createdAt = revision.createdAt.toISOString();
-    const existing = cards.get(source.id) ?? {
-      sourceSessionId: source.id,
-      cardProfile: source.cardProfile,
-      workflowState: source.workflowState,
-      identity,
-      lastMappedAt: createdAt,
-      revisions: [],
-    };
-    existing.lastMappedAt = existing.lastMappedAt > createdAt ? existing.lastMappedAt : createdAt;
-    existing.revisions.push({
-      scope: speedsterMapScopeForKey(revision.matchKey),
-      keyGeneration: speedsterMapScopeForKey(revision.matchKey) === "EXACT"
-        ? "EXACT_FROZEN"
-        : revision.matchKey.category === "SPORTS"
-          ? "FAMILY_CURRENT"
-          : isSpeedsterPokemonFamilyKeyV2(revision.matchKey)
-            ? "FAMILY_V2"
-            : "FAMILY_LEGACY",
-      layoutType: isSpeedsterPokemonFamilyKeyV2(revision.matchKey) ? revision.matchKey.layoutType : null,
-      runtimeEligible: !(
-        speedsterMapScopeForKey(revision.matchKey) === "FAMILY"
-        && revision.matchKey.category === "POKEMON"
-        && !isSpeedsterPokemonFamilyKeyV2(revision.matchKey)
-      ),
-      mapId: revision.mapId,
-      revisionId: revision.revisionId,
-      version: revision.version,
-      revisionHash: revision.revisionHash,
-      mapSchemaVersion: revision.mapSchemaVersion,
-      filterPolicyVersion: revision.filterPolicyVersion,
-      createdAt,
-    });
-    cards.set(source.id, existing);
   }
 
-  return [...cards.values()]
+  const validCards = [...cards.values()]
     .map((card) => ({
       ...card,
       revisions: card.revisions.sort((left, right) => (
@@ -1441,6 +1463,13 @@ export async function listSpeedsterMappedSourceCards(
       )),
     }))
     .sort((left, right) => right.lastMappedAt.localeCompare(left.lastMappedAt));
+  return {
+    cards: validCards,
+    incidents: incidents.sort((left, right) => (
+      left.mapId.localeCompare(right.mapId)
+      || (left.currentRevisionId ?? "").localeCompare(right.currentRevisionId ?? "")
+    )),
+  };
 }
 
 export async function loadScopedActiveSpeedsterMapRevision(

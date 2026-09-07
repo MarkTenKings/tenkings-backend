@@ -55,6 +55,7 @@ export type SpeedsterSmartMarkLearning = {
 };
 
 export type SpeedsterMemoryProposal = {
+  lessonKey?: string;
   lessonSessionId: string;
   lessonCompletionOrder: number;
   lessonProposalOrder: number;
@@ -65,6 +66,7 @@ export type SpeedsterMemoryProposal = {
 
 export type SpeedsterFindingProvenanceContributor = {
   proposalId: string;
+  rawCandidateId?: string;
   origin: SpeedsterDefectOrigin;
   sourceViewId: string;
   defectType: SpeedsterDefectType;
@@ -108,6 +110,8 @@ export type SpeedsterDefect = {
   learningAdjustment?: number;
   confidence: number;
   canonicalContour: readonly SpeedsterPoint[];
+  /** Exact detector-owned pixels. Contours are a display/legacy projection. */
+  detectorMask?: SpeedsterTraceRleV1;
   finalTrace?: SpeedsterTraceRleV1;
   traceSha256?: string;
   traceProvenance?: SpeedsterTraceProvenance;

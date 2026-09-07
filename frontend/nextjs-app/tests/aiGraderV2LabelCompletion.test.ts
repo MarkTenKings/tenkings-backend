@@ -306,6 +306,7 @@ test("additive schema seam defaults existing labels to HUMAN and uniquely links 
   assert.match(migration, /ADD COLUMN "source"[^\n]+NOT NULL DEFAULT 'HUMAN'/);
   assert.doesNotMatch(migration, /\bUPDATE\s+"HumanGradeLabel"/i);
   assert.match(endpoint, /if \(session\.workflowState !== "CAPTURED"\)/);
+  assert.match(endpoint, /parsePersistedSpeedsterReviewFindings\(session\.reviewedDefects\)/);
   assert.match(endpoint, /workflowState: "CAPTURED"/);
   const completionLock = endpoint.indexOf("FROM \"AiGraderV2Session\"");
   const authoritativeRead = endpoint.indexOf("const session = await tx.aiGraderV2Session.findFirst");

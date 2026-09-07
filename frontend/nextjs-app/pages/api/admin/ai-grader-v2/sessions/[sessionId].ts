@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, type Prisma } from "@tenkings/database";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import {
-  parseSpeedsterReviewFindings,
+  parsePersistedSpeedsterReviewFindings,
   stripSpeedsterTraceBodies,
 } from "../../../../../lib/ai-grader-v2/review-findings";
 import {
@@ -34,13 +35,24 @@ import {
 import {
   parseSpeedsterColorGeometryProposal,
   speedsterQuadsDiffer,
+  type SpeedsterColorGeometryEngineVersion,
   type SpeedsterColorGeometryMode,
+  type SpeedsterColorGeometryPolicyProvenance,
 } from "../../../../../lib/ai-grader-v2/color-geometry";
 import { sanitizeSpeedsterUnitQuad } from "../../../../../lib/ai-grader-v2/geometry";
 import {
   SpeedsterColorGeometryReceiptExpiredError,
   verifySpeedsterColorGeometryReceipt,
 } from "../../../../../lib/server/speedsterColorGeometryAuthority";
+import {
+  verifySpeedsterPhysicalGeometryLearningCapture,
+  type SpeedsterPhysicalGeometryLessonRow,
+} from "../../../../../lib/server/speedsterPhysicalGeometryLessons";
+import {
+  appendSpeedsterMapAuthorityEvidence,
+  speedsterMapAuthorityEvidenceFromCapture,
+  type SpeedsterMapAuthorityEvent,
+} from "../../../../../lib/ai-grader-v2/map-authority";
 
 const jsonObject = z.record(z.string(), z.unknown());
 const patchSchema = z
@@ -62,6 +74,7 @@ type PersistedSession = {
   publicReportSlug?: string | null;
   workflowState?: string;
   reviewedDefects?: unknown;
+  updatedAt?: Date;
   [key: string]: unknown;
 };
 
@@ -80,8 +93,8 @@ type ColorGeometryEvidenceRow = Readonly<{
   mode: SpeedsterColorGeometryMode;
   matColor: "BLACK" | "WHITE" | "MAGENTA";
   outcome: "ACCEPTED" | "INSUFFICIENT_EVIDENCE" | "NOT_APPLICABLE" | "ABSTAIN";
-  engineVersion: "speedster-color-geometry-v1";
-  policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED";
+  engineVersion: SpeedsterColorGeometryEngineVersion;
+  policyProvenance: SpeedsterColorGeometryPolicyProvenance;
   sourceImageStorageKey: string;
   sourceImageSha256: string;
   proposal?: Prisma.InputJsonValue;
@@ -110,7 +123,7 @@ type MapBindingValidationResult = Pick<
 > & Readonly<{
   appliedMap?: SpeedsterAppliedMapRevision | null;
   selectedMap?: SpeedsterAppliedMapRevision | null;
-  mapFailureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | null;
+  mapFailureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | "MAP_AUTHORITY_HUMAN_REVIEW" | null;
 }>;
 
 type MapBindingValidationDependencies = Readonly<{
@@ -152,16 +165,24 @@ export async function validateSpeedsterSubmittedMapBinding(
     identity: session.identity,
     capture,
   });
+  const authority = speedsterMapAuthorityEvidenceFromCapture(session.capture)?.current;
+  if (authority?.status === "HUMAN_REVIEW_WITHOUT_MAP") {
+    if (binding) {
+      throw new SpeedsterMapIntegrityError(
+        "This capture explicitly continued without a Card Map, but a map binding was submitted.",
+      );
+    }
+    return {
+      appliedMap: null,
+      selectedMap: null,
+      mapFailureCode: "MAP_AUTHORITY_HUMAN_REVIEW",
+    };
+  }
   let selectedMap: SpeedsterAppliedMapRevision | null;
   try {
     selectedMap = await deps.loadActiveMap({ cardProfile: source.cardProfile, identity: source.identity });
   } catch (error) {
-    if (binding) throw error;
-    return {
-      appliedMap: null,
-      selectedMap: null,
-      mapFailureCode: "MAP_LOOKUP_INTEGRITY_FAILED",
-    };
+    throw error;
   }
   if (!selectedMap) {
     if (binding) {
@@ -170,18 +191,14 @@ export async function validateSpeedsterSubmittedMapBinding(
     return { appliedMap: null, selectedMap: null };
   }
   if (!binding) {
-    return {
-      appliedMap: null,
-      selectedMap,
-      mapFailureCode: "MAP_REGISTRATION_NOT_APPLIED",
-    };
+    throw new SpeedsterMapIntegrityError(
+      "An eligible Card Map exists, but validated Front + Back registration was not submitted. Retry registration or explicitly record human review without the map.",
+    );
   }
   const revision = selectedMap.revision;
   if (revision.revisionId !== binding.revisionId) {
     throw new SpeedsterMapIntegrityError("Speedster map binding does not match the active revision.");
   }
-  // The loader has always supplied this field, but retaining the v1 default
-  // here keeps legacy/test callers from becoming a new capture blocker.
   const revisionFilterPolicyVersion = revision.filterPolicyVersion
     ?? SPEEDSTER_MAP_FILTER_POLICY_VERSION;
   if (revisionFilterPolicyVersion !== binding.filterPolicyVersion) {
@@ -295,6 +312,7 @@ type Dependencies = {
     createdByUserId: string,
     data: UpdateSessionData,
     colorGeometryEvidence: readonly ColorGeometryEvidenceRow[],
+    expectedUpdatedAt: Date | undefined,
   ) => Promise<PersistedSession | null>;
   hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
   verifyColorGeometryReceipt?: typeof verifySpeedsterColorGeometryReceipt;
@@ -304,17 +322,32 @@ type Dependencies = {
   > & Readonly<{
     appliedMap?: SpeedsterAppliedMapRevision | null;
     selectedMap?: SpeedsterAppliedMapRevision | null;
-    mapFailureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | null;
+    mapFailureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | "MAP_AUTHORITY_HUMAN_REVIEW" | null;
   }>>;
+  loadPhysicalLearningEvent?: (eventKey: string) => Promise<Readonly<{
+    eventKey: string;
+    sessionId: string;
+    createdByUserId: string;
+    category: string;
+    eventType: string;
+    details: unknown;
+  }> | null>;
+  loadPhysicalLearningEvidence?: (evidenceId: string) => Promise<(SpeedsterPhysicalGeometryLessonRow & Readonly<{
+    createdByUserId: string;
+    workflowState: string;
+  }>) | null>;
   recordInstrumentation?: (events: readonly SpeedsterInstrumentationEvent[]) => Promise<unknown>;
 };
 
 const dependencies: Dependencies = {
   requireAdminSession,
   findSession: (id, createdByUserId) => prisma.aiGraderV2Session.findFirst({ where: { id, createdByUserId } }),
-  updateSession: (id, createdByUserId, data, colorGeometryEvidence) => prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  updateSession: (id, createdByUserId, data, colorGeometryEvidence, expectedUpdatedAt) => prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    if (!(expectedUpdatedAt instanceof Date)) {
+      throw new Error("Speedster draft revision evidence is unavailable; capture was not changed.");
+    }
     const updated = await tx.aiGraderV2Session.updateMany({
-      where: { id, createdByUserId, workflowState: "DRAFT" },
+      where: { id, createdByUserId, workflowState: "DRAFT", updatedAt: expectedUpdatedAt },
       data,
     });
     if (updated.count !== 1) return null;
@@ -324,6 +357,55 @@ const dependencies: Dependencies = {
   hashEvidence: hashSpeedsterMapStorageEvidence,
   verifyColorGeometryReceipt: verifySpeedsterColorGeometryReceipt,
   validateMapBinding: validateSpeedsterSubmittedMapBinding,
+  loadPhysicalLearningEvent: (eventKey) => prisma.aiGraderV2InstrumentationEvent.findUnique({
+    where: { eventKey },
+    select: {
+      eventKey: true,
+      sessionId: true,
+      createdByUserId: true,
+      category: true,
+      eventType: true,
+      details: true,
+    },
+  }),
+  loadPhysicalLearningEvidence: async (evidenceId) => {
+    const evidence = await prisma.aiGraderV2ColorGeometryEvidence.findUnique({
+      where: { id: evidenceId },
+      select: {
+        id: true,
+        sessionId: true,
+        createdByUserId: true,
+        side: true,
+        mode: true,
+        matColor: true,
+        outcome: true,
+        engineVersion: true,
+        policyProvenance: true,
+        sourceImageSha256: true,
+        proposal: true,
+        confirmedQuad: true,
+        proposalChanged: true,
+        createdAt: true,
+        session: {
+          select: {
+            workflowState: true,
+            mapRevisionId: true,
+            mapRevision: { select: { mapId: true } },
+          },
+        },
+      },
+    });
+    const mapRevisionId = evidence?.session.mapRevisionId;
+    const mapId = evidence?.session.mapRevision?.mapId;
+    if (!evidence || !mapRevisionId || !mapId) return null;
+    const { session, ...row } = evidence;
+    return {
+      ...row,
+      mapId,
+      mapRevisionId,
+      workflowState: session.workflowState,
+    };
+  },
   recordInstrumentation: (events) => insertSpeedsterInstrumentationEvents(prisma, events),
 };
 
@@ -337,12 +419,16 @@ function safeSessionResponse(session: PersistedSession): PersistedSession {
   return {
     ...session,
     reviewedDefects: stripSpeedsterTraceBodies(
-      parseSpeedsterReviewFindings(session.reviewedDefects),
+      parsePersistedSpeedsterReviewFindings(session.reviewedDefects),
     ),
   };
 }
 
-function canonicalSpeedsterCapture(source: SpeedsterMapSourceSession): Prisma.InputJsonValue {
+function canonicalSpeedsterCapture(
+  source: SpeedsterMapSourceSession,
+  priorCapture: unknown,
+  finalAuthority: SpeedsterMapAuthorityEvent,
+): Prisma.InputJsonValue {
   const side = (value: SpeedsterMapSourceSession["front"]) => ({
     originalStorageKey: value.originalStorageKey,
     rectifiedStorageKey: value.rectifiedStorageKey,
@@ -354,10 +440,12 @@ function canonicalSpeedsterCapture(source: SpeedsterMapSourceSession): Prisma.In
     transform: value.transform,
     viewStorageKeys: value.viewStorageKeys,
   });
+  const authorityCapture = appendSpeedsterMapAuthorityEvidence(priorCapture, finalAuthority);
   return {
     cornerShape: source.cornerShape,
     front: side(source.front),
     back: side(source.back),
+    mapAuthority: authorityCapture.mapAuthority,
   } as Prisma.InputJsonValue;
 }
 
@@ -378,6 +466,9 @@ export async function parseSpeedsterColorGeometryCaptureRows(input: Readonly<{
   source: SpeedsterMapSourceSession;
   hashEvidence: typeof hashSpeedsterMapStorageEvidence;
   verifyReceipt: typeof verifySpeedsterColorGeometryReceipt;
+  finalMapRevisionId?: string | null;
+  loadPhysicalLearningEvent?: NonNullable<Dependencies["loadPhysicalLearningEvent"]>;
+  loadPhysicalLearningEvidence?: NonNullable<Dependencies["loadPhysicalLearningEvidence"]>;
 }>): Promise<readonly ColorGeometryEvidenceRow[]> {
   const rows: ColorGeometryEvidenceRow[] = [];
   for (const side of ["FRONT", "BACK"] as const) {
@@ -446,6 +537,31 @@ export async function parseSpeedsterColorGeometryCaptureRows(input: Readonly<{
         expectedConfirmed,
         `${side} ${mode}`,
       );
+      if (mode === "PRINTED_FRAME" && submitted.physicalGeometryLearning !== undefined) {
+        throw new SpeedsterMapIntegrityError(`${side} printed geometry cannot claim physical-outline learning.`);
+      }
+      let learningDiagnostics: Awaited<ReturnType<typeof verifySpeedsterPhysicalGeometryLearningCapture>> | undefined;
+      if (mode === "PHYSICAL_OUTER" && submitted.physicalGeometryLearning !== undefined) {
+        if (!input.loadPhysicalLearningEvent || !input.loadPhysicalLearningEvidence) {
+          throw new SpeedsterMapIntegrityError(`${side} physical geometry learning authority is unavailable.`);
+        }
+        try {
+          learningDiagnostics = await verifySpeedsterPhysicalGeometryLearningCapture({
+            learning: submitted.physicalGeometryLearning,
+            targetSessionId: input.sessionId,
+            createdByUserId: input.createdByUserId,
+            side,
+            finalMapRevisionId: input.finalMapRevisionId ?? null,
+            sourceImageSha256,
+            currentProposal: result,
+            confirmedQuad,
+            loadEvent: input.loadPhysicalLearningEvent,
+            loadEvidence: input.loadPhysicalLearningEvidence,
+          });
+        } catch {
+          throw new SpeedsterMapIntegrityError(`${side} physical geometry learning authority is invalid.`);
+        }
+      }
       rows.push({
         sessionId: input.sessionId,
         createdByUserId: input.createdByUserId,
@@ -465,6 +581,7 @@ export async function parseSpeedsterColorGeometryCaptureRows(input: Readonly<{
           sideEvidence: result.sideEvidence,
           ambiguity: result.ambiguity,
           advisory: result.advisory,
+          ...(learningDiagnostics ? { learning: learningDiagnostics } : {}),
         } as unknown as Prisma.InputJsonValue,
         proposalChanged: result.proposal ? speedsterQuadsDiffer(result.proposal, confirmedQuad) : null,
       });
@@ -509,14 +626,6 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
       });
       const hashEvidence = deps.hashEvidence ?? hashSpeedsterMapStorageEvidence;
       const verifyColorGeometryReceipt = deps.verifyColorGeometryReceipt ?? verifySpeedsterColorGeometryReceipt;
-      const colorGeometryEvidence = await parseSpeedsterColorGeometryCaptureRows({
-        sessionId,
-        createdByUserId: admin.user.id,
-        rawCapture: parsed.data.capture,
-        source: canonicalSource,
-        hashEvidence,
-        verifyReceipt: verifyColorGeometryReceipt,
-      });
       const validatedMapBinding = await deps.validateMapBinding?.(existing, parsed.data.mapBinding, parsed.data.capture);
       if (!validatedMapBinding) {
         throw new Error("Speedster map binding validation is unavailable.");
@@ -527,11 +636,57 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
         mapFailureCode = null,
         ...mapBinding
       } = validatedMapBinding;
+      const colorGeometryEvidence = await parseSpeedsterColorGeometryCaptureRows({
+        sessionId,
+        createdByUserId: admin.user.id,
+        rawCapture: parsed.data.capture,
+        source: canonicalSource,
+        hashEvidence,
+        verifyReceipt: verifyColorGeometryReceipt,
+        finalMapRevisionId: mapBinding.mapRevisionId ?? null,
+        loadPhysicalLearningEvent: deps.loadPhysicalLearningEvent,
+        loadPhysicalLearningEvidence: deps.loadPhysicalLearningEvidence,
+      });
+      const finalMapAuthority: SpeedsterMapAuthorityEvent = {
+        attemptId: randomUUID(),
+        recordedAt: new Date().toISOString(),
+        status: appliedMap
+          ? "APPLIED"
+          : mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+            ? "HUMAN_REVIEW_WITHOUT_MAP"
+            : "NO_MAP",
+        failureCode: mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+          ? speedsterMapAuthorityEvidenceFromCapture(existing.capture)?.current.failureCode ?? null
+          : null,
+        message: appliedMap
+          ? `Capture committed with validated Front + Back registration for immutable revision ${appliedMap.revision.revisionId}.`
+          : mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+            ? "Capture committed through the operator's durable human-review-without-map decision; the original failure remains in authority history."
+            : "Capture committed after the authoritative server lookup confirmed NO_MAP.",
+        revision: appliedMap ? {
+          revisionId: appliedMap.revision.revisionId,
+          revisionHash: appliedMap.revision.revisionHash,
+          version: appliedMap.revision.version,
+          scope: appliedMap.appliedScope,
+          name: appliedMap.appliedMapName,
+        } : mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+          ? speedsterMapAuthorityEvidenceFromCapture(existing.capture)?.current.revision ?? null
+          : null,
+        registrationOperationId: mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+          ? speedsterMapAuthorityEvidenceFromCapture(existing.capture)?.current.registrationOperationId ?? null
+          : null,
+        registrationFailures: mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+          ? speedsterMapAuthorityEvidenceFromCapture(existing.capture)?.current.registrationFailures ?? []
+          : [],
+        operatorDecisionId: mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+          ? speedsterMapAuthorityEvidenceFromCapture(existing.capture)?.current.operatorDecisionId ?? null
+          : null,
+      };
       const session = await deps.updateSession(sessionId, admin.user.id, {
         workflowState: "CAPTURED",
-        capture: canonicalSpeedsterCapture(canonicalSource),
+        capture: canonicalSpeedsterCapture(canonicalSource, existing.capture, finalMapAuthority),
         ...mapBinding,
-      }, colorGeometryEvidence);
+      }, colorGeometryEvidence, existing.updatedAt);
       if (!session) {
         return res.status(409).json({ message: "Speedster capture state changed before it could be saved" });
       }

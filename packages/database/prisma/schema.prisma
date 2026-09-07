@@ -3673,6 +3673,8 @@ model AiGraderV2CaptureDevice {
   activeSessionId String?
   uploadVersion   Int      @default(0)
   readyVersion    Int      @default(0)
+  uploadManifest  Json?    @db.JsonB
+  readyManifest   Json?    @db.JsonB
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

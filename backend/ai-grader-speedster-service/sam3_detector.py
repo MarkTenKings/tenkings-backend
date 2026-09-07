@@ -3,8 +3,13 @@
 import hashlib
 import json
 import logging
+import os
+import platform
+import re
+import subprocess
 import time
 from contextlib import nullcontext
+from copy import deepcopy
 from threading import Lock
 from typing import Optional, Protocol
 
@@ -34,21 +39,41 @@ from defect_math import (
 from sam_memory_v2 import (
     MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE,
     MEMORY_PROPOSAL_SIMILARITY_THRESHOLD,
+    all_exemplars_v2,
     decide_candidate_v2,
+    lesson_reference_v2,
     prepare_bank_v2,
     smart_mark_proposal_seeds_v2,
 )
-from trace_rle import decode_trace_rle
+from trace_rle import decode_trace_rle, encode_trace_rle
 
 
 SAM3_REPOSITORY_COMMIT = "96914d2425f90a64f45ca977c2b5165418099543"
+SAM3_REPOSITORY = "facebook/sam3"
 SAM3_CHECKPOINT = "sam3.pt"
+SAM3_CHECKPOINT_REVISION = "3c879f39826c281e95690f02c7821c4de09afae7"
+SAM3_CHECKPOINT_SHA256 = "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e"
+CUBLAS_WORKSPACE_CONFIG = ":4096:8"
+COMPILER_CONTRACT_VERSION = "speedster-host-compiler-v1"
+COMPILER_CC_PATH = "/usr/bin/gcc-14"
+COMPILER_PACKAGE_VERSION = "14.2.0-19"
+LIBC_DEV_PACKAGE_VERSION = "2.41-12+deb13u3"
+COMPILER_VERSION = "14.2.0"
+COMPILER_TARGET = "x86_64-linux-gnu"
+GPU_POLICY_VERSION = "speedster-rtx4090-only-v1"
+GPU_REQUIRED_NAME = "NVIDIA GeForce RTX 4090"
+GPU_REQUIRED_CAPABILITY = (8, 9)
+GPU_REQUIRED_COUNT = 1
 DETECTOR_VERSION = f"sam3-local-box-inspection-2mm@{SAM3_REPOSITORY_COMMIT}"
+DETECTOR_IDENTITY_VERSION = "speedster-detector-identity-v1"
+DETECTOR_PROMPT_VERSION = "sam3-box-and-smart-mark-point-v1"
+DETECTOR_FUSION_VERSION = "speedster-side-wide-memory-cap-v2"
+DETECTOR_MEASUREMENT_VERSION = "speedster-exact-canonical-mask-v1"
+DETECTOR_MEMORY_VERSION = "sam-memory-v2-lesson-verdict-v1"
 MIN_SAM_AREA_MM2 = 0.02
 MAX_SAM_AREA_MM2 = 120.0
 PX_PER_MM = GRID_WIDTH / 63.5
 FINGERPRINT_SIZE = 32
-LEARNING_SCALE = 0.06
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 SMART_MARK_PROMPT_MAX_POSITIVE_POINTS = 16
@@ -69,7 +94,421 @@ class MaskProcessor(Protocol):
         source_view_id: Optional[str] = None,
         session_id: Optional[str] = None,
         trace_id: Optional[str] = None,
+        candidate_evidence: Optional[dict] = None,
     ) -> list[dict]: ...
+
+
+DETECTOR_EVIDENCE_VERSION = "speedster-detector-evidence-v1"
+RAW_CANDIDATE_VERSION = "speedster-raw-detector-candidate-v1"
+MEMORY_DECISION_EVIDENCE_VERSION = "speedster-memory-decision-evidence-v1"
+LESSON_VERDICTS_VERSION = "speedster-memory-lesson-side-verdicts-v1"
+COLLECTION_CONFIDENCE_THRESHOLD = 0.5
+
+_LESSON_STATUS_PRIORITY = {"SKIPPED": 0, "REJECTED": 1, "USED": 2}
+_LESSON_REASON_PRIORITY = {
+    "SMART_MARK_PROPOSAL_RETAINED_FOR_MEASUREMENT": 0,
+    "CLASSIFIER_EXPLICIT_POSITIVE_PROTECTION": 1,
+    "CLASSIFIER_NEGATIVE_MAX": 2,
+    "CLASSIFIER_GENTLE_POSITIVE_MAX": 3,
+    "CLASSIFIER_EXPLICIT_POSITIVE_MARGIN_CHECK": 4,
+    "SMART_MARK_PROMPT_SIDE_CAP": 10,
+    "SMART_MARK_PROMPT_LOWER_CONFIDENCE": 11,
+    "SMART_MARK_PROMPT_BELOW_COLLECTION_THRESHOLD": 12,
+    "SMART_MARK_PROMPT_VETOED": 13,
+    "SMART_MARK_PROMPT_NO_VALID_MASK": 14,
+    "SMART_MARK_COMPONENT_TYPE_SIDE_CAP": 15,
+    "SMART_MARK_COMPONENT_IOU_DEDUP": 16,
+    "SMART_MARK_COMPONENT_INVALID_GEOMETRY": 17,
+    "SMART_MARK_SIMILARITY_BELOW_THRESHOLD": 18,
+    "NOT_SELECTED_AS_MAX_EXEMPLAR": 19,
+    "SELECTED_BUT_POLICY_BRANCH_INACTIVE": 20,
+    "NO_ALLOWED_MATERIAL_CELLS": 30,
+    "FEATURE_MAP_UNAVAILABLE": 31,
+    "CANDIDATE_FINGERPRINT_UNAVAILABLE": 32,
+    "SOURCE_VIEW_NOT_SCANNED": 33,
+    "NO_ELIGIBLE_RAW_CANDIDATE": 34,
+}
+
+
+def _lesson_observation(
+    lesson_key: str,
+    status: str,
+    reason_code: str,
+    *,
+    similarity: Optional[float] = None,
+    candidate_id: Optional[str] = None,
+) -> dict:
+    return {
+        "lessonKey": lesson_key,
+        "status": status,
+        "reasonCode": reason_code,
+        "similarity": (
+            round(max(0.0, min(1.0, float(similarity))), 6)
+            if similarity is not None
+            else None
+        ),
+        "candidateId": candidate_id,
+    }
+
+
+def _record_lesson_observations(
+    candidate_evidence: Optional[dict], observations: list[dict]
+) -> None:
+    if candidate_evidence is not None:
+        candidate_evidence.setdefault("_lessonObservations", []).extend(observations)
+
+
+def _finalize_lesson_verdicts(
+    prepared_bank,
+    observations: list[dict],
+    *,
+    side: str,
+    scanned_source_views: set[str],
+) -> dict:
+    by_lesson = {}
+    for observation in observations:
+        by_lesson.setdefault(observation["lessonKey"], []).append(observation)
+    verdicts = []
+    for exemplar in all_exemplars_v2(prepared_bank):
+        lesson = lesson_reference_v2(exemplar)
+        recorded = by_lesson.get(lesson["lessonKey"], [])
+        if not recorded:
+            reason_code = (
+                "NO_ELIGIBLE_RAW_CANDIDATE"
+                if exemplar.source_view_id in scanned_source_views
+                else "SOURCE_VIEW_NOT_SCANNED"
+            )
+            recorded = [
+                _lesson_observation(
+                    lesson["lessonKey"], "SKIPPED", reason_code
+                )
+            ]
+        terminal_status = max(
+            (entry["status"] for entry in recorded),
+            key=lambda status: _LESSON_STATUS_PRIORITY[status],
+        )
+        terminal_reasons = sorted(
+            {
+                entry["reasonCode"]
+                for entry in recorded
+                if entry["status"] == terminal_status
+            },
+            key=lambda reason: (_LESSON_REASON_PRIORITY[reason], reason),
+        )
+        similarities = [
+            entry["similarity"]
+            for entry in recorded
+            if entry["status"] == terminal_status
+            and entry.get("similarity") is not None
+        ]
+        candidate_ids = (
+            sorted(
+                {
+                    entry["candidateId"]
+                    for entry in recorded
+                    if entry.get("candidateId") is not None
+                    and entry["status"] == terminal_status
+                }
+            )
+            if terminal_status == "USED"
+            else []
+        )
+        verdicts.append(
+            {
+                "lesson": lesson,
+                "status": terminal_status,
+                "reasonCode": terminal_reasons[0],
+                "reasonCodes": terminal_reasons,
+                "observationCount": len(recorded),
+                "maxSimilarity": max(similarities) if similarities else None,
+                "candidateIds": candidate_ids,
+            }
+        )
+    return {
+        "version": LESSON_VERDICTS_VERSION,
+        "side": side,
+        "loadedLessonCount": len(verdicts),
+        "verdicts": verdicts,
+    }
+
+_GIT_SHA = re.compile(r"^[a-f0-9]{40}$")
+_SHA256 = re.compile(r"^[a-f0-9]{64}$")
+_OCI_DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
+
+
+def _required_environment(name: str, pattern: re.Pattern[str]) -> str:
+    value = os.environ.get(name, "").strip()
+    if not pattern.fullmatch(value):
+        raise RuntimeError(f"{name} is missing or is not an immutable identity")
+    return value
+
+
+def _required_text_environment(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value or len(value) > 240:
+        raise RuntimeError(f"{name} is missing or invalid")
+    return value
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as checkpoint:
+        for chunk in iter(lambda: checkpoint.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verified_checkpoint_path(download) -> tuple[str, str, str]:
+    """Resolve an immutable Hub revision and verify its exact checkpoint bytes."""
+
+    revision = os.environ.get(
+        "SAM3_CHECKPOINT_REVISION", SAM3_CHECKPOINT_REVISION
+    ).strip()
+    expected_sha256 = os.environ.get(
+        "SAM3_CHECKPOINT_SHA256", SAM3_CHECKPOINT_SHA256
+    ).strip()
+    if revision != SAM3_CHECKPOINT_REVISION or not _GIT_SHA.fullmatch(revision):
+        raise RuntimeError(
+            "SAM3_CHECKPOINT_REVISION does not match the approved immutable revision"
+        )
+    if expected_sha256 != SAM3_CHECKPOINT_SHA256 or not _SHA256.fullmatch(
+        expected_sha256
+    ):
+        raise RuntimeError(
+            "SAM3_CHECKPOINT_SHA256 does not match the approved checkpoint digest"
+        )
+    checkpoint_path = download(
+        repo_id=SAM3_REPOSITORY,
+        filename=SAM3_CHECKPOINT,
+        revision=revision,
+        token=True,
+    )
+    actual_sha256 = _sha256_file(checkpoint_path)
+    if actual_sha256 != expected_sha256:
+        raise RuntimeError(
+            "Pinned SAM 3 checkpoint SHA-256 mismatch: refusing to start"
+        )
+    return checkpoint_path, revision, actual_sha256
+
+
+def _validated_cublas_workspace_config() -> str:
+    value = os.environ.get("CUBLAS_WORKSPACE_CONFIG")
+    if value != CUBLAS_WORKSPACE_CONFIG:
+        raise RuntimeError(
+            "CUBLAS_WORKSPACE_CONFIG must be exactly :4096:8 before Python/CUDA startup"
+        )
+    return value
+
+
+def _command_output(command: list[str]) -> str:
+    try:
+        completed = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError(f"Runtime identity command failed: {command[0]}") from error
+    value = completed.stdout.strip()
+    if not value or len(value) > 120:
+        raise RuntimeError(f"Runtime identity command returned invalid output: {command[0]}")
+    return value
+
+
+def _validated_compiler_runtime() -> dict:
+    expected_environment = {
+        "CC": COMPILER_CC_PATH,
+        "SPEEDSTER_COMPILER_PACKAGE_VERSION": COMPILER_PACKAGE_VERSION,
+        "SPEEDSTER_LIBC_DEV_PACKAGE_VERSION": LIBC_DEV_PACKAGE_VERSION,
+        "SPEEDSTER_COMPILER_VERSION": COMPILER_VERSION,
+        "SPEEDSTER_COMPILER_TARGET": COMPILER_TARGET,
+    }
+    for name, expected in expected_environment.items():
+        if os.environ.get(name) != expected:
+            raise RuntimeError(
+                f"{name} does not match the immutable host compiler contract"
+            )
+    if not os.path.isfile(COMPILER_CC_PATH) or not os.access(
+        COMPILER_CC_PATH, os.X_OK
+    ):
+        raise RuntimeError(f"Configured compiler {COMPILER_CC_PATH} is not executable")
+
+    cc_version = _command_output([COMPILER_CC_PATH, "-dumpfullversion"])
+    cc_target = _command_output([COMPILER_CC_PATH, "-dumpmachine"])
+    cc_package = _command_output(
+        ["/usr/bin/dpkg-query", "-W", "-f=${Version}", "gcc-14"]
+    )
+    libc_dev_package = _command_output(
+        ["/usr/bin/dpkg-query", "-W", "-f=${Version}", "libc6-dev"]
+    )
+    if cc_version != COMPILER_VERSION:
+        raise RuntimeError("Configured compiler version does not match the image contract")
+    if cc_target != COMPILER_TARGET:
+        raise RuntimeError("Configured compiler target does not match the image contract")
+    if cc_package != COMPILER_PACKAGE_VERSION:
+        raise RuntimeError("Configured compiler package does not match the image contract")
+    if libc_dev_package != LIBC_DEV_PACKAGE_VERSION:
+        raise RuntimeError(
+            "Configured libc development package does not match the image contract"
+        )
+
+    return {
+        "contractVersion": COMPILER_CONTRACT_VERSION,
+        "ccPath": COMPILER_CC_PATH,
+        "packageName": "gcc-14",
+        "packageVersion": COMPILER_PACKAGE_VERSION,
+        "libcDevPackageName": "libc6-dev",
+        "libcDevPackageVersion": LIBC_DEV_PACKAGE_VERSION,
+        "version": COMPILER_VERSION,
+        "target": COMPILER_TARGET,
+        "ccSha256": _sha256_file(COMPILER_CC_PATH),
+        "validation": "IMMUTABLE_IMAGE_STARTUP_AND_PRE_TORCH",
+    }
+
+
+def _validated_gpu_runtime(torch) -> dict:
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is unavailable; RTX 4090 policy refuses to start")
+
+    gpu_count = int(torch.cuda.device_count())
+    if gpu_count != GPU_REQUIRED_COUNT:
+        raise RuntimeError(
+            f"Observed {gpu_count} CUDA GPUs; RTX 4090 policy requires exactly "
+            f"{GPU_REQUIRED_COUNT}"
+        )
+
+    device = int(torch.cuda.current_device())
+    device_properties = torch.cuda.get_device_properties(device)
+    capability = tuple(int(value) for value in torch.cuda.get_device_capability(device))
+    gpu_name = str(device_properties.name)
+    if gpu_name != GPU_REQUIRED_NAME:
+        raise RuntimeError(
+            f"Observed unsupported GPU {gpu_name!r}; RTX 4090 policy refuses to start"
+        )
+    if capability != GPU_REQUIRED_CAPABILITY:
+        observed_capability = ".".join(str(value) for value in capability)
+        required_capability = ".".join(
+            str(value) for value in GPU_REQUIRED_CAPABILITY
+        )
+        raise RuntimeError(
+            "Observed RTX 4090 capability "
+            f"{observed_capability}; policy requires {required_capability}"
+        )
+
+    capability_text = f"{capability[0]}.{capability[1]}"
+    return {
+        "policyVersion": GPU_POLICY_VERSION,
+        "required": {
+            "gpuName": GPU_REQUIRED_NAME,
+            "gpuCapability": (
+                f"{GPU_REQUIRED_CAPABILITY[0]}.{GPU_REQUIRED_CAPABILITY[1]}"
+            ),
+            "gpuCount": GPU_REQUIRED_COUNT,
+        },
+        "observed": {
+            "gpuName": gpu_name,
+            "gpuCapability": capability_text,
+            "gpuCount": gpu_count,
+            "currentDevice": device,
+        },
+        "validation": "OBSERVED_CUDA_RUNTIME_BEFORE_MODEL_LOAD",
+    }
+
+
+def _configure_determinism(torch, cublas_workspace_config: str) -> dict:
+    if cublas_workspace_config != CUBLAS_WORKSPACE_CONFIG:
+        raise RuntimeError("Unvalidated deterministic CuBLAS workspace configuration")
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    return {
+        "deterministicAlgorithms": bool(
+            torch.are_deterministic_algorithms_enabled()
+        ),
+        "cudnnDeterministic": bool(torch.backends.cudnn.deterministic),
+        "cudnnBenchmark": bool(torch.backends.cudnn.benchmark),
+        "allowTf32": bool(
+            torch.backends.cuda.matmul.allow_tf32
+            or torch.backends.cudnn.allow_tf32
+        ),
+        "evalMode": True,
+        "compile": False,
+        "autocastDtype": "bfloat16",
+        "cublasWorkspaceConfig": cublas_workspace_config,
+    }
+
+
+def _release_identity_inputs() -> dict:
+    return {
+        "sourceCommit": _required_environment(
+            "SPEEDSTER_SOURCE_COMMIT_SHA", _GIT_SHA
+        ),
+        "sourceTree": _required_environment("SPEEDSTER_SOURCE_TREE_SHA", _GIT_SHA),
+        "ociDigest": _required_environment("SPEEDSTER_OCI_IMAGE_DIGEST", _OCI_DIGEST),
+        "sourceRepository": _required_text_environment("SPEEDSTER_SOURCE_REPOSITORY"),
+        "buildId": _required_text_environment("SPEEDSTER_BUILD_ID"),
+        "imageReference": _required_text_environment("SPEEDSTER_OCI_IMAGE_REFERENCE"),
+    }
+
+
+def _runtime_detector_identity(
+    torch,
+    checkpoint_revision: str,
+    checkpoint_sha256: str,
+    determinism: dict,
+    release: dict,
+    compiler: dict,
+    gpu: dict,
+) -> dict:
+    cudnn_version = torch.backends.cudnn.version()
+    observed_gpu = gpu["observed"]
+    return {
+        "version": DETECTOR_IDENTITY_VERSION,
+        "detectorVersion": DETECTOR_VERSION,
+        "source": {
+            "repository": release["sourceRepository"],
+            "commitSha": release["sourceCommit"],
+            "treeSha": release["sourceTree"],
+        },
+        "runtime": {
+            "ociDigest": release["ociDigest"],
+            "ociDigestProvenance": "DEPLOYMENT_INJECTED",
+            "ociImageReference": release["imageReference"],
+            "buildId": release["buildId"],
+            "buildIdentityProvenance": "OCI_IMAGE_ENV",
+            "platform": f"{platform.system().lower()}/{platform.machine().lower()}",
+            "pythonVersion": platform.python_version(),
+            "frameworkVersion": f"sam3@{SAM3_REPOSITORY_COMMIT}",
+            "torchVersion": str(torch.__version__),
+            "cudaVersion": str(torch.version.cuda or "none"),
+            "cudnnVersion": str(cudnn_version if cudnn_version is not None else "none"),
+            "accelerator": observed_gpu["gpuName"],
+            "gpuName": observed_gpu["gpuName"],
+            "gpuCapability": observed_gpu["gpuCapability"],
+            "gpuCount": observed_gpu["gpuCount"],
+            "gpuPolicy": deepcopy(gpu),
+            "compiler": deepcopy(compiler),
+        },
+        "model": {
+            "name": "sam3-speedster",
+            "repository": SAM3_REPOSITORY,
+            "revision": checkpoint_revision,
+            "checkpointSha256": checkpoint_sha256,
+            "sourceCommitSha": SAM3_REPOSITORY_COMMIT,
+        },
+        "policy": {
+            "detectorVersion": DETECTOR_VERSION,
+            "promptVersion": DETECTOR_PROMPT_VERSION,
+            "fusionVersion": DETECTOR_FUSION_VERSION,
+            "measurementVersion": DETECTOR_MEASUREMENT_VERSION,
+            "memoryVersion": DETECTOR_MEMORY_VERSION,
+        },
+        "determinism": determinism,
+    }
 
 
 def _project_prompt_points_to_material(
@@ -333,11 +772,22 @@ def memory_proposal_candidates(
     image_width: int,
     image_height: int,
     allowed_mask: np.ndarray,
+    lesson_observations: Optional[list[dict]] = None,
 ) -> list[dict]:
     """Find tight explicit-Smart-Mark matches without another model or embedding."""
 
+    seeds = smart_mark_proposal_seeds_v2(prepared_bank, source_view_id)
+    observations = lesson_observations if lesson_observations is not None else []
     compact = _compact_normalized_feature_map(feature_map)
     if compact is None:
+        observations.extend(
+            _lesson_observation(
+                lesson_reference_v2(seed)["lessonKey"],
+                "SKIPPED",
+                "FEATURE_MAP_UNAVAILABLE",
+            )
+            for _defect_type, seed in seeds
+        )
         return []
     feature_height, feature_width = compact.shape[1:]
     allowed_cells = cv2.resize(
@@ -345,13 +795,22 @@ def memory_proposal_candidates(
         (feature_width, feature_height),
         interpolation=cv2.INTER_AREA,
     ) > 0
+    if not np.any(allowed_cells):
+        observations.extend(
+            _lesson_observation(
+                lesson_reference_v2(seed)["lessonKey"],
+                "SKIPPED",
+                "NO_ALLOWED_MATERIAL_CELLS",
+            )
+            for _defect_type, seed in seeds
+        )
+        return []
     card_x, card_y, card_width, card_height = cv2.boundingRect(
         (np.asarray(allowed_mask) > 0).astype(np.uint8)
     )
     matches = []
-    for defect_type, seed in smart_mark_proposal_seeds_v2(
-        prepared_bank, source_view_id
-    ):
+    for defect_type, seed in seeds:
+        lesson_key = lesson_reference_v2(seed)["lessonKey"]
         similarity = np.tensordot(
             np.asarray(seed.fingerprint, dtype=np.float32),
             compact,
@@ -363,6 +822,20 @@ def memory_proposal_candidates(
             & allowed_cells
         ).astype(np.uint8)
         component_count, labels = cv2.connectedComponents(thresholded, connectivity=8)
+        if component_count == 1:
+            finite_allowed = similarity[np.isfinite(similarity) & allowed_cells]
+            observations.append(
+                _lesson_observation(
+                    lesson_key,
+                    "REJECTED",
+                    "SMART_MARK_SIMILARITY_BELOW_THRESHOLD",
+                    similarity=(
+                        float(np.max(finite_allowed))
+                        if finite_allowed.size > 0
+                        else None
+                    ),
+                )
+            )
         for label in range(1, component_count):
             component = labels == label
             geometry = _memory_component_candidate(
@@ -371,6 +844,14 @@ def memory_proposal_candidates(
                 image_height=image_height,
             )
             if geometry is None:
+                observations.append(
+                    _lesson_observation(
+                        lesson_key,
+                        "REJECTED",
+                        "SMART_MARK_COMPONENT_INVALID_GEOMETRY",
+                        similarity=float(np.max(similarity[component])),
+                    )
+                )
                 continue
             core_x, core_y, core_width, core_height = geometry["coreBox"]
             component_similarity = float(np.max(similarity[component]))
@@ -386,6 +867,7 @@ def memory_proposal_candidates(
                     "defectType": defect_type,
                     "origin": "MEMORY",
                     "memoryProposal": {
+                        "lessonKey": lesson_key,
                         "lessonSessionId": seed.session_id,
                         "lessonCompletionOrder": seed.completion_order,
                         "lessonProposalOrder": seed.proposal_order,
@@ -414,6 +896,15 @@ def memory_proposal_candidates(
         defect_type = candidate["defectType"]
         count = per_type.get(defect_type, 0)
         if count >= MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE:
+            proposal = candidate["memoryProposal"]
+            observations.append(
+                _lesson_observation(
+                    proposal["lessonKey"],
+                    "REJECTED",
+                    "SMART_MARK_COMPONENT_TYPE_SIDE_CAP",
+                    similarity=proposal["similarity"],
+                )
+            )
             continue
         if any(
             _box_iou(
@@ -423,6 +914,15 @@ def memory_proposal_candidates(
             >= 0.80
             for existing in admitted_by_type.get(defect_type, ())
         ):
+            proposal = candidate["memoryProposal"]
+            observations.append(
+                _lesson_observation(
+                    proposal["lessonKey"],
+                    "REJECTED",
+                    "SMART_MARK_COMPONENT_IOU_DEDUP",
+                    similarity=proposal["similarity"],
+                )
+            )
             continue
         per_type[defect_type] = count + 1
         admitted_by_type.setdefault(defect_type, []).append(candidate)
@@ -430,7 +930,11 @@ def memory_proposal_candidates(
     return admitted
 
 
-def _cap_memory_candidates_per_side(candidates: list[dict]) -> list[dict]:
+def _cap_memory_candidates_per_side(
+    candidates: list[dict],
+    *,
+    lesson_observations: Optional[list[dict]] = None,
+) -> list[dict]:
     """Keep the best three memory matches per type across every side view."""
 
     memory_indices_by_type = {}
@@ -462,10 +966,32 @@ def _cap_memory_candidates_per_side(candidates: list[dict]) -> list[dict]:
                     duplicate = True
                     break
             if duplicate:
+                if lesson_observations is not None:
+                    proposal = candidate["memoryProposal"]
+                    if isinstance(proposal.get("lessonKey"), str):
+                        lesson_observations.append(
+                            _lesson_observation(
+                                proposal["lessonKey"],
+                                "REJECTED",
+                                "SMART_MARK_COMPONENT_IOU_DEDUP",
+                                similarity=proposal["similarity"],
+                            )
+                        )
+                continue
+            if len(distinct) >= MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE:
+                if lesson_observations is not None:
+                    proposal = candidate["memoryProposal"]
+                    if isinstance(proposal.get("lessonKey"), str):
+                        lesson_observations.append(
+                            _lesson_observation(
+                                proposal["lessonKey"],
+                                "REJECTED",
+                                "SMART_MARK_COMPONENT_TYPE_SIDE_CAP",
+                                similarity=proposal["similarity"],
+                            )
+                        )
                 continue
             distinct.append(index)
-            if len(distinct) >= MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE:
-                break
         admitted_indices.update(distinct)
     return [
         candidate
@@ -474,64 +1000,31 @@ def _cap_memory_candidates_per_side(candidates: list[dict]) -> list[dict]:
     ]
 
 
-def learning_adjustment(
-    fingerprint: Optional[list[float]], defect_type: str, learning_bank: Optional[dict]
-) -> float:
-    if fingerprint is None or not isinstance(learning_bank, dict):
-        return 0.0
-    types = learning_bank.get("types")
-    entry = types.get(defect_type) if isinstance(types, dict) else None
-    if not isinstance(entry, dict):
-        return 0.0
-
-    vector = np.asarray(fingerprint, dtype=np.float32)
-
-    def similarity(key: str) -> float:
-        prototype = entry.get(key)
-        if not isinstance(prototype, dict) or not prototype.get("count"):
-            return 0.0
-        values = prototype.get("sum")
-        if not isinstance(values, list) or len(values) != len(vector):
-            return 0.0
-        candidate = np.asarray(values, dtype=np.float32)
-        norm = float(np.linalg.norm(candidate))
-        if not np.isfinite(norm) or norm <= 0:
-            return 0.0
-        return max(0.0, float(np.dot(vector, candidate / norm)))
-
-    return round(
-        float(
-            np.clip(
-                LEARNING_SCALE
-                * (similarity("positive") - similarity("negative")),
-                -LEARNING_SCALE,
-                LEARNING_SCALE,
-            )
-        ),
-        6,
-    )
-
-
 class Sam3ImageProcessor:
     """Lazily loads one official SAM 3 model and reuses its image embedding."""
 
     def __init__(self):
         self._processor = None
+        self._detector_identity = None
         self._autocast = nullcontext
         self._lock = Lock()
 
     def load(self):
         if self._processor is None:
+            cublas_workspace_config = _validated_cublas_workspace_config()
+            compiler_runtime = _validated_compiler_runtime()
             import torch
+
+            gpu_runtime = _validated_gpu_runtime(torch)
             from huggingface_hub import hf_hub_download
             from sam3.model_builder import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
 
-            checkpoint_path = hf_hub_download(
-                repo_id="facebook/sam3",
-                filename=SAM3_CHECKPOINT,
-                token=True,
+            release_identity = _release_identity_inputs()
+            checkpoint_path, checkpoint_revision, checkpoint_sha256 = (
+                _verified_checkpoint_path(hf_hub_download)
             )
+            determinism = _configure_determinism(torch, cublas_workspace_config)
             model = build_sam3_image_model(
                 checkpoint_path=checkpoint_path,
                 load_from_HF=False,
@@ -545,7 +1038,21 @@ class Sam3ImageProcessor:
             self._autocast = lambda: torch.autocast(
                 device_type="cuda", dtype=torch.bfloat16
             )
+            self._detector_identity = _runtime_detector_identity(
+                torch,
+                checkpoint_revision,
+                checkpoint_sha256,
+                determinism,
+                release_identity,
+                compiler_runtime,
+                gpu_runtime,
+            )
         return self._processor
+
+    def detector_identity(self) -> dict:
+        if self._processor is None or self._detector_identity is None:
+            raise RuntimeError("Speedster detector identity is unavailable before startup")
+        return deepcopy(self._detector_identity)
 
     def propose_smart_mark_trace(
         self,
@@ -692,9 +1199,15 @@ class Sam3ImageProcessor:
         source_view_id: Optional[str],
         session_id: Optional[str],
         trace_id: Optional[str],
+        candidate_evidence: Optional[dict] = None,
     ) -> list[dict]:
         results = []
-        for candidate in candidates:
+        for prompt_index, candidate in enumerate(candidates):
+            prompt_evidence_start = (
+                len(candidate_evidence["rawCandidates"])
+                if candidate_evidence is not None
+                else 0
+            )
             x, y, width, height = candidate["box"]
             processor.reset_all_prompts(state)
             output = processor.add_geometric_prompt(
@@ -716,7 +1229,8 @@ class Sam3ImageProcessor:
                 raise RuntimeError("SAM 3 returned mismatched masks and scores")
 
             best = None
-            for mask, score in zip(masks, scores):
+            best_decision_record = None
+            for mask_index, (mask, score) in enumerate(zip(masks, scores)):
                 binary = np.asarray(mask) > 0
                 if binary.shape != (image_height, image_width):
                     binary = cv2.resize(
@@ -744,6 +1258,30 @@ class Sam3ImageProcessor:
                     continue
                 fingerprint = feature_fingerprint(feature_map, clipped)
                 raw_confidence = float(score)
+                canonical_mask = crop_detector_mask_to_card(clipped)
+                raw_mask = encode_trace_rle(canonical_mask)
+                evidence_ordinal = (
+                    len(candidate_evidence["rawCandidates"])
+                    if candidate_evidence is not None
+                    else 0
+                )
+                candidate_id_preimage = json.dumps(
+                    {
+                        "evidenceOrdinal": evidence_ordinal,
+                        "sourceViewId": source_view_id,
+                        "promptIndex": prompt_index,
+                        "maskIndex": mask_index,
+                        "defectType": candidate["defectType"],
+                        "origin": candidate.get("origin", "DETECTOR"),
+                        "maskSha256": raw_mask["sha256"],
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+                raw_candidate_id = (
+                    "raw-" + hashlib.sha256(candidate_id_preimage).hexdigest()[:24]
+                )
+                diagnostic = None
                 if prepared_v2 is not None:
                     decision = decide_candidate_v2(
                         prepared_v2,
@@ -772,26 +1310,83 @@ class Sam3ImageProcessor:
                             sort_keys=True,
                         ),
                     )
-                    if decision["veto"]:
-                        continue
-                    adjustment = decision["adjustment"]
-                else:
-                    adjustment = learning_adjustment(
-                        fingerprint, candidate["defectType"], learning_bank
+                    diagnostic = decision["diagnostic"]
+                    _record_lesson_observations(
+                        candidate_evidence,
+                        [
+                            {**observation, "candidateId": raw_candidate_id}
+                            for observation in decision["lessonObservations"]
+                        ],
                     )
+                    adjustment = decision["adjustment"]
+                    memory_action = diagnostic["action"]
+                    memory_policy = "SAM_MEMORY_V2"
+                else:
+                    adjustment = 0.0
+                    memory_action = "retained"
+                    memory_policy = "NONE"
                 adjusted_confidence = float(
                     np.clip(raw_confidence + adjustment, 0, 1)
                 )
-                if adjusted_confidence < 0.5:
+                if prepared_v2 is not None and decision["veto"]:
+                    disposition = "VETOED_BY_MEMORY"
+                elif adjusted_confidence < COLLECTION_CONFIDENCE_THRESHOLD:
+                    disposition = "SUPPRESSED_BELOW_COLLECTION_THRESHOLD"
+                else:
+                    disposition = "RETAINED_FOR_PROMPT_OUTPUT"
+
+                decision_record = {
+                    "version": MEMORY_DECISION_EVIDENCE_VERSION,
+                    "candidateId": raw_candidate_id,
+                    "policy": memory_policy,
+                    "action": memory_action,
+                    "adjustment": adjustment,
+                    "adjustedConfidence": adjusted_confidence,
+                    "collectionThreshold": COLLECTION_CONFIDENCE_THRESHOLD,
+                    "disposition": disposition,
+                    **({"diagnostic": diagnostic} if diagnostic is not None else {}),
+                }
+                if candidate_evidence is not None:
+                    candidate_evidence["rawCandidates"].append(
+                        {
+                            "version": RAW_CANDIDATE_VERSION,
+                            "candidateId": raw_candidate_id,
+                            "evidenceOrdinal": evidence_ordinal,
+                            "sourceViewId": source_view_id,
+                            "promptIndex": prompt_index,
+                            "maskIndex": mask_index,
+                            "promptBox": [x, y, width, height],
+                            "defectType": candidate["defectType"],
+                            "origin": candidate.get("origin", "DETECTOR"),
+                            "rawConfidence": raw_confidence,
+                            "featureFingerprint": fingerprint,
+                            "canonicalMask": raw_mask,
+                            **(
+                                {"memoryProposal": candidate["memoryProposal"]}
+                                if candidate.get("origin") == "MEMORY"
+                                else {}
+                            ),
+                        }
+                    )
+                    candidate_evidence["memoryDecisions"].append(decision_record)
+                if disposition in {
+                    "VETOED_BY_MEMORY",
+                    "SUPPRESSED_BELOW_COLLECTION_THRESHOLD",
+                }:
                     continue
                 if best is None or adjusted_confidence > best["rankingConfidence"]:
+                    if best_decision_record is not None:
+                        best_decision_record["disposition"] = (
+                            "NOT_SELECTED_LOWER_ADJUSTED_CONFIDENCE"
+                        )
                     best = {
                         "defectType": candidate["defectType"],
                         "confidence": raw_confidence,
                         "rankingConfidence": adjusted_confidence,
                         "learningAdjustment": adjustment,
                         "featureFingerprint": fingerprint,
-                        "mask": crop_detector_mask_to_card(clipped),
+                        "mask": canonical_mask,
+                        "rawCandidateId": raw_candidate_id,
                         **(
                             {
                                 "origin": "MEMORY",
@@ -801,8 +1396,32 @@ class Sam3ImageProcessor:
                             else {}
                         ),
                     }
+                    best_decision_record = decision_record
+                else:
+                    decision_record["disposition"] = (
+                        "NOT_SELECTED_LOWER_ADJUSTED_CONFIDENCE"
+                    )
             if best is not None:
                 results.append(best)
+            elif (
+                candidate_evidence is not None
+                and candidate.get("origin") == "MEMORY"
+                and len(candidate_evidence["rawCandidates"])
+                == prompt_evidence_start
+            ):
+                proposal = candidate["memoryProposal"]
+                if isinstance(proposal.get("lessonKey"), str):
+                    _record_lesson_observations(
+                        candidate_evidence,
+                        [
+                            _lesson_observation(
+                                proposal["lessonKey"],
+                                "REJECTED",
+                                "SMART_MARK_PROMPT_NO_VALID_MASK",
+                                similarity=proposal["similarity"],
+                            )
+                        ],
+                    )
         return results
 
     def scan(
@@ -814,6 +1433,7 @@ class Sam3ImageProcessor:
         source_view_id: Optional[str] = None,
         session_id: Optional[str] = None,
         trace_id: Optional[str] = None,
+        candidate_evidence: Optional[dict] = None,
     ) -> list[dict]:
         image_height, image_width = image.shape[:2]
         if allowed_mask is None:
@@ -821,6 +1441,10 @@ class Sam3ImageProcessor:
         if allowed_mask.shape != (image_height, image_width):
             raise ValueError("Detector material mask does not match the image")
         prepared_v2 = prepare_bank_v2(learning_bank)
+        if learning_bank is not None and (
+            prepared_v2 is None or prepared_v2.status != "calibrated"
+        ):
+            raise ValueError("Legacy or malformed Memory is not accepted by the current detector. Supply Memory V2 or no Memory.")
         rgb_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         with self._lock:
             processor = self.load()
@@ -837,6 +1461,13 @@ class Sam3ImageProcessor:
                             image_width=image_width,
                             image_height=image_height,
                             allowed_mask=allowed_mask,
+                            lesson_observations=(
+                                candidate_evidence.setdefault(
+                                    "_lessonObservations", []
+                                )
+                                if candidate_evidence is not None
+                                else None
+                            ),
                         )
                     )
                 return self._scan_prompt_candidates(
@@ -852,6 +1483,7 @@ class Sam3ImageProcessor:
                     source_view_id=source_view_id,
                     session_id=session_id,
                     trace_id=trace_id,
+                    candidate_evidence=candidate_evidence,
                 )
 
     def scan_side(
@@ -860,10 +1492,15 @@ class Sam3ImageProcessor:
         learning_bank: Optional[dict] = None,
         session_id: Optional[str] = None,
         trace_id: Optional[str] = None,
+        candidate_evidence: Optional[dict] = None,
     ) -> list[dict]:
         """Rank side-wide memory matches before at most three prompts per type."""
 
         prepared_v2 = prepare_bank_v2(learning_bank)
+        if learning_bank is not None and (
+            prepared_v2 is None or prepared_v2.status != "calibrated"
+        ):
+            raise ValueError("Legacy or malformed Memory is not accepted by the current detector. Supply Memory V2 or no Memory.")
         with self._lock:
             processor = self.load()
             with self._autocast():
@@ -888,6 +1525,13 @@ class Sam3ImageProcessor:
                             image_width=image_width,
                             image_height=image_height,
                             allowed_mask=allowed_mask,
+                            lesson_observations=(
+                                candidate_evidence.setdefault(
+                                    "_lessonObservations", []
+                                )
+                                if candidate_evidence is not None
+                                else None
+                            ),
                         )
                         if prepared_v2 is not None
                         else []
@@ -909,6 +1553,7 @@ class Sam3ImageProcessor:
                             source_view_id=view["sourceViewId"],
                             session_id=session_id,
                             trace_id=trace_id,
+                            candidate_evidence=candidate_evidence,
                         )
                         continue
                     prepared_views.append(
@@ -923,7 +1568,12 @@ class Sam3ImageProcessor:
                     )
 
                 selected_memory = _cap_memory_candidates_per_side(
-                    all_memory_candidates
+                    all_memory_candidates,
+                    lesson_observations=(
+                        candidate_evidence.setdefault("_lessonObservations", [])
+                        if candidate_evidence is not None
+                        else None
+                    ),
                 )
                 for view in prepared_views:
                     view_index = view["viewIndex"]
@@ -946,6 +1596,7 @@ class Sam3ImageProcessor:
                         source_view_id=view["sourceViewId"],
                         session_id=session_id,
                         trace_id=trace_id,
+                        candidate_evidence=candidate_evidence,
                     )
                     results_by_view[view_index] = scanned
                 return [
@@ -959,6 +1610,10 @@ _processor = Sam3ImageProcessor()
 
 def get_processor() -> MaskProcessor:
     return _processor
+
+
+def get_detector_identity() -> dict:
+    return _processor.detector_identity()
 
 
 def _mask_contours(mask: np.ndarray) -> list[list[dict[str, float]]]:
@@ -1041,7 +1696,10 @@ def _measurement_payload(
         * side_weight,
     )
     return {
-        **({"pixelCount": result["pixelCount"]} if exact else {}),
+        # New detector masks and human traces both own exact canonical pixels.
+        # The optional parser field remains backward-compatible for contour-era
+        # persisted findings.
+        "pixelCount": result["pixelCount"],
         "widthMm": result["widthMm"],
         "heightMm": result["heightMm"],
         "areaMm2": result["areaMm2"],
@@ -1098,6 +1756,7 @@ def _trace_source_record(
             "canonicalContour",
             "canonicalContours",
             "canonicalMask",
+            "detectorMask",
             "mask",
             "measurement",
             "measurementRegions",
@@ -1230,6 +1889,11 @@ def _to_speedster_defects(
                     if result.get("findingProvenance") is not None
                     else {}
                 ),
+                **(
+                    {"detectorMask": encode_trace_rle(result["canonicalMask"])}
+                    if result.get("canonicalMask") is not None
+                    else {}
+                ),
                 "canonicalContour": contour,
                 "sourceViewId": result["sourceViewId"],
                 "supportingViewIds": result["supportingViewIds"],
@@ -1268,6 +1932,13 @@ def detect_views(
 ) -> dict:
     detect_started = time.perf_counter()
     active_processor = processor or get_processor()
+    prepared_bank = prepare_bank_v2(learning_bank)
+    candidate_evidence = {
+        "version": DETECTOR_EVIDENCE_VERSION,
+        "rawCandidates": [],
+        "memoryDecisions": [],
+        "_lessonObservations": [],
+    }
     prepared_views = []
     view_diagnostics = []
     for view_id, image in views:
@@ -1308,6 +1979,7 @@ def detect_views(
             learning_bank,
             session_id=session_id,
             trace_id=trace_id,
+            candidate_evidence=candidate_evidence,
         )
     else:
         scanned_candidates = []
@@ -1320,6 +1992,7 @@ def detect_views(
                 source_view_id=view["sourceViewId"],
                 session_id=session_id,
                 trace_id=trace_id,
+                candidate_evidence=candidate_evidence,
             ):
                 scanned_candidates.append(
                     {**candidate, "sourceViewId": view["sourceViewId"]}
@@ -1328,6 +2001,67 @@ def detect_views(
 
     proposals = []
     capped_candidates = _cap_memory_candidates_per_side(scanned_candidates)
+    retained_raw_candidate_ids = {
+        candidate["rawCandidateId"]
+        for candidate in capped_candidates
+        if candidate.get("rawCandidateId") is not None
+    }
+    for decision in candidate_evidence["memoryDecisions"]:
+        if decision["disposition"] != "RETAINED_FOR_PROMPT_OUTPUT":
+            continue
+        decision["disposition"] = (
+            "RETAINED_FOR_MEASUREMENT"
+            if decision["candidateId"] in retained_raw_candidate_ids
+            else "SUPPRESSED_BY_SIDE_MEMORY_CAP"
+        )
+    raw_candidates_by_id = {
+        candidate["candidateId"]: candidate
+        for candidate in candidate_evidence["rawCandidates"]
+    }
+    memory_disposition_reasons = {
+        "VETOED_BY_MEMORY": "SMART_MARK_PROMPT_VETOED",
+        "SUPPRESSED_BELOW_COLLECTION_THRESHOLD": (
+            "SMART_MARK_PROMPT_BELOW_COLLECTION_THRESHOLD"
+        ),
+        "NOT_SELECTED_LOWER_ADJUSTED_CONFIDENCE": (
+            "SMART_MARK_PROMPT_LOWER_CONFIDENCE"
+        ),
+        "SUPPRESSED_BY_SIDE_MEMORY_CAP": "SMART_MARK_PROMPT_SIDE_CAP",
+        "RETAINED_FOR_MEASUREMENT": (
+            "SMART_MARK_PROPOSAL_RETAINED_FOR_MEASUREMENT"
+        ),
+    }
+    for decision in candidate_evidence["memoryDecisions"]:
+        candidate = raw_candidates_by_id[decision["candidateId"]]
+        proposal = candidate.get("memoryProposal")
+        if not proposal or not isinstance(proposal.get("lessonKey"), str):
+            continue
+        status = (
+            "USED"
+            if decision["disposition"] == "RETAINED_FOR_MEASUREMENT"
+            else "REJECTED"
+        )
+        candidate_evidence["_lessonObservations"].append(
+            _lesson_observation(
+                proposal["lessonKey"],
+                status,
+                memory_disposition_reasons[decision["disposition"]],
+                similarity=proposal["similarity"],
+                candidate_id=decision["candidateId"],
+            )
+        )
+    if prepared_bank is not None and prepared_bank.status == "calibrated":
+        scanned_source_views = {
+            view_id.split(":", 1)[-1]
+            for view_id, _image in views
+        }
+        candidate_evidence["lessonVerdicts"] = _finalize_lesson_verdicts(
+            prepared_bank,
+            candidate_evidence["_lessonObservations"],
+            side=side,
+            scanned_source_views=scanned_source_views,
+        )
+    candidate_evidence.pop("_lessonObservations", None)
     for proposal_index, candidate in enumerate(capped_candidates):
         proposals.append(
             {
@@ -1341,6 +2075,7 @@ def detect_views(
                 ),
                 "learningAdjustment": candidate.get("learningAdjustment", 0.0),
                 "featureFingerprint": candidate.get("featureFingerprint"),
+                "rawCandidateId": candidate.get("rawCandidateId"),
                 **(
                     {
                         "origin": "MEMORY",
@@ -1357,9 +2092,22 @@ def detect_views(
     measurement_duration_ms = round(
         (time.perf_counter() - measurement_started) * 1000, 3
     )
+    identity_reader = getattr(active_processor, "detector_identity", None)
+    try:
+        detector_identity = identity_reader() if callable(identity_reader) else None
+    except RuntimeError:
+        if active_processor is _processor:
+            raise
+        detector_identity = None
     return {
         "detectorVersion": DETECTOR_VERSION,
+        **(
+            {"detectorIdentity": detector_identity}
+            if detector_identity is not None
+            else {}
+        ),
         "defects": _to_speedster_defects(measured, side, "UNREVIEWED"),
+        "detectorEvidence": candidate_evidence,
         "instrumentation": {
             "views": view_diagnostics,
             "localizedCandidateCount": sum(
@@ -1368,6 +2116,10 @@ def detect_views(
             "scannedCandidateCount": len(scanned_candidates),
             "cappedCandidateCount": len(capped_candidates),
             "measuredRegionCount": len(measured),
+            "rawCandidateEvidenceCount": len(candidate_evidence["rawCandidates"]),
+            "memoryDecisionEvidenceCount": len(
+                candidate_evidence["memoryDecisions"]
+            ),
             "samMemoryMs": scan_duration_ms,
             "measurementMs": measurement_duration_ms,
             "detectViewsTotalMs": round(
@@ -1520,7 +2272,7 @@ def measure_marks(
         exact_marks.append((mark, mask))
 
     trace_findings = []
-    legacy_findings = []
+    detector_mask_findings = []
     frozen_findings = []
     trace_errors = []
     for finding in findings or []:
@@ -1551,6 +2303,14 @@ def measure_marks(
                 )
                 continue
             trace_findings.append((finding, mask))
+        elif finding.get("detectorMask") is not None:
+            try:
+                mask = decode_trace_rle(finding.get("detectorMask"))
+            except ValueError as error:
+                raise ValueError(
+                    "Existing detector mask authority is invalid"
+                ) from error
+            detector_mask_findings.append((finding, mask))
         elif finding.get("traceProvenance") is not None:
             frozen_findings.append(finding)
             trace_errors.append(
@@ -1560,9 +2320,9 @@ def measure_marks(
                 }
             )
         elif finding.get("canonicalContour") is not None:
-            # Contour-era active findings remain dual-readable and participate
-            # in the same overlap pass. Published history never calls /measure.
-            legacy_findings.append(finding)
+            raise ValueError(
+                "Contour-only historical findings cannot enter a current grade. Rerun the current detector to create exact mask evidence."
+            )
 
     trace_sources = {finding["id"]: finding for finding, _mask in trace_findings}
     for mark, _mask in exact_marks:
@@ -1628,10 +2388,15 @@ def measure_marks(
 
     proposals = [
         {
-            **finding,
+            **{
+                key: value
+                for key, value in finding.items()
+                if key not in {"canonicalContour", "canonicalMask", "measurement"}
+            },
+            "canonicalMask": mask,
             "confidence": float(finding["confidence"]),
         }
-        for finding in legacy_findings
+        for finding, mask in detector_mask_findings
     ] + [
         {
             **{
@@ -1686,23 +2451,6 @@ def measure_marks(
             )
         )
         appended_trace_ids.add(finding["id"])
-    for finding in legacy_findings:
-        if finding["id"] in measured_ids:
-            continue
-        defects.append(
-            {
-                **finding,
-                "measurement": {
-                    "widthMm": 0.0,
-                    "heightMm": 0.0,
-                    "areaMm2": 0.0,
-                    "zonePercent": 0.0,
-                    "multiplier": DEFECT_MULTIPLIERS[finding["defectType"]],
-                    "weightedAreaMm2": 0.0,
-                    "subgradeEffect": 0.0,
-                },
-            }
-        )
     defects.extend(frozen_findings)
     return {
         "defects": defects,

@@ -211,9 +211,9 @@ function draft(sessionId = "session-a", createdAtMs = 1_000): SpeedsterCaptureRe
 function colorProposal(mode: "PHYSICAL_OUTER" | "PRINTED_FRAME", matColor: "BLACK" | "WHITE") {
   return {
     version: "speedster-color-geometry-proposal-v1" as const,
-    engineVersion: "speedster-color-geometry-v1" as const,
+    engineVersion: "speedster-color-geometry-v2" as const,
     authority: "PROPOSER_ONLY" as const,
-    policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED" as const,
+    policyProvenance: "OWNER_APPROVED_VISIBLE_OUTLINE_V2" as const,
     mode,
     outcome: "ACCEPTED" as const,
     matColor,
@@ -615,14 +615,15 @@ test("durable stages reject impossible centering order and missing interruption 
   abandoned.registrationRecordedAtMs = {};
   abandoned.registrationFailureSides = { BACK: true };
   abandoned.mapRegistrationFailed = true;
-  assert.ok(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(abandoned), binding()));
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(abandoned), binding()), null,
+    "a loaded-map registration failure cannot resume in centering without exact map authority");
 
   const authorityAbandoned = mutableClone(abandoned);
   authorityAbandoned.registrationFailureSides = {};
   authorityAbandoned.mapRegistrationFailed = false;
   authorityAbandoned.mapAuthorityAbandoned = true;
-  assert.ok(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(authorityAbandoned), binding()),
-    "explicit map-authority abandonment is distinct from a registration attempt failure");
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(authorityAbandoned), binding()), null,
+    "a loaded-map draft cannot claim human review without preserved registration-failure evidence");
   authorityAbandoned.provisional.FRONT = mutableClone(interrupted.provisional.FRONT!);
   authorityAbandoned.front.mapRegistration = mutableClone(interrupted.front.mapRegistration!);
   authorityAbandoned.registrationRecordedAtMs.FRONT = authorityAbandoned.updatedAtMs - 1;
@@ -644,8 +645,8 @@ test("durable stages reject impossible centering order and missing interruption 
   };
   assert.ok(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(nonLoaded), noMapBinding));
   nonLoaded.mapAuthorityAbandoned = true;
-  assert.ok(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(nonLoaded), noMapBinding),
-    "explicitly abandoned old map authority remains durable when current lookup has no map");
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(nonLoaded), noMapBinding), null,
+    "NO_MAP is a server fact and cannot masquerade as an explicit human-review decision");
   nonLoaded.mapAuthorityAbandoned = false;
   nonLoaded.registrationFailureSides = { BACK: true };
   nonLoaded.mapRegistrationFailed = true;

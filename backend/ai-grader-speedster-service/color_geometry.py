@@ -1,7 +1,8 @@
 """Deterministic, proposer-only color geometry for Speedster capture.
 
-This module never accepts geometry on behalf of an operator.  It either supplies
-a four-side-supported draft or an honest non-accepted outcome with an advisory.
+This module never accepts geometry on behalf of an operator. It supplies the
+best complete four-corner draft the current engine found, or an honest
+non-accepted outcome when no complete outline exists.
 """
 
 from __future__ import annotations
@@ -15,8 +16,8 @@ import numpy as np
 from card_geometry import GRID_HEIGHT, GRID_WIDTH, PX_PER_MM, ranked_card_quads
 
 
-ENGINE_VERSION = "speedster-color-geometry-v1"
-POLICY_PROVENANCE = "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED"
+ENGINE_VERSION = "speedster-color-geometry-v2"
+POLICY_PROVENANCE = "OWNER_APPROVED_VISIBLE_OUTLINE_V2"
 AUTHORITY = "PROPOSER_ONLY"
 MODES = ("PHYSICAL_OUTER", "PRINTED_FRAME")
 OUTCOMES = ("ACCEPTED", "INSUFFICIENT_EVIDENCE", "NOT_APPLICABLE", "ABSTAIN")
@@ -26,6 +27,9 @@ SIDE_NAMES = ("top", "right", "bottom", "left")
 PHYSICAL_CONTRAST_FLOOR_DELTA_E = 18.0
 PHYSICAL_MINIMUM_SIDE_SUPPORT = 0.70
 PHYSICAL_AMBIGUOUS_RUNNER_UP_RATIO = 0.92
+PHYSICAL_SAMPLE_MAT_FRACTION = 0.60
+PHYSICAL_MAT_REFERENCE_MIN_DELTA_E = 8.0
+PHYSICAL_MAT_REFERENCE_MAX_DELTA_E = 18.0
 PRINTED_FRAME_CONTRAST_FLOOR_DELTA_E = 12.0
 PRINTED_FRAME_MINIMUM_SIDE_SUPPORT = 0.55
 PRINTED_FRAME_AMBIGUOUS_RUNNER_UP_RATIO = 0.90
@@ -59,14 +63,6 @@ def _advisory(code: str, recommended_mat: Optional[str], message: str) -> dict:
     return {"code": code, "recommendedMat": recommended_mat, "message": message}
 
 
-def _alternate_mat(mat_color: str) -> str:
-    return {
-        "BLACK": "WHITE",
-        "WHITE": "MAGENTA",
-        "MAGENTA": "WHITE",
-    }[mat_color]
-
-
 def _result(
     mode: str,
     mat_color: str,
@@ -78,6 +74,7 @@ def _result(
     runner_up_ratio: Optional[float] = None,
     ambiguous: bool = False,
     advisory: Optional[dict] = None,
+    diagnostic_candidate: Optional[dict] = None,
 ) -> dict:
     if mode not in MODES or outcome not in OUTCOMES or mat_color not in MAT_COLORS:
         raise ValueError("Color geometry result contains an unsupported enum value")
@@ -107,11 +104,17 @@ def _result(
             "ambiguous": ambiguous,
         },
         "advisory": advisory,
+        "diagnosticCandidate": diagnostic_candidate,
     }
 
 
 def engine_error_result(mode: str, mat_color: str) -> dict:
     """Return deterministic, non-authoritative evidence after an engine fault."""
+    message = (
+        "Color geometry could not evaluate this image. Place the physical-card handles manually."
+        if mode == "PHYSICAL_OUTER"
+        else "Color geometry could not evaluate this image. Place the four printed-frame corners manually."
+    )
     return _result(
         mode,
         mat_color,
@@ -119,31 +122,53 @@ def engine_error_result(mode: str, mat_color: str) -> dict:
         advisory=_advisory(
             "COLOR_ENGINE_ERROR",
             None,
-            "Color geometry could not evaluate this image. The unchanged legacy proposal remains active.",
+            message,
         ),
     )
 
 
-def _mat_pixel_support(image: np.ndarray, mat_color: str) -> float:
-    height, width = image.shape[:2]
-    band = max(3, round(min(height, width) * 0.025))
-    pixels = np.concatenate(
-        (
-            image[:band].reshape(-1, 3),
-            image[-band:].reshape(-1, 3),
-            image[:, :band].reshape(-1, 3),
-            image[:, -band:].reshape(-1, 3),
-        )
-    ).reshape(-1, 1, 3)
+def _mat_pixel_mask(pixels: np.ndarray, mat_color: str) -> np.ndarray:
+    pixels = np.asarray(pixels, dtype=np.uint8).reshape(-1, 1, 3)
     hsv = cv2.cvtColor(pixels, cv2.COLOR_BGR2HSV).reshape(-1, 3)
     hue, saturation, value = hsv[:, 0], hsv[:, 1], hsv[:, 2]
     if mat_color == "BLACK":
-        selected = value <= 95
-    elif mat_color == "WHITE":
-        selected = (value >= 155) & (saturation <= 90)
-    else:
-        selected = (hue >= 135) & (hue <= 175) & (saturation >= 95) & (value >= 65)
-    return float(np.mean(selected))
+        return value <= 95
+    if mat_color == "WHITE":
+        return (value >= 155) & (saturation <= 90)
+    return (hue >= 135) & (hue <= 175) & (saturation >= 95) & (value >= 65)
+
+
+def _photo_perimeter_mask(height: int, width: int) -> np.ndarray:
+    band = max(3, round(min(height, width) * 0.025))
+    perimeter = np.zeros((height, width), dtype=bool)
+    perimeter[:band] = True
+    perimeter[-band:] = True
+    perimeter[:, :band] = True
+    perimeter[:, -band:] = True
+    return perimeter
+
+
+def _mat_ownership_mask(image: np.ndarray, mat_color: str) -> tuple[np.ndarray, float]:
+    """Bind selected-mat pixels to this photo's actual perimeter appearance."""
+    height, width = image.shape[:2]
+    perimeter = _photo_perimeter_mask(height, width)
+    broad_class = _mat_pixel_mask(image, mat_color).reshape(height, width)
+    lab = _cie_lab(image)
+    reference_pixels = lab[perimeter & broad_class]
+    broad_support = float(np.mean(broad_class[perimeter]))
+    if broad_support < 0.55 or not len(reference_pixels):
+        return np.zeros((height, width), dtype=bool), broad_support
+
+    reference = np.median(reference_pixels, axis=0)
+    perimeter_distances = np.linalg.norm(reference_pixels - reference, axis=1)
+    tolerance = float(np.clip(
+        np.percentile(perimeter_distances, 95) + 3.0,
+        PHYSICAL_MAT_REFERENCE_MIN_DELTA_E,
+        PHYSICAL_MAT_REFERENCE_MAX_DELTA_E,
+    ))
+    distances = np.linalg.norm(lab - reference, axis=2)
+    owned = broad_class & (distances <= tolerance)
+    return owned, float(np.mean(owned[perimeter]))
 
 
 def _sample_patch(lab: np.ndarray, point: np.ndarray, radius: int = 2) -> np.ndarray:
@@ -153,8 +178,24 @@ def _sample_patch(lab: np.ndarray, point: np.ndarray, radius: int = 2) -> np.nda
     return np.median(lab[y - radius : y + radius + 1, x - radius : x + radius + 1], axis=(0, 1))
 
 
-def _quad_side_evidence(image: np.ndarray, quad: np.ndarray) -> dict:
-    lab = _cie_lab(cv2.GaussianBlur(image, (5, 5), 0))
+def _patch_mask_fraction(
+    mask: np.ndarray,
+    point: np.ndarray,
+    radius: int = 2,
+) -> float:
+    height, width = mask.shape[:2]
+    x = int(np.clip(round(float(point[0])), radius, width - radius - 1))
+    y = int(np.clip(round(float(point[1])), radius, height - radius - 1))
+    patch = mask[y - radius : y + radius + 1, x - radius : x + radius + 1]
+    return float(np.mean(patch))
+
+
+def _quad_side_evidence(
+    image: np.ndarray,
+    quad: np.ndarray,
+    mat_ownership: np.ndarray,
+    lab: np.ndarray,
+) -> dict:
     centroid = np.mean(quad, axis=0)
     distance = max(5.0, min(image.shape[:2]) * 0.009)
     evidence = {}
@@ -170,20 +211,36 @@ def _quad_side_evidence(image: np.ndarray, quad: np.ndarray) -> dict:
         values = []
         for along in np.linspace(0.12, 0.88, 33):
             edge = start + along * (end - start)
-            inside = _sample_patch(lab, edge + inward * distance)
-            outside = _sample_patch(lab, edge - inward * distance)
+            inside_point = edge + inward * distance
+            outside_point = edge - inward * distance
+            inside = _sample_patch(lab, inside_point)
+            outside = _sample_patch(lab, outside_point)
             difference = inside - outside
             values.append((
                 float(np.linalg.norm(difference)),
                 float(abs(difference[0])),
                 float(np.linalg.norm(difference[1:])),
+                _patch_mask_fraction(mat_ownership, outside_point),
+                _patch_mask_fraction(mat_ownership, inside_point),
             ))
         contrasts = np.asarray(values, dtype=np.float32)
+        contrast_supported = contrasts[:, 0] >= PHYSICAL_CONTRAST_FLOOR_DELTA_E
+        outside_is_mat = contrasts[:, 3] >= PHYSICAL_SAMPLE_MAT_FRACTION
+        inside_is_not_mat = contrasts[:, 4] <= 1.0 - PHYSICAL_SAMPLE_MAT_FRACTION
         evidence[side_name] = {
             "medianContrastDeltaE": round(float(np.median(contrasts[:, 0])), 3),
             "medianLightnessContrast": round(float(np.median(contrasts[:, 1])), 3),
             "medianChromaContrast": round(float(np.median(contrasts[:, 2])), 3),
-            "supportFraction": round(float(np.mean(contrasts[:, 0] >= PHYSICAL_CONTRAST_FLOOR_DELTA_E)), 4),
+            # The v1 support fraction now means physical ownership support, not
+            # merely a strong color transition.  An inner printed/art boundary
+            # can have excellent contrast but cannot pass unless its outside is
+            # the operator-selected mat and its inside is card material.
+            "supportFraction": round(float(np.mean(
+                contrast_supported & outside_is_mat & inside_is_not_mat
+            )), 4),
+            "contrastSupportFraction": round(float(np.mean(contrast_supported)), 4),
+            "outsideMatSupportFraction": round(float(np.mean(outside_is_mat)), 4),
+            "insideNonMatSupportFraction": round(float(np.mean(inside_is_not_mat)), 4),
             "sampleCount": int(len(contrasts)),
             "candidateCount": 1,
             "ambiguous": False,
@@ -194,110 +251,50 @@ def _quad_side_evidence(image: np.ndarray, quad: np.ndarray) -> dict:
 def propose_physical_outer(image: np.ndarray, mat_color: str) -> dict:
     if mat_color not in MAT_COLORS:
         raise ValueError("matColor must be BLACK, WHITE, or MAGENTA")
-    mat_support = _mat_pixel_support(image, mat_color)
-    if mat_support < 0.55:
-        return _result(
-            "PHYSICAL_OUTER",
-            mat_color,
-            "ABSTAIN",
-            advisory=_advisory(
-                "VERIFY_SELECTED_MAT",
-                None,
-                f"Only {mat_support:.0%} of the photo perimeter supports the selected {mat_color} mat.",
-            ),
-        )
-
     candidates = ranked_card_quads(image, limit=4)
     if not candidates:
-        recommended = _alternate_mat(mat_color)
         return _result(
             "PHYSICAL_OUTER",
             mat_color,
             "INSUFFICIENT_EVIDENCE",
             advisory=_advisory(
-                "SWITCH_MAT",
-                recommended,
-                "No complete physical-card candidate has four usable sides. Switch mats or place the handles manually.",
+                "NO_PHYSICAL_OUTLINE",
+                None,
+                "The current outline detector found no complete four-corner outline. Place the four corners manually.",
             ),
         )
 
-    best_score, best_quad = candidates[0]
+    mat_ownership, _mat_support = _mat_ownership_mask(image, mat_color)
+    contrast_lab = _cie_lab(cv2.GaussianBlur(image, (5, 5), 0))
+    evaluated = [
+        (
+            score,
+            quad,
+            _quad_side_evidence(image, quad, mat_ownership, contrast_lab),
+        )
+        for score, quad in candidates
+    ]
+    best_score, best_quad, sides = evaluated[0]
+
     runner_ratio = None
     ambiguous = False
-    if len(candidates) > 1 and best_score > 0:
+    if len(evaluated) > 1 and best_score > 0:
         runner_ratio, ambiguous = _canonical_ambiguity(
-            float(candidates[1][0] / best_score),
+            float(evaluated[1][0] / best_score),
             PHYSICAL_AMBIGUOUS_RUNNER_UP_RATIO,
         )
-    sides = _quad_side_evidence(image, best_quad)
     for side in sides.values():
-        side["candidateCount"] = len(candidates)
+        side["candidateCount"] = len(evaluated)
         side["ambiguous"] = ambiguous
-
-    if ambiguous:
-        return _result(
-            "PHYSICAL_OUTER",
-            mat_color,
-            "ABSTAIN",
-            sides=sides,
-            candidate_count=len(candidates),
-            runner_up_ratio=runner_ratio,
-            ambiguous=True,
-            advisory=_advisory(
-                "AMBIGUOUS_BOUNDARY",
-                _alternate_mat(mat_color),
-                "More than one physical boundary is similarly plausible. Switch mats or place the handles manually.",
-            ),
-        )
-
-    supported = all(
-        side["medianContrastDeltaE"] >= PHYSICAL_CONTRAST_FLOOR_DELTA_E
-        and side["supportFraction"] >= PHYSICAL_MINIMUM_SIDE_SUPPORT
-        for side in sides.values()
-    )
-    # Conservative owner rule: until live calibration exists, chroma alone is
-    # not enough to accept a dark Back on a black mat.
-    dark_edge_on_black = mat_color == "BLACK" and any(
-        side.get("medianLightnessContrast", 0.0) < 20.0
-        for side in sides.values()
-    )
-    if dark_edge_on_black:
-        return _result(
-            "PHYSICAL_OUTER",
-            mat_color,
-            "ABSTAIN",
-            sides=sides,
-            candidate_count=len(candidates),
-            runner_up_ratio=runner_ratio,
-            advisory=_advisory(
-                "DARK_EDGE_ON_BLACK",
-                "WHITE",
-                "A dark card edge is lightness-ambiguous on the black mat even when chroma differs. Switch to WHITE or place the handles manually.",
-            ),
-        )
-    if not supported:
-        recommended = _alternate_mat(mat_color)
-        return _result(
-            "PHYSICAL_OUTER",
-            mat_color,
-            "INSUFFICIENT_EVIDENCE",
-            sides=sides,
-            candidate_count=len(candidates),
-            runner_up_ratio=runner_ratio,
-            advisory=_advisory(
-                "SWITCH_MAT",
-                recommended,
-                "At least one physical edge is below the offline-estimate contrast/support floor. Switch mats or place the handles manually.",
-            ),
-        )
     return _result(
         "PHYSICAL_OUTER",
         mat_color,
         "ACCEPTED",
         proposal=best_quad,
         sides=sides,
-        candidate_count=len(candidates),
+        candidate_count=len(evaluated),
         runner_up_ratio=runner_ratio,
+        ambiguous=ambiguous,
     )
 
 
@@ -473,4 +470,13 @@ def serialize_proposal(result: dict, width: int, height: int) -> dict:
         if proposal is not None
         else None
     )
+    diagnostic_candidate = result.get("diagnosticCandidate")
+    if diagnostic_candidate is not None:
+        serialized["diagnosticCandidate"] = {
+            **diagnostic_candidate,
+            "quad": [
+                {"x": float(point[0] / width), "y": float(point[1] / height)}
+                for point in np.asarray(diagnostic_candidate["quad"])
+            ],
+        }
     return serialized

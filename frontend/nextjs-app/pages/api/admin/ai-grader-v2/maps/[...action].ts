@@ -28,7 +28,7 @@ import {
   type SpeedsterLoadedMapRevision,
   type SpeedsterAppliedMapRevision,
   type SpeedsterMapDualSaveResult,
-  type SpeedsterMappedSourceCard,
+  type SpeedsterMappedSourceCardList,
   type SpeedsterMapSaveResult,
   type SpeedsterMapSourceSession,
   type SpeedsterMapTrainingSideInput,
@@ -141,7 +141,7 @@ type Dependencies = Readonly<{
     identity: SpeedsterSessionIdentity;
   }>) => Promise<SpeedsterAppliedMapRevision | null>;
   listRevisions: (mapId: string, currentRevisionId: string) => Promise<Awaited<ReturnType<typeof listSpeedsterMapRevisionSummaries>>>;
-  listMappedCards?: (adminId: string) => Promise<readonly SpeedsterMappedSourceCard[]>;
+  listMappedCards?: (adminId: string) => Promise<SpeedsterMappedSourceCardList>;
   saveDualRevisions: (input: Readonly<{
     source: SpeedsterMapSourceSession;
     authorAdminId: string;
@@ -372,8 +372,8 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
       const action = requestedAction;
       if (req.method === "GET" && action === "list") {
         if (!deps.listMappedCards) throw new SpeedsterMapIntegrityError("Card Map library is unavailable.");
-        const cards = await deps.listMappedCards(admin.user.id);
-        return res.status(200).json({ cards });
+        const library = await deps.listMappedCards(admin.user.id);
+        return res.status(200).json(library);
       }
       if (req.method === "GET" && (action === "current" || action === "source")) {
         const sessionId = sessionIdFrom(req);
