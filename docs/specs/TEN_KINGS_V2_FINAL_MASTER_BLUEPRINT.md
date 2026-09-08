@@ -10,6 +10,18 @@
 
 This owner-approved document replaces the earlier Fable 5 draft as the current V2 planning authority. It incorporates Mark’s decisions, the verified V1 NFC and comps workflows, and the actual Speedster V2 completion contract. It is a product and architecture blueprint, not authorization to deploy, migrate, disable V1, or begin the later platform phases.
 
+### Owner-approved ATLAS direction — 2026-09-07
+
+Mark subsequently approved ATLAS Grading as the independent grading application direction, with Astra as a bounded preparation operator and trained humans retaining certification and explicit trusted-learning approval. Deterministic code continues to own evidence preservation, pixel measurements, grading/financial arithmetic, rendering and state transitions. Machine proposals never borrow current human completion/rescue authority and do not allocate certificates, activate maps, approve trusted lessons or execute commercial actions.
+
+The near-term application boundary is a dedicated ATLAS app and separate Vercel project in this repository, staff/grading at `app.atlasgrading.com` and public ATLAS content at `atlasgrading.com`, with separate route/environment/auth/release/monitoring boundaries. This narrowly supersedes the single existing Next.js application assumption below for the ATLAS grading surface. Ten Kings card-platform behavior, historic report/label/certificate identities, and issued card/NFC/QR URLs remain governed by this blueprint. Shared authoritative evidence/data and pure grading modules may be reused temporarily through scoped adapters; repository extraction is deferred. ATLAS issuer/certificate and any external-card ownership policy must be decided explicitly before issuance, not inferred from the Ten Kings house-card writer.
+
+Local implementation preparation includes strict machine/human contracts, immutable analysis revisions and approval/audit records, durable processing/lease/outbox/retry/budget design, synthetic offline evaluation, app dependency extraction design, and practical capture/review staffing. These are required for the accepted ATLAS preparation scope, not authorization to build a general job framework or begin later commercial phases. Small measured supervised/shadow evaluations precede unattended drafts or scale. Mock tests and signed historical artifacts cannot establish current grading accuracy, worker readiness or operational success.
+
+Source-evidence correction at `7bde06f65959e376e12725186d605cc91c67852b`: the implemented V2 sold-comps package uses SoldComps; the SerpAPI text in the original launch plan below is not a description of that implementation. This note records the discrepancy without authorizing another provider change. The canonical ATLAS contract/evaluation/app preparation records are `docs/atlas/CONTRACTS.md`, `docs/atlas/EVALUATION.md` and `docs/atlas/APP_EXTRACTION.md`. The session handoff records this dated amendment.
+
+No paid API/RunPod experiment, funding, push-triggered operational side effect, merge/deploy/restart, Production write/migration, service removal, or domain/DNS/Vercel/email/auth-routing change is authorized by this amendment. Those actions retain their exact reviewed operational approval gates. The original phase gates and explicit do-not-build constraints remain in force outside this narrow ATLAS scope.
+
 ---
 
 ## 1. Executive Decision
