@@ -512,6 +512,7 @@ const capture = {
       MICRO_DEFECT: `ai-grader-v2/admin-1/${sessionId}/prepared/front/micro_defect.webp`,
       DIRECTIONAL: `ai-grader-v2/admin-1/${sessionId}/prepared/front/directional.webp`,
     },
+    centeringQuad: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }],
     centeringBorders: { leftMm: 10, rightMm: 10, topMm: 10, bottomMm: 10 },
   },
   back: {
@@ -524,6 +525,7 @@ const capture = {
       MICRO_DEFECT: `ai-grader-v2/admin-1/${sessionId}/prepared/back/micro_defect.webp`,
       DIRECTIONAL: `ai-grader-v2/admin-1/${sessionId}/prepared/back/directional.webp`,
     },
+    centeringQuad: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }],
     centeringBorders: { leftMm: 10, rightMm: 10, topMm: 10, bottomMm: 10 },
   },
 };

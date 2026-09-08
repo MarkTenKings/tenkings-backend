@@ -1,10 +1,9 @@
 import type {
   SpeedsterCardSide,
   SpeedsterDefectType,
-  SpeedsterQuad,
   SpeedsterSubgrades,
 } from "./contracts";
-import { SPEEDSTER_CARD_HEIGHT_MM, SPEEDSTER_CARD_WIDTH_MM } from "./geometry";
+import { SPEEDSTER_CARD_HEIGHT_MM, SPEEDSTER_CARD_WIDTH_MM, sanitizeSpeedsterUnitQuad } from "./geometry";
 
 export type SpeedsterCenteringBorders = {
   leftMm: number;
@@ -13,14 +12,20 @@ export type SpeedsterCenteringBorders = {
   bottomMm: number;
 };
 
-export function measureSpeedsterCenteringBorders(quad: SpeedsterQuad): SpeedsterCenteringBorders {
+export function measureSpeedsterCenteringBorders(value: unknown): SpeedsterCenteringBorders {
+  const quad = sanitizeSpeedsterUnitQuad(value);
+  if (!quad) throw new RangeError("Speedster printed-frame geometry is invalid.");
   const [topLeft, topRight, bottomRight, bottomLeft] = quad;
-  return {
+  const borders = {
     leftMm: ((topLeft.x + bottomLeft.x) / 2) * SPEEDSTER_CARD_WIDTH_MM,
     rightMm: (1 - (topRight.x + bottomRight.x) / 2) * SPEEDSTER_CARD_WIDTH_MM,
     topMm: ((topLeft.y + topRight.y) / 2) * SPEEDSTER_CARD_HEIGHT_MM,
     bottomMm: (1 - (bottomLeft.y + bottomRight.y) / 2) * SPEEDSTER_CARD_HEIGHT_MM,
   };
+  // A frame spanning an entire axis supplies no measurable border balance.
+  calculateCenteringBalance(borders.leftMm, borders.rightMm);
+  calculateCenteringBalance(borders.topMm, borders.bottomMm);
+  return borders;
 }
 
 export type SpeedsterDefectArea = {
@@ -74,7 +79,11 @@ export function calculateCenteringBalance(
   secondBorderMm: number,
 ): readonly [number, number] {
   const totalMm = firstBorderMm + secondBorderMm;
-  if (totalMm <= Number.EPSILON) return [50, 50];
+  if (!Number.isFinite(firstBorderMm) || !Number.isFinite(secondBorderMm)
+    || firstBorderMm < 0 || secondBorderMm < 0
+    || !Number.isFinite(totalMm) || totalMm <= Number.EPSILON) {
+    throw new RangeError("Speedster centering requires finite nonnegative borders and a positive total on each axis.");
+  }
   return [
     normalizeMeasurement((firstBorderMm / totalMm) * 100),
     normalizeMeasurement((secondBorderMm / totalMm) * 100),

@@ -56,6 +56,7 @@ const defect: SpeedsterMeasuredDefect = {
 const capture = {
   cornerShape: "SQUARE",
   front: {
+    centeringQuad: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }],
     originalStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/original/front.jpg",
     rectifiedStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/prepared/front/rectified.webp",
     inspectionStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/prepared/front/inspection.webp",
@@ -68,6 +69,7 @@ const capture = {
     centeringBorders: { leftMm: 10, rightMm: 10, topMm: 10, bottomMm: 10 },
   },
   back: {
+    centeringQuad: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }],
     originalStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/original/back.jpg",
     rectifiedStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/prepared/back/rectified.webp",
     inspectionStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/prepared/back/inspection.webp",
@@ -343,6 +345,49 @@ test("one server-owned REMOVE measures once, persists grade+findings atomically,
   assert.equal(saved?.reviewedDefects[0].reviewResult, "REMOVED");
   assert.equal(JSON.stringify(result).includes("finalTrace"), false);
   assert.equal(result.gradeReport.detectorVersion, "sam3-server-owned");
+});
+
+test("review mutation recomputes persisted centering from geometry before saving its grade", async () => {
+  const forged = structuredClone(capture);
+  for (const side of [forged.front, forged.back]) {
+    side.centeringQuad = [{ x: 0.2, y: 0.1 }, { x: 0.95, y: 0.1 }, { x: 0.95, y: 0.9 }, { x: 0.2, y: 0.9 }];
+    side.centeringBorders = { leftMm: 0, rightMm: 0, topMm: 0, bottomMm: 0 };
+  }
+  let savedGrade: unknown;
+  const result = await applySpeedsterReviewAction({
+    sessionId: session().id,
+    createdByUserId: "admin-1",
+    action: { type: "REMOVE", defectIds: [defect.id] },
+  }, {
+    async loadOwnedSession() { return session([defect], forged); },
+    async persistReviewIfRevision(_identity, _revision, data) { savedGrade = data.gradeReport; },
+    async presignRead() { return "https://fixture.invalid/front.webp"; },
+    async learningBankForDetect() { throw new Error("must not load Memory"); },
+    async detect() { throw new Error("must not detect"); },
+    async measure() { return { defects: [] }; },
+  });
+  assert.equal((result.gradeReport.subgrades as { centering: number }).centering, 5);
+  assert.deepEqual((result.gradeReport.front as { centering: { leftRightBalance: number[] } }).centering.leftRightBalance, [80, 20]);
+  assert.deepEqual(savedGrade, result.gradeReport);
+});
+
+test("review mutation rejects missing or full-frame geometry before external work", async () => {
+  for (const quad of [undefined, [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }]]) {
+    let externalCalls = 0;
+    await assert.rejects(applySpeedsterReviewAction({
+      sessionId: session().id,
+      createdByUserId: "admin-1",
+      action: { type: "REMOVE", defectIds: [defect.id] },
+    }, {
+      async loadOwnedSession() { return session([defect], { ...capture, back: { ...capture.back, centeringQuad: quad } }); },
+      async persistReviewIfRevision() { externalCalls += 1; },
+      async presignRead() { externalCalls += 1; return "https://fixture.invalid/front.webp"; },
+      async learningBankForDetect() { externalCalls += 1; return {}; },
+      async detect() { externalCalls += 1; return {}; },
+      async measure() { externalCalls += 1; return { defects: [] }; },
+    }), /BACK printed-frame geometry cannot provide valid centering/);
+    assert.equal(externalCalls, 0);
+  }
 });
 
 test("review actions retain exact versioned recapture and iPhone evidence paths", async () => {

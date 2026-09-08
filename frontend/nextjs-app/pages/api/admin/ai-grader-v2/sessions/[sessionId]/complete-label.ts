@@ -35,7 +35,7 @@ import {
   parsePersistedSpeedsterReviewFindings,
   parseSpeedsterReviewFindings,
 } from "../../../../../../lib/ai-grader-v2/review-findings";
-import type { SpeedsterCenteringBorders } from "../../../../../../lib/ai-grader-v2/scoring";
+import { speedsterCenteringFromConfirmedQuad } from "../../../../../../lib/server/speedsterCenteringAuthority";
 import {
   insertSpeedsterInstrumentationEvents,
   speedsterFindingFinalEvents,
@@ -122,20 +122,18 @@ const optional = (value: string | null | undefined) => value?.trim() || null;
 const record = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
-function serverOwnedReview(session: CompletionSession) {
+export function serverOwnedReview(session: CompletionSession) {
   const capture = record(session.capture);
   const front = record(capture?.front);
   const back = record(capture?.back);
-  const frontBorders = record(front?.centeringBorders);
-  const backBorders = record(back?.centeringBorders);
   const persistedGrade = record(session.gradeReport);
-  if (!frontBorders || !backBorders || typeof persistedGrade?.detectorVersion !== "string") {
+  if (!front || !back || typeof persistedGrade?.detectorVersion !== "string") {
     throw new HttpError(409, "Speedster server-owned review state is incomplete");
   }
   const defects = completeSpeedsterReview(parsePersistedSpeedsterReviewFindings(session.reviewedDefects));
   const review = calculateSpeedsterReview({
-    front: { centeringBorders: frontBorders as SpeedsterCenteringBorders },
-    back: { centeringBorders: backBorders as SpeedsterCenteringBorders },
+    front: { centeringBorders: speedsterCenteringFromConfirmedQuad(front.centeringQuad, "FRONT") },
+    back: { centeringBorders: speedsterCenteringFromConfirmedQuad(back.centeringQuad, "BACK") },
   }, defects);
   return {
     reviewedDefects: publicSpeedsterDefects(review.defects),

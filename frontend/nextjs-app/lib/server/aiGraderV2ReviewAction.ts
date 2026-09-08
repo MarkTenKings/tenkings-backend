@@ -83,6 +83,7 @@ import {
   type UnsignedSpeedsterDetectionSideCheckpoint,
 } from "./speedsterDetectionSideCheckpoint";
 import { HttpError } from "./adminSessionAuthority";
+import { speedsterCenteringFromConfirmedQuad } from "./speedsterCenteringAuthority";
 import { assertSpeedsterMapRevisionAppliesToIdentity } from "./speedsterCardTypeMaps";
 import {
   isAuthorizedSpeedsterOriginalStorageKey,
@@ -349,7 +350,10 @@ function captureAuthority(value: unknown, sessionId: string, createdByUserId: st
       })) {
       throw new Error("Speedster persisted inspection evidence is not owned by this session.");
     }
-    return candidate as unknown as PersistedCaptureSide;
+    return {
+      ...candidate,
+      centeringBorders: speedsterCenteringFromConfirmedQuad(candidate.centeringQuad, name),
+    } as PersistedCaptureSide;
   };
   return { cornerShape: value.cornerShape, front: side("FRONT"), back: side("BACK") };
 }

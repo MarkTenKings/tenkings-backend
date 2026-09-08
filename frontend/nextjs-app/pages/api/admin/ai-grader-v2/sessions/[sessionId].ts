@@ -40,6 +40,7 @@ import {
   type SpeedsterColorGeometryPolicyProvenance,
 } from "../../../../../lib/ai-grader-v2/color-geometry";
 import { sanitizeSpeedsterUnitQuad } from "../../../../../lib/ai-grader-v2/geometry";
+import { speedsterCenteringFromConfirmedQuad } from "../../../../../lib/server/speedsterCenteringAuthority";
 import {
   SpeedsterColorGeometryReceiptExpiredError,
   verifySpeedsterColorGeometryReceipt,
@@ -435,7 +436,7 @@ function canonicalSpeedsterCapture(
     inspectionStorageKey: value.inspectionStorageKey,
     sourceCorners: value.sourceCorners,
     centeringQuad: value.centeringQuad,
-    centeringBorders: value.centeringBorders,
+    centeringBorders: speedsterCenteringFromConfirmedQuad(value.centeringQuad, value.side),
     inspectionFrame: value.inspectionFrame,
     transform: value.transform,
     viewStorageKeys: value.viewStorageKeys,
