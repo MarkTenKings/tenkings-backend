@@ -43,3 +43,12 @@ export * from "./aiGraderNfcService";
 export * from "./aiGraderNfcSchemaReadiness";
 export * from "./aiGraderDesignReferenceService";
 export * from "./cardPlatformV2";
+export * from "./cardInventoryV2Read";
+
+export * from "./cardInventoryV2";
+export * from "./cardInventoryV2State";
+export * from "./cardInventoryV2Http";
+export * from "./inventoryWorkflowV2";
+export * from "./inventoryWorkflowV2State";
+export * from "./inventoryWorkflowV2Read";
+export * from "./inventoryWorkflowV2Http";

@@ -24,7 +24,8 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "@tenkings/shared": "workspace:*"
+    "@tenkings/shared": "workspace:*",
+    "zod": "^4.1.11"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

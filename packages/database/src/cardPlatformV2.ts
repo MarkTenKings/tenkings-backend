@@ -1,6 +1,19 @@
 import { randomBytes } from "crypto";
 
 import { Prisma } from "@prisma/client";
+import {
+  CardInventoryErrorV2, InventorySourceEventInput, canonical, inventoryHash,
+  parseCardInventoryCommandV2, cardInventorySourceEventIdV2,
+} from './cardInventoryV2';
+import { InventoryState } from './cardInventoryV2State';
+import {
+  readCardInventoryCardHistoryV2, verifyCardInventoryRowV2,
+  type CardInventoryProjectionV2, type CardInventoryContentV2, type CardInventoryRowV2,
+} from './cardInventoryV2Read';
+
+import { parseWorkflowCommandV2, WorkflowEventInputV2, workflowEventIdV2, WORKFLOW_MAX_EVENT_BYTES_V2, type WorkflowEventV2 } from './inventoryWorkflowV2';
+import { replayWorkflowEventsV2, calculateWorkflowAllocationV2, overlapsWorkflowScopeV2, workflowPurchaseCancellationBlockV2 } from './inventoryWorkflowV2State';
+import { readWorkflowHistoryV2, verifyWorkflowRowV2, type WorkflowRowV2 } from './inventoryWorkflowV2Read';
 
 const PUBLIC_TOKEN = /^tk2c_[A-Za-z0-9_-]{32}$/;
 const TOKEN_ATTEMPTS = 8;
@@ -1575,4 +1588,251 @@ export async function markNfcVerified(
     },
   });
   return { outcome: "UPDATED", card };
+}
+
+/**
+ * Sole physical inventory writer. Compose only inside one READ COMMITTED
+ * transaction. The transaction-scoped lock serializes the immutable journal;
+ * MAX + 1 is committed with the event, so rolled-back attempts leave no holes.
+ * No payment, V1, wallet, grading, media, or pack-sales-engine write occurs here.
+ */
+export async function recordCardInventoryEventV2(
+  tx: CardPlatformV2Transaction, input: unknown, adminId: string,
+): Promise<{ outcome: 'RECORDED' | 'REPLAY'; event: CardInventoryContentV2['event'] }> {
+  const command = parseCardInventoryCommandV2(input);
+  const actor = requireAdminText(adminId, 'Authenticated inventory admin');
+  if (actor.length > 200) throw new CardInventoryErrorV2('INVALID_INPUT', 'Admin identity is too long');
+  const requestHash = inventoryHash({ command, actor });
+  const id = cardInventorySourceEventIdV2(command.request_id);
+  const conflict = (message: string): never => { throw new CardInventoryErrorV2('CONFLICT', message); };
+
+  await tx.$queryRaw(Prisma.sql`SELECT true AS locked FROM pg_advisory_xact_lock(20260907, 4201)`);
+  const previous = await tx.$queryRaw<CardInventoryRowV2[]>(Prisma.sql`
+    SELECT * FROM "CardInventoryEventV2" WHERE "id" = ${id}
+  `);
+  if (previous.length) {
+    const stored = verifyCardInventoryRowV2(previous[0]);
+    if (previous[0].requestHash !== requestHash) conflict('Inventory retry conflicts with its original evidence or actor');
+    return { outcome: 'REPLAY', event: stored.event };
+  }
+  const rawLinked = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT w."id" FROM "InventoryWorkflowEventV2" w,
+      jsonb_array_elements(COALESCE(w."content"::jsonb -> 'event' -> 'data' -> 'permanent_card_links', '[]'::jsonb)) AS link
+    WHERE link ->> 'card_id' = ${command.card_id} LIMIT 1
+  `);
+  if (rawLinked.length) conflict('This card is already tracked through a purchased-lot workflow; exact-journal dual tracking is prohibited');
+  const [clock] = await tx.$queryRaw<{ now: Date }[]>(Prisma.sql`SELECT clock_timestamp() AS now`);
+  const recordedAt = clock.now;
+  if (command.event.effective_at > recordedAt.toISOString()) conflict('Physical evidence cannot be future dated');
+  const [card] = await tx.$queryRaw<(CardInventoryProjectionV2 & { id: string; humanGradeLabelId: string })[]>(Prisma.sql`
+    SELECT "id", "humanGradeLabelId", "currentOwnerType"::text AS "currentOwnerType", "currentOwnerId",
+      "lifecycleState"::text AS "lifecycleState", "locationId", "saleMode"::text AS "saleMode"
+    FROM "CollectibleCardV2" WHERE "id" = ${command.card_id} FOR UPDATE
+  `);
+  if (!card || !['HOUSE', 'EXTERNAL'].includes(card.currentOwnerType) || card.currentOwnerId !== null ||
+    !['GRADED', 'IN_INVENTORY', 'ASSIGNED_TO_PACK', 'AT_LOCATION', 'EXTERNAL'].includes(card.lifecycleState)) {
+    conflict('Physical evidence requires an eligible permanent V2 card; account-owned, void, direct-listed, and shipping cards are excluded');
+  }
+  const cardBefore: CardInventoryProjectionV2 = {
+    currentOwnerType: card.currentOwnerType, currentOwnerId: null, lifecycleState: card.lifecycleState,
+    locationId: card.locationId, saleMode: card.saleMode,
+  };
+  const history = await readCardInventoryCardHistoryV2(tx, card.id);
+  const last = history[history.length - 1];
+  if (last && canonical(last.card_after) !== canonical(cardBefore)) conflict('Card state no longer matches its physical evidence');
+  if (!last && (card.currentOwnerType !== 'HOUSE' || !['GRADED', 'IN_INVENTORY'].includes(card.lifecycleState))) {
+    conflict('An opening inventory record cannot invent prior ownership or packing history');
+  }
+  if (last && command.event.effective_at < last.event.effective_at) conflict('Event predates accepted card evidence; append a current dated correction');
+
+  // An external identifier has a documented, immutable meaning. A Location is
+  // the existing source identity; no name, price tier, or HAHA number is guessed.
+  const existingProducts = await tx.$queryRaw<{ identity: string }[]>(Prisma.sql`
+    SELECT DISTINCT "content"::jsonb -> 'command' ->> 'product_identity_ref' AS identity
+    FROM "CardInventoryEventV2" WHERE "content"::jsonb -> 'event' ->> 'external_product_id' = ${command.event.external_product_id}
+    LIMIT 2
+  `);
+  if (existingProducts.some(p => p.identity !== command.product_identity_ref)) conflict('Product identity evidence conflicts with its immutable source definition');
+  for (const binding of command.custody_bindings) {
+    const locations = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`SELECT "id" FROM "Location" WHERE "id" = ${binding.location_id}::uuid`);
+    if (locations.length !== 1) conflict('Custody must identify an existing Location');
+    const prior = await tx.$queryRaw<{ location: string; evidence: string }[]>(Prisma.sql`
+      SELECT DISTINCT binding ->> 'location_id' AS location, binding ->> 'evidence_ref' AS evidence
+      FROM "CardInventoryEventV2", jsonb_array_elements("content"::jsonb -> 'command' -> 'custody_bindings') AS binding
+      WHERE binding ->> 'custody_id' = ${binding.custody_id}
+      LIMIT 2
+    `);
+    if (prior.some(p => p.location !== binding.location_id || p.evidence !== binding.evidence_ref)) {
+      conflict('Custody identity conflicts with its immutable existing-location evidence');
+    }
+    const workflowBindings = await tx.$queryRaw<{ location: string | null }[]>(Prisma.sql`
+      SELECT DISTINCT binding.value ->> 'location_id' AS location
+      FROM "InventoryWorkflowEventV2", jsonb_each("content"::jsonb -> 'event' -> 'data') AS binding
+      WHERE binding.key IN ('custody', 'to', 'destination') AND binding.value ->> 'custody_id' = ${binding.custody_id}
+      LIMIT 2
+    `);
+    if (workflowBindings.some(p => p.location !== binding.location_id)) conflict('Custody conflicts with existing purchased-lot Location authority');
+  }
+  const [sequence] = await tx.$queryRaw<{ next: bigint }[]>(Prisma.sql`
+    SELECT (COALESCE(MAX("sequence"), 0) + 1)::bigint AS next FROM "CardInventoryEventV2"
+  `);
+  const next = Number(sequence.next);
+  if (!Number.isSafeInteger(next) || next < 1) throw new CardInventoryErrorV2('INTEGRITY', 'Inventory sequence exceeds the supported range');
+  const parsed = InventorySourceEventInput.safeParse({ ...command.event, source_event_id: id,
+    source_sequence: next, recorded_at: recordedAt.toISOString(), recorded_by: actor,
+    stock_id: ['opening', 'receipt', 'pack'].includes(command.event.event_kind) ? id : command.event.stock_id });
+  if (!parsed.success) throw new CardInventoryErrorV2('INVALID_INPUT', 'Physical event does not satisfy the financial inventory contract');
+  const event = parsed.data;
+  const state = new InventoryState();
+  try { for (const entry of history) state.apply(entry.event); }
+  catch { throw new CardInventoryErrorV2('INTEGRITY', 'Stored inventory history cannot be replayed'); }
+  const parent = event.reverses_source_event_id ? history.find(h => h.event.source_event_id === event.reverses_source_event_id) : null;
+  if (event.event_kind === 'pack') {
+    const conflictingCard = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT "id" FROM "CollectibleCardV2" WHERE "id" = ${event.unit_or_pack_id}
+    `);
+    if (conflictingCard.length) conflict('A physical pack identity cannot impersonate a permanent card identity');
+    const origin = state.origins.get(event.inputs[0].stock_id);
+    if (!origin || !['opening', 'receipt'].includes(origin.event_kind) || origin.unit_or_pack_id !== card.id) conflict('A physical pack consumes exactly its evidenced loose permanent card');
+    if (history.some(h => h.event.event_kind === 'pack' && h.event.unit_or_pack_id === event.unit_or_pack_id)) conflict('A physical pack identity cannot be reused');
+  }
+  if (['opening', 'receipt'].includes(event.event_kind)) {
+    const conflictingPack = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT "id" FROM "CardInventoryEventV2" WHERE "content"::jsonb -> 'event' ->> 'event_kind' = 'pack'
+        AND "content"::jsonb -> 'event' ->> 'unit_or_pack_id' = ${card.id} LIMIT 1
+    `);
+    if (conflictingPack.length) conflict('The permanent card identity conflicts with an existing physical pack identity');
+    if (!command.ownership_evidence_ref) conflict('Opening or acquisition requires explicit house-ownership evidence');
+  }
+  if (['restock', 'transfer', 'pack', 'unpack', 'sale'].includes(event.event_kind) && card.currentOwnerType !== 'HOUSE') conflict('Only house-owned physical inventory can be moved, packed, or sold');
+  if (event.event_kind === 'return' && (card.currentOwnerType !== 'EXTERNAL' || !command.ownership_evidence_ref)) conflict('A physical return requires documented transfer of title back to the house');
+  if (event.event_kind === 'reversal' && !command.ownership_evidence_ref) conflict('A correction requires evidence for its resulting custody and ownership');
+  try { state.apply(event); }
+  catch (error) { conflict(error instanceof Error ? error.message : 'Physical inventory conservation failed'); }
+
+  let owner = cardBefore.currentOwnerType;
+  if (['opening', 'receipt', 'return'].includes(event.event_kind)) owner = 'HOUSE';
+  if (event.event_kind === 'sale') owner = 'EXTERNAL';
+  if (event.event_kind === 'reversal' && parent && parent.card_before.currentOwnerType !== parent.card_after.currentOwnerType) {
+    if (owner !== parent.card_after.currentOwnerType) conflict('Ownership evolved after the corrected event');
+    owner = parent.card_before.currentOwnerType;
+  }
+  const positions = [...state.positions.values()].filter(p => p.quantity > 0);
+  if (positions.length > 1) conflict('One permanent card cannot occupy multiple stock positions');
+  const position = positions[0];
+  const moneyOnly = event.event_kind === 'refund' || (event.event_kind === 'reversal' && event.quantity === 0);
+  let cardAfter = { ...cardBefore };
+  if (!moneyOnly) {
+    if (owner === 'EXTERNAL' && position) conflict('External ownership cannot retain house inventory stock');
+    let locationId: string | null = null;
+    if (position) {
+      const binding = command.custody_bindings.find(b => b.custody_id === position.custody) ??
+        history.flatMap(h => h.command.custody_bindings).find(b => b.custody_id === position.custody);
+      if (!binding) conflict('Resulting physical custody has no exact existing-location evidence');
+      locationId = binding!.location_id;
+    }
+    cardAfter = { currentOwnerType: owner, currentOwnerId: null, locationId,
+      saleMode: event.event_kind === 'sale' ? (state.origins.get(event.stock_id!)?.event_kind === 'pack' ? 'PACK' : 'DIRECT') :
+        position?.origin.event_kind === 'pack' ? 'PACK' : cardBefore.saleMode,
+      lifecycleState: owner === 'EXTERNAL' ? 'EXTERNAL' : !position ? 'GRADED' :
+        position.custody.startsWith('machine:') ? 'AT_LOCATION' :
+          position.origin.event_kind === 'pack' ? 'ASSIGNED_TO_PACK' : 'IN_INVENTORY' };
+    if (!position && owner === 'HOUSE' && event.event_kind !== 'reversal') conflict('House-owned physical event has no resulting stock');
+  }
+  const content: CardInventoryContentV2 = { command, event, card_before: cardBefore, card_after: cardAfter };
+  const canonicalContent = canonical(content);
+  // The append precedes the projection update. Database guards check the new
+  // immutable authority on update and verify the final projection at commit.
+  await tx.$executeRaw(Prisma.sql`
+    INSERT INTO "CardInventoryEventV2" ("sequence", "id", "cardId", "recordedAt", "content", "contentHash", "requestHash")
+    VALUES (${BigInt(next)}, ${id}, ${card.id}, ${recordedAt}, ${canonicalContent}, ${inventoryHash(content)}, ${requestHash})
+  `);
+  if (cardBefore.currentOwnerType !== cardAfter.currentOwnerType) {
+    await tx.cardOwnershipEventV2.create({ data: {
+      cardId: card.id, fromOwnerType: cardBefore.currentOwnerType, fromOwnerId: null,
+      toOwnerType: cardAfter.currentOwnerType, toOwnerId: null,
+      reason: event.event_kind === 'sale' ? (state.origins.get(event.stock_id!)?.event_kind === 'pack' ? 'PACK_PURCHASE' : 'DIRECT_PURCHASE') : 'ADMIN_CORRECTION',
+      referenceType: 'PHYSICAL_INVENTORY_V2', referenceId: id,
+      pricePaidCents: event.event_kind === 'sale' ? event.sale_gross_cents : null,
+      tkdAmountCents: null, channel: 'ADMIN', actorAdminId: actor, createdAt: recordedAt,
+    } });
+  }
+  await tx.collectibleCardV2.update({ where: { id: card.id }, data: {
+    ...cardAfter, lifecycleState: cardAfter.lifecycleState as 'GRADED' | 'IN_INVENTORY' | 'ASSIGNED_TO_PACK' | 'AT_LOCATION' | 'EXTERNAL',
+  } });
+  const [persisted] = await tx.$queryRaw<CardInventoryRowV2[]>(Prisma.sql`SELECT * FROM "CardInventoryEventV2" WHERE "id" = ${id}`);
+  if (!persisted || canonical(verifyCardInventoryRowV2(persisted)) !== canonical(content)) throw new CardInventoryErrorV2('INTEGRITY', 'New inventory evidence did not persist exactly');
+  // Surface deferred SQL violations before returning a success result to the
+  // transaction caller; re-arm deferral for another atomic writer invocation.
+  await tx.$executeRaw(Prisma.sql`SET CONSTRAINTS "CardInventoryEventV2_projection_at_commit" IMMEDIATE`);
+  await tx.$executeRaw(Prisma.sql`SET CONSTRAINTS "CardInventoryEventV2_projection_at_commit" DEFERRED`);
+  return { outcome: 'RECORDED', event };
+}
+
+/** The sole raw-receipt, cost-assignment and aggregate physical-evidence writer.
+ * Caller owns one READ COMMITTED transaction. Preview uses the same locked causal
+ * replay and makes no mutation. No V1, grading, ownership or payment write occurs.
+ */
+export async function recordInventoryWorkflowEventV2(
+  tx: CardPlatformV2Transaction, input: unknown, adminId: string, options: { preview?: boolean } = {},
+): Promise<{ outcome: 'PREVIEW' | 'RECORDED' | 'REPLAY'; request_id: string; event: WorkflowEventV2; impact: { units: number; lots: number; batches: number; backdated: boolean } | null }> {
+  const command = parseWorkflowCommandV2(input);
+  const actor = requireAdminText(adminId, 'Authenticated inventory admin');
+  if (actor.length > 200) throw new CardInventoryErrorV2('INVALID_INPUT', 'Admin identity is too long');
+  const conflict = (message: string): never => { throw new CardInventoryErrorV2('CONFLICT', message); };
+  const id = workflowEventIdV2(command.request_id), requestHash = inventoryHash({ command, actor });
+  await tx.$queryRaw(Prisma.sql`SELECT true AS locked FROM pg_advisory_xact_lock(20260907, 4201)`);
+  await tx.$queryRaw(Prisma.sql`SELECT true AS locked FROM pg_advisory_xact_lock(20260908, 4201)`);
+  const [previous] = await tx.$queryRaw<WorkflowRowV2[]>(Prisma.sql`SELECT * FROM "InventoryWorkflowEventV2" WHERE "id" = ${id}`);
+  if (previous) {
+    const stored = verifyWorkflowRowV2(previous);
+    if (previous.requestHash !== requestHash) conflict('Retry changed the accepted command or recording actor');
+    return { outcome: 'REPLAY', request_id: command.request_id, event: stored.event, impact: null };
+  }
+  const history = await readWorkflowHistoryV2(tx);
+  if (command.event_kind === 'purchase_cancelled') {
+    const blocked = workflowPurchaseCancellationBlockV2(replayWorkflowEventsV2(history), command.data.lot_id);
+    if (blocked) conflict(blocked);
+  }
+  const [clock] = await tx.$queryRaw<{ now: Date }[]>(Prisma.sql`SELECT clock_timestamp() AS now`);
+  const recordedAt = clock.now;
+  if (command.effective_at > recordedAt.toISOString()) conflict('Physical evidence cannot be future dated');
+  if (command.event_kind === 'opening_stock_recorded' && command.data.machine_scope) {
+    const scope = command.data.machine_scope;
+    if (history.some(e => 'scope' in e.data && overlapsWorkflowScopeV2(e.data.scope, scope) || e.event_kind === 'opening_stock_recorded' && e.data.machine_scope && overlapsWorkflowScopeV2(e.data.machine_scope, scope))) conflict('Historical opening is allowed only before any accepted history for this machine/product/door scope');
+    const exactScope = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`SELECT "id" FROM "CardInventoryEventV2" WHERE "content"::jsonb -> 'event' ->> 'external_product_id' = ${scope.product_id} AND ("content"::jsonb -> 'event' ->> 'to_custody_id' = ${'machine:' + scope.machine_id} OR "content"::jsonb -> 'event' ->> 'from_custody_id' = ${'machine:' + scope.machine_id}) LIMIT 1`);
+    if (exactScope.length) conflict('Historical opening would overlap existing exact-card inventory history');
+  }
+  const before = replayWorkflowEventsV2(history.filter(e => e.effective_at <= command.effective_at));
+  const event = WorkflowEventInputV2.parse({ schema_version: 2, source_event_id: id, source_sequence: history.length + 1,
+    event_kind: command.event_kind, effective_at: command.effective_at, evidence_ref: command.evidence_ref,
+    recorded_at: recordedAt.toISOString(), recorded_by: actor, currency: 'USD',
+    data: command.event_kind === 'cost_assigned' ? { ...command.data, allocation: calculateWorkflowAllocationV2(before, command.data) } : command.data });
+  // A backdated command must preserve every already recorded later causal fact.
+  const after = replayWorkflowEventsV2([...history, event]);
+  const bindings = [...after.custodyBindings];
+  const locationIds = [...new Set(bindings.flatMap(([, location]) => location === null ? [] : [location]))];
+  if (locationIds.length) {
+    const locations = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`SELECT "id" FROM "Location" WHERE "id" IN (${Prisma.join(locationIds.map(location => Prisma.sql`${location}::uuid`))})`);
+    if (locations.length !== locationIds.length) conflict('Custody refers to a Location that does not exist');
+  }
+  const exactBindings = await tx.$queryRaw<{ custody: string; location: string }[]>(Prisma.sql`
+    SELECT DISTINCT binding ->> 'custody_id' AS custody, binding ->> 'location_id' AS location
+    FROM "CardInventoryEventV2", jsonb_array_elements("content"::jsonb -> 'command' -> 'custody_bindings') AS binding
+  `);
+  if (exactBindings.some(binding => after.custodyBindings.has(binding.custody) && after.custodyBindings.get(binding.custody) !== binding.location)) conflict('Custody conflicts with existing exact-card Location authority');
+  if (command.event_kind === 'processed') for (const link of command.data.permanent_card_links) {
+    const [card] = await tx.$queryRaw<{ id: string; currentOwnerType: string; currentOwnerId: string | null; lifecycleState: string }[]>(Prisma.sql`SELECT "id", "currentOwnerType"::text, "currentOwnerId", "lifecycleState"::text FROM "CollectibleCardV2" WHERE "id" = ${link.card_id} FOR UPDATE`);
+    if (!card || card.currentOwnerType !== 'HOUSE' || card.currentOwnerId !== null || !['GRADED', 'IN_INVENTORY'].includes(card.lifecycleState)) conflict('Processing links only an actual eligible house-owned permanent V2 card');
+    const exact = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`SELECT "id" FROM "CardInventoryEventV2" WHERE "cardId" = ${link.card_id} LIMIT 1`);
+    if (exact.length) conflict('Permanent card already belongs to exact-card inventory; dual tracking is prohibited');
+  }
+  const content = { command, event }, text = canonical(content);
+  if (Buffer.byteLength(text, 'utf8') > WORKFLOW_MAX_EVENT_BYTES_V2) throw new CardInventoryErrorV2('INVALID_INPUT', 'Workflow evidence exceeds the accepted byte bound');
+  const impact = { units: after.units.size, lots: after.lots.size, batches: after.batches.size, backdated: history.some(e => e.effective_at > command.effective_at) };
+  if (options.preview) return { outcome: 'PREVIEW', request_id: command.request_id, event, impact };
+  await tx.$executeRaw(Prisma.sql`INSERT INTO "InventoryWorkflowEventV2" ("sequence", "id", "recordedAt", "content", "contentHash", "requestHash") VALUES (${BigInt(event.source_sequence)}, ${id}, ${recordedAt}, ${text}, ${inventoryHash(content)}, ${requestHash})`);
+  const [persisted] = await tx.$queryRaw<WorkflowRowV2[]>(Prisma.sql`SELECT * FROM "InventoryWorkflowEventV2" WHERE "id" = ${id}`);
+  if (!persisted || canonical(verifyWorkflowRowV2(persisted)) !== text) throw new CardInventoryErrorV2('INTEGRITY', 'Workflow evidence was not stored exactly');
+  return { outcome: 'RECORDED', request_id: command.request_id, event, impact };
 }
