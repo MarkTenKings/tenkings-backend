@@ -2867,6 +2867,7 @@
     "newRuntimeNamespaces": [
       "ATLAS_PUBLIC_ORIGIN",
       "ATLAS_STAFF_ORIGIN",
+      "ATLAS_ADMIN_PHONES",
       "ATLAS_AUTH_*",
       "ATLAS_DATA_ADAPTER_*",
       "ATLAS_STORAGE_*",

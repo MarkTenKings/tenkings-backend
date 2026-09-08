@@ -10,6 +10,8 @@ The owner-approved [V2 blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.m
 
 The target is a dedicated staff application at `frontend/atlas-app`, in a separate ATLAS Vercel project serving `app.atlasgrading.com`. It exposes only grading, assigned evidence, human review, and explicitly approved finishing operations. Build a separate minimal public application from the public route manifest for `atlasgrading.com`; `frontend/atlas-public` is a proposed location and is not created here. Public and staff projects can then release independently while sharing reviewed packages in the same repository.
 
+The owner's unfinished consumer-facing GPT Pages draft is a separate future public-site input; it has not been imported or reviewed. Initial staff access follows the [phone-verification and admin-allowlist decision](STAFF_ACCESS.md). The draft does not determine the private grading interface.
+
 One ATLAS project serving both hosts is a smaller optional first deployment. It requires the same exact per-host route allowlists, with staff APIs denied on the apex and host-only staff sessions. That option separates ATLAS from Ten Kings, but its public and staff surfaces share one artifact, environment, and release impact. It must not be described as public/staff deployment isolation.
 
 Adding an ATLAS alias to the existing full Ten Kings application does not establish this boundary. Neither does copying the existing Next app into another directory. The new builds contain only their listed pages and adapters; every unlisted host, path, method, and action is denied. The existing Ten Kings application and all issued public URLs remain available during preparation.
@@ -61,6 +63,8 @@ Current `complete-label` does more than certify: it completes the session, issue
 ## Human, machine, and capture authority
 
 Staff authentication belongs to `app.atlasgrading.com`. The proposed session is a host-only `__Host-atlas_staff` cookie with `HttpOnly`, `Secure`, `Path=/`, and `SameSite=Lax`, with no `Domain` attribute. All writes also validate the exact trusted Origin and a session-bound CSRF token. The issuer, audience, expiry/revocation, roster, and assignment are server-owned. Public pages receive no staff cookie or authority. A separately reviewed identity federation could reuse an identity provider, but copying Ten Kings tokens or its admin allowlist is not federation.
+
+The initial identity provider is proposed as Twilio Verify with a separate ATLAS verification context and an owner-managed `ATLAS_ADMIN_PHONES` allowlist. [STAFF_ACCESS.md](STAFF_ACCESS.md) specifies challenge binding, session issuance, revocation and the remaining live-configuration gates. Neither this decision nor the manifest implements authentication.
 
 Certification review and trusted-learning approval require distinct fresh trained-human decisions bound to the exact evidence/package revision. Machine credentials are short-lived server-to-server capabilities bound to a principal of kind MACHINE, assigned card/run, tool, evidence revision, operation, expiry, budget, and lease fence. They never share a human bearer or cookie and have no fallback to the existing admin service.
 
