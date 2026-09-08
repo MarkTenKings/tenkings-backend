@@ -4,8 +4,9 @@ import { api } from '../lib/client';
 import { Notice, Unavailable } from '../components/Shell';
 import { pageAccess } from '../lib/server/runtime.mjs';
 export function getServerSideProps(ctx) { return pageAccess(ctx, { authenticated: false }); }
-export default function SignIn({ unavailable }) { return unavailable ? <Unavailable /> : <SignInForm />; }
-function SignInForm() {
+export default function SignIn({ unavailable, mode }) { return unavailable ? <Unavailable /> : <SignInForm mode={mode}/>; }
+function SignInForm({ mode }) {
+    const local = mode !== 'PRODUCTION';
     const [phone, setPhone] = useState('');
     const [code, setCode] = useState('');
     const [csrf, setCsrf] = useState('');
@@ -50,15 +51,15 @@ function SignInForm() {
     return <main className="login-page">
     <Head><title>Staff sign-in · ATLAS</title></Head>
     <section className="login-story"><div className="brand">ATLAS<span>STAFF WORKSPACE</span></div><div className="login-orbit" aria-hidden="true"><div /><div /><div /><span>A</span></div><div><p className="eyebrow">A CLOSER LOOK</p><h1>Every detail.<br />Considered.</h1><p>A focused workspace for the people<br />behind every card review.</p></div><small>ATLAS GRADING · INTERNAL WORKSPACE</small></section>
-    <section className="login-form-section"><div className="login-form-wrap"><span className="local-badge"><i />Local preview</span><h2>{challenge ? 'Enter your code' : 'Welcome to ATLAS'}</h2><p className="muted">{challenge ? 'Use the six-digit code for this sign-in attempt.' : 'Sign in with an owner-approved staff phone number.'}</p>
+    <section className="login-form-section"><div className="login-form-wrap">{local && <span className="local-badge"><i />{mode === 'LOCAL_FIXTURE' ? 'Persistent local preview' : 'Local preview'}</span>}<h2>{challenge ? 'Enter your code' : 'Welcome to ATLAS'}</h2><p className="muted">{challenge ? 'Use the six-digit code for this sign-in attempt.' : 'Sign in with an owner-approved staff phone number.'}</p>
       <form onSubmit={submit}>
         {challenge ? <><label htmlFor="code">Verification code</label><input id="code" name="code" autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoFocus value={code} onChange={e => setCode(e.target.value)} required placeholder="000000" className="code-input"/><p className="field-help">This code expires in five minutes.</p></> : <><label htmlFor="phone">Phone number</label><input id="phone" name="phone" type="tel" autoComplete="tel" value={phone} onChange={e => { setPhone(e.target.value); request.current = null; }} required placeholder="+1 202 555 0141"/><p className="field-help">Include the country code; use digits without spaces.</p></>}
         {error && <Notice error>{error}</Notice>}
         <button className="primary full" disabled={busy || !csrf} type="submit">{busy ? 'Please wait…' : challenge ? 'Verify & open workspace' : 'Request sign-in code'}<span>→</span></button>
         {challenge && <button type="button" className="text-button" disabled={busy} onClick={() => { setChallenge(null); request.current = null; setError(''); }}>Use a different number</button>}
       </form>
-      <div className="demo-guide"><strong>Try the local review</strong><p>Sample number <button className="inline-code" onClick={() => { setPhone('+12025550141'); request.current = null; }} disabled={Boolean(challenge)}>+12025550141</button><br />Sample code <code>424242</code></p><small>These are fictional credentials. No text message is sent.</small></div>
-      <p className="login-footnote">Staff access and grade certification are separate.<br />This preview saves drafts only.</p>
+      {local && <div className="demo-guide"><strong>Try the local review</strong><p>Sample number <button className="inline-code" onClick={() => { setPhone('+12025550141'); request.current = null; }} disabled={Boolean(challenge)}>+12025550141</button><br />Sample code <code>424242</code></p><small>These are fictional credentials. No text message is sent.</small></div>}
+      <p className="login-footnote">Staff access and grade certification are separate.{local && <><br />This preview saves drafts only.</>}</p>
     </div></section>
   </main>;
 }

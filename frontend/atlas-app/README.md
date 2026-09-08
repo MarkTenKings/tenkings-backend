@@ -1,47 +1,53 @@
 # ATLAS staff application
 
-Working local foundation for the private staff application. It runs on `http://127.0.0.1:4318` with fictional identities, illustrated sample cards and a synthetic verification transport. No provider client, production credentials, database adapter, grading engine or certification route is installed here.
+Separate Next.js staff application with phone-code access, assigned review queue, private Front/Back evidence and immutable saved draft history. Production access requires dedicated ATLAS configuration and an enabled database control record bound to the exact release/deployment/configuration. No live provider, database, DNS or deployment has been configured by this work.
 
-## Run locally
+## Local previews
 
-Use the repository's Node 20 / pnpm 9.12.0 toolchain from the repository root:
+Use Node 20 and the repository's pnpm 9.12.0. Generate the app-only Prisma client before either preview:
 
 ```sh
 pnpm install --filter @atlas/staff-app --offline --frozen-lockfile --ignore-scripts
+pnpm --filter @atlas/staff-app db:generate
 pnpm --filter @atlas/staff-app dev
 ```
 
-The launcher uses a scrubbed child environment, refuses app `.env` files and binds only to IPv4 loopback port 4318. It does not load the Ten Kings environment. Use the sample-number button, then code `424242`. The fictional reviewer is `+12025550141`; `+12025550142` is a read-only fixture identity assigned only Northstar.
+The original preview uses process-local state and resets when its launcher stops. For persistent review testing, use the owned disposable PostgreSQL runner with locally installed PostgreSQL binaries and the `pg` tooling module:
 
-The workflow includes phone/code entry, assigned queue search/status filters, protected Front/Back illustrations, image inspection, per-side observations, a review checklist, draft status, explicit save/reload and prior-revision metadata. Saves preserve full previous drafts server-side. Conflicting or failed saves keep the browser's notes. Readiness cannot be saved without both sides and identity review. The third card intentionally lacks Back evidence.
+```sh
+node frontend/atlas-app/scripts/local-postgres.mjs \
+  --ack-disposable-local-postgres \
+  --postgres-bin /absolute/path/to/postgres/bin \
+  --pg-module /absolute/path/to/node_modules/pg \
+  --serve
+```
 
-All state is **process-local**. Page reloads retain saved drafts; restarting the server clears identities, challenges, sessions and drafts. This is not a durable store or a production authentication implementation. No actual trained-human approval is issued, including when a draft is marked ready for human review.
+Invoke the database runners with a scrubbed environment; they reject inherited database URLs/PG configuration. They create their own loopback cluster, apply all repository migrations unchanged plus the separate ATLAS migration, and verify that second deploys change neither ledger. They never connect to an existing database. The preview signs in, saves a draft, restarts only its web child and verifies the persisted draft/session before leaving the preview at `http://127.0.0.1:4318`. Stopping the runner stops its cluster, removes only its regenerable database files and retains validation evidence. Restarting the web child preserves state; starting an entirely new fixture creates new sample data.
 
-## Implemented boundary
+Both previews refuse app `.env` files and use only fictional illustrated cards and fictional verification. Sample reviewer `+12025550141`, code `424242`; sample observer `+12025550142` has read-only access to Northstar. These values are hidden in the production sign-in UI. No SMS is sent by either fixture. Draft readiness is not human approval or an actual grade.
 
-- `NODE_ENV=production`, every Vercel mode and a missing explicit local flag deny access even if the fixture flag is copied. `next start` serves the unavailable page and denies the API. Unknown/consumer/preview hosts and non-loopback peers are denied. Client forwarding headers cannot substitute for the exact Host and socket.
-- Only a server-defined fictional roster can authenticate. Challenges bind browser nonce, phone, account/service, exact synthetic Verification SID, channel, expiry and attempts. Serialized consumption returns the same active session on an exact retry. Logout, expiry and roster removal revoke it. Unknown provider outcomes remain blocked until expiry.
-- Separate opaque **local** cookies are HttpOnly, host-only, SameSite=Lax and Path=/. They intentionally use `atlas_local_*` names on HTTP loopback and cannot become the future Secure `__Host-atlas_staff` session. Every mutation checks exact Origin, JSON and the applicable browser/session CSRF token. Only token hashes are stored; an HMAC recreates the same token for a lost verification response.
-- Every card/evidence/draft request rechecks access and server-owned assignment. Only the fixture reviewer can save. Draft CAS binds card, evidence hash/revision and expected draft revision. Unknown body fields, grades, certification and learning actions are rejected.
-- The API catch-all dispatches only the eight explicit method/path combinations in `lib/server/http.mjs`. There is no legacy proxy, arbitrary fetch/storage signer, live SMS transport, machine bearer or provider fallback. Responses and evidence are private/no-store. The content policy confines resources to this app.
+## Durable boundary
 
-The in-memory serialization and rate counters are fixture behavior, not distributed guarantees. The synthetic SVG bytes are hashed, but prove no physical-card identity, prepared-image integrity or optical accuracy. This app owns no scoring implementation.
+The dedicated schema, migration ledger and generated Prisma client live under this app. `atlas_staff` stores the activation record, identities, browser-bound verification challenges, sessions, durable limits/audit, specimens, assignments, immutable review revisions and operation identities. It has no Ten Kings user/wallet/card/certificate relations. The serving role cannot activate a release, assign specimens, change evidence, train itself or read public-schema card/financial tables. Each transaction verifies effective privileges; exact grants are generated by `staffGrantSQL` in `lib/server/access/privileges.mjs`.
+
+Production uses a dedicated Twilio Verify transport with one SID-bound request per durable claim, no redirects/retries, bounded response/time, and exact account/service/SID/phone/channel checks. Provider calls happen outside database transactions. Unknown results remain quarantined for the configured token lifetime plus margin; no blind resend occurs. Challenge consumption, one opaque session and audit commit together. Current deployment, allowlist, identity/access version, browser binding and expiry are rechecked on every authorized operation. Certification and learning training remain separate authority fields which serving credentials cannot modify.
+
+Production cookies are host-only Secure/HttpOnly `__Host-atlas_*`; loopback cookies have different names. Writes require exact trusted Origin, JSON and session/browser CSRF. Retained preview/deployment/consumer hosts fail closed. A copied fixture flag cannot enable production access. Requests expose only named operations and safe DTOs; raw Prisma, SQL, arbitrary URLs, storage keys and legacy administrator authority never reach callers.
+
+Review saves compare exact evidence and draft revisions, preserve full earlier revisions, record immutable operation/audit identities and fail on concurrent edits. Evidence reads hash the returned exact bytes and recheck assignment/evidence after the external read. Current UI retains unsaved notes on conflict. The initial protected evidence port is synthetic; the real preserved-capture adapter and graded-report workflow are subsequent integration work.
 
 ## Verify
 
 ```sh
 pnpm --filter @atlas/staff-app test
 pnpm --filter @atlas/staff-app build
-# With port 4318 free, prove the built production server refuses fixture access:
 node frontend/atlas-app/scripts/smoke-production.mjs
+node frontend/atlas-app/scripts/validate-postgres.mjs \
+  --ack-disposable-local-postgres \
+  --postgres-bin /absolute/path/to/postgres/bin \
+  --pg-module /absolute/path/to/node_modules/pg
 ```
 
-The build check inspects actual Next routes, browser chunks and server dependency traces. Unexpected pages and legacy/auth/wallet/provider dependencies fail the check. It is an artifact/dependency check, not an independent security audit. The earlier `boundary-manifest.json` remains the historical extraction inventory; its proposed future routes are not mounted by this app. Plain image elements retain same-origin cookie authorization and bypass any image-optimizer proxy/cache; their lint exception is deliberate.
+Evidence at this milestone: 41 unit checks; 22 real PostgreSQL scenarios using the restricted role; 12 HTTP/SSR checks including an actual app-process restart; 8 built production-denial probes. The build checks actual route manifests, browser chunks and dependency traces. It permits only the app-owned generated database runtime and schema; no broad shared database/auth/wallet/provider SDK is imported. These checks prove software behavior with synthetic evidence, not live message delivery, optical grading quality or physical NFC/slab readiness.
 
-Tests cover denied environments/hosts, allowlisting, CSRF, wrong/expired codes, service/SID/phone/channel mismatch, concurrent/lost responses, unknown sends, rate limits, logout/revocation, assignments/roles, fixed private evidence, missing sides, stale drafts and forbidden authority. Live acceptance still requires a durable identity/session/challenge store, separate reviewed Verify adapter and exact host/old-deployment revocation proof under [STAFF_ACCESS.md](../../docs/atlas/STAFF_ACCESS.md).
-
-## Integration and release
-
-The app uses only the existing locked Next/React versions. Vault cleared the additive app importer; retain its independent `frontend/vault-kiosk` Playwright changes when merging histories. The original dirty checkout, Prisma, financial/card/certificate models and existing preparation worker remain separate.
-
-`vercel.json` disables this app's automatic Git deployment. The legacy project's local config also excludes the exact staff branch. These files are local source, not active provider protection or publication approval. Live hosting/auth/DNS/provider configuration, production data, SMS and issuance remain separate operational gates. The public GPT Pages draft remains an unreviewed future input.
+`vercel.json` disables automatic Git deployment in this local app configuration. The exact operational activation process is documented in [STAFF_ACCESS.md](../../docs/atlas/STAFF_ACCESS.md); it has not run. The complete remaining workflow is tracked in [COMPLETION.md](../../docs/atlas/COMPLETION.md).

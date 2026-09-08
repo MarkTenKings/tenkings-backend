@@ -1,0 +1,277 @@
+#!/usr/bin/env node
+import assert from 'node:assert/strict';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { PrismaClient } from '../.generated/staff-database/index.js';
+import { disposablePostgres } from './disposable-postgres.mjs';
+import { localAccessConfig, seedLocalStaff, fixtureEvidence, fixtureVerifyProvider } from '../lib/server/access/fixture.mjs';
+import { DurableStaffAuth } from '../lib/server/access/auth.mjs';
+import { StaffDatabase } from '../lib/server/access/database.mjs';
+import { DurableReviewStore } from '../lib/server/access/review.mjs';
+import { canonical } from '../lib/server/review-contract.mjs';
+import { hash } from '../lib/server/policy.mjs';
+
+const fixture = await disposablePostgres(process.argv.slice(2));
+const results = [], clients = new Set();
+const check = (code, action) => assert.rejects(action, error => error.code === code, code);
+function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
+async function scenario(name, work, { emptyRoster = false } = {}) {
+    const db = await fixture.database();
+    const admin = new PrismaClient({ datasources: { db: { url: db.adminUrl } } });
+    const client = new PrismaClient({ datasources: { db: { url: db.staffUrl } } });
+    clients.add(admin); clients.add(client);
+    const config = localAccessConfig({ databaseUrl: db.staffUrl, sessionKey: randomBytes(32), phoneKey: randomBytes(32) });
+    const identities = await seedLocalStaff(admin, config, { identities: !emptyRoster });
+    const makeAuth = (provider = fixtureVerifyProvider(config)) => new DurableStaffAuth({ config, database: new StaffDatabase(client, config), provider });
+    const auth = makeAuth();
+    const casesql = (sql, values) => fixture.sql(sql, values, db.name);
+    async function begin(whichAuth = auth, phone = '+12025550141') {
+        const boot = await whichAuth.bootstrap(undefined, 'test-client');
+        const cookie = `${config.cookies.browser}=${boot.browserToken}`;
+        const requestId = randomUUID();
+        const challenge = await whichAuth.send(cookie, boot.csrf, { phone, requestId }, 'test-client');
+        return { boot, cookie, requestId, phone, challenge };
+    }
+    async function login(whichAuth = auth, phone) {
+        const context = await begin(whichAuth, phone);
+        const result = await whichAuth.verify(context.cookie, context.boot.csrf, { challengeId: context.challenge.challengeId, code: '424242' }, 'test-client');
+        return { ...context, ...result, cookie: `${context.cookie}; ${config.cookies.session}=${result.token}` };
+    }
+    try {
+        await work({ db, admin, client, config, identities, auth, makeAuth, sql: casesql, begin, login });
+        results.push({ name, ok: true }); console.log(`PASS ${name}`);
+    } catch (error) {
+        results.push({ name, ok: false, error: fixture.safe(error.message) }); throw error;
+    } finally { await admin.$disconnect(); await client.$disconnect(); clients.delete(admin); clients.delete(client); }
+}
+const draft = (card, change = {}) => ({ operationId: randomUUID(), expectedRevision: card.draft.revision,
+    evidenceRevision: card.evidenceRevision, evidenceHash: card.evidenceHash, observations: { FRONT: 'Check this edge.', BACK: '' },
+    reviewedSides: [], identityReviewed: false, disposition: 'IN_REVIEW', ...change });
+
+let error;
+try {
+    await scenario('first allowed login creates only an untrained staff identity', async ({ login, admin }) => {
+        assert.equal(await admin.staffIdentity.count(), 0);
+        const signed = await login();
+        const identity = await admin.staffIdentity.findUnique({ where: { id: signed.staff.id } });
+        assert.equal(identity.role, 'REVIEWER'); assert.equal(identity.certificationUntil, null);
+        assert.equal(identity.trustedLearningUntil, null); assert.equal(await admin.staffIdentity.count(), 1);
+    }, { emptyRoster: true });
+    await scenario('durable session, review history and exact evidence survive fresh clients', async ({ auth, login, config, db, client }) => {
+        const signed = await login();
+        const review = new DurableReviewStore({ auth, evidence: fixtureEvidence() });
+        const cards = await review.list(signed.staff); assert.equal(cards.length, 3);
+        const card = await review.read(signed.staff, cards.find(c => c.evidenceComplete).id);
+        const updated = await review.save(signed.staff, card.id, draft(card)); assert.equal(updated.draft.revision, 2);
+        const asset = await review.asset(signed.staff, card.id, 'FRONT'); assert.match(asset.contentType, /svg/);
+        assert.equal(hash(asset.bytes), card.sides[0].sha256);
+        await client.$disconnect();
+        const freshClient = new PrismaClient({ datasources: { db: { url: db.staffUrl } } }); clients.add(freshClient);
+        try {
+            const fresh = new DurableStaffAuth({ database: new StaffDatabase(freshClient, config), config, provider: { start() { throw Error('Unexpected dispatch'); }, check() { throw Error('Unexpected dispatch'); } } });
+            const staff = await fresh.authenticate(signed.cookie, signed.csrf);
+            const restored = await new DurableReviewStore({ auth: fresh, evidence: fixtureEvidence() }).read(staff, card.id);
+            assert.deepEqual(restored.draft, updated.draft); assert.equal(restored.history.length, 1);
+        } finally { await freshClient.$disconnect(); clients.delete(freshClient); }
+    });
+    await scenario('lost verification reply replays one exact session; logout defeats replay', async ({ auth, begin, admin }) => {
+        const b = await begin(); const input = { challengeId: b.challenge.challengeId, code: '424242' };
+        const first = await auth.verify(b.cookie, b.boot.csrf, input, 'test');
+        const again = await auth.verify(b.cookie, b.boot.csrf, input, 'test'); assert.equal(first.token, again.token);
+        assert.equal(await admin.staffSession.count(), 1);
+        await auth.logout(`${b.cookie}; atlas_local_staff=${first.token}`, first.csrf);
+        await check('CODE_NOT_ACCEPTED', () => auth.verify(b.cookie, b.boot.csrf, input, 'test'));
+    });
+    await scenario('durable send claims prevent duplicate calls and changed-request reuse', async ({ makeAuth, config, admin }) => {
+        const hold = deferred(), entered = deferred(), transport = fixtureVerifyProvider(config); let count = 0;
+        const provider = { ...transport, async start(phone) { count++; entered.resolve(); await hold.promise; return transport.start(phone); } };
+        const auth = makeAuth(provider), boot = await auth.bootstrap(undefined, 'test');
+        const cookie = `atlas_local_browser=${boot.browserToken}`, input = { phone: '+12025550141', requestId: randomUUID() };
+        const first = auth.send(cookie, boot.csrf, input, 'test'); await entered.promise;
+        await check('SIGN_IN_RESTART_REQUIRED', () => makeAuth(provider).send(cookie, boot.csrf, input, 'test'));
+        assert.equal((await admin.staffChallenge.findFirst()).state, 'SENDING');
+        hold.resolve(); const result = await first;
+        assert.deepEqual(await makeAuth(provider).send(cookie, boot.csrf, input, 'test'), result); assert.equal(count, 1);
+        await check('REQUEST_CONFLICT', () => auth.send(cookie, boot.csrf, { ...input, phone: '+12025550142' }, 'test'));
+    });
+    await scenario('concurrent checks claim once and persist the approved result', async ({ makeAuth, config, begin, admin }) => {
+        const hold = deferred(), entered = deferred(), transport = fixtureVerifyProvider(config); let count = 0;
+        const provider = { ...transport, async check(sid, code) { count++; entered.resolve(); await hold.promise; return transport.check(sid, code); } };
+        const auth = makeAuth(provider), b = await begin(auth), input = { challengeId: b.challenge.challengeId, code: '424242' };
+        const first = auth.verify(b.cookie, b.boot.csrf, input, 'test'); await entered.promise;
+        await check('CODE_NOT_ACCEPTED', () => makeAuth(provider).verify(b.cookie, b.boot.csrf, input, 'test'));
+        hold.resolve(); const signed = await first; assert(signed.staff); assert.equal(count, 1);
+        assert.equal(await admin.staffSession.count(), 1); assert.equal((await admin.staffChallenge.findFirst()).attempts, 1);
+    });
+    await scenario('five wrong-code attempts remain spent after auth recreation', async ({ auth, begin, makeAuth, admin }) => {
+        const b = await begin(); const input = { challengeId: b.challenge.challengeId, code: '000000' };
+        for (let i = 0; i < 5; i++) await check('CODE_NOT_ACCEPTED', () => auth.verify(b.cookie, b.boot.csrf, input, 'test'));
+        let called = false;
+        await check('CODE_NOT_ACCEPTED', () => makeAuth({ async check() { called = true; } }).verify(b.cookie, b.boot.csrf, { ...input, code: '424242' }, 'test'));
+        assert.equal(called, false); assert.equal((await admin.staffChallenge.findFirst()).attempts, 5);
+    });
+    await scenario('unknown send/check outcomes remain quarantined across processes', async ({ makeAuth, begin, config, admin }) => {
+        const transport = fixtureVerifyProvider(config); let sends = 0;
+        const auth = makeAuth({ ...transport, async start() { sends++; throw Error('lost response'); } });
+        const boot = await auth.bootstrap(undefined, 'test'), cookie = `atlas_local_browser=${boot.browserToken}`;
+        await check('SIGN_IN_RESTART_REQUIRED', () => auth.send(cookie, boot.csrf, { phone: '+12025550141', requestId: randomUUID() }, 'test'));
+        await check('SIGN_IN_RESTART_REQUIRED', () => makeAuth().send(cookie, boot.csrf, { phone: '+12025550141', requestId: randomUUID() }, 'test'));
+        assert.equal(sends, 1);
+        const second = makeAuth({ ...transport, async check() { throw Error('lost reply'); } });
+        const b = await begin(second, '+12025550142');
+        await check('SIGN_IN_RESTART_REQUIRED', () => second.verify(b.cookie, b.boot.csrf, { challengeId: b.challenge.challengeId, code: '424242' }, 'test'));
+        assert.equal(await admin.staffChallenge.count({ where: { state: 'UNKNOWN' } }), 2); assert.equal(await admin.staffSession.count(), 0);
+    });
+    for (const field of ['accountSid', 'serviceSid', 'verificationSid', 'phone', 'channel', 'status']) {
+        await scenario(`provider substitution denied: ${field}`, async ({ makeAuth, config, begin, admin }) => {
+            const transport = fixtureVerifyProvider(config);
+            const auth = makeAuth({ ...transport, async check(sid, code) { return { ...await transport.check(sid, code), [field]: 'substituted' }; } });
+            const b = await begin(auth);
+            await check('SIGN_IN_RESTART_REQUIRED', () => auth.verify(b.cookie, b.boot.csrf, { challengeId: b.challenge.challengeId, code: '424242' }, 'test'));
+            assert.equal(await admin.staffSession.count(), 0); assert.equal((await admin.staffChallenge.findFirst()).state, 'UNKNOWN');
+        });
+    }
+    await scenario('current access, browser binding and actor provenance gate every operation', async ({ auth, login, admin, identities }) => {
+        const signed = await login(); const review = new DurableReviewStore({ auth, evidence: fixtureEvidence() });
+        await check('SIGN_IN_REQUIRED', () => review.list({ ...signed.staff }));
+        const other = await auth.bootstrap(undefined, 'other');
+        assert.equal(await auth.maybeAuthenticate(`atlas_local_browser=${other.browserToken}; atlas_local_staff=${signed.token}`), null);
+        await admin.staffIdentity.update({ where: { id: identities[0].id }, data: { revokedAt: new Date(), accessVersion: { increment: 1 } } });
+        await check('SIGN_IN_REQUIRED', () => review.list(signed.staff)); assert.equal(await auth.maybeAuthenticate(signed.cookie), null);
+    });
+    await scenario('revocation during provider verification prevents late session issuance', async ({ makeAuth, config, begin, admin, identities }) => {
+        const transport = fixtureVerifyProvider(config);
+        const auth = makeAuth({ ...transport, async check(sid, code) {
+            await admin.staffIdentity.update({ where: { id: identities[0].id }, data: { revokedAt: new Date(), accessVersion: { increment: 1 } } });
+            return transport.check(sid, code);
+        } });
+        const b = await begin(auth);
+        await check('CODE_NOT_ACCEPTED', () => auth.verify(b.cookie, b.boot.csrf, { challengeId: b.challenge.challengeId, code: '424242' }, 'test'));
+        assert.equal(await admin.staffSession.count(), 0);
+    });
+    await scenario('activation switch and old deployment invalidate retained authority', async ({ auth, login, admin, config, client }) => {
+        const signed = await login();
+        const old = new DurableStaffAuth({ config: { ...config, deploymentId: 'old-deployment' }, database: new StaffDatabase(client, { ...config, deploymentId: 'old-deployment' }) });
+        await check('STAFF_ACCESS_NOT_ENABLED', () => old.maybeAuthenticate(signed.cookie));
+        await admin.staffControl.update({ where: { id: 'active' }, data: { revision: { increment: 1 } } });
+        assert.equal(await auth.maybeAuthenticate(signed.cookie), null);
+        await admin.staffControl.update({ where: { id: 'active' }, data: { enabled: false, revision: { increment: 1 } } });
+        await check('STAFF_ACCESS_NOT_ENABLED', () => auth.bootstrap(undefined, 'test'));
+    });
+    await scenario('serving role cannot activate, assign, self-train or access legacy cards', async ({ client, auth, sql }) => {
+        for (const query of [
+            'UPDATE atlas_staff."StaffControl" SET enabled=true,revision=revision+1',
+            'UPDATE atlas_staff."StaffIdentity" SET "certificationUntil"=now(),"accessVersion"="accessVersion"+1',
+            'UPDATE atlas_staff."StaffAssignment" SET "canReview"=true,fence=fence+1',
+            'SELECT * FROM public."User"', 'SELECT * FROM public."CollectibleCardV2"',
+            'DELETE FROM atlas_staff."StaffAudit"', 'TRUNCATE atlas_staff."StaffReviewRevision"',
+        ]) await assert.rejects(() => client.$executeRawUnsafe(query));
+        await sql('GRANT SELECT ON public."User" TO atlas_fixture_staff');
+        await check('STAFF_DATABASE_ROLE_INVALID', () => auth.bootstrap(undefined, 'test'));
+    });
+    await scenario('review CAS, idempotency, complete checklist and observer/assignment rules', async ({ auth, login, admin, identities }) => {
+        const signed = await login(), observer = await login(auth, '+12025550142');
+        const review = new DurableReviewStore({ auth, evidence: fixtureEvidence() });
+        const observerCards = await review.list(observer.staff); assert.equal(observerCards.length, 1);
+        const card = await review.read(signed.staff, observerCards[0].id);
+        await check('REVIEW_PERMISSION_REQUIRED', () => review.save(observer.staff, card.id, draft(card)));
+        const input = draft(card), race = await Promise.allSettled([review.save(signed.staff, card.id, input), review.save(signed.staff, card.id, draft(card))]);
+        assert.equal(race.filter(r => r.status === 'fulfilled').length, 1);
+        assert.equal(race.find(r => r.status === 'rejected').reason.code, 'DRAFT_CHANGED');
+        const updated = await review.read(signed.staff, card.id); assert.equal(updated.draft.revision, 2);
+        if (race[0].status === 'fulfilled') assert.equal((await review.save(signed.staff, card.id, input)).draft.revision, 2);
+        await check('REVIEW_CHECKLIST_REQUIRED', () => review.save(signed.staff, card.id, draft(updated, { disposition: 'READY_FOR_HUMAN' })));
+        const ready = await review.save(signed.staff, card.id, draft(updated, { disposition: 'READY_FOR_HUMAN', identityReviewed: true, reviewedSides: ['FRONT', 'BACK'] }));
+        assert.equal(ready.history.length, 2);
+        await admin.staffAssignment.update({ where: { specimenId_identityId: { specimenId: card.id, identityId: identities[0].id } }, data: { revokedAt: new Date(), fence: { increment: 1 } } });
+        await check('CARD_NOT_FOUND', () => review.read(signed.staff, card.id));
+        await check('CARD_NOT_FOUND', () => review.save(signed.staff, card.id, draft(ready)));
+    });
+    await scenario('evidence byte mismatch and in-flight assignment revocation fail closed', async ({ auth, login, admin, identities }) => {
+        const signed = await login(), normal = new DurableReviewStore({ auth, evidence: fixtureEvidence() });
+        const card = (await normal.list(signed.staff)).find(c => c.evidenceComplete);
+        const bad = new DurableReviewStore({ auth, evidence: { async read() { return Buffer.from('wrong bytes'); } } });
+        await check('EVIDENCE_UNAVAILABLE', () => bad.asset(signed.staff, card.id, 'FRONT'));
+        const revoking = new DurableReviewStore({ auth, evidence: { async read(binding) {
+            await admin.staffAssignment.update({ where: { specimenId_identityId: { specimenId: card.id, identityId: identities[0].id } }, data: { revokedAt: new Date(), fence: { increment: 1 } } });
+            return fixtureEvidence().read(binding);
+        } } });
+        await check('CARD_NOT_FOUND', () => revoking.asset(signed.staff, card.id, 'FRONT'));
+    });
+    await scenario('audit failure rolls back review head, immutable history and idempotency', async ({ auth, login, admin, sql }) => {
+        const signed = await login(), review = new DurableReviewStore({ auth, evidence: fixtureEvidence() });
+        const card = await review.read(signed.staff, (await review.list(signed.staff))[0].id);
+        await sql(`CREATE FUNCTION atlas_staff.fixture_reject_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END; $$;
+          CREATE TRIGGER fixture_reject_audit BEFORE INSERT ON atlas_staff."StaffAudit" FOR EACH ROW EXECUTE FUNCTION atlas_staff.fixture_reject_audit()`);
+        await assert.rejects(() => review.save(signed.staff, card.id, draft(card)));
+        assert.equal((await admin.staffSpecimen.findUnique({ where: { id: card.id } })).draftRevision, 1);
+        assert.equal(await admin.staffReviewRevision.count({ where: { specimenId: card.id } }), 1);
+        assert.equal(await admin.staffOperation.count(), 0);
+    });
+    await scenario('SQL rejects orphan heads, history replacement and partial session issuance', async ({ admin, sql, begin, identities }) => {
+        const card = await admin.staffSpecimen.findFirst(), revision = await admin.staffReviewRevision.findFirst({ where: { specimenId: card.id } });
+        await assert.rejects(() => admin.$transaction(async tx => {
+            const content = canonical({ ...JSON.parse(revision.canonical), revision: 99 });
+            await tx.staffReviewRevision.create({ data: { ...revision, revision: 99, canonical: content, contentHash: hash(content) } });
+            await tx.$executeRaw`SET CONSTRAINTS ALL IMMEDIATE`;
+        }));
+        await assert.rejects(() => admin.$transaction(async tx => {
+            await tx.staffSpecimen.update({ where: { id: card.id }, data: { draftRevision: 2 } });
+            await tx.$executeRaw`SET CONSTRAINTS ALL IMMEDIATE`;
+        }));
+        await assert.rejects(() => admin.staffReviewRevision.update({ where: { specimenId_revision: { specimenId: card.id, revision: 1 } }, data: { savedById: randomUUID() } }));
+        await assert.rejects(() => sql('TRUNCATE atlas_staff."StaffReviewRevision" CASCADE'));
+        assert.equal((await admin.staffSpecimen.findUnique({ where: { id: card.id } })).draftRevision, 1);
+        const b = await begin(); const challenge = await admin.staffChallenge.findUnique({ where: { id: b.challenge.challengeId } });
+        const now = new Date();
+        await assert.rejects(() => admin.$transaction(async tx => {
+            await tx.staffSession.create({ data: { tokenHash: hash(randomBytes(32)), identityId: identities[0].id,
+                browserHash: challenge.browserHash, challengeId: challenge.id, controlRevision: challenge.controlRevision,
+                accessVersion: 1, createdAt: now, expiresAt: new Date(+now + 60_000) } });
+            await tx.$executeRaw`SET CONSTRAINTS ALL IMMEDIATE`;
+        }));
+        await assert.rejects(() => admin.$transaction(async tx => {
+            await tx.staffChallenge.update({ where: { id: challenge.id }, data: { state: 'CHECKING', checkClaimId: randomUUID(), attempts: 1 } });
+            await tx.staffChallenge.update({ where: { id: challenge.id }, data: { state: 'CONSUMED', consumedAt: now,
+                replayHash: hash(randomBytes(32)), replayUntil: new Date(+now + 30_000) } });
+            await tx.$executeRaw`SET CONSTRAINTS ALL IMMEDIATE`;
+        }));
+        assert.equal((await admin.staffChallenge.findUnique({ where: { id: challenge.id } })).state, 'PENDING');
+        assert.equal(await admin.staffSession.count(), 0);
+    });
+    await scenario('expired challenge, browser and session cannot restore access', async ({ auth, admin, config }) => {
+        const createdAt = new Date(Date.now() - 4 * 60_000), consumedAt = new Date(+createdAt + 1000);
+        const token = randomBytes(32).toString('base64url'), browserToken = randomBytes(32).toString('base64url');
+        const identity = await admin.staffIdentity.findFirst();
+        const browserHash = hash(browserToken), id = randomBytes(32).toString('base64url');
+        await admin.$transaction(async tx => {
+            await tx.staffBrowser.create({ data: { tokenHash: browserHash, controlRevision: 1, createdAt, expiresAt: new Date(Date.now() + 60_000) } });
+            await tx.staffChallenge.create({ data: { id, browserHash, requestId: randomUUID(), phoneHash: identity.phoneHash,
+                controlRevision: 1, accountSid: config.accountSid, serviceSid: config.serviceSid, sendClaimId: randomUUID(), state: 'SENDING',
+                createdAt, expiresAt: new Date(+createdAt + 3 * 60_000), quarantineUntil: new Date(+createdAt + 10 * 60_000) } });
+            await tx.staffChallenge.update({ where: { id }, data: { state: 'PENDING', verificationSid: `VE${'3'.repeat(32)}` } });
+            await tx.staffChallenge.update({ where: { id }, data: { state: 'CHECKING', checkClaimId: randomUUID(), attempts: 1 } });
+            await tx.staffSession.create({ data: { tokenHash: hash(token), identityId: identity.id, browserHash, challengeId: id,
+                controlRevision: 1, accessVersion: 1, createdAt: consumedAt, expiresAt: new Date(+consumedAt + 60_000) } });
+            await tx.staffChallenge.update({ where: { id }, data: { state: 'CONSUMED', consumedAt, replayHash: hash(randomBytes(32)), replayUntil: new Date(+consumedAt + 30_000) } });
+            await tx.$executeRaw`SET CONSTRAINTS ALL IMMEDIATE`;
+        });
+        const cookie = `atlas_local_browser=${browserToken}; atlas_local_staff=${token}`;
+        assert.equal(await auth.maybeAuthenticate(cookie), null);
+        await check('CODE_NOT_ACCEPTED', () => auth.verify(cookie, auth.digest(`browser:${browserToken}`), { challengeId: id, code: '424242' }, 'test'));
+        const expired = randomBytes(32).toString('base64url');
+        await admin.staffBrowser.create({ data: { tokenHash: hash(expired), controlRevision: 1, createdAt,
+            expiresAt: new Date(+createdAt + 60_000) } });
+        await check('SIGN_IN_SESSION_EXPIRED', () => auth.send(`atlas_local_browser=${expired}`, auth.digest(`browser:${expired}`), { phone: '+12025550141', requestId: randomUUID() }, 'test'));
+    });
+} catch (caught) { error = caught; }
+finally {
+    for (const client of clients) await client.$disconnect();
+    await fixture.stop();
+    const result = { ok: !error, directory: fixture.directory, stopped: true, source: fixture.source, results,
+        error: error ? fixture.safe(error.message) : null };
+    writeFileSync(join(fixture.directory, 'result.json'), JSON.stringify(result, null, 2));
+    console.log(JSON.stringify({ ok: result.ok, passed: results.filter(r => r.ok).length, directory: fixture.directory, stopped: true }));
+}
+if (error) { console.error(fixture.safe(error.stack)); process.exitCode = 1; }

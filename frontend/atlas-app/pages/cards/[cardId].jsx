@@ -3,12 +3,14 @@ import { useEffect, useRef, useState } from 'react';
 import Shell, { Notice, Unavailable } from '../../components/Shell';
 import { api, useStaffResource } from '../../lib/client';
 import { pageAccess, runtime } from '../../lib/server/runtime.mjs';
-export function getServerSideProps(ctx) {
-    const access = pageAccess(ctx);
+export async function getServerSideProps(ctx) {
+    const access = await pageAccess(ctx);
     if (!access.props?.staff)
         return access;
     try {
-        runtime().review.assigned(access.props.staff, ctx.params.cardId);
+        const state = runtime(ctx.req);
+        const staff = await state.auth.authenticate(ctx.req.headers.cookie);
+        await state.review.read(staff, ctx.params.cardId);
     }
     catch {
         return { notFound: true };

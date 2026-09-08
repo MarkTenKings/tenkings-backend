@@ -1,0 +1,163 @@
+// A separate client and migration history for the atlas_staff schema only.
+// The connection URL must explicitly select ?schema=atlas_staff.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../.generated/staff-database"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("ATLAS_DATABASE_URL")
+}
+
+model StaffControl {
+  id           String   @id @default("active")
+  enabled      Boolean  @default(false)
+  mode         String
+  origin       String
+  deploymentId String
+  releaseSha   String   @db.VarChar(40)
+  configHash   String   @db.VarChar(64)
+  revision     Int      @default(1)
+  updatedAt    DateTime @default(now())
+}
+
+model StaffIdentity {
+  id                  String   @id @default(uuid()) @db.Uuid
+  phoneHash           String   @unique @db.VarChar(64)
+  name                String   @default("Staff member") @db.VarChar(100)
+  role                String   @default("REVIEWER")
+  accessVersion       Int      @default(1)
+  revokedAt           DateTime?
+  certificationUntil  DateTime?
+  trustedLearningUntil DateTime?
+  createdAt           DateTime @default(now())
+  lastLoginAt         DateTime @default(now())
+  sessions            StaffSession[]
+  assignments         StaffAssignment[]
+  operations          StaffOperation[]
+}
+
+model StaffBrowser {
+  tokenHash       String   @id @db.VarChar(64)
+  controlRevision Int
+  createdAt       DateTime @default(now())
+  expiresAt       DateTime
+  challenges      StaffChallenge[]
+  sessions        StaffSession[]
+  @@index([expiresAt])
+}
+
+model StaffChallenge {
+  id              String   @id @db.VarChar(43)
+  browserHash     String   @db.VarChar(64)
+  browser         StaffBrowser @relation(fields: [browserHash], references: [tokenHash], onDelete: Restrict)
+  requestId       String   @db.VarChar(80)
+  phoneHash       String   @db.VarChar(64)
+  controlRevision Int
+  accountSid      String   @db.VarChar(34)
+  serviceSid      String   @db.VarChar(34)
+  verificationSid String?  @db.VarChar(34)
+  state           String
+  attempts        Int      @default(0)
+  sendClaimId     String   @unique @db.Uuid
+  checkClaimId    String?  @db.Uuid
+  replayHash      String?  @db.VarChar(64)
+  replayUntil     DateTime?
+  createdAt       DateTime @default(now())
+  expiresAt       DateTime
+  quarantineUntil DateTime
+  consumedAt      DateTime?
+  session         StaffSession?
+  @@unique([browserHash, requestId])
+  @@index([phoneHash, createdAt])
+}
+
+model StaffSession {
+  tokenHash       String   @id @db.VarChar(64)
+  identityId      String   @db.Uuid
+  identity        StaffIdentity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  browserHash     String   @db.VarChar(64)
+  browser         StaffBrowser @relation(fields: [browserHash], references: [tokenHash], onDelete: Restrict)
+  challengeId     String   @unique @db.VarChar(43)
+  challenge       StaffChallenge @relation(fields: [challengeId], references: [id], onDelete: Restrict)
+  controlRevision Int
+  accessVersion   Int
+  createdAt       DateTime @default(now())
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  @@index([identityId, expiresAt])
+}
+
+model StaffRateBucket {
+  key       String   @id @db.VarChar(100)
+  count     Int
+  expiresAt DateTime
+  @@index([expiresAt])
+}
+
+model StaffAudit {
+  id           String   @id @default(uuid()) @db.Uuid
+  event        String   @db.VarChar(60)
+  subjectId    String   @db.VarChar(100)
+  actorId      String?  @db.Uuid
+  details      String   @db.Text
+  createdAt    DateTime @default(now())
+  @@index([subjectId, createdAt])
+}
+
+model StaffSpecimen {
+  id                String   @id @default(uuid()) @db.Uuid
+  sourceType        String
+  sourceId          String   @db.VarChar(128)
+  sourceOwnerId     String?  @db.VarChar(128)
+  title             String   @db.VarChar(200)
+  subtitle          String   @db.VarChar(300)
+  evidenceCanonical String   @db.Text
+  evidenceHash      String   @db.VarChar(64)
+  evidenceRevision  Int      @default(1)
+  draftRevision     Int      @default(1)
+  createdAt         DateTime @default(now())
+  assignments       StaffAssignment[]
+  revisions         StaffReviewRevision[]
+  operations        StaffOperation[]
+  @@unique([sourceType, sourceId])
+}
+
+model StaffAssignment {
+  specimenId    String   @db.Uuid
+  specimen      StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  identityId    String   @db.Uuid
+  identity      StaffIdentity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  fence         Int      @default(1)
+  canReview     Boolean  @default(false)
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  @@id([specimenId, identityId])
+  @@index([identityId, expiresAt])
+}
+
+model StaffReviewRevision {
+  specimenId       String   @db.Uuid
+  specimen         StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  revision         Int
+  evidenceRevision Int
+  evidenceHash     String   @db.VarChar(64)
+  contentHash      String   @db.VarChar(64)
+  canonical        String   @db.Text
+  savedById        String?  @db.Uuid
+  savedAt          DateTime @default(now())
+  @@id([specimenId, revision])
+}
+
+model StaffOperation {
+  identityId  String   @db.Uuid
+  identity    StaffIdentity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  operationId String   @db.VarChar(80)
+  specimenId  String   @db.Uuid
+  specimen    StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  inputHash   String   @db.VarChar(64)
+  revision    Int
+  createdAt   DateTime @default(now())
+  @@id([identityId, operationId])
+}

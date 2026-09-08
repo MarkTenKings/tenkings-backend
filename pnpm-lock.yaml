@@ -325,6 +325,9 @@ importers:
 
   frontend/atlas-app:
     dependencies:
+      '@prisma/client':
+        specifier: 5.22.0
+        version: 5.22.0(prisma@5.22.0)
       next:
         specifier: 14.2.5
         version: 14.2.5(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -341,6 +344,9 @@ importers:
       eslint-config-next:
         specifier: 14.2.5
         version: 14.2.5(eslint@8.57.0)(typescript@5.5.4)
+      prisma:
+        specifier: 5.22.0
+        version: 5.22.0
 
   frontend/nextjs-app:
     dependencies:

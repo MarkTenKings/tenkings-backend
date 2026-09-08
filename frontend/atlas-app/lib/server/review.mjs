@@ -1,5 +1,5 @@
-import { deny, hash, identifier, strictObject } from './policy.mjs';
-const SIDES = ['FRONT', 'BACK'];
+import { deny, hash } from './policy.mjs';
+import { SIDES, validateDraft } from './review-contract.mjs';
 const cards = [
     { id: 'sample-001', title: 'Lumen Finch', set: 'Field Notes · 2026', number: '01 / 03', category: 'Illustration', color: '#b8ca9b', accent: '#df875d', state: 'IN_REVIEW' },
     { id: 'sample-002', title: 'Northstar', set: 'Night Studies · 2026', number: '02 / 03', category: 'Illustration', color: '#acc7d3', accent: '#ecd399', state: 'IN_REVIEW' },
@@ -71,18 +71,7 @@ export class LocalReviewStore {
         const c = this.assigned(staff, cardId);
         if (staff.role !== 'REVIEWER')
             deny(403, 'REVIEW_PERMISSION_REQUIRED');
-        strictObject(input, ['operationId', 'expectedRevision', 'evidenceRevision', 'evidenceHash', 'observations', 'reviewedSides', 'identityReviewed', 'disposition']);
-        identifier(input.operationId);
-        strictObject(input.observations, SIDES);
-        if (SIDES.some(side => typeof input.observations[side] !== 'string' || input.observations[side].length > 2000 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(input.observations[side])) ||
-            !Array.isArray(input.reviewedSides) || input.reviewedSides.length > 2 || new Set(input.reviewedSides).size !== input.reviewedSides.length || input.reviewedSides.some(side => !SIDES.includes(side)) ||
-            typeof input.identityReviewed !== 'boolean' || !['IN_REVIEW', 'NEEDS_EVIDENCE', 'READY_FOR_HUMAN'].includes(input.disposition) ||
-            !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1 || !Number.isSafeInteger(input.evidenceRevision) || typeof input.evidenceHash !== 'string')
-            deny(400, 'INVALID_DRAFT');
-        if (input.reviewedSides.some(side => !c.evidence[side]))
-            deny(409, 'EVIDENCE_REQUIRED');
-        if (input.disposition === 'READY_FOR_HUMAN' && (!input.identityReviewed || input.reviewedSides.length !== 2 || !c.evidence.FRONT || !c.evidence.BACK))
-            deny(409, 'REVIEW_CHECKLIST_REQUIRED');
+        validateDraft(input, c.evidence);
         const operationKey = `${staff.id}:${input.operationId}`;
         const payloadHash = hash(JSON.stringify(input));
         const prior = c.operations.get(operationKey);

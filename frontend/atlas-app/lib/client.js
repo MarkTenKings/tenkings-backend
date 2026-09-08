@@ -4,7 +4,7 @@ const messages = {
     USE_INTERNATIONAL_PHONE: 'Enter the full number with a country code, such as +1.',
     CODE_NOT_ACCEPTED: 'That code was not accepted. Check the code and try again.',
     SIGN_IN_SESSION_EXPIRED: 'Your sign-in session expired. Reload to start again.',
-    SIGN_IN_RESTART_REQUIRED: 'This attempt could not be confirmed. Wait five minutes, then start again.',
+    SIGN_IN_RESTART_REQUIRED: 'This attempt could not be confirmed. Please wait before starting a new sign-in attempt.',
     PLEASE_WAIT: 'Please wait before trying again.',
     DRAFT_CHANGED: 'A newer draft was saved. Your notes are still here. Reload the latest draft to continue.',
     EVIDENCE_CHANGED: 'The evidence changed. Your notes are still here. Reload the card before continuing.',

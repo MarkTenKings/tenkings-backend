@@ -315,7 +315,7 @@ test('page rendering has no POST, PUT, PATCH or DELETE action surface', async ()
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
         const headers = {};
         const res = { setHeader(key, value) { headers[key] = value; } };
-        const result = pageAccess({ req: { method }, res });
+        const result = await pageAccess({ req: { method }, res });
         assert.equal(res.statusCode, 405);
         assert.equal(headers.Allow, 'GET, HEAD');
         assert.equal(result.props.unavailable, true);

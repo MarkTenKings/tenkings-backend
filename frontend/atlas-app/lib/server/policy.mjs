@@ -35,8 +35,8 @@ export function assertLocalRequest(req, env) {
     if (req.headers.authorization)
         deny(403, 'STAFF_COOKIE_REQUIRED');
 }
-export function assertWrite(req) {
-    if (req.headers.origin !== LOCAL_ORIGIN ||
+export function assertWrite(req, origin = LOCAL_ORIGIN) {
+    if (req.headers.origin !== origin ||
         (req.headers['sec-fetch-site'] && req.headers['sec-fetch-site'] !== 'same-origin'))
         deny(403, 'ORIGIN_NOT_ALLOWED');
     if (req.headers['content-type']?.split(';')[0].trim() !== 'application/json')

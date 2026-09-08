@@ -1,6 +1,6 @@
 # ATLAS staff access
 
-Status: implementation decision and live acceptance contract, September 7 Pacific / September 8 UTC, 2026. The [staff application foundation](../../frontend/atlas-app/README.md) now implements a loopback-only synthetic sign-in, session and review workflow. Production and preview access remain denied. No live provider service, credential, staff account, environment variable or deployment has been created.
+Status: implementation decision and live acceptance contract, September 7 Pacific / September 8 UTC, 2026. The [staff application](../../frontend/atlas-app/README.md) implements separate PostgreSQL-backed identity, verification/session, assignment and immutable review storage, plus a dedicated Verify transport. Local integration is tested with synthetic credentials and evidence. Live production and preview access remain inactive. No live provider service, credential, staff account, environment variable or deployment has been created.
 
 ## First version
 
@@ -32,7 +32,7 @@ Google sign-in with a verified-email allowlist is the alternative if the owner p
 - Use a short, revocable opaque session in a host-only `__Host-atlas_staff` cookie: `HttpOnly`, `Secure`, `Path=/`, `SameSite=Lax`, no `Domain`. Keep only a hash of the session token in the durable store. All writes require the exact trusted Origin and a session-bound CSRF token. A local test configuration must never become a production authentication bypass.
 - Keep staff identity, current access and trained-human permissions server-owned. Removing an environment allowlist entry takes effect when the serving deployment receives that configuration; do not promise that editing a Vercel value immediately revokes every session. Production acceptance must prove active-session revocation and denial through retained preview/old deployment URLs. Staff access on the consumer host is denied.
 
-The dedicated session/challenge/identity store remains to be implemented behind a narrow port. Any shared-schema changes require coordination with the database owner. Neither the existing offline file store nor an in-memory rate limiter is a production identity or distributed session system.
+The dedicated store is implemented in the app-owned `atlas_staff` PostgreSQL schema with its own generated client and migration ledger. A shared-repository namespace notice was sent to the active Vault software owner; no public/Vault/financial/card model or migration was changed. The serving role is restricted to exact table/column grants and two fixed-search-path locking functions; its effective privileges are checked on each transaction. The original in-memory preview remains a separate fixture, not distributed session authority.
 
 Proposed server-only configuration names are `ATLAS_ADMIN_PHONES`, `ATLAS_STAFF_ORIGIN`, `ATLAS_AUTH_TWILIO_ACCOUNT_SID`, `ATLAS_AUTH_TWILIO_VERIFY_SERVICE_SID`, purpose-scoped `ATLAS_AUTH_TWILIO_*` credentials and `ATLAS_AUTH_*` session configuration. These are names, not provisioned values. Production, Preview and local configurations must remain distinct; unapproved previews receive no live SMS or data authority.
 
@@ -41,3 +41,11 @@ Proposed server-only configuration names are `ATLAS_ADMIN_PHONES`, `ATLAS_STAFF_
 Prove allowed and denied login, canonical-number matching, expired/wrong/reused codes, different service/SID/phone responses, concurrent checks, resend limits, lost responses, cookie/CSRF/origin checks, logout and active-session revocation. Verify cross-host, cross-card, cross-role and machine-versus-human denial. Test the exact production host and retained deployment URLs before enabling staff data adapters.
 
 Local development and the separate grading workspace can proceed using synthetic identities. Provider creation, real messages, live roster configuration and auth/domain cutover belong to a concrete operational release; they have not occurred here.
+
+## Local durable acceptance and pending activation
+
+At the durable staff milestone, 41 unit checks, 22 restricted-role PostgreSQL scenarios and 12 actual Next HTTP/SSR checks passed. The latter restarts the web process and verifies the same session, exact saved draft and idempotent retry. All 93 existing public migrations and the separate staff migration applied with source checksums intact; both second deploys were no-ops. Evidence: `/private/tmp/atlas-staff-db-FbxMyy/result.json` and `/private/tmp/atlas-staff-db-fQm2tJ/web-result.json`. Test database files were discarded only after shutdown; results/logs/ledgers remain. This does not establish live Verify or hosted acceptance.
+
+Activation must provision a restricted app serving role and separate operator/migration authority, the purpose-specific API key/Verify service, canonical approved numbers and independent 32-byte session/phone keys. The service's actual verification-token lifetime must match the configured ten-minute lifetime. Activate `StaffControl` only after reviewing the exact `PRODUCTION` origin, Vercel deployment ID, full release SHA and computed config hash. Every change advances its revision; old sessions and retained deployments lose authority. The HTTP boundary requires the exact `app.atlasgrading.com` Host and platform forwarding host/protocol; prove these against the actual deployed request before activation. The current conservative shared-ingress rate bucket intentionally does not trust arbitrary client forwarding headers.
+
+No route grants training or assignments. Operator-side roster/training/assignment commands and the real preserved-evidence adapter must be integrated before real grading access. A valid phone login creates only an untrained reviewer; publication and trusted learning require their separate exact current human permissions.
