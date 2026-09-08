@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { resolvePersistedSpeedsterPreparationCapture } from "../../../../../../lib/server/speedsterPreparationCaptureEvidence";
 import { createCardFromSpeedster, prisma, type Prisma } from "@tenkings/database";
 import { z } from "zod";
 import {
@@ -81,6 +82,7 @@ const identitySchema = z
 
 type CompletionSession = {
   id: string;
+  createdByUserId?: string;
   cardProfile: string;
   workflowState: string;
   publicReportSlug: string | null;
@@ -123,7 +125,10 @@ const record = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
 export function serverOwnedReview(session: CompletionSession) {
-  const capture = record(session.capture);
+  const capture = record(session.createdByUserId
+    ? resolvePersistedSpeedsterPreparationCapture({ ...session, createdByUserId: session.createdByUserId, capture: session.capture }).capture
+    : session.capture);
+  if (capture?.preparationEvidenceCanonical && !session.createdByUserId) throw new HttpError(409, "Prepared capture owner is unavailable");
   const front = record(capture?.front);
   const back = record(capture?.back);
   const persistedGrade = record(session.gradeReport);
@@ -230,6 +235,7 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
       where: { id: input.sessionId, createdByUserId: input.createdByUserId },
       select: {
         id: true,
+        createdByUserId: true,
         cardProfile: true,
         workflowState: true,
         publicReportSlug: true,

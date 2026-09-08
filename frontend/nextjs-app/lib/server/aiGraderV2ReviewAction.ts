@@ -87,6 +87,7 @@ import { HttpError } from "./adminSessionAuthority";
 import { speedsterCenteringFromConfirmedQuad } from "./speedsterCenteringAuthority";
 import { admitCurrentSpeedsterDetectorIdentity } from "./speedsterCurrentRelease";
 import { assertSpeedsterMapRevisionAppliesToIdentity } from "./speedsterCardTypeMaps";
+import { resolvePersistedSpeedsterPreparationCapture, speedsterPreparationSideAuthority, preparationOriginalReadKey } from "./speedsterPreparationCaptureEvidence";
 import {
   isAuthorizedSpeedsterOriginalStorageKey,
   isAuthorizedSpeedsterPreparedStorageKeys,
@@ -303,6 +304,7 @@ async function recordInstrumentationFailOpen(
 }
 
 function captureAuthority(value: unknown, sessionId: string, createdByUserId: string): PersistedCapture {
+  value = resolvePersistedSpeedsterPreparationCapture({ id: sessionId, createdByUserId, capture: value }).capture;
   if (!isRecord(value) || (value.cornerShape !== "SQUARE" && value.cornerShape !== "ROUNDED_3_18_MM")) {
     throw new Error("Speedster persisted capture is incomplete.");
   }
@@ -326,7 +328,7 @@ function captureAuthority(value: unknown, sessionId: string, createdByUserId: st
         sessionId,
         side: name,
       })
-      || !isAuthorizedSpeedsterPreparedStorageKeys({
+      || (!speedsterPreparationSideAuthority(candidate) && (!isAuthorizedSpeedsterPreparedStorageKeys({
         userId: createdByUserId,
         sessionId,
         side: name,
@@ -348,11 +350,12 @@ function captureAuthority(value: unknown, sessionId: string, createdByUserId: st
         userId: createdByUserId,
         sessionId,
         side: name,
-      })) {
+      })))) {
       throw new Error("Speedster persisted inspection evidence is not owned by this session.");
     }
     return {
       ...candidate,
+      originalStorageKey: preparationOriginalReadKey(candidate)!,
       centeringBorders: speedsterCenteringFromConfirmedQuad(candidate.centeringQuad, name),
     } as PersistedCaptureSide;
   };

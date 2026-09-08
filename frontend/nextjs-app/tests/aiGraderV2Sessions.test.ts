@@ -496,7 +496,8 @@ test("color geometry proxy replaces browser URLs and binds exact image bytes plu
   const fixture = mapBindingFixture();
   const sourceGeneration = `iphone-v4-sha256-${"1".repeat(64)}`;
   const sourceImageStorageKey = `ai-grader-v2/admin-1/${fixture.sessionId}/original/${sourceGeneration}/back.jpg`;
-  const body = await speedsterServiceBody("prepare", {
+  const body = await speedsterServiceBody("color-geometry", {
+    mode: "PRINTED_FRAME",
     sessionId: fixture.sessionId,
     side: "BACK",
     imageUrl: "https://browser-controlled.example/ignore.jpg",
@@ -513,13 +514,7 @@ test("color geometry proxy replaces browser URLs and binds exact image bytes plu
   assert.equal(body.imageUrl, `https://server-read.example/${sourceImageStorageKey}`);
   assert.equal(body.sessionId, undefined);
   assert.deepEqual(body.corners, mapBindingQuad);
-  assert.deepEqual(body.outputUploads, {
-    rectified: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/rectified.webp`,
-    inspection: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/inspection.webp`,
-    normalized: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/normalized.webp`,
-    microDefect: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/micro_defect.webp`,
-    directional: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/directional.webp`,
-  });
+  assert.equal(body.outputUploads, undefined);
   let hostilePresigns = 0;
   await assert.rejects(() => speedsterServiceBody("prepare", {
     sessionId: fixture.sessionId,
@@ -534,7 +529,7 @@ test("color geometry proxy replaces browser URLs and binds exact image bytes plu
     async presignRead() { hostilePresigns += 1; return "unexpected"; },
     async presignUpload() { hostilePresigns += 1; return "unexpected"; },
     async hashMapEvidence() { hostilePresigns += 1; return mapBindingSha(sourceImageStorageKey); },
-  }), /Browser-selected.*destinations are not accepted/);
+  }), /legacy output grants are disabled/);
   assert.equal(hostilePresigns, 0);
   assert.deepEqual(body.colorGeometryAuthorityBinding, {
     sessionId: fixture.sessionId,

@@ -1,3 +1,11 @@
+import { prepareSpeedsterSide, loadCurrentSpeedsterPreparation } from "../../../../../lib/server/speedsterPreparationService";
+import { createPrismaSpeedsterPreparationStore } from "../../../../../lib/server/speedsterPreparationStore";
+import { currentSpeedsterPreparationRelease } from "../../../../../lib/server/speedsterPreparationRelease";
+import { SpeedsterPreparationConflict, preparationHash, preparationRequire } from "../../../../../lib/server/speedsterPreparationIntegrity";
+import type { PreparationManifest } from "../../../../../lib/server/speedsterPreparationAuthority";
+import { freezeSpeedsterPreparationSource } from "../../../../../lib/server/speedsterPreparationStorage";
+import type { SpeedsterPreparationScope } from "../../../../../lib/ai-grader-v2/preparation";
+import { resolvePersistedSpeedsterPreparationCapture, speedsterPreparationSideAuthority } from "../../../../../lib/server/speedsterPreparationCaptureEvidence";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@tenkings/database";
@@ -62,7 +70,6 @@ import {
   isAuthorizedSpeedsterPreparedStorageKeys,
   isAuthorizedSpeedsterInspectionStorageKey,
   speedsterOriginalStorageGeneration,
-  speedsterPreparedStorageKeys,
   speedsterPreparedStorageGenerationForInspection,
 } from "../../../../../lib/server/aiGraderV2IphoneCapture";
 
@@ -224,6 +231,8 @@ export function speedsterServiceHeaders() {
 }
 
 type TraceEvidenceDependencies = {
+  freezeSource?: typeof freezeSpeedsterPreparationSource;
+  resolvePreparation?: (reference: unknown, scope: SpeedsterPreparationScope, originalKey: string, allowCaptured?: boolean) => Promise<PreparationManifest | null>;
   findOwnedCapture: (
     sessionId: string,
     createdByUserId: string,
@@ -252,6 +261,17 @@ type TraceEvidenceDependencies = {
 };
 
 const traceEvidenceDependencies: TraceEvidenceDependencies = {
+  freezeSource: freezeSpeedsterPreparationSource,
+  resolvePreparation: async (reference, scope, originalKey, allowCaptured = false) => {
+    const store = createPrismaSpeedsterPreparationStore();
+    if (reference !== undefined) return loadCurrentSpeedsterPreparation(reference, scope, store, allowCaptured);
+    const snapshot = await store.read(scope);
+    const attempt = snapshot.attempts[scope.side];
+    if (attempt?.input.source.originalStorageKey !== originalKey) return null;
+    const manifest = snapshot.manifests[scope.side];
+    preparationRequire(manifest, "Preparation has no adopted result. Reload its saved state before continuing.");
+    return manifest;
+  },
   findOwnedCapture: (sessionId, createdByUserId) => prisma.aiGraderV2Session.findFirst({
     where: { id: sessionId, createdByUserId },
     select: { capture: true, reviewedDefects: true },
@@ -674,7 +694,8 @@ export async function speedsterServiceBody(
   evidenceDeps: TraceEvidenceDependencies = traceEvidenceDependencies,
   requestTraceId?: string,
 ) {
-  if ((action === "geometry" || action === "prepare" || action === "color-geometry") && createdByUserId) {
+  if (action === "prepare") throw new SpeedsterPreparationConflict("Preparation requires the durable attempt service; legacy output grants are disabled.");
+  if ((action === "geometry" || action === "color-geometry") && createdByUserId) {
     const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
     const side = body.side === "FRONT" || body.side === "BACK" ? body.side : null;
     const matColor = body.matColor === "BLACK" || body.matColor === "WHITE" || body.matColor === "MAGENTA"
@@ -683,9 +704,6 @@ export async function speedsterServiceBody(
     const sourceImageStorageKey = typeof body.sourceImageStorageKey === "string"
       ? body.sourceImageStorageKey.trim()
       : "";
-    if (action === "prepare" && body.outputUploads !== undefined) {
-      throw new Error("Browser-selected Speedster prepared output destinations are not accepted.");
-    }
     const authorizedSource = side ? isAuthorizedSpeedsterOriginalStorageKey({
       storageKey: sourceImageStorageKey,
       userId: createdByUserId,
@@ -702,12 +720,20 @@ export async function speedsterServiceBody(
     if (!session || session.workflowState !== "DRAFT") {
       throw new Error("Speedster color geometry draft was not found.");
     }
-    const sourceImageSha256 = await hashEvidence(sourceImageStorageKey);
+    const preparation = await evidenceDeps.resolvePreparation?.(body.preparation, { sessionId, createdByUserId, side }, sourceImageStorageKey);
+    if (preparation) preparationRequire(preparation.body.input.matColor === matColor
+      && preparation.body.input.source.originalStorageKey === sourceImageStorageKey,
+    "Color recovery differs from its adopted source or mat.");
+    const frozen = preparation?.body.input.source
+      ?? (evidenceDeps.freezeSource ? await evidenceDeps.freezeSource({ sessionId, createdByUserId, side }, sourceImageStorageKey) : null);
+    const readStorageKey = frozen?.storageKey ?? sourceImageStorageKey;
+    const sourceImageSha256 = await hashEvidence(readStorageKey);
+    if (frozen) preparationRequire(sourceImageSha256 === frozen.sha256, "Frozen Color source bytes changed.");
     if (!SHA256_HEX.test(sourceImageSha256)) {
       throw new Error("Speedster color geometry source image hash is unavailable.");
     }
     const base = {
-      imageUrl: await evidenceDeps.presignRead(sourceImageStorageKey, 60 * 10),
+      imageUrl: await evidenceDeps.presignRead(readStorageKey, 60 * 10),
       matColor,
     };
     if (action === "geometry") {
@@ -774,6 +800,8 @@ export async function speedsterServiceBody(
     if (!corners || JSON.stringify(corners) !== JSON.stringify(body.corners)) {
       throw new Error("Speedster printed-frame rectification input is invalid.");
     }
+    if (preparation) preparationRequire(preparationHash(corners) === preparation.body.input.physicalQuadSha256,
+      "Color recovery physical geometry differs from its adopted preparation.");
     if (action === "color-geometry") {
       const mode = body.mode === "PHYSICAL_OUTER" || body.mode === "PRINTED_FRAME"
         ? body.mode
@@ -809,50 +837,6 @@ export async function speedsterServiceBody(
         },
       };
     }
-    const sourceGeneration = speedsterOriginalStorageGeneration({
-      storageKey: sourceImageStorageKey,
-      userId: createdByUserId,
-      sessionId,
-      side,
-    });
-    const presignPreparedUpload = evidenceDeps.presignUpload
-      ?? (evidenceDeps === traceEvidenceDependencies ? traceEvidenceDependencies.presignUpload : undefined);
-    if (sourceGeneration === undefined || !presignPreparedUpload) {
-      throw new Error("Speedster printed-frame output authority is unavailable.");
-    }
-    const preparedKeys = speedsterPreparedStorageKeys(
-      createdByUserId,
-      sessionId,
-      side,
-      sourceGeneration ?? undefined,
-    );
-    const [rectified, inspection, normalized, microDefect, directional] = await Promise.all([
-      presignPreparedUpload(preparedKeys.RECTIFIED, "image/webp"),
-      presignPreparedUpload(preparedKeys.INSPECTION, "image/webp"),
-      presignPreparedUpload(preparedKeys.NORMALIZED, "image/webp"),
-      presignPreparedUpload(preparedKeys.MICRO_DEFECT, "image/webp"),
-      presignPreparedUpload(preparedKeys.DIRECTIONAL, "image/webp"),
-    ]);
-    return {
-      ...base,
-      corners,
-      outputUploads: {
-        rectified,
-        inspection,
-        normalized,
-        microDefect,
-        directional,
-      },
-      colorGeometryAuthorityBinding: {
-        sessionId,
-        side,
-        mode: "PRINTED_FRAME",
-        sourceImageStorageKey,
-        sourceImageSha256,
-        matColor,
-        physicalQuadSha256: speedsterPhysicalQuadHash(corners),
-      },
-    };
   }
   if (action === "map-registration" && createdByUserId) {
     const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
@@ -866,27 +850,18 @@ export async function speedsterServiceBody(
       ? body.currentOriginalStorageKey.trim()
       : "";
     if (!sessionId || !side || !currentPhysicalQuad || JSON.stringify(currentPhysicalQuad) !== JSON.stringify(rawQuad)
-      || !isAuthorizedSpeedsterInspectionStorageKey({
-        storageKey: currentInspectionStorageKey,
-        userId: createdByUserId,
-        sessionId,
-        side: side ?? "FRONT",
-      }) || !isAuthorizedSpeedsterOriginalStorageKey({
-        storageKey: currentOriginalStorageKey,
-        userId: createdByUserId,
-        sessionId,
-        side: side ?? "FRONT",
-      }) || speedsterOriginalStorageGeneration({
-        storageKey: currentOriginalStorageKey,
-        userId: createdByUserId,
-        sessionId,
-        side: side ?? "FRONT",
-      }) !== speedsterPreparedStorageGenerationForInspection({
-        storageKey: currentInspectionStorageKey,
-        userId: createdByUserId,
-        sessionId,
-        side: side ?? "FRONT",
-      })) {
+      || !isAuthorizedSpeedsterOriginalStorageKey({ storageKey: currentOriginalStorageKey, userId: createdByUserId, sessionId, side })) {
+      throw new Error("Speedster map registration request is invalid.");
+    }
+    const preparation = await evidenceDeps.resolvePreparation?.(body.preparation, { sessionId, createdByUserId, side }, currentOriginalStorageKey, true);
+    if (preparation) {
+      preparationRequire(preparation.body.input.source.originalStorageKey === currentOriginalStorageKey
+        && preparation.body.artifacts.INSPECTION.storageKey === currentInspectionStorageKey
+        && preparationHash(currentPhysicalQuad) === preparation.body.input.physicalQuadSha256,
+      "Map registration differs from its adopted preparation.");
+    } else if (!isAuthorizedSpeedsterInspectionStorageKey({ storageKey: currentInspectionStorageKey, userId: createdByUserId, sessionId, side })
+      || speedsterOriginalStorageGeneration({ storageKey: currentOriginalStorageKey, userId: createdByUserId, sessionId, side })
+        !== speedsterPreparedStorageGenerationForInspection({ storageKey: currentInspectionStorageKey, userId: createdByUserId, sessionId, side })) {
       throw new Error("Speedster map registration request is invalid.");
     }
     const findOwnedMapSession = evidenceDeps.findOwnedMapSession ?? traceEvidenceDependencies.findOwnedMapSession;
@@ -921,6 +896,7 @@ export async function speedsterServiceBody(
       hashMapEvidence(mapSide.referenceInspection.storageKey),
       hashMapEvidence(preparedCurrentStorageKey),
     ]);
+    if (preparation) preparationRequire(currentInspectionSha256 === preparation.body.artifacts.INSPECTION.sha256, "Adopted inspection bytes changed.");
     if (referenceSha256 !== mapSide.referenceInspection.sha256) {
       throw new Error("Active TRAIN map reference evidence failed hash verification.");
     }
@@ -1040,7 +1016,8 @@ export async function speedsterServiceBody(
     if (!side) throw new Error("Speedster trace proposal side is invalid.");
     const owned = await evidenceDeps.findOwnedCapture(sessionId.trim(), createdByUserId);
     if (!owned) throw new Error("Speedster trace proposal session was not found.");
-    const capture = isRecord(owned.capture) ? owned.capture : null;
+    const resolved = resolvePersistedSpeedsterPreparationCapture({ id: sessionId.trim(), createdByUserId, capture: owned.capture });
+    const capture = isRecord(resolved.capture) ? resolved.capture : null;
     const cornerShape = capture?.cornerShape === "SQUARE" || capture?.cornerShape === "ROUNDED_3_18_MM"
       ? capture.cornerShape
       : null;
@@ -1080,7 +1057,7 @@ export async function speedsterServiceBody(
       || typeof persistedKeys.NORMALIZED !== "string"
       || typeof persistedKeys.MICRO_DEFECT !== "string"
       || typeof persistedKeys.DIRECTIONAL !== "string"
-      || !isAuthorizedSpeedsterPreparedStorageKeys({
+      || (!speedsterPreparationSideAuthority(persistedSide) && !isAuthorizedSpeedsterPreparedStorageKeys({
         userId: createdByUserId,
         sessionId: sessionId.trim(),
         side,
@@ -1091,7 +1068,7 @@ export async function speedsterServiceBody(
           MICRO_DEFECT: persistedKeys.MICRO_DEFECT,
           DIRECTIONAL: persistedKeys.DIRECTIONAL,
         },
-      }) ||
+      })) ||
       !cornerShape || !isRecord(persistedSide?.inspectionFrame)
     ) {
       throw new Error("Speedster trace proposal evidence is not owned by this session.");
@@ -1121,7 +1098,22 @@ export async function speedsterServiceBody(
   return body;
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+async function prepareRuntime(body: unknown, createdByUserId: string) {
+  return prepareSpeedsterSide(body, createdByUserId, {
+    store: createPrismaSpeedsterPreparationStore(), approvedRelease: currentSpeedsterPreparationRelease,
+    readUrl: presignReadUrl,
+    stagingUpload: (storageKey) => presignPrivateSpeedsterUploadUrl({ storageKey, contentType: "image/webp" }),
+    invokeWorker: async (request) => {
+      const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");
+      if (!serviceUrl) throw new Error("AI_GRADER_SPEEDSTER_SERVICE_URL is not configured");
+      const { response, payload } = await fetchSpeedsterImageUpstream({ url: `${serviceUrl}/prepare`, action: "prepare", headers: speedsterServiceHeaders(), body: JSON.stringify(request) });
+      return { ok: response.ok, status: response.status, payload };
+    },
+  });
+}
+
+export function createSpeedsterImageHandler(deps = { requireAdminSession, prepare: prepareRuntime }) {
+return async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ message: "Method not allowed" });
@@ -1189,10 +1181,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   };
   res.setHeader("X-Request-ID", requestTraceId);
   try {
-    const admin = await requireAdminSession(req);
+    const admin = await deps.requireAdminSession(req);
     const action = requestedAction;
     if (!action || !ACTIONS.has(action)) {
       return res.status(404).json({ message: "Unknown Speedster image action" });
+    }
+
+    if (action === "prepare") {
+      res.setHeader("Cache-Control", "private, no-store");
+      return res.status(200).json(await deps.prepare(req.body ?? {}, admin.user.id));
     }
 
     const serviceRequestBody = await speedsterServiceBody(
@@ -1357,11 +1354,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           if (!requestedMat) throw new Error("Speedster geometry mat selection is invalid.");
           return sanitizeSpeedsterGeometryPayload(payload, { mode: "PHYSICAL_OUTER", matColor: requestedMat });
         })()
-      : action === "prepare" && response.ok
-        ? (() => {
-            if (!requestedMat) throw new Error("Speedster prepare mat selection is invalid.");
-            return sanitizeSpeedsterPreparePayload(payload, { matColor: requestedMat });
-          })()
       : action === "color-geometry" && response.ok
         ? (() => {
             if (!requestedMat) throw new Error("Speedster color geometry recovery mat selection is invalid.");
@@ -1392,7 +1384,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               designBoundary: serviceRequestBody.designBoundary as Parameters<typeof parseSpeedsterMapRegistration>[1]["designBoundary"],
             })
         : payload;
-    if ((action === "geometry" || action === "prepare" || action === "color-geometry") && response.ok) {
+    if ((action === "geometry" || action === "color-geometry") && response.ok) {
       if (!colorGeometryAuthorityBinding) {
         throw new Error("Speedster color geometry result lacks exact source authority.");
       }
@@ -1532,7 +1524,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
       return res.status(504).json({
-        message: `Speedster ${error.action} service did not respond in time. Your photos and current geometry are preserved; retry this step.`,
+        message: error.action === "prepare"
+          ? "Preparation response was not received. Your saved attempt and photos are preserved; reload preparation status before explicitly starting another attempt."
+          : `Speedster ${error.action} service did not respond in time. Your photos and current geometry are preserved; retry this step.`,
         requestId: requestTraceId,
         ...(requestedAction === "map-registration" ? {
           registrationError: speedsterMapRegistrationTimeoutEnvelope(requestTraceId),
@@ -1540,6 +1534,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         } : {}),
       });
     }
+    if (error instanceof SpeedsterPreparationConflict) return res.status(409).json({ message: error.message, requestId: requestTraceId });
     const mapped = toErrorResponse(error);
     if (requestedAction === "map-registration") {
       const providerNetwork = registrationUpstreamStarted
@@ -1580,3 +1575,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(mapped.status).json({ message: mapped.message, requestId: requestTraceId });
   }
 }
+
+}
+
+export default createSpeedsterImageHandler();

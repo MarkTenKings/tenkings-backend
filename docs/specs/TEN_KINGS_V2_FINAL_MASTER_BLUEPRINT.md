@@ -20,6 +20,14 @@ Local implementation preparation includes strict machine/human contracts, immuta
 
 Source-evidence correction at `7bde06f65959e376e12725186d605cc91c67852b`: the implemented V2 sold-comps package uses SoldComps; the SerpAPI text in the original launch plan below is not a description of that implementation. This note records the discrepancy without authorizing another provider change. The canonical ATLAS contract/evaluation/app preparation records are `docs/atlas/CONTRACTS.md`, `docs/atlas/EVALUATION.md` and `docs/atlas/APP_EXTRACTION.md`. The session handoff records this dated amendment.
 
+#### Owner clarification — ATLAS review, public report and slab finishing, 2026-09-07 Pacific
+
+Mark clarified that the final output is an ATLAS graded report using his existing ATLAS grading system, with Astra operating most of the grading workflow. Completed machine-assisted drafts enter a human review queue. The human can quickly inspect the report, correct findings or other reviewable content, save the corrected revision, and approve that exact final report. Human approval makes the report public and moves the card to the approved/graded state. This approval remains separate from any permission to approve trusted learning. Astra does not replace the grading formulas or the final human approver.
+
+ATLAS slab finishing includes printing the label, programming and verifying an NFC tag linking to the approved report, and human assembly of the label, tag, card and slab followed by sonic welding. Software must make these steps easy and preserve their association with the approved card/report. The existing Dell/ACR1552U/F8215/GoToTags workflow below is the reuse starting point; current source requires a human Start Encoding action and physical tag handling. Automated job preparation or helper attestation does not prove physical assembly or welding. No change to Ten Kings ownership, inventory, wallet, historical tokens or existing NFC/report URLs is implied by this ATLAS clarification.
+
+Mark fixed the first acceptance batch at ten cards to assess the updated ATLAS system with the Astra operator before expansion. Local build work continues through this workflow. Exact pilot specimens, account capacity and bounded spending, current worker/storage/workstation readiness, and concrete operational release actions still require their actual inputs and verification. The implementation/acceptance checklist is `docs/atlas/COMPLETION.md`.
+
 No paid API/RunPod experiment, funding, push-triggered operational side effect, merge/deploy/restart, Production write/migration, service removal, or domain/DNS/Vercel/email/auth-routing change is authorized by this amendment. Those actions retain their exact reviewed operational approval gates. The original phase gates and explicit do-not-build constraints remain in force outside this narrow ATLAS scope.
 
 ---

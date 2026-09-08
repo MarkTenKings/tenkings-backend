@@ -15,6 +15,7 @@ import {
   speedsterFindingRegions,
 } from "../ai-grader-v2/review-findings";
 import { parseSpeedsterTraceRleV1, type SpeedsterTraceRleV1 } from "../ai-grader-v2/trace-codec";
+import { resolvePersistedSpeedsterPreparationCapture, speedsterPreparationSideAuthority, preparationOriginalReadKey } from "./speedsterPreparationCaptureEvidence";
 import {
   isAuthorizedSpeedsterOriginalStorageKey,
   isAuthorizedSpeedsterPreparedStorageKeys,
@@ -249,6 +250,7 @@ export function projectLearningBlueprintCard(
 }
 
 function sideCapture(session: LearningBlueprintSessionRow, side: SpeedsterCardSide) {
+  session = resolvePersistedSpeedsterPreparationCapture(session);
   const capture = record(session.capture);
   return capture ? record(capture[side.toLowerCase()]) : null;
 }
@@ -264,13 +266,13 @@ export async function signLearningBlueprintImages(input: Readonly<{
   let original: string | null = null;
   let rectified: string | null = null;
   let inspection: string | null = null;
-  const originalKey = text(value?.originalStorageKey);
-  if (originalKey && isAuthorizedSpeedsterOriginalStorageKey({
+  const originalKey = preparationOriginalReadKey(value);
+  if (originalKey && (speedsterPreparationSideAuthority(value) || isAuthorizedSpeedsterOriginalStorageKey({
     storageKey: originalKey,
     userId: input.session.createdByUserId,
     sessionId: input.session.id,
     side: input.side,
-  })) {
+  }))) {
     try {
       original = await input.presignRead(originalKey, 600);
     } catch {
@@ -284,7 +286,7 @@ export async function signLearningBlueprintImages(input: Readonly<{
   const viewKeys = record(value?.viewStorageKeys);
   if (rectifiedKey && inspectionKey && viewKeys
     && text(viewKeys.NORMALIZED) && text(viewKeys.MICRO_DEFECT) && text(viewKeys.DIRECTIONAL)
-    && isAuthorizedSpeedsterPreparedStorageKeys({
+    && (speedsterPreparationSideAuthority(value) || isAuthorizedSpeedsterPreparedStorageKeys({
       userId: input.session.createdByUserId,
       sessionId: input.session.id,
       side: input.side,
@@ -295,7 +297,7 @@ export async function signLearningBlueprintImages(input: Readonly<{
         MICRO_DEFECT: text(viewKeys.MICRO_DEFECT)!,
         DIRECTIONAL: text(viewKeys.DIRECTIONAL)!,
       },
-    })) {
+    }))) {
     try {
       [rectified, inspection] = await Promise.all([
         input.presignRead(rectifiedKey, 600),

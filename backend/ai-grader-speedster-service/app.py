@@ -44,6 +44,11 @@ from sam3_detector import (
     measure_marks,
 )
 from trace_rle import decode_trace_rle, encode_trace_rle
+from preparation_evidence import (
+    decode_preparation_source,
+    load_preparation_bytes,
+    preparation_identity,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -118,6 +123,7 @@ class PreparedUploads(BaseModel):
 class PrepareRequest(RectifyRequest):
     outputUploads: PreparedUploads
     matColor: str
+    preparationBinding: Optional[dict] = None
 
 
 class PrepareResponse(BaseModel):
@@ -128,6 +134,8 @@ class PrepareResponse(BaseModel):
     detectedBorders: List[str]
     inspectionFrame: dict
     colorGeometry: Optional[dict] = None
+    preparationIdentity: Optional[dict] = None
+    preparationEvidence: Optional[dict] = None
 
 
 class MapRegistrationAnchor(BaseModel):
@@ -681,7 +689,24 @@ def prepare_image(request: PrepareRequest):
     if len(request.corners) != 4:
         raise HTTPException(status_code=400, detail="Exactly four corners are required")
     try:
-        image = load_image(request.imageUrl, request.imageBase64)
+        identity = None
+        preparation_evidence = None
+        if request.preparationBinding is not None:
+            binding = request.preparationBinding
+            uuid = r"[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}"
+            if (set(binding) != {"attemptId", "dispatchClaimId", "requestSha256", "inputSha256", "sourceSha256"}
+                    or any(not isinstance(binding.get(key), str) or not re.fullmatch(uuid, binding[key]) for key in ("attemptId", "dispatchClaimId"))
+                    or any(not isinstance(binding.get(key), str) or not re.fullmatch(r"[a-f0-9]{64}", binding[key]) for key in ("requestSha256", "inputSha256", "sourceSha256"))
+                    or not request.outputUploads.inspection):
+                raise ValueError("Preparation attempt binding is invalid")
+            identity = preparation_identity()
+            data = load_preparation_bytes(request.imageUrl, request.imageBase64)
+            image, source = decode_preparation_source(data)
+            if source["sha256"] != binding["sourceSha256"]:
+                raise ValueError("Preparation source bytes do not match the dispatched attempt")
+            preparation_evidence = {**binding, "source": source}
+        else:
+            image = load_image(request.imageUrl, request.imageBase64)
         rectified, transform = rectify(image, request.corners)
         try:
             color_geometry = propose_printed_frame(rectified, request.matColor)
@@ -755,6 +780,8 @@ def prepare_image(request: PrepareRequest):
         "detectedBorders": detected_borders,
         "inspectionFrame": frame,
         "colorGeometry": serialize_proposal(color_geometry, TARGET_WIDTH, TARGET_HEIGHT) if color_geometry else None,
+        "preparationIdentity": identity,
+        "preparationEvidence": preparation_evidence,
     }
 
 

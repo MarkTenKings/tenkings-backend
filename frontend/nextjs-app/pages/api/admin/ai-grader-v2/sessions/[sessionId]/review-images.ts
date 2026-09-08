@@ -7,6 +7,7 @@ import {
 import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
 import { isAuthorizedSpeedsterPreparedStorageKeys } from "../../../../../../lib/server/aiGraderV2IphoneCapture";
 import { presignReadUrl } from "../../../../../../lib/server/storage";
+import { resolvePersistedSpeedsterPreparationCapture, speedsterPreparationSideAuthority } from "../../../../../../lib/server/speedsterPreparationCaptureEvidence";
 
 type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
@@ -51,7 +52,7 @@ function sideStorageKeys(input: {
     MICRO_DEFECT: persisted.viewStorageKeys.MICRO_DEFECT,
     DIRECTIONAL: persisted.viewStorageKeys.DIRECTIONAL,
   };
-  if (!isAuthorizedSpeedsterPreparedStorageKeys({
+  if (!speedsterPreparationSideAuthority(persisted) && !isAuthorizedSpeedsterPreparedStorageKeys({
     userId: input.createdByUserId,
     sessionId: input.sessionId,
     side: input.side,
@@ -89,8 +90,9 @@ export function createSpeedsterReviewImagesHandler(deps: Dependencies = dependen
       const admin = await deps.requireAdminSession(req);
       const sessionId = sessionIdFrom(req);
       if (!sessionId) return res.status(400).json({ message: "Session ID is required" });
-      const session = await deps.findOwnedCapture(sessionId, admin.user.id);
-      if (!session) return res.status(404).json({ message: "Speedster session not found" });
+      const stored = await deps.findOwnedCapture(sessionId, admin.user.id);
+      if (!stored) return res.status(404).json({ message: "Speedster session not found" });
+      const session = resolvePersistedSpeedsterPreparationCapture({ ...stored, id: sessionId, createdByUserId: admin.user.id });
       if (!isRecord(session.capture)) {
         return res.status(409).json({ message: "Speedster review images are not ready" });
       }

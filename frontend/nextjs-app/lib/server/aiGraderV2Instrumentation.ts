@@ -42,7 +42,8 @@ export type SpeedsterInstrumentationEvent = Readonly<{
     | "GEOMETRY_LEARNING"
     | "DETECTOR_EVIDENCE"
     | "MEMORY_DECISION"
-    | "DETECTOR_CHECKPOINT";
+    | "DETECTOR_CHECKPOINT"
+    | "PREPARATION_AUTHORITY";
   eventType: string;
   findingId?: string | null;
   origin?: SpeedsterDefectOrigin | null;

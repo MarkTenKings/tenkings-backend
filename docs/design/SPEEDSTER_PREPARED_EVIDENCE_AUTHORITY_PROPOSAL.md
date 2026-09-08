@@ -1,14 +1,14 @@
 # Speedster prepared evidence: authority and storage proposal
 
-Status: **DESIGN ONLY — not implemented or operationally approved.**
+Status: **Design implemented locally; release/integration acceptance pending.** See [implementation and evidence](SPEEDSTER_PREPARED_EVIDENCE_IMPLEMENTATION.md).
 
-This is the separate third safeguard slice, based on source at `1a764beebd4606c26f4fd5fe1fea23a3c27bafc7`. The lead selected typed per-side preparation heads, attempts, and immutable adopted manifests as the preferred future storage design. The lead will coordinate the schema boundary with the Vault owner. No Prisma schema, runtime route, worker, storage object, provider setting, or deployed system changes in this slice. This proposal does not amend the owner-approved V2 master blueprint.
+This records the third safeguard design slice, based on source at `1a764beebd4606c26f4fd5fe1fea23a3c27bafc7` and committed as design only at `db899e95`. Subsequent owner-authorized implementation uses the selected typed per-side heads, attempts, and immutable manifests within the coordinated preparation-only schema boundary. The observed authority trace below remains a dated description of that original baseline. This proposal does not amend the owner-approved V2 master blueprint; local implementation does not authorize deployment.
 
 The prior centering and detector-admission commits remain separate. Signed image provenance and matching reported runtime fields do not prove an actual GPU execution, image correctness, or prepared-byte provenance. The existing initialized-session history is not automatically current-release evidence for ATLAS.
 
 ## Problem and required result
 
-Two preparations of the same original currently receive the same five output keys even when their physical corners differ. A slow first request can finish after the second request, or after capture is committed, and overwrite those objects through still-valid upload URLs. A final database CAS cannot revoke an already-issued storage grant. Giving each attempt a new key prevents inter-attempt collisions but does not prevent a repeated PUT from changing that attempt's already accepted objects.
+Two preparations of the same original in the inspected baseline receive the same five output keys even when their physical corners differ. A slow first request can finish after the second request, or after capture is committed, and overwrite those objects through still-valid upload URLs. A final database CAS cannot revoke an already-issued storage grant. Giving each attempt a new key prevents inter-attempt collisions but does not prevent a repeated PUT from changing that attempt's already accepted objects.
 
 New captures must instead adopt an exact, server-verified set of bytes from the current per-side preparation attempt. A delayed or repeated worker write must be confined to staging. Final capture must load the adopted manifests from durable server authority, bind them to the operator-confirmed physical geometry, and freeze their references atomically. Originals, prior attempts, historical captures, and issued reports remain preserved.
 
@@ -171,4 +171,4 @@ Rollout acceptance must also verify the new preparation release/protocol and det
 
 The local repair pass delivers this design for lead/schema-owner coordination. The exact missing application primitive is the typed per-side active attempt and atomic adoption/supersession contract; storage needs accepted-byte finalization with no replayable grants into the accepted namespace. Existing substrate can help implement them but does not already supply them.
 
-Implementation is intentionally deferred under the lead's explicit scope decision. Current mutable prepared-key behavior remains a known unfixed runtime limitation. Keep the centering and release-admission commits independently reviewable. A rollback of future preparation work must preserve adopted manifests and historical objects; pause new preparations/capture commits if the complete boundary cannot be maintained. Do not restore direct worker writes to accepted evidence or erase old keys to conceal conflicts.
+The original design-only decision was superseded by owner-authorized local implementation. Deployment still requires the separate release and integration gates in the implementation record. Keep the centering and release-admission commits independently reviewable. A rollback of preparation work must preserve adopted manifests and historical objects; pause new preparations/capture commits if the complete boundary cannot be maintained. Do not restore direct worker writes to accepted evidence or erase old keys to conceal conflicts.

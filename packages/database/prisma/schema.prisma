@@ -3602,8 +3602,70 @@ model AiGraderV2Session {
   mapRegistrationLessons AiGraderV2MapRegistrationLesson[] @relation("MapRegistrationLessonEvidenceSession")
   legacyMapLayoutAuthority AiGraderV2LegacyMapLayoutAuthority?
   colorGeometryEvidence AiGraderV2ColorGeometryEvidence[]
+  preparationHeads AiGraderV2PreparationHead[]
+  preparationAttempts AiGraderV2PreparationAttempt[]
+  preparationManifests AiGraderV2PreparationManifest[]
 
   @@index([mapRevisionId])
+}
+
+model AiGraderV2PreparationHead {
+  sessionId         String
+  side              String
+  sideRevision      Int
+  activeAttemptId   String
+  adoptedManifestId String?
+  session           AiGraderV2Session @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  activeAttempt     AiGraderV2PreparationAttempt @relation("PreparationHeadAttempt", fields: [sessionId, side, sideRevision, activeAttemptId], references: [sessionId, side, sideRevision, id], onDelete: Restrict, map: "PreparationHead_activeAttempt_fkey")
+  adoptedManifest   AiGraderV2PreparationManifest? @relation("PreparationHeadManifest", fields: [sessionId, side, sideRevision, activeAttemptId, adoptedManifestId], references: [sessionId, side, sideRevision, attemptId, id], onDelete: Restrict, map: "PreparationHead_adoptedManifest_fkey")
+
+  @@id([sessionId, side])
+}
+
+model AiGraderV2PreparationAttempt {
+  id                   String @id
+  sessionId            String
+  createdByUserId      String
+  side                 String
+  sideRevision         Int
+  idempotencyKey       String
+  requestSha256        String
+  expectedSideRevision Int
+  expectedAttemptId    String?
+  input                Json @db.JsonB
+  inputCanonical       String @db.Text
+  dispatchClaimId      String? @unique
+  dispatchClaimedAt    DateTime?
+  terminalOutcome      String?
+  terminalDetails      Json? @db.JsonB
+  terminalAt           DateTime?
+  createdAt            DateTime @default(now())
+  session              AiGraderV2Session @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  activeHeads          AiGraderV2PreparationHead[] @relation("PreparationHeadAttempt")
+  adoptedManifest      AiGraderV2PreparationManifest? @relation("PreparationAttemptManifest")
+
+  @@unique([sessionId, side, sideRevision])
+  @@unique([sessionId, side, idempotencyKey])
+  @@unique([sessionId, side, sideRevision, id])
+}
+
+model AiGraderV2PreparationManifest {
+  id              String @id
+  sessionId       String
+  createdByUserId String
+  side            String
+  sideRevision    Int
+  attemptId       String @unique
+  manifestSha256  String
+  body            Json @db.JsonB
+  bodyCanonical   String @db.Text
+  createdAt       DateTime @default(now())
+  session         AiGraderV2Session @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  attempt         AiGraderV2PreparationAttempt @relation("PreparationAttemptManifest", fields: [sessionId, side, sideRevision, attemptId], references: [sessionId, side, sideRevision, id], onDelete: Restrict)
+  activeHeads     AiGraderV2PreparationHead[] @relation("PreparationHeadManifest")
+
+  @@unique([sessionId, side, sideRevision, attemptId], map: "PreparationManifest_scopedAttempt_key")
+  @@unique([sessionId, side, sideRevision, attemptId, id], map: "PreparationManifest_scopedIdentity_key")
 }
 
 model AiGraderV2LegacyMapLayoutAuthority {
