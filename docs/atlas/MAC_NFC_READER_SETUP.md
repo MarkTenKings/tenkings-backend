@@ -22,6 +22,8 @@ The vendor postinstall also attempts an obsolete `/usr/libexec` link and exits z
 
 ## Resume after the user's installation and restart
 
+Observed September 8 at 22:16 UTC: Mark reported installation and restart, and shared macOS's ACS smart-card extension notification. Independent checks found `com.acs.acsccid` version 1.1.13, bundle identifier `hk.com.acs.ccid`, and a valid strict code signature. The installed binary SHA-256 exactly matches the audited package (`f027d102f7fde7efddf85b0f5387b8c5cc699371ce122c6b014e0d8d28be5c1c`). Initial USB/PCSC discovery found no connected ACR1552U, so the user was asked to reconnect it and present an unused tag. Successful driver loading against the attached reader and tag detection are not yet established. Private evidence: `MAC_NFC_POST_RESTART_DRIVER_20260908.json` and `MAC_NFC_POST_RESTART_INSPECTION_20260908.json`.
+
 1. Record the actual install result. Check `com.acs.acsccid` receipt, installed bundle version/signature and any selected installation errors. Do not infer installation from the prepared download.
 2. Reconnect the ACR1552U, then run `packages/atlas-mac-nfc/.build/debug/atlas-mac-nfc-probe list`. Rebuild with `swift build --package-path packages/atlas-mac-nfc` only if needed.
 3. With one owner-presented unused F8215 tag, run the fixed `inspect` command once. Retain only its bounded nonidentifying JSON output and actual exit status.
