@@ -1,6 +1,6 @@
 # ATLAS application extraction design
 
-Status: local design and source inventory only. No application, adapter, provider configuration, or live route is created by this document or its [boundary manifest](../../frontend/atlas-app/boundary-manifest.json).
+Status: local extraction design and historical source inventory. The [boundary manifest](../../frontend/atlas-app/boundary-manifest.json) remains design-only. A later [staff application foundation](../../frontend/atlas-app/README.md) now implements synthetic local sign-in, an assigned review queue and Front/Back draft workspace with its own built-route/dependency checks. Production adapters, provider configuration and live access remain unavailable; the proposed future route roster below is not mounted wholesale.
 
 Source baseline: `7bde06f65959e376e12725186d605cc91c67852b`, reviewed September 7, 2026. The manifest records 42 current route files and direct dependencies for 90 selected modules. Imports include type-only and literal dynamic imports; this is a targeted source inventory, not proof of the full executed dependency graph or current provider state.
 

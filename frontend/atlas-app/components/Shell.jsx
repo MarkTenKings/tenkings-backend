@@ -1,0 +1,42 @@
+import Link from 'next/link';
+import Head from 'next/head';
+import { useState } from 'react';
+import { api } from '../lib/client';
+export function Unavailable() {
+    return <main className="unavailable"><Head><title>ATLAS · Access unavailable</title></Head><div className="brand">ATLAS<span>STAFF</span></div><h1>Staff access is not enabled here.</h1><p>This build is available only in the local review environment.</p></main>;
+}
+export function Notice({ children, error = false }) {
+    return <div className={`notice ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'}>{children}</div>;
+}
+export default function Shell({ children, staff, title = 'Review queue', workspace = false }) {
+    const [error, setError] = useState('');
+    const [busy, setBusy] = useState(false);
+    async function logout() {
+        setBusy(true);
+        setError('');
+        try {
+            const session = await api('session');
+            await api('auth/logout', { body: {}, csrf: session.csrf });
+            window.location.replace('/');
+        }
+        catch (e) {
+            setError(e.message);
+            setBusy(false);
+        }
+    }
+    return <div className="app-shell">
+    <Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head>
+    <aside className="rail">
+      <Link href="/grading" className="brand" aria-label="ATLAS staff review queue">ATLAS<span>STAFF WORKSPACE</span></Link>
+      <div className="rail-label">GRADING</div>
+      <Link className="nav-item active" href="/grading"><span className="nav-icon">▦</span>Review queue</Link>
+      <div className="rail-footer"><div className="avatar">{staff?.name?.slice(0, 1) ?? 'A'}</div><div><strong>{staff?.name ?? 'Staff'}</strong><small>{staff?.role === 'OBSERVER' ? 'Read-only access' : 'Review staff'}</small></div><button onClick={logout} disabled={busy} title="Sign out" aria-label="Sign out">↗</button></div>
+    </aside>
+    <div className="app-body">
+      <header className="topbar"><div><span className="breadcrumb">Staff</span><span className="crumb-slash">/</span>{workspace ? <Link href="/grading">Review queue</Link> : <span>Review queue</span>}{workspace && <><span className="crumb-slash">/</span><span>Card workspace</span></>}</div><div className="topbar-actions"><span className="local-badge"><i />Local preview</span><button className="mobile-signout" onClick={logout} disabled={busy} aria-label="Sign out">↗</button></div></header>
+      <div className="fixture-strip">Synthetic cards &amp; sign-in <span>·</span> Drafts stay in this local process and reset when it stops.</div>
+      {error && <Notice error>{error}</Notice>}
+      {children}
+    </div>
+  </div>;
+}

@@ -16,4 +16,4 @@ for (const [name, routes] of [['public', manifest.publicRouteManifest], ['staff'
   const keys = routes.flatMap(r => r.methods.map(method => `${method}:${r.path}`));
   assert.equal(new Set(keys).size, keys.length, `Duplicate ${name} route`);
 }
-process.stdout.write(`${JSON.stringify({ status: 'DESIGN_MANIFEST_VALID', currentRoutes: manifest.sourceRoutes.length, selectedModules: manifest.sourceModuleDependencies.length, existingSourcePathsChecked: sources.length, proposedMachineTools: TOOL_NAMES.length, runtimeRoutesCreated: 0 })}\n`);
+process.stdout.write(`${JSON.stringify({ status: 'DESIGN_MANIFEST_VALID', currentRoutes: manifest.sourceRoutes.length, selectedModules: manifest.sourceModuleDependencies.length, existingSourcePathsChecked: sources.length, proposedMachineTools: TOOL_NAMES.length, runtimeRoutesCreatedByDesignManifest: 0, staffBuildValidation: 'frontend/atlas-app/scripts/check-boundary.mjs' })}\n`);

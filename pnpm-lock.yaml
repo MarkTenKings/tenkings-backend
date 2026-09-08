@@ -323,6 +323,25 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@20.19.19)(jsdom@24.1.3)
 
+  frontend/atlas-app:
+    dependencies:
+      next:
+        specifier: 14.2.5
+        version: 14.2.5(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: 18.3.1
+        version: 18.3.1(react@18.3.1)
+    devDependencies:
+      eslint:
+        specifier: 8.57.0
+        version: 8.57.0
+      eslint-config-next:
+        specifier: 14.2.5
+        version: 14.2.5(eslint@8.57.0)(typescript@5.5.4)
+
   frontend/nextjs-app:
     dependencies:
       '@aws-sdk/client-s3':

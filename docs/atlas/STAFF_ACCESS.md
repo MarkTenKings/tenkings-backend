@@ -1,6 +1,6 @@
 # ATLAS staff access
 
-Status: implementation decision and acceptance contract, September 7 Pacific / September 8 UTC, 2026. No sign-in route, provider service, credential, staff account, environment variable or deployment is created by this document.
+Status: implementation decision and live acceptance contract, September 7 Pacific / September 8 UTC, 2026. The [staff application foundation](../../frontend/atlas-app/README.md) now implements a loopback-only synthetic sign-in, session and review workflow. Production and preview access remain denied. No live provider service, credential, staff account, environment variable or deployment has been created.
 
 ## First version
 

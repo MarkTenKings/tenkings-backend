@@ -2,7 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": {
-      "codex/atlas-integration-20260907": false
+      "codex/atlas-integration-20260907": false,
+      "codex/atlas-staff-app-20260908": false
     }
   }
 }
