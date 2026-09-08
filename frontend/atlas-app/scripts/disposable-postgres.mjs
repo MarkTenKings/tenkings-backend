@@ -11,6 +11,7 @@ import { hash } from '../lib/server/policy.mjs';
 import { staffGrantSQL } from '../lib/server/access/privileges.mjs';
 import { publicGrantSQL } from '../../atlas-public/lib/server/privileges.mjs';
 import { operatorGrantSQL } from '../../../packages/atlas-operator/src/privileges.mjs';
+import { operationsGrantSQL } from '../lib/server/access/operations-authority.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const root = resolve(appRoot, '../..');
@@ -33,13 +34,14 @@ export async function disposablePostgres(args) {
     const ownerPassword = randomBytes(24).toString('hex'), staffPassword = randomBytes(24).toString('hex'), publicPassword = randomBytes(24).toString('hex');
     const publicRole = 'atlas_fixture_public';
     const operatorRole = 'atlas_fixture_operator', operatorPassword = randomBytes(24).toString('hex');
+    const operationsRole = 'atlas_fixture_operations', operationsPassword = randomBytes(24).toString('hex');
     const passwordFile = join(directory, 'owner-password');
     writeFileSync(passwordFile, ownerPassword, { mode: 0o600 });
     const sentinel = { nonce: randomBytes(16).toString('hex'), data, ownerPid: process.pid, uid: process.getuid(), createdByHarness: true };
     writeFileSync(join(directory, 'ownership.json'), JSON.stringify(sentinel), { mode: 0o600 });
     let log = '', started = false;
     const safe = value => String(value).replaceAll(ownerPassword, '[fixture-password]').replaceAll(staffPassword, '[fixture-password]')
-        .replaceAll(publicPassword, '[fixture-password]').replaceAll(operatorPassword, '[fixture-password]');
+        .replaceAll(publicPassword, '[fixture-password]').replaceAll(operatorPassword, '[fixture-password]').replaceAll(operationsPassword, '[fixture-password]');
     function run(command, commandArgs, env = cleanEnv) {
         const result = spawnSync(command, commandArgs, { cwd: root, env, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
         log += safe(`${result.stdout ?? ''}${result.stderr ?? ''}`);
@@ -54,6 +56,7 @@ export async function disposablePostgres(args) {
     function url(database, staff = false, schema = 'atlas_staff') {
         assert(/^[a-z][a-z0-9_]+$/.test(database));
         if (staff === 'operator') return `postgresql://${operatorRole}:${operatorPassword}@127.0.0.1:${port}/${database}?schema=${schema}&connection_limit=4`;
+        if (staff === 'operations') return `postgresql://${operationsRole}:${operationsPassword}@127.0.0.1:${port}/${database}?schema=${schema}&connection_limit=4`;
         return `postgresql://${staff === 'public' ? publicRole : staff ? role : owner}:${staff === 'public' ? publicPassword : staff ? staffPassword : ownerPassword}@127.0.0.1:${port}/${database}?schema=${schema}&connection_limit=4`;
     }
     async function sql(query, values = [], database = 'postgres') {
@@ -128,13 +131,15 @@ export async function disposablePostgres(args) {
         await sql(publicGrantSQL(publicRole), [], 'atlas_fixture_template');
         await sql(`CREATE ROLE ${operatorRole} LOGIN PASSWORD '${operatorPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
         await sql(operatorGrantSQL(operatorRole), [], 'atlas_fixture_template');
+        await sql(`CREATE ROLE ${operationsRole} LOGIN PASSWORD '${operationsPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
+        await sql(operationsGrantSQL(operationsRole), [], 'atlas_fixture_template');
         let serial = 0; const released = [];
         return { directory, source, sql, url, role, safe, stop,
             async database() {
                 const name = `atlas_fixture_case_${++serial}`;
                 await sql(`CREATE DATABASE ${name} TEMPLATE atlas_fixture_template`);
                 let disposed = false;
-                return { name, adminUrl: url(name), staffUrl: url(name, true), publicUrl: url(name, 'public'), operatorUrl: url(name,'operator'),
+                return { name, adminUrl: url(name), staffUrl: url(name, true), publicUrl: url(name, 'public'), operatorUrl: url(name,'operator'),operationsUrl:url(name,'operations'),
                     async dispose() {
                         if (disposed) return;
                         assert.deepEqual(JSON.parse(readFileSync(join(directory, 'ownership.json'), 'utf8')), sentinel);

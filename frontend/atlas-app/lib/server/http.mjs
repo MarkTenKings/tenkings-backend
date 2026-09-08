@@ -20,6 +20,9 @@ export function createHandler(resolveRuntime, env = process.env) {
             ];
             if (state.reports) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/approve$`)]);
             if (state.proposals) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/proposals$`)]);
+            if (state.operations) patterns.push(['GET', /^\/api\/staff\/operations\/roster$/],
+                ['POST', /^\/api\/staff\/operations\/(roster\/update|assign|intake\/preview|intake\/admit|pilots\/prepare|invoices\/reconcile)$/],
+                ['GET', /^\/api\/staff\/operations\/pilots\/([a-f0-9-]{36})$/]);
             if (state.grading) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/grade$`)],
                 ['POST', new RegExp(`^/api/staff/cards/${cardPattern}/trace$`)],
                 ['GET', new RegExp(`^/api/staff/cards/${cardPattern}/operations/([a-f0-9-]{36})$`)]);
@@ -69,6 +72,17 @@ export function createHandler(resolveRuntime, env = process.env) {
                 }
                 else if (path === '/api/staff/cards')
                     body = { cards: await review.list(staff) };
+                else if (path.startsWith('/api/staff/operations/')) {
+                    const operation = path.slice('/api/staff/operations/'.length);
+                    if (operation === 'roster') body = { roster: await state.operations.roster(staff) };
+                    else if (operation === 'roster/update') body = { receipt: await state.operations.updateRoster(staff, req.body) };
+                    else if (operation === 'assign') body = { receipt: await state.operations.assign(staff, req.body) };
+                    else if (operation === 'intake/preview') body = { preview: await state.operations.previewIntake(staff, req.body) };
+                    else if (operation === 'intake/admit') body = { receipt: await state.operations.admitIntake(staff, req.body) };
+                    else if (operation === 'pilots/prepare') body = { receipt: await state.operations.preparePilot(staff, req.body) };
+                    else if (operation === 'invoices/reconcile') body = { receipt: await state.operations.reconcileInvoice(staff, req.body) };
+                    else body = { summary: await state.operations.pilotSummary(staff, match[1]) };
+                }
                 else if (path.startsWith('/api/staff/evidence/')) {
                     const asset = await review.asset(staff, match[1], match[2]);
                     res.setHeader('Content-Type', asset.contentType ?? 'image/svg+xml');

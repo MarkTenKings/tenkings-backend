@@ -9,7 +9,8 @@
     "./executor": { "types": "./src/executor.d.mts", "default": "./src/executor.mjs" },
     "./public-media": { "types": "./src/public-media.d.mts", "default": "./src/public-media.mjs" },
     "./operator-images": { "types": "./src/operator-images.d.mts", "default": "./src/operator-images.mjs" },
-    "./operator-evidence": { "types": "./src/operator-evidence.d.mts", "default": "./src/operator-evidence.mjs" }
+    "./operator-evidence": { "types": "./src/operator-evidence.d.mts", "default": "./src/operator-evidence.mjs" },
+    "./intake": { "types": "./src/intake.d.mts", "default": "./src/intake.mjs" }
   },
   "dependencies": { "@atlas/grading-core": "workspace:*" },
   "scripts": { "test": "node --test test/*.test.mjs" }

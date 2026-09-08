@@ -20,6 +20,8 @@ import { hash } from '../lib/server/policy.mjs';
 import { bridgeFixture, gradingInput } from './bridge-fixture.mjs';
 import { operatorScenarios } from './operator-fixture.mjs';
 import { machineAdapterScenarios } from './machine-adapter-fixture.mjs';
+import { operationsScenarios } from './operations-fixture.mjs';
+import { intakeScenarios } from './intake-fixture.mjs';
 
 const fixture = await disposablePostgres(process.argv.slice(2));
 const results = [], clients = new Set();
@@ -629,6 +631,8 @@ try {
     });
     await operatorScenarios(scenario);
     await machineAdapterScenarios(scenario);
+    await operationsScenarios(scenario);
+    for (const { name, work } of intakeScenarios) await scenario(name, work);
 } catch (caught) { error = caught; }
 finally {
     for (const client of clients) await client.$disconnect();

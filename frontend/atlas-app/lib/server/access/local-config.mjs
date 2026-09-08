@@ -18,5 +18,12 @@ export function readLocalPostgresConfig(env) {
         || database.username !== 'atlas_fixture_staff' || !/^\/atlas_fixture_case_\d+$/.test(database.pathname)
         || database.searchParams.get('schema') !== 'atlas_staff'
         || !/^[a-f0-9]{64}$/.test(record.sessionKey ?? '') || !/^[a-f0-9]{64}$/.test(record.phoneKey ?? '')) deny(503, 'STAFF_ACCESS_NOT_ENABLED');
-    return localAccessConfig({ databaseUrl: record.databaseUrl, sessionKey: Buffer.from(record.sessionKey, 'hex'), phoneKey: Buffer.from(record.phoneKey, 'hex') });
+    if (record.operationsDatabaseUrl) {
+        const operations = new URL(record.operationsDatabaseUrl);
+        if (operations.hostname !== database.hostname || operations.port !== database.port || operations.pathname !== database.pathname
+            || operations.username !== 'atlas_fixture_operations' || operations.searchParams.get('schema') !== 'atlas_staff')
+            deny(503, 'STAFF_ACCESS_NOT_ENABLED');
+    }
+    return Object.freeze({ ...localAccessConfig({ databaseUrl: record.databaseUrl, sessionKey: Buffer.from(record.sessionKey, 'hex'),
+        phoneKey: Buffer.from(record.phoneKey, 'hex') }), operationsDatabaseUrl: record.operationsDatabaseUrl });
 }

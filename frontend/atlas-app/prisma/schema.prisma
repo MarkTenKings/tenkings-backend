@@ -477,3 +477,55 @@ model StaffProposalDecision {
   @@unique([stepId,analysisRevision])
   @@unique([actorId,operationId])
 }
+
+model StaffOperationsGrant {
+  id String @id @db.Uuid
+  identityId String @db.Uuid
+  accessVersion Int
+  controlRevision Int
+  mode String
+  origin String
+  deploymentId String
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  authorizationEvidenceHash String @db.VarChar(64)
+  createdAt DateTime
+  expiresAt DateTime
+  revokedAt DateTime?
+  @@index([identityId], map: "StaffOperationsGrant_identity_idx")
+}
+model StaffIntakeControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  origin String
+  deploymentId String
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  clientKeyHash String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  revision Int @default(1)
+  updatedAt DateTime @default(now())
+}
+model StaffSourceAdmission {
+  id String @id @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  operationsGrantId String @db.Uuid
+  controlRevision Int
+  sourceType String
+  sourceId String @db.VarChar(128)
+  sourceOwnerId String @db.VarChar(128)
+  sourceRevision String @db.VarChar(80)
+  title String @db.VarChar(200)
+  subtitle String @db.VarChar(300)
+  evidenceCanonical String @db.Text
+  evidenceHash String @db.VarChar(64)
+  admissionCanonical String @db.Text
+  admissionHash String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  bridgeConfigHash String @db.VarChar(64)
+  createdAt DateTime
+  expiresAt DateTime
+  @@index([actorId,sessionHash,operationsGrantId,sourceType,sourceId,sourceOwnerId,createdAt], map: "StaffSourceAdmission_scope_idx")
+}

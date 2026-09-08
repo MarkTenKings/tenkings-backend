@@ -14,6 +14,7 @@ import { bridgeClient } from '@atlas/service-bridge/transport';
 import { keyBytes } from '@atlas/service-bridge/protocol';
 import { StaffGrading } from './access/grading.mjs';
 import { StaffProposals } from './access/proposals.mjs';
+import { operationsRuntimeSettings, createOperationsRuntime } from './access/operations-runtime.mjs';
 
 export function runtime(req, env = process.env) {
     if (env.ATLAS_LOCAL_SYNTHETIC === '1') {
@@ -29,7 +30,8 @@ export function runtime(req, env = process.env) {
     const assertRequest = local ? request => assertLocalRequest(request, { ...env, ATLAS_LOCAL_SYNTHETIC: '1' })
         : request => assertProductionStaffRequest(request, config);
     assertRequest(req);
-    const key = Symbol.for(`atlas.staff.postgres.${config.mode}.${config.deploymentId}.${config.configHash}`);
+    const operationsSettings = operationsRuntimeSettings(env, config);
+    const key = Symbol.for(`atlas.staff.postgres.${config.mode}.${config.deploymentId}.${config.configHash}.${operationsSettings?.key ?? 'no-operations'}`);
     if (!globalThis[key]) {
         const client = new PrismaClient({ datasources: { db: { url: config.databaseUrl } }, errorFormat: 'minimal' });
         const provider = local ? fixtureVerifyProvider(config) : twilioVerifyTransport({ accountSid: config.accountSid, serviceSid: config.serviceSid,
@@ -44,7 +46,8 @@ export function runtime(req, env = process.env) {
         } };
         const review = new DurableReviewStore({ auth, evidence });
         globalThis[key] = { auth, review, reports: new StaffReports({ auth, review }), grading: new StaffGrading({ auth, review, bridge }),
-            proposals: new StaffProposals({ auth, review }) };
+            proposals: new StaffProposals({ auth, review }),
+            operations: createOperationsRuntime({ settings: operationsSettings, auth, Client: PrismaClient }) };
     }
     const state = globalThis[key];
     Object.setPrototypeOf(state.auth, DurableStaffAuth.prototype);
