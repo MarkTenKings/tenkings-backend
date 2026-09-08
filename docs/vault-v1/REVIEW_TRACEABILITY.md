@@ -33,6 +33,8 @@ Focused profile-contract, kiosk and machine commits now preserve the imported co
 
 Implementation detail and the separately hashed CAD R01 proposals are in [MACHINE_PROFILES.md](MACHINE_PROFILES.md). Installed physical qualification,5purchase+2restock cycles per applicable door,500real observed sessions, certification and pilot remain open. Simulator results never replace them.
 
+Exact-head CI at `93adc3dc` passed Vault, repository build and protected Speedster tests, but seven inherited service image builds stopped on expired Debian Bullseye security metadata. Their Dockerfiles now select Bookworm while retaining Node20/pnpm9.12 and apt verification. This necessary CI environment correction changes no service business logic and authorizes no deployment. Final reviewed-head image builds remain a required check.
+
 ## Historical review baselines and pre-change checklist
 
 **Owner baseline changed during review:** the intended machine now has **100 doors**, one SER mini PC and an OS-free ViewSonic touchscreen. See [current product baseline](PRODUCT_BASELINE.md). The checklist below records the reviewed legacy 150-door implementation; it is not acceptance evidence for the new capacity. Exact physical arrangement/door labels and hardware models are pending before capacity-specific changes.
