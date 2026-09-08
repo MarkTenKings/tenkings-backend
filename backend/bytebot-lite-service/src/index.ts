@@ -13,7 +13,7 @@ import { fetchPriceChartingComps } from "./sources/pricecharting";
 import { sleep } from "./utils";
 import { startTeachServer } from "./teachServer";
 import { compareImageSignatures, computeImageSignature, ImageSignature } from "./pattern";
-import { processPendingReferences } from "./reference/queue";
+import { processPendingReferences, REFERENCE_MIN_POLL_INTERVAL_MS } from "./reference/queue";
 
 type PlaybookRule = {
   id: string;
@@ -67,7 +67,10 @@ const VIEWPORT_WIDTH = Number(process.env.BYTEBOT_LITE_VIEWPORT_WIDTH ?? 1280);
 const VIEWPORT_HEIGHT = Number(process.env.BYTEBOT_LITE_VIEWPORT_HEIGHT ?? 720);
 const PATTERN_ENABLED = (process.env.BYTEBOT_PATTERN_ENABLED ?? "false").toLowerCase() === "true";
 const PATTERN_MIN_SCORE = Number(process.env.BYTEBOT_PATTERN_MIN_SCORE ?? 0.7);
-const REFERENCE_POLL_INTERVAL_MS = Number(process.env.BYTEBOT_REFERENCE_POLL_INTERVAL_MS ?? 15000);
+const REFERENCE_POLL_INTERVAL_MS = Math.max(
+  REFERENCE_MIN_POLL_INTERVAL_MS,
+  Math.min(300_000, Number(process.env.BYTEBOT_REFERENCE_POLL_INTERVAL_MS) || REFERENCE_MIN_POLL_INTERVAL_MS),
+);
 const AUTO_ATTACH_COMPS =
   (process.env.BYTEBOT_AUTO_ATTACH_COMPS ?? "false").toLowerCase() === "true";
 
@@ -418,14 +421,11 @@ async function referenceLoop() {
   console.log("[bytebot-lite] reference worker online");
   while (true) {
     try {
-      const count = await processPendingReferences(8);
-      if (count === 0) {
-        await sleep(REFERENCE_POLL_INTERVAL_MS);
-      }
+      await processPendingReferences(8);
     } catch (error) {
       console.error("[bytebot-lite] reference worker error", error);
-      await sleep(REFERENCE_POLL_INTERVAL_MS);
     }
+    await sleep(REFERENCE_POLL_INTERVAL_MS);
   }
 }
 
