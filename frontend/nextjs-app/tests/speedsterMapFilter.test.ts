@@ -1,3 +1,9 @@
+import { speedsterMemoryLessonKey } from "../lib/server/aiGraderV2Instrumentation";
+import {
+  currentSpeedsterIdentityFixture,
+  emptySpeedsterMemoryBankFixture,
+  emptySpeedsterLessonVerdictsFixture,
+} from "./fixtures/speedsterCurrentRelease";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -64,6 +70,29 @@ const inside: SpeedsterMeasuredDefect = {
   reviewResult: "UNREVIEWED",
   measurement,
 };
+const memoryExemplar = {
+  defectType: "LIGHT_SCRATCH_SCUFF" as const,
+  polarity: "POSITIVE" as const,
+  sessionId: "lesson-session-1234567890",
+  completedAt: "2026-08-09T00:00:00.000Z",
+  completionOrder: 7,
+  proposalOrder: 2,
+  lessonOrder: 0,
+  fingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+  provenance: "SMART_MARK_POSITIVE" as const,
+  sourceViewId: "ORIGINAL" as const,
+};
+const memoryLesson = {
+  lessonKey: speedsterMemoryLessonKey(memoryExemplar),
+  sourceSessionId: memoryExemplar.sessionId,
+  sourceCompletionOrder: memoryExemplar.completionOrder,
+  proposalOrder: memoryExemplar.proposalOrder,
+  lessonOrder: memoryExemplar.lessonOrder,
+  defectType: memoryExemplar.defectType,
+  polarity: memoryExemplar.polarity,
+  provenance: memoryExemplar.provenance,
+  sourceViewId: memoryExemplar.sourceViewId,
+};
 const outside: SpeedsterMeasuredDefect = {
   ...inside,
   id: "BACK:outside:SURFACE",
@@ -73,6 +102,7 @@ const outside: SpeedsterMeasuredDefect = {
   sourceViewId: "BACK:ORIGINAL",
   supportingViewIds: [],
   memoryProposal: {
+    lessonKey: memoryLesson.lessonKey,
     lessonSessionId: "lesson-session-1234567890",
     lessonCompletionOrder: 7,
     lessonProposalOrder: 2,
@@ -549,7 +579,7 @@ function initializeSession(withMap: boolean): SpeedsterReviewActionSession {
   };
 }
 
-function detectorResponse(findings: readonly SpeedsterMeasuredDefect[]) {
+function detectorResponse(side: "FRONT" | "BACK", findings: readonly SpeedsterMeasuredDefect[]) {
   const authoritative = findings.map((finding, index) => {
     const candidateId = `raw-${finding.side === "FRONT" ? "a" : "b"}${index.toString(16).padStart(23, "0")}`;
     const pixels = rasterizeSpeedsterCanonicalContour(finding.canonicalContour);
@@ -605,9 +635,24 @@ function detectorResponse(findings: readonly SpeedsterMeasuredDefect[]) {
   });
   return {
     detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
+    detectorIdentity: currentSpeedsterIdentityFixture(),
     defects: authoritative.map(({ finding }) => finding),
     detectorEvidence: {
       version: "speedster-detector-evidence-v1",
+      lessonVerdicts: {
+        version: "speedster-memory-lesson-side-verdicts-v1",
+        side,
+        loadedLessonCount: 1,
+        verdicts: [{
+          lesson: memoryLesson,
+          status: side === "BACK" ? "USED" : "SKIPPED",
+          reasonCode: side === "BACK" ? "SMART_MARK_PROPOSAL_RETAINED_FOR_MEASUREMENT" : "CANDIDATE_FINGERPRINT_UNAVAILABLE",
+          reasonCodes: [side === "BACK" ? "SMART_MARK_PROPOSAL_RETAINED_FOR_MEASUREMENT" : "CANDIDATE_FINGERPRINT_UNAVAILABLE"],
+          observationCount: 1,
+          maxSimilarity: side === "BACK" ? 0.94 : null,
+          candidateIds: side === "BACK" ? authoritative.map(({ candidate }) => candidate.candidateId) : [],
+        }],
+      },
       rawCandidates: authoritative.map(({ candidate }) => candidate),
       memoryDecisions: authoritative.map(({ decision }) => decision),
     },
@@ -616,7 +661,12 @@ function detectorResponse(findings: readonly SpeedsterMeasuredDefect[]) {
 
 test("INITIALIZE shares one Memory object across sequential detectors, then atomically persists the filtered split", async () => {
   const initial = initializeSession(true);
-  const sharedLearningBank = { version: "GLOBAL" };
+  const sharedLearningBank = {
+    ...emptySpeedsterMemoryBankFixture(),
+    calibration: { status: "CALIBRATED", tau: 0.8, margin: 0.1 },
+    replayCursor: { completionOrder: 7, sessionId: memoryExemplar.sessionId, sessionDigest: "d".repeat(64) },
+    exemplars: [memoryExemplar],
+  };
   let learningBankCalls = 0;
   const detectorLearningBanks: unknown[] = [];
   let frontSettled = false;
@@ -655,7 +705,7 @@ test("INITIALIZE shares one Memory object across sequential detectors, then atom
         backStartedWhileFrontPending = !frontSettled;
       }
       detectorReturns += 1;
-      return detectorResponse(body.side === "FRONT" ? [inside] : [outside]);
+      return detectorResponse(body.side, body.side === "FRONT" ? [inside] : [outside]);
     },
     async measure() { throw new Error("must not measure"); },
     async recordInstrumentation(events) { instrumentation = events; },
@@ -696,7 +746,7 @@ test("INITIALIZE shares one Memory object across sequential detectors, then atom
   assert.equal((result.gradeReport as { detectorVersion: string }).detectorVersion, SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION);
 });
 
-test("no map leaves the existing result/persist shape unchanged and does not invoke a map loader", async () => {
+test("no map preserves the review payload and records the required Memory ledger without loading a map", async () => {
   const initial = initializeSession(false);
   let mapLoads = 0;
   let persisted: Record<string, unknown> | null = null;
@@ -709,13 +759,15 @@ test("no map leaves the existing result/persist shape unchanged and does not inv
     async loadPinnedMapFilter() { mapLoads += 1; return map; },
     async persistReviewIfRevision(_identity, _updatedAt, data) { persisted = data; },
     async presignRead(key) { return `https://local.invalid/${key}`; },
-    async learningBankForDetect() { return {}; },
-    async detect() {
+    async learningBankForDetect() { return emptySpeedsterMemoryBankFixture(); },
+    async detect(body) {
       return {
-        detectorVersion: "unchanged-pre-map-version",
+        detectorIdentity: currentSpeedsterIdentityFixture(),
+        detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
         defects: [],
         detectorEvidence: {
           version: "speedster-detector-evidence-v1",
+          lessonVerdicts: emptySpeedsterLessonVerdictsFixture(body.side),
           rawCandidates: [],
           memoryDecisions: [],
         },
@@ -724,7 +776,7 @@ test("no map leaves the existing result/persist shape unchanged and does not inv
     async measure() { throw new Error("must not measure"); },
   });
   assert.equal(mapLoads, 0);
-  assert.deepEqual(Object.keys(persisted ?? {}).sort(), ["gradeReport", "reviewedDefects"]);
+  assert.deepEqual(Object.keys(persisted ?? {}).sort(), ["detectorEvidenceEvents", "gradeReport", "reviewedDefects"]);
   assert.deepEqual(Object.keys(result).sort(), [
     "detectorAttempts",
     "gradeReport",
@@ -745,9 +797,9 @@ test("current review initialization rejects legacy Memory evidence instead of gr
     async loadOwnedSession() { return initial; },
     async persistReviewIfRevision() { persisted = true; },
     async presignRead(key) { return `https://local.invalid/${key}`; },
-    async learningBankForDetect() { return {}; },
+    async learningBankForDetect() { return emptySpeedsterMemoryBankFixture(); },
     async detect(body) {
-      const response = detectorResponse([body.side === "FRONT" ? inside : outside]);
+      const response = detectorResponse(body.side, [body.side === "FRONT" ? inside : outside]);
       return {
         ...response,
         detectorEvidence: {
@@ -776,7 +828,7 @@ test("invalid pinned map is a controlled initialization failure with no persiste
     async loadPinnedMapFilter() { throw new Error("revision hash mismatch"); },
     async persistReviewIfRevision() { persisted = true; },
     async presignRead(key) { return `https://local.invalid/${key}`; },
-    async learningBankForDetect() { return {}; },
+    async learningBankForDetect() { return emptySpeedsterMemoryBankFixture(); },
     async detect() { throw new Error("must not detect"); },
     async measure() { throw new Error("must not measure"); },
   }), /map initialization failed: revision hash mismatch/i);
@@ -807,7 +859,7 @@ test("a pinned revision for a different exact card key fails visibly before dete
     async loadPinnedMapFilter() { return wrongMap; },
     async persistReviewIfRevision() { persisted = true; },
     async presignRead(key) { return `https://local.invalid/${key}`; },
-    async learningBankForDetect() { return {}; },
+    async learningBankForDetect() { return emptySpeedsterMemoryBankFixture(); },
     async detect() { detected = true; throw new Error("must not detect"); },
     async measure() { throw new Error("must not measure"); },
   }), /map initialization failed/i);
@@ -839,13 +891,15 @@ test("a pinned family revision applies across card names within the same Card Ty
     async loadPinnedMapFilter() { return familyMap; },
     async persistReviewIfRevision() { persisted = true; },
     async presignRead(key) { return `https://local.invalid/${key}`; },
-    async learningBankForDetect() { return {}; },
-    async detect() {
+    async learningBankForDetect() { return emptySpeedsterMemoryBankFixture(); },
+    async detect(body) {
       return {
+        detectorIdentity: currentSpeedsterIdentityFixture(),
         detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
         defects: [],
         detectorEvidence: {
           version: "speedster-detector-evidence-v1",
+          lessonVerdicts: emptySpeedsterLessonVerdictsFixture(body.side),
           rawCandidates: [],
           memoryDecisions: [],
         },

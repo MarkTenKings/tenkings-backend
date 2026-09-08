@@ -324,7 +324,6 @@ const dependencies: HandlerDependencies = {
     const raw = Number(process.env.AI_GRADER_SPEEDSTER_DETECT_DEADLINE_MS ?? 55_000);
     return Number.isSafeInteger(raw) ? Math.max(1_000, Math.min(120_000, raw)) : 55_000;
   })(),
-  requireDetectorIdentityV1: true,
   async detect(body, request) {
     const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");
     if (!serviceUrl) throw new HttpError(503, "AI_GRADER_SPEEDSTER_SERVICE_URL is not configured");

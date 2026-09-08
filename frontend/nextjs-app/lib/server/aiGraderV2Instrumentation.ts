@@ -464,6 +464,31 @@ function lessonVerdictProjection(verdict: SpeedsterMemoryLessonSideVerdictV1) {
   };
 }
 
+function frozenLessonRoster(memoryBank: unknown) {
+  const bank = parseSpeedsterLearningBankV2(memoryBank);
+  if (!bank) throw new Error("Speedster lesson verdicts require one valid frozen Memory V2 bank.");
+  const expected = bank.exemplars.map(expectedLessonReference);
+  if (new Set(expected.map(({ lessonKey }) => lessonKey)).size !== expected.length) {
+    throw new Error("Speedster frozen Memory bank contains duplicate lesson identities.");
+  }
+  return { bank, expected };
+}
+
+export function assertSpeedsterMemoryLessonSideEvidence(input: {
+  side: "FRONT" | "BACK";
+  memoryBank: unknown;
+  evidence: SpeedsterDetectorEvidenceV1;
+}) {
+  const { expected } = frozenLessonRoster(input.memoryBank);
+  const verdicts = validatedLessonVerdicts(input.side, input.evidence, expected);
+  validateLessonCandidateLinkage(
+    input.side,
+    input.evidence,
+    new Map(expected.map((lesson) => [lesson.lessonKey, lesson])),
+    verdicts,
+  );
+}
+
 export function speedsterMemoryLessonScanVerdictsEvent(input: {
   sessionId: string;
   createdByUserId: string;
@@ -479,12 +504,7 @@ export function speedsterMemoryLessonScanVerdictsEvent(input: {
   if (!/^[a-f0-9]{64}$/.test(input.memorySnapshotSha256)) {
     throw new Error("Speedster Memory snapshot hash is malformed.");
   }
-  const bank = parseSpeedsterLearningBankV2(input.memoryBank);
-  if (!bank) throw new Error("Speedster lesson verdicts require one valid frozen Memory V2 bank.");
-  const expected = bank.exemplars.map(expectedLessonReference);
-  if (new Set(expected.map(({ lessonKey }) => lessonKey)).size !== expected.length) {
-    throw new Error("Speedster frozen Memory bank contains duplicate lesson identities.");
-  }
+  const { bank, expected } = frozenLessonRoster(input.memoryBank);
   const frontEvidence = parseSpeedsterDetectorEvidence(input.sides.FRONT.evidence);
   const backEvidence = parseSpeedsterDetectorEvidence(input.sides.BACK.evidence);
   const front = validatedLessonVerdicts("FRONT", frontEvidence, expected);
