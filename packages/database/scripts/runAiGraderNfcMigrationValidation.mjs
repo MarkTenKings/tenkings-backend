@@ -17,6 +17,7 @@ const SPEEDSTER_LAYOUT_V2_MIGRATION = "20260813200000_speedster_pokemon_layout_k
 const SPEEDSTER_COLOR_GEOMETRY_MIGRATION = "20260816100000_speedster_color_geometry_evidence";
 const SPEEDSTER_COLOR_GEOMETRY_V2_CONSTRAINT_MIGRATION = "20260819220000_speedster_color_geometry_v2_constraints";
 const SPEEDSTER_AUDIT_IMMUTABILITY_MIGRATION = "20260818153000_speedster_audit_evidence_append_only";
+const VAULT_PROFILE_MIGRATION = "20260908010000_vault_machine_profiles";
 const TARGET_MIGRATIONS = [
   "20260712160000_ai_grader_nfc_static_url_v1",
   "20260716225000_ai_grader_nfc_feiju_f8215_chip_type",
@@ -38,6 +39,10 @@ const migrationsDir = resolve(repositoryRoot, "packages/database/prisma/migratio
 const prismaSchema = resolve(repositoryRoot, "packages/database/prisma/schema.prisma");
 const absentSql = resolve(scriptDir, "validateAiGraderNfcSchemaAbsent.sql");
 const appliedSql = resolve(scriptDir, "validateAiGraderNfcMigration.sql");
+const vaultV1Sql = resolve(scriptDir, "validateVaultV1Migration.sql");
+const vaultLegacyProfileSeedSql = resolve(scriptDir, "seedVaultLegacyProfileUpgrade.sql");
+const vaultLegacyProfileValidationSql = resolve(scriptDir, "validateVaultLegacyProfileUpgrade.sql");
+const vaultV1ServiceScript = resolve(repositoryRoot, "scripts/validate-vault-postgres.mjs");
 const mathematicalCalibrationSnapshotSql = resolve(
   scriptDir,
   "validateAiGraderMathematicalCalibrationSnapshot.sql",
@@ -81,6 +86,10 @@ for (const requiredPath of [
   migrationsDir,
   absentSql,
   appliedSql,
+  vaultV1Sql,
+  vaultLegacyProfileSeedSql,
+  vaultLegacyProfileValidationSql,
+  vaultV1ServiceScript,
   mathematicalCalibrationSnapshotSql,
   calibrationActivationRegistrySql,
   speedsterMapRegistrationLessonSql,
@@ -435,13 +444,24 @@ try {
     "proving isolated Layout V2 upgrade fixtures were removed",
   );
   if (remainingUpgradeFixtureCount !== "0") fail("Layout V2 upgrade fixtures were not fully removed.");
-  for (const migrationName of postLayoutMigrationNames) {
+  if (!postLayoutMigrationNames.includes(VAULT_PROFILE_MIGRATION)) fail("Vault profile migration is required for historical upgrade validation.");
+  for (const migrationName of postLayoutMigrationNames.filter((name) => name < VAULT_PROFILE_MIGRATION)) {
     cpSync(resolve(migrationsDir, migrationName), resolve(upgradeMigrationsDir, migrationName), { recursive: true });
   }
   run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "migrate", "deploy", "--schema", upgradeSchema], {
     env: databaseEnv,
-    label: "deploying all ordered post-Layout-V2 migrations",
+    label: "deploying ordered post-Layout-V2 migrations before Vault profiles",
   });
+  const vaultLegacySeed = runSqlFile(vaultLegacyProfileSeedSql, "inserting disposable pre-profile Vault command-history fixtures");
+  if (!vaultLegacySeed.includes("VAULT_LEGACY_PROFILE_UPGRADE_SEED_PASS")) fail("Vault historical fixture preparation did not reach its PASS marker.");
+  for (const migrationName of postLayoutMigrationNames.filter((name) => name >= VAULT_PROFILE_MIGRATION)) {
+    cpSync(resolve(migrationsDir, migrationName), resolve(upgradeMigrationsDir, migrationName), { recursive: true });
+  }
+  run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "migrate", "deploy", "--schema", upgradeSchema], {
+    env: databaseEnv, label: "deploying Vault profiles over historical active sales and restocks, then remaining migrations",
+  });
+  const vaultLegacyUpgrade = runSqlFile(vaultLegacyProfileValidationSql, "verifying receipt-derived historical terminality and legacy work continuation");
+  if (!vaultLegacyUpgrade.includes("VAULT_LEGACY_PROFILE_UPGRADE_VALIDATION_PASS")) fail("Vault historical profile upgrade did not reach its PASS marker.");
   const finalStagedLedgerCount = queryScalar(
     `SELECT count(*) FROM "_prisma_migrations"
       WHERE "finished_at" IS NOT NULL AND "rolled_back_at" IS NULL`,
@@ -562,6 +582,19 @@ try {
     fail("The real Card Platform V2 validation did not reach its PASS marker.");
   }
 
+  const vaultV1Result = runSqlFile(vaultV1Sql, "verifying Vault V1 isolation, snapshot and event immutability against real disposable PostgreSQL");
+  if (!vaultV1Result.includes("VAULT_V1_MIGRATION_VALIDATION_PASS")) {
+    fail("The Vault V1 migration validation did not reach its PASS marker.");
+  }
+  run(pnpm, ["--filter", "@tenkings/vault-contracts", "build"], { env: databaseEnv, label: "building Vault contracts for disposable cross-stack validation" });
+  run(pnpm, ["--filter", "@tenkings/vault-machine", "build"], { env: databaseEnv, label: "building simulated Vault machine authority for disposable cross-stack validation" });
+  for (const profileDoors of [null, 72, 125]) {
+    const vaultV1ServiceResult = run(process.execPath, [vaultV1ServiceScript, ...(profileDoors ? [`--profile-doors=${profileDoors}`] : [])], {
+      env: databaseEnv, label: `projecting simulated ${profileDoors ?? "legacy150"}-door machine/payment/restock/retry events through public production Next HTTP into disposable PostgreSQL`,
+    });
+    if (!vaultV1ServiceResult.includes("VAULT_V1_REAL_POSTGRES_VALIDATION_PASS")) fail(`The Vault V1 ${profileDoors ?? "legacy150"}-door cross-stack PostgreSQL validation did not reach its PASS marker.`);
+  }
+
   const secondDeploy = run(
     pnpm,
     ["--filter", "@tenkings/database", "exec", "prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"],
@@ -620,6 +653,6 @@ if (primaryError) {
   process.exitCode = 1;
 } else {
   console.log(
-    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1, Speedster registration lessons, Layout Key V2, Speedster Color Geometry v2 evidence constraints, Speedster audit evidence immutability, and Card Platform V2 catalog, constraint, lifecycle, immutability, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
+    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1, Speedster registration lessons, Layout Key V2, Speedster Color Geometry v2 evidence constraints, Speedster audit evidence immutability, Card Platform V2 and Vault V1 catalog, constraint, lifecycle, immutability, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
   );
 }

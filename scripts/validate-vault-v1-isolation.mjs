@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -11,6 +11,8 @@ const sourceRootEntries = [
   "frontend/nextjs-app/lib/server/vaultV1",
   "frontend/nextjs-app/pages/api/vault",
   "frontend/nextjs-app/pages/admin/vault.tsx",
+  "frontend/nextjs-app/pages/vault/support",
+  "frontend/nextjs-app/lib/vaultSupport.ts",
   "packages/database/src/vaultV1.ts",
 ];
 const sourceRoots = sourceRootEntries.map((entry) => join(root, entry));
@@ -242,6 +244,7 @@ const windowsInvalidCharacters = /[<>:"\\|?*\u0000-\u001f]/u;
 function scanWindowsCheckoutPaths(paths) {
   const findings = [];
   const caseInsensitivePaths = new Map();
+  const identities = new Map(paths.map((file) => [file.toLowerCase(), file]));
   for (const file of paths) {
     const components = file.split("/");
     for (const component of components) {
@@ -259,6 +262,7 @@ function scanWindowsCheckoutPaths(paths) {
       if (windowsReservedBasenames.test(basenameWithoutExtension)) {
         addFinding(findings, { code: "WINDOWS_RESERVED_FILENAME", file, line: 1 });
       }
+      if (/^(?:\.git|git~[1-9])$/i.test(component)) addFinding(findings, { code: "WINDOWS_GIT_PROTECTED_PATH", file, line: 1 });
       if (component.length > 255) {
         addFinding(findings, { code: "WINDOWS_PATH_COMPONENT_TOO_LONG", file, line: 1 });
       }
@@ -267,6 +271,10 @@ function scanWindowsCheckoutPaths(paths) {
       addFinding(findings, { code: "WINDOWS_RELATIVE_PATH_TOO_LONG", file, line: 1 });
     }
     const windowsIdentity = file.toLocaleLowerCase("en-US");
+    for (let index = 1; index < components.length; index += 1) {
+      const ancestor = identities.get(components.slice(0, index).join("/").toLowerCase());
+      if (ancestor) addFinding(findings, { code: "WINDOWS_FILE_DIRECTORY_COLLISION", file, line: 1 });
+    }
     const prior = caseInsensitivePaths.get(windowsIdentity);
     if (prior && prior !== file) {
       addFinding(findings, { code: "WINDOWS_CASE_INSENSITIVE_PATH_COLLISION", file: prior, line: 1 });
@@ -287,15 +295,9 @@ function currentCheckoutPaths() {
   if (result.status !== 0) {
     throw new Error(`git ls-files failed: ${String(result.stderr).trim()}`);
   }
-  return result.stdout.split("\0").filter((file) => {
-    if (!file) return false;
-    try {
-      lstatSync(join(root, file));
-      return true;
-    } catch {
-      return false;
-    }
-  });
+  // The index is checkout authority. Missing worktree files and dangling links
+  // must not hide an invalid tracked name from CI or pre-commit validation.
+  return result.stdout.split("\0").filter(Boolean);
 }
 
 function runSelfTests() {
@@ -340,6 +342,10 @@ function runSelfTests() {
   expectCode("Windows overlong component", scanWindowsCheckoutPaths([`frontend/${"x".repeat(256)}.ts`]), "WINDOWS_PATH_COMPONENT_TOO_LONG");
   expectCode("Windows overlong relative path", scanWindowsCheckoutPaths([`${"nested/".repeat(35)}route.ts`]), "WINDOWS_RELATIVE_PATH_TOO_LONG");
   expectCode("Windows case-insensitive collision", scanWindowsCheckoutPaths(["frontend/Vault.ts", "frontend/vault.ts"]), "WINDOWS_CASE_INSENSITIVE_PATH_COLLISION");
+  expectCode("Windows file-directory collision", scanWindowsCheckoutPaths(["frontend/Vault", "frontend/vault/index.ts"]), "WINDOWS_FILE_DIRECTORY_COLLISION");
+  expectCode("Windows protected git alias", scanWindowsCheckoutPaths(["frontend/git~1/config"]), "WINDOWS_GIT_PROTECTED_PATH");
+  for (const character of ['<', '>', ':', '"', '\\', '|', '?', '*', '\u0000', '\u001f']) expectCode("Windows forbidden character", scanWindowsCheckoutPaths([`vault/bad${character}name.ts`]), "WINDOWS_INVALID_PATH_CHARACTER");
+  for (const name of ["aux", "PRN.txt", "NUL.json", "COM1.ts", "LPT9.md", "COM¹.txt", "con .ts", "CONIN$", "CONOUT$"]) expectCode("Windows reserved device", scanWindowsCheckoutPaths([`vault/${name}`]), "WINDOWS_RESERVED_FILENAME");
   expectClean("Windows-safe catch-all routes", scanWindowsCheckoutPaths([
     "frontend/nextjs-app/pages/api/vault/v1/machines/[machineId]/[...action].ts",
     "frontend/nextjs-app/lib/server/vaultV1/machineActions.ts",

@@ -4,6 +4,25 @@
 
 Review started 2026-09-07 against PR #339 at `92ad20c7f1391b23c55d9c43318eced95072ded9`.
 
+## Current integrated implementation — fresh software task
+
+Focused profile-contract, kiosk and machine commits now preserve the imported corrections and implement schema2 profiles across the product. Root Node20 build and240tests pass (11contracts,99machine,78kiosk,9database,43cloud); the safe full Next production rebuild,13 real public-route transport cases and72/125 disposable local HTTP demos also pass. Kiosk browser evidence covers17 scenarios. These results precede the final committed-candidate review and PR checks; those checks remain required.
+
+| Requirement / discrepancy | Implemented correction and evidence | Remaining boundary |
+| --- | --- | --- |
+| Configurable topology and history | Signed schema2 profiles; separate opaque identity/label/geometry/address; mixed-size/cutout fixtures across1/7/32/72/125/150/256; explicit schema1 compatibility; retained retired history; pinned work snapshots | Complete physical source, actual mapping and applicable interface qualification;256 is a parser bound |
+| Service reconfiguration and fit | Exact pending version/digest, empty-machine Technician/Admin confirmation, active financial/command/restock/certification barriers, retained lock and reauthentication; FILLED requires per-door fit attestation | Installed service procedure and actual packaged-product/mechanical acceptance |
+| Runtime and external-effect recovery | CLI cloud/config/grant/heartbeat/outbox wiring; fresh pre-checkout proof; durable mock provider; serialization, cancellation, terminality and settlement progression; same original paid-group retry; immutable mode | Official Nayax/controller adapters and vendor-qualified behavior |
+| Staff, kiosk and support | Scoped grant revalidation; durable recovery after browser/service interruption; individual PIN, explicit workflow resume and lock; truthful certification FAIL/CRITICAL observations; stable touch/focus/labels and bounded public support | Real contacts, installed Windows/ViewSonic touch/TV/assigned-access acceptance |
+| Cloud/admin and transport | Human fresh step-up and machine scope rechecks; credential lifecycle; published-config/evidence integrity; settlement-aware complete reports and BigInt/date handling; bounded raw UTF-8 JSON; typed redacted legacy event parity | Production credentials, config values and authorized deployment |
+| Database lifecycle | Additive Vault integrity/profile migrations and receipt-derived legacy finality; full95-migration historical chain, active legacy upgrade/resume, Vault SQL invariants, public Next HTTP legacy150/72/125 projections and concurrent replay passed; second deploy was an unchanged-ledger no-op; container/storage cleanup verified | Separately authorized deployment and installed acceptance |
+| Windows, backup and release | Functional manifest/path/hash/link tests, staging-only scripts, bounded SQLite integrity/foreign-key checks and redacted support export | Final pinned runtime/nativeSQLite/service/protected storage and state-aware encrypted update/restore implementation |
+| Independent acceptance | Combined tests/builds and simulator/browser evidence; focused commits with append-only session history | Review exact final committed head, resolve findings, normal push to PR339, every exact-head check green, keep open |
+
+Implementation detail and the separately hashed CAD R01 proposals are in [MACHINE_PROFILES.md](MACHINE_PROFILES.md). Installed physical qualification,5purchase+2restock cycles per applicable door,500real observed sessions, certification and pilot remain open. Simulator results never replace them.
+
+## Historical review baselines and pre-change checklist
+
 **Owner baseline changed during review:** the intended machine now has **100 doors**, one SER mini PC and an OS-free ViewSonic touchscreen. See [current product baseline](PRODUCT_BASELINE.md). The checklist below records the reviewed legacy 150-door implementation; it is not acceptance evidence for the new capacity. Exact physical arrangement/door labels and hardware models are pending before capacity-specific changes.
 
 **Later owner requirement supersedes a fixed-capacity implementation:** support a family of cabinet sizes, door quantities and mixed door sizes through approved, versioned machine profiles using standardized hardware interfaces. The first planned cabinet is 100 doors; neither 100 nor the legacy 150 may remain a global topology assumption. Profile architecture/refactoring can proceed before final CAD dimensions. Actual wiring, hardware limits and installed acceptance still need evidence. See `PRODUCT_BASELINE.md` for the required identity/mapping/history/activation boundaries and the unimplemented status.
@@ -57,7 +76,7 @@ The baseline has contracts and substantial individual implementations, but prior
 | API URLs/version/method/body/auth and Windows checkout safety (§9,17) | Next catch-all, API handlers, isolation tool | None | Both colon-bearing public URLs preserved; Windows-invalid paths/collisions rejected; meaningful transport tests |
 | Release evidence and safety (§19–20) | CI, test suites, migration source, handoff | No merge/deploy/Production/provider/hardware/pilot authority | Node20 full test/build/Prisma/Next; disposable-only migration chain and no-op; independent final-commit review and green PR checks |
 
-## Initial discrepancies under review
+## Initial discrepancies (historical starting point; corrected above)
 
 - Machine CLI has no configuration/staff-grant/cloud heartbeat/outbox runtime wiring; tests seed these internals directly.
 - Payment continuation, concurrent checkout, in-flight command finality and staff-grant revalidation require adversarial verification.

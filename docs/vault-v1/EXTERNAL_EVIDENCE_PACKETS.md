@@ -21,7 +21,7 @@ Until approved, only the deterministic normalized mock is allowed. No public doc
 
 Request dated/versioned evidence for controller make/model/serial, firmware version/hash, stable USB identity, COM parameters, framing/checksum, command IDs, channel map, ACK/error/timeout meanings, duplicate/reboot behavior, watchdog/default-off/max-on safeguards, and firmware-owned pulse profiles.
 
-Bench evidence must cover at least eight representative doors and record solenoid/driver/PSU identities, inrush/current, voltage drop, release timing, temperature, EMI, flyback, brownout, reset/disconnect, stuck output, malformed/duplicate/flooded command handling, wire gauge, fusing, and enclosure grounding. Produce a signed bidirectional 150-door-to-channel map. Until complete, only the non-actuating simulator is allowed.
+Bench evidence must cover at least eight representative doors and record solenoid/driver/PSU identities, inrush/current, voltage drop, release timing, temperature, EMI, flyback, brownout, reset/disconnect, stuck output, malformed/duplicate/flooded command handling, wire gauge, fusing, and enclosure grounding. Produce a signed bidirectional map for every door in the applicable profile, independent of physical/display geometry. Installed output count, simultaneous coil energization and payment cart limits are separate. Until complete, only the non-actuating simulator is allowed.
 
 ## Machine tax packet (G-03)
 
@@ -29,7 +29,7 @@ For each production machine, Admin supplies and reviews machine ID, street/locat
 
 ## Screen/Windows/enclosure packet (G-04)
 
-Record final PC, touchscreen, Windows edition/build, drivers, orientation, 100/125/150% scaling, browser version/zoom/assigned access, effective CSS viewport, touch calibration, VESA/mount/enclosure, glare, reach, cable routing, ventilation/thermal, service access, cold-boot/power recovery, USB identity, and photos/results for the 720×1280 through 1080×1920 acceptance suite. Elo 1304L remains a candidate until this packet passes.
+Record exact SER PC, separate ViewSonic touchscreen/TV identities, Windows edition/build, drivers, orientation, 100/125/150% scaling, browser version/zoom/assigned access, effective CSS viewport, touch calibration, VESA/mount/enclosure, glare, reach, cable routing, ventilation/thermal, service access, cold-boot/power recovery, USB identity, and photos/results for the 720×1280 through 1080×1920 acceptance suite. Qualify touch association and device binding after restart/reconnection; do not infer identities from OS display order or COM names. The CAD R01 research identifies historical references but selects no final installed hardware.
 
 ## Support/deployment packet (G-06)
 

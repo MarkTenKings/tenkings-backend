@@ -10,7 +10,7 @@ The service listens only on `127.0.0.1` and `::1`. Mutations require a valid sam
 |---|---|
 | `POST /api/v1/session/bootstrap` | Same-origin assigned-access bootstrap; rotates a short-lived HttpOnly SameSite=Strict session and returns no secret. |
 | `POST /api/v1/session/activity` | Persists genuine public activity and advances the optimistic state version. Rejected during an active sale or service lock. |
-| `GET /api/v1/state` | Current durable public state, products, all 150 doors, cart/sale summary, readiness, support config, and state version. |
+| `GET /api/v1/state` | Current durable public state, products, all active profile doors, explicit `configSchemaVersion` and `machineProfile`, cart/sale summary, readiness, support config, and state version. Schema 1 alone uses the historical 150-door layout. |
 | `GET /api/v1/events` (WebSocket upgrade) | Authenticated state/event notifications only; never accepts hardware commands. |
 | `POST /api/v1/cart/select` | Add/remove an available door before payment; persists authoritative cart selection. |
 | `POST /api/v1/cart/pick` | Securely selects and persists one available door for a requested product before animation. |
@@ -22,8 +22,9 @@ The service listens only on `127.0.0.1` and `::1`. Mutations require a valid sam
 | `POST /api/v1/staff/authenticate` | Verifies individual six-digit machine grant with rate limit/backoff and returns scoped service session. |
 | `POST /api/v1/staff/lock` | Locks service mode; blocks new public sessions. |
 | `POST /api/v1/staff/safe-exit` | Requires authorized actor and explicit serviced-doors-closed confirmation before public mode. |
+| `POST /api/v1/staff/profile-activation` | Technician/Admin confirms the exact pending version/digest, empty compartments and serviced doors closed. Requires no pinned customer, financial, restock, certification or command work; activates atomically into service lock and requires reauthentication/safe exit. |
 | `POST /api/v1/restocks` | Starts/resumes an authorized pinned-config restock session; exact expected doors only. Schedules at most one unobserved command and returns its intent/terminal/observation phase. |
-| `POST /api/v1/restocks/{id}/items/{doorId}` | After a terminal command receipt, records one per-door human observation: `FILLED`, `LEFT_EMPTY`, or `EXCEPTION`; only `FILLED` makes the planned assignment available. |
+| `POST /api/v1/restocks/{id}/items/{doorId}` | After a terminal command receipt, records one per-door human observation: `FILLED`, `LEFT_EMPTY`, or `EXCEPTION`; only `FILLED` makes the planned assignment available. Schema 2 additionally requires `productFitConfirmed: true` for FILLED. |
 | `POST /api/v1/restocks/{id}/finalize` | Requires every door reviewed and physical-close confirmation; persists audit/outbox. |
 | `POST /api/v1/certification/sessions` | Starts/resumes immutable `CERTIFICATION` mode using the same command/state paths and selected test adapters. Requires trusted service-supplied source commit/app identity and schedules at most one unobserved command. |
 | `POST /api/v1/certification/sessions/{id}/evidence` | After a terminal command receipt, records PASS/FAIL/CRITICAL evidence bound to that exact command and door; unexpected door makes physical automation fail closed. |
@@ -50,7 +51,7 @@ Admin routes use server-side human sessions plus the explicit Vault owner permis
 
 - `/api/vault/v1/admin/products`
 - `/api/vault/v1/admin/machines`
-- `/api/vault/v1/admin/machines/{machineId}/config/{draft|validate|impact|publish}`
+- `/api/vault/v1/admin/machines/{machineId}/config/{draft|validate|impact|verify-profile|publish}`
 - `/api/vault/v1/admin/machines/{machineId}/doors/plan`
 - `/api/vault/v1/admin/machines/{machineId}/staff-access`
 - `/api/vault/v1/admin/machines/{machineId}/enrollment`
@@ -61,3 +62,5 @@ Admin routes use server-side human sessions plus the explicit Vault owner permis
 - `/api/vault/v1/admin/support-cases`
 
 No route may unlock a door remotely, mutate local inventory authority, mutate a pinned/closed sale, or write any V1/V2 pack/card/ownership record.
+
+Cloud POST routes parse bounded raw UTF-8 JSON themselves, including streamed bytes and whitespace, and return the same error envelope for malformed JSON, oversized bodies and lookalike media types. The Windows-safe catch-all route preserves the exact `events:batch` and `staff-grants:pull` public URLs. Production-built Next HTTP tests cover the transport; the guarded PostgreSQL harness additionally exercises authenticated database effects.

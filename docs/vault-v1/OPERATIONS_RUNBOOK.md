@@ -9,9 +9,13 @@ env PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/bin:/bin pnpm inst
 env PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/bin:/bin pnpm vault:validate-isolation
 env PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/bin:/bin pnpm vault:build
 env PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/bin:/bin pnpm vault:test
+env PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/bin:/bin pnpm vault:build-next
+env PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/bin:/bin pnpm vault:test-next-routes
 ```
 
 Use only temporary local SQLite files and the deterministic mock adapters. Never point simulator tests at a provider, serial port, or production cloud.
+
+`pnpm vault:demo -- --doors 72` (or 125) builds and starts a disposable loopback kiosk with explicit synthetic geometry, wiring, test PIN and mock payment/cloud. Its output prints the URL and staff instructions. See [machine profiles](MACHINE_PROFILES.md). The safe Next build/test wrapper rejects environment files and strips inherited application credentials; build uses an unusable loopback database address and disables migrations. Real PostgreSQL tests run only through the separately guarded disposable harness after a planned session-log entry.
 
 The service process must receive immutable `VAULT_APP_VERSION` and `VAULT_SOURCE_COMMIT` values from the verified installer/service wrapper. Browser input cannot supply or replace build provenance, and certification fails closed when the source commit is absent or `UNVERIFIED`.
 
@@ -29,12 +33,14 @@ The service process must receive immutable `VAULT_APP_VERSION` and `VAULT_SOURCE
 
 ## Backup and restore
 
-- Backups use SQLite's consistent backup facility, are encrypted by the machine protected-storage boundary, named with machine/schema/app/config versions, and kept outside the live database directory.
+- Development code provides bounded verified SQLite backup/restore primitives. Encryption, Windows protected storage, final installer integration and installed restore qualification remain production work; the current primitives do not supply those guarantees.
+- Production backups must use SQLite's consistent backup facility, be encrypted by the machine protected-storage boundary, named with machine/schema/app/config versions, and kept outside the live database directory.
 - Validate each backup with `integrity_check`, digest it, enforce a bounded retention/quota, and audit creation/pruning. Sync acknowledgement never deletes source business facts.
 - Restore only in service lock with Technician/Admin operational authority. Preserve the failed database and logs, restore to a new path, verify digest/integrity/schema/config, then restart into locked recovery. Credential recovery is Admin-only.
 
 ## Update and rollback
 
+- Checked-in Windows scripts verify and stage release files only. They are not a finished service installer or an implementation of the full state-aware activation/rollback procedure below.
 - Accept only signed/digest-verified installers from the approved channel. Record prior/new commit, app, contract, local schema, and UI asset digests.
 - Stop accepting new checkout, finish/reconcile active work, enter service lock, take verified backup, install, cold-start checks, then require explicit safe exit.
 - On failure, restore the prior signed application and compatible database backup. Never downgrade config trust roots or silently reverse a local schema.

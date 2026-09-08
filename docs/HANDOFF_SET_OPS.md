@@ -1,5 +1,13 @@
 # Set Ops Handoff (Living)
 
+## Vault configurable software candidate validated — 2026-09-07
+
+The fresh software task implemented signed schema2 machine profiles while preserving schema1 historical150 identities, signed bytes and paid/restock/certification history. Current design intent remains maximum125 and exploratory compact~72 with central controls. All new fixtures are synthetic; the CAD partner's R01 memos preserve the100-door Rev27 versus125-door Rev6 source conflict and select no final physical profile or hardware. Details and hashes: `docs/vault-v1/MACHINE_PROFILES.md`.
+
+Focused implementation commits are `1534e156` (contracts and saved authority/transfer record), `160aed97` (kiosk), `640b2088` (machine) and `d9635659` (cloud/database). Local Node20 combined build and240tests pass, as do the safe full Next production rebuild,13 real public-route transport cases,72/125 disposable local HTTP demos,17 browser scenarios, Windows manifest/path/hash regressions and isolation normal/57self-tests. The full guarded PostgreSQL run passed95migrations, legacy active-work receipt backfill/continuation, all preserved non-Vault checks, Vault invariants, public production Next HTTP config/staff/heartbeat/events for legacy150/72/125, concurrent replay, second-deploy unchanged-ledger no-op and container/storage cleanup. Run evidence is appended in `docs/handoffs/SESSION_LOG.md`.
+
+Remaining delivery steps are exact-final-commit independent review, normal push to the existing `codex/vault-v1-build` remote and all PR#339 checks green. Keep the PR open/unmerged. No Production system, provider, real credential, controller or hardware was touched. Production still needs official payment/controller adapter implementation and qualification, exact physical mapping/mechanics/electrical evidence, final pinned Windows runtime/nativeSQLite/service/protected-storage/state-aware update implementation, installed SER/ViewSonic acceptance, real tax/support configuration, separately authorized migration/deployment, physical certification and pilot.
+
 ## Vault software takeover verified — 2026-09-07
 
 Software/integration task `01a07f31-162f-7e52-97bb-414e47a68aaa` owns the isolated `/Users/markthomas/.codex/worktrees/2dbc/ten-kings-mystery-packs-clean` checkout on `codex/vault-v1-software-20260907`. CAD/hardware partner task `01a07f31-0efc-7013-bf29-10ebdbfd153b` owns only `/Users/markthomas/Documents/Codex/2026-09-07/vault-cad-hardware-astra-max/outputs`. The former implementation task is retired.

@@ -19,6 +19,8 @@
 | Repeated OPEN DOORS taps/restart | Transaction-level unique retry consumption and deterministic per-door attempt-2 IDs | Every paid door gets at most one second command; no other door |
 | Cloud outage | Freshness readiness gate only before checkout; local active transaction authority | New checkout blocked; active/authorized work continues |
 | Config downgrade/tamper | Ed25519 signature, digest, version monotonicity, machine binding, expiry, safe-boundary activation | Rejected snapshot; current pinned transaction unchanged |
+| Profile reconfiguration or guessed wiring | Explicit unique endpoint/channel mapping; immutable config/profile/label snapshots; empty-machine Technician/Admin confirmation of exact pending digest | No geometry-derived address, remapped paid door or erased retired history |
+| Incomplete or falsely qualified geometry | Separate nullable draft contract; complete executable envelope; independent stored geometry/wiring/capability/hardware evidence and Admin attestation | Synthetic examples remain test-only; report hashes never substitute for physical qualification |
 | Local database corruption/disk pressure | Startup integrity check, fail-closed recovery, backup/restore, pressure thresholds | No new sale; support/service evidence preserved |
 | Clock rollback | trusted sync observations + monotonic duration accounting | New sale/config activation blocked when unsafe; active fulfillment continues |
 | PIN guessing/role escalation | six digits, memory-hard verifier, machine/version scope, exponential backoff, generic errors | Locked service entry and audit; no permission widening |

@@ -1,12 +1,14 @@
 # Vault V1 Architecture and Ownership
 
-Status: frozen for implementation on `codex/vault-v1-build` from `origin/main` at `1dcb39a1`.
+Status: software integration and independent review in `codex/vault-v1-software-20260907`, targeting the existing open PR #339 / `codex/vault-v1-build`. The [current owner baseline](PRODUCT_BASELINE.md) is a configurable family with a maximum current design of 125 doors and a compact concept near 72, one SER mini PC, a ViewSonic customer touchscreen and a separate TV. These capacities are design intent; final physical geometry and hardware remain unqualified.
+
+Config schema 2 now carries an explicit versioned machine profile. Historical schema 1 retains the original 150-door identities, signed payload shape and channel interpretation. See [profile implementation and CAD boundary](MACHINE_PROFILES.md) for the executable schema, synthetic fixtures, history and activation rules. Final combined validation and exact-commit review are recorded separately in the traceability and session log.
 
 ## Canonical architecture
 
 One Windows service (`packages/vault-machine`) is the sole local writer and immediate authority. It serves one static React kiosk (`frontend/vault-kiosk`) over authenticated loopback HTTP/WebSocket, owns SQLite, persists every external-effect intent, drives normalized payment/controller adapters, and synchronizes an append-only outbox to the existing Next.js/PostgreSQL cloud. The cloud owns immutable configuration publication, machine/staff credentials, fleet administration, audit projection, and reporting; it never sends a door command.
 
-`packages/vault-contracts` is the single shared vocabulary. It fixes the 150-door parser/order, integer-money/tax rules, roles, states, config signing, API envelopes, adapter contracts, redaction, and certification thresholds.
+`packages/vault-contracts` is the single shared vocabulary for generic stable door identities, versioned profiles and explicit mappings, the historical 150-door parser/order, integer-money/tax rules, roles, states, config signing, API envelopes, adapter contracts, redaction, and certification policy.
 
 ## File ownership during the build
 
@@ -29,8 +31,8 @@ No specialist edits another owner's file set. The lead resolves cross-package ch
 - Cloud reachability must be recently proven before checkout. The signed config carries a deterministic freshness limit (default 120 seconds). Once checkout begins, cloud loss cannot stop payment recovery, fulfillment, or the single group retry.
 - Financial settlement and customer retrieval are orthogonal facts. Durable sale/payment/item states remain distinct; public UI state is derived.
 - Decline or confirmed pre-authorization cancellation releases reserved doors atomically. Unknown payment retains reservations and prevents a second payment until reconciliation.
-- Config activation waits for a safe boundary: no active customer/payment/reconciliation, staff, or restock session. Historical snapshots never mutate.
-- Simulator logical channel order is row-major. A real controller mapping remains blocked on G-02 and must replace it only through a signed 150-door config plus certification evidence.
+- Config activation waits for a safe boundary: no active customer/payment/reconciliation, commands, staff, restock or certification session. A topology or mapping change also requires the exact pending version/digest, an empty machine and explicit Technician/Admin service confirmation. Historical snapshots and retired door history remain intact.
+- Schema 1 retains its historical simulator channel order. Schema 2 requires explicit endpoint/channel mappings independent of layout or labels; synthetic fixtures deliberately scramble the relation. A real mapping and adapter remain blocked on G-02 and applicable profile certification evidence.
 - Customer retry extension is a signed bounded config value, default 30 seconds. Customer door commands are capped at attempts 1 and 2. Restock/certification commands never auto-repeat; an operator must record an outcome and create a new explicit evidence step where allowed.
 - Local outbox pressure is an alert at 100,000 pending events or 512 MiB. Acknowledged envelopes may be archived after verified backup; underlying sale, command, audit, support, and certification facts are never deleted by sync.
 
