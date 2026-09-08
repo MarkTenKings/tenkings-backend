@@ -12925,3 +12925,7 @@ PR #339 was normally pushed after all three exact-head independent reviews clear
 ## 2026-09-07 - V72 CAD review source integrated
 
 The completed V72 Centered R01 model/archive were read and independently hashed; bindings are in `docs/vault-v1/MACHINE_PROFILES.md`. The model is an inch-based dimensional review with 72 null stable software IDs and null controller mappings. It is not an executable profile, qualified pulse/mapping, installed geometry or fabrication release. Software fixtures remain synthetic. The final software/CI review includes this documentation-only handoff.
+
+## 2026-09-07 - V72 construction remains under owner review
+
+Mark challenged the proposed 178-piece construction against the minimalist Rev27 derivative. The CAD lead reconciles 139 source pieces - 28 doors + 11 shelf segments + 6 wall segments + 50 added case/mounting/reinforcement pieces = 178. The 50 additions and their support construction are agent-selected fabrication choices, not owner-approved hardware requirements. Current `MACHINE_PROFILES.md` and `PRODUCT_BASELINE.md` now record that correction and the hashed part audit. The 72-door direction, ATOPLEE selection and previous 6-inch cassette tradeoff remain inputs; no executable profile, mapping, pulse or physical approval is inferred. This is documentation only; prior accepted software commit `a06235f2` had all 15 checks green, and the new documentation head must be independently reviewed and validated in PR #339.
