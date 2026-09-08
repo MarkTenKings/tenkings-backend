@@ -21,4 +21,4 @@ guard args == ["list"] || args == ["inspect"] else {
     finish(ProbeResult(status: "invalid_arguments"), status: 64)
 }
 let result = Probe.run(inspect: args == ["inspect"], backend: ApplePCSCReader())
-finish(result, status: ["reader_found", "header_observed"].contains(result.status) ? 0 : 2)
+finish(result, status: ["reader_found", "reader_interfaces_found", "header_observed"].contains(result.status) ? 0 : 2)

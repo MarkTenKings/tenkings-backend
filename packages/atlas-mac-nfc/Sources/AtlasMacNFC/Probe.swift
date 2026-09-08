@@ -17,6 +17,7 @@ public enum ProbeFailure: String, Error {
 }
 
 public enum InspectionStage: String, Codable, CaseIterable, Sendable {
+    case interfaceResolution = "interface_resolution"
     case inputValidation = "input_validation"
     case establishContext = "establish_context"
     case connect
@@ -42,7 +43,14 @@ public struct InspectionFailure: Error {
 // This interface intentionally has no arbitrary transmit/UID/write facility.
 public protocol ReadOnlyReader {
     func readerNames() throws -> [String]
+    func resolvePresentType2Interface(candidates: [String]) throws -> String
     func readType2Header(reader: String) throws -> [UInt8]
+}
+
+public extension ReadOnlyReader {
+    func resolvePresentType2Interface(candidates: [String]) throws -> String {
+        throw ProbeFailure.ambiguousReader
+    }
 }
 
 public struct HeaderSummary: Codable, Equatable {
@@ -61,16 +69,18 @@ public struct ProbeResult: Codable, Equatable {
     public let qualification: String
     public let supportedReaderCount: Int?
     public let supportedInterfaces: [String]?
+    public let candidateInterfaceCount: Int?
     public let tag: HeaderSummary?
     public let failureStage: InspectionStage?
     public let fixedReadAttempted: Bool?
 
-    public init(status: String, count: Int? = nil, tag: HeaderSummary? = nil, failure: InspectionFailure? = nil) {
+    public init(status: String, count: Int? = nil, candidates: Int? = nil, tag: HeaderSummary? = nil, failure: InspectionFailure? = nil) {
         self.status = status
         self.readOnly = true
         self.qualification = "not_established"
         self.supportedReaderCount = count
         self.supportedInterfaces = count.map { Array(repeating: "ACS ACR1552U PICC", count: min($0, 32)) }
+        self.candidateInterfaceCount = candidates
         self.tag = tag
         self.failureStage = failure?.stage
         self.fixedReadAttempted = failure?.fixedReadAttempted
@@ -78,6 +88,9 @@ public struct ProbeResult: Codable, Equatable {
 }
 
 public enum Probe {
+    // ACS 1.1.13 exposes the M1's PICC/SAM interfaces under these aliases on this
+    // Mac. Their ordinals are NOT USB slot identities and cannot select a card.
+    private static let macVendorAliases = Set(["ACS ACR1552 1S CL Reader(1)", "ACS ACR1552 1S CL Reader(2)"])
     public static func selectReader(_ names: [String]) throws -> String {
         guard names.count <= 32 else { throw ProbeFailure.malformedReaderList }
         var supported: [String] = []
@@ -122,7 +135,19 @@ public enum Probe {
 
     public static func run(inspect: Bool, backend: any ReadOnlyReader) -> ProbeResult {
         do {
-            let reader = try selectReader(backend.readerNames())
+            let names = try backend.readerNames()
+            let reader: String
+            if names.count == 2 && Set(names) == macVendorAliases {
+                if !inspect { return ProbeResult(status: "reader_interfaces_found", candidates: 2) }
+                do {
+                    reader = try backend.resolvePresentType2Interface(candidates: names)
+                    guard names.contains(reader) else { throw ProbeFailure.ambiguousReader }
+                } catch let failure as ProbeFailure {
+                    throw InspectionFailure(reason: failure, stage: .interfaceResolution, fixedReadAttempted: false)
+                }
+            } else {
+                reader = try selectReader(names)
+            }
             if !inspect { return ProbeResult(status: "reader_found", count: 1) }
             var response = try backend.readType2Header(reader: reader)
             defer { response.withUnsafeMutableBytes { if let base = $0.baseAddress { atlas_clear(base, $0.count) } } }
@@ -133,7 +158,9 @@ public enum Probe {
             }
             return ProbeResult(status: "header_observed", count: 1, tag: header)
         } catch let failure as InspectionFailure {
-            return ProbeResult(status: failure.reason.rawValue, count: 1, failure: failure)
+            let resolving = failure.stage == .interfaceResolution
+            return ProbeResult(status: failure.reason.rawValue, count: resolving ? nil : 1,
+                               candidates: resolving ? 2 : nil, failure: failure)
         } catch let failure as ProbeFailure {
             return ProbeResult(status: failure.rawValue, count: failure == .noSupportedReader ? 0 : nil)
         } catch {
@@ -153,6 +180,7 @@ public final class ApplePCSCReader: ReadOnlyReader {
         case 0x80100017: throw ProbeFailure.readerUnavailable
         case 0xa7100001: throw ProbeFailure.unsupportedATR
         case 0xa7100002: throw ProbeFailure.invalidResponse
+        case 0xa7100004: throw ProbeFailure.ambiguousReader
         default: throw ProbeFailure.pcscUnavailable
         }
     }
@@ -195,5 +223,13 @@ public final class ApplePCSCReader: ReadOnlyReader {
                                     fixedReadAttempted: diagnostics.fixed_read_attempted == 1)
         }
         return response
+    }
+
+    public func resolvePresentType2Interface(candidates: [String]) throws -> String {
+        guard candidates.count == 2 else { throw ProbeFailure.ambiguousReader }
+        var selected: UInt32 = .max
+        try check(atlas_resolve_present_type2(candidates[0], candidates[1], &selected))
+        guard selected < candidates.count else { throw ProbeFailure.ambiguousReader }
+        return candidates[Int(selected)]
     }
 }

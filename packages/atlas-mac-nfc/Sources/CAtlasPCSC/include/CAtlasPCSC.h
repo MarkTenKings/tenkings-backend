@@ -5,6 +5,8 @@
 void atlas_clear(void *buffer, size_t length);
 // No arbitrary command, UID, control, authentication, write, reset or lock API.
 int32_t atlas_list_readers(char *buffer, uint32_t capacity, uint32_t *length);
+// Presence snapshot only: no connection or command to either candidate.
+int32_t atlas_resolve_present_type2(const char *first, const char *second, uint32_t *selected);
 typedef enum {
     ATLAS_STAGE_NONE = 0,
     ATLAS_STAGE_INPUT = 1,
@@ -31,4 +33,5 @@ _Noreturn void atlas_finish(const char *json, size_t length, int status);
 #define ATLAS_UNSUPPORTED_ATR ((int32_t)0xA7100001)
 #define ATLAS_INVALID_LENGTH ((int32_t)0xA7100002)
 #define ATLAS_INVALID_PROTOCOL ((int32_t)0xA7100003)
+#define ATLAS_AMBIGUOUS_INTERFACE ((int32_t)0xA7100004)
 #endif

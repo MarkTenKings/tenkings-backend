@@ -7,15 +7,76 @@ final class FixtureReader: ReadOnlyReader {
     var response: [UInt8] = [0x04,0x17,0xA9,0x32,0xCA,0x12,0x83,0xBA,0xE1,0x48,0x00,0x01,0xE1,0x10,0x3E,0x00,0x90,0]
     var reads = 0
     var failure: Error?
+    var resolutions = 0
+    var resolvedReader = "ACS ACR1552 1S CL Reader(2)"
+    var resolutionFailure: ProbeFailure?
+    var readTarget: String?
     func readerNames() throws -> [String] { names }
+    func resolvePresentType2Interface(candidates: [String]) throws -> String {
+        resolutions += 1
+        if let resolutionFailure { throw resolutionFailure }
+        return resolvedReader
+    }
     func readType2Header(reader: String) throws -> [UInt8] {
         reads += 1
+        readTarget = reader
         if let failure { throw failure }
         return response
     }
 }
 
 final class ProbeTests {
+    func testMacVendorListDoesNotResolveOrReadAnInterface() {
+        let fixture = FixtureReader()
+        fixture.names = ["ACS ACR1552 1S CL Reader(1)", "ACS ACR1552 1S CL Reader(2)"]
+        let result = Probe.run(inspect: false, backend: fixture)
+        XCTAssertEqual(result.status, "reader_interfaces_found")
+        XCTAssertEqual(result.candidateInterfaceCount, 2)
+        XCTAssertNil(result.supportedReaderCount)
+        XCTAssertEqual(fixture.resolutions, 0)
+        XCTAssertEqual(fixture.reads, 0)
+    }
+    func testMacVendorInspectUsesObservedInterfaceRegardlessOfOrder() {
+        for reversed in [false, true] {
+            for ordinal in [1, 2] {
+                let fixture = FixtureReader()
+                let names = ["ACS ACR1552 1S CL Reader(1)", "ACS ACR1552 1S CL Reader(2)"]
+                fixture.names = reversed ? Array(names.reversed()) : names
+                fixture.resolvedReader = "ACS ACR1552 1S CL Reader(\(ordinal))"
+                XCTAssertEqual(Probe.run(inspect: true, backend: fixture).status, "header_observed")
+                XCTAssertEqual(fixture.readTarget, fixture.resolvedReader)
+                XCTAssertEqual(fixture.resolutions, 1)
+                XCTAssertEqual(fixture.reads, 1)
+            }
+        }
+    }
+    func testMacVendorAmbiguityAndOutOfSetResolutionNeverRead() {
+        let pair = ["ACS ACR1552 1S CL Reader(1)", "ACS ACR1552 1S CL Reader(2)"]
+        for names in [[pair[0]], [pair[0], pair[0]], pair + ["Other Reader"],
+                      [pair[0], "ACS ACR1552 1S CL Reader(3)"], pair + ["ACS ACR1552U PICC 00"]] {
+            let fixture = FixtureReader(); fixture.names = names
+            XCTAssertNotEqual(Probe.run(inspect: true, backend: fixture).status, "header_observed")
+            XCTAssertEqual(fixture.resolutions, 0)
+            XCTAssertEqual(fixture.reads, 0)
+        }
+        let fixture = FixtureReader(); fixture.names = pair; fixture.resolvedReader = "unrelated"
+        XCTAssertEqual(Probe.run(inspect: true, backend: fixture).status, "ambiguous_reader")
+        XCTAssertEqual(fixture.reads, 0)
+    }
+    func testMacVendorPresenceFailuresStopBeforeConnectionOrRead() {
+        for failure in [ProbeFailure.noTag, .unsupportedATR, .readerBusy, .ambiguousReader, .pcscUnavailable] {
+            let fixture = FixtureReader()
+            fixture.names = ["ACS ACR1552 1S CL Reader(1)", "ACS ACR1552 1S CL Reader(2)"]
+            fixture.resolutionFailure = failure
+            let result = Probe.run(inspect: true, backend: fixture)
+            XCTAssertEqual(result.status, failure.rawValue)
+            XCTAssertEqual(result.failureStage, .interfaceResolution)
+            XCTAssertEqual(result.fixedReadAttempted, false)
+            XCTAssertNil(result.supportedReaderCount)
+            XCTAssertEqual(result.candidateInterfaceCount, 2)
+            XCTAssertEqual(fixture.reads, 0)
+        }
+    }
     func testListsOnlySupportedInterfaceWithoutTouchingTag() {
         let fixture = FixtureReader()
         fixture.names += ["ACS ACR1552U SAM Interface 00 01", "Other Reader 01"]

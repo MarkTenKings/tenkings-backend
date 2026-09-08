@@ -35,6 +35,50 @@ int atlas_is_ultralight_atr(const uint8_t *atr, size_t length) {
     return checksum == 0;
 }
 
+int32_t atlas_resolve_present_type2(const char *first, const char *second, uint32_t *selected) {
+    if (!selected) return ATLAS_INVALID_LENGTH;
+    *selected = UINT32_MAX;
+    if (!first || !second || !*first || !*second || !strcmp(first, second)
+        || strlen(first) > 1024 || strlen(second) > 1024) return ATLAS_INVALID_LENGTH;
+    SCARDCONTEXT context = 0;
+    int32_t status = SCardEstablishContext(SCARD_SCOPE_USER, NULL, NULL, &context);
+    if (status) return status;
+    SCARD_READERSTATE states[2] = {0};
+    states[0].szReader = first;
+    states[1].szReader = second;
+    status = SCardGetStatusChange(context, 0, states, 2);
+    uint32_t present = 0, candidate = UINT32_MAX;
+    if (!status) {
+        for (uint32_t i = 0; i < 2; i++) {
+            const uint32_t event = states[i].dwEventState;
+            if (event & (SCARD_STATE_UNKNOWN | SCARD_STATE_UNAVAILABLE | SCARD_STATE_IGNORE)) {
+                status = SCARD_E_READER_UNAVAILABLE; break;
+            }
+            if (event & (SCARD_STATE_EXCLUSIVE | SCARD_STATE_INUSE)) {
+                status = SCARD_E_SHARING_VIOLATION; break;
+            }
+            if (!!(event & SCARD_STATE_PRESENT) == !!(event & SCARD_STATE_EMPTY)) {
+                status = ATLAS_AMBIGUOUS_INTERFACE; break;
+            }
+            if (event & SCARD_STATE_PRESENT) {
+                present++;
+                if (!(event & (SCARD_STATE_MUTE | SCARD_STATE_UNPOWERED))
+                    && atlas_is_ultralight_atr(states[i].rgbAtr, states[i].cbAtr)) candidate = i;
+            }
+        }
+        if (!status) {
+            if (present > 1) status = ATLAS_AMBIGUOUS_INTERFACE;
+            else if (!present) status = SCARD_E_NO_SMARTCARD;
+            else if (candidate == UINT32_MAX) status = ATLAS_UNSUPPORTED_ATR;
+        }
+    }
+    atlas_clear(states, sizeof(states));
+    int32_t released = SCardReleaseContext(context);
+    if (!status) status = released;
+    if (!status) *selected = candidate;
+    return status;
+}
+
 int32_t atlas_read_type2_header(const char *reader, uint8_t response[18], uint32_t *length,
                                AtlasInspectionDiagnostics *diagnostics) {
     if (!diagnostics) return ATLAS_INVALID_LENGTH;

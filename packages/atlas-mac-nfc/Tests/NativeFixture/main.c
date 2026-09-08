@@ -7,7 +7,27 @@ static int scenario, transmitted, disconnected, released;
 int32_t SCardEstablishContext(uint32_t scope,const void *a,const void *b,LPSCARDCONTEXT context) {
     assert(scope==SCARD_SCOPE_USER && !a && !b); if(scenario==7)return SCARD_E_NO_SMARTCARD; *context=10; return 0;
 }
-int32_t SCardReleaseContext(SCARDCONTEXT context) { assert(context==10); released++; return (scenario==11 || scenario==13 || scenario==15)?SCARD_E_NO_SMARTCARD:0; }
+int32_t SCardReleaseContext(SCARDCONTEXT context) { assert(context==10); released++; return (scenario==11 || scenario==13 || scenario==15 || scenario==26 || scenario==27)?SCARD_E_NO_SMARTCARD:0; }
+int32_t SCardGetStatusChange(SCARDCONTEXT context,uint32_t timeout,LPSCARD_READERSTATE_A states,uint32_t count) {
+    assert(context==10 && timeout==0 && count==2 && scenario>=17);
+    assert(!strcmp(states[0].szReader,"candidate-a") && !strcmp(states[1].szReader,"candidate-b"));
+    const uint8_t atr[]={0x3B,0x8F,0x80,0x01,0x80,0x4F,0x0C,0xA0,0,0,3,6,3,0,3,0,0,0,0,0x68};
+    for(int i=0;i<2;i++){
+        assert(states[i].dwCurrentState==SCARD_STATE_UNAWARE && !states[i].pvUserData);
+        states[i].dwEventState=SCARD_STATE_EMPTY|SCARD_STATE_CHANGED;
+    }
+    int selected=scenario==18?1:0;
+    states[selected].dwEventState=SCARD_STATE_PRESENT|SCARD_STATE_CHANGED;
+    memcpy(states[selected].rgbAtr,atr,sizeof(atr));states[selected].cbAtr=sizeof(atr);
+    if(scenario==19)states[0].dwEventState=SCARD_STATE_EMPTY;
+    if(scenario==20)states[1].dwEventState=SCARD_STATE_PRESENT;
+    if(scenario==21)states[0].rgbAtr[14]^=1;
+    if(scenario==22)states[0].dwEventState|=SCARD_STATE_EXCLUSIVE;
+    if(scenario==23)states[1].dwEventState|=SCARD_STATE_UNKNOWN;
+    if(scenario==24)states[1].dwEventState|=SCARD_STATE_PRESENT;
+    if(scenario==28)states[0].cbAtr=UINT32_MAX;
+    return (scenario==25 || scenario==27)?SCARD_E_TIMEOUT:0;
+}
 int32_t SCardListReaders(SCARDCONTEXT context,const char *groups,char *out,uint32_t *length) {
     assert(context==10 && !groups); if(scenario==4)return SCARD_E_NO_READERS_AVAILABLE;
     if(scenario==5){*length=70000;return 0;}
@@ -62,6 +82,17 @@ int main(void) {
         int32_t result=atlas_list_readers(names,sizeof(names),&length);
         assert(released==1 && length==0);assert(scenario==5?result==ATLAS_INVALID_LENGTH:result==0);
     }
-    puts("{\"test\":\"native_fixed_command_and_cleanup\",\"ok\":true,\"scenarios\":17}");
+    const int32_t resolverStatus[]={0,0,SCARD_E_NO_SMARTCARD,ATLAS_AMBIGUOUS_INTERFACE,
+        ATLAS_UNSUPPORTED_ATR,SCARD_E_SHARING_VIOLATION,SCARD_E_READER_UNAVAILABLE,
+        ATLAS_AMBIGUOUS_INTERFACE,SCARD_E_TIMEOUT,SCARD_E_NO_SMARTCARD,SCARD_E_TIMEOUT,
+        ATLAS_UNSUPPORTED_ATR};
+    for(scenario=17;scenario<29;scenario++){
+        transmitted=disconnected=released=0;uint32_t selected=99;
+        int32_t result=atlas_resolve_present_type2("candidate-a","candidate-b",&selected);
+        assert(result==resolverStatus[scenario-17]);
+        assert(released==1 && transmitted==0 && disconnected==0);
+        assert(selected==(scenario==17?0:scenario==18?1:UINT32_MAX));
+    }
+    puts("{\"test\":\"native_fixed_command_and_cleanup\",\"ok\":true,\"scenarios\":29}");
     return 0;
 }
