@@ -1,0 +1,55 @@
+{
+  "name": "@atlas/grading-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./contracts": {
+      "types": "./src/contracts.ts",
+      "default": "./dist/contracts.js"
+    },
+    "./trace-codec": {
+      "types": "./src/trace-codec.ts",
+      "default": "./dist/trace-codec.js"
+    },
+    "./identity": {
+      "types": "./src/identity.ts",
+      "default": "./dist/identity.js"
+    },
+    "./card-type-map-contracts": {
+      "types": "./src/card-type-map-contracts.ts",
+      "default": "./dist/card-type-map-contracts.js"
+    },
+    "./geometry": {
+      "types": "./src/geometry.ts",
+      "default": "./dist/geometry.js"
+    },
+    "./scoring": {
+      "types": "./src/scoring.ts",
+      "default": "./dist/scoring.js"
+    },
+    "./review-findings": {
+      "types": "./src/review-findings.ts",
+      "default": "./dist/review-findings.js"
+    },
+    "./review": {
+      "types": "./src/review.ts",
+      "default": "./dist/review.js"
+    },
+    "./report": {
+      "types": "./src/report.ts",
+      "default": "./dist/report.js"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/build.mjs && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "zod": "4.1.11"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.7"
+  }
+}
