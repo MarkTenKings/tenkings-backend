@@ -188,7 +188,7 @@ export class VaultOperationsService {
   recordCertificationEvidence(staffSessionId: string, input: unknown): { critical: boolean } {
     const actor = this.machine.staff.requireSession(staffSessionId, "CERTIFICATION_COLLECT");
     const evidence = VaultCertificationEvidenceSchema.parse(input);
-    const session = this.machine.store.one(`SELECT status,actor_session_id,adapter_mode FROM certification_session WHERE session_id=?`, evidence.sessionId);
+    const session = this.machine.store.one(`SELECT status,actor_session_id,adapter_mode,controller_identity_json,payment_identity_json FROM certification_session WHERE session_id=?`, evidence.sessionId);
     if (session.status !== "ACTIVE") throw new VaultError("CERTIFICATION_SESSION_INACTIVE", "Certification session is not active", 409);
     if (session.actor_session_id !== staffSessionId && actor.role !== "ADMIN") throw new VaultError("CERTIFICATION_SESSION_SCOPE", "Certification belongs to a different staff session", 403);
     const command = this.machine.store.maybeOne(`SELECT ci.* FROM command_intent ci LEFT JOIN certification_evidence ce ON ce.command_id=ci.command_id WHERE ci.certification_session_id=? AND ce.command_id IS NULL ORDER BY ci.created_at DESC LIMIT 1`, evidence.sessionId);
@@ -198,7 +198,9 @@ export class VaultOperationsService {
     if (evidence.doorId !== command.door_id || evidence.expectedDoorIds.length !== 1 || evidence.expectedDoorIds[0] !== command.door_id) {
       throw new VaultError("CERTIFICATION_COMMAND_EVIDENCE_MISMATCH", "Certification evidence must describe the exact scheduled command door", 409);
     }
-    if (session.adapter_mode === "MOCK" && evidence.evidenceClass !== "AUTOMATED") throw new VaultError("CERTIFICATION_EVIDENCE_CLASS_INVALID", "Simulator commands cannot produce physical or official provider evidence", 409);
+    const controllerIdentity = parseJson<{ mode?: string }>(session.controller_identity_json);
+    const paymentIdentity = parseJson<{ mode?: string }>(session.payment_identity_json);
+    if (evidence.evidenceClass !== "AUTOMATED" && (session.adapter_mode === "MOCK" || controllerIdentity.mode === "MOCK" || paymentIdentity.mode === "MOCK")) throw new VaultError("CERTIFICATION_EVIDENCE_CLASS_INVALID", "Simulator commands cannot produce physical or official provider evidence", 409);
     const unexpected = evidence.observedDoorIds.some((doorId) => !evidence.expectedDoorIds.includes(doorId));
     if (!unexpected && evidence.outcome === "PASS" && (!evidence.observedDoorIds.includes(command.door_id as VaultDoorId) || command.state !== "ACCEPTED")) throw new VaultError("CERTIFICATION_PASS_UNSUPPORTED", "PASS requires the expected observed door and accepted command evidence", 409);
     const critical = evidence.outcome === "CRITICAL" || unexpected;

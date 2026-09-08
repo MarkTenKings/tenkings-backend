@@ -76,6 +76,28 @@ test('mock certification rejects every physical or provider evidence class befor
   } finally { rig.store.close(); }
 });
 
+test('mixed official-test and mock adapters cannot classify simulator evidence as physical even after capability changes', async () => {
+  for (const mocked of ['controller', 'payment']) {
+    const rig = await createRig();
+    try {
+      const payment = await rig.payment.capabilities(); const controller = await rig.controller.identity();
+      rig.payment.capabilities = async () => ({ ...payment, mode: mocked === 'payment' ? 'MOCK' : 'OFFICIAL_TEST' });
+      rig.controller.identity = async () => ({ ...controller, mode: mocked === 'controller' ? 'MOCK' : 'OFFICIAL_TEST' });
+      const actor = grant(rig, 'TECHNICIAN'); const cert = await rig.operations.startCertification(actor.sessionId);
+      // Classification must read the immutable command-session identities,
+      // even if a later probe describes different connected test adapters.
+      rig.payment.capabilities = async () => ({ ...payment, mode: 'OFFICIAL_TEST' });
+      rig.controller.identity = async () => ({ ...controller, mode: 'OFFICIAL_TEST' });
+      const evidence = { evidenceId: crypto.randomUUID(), sessionId: cert.sessionId, doorId: cert.scheduledDoorId, outcome: 'PASS', expectedDoorIds: [cert.scheduledDoorId], observedDoorIds: [cert.scheduledDoorId], notes: 'Software adapter fixture only', artifactDigest: 'b'.repeat(64), observedAt: rig.clock.now().toISOString() };
+      for (const evidenceClass of ['OFFICIAL_SDK', 'BENCH', 'FULL_MACHINE', 'FIELD']) assert.throws(() => rig.operations.recordCertificationEvidence(actor.sessionId, { ...evidence, evidenceClass }), error => error.code === 'CERTIFICATION_EVIDENCE_CLASS_INVALID');
+      assert.equal(rig.store.one('SELECT count(*) AS n FROM certification_evidence').n, 0);
+      assert.equal(rig.store.one("SELECT count(*) AS n FROM machine_event WHERE type='CERTIFICATION_EVIDENCE_RECORDED'").n, 0);
+      rig.operations.recordCertificationEvidence(actor.sessionId, { ...evidence, evidenceClass: 'AUTOMATED' });
+      assert.equal(rig.store.one('SELECT count(*) AS n FROM certification_evidence').n, 1);
+    } finally { rig.store.close(); }
+  }
+});
+
 test('a late reconciliation exception cannot overwrite a concurrently observed terminal settlement', async () => {
   const rig = await createRig(); let rejectReconciliation;
   try {
