@@ -587,6 +587,15 @@ importers:
 
   packages/atlas-contracts: {}
 
+  packages/atlas-operator:
+    dependencies:
+      '@atlas/service-bridge':
+        specifier: workspace:*
+        version: link:../atlas-service-bridge
+      zod:
+        specifier: 4.1.11
+        version: 4.1.11
+
   packages/atlas-grading-core:
     dependencies:
       zod:
