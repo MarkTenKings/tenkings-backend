@@ -30,6 +30,12 @@ Mark fixed the first acceptance batch at ten cards to assess the updated ATLAS s
 
 No paid API/RunPod experiment, funding, push-triggered operational side effect, merge/deploy/restart, Production write/migration, service removal, or domain/DNS/Vercel/email/auth-routing change is authorized by this amendment. Those actions retain their exact reviewed operational approval gates. The original phase gates and explicit do-not-build constraints remain in force outside this narrow ATLAS scope.
 
+#### Owner clarification — MacBook grading workstation, 2026-09-08
+
+Mark uses a MacBook for ATLAS grading. The intended human grading, review, correction and approval workstation is the MacBook browser. Windows, PowerShell and the Dell NFC helper are not requirements for those actions. The earlier Dell/ACR1552U/F8215/GoToTags reuse direction concerns the physical NFC integration; it does not make Windows the ATLAS grading platform.
+
+The implemented native NFC helper remains Windows-specific. This clarification does not select the physical NFC workstation or establish macOS tag-encoding support. If tag encoding will also take place on the MacBook, a macOS device/signing adapter and actual hardware acceptance are required. Label printing is a browser workflow whose actual Mac/printer scale and fit still need verification. The Astra runner host is a separate deployment choice from the human's grading browser.
+
 ---
 
 ## 1. Executive Decision

@@ -2,6 +2,8 @@
 
 Updated September 8, 2026. The implemented operator lives in `packages/atlas-operator`; `packages/atlas-contracts` remains the earlier offline reference. The operator has locally verified source/runtime/ledger integration and no active production runner or scheduler. [COMPLETION.md](COMPLETION.md) describes the full staff workflow and operational acceptance gates.
 
+Mark grades and reviews in the ATLAS browser app on his MacBook. The background Astra runner host is a separate deployment choice. Windows NFC helper setup is not a requirement for either browser grading or this operator package.
+
 ## Authority and work
 
 Fresh human operations admission names one exact uninitialized specimen in the fixed ten-card pilot. Separate admission and execution HMAC purposes/keys prevent the runner from creating permission. The private execution service independently validates the current human scope, preserved source/preparation and current map/Memory/worker policy, performs original INITIALIZE with fresh detection, and commits exactly one matching operator run. The runner preserves the admitted initialization ID after a lost reply and only uses the service's durable same-job replay. Failed/unknown initialization or a missing confirmed run never constructs the provider.
@@ -30,4 +32,4 @@ SIGINT/SIGTERM abort new work, preserve bounded receipt drain and disconnect han
 
 ## Evidence
 
-The final database suite passes 128 scenarios across all 93 original public and 13 additive staff migrations and both no-op replays. The final local verification and exact artifact hashes are recorded in the session log/private acceptance record. All card/provider examples are synthetic; current preparation remains unadmitted. Original graders and learning-harvest arithmetic are reused. A real ten-card supervised evaluation, actual-host release verification, Windows/NFC/printing and explicit live release actions remain.
+The final database suite passes 128 scenarios across all 93 original public and 13 additive staff migrations and both no-op replays. The final local verification and exact artifact hashes are recorded in the session log/private acceptance record. All card/provider examples are synthetic; current preparation remains unadmitted. Original graders and learning-harvest arithmetic are reused. MacBook browser and actual-host release verification, a real ten-card supervised evaluation and explicit live release actions remain. Physical printing/NFC acceptance follows the actual selected equipment; Windows tests concern only the existing NFC helper.

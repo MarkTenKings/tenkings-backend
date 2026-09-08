@@ -1,6 +1,8 @@
 # ATLAS local acceptance — September 8, 2026
 
-This record applies to the M9–M13 completion commit containing this file on `codex/atlas-completion-20260908`, following M7 `0c170947` and M8 `d8d74bb3`. The [approved blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) remains unchanged. [COMPLETION.md](COMPLETION.md) describes the implemented workflow; this record states what was actually verified and what remains.
+The runtime evidence below records M9–M13 implementation commit `b75e26f4` on `codex/atlas-completion-20260908`, following M7 `0c170947` and M8 `d8d74bb3`. [COMPLETION.md](COMPLETION.md) describes the implemented workflow; this record states what was actually verified and what remains.
+
+Subsequent owner clarification on September 8: **Mark uses a MacBook for ATLAS grading**. Browser grading/review/approval require no Windows setup. The [canonical blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) now records that clarification. Windows results and pending tests below concern the existing NFC helper only; they are not MacBook grading prerequisites. No macOS NFC adapter or real tag acceptance is established by the recorded tests.
 
 ## Verified locally
 
@@ -39,8 +41,10 @@ These packages have explicitly **synthetic, inactive release bindings**. They ar
 
 The preparation release remains **null**. Live staff/provider/worker/NFC controls remain inactive. No real-card processing, SMS, paid model/worker request, physical print, native print-dialog acceptance, real NFC encoding/lock, assembly or sonic weld occurred. Learning approvals record an exact reviewed subset as `APPROVED_PENDING_APPLICATION`; no global learning-bank writer was added.
 
-The next release needs selected staff/public/private and operator hosts, protected distinct credentials, current source/storage/preparation/worker evidence, assigned trained humans and explicit caps. Its publication, migration, deployment and activation actions require their exact operational scope. Validate the eight skipped Windows groups and all three PowerShell configuration/maintenance/update suites on the actual workstation, then real label scale/QR, reader, signer, encoding, permanent lock, hosted receipt and physical finishing. [Windows configuration](../../scripts/ai-grader-nfc/ATLAS_CONFIGURATION.md) and [finishing instructions](../../packages/atlas-finishing/README.md) describe those boundaries.
+The grading release targets Mark's MacBook browser and needs selected staff/public/private and operator hosts, protected distinct credentials, current source/storage/preparation/worker evidence, assigned trained humans and explicit caps. Its publication, migration, deployment and activation actions require their exact operational scope. MacBook browser and physical label scale/QR acceptance remain.
+
+For physical NFC, first select the actual workstation. If the existing Windows path is used, validate its eight skipped groups and three PowerShell configuration/maintenance/update suites. If the MacBook will encode tags, implement and validate a macOS device/signing adapter; the current Windows helper cannot provide that support. Either physical path needs actual reader, signer, encoding, permanent lock, hosted receipt and finishing acceptance. [Windows NFC configuration](../../scripts/ai-grader-nfc/ATLAS_CONFIGURATION.md) and [finishing instructions](../../packages/atlas-finishing/README.md) describe the currently implemented integration.
 
 Final supervised acceptance is **exactly ten real cards**, with the approved cohort, time window, reviewers and per-card/batch limits. Record measured quality, failures, elapsed time, reconciled invoices and every physical result before owner acceptance or expansion.
 
-Private evidence is retained in the task's `atlas-handoffs/2026-09-07` directory. `FINAL_LOCAL_ACCEPTANCE.json` binds the final source commit to evidence hashes; `RELEASE_PLAN.md` lists the concrete remaining inputs and execution sequence. These records contain no authorization to activate live work. The repository handoff history is [SESSION_LOG.md](../handoffs/SESSION_LOG.md).
+Private evidence is retained in the task's `atlas-handoffs/2026-09-07` directory. `FINAL_LOCAL_ACCEPTANCE.json` preserves the implementation commit and evidence hashes as recorded before the MacBook clarification; `RELEASE_PLAN.md` contains the current workstation scope and remaining sequence. These records contain no authorization to activate live work. The repository handoff history is [SESSION_LOG.md](../handoffs/SESSION_LOG.md).

@@ -20,7 +20,9 @@ The owner-approved ATLAS workflow is implemented locally on `codex/atlas-complet
 
 Current local evidence: all 128 PostgreSQL scenarios on the original 93 public plus 13 additive staff migrations and both no-op replays; 55 paired-web/restart checks; private/staff/public builds; 70 built-production denials. Original committed migration bytes and grading arithmetic are retained. Detailed evidence and remaining inputs are in [ATLAS completion](../atlas/COMPLETION.md) and [local acceptance](../atlas/LOCAL_ACCEPTANCE.md).
 
-This is local source acceptance. The preparation release remains null; no live provider/SMS/worker/NFC, real card, deployment/migration, printing, assembly or welding has run. Windows/actual-host acceptance and the explicitly capped batch of exactly ten real cards remain. The canonical blueprint is unchanged; runtime/DB evidence still governs deployed state.
+Mark clarified on September 8 that his ATLAS grading workstation is a **MacBook**. Browser grading/review/approval require no Windows or PowerShell setup. The existing Windows NFC helper concerns physical tag encoding only; the physical NFC workstation remains unspecified, and a macOS NFC adapter is not implemented. The canonical blueprint records this owner clarification.
+
+This is local source acceptance. The preparation release remains null; no live provider/SMS/worker/NFC, real card, deployment/migration, printing, assembly or welding has run. MacBook browser/actual-host acceptance, separate physical finishing acceptance and the explicitly capped batch of exactly ten real cards remain. Runtime/DB evidence still governs deployed state.
 
 ## Source-of-Truth Policy
 When there is a conflict, use this order:
