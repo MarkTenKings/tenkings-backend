@@ -18,6 +18,7 @@ import { decodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitm
 import { canonical } from '../lib/server/review-contract.mjs';
 import { hash } from '../lib/server/policy.mjs';
 import { bridgeFixture, gradingInput } from './bridge-fixture.mjs';
+import { operatorScenarios } from './operator-fixture.mjs';
 
 const fixture = await disposablePostgres(process.argv.slice(2));
 const results = [], clients = new Set();
@@ -625,6 +626,7 @@ try {
         const view = await bridge.review.read(signed.staff, card.id);
         await check('REVIEW_PERMISSION_REQUIRED', () => bridge.run(signed.staff, card.id, gradingInput(view)));
     });
+    await operatorScenarios(scenario);
 } catch (caught) { error = caught; }
 finally {
     for (const client of clients) await client.$disconnect();

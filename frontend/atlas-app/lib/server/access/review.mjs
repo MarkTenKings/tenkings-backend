@@ -3,6 +3,7 @@ import { deny, hash } from '../policy.mjs';
 import { canonical, SIDES, validateDraft } from '../review-contract.mjs';
 import { gradingView } from './reports.mjs';
 import { bridgeScope } from './grading.mjs';
+import { operatorPending } from './operator.mjs';
 const uuid = value => {
     if (typeof value !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value)) deny(404, 'CARD_NOT_FOUND');
     return value;
@@ -110,7 +111,8 @@ export class DurableReviewStore {
                 if (card.draftRevision !== prior.revision) deny(409, 'DRAFT_CHANGED');
                 return this.view(context, card, assignment);
             }
-            if (await tx.staffGradingOperation.count({ where: { specimenId: cardId, state: { in: ['RESERVED', 'DISPATCHED', 'UNKNOWN'] } } }))
+            if (await tx.staffGradingOperation.count({ where: { specimenId: cardId, state: { in: ['RESERVED', 'DISPATCHED', 'UNKNOWN'] } } })
+                || await operatorPending(tx,cardId))
                 deny(409, 'GRADING_WORK_UNRESOLVED');
             if (card.draftRevision !== input.expectedRevision) deny(409, 'DRAFT_CHANGED');
             const draft = { revision: card.draftRevision + 1, evidenceRevision: card.evidenceRevision, evidenceHash: card.evidenceHash,

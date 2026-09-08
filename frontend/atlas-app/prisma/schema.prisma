@@ -319,3 +319,112 @@ model PublicMediaControl {
   revision     Int @default(1)
   updatedAt    DateTime @default(now())
 }
+
+model StaffOperatorControl {
+  id                  String @id @default("active")
+  enabled             Boolean @default(false)
+  mode                String
+  releaseSha          String @db.VarChar(40)
+  buildHash           String @db.VarChar(64)
+  configHash          String @db.VarChar(64)
+  providerBindingHash String @db.VarChar(64)
+  policyCanonical     String @db.Text
+  policyHash          String @db.VarChar(64)
+  revision            Int @default(1)
+  updatedAt           DateTime @default(now())
+}
+
+model StaffOperatorRun {
+  id                       String @id @db.Uuid
+  specimenId               String @db.Uuid
+  pilotId                  String @db.Uuid
+  evidenceHash             String @db.VarChar(64)
+  policyHash               String @db.VarChar(64)
+  policyCanonical          String @db.Text
+  runtimeHash              String @db.VarChar(64)
+  gradingPolicyHash        String @db.VarChar(64)
+  manifestCanonical        String @db.Text
+  manifestHash             String @db.VarChar(64)
+  expectedAnalysisRevision Int
+  expectedReviewRevision   Int
+  revision                 Int @default(1)
+  state                    String @default("QUEUED")
+  inputCanonical           String @db.Text
+  inputHash                String @db.VarChar(64)
+  leaseOwner               String? @db.Uuid
+  leaseFence               Int @default(0)
+  leaseMode                String?
+  leaseExpiresAt           DateTime?
+  summary                  String? @db.VarChar(1000)
+  failureCode              String? @db.VarChar(80)
+  deadlineAt               DateTime
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @default(now())
+  @@index([pilotId, state])
+}
+
+model StaffOperatorAttempt {
+  id                      String @id @db.Uuid
+  runId                   String @db.Uuid
+  ordinal                 Int
+  runRevision             Int
+  leaseFence              Int
+  dispatchClaimId         String @unique @db.Uuid
+  requestCanonical        String @db.Text
+  requestHash             String @db.VarChar(64)
+  providerBindingHash     String @db.VarChar(64)
+  reservedMicroUsd        BigInt
+  usageCeilingMicroUsd     BigInt?
+  usageEnvelopeExceeded   Boolean @default(false)
+  actualMicroUsd          BigInt?
+  costEvidenceHash        String? @db.VarChar(64)
+  state                   String @default("RESERVED")
+  resultReceiptId         String? @unique @db.Uuid
+  createdAt               DateTime @default(now())
+  dispatchedAt            DateTime?
+  finishedAt              DateTime?
+  @@unique([runId, ordinal])
+}
+
+model StaffOperatorReceipt {
+  id         String @id @db.Uuid
+  attemptId  String @db.Uuid
+  canonical  String @db.Text
+  hash       String @db.VarChar(64)
+  createdAt  DateTime @default(now())
+  @@unique([attemptId, hash])
+}
+
+model StaffOperatorStep {
+  id                       String @id @db.Uuid
+  runId                    String @db.Uuid
+  attemptId                String @db.Uuid
+  revision                 Int
+  callId                   String @db.VarChar(160)
+  toolName                 String @db.VarChar(80)
+  requestCanonical         String @db.Text
+  requestHash              String @db.VarChar(64)
+  resultCanonical          String @db.Text
+  resultHash               String @db.VarChar(64)
+  nextInputHash            String @db.VarChar(64)
+  createdAt                DateTime @default(now())
+  @@unique([runId, revision])
+  @@unique([runId, callId])
+  @@unique([attemptId])
+}
+
+model StaffOperatorOutbox {
+  id          String @id @db.Uuid
+  runId       String @db.Uuid
+  revision    Int
+  type        String
+  payload     String @db.Text
+  payloadHash String @db.VarChar(64)
+  state       String @default("PENDING")
+  claimOwner  String? @db.Uuid
+  claimFence  Int @default(0)
+  claimUntil  DateTime?
+  deliveredAt DateTime?
+  createdAt   DateTime @default(now())
+  @@unique([runId, revision, type])
+}

@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { "./responses": "./src/responses.mjs", "./provider": "./src/provider.mjs" },
+  "exports": { "./responses": "./src/responses.mjs", "./provider": "./src/provider.mjs", "./ledger": "./src/ledger.mjs",
+    "./policy": "./src/policy.mjs", "./privileges": "./src/privileges.mjs" },
   "dependencies": { "@atlas/service-bridge": "workspace:*", "zod": "4.1.11" },
   "scripts": { "test": "node --test test/*.test.mjs" }
 }

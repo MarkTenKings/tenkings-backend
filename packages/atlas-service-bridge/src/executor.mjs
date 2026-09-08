@@ -95,12 +95,7 @@ export class ScopedGradingBridge {
             const [{ count }] = await tx.$queryRaw`SELECT count(*)::int AS count FROM atlas_staff."StaffSpecimen"
                 WHERE id::text = ANY(${policy.specimenIds}::text[]) AND "sourceType"=${card.sourceType}`;
             requireBridge(count === 10, 'PILOT_TEN_CARDS_REQUIRED');
-            const [usage] = await tx.$queryRaw`SELECT COALESCE(sum(COALESCE(e."actualMicroUsd",e."reservedMicroUsd")),0)::text AS total,
-                COALESCE(sum(COALESCE(e."actualMicroUsd",e."reservedMicroUsd")) FILTER (WHERE o."specimenId"=${card.id}::uuid),0)::text AS card,
-                count(*) FILTER (WHERE o."specimenId"=${card.id}::uuid)::int AS operations,
-                COALESCE(bool_or(e."actualMicroUsd">e."reservedMicroUsd"),false) AS overrun
-                FROM atlas_staff."StaffGradingExecution" e JOIN atlas_staff."StaffGradingOperation" o ON o.id=e."operationId"
-                WHERE e."pilotId"=${policy.pilotId}::uuid`;
+            const [usage] = await tx.$queryRaw`SELECT * FROM atlas_staff.pilot_budget_usage(${policy.pilotId}::uuid,${card.id}::uuid)`;
             const reserve = BigInt(policy.reservationPerOperationMicroUsd);
             requireBridge(!usage.overrun && BigInt(usage.total) + reserve <= BigInt(policy.maxTotalMicroUsd)
                 && BigInt(usage.card) + reserve <= BigInt(policy.maxCardMicroUsd)

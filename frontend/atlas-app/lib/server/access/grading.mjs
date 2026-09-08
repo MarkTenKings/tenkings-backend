@@ -7,6 +7,7 @@ import { parsePilotPolicy } from '@atlas/service-bridge/protocol';
 import { deny, hash, identifier, strictObject } from '../policy.mjs';
 import { canonical } from '../review-contract.mjs';
 import { loadAnalysis } from './reports.mjs';
+import { operatorPending } from './operator.mjs';
 
 export function bridgeScope(context, card, assignment) {
     return { controlRevision: context.control.revision, specimenId: card.id, actorId: context.identity.id,
@@ -53,7 +54,8 @@ export class StaffGrading {
             if (input.expectedAnalysisRevision !== card.analysisRevision || input.analysisHash !== (analysis?.row.sourceHash ?? null)
                 || input.expectedReviewRevision !== card.draftRevision || input.reviewHash !== draft.contentHash) deny(409, 'DRAFT_CHANGED');
             if ((parsed.data.action.type === 'INITIALIZE') !== (card.analysisRevision === 0)) deny(409, 'INVALID_GRADING_TRANSITION');
-            if (await tx.staffGradingOperation.count({ where: { specimenId: cardId, state: { in: ['RESERVED', 'DISPATCHED', 'UNKNOWN'] } } }))
+            if (await tx.staffGradingOperation.count({ where: { specimenId: cardId, state: { in: ['RESERVED', 'DISPATCHED', 'UNKNOWN'] } } })
+                || await operatorPending(tx,cardId))
                 deny(409, 'GRADING_WORK_UNRESOLVED');
             const evidence = this.review.evidenceRecord(card);
             if (!evidence.sides.FRONT || !evidence.sides.BACK) deny(409, 'EVIDENCE_REQUIRED');

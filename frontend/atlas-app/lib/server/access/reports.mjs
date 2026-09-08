@@ -3,6 +3,7 @@ import { parsePublicReport } from '@atlas/report-view/public-contract';
 import { previewAtlasReport, finalizeAtlasReportContent, presentAtlasFindings } from '@atlas/grading-core/report';
 import { deny, hash, identifier, strictObject } from '../policy.mjs';
 import { canonical } from '../review-contract.mjs';
+import { operatorPending } from './operator.mjs';
 
 const controlPublicOrigin = mode => mode === 'PRODUCTION' ? 'https://atlasgrading.com' : 'http://127.0.0.1:4319';
 function checkedJSON(text, digest, failure = 'REPORT_UNAVAILABLE') {
@@ -41,7 +42,8 @@ function approvalBlock(context, card, assignment, draft, analysis, pending) {
 }
 export async function gradingView(context, card, assignment, draft) {
     const analysis = await loadAnalysis(context, card);
-    const pending = await context.tx.staffGradingOperation.count({ where: { specimenId: card.id, state: { in: ['RESERVED', 'DISPATCHED', 'UNKNOWN'] } } });
+    const pending = await context.tx.staffGradingOperation.count({ where: { specimenId: card.id, state: { in: ['RESERVED', 'DISPATCHED', 'UNKNOWN'] } } })
+        + await operatorPending(context.tx,card.id);
     const publication = await context.tx.staffPublicReport.findUnique({ where: { specimenId: card.id } });
     const approval = publication ? await context.tx.staffReportApproval.findUnique({ where: { id: publication.currentApprovalId } }) : null;
     const matchesCurrent = Boolean(approval && approval.analysisRevision === card.analysisRevision && approval.reviewRevision === card.draftRevision
@@ -91,7 +93,8 @@ export class StaffReports {
             if (card.evidenceHash !== input.evidenceHash) deny(409, 'EVIDENCE_CHANGED');
             if (!analysis || analysis.row.revision !== input.expectedAnalysisRevision || analysis.row.sourceHash !== input.analysisHash
                 || card.draftRevision !== input.expectedReviewRevision || reviewRow.contentHash !== input.reviewHash) deny(409, 'DRAFT_CHANGED');
-            const pending = await tx.staffGradingOperation.count({ where: { specimenId: cardId, state: { in: ['RESERVED', 'DISPATCHED', 'UNKNOWN'] } } });
+            const pending = await tx.staffGradingOperation.count({ where: { specimenId: cardId, state: { in: ['RESERVED', 'DISPATCHED', 'UNKNOWN'] } } })
+                + await operatorPending(tx,cardId);
             const blocked = approvalBlock(context, card, assignment, draft, analysis, pending);
             if (blocked) deny(409, blocked);
             const existing = await tx.staffPublicReport.findUnique({ where: { specimenId: cardId } });
