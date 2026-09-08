@@ -23,6 +23,7 @@ import {
   type VaultRole,
 } from "../../vault-contracts/dist";
 import { StaffAuthService } from "./auth";
+import { certificationObservationEvidenceClass } from "./certification-provenance";
 import { ConfigManager, type PublicKey } from "./config-manager";
 import { EventRepository } from "./events";
 import { VaultStore } from "./store";
@@ -763,7 +764,7 @@ export class VaultMachine {
     const observed = unobserved ? undefined : this.store.maybeOne(`SELECT ci.* FROM command_intent ci JOIN certification_evidence ce ON ce.command_id=ci.command_id WHERE ci.certification_session_id=? ORDER BY ce.observed_at DESC LIMIT 1`, row.session_id);
     const currentCommand = unobserved ?? observed;
     const nextDoor = unobserved ? unobserved.door_id as VaultDoorId : canonicalDoorIds.length ? nextUnderTestedDoor(doorCounts, canonicalDoorIds) as VaultDoorId : null;
-    return { sessionId: String(row.session_id), configVersion: Number(row.config_version), configSchemaVersion: config.schemaVersion, machineProfile: profile, status: String(row.status), adapterMode: String(row.adapter_mode), passCount: counts.PASS ?? 0, failCount: counts.FAIL ?? 0, criticalCount: counts.CRITICAL ?? 0, nextUnderTestedDoorId: nextDoor, nextUnderTestedDoorLabel: nextDoor ? profile?.doors.find(door => door.doorId === nextDoor)?.label ?? nextDoor : null, currentCommand: currentCommand ? this.publicCommand(currentCommand, Boolean(observed)) : null };
+    return { sessionId: String(row.session_id), configVersion: Number(row.config_version), configSchemaVersion: config.schemaVersion, machineProfile: profile, status: String(row.status), adapterMode: String(row.adapter_mode), observationEvidenceClass: certificationObservationEvidenceClass(row), passCount: counts.PASS ?? 0, failCount: counts.FAIL ?? 0, criticalCount: counts.CRITICAL ?? 0, nextUnderTestedDoorId: nextDoor, nextUnderTestedDoorLabel: nextDoor ? profile?.doors.find(door => door.doorId === nextDoor)?.label ?? nextDoor : null, currentCommand: currentCommand ? this.publicCommand(currentCommand, Boolean(observed)) : null };
   }
 
   private publicCommand(command: Record<string, unknown>, observationRecorded: boolean): PublicCommandPhase {

@@ -90,7 +90,7 @@ export interface PublicMachineState {
   serviceLocked: boolean;
   activeStaff: null | { sessionId: string; userId: string; role: VaultRole; locked: boolean; expiresAt: string };
   activeRestock: null | { sessionId: string; configVersion: number; configSchemaVersion: 1 | 2; machineProfile: VaultMachineProfile | null; status: string; expectedDoorIds: VaultDoorId[]; items: Array<{ doorId: VaultDoorId; doorLabel: string; productId: string | null; productName: string | null; outcome: string; command: PublicCommandPhase | null }> };
-  activeCertification: null | { sessionId: string; configVersion: number; configSchemaVersion: 1 | 2; machineProfile: VaultMachineProfile | null; status: string; adapterMode: string; passCount: number; failCount: number; criticalCount: number; nextUnderTestedDoorId: VaultDoorId | null; nextUnderTestedDoorLabel: string | null; currentCommand: PublicCommandPhase | null };
+  activeCertification: null | { sessionId: string; configVersion: number; configSchemaVersion: 1 | 2; machineProfile: VaultMachineProfile | null; status: string; adapterMode: string; observationEvidenceClass: "AUTOMATED" | "FULL_MACHINE"; passCount: number; failCount: number; criticalCount: number; nextUnderTestedDoorId: VaultDoorId | null; nextUnderTestedDoorLabel: string | null; currentCommand: PublicCommandPhase | null };
 }
 
 export interface PublicCommandPhase {

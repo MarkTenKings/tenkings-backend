@@ -30,6 +30,7 @@ import {
   paymentIdempotencyKey,
 } from "./workflow/durableIntents";
 import { currentDoorLabel } from "./workflow/profileLayout";
+import { observationEvidenceClass } from "./workflow/certificationEvidence";
 
 const SHOPPING_STATES = new Set([
   "ATTRACT", "SHOPPING_EMPTY", "SHOPPING_WITH_CART", "PRODUCT_SOLD_OUT", "ALL_PRODUCTS_SOLD_OUT",
@@ -384,8 +385,8 @@ export function App({ api: providedApi }: AppProps) {
     const evidenceId = crypto.randomUUID();
     const expectedDoorIds = doorId ? [doorId] : [];
     const observedDoorIds = observation.observedDoorIds;
-    if (!certification.adapterMode) return;
-    const evidenceClass = certification.adapterMode === "MOCK" ? "AUTOMATED" : "FULL_MACHINE";
+    const evidenceClass = observationEvidenceClass(certification);
+    if (!evidenceClass) return;
     const evidenceDigest = await sha256Hex(JSON.stringify({
       evidenceId,
       sessionId: certification.activeSessionId,

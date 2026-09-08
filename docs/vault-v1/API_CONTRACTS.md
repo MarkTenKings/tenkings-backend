@@ -31,6 +31,8 @@ The service listens only on `127.0.0.1` and `::1`. Mutations require a valid sam
 | `POST /api/v1/certification/sessions/{id}/submit` | Requires all scheduled commands to have human evidence plus physical-close confirmation, then closes local collection as `REVIEW_REQUIRED`. It is not certificate approval. |
 | `GET /api/v1/health` | Readiness reasons, trusted source/app identity, schema/config versions, integrity, clock/storage/cloud/outbox, mock adapter identity, and service lock; redacted. |
 
+The public active-certification DTO supplies `observationEvidenceClass` from the session's immutable controller and payment identities. Either MOCK identity restricts kiosk observations to `AUTOMATED`; the same classification enforces the local evidence guard. `adapterMode` retains the payment-mode meaning used to permit simulated purchase/restock cycles and does not establish physical evidence eligibility. A kiosk talking to an older DTO may infer only AUTOMATED from MOCK payment; official payment without the explicit classification blocks observations until provenance is available.
+
 ## Cloud machine API
 
 All enrolled-machine routes require the unique machine credential. The server hashes it, verifies credential version/status, and binds it to the `{machineId}` path. A machine/user/operator credential cannot substitute for another authority type.

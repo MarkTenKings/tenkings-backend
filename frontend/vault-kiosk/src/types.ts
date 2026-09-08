@@ -202,6 +202,7 @@ export interface CertificationStatus {
   criticalStop: boolean;
   currentCommand: ControllerCommandReceipt | null;
   adapterMode?: "MOCK" | "OFFICIAL_TEST" | "LIVE";
+  observationEvidenceClass?: "AUTOMATED" | "FULL_MACHINE";
 }
 
 export interface CertificationObservation {

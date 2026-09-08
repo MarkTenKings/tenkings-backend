@@ -9,6 +9,27 @@ import { click, renderReact } from "./render";
 afterEach(() => document.body.replaceChildren());
 
 describe("durable staff operations", () => {
+  it("blocks official-payment evidence until the service supplies both-adapter classification", async () => {
+    const evidence = vi.fn(async () => undefined);
+    const status = { adapterMode: "OFFICIAL_TEST" as const, configSchemaVersion: 1 as const, activeSessionId: "cert-provenance", passEvidenceCount: 0, failEvidenceCount: 0, criticalEvidenceCount: 0, nextDoorId: doors[0].doorId, criticalStop: false, currentCommand: { commandId: "cmd-provenance", doorId: doors[0].doorId, state: "ACCEPTED", terminal: true, observationRecorded: false, outcome: "ACCEPTED", observedDoorId: doors[0].doorId, evidenceCode: null } };
+    const props = { busy: false, buildIdentity: { sourceCommit: "a".repeat(40), appVersion: "1.0.0" }, onStart: async () => undefined, onEvidence: evidence, onSubmit: async () => undefined };
+    const view = renderReact(<CertificationPanel {...props} status={status} />);
+    await click(view.container.querySelector(".observation-check input"));
+    act(() => {
+      const observed = view.container.querySelector<HTMLInputElement>('input[aria-label="Actually observed door IDs"]')!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(observed, doors[0].doorId);
+      observed.dispatchEvent(new Event("input", { bubbles: true }));
+      const notes = view.container.querySelector("textarea")!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(notes, "Explicit observation");
+      notes.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(view.container.textContent).toContain("Adapter provenance unavailable; evidence is blocked");
+    expect([...view.container.querySelectorAll<HTMLButtonElement>(".evidence-actions button")].every(button => button.disabled)).toBe(true);
+    view.rerender(<CertificationPanel {...props} status={{ ...status, observationEvidenceClass: "AUTOMATED" }} />);
+    expect(view.container.textContent).toContain("simulator evidence only; no physical coverage");
+    expect(view.container.querySelector<HTMLButtonElement>(".evidence-actions button")!.disabled).toBe(false);
+    view.unmount();
+  });
   it("offers canonical simulator cycles only after the previous command has explicit evidence", async () => {
     const cycle = vi.fn(async () => undefined);
     const status = { adapterMode: "MOCK" as const, configSchemaVersion: 1 as const, activeSessionId: "cert-cycle", passEvidenceCount: 1, failEvidenceCount: 0, criticalEvidenceCount: 0, nextDoorId: doors[1].doorId, criticalStop: false, currentCommand: { commandId: "cmd-cycle", doorId: doors[0].doorId, state: "ACCEPTED", terminal: true, observationRecorded: true, outcome: "ACCEPTED", observedDoorId: doors[0].doorId, evidenceCode: null } };

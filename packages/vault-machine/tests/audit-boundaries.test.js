@@ -88,6 +88,7 @@ test('mixed official-test and mock adapters cannot classify simulator evidence a
       // even if a later probe describes different connected test adapters.
       rig.payment.capabilities = async () => ({ ...payment, mode: 'OFFICIAL_TEST' });
       rig.controller.identity = async () => ({ ...controller, mode: 'OFFICIAL_TEST' });
+      assert.equal((await rig.machine.publicState()).activeCertification.observationEvidenceClass, 'AUTOMATED');
       const evidence = { evidenceId: crypto.randomUUID(), sessionId: cert.sessionId, doorId: cert.scheduledDoorId, outcome: 'PASS', expectedDoorIds: [cert.scheduledDoorId], observedDoorIds: [cert.scheduledDoorId], notes: 'Software adapter fixture only', artifactDigest: 'b'.repeat(64), observedAt: rig.clock.now().toISOString() };
       for (const evidenceClass of ['OFFICIAL_SDK', 'BENCH', 'FULL_MACHINE', 'FIELD']) assert.throws(() => rig.operations.recordCertificationEvidence(actor.sessionId, { ...evidence, evidenceClass }), error => error.code === 'CERTIFICATION_EVIDENCE_CLASS_INVALID');
       assert.equal(rig.store.one('SELECT count(*) AS n FROM certification_evidence').n, 0);

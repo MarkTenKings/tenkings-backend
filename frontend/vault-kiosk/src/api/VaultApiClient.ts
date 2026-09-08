@@ -96,6 +96,7 @@ type WireCertification = {
   nextUnderTestedDoorLabel?: string | null;
   currentCommand?: WireCommand | null;
   adapterMode?: "MOCK" | "OFFICIAL_TEST" | "LIVE";
+  observationEvidenceClass?: "AUTOMATED" | "FULL_MACHINE";
 };
 
 type WireSnapshot = Omit<Partial<KioskPublicSnapshot>, "activeSale" | "activeRestock" | "activeCertification" | "buildIdentity" | "reservationConflictDoorIds" | "preservedDoorIds"> & Pick<KioskPublicSnapshot, "stateVersion" | "publicState" | "health" | "products" | "doors" | "cart" | "support" | "serviceLocked" | "configVersion" | "readinessReasons"> & {
@@ -163,6 +164,7 @@ function normalizeSnapshot(raw: WireSnapshot): KioskPublicSnapshot {
     configSchemaVersion: raw.activeCertification.configSchemaVersion ?? null,
     machineProfile: raw.activeCertification.machineProfile ?? null,
     adapterMode: raw.activeCertification.adapterMode,
+    observationEvidenceClass: raw.activeCertification.observationEvidenceClass,
     activeSessionId: raw.activeCertification.sessionId,
     passEvidenceCount: raw.activeCertification.passCount,
     failEvidenceCount: raw.activeCertification.failCount,

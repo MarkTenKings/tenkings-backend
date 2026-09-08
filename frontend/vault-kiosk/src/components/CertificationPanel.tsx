@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { CertificationStatus, CertificationObservation, TrustedBuildIdentity, VaultDoorId } from "../types";
 import { displayDoorIdentities, resolveObservedDoors } from "../workflow/profileLayout";
+import { observationEvidenceClass } from "../workflow/certificationEvidence";
 
 interface CertificationPanelProps {
   status: CertificationStatus | null;
@@ -30,7 +31,9 @@ export function CertificationPanel({ status, busy, buildIdentity, onStart, onEvi
   const observedUnexpected = observedIds.some((id) => id !== commandDoorId);
   const passValid = observationValid && observedIds.length === 1 && observedIds[0] === commandDoorId;
   const sendEvidence = (outcome: "PASS" | "FAIL" | "CRITICAL") => onEvidence(outcome, commandDoorId, { observedDoorIds: observedIds as VaultDoorId[], notes: notes.trim() });
-  const simulated = status?.adapterMode === "MOCK";
+  const evidenceClass = observationEvidenceClass(status);
+  const simulatedEvidence = evidenceClass === "AUTOMATED";
+  const simulatedCycles = status?.adapterMode === "MOCK";
   const commandLabel = command?.doorLabel ?? identities.find((door) => door.doorId === commandDoorId)?.label ?? commandDoorId;
 
   useEffect(() => {
@@ -45,7 +48,7 @@ export function CertificationPanel({ status, busy, buildIdentity, onStart, onEvi
       <strong className="test-mode-banner">TEST MODE · NEVER PRODUCTION REVENUE</strong>
       <p className="eyebrow">Version-bound evidence</p>
       <h2 id="certification-title">Machine certification</h2>
-      {status?.activeSessionId && <p className="adapter-mode-label">{simulated ? "MOCK ADAPTER · simulator evidence only; no physical coverage" : status?.adapterMode ? `${status.adapterMode} adapter` : "Adapter provenance unavailable; evidence is blocked"}</p>}
+      {status?.activeSessionId && <p className="adapter-mode-label">{simulatedEvidence ? "MOCK ADAPTER IN SESSION · simulator evidence only; no physical coverage" : evidenceClass ? "OFFICIAL_TEST adapters · supervised physical observation" : "Adapter provenance unavailable; evidence is blocked"}</p>}
       {buildIdentity ? (
         <dl className="command-receipt trusted-build">
           <div><dt>Service build</dt><dd>{buildIdentity.appVersion}</dd></div>
@@ -91,7 +94,7 @@ export function CertificationPanel({ status, busy, buildIdentity, onStart, onEvi
           {command?.terminal && !currentObservationRecorded && !status.criticalStop && commandMatchesScheduledDoor && (
             <label className="confirmation-check observation-check">
               <input type="checkbox" checked={observationConfirmed} onChange={(event) => setObservationConfirmed(event.target.checked)} />
-              <span>I reviewed the {simulated ? "simulated" : "physical"} result for {commandLabel}. The controller receipt alone is not proof of opening.</span>
+              <span>I reviewed the {simulatedEvidence ? "simulated" : evidenceClass ? "physical" : "reported"} result for {commandLabel}. The controller receipt alone is not proof of opening.</span>
             </label>
           )}
           {command?.terminal && !currentObservationRecorded && !status.criticalStop && (
@@ -112,16 +115,16 @@ export function CertificationPanel({ status, busy, buildIdentity, onStart, onEvi
           {wrongDoorReceipt && !currentObservationRecorded && <p className="critical-stop" role="alert">CRITICAL STOP — the controller receipt names {command?.observedDoorId}, not the bound door {commandDoorId}. Only a supervised CRITICAL observation may be recorded.</p>}
           {commandDoorId && !status.criticalStop && !currentObservationRecorded && (
             <div className="evidence-actions" role="group" aria-label={`Record evidence for ${commandDoorId}`}>
-              <button type="button" disabled={busy || !buildIdentity || !status.adapterMode || !command?.terminal || command.state !== "ACCEPTED" || !commandMatchesScheduledDoor || !observationConfirmed || wrongDoorReceipt || !passValid} onClick={() => void sendEvidence("PASS")}>Record PASS</button>
-              <button type="button" disabled={busy || !buildIdentity || !status.adapterMode || !command?.terminal || !commandMatchesScheduledDoor || !observationConfirmed || wrongDoorReceipt || !observationValid || observedUnexpected} onClick={() => void sendEvidence("FAIL")}>Record FAIL</button>
-              <button type="button" disabled={busy || !buildIdentity || !status.adapterMode || !command?.terminal || !commandMatchesScheduledDoor || !observationConfirmed || !observationValid} className="danger" onClick={() => void sendEvidence("CRITICAL")}>Wrong/unpaid door</button>
+              <button type="button" disabled={busy || !buildIdentity || !evidenceClass || !command?.terminal || command.state !== "ACCEPTED" || !commandMatchesScheduledDoor || !observationConfirmed || wrongDoorReceipt || !passValid} onClick={() => void sendEvidence("PASS")}>Record PASS</button>
+              <button type="button" disabled={busy || !buildIdentity || !evidenceClass || !command?.terminal || !commandMatchesScheduledDoor || !observationConfirmed || wrongDoorReceipt || !observationValid || observedUnexpected} onClick={() => void sendEvidence("FAIL")}>Record FAIL</button>
+              <button type="button" disabled={busy || !buildIdentity || !evidenceClass || !command?.terminal || !commandMatchesScheduledDoor || !observationConfirmed || !observationValid} className="danger" onClick={() => void sendEvidence("CRITICAL")}>Wrong/unpaid door</button>
             </div>
           )}
           {currentObservationRecorded && !status.criticalStop && (
             <div className="phase-complete" role="status">
               <p>This supervised test has durable human evidence. The service may now schedule the next deterministic under-tested door.</p>
               <button type="button" className="secondary-action" disabled={busy || !buildIdentity || !identities.length} onClick={() => void onStart()}>{busy ? "Scheduling…" : "Schedule next supervised test"}</button>
-              {simulated && onCycle && <div className="certification-cycle-actions">
+              {simulatedCycles && onCycle && <div className="certification-cycle-actions">
                 <button type="button" className="secondary-action" disabled={busy || !buildIdentity || !identities.length} onClick={() => void onCycle("PURCHASE")}>Run simulated purchase cycle</button>
                 <button type="button" className="secondary-action" disabled={busy || !buildIdentity || !identities.length} onClick={() => void onCycle("RESTOCK")}>Run simulated restock cycle</button>
                 <p>Purchase cycles use the same payment and fulfillment path. After a restock cycle, complete the exact door outcome and safe-close checklist in Restock before continuing.</p>
