@@ -16,7 +16,7 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "test": "pnpm run build && node --test tests/*.test.js"
+    "test": "pnpm run build && node ../../scripts/test-vault-node.mjs"
   },
   "dependencies": {
     "zod": "^4.1.11"

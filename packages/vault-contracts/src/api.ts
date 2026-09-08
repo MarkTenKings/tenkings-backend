@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { VaultDoorIdSchema } from "./doors";
+import { VaultDoorIdSchema, VAULT_MAX_PROFILE_DOORS } from "./doors";
 import { VaultHealthStateSchema, VaultModeSchema, VaultPaymentStateSchema, VaultRoleSchema, VaultSaleItemSnapshotSchema } from "./domain";
 
 export const VaultCheckoutRequestSchema = z.object({
   idempotencyKey: z.string().uuid(),
   mode: VaultModeSchema,
   configVersion: z.number().int().positive(),
-  doorIds: z.array(VaultDoorIdSchema).min(1).max(150).refine((ids) => new Set(ids).size === ids.length),
+  doorIds: z.array(VaultDoorIdSchema).min(1).max(VAULT_MAX_PROFILE_DOORS).refine((ids) => new Set(ids).size === ids.length),
 });
 
 export const VaultRetryRequestSchema = z.object({
@@ -34,6 +34,7 @@ export const VaultMachineEventSchema = z.object({
   mode: VaultModeSchema,
   correlationId: z.string().max(256).optional(),
   causationId: z.string().max(256).optional(),
+  actor: z.string().min(1).max(128).optional(),
   occurredAt: z.string().datetime(),
   payload: z.record(z.string(), z.unknown()),
 });
@@ -47,12 +48,13 @@ export const VaultEventBatchSchema = z.object({
 export const VaultHeartbeatSchema = z.object({
   contractVersion: z.literal(1),
   appVersion: z.string().min(1).max(64),
+  sourceCommit: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   localSchemaVersion: z.number().int().nonnegative(),
   configVersion: z.number().int().positive().nullable(),
   configDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   health: VaultHealthStateSchema,
   readinessReasons: z.array(z.string().max(160)).max(32),
-  availableDoorCount: z.number().int().min(0).max(150),
+  availableDoorCount: z.number().int().min(0).max(VAULT_MAX_PROFILE_DOORS),
   outboxPendingCount: z.number().int().nonnegative(),
   serviceLocked: z.boolean(),
   observedAt: z.string().datetime(),
@@ -72,6 +74,7 @@ export const VaultStaffGrantSchema = z.object({
   machineId: z.string().uuid(),
   role: VaultRoleSchema,
   verifierVersion: z.number().int().positive(),
+  grantVersion: z.number().int().positive().optional(),
   verifier: z.string().min(32).max(1024),
   hashAlgorithm: z.enum(["scrypt", "argon2id"]),
   hashParameters: z.record(z.string(), z.number().int().positive()),

@@ -109,6 +109,17 @@ export function mayTransitionSale(from: VaultSaleState, to: VaultSaleState): boo
   return SALE_TRANSITIONS[from].includes(to);
 }
 
+/** Shared machine/cloud callback projection rule; authorization and settlement stay distinct. */
+export function vaultPaymentTransitionAllowed(current: string, next: z.infer<typeof VaultPaymentStateSchema>, committed: boolean): boolean {
+  if (current === next) return true;
+  if (["DECLINED", "CANCELLED", "SETTLED"].includes(current)) return false;
+  if (next === "NOT_REQUESTED" || next === "REQUESTED") return false;
+  if (committed && (next === "DECLINED" || next === "CANCELLED")) return false;
+  if (!committed && ["VEND_RESULT_PENDING", "SETTLEMENT_PENDING", "SETTLED"].includes(next)) return false;
+  if (committed && ["VEND_RESULT_PENDING", "SETTLEMENT_PENDING"].includes(current) && next === "AUTHORIZED") return false;
+  return true;
+}
+
 export const VaultPermissionSchema = z.enum([
   "RESTOCK_RUN", "SERVICE_LOCK", "DIAGNOSTICS_VIEW", "DOOR_TEST", "SOFTWARE_RECOVERY",
   "CERTIFICATION_COLLECT", "CERTIFICATION_APPROVE", "PRODUCT_MANAGE", "TAX_MANAGE",
@@ -119,6 +130,8 @@ export const VaultPermissionSchema = z.enum([
 export const VaultSaleItemSnapshotSchema = z.object({
   lineId: z.string().uuid(),
   doorId: VaultDoorIdSchema,
+  /** Frozen printed label, absent only in historical v1 snapshots. */
+  doorLabel: z.string().min(1).max(32).optional(),
   productId: z.string().min(1).max(128),
   productName: z.string().min(1).max(120),
   photoUrl: z.string().url().max(2048),

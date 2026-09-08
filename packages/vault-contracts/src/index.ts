@@ -4,5 +4,7 @@ export * from "./certification";
 export * from "./config";
 export * from "./domain";
 export * from "./doors";
+export * from "./event-bounds";
 export * from "./money";
+export * from "./profiles";
 export * from "./security";

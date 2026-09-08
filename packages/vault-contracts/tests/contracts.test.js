@@ -28,6 +28,18 @@ test("role matrix reserves finance and enrollment for Admin", () => {
   assert.equal(vault.roleMay("ADMIN", "ENROLLMENT_MANAGE"), true);
 });
 
+test("event payload bounds match the cloud JSON vocabulary before durable append", () => {
+  const valid = { mappingVersion: "1", items: Array.from({ length: 150 }, (_, index) => ({ line: index, text: "safe" })) };
+  assert.doesNotThrow(() => vault.assertVaultEventPayloadBounds(valid));
+  for (const value of [
+    { text: "a".repeat(4001) }, { items: Array(vault.VAULT_MAX_PROFILE_DOORS + 1).fill(1) }, { fraction: 1.5 },
+    { unsafe: Number.MAX_SAFE_INTEGER + 1 }, { invalid: undefined }, { "bad-key": true },
+    { a: { b: { c: { d: { e: { f: { g: 1 } } } } } } },
+    Object.fromEntries(Array.from({ length: 4097 }, (_, index) => [`key${index}`, 1])),
+    Object.fromEntries(Array.from({ length: 400 }, (_, index) => [`key${index}`, "界".repeat(1000)])),
+  ]) assert.throws(() => vault.assertVaultEventPayloadBounds(value));
+});
+
 test("config digest and Ed25519 verification use canonical payload", () => {
   const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
   const payload = {
@@ -44,6 +56,22 @@ test("config digest and Ed25519 verification use canonical payload", () => {
   const canonical = vault.canonicalJson(payload);
   const config = { payload, digest: vault.configDigest(payload), keyId: "test-key", algorithm: "Ed25519", signature: crypto.sign(null, Buffer.from(canonical), privateKey).toString("base64") };
   assert.equal(vault.verifySignedConfig(config, publicKey.export({ type: "spki", format: "pem" })), true);
+  for (const corrupt of [
+    (value) => value.products.push({ ...value.products[0] }),
+    (value) => { delete value.assignments['X-01']; },
+    (value) => { value.assignments['X-01'] = 'unconfigured-product'; },
+    (value) => { value.timezone = 'Invented/Timezone'; },
+    (value) => { value.expiresAt = value.createdAt; },
+    (value) => { value.minimumAppVersion = 'garbage'; },
+    (value) => { value.products[0].photoUrl = 'javascript:alert(1)'; },
+    (value) => { value.support.pageUrl = 'https://secret:credential@example.test'; },
+    (value) => { value.support.phoneNumber = '+15555550101?body=injected'; },
+  ]) {
+    const malformed = structuredClone(payload); corrupt(malformed);
+    const bytes = Buffer.from(vault.canonicalJson(malformed));
+    const signedMalformed = { ...config, payload: malformed, digest: crypto.createHash('sha256').update(bytes).digest('hex'), signature: crypto.sign(null, bytes, privateKey).toString('base64') };
+    assert.throws(() => vault.verifySignedConfig(signedMalformed, publicKey.export({ type: 'spki', format: 'pem' })));
+  }
   config.payload.city = "Changed";
   assert.equal(vault.verifySignedConfig(config, publicKey.export({ type: "spki", format: "pem" })), false);
 });

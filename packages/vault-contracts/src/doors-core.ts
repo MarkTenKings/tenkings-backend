@@ -2,6 +2,14 @@ export const VAULT_COLUMNS = ["X", "K", "I", "N", "G", "S"] as const;
 export const VAULT_ROW_COUNT = 25;
 export const VAULT_DOOR_COUNT = VAULT_COLUMNS.length * VAULT_ROW_COUNT;
 export const VAULT_DOOR_ID_PATTERN = /^(X|K|I|N|G|S)-(0[1-9]|1[0-9]|2[0-5])$/;
+/** Defensive parser/resource bound, not a cabinet design or qualified hardware capacity. */
+export const VAULT_MAX_PROFILE_DOORS = 256;
+export const VAULT_STABLE_DOOR_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+export function isVaultDoorId(value: unknown): value is VaultDoorId {
+  return typeof value === "string" && VAULT_STABLE_DOOR_ID_PATTERN.test(value)
+    && !["constructor", "prototype", "__proto__"].includes(value.toLowerCase());
+}
 
 declare const vaultDoorBrand: unique symbol;
 export type VaultDoorId = string & { readonly [vaultDoorBrand]: "VaultDoorId" };
@@ -30,7 +38,7 @@ export function parseDoorId(value: string): VaultDoorCoordinate {
   return { doorId, column, row, logicalChannel: (row - 1) * VAULT_COLUMNS.length + columnIndex + 1 };
 }
 
-/** Canonical physical display order: row 01 X..S, then row 02 X..S, through row 25. */
+/** Historical v1 display order only. New profiles supply their own stable IDs and geometry. */
 export const VAULT_DOOR_MAP: readonly VaultDoorCoordinate[] = Object.freeze(
   Array.from({ length: VAULT_ROW_COUNT }, (_, rowIndex) =>
     VAULT_COLUMNS.map((column) => {

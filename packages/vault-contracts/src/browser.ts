@@ -3,3 +3,4 @@ export * from "./domain-core";
 export * from "./doors-core";
 export * from "./money";
 export * from "./security";
+export type { VaultMachineProfile, VaultProfileDoor } from "./profiles";

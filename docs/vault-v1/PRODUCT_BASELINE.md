@@ -1,0 +1,54 @@
+# Current Vault V1 product baseline
+
+## Latest owner decision — a configurable family of Vault machines
+
+Mark requires one Vault software platform that supports different cabinet sizes, door quantities and door sizes. His latest direction sets the current maximum design at **125 doors** and a compact concept at **roughly 72 doors**. Earlier 100-door and original 150-door descriptions are historical, not the current production target or new global constants. Standardize the door locks, ViewSonic TV/touch displays, Nayax terminals and one SER mini PC per machine. Exact models, controller protocol/capacity and qualified operating limits still need confirmation.
+
+The compact concept places the touchscreen, Nayax terminal and product-display cutouts in the **center, surrounded by doors**, rather than on the side. Mark wants to explore reduced cabinet width, height and potentially depth to improve fabrication cost and speed; display-case height/width and possibly 1–2 inches of touchscreen width are design variables, not approved dimensions or permission to trim an existing display. A smaller physical screen may require a different qualified model even within the same brand. Roughly 72 is a design exploration, not a fixed minimum or final door count.
+
+The acceptance target is **the same application build for every supported, qualified machine profile**, with cabinet/layout differences supplied by approved versioned configuration. This is an intended requirement, not a capability already implemented. No unlimited-capacity or arbitrary-hardware compatibility claim is made.
+
+A machine profile must distinguish:
+
+- Stable machine/model/profile identity and profile revision.
+- Each door's stable internal ID, printed customer label, physical/display position and dimensions. Support mixed-size doors and nonuniform arrangements; do not make a rectangular row/column grid the only representation.
+- Explicit door-to-controller endpoint/board/channel mapping, independent of door labels or screen position. A layout never authorizes a guessed relay address.
+- Hardware/adapter identity and qualified capacity; payment/cart limits remain bounded by the actual payment integration rather than equaling cabinet door count.
+- Customer-touchscreen and TV/display roles, supported orientation/resolution/scaling and touch association. Shared brands alone do not prove interface, driver or capability compatibility.
+- Per-door product assignment and per-profile completeness/certification coverage. Cabinet dimensions are distinct from inventory, payment and fulfillment authority. Record usable compartment dimensions separately from exterior door/cutout size; any product-fit restrictions for different compartments need an explicit operator/product policy rather than an assumed fit.
+
+Profiles must be validated, signed/versioned and activated at a safe service boundary. Freeze the applicable profile/mapping with every sale, command, restock and certification record. Profile edits must not relabel historical transactions, remap paid doors or erase retired-door history. Physical reconfiguration of stocked/in-use machines needs an explicit service/reconciliation procedure and applicable recertification.
+
+New sizes/layouts within tested interface and capacity limits should require configuration and acceptance testing, not application changes. New controller protocols, unsupported capacity, sensor semantics, payment behavior or incompatible display/OS interfaces can still require code changes. Lock power, duty cycle, wiring, larger-door mechanics, cooling, usability and installed-machine safety remain physical qualification obligations even when software is unchanged.
+
+General software review and the profile architecture/refactor can proceed before final cabinet dimensions are chosen. Real wiring maps, final CAD/fabrication, installed-display acceptance and physical certification still require the actual selected design and hardware. Use the owner's approximate 72-door and maximum 125-door direction for design and software test cases, while keeping final topology and qualified operating bounds explicit and preserving legacy history.
+
+## Earlier owner update — 2026-09-07
+
+Mark's latest instructions supersede the August 16 brief where they differ:
+
+- The first planned Vault has **100 doors**, not 150; later owner instructions above expand this to a configurable machine family.
+- Each Vault has its own **SER mini PC**.
+- The touchscreen is a **ViewSonic display with no operating system of its own**, as described by Mark. The exact model and connection requirements remain to be identified; do not infer an Android/tablet runtime.
+
+The original engineering package under `authority/` is retained unchanged as historical design authority. It must be read together with this newer owner decision. Its 150-door / six-column / 25-row assumptions and candidate-display discussion are no longer current product requirements.
+
+## Physical reference and remaining hardware decisions
+
+The inspected Rev27 file at `/Users/markthomas/Downloads/Ten_Kings_Vault_Rev27_FINAL_QA/04_DIMENSIONED_4x10_SHEET_LAYOUTS/Final_Ten_Kings_Vault_Rev27_All_5_Sheets_DIMENSIONED.dxf` contains 100 rectangular openings in 5 columns by 20 rows, annotated 5.000 inches wide by 2.250 inches high, plus a TD1655 display opening and Nayax mounting notes. It is a five-sheet fabrication layout, not assembled-fit, electrical or controller-mapping proof. Mark states that his most recent supplied CAD establishes 125 doors. The exact corresponding 125-door DXF has **not yet been verified**; locate it or ask Mark to identify it before making precise revisions. Do not relabel the inspected 100-opening Rev27 drawing as a 125-door drawing. No CAD file was edited by the retiring task.
+
+1. Actual physical rows/columns and printed door labels, preferably a front-view drawing or photo. Do not assume that X/K/I/N/G/S identifiers or equal column heights still apply. Do not derive relay addresses from a guessed visual arrangement.
+2. Exact SER model, processor architecture and intended OS/edition. The existing software targets Windows with Node 20 and native SQLite; that is implementation evidence, not confirmation of the new PC specification.
+3. Exact ViewSonic model, installed orientation/resolution/scaling and video/touch connection types.
+4. Controller/relay-board model, firmware/protocol, and authoritative door-to-channel mapping. No real controller commands are authorized.
+5. Confirm the previously outstanding Nayax terminal/Marshall integration kit and official test/certification information; no payment activation or charge is authorized.
+
+## Current implementation and review status
+
+Saved software corrections cover runtime synchronization, payment/recovery/concurrency, scoped staff and cloud authority, configuration/reporting/certification integrity, kiosk recovery/accessibility and Windows artifact staging safety. Independent final-head review and final validation have **not** completed.
+
+The current contracts, database constraints, kiosk map, fixtures, certificate thresholds and documentation still contain the **legacy 150-door baseline**. Passing those tests does not demonstrate the new 125-door or compact concept, or a configurable machine family. The earlier blanket pause pending a single final 100-door layout is superseded: design/refactor toward versioned machine profiles may proceed, while real wiring, fabrication and installed acceptance remain pending. Final exact-head review, full validation and PR handoff are still incomplete. See `FRESH_TASK_HANDOFF_2026-09-07.md` for the approved two-task ownership split and saved-work transfer instructions.
+
+The machine-profile revision must update identifiers/mapping, profile-based assignment cardinality, controller/config/database validation, kiosk geometry and touch tests, certificate coverage calculations, fixtures, API documentation and operational evidence together. Preserve the per-door certification policy unless Mark changes it: 5 purchase and 2 restock cycles for every door in the applicable approved profile; never fabricate physical coverage from simulator results. Test multiple capacities and mixed-size/nonuniform layouts, plus migration and recovery of the historical 150-door fixtures without reinterpreting their IDs or snapshots.
+
+Official Nayax/controller adapters, the final Windows runtime/native binary/package/service/protected-storage implementation, installed-appliance validation, authorized migration/deployment, physical certification and pilot remain outstanding. No PR merge, Production access, deployment, hardware actuation, credential change or real payment is authorized.
