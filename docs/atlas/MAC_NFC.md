@@ -1,0 +1,56 @@
+# Integrated MacBook NFC finishing
+
+Owner direction and research checkpoint: September 8, 2026. Mark selected the MacBook for ATLAS NFC finishing, using the **same ACS ACR1552U reader and FEIJU F8215 tags** already used on Windows. The target is a first-party ATLAS workflow with no per-card GoToTags login, app switch, URL copying or external Start Encoding action. This supersedes the earlier unselected physical-workstation assumption. It does not claim that the native writer is already implemented or hardware-qualified.
+
+## Intended operator experience
+
+1. Open ATLAS on the MacBook and connect the ATLAS reader bridge once for the finishing session.
+2. A trained human approves the exact final report. Select its physical card in the finishing workspace, or scan its label to select the matching approved report. ATLAS shows that card's image, identity and approval version. The NFC reader cannot identify which physical trading card is beside it; that association remains explicit.
+3. Place one fresh F8215 tag on the reader. The armed session automatically writes the exact approved URL, reads it back, applies the qualified permanent lock, verifies the result and records it against that card. All progress stays in ATLAS.
+4. A clear verified signal tells the human to remove that tag and assemble it with the selected card/label/slab. Reader-observed removal and saved hosted completion release the station for the next card.
+5. If anything is uncertain, ATLAS stops the cycle and preserves the exact operation. It does not silently choose another card, rewrite a tag, or report success. Assembly and sonic welding remain human physical actions.
+
+The human arms a bounded finishing session and performs physical placement/removal. Normal software steps should require no additional per-card external-app interaction. No throughput target has been measured yet.
+
+## Astra's role
+
+Astra can help prepare and coordinate work for already approved cards, show the next required physical action and surface exceptions. The deterministic ATLAS service and Mac bridge own URL construction, device commands, readback, locking, receipt verification and queue transitions. There is no reason to pay a model to generate NFC commands on every tag.
+
+The model cannot approve the report, supply arbitrary URLs/APDUs/lock masks, infer that the correct physical card is present, invent a successful write or mark assembly/welding complete. Human report approval plus a bounded armed station session authorizes the exact automated finishing operation. A background model run without that station/card authorization cannot start writing.
+
+## Research findings
+
+**The reader supports a native Mac path.** ACS lists ACR1552U macOS support, USB CCID and PC/SC interfaces, with a Mac driver download. Its reference manual documents PC/SC communication and reader command formats. Apple provides local smart-card access, including APDU transmission through CryptoTokenKit. The engineering path is a small ATLAS Mac companion using system APIs to talk to the existing USB reader. A vendor driver may still be necessary depending on the installed OS/reader interface; no driver has been installed in this work. [ACS reader documentation](https://www.acs.com.hk/en/products/575/acr1552u-usb-nfc-reader-iv/), [Apple smart-card transmission](https://developer.apple.com/documentation/cryptotokenkit/tksmartcard/transmit(_:reply:)).
+
+**A browser page alone is insufficient for this reader.** Chrome's Web NFC implementation is Android-specific; its desktop WebUSB implementation protects the smart-card interface class. A first-party background bridge keeps the user in ATLAS while providing native reader access. ACS's own browser tool likewise uses an extension and native host; it confirms the integration pattern, but does not supply the F8215 lock algorithm. [Chrome Web NFC](https://developer.chrome.com/docs/capabilities/nfc), [Chromium protected-interface implementation](https://chromium.googlesource.com/chromium/src.git/+/532ba437f081ab1d4e617a5b8c272ffe49fcf8ba/third_party/blink/renderer/modules/webusb/usb_device.cc), [ACS Web APDU architecture](https://www.acs.com.hk/en/web-apdu-tool/).
+
+**F8215 write/lock semantics still need qualification.** GoToTags identifies F8215 as a supported Feiju Type 2 chip, but supplies no linked F8215 datasheet or native lock commands. The current Ten Kings implementation verifies its application callback and retains GoToTags' write/readback/lock assertions. Historical tests established URL reading and the application's locked indication; the alternate overwrite was blocked by GoToTags before a hardware command was sent. That is useful legacy evidence, but not a direct native lock-command transcript. [GoToTags supported devices](https://gototags.com/desktop-app/features/nfc/supported).
+
+Accessible reseller descriptions conflict on memory and lock granularity. Earlier same-lot app reports also classified the tag differently before GoToTags identified F8215. Neither a product name containing “215” nor a reported 496-byte NDEF capacity establishes the NXP NTAG215 memory map. No NXP lock addresses/masks are adopted for F8215. The direct Mac writer needs documented identification and lock semantics, actual same-lot read-only observations and controlled hardware verification. Raw tag UID must remain transient, with no UID or UID digest in hosted records or diagnostic output.
+
+## Implementation changes
+
+The existing immutable report, label, approval, job and verification records are reusable. The current browser/Node/C#/SQL contract specifically identifies GoToTags 4.37.0.1 and Windows CNG enrollment. A native result must have its own truthful profile; it cannot claim the old adapter identity merely to pass existing checks.
+
+- **Native Mac bridge:** system reader access, one selected PICC interface, fixed command allowlist, exclusive transaction ownership, bounded calls, signed job verification and durable recovery. No arbitrary-command endpoint, shell tool or model-supplied device address. One-time installation/pairing replaces per-card setup. Native signing must use reviewed Mac key protection, not a copied Windows private key.
+- **Qualified F8215 profile:** exact identification, safe page ranges, NDEF capacity, reserved/configuration bytes, CC behavior, static/dynamic lock coverage and order, ACK/NAK behavior and readback proof. Write protection covers every report/metadata byte that can affect the URL, not just the first pages or an application read-only flag. Unsupported or ambiguous tags stop before mutation.
+- **Versioned hosted/native protocol:** bind the exact specimen, approval/version, public hash/URL, label issue, station, nonce, profile/release, authorization and expiry. Add explicit Mac enrollment/profile validation through an additive migration; historical migrations and Windows receipts remain readable unchanged.
+- **Saved completion acknowledgement:** the bridge must verify a hosted signed acknowledgement bound to its exact terminal result. A browser boolean is not proof that the hosted receipt committed. Keep a durable completed-job record so an old job cannot encode another tag after local cleanup.
+- **Integrated finishing queue:** arm once, explicitly associate one approved physical card, automatically run on fresh-tag placement, show write/readback/lock/hosted-save progress and observe removal before advancing. A label's current public QR identifies the report/version, not its label-copy issue ID; the UI must resolve and bind the intended issue rather than infer it from that QR alone.
+- **Recovery:** preserve success until the host acknowledges it; no automatic mutating retries. Disconnect/sleep/expiry/power loss before confirmed completion retain an uncertain outcome. Restart does not resume a partly written tag automatically. An expired unrecorded result stays unresolved under current policy; no silent extension of authority.
+
+## Current implementation status
+
+The first native deliverable is [the Mac reader probe](../../packages/atlas-mac-nfc/README.md), a zero-dependency read-only PC/SC executable. It provides local reader discovery and limited nonidentifying tag-header diagnostics. It has no write, lock, generic APDU, web-server, installation or key-enrollment capability. Its results are qualification inputs, never an F8215 compatibility or permanent-lock certificate.
+
+On September 8, the probe built on this MacBook (macOS 15.5, arm64, Swift 6.1.2). The final diagnostic version passes 29 native/injected scenarios. After Mark connected the existing ACR1552U, native discovery found exactly one supported PICC interface through the installed Apple PC/SC stack. The tag inspection returned `no_tag` at `connect`, with `fixedReadAttempted: false`, including after a port change. No tag header was obtained. This establishes reader discovery on this Mac, not encoding compatibility.
+
+The Mac has the generic CCID 1.5.1 bundle and no ACS driver in the inspected standard locations/receipts. Separate fixed read-only reader-radio queries were rejected by the current PC/SC path; the actual radio state remains unknown. The official ACS 1.1.13 Mac driver package has been downloaded and its ACS signature/notarization, arm64 support and installer behavior reviewed. Its normal installer requires administrator authentication and a restart. [Reader setup and post-restart checks](MAC_NFC_READER_SETUP.md) record the concrete next step; installation and successful tag detection have not yet been observed.
+
+The full native writer, Mac protected signer/pairing, new hosted result/acknowledgement protocol, automatic finishing queue and signed distributable installer remain implementation work. Existing `495` JS/TS tests and `128` PostgreSQL scenarios describe the previous implementation, not native Mac encoding acceptance. Native probe results are recorded separately in SESSION_LOG and the private Mac research/verification handoffs.
+
+## Next hardware checks
+
+First connect the ACR1552U and run read-only discovery, then inspect an unused same-lot F8215. Reconcile actual reader/card behavior with the exact chip documentation or independently reviewed qualification evidence. Prepare the exact write/lock operation and expected byte coverage before using a designated sacrificial tag. A real lock is irreversible; no ordinary graded-card tag is used to guess an undocumented mask.
+
+Qualification must establish full URL write/readback, physical lock coverage and an actual attempted hardware overwrite rejection after re-presentation, plus unplug/sleep/expiry/restart and duplicate-job behavior. One successful tag does not establish throughput or all failure paths. The final supervised ATLAS batch remains exactly ten real cards after the native flow and actual hardware are accepted.

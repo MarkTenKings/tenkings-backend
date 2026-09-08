@@ -2,7 +2,7 @@
 
 Local implementation candidate; no operational activation. This package has no database, network, device or provider dependencies. Its Node ECDSA code is server-only. It does not grant report approval or access to a Ten Kings card writer.
 
-Mark's ATLAS grading workstation is a MacBook browser. The Windows device helper documented here is solely the existing NFC integration and is not a grading/review/approval prerequisite. Direct MacBook tag encoding would require a macOS device/signing adapter and hardware acceptance; cross-platform protocol tests do not establish that support.
+Mark's ATLAS grading workstation is a MacBook browser. The Windows device helper documented here is solely the existing NFC integration and is not a grading/review/approval prerequisite. Mark has now selected direct MacBook encoding with the same reader/tags and automatic in-ATLAS progression. That rework requires a distinct native device/signing profile, hosted acknowledgement and hardware acceptance; cross-platform protocol tests do not establish it. See [MAC_NFC.md](../../docs/atlas/MAC_NFC.md).
 
 The current ATLAS public route is `https://atlasgrading.com/reports/ar_<24 base64url characters>?v=<positive approval version>` (`frontend/atlas-app/lib/server/access/reports.mjs`). Every job and result binds `specimenId`, `approvalId`, `approvalVersion` (integer), `publicToken`, and `publicHash` (SHA-256 of the approved public canonical bytes). URL comparison is byte-exact; no alternate host, unversioned URL, extra query, redirect or fragment is accepted.
 

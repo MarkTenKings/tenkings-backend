@@ -36,6 +36,12 @@ Mark uses a MacBook for ATLAS grading. The intended human grading, review, corre
 
 The implemented native NFC helper remains Windows-specific. This clarification does not select the physical NFC workstation or establish macOS tag-encoding support. If tag encoding will also take place on the MacBook, a macOS device/signing adapter and actual hardware acceptance are required. Label printing is a browser workflow whose actual Mac/printer scale and fit still need verification. The Astra runner host is a separate deployment choice from the human's grading browser.
 
+#### Owner direction — integrated MacBook NFC with unchanged hardware, 2026-09-08
+
+Mark subsequently selected the MacBook for ATLAS NFC writing, reading and permanent locking, using the same ACS ACR1552U reader and FEIJU F8215 tags as the Windows workflow. Research and rework must target a first-party integrated flow that removes per-card GoToTags/account/app switching and external Start Encoding. This supersedes the earlier unselected physical-workstation assumption and Dell reuse as the target ATLAS encoding implementation; historical Ten Kings behavior remains preserved.
+
+After exact human report approval and explicit association of the physical card with a bounded armed finishing session, ATLAS should automatically write, read back, permanently lock and record the tag when the human places it on the reader. Astra may coordinate eligible approved work and exceptions; deterministic code owns exact URLs, fixed device commands, lock verification and receipts. No model-supplied raw commands or invented physical success are permitted. Placement, removal, card/tag/slab assembly and welding remain physical human actions. Real F8215 command/lock qualification is required before production tag execution. The current research, implementation gaps and intended flow are recorded in `docs/atlas/MAC_NFC.md`; native automation is not yet operationally accepted.
+
 ---
 
 ## 1. Executive Decision

@@ -2,7 +2,7 @@
 
 Updated September 8, 2026. The owner-approved ATLAS amendment in [the canonical V2 blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) governs scope. Runtime, database and source evidence determine what is implemented. Historical checkpoints remain in [SESSION_LOG](../handoffs/SESSION_LOG.md); older test counts do not describe the final candidate.
 
-Mark's ATLAS grading workstation is his **MacBook**. Grading, review, corrections and approval use the browser and require no Windows helper or PowerShell setup. Windows references below concern the existing physical NFC integration only; the physical NFC workstation has not been selected by this clarification.
+Mark selected his **MacBook for grading and NFC finishing**, keeping the same ACR1552U reader and F8215 tags. The new target is automatic write/readback/lock inside ATLAS after human report approval and physical card selection. The implemented finishing entry below describes the existing Windows integration; the direct Mac writer and automatic queue are additional unfinished work. [MAC_NFC.md](MAC_NFC.md) records the research, native probe and remaining implementation.
 
 ## Implemented workflow
 
@@ -14,7 +14,7 @@ Mark's ATLAS grading workstation is his **MacBook**. Grading, review, correction
 6. **Trusted learning:** independently authorized fresh reviewers select the exact candidate subset and record an immutable approval or rejection with a reason. Approved decisions remain `APPROVED_PENDING_APPLICATION`. This workflow does not write to the global learning bank; report certification grants no learning authority.
 7. **Operations and recovery:** intake, roster/assignment, exact ten-member pilot preparation, cost inspection/invoice reconciliation, cancellation of never-dispatched initialization, and explicit abandonment of uncertain work. Abandonment retains charges, receipts and budget holds and prevents silent same-evidence reenqueuing.
 
-The existing Windows NFC helper retains the Ten Kings paths. ATLAS uses distinct job purpose, server trust, workstation token and signed results. Optional NFC configuration is disabled by default. Installer/updater/start-script wiring applies only to a Windows NFC workstation. Direct tag encoding on the MacBook is not implemented by this helper and would require a macOS adapter and hardware acceptance.
+The existing Windows NFC helper retains the Ten Kings paths. ATLAS uses distinct job purpose, server trust, workstation token and signed results. Optional NFC configuration is disabled by default. Installer/updater/start-script wiring applies only to a Windows NFC workstation. The selected MacBook path requires the first-party native adapter and hardware qualification now being developed; the old helper is retained for historical Ten Kings compatibility.
 
 ## Local verification
 
@@ -29,7 +29,7 @@ The existing Windows NFC helper retains the Ten Kings paths. ATLAS uses distinct
 
 The preparation release is deliberately **null**, and live staff/provider/worker/NFC controls remain inactive. No real card, SMS, paid API/worker request, live migration/deployment, real print, encoding, assembly or weld was performed. Local implementation acceptance does not establish operational readiness.
 
-Prepare a concrete grading release for MacBook browser use and the selected staff/public/private hosts and operator host, with exact artifacts, inactive controls, restricted database roles, dedicated Verify/provider credentials and current storage/worker proof. Verify the release on its actual hosts and the MacBook browser. Physical NFC acceptance follows the separately selected workstation: Windows helper configuration applies only if that existing path is used. Source publication, CI/deployment side effects and live changes need the separately authorized exact action; this document authorizes none.
+Prepare a concrete grading release for MacBook browser use and the selected staff/public/private hosts and operator host, with exact artifacts, inactive controls, restricted database roles, dedicated Verify/provider credentials and current storage/worker proof. Verify the release on its actual hosts and the MacBook browser. Physical NFC acceptance now targets the MacBook with the unchanged reader/tags; the new native writer, protected signer and integrated queue must be completed and verified before the finishing pilot. Windows helper configuration is historical integration guidance, not the selected ATLAS setup. Source publication, CI/deployment side effects and live changes need the separately authorized exact action; this document authorizes none.
 
 The final supervised acceptance batch is **exactly ten real cards**, with approved cohort, reviewer roster, instructions, time window and explicit per-card/batch caps. Record measured quality, failures, elapsed time, provider invoices, exact labels/QR/NFC readback and human assembly/weld confirmation. Expansion follows owner acceptance of those results. The consumer website design is a separate owner input.
 

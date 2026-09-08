@@ -1,6 +1,6 @@
 # Optional ATLAS configuration in the existing Windows helper
 
-This document applies only when using the existing Windows workstation for NFC tag encoding. Mark uses a MacBook for ATLAS browser grading, review and approval; none of this Windows/PowerShell setup is required for those actions. This helper does not implement macOS NFC encoding.
+This document applies only when using the existing Windows workstation for NFC tag encoding. Mark uses a MacBook for ATLAS browser grading, review and approval; none of this Windows/PowerShell setup is required for those actions. The selected MacBook NFC rework is documented in [MAC_NFC.md](../../docs/atlas/MAC_NFC.md); this Windows helper does not implement it.
 
 The stable `start-ai-grader-nfc-helper.ps1` launcher reads the same protected
 `C:\TenKings\config\ai-grader-nfc\helper.json`. These optional properties add

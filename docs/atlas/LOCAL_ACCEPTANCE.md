@@ -2,7 +2,7 @@
 
 The runtime evidence below records M9–M13 implementation commit `b75e26f4` on `codex/atlas-completion-20260908`, following M7 `0c170947` and M8 `d8d74bb3`. [COMPLETION.md](COMPLETION.md) describes the implemented workflow; this record states what was actually verified and what remains.
 
-Subsequent owner clarification on September 8: **Mark uses a MacBook for ATLAS grading**. Browser grading/review/approval require no Windows setup. The [canonical blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) now records that clarification. Windows results and pending tests below concern the existing NFC helper only; they are not MacBook grading prerequisites. No macOS NFC adapter or real tag acceptance is established by the recorded tests.
+Subsequent owner direction on September 8 selects **MacBook grading and NFC encoding with the same ACR1552U/F8215 hardware**, fully integrated in ATLAS. The [canonical blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) records the new native automation target. Windows results below concern the previous helper; they do not establish Mac encoding acceptance. [MAC_NFC.md](MAC_NFC.md) tracks the native rework separately from these completed implementation tests.
 
 ## Verified locally
 
@@ -43,7 +43,7 @@ The preparation release remains **null**. Live staff/provider/worker/NFC control
 
 The grading release targets Mark's MacBook browser and needs selected staff/public/private and operator hosts, protected distinct credentials, current source/storage/preparation/worker evidence, assigned trained humans and explicit caps. Its publication, migration, deployment and activation actions require their exact operational scope. MacBook browser and physical label scale/QR acceptance remain.
 
-For physical NFC, first select the actual workstation. If the existing Windows path is used, validate its eight skipped groups and three PowerShell configuration/maintenance/update suites. If the MacBook will encode tags, implement and validate a macOS device/signing adapter; the current Windows helper cannot provide that support. Either physical path needs actual reader, signer, encoding, permanent lock, hosted receipt and finishing acceptance. [Windows NFC configuration](../../scripts/ai-grader-nfc/ATLAS_CONFIGURATION.md) and [finishing instructions](../../packages/atlas-finishing/README.md) describe the currently implemented integration.
+For physical NFC, complete and validate the selected MacBook native device/signing adapter, exact F8215 locking profile and automatic station workflow using the same reader/tags. The actual reader, signer, encoding, physical lock, hosted acknowledgement and finishing need hardware acceptance. The eight Windows-only test groups and three PowerShell suites remain historical helper limitations; they are not requirements to launch Mac grading or a substitute for Mac NFC acceptance.
 
 Final supervised acceptance is **exactly ten real cards**, with the approved cohort, time window, reviewers and per-card/batch limits. Record measured quality, failures, elapsed time, reconciled invoices and every physical result before owner acceptance or expansion.
 
