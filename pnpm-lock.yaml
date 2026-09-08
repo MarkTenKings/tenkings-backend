@@ -325,6 +325,12 @@ importers:
 
   frontend/atlas-app:
     dependencies:
+      '@atlas/finishing':
+        specifier: workspace:*
+        version: link:../../packages/atlas-finishing
+      qrcode:
+        specifier: ^1.5.4
+        version: 1.5.4
       '@atlas/service-bridge':
         specifier: workspace:*
         version: link:../../packages/atlas-service-bridge
@@ -393,6 +399,9 @@ importers:
 
   frontend/nextjs-app:
     dependencies:
+      '@atlas/operator':
+        specifier: workspace:*
+        version: link:../../packages/atlas-operator
       '@atlas/service-bridge':
         specifier: workspace:*
         version: link:../../packages/atlas-service-bridge
@@ -586,6 +595,8 @@ importers:
         version: link:../atlas-grading-core
 
   packages/atlas-contracts: {}
+
+  packages/atlas-finishing: {}
 
   packages/atlas-operator:
     dependencies:

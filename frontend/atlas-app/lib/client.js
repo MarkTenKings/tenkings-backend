@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { staffClientRequest } from './client-request.mjs';
 const messages = {
     SIGN_IN_NOT_AVAILABLE: 'Sign-in is not available for these details.',
     USE_INTERNATIONAL_PHONE: 'Enter the full number with a country code, such as +1.',
@@ -38,11 +39,8 @@ const messages = {
 };
 export const approvalMessage = code => messages[code] ?? 'Save and review this report before approving.';
 export async function api(path, { body, csrf, signal } = {}) {
-    const response = await fetch(`/api/staff/${path}`, { method: body === undefined ? 'GET' : 'POST',
-        credentials: 'same-origin', cache: 'no-store', signal,
-        headers: body === undefined ? {} : { 'Content-Type': 'application/json', 'X-Atlas-Csrf': csrf ?? '' },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    const data = await response.json();
+    const response = await staffClientRequest(path, { body, csrf, signal });
+    const { data } = response;
     if (!response.ok) {
         const error = new Error(messages[data.error] ?? 'The request could not be completed. Your unsaved notes are kept.');
         error.code = data.error;

@@ -11,6 +11,7 @@ export class ScopedGradingBridge<Tx, Source extends { id: string; createdByUserI
             loadSource(tx: Tx, card: BridgeCase): Promise<Source>;
             sourceEvidence(source: Source, sourceRevision?: string): unknown;
             assertSourceAdmission(source: Source): void;
+            assertFreshDetection(tx: Tx, source: Source): Promise<void>;
             reportSource(source: Source): unknown;
             readEvidence(descriptor: EvidenceDescriptor): Promise<Uint8Array>;
             perform(input: { source: Source; action: Action; policy: PilotPolicy; signal: AbortSignal;

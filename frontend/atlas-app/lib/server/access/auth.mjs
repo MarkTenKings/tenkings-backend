@@ -63,7 +63,7 @@ export class DurableStaffAuth {
             return work({ ...context, identity: current.identity, session: current.session });
         });
     }
-    async bootstrap(header, client = 'loopback') {
+    async bootstrap(header, client = 'loopback', { reauthenticate = false } = {}) {
         return unwrap(await this.database.transaction(async context => {
             const { tx, now, control } = context, jar = this.jar(header);
             let token = jar[this.config.cookies.browser];
@@ -75,7 +75,7 @@ export class DurableStaffAuth {
             }
             const sessionToken = jar[this.config.cookies.session];
             const current = tokenShape(sessionToken) && await this.current(context, hash(sessionToken), hash(token));
-            return { browserToken: token, csrf: this.digest(current ? `session:${sessionToken}` : `browser:${token}`),
+            return { browserToken: token, csrf: this.digest(current && !reauthenticate ? `session:${sessionToken}` : `browser:${token}`),
                 staff: current ? this.actor(current, hash(token)) : null };
         }));
     }

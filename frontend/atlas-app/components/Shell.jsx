@@ -37,6 +37,7 @@ export default function Shell({ children, staff, title = 'Review queue', workspa
     </aside>
     <div className="app-body">
       <header className="topbar"><div><span className="breadcrumb">Staff</span><span className="crumb-slash">/</span>{workspace ? <Link href="/grading">Review queue</Link> : <span>{operations ? 'Operations' : 'Review queue'}</span>}{workspace && <><span className="crumb-slash">/</span><span>Card workspace</span></>}</div><div className="topbar-actions">{staff?.mode !== 'PRODUCTION' && <span className="local-badge"><i />{staff?.mode === 'LOCAL_FIXTURE' ? 'Persistent local preview' : 'Local preview'}</span>}<button className="mobile-signout" onClick={logout} disabled={busy} aria-label="Sign out">↗</button></div></header>
+      <nav className="mobile-navigation" aria-label="Staff workspace"><Link href="/grading" aria-current={operations ? undefined : 'page'}>Review queue</Link><Link href="/operations" aria-current={operations ? 'page' : undefined}>Operations</Link></nav>
       {staff?.mode !== 'PRODUCTION' && <div className="fixture-strip">Synthetic cards &amp; sign-in <span>·</span> {staff?.mode === 'LOCAL_FIXTURE' ? 'Drafts are saved in this local database and survive app restarts.' : 'Drafts stay in this local process and reset when it stops.'}</div>}
       {error && <Notice error>{error}</Notice>}
       {children}

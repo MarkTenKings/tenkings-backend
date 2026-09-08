@@ -10,6 +10,7 @@ import { currentSpeedsterPreparationRelease } from './speedsterPreparationReleas
 import { readStorageBufferBounded } from './storage';
 import { currentSpeedsterDetectorReleasePolicy } from './speedsterCurrentRelease';
 import { SPEEDSTER_RULE_VERSION } from '../ai-grader-v2/contracts';
+import { assertAtlasFreshDetection, withAtlasFreshDetection } from './atlasFreshDetection';
 
 export function atlasGradingPolicyHash() {
     return digest(canonical({ purpose: 'atlas-grading-policy-v1', ruleVersion: SPEEDSTER_RULE_VERSION,
@@ -35,7 +36,11 @@ export function atlasGradingBridgeConfig(env: NodeJS.ProcessEnv = process.env) {
         receiptKeyId: env.AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_HMAC_KEY_ID,
         receiptKeyHash: digest(env.AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_HMAC_SECRET ?? ''),
         previousReceiptKeysHash: digest(env.AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_PREVIOUS_KEYS_JSON ?? ''),
-        detectorDeadlineMs: env.AI_GRADER_SPEEDSTER_DETECT_DEADLINE_MS ?? '55000' }));
+        detectorDeadlineMs: env.AI_GRADER_SPEEDSTER_DETECT_DEADLINE_MS ?? '55000',
+        machineAdmissionKeyHash: digest(env.ATLAS_MACHINE_ADMISSION_KEY ?? ''),
+        machineExecutionKeyHash: digest(env.ATLAS_MACHINE_EXECUTION_KEY ?? ''),
+        machineRuntimeHash: env.ATLAS_OPERATOR_RUNTIME_HASH ?? '',
+        machineIntakeRosterHash: digest(env.ATLAS_INTAKE_ALLOWED_PHONE_HASHES_JSON ?? '') }));
     return { ...config, configHash, key };
 }
 
@@ -72,18 +77,20 @@ export function assertAtlasSpeedsterSourceAdmission(source: SpeedsterReviewActio
         assertPreparationIdentity(authority!.input.preparationIdentity, approved);
     }
 }
-export function createAtlasGradingBridge(client: PrismaClient, config: ReturnType<typeof atlasGradingBridgeConfig>) {
-    return new ScopedGradingBridge({ client, config, ports: {
+export function createAtlasGradingPorts(client: PrismaClient, config: ReturnType<typeof atlasGradingBridgeConfig>) {
+    return {
         async loadSource(tx: Prisma.TransactionClient, card: { sourceId: string; sourceOwnerId: string }) {
-            const row = await tx.aiGraderV2Session.findFirst({ where: { id: card.sourceId, createdByUserId: card.sourceOwnerId },
-                select: { id: true, createdByUserId: true, cardProfile: true, workflowState: true, identity: true,
-                    capture: true, reviewedDefects: true, gradeReport: true, mapRevisionId: true, mapFilterPolicyVersion: true,
-                    mapRegistration: true, updatedAt: true } });
+            const [row] = await tx.$queryRaw<SpeedsterReviewActionSession[]>`SELECT id,"createdByUserId","cardProfile","workflowState",identity,
+                capture,"reviewedDefects","gradeReport","mapRevisionId","mapFilterPolicyVersion","mapRegistration","updatedAt"
+                FROM public."AiGraderV2Session" WHERE id=${card.sourceId} AND "createdByUserId"=${card.sourceOwnerId} FOR SHARE`;
             requireBridge(row?.workflowState === 'CAPTURED', 'SOURCE_NOT_CAPTURED');
             return resolvePersistedSpeedsterPreparationCapture(row!);
         },
         sourceEvidence: atlasSpeedsterSourceEvidence,
         assertSourceAdmission: assertAtlasSpeedsterSourceAdmission,
+        async assertFreshDetection(tx: Prisma.TransactionClient, source: SpeedsterReviewActionSession) {
+            await assertAtlasFreshDetection(tx, source);
+        },
         reportSource(source: SpeedsterReviewActionSession) {
             return { cardProfile: source.cardProfile, identity: source.identity, capture: source.capture,
                 reviewedDefects: source.reviewedDefects, gradeReport: source.gradeReport,
@@ -95,8 +102,9 @@ export function createAtlasGradingBridge(client: PrismaClient, config: ReturnTyp
             policy: { maxWorkerCalls: number }; signal: AbortSignal;
             beforeSessionLock: SpeedsterReviewDependencyOptions['beforeSessionLock']; afterPersist: SpeedsterReviewDependencyOptions['afterPersist'] }) {
             const fetchImpl = boundedWorkerFetch({ serviceUrl: config.serviceUrl, maxCalls: input.policy.maxWorkerCalls, signal: input.signal });
-            const deps = createSpeedsterReviewDependencies(client, { fetchImpl, signal: input.signal,
+            const original = createSpeedsterReviewDependencies(client, { fetchImpl, signal: input.signal,
                 beforeSessionLock: input.beforeSessionLock, afterPersist: input.afterPersist });
+            const deps = input.action.type === 'INITIALIZE' ? withAtlasFreshDetection(input.source, original) : original;
             const load = deps.loadOwnedSession;
             deps.loadOwnedSession = async identity => {
                 const source = await load(identity);
@@ -106,5 +114,8 @@ export function createAtlasGradingBridge(client: PrismaClient, config: ReturnTyp
             };
             return applySpeedsterReviewAction({ sessionId: input.source.id, createdByUserId: input.source.createdByUserId, action: input.action }, deps);
         },
-    } });
+    };
+}
+export function createAtlasGradingBridge(client: PrismaClient, config: ReturnType<typeof atlasGradingBridgeConfig>) {
+    return new ScopedGradingBridge({ client, config, ports: createAtlasGradingPorts(client, config) });
 }

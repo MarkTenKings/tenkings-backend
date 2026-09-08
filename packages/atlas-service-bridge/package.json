@@ -10,7 +10,11 @@
     "./public-media": { "types": "./src/public-media.d.mts", "default": "./src/public-media.mjs" },
     "./operator-images": { "types": "./src/operator-images.d.mts", "default": "./src/operator-images.mjs" },
     "./operator-evidence": { "types": "./src/operator-evidence.d.mts", "default": "./src/operator-evidence.mjs" },
-    "./intake": { "types": "./src/intake.d.mts", "default": "./src/intake.mjs" }
+    "./intake": { "types": "./src/intake.d.mts", "default": "./src/intake.mjs" },
+    "./machine-initialize": { "types": "./src/machine-initialize.d.mts", "default": "./src/machine-initialize.mjs" },
+    "./machine-initialize-transport": { "types": "./src/machine-initialize-transport.d.mts", "default": "./src/machine-initialize-transport.mjs" },
+    "./trusted-learning": { "types": "./src/trusted-learning.d.mts", "default": "./src/trusted-learning.mjs" },
+    "./identity-correction": { "types": "./src/identity-correction.d.mts", "default": "./src/identity-correction.mjs" }
   },
   "dependencies": { "@atlas/grading-core": "workspace:*" },
   "scripts": { "test": "node --test test/*.test.mjs" }

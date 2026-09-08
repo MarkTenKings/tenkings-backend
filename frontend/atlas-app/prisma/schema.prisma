@@ -172,6 +172,7 @@ model StaffOperation {
 
 
 model StaffAnalysisRevision {
+  identityCorrectionId String? @unique @db.Uuid
   operationId       String?  @unique @db.Uuid
   specimenId        String   @db.Uuid
   specimen          StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
@@ -335,6 +336,7 @@ model StaffOperatorControl {
 }
 
 model StaffOperatorRun {
+  initializationId String? @unique @db.Uuid
   id                       String @id @db.Uuid
   specimenId               String @db.Uuid
   pilotId                  String @db.Uuid
@@ -528,4 +530,310 @@ model StaffSourceAdmission {
   createdAt DateTime
   expiresAt DateTime
   @@index([actorId,sessionHash,operationsGrantId,sourceType,sourceId,sourceOwnerId,createdAt], map: "StaffSourceAdmission_scope_idx")
+}
+
+model StaffMachineInitialization {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  pilotId String @db.Uuid
+  gradingOperationId String @unique @db.Uuid
+  runtimeHash String @db.VarChar(64)
+  evidenceHash String @db.VarChar(64)
+  operatorPolicyHash String @db.VarChar(64)
+  bridgePolicyHash String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  sourceHash String @db.VarChar(64)
+  sourceRevision String @db.VarChar(80)
+  expectedAnalysisRevision Int
+  expectedReviewRevision Int
+  controlRevision Int
+  operatorRevision Int
+  bridgeRevision Int
+  admittedById String @db.Uuid
+  admittedSessionHash String @db.VarChar(64)
+  admittedAccessVersion Int
+  operationsGrantId String @db.Uuid
+  admissionReason String @db.VarChar(500)
+  authorizationEvidenceHash String @db.VarChar(64)
+  deadlineAt DateTime
+  createdAt DateTime
+  dispatchedAt DateTime?
+  finishedAt DateTime?
+  state String
+  failureCode String? @db.VarChar(80)
+  @@index([specimenId,state], map: "StaffMachineInitialization_specimen_state_idx")
+}
+
+model StaffNfcControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  origin String
+  deploymentId String
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  signingKeyHash String @db.VarChar(64)
+  trustHash String @db.VarChar(64)
+  revision Int @default(1)
+  updatedAt DateTime @default(now())
+}
+
+model StaffLabelIssue {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.VarChar(80)
+  inputHash String @db.VarChar(64)
+  createdAt DateTime
+  labelCanonical String @db.Text
+  labelHash String @db.VarChar(64)
+  @@unique([id,specimenId,approvalId])
+  @@unique([actorId,operationId])
+  @@index([specimenId,createdAt,id], map: "StaffLabelIssue_specimen_created_idx")
+}
+
+model StaffNfcJob {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.VarChar(80)
+  inputHash String @db.VarChar(64)
+  createdAt DateTime
+  labelIssueId String @db.Uuid
+  jobCanonical String @db.Text
+  jobHash String @db.VarChar(64)
+  jobEnvelopeSha256 String @unique @db.VarChar(64)
+  bindingHash String @db.VarChar(64)
+  expiresAt DateTime
+  nfcConfigHash String @db.VarChar(64)
+  nfcControlRevision Int
+  @@unique([id,specimenId,approvalId])
+  @@unique([actorId,operationId])
+  @@index([specimenId,createdAt,id], map: "StaffNfcJob_specimen_created_idx")
+}
+
+model StaffNfcVerification {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.VarChar(80)
+  inputHash String @db.VarChar(64)
+  createdAt DateTime
+  jobId String @unique @db.Uuid
+  resultCanonical String @db.Text
+  resultHash String @unique @db.VarChar(64)
+  readbackPayloadSha256 String @db.VarChar(64)
+  workstationKeyId String @db.VarChar(64)
+  observedAt DateTime
+  nfcConfigHash String @db.VarChar(64)
+  nfcControlRevision Int
+  @@unique([id,specimenId,approvalId])
+  @@unique([actorId,operationId])
+  @@index([specimenId,createdAt,id], map: "StaffNfcVerification_specimen_created_idx")
+}
+
+model StaffPhysicalFinish {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.VarChar(80)
+  inputHash String @db.VarChar(64)
+  createdAt DateTime
+  labelIssueId String @db.Uuid
+  verificationId String @db.Uuid
+  stage String
+  assemblyId String? @db.Uuid
+  physicalConfirmedAt DateTime
+  @@unique([labelIssueId,verificationId,stage])
+  @@unique([id,specimenId,approvalId,labelIssueId,verificationId])
+  @@unique([id,specimenId,approvalId])
+  @@unique([actorId,operationId])
+  @@index([specimenId,createdAt,id], map: "StaffPhysicalFinish_specimen_created_idx")
+}
+
+model StaffOperationalResolution {
+  id String @id @db.Uuid
+  kind String
+  recordId String @db.Uuid
+  specimenId String @db.Uuid
+  pilotId String @db.Uuid
+  operationId String @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  controlRevision Int
+  operationsGrantId String @db.Uuid
+  inputHash String @db.VarChar(64)
+  bindingHash String @db.VarChar(64)
+  sourceEvidenceHash String @db.VarChar(64)
+  evidenceHash String @db.VarChar(64)
+  reason String @db.VarChar(500)
+  createdAt DateTime
+  @@unique([actorId,operationId])
+  @@unique([kind,recordId])
+  @@index([specimenId,sourceEvidenceHash], map: "StaffOperationalResolution_evidence_idx")
+}
+
+model StaffLearningControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  origin String
+  deploymentId String @db.VarChar(120)
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  clientKeyHash String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  phoneAllowlistHash String @db.VarChar(64)
+  revision Int @default(1)
+  updatedAt DateTime @default(now())
+}
+
+model StaffLearningCandidates {
+  id String @id @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  analysisRevision Int
+  reviewRevision Int
+  evidenceHash String @db.VarChar(64)
+  analysisHash String @db.VarChar(64)
+  reviewHash String @db.VarChar(64)
+  sourceRevision String @db.VarChar(80)
+  sourceType String
+  sourceId String @db.VarChar(128)
+  sourceOwnerId String @db.VarChar(128)
+  rawFindingsHash String @db.VarChar(64)
+  generatorVersion String @db.VarChar(80)
+  fingerprintVersion String @db.VarChar(160)
+  gradingPolicyHash String @db.VarChar(64)
+  bridgeConfigHash String @db.VarChar(64)
+  candidateCanonical String @db.Text
+  candidateHash String @db.VarChar(64)
+  bundleHash String @db.VarChar(64)
+  createdAt DateTime
+  expiresAt DateTime
+  @@unique([id,specimenId,approvalId])
+  @@index([actorId,sessionHash,specimenId,approvalId,createdAt], map: "StaffLearningCandidates_scope_idx")
+}
+
+model StaffTrustedLearningDecision {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  candidatesId String @db.Uuid
+  bundleHash String @db.VarChar(64)
+  rawFindingsHash String @db.VarChar(64)
+  analysisRevision Int
+  reviewRevision Int
+  evidenceHash String @db.VarChar(64)
+  analysisHash String @db.VarChar(64)
+  reviewHash String @db.VarChar(64)
+  sourceRevision String @db.VarChar(80)
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.VarChar(80)
+  inputHash String @db.VarChar(64)
+  decisionCanonical String @db.Text
+  decisionHash String @db.VarChar(64)
+  status String
+  createdAt DateTime
+  @@unique([actorId,operationId])
+  @@index([specimenId,createdAt,id], map: "StaffTrustedLearningDecision_specimen_created_idx")
+}
+
+
+model StaffIdentityCorrectionControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  origin String
+  deploymentId String @db.VarChar(120)
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  clientKeyHash String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  phoneAllowlistHash String @db.VarChar(64)
+  revision Int @default(1)
+  updatedAt DateTime @default(now())
+}
+
+model StaffIdentityCorrection {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  actorId String @db.Uuid
+  operationId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  browserHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  correctionControlRevision Int
+  gradingPolicyHash String @db.VarChar(64)
+  bridgeConfigHash String @db.VarChar(64)
+  requestCanonical String @db.Text
+  inputHash String @db.VarChar(64)
+  sourceType String
+  sourceId String @db.VarChar(128)
+  sourceOwnerId String @db.VarChar(128)
+  expectedAnalysisRevision Int
+  expectedReviewRevision Int
+  expectedEvidenceRevision Int
+  resultAnalysisRevision Int
+  resultReviewRevision Int
+  resultEvidenceRevision Int
+  oldSourceRevision String @db.VarChar(80)
+  newSourceRevision String @db.VarChar(80)
+  oldSourceHash String @db.VarChar(64)
+  newSourceHash String @db.VarChar(64)
+  oldEvidenceHash String @db.VarChar(64)
+  newEvidenceHash String @db.VarChar(64)
+  oldReportHash String @db.VarChar(64)
+  newReportHash String @db.VarChar(64)
+  oldReviewHash String @db.VarChar(64)
+  newReviewHash String @db.VarChar(64)
+  oldAdmissionHash String @db.VarChar(64)
+  oldIdentityCanonical String @db.Text
+  newIdentityCanonical String @db.Text
+  oldEvidenceCanonical String @db.Text
+  newEvidenceCanonical String @db.Text
+  rawSourceCanonical String @db.Text
+  rawSourceHash String @db.VarChar(64)
+  nextRawSourceCanonical String @db.Text
+  nextRawSourceHash String @db.VarChar(64)
+  proofCanonical String @db.Text
+  proofHash String @db.VarChar(64)
+  priorApprovalId String? @db.Uuid
+  createdAt DateTime
+  @@unique([actorId,operationId])
+  @@unique([id,specimenId])
+  @@unique([specimenId,expectedAnalysisRevision])
+  @@index([sourceId,sourceOwnerId,createdAt], map: "StaffIdentityCorrection_source_idx")
 }

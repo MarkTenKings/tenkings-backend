@@ -24,7 +24,7 @@ function fixture() {
         session: { tokenHash: SHA, identityId, browserHash: BROWSER, controlRevision: 3, accessVersion: 4,
             revokedAt: null, createdAt: new Date(+NOW - 60_000), expiresAt: new Date(+NOW + 1200_000) },
         role: { role: operationsConfig.roleName, database: operationsConfig.databaseName, unsafe: false },
-        schemas: [], sequences: [], functions: ['lock_control()', 'lock_operations_grants(uuid)', 'lock_source_admissions(uuid, text, uuid, text, text, text)'].map(name => ({ name, schema: 'atlas_staff', definer: true })),
+        schemas: [], sequences: [], functions: ['lock_control()', 'lock_operations_grants(uuid)', 'lock_source_admissions(uuid, text, uuid, text, text, text)', 'apply_operational_resolution(uuid)'].map(name => ({ name, schema: 'atlas_staff', definer: true })),
         columns: Object.entries(OPERATION_GRANTS).flatMap(([name, grants]) =>
             [...new Set(['id', ...(grants.INSERT ?? []), ...(grants.UPDATE ?? [])])].map(column => ({ schema: 'atlas_staff', name, column,
                 sel: true, ins: grants.INSERT?.includes(column) === true, upd: grants.UPDATE?.includes(column) === true, refs: false, extra: false }))),

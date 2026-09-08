@@ -30,7 +30,7 @@ try {
     await delay(50);
   }
   let checks = 0;
-  for (const path of ['/', '/grading', '/cards/sample-001', '/api/staff/session', '/api/staff/cards', '/api/staff/cards/sample-001', '/api/staff/evidence/sample-001/FRONT']) {
+  for (const path of ['/', '/grading', '/operations', '/cards/sample-001', '/api/staff/session', '/api/staff/cards', '/api/staff/cards/sample-001', '/api/staff/evidence/sample-001/FRONT']) {
     const result = await fetch(`${origin}${path}`, { redirect: 'manual' });
     assert.equal(result.status, 503, path);
     assert.match(result.headers.get('cache-control'), /no-store/);
@@ -48,6 +48,15 @@ try {
     const response = await fetch(`${origin}/api/staff/cards/00000000-0000-4000-8000-000000000000/${suffix}`,
       suffix.startsWith('operations/') ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: '{}' });
     assert.equal(response.status, 503); assert.equal(response.headers.get('set-cookie'), null); checks++;
+  }
+  const card = '00000000-0000-4000-8000-000000000000';
+  for (const path of [`cards/${card}/identity-correction`, `cards/${card}/learning/preview`, `cards/${card}/learning/decisions`,
+      ...['label', 'nfc-job', 'nfc-verify', 'physical'].map(action => `cards/${card}/finishing/${action}`),
+      'operations/machine/admit', 'operations/resolution/inspect', 'operations/resolution/cancel-initialization',
+      'operations/resolution/abandon', 'operations/intake/admit', 'operations/roster/update', 'operations/invoices/reconcile']) {
+    const response = await fetch(`${origin}/api/staff/${path}`, { method:'POST', headers:{'Content-Type':'application/json',Origin:origin},body:'{}' });
+    assert.equal(response.status,503,path);assert.equal(response.headers.get('set-cookie'),null);
+    assert.deepEqual(await response.json(),{error:'STAFF_ACCESS_NOT_ENABLED'});checks++;
   }
   console.log(JSON.stringify({ status: 'BUILT_PRODUCTION_DENIAL_PASS', checks, fixtureFlagPresent: true, sessionCookiesIssued: 0, providerRequests: 0 }));
 } finally {

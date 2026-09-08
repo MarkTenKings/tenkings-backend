@@ -22,11 +22,15 @@ export const OPERATION_GRANTS = Object.freeze(Object.fromEntries(Object.entries(
         UPDATE: ['fence', 'canReview', 'expiresAt', 'revokedAt'] },
     StaffGradingExecution: { UPDATE: ['actualMicroUsd', 'costEvidenceHash'] },
     StaffOperatorAttempt: { UPDATE: ['actualMicroUsd', 'costEvidenceHash'] },
-    StaffGradingOperation: {}, StaffOperatorRun: {},
+    StaffGradingOperation: {}, StaffOperatorRun: {}, StaffMachineInitialization: {}, StaffAnalysisRevision: {},
+    StaffOperationalResolution: { INSERT: ['id', 'kind', 'recordId', 'specimenId', 'pilotId', 'operationId', 'actorId',
+        'sessionHash', 'accessVersion', 'controlRevision', 'operationsGrantId', 'inputHash', 'bindingHash',
+        'sourceEvidenceHash', 'evidenceHash', 'reason', 'createdAt'] },
 }).map(([table, grants]) => [table, Object.freeze(Object.fromEntries(Object.entries(grants)
     .map(([operation, columns]) => [operation, Object.freeze(columns)])))])));
 
-const FUNCTIONS = Object.freeze(['lock_control()', 'lock_operations_grants(uuid)', 'lock_source_admissions(uuid, text, uuid, text, text, text)']);
+const FUNCTIONS = Object.freeze(['lock_control()', 'lock_operations_grants(uuid)', 'lock_source_admissions(uuid, text, uuid, text, text, text)',
+    'apply_operational_resolution(uuid)']);
 
 /** Offline reviewed provisioning helper only; the runtime never executes it. */
 export function operationsGrantSQL(role) {

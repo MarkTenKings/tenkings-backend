@@ -198,6 +198,43 @@ public sealed record TenKingsV2NfcOperationResponse(
 
 public sealed record TenKingsV2NfcAcknowledgeResponse(bool Cleaned);
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AtlasNfcPrepareRequest(AtlasNfcSignedJob Job, bool FreshTagConfirmed);
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AtlasNfcStatusRequest(string JobEnvelopeSha256);
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AtlasNfcSuccessAcknowledgeRequest(string JobEnvelopeSha256, bool TagRemoved);
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AtlasNfcDiscardAcknowledgeRequest(
+    string JobEnvelopeSha256,
+    string AcknowledgementNonce,
+    string Phase,
+    bool TagRemoved);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AtlasNfcOperationResponse(
+    string HelperProtocolVersion,
+    string HelperVersion,
+    string HelperCapability,
+    string JobEnvelopeSha256,
+    string SpecimenId,
+    string ApprovalId,
+    int ApprovalVersion,
+    string PublicHash,
+    string PublicToken,
+    string Url,
+    string Phase,
+    bool Terminal,
+    string? ErrorCode,
+    string? DiscardAcknowledgementNonce,
+    AtlasNfcTerminalResult? Result);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AtlasNfcAcknowledgeResponse(bool Cleaned);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record AtlasNfcCapabilities(string HelperCapability, string WorkstationKeyId, IReadOnlyList<string> TrustedJobSigningKeyIds);
+
 public sealed record WorkstationKeyMetadata(
     string KeyName,
     string KeyId,
@@ -256,6 +293,13 @@ public sealed class NfcHelperException : Exception
 [JsonSerializable(typeof(F8215PrepareRequest))]
 [JsonSerializable(typeof(F8215OperationStatusRequest))]
 [JsonSerializable(typeof(F8215OperationAcknowledgeRequest))]
+[JsonSerializable(typeof(AtlasNfcPrepareRequest))]
+[JsonSerializable(typeof(AtlasNfcStatusRequest))]
+[JsonSerializable(typeof(AtlasNfcSuccessAcknowledgeRequest))]
+[JsonSerializable(typeof(AtlasNfcDiscardAcknowledgeRequest))]
+[JsonSerializable(typeof(ApiEnvelope<AtlasNfcOperationResponse>))]
+[JsonSerializable(typeof(ApiEnvelope<AtlasNfcAcknowledgeResponse>))]
+[JsonSerializable(typeof(ApiEnvelope<AtlasNfcCapabilities>))]
 [JsonSerializable(typeof(TenKingsV2NfcPrepareRequest))]
 [JsonSerializable(typeof(TenKingsV2NfcStatusRequest))]
 [JsonSerializable(typeof(TenKingsV2NfcSuccessAcknowledgeRequest))]

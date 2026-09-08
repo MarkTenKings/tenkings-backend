@@ -104,9 +104,13 @@ export class ScopedGradingBridge {
             requireBridge(source.updatedAt.toISOString() === request.sourceRevision
                 && canonical(this.ports.sourceEvidence(source, checked(card.evidenceCanonical, card.evidenceHash).sourceRevision)) === card.evidenceCanonical, 'SOURCE_REVISION_CHANGED');
             try { this.ports.assertSourceAdmission(source); } catch { requireBridge(false, 'PREPARATION_RELEASE_NOT_ADMITTED'); }
-            if (request.request.action.type === 'INITIALIZE') requireBridge(op.expectedAnalysisRevision === 0
-                && Array.isArray(source.reviewedDefects) && source.reviewedDefects.length === 0
-                && (!source.gradeReport || Object.keys(source.gradeReport).length === 0), 'FRESH_DETECTION_REQUIRED');
+            if (request.request.action.type === 'INITIALIZE') {
+                requireBridge(op.expectedAnalysisRevision === 0
+                    && Array.isArray(source.reviewedDefects) && source.reviewedDefects.length === 0
+                    && (!source.gradeReport || Object.keys(source.gradeReport).length === 0)
+                    && typeof this.ports.assertFreshDetection === 'function', 'FRESH_DETECTION_REQUIRED');
+                await this.ports.assertFreshDetection(tx, source);
+            }
             else requireBridge(op.expectedAnalysisRevision > 0, 'GRADING_NOT_READY');
             const claimId = randomUUID();
             await tx.$executeRaw`INSERT INTO atlas_staff."StaffGradingExecution"

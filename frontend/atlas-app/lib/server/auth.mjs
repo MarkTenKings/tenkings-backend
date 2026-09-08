@@ -76,7 +76,7 @@ export class LocalStaffAuth {
             deny(403, 'SIGN_IN_NOT_AVAILABLE');
         return { id: staff.id, name: staff.name, role: staff.role, mode: 'SYNTHETIC' };
     }
-    bootstrap(header) {
+    bootstrap(header, _client, { reauthenticate = false } = {}) {
         this.prune();
         const jar = cookies(header);
         let token = jar[BROWSER_COOKIE];
@@ -87,7 +87,7 @@ export class LocalStaffAuth {
             this.browsers.set(hash(token), { expiresAt: this.now() + 60 * MINUTE });
         }
         const staff = this.maybeAuthenticate(header);
-        return { browserToken: token, csrf: staff ? this.digest(`session:${jar[SESSION_COOKIE]}`) : this.digest(`browser:${token}`), staff };
+        return { browserToken: token, csrf: staff && !reauthenticate ? this.digest(`session:${jar[SESSION_COOKIE]}`) : this.digest(`browser:${token}`), staff };
     }
     browser(header, csrf) {
         const token = cookies(header)[BROWSER_COOKIE];

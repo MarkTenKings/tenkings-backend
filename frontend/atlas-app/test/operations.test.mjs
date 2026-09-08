@@ -10,7 +10,7 @@ const SHA = 'a'.repeat(64);
 const AUTH = () => ({ operationId: randomUUID(), reason: 'Explicit synthetic operator instruction', authorizationEvidenceHash: SHA });
 function fixture() {
     const names = ['staffIdentity', 'staffSpecimen', 'staffReviewRevision', 'staffAudit', 'staffAssignment',
-        'staffGradingExecution', 'staffGradingOperation', 'staffOperatorRun', 'staffOperatorAttempt'];
+        'staffGradingExecution', 'staffGradingOperation', 'staffOperatorRun', 'staffOperatorAttempt', 'staffMachineInitialization'];
     const state = Object.fromEntries(names.map(name => [name, []]));
     const actorId = randomUUID(), reviewerId = randomUUID();
     state.staffIdentity.push(...[actorId, reviewerId].map(id => ({ id, role: 'REVIEWER', name: 'Synthetic reviewer',

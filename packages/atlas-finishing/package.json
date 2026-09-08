@@ -1,0 +1,5 @@
+{
+  "name": "@atlas/finishing", "version": "0.1.0", "private": true, "type": "module",
+  "exports": { "./nfc": { "types": "./src/nfc.d.mts", "default": "./src/nfc.mjs" }, "./browser": "./browser.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}

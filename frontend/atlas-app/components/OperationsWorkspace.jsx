@@ -1,7 +1,10 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Notice } from './Shell';
-import { api, useStaffResource } from '../lib/client';
+import { useStaffResource } from '../lib/client';
+import MachinePreparation, { operationsRequest } from './MachinePreparation';
+import OperationalRecovery from './OperationalRecovery';
+import { usePendingNavigation } from '../lib/usePendingNavigation';
 import styles from './OperationsWorkspace.module.css';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -54,23 +57,31 @@ export default function OperationsWorkspace() {
     const resource = useStaffResource('operations/roster');
     if (resource.loading) return <div className="empty-state" role="status">Loading operations access…</div>;
     if (resource.error) return <div className="empty-state"><Notice error>{resource.error}</Notice>
-        {resource.signedOut ? <Link href="/">Sign in again</Link> : <button onClick={resource.reload}>Retry operations access</button>}</div>;
+        {resource.signedOut ? <Link href="/?reauthenticate=1">Sign in again</Link> : <button onClick={resource.reload}>Retry operations access</button>}</div>;
     return <Workspace initialRoster={resource.data.roster} csrf={resource.session.csrf} mode={resource.session.mode} />;
 }
 
 function Workspace({ initialRoster, csrf, mode }) {
+    const [currentCsrf, setCurrentCsrf] = useState(csrf);
     const [tab, setTab] = useState('intake'), [roster, setRoster] = useState(initialRoster);
     const [busy, setBusy] = useState(false), [error, setError] = useState(''), [saved, setSaved] = useState(''), [signedOut, setSignedOut] = useState(false);
     const pending = useRef(null), busyRef = useRef(false), [pendingLabel, setPendingLabel] = useState('');
+    usePendingNavigation(()=>Boolean(pending.current),setError);
     const [reason, setReason] = useState(''), [authorizationHash, setAuthorizationHash] = useState('');
     const [sourceId, setSourceId] = useState(''), [sourceOwnerId, setSourceOwnerId] = useState(''), [preview, setPreview] = useState(null);
     const [pilotCards, setPilotCards] = useState([]), [pilotId, setPilotId] = useState(''), [summary, setSummary] = useState(null);
+    const pilotIdRef = useRef(pilotId); pilotIdRef.current = pilotId;
     const [policy, setPolicy] = useState({ expiresAt: '', maxOperationsPerCard: '', maxTotalUsd: '', maxCardUsd: '', reservationUsd: '', maxWorkerCalls: '', deadlineSeconds: '' });
     const [selectedPerson, setSelectedPerson] = useState(''), [person, setPerson] = useState({ role: 'REVIEWER', revoked: false, certificationUntil: '', trustedLearningUntil: '' });
     const [assignment, setAssignment] = useState({ specimenId: '', identityId: '', existing: false, expectedFence: '', canReview: false, expiresAt: '', revoked: false });
     const [invoice, setInvoice] = useState({ recordKey: '', invoiceId: '', lineId: '', documentSha256: '', actualUsd: '' });
     const locked = busy || Boolean(pendingLabel) || signedOut;
     const selected = roster.find(row => row.id === selectedPerson);
+    useEffect(() => {
+        const leaving = event => { if (pending.current) { event.preventDefault(); event.returnValue = ''; } };
+        window.addEventListener('beforeunload', leaving);
+        return () => window.removeEventListener('beforeunload', leaving);
+    }, []);
     useEffect(() => {
         if (selected) setPerson({ role: selected.role, revoked: Boolean(selected.revokedAt),
             certificationUntil: localDate(selected.certificationUntil), trustedLearningUntil: localDate(selected.trustedLearningUntil) });
@@ -84,16 +95,16 @@ function Workspace({ initialRoster, csrf, mode }) {
         busyRef.current = true;
         setBusy(true); setError(''); setSaved('');
         try {
-            const data = await api(request.path, { body: request.body, csrf });
+            const data = await operationsRequest(request.path, { body: request.body, csrf: currentCsrf });
             request.onSuccess(data);
             pending.current = null; setPendingLabel('');
             setSaved(request.success);
         } catch (e) {
             setError(messages[e.code] ?? e.message);
             if (['SIGN_IN_REQUIRED', 'FRESH_HUMAN_OPERATIONS_REQUIRED'].includes(e.code)) setSignedOut(true);
-            // Unknown/lost replies retain the exact request and operation ID.
-            // Known boundary rejections did not commit a service transaction.
-            if (e.code && e.code !== 'TEMPORARILY_UNAVAILABLE') { pending.current = null; setPendingLabel(''); }
+            // A later rejection cannot erase an earlier unconfirmed save.
+            request.uncertain ||= !e.status || e.status >= 500;
+            if (!request.uncertain && e.status >= 400 && e.status < 500) { pending.current = null; setPendingLabel(''); }
         } finally { busyRef.current = false; setBusy(false); }
     }
     function request(label, path, body, onSuccess, success, mutation = true) {
@@ -103,7 +114,7 @@ function Workspace({ initialRoster, csrf, mode }) {
             if (!reason.trim() || reason.length > 500 || !SHA.test(authorizationHash)) throw new Error('Enter the reason and authorization record checksum before saving a change.');
             packet = { ...body, reason, authorizationEvidenceHash: authorizationHash, operationId: crypto.randomUUID() };
         }
-        const next = { label, path, body: packet, onSuccess, success };
+        const next = { label, path, body: structuredClone(packet), onSuccess, success, uncertain: false };
         if (mutation) { pending.current = next; setPendingLabel(label); }
         void send(next);
     }
@@ -156,6 +167,22 @@ function Workspace({ initialRoster, csrf, mode }) {
     function loadSummary() {
         request('Load pilot summary', `operations/pilots/${requireId(pilotId)}`, undefined, data => { setSummary(data.summary); setInvoice(value => ({ ...value, recordKey: '' })); }, 'Pilot summary updated.', false);
     }
+    async function refreshPilotSummary() {
+        const expected = requireId(pilotIdRef.current);
+        const data = await operationsRequest(`operations/pilots/${expected}`);
+        if (pilotIdRef.current === expected && data.summary?.pilotId === expected) setSummary(data.summary);
+    }
+    async function refreshAccess() {
+        if (busyRef.current) return;
+        busyRef.current = true; setBusy(true); setError('');
+        try {
+            const session = await operationsRequest('session');
+            if (!session.staff || !SHA.test(session.csrf)) throw new Error('Sign in in another tab, then refresh access here.');
+            const data = await operationsRequest('operations/roster');
+            setCurrentCsrf(session.csrf); setRoster(data.roster); setSignedOut(false);
+        } catch (e) { setError(messages[e.code] ?? e.message); }
+        finally { busyRef.current = false; setBusy(false); }
+    }
     function reconcile() {
         const cost = summary?.costs.find(row => `${row.kind}:${row.recordId}` === invoice.recordKey);
         if (!cost || cost.actualMicroUsd !== null) throw new Error('Choose an unsettled attempt from the loaded pilot summary.');
@@ -170,7 +197,8 @@ function Workspace({ initialRoster, csrf, mode }) {
 
     return <div className={styles.workspace}>
         {error && <Notice error>{error}</Notice>}{saved && <Notice>{saved}</Notice>}
-        {signedOut && <p><Link className="text-button" href="/">Sign in again →</Link></p>}
+        {signedOut && <p><Link className="text-button" href="/?reauthenticate=1" target="_blank" rel="noopener noreferrer">Sign in in another tab →</Link>
+            <button className="text-button" type="button" disabled={busy} onClick={refreshAccess}>Refresh access in this tab</button></p>}
         {pendingLabel && !busy && !signedOut && <Notice>The result of “{pendingLabel}” is unconfirmed. Your exact request is retained.
             <button className="text-button" type="button" onClick={() => void send(pending.current)}>Check the same request again</button></Notice>}
         <details className={styles.authorization} open><summary>Authorization for changes</summary><p>Use the recorded authorization for the intake, staff or cost changes you are making.</p>
@@ -254,6 +282,13 @@ function Workspace({ initialRoster, csrf, mode }) {
                     </div><button className="primary" type="submit">Record this actual invoice cost</button></fieldset></form>
                 </details>
             </div>}
-        </Panel></div>
+        </Panel>
+        <MachinePreparation csrf={currentCsrf} pilotId={summary?.pilotId ?? ''} specimens={summary?.specimens ?? []}
+            initializations={summary?.initializations ?? []} runs={summary?.runs ?? []} costs={summary?.costs ?? []}
+            reason={reason} authorizationEvidenceHash={authorizationHash} disabled={locked || !summary} onChanged={refreshPilotSummary}/>
+        <OperationalRecovery csrf={currentCsrf} pilotId={summary?.pilotId ?? ''} specimens={summary?.specimens ?? []}
+            initializations={summary?.initializations ?? []} runs={summary?.runs ?? []} costs={summary?.costs ?? []}
+            disabled={locked || !summary} onChanged={refreshPilotSummary}/>
+        </div>
     </div>;
 }

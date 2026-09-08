@@ -15,6 +15,11 @@ import { keyBytes } from '@atlas/service-bridge/protocol';
 import { StaffGrading } from './access/grading.mjs';
 import { StaffProposals } from './access/proposals.mjs';
 import { operationsRuntimeSettings, createOperationsRuntime } from './access/operations-runtime.mjs';
+import { createFinishingRuntime } from './access/finishing-runtime.mjs';
+import { StaffOperationalResolutionService } from './access/resolution.mjs';
+import { machineAdmissionRuntimeSettings, StaffMachinePreparation } from './access/machine.mjs';
+import { createLearningRuntime } from './access/learning-runtime.mjs';
+import { createIdentityCorrectionRuntime } from './access/identity-correction-runtime.mjs';
 
 export function runtime(req, env = process.env) {
     if (env.ATLAS_LOCAL_SYNTHETIC === '1') {
@@ -56,7 +61,14 @@ export function runtime(req, env = process.env) {
     Object.setPrototypeOf(state.reports, StaffReports.prototype);
     Object.setPrototypeOf(state.grading, StaffGrading.prototype);
     Object.setPrototypeOf(state.proposals, StaffProposals.prototype);
+    let machineSettings = null;
+    try { machineSettings = machineAdmissionRuntimeSettings(env, config); } catch { /* New admission denies below; retained records remain readable. */ }
     return { ...state, mode: config.mode, origin: config.origin, cookies: config.cookies,
+        finishing: createFinishingRuntime({ auth: state.auth, review: state.review, staffConfig: config, env }),
+        learning: createLearningRuntime({ auth: state.auth, review: state.review, staffConfig: config, env }),
+        identityCorrection: createIdentityCorrectionRuntime({ auth: state.auth, review: state.review, staffConfig: config, env }),
+        resolution: state.operations ? new StaffOperationalResolutionService({ admin: state.operations.admin }) : null,
+        machine: state.operations ? new StaffMachinePreparation({ admin: state.operations.admin, settings: machineSettings }) : null,
         cookie: local ? undefined : secureStaffCookie, assertRequest,
         // Global/phone budgets remain effective even if the platform cannot
         // provide a trusted per-client address. No arbitrary forwarding header

@@ -65,6 +65,9 @@ public sealed partial class F8215JobCoordinator
         _timeProvider = timeProvider ?? TimeProvider.System;
         if (!_options.IsConfigured) return;
         _options.ValidateConfiguration();
+        if (File.Exists(ProtectedJobDirectory.ContainedFile(_options.JobRoot, AtlasNfcCoordinator.StateFileName)) &&
+            File.Exists(ProtectedJobDirectory.ContainedFile(_options.JobRoot, StateFileName)))
+            throw new NfcHelperException("atlas_nfc_recovery_conflict", "Legacy and ATLAS operations conflict; no state was changed.", false, 503);
         _statePath = ProtectedJobDirectory.ContainedFile(_options.JobRoot, StateFileName);
         RecoverPersistedState();
     }

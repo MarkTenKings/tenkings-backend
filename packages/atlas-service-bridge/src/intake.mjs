@@ -129,7 +129,7 @@ export class ScopedSourceIntake {
             && g.controlRevision === control.revision && ['mode', 'origin', 'deploymentId', 'releaseSha', 'configHash'].every(key => g[key] === control[key])
             && sha(g.authorizationEvidenceHash) && date(g.createdAt) && g.createdAt <= now && date(g.expiresAt) && g.expiresAt > now);
         check(matches.length === 1 && matches[0].id === s.operationsGrantId, 'FRESH_HUMAN_OPERATIONS_REQUIRED');
-        return { session, browser, grant: matches[0] };
+        return { identity, control, session, browser, grant: matches[0] };
     }
     async receive(body, signature) {
         // Authenticate before opening a transaction, then recheck against DB time.

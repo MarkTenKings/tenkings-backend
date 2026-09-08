@@ -27,6 +27,6 @@ export default function OperationsPage({ unavailable, operationsUnavailable, sta
             <Link href="/grading" className="text-button">Review queue →</Link></div>
         {operationsUnavailable ? <section className="empty-state"><h2>Operations access is unavailable.</h2>
             <p>This workspace requires an enabled operations service and a current human operations grant.</p>
-            <Link href="/">Sign in again</Link></section> : <OperationsWorkspace />}
+            <Link href="/?reauthenticate=1">Sign in again</Link></section> : <OperationsWorkspace />}
     </main></Shell>;
 }

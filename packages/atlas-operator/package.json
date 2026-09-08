@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { "./responses": "./src/responses.mjs", "./provider": "./src/provider.mjs", "./ledger": "./src/ledger.mjs",
+  "exports": { "./responses": "./src/responses.mjs", "./provider": "./src/provider.mjs", "./ledger": { "types": "./src/ledger.d.mts", "default": "./src/ledger.mjs" },
     "./policy": "./src/policy.mjs", "./privileges": "./src/privileges.mjs", "./runner": "./src/runner.mjs", "./adapters": "./src/adapters.mjs" },
   "dependencies": { "@atlas/service-bridge": "workspace:*", "@atlas/grading-core": "workspace:*", "zod": "4.1.11" },
   "scripts": { "test": "node --test test/*.test.mjs" }

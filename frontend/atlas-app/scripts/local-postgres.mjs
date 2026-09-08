@@ -82,13 +82,18 @@ try {
     const publicConfig = makePublicConfig({ mode: 'LOCAL_FIXTURE', origin: PUBLIC_LOCAL_ORIGIN, deploymentId: 'local-public-fixture',
         releaseSha: '0'.repeat(40), databaseUrl: db.publicUrl });
     try {
-        await seedLocalStaff(admin, config, { analyses: true, trained: true, traces: true });
+        const identities=await seedLocalStaff(admin, config, { analyses: true, trained: true, traces: true });
+        const reviewer=await admin.staffIdentity.update({where:{id:identities[0].id},data:{accessVersion:2,trustedLearningUntil:new Date(Date.now()+3600_000)}});
+        await admin.staffOperationsGrant.create({data:{id:randomUUID(),identityId:reviewer.id,accessVersion:reviewer.accessVersion,
+            controlRevision:1,mode:config.mode,origin:config.origin,deploymentId:config.deploymentId,releaseSha:config.releaseSha,
+            configHash:config.configHash,authorizationEvidenceHash:'a'.repeat(64),createdAt:new Date(Date.now()-1000),expiresAt:new Date(Date.now()+3600_000)}});
         const { databaseUrl, ...activation } = publicConfig;
         await admin.publicReaderControl.create({ data: { ...activation, enabled: true } });
     } finally { await admin.$disconnect(); }
     const ownership = JSON.parse(readFileSync(join(fixture.directory, 'ownership.json'), 'utf8'));
     const path = join(fixture.directory, 'web-config.json');
-    writeFileSync(path, JSON.stringify({ nonce: ownership.nonce, databaseUrl: db.staffUrl, sessionKey: sessionKey.toString('hex'), phoneKey: phoneKey.toString('hex') }), { mode: 0o600 });
+    writeFileSync(path, JSON.stringify({ nonce: ownership.nonce, databaseUrl: db.staffUrl, operationsDatabaseUrl:db.operationsUrl,
+        sessionKey: sessionKey.toString('hex'), phoneKey: phoneKey.toString('hex') }), { mode: 0o600 });
     const publicPath = join(fixture.directory, 'public-config.json');
     writeFileSync(publicPath, JSON.stringify({ nonce: ownership.nonce, databaseUrl: db.publicUrl }), { mode: 0o600 });
     for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { stop().finally(() => process.exit()); });
@@ -99,7 +104,7 @@ try {
     response = await call('/api/staff/auth/request', { phone: '+12025550141', requestId: randomUUID() }, boot.csrf);
     assert.equal(response.status, 200, await response.clone().text()); const challenge = await response.json(); checks++;
     response = await call('/api/staff/auth/verify', { challengeId: challenge.challengeId, code: '424242' }, boot.csrf);
-    assert.equal(response.status, 200, await response.clone().text()); const signed = await response.json(); checks++;
+    assert.equal(response.status, 200, await response.clone().text()); let signed = await response.json(); checks++;
     response = await call('/grading'); assert.equal(response.status, 200); assert.match(await response.text(), /survive app restarts/); checks++;
     response = await call('/api/staff/cards'); assert.equal(response.status, 200); const { cards } = await response.json(); assert.equal(cards.length, 3); checks++;
     const id = cards.find(c => c.evidenceComplete).id;
@@ -116,6 +121,29 @@ try {
     response = await call(`/api/staff/cards/${id}/approve`, approvalInput, signed.csrf);
     assert.equal(response.status, 200, await response.clone().text());
     const approval = (await response.json()).approval; assert.equal(approval.version, 1); checks++;
+    response=await call(`/api/staff/cards/${id}/finishing`);assert.equal(response.status,200);
+    const finishing=(await response.json()).finishing;assert.equal(finishing.nfcConfigured,false);assert.equal(finishing.stage,'READY_FOR_LABEL');checks++;
+    const labelInput={operationId:randomUUID(),approvalId:finishing.approved.approvalId,
+        approvalVersion:finishing.approved.approvalVersion,publicHash:finishing.approved.publicHash};
+    response=await call(`/api/staff/cards/${id}/finishing/label`,labelInput,signed.csrf);assert.equal(response.status,200,await response.clone().text());
+    const label=(await response.json()).receipt;assert.equal(label.approvalId,approval.approvalId);checks++;
+    response=await call(`/api/staff/cards/${id}/finishing/nfc-job`,{...labelInput,operationId:randomUUID(),labelIssueId:label.id},signed.csrf);
+    assert.equal(response.status,503);assert.equal((await response.json()).error,'NFC_NOT_CONFIGURED');checks++;
+    response=await call(`/api/staff/cards/${id}/learning`);assert.equal(response.status,200,await response.clone().text());
+    assert.deepEqual((await response.json()).learning,{decisions:[],olderDecisionsAvailable:false,applicationAvailable:false});checks++;
+    response=await call(`/api/staff/cards/${id}/learning/preview`,{approvalId:approval.approvalId},signed.csrf);
+    assert.equal(response.status,503);assert.equal((await response.json()).error,'LEARNING_NOT_CONFIGURED');checks++;
+    response=await call('/operations');assert.equal(response.status,200);checks++;
+    response=await call('/api/staff/operations/roster');assert.equal(response.status,200,await response.clone().text());
+    const roster=(await response.json()).roster,observer=roster.find(row=>row.role==='OBSERVER');assert(observer);checks++;
+    const rosterInput={operationId:randomUUID(),identityId:observer.id,expectedAccessVersion:observer.accessVersion,role:'OBSERVER',revoked:false,
+        certificationUntil:null,trustedLearningUntil:null,reason:'Owned synthetic web access revision.',authorizationEvidenceHash:'a'.repeat(64)};
+    response=await call('/api/staff/operations/roster/update',rosterInput,signed.csrf);assert.equal(response.status,200,await response.clone().text());
+    const rosterReceipt=(await response.json()).receipt;assert.equal(rosterReceipt.accessVersion,observer.accessVersion+1);checks++;
+    const emptyPilot=randomUUID();response=await call(`/api/staff/operations/pilots/${emptyPilot}`);assert.equal(response.status,200);
+    const summary=(await response.json()).summary;assert.deepEqual(summary.initializations,[]);assert.deepEqual(summary.costs,[]);assert.deepEqual(summary.specimens,[]);checks++;
+    response=await call('/api/staff/operations/machine/admit',{jobId:randomUUID(),specimenId:id,reason:'Owned synthetic disabled admission.',authorizationEvidenceHash:'a'.repeat(64)},signed.csrf);
+    assert.equal(response.status,503);assert.equal((await response.json()).error,'MACHINE_ADMISSION_NOT_CONFIGURED');checks++;
     response = await call('/api/staff/cards'); assert.equal((await response.json()).cards.find(c => c.id === id).disposition, 'HUMAN_APPROVED'); checks++;
     response = await publicCall(approval.path); assert.equal(response.status, 200, await response.clone().text());
     const publicHtml = await response.text(); assert.match(publicHtml, /SYNTHETIC DEMONSTRATION/); assert.match(publicHtml, /Human-approved grade/);
@@ -155,10 +183,31 @@ try {
     }
     response = await call(`/api/staff/cards/${id}`); assert.equal(response.status, 200, await response.clone().text());
     const restored = (await response.json()).card; assert.equal(restored.draft.revision, 2); assert.deepEqual(restored.draft.observations, input.observations); checks++;
+    assert.equal(restored.grading.sourceRevision, 'local-illustration-v1'); checks++;
+    response = await call(`/cards/${id}`); assert.equal(response.status, 200);
+    assert.match(await response.text(), /Card review/); checks++;
+    response = await call(`/api/staff/cards/${id}/identity-correction`, {}, signed.csrf);
+    assert.equal(response.status, 400); assert.deepEqual(await response.json(), { error: 'IDENTITY_REQUEST_INVALID' }); checks++;
     response = await call(`/api/staff/cards/${id}/draft`, input, signed.csrf); assert.equal(response.status, 200); assert.equal((await response.json()).card.draft.revision, 2); checks++;
     assert.equal(restored.grading.published.matchesCurrent, true); assert.equal(restored.grading.published.version, 1); checks++;
+    response=await call(`/api/staff/cards/${id}/finishing/label`,labelInput,signed.csrf);assert.equal(response.status,200);
+    assert.deepEqual((await response.json()).receipt,label);checks++;
+    response=await call(`/api/staff/cards/${id}/finishing`);assert.equal(response.status,200);
+    const recoveredFinishing=(await response.json()).finishing;assert.equal(recoveredFinishing.labels.length,1);
+    assert.deepEqual(recoveredFinishing.jobs,[]);assert.deepEqual(recoveredFinishing.physical,[]);checks++;
+    response=await call('/api/staff/operations/roster/update',rosterInput,signed.csrf);assert.equal(response.status,200);
+    assert.deepEqual((await response.json()).receipt,rosterReceipt);checks++;
+    response=await call(`/api/staff/cards/${id}/learning`);assert.equal(response.status,200);checks++;
     response = await call(`/api/staff/cards/${id}/approve`, approvalInput, signed.csrf);
     assert.equal(response.status, 200, await response.clone().text()); assert.deepEqual((await response.json()).approval, approval); checks++;
+    response=await call('/?reauthenticate=1');assert.equal(response.status,200);assert.match(await response.text(),/Complete a fresh sign-in/);checks++;
+    response=await call('/api/staff/session?reauthenticate=1');assert.equal(response.status,200);
+    const reauth=await response.json();assert.equal(reauth.staff.id,signed.staff.id);assert.notEqual(reauth.csrf,signed.csrf);checks++;
+    response=await call('/api/staff/auth/request',{phone:'+12025550141',requestId:randomUUID()},reauth.csrf);
+    assert.equal(response.status,200,await response.clone().text());const freshChallenge=await response.json();checks++;
+    response=await call('/api/staff/auth/verify',{challengeId:freshChallenge.challengeId,code:'424242'},reauth.csrf);
+    assert.equal(response.status,200,await response.clone().text());signed=await response.json();checks++;
+    response=await call('/api/staff/operations/roster');assert.equal(response.status,200);checks++;
     response = await call('/api/staff/auth/logout', {}, signed.csrf); assert.equal(response.status, 200);
     response = await call('/api/staff/cards'); assert.equal(response.status, 401); checks++;
     writeFileSync(join(fixture.directory, 'web-result.json'), JSON.stringify({ ok: true, checks, actualWebProcessRestart: true, publicAppRestart: true,

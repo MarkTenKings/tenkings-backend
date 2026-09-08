@@ -3,9 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/client';
 import { Notice, Unavailable } from '../components/Shell';
 import { pageAccess } from '../lib/server/runtime.mjs';
-export function getServerSideProps(ctx) { return pageAccess(ctx, { authenticated: false }); }
-export default function SignIn({ unavailable, mode }) { return unavailable ? <Unavailable /> : <SignInForm mode={mode}/>; }
-function SignInForm({ mode }) {
+export async function getServerSideProps(ctx) {
+    const result = await pageAccess(ctx, { authenticated: false });
+    return result.props ? { ...result, props: { ...result.props, reauthenticate: ctx.query.reauthenticate === '1' } } : result;
+}
+export default function SignIn({ unavailable, mode, reauthenticate = false }) { return unavailable ? <Unavailable /> : <SignInForm mode={mode} reauthenticate={reauthenticate}/>; }
+function SignInForm({ mode, reauthenticate }) {
     const local = mode !== 'PRODUCTION';
     const [phone, setPhone] = useState('');
     const [code, setCode] = useState('');
@@ -16,15 +19,15 @@ function SignInForm({ mode }) {
     const request = useRef(null);
     useEffect(() => {
         const controller = new AbortController();
-        api('session', { signal: controller.signal }).then(s => {
-            if (s.staff)
+        api(`session${reauthenticate ? '?reauthenticate=1' : ''}`, { signal: controller.signal }).then(s => {
+            if (s.staff && !reauthenticate)
                 window.location.replace('/grading');
             else
                 setCsrf(s.csrf);
         }).catch(e => { if (!controller.signal.aborted)
             setError(e.message); });
         return () => controller.abort();
-    }, []);
+    }, [reauthenticate]);
     async function submit(event) {
         event.preventDefault();
         setBusy(true);
@@ -52,6 +55,7 @@ function SignInForm({ mode }) {
     <Head><title>Staff sign-in · ATLAS</title></Head>
     <section className="login-story"><div className="brand">ATLAS<span>STAFF WORKSPACE</span></div><div className="login-orbit" aria-hidden="true"><div /><div /><div /><span>A</span></div><div><p className="eyebrow">A CLOSER LOOK</p><h1>Every detail.<br />Considered.</h1><p>A focused workspace for the people<br />behind every card review.</p></div><small>ATLAS GRADING · INTERNAL WORKSPACE</small></section>
     <section className="login-form-section"><div className="login-form-wrap">{local && <span className="local-badge"><i />{mode === 'LOCAL_FIXTURE' ? 'Persistent local preview' : 'Local preview'}</span>}<h2>{challenge ? 'Enter your code' : 'Welcome to ATLAS'}</h2><p className="muted">{challenge ? 'Use the six-digit code for this sign-in attempt.' : 'Sign in with an owner-approved staff phone number.'}</p>
+      {reauthenticate && <p className="field-help">Complete a fresh sign-in, then return to your open workspace and refresh access or retry the saved request.</p>}
       <form onSubmit={submit}>
         {challenge ? <><label htmlFor="code">Verification code</label><input id="code" name="code" autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoFocus value={code} onChange={e => setCode(e.target.value)} required placeholder="000000" className="code-input"/><p className="field-help">Use the most recent code for this sign-in attempt.</p></> : <><label htmlFor="phone">Phone number</label><input id="phone" name="phone" type="tel" autoComplete="tel" value={phone} onChange={e => { setPhone(e.target.value); request.current = null; }} required placeholder="+1 202 555 0141"/><p className="field-help">Include the country code; use digits without spaces.</p></>}
         {error && <Notice error>{error}</Notice>}

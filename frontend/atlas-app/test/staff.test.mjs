@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { LocalStaffAuth, syntheticVerifyProvider } from '../lib/server/auth.mjs';
 import { LocalReviewStore } from '../lib/server/review.mjs';
 import { createHandler } from '../lib/server/http.mjs';
-import { BROWSER_COOKIE, SESSION_COOKIE, FIXTURE_PHONE, FIXTURE_CODE, LOCAL_HOST, LOCAL_ORIGIN, parseApprovedPhones } from '../lib/server/policy.mjs';
+import { BROWSER_COOKIE, SESSION_COOKIE, FIXTURE_PHONE, FIXTURE_CODE, LOCAL_HOST, LOCAL_ORIGIN, parseApprovedPhones, hash } from '../lib/server/policy.mjs';
 // All transports/stores are synthetic and dependency-free; no network/provider SDK.
 const LOCAL = { NODE_ENV: 'development', ATLAS_LOCAL_SYNTHETIC: '1' };
 function fixture(options = {}, env = LOCAL) {
@@ -53,6 +53,70 @@ function draft(card, change = {}) {
         evidenceHash: card.evidenceHash, observations: { FRONT: 'Inspect the upper left edge.', BACK: 'No observation yet.' },
         reviewedSides: [], identityReviewed: false, disposition: 'IN_REVIEW', ...change };
 }
+test('explicit reauthentication returns browser CSRF without replacing or refreshing the existing signed-in session', async () => {
+    let now = 1000;
+    const f = fixture({ now: () => now }), c = f.client(), login = await c.login();
+    const browser = c.jar[BROWSER_COOKIE], session = c.jar[SESSION_COOKIE], previous = structuredClone(f.auth.sessions.get(hash(session)));
+    now += 6 * 60000;
+    const normal = await c.call('session'), boot = await c.call('session?reauthenticate=1');
+    assert.equal(normal.body.csrf, login.csrf); assert.equal(boot.body.staff.id, login.staff.id);
+    assert.notEqual(boot.body.csrf, login.csrf); assert.equal(c.jar[BROWSER_COOKIE], browser); assert.equal(c.jar[SESSION_COOKIE], session);
+    assert.deepEqual(f.auth.sessions.get(hash(session)), previous); assert.equal(f.auth.sessions.size, 1);
+    assert.equal((await c.call('cards')).status, 200);
+    // Neither CSRF purpose acquires the other purpose's mutation authority.
+    assert.equal((await c.call('auth/request', { phone: FIXTURE_PHONE, requestId: 'reauth_request_001' }, { 'x-atlas-csrf': login.csrf })).status, 403);
+    assert.equal((await c.call('auth/logout', {}, { 'x-atlas-csrf': boot.body.csrf })).status, 403);
+    assert.equal(c.jar[SESSION_COOKIE], session);
+});
+test('session reauthentication mode requires one exact parsed query value and does not dispatch verification', async () => {
+    let sends = 0;
+    const original = syntheticVerifyProvider(), f = fixture({ provider: { ...original, async start(...args) { sends++; return original.start(...args); } } });
+    const c = f.client(), login = await c.login(), count = sends;
+    for (const query of ['', '?reauthenticate=', '?reauthenticate=0', '?reauthenticate=true', '?reauthenticate=01',
+        '?reauthenticate=1&reauthenticate=1', '?reauthenticate=1&reauthenticate=0', '?reauthenticate[]=1']) {
+        const response = await c.call(`session${query}`); assert.equal(response.status, 200); assert.equal(response.body.csrf, login.csrf, query);
+    }
+    assert.notEqual((await c.call('session?reauthenticate=1')).body.csrf, login.csrf);
+    assert.equal(sends, count); assert.equal(f.auth.sessions.size, 1);
+});
+test('reauthentication mints one fresh session only after code verification; lost replies replay it and other-tab CSRF refresh is required', async () => {
+    let now = 1000;
+    const f = fixture({ now: () => now }), c = f.client(), first = await c.login(), oldToken = c.jar[SESSION_COOKIE], browser = c.jar[BROWSER_COOKIE];
+    const oldSession = structuredClone(f.auth.sessions.get(hash(oldToken)));
+    const card = (await c.call('cards/sample-001')).body.card;
+    const unsaved = draft(card, { operationId: 'operation_reauthentication' }), before = structuredClone(unsaved);
+    now += 6 * 60000;
+    const boot = await c.call('session?reauthenticate=1'), headers = { 'x-atlas-csrf': boot.body.csrf };
+    const input = { phone: FIXTURE_PHONE, requestId: 'reauth_request_002' }, sent = await c.call('auth/request', input, headers);
+    assert.equal(sent.status, 200); assert.equal(c.jar[SESSION_COOKIE], oldToken);
+    assert.equal((await c.call('auth/request', input, headers)).body.challengeId, sent.body.challengeId);
+    assert.equal((await c.call('auth/verify', { challengeId: sent.body.challengeId, code: '000000' }, headers)).status, 400);
+    assert.equal(c.jar[SESSION_COOKIE], oldToken); assert.deepEqual(f.auth.sessions.get(hash(oldToken)), oldSession);
+    const check = { challengeId: sent.body.challengeId, code: FIXTURE_CODE }, verified = await c.call('auth/verify', check, headers);
+    assert.equal(verified.status, 200); assert.notEqual(c.jar[SESSION_COOKIE], oldToken); assert.equal(c.jar[BROWSER_COOKIE], browser);
+    assert.equal(f.auth.sessions.size, 2); assert.equal(f.auth.sessions.get(hash(c.jar[SESSION_COOKIE])).expiresAt, now + 30 * 60000);
+    const retry = await c.call('auth/verify', check, headers);
+    assert.equal(retry.status, 200); assert.equal(retry.headers['Set-Cookie'], verified.headers['Set-Cookie']); assert.equal(f.auth.sessions.size, 2);
+    // Browsers share cookies across tabs; another tab retains its old in-memory
+    // session CSRF and unsaved request until it explicitly refreshes access.
+    const rejected = await c.call('cards/sample-001/draft', unsaved, { 'x-atlas-csrf': first.csrf });
+    assert.equal(rejected.status, 403); assert.equal(rejected.body.error, 'CSRF_REQUIRED'); assert.deepEqual(unsaved, before);
+    const refreshed = await c.call('session'); assert.equal(refreshed.body.csrf, verified.body.csrf);
+    assert.equal((await c.call('cards/sample-001/draft', unsaved, { 'x-atlas-csrf': refreshed.body.csrf })).status, 200);
+});
+test('reauthentication challenge remains browser-bound and expiry does not destroy or extend the previous session', async () => {
+    let now = 1000;
+    const f = fixture({ now: () => now }), a = f.client(), b = f.client();
+    await a.login(); now += 6 * 60000;
+    const oldToken = a.jar[SESSION_COOKIE], old = structuredClone(f.auth.sessions.get(hash(oldToken))), boot = await a.call('session?reauthenticate=1');
+    const sent = await a.call('auth/request', { phone: FIXTURE_PHONE, requestId: 'reauth_request_003' }, { 'x-atlas-csrf': boot.body.csrf });
+    const foreign = await b.call('session?reauthenticate=1'), input = { challengeId: sent.body.challengeId, code: FIXTURE_CODE };
+    assert.equal((await b.call('auth/verify', input, { 'x-atlas-csrf': foreign.body.csrf })).status, 400);
+    now += 5 * 60000;
+    assert.equal((await a.call('auth/verify', input, { 'x-atlas-csrf': boot.body.csrf })).status, 400);
+    assert.equal(a.jar[SESSION_COOKIE], oldToken); assert.deepEqual(f.auth.sessions.get(hash(oldToken)), old);
+    assert.equal((await a.call('cards')).status, 200); assert.equal(f.auth.sessions.size, 1);
+});
 for (const env of [{}, { NODE_ENV: 'production', ATLAS_LOCAL_SYNTHETIC: '1' }, { ...LOCAL, VERCEL: '1' }, { ...LOCAL, VERCEL_ENV: 'preview' }, { ...LOCAL, AWS_LAMBDA_FUNCTION_NAME: 'staff' }]) {
     test(`production/deployment denial: ${JSON.stringify(env)}`, async () => {
         const f = fixture({}, env), c = f.client();

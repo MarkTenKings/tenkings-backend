@@ -54,6 +54,10 @@ export async function bridgeFixture(context, options = {}) {
         },
         sourceEvidence: source => JSON.parse(sources.get(source.id).evidenceCanonical),
         assertSourceAdmission: source => { if (!sources.has(source.id)) throw new Error('SYNTHETIC_ONLY'); },
+        async assertFreshDetection(tx, source) {
+            if (!sources.has(source.id)) throw new Error('SYNTHETIC_ONLY');
+            await options.assertFreshDetection?.(tx, source);
+        },
         reportSource: source => ({ cardProfile: source.cardProfile, identity: source.identity, capture: source.capture,
             reviewedDefects: source.reviewedDefects, gradeReport: source.gradeReport }),
         async readEvidence() { throw new Error('NO_REAL_STORAGE_PORT'); },

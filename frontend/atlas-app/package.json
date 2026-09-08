@@ -15,6 +15,8 @@
     "react-dom": "18.3.1",
     "@prisma/client": "5.22.0",
     "@atlas/grading-core": "workspace:*",
+    "@atlas/finishing": "workspace:*",
+    "qrcode": "^1.5.4",
     "@atlas/report-view": "workspace:*",
     "@atlas/service-bridge": "workspace:*"
   },

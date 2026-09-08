@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { PrismaClient } from '../.generated/staff-database/index.js';
 import { disposablePostgres } from './disposable-postgres.mjs';
 import { localAccessConfig, seedLocalStaff, fixtureEvidence, fixtureVerifyProvider } from '../lib/server/access/fixture.mjs';
@@ -22,6 +24,17 @@ import { operatorScenarios } from './operator-fixture.mjs';
 import { machineAdapterScenarios } from './machine-adapter-fixture.mjs';
 import { operationsScenarios } from './operations-fixture.mjs';
 import { intakeScenarios } from './intake-fixture.mjs';
+import { machineInitializationScenarios } from './machine-initialization-fixture.mjs';
+import { finishingScenarios } from './finishing-fixture.mjs';
+import { resolutionScenarios } from './resolution-fixture.mjs';
+import { learningScenarios } from './learning-fixture.mjs';
+import { identityCorrectionScenarios } from './identity-correction-fixture.mjs';
+
+// Execute the original pure TypeScript classifier in the fixture. No substitute
+// normalization/scoring code or private runtime activation is used here.
+const privateRequire = createRequire(new URL('../../nextjs-app/package.json', import.meta.url));
+const { tsImport } = await import(pathToFileURL(privateRequire.resolve('tsx/esm/api')).href);
+const { classifyAtlasIdentityCorrection } = await tsImport('../../nextjs-app/lib/server/atlasIdentityCorrection.ts', import.meta.url);
 
 const fixture = await disposablePostgres(process.argv.slice(2));
 const results = [], clients = new Set();
@@ -633,6 +646,11 @@ try {
     await machineAdapterScenarios(scenario);
     await operationsScenarios(scenario);
     for (const { name, work } of intakeScenarios) await scenario(name, work);
+    await machineInitializationScenarios(scenario);
+    await finishingScenarios(scenario);
+    await resolutionScenarios(scenario);
+    await learningScenarios(scenario);
+    await identityCorrectionScenarios(scenario, { classify: classifyAtlasIdentityCorrection });
 } catch (caught) { error = caught; }
 finally {
     for (const client of clients) await client.$disconnect();

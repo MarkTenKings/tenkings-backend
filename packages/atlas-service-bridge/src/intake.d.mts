@@ -10,6 +10,13 @@ export type IntakeReceipt = IntakeSource & { id: string; actorId: string; sessio
     admissionHash: string; gradingPolicyHash: string; bridgeConfigHash: string; createdAt: Date; expiresAt: Date };
 export type IntakePacket = { purpose: 'atlas-intake-v1'; audience: string; bridgeConfigHash: string; scope: IntakeScope; source: IntakeSource;
     nonce: string; issuedAt: number; expiresAt: number };
+export type IntakeHumanAuthority = {
+    identity: { id: string; accessVersion: number; revokedAt: Date | null };
+    control: { revision: number };
+    session: { identityId: string; tokenHash: string; accessVersion: number; revokedAt: Date | null; controlRevision: number; createdAt: Date; expiresAt: Date };
+    browser: { tokenHash: string; createdAt: Date; expiresAt: Date };
+    grant: { id: string; expiresAt: Date };
+};
 export const INTAKE_PATH: '/api/internal/atlas/intake';
 export const INTAKE_PURPOSE: 'atlas-intake-v1';
 export function exactIntakeSource(source: unknown): IntakeSource;
@@ -31,6 +38,8 @@ export class ScopedSourceIntake<Tx, Source extends { id: string; createdByUserId
             sourceTitle(source: Source): { title: string; subtitle: string } | Promise<{ title: string; subtitle: string }>;
             isStaffPhoneAllowed(phoneHash: string): boolean;
         } });
+    /** Private composition only, after authenticating the purpose-scoped packet. */
+    authorize(tx: Tx, packet: { scope: IntakeScope }, now: Date): Promise<IntakeHumanAuthority>;
     receive(body: string, signature: string): Promise<IntakeSummary>;
 }
 export function intakeClient(config: IntakeConfig, fetchImpl?: typeof fetch): Readonly<{

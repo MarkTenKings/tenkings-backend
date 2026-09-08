@@ -47,7 +47,8 @@
     "stripe": "^16.6.0",
     "zod": "^4.1.11",
     "@atlas/grading-core": "workspace:*",
-    "@atlas/service-bridge": "workspace:*"
+    "@atlas/service-bridge": "workspace:*",
+    "@atlas/operator": "workspace:*"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.7",

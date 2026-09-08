@@ -54,6 +54,7 @@ export async function gradingView(context, card, assignment, draft) {
     const bridge = await context.tx.staffGradingBridgeControl.findUnique({ where: { id: 'active' } });
     const operations = await context.tx.staffGradingOperation.findMany({ where: { specimenId: card.id }, orderBy: { createdAt: 'desc' }, take: 5 });
     return { analysisRevision: analysis?.row.revision ?? 0, analysisHash: analysis?.row.sourceHash ?? null,
+        sourceRevision: analysis?.row.sourceRevision ?? null,
         reportHash: analysis?.row.reportHash ?? null, report: matchesCurrent ? checkedJSON(approval.publicCanonical, approval.publicHash).report : analysis ? projectedReport(analysis.report, 'DRAFT') : null,
         reviewFindings: analysis ? presentAtlasFindings(analysis.report.findings, 'DRAFT') : [],
         cornerShape: analysis?.source.capture?.cornerShape ?? null,

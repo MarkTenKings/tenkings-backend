@@ -1592,7 +1592,12 @@ label+input,label+textarea,label+select {
   display:none;
 }
 
+.mobile-navigation { display:none; }
+
 @media(max-width:460px) {
+  .mobile-navigation { display:flex; gap:8px; padding:10px 18px; border-bottom:1px solid var(--line); background:white; }
+  .mobile-navigation a { padding:9px 12px; border-radius:5px; font-size:12px; text-decoration:none; }
+  .mobile-navigation a[aria-current="page"] { color:white; background:var(--green); }
   .topbar .local-badge {
     font-size:8px;
     padding:5px 7px;

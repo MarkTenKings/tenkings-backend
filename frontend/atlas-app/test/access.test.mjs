@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { productionAccessConfig, assertProductionStaffRequest, secureStaffCookie, ACCESS_COOKIES } from '../lib/server/access/config.mjs';
 import { twilioVerifyTransport } from '../lib/server/access/twilio.mjs';
 import { assertWrite } from '../lib/server/policy.mjs';
+import { hash } from '../lib/server/policy.mjs';
+import { DurableStaffAuth } from '../lib/server/access/auth.mjs';
 const sid = prefix => `${prefix}${'1'.repeat(32)}`;
 const environment = () => ({ ATLAS_STAFF_RUNTIME: 'postgres', NODE_ENV: 'production', VERCEL_ENV: 'production',
     ATLAS_STAFF_ORIGIN: 'https://app.atlasgrading.com', VERCEL_URL: 'atlas-release-123.vercel.app', VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40),
@@ -13,6 +15,53 @@ const environment = () => ({ ATLAS_STAFF_RUNTIME: 'postgres', NODE_ENV: 'product
 const fields = () => ({ sid: sid('VE'), account_sid: sid('AC'), service_sid: sid('VA'), to: '+12025550141', channel: 'sms', status: 'approved' });
 const transport = fetch => twilioVerifyTransport({ accountSid: sid('AC'), serviceSid: sid('VA'), apiKeySid: sid('SK'), apiKeySecret: 'fixture-secret-never-used-for-network', fetch });
 const response = object => new Response(JSON.stringify(object), { headers: { 'Content-Type': 'application/json' } });
+function durableBootstrapFixture() {
+    const config = productionAccessConfig(environment()), now = new Date('2026-09-08T18:00:00.000Z');
+    const browserToken = Buffer.alloc(32, 7).toString('base64url'), sessionToken = Buffer.alloc(32, 8).toString('base64url');
+    const state = { now, control: { revision: 1 }, identity: { id: '00000000-0000-4000-8000-000000000001', phoneHash: [...config.phoneByHash.keys()][0],
+        name: 'Fixture human', role: 'REVIEWER', accessVersion: 1, revokedAt: null },
+        session: { tokenHash: hash(sessionToken), identityId: '00000000-0000-4000-8000-000000000001', browserHash: hash(browserToken),
+            accessVersion: 1, controlRevision: 1, createdAt: new Date(+now - 6 * 60000), expiresAt: new Date(+now + 24 * 60000), revokedAt: null } };
+    const browsers = new Map([[hash(browserToken), { tokenHash: hash(browserToken), controlRevision: 1, createdAt: new Date(+now - 10 * 60000), expiresAt: new Date(+now + 50 * 60000) }]]);
+    const rates = new Map(); let createdBrowsers = 0;
+    const tx = { staffBrowser: { async findUnique({ where }) { return browsers.get(where.tokenHash) ?? null; },
+        async create({ data }) { createdBrowsers++; browsers.set(data.tokenHash, structuredClone(data)); return data; } },
+        staffSession: { async findUnique({ where }) { return where.tokenHash === state.session.tokenHash
+            ? { ...structuredClone(state.session), browser: structuredClone(browsers.get(state.session.browserHash)) } : null; } },
+        staffRateBucket: { async findUnique({ where }) { return rates.get(where.key) ?? null; },
+            async upsert({ where, create, update }) { const row = rates.has(where.key) ? { ...rates.get(where.key), ...update } : create; rates.set(where.key, row); return row; } },
+        async $queryRaw(strings, ...values) { assert.match(strings.join('?'), /StaffIdentity.*FOR SHARE/s);
+            return values[0] === state.identity.id ? [structuredClone(state.identity)] : []; } };
+    const database = { transaction: async work => work({ tx, now: state.now, control: state.control }) };
+    const auth = new DurableStaffAuth({ database, config, provider: { start() { throw Error('No provider calls authorized'); }, check() { throw Error('No provider calls authorized'); } } });
+    const cookie = `${config.cookies.browser}=${browserToken}; ${config.cookies.session}=${sessionToken}`;
+    return { auth, config, state, browsers, cookie, browserToken, sessionToken, database, createdBrowsers: () => createdBrowsers };
+}
+test('durable reauthentication bootstrap changes CSRF purpose only and cannot rejuvenate current opaque human authority', async () => {
+    const f = durableBootstrapFixture(), before = structuredClone(f.state.session);
+    const normal = await f.auth.bootstrap(f.cookie), reauth = await f.auth.bootstrap(f.cookie, 'unit-client', { reauthenticate: true });
+    assert.equal(normal.staff.id, reauth.staff.id); assert.equal(normal.csrf, f.auth.digest(`session:${f.sessionToken}`));
+    assert.equal(reauth.csrf, f.auth.digest(`browser:${f.browserToken}`)); assert.equal(reauth.browserToken, f.browserToken); assert.equal(f.createdBrowsers(), 0);
+    assert.deepEqual(f.state.session, before);
+    await f.database.transaction(async context => {
+        assert.equal(await f.auth.browser(context, f.cookie, normal.csrf), null);
+        assert.equal((await f.auth.browser(context, f.cookie, reauth.csrf)).tokenHash, hash(f.browserToken));
+    });
+    await assert.rejects(() => f.auth.authenticate(f.cookie, reauth.csrf), { message: 'CSRF_REQUIRED' });
+    const staff = await f.auth.authenticate(f.cookie, normal.csrf);
+    await f.auth.withStaff(staff, context => { assert.equal(+context.session.createdAt, +before.createdAt); assert(+context.now - +context.session.createdAt > 5 * 60000); });
+    await assert.rejects(() => f.auth.withStaff({ ...reauth.staff }, () => {}), { message: 'SIGN_IN_REQUIRED' });
+});
+test('durable reauthentication still enforces session/browser/control/access expiry and never revives an old session', async () => {
+    for (const mutate of [f => { f.state.session.expiresAt = f.state.now; }, f => { f.state.session.revokedAt = f.state.now; },
+        f => { f.state.identity.revokedAt = f.state.now; }, f => { f.state.identity.accessVersion++; },
+        f => { f.browsers.get(hash(f.browserToken)).expiresAt = f.state.now; }, f => { f.state.control.revision++; }]) {
+        const f = durableBootstrapFixture(); mutate(f); const before = structuredClone(f.state.session);
+        const boot = await f.auth.bootstrap(f.cookie, 'unit-client', { reauthenticate: true });
+        assert.equal(boot.staff, null); assert.equal(boot.csrf, f.auth.digest(`browser:${boot.browserToken}`)); assert.deepEqual(f.state.session, before);
+        await assert.rejects(() => f.auth.authenticate(f.cookie), { message: 'SIGN_IN_REQUIRED' });
+    }
+});
 test('production configuration requires exact environment, host, schema and dedicated keys', () => {
     const env = environment(), config = productionAccessConfig(env);
     assert.equal(config.mode, 'PRODUCTION'); assert.equal(config.phoneByHash.size, 1);

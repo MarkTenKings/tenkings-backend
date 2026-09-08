@@ -25,7 +25,10 @@ try {
         assert(server.exitCode === null && Date.now() < deadline, 'Owned bridge denial server failed to start'); await delay(50);
     }
     let checks = 0;
-    for (const [path, error] of [['bridge', 'ATLAS_BRIDGE_UNAVAILABLE'], ['public-media', 'ATLAS_PUBLIC_IMAGE_UNAVAILABLE']])
+    for (const [path, error] of [['bridge', 'ATLAS_BRIDGE_UNAVAILABLE'], ['public-media', 'ATLAS_PUBLIC_IMAGE_UNAVAILABLE'],
+        ['machine-initialize/admit', 'ATLAS_MACHINE_INITIALIZATION_UNAVAILABLE'], ['machine-initialize/execute', 'ATLAS_MACHINE_INITIALIZATION_UNAVAILABLE'],
+        ['trusted-learning/candidates', 'ATLAS_TRUSTED_LEARNING_UNAVAILABLE'], ['identity-correction', 'ATLAS_IDENTITY_CORRECTION_UNAVAILABLE'],
+        ['intake', 'ATLAS_INTAKE_UNAVAILABLE'], ['operator-evidence', 'ATLAS_OPERATOR_EVIDENCE_UNAVAILABLE']])
     for (const request of [{ method: 'GET' }, { method: 'POST', body: '{}' },
         { method: 'POST', body: '{}', headers: { Cookie: 'adminSession=not-authority', Authorization: 'Bearer not-authority' } },
         { method: 'POST', body: '{}', headers: { 'x-atlas-signature': 'f'.repeat(64), Host: 'app.atlasgrading.com' } }]) {

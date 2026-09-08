@@ -279,7 +279,9 @@ export class StaffOperations {
         return this.transaction(staff, async context => {
             const workers = await context.tx.staffGradingExecution.findMany({ where: { pilotId }, take: 1001, select: WORKER_COST });
             const runs = await context.tx.staffOperatorRun.findMany({ where: { pilotId }, take: 1001, select: RUN_PARENT });
-            check(workers.length <= 1000 && runs.length <= 1000, 'PILOT_SUMMARY_LIMIT', 409);
+            const initializations = await context.tx.staffMachineInitialization.findMany({ where: { pilotId }, take: 1001,
+                select: { id: true, specimenId: true, state: true, deadlineAt: true } });
+            check(workers.length <= 1000 && runs.length <= 1000 && initializations.length <= 1000, 'PILOT_SUMMARY_LIMIT', 409);
             const attempts = await context.tx.staffOperatorAttempt.findMany({ where: { runId: { in: runs.map(row => row.id) } }, take: 1001, select: ASTRA_COST });
             check(attempts.length <= 1000, 'PILOT_SUMMARY_LIMIT', 409);
             const operations = await context.tx.staffGradingOperation.findMany({ where: { id: { in: workers.map(row => row.operationId) } }, take: 1001, select: WORKER_PARENT });
@@ -320,6 +322,7 @@ export class StaffOperations {
                 }
             }
             return { pilotId, preparedConfiguration, specimens, actualMicroUsd: actual.toString(), unsettledMicroUsd: held.toString(),
+                initializations: initializations.map(row => ({ id: row.id, specimenId: row.specimenId, state: row.state, deadlineAt: row.deadlineAt.toISOString() })),
                 accountedMicroUsd: (actual + held).toString(), overrun, costs,
                 runs: runs.map(row => ({ id: row.id, specimenId: row.specimenId, state: row.state, revision: row.revision })) };
         });
