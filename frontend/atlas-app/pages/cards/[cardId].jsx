@@ -4,6 +4,7 @@ import Shell, { Notice, Unavailable } from '../../components/Shell';
 import { api, approvalMessage, useStaffResource } from '../../lib/client';
 import GradedReport from '../../components/GradedReport';
 import GradingActions from '../../components/GradingActions';
+import MachineProposals from '../../components/MachineProposals';
 import { pageAccess, runtime } from '../../lib/server/runtime.mjs';
 export async function getServerSideProps(ctx) {
     const access = await pageAccess(ctx);
@@ -36,6 +37,8 @@ function Workspace({ initial, csrf, mode }) {
     const pending = useRef(null);
     const pendingApproval = useRef(null);
     const pendingGrading = useRef(null);
+    const pendingProposal = useRef(null);
+    const proposalSending = useRef(false);
     const synthetic = mode !== 'PRODUCTION';
     const dirty = ['observations', 'reviewedSides', 'identityReviewed', 'disposition'].some(key => JSON.stringify(form[key]) !== JSON.stringify(card.draft[key]));
     useEffect(() => {
@@ -140,6 +143,7 @@ function Workspace({ initial, csrf, mode }) {
             pending.current = null;
             pendingApproval.current = null;
             setSaved('Latest draft loaded.');
+            pendingProposal.current = null;
         }
         catch (e) {
             setError(e.message);
@@ -150,12 +154,30 @@ function Workspace({ initial, csrf, mode }) {
             setBusy(false);
         }
     }
+    async function decideProposal(proposal,decision,reason) {
+        if (busy||dirty||signedOut||proposalSending.current) return;
+        const fields={stepId:proposal.stepId,analysisRevision:card.grading.analysisRevision,
+            analysisHash:card.grading.analysisHash,evidenceHash:card.evidenceHash,decision,reason};
+        if(pendingProposal.current&&JSON.stringify(pendingProposal.current.fields)!==JSON.stringify(fields)) {
+            setError('Retry the previous proposal decision or reload its saved state before recording another decision.');return;
+        }
+        pendingProposal.current??={fields,operationId:crypto.randomUUID()};
+        proposalSending.current=true;
+        setBusy(true);setError('');setSaved('');
+        try {
+            const result=await api(`cards/${card.id}/proposals`,{csrf,body:{operationId:pendingProposal.current.operationId,...fields}});
+            pendingProposal.current=null;
+            setCard(result.card);setForm(result.card.draft);setSaved('Proposal decision saved for this analysis.');
+        } catch(e) {if(e.status>=400&&e.status<500)pendingProposal.current=null;setError(e.message);if(e.code==='SIGN_IN_REQUIRED')setSignedOut(true);}
+        finally {proposalSending.current=false;setBusy(false);}
+    }
     return <>
     <div className="workspace-heading"><div><Link href="/grading" className="back-link">← Back to queue</Link><h1>{card.title}</h1><p className="muted">{card.set}{card.number && <><span className="middot">·</span>{card.number}</>}<span className="middot">·</span><span className="mono">{card.id.toUpperCase()}</span></p></div><div className="revision-label"><span>{card.grading?.published?.matchesCurrent ? 'REPORT APPROVED' : 'DRAFT FOR REVIEW'}</span><strong>Revision {card.draft.revision}</strong></div></div>
     {card.grading?.report && <GradedReport report={card.grading.report} approved={card.grading.published?.matchesCurrent} synthetic={synthetic}>
       {card.grading.published && <div className="publication-note"><strong>{card.grading.published.reportNumber} · Approved version {card.grading.published.version}</strong><p>{card.grading.published.matchesCurrent ? 'The current analysis and saved review match this approval.' : 'The draft has changed. The prior approved report remains available; these changes need a new approval.'}</p><a className="text-button" href={card.grading.published.href} target="_blank" rel="noreferrer">Open approved report ↗</a></div>}
     </GradedReport>}
     {card.grading && <GradingActions card={card} csrf={csrf} disabled={busy || signedOut || !card.canEdit} dirty={dirty} onAction={grade} onRefresh={refreshOperation}/>}
+    <MachineProposals proposals={card.grading?.proposals} disabled={busy||dirty||signedOut||!card.canEdit||Boolean(card.grading?.pendingOperations)} onDecide={decideProposal}/>
     {pendingGrading.current && <button type="button" disabled={busy || signedOut} onClick={() => refreshOperation(null)}>Check previous grading request</button>}
     <div className="review-layout"><section className="evidence-panel"><div className="panel-heading"><div><h2>Card evidence</h2><p>Review each side at its available resolution.</p></div><span className="quiet-label">FRONT / BACK</span></div>
       <div className="evidence-grid">{card.sides.map(side => <div className="side-panel" key={side.side}><div className="side-heading"><h3>{side.side === 'FRONT' ? 'Front' : 'Back'}</h3><span>{side.available ? (synthetic ? 'Original fixture' : 'Preserved evidence') : 'Unavailable'}</span></div><div className="image-stage">{side.available && !signedOut ? <button className="evidence-button" aria-label={`Enlarge ${side.side.toLowerCase()} evidence`} onClick={() => setZoom(side.side)}><img src={`/api/staff/evidence/${card.id}/${side.side}`} width="360" height="504" alt={`${card.title}, ${side.side.toLowerCase()}`} onLoad={() => setLoaded(s => ({ ...s, [side.side]: true }))} onError={() => setLoaded(s => ({ ...s, [side.side]: false }))}/><span>↗ Inspect</span></button> : <div className="missing-evidence"><span>◇</span><h3>{signedOut ? 'Session ended' : 'Back evidence missing'}</h3><p>{signedOut ? 'Sign in to view this evidence.' : 'Keep this card in Needs evidence until the second side is available.'}</p></div>}</div><div className="source-note">{side.available ? <><span>{side.width} × {side.height}{synthetic ? ' · Synthetic SVG' : ''}</span><small title={side.sha256}>SHA-256 {side.sha256.slice(0, 12)}…</small>{loaded[side.side] === false && <Notice error>Evidence could not be loaded. Reload before reviewing.</Notice>}</> : <span>No substitute image is used.</span>}</div></div>)}</div>

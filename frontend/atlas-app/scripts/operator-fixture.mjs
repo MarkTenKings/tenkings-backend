@@ -10,7 +10,7 @@ import { bridgeFixture, gradingInput } from './bridge-fixture.mjs';
 
 const reject = (code, work) => assert.rejects(work,error => error.code === code,code);
 async function fixture(context, work, options = {}) {
-    const bridge = await bridgeFixture(context);
+    const bridge = await bridgeFixture(context,options.bridgeOptions);
     const budget = { ...bridge.policy, maxTotalMicroUsd: options.total ?? 1_000_000_000, maxCardMicroUsd: options.card ?? 100_000_000 };
     const policyCanonical = canonical(budget);
     await context.admin.staffGradingBridgeControl.update({ where: { id: 'active' }, data: {
@@ -24,7 +24,7 @@ async function fixture(context, work, options = {}) {
         astra: { version: 'atlas-astra-policy-v1', model: MODEL, returnedModel: MODEL, effort: 'medium', serviceTier: 'default',
             maxOutputTokens: 2000, requestTimeoutMs: 10_000, pricingVersion: PRICING.version,
             inputNanoUsdPerToken: PRICING.inputNanoUsdPerToken, outputNanoUsdPerToken: PRICING.outputNanoUsdPerToken },
-        tools: ['read_card_report','submit_for_human_review'], maxAttemptsPerCard: 10, maxStepsPerRun: 8,
+        tools: options.tools ?? ['read_card_report','submit_for_human_review'], maxAttemptsPerCard: 10, maxStepsPerRun: 8,
         maxRunMs: 600_000, leaseMs: 60_000, concurrency: 1 };
     await context.admin.staffOperatorControl.create({ data: { ...config, enabled: true,
         policyCanonical: canonical(policy), policyHash: digest(canonical(policy)) } });
@@ -64,6 +64,7 @@ async function fixture(context, work, options = {}) {
     try { await work({ ...context, bridge, config, binding, client, ledger, budget, policy, signed, initialize, start, request, expire, calls: () => calls }); }
     finally { await client.$disconnect(); }
 }
+export { fixture as operatorFixture };
 
 export async function operatorScenarios(scenario) {
     await scenario('Astra intake requires a fresh initial grading and cannot use serving or runner authority', context => fixture(context, async f => {

@@ -19,9 +19,11 @@ export const STAFF_GRANTS = Object.freeze({
     StaffGradingOperation: { INSERT: '*', UPDATE: ['state', 'dispatchedAt', 'finishedAt', 'resultAnalysisRevision', 'failureCode'] },
     StaffReportApproval: { INSERT: '*' },
     StaffApprovedImage: { INSERT: '*' },
+    StaffProposalDecision: { INSERT: '*' },
     StaffPublicReport: { INSERT: '*', UPDATE: ['currentApprovalId'] },
 });
-const FUNCTIONS = new Set(['lock_control()', 'lock_assignment(uuid, uuid)', 'operator_work_pending(uuid)']);
+const FUNCTIONS = new Set(['lock_control()', 'lock_assignment(uuid, uuid)', 'operator_work_pending(uuid)',
+    'read_operator_proposals(uuid)', 'operator_proposals_pending(uuid)']);
 
 export function staffGrantSQL(role) {
     if (!/^[a-z][a-z0-9_]{0,62}$/.test(role)) throw new Error('Invalid staff role name');

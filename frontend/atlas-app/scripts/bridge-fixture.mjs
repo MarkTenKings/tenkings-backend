@@ -25,7 +25,7 @@ export async function bridgeFixture(context, options = {}) {
     await admin.$transaction(async tx => {
         for (const [index, id] of specimenIds.entries()) {
             const sourceId = `bridge-fixture-${id}`, sourceOwnerId = 'fictional-source-owner';
-            const evidenceCanonical = canonical({ ...JSON.parse(base.evidenceCanonical), sourceRevision });
+            const evidenceCanonical = canonical({ ...(options.evidence ?? JSON.parse(base.evidenceCanonical)), sourceRevision });
             const evidenceHash = hash(evidenceCanonical);
             const analysis = fixtureAnalysis({ title: `Synthetic bridge ${index + 1}`, set: 'Isolated database test' }, evidenceHash);
             const full = JSON.parse(analysis.sourceCanonical), initial = { ...full, reviewedDefects: [], gradeReport: null };

@@ -9,6 +9,7 @@ export const OPERATOR_GRANTS = Object.freeze({
     StaffOperatorAttempt: { INSERT: ['id','runId','ordinal','runRevision','leaseFence','dispatchClaimId','requestCanonical','requestHash','providerBindingHash','reservedMicroUsd','state','createdAt'],
         UPDATE: ['state','usageCeilingMicroUsd','usageEnvelopeExceeded','resultReceiptId','dispatchedAt','finishedAt'] },
     StaffOperatorReceipt: { INSERT: '*' }, StaffOperatorStep: { INSERT: '*' },
+    StaffOperatorImage: { INSERT: '*' }, StaffOperatorImageDelivery: { INSERT: '*' },
     StaffOperatorOutbox: { INSERT: '*', UPDATE: ['state','claimOwner','claimFence','claimUntil','deliveredAt'] },
 });
 const FUNCTIONS = new Set(['lock_control()', 'lock_operator_control()', 'lock_operator_bridge_control()',

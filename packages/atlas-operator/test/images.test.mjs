@@ -5,6 +5,7 @@ import { canonical, digest } from '@atlas/service-bridge/protocol';
 import { createOperatorImagePacket, OPERATOR_IMAGE_DECODER } from '@atlas/service-bridge/operator-images';
 import { syntheticPng } from '../../atlas-contracts/test/fixtures.mjs';
 import { appendToolResult, toolImageOutput } from '../src/responses.mjs';
+import { imageRecord, requestImageRoster } from '../src/image-lineage.mjs';
 
 function fixture() {
     const binding={runId:randomUUID(),expectedRevision:1,evidenceHash:'a'.repeat(64),manifestHash:'b'.repeat(64)};
@@ -47,4 +48,16 @@ test('crop output is bound to the exact requested source rectangle and image has
     assert.equal(toolImageOutput(call,[image]).roster[0].purpose,'CROP');
     assert.throws(()=>toolImageOutput({...call,args:{...call.args,rect:{...request.rect,x:1}}},[image]),/ASTRA_IMAGE_TOOL_SCOPE_CHANGED/);
     assert.throws(()=>toolImageOutput({...call,args:{...call.args,sourceSha256:'f'.repeat(64)}},[image]),/ASTRA_IMAGE_TOOL_SCOPE_CHANGED/);
+});
+test('durable image roster rejects changed marker, bytes, omissions and duplicated delivery',()=>{
+    const f=fixture(),input=appendToolResult([],f.response,f.call,{synthetic:true},f.images);
+    const records=f.images.map(({packet,asset})=>imageRecord(packet,asset));
+    assert.equal(requestImageRoster(input,records).length,2);
+    const changed=structuredClone(input),parts=changed.at(-1).output;
+    const marker=JSON.parse(parts[1].text);marker.sourceView='ORIGINAL';parts[1].text=canonical(marker);
+    assert.throws(()=>requestImageRoster(changed,records),/ASTRA_IMAGE_DELIVERY_CHANGED/);
+    const swapped=structuredClone(input);swapped.at(-1).output[2].image_url=input.at(-1).output[4].image_url;
+    assert.throws(()=>requestImageRoster(swapped,records),/ASTRA_IMAGE_BYTES_CHANGED/);
+    assert.throws(()=>requestImageRoster(input.slice(0,-1),records),/ASTRA_IMAGE_DELIVERY_INCOMPLETE/);
+    assert.throws(()=>requestImageRoster([...input,input.at(-1)],records),/ASTRA_IMAGE_DELIVERY_CHANGED/);
 });

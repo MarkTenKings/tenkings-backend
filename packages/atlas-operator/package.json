@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": { "./responses": "./src/responses.mjs", "./provider": "./src/provider.mjs", "./ledger": "./src/ledger.mjs",
-    "./policy": "./src/policy.mjs", "./privileges": "./src/privileges.mjs" },
-  "dependencies": { "@atlas/service-bridge": "workspace:*", "zod": "4.1.11" },
+    "./policy": "./src/policy.mjs", "./privileges": "./src/privileges.mjs", "./runner": "./src/runner.mjs", "./adapters": "./src/adapters.mjs" },
+  "dependencies": { "@atlas/service-bridge": "workspace:*", "@atlas/grading-core": "workspace:*", "zod": "4.1.11" },
   "scripts": { "test": "node --test test/*.test.mjs" }
 }

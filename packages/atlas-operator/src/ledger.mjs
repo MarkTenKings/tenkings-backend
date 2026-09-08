@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { canonical, digest, parsePilotPolicy, requireBridge as check } from '@atlas/service-bridge/protocol';
 import { buildRequest, inspectResponse, appendToolResult, requestReservation, usageCeiling,
-    instructionsFor, toolDefinitions, MAX_RESPONSE_BYTES } from './responses.mjs';
+    instructionsFor, toolDefinitions, toolImageOutput, MAX_RESPONSE_BYTES } from './responses.mjs';
 import { parseControlPolicy, checked } from './policy.mjs';
 import { assertOperatorPrivileges } from './privileges.mjs';
+import { imageRecord, requestImageRoster } from './image-lineage.mjs';
 
 const active = ['QUEUED','RUNNING','WAITING_TOOL','UNKNOWN'];
 const unresolved = ['RESERVED','DISPATCHED','RECEIVED','UNKNOWN'];
@@ -44,11 +45,13 @@ export async function enqueueOperatorRun(client, config, specimenId) {
         check(analysis?.evidenceHash === card.evidenceHash, 'ASTRA_EVIDENCE_CHANGED');
         checked(analysis.reportCanonical,analysis.reportHash); checked(analysis.sourceCanonical,analysis.sourceHash);
         const evidence = checked(card.evidenceCanonical,card.evidenceHash);
-        const assets = ['FRONT','BACK'].map(side => {
-            const d = evidence.sides[side]; check(d?.sha256 && d.byteCount > 0, 'ASTRA_EVIDENCE_REQUIRED');
-            return { assetId: randomUUID(), side, view: 'RECTIFIED', sha256: d.sha256, byteCount: d.byteCount,
-                width: d.width, height: d.height, contentType: d.contentType };
-        });
+        const assets = ['RECTIFIED','ORIGINAL'].flatMap(view => ['FRONT','BACK'].flatMap(side => {
+            const d = (view === 'RECTIFIED' ? evidence.sides : evidence.originals)?.[side];
+            if (!d && view === 'ORIGINAL' && control.mode === 'LOCAL_FIXTURE') return [];
+            check(d?.sha256 && d.byteCount > 0, 'ASTRA_EVIDENCE_REQUIRED');
+            return [{ assetId: randomUUID(), side, view, sha256: d.sha256, byteCount: d.byteCount,
+                width: d.width, height: d.height, contentType: d.contentType }];
+        }));
         const id = randomUUID(), manifest = { version: 'atlas-operator-manifest-v1', runId: id, specimenId,
             evidenceHash: card.evidenceHash, analysisRevision: card.analysisRevision, reviewRevision: card.draftRevision,
             sourceHash: analysis.sourceHash, reportHash: analysis.reportHash, assets };
@@ -123,6 +126,30 @@ export class OperatorLedger {
                 leaseExpiresAt: new Date(Math.min(+now + policy.leaseMs,+run.deadlineAt)), updatedAt: now } }); return lease;
         });
     }
+    async snapshot(lease) {
+        return this.transaction(async context => {
+            const { run, policy, now } = await this.leased(context,lease,{ work: false });
+            return { run, policy, now };
+        });
+    }
+    // A stop closes only this fenced owner. It is permitted after activation or
+    // deadline expiry, but never clears dispatched work or releases unknown cost.
+    async stop(lease, { code }) {
+        leaseSchema.parse(lease); z.string().regex(/^[A-Z0-9_]{1,80}$/).parse(code);
+        return this.transaction(async ({ tx, now }) => {
+            const [run] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffOperatorRun" WHERE id=${lease.runId}::uuid FOR UPDATE`;
+            check(run && run.runtimeHash === this.config.configHash && run.leaseOwner === lease.owner
+                && run.leaseFence === lease.fence && run.revision === lease.revision && active.includes(run.state), 'ASTRA_LEASE_STALE');
+            const attempts = await tx.staffOperatorAttempt.findMany({ where: { runId: run.id, state: { in: unresolved } } });
+            for (const a of attempts.filter(a => a.state === 'RESERVED'))
+                await tx.staffOperatorAttempt.update({ where: { id: a.id }, data: { state: 'FAILED', finishedAt: now } });
+            const unknown = run.state === 'UNKNOWN' || attempts.some(a => a.state !== 'RESERVED');
+            const state = unknown ? 'UNKNOWN' : 'FAILED';
+            await tx.staffOperatorRun.update({ where: { id: run.id }, data: { state, failureCode: code,
+                leaseOwner: null, leaseMode: null, leaseExpiresAt: null, updatedAt: now } });
+            return { state };
+        }, { active: false });
+    }
     async reserve(lease) {
         return this.transaction(async context => {
             const { tx, run, input, policy, budget, now } = await this.leased(context,lease);
@@ -138,6 +165,10 @@ export class OperatorLedger {
               (id,"runId",ordinal,"runRevision","leaseFence","dispatchClaimId","requestCanonical","requestHash","providerBindingHash","reservedMicroUsd",state,"createdAt")
               VALUES (${id}::uuid,${run.id}::uuid,${ordinal},${run.revision},${run.leaseFence},${claimId}::uuid,${request.requestCanonical},${request.requestHash},
               ${this.config.providerBindingHash},${reserve},'RESERVED',(${now}::timestamptz AT TIME ZONE 'UTC'))`;
+            const images = await tx.staffOperatorImage.findMany({ where: { runId: run.id }, orderBy: { createdAt: 'asc' } });
+            for (const image of requestImageRoster(input,images)) await tx.$executeRaw`INSERT INTO atlas_staff."StaffOperatorImageDelivery"
+              ("attemptId","imageId","requestHash","lineageHash","createdAt")
+              VALUES (${id}::uuid,${image.imageId}::uuid,${request.requestHash},${image.lineageHash},(${now}::timestamptz AT TIME ZONE 'UTC'))`;
             return { attemptId: id, dispatchClaimId: claimId, requestHash: request.requestHash };
         });
     }
@@ -222,7 +253,7 @@ export class OperatorLedger {
         z.uuidv4().parse(attemptId);
         return this.transaction(async context => {
             const { call, run, manifest, card } = await this.pendingTool(context,lease,attemptId);
-            return { call, manifest, card, run };
+            return { call, manifest, card, run, attemptId };
         });
     }
     /** The adapter may do deterministic computation/database work in this
@@ -234,13 +265,21 @@ export class OperatorLedger {
             const data = await this.pendingTool(context,lease,attemptId), { tx, now, run, manifest, input, receipt, call } = data;
             check(!await tx.staffOperatorStep.findUnique({ where: { runId_callId: { runId: run.id, callId: call.callId } } }), 'ASTRA_CALL_ALREADY_APPLIED');
             if (call.name === 'submit_for_human_review') check(call.args.reportHash === manifest.reportHash, 'ASTRA_REPORT_CHANGED');
-            const result = await adapter(data);
+            const prepared = await adapter(data);
+            // Existing injected fixture adapters return content directly. Real
+            // adapters use this explicit closed content/image envelope.
+            const envelope = prepared && Object.hasOwn(prepared,'result');
+            const result = envelope ? prepared.result : prepared, images = envelope ? prepared.images ?? [] : [];
+            toolImageOutput(call,images);
+            for (const { packet, asset } of images) check(manifest.assets.some(a => canonical(a) === canonical(asset)), 'ASTRA_IMAGE_NOT_IN_MANIFEST');
             const binding = { runId: run.id, evidenceHash: run.evidenceHash, expectedRevision: run.revision+1, manifestHash: run.manifestHash };
             const output = { binding, result }, resultCanonical = canonical(output), requestCanonical = canonical(call.args);
-            const nextInput = canonical(appendToolResult(input,receipt.body,call,output)), nextInputHash = digest(nextInput);
-            await tx.staffOperatorStep.create({ data: { id: randomUUID(), runId: run.id, attemptId, revision: binding.expectedRevision,
+            const nextInput = canonical(appendToolResult(input,receipt.body,call,output,images)), nextInputHash = digest(nextInput), stepId = randomUUID();
+            await tx.staffOperatorStep.create({ data: { id: stepId, runId: run.id, attemptId, revision: binding.expectedRevision,
                 callId: call.callId, toolName: call.name, requestCanonical, requestHash: digest(requestCanonical),
                 resultCanonical, resultHash: digest(resultCanonical), nextInputHash, createdAt: now } });
+            for (const { packet, asset } of images) await tx.staffOperatorImage.create({ data: {
+                ...imageRecord(packet,asset), runId: run.id, stepId, createdAt: now } });
             let state = 'RUNNING';
             if (call.name === 'submit_for_human_review') {
                 state = { READY_FOR_REVIEW: 'READY_FOR_HUMAN', NEEDS_RECAPTURE: 'NEEDS_RECAPTURE', NEEDS_EXPERT: 'NEEDS_EXPERT' }[call.args.disposition];

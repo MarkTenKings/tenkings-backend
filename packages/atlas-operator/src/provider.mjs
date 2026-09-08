@@ -15,9 +15,10 @@ export function openAiBinding(env) {
  * the immutable request. No HTTP body or model output can supply that grant.
  * There is no retry, alternate destination, ambient credential or tool execution
  * in this transport. Unknown outcomes keep their ledger reservation held. */
-export function responsesTransport({ binding, takeDispatch, fetchImpl = fetch }) {
+export function responsesTransport({ binding, takeDispatch, fetchImpl = fetch, signal }) {
     return { async dispatch(attemptId) {
         check(typeof attemptId === 'string' && UUID.test(attemptId), 'ASTRA_ATTEMPT_INVALID');
+        signal?.throwIfAborted();
         const grant = await takeDispatch(attemptId);
         check(grant?.attemptId === attemptId && grant.providerBindingHash === binding.bindingHash
             && Number.isSafeInteger(grant.expiresAtMs) && grant.expiresAtMs > Date.now(), 'ASTRA_DISPATCH_NOT_ADMITTED');
@@ -27,10 +28,11 @@ export function responsesTransport({ binding, takeDispatch, fetchImpl = fetch })
         const startedAt = new Date().toISOString();
         let response;
         try {
+            signal?.throwIfAborted();
             response = await fetchImpl(RESPONSE_ENDPOINT, { method: 'POST', redirect: 'error', cache: 'no-store',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${binding.apiKey}`,
                     'OpenAI-Project': binding.projectId, 'X-Client-Request-Id': attemptId },
-                body: grant.requestCanonical, signal: AbortSignal.timeout(remaining) });
+                body: grant.requestCanonical, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(remaining)]) : AbortSignal.timeout(remaining) });
             const providerRequestId = response.headers.get('x-request-id');
             check(providerRequestId === null || /^[A-Za-z0-9_-]{1,180}$/.test(providerRequestId), 'ASTRA_PROVIDER_REQUEST_ID_INVALID');
             const bytes = await boundedBytes(response, MAX_RESPONSE_BYTES);

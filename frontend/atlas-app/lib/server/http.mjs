@@ -19,6 +19,7 @@ export function createHandler(resolveRuntime, env = process.env) {
                 ['GET', new RegExp(`^/api/staff/evidence/${cardPattern}/(FRONT|BACK)$`)]
             ];
             if (state.reports) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/approve$`)]);
+            if (state.proposals) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/proposals$`)]);
             if (state.grading) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/grade$`)],
                 ['POST', new RegExp(`^/api/staff/cards/${cardPattern}/trace$`)],
                 ['GET', new RegExp(`^/api/staff/cards/${cardPattern}/operations/([a-f0-9-]{36})$`)]);
@@ -76,6 +77,8 @@ export function createHandler(resolveRuntime, env = process.env) {
                 }
                 else if (path.endsWith('/approve'))
                     body = await state.reports.approve(staff, match[1], req.body);
+                else if (path.endsWith('/proposals'))
+                    body = await state.proposals.decide(staff, match[1], req.body);
                 else if (path.endsWith('/grade'))
                     body = await state.grading.run(staff, match[1], req.body);
                 else if (path.endsWith('/trace'))

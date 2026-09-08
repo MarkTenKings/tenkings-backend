@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { renderAtlasOperatorImage } from '../lib/server/atlasOperatorImages';
 import { canonical, digest } from '@atlas/service-bridge/protocol';
 import { OPERATOR_IMAGE_DECODER, operatorImageTransform, parseOperatorImagePacket,
     type OperatorImageAsset, type OperatorImageRequest } from '@atlas/service-bridge/operator-images';
+import { operatorEvidenceClient, MAX_OPERATOR_EVIDENCE_RESPONSE_BYTES } from '@atlas/service-bridge/operator-evidence';
 
 function pixels(width: number,height: number) {
     const data=Buffer.alloc(width*height*3);
@@ -127,4 +128,26 @@ test('valid animated PNG is rejected even when the decoder reports only its firs
     const packet=await renderAtlasOperatorImage({...f,request});
     assert.throws(()=>parseOperatorImagePacket({...packet,bytesBase64:sourceBytes.toString('base64'),
         byteCount:sourceBytes.length,sha256:digest(sourceBytes)},request,f.asset),/ASTRA_SOURCE_ANIMATION_UNSUPPORTED/);
+});
+test('a full-size noisy RGB crop fits the bounded signed HTTP response without shrinking pixels',async()=>{
+    const width=1024,height=1024,raw=Buffer.alloc(width*height*3);let seed=0x912a44bf;
+    for(let i=0;i<raw.length;i++) {seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;raw[i]=seed&255;}
+    const sourceBytes=await sharp(raw,{raw:{width,height,channels:3}}).png().toBuffer();
+    const asset:OperatorImageAsset={assetId:randomUUID(),sha256:digest(sourceBytes),side:'FRONT',view:'ORIGINAL',width,height,byteCount:sourceBytes.length,contentType:'image/png'};
+    const request:OperatorImageRequest={runId:randomUUID(),expectedRevision:1,evidenceHash:'a'.repeat(64),manifestHash:'b'.repeat(64),
+        assetId:asset.assetId,sourceSha256:asset.sha256,side:'FRONT',purpose:'CROP',rect:{x:0,y:0,width,height}};
+    const packet=await renderAtlasOperatorImage({sourceBytes,asset,request});
+    const scope={runId:request.runId,owner:randomUUID(),fence:1,revision:1,attemptId:randomUUID(),callId:'call_noisy_crop'};
+    const key=randomBytes(32),runtimeHash='c'.repeat(64),sourceHash='d'.repeat(64);let size=0;
+    const client=operatorEvidenceClient({origin:'https://synthetic-images.example.test',key,runtimeHash},async(_url:string,init:RequestInit)=>{
+        const claims=JSON.parse(init.body as string),value={purpose:'atlas-operator-evidence-receipt-v1',runtimeHash,scope,request,
+            requestHash:digest(init.body as string),expiresAt:claims.expiresAt,evidenceHash:request.evidenceHash,manifestHash:request.manifestHash,sourceHash,image:packet};
+        const body=canonical(value);size=Buffer.byteLength(body);
+        return new Response(body,{status:200,headers:{'content-type':'application/json','x-atlas-operator-evidence-signature':createHmac('sha256',key).update(body).digest('hex')}});
+    });
+    const receipt=await client.read(scope,request);
+    const verified=client.verify(receipt,scope,request,{runtimeHash,evidenceHash:request.evidenceHash,manifestHash:request.manifestHash,manifestCanonical:canonical({sourceHash})});
+    assert(size>4*1024*1024);assert(size<=MAX_OPERATOR_EVIDENCE_RESPONSE_BYTES);assert(MAX_OPERATOR_EVIDENCE_RESPONSE_BYTES<4_500_000);
+    const decoded=await sharp(Buffer.from(verified.image.bytesBase64,'base64')).raw().toBuffer();
+    assert.deepEqual(decoded,raw);assert.equal(packet.width,1024);assert.equal(packet.height,1024);
 });

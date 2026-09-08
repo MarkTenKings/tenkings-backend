@@ -13,6 +13,7 @@ import { twilioVerifyTransport } from './access/twilio.mjs';
 import { bridgeClient } from '@atlas/service-bridge/transport';
 import { keyBytes } from '@atlas/service-bridge/protocol';
 import { StaffGrading } from './access/grading.mjs';
+import { StaffProposals } from './access/proposals.mjs';
 
 export function runtime(req, env = process.env) {
     if (env.ATLAS_LOCAL_SYNTHETIC === '1') {
@@ -42,7 +43,8 @@ export function runtime(req, env = process.env) {
             return bridge.call(binding.scope, { action: 'READ_EVIDENCE', side: binding.side });
         } };
         const review = new DurableReviewStore({ auth, evidence });
-        globalThis[key] = { auth, review, reports: new StaffReports({ auth, review }), grading: new StaffGrading({ auth, review, bridge }) };
+        globalThis[key] = { auth, review, reports: new StaffReports({ auth, review }), grading: new StaffGrading({ auth, review, bridge }),
+            proposals: new StaffProposals({ auth, review }) };
     }
     const state = globalThis[key];
     Object.setPrototypeOf(state.auth, DurableStaffAuth.prototype);
@@ -50,6 +52,7 @@ export function runtime(req, env = process.env) {
     Object.setPrototypeOf(state.review, DurableReviewStore.prototype);
     Object.setPrototypeOf(state.reports, StaffReports.prototype);
     Object.setPrototypeOf(state.grading, StaffGrading.prototype);
+    Object.setPrototypeOf(state.proposals, StaffProposals.prototype);
     return { ...state, mode: config.mode, origin: config.origin, cookies: config.cookies,
         cookie: local ? undefined : secureStaffCookie, assertRequest,
         // Global/phone budgets remain effective even if the platform cannot

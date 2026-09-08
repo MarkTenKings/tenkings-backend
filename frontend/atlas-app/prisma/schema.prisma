@@ -428,3 +428,52 @@ model StaffOperatorOutbox {
   createdAt   DateTime @default(now())
   @@unique([runId, revision, type])
 }
+
+model StaffOperatorImage {
+  imageId String @id @db.Uuid
+  runId String @db.Uuid
+  stepId String @db.Uuid
+  canonical String @db.Text
+  hash String @db.VarChar(64)
+  createdAt DateTime @default(now())
+}
+model StaffOperatorImageDelivery {
+  attemptId String @db.Uuid
+  imageId String @db.Uuid
+  requestHash String @db.VarChar(64)
+  lineageHash String @db.VarChar(64)
+  createdAt DateTime @default(now())
+  @@id([attemptId,imageId])
+}
+model StaffOperatorImageControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  origin String
+  deploymentId String
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  clientKeyHash String @db.VarChar(64)
+  revision Int @default(1)
+  updatedAt DateTime @default(now())
+}
+model StaffProposalDecision {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  stepId String @db.Uuid
+  analysisRevision Int
+  analysisHash String @db.VarChar(64)
+  evidenceHash String @db.VarChar(64)
+  decision String
+  reason String @db.VarChar(1000)
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.Uuid
+  inputHash String @db.VarChar(64)
+  createdAt DateTime @default(now())
+  @@unique([stepId,analysisRevision])
+  @@unique([actorId,operationId])
+}

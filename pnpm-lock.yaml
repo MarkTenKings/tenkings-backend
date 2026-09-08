@@ -589,6 +589,9 @@ importers:
 
   packages/atlas-operator:
     dependencies:
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../atlas-grading-core
       '@atlas/service-bridge':
         specifier: workspace:*
         version: link:../atlas-service-bridge

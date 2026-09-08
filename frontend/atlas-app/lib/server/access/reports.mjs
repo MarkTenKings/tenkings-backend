@@ -4,6 +4,7 @@ import { previewAtlasReport, finalizeAtlasReportContent, presentAtlasFindings } 
 import { deny, hash, identifier, strictObject } from '../policy.mjs';
 import { canonical } from '../review-contract.mjs';
 import { operatorPending } from './operator.mjs';
+import { proposalsView } from './proposals.mjs';
 
 const controlPublicOrigin = mode => mode === 'PRODUCTION' ? 'https://atlasgrading.com' : 'http://127.0.0.1:4319';
 function checkedJSON(text, digest, failure = 'REPORT_UNAVAILABLE') {
@@ -30,9 +31,10 @@ function projectedReport(report, visibility) {
         findings: presentAtlasFindings(report.findings, visibility),
         findingCounts: visibility === 'DRAFT' ? report.findingCounts : { included: report.findingCounts.included } };
 }
-function approvalBlock(context, card, assignment, draft, analysis, pending) {
+function approvalBlock(context, card, assignment, draft, analysis, pending, unresolvedProposals = 0) {
     if (!analysis) return 'GRADING_NOT_READY';
     if (pending) return 'GRADING_WORK_UNRESOLVED';
+    if (unresolvedProposals) return 'MACHINE_PROPOSALS_UNRESOLVED';
     if (!context.control.gradingPolicyHash || analysis.admission.policyHash !== context.control.gradingPolicyHash) return 'GRADING_POLICY_CHANGED';
     if (context.identity.role !== 'REVIEWER' || !assignment.canReview || !context.identity.certificationUntil
         || context.identity.certificationUntil <= context.now) return 'TRAINED_REVIEWER_REQUIRED';
@@ -42,6 +44,7 @@ function approvalBlock(context, card, assignment, draft, analysis, pending) {
 }
 export async function gradingView(context, card, assignment, draft) {
     const analysis = await loadAnalysis(context, card);
+    const proposals = await proposalsView(context.tx,card);
     const pending = await context.tx.staffGradingOperation.count({ where: { specimenId: card.id, state: { in: ['RESERVED', 'DISPATCHED', 'UNKNOWN'] } } })
         + await operatorPending(context.tx,card.id);
     const publication = await context.tx.staffPublicReport.findUnique({ where: { specimenId: card.id } });
@@ -57,7 +60,8 @@ export async function gradingView(context, card, assignment, draft) {
         mode: analysis?.row.mode ?? null, pendingOperations: pending,
         correctionsEnabled: Boolean(bridge?.enabled && bridge.mode === context.control.mode && bridge.gradingPolicyHash === context.control.gradingPolicyHash),
         operations: operations.map(op => ({ id: op.id, state: op.state, failureCode: op.failureCode, createdAt: op.createdAt.toISOString() })),
-        approvalBlock: matchesCurrent ? 'ALREADY_APPROVED' : approvalBlock(context, card, assignment, draft, analysis, pending),
+        proposals,
+        approvalBlock: matchesCurrent ? 'ALREADY_APPROVED' : approvalBlock(context, card, assignment, draft, analysis, pending, proposals.filter(p=>!p.decision).length),
         published: approval ? { approvalId: approval.id, version: approval.version, publicToken: publication.publicToken,
             reportNumber: publication.reportNumber, approvedAt: approval.approvedAt.toISOString(), matchesCurrent,
             path: `/reports/${publication.publicToken}?v=${approval.version}`,
@@ -95,7 +99,8 @@ export class StaffReports {
                 || card.draftRevision !== input.expectedReviewRevision || reviewRow.contentHash !== input.reviewHash) deny(409, 'DRAFT_CHANGED');
             const pending = await tx.staffGradingOperation.count({ where: { specimenId: cardId, state: { in: ['RESERVED', 'DISPATCHED', 'UNKNOWN'] } } })
                 + await operatorPending(tx,cardId);
-            const blocked = approvalBlock(context, card, assignment, draft, analysis, pending);
+            const [{ count: unresolvedProposals }] = await tx.$queryRaw`SELECT atlas_staff.operator_proposals_pending(${cardId}::uuid) AS count`;
+            const blocked = approvalBlock(context, card, assignment, draft, analysis, pending, unresolvedProposals);
             if (blocked) deny(409, blocked);
             const existing = await tx.staffPublicReport.findUnique({ where: { specimenId: cardId } });
             const previous = existing ? await tx.staffReportApproval.findUnique({ where: { id: existing.currentApprovalId } }) : null;

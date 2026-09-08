@@ -4,7 +4,9 @@ export const IMAGE_TRANSFORM = 'atlas-oriented-source-crop-srgb-png-v1';
 // Exact current decoder imported by the legacy application (distinct from
 // the calibration package's separately traced Sharp version).
 export const OPERATOR_IMAGE_DECODER = 'sharp-0.33.5/vips-8.15.3';
-export const MAX_OPERATOR_IMAGE_BYTES = 4 * 1024 * 1024;
+// Base64 plus the complete signed receipt must fit the deployed HTTP body
+// limit. This still admits a lossless 1024-square noisy RGB crop.
+export const MAX_OPERATOR_IMAGE_BYTES = 3_200_000;
 export const MAX_OPERATOR_CROP_PIXELS = 1024 * 1024;
 export const OVERVIEW_LONG_EDGE = 1024;
 const uuid = value => typeof value === 'string' && UUID.test(value);
