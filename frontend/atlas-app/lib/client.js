@@ -15,8 +15,16 @@ const messages = {
     STAFF_ACCESS_NOT_ENABLED: 'Staff access is not enabled in this environment.',
     CARD_NOT_FOUND: 'This card is not available in your assigned queue.',
     REVIEW_PERMISSION_REQUIRED: 'This staff identity has read-only access.',
-    REQUEST_CONFLICT: 'This request changed during retry. Reload the latest state before continuing.'
+    REQUEST_CONFLICT: 'This request changed during retry. Reload the latest state before continuing.',
+    GRADING_NOT_READY: 'The graded report is not ready yet.',
+    GRADING_WORK_UNRESOLVED: 'A grading operation still needs to finish or be resolved.',
+    GRADING_POLICY_CHANGED: 'This analysis needs to be checked against the current grading release.',
+    TRAINED_REVIEWER_REQUIRED: 'An assigned reviewer with current certification training must approve this report.',
+    FRESH_SIGN_IN_REQUIRED: 'Sign in again before approving this report. Approval requires a recent sign-in.',
+    ALREADY_APPROVED: 'This exact report and review have already been approved.',
+    REPORT_UNAVAILABLE: 'The report could not be verified. Reload before continuing.'
 };
+export const approvalMessage = code => messages[code] ?? 'Save and review this report before approving.';
 export async function api(path, { body, csrf, signal } = {}) {
     const response = await fetch(`/api/staff/${path}`, { method: body === undefined ? 'GET' : 'POST',
         credentials: 'same-origin', cache: 'no-store', signal,

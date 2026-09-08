@@ -7,6 +7,7 @@ import { readLocalPostgresConfig } from './access/local-config.mjs';
 import { StaffDatabase } from './access/database.mjs';
 import { DurableStaffAuth } from './access/auth.mjs';
 import { DurableReviewStore } from './access/review.mjs';
+import { StaffReports } from './access/reports.mjs';
 import { fixtureEvidence, fixtureVerifyProvider } from './access/fixture.mjs';
 import { twilioVerifyTransport } from './access/twilio.mjs';
 
@@ -32,12 +33,14 @@ export function runtime(req, env = process.env) {
         const auth = new DurableStaffAuth({ database: new StaffDatabase(client, config), config, provider });
         // The real evidence port is supplied by the reviewed capture adapter.
         const evidence = local ? fixtureEvidence() : { async read() { deny(503, 'EVIDENCE_UNAVAILABLE'); } };
-        globalThis[key] = { auth, review: new DurableReviewStore({ auth, evidence }) };
+        const review = new DurableReviewStore({ auth, evidence });
+        globalThis[key] = { auth, review, reports: new StaffReports({ auth, review }) };
     }
     const state = globalThis[key];
     Object.setPrototypeOf(state.auth, DurableStaffAuth.prototype);
     Object.setPrototypeOf(state.auth.database, StaffDatabase.prototype);
     Object.setPrototypeOf(state.review, DurableReviewStore.prototype);
+    Object.setPrototypeOf(state.reports, StaffReports.prototype);
     return { ...state, mode: config.mode, origin: config.origin, cookies: config.cookies,
         cookie: local ? undefined : secureStaffCookie, assertRequest,
         // Global/phone budgets remain effective even if the platform cannot

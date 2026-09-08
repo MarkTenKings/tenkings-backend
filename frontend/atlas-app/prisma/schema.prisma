@@ -18,6 +18,7 @@ model StaffControl {
   deploymentId String
   releaseSha   String   @db.VarChar(40)
   configHash   String   @db.VarChar(64)
+  gradingPolicyHash String? @db.VarChar(64)
   revision     Int      @default(1)
   updatedAt    DateTime @default(now())
 }
@@ -36,6 +37,7 @@ model StaffIdentity {
   sessions            StaffSession[]
   assignments         StaffAssignment[]
   operations          StaffOperation[]
+  approvals           StaffReportApproval[]
 }
 
 model StaffBrowser {
@@ -117,10 +119,15 @@ model StaffSpecimen {
   evidenceHash      String   @db.VarChar(64)
   evidenceRevision  Int      @default(1)
   draftRevision     Int      @default(1)
+  analysisRevision  Int      @default(0)
   createdAt         DateTime @default(now())
   assignments       StaffAssignment[]
   revisions         StaffReviewRevision[]
   operations        StaffOperation[]
+  analyses          StaffAnalysisRevision[]
+  gradingOperations StaffGradingOperation[]
+  approvals         StaffReportApproval[]
+  publicReport      StaffPublicReport?
   @@unique([sourceType, sourceId])
 }
 
@@ -144,6 +151,7 @@ model StaffReviewRevision {
   evidenceRevision Int
   evidenceHash     String   @db.VarChar(64)
   contentHash      String   @db.VarChar(64)
+  analysisRevision Int      @default(0)
   canonical        String   @db.Text
   savedById        String?  @db.Uuid
   savedAt          DateTime @default(now())
@@ -160,4 +168,85 @@ model StaffOperation {
   revision    Int
   createdAt   DateTime @default(now())
   @@id([identityId, operationId])
+}
+
+
+model StaffAnalysisRevision {
+  operationId       String?  @unique @db.Uuid
+  specimenId        String   @db.Uuid
+  specimen          StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  revision          Int
+  evidenceHash      String   @db.VarChar(64)
+  sourceCanonical   String   @db.Text
+  sourceHash        String   @db.VarChar(64)
+  reportCanonical   String   @db.Text
+  reportHash        String   @db.VarChar(64)
+  admissionCanonical String  @db.Text
+  admissionHash     String   @db.VarChar(64)
+  sourceRevision    String   @db.VarChar(80)
+  mode              String
+  createdAt         DateTime @default(now())
+  @@id([specimenId, revision])
+}
+
+model StaffGradingOperation {
+  id                       String   @id @default(uuid()) @db.Uuid
+  specimenId               String   @db.Uuid
+  specimen                 StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  operationId              String   @db.VarChar(80)
+  actorKind                String
+  actorId                  String   @db.VarChar(100)
+  sessionHash              String?  @db.VarChar(64)
+  assignmentFence          Int?
+  controlRevision          Int
+  evidenceHash             String   @db.VarChar(64)
+  expectedAnalysisRevision Int
+  expectedReviewRevision   Int
+  requestCanonical         String   @db.Text
+  inputHash                String   @db.VarChar(64)
+  state                    String
+  dispatchClaimId          String   @unique @db.Uuid
+  leaseFence               Int
+  leaseExpiresAt           DateTime
+  resultAnalysisRevision   Int?
+  failureCode              String?  @db.VarChar(80)
+  createdAt                DateTime @default(now())
+  dispatchedAt             DateTime?
+  finishedAt               DateTime?
+  @@unique([specimenId, operationId])
+  @@index([specimenId, state])
+}
+
+model StaffReportApproval {
+  id                   String   @id @default(uuid()) @db.Uuid
+  specimenId           String   @db.Uuid
+  specimen             StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  version              Int
+  analysisRevision     Int
+  reviewRevision       Int
+  evidenceHash         String   @db.VarChar(64)
+  analysisHash         String   @db.VarChar(64)
+  reviewHash           String   @db.VarChar(64)
+  publicCanonical      String   @db.Text
+  publicHash           String   @db.VarChar(64)
+  actorId              String   @db.Uuid
+  actor                StaffIdentity @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  sessionHash          String   @db.VarChar(64)
+  accessVersion        Int
+  assignmentFence      Int
+  controlRevision      Int
+  operationId          String   @db.VarChar(80)
+  inputHash            String   @db.VarChar(64)
+  approvedAt           DateTime @default(now())
+  @@unique([specimenId, version])
+  @@unique([actorId, operationId])
+}
+
+model StaffPublicReport {
+  specimenId         String   @id @db.Uuid
+  specimen           StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  publicToken        String   @unique @db.VarChar(40)
+  reportNumber       String   @unique @db.VarChar(24)
+  currentApprovalId  String   @unique @db.Uuid
+  createdAt          DateTime @default(now())
 }

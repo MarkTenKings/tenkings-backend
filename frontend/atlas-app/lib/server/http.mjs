@@ -18,6 +18,7 @@ export function createHandler(resolveRuntime, env = process.env) {
                 ['POST', new RegExp(`^/api/staff/cards/${cardPattern}/draft$`)],
                 ['GET', new RegExp(`^/api/staff/evidence/${cardPattern}/(FRONT|BACK)$`)]
             ];
+            if (state.reports) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/approve$`)]);
             const matched = patterns.find(([, pattern]) => pattern.test(path));
             if (!matched)
                 deny(404, 'NOT_FOUND');
@@ -70,6 +71,8 @@ export function createHandler(resolveRuntime, env = process.env) {
                     res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
                     return res.status(200).send(asset.bytes ?? asset);
                 }
+                else if (path.endsWith('/approve'))
+                    body = await state.reports.approve(staff, match[1], req.body);
                 else if (req.method === 'POST')
                     body = { card: await review.save(staff, match[1], req.body) };
                 else

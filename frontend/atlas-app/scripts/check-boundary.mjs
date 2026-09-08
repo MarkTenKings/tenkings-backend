@@ -17,7 +17,7 @@ for (const trace of traces) {
     for (const file of JSON.parse(readFileSync(trace, 'utf8')).files) {
         const full = resolve(dirname(trace), file), rel = relative(repo, full);
         assert.ok(!rel.startsWith('..'), `External checkout dependency: ${file}`);
-        assert.ok(rel.startsWith('frontend/atlas-app/') || rel.startsWith('node_modules/') || rel === 'package.json', `Non-app server dependency: ${rel}`);
+        assert.ok(rel.startsWith('frontend/atlas-app/') || rel.startsWith('node_modules/') || rel === 'package.json' || rel === 'packages/atlas-grading-core/package.json' || rel.startsWith('packages/atlas-grading-core/dist/'), `Non-app server dependency: ${rel}`);
         assert.ok(!/@tenkings[+/]|stripe|mux-player|aws-sdk|ai-grader-capture-helper/i.test(rel)
             && (!/twilio/i.test(rel) || rel === 'frontend/atlas-app/lib/server/access/twilio.mjs'), `Forbidden effect dependency: ${rel}`);
         if (/prisma/i.test(rel)) assert.ok(rel === 'frontend/atlas-app/prisma/schema.prisma' || rel.startsWith('frontend/atlas-app/.generated/staff-database/')
@@ -27,4 +27,4 @@ for (const trace of traces) {
 }
 assert.ok(traces.length > 0 && chunks.length > 0);
 console.log(JSON.stringify({ status: 'STAFF_BUILD_BOUNDARY_PASS', pages: Object.keys(pages), browserChunks: chunks.length, serverTraces: traces.length,
-    tracedFilesChecked: checkedFiles, durableStore: 'atlas_staff', providerAdapters: ['explicitly activated ATLAS Verify'], certificationRoutes: 0 }));
+    tracedFilesChecked: checkedFiles, durableStore: 'atlas_staff', providerAdapters: ['explicitly activated ATLAS Verify'], certificationRoutes: 1 }));

@@ -60,7 +60,7 @@ export class DurableStaffAuth {
         return this.database.transaction(async context => {
             const current = await this.current(context, authority.sessionHash, authority.browserHash);
             if (!current) deny(401, 'SIGN_IN_REQUIRED');
-            return work({ ...context, identity: current.identity });
+            return work({ ...context, identity: current.identity, session: current.session });
         });
     }
     async bootstrap(header, client = 'loopback') {

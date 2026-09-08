@@ -51,7 +51,7 @@ try {
     const db = await fixture.database(), sessionKey = randomBytes(32), phoneKey = randomBytes(32);
     const config = localAccessConfig({ databaseUrl: db.staffUrl, sessionKey, phoneKey });
     const admin = new PrismaClient({ datasources: { db: { url: db.adminUrl } } });
-    try { await seedLocalStaff(admin, config); } finally { await admin.$disconnect(); }
+    try { await seedLocalStaff(admin, config, { analyses: true, trained: true }); } finally { await admin.$disconnect(); }
     const ownership = JSON.parse(readFileSync(join(fixture.directory, 'ownership.json'), 'utf8'));
     const path = join(fixture.directory, 'web-config.json');
     writeFileSync(path, JSON.stringify({ nonce: ownership.nonce, databaseUrl: db.staffUrl, sessionKey: sessionKey.toString('hex'), phoneKey: phoneKey.toString('hex') }), { mode: 0o600 });
@@ -71,12 +71,23 @@ try {
     response = await call(`/api/staff/cards/${id}`); assert.equal(response.status, 200); const { card } = await response.json();
     response = await call(`/api/staff/evidence/${id}/FRONT`); assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), /image\/svg\+xml/); checks++;
     const input = { operationId: randomUUID(), expectedRevision: card.draft.revision, evidenceRevision: card.evidenceRevision,
-        evidenceHash: card.evidenceHash, observations: { FRONT: 'Saved before the web process restarted.', BACK: '' }, reviewedSides: [], identityReviewed: false, disposition: 'IN_REVIEW' };
+        evidenceHash: card.evidenceHash, observations: { FRONT: 'Saved before the web process restarted.', BACK: '' }, reviewedSides: ['FRONT', 'BACK'], identityReviewed: true, disposition: 'READY_FOR_HUMAN' };
     response = await call(`/api/staff/cards/${id}/draft`, input, signed.csrf); assert.equal(response.status, 200, await response.clone().text()); checks++;
+    const ready = (await response.json()).card;
+    assert.equal(ready.grading.approvalBlock, null); assert.equal(ready.grading.report.version, 'atlas-graded-report-v1');
+    const approvalInput = { operationId: randomUUID(), expectedAnalysisRevision: ready.grading.analysisRevision,
+        analysisHash: ready.grading.analysisHash, expectedReviewRevision: ready.draft.revision, reviewHash: ready.reviewHash, evidenceHash: ready.evidenceHash };
+    response = await call(`/api/staff/cards/${id}/approve`, approvalInput, signed.csrf);
+    assert.equal(response.status, 200, await response.clone().text());
+    const approval = (await response.json()).approval; assert.equal(approval.version, 1); checks++;
+    response = await call('/api/staff/cards'); assert.equal((await response.json()).cards.find(c => c.id === id).disposition, 'HUMAN_APPROVED'); checks++;
     await stopWeb(); await startWeb(path);
     response = await call(`/api/staff/cards/${id}`); assert.equal(response.status, 200, await response.clone().text());
     const restored = (await response.json()).card; assert.equal(restored.draft.revision, 2); assert.deepEqual(restored.draft.observations, input.observations); checks++;
     response = await call(`/api/staff/cards/${id}/draft`, input, signed.csrf); assert.equal(response.status, 200); assert.equal((await response.json()).card.draft.revision, 2); checks++;
+    assert.equal(restored.grading.published.matchesCurrent, true); assert.equal(restored.grading.published.version, 1); checks++;
+    response = await call(`/api/staff/cards/${id}/approve`, approvalInput, signed.csrf);
+    assert.equal(response.status, 200, await response.clone().text()); assert.deepEqual((await response.json()).approval, approval); checks++;
     response = await call('/api/staff/auth/logout', {}, signed.csrf); assert.equal(response.status, 200);
     response = await call('/api/staff/cards'); assert.equal(response.status, 401); checks++;
     writeFileSync(join(fixture.directory, 'web-result.json'), JSON.stringify({ ok: true, checks, actualWebProcessRestart: true, mode: 'LOCAL_FIXTURE' }, null, 2));

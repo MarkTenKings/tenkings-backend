@@ -3,6 +3,7 @@ import { LocalReviewStore } from '../review.mjs';
 import { hash, BROWSER_COOKIE, SESSION_COOKIE, LOCAL_ORIGIN } from '../policy.mjs';
 import { canonical } from '../review-contract.mjs';
 import { makeAccessConfig } from './config.mjs';
+import { fixtureAnalysis, FIXTURE_GRADING_POLICY } from './fixture-analysis.mjs';
 
 export function localAccessConfig({ databaseUrl, sessionKey, phoneKey, phones = ['+12025550141', '+12025550142'] }) {
     return makeAccessConfig({ mode: 'LOCAL_FIXTURE', origin: LOCAL_ORIGIN, deploymentId: 'local-postgres-fixture',
@@ -41,17 +42,19 @@ export function fixtureEvidence() {
 }
 
 /** Elevated seeding is only used by the owned disposable fixture, never HTTP. */
-export async function seedLocalStaff(admin, config, { identities: seedIdentities = true } = {}) {
+export async function seedLocalStaff(admin, config, { identities: seedIdentities = true, analyses = false, trained = false } = {}) {
     if (config.mode !== 'LOCAL_FIXTURE') throw new Error('FIXTURE_ONLY');
     const now = new Date();
     const identities = [];
     await admin.$transaction(async tx => {
         await tx.staffControl.create({ data: { enabled: true, mode: config.mode, origin: config.origin,
-            deploymentId: config.deploymentId, releaseSha: config.releaseSha, configHash: config.configHash } });
+            deploymentId: config.deploymentId, releaseSha: config.releaseSha, configHash: config.configHash,
+            gradingPolicyHash: analyses ? FIXTURE_GRADING_POLICY : null } });
         for (const [index, phoneHash] of [...config.phoneByHash.keys()].entries()) {
             if (!seedIdentities) continue;
             identities.push(await tx.staffIdentity.create({ data: { id: randomUUID(), phoneHash,
-                name: index === 1 ? 'Sample observer' : 'Sample reviewer', role: index === 1 ? 'OBSERVER' : 'REVIEWER' } }));
+                name: index === 1 ? 'Sample observer' : 'Sample reviewer', role: index === 1 ? 'OBSERVER' : 'REVIEWER',
+                ...(trained && index !== 1 ? { certificationUntil: new Date(+now + 60 * 60_000) } : {}) } }));
         }
         for (const sample of new LocalReviewStore().cards.values()) {
             const id = randomUUID();
@@ -59,11 +62,13 @@ export async function seedLocalStaff(admin, config, { identities: seedIdentities
                 sha256: hash(sample.evidence[side]), byteCount: sample.evidence[side].length, width: 360, height: 504,
                 contentType: 'image/svg+xml', sourceRef: `${sample.id}:${side}` } : null]));
             const evidenceCanonical = canonical({ sides }), evidenceHash = hash(evidenceCanonical);
+            const analysisRevision = analyses && sides.FRONT && sides.BACK ? 1 : 0;
             await tx.staffSpecimen.create({ data: { id, sourceType: 'LOCAL_FIXTURE', sourceId: sample.id,
-                title: sample.title, subtitle: sample.set, evidenceCanonical, evidenceHash } });
+                title: sample.title, subtitle: sample.set, evidenceCanonical, evidenceHash, analysisRevision } });
+            if (analysisRevision) await tx.staffAnalysisRevision.create({ data: { specimenId: id, ...fixtureAnalysis(sample, evidenceHash) } });
             const draft = { ...sample.draft, evidenceHash };
             const content = canonical(draft);
-            await tx.staffReviewRevision.create({ data: { specimenId: id, revision: 1, evidenceRevision: 1,
+            await tx.staffReviewRevision.create({ data: { specimenId: id, revision: 1, evidenceRevision: 1, analysisRevision,
                 evidenceHash, contentHash: hash(content), canonical: content } });
             for (const identity of identities) {
                 if (identity.role === 'OBSERVER' && sample.id !== 'sample-002') continue;

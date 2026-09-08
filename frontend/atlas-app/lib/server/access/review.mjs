@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { deny, hash } from '../policy.mjs';
 import { canonical, SIDES, validateDraft } from '../review-contract.mjs';
+import { gradingView } from './reports.mjs';
 const uuid = value => {
     if (typeof value !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value)) deny(404, 'CARD_NOT_FOUND');
     return value;
@@ -40,7 +41,8 @@ export class DurableReviewStore {
         const row = await context.tx.staffReviewRevision.findUnique({ where: { specimenId_revision: { specimenId: card.id, revision: card.draftRevision } } });
         const history = await context.tx.staffReviewRevision.findMany({ where: { specimenId: card.id, revision: { lt: card.draftRevision } }, orderBy: { revision: 'desc' }, take: 100 });
         return { id: card.id, title: card.title, set: card.subtitle, number: '', category: card.sourceType === 'LOCAL_FIXTURE' ? 'Illustration' : 'Card',
-            evidenceRevision: card.evidenceRevision, evidenceHash: card.evidenceHash, draft: this.revisionRecord(row),
+            evidenceRevision: card.evidenceRevision, evidenceHash: card.evidenceHash, draft: this.revisionRecord(row), reviewHash: row.contentHash,
+            grading: await gradingView(context, card, assignment, this.revisionRecord(row)),
             canEdit: context.identity.role === 'REVIEWER' && assignment.canReview, assignmentFence: assignment.fence,
             sides: SIDES.map(side => ({ side, available: Boolean(evidence.sides[side]), sha256: evidence.sides[side]?.sha256 ?? null,
                 width: evidence.sides[side]?.width ?? null, height: evidence.sides[side]?.height ?? null })),
@@ -53,8 +55,11 @@ export class DurableReviewStore {
             return Promise.all(assignments.map(async assignment => {
                 const card = assignment.specimen, evidence = this.evidenceRecord(card);
                 const row = await context.tx.staffReviewRevision.findUnique({ where: { specimenId_revision: { specimenId: card.id, revision: card.draftRevision } } });
+                const publication = await context.tx.staffPublicReport.findUnique({ where: { specimenId: card.id } });
+                const approval = publication ? await context.tx.staffReportApproval.findUnique({ where: { id: publication.currentApprovalId } }) : null;
+                const approved = approval?.analysisRevision === card.analysisRevision && approval?.reviewRevision === card.draftRevision && approval?.evidenceHash === card.evidenceHash;
                 return { id: card.id, title: card.title, set: card.subtitle, number: '', category: card.sourceType === 'LOCAL_FIXTURE' ? 'Illustration' : 'Card',
-                    disposition: this.revisionRecord(row).disposition, evidenceComplete: Boolean(evidence.sides.FRONT && evidence.sides.BACK), revision: card.draftRevision };
+                    disposition: approved ? 'HUMAN_APPROVED' : this.revisionRecord(row).disposition, evidenceComplete: Boolean(evidence.sides.FRONT && evidence.sides.BACK), revision: card.draftRevision };
             }));
         });
     }
@@ -110,7 +115,7 @@ export class DurableReviewStore {
                 disposition: input.disposition, savedAt: now.toISOString(), savedBy: identity.name };
             const content = canonical(draft);
             await tx.staffReviewRevision.create({ data: { specimenId: cardId, revision: draft.revision, evidenceRevision: card.evidenceRevision,
-                evidenceHash: card.evidenceHash, contentHash: hash(content), canonical: content, savedById: identity.id, savedAt: now } });
+                evidenceHash: card.evidenceHash, analysisRevision: card.analysisRevision, contentHash: hash(content), canonical: content, savedById: identity.id, savedAt: now } });
             await tx.staffSpecimen.update({ where: { id: cardId }, data: { draftRevision: draft.revision } });
             await tx.staffOperation.create({ data: { identityId: identity.id, operationId: input.operationId, specimenId: cardId, inputHash, revision: draft.revision, createdAt: now } });
             await tx.staffAudit.create({ data: { id: randomUUID(), event: 'REVIEW_DRAFT_SAVED', subjectId: cardId, actorId: identity.id,

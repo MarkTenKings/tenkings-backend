@@ -9,6 +9,7 @@ import { localAccessConfig, seedLocalStaff, fixtureEvidence, fixtureVerifyProvid
 import { DurableStaffAuth } from '../lib/server/access/auth.mjs';
 import { StaffDatabase } from '../lib/server/access/database.mjs';
 import { DurableReviewStore } from '../lib/server/access/review.mjs';
+import { StaffReports } from '../lib/server/access/reports.mjs';
 import { canonical } from '../lib/server/review-contract.mjs';
 import { hash } from '../lib/server/policy.mjs';
 
@@ -16,13 +17,13 @@ const fixture = await disposablePostgres(process.argv.slice(2));
 const results = [], clients = new Set();
 const check = (code, action) => assert.rejects(action, error => error.code === code, code);
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
-async function scenario(name, work, { emptyRoster = false } = {}) {
+async function scenario(name, work, { emptyRoster = false, analyses = false, trained = false } = {}) {
     const db = await fixture.database();
     const admin = new PrismaClient({ datasources: { db: { url: db.adminUrl } } });
     const client = new PrismaClient({ datasources: { db: { url: db.staffUrl } } });
     clients.add(admin); clients.add(client);
     const config = localAccessConfig({ databaseUrl: db.staffUrl, sessionKey: randomBytes(32), phoneKey: randomBytes(32) });
-    const identities = await seedLocalStaff(admin, config, { identities: !emptyRoster });
+    const identities = await seedLocalStaff(admin, config, { identities: !emptyRoster, analyses, trained });
     const makeAuth = (provider = fixtureVerifyProvider(config)) => new DurableStaffAuth({ config, database: new StaffDatabase(client, config), provider });
     const auth = makeAuth();
     const casesql = (sql, values) => fixture.sql(sql, values, db.name);
@@ -48,6 +49,19 @@ async function scenario(name, work, { emptyRoster = false } = {}) {
 const draft = (card, change = {}) => ({ operationId: randomUUID(), expectedRevision: card.draft.revision,
     evidenceRevision: card.evidenceRevision, evidenceHash: card.evidenceHash, observations: { FRONT: 'Check this edge.', BACK: '' },
     reviewedSides: [], identityReviewed: false, disposition: 'IN_REVIEW', ...change });
+
+const approvalInput = card => ({ operationId: randomUUID(), expectedAnalysisRevision: card.grading.analysisRevision,
+    analysisHash: card.grading.analysisHash, expectedReviewRevision: card.draft.revision,
+    reviewHash: card.reviewHash, evidenceHash: card.evidenceHash });
+async function readyReport(context) {
+    const signed = await context.login();
+    const review = new DurableReviewStore({ auth: context.auth, evidence: fixtureEvidence() });
+    const reports = new StaffReports({ auth: context.auth, review });
+    const cards = await review.list(signed.staff);
+    const card = await review.read(signed.staff, cards.find(c => c.evidenceComplete).id);
+    const ready = await review.save(signed.staff, card.id, draft(card, { disposition: 'READY_FOR_HUMAN', reviewedSides: ['FRONT', 'BACK'], identityReviewed: true }));
+    return { signed, review, reports, ready };
+}
 
 let error;
 try {
@@ -265,6 +279,82 @@ try {
             expiresAt: new Date(+createdAt + 60_000) } });
         await check('SIGN_IN_SESSION_EXPIRED', () => auth.send(`atlas_local_browser=${expired}`, auth.digest(`browser:${expired}`), { phone: '+12025550141', requestId: randomUUID() }, 'test'));
     });
+    await scenario('human approval publishes an exact immutable version; corrections retain prior publication', async context => {
+        const { signed, review, reports, ready } = await readyReport(context);
+        assert.equal(ready.grading.report.findingCounts.unreviewed, 1);
+        assert.equal(ready.grading.approvalBlock, null);
+        const input = approvalInput(ready), result = await reports.approve(signed.staff, ready.id, input);
+        assert.equal(result.approval.version, 1); assert.equal(result.card.grading.published.matchesCurrent, true);
+        assert.equal(result.card.grading.approvalBlock, 'ALREADY_APPROVED');
+        const approval = await context.admin.staffReportApproval.findUnique({ where: { id: result.approval.approvalId } });
+        const published = JSON.parse(approval.publicCanonical);
+        assert.equal(published.report.findings[0].reviewResult, 'ACCEPTED'); assert.equal(published.mode, 'LOCAL_FIXTURE');
+        assert.deepEqual(published.report.grade, ready.grading.report.grade);
+        const before = approval.publicCanonical;
+        const retry = await reports.approve(signed.staff, ready.id, input); assert.deepEqual(retry.approval, result.approval);
+        const edited = await review.save(signed.staff, ready.id, draft(result.card, { observations: { FRONT: 'A later review note.', BACK: '' } }));
+        assert.equal(edited.grading.published.version, 1); assert.equal(edited.grading.published.matchesCurrent, false);
+        assert.equal((await context.admin.staffReportApproval.findUnique({ where: { id: approval.id } })).publicCanonical, before);
+        const oldRetry = await reports.approve(signed.staff, ready.id, input); assert.deepEqual(oldRetry.approval, result.approval);
+        assert.equal(oldRetry.card.grading.published.matchesCurrent, false);
+        const nextReady = await review.save(signed.staff, ready.id, draft(edited, { disposition: 'READY_FOR_HUMAN', reviewedSides: ['FRONT', 'BACK'], identityReviewed: true }));
+        const second = await reports.approve(signed.staff, ready.id, approvalInput(nextReady));
+        assert.equal(second.approval.version, 2); assert.equal(second.card.grading.published.publicToken, result.card.grading.published.publicToken);
+        assert.equal(await context.admin.staffReportApproval.count(), 2); assert.equal(await context.admin.staffPublicReport.count(), 1);
+        assert.equal((await context.admin.staffReportApproval.findUnique({ where: { id: approval.id } })).publicCanonical, before);
+        assert.equal(Number((await context.sql('SELECT count(*) FROM public."CollectibleCardV2"')).rows[0].count), 0);
+    }, { analyses: true, trained: true });
+    await scenario('untrained and fabricated machine identities cannot approve', async context => {
+        const { signed, reports, ready } = await readyReport(context);
+        await check('TRAINED_REVIEWER_REQUIRED', () => reports.approve(signed.staff, ready.id, approvalInput(ready)));
+        await check('SIGN_IN_REQUIRED', () => reports.approve({ ...signed.staff, role: 'REVIEWER', mode: 'PRODUCTION' }, ready.id, approvalInput(ready)));
+        assert.equal(await context.admin.staffReportApproval.count(), 0);
+    }, { analyses: true });
+    await scenario('stale analysis/review and concurrent approvals cannot publish twice', async context => {
+        const { signed, reports, ready } = await readyReport(context), input = approvalInput(ready);
+        await check('DRAFT_CHANGED', () => reports.approve(signed.staff, ready.id, { ...input, analysisHash: 'f'.repeat(64) }));
+        await check('DRAFT_CHANGED', () => reports.approve(signed.staff, ready.id, { ...input, expectedReviewRevision: 1 }));
+        const results = await Promise.allSettled([reports.approve(signed.staff, ready.id, input), reports.approve(signed.staff, ready.id, approvalInput(ready))]);
+        assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+        assert.equal(results.find(r => r.status === 'rejected').reason.code, 'ALREADY_APPROVED');
+        assert.equal(await context.admin.staffReportApproval.count(), 1); assert.equal(await context.admin.staffPublicReport.count(), 1);
+    }, { analyses: true, trained: true });
+    await scenario('unresolved grading and changed policy block human approval', async context => {
+        const { signed, review, reports, ready } = await readyReport(context);
+        const session = await context.admin.staffSession.findFirst(); const now = new Date();
+        const requestCanonical = canonical({ type: 'INITIALIZE' });
+        const op = await context.admin.staffGradingOperation.create({ data: { id: randomUUID(), specimenId: ready.id, operationId: randomUUID(),
+            actorKind: 'HUMAN', actorId: signed.staff.id, sessionHash: session.tokenHash, assignmentFence: 1,
+            controlRevision: 1, evidenceHash: ready.evidenceHash, expectedAnalysisRevision: ready.grading.analysisRevision,
+            expectedReviewRevision: ready.draft.revision, requestCanonical, inputHash: hash(requestCanonical), state: 'RESERVED',
+            dispatchClaimId: randomUUID(), leaseFence: 1, createdAt: now, leaseExpiresAt: new Date(+now + 60_000) } });
+        await check('GRADING_WORK_UNRESOLVED', () => reports.approve(signed.staff, ready.id, approvalInput(ready)));
+        await context.admin.staffGradingOperation.update({ where: { id: op.id }, data: { state: 'FAILED', failureCode: 'CANCELLED_BEFORE_DISPATCH', finishedAt: new Date() } });
+        await context.admin.staffControl.update({ where: { id: 'active' }, data: { gradingPolicyHash: 'f'.repeat(64), revision: { increment: 1 } } });
+        const fresh = await context.login();
+        const current = await review.read(fresh.staff, ready.id);
+        await check('GRADING_POLICY_CHANGED', () => reports.approve(fresh.staff, ready.id, approvalInput(current)));
+        assert.equal(await context.admin.staffReportApproval.count(), 0);
+    }, { analyses: true, trained: true });
+    await scenario('approval audit failure rolls back approval and public identity together', async context => {
+        const { signed, reports, ready } = await readyReport(context);
+        await context.sql(`CREATE FUNCTION atlas_staff.fixture_reject_report_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected report audit failure'; END; $$;
+          CREATE TRIGGER fixture_reject_report_audit BEFORE INSERT ON atlas_staff."StaffAudit" FOR EACH ROW EXECUTE FUNCTION atlas_staff.fixture_reject_report_audit()`);
+        await assert.rejects(() => reports.approve(signed.staff, ready.id, approvalInput(ready)));
+        assert.equal(await context.admin.staffReportApproval.count(), 0); assert.equal(await context.admin.staffPublicReport.count(), 0);
+        assert.equal((await context.admin.staffSpecimen.findUnique({ where: { id: ready.id } })).analysisRevision, 1);
+    }, { analyses: true, trained: true });
+    await scenario('SQL preserves source, approval and permanent public identity', async context => {
+        const { signed, reports, ready } = await readyReport(context);
+        const result = await reports.approve(signed.staff, ready.id, approvalInput(ready));
+        await assert.rejects(() => context.admin.staffAnalysisRevision.update({ where: { specimenId_revision: { specimenId: ready.id, revision: 1 } }, data: { sourceRevision: 'changed' } }));
+        await assert.rejects(() => context.admin.staffReportApproval.update({ where: { id: result.approval.approvalId }, data: { publicHash: 'f'.repeat(64) } }));
+        await assert.rejects(() => context.admin.$transaction(async tx => {
+            await tx.staffPublicReport.update({ where: { specimenId: ready.id }, data: { reportNumber: 'ATLAS-FFFFFFFFFFFF' } });
+            await tx.$executeRaw`SET CONSTRAINTS ALL IMMEDIATE`;
+        }));
+        assert.equal((await context.admin.staffPublicReport.findUnique({ where: { specimenId: ready.id } })).reportNumber, result.card.grading.published.reportNumber);
+    }, { analyses: true, trained: true });
 } catch (caught) { error = caught; }
 finally {
     for (const client of clients) await client.$disconnect();
