@@ -1,19 +1,22 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, type Prisma } from "@tenkings/database";
-import { VaultConfigPayloadSchema, VaultHeartbeatSchema } from "@tenkings/vault-contracts";
-import { methodNotAllowed, requireVaultJson, requireVaultMachine, sendVaultError, vaultRequestId, VaultApiError } from "../../../../../../lib/server/vaultV1/http";
+import { configDoorIds, VaultConfigPayloadSchema, VaultHeartbeatSchema } from "@tenkings/vault-contracts";
+import { assertVaultMachineAuthorityCurrent, methodNotAllowed, requireVaultJson, withVaultJsonBody, requireVaultMachine, sendVaultError, vaultRequestId, VaultApiError } from "../../../../../../lib/server/vaultV1/http";
+import { vaultCertificateMatchesReportedBuild } from "../../../../../../lib/server/vaultV1/certification";
+import { activateVaultProfileProjection } from "../../../../../../lib/server/vaultV1/config";
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+async function handler(req: NextApiRequest, res: NextApiResponse) {
   const requestId = vaultRequestId(req);
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"], requestId);
   try {
     requireVaultJson(req, 32 * 1024);
     const machineId = String(req.query.machineId ?? "");
-    await requireVaultMachine(req, machineId);
+    const authority = await requireVaultMachine(req, machineId);
     const heartbeat = VaultHeartbeatSchema.parse(req.body);
     const observedAt = new Date(heartbeat.observedAt);
     const updated = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${machineId} FOR UPDATE`;
+      await assertVaultMachineAuthorityCurrent(tx, authority, machineId);
       const machine = await tx.vaultMachine.findUnique({
         where: { id: machineId },
         select: { activeConfigId: true, pendingConfigId: true },
@@ -53,6 +56,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           data: { status: "SUPERSEDED" },
         });
       }
+      if (activation && heartbeat.availableDoorCount > configDoorIds(activation.payload).length) throw new VaultApiError(422, "HEARTBEAT_PROFILE_COUNT_INVALID", "Available doors exceed the reported profile");
+      if (activation?.clearPending) await activateVaultProfileProjection(tx, machineId, activation.payload);
+
+      // Certification is exact-build authority, never a permanent machine flag.
+      // Unknown source identity fails closed once a certificate has been issued.
+      const certificates = await tx.vaultCertificationSession.findMany({ where: { machineId, status: "PASSED" }, include: { configVersion: { select: { version: true, digest: true } } } });
+      for (const certificate of certificates) {
+        if (vaultCertificateMatchesReportedBuild(certificate, heartbeat)) continue;
+        const invalidatedAt = new Date();
+        const invalidationReason = "REPORTED_BUILD_OR_CONFIG_CHANGED";
+        await tx.vaultCertificationSession.update({ where: { id: certificate.id }, data: { status: "INVALIDATED", invalidatedAt, invalidationReason } });
+        await tx.vaultCertificate.updateMany({ where: { certificationId: certificate.id, invalidatedAt: null }, data: { invalidatedAt, invalidationReason } });
+        await tx.vaultAdminAuditEvent.create({ data: { machineId, action: "vault.certification.build-change.invalidate", outcome: "SUCCESS", targetType: "VaultCertificationSession", targetId: certificate.id, requestId, reason: invalidationReason } });
+      }
 
       return tx.vaultMachine.update({
         where: { id: machineId },
@@ -90,4 +107,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 }
 
-export const config = { api: { bodyParser: { sizeLimit: "32kb" } } };
+export const config = { api: { bodyParser: false } };
+export default withVaultJsonBody(handler, 32768);

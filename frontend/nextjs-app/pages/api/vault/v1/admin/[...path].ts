@@ -5,10 +5,15 @@ import {
   canonicalJson,
   calculateTaxCents,
   parseTaxPercentageToBasisPoints,
-  SIMULATOR_DOOR_MAPPING,
+  VaultMachineProfileSchema,
+  VaultMachineProfileDraftSchema,
+  VaultDoorMappingSchema,
+  VAULT_MAX_PROFILE_DOORS,
   VAULT_ALLOWED_PRICE_CENTS,
   VaultDoorIdSchema,
   VaultProductConfigSchema,
+  VaultSupportConfigSchema,
+  roleMay,
 } from "@tenkings/vault-contracts";
 import { z } from "zod";
 import {
@@ -16,23 +21,31 @@ import {
   publishVaultConfig,
   validateVaultConfigPayload,
   vaultConfigImpact,
+  VaultProfileEvidenceBindingsSchema,
+  verifyVaultProfileEvidence,
 } from "../../../../../lib/server/vaultV1/config";
 import {
   methodNotAllowed,
   requireVaultAdmin,
   requireVaultContract,
-  requireVaultJson,
+  requireVaultJson, withVaultJsonBody,
   sendVaultError,
   vaultRequestId,
   VaultApiError,
   writeVaultAdminAudit,
   type VaultAdminAuthority,
+  vaultHumanAccess,
+  vaultListScope,
 } from "../../../../../lib/server/vaultV1/http";
 import {
   evaluateVaultCertificationApproval,
   VaultCertificationEvidenceManifestSchema,
+  VaultVerifyArtifactsSchema,
+  verifyVaultArtifact,
+  verifyVaultAutomatedProof,
 } from "../../../../../lib/server/vaultV1/certification";
 import { VaultFinancialResolutionSchema, vaultSaleAdminDto, vaultSupportCaseAdminDto } from "../../../../../lib/server/vaultV1/support";
+import { machineLocalDate, salesTotals, vaultMachineDto, VaultSalesQuerySchema } from "../../../../../lib/server/vaultV1/reporting";
 
 const productInputSchema = VaultProductConfigSchema.omit({ id: true }).extend({ slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(80), reason: z.string().min(8).max(500).optional() });
 const machineInputSchema = z.object({
@@ -40,17 +53,18 @@ const machineInputSchema = z.object({
   serialNumber: z.string().trim().min(3).max(120),
   displayName: z.string().trim().min(1).max(120),
   locationLabel: z.string().trim().max(160).nullable().optional(),
-  timezone: z.string().trim().min(1).max(80),
+  timezone: z.string().trim().min(1).max(80).refine((value) => { try { new Intl.DateTimeFormat("en", { timeZone: value }); return true; } catch { return false; } }, "Valid IANA timezone required"),
   city: z.string().trim().min(1).max(100),
   state: z.string().trim().min(2).max(64),
   taxPercentage: z.string(),
-  support: z.object({
-    pageUrl: z.string().url(), email: z.string().email(), textNumber: z.string().min(7).max(32),
-    phoneNumber: z.string().min(7).max(32), hours: z.string().min(1).max(160),
-  }),
+  support: VaultSupportConfigSchema,
+  machineProfile: z.union([VaultMachineProfileSchema, VaultMachineProfileDraftSchema]),
+  doorMapping: VaultDoorMappingSchema.optional(),
   reason: z.string().min(8).max(500),
 });
 const configDraftSchema = z.object({
+  machineProfile: VaultMachineProfileSchema.optional(),
+  doorMapping: VaultDoorMappingSchema.optional(),
   minimumAppVersion: z.string().min(1).max(64).optional(),
   cloudFreshnessMs: z.number().int().min(15_000).max(900_000).optional(),
   retrievalSeconds: z.number().int().min(10).max(300).optional(),
@@ -62,8 +76,9 @@ const configDraftSchema = z.object({
 const doorPlanSchema = z.object({
   dryRun: z.boolean().default(true),
   confirmPhrase: z.string().optional(),
+  impactDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   reason: z.string().min(8).max(500).optional(),
-  assignments: z.array(z.object({ doorId: VaultDoorIdSchema, productId: z.string().uuid().nullable() })).min(1).max(150),
+  assignments: z.array(z.object({ doorId: VaultDoorIdSchema, productId: z.string().uuid().nullable() })).min(1).max(VAULT_MAX_PROFILE_DOORS),
 });
 const staffAccessSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("grant"), userId: z.string().min(1).max(128), role: z.enum(["RESTOCKER", "TECHNICIAN", "ADMIN"]), pin: z.string().regex(/^\d{6}$/), validFrom: z.string().datetime(), expiresAt: z.string().datetime(), reason: z.string().min(8).max(500) }),
@@ -72,16 +87,18 @@ const staffAccessSchema = z.discriminatedUnion("action", [
 const enrollmentSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("create"), expiresInMinutes: z.number().int().min(5).max(1440).default(60), reason: z.string().min(8).max(500) }),
   z.object({ action: z.literal("revoke-credential"), credentialId: z.string().uuid(), reason: z.string().min(8).max(500) }),
+  z.object({ action: z.literal("revoke-token"), tokenId: z.string().uuid(), reason: z.string().min(8).max(500) }),
   z.object({ action: z.literal("decommission"), confirmPhrase: z.string().max(200), reason: z.string().min(8).max(500) }),
 ]);
 const supportMutationSchema = z.object({
   caseId: z.string().uuid(), status: z.enum(["INVESTIGATING", "RESOLVED", "CLOSED"]),
   resolutionReason: z.string().min(8).max(2000), financialResolution: VaultFinancialResolutionSchema.optional(),
 });
-const certificationMutationSchema = z.discriminatedUnion("action", [
+const certificationMutationSchema = z.union([
   z.object({ action: z.literal("approve"), certificationId: z.string().uuid(), reason: z.string().min(8).max(1000) }).strict(),
   z.object({ action: z.literal("invalidate"), certificationId: z.string().uuid(), reason: z.string().min(8).max(1000) }).strict(),
   VaultCertificationEvidenceManifestSchema.extend({ action: z.literal("attach-manifest") }),
+  VaultVerifyArtifactsSchema,
 ]);
 
 function pathParts(req: NextApiRequest): string[] {
@@ -101,15 +118,23 @@ function jsonRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-async function listMachines() {
-  return prisma.vaultMachine.findMany({
+async function listMachines(where: Prisma.VaultMachineWhereInput = {}) {
+  const machines = await prisma.vaultMachine.findMany({
+    where,
     orderBy: { displayName: "asc" },
     include: {
-      _count: { select: { doors: true, sales: true, supportCases: true, certificationSessions: true } },
+      _count: { select: { doors: true, sales: true, supportCases: { where: { status: { in: ["OPEN", "INVESTIGATING"] } } }, certificationSessions: true } },
       activeConfig: { select: { id: true, version: true, digest: true, status: true, publishedAt: true } },
       pendingConfig: { select: { id: true, version: true, digest: true, status: true, publishedAt: true } },
+      configs: { where: { status: { in: ["DRAFT", "VALIDATED"] } }, select: { id: true, version: true, status: true, digest: true }, orderBy: { version: "desc" } },
+      doors: { select: { doorId: true, doorLabel: true, controllerEndpointId: true, controllerChannel: true, retiredAt: true, state: true, activeProductId: true, plannedProductId: true } },
     },
   });
+  return machines.map((machine) => ({ ...vaultMachineDto(machine), stock: [...new Set(machine.doors.filter((door) => !door.retiredAt).map((door) => door.plannedProductId).filter(Boolean))].map((productId) => {
+    const enabled = machine.doors.filter((door) => !door.retiredAt && door.state !== "DISABLED" && door.plannedProductId === productId).length;
+    const available = machine.doors.filter((door) => !door.retiredAt && door.state === "AVAILABLE" && door.activeProductId === productId).length;
+    return { productId, enabled, available, lowStock: available <= enabled * 0.2, soldOut: available === 0 };
+  }) }));
 }
 
 function signingKey() {
@@ -121,7 +146,8 @@ function signingKey() {
 
 async function handleProducts(req: NextApiRequest, res: NextApiResponse, requestId: string) {
   if (req.method === "GET") {
-    await requireVaultAdmin(req, { permission: "PRODUCT_MANAGE" });
+    const access = await vaultHumanAccess(req);
+    if (!access.owner && !access.machines.size) throw new VaultApiError(403, "VAULT_PERMISSION_REQUIRED", "Vault machine access required");
     return res.status(200).json({ requestId, products: await prisma.vaultProduct.findMany({ orderBy: [{ active: "desc" }, { category: "asc" }, { priceCents: "asc" }] }) });
   }
   if (req.method !== "POST") return methodNotAllowed(res, ["GET", "POST"], requestId);
@@ -143,11 +169,11 @@ async function handleProducts(req: NextApiRequest, res: NextApiResponse, request
 
 async function handleMachines(req: NextApiRequest, res: NextApiResponse, requestId: string) {
   if (req.method === "GET") {
-    await requireVaultAdmin(req, { permission: "DIAGNOSTICS_VIEW" });
-    return res.status(200).json({ requestId, machines: await listMachines() });
+    const scope = await vaultListScope(req, "RESTOCK_RUN");
+    return res.status(200).json({ requestId, machines: await listMachines(scope) });
   }
   if (req.method !== "POST") return methodNotAllowed(res, ["GET", "POST"], requestId);
-  requireVaultJson(req, 64 * 1024);
+  requireVaultJson(req, 256 * 1024);
   const input = machineInputSchema.parse(req.body);
   const authority = await requireVaultAdmin(req, { permission: "ENROLLMENT_MANAGE", fresh: true, reason: input.reason });
   const taxRateBasisPoints = parseTaxPercentageToBasisPoints(input.taxPercentage);
@@ -158,13 +184,23 @@ async function handleMachines(req: NextApiRequest, res: NextApiResponse, request
         timezone: input.timezone, city: input.city, state: input.state, taxRateBasisPoints,
         supportPageUrl: input.support.pageUrl, supportEmail: input.support.email, supportTextNumber: input.support.textNumber,
         supportPhoneNumber: input.support.phoneNumber, supportHours: input.support.hours,
+        draftMachineProfile: jsonValue(input.machineProfile), draftDoorMapping: input.doorMapping ? jsonValue(input.doorMapping) : undefined,
       },
     });
-    await tx.vaultDoor.createMany({ data: SIMULATOR_DOOR_MAPPING.map((door) => ({ machineId: created.id, doorId: door.doorId, controllerChannel: door.controllerChannel })) });
+    if (!("status" in input.machineProfile)) {
+      // Run complete config validation for exact profile/mapping membership before
+      // seeding empty reporting rows. A provisional draft has no hardware rows.
+      const mapping = VaultDoorMappingSchema.parse(input.doorMapping);
+      const endpoints = new Map(input.machineProfile.controller.endpoints.map((entry) => [entry.endpointId, entry.channelCount]));
+      const members = new Set(input.machineProfile.doors.map((door) => door.doorId));
+      if (mapping.length !== members.size || mapping.some((entry) => !members.has(entry.doorId) || !entry.controllerEndpointId || !endpoints.has(entry.controllerEndpointId) || entry.controllerChannel > endpoints.get(entry.controllerEndpointId)!)) throw new VaultApiError(400, "PROFILE_MAPPING_INVALID", "Supply every profile door with an explicit valid endpoint/channel pair");
+      const profile = input.machineProfile;
+      await tx.vaultDoor.createMany({ data: mapping.map((door) => ({ machineId: created.id, doorId: door.doorId, doorLabel: profile.doors.find((member) => member.doorId === door.doorId)!.label, controllerEndpointId: door.controllerEndpointId, controllerChannel: door.controllerChannel })) });
+    }
     await writeVaultAdminAudit({ req, authority, tx, machineId: created.id, action: "vault.machine.create", outcome: "SUCCESS", targetType: "VaultMachine", targetId: created.id });
     return created;
   });
-  return res.status(201).json({ requestId, machine, doorCount: 150 });
+  return res.status(201).json({ requestId, machine: vaultMachineDto(machine), doorCount: "status" in input.machineProfile ? 0 : input.machineProfile.doors.length });
 }
 
 async function handleMachineConfig(req: NextApiRequest, res: NextApiResponse, requestId: string, machineId: string, action: string) {
@@ -176,6 +212,8 @@ async function handleMachineConfig(req: NextApiRequest, res: NextApiResponse, re
     const authority = await requireVaultAdmin(req, { permission: "CONFIG_PUBLISH", machineId, fresh: true, reason: input.reason });
     const draft = await prisma.$transaction(async (tx) => {
       const created = await createVaultConfigDraft(machineId, authority.admin.user.id, {
+        machineProfile: input.machineProfile,
+        doorMapping: input.doorMapping,
         minimumAppVersion: input.minimumAppVersion,
         cloudFreshnessMs: input.cloudFreshnessMs,
         retrievalSeconds: input.retrievalSeconds,
@@ -198,11 +236,29 @@ async function handleMachineConfig(req: NextApiRequest, res: NextApiResponse, re
   const configId = z.string().uuid().parse(req.body?.configId);
   const config = await prisma.vaultConfigVersion.findUnique({ where: { id: configId } });
   if (!config || config.machineId !== machineId) throw new VaultApiError(404, "CONFIG_NOT_FOUND", "Config version was not found for this machine");
+  if (action === "verify-profile") {
+    const authority = await requireVaultAdmin(req, { permission: "CONFIG_PUBLISH", machineId, fresh: true, reason });
+    if (!["DRAFT", "VALIDATED"].includes(config.status)) throw new VaultApiError(409, "CONFIG_IMMUTABLE", "Only an unpublished draft can receive qualification evidence");
+    const input = VaultProfileEvidenceBindingsSchema.parse({ confirmPhrase: req.body?.confirmPhrase, bindings: req.body?.bindings });
+    const { payload } = validateVaultConfigPayload(config.canonicalPayload);
+    const profileEvidence = await verifyVaultProfileEvidence(payload, input, authority.admin.user.id);
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${machineId} FOR UPDATE`;
+      const current = await tx.vaultConfigVersion.findUnique({ where: { id: configId } });
+      if (!current || !["DRAFT", "VALIDATED"].includes(current.status) || current.digest !== config.digest) throw new VaultApiError(409, "CONFIG_STATE_CHANGED", "Config changed during evidence verification");
+      await tx.vaultConfigVersion.update({ where: { id: configId }, data: { validationSummary: jsonValue({ ...jsonRecord(current.validationSummary), profileEvidence }) } });
+      await writeVaultAdminAudit({ req, authority, tx, machineId, action: "vault.profile.qualification.verify", outcome: "SUCCESS", targetType: "VaultConfigVersion", targetId: configId, payloadDigest: config.digest, metadata: { profileDigest: profileEvidence.profileDigest } });
+    });
+    return res.status(200).json({ requestId, profileEvidence });
+  }
   if (action === "validate") {
-    const authority = await requireVaultAdmin(req, { permission: "CONFIG_PUBLISH", machineId });
+    const authority = await requireVaultAdmin(req, { permission: "CONFIG_PUBLISH", machineId, fresh: true, reason });
     const validated = validateVaultConfigPayload(config.canonicalPayload);
     const updated = await prisma.$transaction(async (tx) => {
-      const value = await tx.vaultConfigVersion.update({ where: { id: config.id }, data: { status: "VALIDATED", digest: validated.digest, validationSummary: jsonValue(validated.summary), validatedByAdminId: authority.admin.user.id, validatedAt: new Date() } });
+      await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${machineId} FOR UPDATE`;
+      const changed = await tx.vaultConfigVersion.updateMany({ where: { id: config.id, status: { in: ["DRAFT", "VALIDATED"] } }, data: { status: "VALIDATED", digest: validated.digest, validationSummary: jsonValue(validated.summary), validatedByAdminId: authority.admin.user.id, validatedAt: new Date() } });
+      if (changed.count !== 1) throw new VaultApiError(409, "CONFIG_IMMUTABLE", "Published, superseded and revoked configurations cannot be validated again");
+      const value = await tx.vaultConfigVersion.findUnique({ where: { id: config.id } });
       await writeVaultAdminAudit({ req, authority, tx, machineId, action: "vault.config.validate", outcome: "SUCCESS", targetType: "VaultConfigVersion", targetId: config.id, payloadDigest: validated.digest });
       return value;
     });
@@ -212,7 +268,6 @@ async function handleMachineConfig(req: NextApiRequest, res: NextApiResponse, re
     await requireVaultAdmin(req, { permission: "CONFIG_PUBLISH", machineId });
     const machine = await prisma.vaultMachine.findUnique({ where: { id: machineId }, include: { activeConfig: true } });
     const impact = vaultConfigImpact(machine?.activeConfig?.canonicalPayload ?? null, config.canonicalPayload);
-    await prisma.vaultConfigVersion.update({ where: { id: config.id }, data: { impactSummary: jsonValue(impact) } });
     return res.status(200).json({ requestId, impact });
   }
   if (action === "publish") {
@@ -236,12 +291,20 @@ async function handleDoorPlan(req: NextApiRequest, res: NextApiResponse, request
   if (!machine) throw new VaultApiError(404, "MACHINE_NOT_FOUND", "Vault machine was not found");
   const duplicate = input.assignments.find((entry, index) => input.assignments.findIndex((candidate) => candidate.doorId === entry.doorId) !== index);
   if (duplicate) throw new VaultApiError(400, "DUPLICATE_DOOR", `Door ${duplicate.doorId} appears more than once`);
-  const current = await prisma.vaultDoor.findMany({ where: { machineId, doorId: { in: input.assignments.map((entry) => entry.doorId) } }, select: { doorId: true, plannedProductId: true, state: true } });
+  const current = await prisma.vaultDoor.findMany({ where: { machineId, retiredAt: null, doorId: { in: input.assignments.map((entry) => entry.doorId) } }, select: { doorId: true, plannedProductId: true, state: true } });
   const impact = input.assignments.map((entry) => ({ ...entry, fromProductId: current.find((door) => door.doorId === entry.doorId)?.plannedProductId ?? null }));
-  if (input.dryRun) return res.status(200).json({ requestId, dryRun: true, changed: impact.filter((row) => row.fromProductId !== row.productId) });
+  if (current.length !== input.assignments.length) throw new VaultApiError(400, "DOOR_MAP_INCOMPLETE", "Plan references a missing machine door");
+  const productIds = [...new Set(input.assignments.map((entry) => entry.productId).filter((id): id is string => id !== null))];
+  if (await prisma.vaultProduct.count({ where: { id: { in: productIds }, active: true } }) !== productIds.length) throw new VaultApiError(400, "INVALID_PLAN_PRODUCT", "Planned products must be active Vault products");
+  const impactDigest = vaultPayloadDigest({ machineId, impact });
+  if (input.dryRun) return res.status(200).json({ requestId, dryRun: true, impactDigest, changed: impact.filter((row) => row.fromProductId !== row.productId) });
   authority = await requireVaultAdmin(req, { permission: "DOOR_PLAN_MANAGE", machineId, fresh: true, reason: input.reason });
   if (input.confirmPhrase !== `PLAN ${machine.slug}`) throw new VaultApiError(400, "CONFIRMATION_REQUIRED", `Type PLAN ${machine.slug} to apply this planned assignment`);
   await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${machineId} FOR UPDATE`;
+    const locked = await tx.vaultDoor.findMany({ where: { machineId, retiredAt: null, doorId: { in: input.assignments.map((entry) => entry.doorId) } }, select: { doorId: true, plannedProductId: true } });
+    const lockedImpact = input.assignments.map((entry) => ({ ...entry, fromProductId: locked.find((door) => door.doorId === entry.doorId)?.plannedProductId ?? null }));
+    if (input.impactDigest !== vaultPayloadDigest({ machineId, impact: lockedImpact })) throw new VaultApiError(409, "PLAN_PREVIEW_STALE", "Preview this exact plan again before applying it");
     for (const entry of input.assignments) await tx.vaultDoor.update({ where: { machineId_doorId: { machineId, doorId: entry.doorId } }, data: { plannedProductId: entry.productId } });
     await writeVaultAdminAudit({ req, authority, tx, machineId, action: "vault.doors.plan", outcome: "SUCCESS", targetType: "VaultDoor", payloadDigest: vaultPayloadDigest(input.assignments), metadata: { changedDoorCount: impact.length } });
   });
@@ -257,6 +320,7 @@ async function handleStaffAccess(req: NextApiRequest, res: NextApiResponse, requ
   if (req.method !== "POST") return methodNotAllowed(res, ["GET", "POST"], requestId);
   requireVaultJson(req, 32 * 1024);
   const input = staffAccessSchema.parse(req.body);
+  if (input.action === "grant" && (new Date(input.validFrom) >= new Date(input.expiresAt) || new Date(input.expiresAt).getTime() <= Date.now())) throw new VaultApiError(400, "GRANT_DATES_INVALID", "Grant expiry must be in the future and later than its validity start");
   const authority = await requireVaultAdmin(req, { permission: "STAFF_MANAGE", machineId, fresh: true, reason: input.reason });
   if (input.action === "revoke") {
     const grant = await prisma.$transaction(async (tx) => {
@@ -341,6 +405,7 @@ async function handleEnrollment(req: NextApiRequest, res: NextApiResponse, reque
   }
   if (input.action === "revoke-credential") {
     const credential = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${machineId} FOR UPDATE`;
       const current = await tx.vaultMachineCredential.findUnique({ where: { id: input.credentialId } });
       if (!current || current.machineId !== machineId) throw new VaultApiError(404, "CREDENTIAL_NOT_FOUND", "Credential was not found for this machine");
       const updated = await tx.vaultMachineCredential.update({ where: { id: input.credentialId }, data: { status: "REVOKED", revokedAt: new Date(), revokedByAdminId: authority.admin.user.id, revocationReason: input.reason } });
@@ -348,6 +413,15 @@ async function handleEnrollment(req: NextApiRequest, res: NextApiResponse, reque
       return updated;
     });
     return res.status(200).json({ requestId, credential: { id: credential.id, status: credential.status } });
+  }
+  if (input.action === "revoke-token") {
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${machineId} FOR UPDATE`;
+      const changed = await tx.vaultEnrollmentToken.updateMany({ where: { id: input.tokenId, machineId, status: { in: ["PENDING_APPROVAL", "APPROVED"] } }, data: { status: "REVOKED", revokedAt: new Date() } });
+      if (changed.count !== 1) throw new VaultApiError(409, "TOKEN_NOT_REVOCABLE", "Token is missing, consumed or already revoked");
+      await writeVaultAdminAudit({ req, authority, tx, machineId, action: "vault.enrollment.token.revoke", outcome: "SUCCESS", targetType: "VaultEnrollmentToken", targetId: input.tokenId });
+    });
+    return res.status(200).json({ requestId, revoked: true });
   }
   const endedAt = new Date();
   const machine = await prisma.$transaction(async (tx) => {
@@ -366,39 +440,60 @@ async function handleEnrollment(req: NextApiRequest, res: NextApiResponse, reque
     await writeVaultAdminAudit({ req, authority, tx, machineId, action: "vault.machine.decommission", outcome: "SUCCESS", targetType: "VaultMachine", targetId: updated.id });
     return updated;
   });
-  return res.status(200).json({ requestId, machine });
+  return res.status(200).json({ requestId, machine: vaultMachineDto(machine) });
 }
 
 async function handleFleet(req: NextApiRequest, res: NextApiResponse, requestId: string) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"], requestId);
-  await requireVaultAdmin(req, { permission: "DIAGNOSTICS_VIEW" });
-  const machines = await listMachines();
-  return res.status(200).json({ requestId, machines, summary: { total: machines.length, online: machines.filter((machine) => machine.lastHeartbeatAt && Date.now() - machine.lastHeartbeatAt.getTime() <= 120_000).length, salesReady: machines.filter((machine) => machine.health === "READY").length, serviceLocked: machines.filter((machine) => machine.serviceLocked).length } });
+  const scope = await vaultListScope(req, "RESTOCK_RUN");
+  const machines = await listMachines(scope);
+  return res.status(200).json({ requestId, machines, summary: { total: machines.length, online: machines.filter((machine) => machine.online).length, salesReady: machines.filter((machine) => machine.salesReady).length, serviceLocked: machines.filter((machine) => machine.serviceLocked).length } });
 }
 
 async function handleSales(req: NextApiRequest, res: NextApiResponse, requestId: string) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"], requestId);
-  const includeCertification = queryBoolean(req.query.includeCertification);
-  const machineId = typeof req.query.machineId === "string" ? req.query.machineId : undefined;
-  await requireVaultAdmin(req, { permission: "FINANCIAL_RESOLVE", machineId });
-  const sales = await prisma.vaultSale.findMany({ where: { ...(includeCertification ? {} : { mode: "PRODUCTION" }), ...(machineId ? { machineId } : {}) }, orderBy: { createdAt: "desc" }, take: 250, include: { items: true, machine: { select: { displayName: true, slug: true } } } });
-  const totals = sales.reduce((result, sale) => ({ authorizedCents: result.authorizedCents + (sale.paymentState === "AUTHORIZED" || sale.paymentState === "SETTLED" ? sale.totalCents : 0), settledCents: result.settledCents + (sale.settlementState === "SETTLED" ? sale.totalCents : 0), taxCents: result.taxCents + (sale.settlementState === "SETTLED" ? sale.taxCents : 0) }), { authorizedCents: 0, settledCents: 0, taxCents: 0 });
-  return res.status(200).json({ requestId, includeCertification, sales: sales.map((sale) => vaultSaleAdminDto(sale as unknown as Record<string, unknown> & { items: Array<Record<string, unknown>> })), totals });
+  const input = VaultSalesQuerySchema.parse(req.query);
+  const scope = await vaultListScope(req, "FINANCIAL_RESOLVE", input.machineId);
+  const where: Prisma.VaultSaleWhereInput = { machine: scope, ...(input.includeCertification === "true" ? {} : { mode: "PRODUCTION" }), ...(input.productId ? { items: { some: { productIdSnapshot: input.productId } } } : {}) };
+  let cursor: string | undefined;
+  let count = 0;
+  let afterRequestedCursor = !input.cursor;
+  let totals = { authorizedCents: 0, settledCents: 0, taxCents: 0 };
+  const sales: Record<string, unknown>[] = [];
+  // Totals cover the complete filtered result, independent of the visible page.
+  // Day boundaries use each sale's pinned timezone, including DST transitions.
+  for (;;) {
+    const chunk = await prisma.vaultSale.findMany({ where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 500, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { items: true, machine: { select: { displayName: true, slug: true } } } });
+    for (const sale of chunk) {
+      const day = machineLocalDate(sale.createdAt, sale.machineTimezone);
+      if ((input.from && day < input.from) || (input.through && day > input.through)) continue;
+      count += 1;
+      const partial = salesTotals([sale]);
+      totals = { authorizedCents: totals.authorizedCents + partial.authorizedCents, settledCents: totals.settledCents + partial.settledCents, taxCents: totals.taxCents + partial.taxCents };
+      if (afterRequestedCursor && sales.length < 251) sales.push(vaultSaleAdminDto(sale as unknown as Record<string, unknown> & { items: Array<Record<string, unknown>> }));
+      if (sale.id === input.cursor) afterRequestedCursor = true;
+    }
+    if (chunk.length < 500) break;
+    cursor = chunk.at(-1)!.id;
+  }
+  if (!afterRequestedCursor) throw new VaultApiError(400, "SALES_CURSOR_INVALID", "Page cursor is outside the selected report");
+  const page = sales.slice(0, 250);
+  return res.status(200).json({ requestId, includeCertification: input.includeCertification === "true", sales: page, totals, totalCount: count, nextCursor: sales.length > 250 ? page.at(-1)?.id : null, dateBasis: "ORIGINAL_MACHINE_TIMEZONE", productFilterBasis: "TRANSACTIONS_CONTAINING_PRODUCT" });
 }
 
 async function handleRestocks(req: NextApiRequest, res: NextApiResponse, requestId: string) {
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"], requestId);
   const machineId = typeof req.query.machineId === "string" ? req.query.machineId : undefined;
-  await requireVaultAdmin(req, { permission: "RESTOCK_RUN", machineId });
-  const restocks = await prisma.vaultRestockSession.findMany({ where: machineId ? { machineId } : {}, orderBy: { startedAt: "desc" }, take: 250, include: { items: true, machine: { select: { displayName: true, slug: true } } } });
+  const scope = await vaultListScope(req, "RESTOCK_RUN", machineId);
+  const restocks = await prisma.vaultRestockSession.findMany({ where: { machine: scope }, orderBy: { startedAt: "desc" }, take: 250, include: { items: true, machine: { select: { displayName: true, slug: true } } } });
   return res.status(200).json({ requestId, restocks });
 }
 
 async function handleCertification(req: NextApiRequest, res: NextApiResponse, requestId: string) {
   if (req.method === "GET") {
     const machineId = typeof req.query.machineId === "string" ? req.query.machineId : undefined;
-    await requireVaultAdmin(req, { permission: "CERTIFICATION_COLLECT", machineId });
-    const sessions = await prisma.vaultCertificationSession.findMany({ where: machineId ? { machineId } : {}, orderBy: { createdAt: "desc" }, take: 200, include: { evidence: true, certificate: true, machine: { select: { displayName: true, serviceEndedAt: true } } } });
+    const scope = await vaultListScope(req, "CERTIFICATION_COLLECT", machineId);
+    const sessions = await prisma.vaultCertificationSession.findMany({ where: { machine: scope }, orderBy: { createdAt: "desc" }, take: 200, include: { evidence: true, certificate: true, machine: { select: { displayName: true, serviceEndedAt: true } } } });
     return res.status(200).json({ requestId, sessions });
   }
   if (req.method !== "POST") return methodNotAllowed(res, ["GET", "POST"], requestId);
@@ -407,8 +502,42 @@ async function handleCertification(req: NextApiRequest, res: NextApiResponse, re
   const identity = await prisma.vaultCertificationSession.findUnique({ where: { id: input.certificationId }, select: { machineId: true } });
   if (!identity) throw new VaultApiError(404, "CERTIFICATION_NOT_FOUND", "Certification session was not found");
   const authority = await requireVaultAdmin(req, { permission: "CERTIFICATION_APPROVE", machineId: identity.machineId, fresh: true, reason: input.reason });
+  if (input.action === "verify-artifacts") {
+    const session = await prisma.vaultCertificationSession.findUnique({ where: { id: input.certificationId }, include: { evidence: true, configVersion: true } });
+    if (!session || session.status !== "REVIEW_REQUIRED") throw new VaultApiError(409, "CERTIFICATION_NOT_REVIEWABLE", "Artifacts require an unapproved review session");
+    const verified = await Promise.all(input.bindings.map(async (binding) => {
+      const evidence = session.evidence.find((item) => item.evidenceId === binding.evidenceId);
+      if (!evidence?.artifactDigest || !binding.artifactStorageKey.startsWith(`vault-certification/${session.id}/`)) throw new VaultApiError(400, "CERTIFICATION_ARTIFACT_SCOPE_INVALID", "Artifact must bind exact session evidence");
+      await verifyVaultArtifact(binding.artifactStorageKey, evidence.artifactDigest);
+      return { id: evidence.id, key: binding.artifactStorageKey, digest: evidence.artifactDigest };
+    }));
+    let automated: { automatedTransactions: number; automatedEvidenceVerified: true; automatedArtifactKey: string; automatedArtifactDigest: string } | undefined;
+    if (input.automatedProof) {
+      if (!input.automatedProof.artifactStorageKey.startsWith(`vault-certification/${session.id}/`)) throw new VaultApiError(400, "CERTIFICATION_ARTIFACT_SCOPE_INVALID", "Automated proof must belong to the session");
+      const bytes = await verifyVaultArtifact(input.automatedProof.artifactStorageKey, input.automatedProof.digest);
+      const automatedTransactions = verifyVaultAutomatedProof(bytes, session);
+      automated = { automatedTransactions, automatedEvidenceVerified: true, automatedArtifactKey: input.automatedProof.artifactStorageKey, automatedArtifactDigest: input.automatedProof.digest };
+    }
+    // Network reads finish before opening a transaction; approval and attachment
+    // acquire this same parent lock and cannot race the verified metadata write.
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${session.machineId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "VaultCertificationSession" WHERE "id" = ${session.id} FOR UPDATE`;
+      const current = await tx.vaultCertificationSession.findUnique({ where: { id: session.id } });
+      if (!current || current.status !== "REVIEW_REQUIRED") throw new VaultApiError(409, "CERTIFICATION_STATE_CHANGED", "Certification changed while artifacts were verified");
+      for (const artifact of verified) {
+        const evidence = await tx.vaultCertificationEvidence.findUnique({ where: { id: artifact.id } });
+        if (!evidence || evidence.artifactDigest !== artifact.digest) throw new VaultApiError(409, "CERTIFICATION_EVIDENCE_CHANGED", "Evidence changed during artifact verification");
+        await tx.vaultCertificationEvidence.update({ where: { id: artifact.id }, data: { metadata: jsonValue({ ...jsonRecord(evidence.metadata), verifiedArtifactDigest: artifact.digest, verifiedArtifactStorageKey: artifact.key, artifactVerifiedAt: new Date().toISOString() }) } });
+      }
+      if (automated) await tx.vaultCertificationSession.update({ where: { id: current.id }, data: { evidenceSummary: jsonValue({ ...jsonRecord(current.evidenceSummary), ...automated }) } });
+      await writeVaultAdminAudit({ req, authority, tx, machineId: session.machineId, action: "vault.certification.artifacts.verify", outcome: "SUCCESS", targetType: "VaultCertificationSession", targetId: session.id, metadata: { verifiedCount: verified.length, automated: Boolean(automated) } });
+    });
+    return res.status(200).json({ requestId, verifiedCount: verified.length, automatedVerified: Boolean(automated) });
+  }
   if (input.action === "attach-manifest") {
     const result = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${identity.machineId} FOR UPDATE`;
       await tx.$queryRaw`SELECT "id" FROM "VaultCertificationSession" WHERE "id" = ${input.certificationId} FOR UPDATE`;
       await tx.$queryRaw`SELECT "id" FROM "VaultCertificationEvidence" WHERE "certificationId" = ${input.certificationId} FOR UPDATE`;
       const session = await tx.vaultCertificationSession.findUnique({
@@ -438,13 +567,15 @@ async function handleCertification(req: NextApiRequest, res: NextApiResponse, re
       const attachedAt = new Date();
       for (const evidence of session.evidence) {
         const binding = bindings.get(evidence.evidenceId)!;
+        const metadata = jsonRecord(evidence.metadata);
+        if (metadata.cycleType !== binding.cycleType) throw new VaultApiError(409, "CERTIFICATION_CYCLE_IMMUTABLE", "Manifest cannot reclassify the machine's actual command cycle");
+        if (metadata.verifiedArtifactDigest !== evidence.artifactDigest || metadata.verifiedArtifactStorageKey !== binding.artifactStorageKey) throw new VaultApiError(409, "CERTIFICATION_ARTIFACT_UNVERIFIED", "Verify each stored artifact before attaching the complete manifest");
         await tx.vaultCertificationEvidence.update({
           where: { id: evidence.id },
           data: {
             artifactStorageKey: binding.artifactStorageKey,
             metadata: jsonValue({
               ...jsonRecord(evidence.metadata),
-              cycleType: binding.cycleType,
               manifestVersion: 1,
               manifestAttachedAt: attachedAt.toISOString(),
               manifestAttachedBy: authority.admin.user.id,
@@ -455,7 +586,7 @@ async function handleCertification(req: NextApiRequest, res: NextApiResponse, re
       await tx.vaultCertificationSession.update({
         where: { id: session.id },
         data: {
-          evidenceSummary: jsonValue({ automatedTransactions: input.automatedTransactions, observedSessions: input.observedSessions, manifestVersion: 1 }),
+          evidenceSummary: jsonValue({ ...jsonRecord(session.evidenceSummary), observedSessions: new Set(session.evidence.filter((evidence) => evidence.outcome === "PASS" && ["FULL_MACHINE", "FIELD"].includes(evidence.evidenceClass ?? "") && jsonRecord(evidence.metadata).cycleType === "PURCHASE").map((evidence) => jsonRecord(evidence.metadata).saleId).filter((value) => typeof value === "string")).size, manifestVersion: 1 }),
           hardwareIdentity: jsonValue(input.hardwareIdentity),
           unresolvedDeviations: jsonValue(input.unresolvedDeviations),
         },
@@ -490,6 +621,7 @@ async function handleCertification(req: NextApiRequest, res: NextApiResponse, re
   }
   if (input.action === "invalidate") {
     const updated = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${identity.machineId} FOR UPDATE`;
       await tx.$queryRaw`SELECT "id" FROM "VaultCertificationSession" WHERE "id" = ${input.certificationId} FOR UPDATE`;
       const now = new Date();
       const value = await tx.vaultCertificationSession.update({ where: { id: input.certificationId }, data: { status: "INVALIDATED", invalidatedAt: now, invalidationReason: input.reason } });
@@ -501,6 +633,7 @@ async function handleCertification(req: NextApiRequest, res: NextApiResponse, re
   }
   const key = signingKey();
   const certificate = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${identity.machineId} FOR UPDATE`;
     await tx.$queryRaw`SELECT "id" FROM "VaultCertificationSession" WHERE "id" = ${input.certificationId} FOR UPDATE`;
     await tx.$queryRaw`SELECT "id" FROM "VaultCertificationEvidence" WHERE "certificationId" = ${input.certificationId} FOR UPDATE`;
     const session = await tx.vaultCertificationSession.findUnique({ where: { id: input.certificationId }, include: { evidence: { orderBy: [{ observedAt: "asc" }, { evidenceId: "asc" }] }, configVersion: true, certificate: true } });
@@ -560,9 +693,9 @@ async function handleCertification(req: NextApiRequest, res: NextApiResponse, re
 async function handleSupportCases(req: NextApiRequest, res: NextApiResponse, requestId: string) {
   if (req.method === "GET") {
     const machineId = typeof req.query.machineId === "string" ? req.query.machineId : undefined;
-    await requireVaultAdmin(req, { permission: "FINANCIAL_RESOLVE", machineId });
+    const scope = await vaultListScope(req, "FINANCIAL_RESOLVE", machineId);
     const status = typeof req.query.status === "string" ? z.enum(["OPEN", "INVESTIGATING", "RESOLVED", "CLOSED"]).parse(req.query.status) : undefined;
-    const cases = await prisma.vaultSupportCase.findMany({ where: { ...(machineId ? { machineId } : {}), ...(status ? { status } : {}) }, orderBy: { openedAt: "desc" }, take: 250, include: { sale: { include: { items: true } }, machine: { select: { displayName: true, slug: true } } } });
+    const cases = await prisma.vaultSupportCase.findMany({ where: { machine: scope, ...(status ? { status } : {}) }, orderBy: { openedAt: "desc" }, take: 250, include: { sale: { include: { items: true } }, machine: { select: { displayName: true, slug: true } } } });
     return res.status(200).json({ requestId, cases: cases.map((supportCase) => vaultSupportCaseAdminDto(supportCase as unknown as Record<string, unknown>)) });
   }
   if (req.method !== "POST") return methodNotAllowed(res, ["GET", "POST"], requestId);
@@ -579,18 +712,24 @@ async function handleSupportCases(req: NextApiRequest, res: NextApiResponse, req
   return res.status(200).json({ requestId, supportCase: vaultSupportCaseAdminDto(updated as unknown as Record<string, unknown>), externalPaymentActionExecuted: false });
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+async function handler(req: NextApiRequest, res: NextApiResponse) {
+  res.setHeader("Cache-Control", "private, no-store");
   const requestId = vaultRequestId(req);
   const parts = pathParts(req);
   let authority: VaultAdminAuthority | null = null;
   try {
     requireVaultContract(req);
+    if (parts[0] === "access" && parts.length === 1) {
+      if (req.method !== "GET") return methodNotAllowed(res, ["GET"], requestId);
+      const access = await vaultHumanAccess(req);
+      return res.status(200).json({ requestId, owner: access.owner, machines: [...access.machines].map(([machineId, role]) => ({ machineId, role })), allowed: access.owner || access.machines.size > 0 });
+    }
     if (parts[0] === "products" && parts.length === 1) return await handleProducts(req, res, requestId);
     if (parts[0] === "machines" && parts.length === 1) return await handleMachines(req, res, requestId);
     if (parts[0] === "machines" && parts[2] === "config" && parts.length === 4) return await handleMachineConfig(req, res, requestId, parts[1], parts[3]);
-    if (parts[0] === "machines" && parts[2] === "doors" && parts[3] === "plan") return await handleDoorPlan(req, res, requestId, parts[1]);
-    if (parts[0] === "machines" && parts[2] === "staff-access") return await handleStaffAccess(req, res, requestId, parts[1]);
-    if (parts[0] === "machines" && parts[2] === "enrollment") return await handleEnrollment(req, res, requestId, parts[1]);
+    if (parts[0] === "machines" && parts[2] === "doors" && parts[3] === "plan" && parts.length === 4) return await handleDoorPlan(req, res, requestId, parts[1]);
+    if (parts[0] === "machines" && parts[2] === "staff-access" && parts.length === 3) return await handleStaffAccess(req, res, requestId, parts[1]);
+    if (parts[0] === "machines" && parts[2] === "enrollment" && parts.length === 3) return await handleEnrollment(req, res, requestId, parts[1]);
     if (parts[0] === "fleet" && parts.length === 1) return await handleFleet(req, res, requestId);
     if (parts[0] === "sales" && parts.length === 1) return await handleSales(req, res, requestId);
     if (parts[0] === "restocks" && parts.length === 1) return await handleRestocks(req, res, requestId);
@@ -609,6 +748,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 }
 
-export const config = { api: { bodyParser: { sizeLimit: "2mb" } } };
+export const config = { api: { bodyParser: false } };
+export default withVaultJsonBody(handler, 2097152);
 
 export { calculateTaxCents, parseTaxPercentageToBasisPoints, VAULT_ALLOWED_PRICE_CENTS };

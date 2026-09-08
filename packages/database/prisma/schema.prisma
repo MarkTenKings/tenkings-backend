@@ -4092,6 +4092,8 @@ model VaultMachine {
   supportTextNumber        String?
   supportPhoneNumber       String?
   supportHours             String?
+  draftMachineProfile      Json?                       @db.JsonB
+  draftDoorMapping         Json?                       @db.JsonB
   serviceStartedAt         DateTime?
   serviceEndedAt           DateTime?
   currentCredentialVersion Int                         @default(0)
@@ -4156,6 +4158,9 @@ model VaultDoor {
   machine           VaultMachine       @relation(fields: [machineId], references: [id], onDelete: Restrict)
   doorId            String
   controllerChannel Int
+  controllerEndpointId String          @default("legacy")
+  doorLabel         String?
+  retiredAt         DateTime?
   state             VaultDoorState     @default(EMPTY)
   stateVersion      Int                @default(1)
   activeProductId   String?
@@ -4173,7 +4178,8 @@ model VaultDoor {
   restockItems      VaultRestockItem[]
 
   @@unique([machineId, doorId])
-  @@unique([machineId, controllerChannel])
+  // Active endpoint/channel uniqueness is a partial index in the profile migration.
+  @@index([machineId, controllerEndpointId, controllerChannel])
   @@index([machineId, state, activeProductId])
 }
 
@@ -4215,6 +4221,7 @@ model VaultSale {
   machineId                String
   machine                  VaultMachine          @relation(fields: [machineId], references: [id], onDelete: Restrict)
   localTransactionId       String
+  certificationSessionId   String?
   supportReference         String
   mode                     VaultMode
   state                    VaultSaleState
@@ -4281,6 +4288,8 @@ model VaultSaleItem {
   priceCentsSnapshot  Int
   taxClassSnapshot    String
   controllerChannelSnapshot Int
+  controllerEndpointIdSnapshot String    @default("legacy")
+  doorLabelSnapshot   String?
   mappingVersionSnapshot String
   taxRateBasisPoints  Int
   taxCentsSnapshot    Int
@@ -4288,8 +4297,10 @@ model VaultSaleItem {
   fulfillmentState    VaultFulfillmentState
   initialCommandId    String?               @unique
   initialCommandState VaultCommandState     @default(NOT_COMMITTED)
+  initialCommandTerminalAt DateTime?
   retryCommandId      String?               @unique
   retryCommandState   VaultCommandState     @default(NOT_COMMITTED)
+  retryCommandTerminalAt DateTime?
   retryUsedAt         DateTime?
   supportReason       String?
   createdAt           DateTime              @default(now())
@@ -4311,6 +4322,7 @@ model VaultMachineEvent {
   mode           VaultMode
   correlationId  String?
   causationId    String?
+  actor          String?
   occurredAt     DateTime
   receivedAt     DateTime     @default(now())
   payload        Json         @db.JsonB
@@ -4329,6 +4341,8 @@ model VaultRestockSession {
   machineId                String
   machine                  VaultMachine             @relation(fields: [machineId], references: [id], onDelete: Restrict)
   localSessionId           String
+  certificationSessionId   String?
+  mode                     VaultMode                @default(PRODUCTION)
   state                    VaultRestockSessionState @default(ACTIVE)
   actorUserId              String?
   actorRole                VaultRole?
@@ -4359,9 +4373,12 @@ model VaultRestockItem {
   door             VaultDoor             @relation(fields: [doorRecordId], references: [id], onDelete: Restrict)
   doorId           String
   plannedProductId String?
+  doorLabelSnapshot String?
+  mappingSnapshot  Json?                 @db.JsonB
   state            VaultRestockItemState @default(UNREVIEWED)
   commandId        String?               @unique
   commandState     VaultCommandState     @default(NOT_COMMITTED)
+  commandTerminalAt DateTime?
   evidence         Json?                 @db.JsonB
   reviewedAt       DateTime?
   updatedAt        DateTime              @updatedAt

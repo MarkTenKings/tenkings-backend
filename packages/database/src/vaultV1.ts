@@ -2,12 +2,11 @@ import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypt
 
 export const VAULT_CONTRACT_VERSION = 1;
 export const VAULT_EVENT_BATCH_LIMIT = 250;
-// A 150-door SALE_RESERVED snapshot repeats bounded product descriptions and
-// photo URLs for every paid line, so the envelope must accommodate the frozen
-// maximum cardinality while still imposing a hard cloud boundary.
+// Resource bounds are independent of each signed profile and payment capacity.
 export const VAULT_EVENT_PAYLOAD_MAX_BYTES = 1024 * 1024;
 export const VAULT_EVENT_PAYLOAD_MAX_DEPTH = 6;
 export const VAULT_EVENT_PAYLOAD_MAX_KEYS = 4096;
+export const VAULT_EVENT_PAYLOAD_MAX_ARRAY_LENGTH = 256;
 export const VAULT_CERTIFICATION_RETENTION_YEARS = 3;
 export const VAULT_ALLOWED_PRICE_CENTS = Object.freeze([2500, 5000, 10_000, 25_000] as const);
 export const VAULT_DOOR_ID_PATTERN = /^(X|K|I|N|G|S)-(0[1-9]|1[0-9]|2[0-5])$/;
@@ -16,12 +15,20 @@ export type VaultEventSequenceInput = Readonly<{ eventId: string; sequence: numb
 export type VaultJsonPrimitive = string | number | boolean | null;
 export type VaultJsonValue = VaultJsonPrimitive | VaultJsonValue[] | { [key: string]: VaultJsonValue };
 
-const VAULT_SECRET_KEY = /(?:pin|pan|cvv|track|bearer|token|secret|password|private.?key|authorization|credential)|^(?:sessionId|providerSessionId|providerTransactionId)$/i;
+function isVaultSecretKey(key: string): boolean {
+  // Match semantic words, not substrings ("mappingVersion" contains "pin").
+  const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/);
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return words.some((word) => ["pin", "pan", "cvv", "track", "bearer", "token", "secret", "password", "authorization", "credential", "cookie", "verifier", "cardholder", "magstripe"].includes(word))
+    || words.includes("private") && words.includes("key")
+    || ["sessionid", "providersessionid", "providertransactionid", "cardnumber", "cardexpiry", "cardexpiration", "primaryaccountnumber", "bankaccount"].includes(normalized)
+    || /(?:bank)?account(?:number|num|no)$|routing(?:number|num|no)$/.test(normalized);
+}
 const VAULT_REDACTED = "[REDACTED]";
 const VAULT_SCRYPT = Object.freeze({ N: 16_384, r: 8, p: 1, keyLength: 64 });
 
 export function hashVaultSecret(secret: string): string {
-  if (secret.length < 32) throw new RangeError("Vault secrets must contain at least 32 characters");
+  if (secret.length < 32 || secret.length > 512) throw new RangeError("Vault secrets must contain 32-512 characters");
   return createHash("sha256").update(secret, "utf8").digest("hex");
 }
 
@@ -105,7 +112,7 @@ function normalizeEventValue(value: unknown, depth: number, keyBudget: { remaini
     return value;
   }
   if (Array.isArray(value)) {
-    if (value.length > 150) throw new RangeError("Vault event payload array is too large");
+    if (value.length > VAULT_EVENT_PAYLOAD_MAX_ARRAY_LENGTH) throw new RangeError("Vault event payload array is too large");
     return value.map((entry) => normalizeEventValue(entry, depth + 1, keyBudget));
   }
   if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype) {
@@ -116,7 +123,7 @@ function normalizeEventValue(value: unknown, depth: number, keyBudget: { remaini
     if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key)) throw new RangeError("Vault event payload contains an invalid key");
     keyBudget.remaining -= 1;
     if (keyBudget.remaining < 0) throw new RangeError("Vault event payload contains too many keys");
-    output[key] = VAULT_SECRET_KEY.test(key) ? VAULT_REDACTED : normalizeEventValue(entry, depth + 1, keyBudget);
+    output[key] = isVaultSecretKey(key) ? VAULT_REDACTED : normalizeEventValue(entry, depth + 1, keyBudget);
   }
   return output;
 }

@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { SignedVaultConfigSchema } from "@tenkings/vault-contracts";
-import { methodNotAllowed, requireVaultGet, requireVaultMachine, sendVaultError, vaultRequestId, VaultApiError } from "../../../../../../lib/server/vaultV1/http";
+import { assertVaultMachineAuthorityCurrent, methodNotAllowed, requireVaultGet, requireVaultMachine, sendVaultError, vaultRequestId, VaultApiError } from "../../../../../../lib/server/vaultV1/http";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const requestId = vaultRequestId(req);
@@ -9,10 +9,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     requireVaultGet(req);
     const machineId = String(req.query.machineId ?? "");
-    await requireVaultMachine(req, machineId);
-    const machine = await prisma.vaultMachine.findUnique({
-      where: { id: machineId },
-      include: { pendingConfig: true, activeConfig: true },
+    const authority = await requireVaultMachine(req, machineId);
+    const machine = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${machineId} FOR UPDATE`;
+      await assertVaultMachineAuthorityCurrent(tx, authority, machineId);
+      return tx.vaultMachine.findUnique({
+        where: { id: machineId },
+        include: { pendingConfig: true, activeConfig: true },
+      });
     });
     const config = machine?.pendingConfig ?? machine?.activeConfig;
     if (!config || config.status !== "PUBLISHED" || !config.signingKeyId || !config.signingAlgorithm || !config.detachedSignature) {

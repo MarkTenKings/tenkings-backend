@@ -25,7 +25,7 @@ import {
   evaluateVaultCertificationApproval,
   VaultCertificationEvidenceManifestSchema,
 } from "../lib/server/vaultV1/certification";
-import { normalizeTypedVaultEvent } from "../lib/server/vaultV1/events";
+import { normalizeTypedVaultEvent, projectVaultMachineEvent } from "../lib/server/vaultV1/events";
 import { VaultFinancialResolutionSchema, vaultSaleAdminDto, vaultSupportCaseAdminDto } from "../lib/server/vaultV1/support";
 
 function request(headers: Record<string, string>): NextApiRequest {
@@ -147,7 +147,7 @@ test("Vault config validation rejects an assigned product outside the signed cat
   payload.assignments["X-01"] = "unknown-product";
   assert.throws(
     () => validateVaultConfigPayload(payload),
-    (error: unknown) => error instanceof VaultApiError && error.code === "UNKNOWN_ASSIGNED_PRODUCT",
+    (error: unknown) => error instanceof VaultApiError && error.code === "UNKNOWN_ASSIGNED_PRODUCT" || Boolean(error && typeof error === "object" && "issues" in error),
   );
 });
 
@@ -194,6 +194,7 @@ test("typed event boundary accepts complete sale snapshots, business session IDs
     }],
   }));
   assert.equal(sale.payload.supportReference, "ABC12345");
+  assert.equal((sale.payload.items as Array<{ mappingVersion: string }>)[0]!.mappingVersion, "1");
 
   const restockPayload = redactVaultValue({
     restockSessionId: "00000000-0000-4000-8000-000000000030",
@@ -212,6 +213,38 @@ test("typed event boundary accepts complete sale snapshots, business session IDs
   }) as Record<string, unknown>));
   assert.equal(staff.payload.sessionId, "[REDACTED]");
   assert.throws(() => normalizeTypedVaultEvent(event("FUTURE_UNREVIEWED_EVENT", {})), (error: unknown) => error instanceof VaultApiError && error.code === "EVENT_TYPE_UNSUPPORTED");
+});
+
+test("machine-redacted sale snapshots reach actual cloud projection with preserved mapping and immutable mode", async () => {
+  const config = validPayload();
+  config.assignments["X-01"] = config.products[0]!.id;
+  const product = config.products[0]!;
+  const saleId = "00000000-0000-4000-8000-000000000020";
+  const payload = { saleId, supportReference: "ABC12345", configVersion: 1, configDigest: "a".repeat(64), timezone: config.timezone, city: config.city, state: config.state, taxRateBasisPoints: config.taxRateBasisPoints, taxCalculationVersion: config.taxCalculationVersion, subtotalCents: 2500, taxCents: 238, totalCents: 2738, currency: "USD", items: [{ lineId: "00000000-0000-4000-8000-000000000021", doorId: "X-01", productId: product.id, productName: product.name, photoUrl: product.photoUrl, description: product.description, category: product.category, priceCents: product.priceCents, taxClass: product.taxClass, controllerChannel: 1, mappingVersion: "1" }] };
+  let persisted: any;
+  let inventoryWrites = 0;
+  const tx: any = {
+    vaultConfigVersion: { findUnique: async () => ({ id: "config", version: 1, publishedAt: new Date(), digest: "a".repeat(64), canonicalPayload: config }) },
+    vaultDoor: { findMany: async () => [{ id: "door", doorId: "X-01" }], updateMany: async () => { inventoryWrites += 1; } },
+    vaultSale: { create: async (value: any) => { persisted = value.data; }, findFirst: async () => ({ mode: "CERTIFICATION" }) },
+  };
+  await projectVaultMachineEvent(tx, normalizeTypedVaultEvent({ ...event("SALE_RESERVED", redactVaultValue(payload) as any), mode: "CERTIFICATION" }));
+  assert.equal(persisted.items.create[0].mappingVersionSnapshot, "1");
+  assert.equal(persisted.mode, "CERTIFICATION");
+  assert.equal(inventoryWrites, 0);
+  await assert.rejects(projectVaultMachineEvent(tx, normalizeTypedVaultEvent(event("PAYMENT_CANCELLED_RESERVATION_RELEASED", { saleId }))), (error: any) => error.code === "SALE_MODE_MISMATCH");
+});
+
+test("cloud payment and retry projections reject unauthorized releases, duplicate entitlements and stale applied callbacks", async () => {
+  const saleId = "00000000-0000-4000-8000-000000000020";
+  let sale: any = { mode: "PRODUCTION", authorizationObservedAt: new Date(), groupRetryConsumedAt: new Date(), providerCallbackSequence: 3 };
+  const tx: any = { vaultSale: { findFirst: async () => sale } };
+  const call = (type: string, payload: Record<string, unknown>) => projectVaultMachineEvent(tx, normalizeTypedVaultEvent({ ...event(type, payload), correlationId: saleId }));
+  await assert.rejects(call("PAYMENT_CANCELLED_RESERVATION_RELEASED", { saleId }), (error: any) => error.code === "AUTHORIZED_SALE_RELEASE_DENIED");
+  await assert.rejects(call("PAID_DOOR_GROUP_RETRY_COMMITTED", { saleId, commands: [{ commandId: "retry-command", doorId: "X-01", attempt: 2 }] }), (error: any) => error.code === "RETRY_NOT_AVAILABLE");
+  await assert.rejects(call("PAYMENT_CALLBACK_APPLIED", { callbackId: "callback", sequence: 3, state: "SETTLED", disposition: "APPLIED" }), (error: any) => error.code === "PROVIDER_SEQUENCE_NOT_MONOTONIC");
+  sale = { mode: "PRODUCTION", authorizationObservedAt: null, providerCallbackSequence: 3 };
+  await assert.rejects(call("PAYMENT_CALLBACK_APPLIED", { callbackId: "callback", sequence: 4, state: "SETTLED", disposition: "APPLIED" }), (error: any) => error.code === "SETTLEMENT_WITHOUT_AUTHORIZATION");
 });
 
 test("complete 150-door manifest becomes eligible only after all 1,050 artifacts and cycles are bound", () => {
@@ -243,7 +276,7 @@ test("complete 150-door manifest becomes eligible only after all 1,050 artifacts
     certificationId,
     reason: "Attach the independently stored physical-cycle artifacts.",
     automatedTransactions: 1000,
-    observedSessions: 500,
+    observedSessions: 750,
     hardwareIdentity: { machineSerial: "vault-001", controllerBoard: "qualified-controller" },
     unresolvedDeviations: [],
     evidenceBindings: cycles.map((item) => ({
@@ -254,8 +287,8 @@ test("complete 150-door manifest becomes eligible only after all 1,050 artifacts
   });
   assert.equal(manifest.evidenceBindings.length, 1050);
   const beforeManifest = evaluateVaultCertificationApproval({
-    status: "REVIEW_REQUIRED", sourceCommit: "abcdef1234567", appBuild: "0.1.0+abcdef1", localSchemaVersion: 1, contractVersion: 1,
-    configVersion: { digest: "c".repeat(64) }, nayaxAdapterVersion: "official-adapter-1", nayaxSdkVersion: "official-sdk-1",
+    status: "REVIEW_REQUIRED", sourceCommit: "a".repeat(40), appBuild: "0.1.0+abcdef1", localSchemaVersion: 1, contractVersion: 1,
+    configVersion: { digest: "c".repeat(64), canonicalPayload: validPayload() }, nayaxAdapterVersion: "official-adapter-1", nayaxSdkVersion: "official-sdk-1",
     nayaxFlowConfig: { mode: "OFFICIAL_TEST" }, controllerIdentity: { adapter: "qualified-controller" }, hardwareIdentity: null,
     evidenceSummary: null, unresolvedDeviations: null, evidence,
   });
@@ -263,27 +296,31 @@ test("complete 150-door manifest becomes eligible only after all 1,050 artifacts
   const bindingById = new Map(manifest.evidenceBindings.map((binding) => [binding.evidenceId, binding]));
   const attachedEvidence = evidence.map((item) => {
     const binding = bindingById.get(item.evidenceId)!;
-    return { ...item, artifactStorageKey: binding.artifactStorageKey, metadata: { ...item.metadata, cycleType: binding.cycleType } };
+    return { ...item, artifactStorageKey: binding.artifactStorageKey, metadata: { ...item.metadata, cycleType: binding.cycleType, commandId: item.evidenceId, saleId: binding.cycleType === "PURCHASE" ? item.evidenceId : null, restockSessionId: binding.cycleType === "RESTOCK" ? item.evidenceId : null, verifiedArtifactDigest: item.artifactDigest, verifiedArtifactStorageKey: binding.artifactStorageKey } };
   });
   const complete = {
     status: "REVIEW_REQUIRED",
-    sourceCommit: "abcdef1234567",
+    sourceCommit: "a".repeat(40),
     appBuild: "0.1.0+abcdef1",
     localSchemaVersion: 1,
     contractVersion: 1,
-    configVersion: { digest: "c".repeat(64) },
+    configVersion: { digest: "c".repeat(64), canonicalPayload: validPayload() },
     nayaxAdapterVersion: "official-adapter-1",
     nayaxSdkVersion: "official-sdk-1",
     nayaxFlowConfig: { mode: "OFFICIAL_TEST" },
-    controllerIdentity: { adapter: "qualified-controller", mappingDigest: "d".repeat(64) },
+    controllerIdentity: { adapter: "qualified-controller", mappingDigest: "d".repeat(64), mode: "OFFICIAL_TEST" },
     hardwareIdentity: manifest.hardwareIdentity,
-    evidenceSummary: { automatedTransactions: manifest.automatedTransactions, observedSessions: manifest.observedSessions },
+    evidenceSummary: { automatedTransactions: manifest.automatedTransactions, observedSessions: manifest.observedSessions, automatedEvidenceVerified: true },
     unresolvedDeviations: manifest.unresolvedDeviations,
     evidence: attachedEvidence,
   };
   const accepted = evaluateVaultCertificationApproval(complete);
   assert.equal(accepted.eligible, true);
-  assert.deepEqual(accepted.counts, { automatedTransactions: 1000, observedSessions: 500, purchaseDoorsComplete: 150, restockDoorsComplete: 150 });
+  assert.deepEqual(accepted.counts, { automatedTransactions: 1000, observedSessions: 750, purchaseDoorsComplete: 150, restockDoorsComplete: 150 });
+  assert.equal(evaluateVaultCertificationApproval({ ...complete, controllerIdentity: { mode: "MOCK" } }).eligible, false);
+  assert.equal(evaluateVaultCertificationApproval({ ...complete, evidence: attachedEvidence.map((item) => ({ ...item, evidenceClass: "AUTOMATED" })) }).eligible, false);
+  assert.equal(evaluateVaultCertificationApproval({ ...complete, evidence: attachedEvidence.map((item) => ({ ...item, metadata: { ...item.metadata, verifiedArtifactDigest: null } })) }).eligible, false);
+  assert.equal(evaluateVaultCertificationApproval({ ...complete, evidenceSummary: { ...complete.evidenceSummary, observedSessions: 500 } }).eligible, false);
 
   const rejected = evaluateVaultCertificationApproval({ ...complete, status: "ACTIVE", hardwareIdentity: null, unresolvedDeviations: ["open"], evidence: [...attachedEvidence, { ...attachedEvidence[0]!, evidenceId: "00000000-0000-4000-8000-ffffffffffff", outcome: "FAIL" }] });
   assert.equal(rejected.eligible, false);

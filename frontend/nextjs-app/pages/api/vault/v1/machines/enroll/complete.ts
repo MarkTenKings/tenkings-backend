@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, hashVaultSecret } from "@tenkings/database";
 import { z } from "zod";
-import { methodNotAllowed, requireVaultJson, sendVaultError, vaultRequestId, VaultApiError, writeVaultAdminAudit } from "../../../../../../lib/server/vaultV1/http";
+import { methodNotAllowed, requireVaultJson, withVaultJsonBody, sendVaultError, vaultRequestId, VaultApiError, writeVaultAdminAudit } from "../../../../../../lib/server/vaultV1/http";
 
 const requestSchema = z.object({
   contractVersion: z.literal(1),
@@ -10,7 +10,8 @@ const requestSchema = z.object({
   enrollmentToken: z.string().min(32).max(512),
 });
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+async function handler(req: NextApiRequest, res: NextApiResponse) {
+  res.setHeader("Cache-Control", "private, no-store");
   const requestId = vaultRequestId(req);
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"], requestId);
   try {
@@ -49,4 +50,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 }
 
-export const config = { api: { bodyParser: { sizeLimit: "16kb" } } };
+export const config = { api: { bodyParser: false } };
+export default withVaultJsonBody(handler, 16384);

@@ -52,6 +52,8 @@ test("event payload boundary redacts secrets and rejects depth, key, numeric and
     mappingVersion: "1",
   }));
   assert.equal(vault.normalizeVaultEventPayload({ items: maximumDoorSnapshot }).items.length, 150, "the key budget must admit the frozen 150-door sale cardinality");
+  assert.equal(vault.normalizeVaultEventPayload({ items: maximumDoorSnapshot }).items[0].mappingVersion, "1", "mapping is a business snapshot, not a PIN");
+  assert.deepEqual(vault.normalizeVaultEventPayload({ staffPin: "123456", mappingVersion: "1", providerTransactionReference: `sha256:${"a".repeat(64)}` }), { staffPin: "[REDACTED]", mappingVersion: "1", providerTransactionReference: `sha256:${"a".repeat(64)}` });
 });
 
 test("cloud scrypt verifiers are byte-for-byte compatible with the frozen 64-byte machine format", () => {

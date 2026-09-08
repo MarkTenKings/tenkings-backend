@@ -4,6 +4,7 @@ import { VaultEventBatchSchema, VaultStaffGrantSchema } from "@tenkings/vault-co
 import { z } from "zod";
 import {
   methodNotAllowed,
+  assertVaultMachineAuthorityCurrent,
   requireVaultGet,
   requireVaultJson,
   requireVaultMachine,
@@ -19,16 +20,18 @@ export type VaultMachineActionDependencies = {
   prismaClient: typeof prisma;
   authenticateMachine: typeof requireVaultMachine;
   projectEvent: typeof projectVaultMachineEvent;
+  recheckMachineAuthority: typeof assertVaultMachineAuthorityCurrent;
 };
 
 const defaultDependencies: VaultMachineActionDependencies = {
   prismaClient: prisma,
   authenticateMachine: requireVaultMachine,
   projectEvent: projectVaultMachineEvent,
+  recheckMachineAuthority: assertVaultMachineAuthorityCurrent,
 };
 
 const staffGrantQuerySchema = z.object({
-  afterGrantVersion: z.coerce.number().int().nonnegative().default(0),
+  afterGrantVersion: z.coerce.number().int().nonnegative().max(2147483647).default(0),
 });
 
 export async function handleVaultEventBatch(
@@ -41,12 +44,13 @@ export async function handleVaultEventBatch(
   try {
     requireVaultJson(req, 8 * 1024 * 1024);
     const machineId = String(req.query.machineId ?? "");
-    await dependencies.authenticateMachine(req, machineId);
+    const authority = await dependencies.authenticateMachine(req, machineId);
     const batch = VaultEventBatchSchema.parse(req.body);
     if (batch.events.some((event) => event.machineId !== machineId)) {
       throw new VaultApiError(403, "EVENT_MACHINE_MISMATCH", "Every event must match the authenticated path machine");
     }
-    assertVaultEventOrder(batch.events);
+    try { assertVaultEventOrder(batch.events); }
+    catch { throw new VaultApiError(400, "EVENT_BATCH_ORDER_INVALID", "Event IDs must be unique and sequences must be safe, positive and contiguous"); }
     const acknowledgedEventIds: string[] = [];
     const rejected: Rejection[] = [];
 
@@ -59,6 +63,7 @@ export async function handleVaultEventBatch(
         const typedEvent = normalizeTypedVaultEvent(event);
         outcome = await dependencies.prismaClient.$transaction(async (tx) => {
           await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${machineId} FOR UPDATE`;
+          await dependencies.recheckMachineAuthority(tx, authority, machineId);
           const existingById = await tx.vaultMachineEvent.findUnique({
             where: { machineId_eventId: { machineId, eventId: event.eventId } },
             select: { payloadDigest: true },
@@ -83,6 +88,7 @@ export async function handleVaultEventBatch(
               mode: event.mode,
               correlationId: event.correlationId ?? null,
               causationId: event.causationId ?? null,
+              actor: event.actor ?? null,
               occurredAt: new Date(event.occurredAt),
               payload: typedEvent.payload as Prisma.InputJsonValue,
               payloadDigest: digest,
@@ -93,6 +99,7 @@ export async function handleVaultEventBatch(
           return "ACCEPTED" as const;
         });
       } catch (error) {
+        if (error instanceof VaultApiError && error.statusCode === 403) throw error;
         if (!(error instanceof VaultApiError) && !(error && typeof error === "object" && "issues" in error)) throw error;
         outcome = "POISON_EVENT";
         poisonCode = error instanceof VaultApiError ? error.code : "EVENT_PROJECTION_SCHEMA_INVALID";
@@ -137,20 +144,26 @@ export async function handleVaultStaffGrantPull(
   res: NextApiResponse,
   dependencies: VaultMachineActionDependencies = defaultDependencies,
 ) {
+  res.setHeader("Cache-Control", "private, no-store");
   const requestId = vaultRequestId(req);
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"], requestId);
   try {
     requireVaultGet(req);
     const machineId = String(req.query.machineId ?? "");
-    await dependencies.authenticateMachine(req, machineId);
+    const authority = await dependencies.authenticateMachine(req, machineId);
     const input = staffGrantQuerySchema.parse({ afterGrantVersion: req.query.afterGrantVersion });
-    const grants = await dependencies.prismaClient.vaultStaffMachineAccess.findMany({
+    const grants = await dependencies.prismaClient.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${machineId} FOR UPDATE`;
+      await dependencies.recheckMachineAuthority(tx, authority, machineId);
+      return tx.vaultStaffMachineAccess.findMany({
       where: { machineId, grantVersion: { gt: input.afterGrantVersion } },
       orderBy: { grantVersion: "asc" },
       take: 500,
+      });
     });
     const payload = grants.map((grant) => VaultStaffGrantSchema.parse({
       grantId: grant.grantId,
+      grantVersion: grant.grantVersion,
       userId: grant.userId,
       machineId: grant.machineId,
       role: grant.role,

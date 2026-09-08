@@ -130,7 +130,7 @@ function fakeDependencies() {
     },
   };
   const prismaClient = {
-    $transaction: async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
+    $transaction: async (callback: (transaction: typeof tx & { vaultStaffMachineAccess: unknown }) => Promise<unknown>) => callback({ ...tx, vaultStaffMachineAccess: prismaClient.vaultStaffMachineAccess }),
     vaultAdminAuditEvent: { create: async ({ data }: any) => { audits.push(data); return data; } },
     vaultStaffMachineAccess: {
       findMany: async (query: any) => {
@@ -156,6 +156,7 @@ function fakeDependencies() {
       };
     },
     projectEvent: async () => undefined,
+    recheckMachineAuthority: async () => undefined,
   } as unknown as VaultMachineActionDependencies;
   return {
     dependencies,
@@ -311,4 +312,31 @@ test("unknown or multi-segment catch-all machine actions fail closed", async () 
   const multiSegment = capturedResponse();
   await handleVaultMachineAction(request, multiSegment.response, fake.dependencies);
   assert.equal(multiSegment.statusCode, 404);
+});
+
+test("events and grant pulls recheck credential authority after acquiring the transaction lock", async () => {
+  const fake = fakeDependencies();
+  let projections = 0;
+  fake.dependencies.projectEvent = async () => { projections++; };
+  fake.dependencies.recheckMachineAuthority = async () => { throw new VaultApiError(403, "MACHINE_AUTHORITY_CHANGED", "Credential revoked while waiting for machine lock"); };
+  const response = capturedResponse();
+  await handleVaultMachineAction(routeRequest({ action: "events:batch", method: "POST", body: { contractVersion: 1, events: [event(1, "00000000-0000-4000-8000-000000000011")] } }), response.response, fake.dependencies);
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.error.code, "MACHINE_AUTHORITY_CHANGED");
+  assert.equal(projections, 0);
+  assert.equal(fake.machineSequence(), 0n);
+  const grants = capturedResponse();
+  await handleVaultMachineAction(routeRequest({ action: "staff-grants:pull", method: "GET" }), grants.response, fake.dependencies);
+  assert.equal(grants.statusCode, 403);
+  assert.equal(fake.staffQueries.length, 0);
+});
+
+test("batch ordering errors are client errors and never advance the accepted prefix", async () => {
+  for (const sequences of [[2, 1], [1, 3]]) {
+    const fake = fakeDependencies();
+    const response = capturedResponse();
+    await handleVaultMachineAction(routeRequest({ action: "events:batch", method: "POST", body: { contractVersion: 1, events: sequences.map((sequence, index) => event(sequence, `00000000-0000-4000-8000-00000000001${index}`)) } }), response.response, fake.dependencies);
+    assert.equal(response.statusCode, 400);
+    assert.equal(fake.machineSequence(), 0n);
+  }
 });
