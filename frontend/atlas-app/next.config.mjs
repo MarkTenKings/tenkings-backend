@@ -2,6 +2,7 @@
 const config = {
     poweredByHeader: false,
     reactStrictMode: true,
+    transpilePackages: ['@atlas/report-view'],
     experimental: { cpus: 2 },
     async headers() {
         return [{ source: '/:path*', headers: [

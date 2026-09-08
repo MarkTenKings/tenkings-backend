@@ -8,7 +8,7 @@ The owner-approved [V2 blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.m
 
 ## Deployment boundary
 
-The target is a dedicated staff application at `frontend/atlas-app`, in a separate ATLAS Vercel project serving `app.atlasgrading.com`. It exposes only grading, assigned evidence, human review, and explicitly approved finishing operations. Build a separate minimal public application from the public route manifest for `atlasgrading.com`; `frontend/atlas-public` is a proposed location and is not created here. Public and staff projects can then release independently while sharing reviewed packages in the same repository.
+The target is a dedicated staff application at `frontend/atlas-app`, in a separate ATLAS Vercel project serving `app.atlasgrading.com`. It exposes only grading, assigned evidence, human review, and explicitly approved finishing operations. Build a separate minimal public application from the public route manifest for `atlasgrading.com`; `frontend/atlas-public` now implements the initial approved-report reader with its own client, activation and read-only database function. Its six-page built boundary excludes staff/write routes and legacy dependencies; actual runtime activation remains absent. Public and staff projects can then release independently while sharing reviewed packages in the same repository.
 
 The owner's unfinished consumer-facing GPT Pages draft is a separate future public-site input; it has not been imported or reviewed. Initial staff access follows the [phone-verification and admin-allowlist decision](STAFF_ACCESS.md). The draft does not determine the private grading interface.
 

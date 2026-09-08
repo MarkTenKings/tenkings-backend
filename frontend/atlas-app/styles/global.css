@@ -1610,37 +1610,8 @@ label+input,label+textarea,label+select {
   }
 }
 
-/* Graded report: shared visual hierarchy for the human decision. */
-.graded-report { background:#fff; border:1px solid var(--line); border-radius:9px; margin-bottom:24px; overflow:hidden; }
-.report-heading { display:flex; justify-content:space-between; align-items:center; padding:24px; gap:20px; }
-.report-heading h2 { margin:10px 0; }
-.report-heading p:not(.eyebrow) { color:var(--muted); font-size:12px; line-height:1.6; }
-.overall-grade { text-align:center; padding:0 15px; }
-.overall-grade span { display:block; font-size:9px; letter-spacing:1.8px; }
-.overall-grade strong { font:58px Georgia,serif; line-height:1.2; }
-.grade-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border-top:1px solid var(--line); }
-.grade-grid article { padding:20px 24px; border-right:1px solid var(--line); }
-.grade-grid article:last-child { border-right:0; }
-.grade-grid article>div { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-.grade-grid article strong { font-size:22px; font-weight:500; }
-.grade-grid p { font-size:11px; color:var(--muted); line-height:1.8; margin:14px 0 6px; }
-.grade-grid small { font-size:10px; color:var(--muted); }
-.grade-details { border-top:1px solid var(--line); padding:18px 24px; }
-.grade-details summary { font-size:12px; cursor:pointer; }
-.grade-details summary span { margin-left:10px; color:var(--muted); }
-.centering-detail { font-size:11px; line-height:1.8; padding:20px 0; }
-.centering-detail strong { text-transform:capitalize; }
-.finding-list { padding:0; list-style:none; margin:0; }
-.finding-list>li { border-top:1px solid var(--line); padding:15px 0; }
-.finding-list>li>div { display:flex; justify-content:space-between; gap:15px; }
-.finding-list strong { font-size:12px; font-weight:500; text-transform:capitalize; }
-.finding-list span { font-size:11px; color:var(--muted); }
-.finding-list ul { padding:8px 0 0; list-style:none; font-size:11px; line-height:1.8; color:var(--muted); }
-.report-empty { padding:10px 0; font-size:12px; }
-.publication-note { padding:18px 24px; background:#edf3e8; border-top:1px solid var(--line); font-size:12px; line-height:1.7; }
-.publication-note p { margin-top:6px; }
 .authority-note .primary { margin-top:16px; font-size:12px; }
 .status-pill.human_approved { background:#dcecdc; color:#315d3e; border-color:#b6d4b8; }
 .summary-grid { grid-template-columns:repeat(5,minmax(0,1fr)); }
-@media(max-width:1100px) { .summary-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } .grade-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .grade-grid article { border-bottom:1px solid var(--line); } }
-@media(max-width:600px) { .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .report-heading { align-items:flex-start; padding:20px 16px; } .overall-grade { padding:0; } .overall-grade strong { font-size:44px; } .grade-grid article { padding:15px 16px; } .finding-list>li>div { flex-direction:column; gap:6px; } }
+@media(max-width:1100px) { .summary-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media(max-width:600px) { .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }

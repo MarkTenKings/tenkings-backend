@@ -9,6 +9,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hash } from '../lib/server/policy.mjs';
 import { staffGrantSQL } from '../lib/server/access/privileges.mjs';
+import { publicGrantSQL } from '../../atlas-public/lib/server/privileges.mjs';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const root = resolve(appRoot, '../..');
@@ -28,13 +29,14 @@ export async function disposablePostgres(args) {
     const { Client } = createRequire(import.meta.url)(pgModule);
     const directory = realpathSync(mkdtempSync(join(tmpdir(), 'atlas-staff-db-')));
     const data = join(directory, 'data'), owner = 'atlas_fixture_owner', role = 'atlas_fixture_staff';
-    const ownerPassword = randomBytes(24).toString('hex'), staffPassword = randomBytes(24).toString('hex');
+    const ownerPassword = randomBytes(24).toString('hex'), staffPassword = randomBytes(24).toString('hex'), publicPassword = randomBytes(24).toString('hex');
+    const publicRole = 'atlas_fixture_public';
     const passwordFile = join(directory, 'owner-password');
     writeFileSync(passwordFile, ownerPassword, { mode: 0o600 });
     const sentinel = { nonce: randomBytes(16).toString('hex'), data, ownerPid: process.pid, uid: process.getuid(), createdByHarness: true };
     writeFileSync(join(directory, 'ownership.json'), JSON.stringify(sentinel), { mode: 0o600 });
     let log = '', started = false;
-    const safe = value => String(value).replaceAll(ownerPassword, '[fixture-password]').replaceAll(staffPassword, '[fixture-password]');
+    const safe = value => String(value).replaceAll(ownerPassword, '[fixture-password]').replaceAll(staffPassword, '[fixture-password]').replaceAll(publicPassword, '[fixture-password]');
     function run(command, commandArgs, env = cleanEnv) {
         const result = spawnSync(command, commandArgs, { cwd: root, env, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
         log += safe(`${result.stdout ?? ''}${result.stderr ?? ''}`);
@@ -48,7 +50,7 @@ export async function disposablePostgres(args) {
     });
     function url(database, staff = false, schema = 'atlas_staff') {
         assert(/^[a-z][a-z0-9_]+$/.test(database));
-        return `postgresql://${staff ? role : owner}:${staff ? staffPassword : ownerPassword}@127.0.0.1:${port}/${database}?schema=${schema}&connection_limit=4`;
+        return `postgresql://${staff === 'public' ? publicRole : staff ? role : owner}:${staff === 'public' ? publicPassword : staff ? staffPassword : ownerPassword}@127.0.0.1:${port}/${database}?schema=${schema}&connection_limit=4`;
     }
     async function sql(query, values = [], database = 'postgres') {
         const client = new Client({ connectionString: url(database, false, 'public') });
@@ -111,12 +113,14 @@ export async function disposablePostgres(args) {
         // This brand-new role exists only inside this owned disposable cluster.
         await sql(`CREATE ROLE ${role} LOGIN PASSWORD '${staffPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
         await sql(staffGrantSQL(role), [], 'atlas_fixture_template');
+        await sql(`CREATE ROLE ${publicRole} LOGIN PASSWORD '${publicPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
+        await sql(publicGrantSQL(publicRole), [], 'atlas_fixture_template');
         let serial = 0;
         return { directory, source, sql, url, role, safe, stop,
             async database() {
                 const name = `atlas_fixture_case_${++serial}`;
                 await sql(`CREATE DATABASE ${name} TEMPLATE atlas_fixture_template`);
-                return { name, adminUrl: url(name), staffUrl: url(name, true) };
+                return { name, adminUrl: url(name), staffUrl: url(name, true), publicUrl: url(name, 'public') };
             } };
     } catch (error) {
         await stop();

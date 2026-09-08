@@ -1,0 +1,17 @@
+{
+  "name": "@atlas/report-view",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./GradedReport": "./src/GradedReport.jsx",
+    "./styles.css": "./src/report.css",
+    "./public-contract": "./src/public-contract.mjs"
+  },
+  "dependencies": {
+    "zod": "4.1.11"
+  },
+  "peerDependencies": {
+    "react": "18.3.1"
+  }
+}

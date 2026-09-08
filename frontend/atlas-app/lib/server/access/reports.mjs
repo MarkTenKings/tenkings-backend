@@ -1,8 +1,10 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { parsePublicReport } from '@atlas/report-view/public-contract';
 import { previewAtlasReport, finalizeAtlasReportContent, presentAtlasFindings } from '@atlas/grading-core/report';
 import { deny, hash, identifier, strictObject } from '../policy.mjs';
 import { canonical } from '../review-contract.mjs';
 
+const controlPublicOrigin = mode => mode === 'PRODUCTION' ? 'https://atlasgrading.com' : 'http://127.0.0.1:4319';
 function checkedJSON(text, digest, failure = 'REPORT_UNAVAILABLE') {
     if (hash(text) !== digest) deny(503, failure);
     let value; try { value = JSON.parse(text); } catch { deny(503, failure); }
@@ -50,7 +52,8 @@ export async function gradingView(context, card, assignment, draft) {
         approvalBlock: matchesCurrent ? 'ALREADY_APPROVED' : approvalBlock(context, card, assignment, draft, analysis, pending),
         published: approval ? { approvalId: approval.id, version: approval.version, publicToken: publication.publicToken,
             reportNumber: publication.reportNumber, approvedAt: approval.approvedAt.toISOString(), matchesCurrent,
-            path: `/reports/${publication.publicToken}?v=${approval.version}` } : null };
+            path: `/reports/${publication.publicToken}?v=${approval.version}`,
+            href: `${controlPublicOrigin(context.control.mode)}/reports/${publication.publicToken}?v=${approval.version}` } : null };
 }
 
 export class StaffReports {
@@ -96,7 +99,7 @@ export class StaffReports {
             const published = { version: 'atlas-public-report-v1', publicToken, reportNumber, approvalVersion: version,
                 approvedAt: now.toISOString(), mode: analysis.row.mode, evidenceHash: card.evidenceHash, analysisHash: analysis.row.sourceHash,
                 report: projectedReport(final, 'APPROVED') };
-            const publicCanonical = canonical(published), approvalId = randomUUID();
+            const publicCanonical = canonical(parsePublicReport(published)), approvalId = randomUUID();
             const approval = await tx.staffReportApproval.create({ data: { id: approvalId, specimenId: cardId, version,
                 analysisRevision: card.analysisRevision, reviewRevision: card.draftRevision, evidenceHash: card.evidenceHash,
                 analysisHash: analysis.row.sourceHash, reviewHash: reviewRow.contentHash, publicCanonical, publicHash: hash(publicCanonical),

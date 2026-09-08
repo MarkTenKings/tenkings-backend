@@ -10,6 +10,9 @@ import { DurableStaffAuth } from '../lib/server/access/auth.mjs';
 import { StaffDatabase } from '../lib/server/access/database.mjs';
 import { DurableReviewStore } from '../lib/server/access/review.mjs';
 import { StaffReports } from '../lib/server/access/reports.mjs';
+import { PublicReportReader } from '../../atlas-public/lib/server/reader.mjs';
+import { makePublicConfig, LOCAL_ORIGIN as PUBLIC_LOCAL_ORIGIN } from '../../atlas-public/lib/server/policy.mjs';
+import { parsePublicReport } from '@atlas/report-view/public-contract';
 import { canonical } from '../lib/server/review-contract.mjs';
 import { hash } from '../lib/server/policy.mjs';
 
@@ -61,6 +64,16 @@ async function readyReport(context) {
     const card = await review.read(signed.staff, cards.find(c => c.evidenceComplete).id);
     const ready = await review.save(signed.staff, card.id, draft(card, { disposition: 'READY_FOR_HUMAN', reviewedSides: ['FRONT', 'BACK'], identityReviewed: true }));
     return { signed, review, reports, ready };
+}
+
+async function withPublicReader(context, work) {
+    const config = makePublicConfig({ mode: 'LOCAL_FIXTURE', origin: PUBLIC_LOCAL_ORIGIN, deploymentId: 'local-public-fixture',
+        releaseSha: '0'.repeat(40), databaseUrl: context.db.publicUrl });
+    const { databaseUrl, ...activation } = config;
+    await context.admin.publicReaderControl.create({ data: { ...activation, enabled: true } });
+    const client = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+    try { await work({ client, config, reader: new PublicReportReader(client, config) }); }
+    finally { await client.$disconnect(); }
 }
 
 let error;
@@ -354,6 +367,57 @@ try {
             await tx.$executeRaw`SET CONSTRAINTS ALL IMMEDIATE`;
         }));
         assert.equal((await context.admin.staffPublicReport.findUnique({ where: { specimenId: ready.id } })).reportNumber, result.card.grading.published.reportNumber);
+    }, { analyses: true, trained: true });
+    await scenario('public role sees only approved versions while private draft edits remain private', async context => {
+        const { signed, review, reports, ready } = await readyReport(context);
+        await withPublicReader(context, async ({ reader }) => {
+            assert.equal(await reader.read({ token: 'ar_000000000000000000000000', version: null }), null);
+            const first = await reports.approve(signed.staff, ready.id, approvalInput(ready));
+            const token = first.card.grading.published.publicToken;
+            const current = await reader.read({ token, version: null });
+            assert.equal(current.publicHash, first.approval.publicHash); assert.equal(current.packet.approvalVersion, 1);
+            assert.equal(current.packet.report.findings[0].reviewResult, 'ACCEPTED');
+            assert(!JSON.stringify(current).includes('Check this edge.'));
+            assert.equal(await reader.read({ token, version: 2 }), null);
+            const changed = await review.save(signed.staff, ready.id, draft(first.card, { observations: { FRONT: 'Private changed notes', BACK: '' } }));
+            assert.deepEqual(await reader.read({ token, version: null }), current);
+            const next = await review.save(signed.staff, ready.id, draft(changed, { disposition: 'READY_FOR_HUMAN', reviewedSides: ['FRONT', 'BACK'], identityReviewed: true }));
+            await reports.approve(signed.staff, ready.id, approvalInput(next));
+            assert.equal((await reader.read({ token, version: null })).packet.approvalVersion, 2);
+            assert.deepEqual(await reader.read({ token, version: 1 }), current);
+            const altered = structuredClone(current.packet); altered.report.findings[0].memoryExamples = ['private'];
+            assert.throws(() => parsePublicReport(altered));
+            const removed = structuredClone(current.packet); removed.report.findings[0].reviewResult = 'REMOVED';
+            assert.throws(() => parsePublicReport(removed));
+        });
+    }, { analyses: true, trained: true });
+    await scenario('public credentials cannot read private tables, write approvals or activate either app', async context => {
+        await withPublicReader(context, async ({ client, config, reader }) => {
+            await assert.rejects(() => client.$queryRaw`SELECT * FROM atlas_staff."StaffIdentity"`);
+            await assert.rejects(() => client.$queryRaw`SELECT * FROM atlas_staff."StaffReportApproval"`);
+            await assert.rejects(() => client.$queryRaw`SELECT * FROM public."CollectibleCardV2"`);
+            await assert.rejects(() => client.$executeRaw`UPDATE atlas_staff."PublicReaderControl" SET enabled=false`);
+            await assert.rejects(() => client.$executeRaw`UPDATE atlas_staff."StaffControl" SET enabled=false`);
+            await assert.rejects(() => context.client.$queryRaw`SELECT * FROM atlas_staff."PublicReaderControl"`);
+            const stale = new PublicReportReader(client, { ...config, releaseSha: 'f'.repeat(40) });
+            await assert.rejects(() => stale.read({ token: 'ar_000000000000000000000000', version: null }));
+            await context.sql('GRANT SELECT ON atlas_staff."StaffIdentity" TO atlas_fixture_public');
+            await assert.rejects(() => reader.read({ token: 'ar_000000000000000000000000', version: null }));
+        });
+    });
+    await scenario('public revocation blocks retained clients and production mode never serves synthetic approvals', async context => {
+        const { signed, reports, ready } = await readyReport(context);
+        const result = await reports.approve(signed.staff, ready.id, approvalInput(ready));
+        const selector = { token: result.card.grading.published.publicToken, version: 1 };
+        await withPublicReader(context, async ({ reader, client, config }) => {
+            assert(await reader.read(selector));
+            await context.admin.publicReaderControl.update({ where: { id: 'active' }, data: { enabled: false, revision: { increment: 1 } } });
+            await assert.rejects(() => reader.read(selector));
+            const production = makePublicConfig({ ...config, mode: 'PRODUCTION', origin: 'https://atlasgrading.com', deploymentId: 'fixture-production.vercel.app' });
+            const { databaseUrl, ...activation } = production;
+            await context.admin.publicReaderControl.update({ where: { id: 'active' }, data: { ...activation, enabled: true, revision: { increment: 1 } } });
+            assert.equal(await new PublicReportReader(client, production).read(selector), null);
+        });
     }, { analyses: true, trained: true });
 } catch (caught) { error = caught; }
 finally {

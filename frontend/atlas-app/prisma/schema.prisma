@@ -250,3 +250,16 @@ model StaffPublicReport {
   currentApprovalId  String   @unique @db.Uuid
   createdAt          DateTime @default(now())
 }
+
+// Operator-owned public deployment activation. No staff serving privileges.
+model PublicReaderControl {
+  id           String @id @default("active")
+  enabled      Boolean @default(false)
+  mode         String
+  origin       String
+  deploymentId String
+  releaseSha   String @db.VarChar(40)
+  configHash   String @db.VarChar(64)
+  revision     Int @default(1)
+  updatedAt    DateTime @default(now())
+}
