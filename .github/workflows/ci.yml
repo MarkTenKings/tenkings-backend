@@ -23,6 +23,35 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @tenkings/database generate
       - run: pnpm --filter @tenkings/* run --if-present build
+      - name: Verify original Vault machine URLs through production Next routing
+        run: pnpm vault:test-next-routes
+
+  vault-v1:
+    name: Vault V1 Contracts, Simulation & UI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm vault:validate-isolation
+      - run: pnpm vault:validate-isolation --self-test
+      - run: pnpm vault:build
+      - run: pnpm vault:test
+      - name: Exercise synthetic 72- and 125-door kiosks through local HTTP
+        run: |
+          node scripts/run-vault-simulator.mjs --doors 72 --smoke
+          node scripts/run-vault-simulator.mjs --doors 125 --smoke
+      - run: pnpm --filter @tenkings/vault-kiosk exec playwright install --with-deps chromium
+      - run: pnpm --filter @tenkings/vault-kiosk test:browser
 
   disposable-postgres-migration-chain:
     name: Disposable PostgreSQL Migration Chain
@@ -41,8 +70,8 @@ jobs:
           cache: "pnpm"
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @tenkings/shared build
-      - run: pnpm --filter @tenkings/database generate
+      - name: Build isolated production Next routing for database integration
+        run: pnpm vault:build-next
       - name: Complete disposable migration chain and second-deploy no-op
         run: pnpm --filter @tenkings/database validate:nfc:migration:disposable -- --ack-disposable-local-postgres
 

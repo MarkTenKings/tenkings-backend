@@ -27,6 +27,8 @@
       "@tenkings/database": ["../../packages/database/src/index.ts"],
       "@tenkings/database/*": ["../../packages/database/src/*"],
       "@tenkings/ebay-sold-comps-v2": ["../../packages/ebay-sold-comps-v2/src/index.ts"],
+      "@tenkings/vault-contracts": ["../../packages/vault-contracts/src/index.ts"],
+      "@tenkings/vault-contracts/*": ["../../packages/vault-contracts/src/*"],
       "@tenkings/shared": ["../../packages/shared/src/index.ts"],
       "@tenkings/shared/*": ["../../packages/shared/src/*"]
     },
