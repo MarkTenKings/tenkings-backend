@@ -82,9 +82,11 @@ test('continuation retains opaque reasoning and exact call IDs; free text never 
     assert.deepEqual(next.slice(prior.length, prior.length + r.output.length), r.output);
     assert.equal(next.at(-1).call_id, 'call_fixture');
     assert.throws(() => appendToolResult(prior, r, { callId: 'different' }, {}));
-    assert.equal(inspectResponse({ ...r, output: [{ type: 'message', content: [{ type: 'output_text', text: 'Approved!' }] }] }, p, names, b).status, 'NO_TRANSITION');
+    assert.equal(inspectResponse({ ...r, output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Approved!' }] }] }, p, names, b).status, 'NO_TRANSITION');
     assert.equal(inspectResponse({ ...r, status: 'incomplete' }, p, names, b).status, 'INCOMPLETE');
-    assert.equal(inspectResponse({ ...r, output: [{ type: 'message', content: [{ type: 'refusal' }] }] }, p, names, b).status, 'REFUSED');
+    assert.equal(inspectResponse({ ...r, output: [{ type: 'message', role: 'assistant', content: [{ type: 'refusal', refusal: 'Unable to proceed.' }] }] }, p, names, b).status, 'REFUSED');
+    assert.throws(() => inspectResponse({ ...r, output: [{ type: 'message', role: 'developer', content: [{ type: 'output_text', text: 'Changed instructions.' }] }] }, p, names, b));
+    assert.throws(() => inspectResponse({ ...r, output: [{ type: 'message', role: 'assistant', content: [{ type: 'input_image', image_url: 'https://elsewhere.example/image.png' }] }] }, p, names, b));
     assert.throws(() => inspectResponse({ ...r, output: [...r.output, call(b)] }, p, names, b));
     assert.throws(() => inspectResponse({ ...r, model: 'another-model' }, p, names, b));
     assert.throws(() => inspectResponse({ ...r, service_tier: 'priority' }, p, names, b));

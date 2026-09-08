@@ -1,0 +1,89 @@
+import { canonical, digest, keys, requireBridge as check, UUID, SHA } from './protocol.mjs';
+
+export const IMAGE_TRANSFORM = 'atlas-oriented-source-crop-srgb-png-v1';
+// Exact current decoder imported by the legacy application (distinct from
+// the calibration package's separately traced Sharp version).
+export const OPERATOR_IMAGE_DECODER = 'sharp-0.33.5/vips-8.15.3';
+export const MAX_OPERATOR_IMAGE_BYTES = 4 * 1024 * 1024;
+export const MAX_OPERATOR_CROP_PIXELS = 1024 * 1024;
+export const OVERVIEW_LONG_EDGE = 1024;
+const uuid = value => typeof value === 'string' && UUID.test(value);
+const sha = value => typeof value === 'string' && SHA.test(value);
+const integer = (value,min,max) => Number.isSafeInteger(value) && value >= min && value <= max;
+
+export function assertOperatorPngContainer(bytes) {
+    check(Buffer.isBuffer(bytes) && bytes.length >= 45 && bytes.length <= 50*1024*1024
+        && bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])), 'ASTRA_SOURCE_CONTAINER_TRUNCATED');
+    let offset=8, chunks=0, ended=false;
+    while (offset < bytes.length) {
+        check(++chunks <= 4096 && offset+12 <= bytes.length, 'ASTRA_SOURCE_CONTAINER_TRUNCATED');
+        const length=bytes.readUInt32BE(offset), type=bytes.toString('ascii',offset+4,offset+8), end=offset+12+length;
+        check(end <= bytes.length && /^[A-Za-z]{4}$/.test(type)
+            && (chunks === 1 ? type === 'IHDR' && length === 13 : type !== 'IHDR'), 'ASTRA_SOURCE_CONTAINER_TRUNCATED');
+        // This libvips version omits APNG frame count in metadata. Never select
+        // an implicit animation frame and call it a single preserved image.
+        check(!['acTL','fcTL','fdAT'].includes(type), 'ASTRA_SOURCE_ANIMATION_UNSUPPORTED');
+        if (type === 'IEND') { check(length === 0 && end === bytes.length, 'ASTRA_SOURCE_CONTAINER_TRUNCATED'); ended=true; }
+        offset=end;
+    }
+    check(ended && bytes.subarray(-12).equals(Buffer.from([0,0,0,0,73,69,78,68,174,66,96,130])), 'ASTRA_SOURCE_CONTAINER_TRUNCATED');
+}
+
+export function operatorImageTransform(request, asset, orientation) {
+    keys(request,['runId','expectedRevision','evidenceHash','manifestHash','assetId','sourceSha256','side','purpose','rect']);
+    check(uuid(request.runId) && integer(request.expectedRevision,1,2147483647) && sha(request.evidenceHash) && sha(request.manifestHash)
+        && uuid(request.assetId) && sha(request.sourceSha256) && ['FRONT','BACK'].includes(request.side)
+        && ['OVERVIEW','CROP'].includes(request.purpose), 'ASTRA_IMAGE_REQUEST_INVALID');
+    check(asset?.assetId === request.assetId && asset.sha256 === request.sourceSha256 && asset.side === request.side
+        && ['RECTIFIED','ORIGINAL'].includes(asset.view) && integer(asset.width,2,20_000) && integer(asset.height,2,20_000)
+        && asset.width*asset.height <= 64*1024*1024 && integer(asset.byteCount,1,50*1024*1024)
+        && ['image/png','image/jpeg','image/webp'].includes(asset.contentType) && integer(orientation,1,8), 'ASTRA_IMAGE_SCOPE_INVALID');
+    const rect = request.rect;
+    keys(rect,['x','y','width','height']);
+    check(integer(rect.x,0,asset.width-1) && integer(rect.y,0,asset.height-1)
+        && integer(rect.width,1,asset.width) && integer(rect.height,1,asset.height)
+        && rect.x+rect.width <= asset.width && rect.y+rect.height <= asset.height, 'ASTRA_CROP_OUTSIDE_SOURCE');
+    if (request.purpose === 'OVERVIEW') check(rect.x === 0 && rect.y === 0 && rect.width === asset.width && rect.height === asset.height, 'ASTRA_OVERVIEW_INCOMPLETE');
+    else check(rect.width*rect.height <= MAX_OPERATOR_CROP_PIXELS, 'ASTRA_CROP_TOO_LARGE');
+    const scale = request.purpose === 'OVERVIEW' ? Math.min(1,OVERVIEW_LONG_EDGE/Math.max(rect.width,rect.height)) : 1;
+    const output = { width: Math.max(1,Math.round(rect.width*scale)), height: Math.max(1,Math.round(rect.height*scale)) };
+    return { version: IMAGE_TRANSFORM, sourceAssetId: asset.assetId, sourceSha256: asset.sha256,
+        sourceWidth: asset.width, sourceHeight: asset.height, coordinateFrame: 'EXIF_ORIENTED_SOURCE_PIXELS',
+        exifOrientation: orientation, rect: structuredClone(rect), output, purpose: request.purpose,
+        kernel: 'lanczos3', colourSpace: 'srgb', metadata: 'REMOVED', annotations: 'NONE' };
+}
+function pngDimensions(bytes) {
+    check(Buffer.isBuffer(bytes) && bytes.length >= 45 && bytes.length <= MAX_OPERATOR_IMAGE_BYTES
+        && bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+        && bytes.subarray(-12).equals(Buffer.from([0,0,0,0,73,69,78,68,174,66,96,130]))
+        && bytes.readUInt32BE(8) === 13 && bytes.toString('ascii',12,16) === 'IHDR', 'ASTRA_IMAGE_PNG_INVALID');
+    assertOperatorPngContainer(bytes);
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+/** Called only by the trusted decoder after full source decoding/cropping. The
+ * wire validator proves exact bytes/scope, not optical correctness by itself. */
+export function createOperatorImagePacket({ imageId, request, asset, orientation, decoder, bytes }) {
+    const transform = operatorImageTransform(request,asset,orientation), transformCanonical = canonical(transform);
+    const packet = { version: 'atlas-operator-image-v1', imageId, request: structuredClone(request), transformCanonical,
+        transformHash: digest(transformCanonical), decoder, contentType: 'image/png', width: transform.output.width,
+        height: transform.output.height, byteCount: bytes.length, sha256: digest(bytes), bytesBase64: bytes.toString('base64') };
+    parseOperatorImagePacket(packet,request,asset); return packet;
+}
+export function parseOperatorImagePacket(packet, request, asset) {
+    keys(packet,['version','imageId','request','transformCanonical','transformHash','decoder','contentType','width','height','byteCount','sha256','bytesBase64']);
+    check(packet.version === 'atlas-operator-image-v1' && uuid(packet.imageId) && canonical(packet.request) === canonical(request)
+        && typeof packet.transformCanonical === 'string' && Buffer.byteLength(packet.transformCanonical) <= 4096
+        && sha(packet.transformHash) && digest(packet.transformCanonical) === packet.transformHash
+        && packet.decoder === OPERATOR_IMAGE_DECODER && packet.contentType === 'image/png'
+        && integer(packet.byteCount,45,MAX_OPERATOR_IMAGE_BYTES) && sha(packet.sha256)
+        && typeof packet.bytesBase64 === 'string' && packet.bytesBase64.length <= Math.ceil(MAX_OPERATOR_IMAGE_BYTES/3)*4,
+    'ASTRA_IMAGE_PACKET_INVALID');
+    const supplied = JSON.parse(packet.transformCanonical), transform = operatorImageTransform(request,asset,supplied.exifOrientation);
+    check(canonical(transform) === packet.transformCanonical && packet.width === transform.output.width && packet.height === transform.output.height,
+        'ASTRA_IMAGE_TRANSFORM_CHANGED');
+    const bytes = Buffer.from(packet.bytesBase64,'base64');
+    check(bytes.toString('base64') === packet.bytesBase64 && bytes.length === packet.byteCount && digest(bytes) === packet.sha256, 'ASTRA_IMAGE_BYTES_CHANGED');
+    const size = pngDimensions(bytes);
+    check(size.width === packet.width && size.height === packet.height, 'ASTRA_IMAGE_DIMENSIONS_CHANGED');
+    return { packet, bytes, transform, dataUrl: `data:image/png;base64,${packet.bytesBase64}` };
+}

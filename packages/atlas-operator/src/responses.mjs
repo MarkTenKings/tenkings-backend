@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { canonical, digest, keys, requireBridge as check } from '@atlas/service-bridge/protocol';
+import { parseOperatorImagePacket } from '@atlas/service-bridge/operator-images';
 
 export const MODEL = 'gpt-6-astra';
 export const RESPONSE_ENDPOINT = 'https://api.openai.com/v1/responses';
@@ -122,16 +123,46 @@ export function inspectResponse(response, policy, names, bindingValue) {
         && Array.isArray(response.output) && response.output.length <= 64 && Buffer.byteLength(canonical(response)) <= MAX_RESPONSE_BYTES, 'ASTRA_RESPONSE_INVALID');
     if (response.status !== 'completed') return { status: 'INCOMPLETE', calls: [] };
     check(response.output.every(item => ['function_call', 'reasoning', 'message'].includes(item.type)), 'ASTRA_OUTPUT_FORBIDDEN');
+    check(response.output.filter(item => item.type === 'message').every(item => item.role === 'assistant' && Array.isArray(item.content)
+        && item.content.every(c => c.type === 'output_text' && typeof c.text === 'string'
+            || c.type === 'refusal' && typeof c.refusal === 'string')), 'ASTRA_MESSAGE_ROLE_OR_CONTENT_INVALID');
     if (response.output.some(item => item.type === 'message' && item.content?.some(c => c.type === 'refusal'))) return { status: 'REFUSED', calls: [] };
     const calls = response.output.filter(item => item.type === 'function_call');
     check(calls.length <= 1, 'ASTRA_PARALLEL_TOOLS_FORBIDDEN');
     return { status: calls.length ? 'TOOL_REQUESTED' : 'NO_TRANSITION', calls: calls.map(c => parseToolCall(c, bindingValue, names)) };
 }
-export function appendToolResult(input, response, call, output) {
+export function toolImageOutput(call, images) {
+    check(Array.isArray(images) && images.length <= 2, 'ASTRA_TOOL_IMAGES_INVALID');
+    if (!images.length) return { content: [], roster: [] };
+    check(call.name === 'read_card_report' && images.length === 2 || call.name === 'inspect_region' && images.length === 1, 'ASTRA_TOOL_IMAGES_FORBIDDEN');
+    const content = [], roster = [];
+    for (const { packet, asset } of images) {
+        const request = packet.request;
+        check(['runId','expectedRevision','evidenceHash','manifestHash'].every(k => request[k] === call.args[k]), 'ASTRA_IMAGE_TOOL_SCOPE_CHANGED');
+        if (call.name === 'inspect_region') check(request.purpose === 'CROP' && request.assetId === call.args.assetId
+            && request.sourceSha256 === call.args.sourceSha256 && request.side === call.args.side
+            && canonical(request.rect) === canonical(call.args.rect), 'ASTRA_IMAGE_TOOL_SCOPE_CHANGED');
+        else check(request.purpose === 'OVERVIEW' && asset.view === 'RECTIFIED', 'ASTRA_OVERVIEW_REQUIRED');
+        const { dataUrl, transform } = parseOperatorImagePacket(packet,request,asset);
+        const image = { imageId: packet.imageId, sourceAssetId: asset.assetId, side: asset.side, sourceView: asset.view,
+            sourceSha256: asset.sha256, sha256: packet.sha256, byteCount: packet.byteCount, width: packet.width, height: packet.height,
+            transformHash: packet.transformHash, coordinateFrame: transform.coordinateFrame, sourceRect: transform.rect,
+            purpose: request.purpose, detail: 'auto' };
+        roster.push(image);
+        content.push({ type: 'input_text', text: canonical({ kind: 'ATLAS_TOOL_IMAGE_EVIDENCE', ...image }) },
+            { type: 'input_image', image_url: dataUrl, detail: 'auto' });
+    }
+    check(new Set(roster.map(i => i.imageId)).size === roster.length
+        && (call.name !== 'read_card_report' || new Set(roster.map(i => i.side)).size === 2), 'ASTRA_IMAGE_ROSTER_INCOMPLETE');
+    return { content, roster };
+}
+export function appendToolResult(input, response, call, output, images = []) {
     const calls = response.output.filter(item => item.type === 'function_call');
     check(calls.length === 1 && calls[0].call_id === call.callId, 'ASTRA_CALL_ID_CHANGED');
     // Includes opaque encrypted reasoning; never decode or log it as an explanation.
-    const next = [...input, ...structuredClone(response.output), { type: 'function_call_output', call_id: call.callId, output: canonical(output) }];
+    const imageOutput = toolImageOutput(call,images);
+    const value = images.length ? [{ type: 'input_text', text: canonical(output) }, ...imageOutput.content] : canonical(output);
+    const next = [...input, ...structuredClone(response.output), { type: 'function_call_output', call_id: call.callId, output: value }];
     check(Buffer.byteLength(canonical(next)) <= MAX_REQUEST_BYTES, 'ASTRA_CONTINUATION_TOO_LARGE');
     return next;
 }
