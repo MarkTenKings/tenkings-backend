@@ -40,6 +40,10 @@
     "./report": {
       "types": "./src/report.ts",
       "default": "./dist/report.js"
+    },
+    "./review-action-contract": {
+      "types": "./src/review-action-contract.ts",
+      "default": "./dist/review-action-contract.js"
     }
   },
   "scripts": {
