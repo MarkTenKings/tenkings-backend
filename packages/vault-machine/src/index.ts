@@ -11,3 +11,6 @@ export * from "./operations";
 export * from "./store";
 export * from "./support";
 export * from "./types";
+export * from "./cloud-client";
+export * from "./durable-mock";
+export * from "./runtime";

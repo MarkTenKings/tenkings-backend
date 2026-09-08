@@ -3,6 +3,7 @@ import type {
   NayaxCapabilities,
   NayaxSessionRequest,
   NayaxSessionResult,
+  NayaxVendResultRequest,
   VaultPaymentState,
 } from "../../vault-contracts/dist";
 import { digest } from "./util";
@@ -86,6 +87,7 @@ export class DeterministicNayaxMock implements NayaxAdapter {
   private readonly sessions = new Map<string, MockSession>();
   private readonly byKey = new Map<string, string>();
   private readonly cancellationsByKey = new Map<string, MockCancellation>();
+  private readonly vendResultsByKey = new Map<string, { digest: string; result: NayaxSessionResult }>();
   private startSteps: NayaxMockStep[] = [];
   private reconcileSteps: NayaxMockStep[] = [];
   private readonly limits: Readonly<MockLimits>;
@@ -174,6 +176,34 @@ export class DeterministicNayaxMock implements NayaxAdapter {
     return cloneResult(session.result);
   }
 
+  async reconcileRequest(idempotencyKey: string): Promise<NayaxSessionResult | null> {
+    const sessionId = this.byKey.get(idempotencyKey);
+    return sessionId ? this.reconcile(sessionId) : null;
+  }
+
+  async reportVendResult(request: NayaxVendResultRequest): Promise<NayaxSessionResult> {
+    const requestDigest = digest(request);
+    const previous = this.vendResultsByKey.get(request.idempotencyKey);
+    if (previous) {
+      if (previous.digest !== requestDigest) throw new VaultError("VEND_RESULT_IDEMPOTENCY_CONFLICT", "Vend result key was reused with different evidence", 409);
+      return cloneResult(previous.result);
+    }
+    const session = this.sessions.get(request.providerSessionId);
+    if (!session || session.request.saleId !== request.saleId || request.policy !== "SIMULATOR_ONLY"
+      || request.items.length !== session.request.items.length || new Set(request.items.map((item) => item.lineId)).size !== request.items.length
+      || request.items.some((item) => !session.request.items.some((line) => line.lineId === item.lineId) || !["ACCEPTED", "SENT_UNKNOWN", "REJECTED", "TIMEOUT"].includes(item.outcome))) {
+      throw new VaultError("VEND_RESULT_INVALID", "Vend evidence must bind exactly the mock session's original items", 409);
+    }
+    if (session.state !== "AUTHORIZED" && session.state !== "SETTLEMENT_PENDING" && session.state !== "SETTLED") throw new VaultError("VEND_RESULT_NOT_AUTHORIZED", "Mock vend evidence requires authorization", 409);
+    // A simulator records command evidence and settles the mock ledger only.
+    // This never claims physical retrieval or defines the future Nayax policy.
+    const result = { providerSessionId: request.providerSessionId, originalRequestDigest: session.digest, state: "SETTLEMENT_PENDING" as const };
+    session.state = "SETTLED";
+    session.result = { ...result, state: "SETTLED" };
+    this.vendResultsByKey.set(request.idempotencyKey, { digest: requestDigest, result });
+    return cloneResult(result);
+  }
+
   session(providerSessionId: string): Readonly<MockSession> | undefined {
     const session = this.sessions.get(providerSessionId);
     return session ? structuredClone(session) : undefined;
@@ -183,23 +213,26 @@ export class DeterministicNayaxMock implements NayaxAdapter {
       sessions: [...this.sessions.entries()],
       keys: [...this.byKey.entries()],
       cancellationKeys: [...this.cancellationsByKey.entries()],
+      vendResults: [...this.vendResultsByKey.entries()],
       startSteps: this.startSteps,
       reconcileSteps: this.reconcileSteps,
     });
   }
   restore(snapshot: unknown): void {
-    if (!isRecord(snapshot)) snapshotInvalid();
-    const sessionEntries = snapshot.sessions ?? [];
-    const keyEntries = snapshot.keys ?? [];
+    if (!isRecord(snapshot) || !hasOnlyKeys(snapshot, new Set(["sessions", "keys", "cancellationKeys", "vendResults", "startSteps", "reconcileSteps"]))) snapshotInvalid();
+    const sessionEntries = snapshot.sessions;
+    const keyEntries = snapshot.keys;
     const cancellationEntries = snapshot.cancellationKeys ?? [];
+    const vendEntries = snapshot.vendResults ?? [];
     const startSteps = snapshot.startSteps ?? [];
     const reconcileSteps = snapshot.reconcileSteps ?? [];
-    if (![sessionEntries, keyEntries, cancellationEntries, startSteps, reconcileSteps].every(Array.isArray)) snapshotInvalid();
+    if (![sessionEntries, keyEntries, cancellationEntries, vendEntries, startSteps, reconcileSteps].every(Array.isArray)) snapshotInvalid();
 
     const sessions = new Map<string, MockSession>();
     for (const entry of sessionEntries as unknown[]) {
       if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string" || !isRecord(entry[1])) snapshotInvalid();
       const providerSessionId = entry[0];
+      if (sessions.has(providerSessionId)) snapshotInvalid();
       const raw = entry[1];
       let request: NayaxSessionRequest;
       try { request = normalizeRequest(raw.request as NayaxSessionRequest); }
@@ -224,7 +257,7 @@ export class DeterministicNayaxMock implements NayaxAdapter {
     for (const entry of keyEntries as unknown[]) {
       if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string" || typeof entry[1] !== "string") snapshotInvalid();
       const session = sessions.get(entry[1]);
-      if (!session || session.request.idempotencyKey !== entry[0]) snapshotInvalid();
+      if (!session || session.request.idempotencyKey !== entry[0] || byKey.has(entry[0])) snapshotInvalid();
       byKey.set(entry[0], entry[1]);
     }
     if (byKey.size !== sessions.size) snapshotInvalid();
@@ -254,12 +287,26 @@ export class DeterministicNayaxMock implements NayaxAdapter {
       });
     }
 
-    this.sessions.clear(); this.byKey.clear(); this.cancellationsByKey.clear();
+    const vendResults = new Map<string, { digest: string; result: NayaxSessionResult }>();
+    for (const entry of vendEntries as unknown[]) {
+      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string" || !isRecord(entry[1])) snapshotInvalid();
+      const raw = entry[1];
+      if (typeof raw.digest !== "string" || !/^[a-f0-9]{64}$/.test(raw.digest) || !isRecord(raw.result)
+        || typeof raw.result.providerSessionId !== "string" || raw.result.state !== "SETTLEMENT_PENDING") snapshotInvalid();
+      const session = sessions.get(raw.result.providerSessionId);
+      if (!session || raw.result.originalRequestDigest !== session.digest) snapshotInvalid();
+      vendResults.set(entry[0], { digest: raw.digest, result: { providerSessionId: raw.result.providerSessionId, originalRequestDigest: session.digest, state: "SETTLEMENT_PENDING" } });
+    }
+    const normalizedStartSteps = (startSteps as unknown[]).map(normalizeStep);
+    if (normalizedStartSteps.some(step => step.outcome === "SETTLE")) snapshotInvalid();
+    const normalizedReconcileSteps = (reconcileSteps as unknown[]).map(normalizeStep);
+    this.sessions.clear(); this.byKey.clear(); this.cancellationsByKey.clear(); this.vendResultsByKey.clear();
     for (const entry of sessions) this.sessions.set(...entry);
     for (const entry of byKey) this.byKey.set(...entry);
     for (const entry of cancellations) this.cancellationsByKey.set(...entry);
-    this.startSteps = (startSteps as unknown[]).map(normalizeStep);
-    this.reconcileSteps = (reconcileSteps as unknown[]).map(normalizeStep);
+    for (const entry of vendResults) this.vendResultsByKey.set(...entry);
+    this.startSteps = normalizedStartSteps;
+    this.reconcileSteps = normalizedReconcileSteps;
   }
 }
 

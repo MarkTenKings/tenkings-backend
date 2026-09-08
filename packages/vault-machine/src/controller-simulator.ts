@@ -1,6 +1,7 @@
 import {
   VAULT_DOOR_COUNT,
   VAULT_DOOR_MAP,
+  VaultDoorMappingSchema,
   type VaultDoorId,
 } from "../../vault-contracts/dist";
 import type {
@@ -12,7 +13,7 @@ import { digest } from "./util";
 
 export type ControllerFault = "ACK" | "NAK" | "TIMEOUT" | "DISCONNECT" | "WRONG_DOOR";
 export interface ControllerSimulatorStep { fault: ControllerFault; observedDoorId?: VaultDoorId; delayMs?: number }
-type DoorMapping = Array<{ doorId: VaultDoorId; controllerChannel: number }>;
+type DoorMapping = Array<{ doorId: VaultDoorId; controllerChannel: number; controllerEndpointId?: string }>;
 
 const CANONICAL_DOORS = new Set<VaultDoorId>(VAULT_DOOR_MAP.map(({ doorId }) => doorId));
 const AUTHORITIES = new Set<ControllerCommand["authority"]>(["PAID_SALE", "RESTOCK", "CERTIFICATION"]);
@@ -20,6 +21,10 @@ const AUTHORITIES = new Set<ControllerCommand["authority"]>(["PAID_SALE", "RESTO
 function uniqueErrors(errors: string[]): string[] { return [...new Set(errors)]; }
 
 function mappingErrors(mapping: DoorMapping): string[] {
+  if (mapping.some(entry => entry.controllerEndpointId !== undefined)) {
+    const parsed = VaultDoorMappingSchema.safeParse(mapping);
+    return [...(parsed.success ? [] : ["PROFILE_MAPPING_INVALID"]), ...(mapping.some(entry => !entry.controllerEndpointId) ? ["ENDPOINT_REQUIRED"] : [])];
+  }
   const errors: string[] = [];
   const doorIds = mapping.map((entry) => entry.doorId);
   const channels = mapping.map((entry) => entry.controllerChannel);
@@ -41,30 +46,31 @@ export class DeterministicControllerSimulator implements ControllerAdapter {
   private highestConcurrency = 0;
   private readonly mapping: DoorMapping;
   private readonly configuredMappingErrors: string[];
-  private readonly channelByDoor: Map<VaultDoorId, number>;
-  private readonly doorByChannel: Map<number, VaultDoorId>;
+  private readonly channelByDoor: Map<VaultDoorId, string>;
+  private readonly doorByChannel: Map<string, VaultDoorId>;
   readonly receipts: ControllerReceipt[] = [];
 
   constructor(mapping: DoorMapping, private connected = true) {
     this.mapping = mapping.map((entry) => ({ ...entry }));
     this.configuredMappingErrors = mappingErrors(this.mapping);
-    this.channelByDoor = new Map(this.mapping.map(({ doorId, controllerChannel }) => [doorId, controllerChannel]));
-    this.doorByChannel = new Map(this.mapping.map(({ doorId, controllerChannel }) => [controllerChannel, doorId]));
+    this.channelByDoor = new Map(this.mapping.map(entry => [entry.doorId, address(entry)]));
+    this.doorByChannel = new Map(this.mapping.map(entry => [address(entry), entry.doorId]));
   }
   script(...steps: ControllerSimulatorStep[]): this { this.steps.push(...steps); return this; }
   setConnected(connected: boolean): void { this.connected = connected; }
 
-  async identity(): Promise<{ adapter: string; firmware: string | null; mappingDigest: string; ready: boolean }> {
-    return { adapter: "ten-kings-deterministic-controller-simulator", firmware: "SIM-1", mappingDigest: digest(this.mapping), ready: this.connected && this.configuredMappingErrors.length === 0 };
+  async identity(): Promise<{ adapter: string; mode: "MOCK"; firmware: string | null; mappingDigest: string; ready: boolean }> {
+    return { adapter: "ten-kings-deterministic-controller-simulator", mode: "MOCK", firmware: "SIM-1", mappingDigest: digest(this.mapping), ready: this.connected && this.configuredMappingErrors.length === 0 };
   }
 
   async validateMapping(mapping: DoorMapping): Promise<{ valid: boolean; errors: string[] }> {
     const errors = mappingErrors(mapping);
     if (this.configuredMappingErrors.length) errors.push("SIMULATOR_MAPPING_INVALID");
     if (errors.length === 0) {
-      for (const { doorId, controllerChannel } of mapping) {
-        if (this.channelByDoor.get(doorId) !== controllerChannel) errors.push("DOOR_TO_CHANNEL_MISMATCH");
-        if (this.doorByChannel.get(controllerChannel) !== doorId) errors.push("CHANNEL_TO_DOOR_MISMATCH");
+      if (mapping.length !== this.mapping.length) errors.push("MAPPING_COUNT_MISMATCH");
+      for (const entry of mapping) {
+        if (this.channelByDoor.get(entry.doorId) !== address(entry)) errors.push("DOOR_TO_CHANNEL_MISMATCH");
+        if (this.doorByChannel.get(address(entry)) !== entry.doorId) errors.push("CHANNEL_TO_DOOR_MISMATCH");
       }
     }
     const unique = uniqueErrors(errors);
@@ -79,8 +85,8 @@ export class DeterministicControllerSimulator implements ControllerAdapter {
       if (command.authority !== "PAID_SALE" && command.attempt !== 1) return this.record(command, "REJECTED", undefined, "AUTHORITY_ATTEMPT_MISMATCH");
       if (
         this.configuredMappingErrors.length
-        || this.channelByDoor.get(command.doorId) !== command.controllerChannel
-        || this.doorByChannel.get(command.controllerChannel) !== command.doorId
+        || this.channelByDoor.get(command.doorId) !== address(command)
+        || this.doorByChannel.get(address(command)) !== command.doorId
       ) return this.record(command, "REJECTED", undefined, "MAPPING_MISMATCH");
       const step = this.steps.shift() ?? { fault: "ACK" as const };
       if (step.delayMs) await new Promise<void>((resolve) => setTimeout(resolve, step.delayMs));
@@ -93,7 +99,8 @@ export class DeterministicControllerSimulator implements ControllerAdapter {
           const scriptedDoor = step.observedDoorId && step.observedDoorId !== command.doorId && this.channelByDoor.has(step.observedDoorId)
             ? step.observedDoorId
             : undefined;
-          const observedDoorId = scriptedDoor ?? this.mapping.find((entry) => entry.doorId !== command.doorId)!.doorId;
+          const observedDoorId = scriptedDoor ?? this.mapping.find((entry) => entry.doorId !== command.doorId)?.doorId;
+          if (!observedDoorId) return this.record(command, "REJECTED", undefined, "WRONG_DOOR_SIMULATION_UNAVAILABLE");
           return this.record(command, "ACCEPTED", observedDoorId, "WRONG_DOOR");
         }
       }
@@ -108,3 +115,5 @@ export class DeterministicControllerSimulator implements ControllerAdapter {
     return receipt;
   }
 }
+
+function address(entry: { controllerChannel: number; controllerEndpointId?: string }): string { return `${entry.controllerEndpointId ?? "legacy"}:${entry.controllerChannel}`; }

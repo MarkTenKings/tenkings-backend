@@ -3,7 +3,7 @@
   <name>Ten Kings Vault Machine</name>
   <description>One-writer local authority for the Ten Kings Vault kiosk.</description>
   <executable>%BASE%\runtime\node.exe</executable>
-  <arguments>%BASE%\current\dist\cli.js</arguments>
+  <arguments>"%BASE%\current\dist\cli.js"</arguments>
   <workingdirectory>%BASE%\current</workingdirectory>
   <startmode>Automatic</startmode>
   <onfailure action="restart" delay="15 sec" />

@@ -6,13 +6,13 @@ test("public activity is durable, state-versioned, and unavailable during servic
   const rig = await createRig();
   await rig.machine.initialize();
   const initial = await rig.machine.publicState();
-  assert.deepEqual(initial.buildIdentity, { sourceCommit: "test-source-commit", appVersion: "0.1.0" });
-  assert.equal(initial.idleSecondsRemaining, 60);
+  assert.deepEqual(initial.buildIdentity, { sourceCommit: "a".repeat(40), appVersion: "0.1.0" });
+  assert.equal(initial.idleSecondsRemaining, 70);
   rig.clock.advance(45_000);
-  assert.equal((await rig.machine.publicState()).idleSecondsRemaining, 15);
+  assert.equal((await rig.machine.publicState()).idleSecondsRemaining, 25);
   const version = rig.machine.recordPublicActivity();
   assert.equal(version, initial.stateVersion + 1);
-  assert.equal((await rig.machine.publicState()).idleSecondsRemaining, 60);
+  assert.equal((await rig.machine.publicState()).idleSecondsRemaining, 70);
   assert.equal(rig.store.one(`SELECT type FROM machine_event ORDER BY sequence DESC LIMIT 1`).type, "PUBLIC_ACTIVITY_RECORDED");
   grant(rig, "RESTOCKER");
   assert.throws(() => rig.machine.recordPublicActivity(), /service is locked/i);
@@ -23,14 +23,14 @@ test("idle warning is machine-derived and resets only an unpaid cart at expiry",
   const rig = await createRig(); makeDoorAvailable(rig, ["X-01"]);
   await rig.machine.initialize();
   rig.machine.selectCartDoor("X-01", "sports-25", true);
-  rig.clock.advance(45_000);
+  rig.clock.advance(60_000);
   const warning = await rig.machine.publicState();
   assert.equal(warning.publicState, "IDLE_WARNING");
-  assert.equal(warning.idleSecondsRemaining, 15);
-  rig.clock.advance(15_000);
+  assert.equal(warning.idleSecondsRemaining, 10);
+  rig.clock.advance(10_000);
   const reset = await rig.machine.publicState();
   assert.equal(reset.publicState, "ATTRACT");
-  assert.equal(reset.idleSecondsRemaining, 60);
+  assert.equal(reset.idleSecondsRemaining, 70);
   assert.equal(rig.store.one(`SELECT COUNT(*) AS count FROM cart_item`).count, 0);
   assert.equal(rig.store.one(`SELECT COUNT(*) AS count FROM machine_event WHERE type='PUBLIC_IDLE_CART_RESET'`).count, 1);
   rig.store.close();
@@ -67,6 +67,8 @@ test("paid retrieval countdown is durable, extends once for the exact retry, and
   assert.ok(completed.presentation_done_at);
   assert.equal(rig.store.one(`SELECT COUNT(*) AS count FROM machine_event WHERE type='PUBLIC_PRESENTATION_DONE' AND correlation_id=?`, paid.saleId).count, 1);
 
+  await rig.machine.advancePayments();
+  assert.equal(rig.machine.publicSale(paid.saleId).paymentState, "SETTLED");
   rig.machine.selectCartDoor("K-01", "sports-25", true);
   const next = await rig.machine.checkout({ idempotencyKey: crypto.randomUUID(), mode: "PRODUCTION", configVersion: 1, doorIds: ["K-01"] });
   assert.ok(next.sale);
@@ -167,7 +169,7 @@ test("certification must be submitted after exact command evidence before public
   const started = await rig.operations.startCertification(session.sessionId);
   const now = rig.clock.now().toISOString();
   rig.operations.recordCertificationEvidence(session.sessionId, {
-    evidenceId: require("node:crypto").randomUUID(), sessionId: started.sessionId, doorId: started.scheduledDoorId, evidenceClass: "FULL_MACHINE", outcome: "PASS",
+    evidenceId: require("node:crypto").randomUUID(), sessionId: started.sessionId, doorId: started.scheduledDoorId, evidenceClass: "AUTOMATED", outcome: "PASS",
     expectedDoorIds: [started.scheduledDoorId], observedDoorIds: [started.scheduledDoorId], notes: "Observed", artifactDigest: "a".repeat(64), observedAt: now,
   });
   assert.throws(() => rig.machine.staff.safeExit(session.sessionId, true), /submitted/i);

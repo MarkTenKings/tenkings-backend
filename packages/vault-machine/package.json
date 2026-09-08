@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "test": "npm run build && node --test tests/*.test.js",
+    "test": "npm run build && node ../../scripts/test-vault-node.mjs",
     "start": "node dist/cli.js"
   },
   "dependencies": {

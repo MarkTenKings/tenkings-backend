@@ -1,23 +1,10 @@
 param(
   [Parameter(Mandatory=$true)][string]$ReleaseDirectory,
   [Parameter(Mandatory=$true)][string]$ManifestPath,
-  [string]$InstallRoot = 'C:\Program Files\Ten Kings\Vault Machine'
+  [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ManifestSha256,
+  [string]$InstallRoot = 'C:\Program Files\Ten Kings\Vault Machine',
+  [switch]$Activate
 )
 $ErrorActionPreference = 'Stop'
-$service = Get-Service -Name 'TenKingsVaultMachine' -ErrorAction Stop
-$manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
-foreach ($file in $manifest.files) {
-  $path = Join-Path $ReleaseDirectory ([string]$file.path)
-  if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$file.sha256).ToLowerInvariant()) { throw "Digest mismatch: $($file.path)" }
-}
-$release = Join-Path $InstallRoot ('releases\' + [string]$manifest.version)
-if (Test-Path -LiteralPath $release) { throw 'Target release already exists.' }
-New-Item -ItemType Directory -Path $release -Force | Out-Null
-Copy-Item -Path (Join-Path $ReleaseDirectory '*') -Destination $release -Recurse
-Stop-Service -InputObject $service
-$current = Join-Path $InstallRoot 'current'; $previous = Join-Path $InstallRoot 'previous'
-if (Test-Path -LiteralPath $previous) { Remove-Item -LiteralPath $previous -Force }
-Rename-Item -LiteralPath $current -NewName 'previous'
-New-Item -ItemType Junction -Path $current -Target $release | Out-Null
-Start-Service -Name 'TenKingsVaultMachine'
-Write-Output "Activated verified release $($manifest.version); previous release retained for rollback."
+if ($Activate) { throw 'Activation is not implemented: it requires a trusted service maintenance barrier, completed/reconciled transactions, verified backup, compatible schema and state-aware rollback. The running installation has not been changed.' }
+& (Join-Path $PSScriptRoot 'install.ps1') -ReleaseDirectory $ReleaseDirectory -ManifestPath $ManifestPath -ManifestSha256 $ManifestSha256 -InstallRoot $InstallRoot

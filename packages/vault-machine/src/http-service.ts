@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, realpathSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import { extname, join, normalize, resolve } from "node:path";
@@ -29,6 +29,7 @@ export interface HttpServiceOptions {
 export class VaultHttpService {
   readonly server: Server;
   private readonly clients = new Set<Duplex>();
+  private readonly clientSessionHashes = new Map<Duplex, string>();
   private readonly logger: RedactedJsonLogger;
 
   constructor(private readonly machine: VaultMachine, private readonly operations: VaultOperationsService, private readonly options: HttpServiceOptions) {
@@ -54,8 +55,14 @@ export class VaultHttpService {
   async broadcastState(): Promise<void> {
     if (!this.clients.size) return;
     const payload = wsFrame(JSON.stringify({ type: "PUBLIC_STATE", data: await this.machine.publicState() }));
-    for (const socket of this.clients) { if (!socket.destroyed) socket.write(payload); }
+    for (const socket of this.clients) {
+      const hash = this.clientSessionHashes.get(socket);
+      if (!hash || !this.machine.store.maybeOne(`SELECT 1 FROM kiosk_session WHERE session_hash=? AND expires_at>?`, hash, iso(this.options.clock.now()))) { socket.end(wsCloseFrame(1008, "session-expired")); this.clients.delete(socket); this.clientSessionHashes.delete(socket); continue; }
+      if (!socket.destroyed) socket.write(payload);
+    }
   }
+
+  async tickState(): Promise<void> { await this.machine.publicState(); await this.broadcastState(); }
 
   private async route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const requestId = randomUUID(); this.securityHeaders(response);
@@ -105,7 +112,7 @@ export class VaultHttpService {
         await this.readJson(request, 1024); this.machine.recordPublicActivity(); await this.broadcastState(); return this.success(response, requestId, await this.machine.publicState());
       }
       if (request.method === "POST" && url.pathname === "/api/v1/cart/select") {
-        const body = await this.readJson(request, MUTATION_LIMIT) as any; const result = this.machine.selectCartDoor(VaultDoorIdSchema.parse(body.doorId), String(body.productId), Boolean(body.selected)); await this.broadcastState(); return this.success(response, requestId, { ...(await this.machine.publicState()), mutation: result });
+        const body = await this.readJson(request, MUTATION_LIMIT) as any; if (typeof body.selected !== "boolean" || typeof body.productId !== "string") throw new VaultError("REQUEST_INVALID", "Cart selection requires a product ID and boolean selected", 400); const result = this.machine.selectCartDoor(VaultDoorIdSchema.parse(body.doorId), body.productId, body.selected); await this.broadcastState(); return this.success(response, requestId, { ...(await this.machine.publicState()), mutation: result });
       }
       if (request.method === "POST" && url.pathname === "/api/v1/cart/pick") {
         const body = await this.readJson(request, MUTATION_LIMIT) as any; const result = this.machine.pickForMe(String(body.productId)); await this.broadcastState(); return this.success(response, requestId, { ...(await this.machine.publicState()), mutation: result });
@@ -121,20 +128,33 @@ export class VaultHttpService {
       if (request.method === "POST" && match) {
         const body = await this.readJson(request, MUTATION_LIMIT) as any; const result = await this.machine.openPaidDoorsAgain(match[1]!, String(body.idempotencyKey ?? "")); await this.broadcastState(); return this.success(response, requestId, { ...(await this.machine.publicState()), mutation: result });
       }
+      match = url.pathname.match(/^\/api\/v1\/sales\/([^/]+)\/cancel$/);
+      if (request.method === "POST" && match) {
+        const body = await this.readJson(request, MUTATION_LIMIT) as any; const result = await this.machine.cancelPayment(match[1]!, String(body.idempotencyKey ?? "")); await this.broadcastState(); return this.success(response, requestId, { ...(await this.machine.publicState()), mutation: result });
+      }
       match = url.pathname.match(/^\/api\/v1\/sales\/([^/]+)\/done$/);
       if (request.method === "POST" && match) { await this.readJson(request, MUTATION_LIMIT); const result = this.machine.markPresentationDone(match[1]!); await this.broadcastState(); return this.success(response, requestId, { ...(await this.machine.publicState()), mutation: result }); }
       if (request.method === "POST" && url.pathname === "/api/v1/staff/lock") {
         const body = await this.readJson(request, MUTATION_LIMIT) as any; this.machine.staff.lock(String(body.staffSessionId ?? "")); await this.broadcastState(); return this.success(response, requestId, { locked: true });
       }
+      if (request.method === "POST" && url.pathname === "/api/v1/staff/activity") {
+        const body = await this.readJson(request, MUTATION_LIMIT) as any; this.machine.staff.requireSession(String(body.staffSessionId ?? "")); return this.success(response, requestId, { recorded: true });
+      }
       if (request.method === "POST" && url.pathname === "/api/v1/staff/safe-exit") {
         const body = await this.readJson(request, MUTATION_LIMIT) as any; this.machine.staff.safeExit(String(body.staffSessionId ?? ""), body.servicedDoorsClosed === true); await this.broadcastState(); return this.success(response, requestId, { exited: true });
+      }
+      if (request.method === "POST" && url.pathname === "/api/v1/staff/profile-activation") {
+        const body = await this.readJson(request, MUTATION_LIMIT) as any;
+        if (!Number.isSafeInteger(body.expectedConfigVersion) || body.expectedConfigVersion < 1 || typeof body.expectedConfigDigest !== "string" || !/^[a-f0-9]{64}$/.test(body.expectedConfigDigest)) throw new VaultError("PROFILE_ACTIVATION_REFERENCE_INVALID", "Review the exact pending configuration before activation", 400);
+        this.machine.activatePendingProfile(String(body.staffSessionId ?? ""), body.expectedConfigVersion, body.expectedConfigDigest, body.compartmentsEmpty === true, body.servicedDoorsClosed === true);
+        await this.broadcastState(); return this.success(response, requestId, await this.machine.publicState());
       }
       if (request.method === "POST" && url.pathname === "/api/v1/restocks") {
         const body = await this.readJson(request, MUTATION_LIMIT) as any; const result = await this.operations.startOrResumeRestock(String(body.staffSessionId ?? ""), Array.isArray(body.doorIds) ? body.doorIds.map((id: unknown) => VaultDoorIdSchema.parse(id)) : undefined); await this.broadcastState(); return this.success(response, requestId, result);
       }
       match = url.pathname.match(/^\/api\/v1\/restocks\/([^/]+)\/items\/([^/]+)$/);
       if (request.method === "POST" && match) {
-        const body = await this.readJson(request, MUTATION_LIMIT) as any; this.operations.recordRestockOutcome(String(body.staffSessionId ?? ""), match[1]!, VaultDoorIdSchema.parse(match[2]!), body.outcome, String(body.notes ?? "")); await this.broadcastState(); return this.success(response, requestId, { recorded: true });
+        const body = await this.readJson(request, MUTATION_LIMIT) as any; this.operations.recordRestockOutcome(String(body.staffSessionId ?? ""), match[1]!, VaultDoorIdSchema.parse(match[2]!), body.outcome, String(body.notes ?? ""), body.productFitConfirmed === true); await this.broadcastState(); return this.success(response, requestId, { recorded: true });
       }
       match = url.pathname.match(/^\/api\/v1\/restocks\/([^/]+)\/finalize$/);
       if (request.method === "POST" && match) {
@@ -147,13 +167,17 @@ export class VaultHttpService {
       if (request.method === "POST" && match) {
         const body = await this.readJson(request, MUTATION_LIMIT) as any; const evidence = { ...body.evidence, sessionId: match[1] }; const result = this.operations.recordCertificationEvidence(String(body.staffSessionId ?? ""), evidence); await this.broadcastState(); return this.success(response, requestId, result);
       }
+      match = url.pathname.match(/^\/api\/v1\/certification\/sessions\/([^/]+)\/cycles$/);
+      if (request.method === "POST" && match) {
+        const body = await this.readJson(request, MUTATION_LIMIT) as any; const result = await this.operations.startCertificationCycle(String(body.staffSessionId ?? ""), match[1]!, body.cycleType); await this.broadcastState(); return this.success(response, requestId, result);
+      }
       match = url.pathname.match(/^\/api\/v1\/certification\/sessions\/([^/]+)\/submit$/);
       if (request.method === "POST" && match) {
         const body = await this.readJson(request, MUTATION_LIMIT) as any; this.operations.submitCertification(String(body.staffSessionId ?? ""), match[1]!, body.servicedDoorsClosed === true); await this.broadcastState(); return this.success(response, requestId, { submitted: true });
       }
       throw new VaultError("ROUTE_NOT_FOUND", "Route was not found", 404);
     } catch (error) {
-      const vaultError = error instanceof VaultError ? error : new VaultError("REQUEST_INVALID", error instanceof Error ? error.message : "Request failed", 400);
+      const vaultError = error instanceof VaultError ? error : new VaultError("REQUEST_INVALID", "Request could not be completed; refresh the machine state", 400);
       this.logger.log(vaultError.status >= 500 ? "ERROR" : "WARN", "HTTP_REQUEST_FAILED", { requestId, method: request.method, path: String(request.url ?? "").split("?", 1)[0], code: vaultError.code });
       response.statusCode = vaultError.status; response.setHeader("Content-Type", "application/json; charset=utf-8"); response.end(JSON.stringify({ requestId, error: { code: vaultError.code, message: vaultError.message } }));
     }
@@ -166,11 +190,13 @@ export class VaultHttpService {
       const protocols = String(request.headers["sec-websocket-protocol"] ?? "").split(",").map((value) => value.trim());
       if (url.pathname !== "/api/v1/events" || request.headers.origin !== this.options.origin || !protocols.includes("vault-contract-v1")) throw new Error("boundary");
       this.requireKioskSession(request);
+      const cookie = String(request.headers.cookie ?? "").split(";").map((part) => part.trim()).find((part) => part.startsWith(`${COOKIE_NAME}=`));
+      this.clientSessionHashes.set(socket, createHash("sha256").update(cookie!.slice(COOKIE_NAME.length + 1)).digest("hex"));
       const key = String(request.headers["sec-websocket-key"] ?? "");
       if (!/^[A-Za-z0-9+/]{22}==$/.test(key)) throw new Error("key");
       const accept = createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
       socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\nSec-WebSocket-Protocol: vault-contract-v1\r\n\r\n`);
-      this.clients.add(socket); socket.on("close", () => this.clients.delete(socket)); socket.on("error", () => this.clients.delete(socket));
+      this.clients.add(socket); socket.on("close", () => { this.clients.delete(socket); this.clientSessionHashes.delete(socket); }); socket.on("error", () => { this.clients.delete(socket); this.clientSessionHashes.delete(socket); });
       // This channel is intentionally output-only. Any client data closes it before it can become a command surface.
       socket.on("data", () => socket.end(wsCloseFrame(1008, "output-only")));
       socket.write(wsFrame(JSON.stringify({ type: "PUBLIC_STATE", data: await this.machine.publicState() })));
@@ -203,13 +229,18 @@ export class VaultHttpService {
     const chunks: Buffer[] = []; let size = 0;
     for await (const chunk of request) { const buffer = Buffer.from(chunk); size += buffer.length; if (size > limit) throw new VaultError("BODY_TOO_LARGE", "Request body exceeds route limit", 413); chunks.push(buffer); }
     const text = Buffer.concat(chunks).toString("utf8");
-    try { return JSON.parse(text || "{}"); } catch { throw new VaultError("JSON_INVALID", "Request body is not valid JSON", 400); }
+    if (request.headers["if-match"] !== undefined) this.requireIfMatch(request);
+    try { const value: unknown = JSON.parse(text || "{}"); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("object required"); return value; } catch { throw new VaultError("JSON_INVALID", "Request body must be a JSON object", 400); }
   }
 
   private success(response: ServerResponse, requestId: string, data: unknown): void { response.statusCode = 200; response.setHeader("Content-Type", "application/json; charset=utf-8"); response.end(JSON.stringify({ requestId, data })); }
   private securityHeaders(response: ServerResponse): void {
     response.setHeader("Cache-Control", "no-store"); response.setHeader("X-Content-Type-Options", "nosniff"); response.setHeader("X-Frame-Options", "DENY"); response.setHeader("Referrer-Policy", "no-referrer");
-    response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    const mediaOrigins = new Set<string>();
+    for (const product of this.machine.config.active()?.payload.products ?? []) {
+      try { const url = new URL(product.photoUrl); if (url.protocol === "https:" && !url.username && !url.password) mediaOrigins.add(url.origin); } catch { /* invalid media remains unavailable */ }
+    }
+    response.setHeader("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: ${[...mediaOrigins].sort().join(" ")}; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
   }
 
   private static(response: ServerResponse, pathname: string): void {
@@ -217,6 +248,8 @@ export class VaultHttpService {
     if (!path.startsWith(root + require("node:path").sep) && path !== root) throw new VaultError("STATIC_PATH_REJECTED", "Static path escapes kiosk root", 403);
     const fallback = resolve(join(root, "index.html")); const selected = existsSync(path) && statSync(path).isFile() ? path : fallback;
     if (!existsSync(selected)) throw new VaultError("STATIC_NOT_FOUND", "Kiosk build was not found", 404);
+    const realRoot = realpathSync(root); const realSelected = realpathSync(selected);
+    if (!realSelected.startsWith(realRoot + require("node:path").sep)) throw new VaultError("STATIC_PATH_REJECTED", "Static path escapes kiosk root", 403);
     const mime: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg" };
     response.statusCode = 200; response.setHeader("Content-Type", mime[extname(selected)] ?? "application/octet-stream"); createReadStream(selected).pipe(response);
   }

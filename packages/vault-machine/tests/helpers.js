@@ -30,7 +30,7 @@ async function createRig(options = {}) {
   const machineId = options.machineId ?? crypto.randomUUID(); const clock = options.clock ?? new FakeClock();
   const pair = options.keyPair ?? crypto.generateKeyPairSync("ed25519");
   const databasePath = options.databasePath ?? ":memory:";
-  const store = new vault.VaultStore(databasePath, { machineId, appVersion: "0.1.0", sourceCommit: options.sourceCommit ?? "test-source-commit", acquireProcessLock: options.acquireProcessLock ?? false });
+  const store = new vault.VaultStore(databasePath, { machineId, appVersion: "0.1.0", sourceCommit: options.sourceCommit ?? "a".repeat(40), acquireProcessLock: options.acquireProcessLock ?? false });
   const payment = options.payment ?? new vault.DeterministicNayaxMock();
   const controller = options.controller ?? new vault.DeterministicControllerSimulator([...contracts.SIMULATOR_DOOR_MAPPING]);
   const publicPem = pair.publicKey.export({ type: "spki", format: "pem" });

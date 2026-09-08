@@ -15,15 +15,16 @@ test("loopback HTTP enforces origin, session, contract/content and optimistic st
   const rig = await createRig(); await rig.machine.initialize(); makeDoorAvailable(rig); const port = await availablePort(); const origin = `http://127.0.0.1:${port}`;
   const service = new vault.VaultHttpService(rig.machine, rig.operations, { origin, host: "127.0.0.1", port, adapterCallbackToken: "adapter-secret-32-bytes-minimum-value", clock: rig.clock });
   await service.listen();
+  try {
   const apiHeaders = { "X-Vault-Contract-Version": "1" };
   let response = await fetch(`${origin}/api/v1/state`, { headers: apiHeaders }); assert.equal(response.status, 401);
   response = await fetch(`${origin}/api/v1/session/bootstrap`, { method: "POST", headers: { ...apiHeaders, Origin: "http://evil.test", "Content-Type": "application/json" }, body: "{}" }); assert.equal(response.status, 403);
   response = await fetch(`${origin}/api/v1/session/bootstrap`, { method: "POST", headers: { ...apiHeaders, Origin: origin, "Content-Type": "application/json" }, body: "{}" }); assert.equal(response.status, 200);
   const bootstrap = await response.json(); assert.equal(Object.hasOwn(bootstrap.data, "token"), false); const cookie = response.headers.get("set-cookie").split(";")[0]; assert.match(response.headers.get("set-cookie"), /HttpOnly.*SameSite=Strict/i);
-  response = await fetch(`${origin}/api/v1/state`, { headers: { ...apiHeaders, Cookie: cookie } }); let stateEnvelope = await response.json(); assert.equal(response.status, 200); assert.equal(stateEnvelope.data.doors.length, 150); assert.equal(stateEnvelope.data.city, "Los Angeles"); assert.equal(stateEnvelope.data.providerLimits.maxItems, 25); assert.deepEqual(stateEnvelope.data.buildIdentity, { sourceCommit: "test-source-commit", appVersion: "0.1.0" });
+  response = await fetch(`${origin}/api/v1/state`, { headers: { ...apiHeaders, Cookie: cookie } }); let stateEnvelope = await response.json(); assert.equal(response.status, 200); assert.equal(stateEnvelope.data.doors.length, 150); assert.equal(stateEnvelope.data.city, "Los Angeles"); assert.equal(stateEnvelope.data.providerLimits.maxItems, 25); assert.deepEqual(stateEnvelope.data.buildIdentity, { sourceCommit: "a".repeat(40), appVersion: "0.1.0" });
   rig.clock.advance(45_000);
-  response = await fetch(`${origin}/api/v1/session/activity`, { method: "POST", headers: { ...apiHeaders, Cookie: cookie, Origin: origin, "Content-Type": "application/json", "If-Match": String(stateEnvelope.data.stateVersion) }, body: "{}" }); stateEnvelope = await response.json(); assert.equal(response.status, 200); assert.equal(stateEnvelope.data.idleSecondsRemaining, 60);
-  response = await fetch(`${origin}/api/v1/health`, { headers: { ...apiHeaders, Cookie: cookie } }); const health = await response.json(); assert.equal(health.data.buildIdentity.sourceCommit, "test-source-commit"); assert.equal(health.data.localSchemaVersion, 1);
+  response = await fetch(`${origin}/api/v1/session/activity`, { method: "POST", headers: { ...apiHeaders, Cookie: cookie, Origin: origin, "Content-Type": "application/json", "If-Match": String(stateEnvelope.data.stateVersion) }, body: "{}" }); stateEnvelope = await response.json(); assert.equal(response.status, 200); assert.equal(stateEnvelope.data.idleSecondsRemaining, 70);
+  response = await fetch(`${origin}/api/v1/health`, { headers: { ...apiHeaders, Cookie: cookie } }); const health = await response.json(); assert.equal(health.data.buildIdentity.sourceCommit, "a".repeat(40)); assert.equal(health.data.localSchemaVersion, vault.LOCAL_SCHEMA_VERSION);
   response = await fetch(`${origin}/api/v1/cart/select`, { method: "POST", headers: { ...apiHeaders, Cookie: cookie, Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ doorId: "X-01", productId: "sports-25", selected: true }) }); assert.equal(response.status, 428);
   response = await fetch(`${origin}/api/v1/cart/select`, { method: "POST", headers: { ...apiHeaders, Cookie: cookie, Origin: origin, "Content-Type": "application/json", "If-Match": String(stateEnvelope.data.stateVersion) }, body: JSON.stringify({ doorId: "X-01", productId: "sports-25", selected: true }) });
   const selected = await response.json(); assert.equal(response.status, 200); assert.equal(selected.data.cart[0].doorId, "X-01"); assert.equal(selected.data.cart[0].productName, "Sports Mystery Pack");
@@ -37,7 +38,7 @@ test("loopback HTTP enforces origin, session, contract/content and optimistic st
     let data = ""; socket.on("data", (chunk) => { data += chunk.toString("latin1"); if (data.includes("\r\n\r\n")) { socket.destroy(); resolve(data); } }); socket.on("error", reject);
   });
   assert.match(handshake, /^HTTP\/1\.1 101/); assert.match(handshake, /Sec-WebSocket-Protocol: vault-contract-v1/i);
-  await service.close(); rig.store.close();
+  } finally { await service.close(); rig.store.close(); }
 });
 
 test("service constructor rejects any non-loopback bind", async () => {
@@ -53,9 +54,50 @@ test("support bundle is metadata-only, redacts logs, hashes every member and exc
   rig.store.close(); fs.rmSync(root, { recursive: true, force: true });
 });
 
-test("Windows appliance artifacts include install, service, verified update, rollback and redacted support collection", () => {
+test("Windows appliance artifacts verify staging and fail closed on unimplemented rollback activation", () => {
   const root = path.resolve(__dirname, "../windows"); const expected = ["vault-machine-service.xml", "install.ps1", "update.ps1", "rollback.ps1", "collect-support-bundle.ps1"];
   for (const file of expected) assert.equal(fs.existsSync(path.join(root, file)), true, file);
-  assert.match(fs.readFileSync(path.join(root, "update.ps1"), "utf8"), /Get-FileHash[\s\S]*SHA256/); assert.match(fs.readFileSync(path.join(root, "rollback.ps1"), "utf8"), /previous/);
+  assert.match(fs.readFileSync(path.join(root, "update.ps1"), "utf8"), /install\.ps1[\s\S]*ManifestSha256/); assert.match(fs.readFileSync(path.join(root, "install.ps1"), "utf8"), /verify-release\.cjs/);
+  const rollback = fs.readFileSync(path.join(root, "rollback.ps1"), "utf8");
+  assert.match(rollback, /throw 'Rollback activation is not implemented/);
+  for (const file of ["install.ps1", "update.ps1", "rollback.ps1"]) assert.doesNotMatch(fs.readFileSync(path.join(root, file), "utf8"), /\b(?:Stop-Service|Restart-Service|Start-Service|Remove-Item|Move-Item)\b/i);
   assert.match(fs.readFileSync(path.join(root, "collect-support-bundle.ps1"), "utf8"), /SQLite database/); assert.doesNotMatch(fs.readFileSync(path.join(root, "vault-machine-service.xml"), "utf8"), /Nayax|COM\d|serial/i);
+});
+
+test('static kiosk serving rejects symlink escapes and unexpected errors expose no adapter detail', async () => {
+  const rig = await createRig(); const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vault-static-boundary-'));
+  const root = path.join(directory, 'kiosk'); fs.mkdirSync(root); fs.writeFileSync(path.join(root, 'index.html'), '<!doctype html><title>Fixture</title>');
+  const privatePath = path.join(directory, 'private.txt'); fs.writeFileSync(privatePath, 'private-test-data'); fs.symlinkSync(privatePath, path.join(root, 'escape.txt'));
+  const origin = 'http://127.0.0.1:47831';
+  const service = new vault.VaultHttpService(rig.machine, rig.operations, { origin, port: 0, staticRoot: root, adapterCallbackToken: 'test-adapter-token', clock: rig.clock });
+  try {
+    const address = await service.listen(); const base = `http://127.0.0.1:${address.port}`;
+    let response = await fetch(`${base}/escape.txt`); assert.equal(response.status, 403); assert.doesNotMatch(await response.text(), /private-test-data/);
+    response = await fetch(`${base}/`); assert.equal(response.status, 200); assert.match(await response.text(), /Fixture/);
+    const headers = { Origin: origin, 'Content-Type': 'application/json', 'X-Vault-Contract-Version': '1' };
+    response = await fetch(`${base}/api/v1/session/bootstrap`, { method: 'POST', headers, body: '{}' });
+    const cookie = response.headers.get('set-cookie').split(';')[0]; await response.json();
+    rig.machine.readiness = async () => { throw new Error('SDK diagnostic bearer private-test-data C:\\secret-provider-state'); };
+    response = await fetch(`${base}/api/v1/health`, { headers: { ...headers, Cookie: cookie } });
+    assert.equal(response.status, 400); assert.doesNotMatch(await response.text(), /private-test-data|secret-provider-state|SDK diagnostic/);
+  } finally { if (service.server.listening) await service.close(); rig.store.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('support export uses a fresh bounded directory and cannot include old private contents', async () => {
+  const rig = await createRig(); const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vault-support-boundary-'));
+  try {
+    fs.writeFileSync(path.join(directory, 'private.txt'), 'private-test-data');
+    assert.throws(() => vault.createSupportBundleDirectory(rig.store, directory), /exist/i);
+    const log = path.join(directory, 'large.log'); const handle = fs.openSync(log, 'w');
+    try {
+      fs.writeSync(handle, JSON.stringify({ token: 'private-test-data' }) + '\n');
+      fs.ftruncateSync(handle, 16 * 1024 * 1024);
+      const end = '\n' + JSON.stringify({ event: 'SAFE_TAIL', pin: '654321' }) + '\n';
+      fs.writeSync(handle, end, 16 * 1024 * 1024 - Buffer.byteLength(end));
+    } finally { fs.closeSync(handle); }
+    const output = path.join(directory, 'new-bundle'); vault.createSupportBundleDirectory(rig.store, output, [log]);
+    const value = fs.readFileSync(path.join(output, 'redacted-large.log'), 'utf8');
+    assert.ok(Buffer.byteLength(value) <= 1024 * 1024); assert.match(value, /SAFE_TAIL/); assert.doesNotMatch(value, /654321|private-test-data/);
+    assert.equal(fs.existsSync(path.join(output, 'private.txt')), false);
+  } finally { rig.store.close(); fs.rmSync(directory, { recursive: true, force: true }); }
 });

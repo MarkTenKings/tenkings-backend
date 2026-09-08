@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypt
 import { VaultStaffGrantSchema, roleMay, type VaultPermission, type VaultRole } from "../../vault-contracts/dist";
 import { EventRepository } from "./events";
 import { VaultStore } from "./store";
-import { iso, json } from "./util";
+import { digest, iso, json } from "./util";
 import { VaultError, type Clock } from "./types";
 
 const PIN_PATTERN = /^\d{6}$/;
@@ -30,24 +30,45 @@ export function verifyScryptPin(pin: string, verifier: string): boolean {
 }
 
 export class StaffAuthService {
-  constructor(private readonly store: VaultStore, private readonly events: EventRepository, private readonly clock: Clock) {}
+  private readonly bootWall: number;
+  private readonly bootMonotonic: number;
+  constructor(private readonly store: VaultStore, private readonly events: EventRepository, private readonly clock: Clock) {
+    this.bootWall = clock.now().getTime(); this.bootMonotonic = clock.monotonicMs();
+  }
+
+  private clockUnsafe(): boolean { return Math.abs((this.clock.now().getTime() - this.bootWall) - (this.clock.monotonicMs() - this.bootMonotonic)) > 5_000 || this.clock.monotonicMs() < this.bootMonotonic; }
 
   importGrant(input: unknown): void {
     const grant = VaultStaffGrantSchema.parse(input);
     const machineId = String(this.store.one(`SELECT machine_id FROM machine_meta WHERE singleton=1`).machine_id);
     if (grant.machineId !== machineId) throw new VaultError("GRANT_MACHINE_MISMATCH", "Staff grant belongs to a different machine", 409);
     if (grant.hashAlgorithm !== "scrypt") throw new VaultError("GRANT_HASH_UNSUPPORTED", "This build accepts only reviewed scrypt verifiers", 409);
+    const previous = this.store.maybeOne(`SELECT * FROM staff_grant WHERE grant_id=?`, grant.grantId);
+    const grantVersion = grant.grantVersion ?? grant.verifierVersion;
+    const grantDigest = digest(grant);
+    if (previous && (previous.user_id !== grant.userId || previous.machine_id !== grant.machineId || Number(previous.verifier_version) > grant.verifierVersion
+      || Number(previous.grant_version) > grantVersion || (previous.revoked_at && !grant.revokedAt))) throw new VaultError("GRANT_DOWNGRADE", "Staff grant identity, version, or revocation cannot regress", 409);
+    if (previous?.grant_digest && Number(previous.grant_version) === grantVersion) {
+      if (previous.grant_digest !== grantDigest) throw new VaultError("GRANT_VERSION_CONFLICT", "Staff grant version has different content", 409);
+      return;
+    }
     this.store.transaction(() => {
       this.store.run(
         `INSERT INTO staff_grant(grant_id,user_id,machine_id,role,verifier_version,verifier,hash_algorithm,hash_parameters_json,valid_from,expires_at,revoked_at)
          VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(grant_id) DO UPDATE SET role=excluded.role,verifier_version=excluded.verifier_version,verifier=excluded.verifier,hash_parameters_json=excluded.hash_parameters_json,valid_from=excluded.valid_from,expires_at=excluded.expires_at,revoked_at=excluded.revoked_at`,
         grant.grantId, grant.userId, grant.machineId, grant.role, grant.verifierVersion, grant.verifier, grant.hashAlgorithm, json(grant.hashParameters), grant.validFrom, grant.expiresAt, grant.revokedAt,
       );
+      this.store.run(`UPDATE staff_grant SET grant_version=?,grant_digest=? WHERE grant_id=?`, grantVersion, grantDigest, grant.grantId);
       this.events.append({ type: "STAFF_GRANT_IMPORTED", actor: "CLOUD", payload: { grantId: grant.grantId, userId: grant.userId, role: grant.role, verifierVersion: grant.verifierVersion, revoked: Boolean(grant.revokedAt) } });
+      if (previous && (previous.verifier !== grant.verifier || previous.role !== grant.role || previous.verifier_version !== grant.verifierVersion || grant.revokedAt)) {
+        this.store.run(`UPDATE staff_session SET locked_at=COALESCE(locked_at,?) WHERE grant_id=? AND ended_at IS NULL`, iso(this.clock.now()), grant.grantId);
+      }
+      this.store.run(`UPDATE staff_session SET locked_at=COALESCE(locked_at,?) WHERE user_id=? AND ended_at IS NULL AND grant_id IN (SELECT grant_id FROM staff_grant WHERE user_id=? AND verifier_version<?)`, iso(this.clock.now()), grant.userId, grant.userId, grant.verifierVersion);
     });
   }
 
   authenticate(userId: string, pin: string): { sessionId: string; userId: string; role: VaultRole; expiresAt: string } {
+    if (this.clockUnsafe()) { this.refreshLocks(); throw new VaultError("STAFF_AUTH_FAILED", "Staff authentication requires a safe local clock", 409); }
     const now = this.clock.now();
     const authState = this.store.maybeOne(`SELECT failure_count,blocked_until FROM staff_auth_state WHERE user_id=?`, userId);
     if (authState?.blocked_until && new Date(String(authState.blocked_until)).getTime() > now.getTime()) {
@@ -55,10 +76,9 @@ export class StaffAuthService {
       throw new VaultError("STAFF_AUTH_FAILED", "Staff authentication failed", 429);
     }
     const grant = this.store.maybeOne(
-      `SELECT * FROM staff_grant WHERE user_id=? AND revoked_at IS NULL AND valid_from<=? AND expires_at>? ORDER BY verifier_version DESC LIMIT 1`,
-      userId, iso(now), iso(now),
+      `SELECT * FROM staff_grant WHERE user_id=? ORDER BY verifier_version DESC,grant_version DESC LIMIT 1`, userId,
     );
-    const valid = grant ? verifyScryptPin(pin, String(grant.verifier)) : false;
+    const valid = grant && !grant.revoked_at && String(grant.valid_from) <= iso(now) && String(grant.expires_at) > iso(now) ? verifyScryptPin(pin, String(grant.verifier)) : false;
     if (!valid) {
       const failures = Number(authState?.failure_count ?? 0) + 1;
       const delaySeconds = Math.min(900, failures <= 2 ? 0 : 2 ** Math.min(10, failures - 2));
@@ -71,8 +91,11 @@ export class StaffAuthService {
       });
       throw new VaultError("STAFF_AUTH_FAILED", "Staff authentication failed", 401);
     }
-    const activePublic = this.store.maybeOne(`SELECT 1 FROM sale WHERE state NOT IN ('COMPLETED','PAYMENT_DECLINED','PAYMENT_CANCELLED') LIMIT 1`);
-    if (activePublic) throw new VaultError("STAFF_ENTRY_UNSAFE", "Staff mode cannot begin during an active transaction", 409);
+    const activePublic = this.store.maybeOne(`SELECT 1 FROM sale WHERE state NOT IN ('COMPLETED','PAYMENT_DECLINED','PAYMENT_CANCELLED') OR payment_state NOT IN ('NOT_REQUESTED','DECLINED','CANCELLED','SETTLED') LIMIT 1`);
+    const certificationRecovery = activePublic && ["TECHNICIAN", "ADMIN"].includes(String(grant!.role))
+      && this.store.maybeOne(`SELECT 1 FROM machine_meta WHERE singleton=1 AND service_locked=1`)
+      && !this.store.maybeOne(`SELECT 1 FROM sale s LEFT JOIN certification_session cs ON cs.session_id=s.certification_session_id WHERE (s.state NOT IN ('COMPLETED','PAYMENT_DECLINED','PAYMENT_CANCELLED') OR s.payment_state NOT IN ('NOT_REQUESTED','DECLINED','CANCELLED','SETTLED')) AND (cs.session_id IS NULL OR cs.status NOT IN ('ACTIVE','CRITICAL_STOP')) LIMIT 1`);
+    if (activePublic && !certificationRecovery) throw new VaultError("STAFF_ENTRY_UNSAFE", "Staff mode cannot begin during an active transaction", 409);
     const sessionId = randomUUID(); const expiresAt = iso(new Date(now.getTime() + 8 * 60 * 60 * 1000));
     this.store.transaction(() => {
       this.store.run(`UPDATE staff_session SET ended_at=? WHERE ended_at IS NULL`, iso(now));
@@ -86,6 +109,7 @@ export class StaffAuthService {
   }
 
   requireSession(sessionId: string, permission?: VaultPermission): { userId: string; role: VaultRole; sessionId: string } {
+    this.refreshLocks();
     const now = this.clock.now();
     const row = this.store.maybeOne(`SELECT * FROM staff_session WHERE session_id=? AND ended_at IS NULL AND expires_at>?`, sessionId, iso(now));
     if (!row || row.locked_at) throw new VaultError("STAFF_SESSION_INVALID", "Staff session is locked or expired", 401);
@@ -98,6 +122,17 @@ export class StaffAuthService {
     if (permission && !roleMay(role, permission)) throw new VaultError("STAFF_PERMISSION_DENIED", "Staff role does not permit this action", 403);
     this.store.run(`UPDATE staff_session SET last_active_at=? WHERE session_id=?`, iso(now), sessionId);
     return { sessionId, userId: String(row.user_id), role };
+  }
+
+  refreshLocks(restarting = false): void {
+    const now = this.clock.now();
+    const rows = this.store.all(`SELECT ss.*,g.revoked_at,g.valid_from,g.expires_at AS grant_expires_at,g.role AS grant_role FROM staff_session ss LEFT JOIN staff_grant g ON g.grant_id=ss.grant_id WHERE ss.ended_at IS NULL AND ss.locked_at IS NULL`);
+    for (const row of rows) {
+      const invalidGrant = !row.grant_role || row.revoked_at || row.grant_role !== row.role || String(row.valid_from) > iso(now) || String(row.grant_expires_at) <= iso(now);
+      if (restarting || this.clockUnsafe() || invalidGrant || String(row.expires_at) <= iso(now) || now.getTime() - new Date(String(row.last_active_at)).getTime() >= 120_000) {
+        this.lock(String(row.session_id), restarting ? "SERVICE_RESTART" : this.clockUnsafe() ? "CLOCK_UNSAFE" : invalidGrant ? "GRANT_INVALID" : "INACTIVITY_OR_EXPIRY");
+      }
+    }
   }
 
   lock(sessionId: string, reason = "EXPLICIT"): void {
@@ -114,6 +149,8 @@ export class StaffAuthService {
   safeExit(sessionId: string, physicalCloseConfirmed: boolean): void {
     if (!physicalCloseConfirmed) throw new VaultError("PHYSICAL_CLOSE_CONFIRMATION_REQUIRED", "Safe exit requires serviced-doors-closed confirmation", 409);
     const actor = this.requireSession(sessionId, "RESTOCK_RUN");
+    if (this.store.maybeOne(`SELECT 1 FROM sale WHERE state NOT IN ('COMPLETED','PAYMENT_DECLINED','PAYMENT_CANCELLED') OR payment_state NOT IN ('NOT_REQUESTED','DECLINED','CANCELLED','SETTLED') LIMIT 1`)
+      || this.store.maybeOne(`SELECT 1 FROM command_intent WHERE completed_at IS NULL LIMIT 1`)) throw new VaultError("SERVICE_EFFECT_PENDING", "Payment or controller effects must finish before safe exit", 409);
     if (this.store.maybeOne(`SELECT 1 FROM restock_session WHERE finalized_at IS NULL`)) throw new VaultError("RESTOCK_NOT_FINALIZED", "Active restock must be finalized before safe exit", 409);
     if (this.store.maybeOne(`SELECT 1 FROM command_intent ci JOIN certification_session cs ON cs.session_id=ci.certification_session_id LEFT JOIN certification_evidence ce ON ce.command_id=ci.command_id WHERE cs.status='ACTIVE' AND ce.command_id IS NULL LIMIT 1`)) {
       throw new VaultError("CERTIFICATION_OBSERVATION_REQUIRED", "Current certification command requires a recorded observation before safe exit", 409);

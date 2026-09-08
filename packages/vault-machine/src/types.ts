@@ -6,6 +6,7 @@ import type {
   VaultPaymentState,
   VaultRole,
   VaultSaleState,
+  VaultMachineProfile,
 } from "../../vault-contracts/dist";
 
 export type HealthState = "READY" | "DEGRADED_CLOUD" | "DEGRADED_SYNC" | "BLOCKED_CONFIG" | "BLOCKED_TAX" | "BLOCKED_NAYAX" | "BLOCKED_CONTROLLER" | "BLOCKED_STORAGE" | "BLOCKED_CLOCK" | "SERVICE_LOCKED" | "RECOVERY_REQUIRED";
@@ -22,6 +23,7 @@ export const systemClock: Clock = {
 
 export interface PublicDoor {
   doorId: VaultDoorId;
+  doorLabel: string;
   controllerChannel: number;
   state: VaultDoorState;
   productId: string | null;
@@ -42,14 +44,16 @@ export interface PublicSale {
   supportReference: string;
   state: VaultSaleState;
   paymentState: VaultPaymentState;
+  authorizationDurable?: boolean;
   mode: VaultMode;
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
-  items: Array<{ lineId: string; doorId: VaultDoorId; productId: string; productName: string; photoUrl: string; description: string; category: string; priceCents: number; taxClass: string }>;
+  items: Array<{ lineId: string; doorId: VaultDoorId; doorLabel: string; productId: string; productName: string; photoUrl: string; description: string; category: string; priceCents: number; taxClass: string }>;
   paidDoorIds: VaultDoorId[];
   retryAvailable: boolean;
   retryUsed: boolean;
+  cancelAvailable?: boolean;
   retrievalSeconds: number;
   retryExtensionSeconds: number;
   retrievalSecondsRemaining: number | null;
@@ -61,10 +65,14 @@ export interface PublicMachineState {
   stateVersion: number;
   sequence: number;
   mode: VaultMode;
+  adapterMode: "MOCK" | "OFFICIAL_TEST" | "LIVE";
   publicState: string;
   health: HealthState;
   readinessReasons: string[];
   configVersion: number | null;
+  configSchemaVersion: 1 | 2 | null;
+  machineProfile: VaultMachineProfile | null;
+  pendingProfile: null | { version: number; digest: string; profileId: string; revision: number; requiresReconfiguration: boolean };
   buildIdentity: { sourceCommit: string; appVersion: string };
   city: string | null;
   state: string | null;
@@ -81,19 +89,23 @@ export interface PublicMachineState {
   idleSecondsRemaining: number | null;
   serviceLocked: boolean;
   activeStaff: null | { sessionId: string; userId: string; role: VaultRole; locked: boolean; expiresAt: string };
-  activeRestock: null | { sessionId: string; configVersion: number; status: string; expectedDoorIds: VaultDoorId[]; items: Array<{ doorId: VaultDoorId; productId: string | null; productName: string | null; outcome: string; command: PublicCommandPhase | null }> };
-  activeCertification: null | { sessionId: string; configVersion: number; status: string; adapterMode: string; passCount: number; failCount: number; criticalCount: number; nextUnderTestedDoorId: VaultDoorId | null; currentCommand: PublicCommandPhase | null };
+  activeRestock: null | { sessionId: string; configVersion: number; configSchemaVersion: 1 | 2; machineProfile: VaultMachineProfile | null; status: string; expectedDoorIds: VaultDoorId[]; items: Array<{ doorId: VaultDoorId; doorLabel: string; productId: string | null; productName: string | null; outcome: string; command: PublicCommandPhase | null }> };
+  activeCertification: null | { sessionId: string; configVersion: number; configSchemaVersion: 1 | 2; machineProfile: VaultMachineProfile | null; status: string; adapterMode: string; passCount: number; failCount: number; criticalCount: number; nextUnderTestedDoorId: VaultDoorId | null; nextUnderTestedDoorLabel: string | null; currentCommand: PublicCommandPhase | null };
 }
 
 export interface PublicCommandPhase {
   commandId: string;
   doorId: VaultDoorId;
+  doorLabel: string;
   state: string;
   terminal: boolean;
   outcome: string | null;
   observedDoorId: VaultDoorId | null;
   evidenceCode: string | null;
   observationRecorded: boolean;
+  cycleType: "PURCHASE" | "RESTOCK" | "DIAGNOSTIC";
+  saleId: string | null;
+  restockSessionId: string | null;
 }
 
 export interface ApiErrorBody {

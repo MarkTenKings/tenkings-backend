@@ -27,7 +27,7 @@ function makeSyntheticProfile(count = 72) {
       { id: "display", kind: "PRODUCT_DISPLAY", rect: { x: 285, y: rows * 30, width: 85, height: rows * 30 } },
     ] },
     doors,
-    controller: { interfaceVersion: "vault-controller-v1", adapterId: "deterministic-controller-simulator", maxDoors: count, endpoints },
+    controller: { interfaceVersion: "vault-controller-v1", adapterId: "ten-kings-deterministic-controller-simulator", maxDoors: count, endpoints },
     hardware: {
       computerModel: "SYNTHETIC SER test identity", os: "SYNTHETIC Windows test identity",
       lockModel: "SYNTHETIC lock", paymentTerminalModel: "SYNTHETIC Nayax contract mock",
