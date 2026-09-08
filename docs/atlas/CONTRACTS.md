@@ -2,6 +2,10 @@
 
 Status: isolated local reference, September 7, 2026. Source baseline `7bde06f65959e376e12725186d605cc91c67852b`. The [approved blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) and its dated ATLAS amendment govern scope. This document adds no production write path or schema. Executable declarations live in [atlas-contracts](../../packages/atlas-contracts/README.md).
 
+## Current implementation note — September 8, 2026
+
+The executable package below remains an offline machine/job reference. The dedicated staff app now has durable authentication, assignments, exact trained-human report approval and independent public delivery; its private full-review adapter has bounded ten-card execution claims and held cost reservations. Those runtime paths do not promote synthetic package capabilities into machine credentials. Initial issuance follows the owner-approved versioned ATLAS report policy, with NFC and physical finishing separate; legacy Ten Kings completion/ownership remains excluded. [COMPLETION.md](COMPLETION.md) tracks the active implementation and remaining machine/provider integration.
+
 ## Authority
 
 | Actor | Permitted | Authority retained elsewhere |

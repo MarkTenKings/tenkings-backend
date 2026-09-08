@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 // A public-output allowlist, with no grade calculation or approval authority.
 const text = z.string().min(1).max(160), optionalText = z.string().max(120).nullable();
+const findingReference = z.string().min(1).max(180);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const score = z.number().min(0).max(10), positive = z.number().min(0);
 const balance = z.tuple([z.number().min(0).max(100), z.number().min(0).max(100)]);
@@ -15,8 +16,8 @@ const point = z.strictObject({ x: z.number().min(0).max(1), y: z.number().min(0)
 const measurement = z.strictObject({ widthMm: positive, heightMm: positive, areaMm2: positive, zonePercent: positive,
     multiplier: positive, weightedAreaMm2: positive, subgradeEffect: z.number(), pixelCount: z.number().int().min(0).optional() });
 const region = z.strictObject({ zone: text, canonicalContour: z.array(point).max(100_000), measurement });
-const common = { id: text, side: z.enum(['FRONT', 'BACK']), defectType: text, origin: text.optional(), detectedDefectType: text.optional(),
-    confidence: z.number().min(0).max(1), sourceViewId: text, supportingViewIds: z.array(text).max(100),
+const common = { id: findingReference, side: z.enum(['FRONT', 'BACK']), defectType: text, origin: text.optional(), detectedDefectType: text.optional(),
+    confidence: z.number().min(0).max(1), sourceViewId: findingReference, supportingViewIds: z.array(findingReference).max(100),
     reviewResult: z.enum(['ACCEPTED', 'SMART_MARKED', 'TYPE_CORRECTED']) };
 const finding = z.union([z.strictObject({ ...common, ...region.shape }),
     z.strictObject({ ...common, traceSha256: hash.optional(), measurementRegions: z.array(region).min(1).max(100) })]);

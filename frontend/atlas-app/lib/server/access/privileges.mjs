@@ -4,6 +4,7 @@ import { deny } from '../policy.mjs';
 // card, change evidence or reach the legacy card/financial schema.
 export const STAFF_GRANTS = Object.freeze({
     StaffControl: {},
+    StaffGradingBridgeControl: {},
     StaffIdentity: { INSERT: ['id', 'phoneHash', 'lastLoginAt'], UPDATE: ['name', 'lastLoginAt'] },
     StaffBrowser: { INSERT: '*' },
     StaffChallenge: { INSERT: '*', UPDATE: ['state', 'verificationSid', 'attempts', 'checkClaimId', 'replayHash', 'replayUntil', 'consumedAt'] },

@@ -44,6 +44,11 @@ try {
   assert.equal(send.status, 503); assert.deepEqual(await send.json(), { error: 'STAFF_ACCESS_NOT_ENABLED' }); checks++;
   const approve = await fetch(`${origin}/api/staff/cards/00000000-0000-4000-8000-000000000000/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: '{}' });
   assert.equal(approve.status, 503); assert.equal(approve.headers.get('set-cookie'), null); checks++;
+  for (const suffix of ['grade', 'trace', 'operations/00000000-0000-4000-8000-000000000000']) {
+    const response = await fetch(`${origin}/api/staff/cards/00000000-0000-4000-8000-000000000000/${suffix}`,
+      suffix.startsWith('operations/') ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: '{}' });
+    assert.equal(response.status, 503); assert.equal(response.headers.get('set-cookie'), null); checks++;
+  }
   console.log(JSON.stringify({ status: 'BUILT_PRODUCTION_DENIAL_PASS', checks, fixtureFlagPresent: true, sessionCookiesIssued: 0, providerRequests: 0 }));
 } finally {
   server.kill('SIGTERM');

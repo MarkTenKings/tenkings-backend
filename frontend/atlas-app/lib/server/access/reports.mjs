@@ -46,9 +46,15 @@ export async function gradingView(context, card, assignment, draft) {
     const approval = publication ? await context.tx.staffReportApproval.findUnique({ where: { id: publication.currentApprovalId } }) : null;
     const matchesCurrent = Boolean(approval && approval.analysisRevision === card.analysisRevision && approval.reviewRevision === card.draftRevision
         && approval.evidenceHash === card.evidenceHash);
+    const bridge = await context.tx.staffGradingBridgeControl.findUnique({ where: { id: 'active' } });
+    const operations = await context.tx.staffGradingOperation.findMany({ where: { specimenId: card.id }, orderBy: { createdAt: 'desc' }, take: 5 });
     return { analysisRevision: analysis?.row.revision ?? 0, analysisHash: analysis?.row.sourceHash ?? null,
         reportHash: analysis?.row.reportHash ?? null, report: matchesCurrent ? checkedJSON(approval.publicCanonical, approval.publicHash).report : analysis ? projectedReport(analysis.report, 'DRAFT') : null,
+        reviewFindings: analysis ? presentAtlasFindings(analysis.report.findings, 'DRAFT') : [],
+        cornerShape: analysis?.source.capture?.cornerShape ?? null,
         mode: analysis?.row.mode ?? null, pendingOperations: pending,
+        correctionsEnabled: Boolean(bridge?.enabled && bridge.mode === context.control.mode && bridge.gradingPolicyHash === context.control.gradingPolicyHash),
+        operations: operations.map(op => ({ id: op.id, state: op.state, failureCode: op.failureCode, createdAt: op.createdAt.toISOString() })),
         approvalBlock: matchesCurrent ? 'ALREADY_APPROVED' : approvalBlock(context, card, assignment, draft, analysis, pending),
         published: approval ? { approvalId: approval.id, version: approval.version, publicToken: publication.publicToken,
             reportNumber: publication.reportNumber, approvedAt: approval.approvedAt.toISOString(), matchesCurrent,

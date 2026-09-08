@@ -15,6 +15,7 @@ import { makePublicConfig, LOCAL_ORIGIN as PUBLIC_LOCAL_ORIGIN } from '../../atl
 import { parsePublicReport } from '@atlas/report-view/public-contract';
 import { canonical } from '../lib/server/review-contract.mjs';
 import { hash } from '../lib/server/policy.mjs';
+import { bridgeFixture, gradingInput } from './bridge-fixture.mjs';
 
 const fixture = await disposablePostgres(process.argv.slice(2));
 const results = [], clients = new Set();
@@ -47,7 +48,7 @@ async function scenario(name, work, { emptyRoster = false, analyses = false, tra
         results.push({ name, ok: true }); console.log(`PASS ${name}`);
     } catch (error) {
         results.push({ name, ok: false, error: fixture.safe(error.message) }); throw error;
-    } finally { await admin.$disconnect(); await client.$disconnect(); clients.delete(admin); clients.delete(client); }
+    } finally { await admin.$disconnect(); await client.$disconnect(); clients.delete(admin); clients.delete(client); await db.dispose(); }
 }
 const draft = (card, change = {}) => ({ operationId: randomUUID(), expectedRevision: card.draft.revision,
     evidenceRevision: card.evidenceRevision, evidenceHash: card.evidenceHash, observations: { FRONT: 'Check this edge.', BACK: '' },
@@ -419,6 +420,141 @@ try {
             assert.equal(await new PublicReportReader(client, production).read(selector), null);
         });
     }, { analyses: true, trained: true });
+    await scenario('bridge commits source, immutable analysis, reset review and operation together; lost reply is idempotent', async context => {
+        const bridge = await bridgeFixture(context, { loseReply: true });
+        const signed = await context.login();
+        const card = await bridge.review.read(signed.staff, bridge.specimenIds[0]), input = gradingInput(card);
+        const result = await bridge.grading.run(signed.staff, card.id, input);
+        assert.equal(result.operation.state, 'SUCCEEDED', result.operation.failureCode); assert.equal(result.card.grading.analysisRevision, 1);
+        assert.equal(result.card.draft.revision, 2); assert.equal(result.card.grading.report.grade.overall.displayGrade, 9.7);
+        const retry = await bridge.grading.run(signed.staff, card.id, input);
+        assert.deepEqual(retry.operation, result.operation); assert.equal(bridge.calls(), 1);
+        const execution = await context.admin.staffGradingExecution.findUnique({ where: { operationId: result.operation.id } });
+        assert.equal(execution.state, 'COMMITTED'); assert.equal(execution.reservedMicroUsd, 10_000n); assert.equal(execution.actualMicroUsd, null);
+    });
+    await scenario('concurrent bridge clicks dispatch once; exact operation identity rejects changed action', async context => {
+        const entered = deferred(), release = deferred();
+        const bridge = await bridgeFixture(context, { beforePerform: async () => { entered.resolve(); await release.promise; } });
+        const signed = await context.login(), card = await bridge.review.read(signed.staff, bridge.specimenIds[0]);
+        const input = gradingInput(card), first = bridge.grading.run(signed.staff, card.id, input);
+        await entered.promise;
+        const duplicate = await bridge.grading.run(signed.staff, card.id, input);
+        assert.equal(duplicate.operation.state, 'DISPATCHED'); assert.equal(bridge.calls(), 1);
+        await check('REQUEST_CONFLICT', () => bridge.grading.run(signed.staff, card.id, { ...input, action: { type: 'REMOVE', defectIds: ['other'] } }));
+        release.resolve(); assert.equal((await first).operation.state, 'SUCCEEDED');
+    });
+    await scenario('bridge transaction rollback leaves old source and report; unknown reservation cannot retry', async context => {
+        const bridge = await bridgeFixture(context, { afterPersist: () => { throw new Error('INJECTED_ROLLBACK'); } });
+        const signed = await context.login(), card = await bridge.review.read(signed.staff, bridge.specimenIds[0]);
+        const input = gradingInput(card), result = await bridge.grading.run(signed.staff, card.id, input);
+        assert.equal(result.operation.state, 'UNKNOWN'); assert.equal(result.card.grading.analysisRevision, 0); assert.equal(result.card.draft.revision, 1);
+        const source = await bridge.ports.loadSource(context.admin, await context.admin.staffSpecimen.findUnique({ where: { id: card.id } }));
+        assert.equal(source.gradeReport, null); assert.equal(await context.admin.staffAnalysisRevision.count({ where: { specimenId: card.id } }), 0);
+        await bridge.grading.run(signed.staff, card.id, input); assert.equal(bridge.calls(), 1);
+        await check('GRADING_WORK_UNRESOLVED', () => bridge.grading.run(signed.staff, card.id, { ...input, operationId: randomUUID() }));
+    });
+    await scenario('revocation during bridge work prevents source/analysis commit and retains the unsettled execution', async context => {
+        const entered = deferred(), release = deferred();
+        const bridge = await bridgeFixture(context, { beforePerform: async () => { entered.resolve(); await release.promise; } });
+        const signed = await context.login(), card = await bridge.review.read(signed.staff, bridge.specimenIds[0]);
+        const running = bridge.grading.run(signed.staff, card.id, gradingInput(card));
+        const observed = running.catch(error => error); await entered.promise;
+        await context.admin.staffIdentity.update({ where: { id: signed.staff.id }, data: { revokedAt: new Date(), accessVersion: { increment: 1 } } });
+        release.resolve(); assert.equal((await observed).code, 'SIGN_IN_REQUIRED');
+        assert.equal(await context.admin.staffAnalysisRevision.count({ where: { specimenId: card.id } }), 0);
+        const op = await context.admin.staffGradingOperation.findFirst({ where: { specimenId: card.id } });
+        assert.equal(op.state, 'UNKNOWN'); const execution = await context.admin.staffGradingExecution.findUnique({ where: { operationId: op.id } });
+        assert.equal(execution.actualMicroUsd, null); assert.equal(bridge.calls(), 1);
+    });
+    await scenario('bridge correction recalculates grade and preserves prior approved public version', async context => {
+        const bridge = await bridgeFixture(context); const signed = await context.login();
+        let card = await bridge.review.read(signed.staff, bridge.specimenIds[0]);
+        card = (await bridge.grading.run(signed.staff, card.id, gradingInput(card))).card;
+        card = await bridge.review.save(signed.staff, card.id, draft(card, { disposition: 'READY_FOR_HUMAN', reviewedSides: ['FRONT','BACK'], identityReviewed: true }));
+        const reports = new StaffReports({ auth: context.auth, review: bridge.review });
+        const first = await reports.approve(signed.staff, card.id, approvalInput(card));
+        await withPublicReader(context, async ({ reader }) => {
+            const selector = { token: first.card.grading.published.publicToken, version: 1 };
+            const published = await reader.read(selector);
+            const corrected = await bridge.grading.run(signed.staff, card.id, gradingInput(first.card,
+                { type: 'REMOVE', defectIds: [first.card.grading.report.findings[0].id] }));
+            assert.equal(corrected.operation.state, 'SUCCEEDED'); assert.equal(corrected.card.grading.analysisRevision, 2);
+            assert.equal(corrected.card.grading.report.grade.overall.displayGrade, 10);
+            assert.deepEqual(corrected.card.draft.reviewedSides, []); assert.equal(corrected.card.draft.identityReviewed, false);
+            assert.equal(corrected.card.grading.published.matchesCurrent, false);
+            assert.deepEqual(await reader.read(selector), published); assert.equal(bridge.calls(), 2);
+        });
+    }, { trained: true });
+    await scenario('bridge enforces per-card cost reservations before another worker attempt', async context => {
+        const bridge = await bridgeFixture(context, { maxCardMicroUsd: 10_000 }); const signed = await context.login();
+        let card = await bridge.review.read(signed.staff, bridge.specimenIds[0]);
+        card = (await bridge.grading.run(signed.staff, card.id, gradingInput(card))).card;
+        const result = await bridge.grading.run(signed.staff, card.id, gradingInput(card, { type: 'REMOVE', defectIds: [card.grading.report.findings[0].id] }));
+        assert.equal(result.operation.state, 'FAILED'); assert.equal(result.operation.failureCode, 'PILOT_BUDGET_EXHAUSTED');
+        assert.equal(bridge.calls(), 1); assert.equal(await context.admin.staffGradingExecution.count(), 1);
+    });
+    await scenario('pilot budget amendments retain mathematical admission and allow a new bounded correction', async context => {
+        const bridge = await bridgeFixture(context, { maxCardMicroUsd: 10_000 }); const signed = await context.login();
+        let card = await bridge.review.read(signed.staff, bridge.specimenIds[0]);
+        card = (await bridge.grading.run(signed.staff, card.id, gradingInput(card))).card;
+        const prior = await context.admin.staffAnalysisRevision.findUnique({ where: { specimenId_revision: { specimenId: card.id, revision: 1 } } });
+        const updatedPolicy = canonical({ ...bridge.policy, maxCardMicroUsd: 20_000 });
+        await context.admin.staffGradingBridgeControl.update({ where: { id: 'active' }, data: { policyCanonical: updatedPolicy, policyHash: hash(updatedPolicy), revision: { increment: 1 } } });
+        const result = await bridge.grading.run(signed.staff, card.id, gradingInput(card, { type: 'REMOVE', defectIds: [card.grading.report.findings[0].id] }));
+        assert.equal(result.operation.state, 'SUCCEEDED'); assert.equal(bridge.calls(), 2);
+        assert.equal((await context.admin.staffAnalysisRevision.findUnique({ where: { specimenId_revision: { specimenId: card.id, revision: 1 } } })).admissionHash, prior.admissionHash);
+        assert.notEqual(result.card.grading.approvalBlock, 'GRADING_POLICY_CHANGED');
+    });
+    await scenario('all ten configured specimens must exist before any pilot worker dispatch', async context => {
+        const bridge = await bridgeFixture(context); const signed = await context.login();
+        const changed = canonical({ ...bridge.policy, specimenIds: [...bridge.specimenIds.slice(0, 9), randomUUID()] });
+        await context.admin.staffGradingBridgeControl.update({ where: { id: 'active' }, data: { policyCanonical: changed, policyHash: hash(changed), revision: { increment: 1 } } });
+        const card = await bridge.review.read(signed.staff, bridge.specimenIds[0]);
+        const result = await bridge.grading.run(signed.staff, card.id, gradingInput(card));
+        assert.equal(result.operation.failureCode, 'PILOT_TEN_CARDS_REQUIRED'); assert.equal(result.operation.state, 'FAILED'); assert.equal(bridge.calls(), 0);
+    });
+    await scenario('a changed source revision is rejected before reserving or calling the worker', async context => {
+        const bridge = await bridgeFixture(context, { beforeDispatch: async () => {
+            await context.admin.$executeRaw`UPDATE public."AtlasBridgeTestSource" SET "updatedAt"="updatedAt"+interval '1 second'`;
+        } });
+        const signed = await context.login(), card = await bridge.review.read(signed.staff, bridge.specimenIds[0]);
+        const result = await bridge.grading.run(signed.staff, card.id, gradingInput(card));
+        assert.equal(result.operation.failureCode, 'SOURCE_REVISION_CHANGED'); assert.equal(result.operation.state, 'FAILED');
+        assert.equal(bridge.calls(), 0); assert.equal(await context.admin.staffGradingExecution.count(), 0);
+    });
+    await scenario('observed cost overrun pauses the entire pilot and cannot be erased by settlement edits', async context => {
+        const bridge = await bridgeFixture(context); const signed = await context.login();
+        let card = await bridge.review.read(signed.staff, bridge.specimenIds[0]);
+        const result = await bridge.grading.run(signed.staff, card.id, gradingInput(card));
+        await context.admin.staffGradingExecution.update({ where: { operationId: result.operation.id }, data: { actualMicroUsd: 10_001n, costEvidenceHash: 'e'.repeat(64) } });
+        await assert.rejects(() => context.admin.staffGradingExecution.update({ where: { operationId: result.operation.id }, data: { actualMicroUsd: 0n, costEvidenceHash: 'f'.repeat(64) } }));
+        card = await bridge.review.read(signed.staff, bridge.specimenIds[1]);
+        const blocked = await bridge.grading.run(signed.staff, card.id, gradingInput(card));
+        assert.equal(blocked.operation.failureCode, 'PILOT_BUDGET_EXHAUSTED'); assert.equal(bridge.calls(), 1);
+    });
+    await scenario('bridge reads cannot substitute staff deployment, assignment, case evidence or session', async context => {
+        const bridge = await bridgeFixture(context); const signed = await context.login();
+        const card = await context.admin.staffSpecimen.findUnique({ where: { id: bridge.specimenIds[0] } });
+        const assignment = await context.admin.staffAssignment.findUnique({ where: { specimenId_identityId: { specimenId: card.id, identityId: signed.staff.id } } });
+        const control = await context.admin.staffControl.findUnique({ where: { id: 'active' } });
+        const session = await context.admin.staffSession.findFirst({ where: { identityId: signed.staff.id } });
+        const claims = { controlRevision: control.revision, specimenId: card.id, actorId: signed.staff.id, sessionHash: session.tokenHash,
+            assignmentFence: assignment.fence, evidenceHash: card.evidenceHash, deploymentId: context.config.deploymentId, releaseSha: context.config.releaseSha };
+        for (const update of [{ deploymentId: 'other' }, { assignmentFence: 200 }, { evidenceHash: 'f'.repeat(64) }, { sessionHash: 'f'.repeat(64) }])
+            await assert.rejects(() => bridge.service.transaction(tx => bridge.service.authorize(tx, { ...claims, ...update })));
+        assert.equal(bridge.calls(), 0);
+    });
+    await scenario('staff serving credentials cannot claim executions, settle cost or enable the private bridge', async context => {
+        await bridgeFixture(context);
+        await assert.rejects(() => context.client.$executeRaw`UPDATE atlas_staff."StaffGradingBridgeControl" SET enabled=true`);
+        await assert.rejects(() => context.client.$queryRaw`SELECT * FROM atlas_staff."StaffGradingExecution"`);
+        const signed = await context.login(undefined, '+12025550142');
+        const bridge = new (await import('../lib/server/access/grading.mjs')).StaffGrading({ auth: context.auth,
+            review: new DurableReviewStore({ auth: context.auth, evidence: fixtureEvidence() }), bridge: null });
+        const card = (await context.admin.staffSpecimen.findMany({ where: { subtitle: 'Synthetic bridge' }, take: 1 }))[0];
+        const view = await bridge.review.read(signed.staff, card.id);
+        await check('REVIEW_PERMISSION_REQUIRED', () => bridge.run(signed.staff, card.id, gradingInput(view)));
+    });
 } catch (caught) { error = caught; }
 finally {
     for (const client of clients) await client.$disconnect();

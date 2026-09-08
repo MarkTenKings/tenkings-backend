@@ -74,6 +74,9 @@ const expectedIdentity = {
   },
 } as const;
 
+/** Frozen admission policy, without inventing the unobserved host compiler hash. */
+export function currentSpeedsterDetectorReleasePolicy() { return structuredClone(expectedIdentity); }
+
 function assertExpectedIdentity(observed: unknown, expected: unknown, path: string): void {
   if (expected !== null && typeof expected === "object") {
     if (observed === null || typeof observed !== "object" || Array.isArray(observed)) {

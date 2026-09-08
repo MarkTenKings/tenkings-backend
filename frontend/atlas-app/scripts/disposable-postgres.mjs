@@ -62,11 +62,18 @@ export async function disposablePostgres(args) {
         assert.equal(statSync(directory).uid, process.getuid());
         if (started) {
             const status = spawnSync(join(bin, 'pg_ctl'), ['-D', data, 'status'], { env: cleanEnv, encoding: 'utf8' });
-            if (status.status === 0) run(join(bin, 'pg_ctl'), ['-D', data, '-m', 'fast', '-w', 'stop']);
+            if (status.status === 0) {
+                // Shutdown must not depend on space being available to flush a
+                // log. Verify stop, free owned data, then retain the log below.
+                const stopped = spawnSync(join(bin, 'pg_ctl'), ['-D', data, '-m', 'fast', '-w', 'stop'], { env: cleanEnv, encoding: 'utf8' });
+                log += safe(`${stopped.stdout ?? ''}${stopped.stderr ?? ''}`);
+                assert.equal(stopped.status, 0, 'Owned fixture did not stop');
+            }
             else assert.equal(status.status, 3, 'Unknown fixture cluster status');
             assert.equal(spawnSync(join(bin, 'pg_ctl'), ['-D', data, 'status'], { env: cleanEnv }).status, 3);
             assert.equal(realpathSync(data), data);
             rmSync(data, { recursive: true });
+            writeFileSync(join(directory, 'validation.log'), log, { mode: 0o600 });
             writeFileSync(join(directory, 'cleanup.json'), JSON.stringify({ stoppedVerified: true, removed: 'owned regenerable database files', evidenceRetained: true }));
             started = false;
         }
@@ -115,12 +122,23 @@ export async function disposablePostgres(args) {
         await sql(staffGrantSQL(role), [], 'atlas_fixture_template');
         await sql(`CREATE ROLE ${publicRole} LOGIN PASSWORD '${publicPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
         await sql(publicGrantSQL(publicRole), [], 'atlas_fixture_template');
-        let serial = 0;
+        let serial = 0; const released = [];
         return { directory, source, sql, url, role, safe, stop,
             async database() {
                 const name = `atlas_fixture_case_${++serial}`;
                 await sql(`CREATE DATABASE ${name} TEMPLATE atlas_fixture_template`);
-                return { name, adminUrl: url(name), staffUrl: url(name, true), publicUrl: url(name, 'public') };
+                let disposed = false;
+                return { name, adminUrl: url(name), staffUrl: url(name, true), publicUrl: url(name, 'public'),
+                    async dispose() {
+                        if (disposed) return;
+                        assert.deepEqual(JSON.parse(readFileSync(join(directory, 'ownership.json'), 'utf8')), sentinel);
+                        assert.equal(statSync(directory).uid, process.getuid());
+                        // The name is generated above and captured here; this
+                        // method cannot accept an existing/shared database.
+                        await sql(`DROP DATABASE ${name}`); await sql('CHECKPOINT'); disposed = true;
+                        released.push({ name, ownedSyntheticDatabaseRemoved: true });
+                        writeFileSync(join(directory, 'database-releases.json'), JSON.stringify(released));
+                    } };
             } };
     } catch (error) {
         await stop();

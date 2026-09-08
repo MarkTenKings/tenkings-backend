@@ -1,0 +1,13 @@
+{
+  "name": "@atlas/service-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./protocol": { "types": "./src/protocol.d.mts", "default": "./src/protocol.mjs" },
+    "./transport": { "types": "./src/transport.d.mts", "default": "./src/transport.mjs" },
+    "./executor": { "types": "./src/executor.d.mts", "default": "./src/executor.mjs" }
+  },
+  "dependencies": { "@atlas/grading-core": "workspace:*" },
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}

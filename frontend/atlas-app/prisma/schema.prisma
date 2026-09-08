@@ -263,3 +263,38 @@ model PublicReaderControl {
   revision     Int @default(1)
   updatedAt    DateTime @default(now())
 }
+
+// Operator-owned release and fixed ten-card budget. Serving roles cannot enable it.
+model StaffGradingBridgeControl {
+  id              String @id @default("active")
+  enabled         Boolean @default(false)
+  mode            String
+  origin          String
+  deploymentId    String
+  releaseSha      String @db.VarChar(40)
+  configHash      String @db.VarChar(64)
+  clientKeyHash   String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  policyCanonical String @db.Text
+  policyHash      String @db.VarChar(64)
+  revision        Int @default(1)
+  updatedAt       DateTime @default(now())
+}
+
+// Only the private adapter can claim execution. Cost reservations stay held
+// until an operator records actual cost evidence, even after a successful run.
+model StaffGradingExecution {
+  operationId           String @id @db.Uuid
+  claimId               String @unique @db.Uuid
+  pilotId               String @db.Uuid
+  bridgeRevision        Int
+  sourceRevision        String @db.VarChar(80)
+  reservedMicroUsd      BigInt
+  actualMicroUsd        BigInt?
+  costEvidenceHash      String? @db.VarChar(64)
+  state                 String
+  failureCode           String? @db.VarChar(80)
+  createdAt             DateTime @default(now())
+  finishedAt            DateTime?
+  @@index([pilotId])
+}

@@ -325,6 +325,9 @@ importers:
 
   frontend/atlas-app:
     dependencies:
+      '@atlas/service-bridge':
+        specifier: workspace:*
+        version: link:../../packages/atlas-service-bridge
       '@atlas/grading-core':
         specifier: workspace:*
         version: link:../../packages/atlas-grading-core
@@ -384,6 +387,9 @@ importers:
 
   frontend/nextjs-app:
     dependencies:
+      '@atlas/service-bridge':
+        specifier: workspace:*
+        version: link:../../packages/atlas-service-bridge
       '@atlas/grading-core':
         specifier: workspace:*
         version: link:../../packages/atlas-grading-core
@@ -566,6 +572,12 @@ importers:
       typescript:
         specifier: ^5.5.4
         version: 5.5.4
+
+  packages/atlas-service-bridge:
+    dependencies:
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../atlas-grading-core
 
   packages/atlas-contracts: {}
 

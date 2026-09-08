@@ -15,7 +15,8 @@
     "react-dom": "18.3.1",
     "@prisma/client": "5.22.0",
     "@atlas/grading-core": "workspace:*",
-    "@atlas/report-view": "workspace:*"
+    "@atlas/report-view": "workspace:*",
+    "@atlas/service-bridge": "workspace:*"
   },
   "devDependencies": {
     "eslint": "8.57.0",

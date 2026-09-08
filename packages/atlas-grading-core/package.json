@@ -44,6 +44,14 @@
     "./review-action-contract": {
       "types": "./src/review-action-contract.ts",
       "default": "./dist/review-action-contract.js"
+    },
+    "./trace-bitmap-wire": {
+      "types": "./src/trace-bitmap-wire.ts",
+      "default": "./dist/trace-bitmap-wire.js"
+    },
+    "./trace-editor": {
+      "types": "./src/trace-editor.ts",
+      "default": "./dist/trace-editor.js"
     }
   },
   "scripts": {

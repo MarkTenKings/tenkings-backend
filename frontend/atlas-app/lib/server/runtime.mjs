@@ -10,6 +10,9 @@ import { DurableReviewStore } from './access/review.mjs';
 import { StaffReports } from './access/reports.mjs';
 import { fixtureEvidence, fixtureVerifyProvider } from './access/fixture.mjs';
 import { twilioVerifyTransport } from './access/twilio.mjs';
+import { bridgeClient } from '@atlas/service-bridge/transport';
+import { keyBytes } from '@atlas/service-bridge/protocol';
+import { StaffGrading } from './access/grading.mjs';
 
 export function runtime(req, env = process.env) {
     if (env.ATLAS_LOCAL_SYNTHETIC === '1') {
@@ -31,16 +34,22 @@ export function runtime(req, env = process.env) {
         const provider = local ? fixtureVerifyProvider(config) : twilioVerifyTransport({ accountSid: config.accountSid, serviceSid: config.serviceSid,
             apiKeySid: env.ATLAS_AUTH_TWILIO_API_KEY_SID, apiKeySecret: env.ATLAS_AUTH_TWILIO_API_KEY_SECRET });
         const auth = new DurableStaffAuth({ database: new StaffDatabase(client, config), config, provider });
-        // The real evidence port is supplied by the reviewed capture adapter.
-        const evidence = local ? fixtureEvidence() : { async read() { deny(503, 'EVIDENCE_UNAVAILABLE'); } };
+        const bridge = !local && env.ATLAS_GRADING_BRIDGE_ORIGIN && env.ATLAS_GRADING_BRIDGE_KEY
+            ? bridgeClient({ origin: env.ATLAS_GRADING_BRIDGE_ORIGIN, key: keyBytes(env.ATLAS_GRADING_BRIDGE_KEY),
+                deploymentId: config.deploymentId, releaseSha: config.releaseSha }) : null;
+        const evidence = local ? fixtureEvidence() : { async read(binding) {
+            if (!bridge || binding.sourceType !== 'SPEEDSTER') deny(503, 'EVIDENCE_UNAVAILABLE');
+            return bridge.call(binding.scope, { action: 'READ_EVIDENCE', side: binding.side });
+        } };
         const review = new DurableReviewStore({ auth, evidence });
-        globalThis[key] = { auth, review, reports: new StaffReports({ auth, review }) };
+        globalThis[key] = { auth, review, reports: new StaffReports({ auth, review }), grading: new StaffGrading({ auth, review, bridge }) };
     }
     const state = globalThis[key];
     Object.setPrototypeOf(state.auth, DurableStaffAuth.prototype);
     Object.setPrototypeOf(state.auth.database, StaffDatabase.prototype);
     Object.setPrototypeOf(state.review, DurableReviewStore.prototype);
     Object.setPrototypeOf(state.reports, StaffReports.prototype);
+    Object.setPrototypeOf(state.grading, StaffGrading.prototype);
     return { ...state, mode: config.mode, origin: config.origin, cookies: config.cookies,
         cookie: local ? undefined : secureStaffCookie, assertRequest,
         // Global/phone budgets remain effective even if the platform cannot

@@ -14,7 +14,7 @@ export function fixtureAnalysis(card, evidenceHash) {
         measurement: { widthMm: 1, heightMm: 1, areaMm2: 1, zonePercent: 2, multiplier: 1, weightedAreaMm2: 1, subgradeEffect: 0 } }];
     const { grade } = calculateSpeedsterReview({ front: { centeringBorders }, back: { centeringBorders } }, findings);
     const source = { cardProfile: 'SPORTS', identity: { playerName: card.title, year: '2026', manufacturer: 'Synthetic illustration', productSet: card.set },
-        capture: { front: { centeringQuad }, back: { centeringQuad } }, reviewedDefects: findings,
+        capture: { cornerShape: 'SQUARE', front: { centeringQuad }, back: { centeringQuad } }, reviewedDefects: findings,
         gradeReport: { ...grade, detectorVersion: 'SYNTHETIC_NO_DETECTION_OR_ASTRA' } };
     const sourceCanonical = canonical(source), sourceHash = hash(sourceCanonical), reportCanonical = canonical(previewAtlasReport(source));
     const admissionCanonical = canonical({ purpose: 'atlas-analysis-admission-v1', mode: 'LOCAL_FIXTURE', evidenceHash,

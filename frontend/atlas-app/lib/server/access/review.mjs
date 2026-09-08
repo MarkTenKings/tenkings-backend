@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { deny, hash } from '../policy.mjs';
 import { canonical, SIDES, validateDraft } from '../review-contract.mjs';
 import { gradingView } from './reports.mjs';
+import { bridgeScope } from './grading.mjs';
 const uuid = value => {
     if (typeof value !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value)) deny(404, 'CARD_NOT_FOUND');
     return value;
@@ -79,7 +80,7 @@ export class DurableReviewStore {
             if (!card) deny(404, 'CARD_NOT_FOUND');
             const descriptor = this.evidenceRecord(card).sides[side];
             if (!descriptor) deny(404, 'EVIDENCE_NOT_FOUND');
-            return { cardId, sourceType: card.sourceType, sourceId: card.sourceId, sourceOwnerId: card.sourceOwnerId,
+            return { scope: bridgeScope(context, card, assignment), cardId, sourceType: card.sourceType, sourceId: card.sourceId, sourceOwnerId: card.sourceOwnerId,
                 evidenceHash: card.evidenceHash, assignmentFence: assignment.fence, side, descriptor };
         });
         // The injected server port accepts this bound record, never a browser URL.
@@ -109,6 +110,8 @@ export class DurableReviewStore {
                 if (card.draftRevision !== prior.revision) deny(409, 'DRAFT_CHANGED');
                 return this.view(context, card, assignment);
             }
+            if (await tx.staffGradingOperation.count({ where: { specimenId: cardId, state: { in: ['RESERVED', 'DISPATCHED', 'UNKNOWN'] } } }))
+                deny(409, 'GRADING_WORK_UNRESOLVED');
             if (card.draftRevision !== input.expectedRevision) deny(409, 'DRAFT_CHANGED');
             const draft = { revision: card.draftRevision + 1, evidenceRevision: card.evidenceRevision, evidenceHash: card.evidenceHash,
                 observations: input.observations, reviewedSides: input.reviewedSides, identityReviewed: input.identityReviewed,
