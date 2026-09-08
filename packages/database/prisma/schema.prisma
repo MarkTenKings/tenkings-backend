@@ -3716,10 +3716,27 @@ model CollectibleCardV2 {
   createdAt                       DateTime                        @default(now())
   updatedAt                       DateTime                        @updatedAt
   ownershipEvents                 CardOwnershipEventV2[]
+  inventoryEvents                 CardInventoryEventV2[]
 
   @@index([lifecycleState, category, saleMode])
   @@index([currentOwnerType, currentOwnerId])
   @@index([locationId, lifecycleState])
+}
+
+// Additive physical evidence; no row is updated or deleted. Reviewed migration
+// 20260907190000_card_inventory_events_v2 owns append-only/projection/sequence
+// guards, content-hash checks and JSON expression indexes Prisma cannot represent.
+model CardInventoryEventV2 {
+  sequence     BigInt            @id
+  id           String            @unique
+  cardId       String
+  card         CollectibleCardV2 @relation(fields: [cardId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  recordedAt   DateTime          @db.Timestamptz(3)
+  content      String
+  contentHash  String
+  requestHash  String
+
+  @@index([cardId, sequence], map: "CardInventoryEventV2_card_sequence")
 }
 
 model CardOwnershipEventV2 {
@@ -3866,4 +3883,14 @@ model AiGraderV2MapFilterRestoreEvent {
   restoredAt            DateTime @default(now())
 
   @@index([restoredAt])
+}
+
+// Purchased-lot/aggregate guards: reviewed migration 20260908190000_inventory_workflow_events_v2.
+model InventoryWorkflowEventV2 {
+  sequence    BigInt   @id
+  id          String   @unique
+  recordedAt  DateTime @db.Timestamptz(3)
+  content     String
+  contentHash String
+  requestHash String
 }
