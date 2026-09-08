@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { act } from "react";
 import { CertificationPanel } from "../src/components/CertificationPanel";
 import { RestockWizard } from "../src/components/RestockWizard";
 import { StaffPortal } from "../src/components/StaffPortal";
@@ -8,10 +9,48 @@ import { click, renderReact } from "./render";
 afterEach(() => document.body.replaceChildren());
 
 describe("durable staff operations", () => {
+  it("offers canonical simulator cycles only after the previous command has explicit evidence", async () => {
+    const cycle = vi.fn(async () => undefined);
+    const status = { adapterMode: "MOCK" as const, configSchemaVersion: 1 as const, activeSessionId: "cert-cycle", passEvidenceCount: 1, failEvidenceCount: 0, criticalEvidenceCount: 0, nextDoorId: doors[1].doorId, criticalStop: false, currentCommand: { commandId: "cmd-cycle", doorId: doors[0].doorId, state: "ACCEPTED", terminal: true, observationRecorded: true, outcome: "ACCEPTED", observedDoorId: doors[0].doorId, evidenceCode: null } };
+    const props = { busy: false, buildIdentity: { sourceCommit: "a".repeat(40), appVersion: "1.0.0" }, onStart: async () => undefined, onEvidence: async () => undefined, onSubmit: async () => undefined, onCycle: cycle };
+    const view = renderReact(<CertificationPanel {...props} status={status} />);
+    const buttons = [...view.container.querySelectorAll<HTMLButtonElement>(".certification-cycle-actions button")];
+    expect(buttons).toHaveLength(2);
+    await click(buttons[0]); await click(buttons[1]);
+    expect(cycle.mock.calls).toEqual([["PURCHASE"], ["RESTOCK"]]);
+    view.rerender(<CertificationPanel {...props} status={{ ...status, currentCommand: { ...status.currentCommand, observationRecorded: false } }} />);
+    expect(view.container.querySelector(".certification-cycle-actions")).toBeNull();
+    view.rerender(<CertificationPanel {...props} status={{ ...status, adapterMode: "OFFICIAL_TEST" }} />);
+    expect(view.container.querySelector(".certification-cycle-actions")).toBeNull();
+    view.unmount();
+  });
+  it("records the actual unexpected door and operator notes, with simulator provenance", async () => {
+    const evidence = vi.fn(async () => undefined);
+    const status = { adapterMode: "MOCK" as const, configSchemaVersion: 1 as const, activeSessionId: "cert-observation", passEvidenceCount: 0, failEvidenceCount: 0, criticalEvidenceCount: 0, nextDoorId: doors[0].doorId, criticalStop: false, currentCommand: { commandId: "cmd-observation", doorId: doors[0].doorId, state: "ACCEPTED", terminal: true, observationRecorded: false, outcome: "ACCEPTED", observedDoorId: doors[0].doorId, evidenceCode: null } };
+    const view = renderReact(<CertificationPanel status={status} busy={false} buildIdentity={{ sourceCommit: "a".repeat(40), appVersion: "1.0.0" }} onStart={async () => undefined} onEvidence={evidence} onSubmit={async () => undefined} />);
+    expect(view.container.textContent).toContain("simulator evidence only; no physical coverage");
+    await click(view.container.querySelector(".observation-check input"));
+    expect([...view.container.querySelectorAll<HTMLButtonElement>(".evidence-actions button")].every((button) => button.disabled)).toBe(true);
+    const observed = view.container.querySelector<HTMLInputElement>('input[aria-label="Actually observed door IDs"]')!;
+    const notes = view.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(observed, "K-01");
+      observed.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(notes, "Simulated wrong-door observation");
+      notes.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const buttons = [...view.container.querySelectorAll<HTMLButtonElement>(".evidence-actions button")];
+    expect(buttons[0].disabled).toBe(true);
+    expect(buttons[1].disabled).toBe(true);
+    expect(buttons[2].disabled).toBe(false);
+    await click(buttons[2]);
+    expect(evidence).toHaveBeenCalledWith("CRITICAL", doors[0].doorId, { observedDoorIds: ["K-01"], notes: "Simulated wrong-door observation" });
+    view.unmount();
+  });
   it("records only explicit per-door restock outcomes and enables finalize after all are reviewed", async () => {
     const outcome = vi.fn(async () => undefined);
     const session = {
-      id: "restock-1", configVersion: 3, status: "ACTIVE" as const, updatedAt: "2026-08-16T00:00:00.000Z",
+      id: "restock-1", configVersion: 3, configSchemaVersion: 1 as const, status: "ACTIVE" as const, updatedAt: "2026-08-16T00:00:00.000Z",
       items: [{ doorId: doors[0].doorId, productId: "sports-25", productName: "Sports Mystery Pack", outcome: "UNREVIEWED" as const, command: {
         commandId: "restock-command-1", doorId: doors[0].doorId, state: "ACCEPTED", terminal: true, observationRecorded: false,
         outcome: "ACCEPTED", observedDoorId: doors[0].doorId, evidenceCode: null,
@@ -23,9 +62,11 @@ describe("durable staff operations", () => {
     const filled = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "FILLED")!;
     expect(filled.disabled).toBe(true);
     await click(view.container.querySelector(".observation-check input"));
+    expect(filled.disabled).toBe(true);
+    await click(view.container.querySelector(".product-fit-check input"));
     expect(filled.disabled).toBe(false);
     await click(filled);
-    expect(outcome).toHaveBeenCalledWith(doors[0].doorId, "FILLED");
+    expect(outcome).toHaveBeenCalledWith(doors[0].doorId, "FILLED", "", true);
     view.rerender(<RestockWizard session={{ ...session, status: "READY_TO_FINALIZE", items: [{ ...session.items[0], outcome: "FILLED" }] }} busy={false} onStart={async () => undefined} onOutcome={outcome} onFinalize={async () => undefined} />);
     const finalize = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Finalize restock")!;
     expect(finalize.disabled).toBe(true);
@@ -35,13 +76,13 @@ describe("durable staff operations", () => {
 
   it("keeps certification visibly isolated and fail-closes a critical observation", () => {
     const status = {
-      activeSessionId: "cert-1", passEvidenceCount: 25, failEvidenceCount: 0, criticalEvidenceCount: 1,
+      configSchemaVersion: 1 as const, activeSessionId: "cert-1", passEvidenceCount: 25, failEvidenceCount: 0, criticalEvidenceCount: 1,
       nextDoorId: doors[5].doorId, criticalStop: true, currentCommand: {
         commandId: "cert-command-1", doorId: doors[5].doorId, state: "ACCEPTED", terminal: true,
         observationRecorded: true, outcome: "ACCEPTED", observedDoorId: doors[5].doorId, evidenceCode: null,
       },
     };
-    const view = renderReact(<CertificationPanel status={status} busy={false} buildIdentity={{ sourceCommit: "abcdef1234567", appVersion: "1.0.0" }} onStart={async () => undefined} onEvidence={async () => undefined} onSubmit={async () => undefined} />);
+    const view = renderReact(<CertificationPanel status={status} busy={false} buildIdentity={{ sourceCommit: "a".repeat(40), appVersion: "1.0.0" }} onStart={async () => undefined} onEvidence={async () => undefined} onSubmit={async () => undefined} />);
     expect(view.container.textContent).toContain("TEST MODE · NEVER PRODUCTION REVENUE");
     expect(view.container.textContent).toContain("CRITICAL STOP");
     expect(view.container.textContent).not.toContain("Record PASS");
@@ -52,7 +93,7 @@ describe("durable staff operations", () => {
     const staff = { sessionId: "staff-1", userId: "r1", displayName: "Restocker One", role: "RESTOCKER" as const, expiresAt: "2026-08-17T00:00:00.000Z" };
     const view = renderReact(
       <StaffPortal
-        staff={staff} restock={null} certification={null} health={null} buildIdentity={{ sourceCommit: "abcdef1234567", appVersion: "1.0.0" }} doorSafetyEpoch={0} workflowResumeRequired={false} busy={false} error={null}
+        staff={staff} restock={null} certification={null} health={null} buildIdentity={{ sourceCommit: "a".repeat(40), appVersion: "1.0.0" }} doorSafetyEpoch={0} workflowResumeRequired={false} busy={false} error={null}
         onLoadHealth={async () => undefined} onStartRestock={async () => undefined} onRestockOutcome={async () => undefined}
         onFinalizeRestock={async () => undefined} onStartCertification={async () => undefined}
         onCertificationEvidence={async () => undefined} onSubmitCertification={async () => undefined} onResumeWorkflow={async () => undefined} onSafeExit={async () => undefined}
@@ -68,7 +109,7 @@ describe("durable staff operations", () => {
     expect(exit.disabled).toBe(false);
     view.rerender(
       <StaffPortal
-        staff={staff} restock={null} certification={null} health={null} buildIdentity={{ sourceCommit: "abcdef1234567", appVersion: "1.0.0" }} doorSafetyEpoch={1} workflowResumeRequired={false} busy={false} error={null}
+        staff={staff} restock={null} certification={null} health={null} buildIdentity={{ sourceCommit: "a".repeat(40), appVersion: "1.0.0" }} doorSafetyEpoch={1} workflowResumeRequired={false} busy={false} error={null}
         onLoadHealth={async () => undefined} onStartRestock={async () => undefined} onRestockOutcome={async () => undefined}
         onFinalizeRestock={async () => undefined} onStartCertification={async () => undefined}
         onCertificationEvidence={async () => undefined} onSubmitCertification={async () => undefined} onResumeWorkflow={async () => undefined} onSafeExit={async () => undefined}
@@ -83,7 +124,7 @@ describe("durable staff operations", () => {
     const start = vi.fn(async () => undefined);
     const outcome = vi.fn(async () => undefined);
     const session = {
-      id: "restock-2", configVersion: 3, status: "ACTIVE" as const, updatedAt: "stable",
+      id: "restock-2", configVersion: 3, configSchemaVersion: 1 as const, status: "ACTIVE" as const, updatedAt: "stable",
       items: [{ doorId: doors[0].doorId, productId: "sports-25", productName: "Sports Mystery Pack", outcome: "UNREVIEWED" as const, command: null }],
     };
     const view = renderReact(<RestockWizard session={session} busy={false} onStart={start} onOutcome={outcome} onFinalize={async () => undefined} />);
@@ -97,7 +138,7 @@ describe("durable staff operations", () => {
   it("requires trusted service identity and exact command-to-door binding for certification evidence", async () => {
     const evidence = vi.fn(async () => undefined);
     const status = {
-      activeSessionId: "cert-2", passEvidenceCount: 0, failEvidenceCount: 0, criticalEvidenceCount: 0,
+      configSchemaVersion: 1 as const, activeSessionId: "cert-2", passEvidenceCount: 0, failEvidenceCount: 0, criticalEvidenceCount: 0,
       nextDoorId: doors[1].doorId, criticalStop: false, currentCommand: {
         commandId: "cert-command-2", doorId: doors[0].doorId, state: "ACCEPTED", terminal: true,
         observationRecorded: false, outcome: "ACCEPTED", observedDoorId: doors[0].doorId, evidenceCode: null,
@@ -115,13 +156,13 @@ describe("durable staff operations", () => {
   it("blocks safe exit while a durable door workflow is not finalized", async () => {
     const staff = { sessionId: "staff-2", userId: "r2", displayName: "Restocker Two", role: "RESTOCKER" as const, expiresAt: "2026-08-17T00:00:00.000Z" };
     const activeRestock = {
-      id: "restock-active", configVersion: 3, status: "ACTIVE" as const, updatedAt: "stable",
+      id: "restock-active", configVersion: 3, configSchemaVersion: 1 as const, status: "ACTIVE" as const, updatedAt: "stable",
       items: [{ doorId: doors[0].doorId, productId: "sports-25", productName: "Sports Mystery Pack", outcome: "UNREVIEWED" as const, command: null }],
     };
     const resume = vi.fn(async () => undefined);
     const view = renderReact(
       <StaffPortal
-        staff={staff} restock={activeRestock} certification={null} health={null} buildIdentity={{ sourceCommit: "abcdef1234567", appVersion: "1.0.0" }} doorSafetyEpoch={4} workflowResumeRequired={true} busy={false} error={null}
+        staff={staff} restock={activeRestock} certification={null} health={null} buildIdentity={{ sourceCommit: "a".repeat(40), appVersion: "1.0.0" }} doorSafetyEpoch={4} workflowResumeRequired={true} busy={false} error={null}
         onLoadHealth={async () => undefined} onStartRestock={async () => undefined} onRestockOutcome={async () => undefined}
         onFinalizeRestock={async () => undefined} onStartCertification={async () => undefined}
         onCertificationEvidence={async () => undefined} onSubmitCertification={async () => undefined} onResumeWorkflow={resume} onSafeExit={async () => undefined}
@@ -138,13 +179,13 @@ describe("durable staff operations", () => {
   it("requires a fresh physical-close confirmation to submit certification for review without calling it approval", async () => {
     const submit = vi.fn(async () => undefined);
     const status = {
-      activeSessionId: "cert-submit", passEvidenceCount: 1, failEvidenceCount: 0, criticalEvidenceCount: 0,
+      configSchemaVersion: 1 as const, activeSessionId: "cert-submit", passEvidenceCount: 1, failEvidenceCount: 0, criticalEvidenceCount: 0,
       nextDoorId: doors[1].doorId, criticalStop: false, currentCommand: {
         commandId: "cert-command-observed", doorId: doors[0].doorId, state: "ACCEPTED", terminal: true,
         observationRecorded: true, outcome: "ACCEPTED", observedDoorId: doors[0].doorId, evidenceCode: null,
       },
     };
-    const view = renderReact(<CertificationPanel status={status} busy={false} buildIdentity={{ sourceCommit: "abcdef1234567", appVersion: "1.0.0" }} onStart={async () => undefined} onEvidence={async () => undefined} onSubmit={submit} />);
+    const view = renderReact(<CertificationPanel status={status} busy={false} buildIdentity={{ sourceCommit: "a".repeat(40), appVersion: "1.0.0" }} onStart={async () => undefined} onEvidence={async () => undefined} onSubmit={submit} />);
     const button = view.container.querySelector<HTMLButtonElement>(".submit-certification-action")!;
     expect(button.disabled).toBe(true);
     expect(view.container.textContent).toContain("It is not certification approval");

@@ -11,11 +11,12 @@ interface CartPanelProps {
   disabled: boolean;
   busy: boolean;
   onRemove: (line: KioskCartLine) => void;
+  onFocus?: (line: KioskCartLine) => void;
   onCheckout: () => void;
 }
 
 export function CartPanel({
-  cart, subtotalCents, taxCents, totalCents, taxLabel, providerViolation, disabled, busy, onRemove, onCheckout,
+  cart, subtotalCents, taxCents, totalCents, taxLabel, providerViolation, disabled, busy, onRemove, onFocus, onCheckout,
 }: CartPanelProps) {
   return (
     <aside className="cart-panel" aria-labelledby="cart-title">
@@ -35,9 +36,11 @@ export function CartPanel({
         <ul className="cart-lines">
           {cart.map((line) => (
             <li className={line.conflict ? "cart-line conflict" : "cart-line"} key={line.doorId}>
-              <span className="cart-door">{line.doorId}</span>
-              <span><strong>{line.productName}</strong><small>{line.conflict ? "Replace this door" : formatMoney(line.priceCents)}</small></span>
-              <button type="button" onClick={() => onRemove(line)} disabled={disabled} aria-label={`Remove door ${line.doorId}`}>×</button>
+              <button type="button" className="cart-line-focus" disabled={disabled} onClick={() => onFocus?.(line)} aria-label={`Find door ${line.doorLabel ?? line.doorId} on the map`}>
+                <span className="cart-door">{line.doorLabel ?? line.doorId}</span>
+                <span><strong>{line.productName}</strong><small>{line.conflict ? "Replace this door" : formatMoney(line.priceCents)}</small></span>
+              </button>
+              <button type="button" onClick={() => onRemove(line)} disabled={disabled} aria-label={`Remove door ${line.doorLabel ?? line.doorId}`}>×</button>
             </li>
           ))}
         </ul>

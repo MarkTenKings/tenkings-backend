@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "test": "vitest run",
+    "test:browser": "node tests/layout-browser.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
     "jsdom": "^24.1.3",
+    "playwright": "1.57.0",
     "typescript": "5.5.4",
     "vite": "^5.4.20",
     "vitest": "^1.6.1"

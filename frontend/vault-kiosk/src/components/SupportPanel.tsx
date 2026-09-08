@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { KioskSaleSummary, KioskSupportConfig } from "../types";
-import { createSupportUrl } from "../workflow/kioskWorkflow";
+import { createSupportUrl, saleDoorLabel } from "../workflow/kioskWorkflow";
 
 interface SupportPanelProps {
   support: KioskSupportConfig;
@@ -9,15 +9,21 @@ interface SupportPanelProps {
 
 export function SupportPanel({ support, sale }: SupportPanelProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [selectedContact, setSelectedContact] = useState<{ url: string; label: string } | null>(null);
+  const paymentUnknown = ["UNKNOWN", "RECONCILIATION_REQUIRED", "REQUESTED"].includes(sale.paymentState);
+  const contextDoorIds = useMemo(() => paymentUnknown ? sale.items.map((item) => item.doorId) : sale.paidDoorIds, [paymentUnknown, sale.items, sale.paidDoorIds]);
   const safeUrl = useMemo(
-    () => createSupportUrl(support, sale.supportReference, sale.paidDoorIds),
-    [support, sale.supportReference, sale.paidDoorIds],
+    () => createSupportUrl(support, sale.supportReference, contextDoorIds),
+    [support, sale.supportReference, contextDoorIds],
   );
+  const qrUrl = selectedContact?.url ?? safeUrl;
+  useEffect(() => { setSelectedContact(null); }, [safeUrl]);
 
   useEffect(() => {
     let active = true;
+    setQrDataUrl(null);
     void import("qrcode")
-      .then(({ default: QRCode }) => QRCode.toDataURL(safeUrl, {
+      .then(({ default: QRCode }) => QRCode.toDataURL(qrUrl, {
         errorCorrectionLevel: "M",
         margin: 2,
         width: 220,
@@ -30,11 +36,13 @@ export function SupportPanel({ support, sale }: SupportPanelProps) {
         if (active) setQrDataUrl(null);
       });
     return () => { active = false; };
-  }, [safeUrl]);
+  }, [qrUrl]);
 
   const subject = encodeURIComponent(`Vault support ${sale.supportReference}`);
-  const body = encodeURIComponent(`Support reference: ${sale.supportReference}\nPaid doors: ${sale.paidDoorIds.join(", ")}`);
-  const textBody = encodeURIComponent(`Vault ${sale.supportReference}; doors ${sale.paidDoorIds.join(", ")}`);
+  const doorLabel = paymentUnknown ? "Reserved doors (payment unresolved)" : "Paid doors";
+  const labels = contextDoorIds.map((doorId) => saleDoorLabel(sale, doorId));
+  const body = encodeURIComponent(`Support reference: ${sale.supportReference}\n${doorLabel}: ${labels.join(", ")}`);
+  const textBody = encodeURIComponent(`Vault ${sale.supportReference}; ${doorLabel}: ${labels.join(", ")}`);
 
   return (
     <section className="support-panel" aria-labelledby="support-title">
@@ -46,17 +54,20 @@ export function SupportPanel({ support, sale }: SupportPanelProps) {
           <span>Reference</span>
           <strong>{sale.supportReference}</strong>
         </div>
-        <p className="paid-door-list"><b>Paid doors:</b> {sale.paidDoorIds.join(" · ")}</p>
+        {paymentUnknown && <p className="inline-alert">Checking payment — do not pay again.</p>}
+        <p className="paid-door-list"><b>{paymentUnknown ? "Reserved doors:" : "Paid doors:"}</b> {labels.join(" · ")}</p>
         <p className="support-hours">Support hours: {support.hours}</p>
         <div className="support-actions" aria-label="Support contact choices">
-          <a className="secondary-action" href={`mailto:${support.email}?subject=${subject}&body=${body}`}>Email</a>
-          <a className="secondary-action" href={`sms:${support.textNumber}?body=${textBody}`}>Text message</a>
-          <a className="secondary-action" href={`tel:${support.phoneNumber}`}>Phone call</a>
+          <a className="secondary-action" href={`mailto:${support.email}?subject=${subject}&body=${body}`} onClick={(event) => { event.preventDefault(); setSelectedContact({ url: event.currentTarget.href, label: "email Ten Kings" }); }}>Email <small>{support.email}</small></a>
+          <a className="secondary-action" href={`sms:${support.textNumber}?body=${textBody}`} onClick={(event) => { event.preventDefault(); setSelectedContact({ url: event.currentTarget.href, label: "text Ten Kings" }); }}>Text message <small>{support.textNumber}</small></a>
+          <a className="secondary-action" href={`tel:${support.phoneNumber}`} onClick={(event) => { event.preventDefault(); setSelectedContact({ url: event.currentTarget.href, label: "call Ten Kings" }); }}>Phone call <small>{support.phoneNumber}</small></a>
         </div>
       </div>
       <div className="support-qr">
-        {qrDataUrl ? <img src={qrDataUrl} alt="QR code for the Ten Kings support page" /> : <div className="qr-placeholder" aria-label="Preparing support QR code" />}
-        <span>Scan for support options</span>
+        {qrDataUrl ? <img src={qrDataUrl} alt={`QR code to ${selectedContact?.label ?? "open the Ten Kings support page"}`} /> : <div className="qr-placeholder" aria-label="Preparing support QR code" />}
+        <span aria-live="polite">Scan to {selectedContact?.label ?? "open support options"}</span>
+        <a href={safeUrl} onClick={(event) => { event.preventDefault(); setSelectedContact(null); }} className="support-page-link">Ten Kings support page</a>
+        <p>Scan with your phone to email, text, or call. You can also use the contacts shown here.</p>
       </div>
     </section>
   );

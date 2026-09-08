@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { roleMay } from "@tenkings/vault-contracts/browser";
 import type {
   CertificationStatus,
+  CertificationObservation,
   MachineHealthDetail,
+  KioskPublicSnapshot,
   RestockSession,
   StaffSession,
   TrustedBuildIdentity,
@@ -27,21 +29,28 @@ interface StaffPortalProps {
   workflowResumeRequired: boolean;
   onLoadHealth: () => Promise<void>;
   onStartRestock: () => Promise<void>;
-  onRestockOutcome: (doorId: VaultDoorId, outcome: Exclude<VaultRestockItemState, "UNREVIEWED">) => Promise<void>;
+  onRestockOutcome: (doorId: VaultDoorId, outcome: Exclude<VaultRestockItemState, "UNREVIEWED">, notes?: string, productFitConfirmed?: boolean) => Promise<void>;
   onFinalizeRestock: (closed: boolean) => Promise<void>;
   onStartCertification: () => Promise<void>;
-  onCertificationEvidence: (outcome: "PASS" | "FAIL" | "CRITICAL", doorId: VaultDoorId | null) => Promise<void>;
+  onCertificationEvidence: (outcome: "PASS" | "FAIL" | "CRITICAL", doorId: VaultDoorId | null, observation: CertificationObservation) => Promise<void>;
   onSubmitCertification: (servicedDoorsClosed: boolean) => Promise<void>;
+  onCertificationCycle?: (cycleType: "PURCHASE" | "RESTOCK") => Promise<void>;
   onResumeWorkflow: () => Promise<void>;
   onSafeExit: (closed: boolean) => Promise<void>;
+  pendingProfile?: KioskPublicSnapshot["pendingProfile"];
+  onActivateProfile?: () => Promise<void>;
+  onLockService?: () => Promise<void>;
 }
 
 export function StaffPortal({
   staff, restock, certification, health, buildIdentity, doorSafetyEpoch, workflowResumeRequired, busy, error, onLoadHealth, onStartRestock, onRestockOutcome,
-  onFinalizeRestock, onStartCertification, onCertificationEvidence, onSubmitCertification, onResumeWorkflow, onSafeExit,
+  onFinalizeRestock, onStartCertification, onCertificationEvidence, onSubmitCertification, onCertificationCycle, onResumeWorkflow, onSafeExit,
+  pendingProfile = null, onActivateProfile, onLockService,
 }: StaffPortalProps) {
   const [tab, setTab] = useState<StaffTab>("OVERVIEW");
   const [closedConfirmed, setClosedConfirmed] = useState(false);
+  const [profileEmptyConfirmed, setProfileEmptyConfirmed] = useState(false);
+  const [profileClosedConfirmed, setProfileClosedConfirmed] = useState(false);
   const operations = useMemo(() => staffOperationsForRole(staff.role), [staff.role]);
   const restockFinalized = !restock || restock.status === "COMPLETED";
   const certificationFinalized = !certification;
@@ -52,6 +61,10 @@ export function StaffPortal({
   }, [health, onLoadHealth, tab]);
 
   useEffect(() => setClosedConfirmed(false), [doorSafetyEpoch]);
+  useEffect(() => {
+    setProfileEmptyConfirmed(false);
+    setProfileClosedConfirmed(false);
+  }, [pendingProfile?.version, pendingProfile?.digest, doorSafetyEpoch, workflowsFinalized]);
 
   return (
     <main className="staff-portal">
@@ -65,6 +78,7 @@ export function StaffPortal({
         {roleMay(staff.role, "DIAGNOSTICS_VIEW") && <button type="button" aria-current={tab === "HEALTH" ? "page" : undefined} onClick={() => setTab("HEALTH")}>Health</button>}
         {roleMay(staff.role, "CERTIFICATION_COLLECT") && <button type="button" aria-current={tab === "CERTIFICATION" ? "page" : undefined} onClick={() => setTab("CERTIFICATION")}>Certification</button>}
       </nav>
+      {onLockService && roleMay(staff.role, "SERVICE_LOCK") && <button type="button" className="secondary-action staff-lock-action" disabled={busy} onClick={() => void onLockService()}>Lock service screen</button>}
       {error && <p className="staff-error" role="alert">{error}</p>}
       {workflowResumeRequired && (
         <section className="operations-card resume-workflow" aria-labelledby="resume-workflow-title">
@@ -77,6 +91,15 @@ export function StaffPortal({
 
       {tab === "OVERVIEW" && (
         <section className="operations-grid" aria-label={`${staff.role} operations`}>
+          {pendingProfile?.requiresReconfiguration && onActivateProfile && roleMay(staff.role, "SOFTWARE_RECOVERY") && <article className="operations-card profile-activation">
+            <p className="eyebrow">Pending configuration {pendingProfile.version}</p>
+            <h2>Activate empty-machine profile</h2>
+            <p>{pendingProfile.profileId} · revision {pendingProfile.revision}. Complete current service work, empty every compartment, and check the cabinet before activating this exact published profile.</p>
+            <label className="confirmation-check"><input type="checkbox" checked={profileEmptyConfirmed} disabled={busy || !workflowsFinalized} onChange={(event) => setProfileEmptyConfirmed(event.target.checked)} /><span>I personally confirmed every compartment is empty.</span></label>
+            <label className="confirmation-check"><input type="checkbox" checked={profileClosedConfirmed} disabled={busy || !workflowsFinalized} onChange={(event) => setProfileClosedConfirmed(event.target.checked)} /><span>I personally confirmed every serviced door is closed.</span></label>
+            <button type="button" className="primary-action profile-activate-action" disabled={busy || !workflowsFinalized || !profileEmptyConfirmed || !profileClosedConfirmed} onClick={() => void onActivateProfile()}>Activate configuration {pendingProfile.version}</button>
+            <p>The local service verifies empty inventory and all outstanding work. Activation locks service and requires a fresh PIN before safe exit.</p>
+          </article>}
           {operations.map((operation) => (
             <article className="operation-tile" key={operation.permission}>
               <span aria-hidden="true">◆</span><h2>{operation.label}</h2><p>{operation.description}</p>
@@ -101,6 +124,9 @@ export function StaffPortal({
           {health ? (
             <dl className="health-grid">
               <div><dt>Readiness</dt><dd>{health.health}</dd></div>
+              <div><dt>App version</dt><dd>{health.appVersion}</dd></div>
+              <div><dt>Local schema</dt><dd>{health.localSchemaVersion ?? "Unavailable"}</dd></div>
+              <div><dt>Active configuration</dt><dd>{health.configVersion ?? "Unavailable"}</dd></div>
               <div><dt>Database</dt><dd>{health.databaseIntegrity}</dd></div>
               <div><dt>Clock</dt><dd>{health.clockSafe ? "Safe" : "Blocked"}</dd></div>
               <div><dt>Storage</dt><dd>{health.storageSafe ? "Safe" : "Blocked"}</dd></div>
@@ -115,7 +141,7 @@ export function StaffPortal({
       )}
 
       {tab === "CERTIFICATION" && roleMay(staff.role, "CERTIFICATION_COLLECT") && (
-        <CertificationPanel status={certification} busy={busy || workflowResumeRequired} buildIdentity={buildIdentity} onStart={onStartCertification} onEvidence={onCertificationEvidence} onSubmit={onSubmitCertification} />
+        <CertificationPanel status={certification} busy={busy || workflowResumeRequired} buildIdentity={buildIdentity} onStart={onStartCertification} onEvidence={onCertificationEvidence} onSubmit={onSubmitCertification} onCycle={onCertificationCycle} />
       )}
 
       <section className="safe-exit-card">

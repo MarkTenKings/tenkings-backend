@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CartPanel } from "../src/components/CartPanel";
 import { DoorMap } from "../src/components/DoorMap";
 import { PaidFlow } from "../src/components/PaidFlow";
+import { IdleWarningDialog } from "../src/components/IdleWarningDialog";
 import { PinEntry } from "../src/components/PinEntry";
 import { ProductRail } from "../src/components/ProductRail";
 import { StatusBanner } from "../src/components/StatusBanner";
@@ -16,16 +17,70 @@ afterEach(() => {
 });
 
 describe("customer touchscreen components", () => {
+  it("contains keyboard focus even while the sole idle action is disabled awaiting a response", async () => {
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.focus();
+    const view = renderReact(<IdleWarningDialog secondsRemaining={8} busy={true} onKeepShopping={() => undefined} />);
+    const dialog = view.container.querySelector('[role="dialog"]');
+    expect(document.activeElement).toBe(dialog);
+    act(() => outside.focus());
+    expect(document.activeElement).toBe(dialog);
+    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    act(() => document.dispatchEvent(tab));
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(dialog);
+    view.unmount();
+    expect(document.activeElement).toBe(outside);
+  });
+  it("offers cancellation only when the durable service permits the current payment state", async () => {
+    const onCancel = vi.fn();
+    const reserved = snapshot({ activeSale: { ...sale, state: "RESERVED", paymentState: "NOT_REQUESTED", cancelAvailable: true } });
+    const view = renderReact(<PaidFlow snapshot={reserved} retryBusy={false} paymentBusy={false} doneBusy={false} onContinuePayment={() => undefined} onOpenDoors={() => undefined} onDone={() => undefined} onCancelPayment={onCancel} />);
+    await click(view.container.querySelector(".payment-cancel-action"));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    view.rerender(<PaidFlow snapshot={snapshot({ activeSale: { ...sale, cancelAvailable: false } })} retryBusy={false} paymentBusy={false} doneBusy={false} onContinuePayment={() => undefined} onOpenDoors={() => undefined} onDone={() => undefined} onCancelPayment={onCancel} />);
+    expect(view.container.querySelector(".payment-cancel-action")).toBeNull();
+    view.unmount();
+  });
+  it("keeps support reachable during payment uncertainty and keeps contact taps inside the kiosk", async () => {
+    const unknown = snapshot({ publicState: "PAYMENT_UNKNOWN", activeSale: { ...sale, paymentState: "UNKNOWN", paidDoorIds: [] } });
+    const view = renderReact(<PaidFlow snapshot={unknown} retryBusy={false} paymentBusy={false} doneBusy={false} onContinuePayment={() => undefined} onOpenDoors={() => undefined} onDone={() => undefined} />);
+    expect(view.container.textContent).toContain("Checking payment — do not pay again");
+    expect(view.container.textContent).toContain("Reserved doors:");
+    const email = view.container.querySelector<HTMLAnchorElement>('a[href^="mailto:"]')!;
+    expect(decodeURIComponent(email.href)).toContain("Reserved doors (payment unresolved): X-01");
+    expect(decodeURIComponent(email.href)).not.toContain("Paid doors:");
+    expect(view.container.querySelector<HTMLAnchorElement>(".support-page-link")?.href).toContain("doors=X-01");
+    const call = view.container.querySelector<HTMLAnchorElement>('a[href^="tel:"]')!;
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+    await act(async () => { call.dispatchEvent(event); });
+    expect(event.defaultPrevented).toBe(true);
+    expect(view.container.textContent).toContain("Scan to call Ten Kings");
+    expect(view.container.querySelector(".support-page-link")).not.toBeNull();
+    expect(view.container.querySelector(".retry-action")).toBeNull();
+    view.unmount();
+  });
+
+  it("uses a bundled placeholder on product-media failure and preserves product description and selection", async () => {
+    const view = renderReact(<ProductRail products={products} doors={doors} selectedProductId="sports-25" disabled={false} onSelect={() => undefined} onPick={() => undefined} pickBusy={false} />);
+    const img = view.container.querySelector("img")!;
+    act(() => img.dispatchEvent(new Event("error")));
+    expect(img.src).toMatch(/^data:image\/svg\+xml,/);
+    expect(view.container.querySelector(".selected-product-description")?.textContent).toBe(products[0].description);
+    expect((view.container.querySelector(".product-select") as HTMLButtonElement).disabled).toBe(false);
+    view.unmount();
+  });
   it("renders all 150 physical positions in fixed row-major order and retains unavailable cells", () => {
     const view = renderReact(
-      <DoorMap doors={doors} selectedProductId="sports-25" disabled={false} animatedDoorId={null} onToggle={() => undefined} />,
+      <DoorMap configSchemaVersion={1} doors={doors} selectedProductId="sports-25" disabled={false} animatedDoorId={null} onToggle={() => undefined} />,
     );
     const cells = [...view.container.querySelectorAll<HTMLElement>("[data-door-id]")];
     expect(cells).toHaveLength(150);
     expect(cells.slice(0, 7).map((cell) => cell.dataset.doorId)).toEqual(["X-01", "K-01", "I-01", "N-01", "G-01", "S-01", "X-02"]);
     expect(cells.at(-1)?.dataset.doorId).toBe("S-25");
     expect((view.container.querySelector('[data-door-id="X-02"]') as HTMLButtonElement).disabled).toBe(true);
-    expect(view.container.querySelectorAll('[role="columnheader"]')).toHaveLength(6);
+    expect(view.container.querySelectorAll('.door-map-header span')).toHaveLength(7);
     view.unmount();
   });
 
@@ -38,6 +93,8 @@ describe("customer touchscreen components", () => {
     expect(view.container.textContent).toContain("$25.00");
     await click(view.container.querySelector('[aria-label="Pick an available Sports Mystery Pack door for me"]'));
     expect(onPick).toHaveBeenCalledWith("sports-25");
+    view.rerender(<ProductRail products={products} doors={doors.map((door) => ({ ...door, selected: door.state === "AVAILABLE" }))} selectedProductId="sports-25" disabled={false} onSelect={() => undefined} onPick={onPick} pickBusy={false} />);
+    expect((view.container.querySelector('[aria-label="Pick an available Sports Mystery Pack door for me"]') as HTMLButtonElement).disabled).toBe(true);
     view.unmount();
   });
 
@@ -112,7 +169,7 @@ describe("customer touchscreen components", () => {
   it("requires a six-digit PIN before staff authentication", async () => {
     const authenticate = vi.fn(async () => undefined);
     const view = renderReact(<PinEntry busy={false} error={null} onAuthenticate={authenticate} onCancel={() => undefined} />);
-    const user = view.container.querySelector('input[autocomplete="username"]') as HTMLInputElement;
+    const user = view.container.querySelector('input[aria-label="Staff ID"]') as HTMLInputElement;
     const pin = view.container.querySelector('input[inputmode="numeric"]') as HTMLInputElement;
     const submit = view.container.querySelector('button[type="submit"]') as HTMLButtonElement;
     expect(submit.disabled).toBe(true);

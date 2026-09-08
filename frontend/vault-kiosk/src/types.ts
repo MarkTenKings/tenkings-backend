@@ -7,6 +7,7 @@ import type {
   VaultRestockItemState,
   VaultRole,
   VaultSaleState,
+  VaultMachineProfile,
 } from "@tenkings/vault-contracts/browser";
 
 export type VaultPublicState =
@@ -64,6 +65,7 @@ export interface KioskDoor {
 
 export interface KioskCartLine {
   doorId: VaultDoorId;
+  doorLabel?: string;
   productId: string;
   productName: string;
   priceCents: number;
@@ -89,6 +91,7 @@ export interface KioskSaleSummary {
   items: Array<{
     lineId: string;
     doorId: VaultDoorId;
+    doorLabel?: string;
     productId: string;
     productName: string;
     photoUrl: string;
@@ -107,6 +110,7 @@ export interface KioskSaleSummary {
   paymentState: VaultPaymentState;
   retrievalSecondsRemaining: number | null;
   resetSecondsRemaining: number | null;
+  cancelAvailable?: boolean;
 }
 
 export interface KioskPublicSnapshot {
@@ -118,6 +122,9 @@ export interface KioskPublicSnapshot {
   readinessReasons: string[];
   serviceLocked: boolean;
   configVersion: number | null;
+  configSchemaVersion: 1 | 2 | null;
+  machineProfile: VaultMachineProfile | null;
+  pendingProfile?: { version: number; digest: string; profileId: string; revision: number; requiresReconfiguration: boolean } | null;
   city: string | null;
   state: string | null;
   taxRateBasisPoints: number | null;
@@ -144,12 +151,16 @@ export interface TrustedBuildIdentity {
 export interface ControllerCommandReceipt {
   commandId: string;
   doorId: VaultDoorId | null;
+  doorLabel?: string | null;
   state: string;
   terminal: boolean;
   observationRecorded: boolean;
   outcome: string | null;
   observedDoorId: VaultDoorId | null;
   evidenceCode: string | null;
+  cycleType?: "DIAGNOSTIC" | "PURCHASE" | "RESTOCK";
+  saleId?: string | null;
+  restockSessionId?: string | null;
 }
 
 export interface StaffSession {
@@ -162,6 +173,7 @@ export interface StaffSession {
 
 export interface RestockItem {
   doorId: VaultDoorId;
+  doorLabel?: string;
   productId: string | null;
   productName: string;
   outcome: VaultRestockItemState;
@@ -171,19 +183,30 @@ export interface RestockItem {
 export interface RestockSession {
   id: string;
   configVersion: number;
+  configSchemaVersion?: 1 | 2 | null;
+  machineProfile?: VaultMachineProfile | null;
   status: "ACTIVE" | "READY_TO_FINALIZE" | "COMPLETED";
   items: RestockItem[];
   updatedAt: string;
 }
 
 export interface CertificationStatus {
+  configSchemaVersion?: 1 | 2 | null;
+  machineProfile?: VaultMachineProfile | null;
   activeSessionId: string | null;
   passEvidenceCount: number;
   failEvidenceCount: number;
   criticalEvidenceCount: number;
   nextDoorId: VaultDoorId | null;
+  nextDoorLabel?: string | null;
   criticalStop: boolean;
   currentCommand: ControllerCommandReceipt | null;
+  adapterMode?: "MOCK" | "OFFICIAL_TEST" | "LIVE";
+}
+
+export interface CertificationObservation {
+  observedDoorIds: VaultDoorId[];
+  notes: string;
 }
 
 export interface MachineHealthDetail {
@@ -236,6 +259,13 @@ export interface RestockFinalizeResult {
 export interface CertificationStartResult {
   sessionId: string;
   scheduledDoorId: VaultDoorId;
+}
+
+export interface CertificationCycleResult {
+  cycleType: "PURCHASE" | "RESTOCK";
+  doorId: VaultDoorId;
+  saleId?: string;
+  restockSessionId?: string;
 }
 
 export interface CertificationEvidenceResult {

@@ -22,7 +22,11 @@ export function PinEntry({ busy, error, onAuthenticate, onCancel, resumeUserId =
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!busy && userId.trim() && /^\d{6}$/.test(pin)) void onAuthenticate(userId.trim(), pin);
+      if (!busy && userId.trim() && /^\d{6}$/.test(pin)) {
+        const enteredPin = pin;
+        setPin("");
+        void onAuthenticate(userId.trim(), enteredPin);
+      }
   };
 
   return (
@@ -39,10 +43,10 @@ export function PinEntry({ busy, error, onAuthenticate, onCancel, resumeUserId =
             id={userIdId}
             value={userId}
             onChange={(event) => setUserId(event.target.value)}
-            autoComplete="username"
+            autoComplete="off"
+            aria-label="Staff ID"
             maxLength={128}
             disabled={busy}
-            readOnly={Boolean(resumeUserId)}
           />
           <label htmlFor={pinId}>Six-digit PIN</label>
           <input
@@ -52,7 +56,7 @@ export function PinEntry({ busy, error, onAuthenticate, onCancel, resumeUserId =
             type="password"
             inputMode="numeric"
             pattern="\d{6}"
-            autoComplete="current-password"
+            autoComplete="off"
             maxLength={6}
             disabled={busy}
           />

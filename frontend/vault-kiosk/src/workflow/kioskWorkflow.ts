@@ -20,6 +20,11 @@ export function formatMoney(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 }
 
+/** Historical labels belong to the sale snapshot, never the current profile. */
+export function saleDoorLabel(sale: KioskSaleSummary, doorId: VaultDoorId): string {
+  return sale.items.find((item) => item.doorId === doorId)?.doorLabel ?? doorId;
+}
+
 export function calculateCartTotals(cart: readonly KioskCartLine[], taxRateBasisPoints: number | null) {
   const subtotalCents = cart.reduce((sum, line) => sum + line.priceCents, 0);
   // Display uses the shared contract; the local service still revalidates and persists the

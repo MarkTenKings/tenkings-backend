@@ -1,5 +1,5 @@
 import type { KioskPublicSnapshot } from "../types";
-import { formatMoney, mayShowOpenDoors } from "../workflow/kioskWorkflow";
+import { formatMoney, mayShowOpenDoors, saleDoorLabel } from "../workflow/kioskWorkflow";
 import { StatusBanner } from "./StatusBanner";
 import { SupportPanel } from "./SupportPanel";
 
@@ -8,12 +8,14 @@ interface PaidFlowProps {
   retryBusy: boolean;
   paymentBusy: boolean;
   doneBusy: boolean;
+  disabled?: boolean;
   onContinuePayment: () => void;
   onOpenDoors: () => void;
   onDone: () => void;
+  onCancelPayment?: () => void;
 }
 
-export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, onContinuePayment, onOpenDoors, onDone }: PaidFlowProps) {
+export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, disabled = false, onContinuePayment, onOpenDoors, onDone, onCancelPayment }: PaidFlowProps) {
   const sale = snapshot.activeSale;
   if (!sale) return <StatusBanner state={snapshot.publicState} reasons={snapshot.readinessReasons} />;
   const paymentNotRequested = sale.state === "RESERVED" && sale.paymentState === "NOT_REQUESTED";
@@ -28,11 +30,12 @@ export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, onContinu
         <StatusBanner state="PAYMENT_STARTING" />
         <section className="paid-receipt" aria-labelledby="reserved-order-title">
           <div className="paid-total"><span>Reserved order total</span><strong>{formatMoney(sale.totalCents)}</strong></div>
-          <div><p className="eyebrow">Payment has not been requested</p><h2 id="reserved-order-title">Continue this order</h2><p>The local service durably reserved doors {sale.items.map((item) => item.doorId).join(" · ")}. Continue once; the same persisted payment intent is reused after a lost response or reload.</p></div>
+          <div><p className="eyebrow">Payment has not been requested</p><h2 id="reserved-order-title">Continue this order</h2><p>Your reserved doors are {sale.items.map((item) => item.doorLabel ?? item.doorId).join(" · ")}. Continue this order to start its payment session.</p></div>
         </section>
-        <button type="button" className="primary-action payment-continue-action" disabled={paymentBusy} onClick={onContinuePayment}>
+        <button type="button" className="primary-action payment-continue-action" disabled={disabled || paymentBusy} onClick={onContinuePayment}>
           {paymentBusy ? "Starting terminal…" : "Continue to payment"}
         </button>
+        {sale.cancelAvailable && onCancelPayment && <button type="button" className="secondary-action payment-cancel-action" disabled={disabled} onClick={onCancelPayment}>Cancel this unpaid order</button>}
       </main>
     );
   }
@@ -43,7 +46,7 @@ export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, onContinu
         <StatusBanner state={snapshot.publicState} />
         <section className="done-card">
           <p>The reservation was released by the local service. No door command is available from this order.</p>
-          <button type="button" className="primary-action return-shopping-action" disabled={doneBusy} onClick={onDone}>
+          <button type="button" className="primary-action return-shopping-action" disabled={disabled || doneBusy} onClick={onDone}>
             {doneBusy ? "Returning…" : "Return to shopping"}
           </button>
         </section>
@@ -59,10 +62,12 @@ export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, onContinu
           <div className="paid-total"><span>Order total</span><strong>{formatMoney(sale.totalCents)}</strong></div>
           <div>
             <p className="eyebrow">Reserved doors · not proof of payment</p>
-            <h2 id="pending-order-title">{sale.items.map((item) => item.doorId).join(" · ")}</h2>
+            <h2 id="pending-order-title">{sale.items.map((item) => item.doorLabel ?? item.doorId).join(" · ")}</h2>
             <p>{sale.paymentState === "REQUESTED" ? "Complete the one in-progress terminal session. Do not start another payment." : `Do not pay again. Give support reference ${sale.supportReference} to Ten Kings if reconciliation does not resolve.`}</p>
           </div>
         </section>
+        {snapshot.support && sale.paymentState !== "REQUESTED" && <SupportPanel support={snapshot.support} sale={sale} />}
+        {sale.cancelAvailable && onCancelPayment && <button type="button" className="secondary-action payment-cancel-action" disabled={disabled} onClick={onCancelPayment}>Request payment cancellation</button>}
       </main>
     );
   }
@@ -77,8 +82,8 @@ export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, onContinu
         </div>
         <div>
           <p className="eyebrow">Your exact paid doors</p>
-          <h2 id="paid-doors-title">{sale.paidDoorIds.join(" · ")}</h2>
-          <p>Take only the packs from these numbered doors. An unlock command is not proof of physical retrieval.</p>
+          <h2 id="paid-doors-title">{sale.paidDoorIds.map((doorId) => saleDoorLabel(sale, doorId)).join(" · ")}</h2>
+          <p>Take only the packs from these labeled doors. An unlock command is not proof of physical retrieval.</p>
         </div>
         {sale.retrievalSecondsRemaining !== null && snapshot.publicState !== "PAID_RESET_COUNTDOWN" && (
           <div className="countdown-orb" aria-live="polite">
@@ -90,7 +95,7 @@ export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, onContinu
       {showRetry && (
         <section className="retry-card">
           <p>If any paid door needs one more unlock command, use the single group retry below.</p>
-          <button type="button" className="primary-action retry-action" onClick={onOpenDoors} disabled={retryBusy}>
+          <button type="button" className="primary-action retry-action" onClick={onOpenDoors} disabled={disabled || retryBusy}>
             {retryBusy ? "Recording retry…" : "OPEN DOORS"}
           </button>
           <small>This sends exactly one second command to every original paid door. It never targets another door.</small>
@@ -104,8 +109,8 @@ export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, onContinu
           <div className="countdown-line" aria-live="polite">
             Resetting in <strong>{sale.resetSecondsRemaining ?? 0}</strong> seconds
           </div>
-          <button type="button" className="secondary-action" disabled={doneBusy} onClick={onDone}>
-            {doneBusy ? "Finishing…" : "Done"}
+          <button type="button" className="secondary-action" disabled={disabled || doneBusy} onClick={onDone}>
+            {doneBusy ? "Finishing…" : "I GOT MY PACKS — DONE"}
           </button>
         </section>
       )}

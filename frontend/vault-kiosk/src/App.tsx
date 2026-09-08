@@ -12,6 +12,7 @@ import { StaffPortal } from "./components/StaffPortal";
 import { StatusBanner } from "./components/StatusBanner";
 import type {
   CertificationStatus,
+  CertificationObservation,
   KioskCartLine,
   KioskDoor,
   KioskPublicSnapshot,
@@ -28,6 +29,7 @@ import {
   clearPaymentIdempotencyKey,
   paymentIdempotencyKey,
 } from "./workflow/durableIntents";
+import { currentDoorLabel } from "./workflow/profileLayout";
 
 const SHOPPING_STATES = new Set([
   "ATTRACT", "SHOPPING_EMPTY", "SHOPPING_WITH_CART", "PRODUCT_SOLD_OUT", "ALL_PRODUCTS_SOLD_OUT",
@@ -72,15 +74,31 @@ export function App({ api: providedApi }: AppProps) {
   const [doorSafetyEpoch, setDoorSafetyEpoch] = useState(0);
   const [workflowResumeRequired, setWorkflowResumeRequired] = useState(false);
   const serviceGestureRef = useRef<number[]>([]);
+  const activityTimerRef = useRef<number | null>(null);
+  const animationTimerRef = useRef<number | null>(null);
+  const busyRef = useRef(false);
+  busyRef.current = busyAction !== null;
 
-  const customerCart = conflictCart ?? snapshot?.cart ?? [];
+  const customerCart = (conflictCart ?? snapshot?.cart ?? []).map((line) => ({ ...line, doorLabel: line.doorLabel ?? (snapshot ? currentDoorLabel(line.doorId, snapshot.configSchemaVersion, snapshot.machineProfile) : line.doorId) }));
+  const animateDoor = useCallback((doorId: VaultDoorId | null) => {
+    if (animationTimerRef.current !== null) window.clearTimeout(animationTimerRef.current);
+    setAnimatedDoorId(doorId);
+    animationTimerRef.current = doorId ? window.setTimeout(() => {
+      setAnimatedDoorId(null);
+      animationTimerRef.current = null;
+    }, 900) : null;
+  }, []);
+  useEffect(() => () => { if (animationTimerRef.current !== null) window.clearTimeout(animationTimerRef.current); }, []);
 
   const applySnapshot = useCallback((next: KioskPublicSnapshot) => {
     if (!snapshotRef.current || next.sequence >= snapshotRef.current.sequence) {
+      const previous = snapshotRef.current;
       snapshotRef.current = next;
       setSnapshot(next);
       if (next.activeSale) clearCheckoutIdempotencyKey();
-      setSelectedProductId((current) => current ?? next.products.find((product) => product.active)?.id ?? null);
+      setSelectedProductId((current) => next.products.some((product) => product.active && product.id === current)
+        ? current : next.products.find((product) => product.active)?.id ?? null);
+      if (!next.activeSale && next.cart.length === 0 && previous?.cart.length && !next.reservationConflictDoorIds.length) setConflictCart(null);
     }
   }, []);
 
@@ -88,6 +106,32 @@ export function App({ api: providedApi }: AppProps) {
     const response = await api.getState();
     applySnapshot(response.data);
     return response.data;
+  }, [api, applySnapshot]);
+
+  useEffect(() => {
+    const activity = (event: Event) => {
+      const current = snapshotRef.current;
+      if (!current || !(event.target instanceof Element)) return;
+      const staffActivity = Boolean(event.target.closest(".staff-portal") && current.activeStaff && !current.activeStaff.locked);
+      if (!staffActivity && (current.activeSale || current.serviceLocked || !mayIdleTimeout(current.publicState)
+        || current.publicState === "IDLE_WARNING" || !event.target.closest(".customer-shopping"))) return;
+      if (activityTimerRef.current !== null) window.clearTimeout(activityTimerRef.current);
+      activityTimerRef.current = window.setTimeout(() => {
+        activityTimerRef.current = null;
+        const latest = snapshotRef.current;
+        if (!latest || busyRef.current) return;
+        if (staffActivity) {
+          if (latest.activeStaff && !latest.activeStaff.locked) void api.recordStaffActivity(latest.activeStaff.sessionId, latest.stateVersion).catch(() => undefined);
+        } else if (!latest.activeSale && !latest.serviceLocked && latest.publicState !== "IDLE_WARNING") {
+          void api.recordActivity(latest.stateVersion).then((response) => applySnapshot(response.data)).catch(() => undefined);
+        }
+      }, 500);
+    };
+    for (const type of ["pointerdown", "keydown", "wheel", "touchmove"]) document.addEventListener(type, activity, { passive: true });
+    return () => {
+      for (const type of ["pointerdown", "keydown", "wheel", "touchmove"]) document.removeEventListener(type, activity);
+      if (activityTimerRef.current !== null) window.clearTimeout(activityTimerRef.current);
+    };
   }, [api, applySnapshot]);
 
   useEffect(() => {
@@ -137,16 +181,18 @@ export function App({ api: providedApi }: AppProps) {
   }, [api, applySnapshot]);
 
   useEffect(() => {
-    if (!snapshot?.activeSale || snapshot.activeSale.retrievalSecondsRemaining === null) return;
+    if (!snapshot) return;
     const timer = window.setInterval(() => {
       void refresh().catch(() => {
         // The websocket reconnect loop owns availability; the durable machine clock remains authoritative.
       });
-    }, 1000);
+    }, snapshot.activeSale ? 1000 : 5000);
     return () => window.clearInterval(timer);
-  }, [refresh, snapshot?.activeSale?.saleId, snapshot?.activeSale?.retrievalSecondsRemaining]);
+  }, [refresh, Boolean(snapshot), snapshot?.activeSale?.saleId]);
 
   const run = useCallback(async <T,>(name: string, action: () => Promise<T>, onSuccess?: (value: T) => void | Promise<void>) => {
+    if (busyRef.current) return undefined;
+    busyRef.current = true;
     setBusyAction(name);
     setNotice(null);
     try {
@@ -158,6 +204,7 @@ export function App({ api: providedApi }: AppProps) {
       try { await refresh(); } catch { /* reconnect loop owns availability */ }
       return undefined;
     } finally {
+      busyRef.current = false;
       setBusyAction(null);
     }
   }, [refresh]);
@@ -169,7 +216,7 @@ export function App({ api: providedApi }: AppProps) {
         const next = current?.filter((line) => line.doorId !== door.doorId) ?? null;
         return next?.some((line) => line.conflict) ? next : null;
       });
-      setNotice(`Removed unavailable door ${door.doorId}. Choose another gold door to replace it.`);
+      setNotice(`Removed unavailable door ${currentDoorLabel(door.doorId, snapshot.configSchemaVersion, snapshot.machineProfile)}. Choose another gold door to replace it.`);
       return;
     }
     if (!door.productId) return;
@@ -186,10 +233,9 @@ export function App({ api: providedApi }: AppProps) {
     void run("pick", () => api.pickForMe(productId, snapshot.stateVersion), (response) => {
       applySnapshot(response.data);
       const picked = response.data.cart.find((line) => !before.has(line.doorId))?.doorId ?? null;
-      setAnimatedDoorId(picked);
-      if (picked) window.setTimeout(() => setAnimatedDoorId(null), 900);
+      animateDoor(picked);
     });
-  }, [api, applySnapshot, run, snapshot]);
+  }, [animateDoor, api, applySnapshot, run, snapshot]);
 
   const continuePayment = useCallback(() => {
     if (!snapshot?.activeSale || snapshot.activeSale.paymentState !== "NOT_REQUESTED") return;
@@ -231,12 +277,20 @@ export function App({ api: providedApi }: AppProps) {
     void run("retry", () => api.openPaidDoors(saleId, snapshot.stateVersion, key), (response) => applySnapshot(response.data));
   }, [api, applySnapshot, run, snapshot]);
 
+  const cancelPayment = useCallback(() => {
+    if (!snapshot?.activeSale?.cancelAvailable) return;
+    const saleId = snapshot.activeSale.saleId;
+    const key = paymentIdempotencyKey(`cancel-${saleId}`);
+    void run("cancel", () => api.cancelPayment(saleId, snapshot.stateVersion, key), (response) => applySnapshot(response.data));
+  }, [api, applySnapshot, run, snapshot]);
+
   const done = useCallback(() => {
     if (!snapshot?.activeSale) return;
     const saleId = snapshot.activeSale.saleId;
     void run("done", () => api.finishPaidPresentation(saleId, snapshot.stateVersion), (response) => {
       clearPaymentIdempotencyKey(saleId);
       clearPaymentIdempotencyKey(`retry-${saleId}`);
+      clearPaymentIdempotencyKey(`cancel-${saleId}`);
       setConflictCart(null);
       applySnapshot(response.data);
     });
@@ -248,7 +302,7 @@ export function App({ api: providedApi }: AppProps) {
   }, [api, applySnapshot, run, snapshot]);
 
   const serviceGesture = useCallback(() => {
-    if (!snapshot || !mayIdleTimeout(snapshot.publicState) || snapshot.activeSale) return;
+    if (!snapshot || snapshot.activeSale || snapshot.publicState === "UPDATING" || snapshot.publicState === "RESETTING") return;
     const now = Date.now();
     serviceGestureRef.current = [...serviceGestureRef.current.filter((time) => now - time < 6000), now];
     if (serviceGestureRef.current.length >= 10) {
@@ -264,15 +318,13 @@ export function App({ api: providedApi }: AppProps) {
       setStaff(response.data.session);
       setRestock(durable.activeRestock ?? response.data.restock);
       setCertification(durable.activeCertification ?? response.data.certification);
-      setWorkflowResumeRequired(Boolean(
-        durable.activeRestock || (durable.activeCertification && !durable.activeCertification.currentCommand?.observationRecorded),
-      ));
+      setWorkflowResumeRequired(Boolean(durable.activeRestock || durable.activeCertification));
     });
   }, [api, refresh, run, snapshot]);
 
   useEffect(() => {
     if (!snapshot) return;
-    if (staff && (!snapshot.activeStaff || snapshot.activeStaff.locked || snapshot.activeStaff.sessionId !== staff.sessionId)) {
+    if (staff && (!snapshot.activeStaff || snapshot.activeStaff.locked || snapshot.activeStaff.sessionId !== staff.sessionId || snapshot.activeStaff.role !== staff.role || snapshot.activeStaff.userId !== staff.userId)) {
       setStaff(null);
       setHealth(null);
       return;
@@ -294,10 +346,10 @@ export function App({ api: providedApi }: AppProps) {
       setWorkflowResumeRequired(false);
     });
   }, [api, refresh, run, snapshot, staff]);
-  const restockOutcome = useCallback(async (doorId: VaultDoorId, outcome: Exclude<VaultRestockItemState, "UNREVIEWED">) => {
+  const restockOutcome = useCallback(async (doorId: VaultDoorId, outcome: Exclude<VaultRestockItemState, "UNREVIEWED">, notes = "", productFitConfirmed = false) => {
     if (!snapshot || !restock || !staff) return;
     setDoorSafetyEpoch((value) => value + 1);
-    await run("restock", () => api.recordRestockOutcome(restock.id, staff.sessionId, doorId, outcome, snapshot.stateVersion), async () => {
+    await run("restock", () => api.recordRestockOutcome(restock.id, staff.sessionId, doorId, outcome, snapshot.stateVersion, notes, productFitConfirmed), async () => {
       setRestock((current) => current ? {
         ...current,
         status: current.items.every((item) => item.doorId === doorId || item.outcome !== "UNREVIEWED") ? "READY_TO_FINALIZE" : current.status,
@@ -324,16 +376,16 @@ export function App({ api: providedApi }: AppProps) {
       setWorkflowResumeRequired(false);
     });
   }, [api, refresh, run, snapshot, staff]);
-  const certificationEvidence = useCallback(async (outcome: "PASS" | "FAIL" | "CRITICAL", doorId: VaultDoorId | null) => {
+  const certificationEvidence = useCallback(async (outcome: "PASS" | "FAIL" | "CRITICAL", doorId: VaultDoorId | null, observation: CertificationObservation) => {
     if (!snapshot || !staff || !certification?.activeSessionId) return;
     setDoorSafetyEpoch((value) => value + 1);
     const observedAt = new Date().toISOString();
-    const notes = outcome === "CRITICAL" ? "Unexpected or unpaid door reported by supervised operator" : "Supervised kiosk evidence";
-    const controllerObservedDoorId = certification.currentCommand?.observedDoorId ?? null;
+    const notes = observation.notes;
     const evidenceId = crypto.randomUUID();
     const expectedDoorIds = doorId ? [doorId] : [];
-    const observedDoorIds = outcome === "PASS" && doorId ? [doorId] : outcome === "CRITICAL" && controllerObservedDoorId ? [controllerObservedDoorId] : [];
-    const evidenceClass = "FULL_MACHINE";
+    const observedDoorIds = observation.observedDoorIds;
+    if (!certification.adapterMode) return;
+    const evidenceClass = certification.adapterMode === "MOCK" ? "AUTOMATED" : "FULL_MACHINE";
     const evidenceDigest = await sha256Hex(JSON.stringify({
       evidenceId,
       sessionId: certification.activeSessionId,
@@ -373,11 +425,34 @@ export function App({ api: providedApi }: AppProps) {
       setWorkflowResumeRequired(false);
     });
   }, [api, certification, refresh, run, snapshot, staff]);
+  const certificationCycle = useCallback(async (cycleType: "PURCHASE" | "RESTOCK") => {
+    if (!snapshot || !staff || !certification?.activeSessionId) return;
+    setDoorSafetyEpoch((value) => value + 1);
+    await run("certification-cycle", () => api.runCertificationCycle(certification.activeSessionId!, staff.sessionId, cycleType, snapshot.stateVersion), async () => { await refresh(); });
+  }, [api, certification, refresh, run, snapshot, staff]);
   const safeExit = useCallback(async (closed: boolean) => {
     if (!snapshot || !staff) return;
     await run("safe-exit", () => api.safeExit(staff.sessionId, snapshot.stateVersion, closed), (response) => {
       applySnapshot(response.data);
       setStaff(null); setRestock(null); setCertification(null); setHealth(null); setServiceEntry(false); setWorkflowResumeRequired(false);
+    });
+  }, [api, applySnapshot, run, snapshot, staff]);
+
+  const lockService = useCallback(async () => {
+    if (!snapshot || !staff) return;
+    await run("staff-lock", () => api.lockService(staff.sessionId, snapshot.stateVersion), (response) => {
+      applySnapshot(response.data);
+      setStaff(null); setHealth(null);
+    });
+  }, [api, applySnapshot, run, snapshot, staff]);
+
+  const activateEmptyMachineProfile = useCallback(async () => {
+    if (!snapshot?.pendingProfile || !staff) return;
+    const pending = snapshot.pendingProfile;
+    await run("profile-activation", () => api.activateEmptyMachineProfile(staff.sessionId, snapshot.stateVersion, pending.version, pending.digest), (response) => {
+      applySnapshot(response.data);
+      setStaff(null); setHealth(null); setRestock(null); setCertification(null);
+      setDoorSafetyEpoch((value) => value + 1);
     });
   }, [api, applySnapshot, run, snapshot, staff]);
 
@@ -398,10 +473,11 @@ export function App({ api: providedApi }: AppProps) {
 
   const totals = calculateCartTotals(customerCart, snapshot.taxRateBasisPoints);
   const violation = providerLimitViolation(customerCart, totals.totalCents, snapshot.providerLimits);
-  const interactionDisabled = busyAction !== null || !connected || snapshot.serviceLocked;
+  const layoutAvailable = snapshot.configSchemaVersion === 1 || snapshot.configSchemaVersion === 2 && snapshot.machineProfile !== null;
+  const interactionDisabled = busyAction !== null || !connected || snapshot.serviceLocked || !layoutAvailable;
   const location = snapshot.city && snapshot.state ? `${snapshot.city}, ${snapshot.state}` : "Ten Kings Vault";
   const durableStaff = snapshot.activeStaff ?? null;
-  const authorizedStaff = staff && durableStaff && !durableStaff.locked && durableStaff.sessionId === staff.sessionId ? staff : null;
+  const authorizedStaff = staff && durableStaff && !durableStaff.locked && durableStaff.sessionId === staff.sessionId && durableStaff.role === staff.role && durableStaff.userId === staff.userId ? staff : null;
   const serviceRecoveryRequired = snapshot.serviceLocked && !authorizedStaff;
   const showServiceEntry = (serviceEntry || serviceRecoveryRequired) && !authorizedStaff;
   const showCustomerSale = Boolean(snapshot.activeSale) && (
@@ -424,18 +500,22 @@ export function App({ api: providedApi }: AppProps) {
       {authorizedStaff && (
         <StaffPortal
           staff={authorizedStaff} restock={restock} certification={certification} health={health} buildIdentity={snapshot.buildIdentity}
-          busy={busyAction !== null} error={notice} doorSafetyEpoch={doorSafetyEpoch} workflowResumeRequired={workflowResumeRequired}
+          busy={busyAction !== null || !connected} error={notice} doorSafetyEpoch={doorSafetyEpoch} workflowResumeRequired={workflowResumeRequired}
           onLoadHealth={loadHealth} onStartRestock={startRestock} onRestockOutcome={restockOutcome}
           onFinalizeRestock={finalizeRestock} onStartCertification={startCertification}
           onCertificationEvidence={certificationEvidence} onSubmitCertification={submitCertification}
+          onCertificationCycle={certificationCycle}
           onResumeWorkflow={resumeServiceWorkflow} onSafeExit={safeExit}
+          pendingProfile={snapshot.pendingProfile ?? null} onActivateProfile={activateEmptyMachineProfile} onLockService={lockService}
         />
       )}
-      {!showServiceEntry && !authorizedStaff && !snapshot.serviceLocked && showCustomerSale && (
-        <PaidFlow
+      {!showServiceEntry && !authorizedStaff && !snapshot.serviceLocked && showCustomerSale && (<>
+        {notice && <p className="global-notice" role="alert">{notice}</p>}
+        <PaidFlow disabled={!connected || busyAction !== null}
           snapshot={snapshot} retryBusy={busyAction === "retry"} paymentBusy={busyAction === "payment"}
           doneBusy={busyAction === "done"} onContinuePayment={continuePayment} onOpenDoors={openDoors} onDone={done}
-        />
+          onCancelPayment={cancelPayment}
+        /></>
       )}
       {!showServiceEntry && !authorizedStaff && !snapshot.serviceLocked && !showCustomerSale && SHOPPING_STATES.has(snapshot.publicState) && (
         <main className="customer-shopping">
@@ -443,10 +523,11 @@ export function App({ api: providedApi }: AppProps) {
           {notice && <p className="global-notice" role="alert">{notice}</p>}
           <ProductRail
             products={snapshot.products} doors={displayDoors} selectedProductId={selectedProductId}
-            disabled={interactionDisabled} onSelect={setSelectedProductId} onPick={pickForMe} pickBusy={busyAction === "pick"}
+            disabled={interactionDisabled} onSelect={setSelectedProductId} onPick={pickForMe} pickBusy={busyAction === "pick"} animationBusy={animatedDoorId !== null}
           />
           <div className="shopping-workspace">
             <DoorMap
+              configSchemaVersion={snapshot.configSchemaVersion} machineProfile={snapshot.machineProfile}
               doors={displayDoors} selectedProductId={selectedProductId} disabled={interactionDisabled}
               animatedDoorId={animatedDoorId} onToggle={toggleDoor}
             />
@@ -455,6 +536,7 @@ export function App({ api: providedApi }: AppProps) {
               taxLabel={snapshot.city && snapshot.state ? `Tax · ${snapshot.city}, ${snapshot.state}` : "Tax"}
               providerViolation={violation} disabled={interactionDisabled} busy={busyAction === "checkout"}
               onRemove={(line) => { const door = displayDoors.find((candidate) => candidate.doorId === line.doorId); if (door) toggleDoor(door); }}
+              onFocus={(line) => { setSelectedProductId(line.productId); animateDoor(line.doorId); }}
               onCheckout={checkout}
             />
           </div>
