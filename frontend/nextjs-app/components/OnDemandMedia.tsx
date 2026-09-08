@@ -30,11 +30,15 @@ export default function OnDemandMedia({
     const observer = new IntersectionObserver(([entry]) => {
       if (!entry?.isIntersecting) stop();
     });
-    if (frame.current) observer.observe(frame.current);
+    const element = frame.current;
+    if (element) observer.observe(element);
+    // Mux forwards a composed but non-bubbling event across its shadow roots.
+    element?.addEventListener("ended", stop, true);
     window.addEventListener(PLAY_EVENT, handlePlay);
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       observer.disconnect();
+      element?.removeEventListener("ended", stop, true);
       window.removeEventListener(PLAY_EVENT, handlePlay);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
@@ -63,7 +67,7 @@ export default function OnDemandMedia({
   };
 
   return (
-    <div ref={frame} className="absolute inset-0" onEnded={() => setSelectedSource(null)}>
+    <div ref={frame} className="absolute inset-0">
       {active ? (
         <>
           {children}

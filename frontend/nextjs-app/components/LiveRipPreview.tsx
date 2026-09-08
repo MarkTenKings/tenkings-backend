@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import MuxPlayer from "@mux/mux-player-react";
 import OnDemandMedia from "./OnDemandMedia";
+import { loadYouTubeIframeApi, type YouTubePlayer } from "../lib/youtubeIframeApi";
 
 type ParsedMedia =
   | { type: "youtube"; id: string; embedUrl: string }
@@ -60,6 +61,7 @@ const parseMedia = (videoUrl: string): ParsedMedia => {
           rel: "0",
           playsinline: "1",
           enablejsapi: "1",
+          ...(typeof window !== "undefined" ? { origin: window.location.origin } : {}),
         });
         return {
           type: "youtube",
@@ -131,10 +133,17 @@ function LiveRipPlayer({
   const media = useMemo(() => parseMedia(videoUrl), [videoUrl]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const youtubeRef = useRef<YouTubePlayer | null>(null);
+  const latestMuted = useRef(muted);
   const hlsInstanceRef = useRef<any | null>(null);
 
   useEffect(() => {
+    latestMuted.current = muted;
     if (videoRef.current) videoRef.current.muted = muted;
+    if (youtubeRef.current) {
+      if (muted) youtubeRef.current.mute();
+      else youtubeRef.current.unMute();
+    }
   }, [muted]);
 
   useEffect(() => {
@@ -195,25 +204,36 @@ function LiveRipPlayer({
   }, [media]);
 
   useEffect(() => {
-    if (media.type !== "youtube" || !iframeRef.current?.contentWindow) {
+    if (isMuxPlayback || media.type !== "youtube" || !iframeRef.current) {
       return;
     }
     const frame = iframeRef.current;
-    const send = (func: string, args: unknown[] = []) => {
-      frame.contentWindow?.postMessage(
-        JSON.stringify({ event: "command", func, args }),
-        "*"
-      );
+    let disposed = false;
+    let player: YouTubePlayer | undefined;
+    const stop = () => {
+      if (!disposed) frame.dispatchEvent(new Event("ended"));
     };
-    const timer = window.setTimeout(() => {
-      if (muted) {
-        send("mute");
-      } else {
-        send("unMute");
-      }
-    }, 200);
-    return () => window.clearTimeout(timer);
-  }, [muted, media]);
+    loadYouTubeIframeApi().then((api) => {
+      if (disposed) return;
+      if (!api) { stop(); return; }
+      player = new api.Player(frame, { events: {
+        onReady: ({ target }) => {
+          if (disposed) return;
+          youtubeRef.current = target;
+          if (target.getPlayerState() === 0) { stop(); return; }
+          if (latestMuted.current) target.mute();
+          else target.unMute();
+        },
+        onStateChange: ({ data }) => { if (data === 0) stop(); },
+      } });
+    }).catch(stop);
+    return () => {
+      disposed = true;
+      youtubeRef.current = null;
+      try { player?.destroy(); } catch { /* The iframe may already be disconnected. */ }
+      frame.removeAttribute("src");
+    };
+  }, [isMuxPlayback, media]);
 
   const renderMedia = () => {
     if (muxPlaybackId) {

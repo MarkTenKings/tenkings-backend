@@ -98,7 +98,7 @@ test("preview lifecycle never mounts media until deliberate visible play and rel
     await click("Close First");
     assert.equal(container.querySelectorAll("video").length, 0);
     await click("Play First");
-    await act(() => container.querySelector("video")!.dispatchEvent(new dom.window.Event("ended", { bubbles: true })));
+    await act(() => container.querySelector("video")!.dispatchEvent(new dom.window.Event("ended")));
     assert.equal(container.querySelectorAll("video").length, 0, "ended previews do not loop");
     await click("Play First");
     const last = container.querySelector("video")!;
