@@ -12921,3 +12921,7 @@ The saved controller/payment certification identities now determine `observation
 ## 2026-09-07 - Vault PR CI image-base correction
 
 PR #339 was normally pushed after all three exact-head independent reviews cleared `93adc3dc`. Vault/whole-repository build and tests plus protected Speedster frontend checks passed. Seven inherited Docker image jobs failed because Debian Bullseye security metadata expired after LTS ended. The narrow correction changes their Debian base to Bookworm while keeping Node20, pnpm9.12, application code and package verification intact. Final head must be independently reviewed and all PR checks rerun; no image deployment or service restart is authorized.
+
+## 2026-09-07 - V72 CAD review source integrated
+
+The completed V72 Centered R01 model/archive were read and independently hashed; bindings are in `docs/vault-v1/MACHINE_PROFILES.md`. The model is an inch-based dimensional review with 72 null stable software IDs and null controller mappings. It is not an executable profile, qualified pulse/mapping, installed geometry or fabrication release. Software fixtures remain synthetic. The final software/CI review includes this documentation-only handoff.
