@@ -42,7 +42,7 @@ export function fixtureEvidence() {
 }
 
 /** Elevated seeding is only used by the owned disposable fixture, never HTTP. */
-export async function seedLocalStaff(admin, config, { identities: seedIdentities = true, analyses = false, trained = false } = {}) {
+export async function seedLocalStaff(admin, config, { identities: seedIdentities = true, analyses = false, trained = false, traces = false } = {}) {
     if (config.mode !== 'LOCAL_FIXTURE') throw new Error('FIXTURE_ONLY');
     const now = new Date();
     const identities = [];
@@ -65,7 +65,7 @@ export async function seedLocalStaff(admin, config, { identities: seedIdentities
             const analysisRevision = analyses && sides.FRONT && sides.BACK ? 1 : 0;
             await tx.staffSpecimen.create({ data: { id, sourceType: 'LOCAL_FIXTURE', sourceId: sample.id,
                 title: sample.title, subtitle: sample.set, evidenceCanonical, evidenceHash, analysisRevision } });
-            if (analysisRevision) await tx.staffAnalysisRevision.create({ data: { specimenId: id, ...fixtureAnalysis(sample, evidenceHash) } });
+            if (analysisRevision) await tx.staffAnalysisRevision.create({ data: { specimenId: id, ...fixtureAnalysis(sample, evidenceHash, { traces }) } });
             const draft = { ...sample.draft, evidenceHash };
             const content = canonical(draft);
             await tx.staffReviewRevision.create({ data: { specimenId: id, revision: 1, evidenceRevision: 1, analysisRevision,

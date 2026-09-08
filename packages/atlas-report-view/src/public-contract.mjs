@@ -4,6 +4,9 @@ import { z } from 'zod';
 const text = z.string().min(1).max(160), optionalText = z.string().max(120).nullable();
 const findingReference = z.string().min(1).max(180);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
+export const approvedImageMetadataSchema = z.strictObject({ sha256: hash, byteCount: z.number().int().min(1).max(50 * 1024 * 1024),
+    width: z.number().int().min(1).max(20_000), height: z.number().int().min(1).max(20_000),
+    contentType: z.enum(['image/webp', 'image/jpeg', 'image/png', 'image/svg+xml']) });
 const score = z.number().min(0).max(10), positive = z.number().min(0);
 const balance = z.tuple([z.number().min(0).max(100), z.number().min(0).max(100)]);
 const damage = z.strictObject({ score, weightedDamagePercent: positive });
@@ -31,13 +34,15 @@ const report = z.strictObject({ version: z.literal('atlas-graded-report-v1'), ru
 export const publicReportSchema = z.strictObject({ version: z.literal('atlas-public-report-v1'),
     publicToken: z.string().regex(/^ar_[A-Za-z0-9_-]{24}$/), reportNumber: z.string().regex(/^ATLAS-[A-F0-9]{12}$/),
     approvalVersion: z.number().int().positive().max(2147483647), approvedAt: z.iso.datetime(),
-    mode: z.enum(['PRODUCTION', 'LOCAL_FIXTURE']), evidenceHash: hash, analysisHash: hash, report });
+    mode: z.enum(['PRODUCTION', 'LOCAL_FIXTURE']), evidenceHash: hash, analysisHash: hash, report,
+    images: z.strictObject({ FRONT: approvedImageMetadataSchema, BACK: approvedImageMetadataSchema }).optional() });
 
 export function parsePublicReport(value) {
     const parsed = publicReportSchema.parse(value);
     if (parsed.report.findingCounts.included !== parsed.report.findings.length
         || new Set(parsed.report.findings.map(f => f.id)).size !== parsed.report.findings.length
-        || (parsed.report.cardProfile === 'SPORTS') !== Object.hasOwn(parsed.report.identity, 'playerName'))
+        || (parsed.report.cardProfile === 'SPORTS') !== Object.hasOwn(parsed.report.identity, 'playerName')
+        || (parsed.mode === 'PRODUCTION' && parsed.images && Object.values(parsed.images).some(i => i.contentType === 'image/svg+xml')))
         throw new Error('PUBLIC_REPORT_INVALID');
     return parsed;
 }

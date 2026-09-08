@@ -6,7 +6,8 @@
   "exports": {
     "./GradedReport": "./src/GradedReport.jsx",
     "./styles.css": "./src/report.css",
-    "./public-contract": "./src/public-contract.mjs"
+    "./public-contract": "./src/public-contract.mjs",
+    "./fixture-artwork": "./src/fixture-artwork.mjs"
   },
   "dependencies": {
     "zod": "4.1.11"

@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
+import { bridgeOrigin, keyBytes } from '@atlas/service-bridge/protocol';
 export const PUBLIC_ORIGIN = 'https://atlasgrading.com';
 export const LOCAL_ORIGIN = 'http://127.0.0.1:4319';
 export const digest = value => createHash('sha256').update(value).digest('hex');
 export function unavailable() { throw new Error('PUBLIC_REPORTS_UNAVAILABLE'); }
 export function makePublicConfig(input) {
     return Object.freeze({ ...input, configHash: digest(JSON.stringify({ version: 'atlas-public-reader-v1',
-        mode: input.mode, origin: input.origin, databaseBindingHash: digest(input.databaseUrl) })) });
+        mode: input.mode, origin: input.origin, databaseBindingHash: digest(input.databaseUrl),
+        mediaOrigin: input.mediaOrigin ?? null, mediaKeyHash: input.mediaKey ? digest(input.mediaKey) : null })) });
 }
 export function productionConfig(env) {
     if (env.NODE_ENV !== 'production' || env.VERCEL_ENV !== 'production' || env.ATLAS_PUBLIC_RUNTIME !== 'postgres'
@@ -15,7 +17,8 @@ export function productionConfig(env) {
     if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.searchParams.get('schema') !== 'atlas_staff'
         || url.searchParams.get('sslmode') !== 'require' || !url.username || !url.password || url.pathname.length < 2) unavailable();
     return makePublicConfig({ mode: 'PRODUCTION', origin: PUBLIC_ORIGIN, deploymentId: env.VERCEL_URL,
-        releaseSha: env.VERCEL_GIT_COMMIT_SHA, databaseUrl: url.href });
+        releaseSha: env.VERCEL_GIT_COMMIT_SHA, databaseUrl: url.href,
+        mediaOrigin: bridgeOrigin(env.ATLAS_PUBLIC_MEDIA_ORIGIN), mediaKey: keyBytes(env.ATLAS_PUBLIC_MEDIA_KEY) });
 }
 export function assertPublicRequest(req, config) {
     if (!['GET', 'HEAD'].includes(req.method) || req.headers.authorization) unavailable();

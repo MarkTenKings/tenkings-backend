@@ -1,8 +1,10 @@
 import { unavailable } from './policy.mjs';
 export const PUBLIC_READER_FUNCTION = 'read_approved_report(text, integer, text, text, text)';
+export const PUBLIC_READER_FUNCTIONS = new Set([PUBLIC_READER_FUNCTION,
+    'read_approved_image(text, integer, text, text, text, text)', 'read_approved_trace(text, integer, text, text, text, text)']);
 export function publicGrantSQL(role) {
     if (!/^[a-z][a-z0-9_]{0,62}$/.test(role)) unavailable();
-    return `GRANT USAGE ON SCHEMA atlas_staff TO "${role}"; GRANT EXECUTE ON FUNCTION atlas_staff.${PUBLIC_READER_FUNCTION} TO "${role}";`;
+    return `GRANT USAGE ON SCHEMA atlas_staff TO "${role}";\n` + [...PUBLIC_READER_FUNCTIONS].map(fn => `GRANT EXECUTE ON FUNCTION atlas_staff.${fn} TO "${role}";`).join('\n');
 }
 export async function assertPublicPrivileges(tx) {
     const [role] = await tx.$queryRaw`SELECT r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolbypassrls
@@ -22,6 +24,6 @@ export async function assertPublicPrivileges(tx) {
       AND NOT (NOT p.prosecdef AND p.probin='$libdir/uuid-ossp' AND EXISTS (SELECT 1 FROM pg_depend d JOIN pg_extension e ON e.oid=d.refobjid
         WHERE d.classid='pg_proc'::regclass AND d.objid=p.oid AND d.refclassid='pg_extension'::regclass AND d.deptype='e' AND e.extname='uuid-ossp'))
       AND has_function_privilege(current_user,p.oid,'EXECUTE')`;
-    if (schemas.length || columns.length || sequences.length || functions.length !== 1
-        || functions[0].schema !== 'atlas_staff' || functions[0].name !== PUBLIC_READER_FUNCTION) unavailable();
+    if (schemas.length || columns.length || sequences.length || functions.length !== PUBLIC_READER_FUNCTIONS.size
+        || functions.some(fn => fn.schema !== 'atlas_staff' || !PUBLIC_READER_FUNCTIONS.has(fn.name))) unavailable();
 }

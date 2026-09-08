@@ -25,12 +25,13 @@ try {
         assert(server.exitCode === null && Date.now() < deadline, 'Owned bridge denial server failed to start'); await delay(50);
     }
     let checks = 0;
+    for (const [path, error] of [['bridge', 'ATLAS_BRIDGE_UNAVAILABLE'], ['public-media', 'ATLAS_PUBLIC_IMAGE_UNAVAILABLE']])
     for (const request of [{ method: 'GET' }, { method: 'POST', body: '{}' },
         { method: 'POST', body: '{}', headers: { Cookie: 'adminSession=not-authority', Authorization: 'Bearer not-authority' } },
         { method: 'POST', body: '{}', headers: { 'x-atlas-signature': 'f'.repeat(64), Host: 'app.atlasgrading.com' } }]) {
-        const response = await fetch(`http://127.0.0.1:${port}/api/internal/atlas/bridge`, { redirect: 'manual', ...request,
+        const response = await fetch(`http://127.0.0.1:${port}/api/internal/atlas/${path}`, { redirect: 'manual', ...request,
             headers: { 'Content-Type': 'application/json', ...request.headers } });
-        assert.equal(response.status, 503); assert.deepEqual(await response.json(), { error: 'ATLAS_BRIDGE_UNAVAILABLE' });
+        assert.equal(response.status, 503); assert.deepEqual(await response.json(), { error });
         assert.match(response.headers.get('cache-control'), /no-store/); assert.equal(response.headers.get('set-cookie'), null); checks++;
     }
     console.log(JSON.stringify({ status: 'BUILT_ATLAS_BRIDGE_DENIAL_PASS', checks, cookiesIssued: 0, liveProviderConfiguration: false }));

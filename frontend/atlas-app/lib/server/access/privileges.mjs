@@ -18,6 +18,7 @@ export const STAFF_GRANTS = Object.freeze({
     StaffAnalysisRevision: {},
     StaffGradingOperation: { INSERT: '*', UPDATE: ['state', 'dispatchedAt', 'finishedAt', 'resultAnalysisRevision', 'failureCode'] },
     StaffReportApproval: { INSERT: '*' },
+    StaffApprovedImage: { INSERT: '*' },
     StaffPublicReport: { INSERT: '*', UPDATE: ['currentApprovalId'] },
 });
 const FUNCTIONS = new Set(['lock_control()', 'lock_assignment(uuid, uuid)']);

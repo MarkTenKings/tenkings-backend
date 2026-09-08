@@ -1,5 +1,6 @@
 import Head from 'next/head';
 import GradedReport from '@atlas/report-view/GradedReport';
+import ApprovedPhotographs from '../../components/ApprovedPhotographs';
 import { publicHeaders, reportSelector } from '../../lib/server/policy.mjs';
 import { runtime } from '../../lib/server/runtime.mjs';
 export async function getServerSideProps(ctx) {
@@ -21,6 +22,7 @@ export default function Report({ packet, publicHash, unavailable }) {
         <section className="card-heading"><p className="eyebrow">HUMAN-APPROVED REPORT</p><h1>{identity.playerName ?? identity.cardName}</h1>
             <p className="muted">{[identity.year, identity.manufacturer, identity.productSet, identity.parallel, identity.insert, identity.cardNumber].filter(Boolean).join(' · ')}</p></section>
         <GradedReport report={packet.report} approved synthetic={packet.mode === 'LOCAL_FIXTURE'}/>
+        <ApprovedPhotographs packet={packet} publicHash={publicHash}/>
         <footer className="report-footer"><p>Approved {new Date(packet.approvedAt).toISOString().slice(0, 10)} · Version {packet.approvalVersion}</p>
             <p>This page records the approved grading report. NFC and physical slab finishing are separate steps.</p>
             <details><summary>Report reference</summary><p>{publicHash}</p></details></footer>

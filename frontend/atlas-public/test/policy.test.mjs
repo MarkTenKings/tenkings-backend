@@ -3,15 +3,18 @@ import test from 'node:test';
 import { productionConfig, assertPublicRequest, reportSelector, PUBLIC_ORIGIN } from '../lib/server/policy.mjs';
 const env = { NODE_ENV: 'production', VERCEL_ENV: 'production', ATLAS_PUBLIC_RUNTIME: 'postgres', ATLAS_PUBLIC_ORIGIN: PUBLIC_ORIGIN,
     VERCEL_URL: 'atlas-public-release.vercel.app', VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40),
-    ATLAS_PUBLIC_DATABASE_URL: 'postgresql://public:fixture@db.example/report?schema=atlas_staff&sslmode=require' };
+    ATLAS_PUBLIC_DATABASE_URL: 'postgresql://public:fixture@db.example/report?schema=atlas_staff&sslmode=require',
+    ATLAS_PUBLIC_MEDIA_ORIGIN: 'https://bridge.example.test', ATLAS_PUBLIC_MEDIA_KEY: Buffer.alloc(32, 4).toString('base64') };
 const request = () => ({ method: 'GET', headers: { host: 'atlasgrading.com', 'x-forwarded-host': 'atlasgrading.com', 'x-forwarded-proto': 'https' } });
 test('public deployment configuration requires exact host, environment, release and dedicated DB', () => {
     const config = productionConfig(env); assert.equal(config.mode, 'PRODUCTION');
     for (const change of [{ NODE_ENV: 'development' }, { VERCEL_ENV: 'preview' }, { ATLAS_LOCAL_PUBLIC: '1' },
         { ATLAS_LOCAL_POSTGRES_FILE: '/tmp/config' }, { ATLAS_PUBLIC_ORIGIN: 'https://app.atlasgrading.com' },
-        { VERCEL_URL: 'unknown.example' }, { VERCEL_GIT_COMMIT_SHA: '' }, { ATLAS_PUBLIC_DATABASE_URL: 'postgresql://a:b@db.example/public' }])
+        { VERCEL_URL: 'unknown.example' }, { VERCEL_GIT_COMMIT_SHA: '' }, { ATLAS_PUBLIC_DATABASE_URL: 'postgresql://a:b@db.example/public' },
+        { ATLAS_PUBLIC_MEDIA_ORIGIN: 'http://bridge.example.test' }, { ATLAS_PUBLIC_MEDIA_KEY: '' }])
         assert.throws(() => productionConfig({ ...env, ...change }));
     assert.notEqual(productionConfig({ ...env, ATLAS_PUBLIC_DATABASE_URL: env.ATLAS_PUBLIC_DATABASE_URL.replace('fixture', 'rotated') }).configHash, config.configHash);
+    assert.notEqual(productionConfig({ ...env, ATLAS_PUBLIC_MEDIA_KEY: Buffer.alloc(32, 5).toString('base64') }).configHash, config.configHash);
 });
 test('only exact apex GET/HEAD requests can read; machine headers and writes never borrow public authority', () => {
     const config = productionConfig(env); assert.doesNotThrow(() => assertPublicRequest(request(), config));

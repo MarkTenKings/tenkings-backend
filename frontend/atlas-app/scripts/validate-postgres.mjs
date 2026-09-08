@@ -13,6 +13,8 @@ import { StaffReports } from '../lib/server/access/reports.mjs';
 import { PublicReportReader } from '../../atlas-public/lib/server/reader.mjs';
 import { makePublicConfig, LOCAL_ORIGIN as PUBLIC_LOCAL_ORIGIN } from '../../atlas-public/lib/server/policy.mjs';
 import { parsePublicReport } from '@atlas/report-view/public-contract';
+import { fixtureArtwork } from '@atlas/report-view/fixture-artwork';
+import { decodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
 import { canonical } from '../lib/server/review-contract.mjs';
 import { hash } from '../lib/server/policy.mjs';
 import { bridgeFixture, gradingInput } from './bridge-fixture.mjs';
@@ -21,13 +23,13 @@ const fixture = await disposablePostgres(process.argv.slice(2));
 const results = [], clients = new Set();
 const check = (code, action) => assert.rejects(action, error => error.code === code, code);
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
-async function scenario(name, work, { emptyRoster = false, analyses = false, trained = false } = {}) {
+async function scenario(name, work, { emptyRoster = false, analyses = false, trained = false, traces = false } = {}) {
     const db = await fixture.database();
     const admin = new PrismaClient({ datasources: { db: { url: db.adminUrl } } });
     const client = new PrismaClient({ datasources: { db: { url: db.staffUrl } } });
     clients.add(admin); clients.add(client);
     const config = localAccessConfig({ databaseUrl: db.staffUrl, sessionKey: randomBytes(32), phoneKey: randomBytes(32) });
-    const identities = await seedLocalStaff(admin, config, { identities: !emptyRoster, analyses, trained });
+    const identities = await seedLocalStaff(admin, config, { identities: !emptyRoster, analyses, trained, traces });
     const makeAuth = (provider = fixtureVerifyProvider(config)) => new DurableStaffAuth({ config, database: new StaffDatabase(client, config), provider });
     const auth = makeAuth();
     const casesql = (sql, values) => fixture.sql(sql, values, db.name);
@@ -73,7 +75,8 @@ async function withPublicReader(context, work) {
     const { databaseUrl, ...activation } = config;
     await context.admin.publicReaderControl.create({ data: { ...activation, enabled: true } });
     const client = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
-    try { await work({ client, config, reader: new PublicReportReader(client, config) }); }
+    try { await work({ client, config, reader: new PublicReportReader(client, config,
+        { async read(_reference, descriptor) { return fixtureArtwork(descriptor.sourceRef); } }) }); }
     finally { await client.$disconnect(); }
 }
 
@@ -406,6 +409,73 @@ try {
             await assert.rejects(() => reader.read({ token: 'ar_000000000000000000000000', version: null }));
         });
     });
+    await scenario('approved photographs bind exact bytes and historical versions without exposing private references', async context => {
+        const { signed, reports, review, ready } = await readyReport(context);
+        const first = await reports.approve(signed.staff, ready.id, approvalInput(ready));
+        const token = first.card.grading.published.publicToken;
+        await withPublicReader(context, async ({ reader, client }) => {
+            const published = await reader.read({ token, version: 1 });
+            assert(!JSON.stringify(published).includes('sourceRef')); assert(!JSON.stringify(published).includes('sample-00'));
+            const retained = {};
+            for (const side of ['FRONT', 'BACK']) {
+                const image = await reader.image({ token, version: 1, side });
+                assert.equal(image.contentType, 'image/svg+xml'); assert.equal(hash(image.bytes), published.packet.images[side].sha256);
+                assert.equal(image.bytes.length, published.packet.images[side].byteCount); retained[side] = image;
+            }
+            assert.equal(await reader.image({ token, version: 2, side: 'FRONT' }), null);
+            assert.equal(await reader.image({ token, version: null, side: 'FRONT' }), null);
+            assert.equal(await reader.image({ token, version: 1, side: 'ORIGINAL' }), null);
+            await assert.rejects(() => client.$queryRaw`SELECT * FROM atlas_staff."StaffApprovedImage"`);
+            await assert.rejects(() => context.admin.staffApprovedImage.update({ where: { approvalId_side: { approvalId: first.approval.approvalId, side: 'FRONT' } }, data: { descriptorHash: 'f'.repeat(64) } }));
+            const updated = await review.save(signed.staff, ready.id, draft(first.card, { observations: { FRONT: 'private later draft', BACK: '' },
+                disposition: 'READY_FOR_HUMAN', reviewedSides: ['FRONT', 'BACK'], identityReviewed: true }));
+            await reports.approve(signed.staff, ready.id, approvalInput(updated));
+            assert.equal((await reader.read({ token, version: null })).packet.approvalVersion, 2);
+            for (const side of ['FRONT', 'BACK']) assert.deepEqual(await reader.image({ token, version: 1, side }), retained[side]);
+            assert.equal(await context.admin.staffApprovedImage.count(), 4);
+        });
+    }, { analyses: true, trained: true });
+    await scenario('approved image storage corruption and access revocation during a read fail closed', async context => {
+        const { signed, reports, ready } = await readyReport(context);
+        const approved = await reports.approve(signed.staff, ready.id, approvalInput(ready));
+        const selector = { token: approved.card.grading.published.publicToken, version: 1, side: 'FRONT' };
+        await withPublicReader(context, async ({ client, config }) => {
+            const corrupted = new PublicReportReader(client, config, { async read() { return Buffer.from('changed image'); } });
+            await assert.rejects(() => corrupted.image(selector));
+            const revoked = new PublicReportReader(client, config, { async read(_reference, descriptor) {
+                await context.admin.publicReaderControl.update({ where: { id: 'active' }, data: { enabled: false, revision: { increment: 1 } } });
+                return fixtureArtwork(descriptor.sourceRef);
+            } });
+            await assert.rejects(() => revoked.image(selector));
+        });
+    }, { analyses: true, trained: true });
+    await scenario('image substitution or insertion failure rolls back the entire human approval and permanent public identity', async context => {
+        const { signed, reports, ready } = await readyReport(context);
+        await context.sql(`CREATE FUNCTION atlas_staff.fixture_reject_image() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+          NEW."descriptorCanonical":=replace(NEW."descriptorCanonical",'sample-00','substituted-00');
+          NEW."descriptorHash":=encode(sha256(convert_to(NEW."descriptorCanonical",'UTF8')),'hex'); RETURN NEW; END; $$;
+          CREATE TRIGGER fixture_reject_image BEFORE INSERT ON atlas_staff."StaffApprovedImage" FOR EACH ROW EXECUTE FUNCTION atlas_staff.fixture_reject_image()`);
+        await assert.rejects(() => reports.approve(signed.staff, ready.id, approvalInput(ready)));
+        assert.equal(await context.admin.staffReportApproval.count(), 0); assert.equal(await context.admin.staffPublicReport.count(), 0);
+        assert.equal(await context.admin.staffApprovedImage.count(), 0);
+        await context.sql(`CREATE OR REPLACE FUNCTION atlas_staff.fixture_reject_image() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected image insert failure'; END; $$`);
+        await assert.rejects(() => reports.approve(signed.staff, ready.id, approvalInput(ready)));
+        assert.equal(await context.admin.staffReportApproval.count(), 0); assert.equal(await context.admin.staffPublicReport.count(), 0);
+    }, { analyses: true, trained: true });
+    await scenario('public traces contain only approved pixels and never removed findings or private provenance', async context => {
+        const { signed, reports, ready } = await readyReport(context);
+        const approved = await reports.approve(signed.staff, ready.id, approvalInput(ready));
+        const selector = { token: approved.card.grading.published.publicToken, version: 1, findingId: 'FRONT:fixture-1:SURFACE' };
+        await withPublicReader(context, async ({ reader }) => {
+            const result = await reader.trace(selector), report = await reader.read(selector);
+            assert.equal(result.publicHash, report.publicHash); assert.equal(result.side, 'FRONT');
+            assert.equal(result.traceWire.rleSha256, report.packet.report.findings[0].traceSha256);
+            assert.equal(decodeSpeedsterTraceBitmapWireV1(result.traceWire).reduce((sum, n) => sum + n, 0), 400);
+            assert.deepEqual(Object.keys(result).sort(), ['publicHash', 'side', 'traceWire']);
+            for (const change of [{ findingId: 'FRONT:fixture-private-removed:SURFACE' }, { findingId: 'unknown' }, { version: 2 }, { version: null }])
+                assert.equal(await reader.trace({ ...selector, ...change }), null);
+        });
+    }, { analyses: true, trained: true, traces: true });
     await scenario('public revocation blocks retained clients and production mode never serves synthetic approvals', async context => {
         const { signed, reports, ready } = await readyReport(context);
         const result = await reports.approve(signed.staff, ready.id, approvalInput(ready));

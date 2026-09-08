@@ -102,15 +102,23 @@ export class StaffReports {
             const publicToken = existing?.publicToken ?? `ar_${randomBytes(18).toString('base64url')}`;
             const reportNumber = existing?.reportNumber ?? `ATLAS-${randomBytes(6).toString('hex').toUpperCase()}`;
             const final = finalizeAtlasReportContent(analysis.source);
+            const descriptors = this.review.evidenceRecord(card).sides;
+            const images = Object.fromEntries(['FRONT', 'BACK'].map(side => {
+                const { sourceRef, ...metadata } = descriptors[side]; return [side, metadata];
+            }));
             const published = { version: 'atlas-public-report-v1', publicToken, reportNumber, approvalVersion: version,
                 approvedAt: now.toISOString(), mode: analysis.row.mode, evidenceHash: card.evidenceHash, analysisHash: analysis.row.sourceHash,
-                report: projectedReport(final, 'APPROVED') };
+                report: projectedReport(final, 'APPROVED'), images };
             const publicCanonical = canonical(parsePublicReport(published)), approvalId = randomUUID();
             const approval = await tx.staffReportApproval.create({ data: { id: approvalId, specimenId: cardId, version,
                 analysisRevision: card.analysisRevision, reviewRevision: card.draftRevision, evidenceHash: card.evidenceHash,
                 analysisHash: analysis.row.sourceHash, reviewHash: reviewRow.contentHash, publicCanonical, publicHash: hash(publicCanonical),
                 actorId: identity.id, sessionHash: session.tokenHash, accessVersion: identity.accessVersion, assignmentFence: assignment.fence,
                 controlRevision: control.revision, operationId: input.operationId, inputHash, approvedAt: now } });
+            for (const side of ['FRONT', 'BACK']) {
+                const descriptorCanonical = canonical(descriptors[side]);
+                await tx.staffApprovedImage.create({ data: { approvalId, side, descriptorCanonical, descriptorHash: hash(descriptorCanonical) } });
+            }
             if (existing) await tx.staffPublicReport.update({ where: { specimenId: cardId }, data: { currentApprovalId: approvalId } });
             else await tx.staffPublicReport.create({ data: { specimenId: cardId, publicToken, reportNumber, currentApprovalId: approvalId, createdAt: now } });
             await this.auth.audit(tx, 'ATLAS_REPORT_APPROVED', cardId, identity.id, { approvalId, version,

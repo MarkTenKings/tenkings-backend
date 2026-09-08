@@ -6,7 +6,8 @@
   "exports": {
     "./protocol": { "types": "./src/protocol.d.mts", "default": "./src/protocol.mjs" },
     "./transport": { "types": "./src/transport.d.mts", "default": "./src/transport.mjs" },
-    "./executor": { "types": "./src/executor.d.mts", "default": "./src/executor.mjs" }
+    "./executor": { "types": "./src/executor.d.mts", "default": "./src/executor.mjs" },
+    "./public-media": { "types": "./src/public-media.d.mts", "default": "./src/public-media.mjs" }
   },
   "dependencies": { "@atlas/grading-core": "workspace:*" },
   "scripts": { "test": "node --test test/*.test.mjs" }

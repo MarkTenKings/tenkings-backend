@@ -36,6 +36,8 @@ try {
       [`/reports/${token}?v=1`, { method: 'POST' }, 503],
       [`/reports/${token}?v=1`, { headers: { 'x-forwarded-host': 'app.atlasgrading.com' } }, 503],
       ['/grading', {}, 404], ['/api/staff/session', {}, 404],
+      [`/api/reports/${token}/images/FRONT?v=1`, {}, 503], [`/api/reports/${token}/images/BACK?v=1`, { method: 'HEAD' }, 503],
+      [`/api/reports/${token}/traces/unknown?v=1`, {}, 503], [`/api/reports/${token}/images/FRONT?v=1`, { method: 'POST' }, 405],
   ]) {
     const response = await fetch(`${origin}${path}`, { redirect: 'manual', ...options });
     assert.equal(response.status, expected, path); assert.equal(response.headers.get('set-cookie'), null);

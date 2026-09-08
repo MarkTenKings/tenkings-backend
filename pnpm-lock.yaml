@@ -359,6 +359,12 @@ importers:
 
   frontend/atlas-public:
     dependencies:
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../../packages/atlas-grading-core
+      '@atlas/service-bridge':
+        specifier: workspace:*
+        version: link:../../packages/atlas-service-bridge
       '@atlas/report-view':
         specifier: workspace:*
         version: link:../../packages/atlas-report-view
