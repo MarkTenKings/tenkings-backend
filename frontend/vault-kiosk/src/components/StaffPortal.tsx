@@ -98,7 +98,7 @@ export function StaffPortal({
             <label className="confirmation-check"><input type="checkbox" checked={profileEmptyConfirmed} disabled={busy || !workflowsFinalized} onChange={(event) => setProfileEmptyConfirmed(event.target.checked)} /><span>I personally confirmed every compartment is empty.</span></label>
             <label className="confirmation-check"><input type="checkbox" checked={profileClosedConfirmed} disabled={busy || !workflowsFinalized} onChange={(event) => setProfileClosedConfirmed(event.target.checked)} /><span>I personally confirmed every serviced door is closed.</span></label>
             <button type="button" className="primary-action profile-activate-action" disabled={busy || !workflowsFinalized || !profileEmptyConfirmed || !profileClosedConfirmed} onClick={() => void onActivateProfile()}>Activate configuration {pendingProfile.version}</button>
-            <p>The local service verifies empty inventory and all outstanding work. Activation locks service and requires a fresh PIN before safe exit.</p>
+            <p>Earlier machine activity must finish syncing before activation. The local service verifies empty inventory and outstanding work. Activation locks service and requires a fresh PIN before safe exit.</p>
           </article>}
           {operations.map((operation) => (
             <article className="operation-tile" key={operation.permission}>

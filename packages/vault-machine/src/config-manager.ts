@@ -101,6 +101,14 @@ export class ConfigManager {
     const previous = this.active();
     const orderedDoors = configDoorIds(payload);
     this.store.transaction(() => {
+      // Cloud membership changes on heartbeat, before it accepts new-profile
+      // facts. First deliver every older state-bearing fact against its old
+      // membership, including the observations that emptied these compartments.
+      // Freshness and authentication audits can be appended after a successful
+      // flush and do not mutate that projection.
+      if (pending.requiresReconfiguration && this.store.maybeOne(`SELECT 1 FROM outbox o JOIN machine_event e ON e.event_id=o.event_id WHERE o.acknowledged_at IS NULL AND e.type NOT IN ('CLOUD_FRESHNESS_PROVEN','STAFF_GRANT_IMPORTED','STAFF_AUTHENTICATED','CONFIG_STAGED') LIMIT 1`)) {
+        throw new VaultError("PROFILE_CLOUD_RECONCILIATION_REQUIRED", "Wait for earlier machine activity to sync to the cloud, then retry profile activation", 409);
+      }
       // Releasing only the current address index allows arbitrary explicit swaps
       // without changing or deleting a retired door or historical command.
       const priorDoors = new Map(this.store.all(`SELECT * FROM door`).map(door => [String(door.door_id), door]));

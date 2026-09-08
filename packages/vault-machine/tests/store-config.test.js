@@ -103,6 +103,8 @@ test("a signed complete controller remap activates atomically without transient 
   const pending = makeConfig(rig.machineId, 2, rig.keyPair.privateKey, "test-config-key", { doorMapping: mapping });
   rig.machine.stageConfig(pending); assert.deepEqual(rig.machine.activatePendingConfig().reasons, ["PROFILE_RECONFIGURATION_REQUIRED"]);
   const actor = grant(rig, "TECHNICIAN");
+  const sync = new vault.OutboxSynchronizer(rig.store, rig.clock, { send: async events => ({ acknowledgedEventIds: events.map(event => event.eventId), rejected: [] }) });
+  await sync.flush();
   rig.machine.activatePendingProfile(actor.sessionId, 2, pending.digest, true, true);
   assert.equal(rig.store.one(`SELECT controller_channel FROM door WHERE door_id='X-01'`).controller_channel, 2); assert.equal(rig.store.one(`SELECT controller_channel FROM door WHERE door_id='K-01'`).controller_channel, 1); rig.store.close();
 });

@@ -19,13 +19,14 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
       await assertVaultMachineAuthorityCurrent(tx, authority, machineId);
       const machine = await tx.vaultMachine.findUnique({
         where: { id: machineId },
-        select: { activeConfigId: true, pendingConfigId: true },
+        select: { activeConfigId: true, pendingConfigId: true, activeConfig: { select: { version: true } }, pendingConfig: { select: { version: true } } },
       });
       if (!machine) throw new VaultApiError(404, "MACHINE_NOT_FOUND", "Vault machine was not found");
 
       let activation: {
         configId: string;
         priorActiveConfigId: string | null;
+        changeActive: boolean;
         clearPending: boolean;
         payload: ReturnType<typeof VaultConfigPayloadSchema.parse>;
       } | null = null;
@@ -37,13 +38,20 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
           throw new VaultApiError(409, "CONFIG_ACTIVATION_MISMATCH", "Heartbeat config version and digest do not match a machine config");
         }
         const alreadyActive = reportedConfig.id === machine.activeConfigId;
-        if (!alreadyActive && (reportedConfig.status !== "PUBLISHED" || reportedConfig.id !== machine.pendingConfigId)) {
-          throw new VaultApiError(409, "CONFIG_NOT_PENDING", "Only the exact pending published config can become active");
+        // A machine can activate v2 before hearing that Admin has published v3.
+        // Accept that signed publication only as forward progress between the
+        // cloud's active and pending versions; the newer pending config remains.
+        if (!alreadyActive && (!reportedConfig.publishedAt || !reportedConfig.signingKeyId || reportedConfig.signingAlgorithm !== "Ed25519" || !reportedConfig.detachedSignature
+          || !["PUBLISHED", "SUPERSEDED"].includes(reportedConfig.status)
+          || reportedConfig.version <= (machine.activeConfig?.version ?? 0)
+          || reportedConfig.version > (machine.pendingConfig?.version ?? 0))) {
+          throw new VaultApiError(409, "CONFIG_NOT_PENDING", "Activation must advance through an exact previously published config no newer than the pending version");
         }
         activation = {
           configId: reportedConfig.id,
           priorActiveConfigId: alreadyActive ? null : machine.activeConfigId,
-          clearPending: !alreadyActive,
+          changeActive: !alreadyActive,
+          clearPending: reportedConfig.id === machine.pendingConfigId,
           payload: VaultConfigPayloadSchema.parse(reportedConfig.canonicalPayload),
         };
       } else if (machine.activeConfigId) {
@@ -57,7 +65,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
         });
       }
       if (activation && heartbeat.availableDoorCount > configDoorIds(activation.payload).length) throw new VaultApiError(422, "HEARTBEAT_PROFILE_COUNT_INVALID", "Available doors exceed the reported profile");
-      if (activation?.clearPending) await activateVaultProfileProjection(tx, machineId, activation.payload);
+      if (activation?.changeActive) await activateVaultProfileProjection(tx, machineId, activation.payload);
 
       // Certification is exact-build authority, never a permanent machine flag.
       // Unknown source identity fails closed once a certificate has been issued.

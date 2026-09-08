@@ -66,6 +66,11 @@ export function mayShowOpenDoors(state: VaultPublicState, sale: KioskSaleSummary
     && !sale?.retryUsed;
 }
 
+// Leave room below QR byte capacity for Unicode and contact URI escaping.
+export function supportQrUrl(full: string, referenceOnly: string): string {
+  return new TextEncoder().encode(full).length <= 1_500 ? full : referenceOnly;
+}
+
 export function createSupportUrl(
   config: KioskSupportConfig,
   supportReference: string,
@@ -74,7 +79,9 @@ export function createSupportUrl(
   const url = new URL(config.pageUrl);
   url.searchParams.set("ref", supportReference);
   url.searchParams.set("doors", doorIds.join(","));
-  return url.toString();
+  const full = url.toString();
+  url.searchParams.delete("doors");
+  return supportQrUrl(full, url.toString());
 }
 
 export interface StaffOperation {

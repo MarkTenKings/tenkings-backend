@@ -456,6 +456,7 @@ async function projectCertificationEvidence(tx: Transaction, event: ProjectionEv
   const session = await tx.vaultCertificationSession.findFirst({ where: { id: payload.certificationSessionId, machineId: event.machineId } });
   if (!session) throw new VaultApiError(422, "CERTIFICATION_PROJECTION_MISSING", "Certification evidence arrived before session start");
   if (session.status !== "ACTIVE" || event.mode !== "CERTIFICATION") throw new VaultApiError(422, "CERTIFICATION_STATE_INVALID", "Evidence requires an active certification session in test mode");
+  if (payload.evidenceClass !== "AUTOMATED" && ((session.controllerIdentity as Record<string, unknown> | null)?.mode === "MOCK" || (session.nayaxFlowConfig as Record<string, unknown> | null)?.mode === "MOCK")) throw new VaultApiError(422, "CERTIFICATION_EVIDENCE_CLASS_INVALID", "Simulator commands cannot produce physical or official provider evidence");
   const config = await tx.vaultConfigVersion.findUnique({ where: { id: session.configVersionId } });
   const profileDoorIds = configDoorIds(VaultConfigPayloadSchema.parse(config?.canonicalPayload));
   if (!payload.doorId || !profileDoorIds.includes(payload.doorId) || payload.expectedDoorIds.length !== 1 || payload.expectedDoorIds[0] !== payload.doorId) throw new VaultApiError(422, "CERTIFICATION_PROFILE_MEMBERSHIP_INVALID", "Certification evidence must identify exactly its commanded profile door");
@@ -508,7 +509,10 @@ export async function projectVaultMachineEvent(tx: Transaction, event: Projectio
     }
     case "PAYMENT_START_EFFECT_UNKNOWN": {
       const payload = EVENT_PAYLOAD_SCHEMAS.PAYMENT_START_EFFECT_UNKNOWN.parse(event.payload);
-      await requireProjectedSale(tx, event.machineId, payload.saleId, event.mode);
+      const sale = await requireProjectedSale(tx, event.machineId, payload.saleId, event.mode);
+      // Older clients could append this transport error after a provider callback.
+      // Keep the immutable audit fact without regressing stronger payment evidence.
+      if (sale.paymentState !== "REQUESTED") return;
       await tx.vaultSale.updateMany({ where: { id: payload.saleId, machineId: event.machineId }, data: { state: "PAYMENT_UNKNOWN", paymentState: "UNKNOWN" } });
       await openSafeSupportCase(tx, { machineId: event.machineId, saleId: payload.saleId, sourceId: payload.saleId, type: "PAYMENT_UNKNOWN", summary: "Payment status is unknown and requires reconciliation." });
       return;

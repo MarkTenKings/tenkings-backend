@@ -2,12 +2,79 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createRig, makeDoorAvailable, makeConfig, grant, tempDatabase, crypto, vault } = require('./helpers');
+const { createRig, makeDoorAvailable, makeConfig, grant, tempDatabase, crypto, vault, FakeClock } = require('./helpers');
 
 async function reserve(rig) {
   makeDoorAvailable(rig); rig.machine.selectCartDoor('X-01', 'sports-25', true);
   return (await rig.machine.checkout({ idempotencyKey: crypto.randomUUID(), mode: 'CERTIFICATION', configVersion: 1, doorIds: ['X-01'] })).sale;
 }
+
+test('a late start transport failure cannot replace a concurrently observed provider outcome or emit false uncertainty', async () => {
+  for (const outcome of ['DECLINED', 'CANCELLED', 'AUTHORIZED', 'SETTLED']) {
+    const rig = await createRig(); let rejectStart;
+    try {
+      const sale = await reserve(rig);
+      rig.payment.startSession = async () => new Promise((_, reject) => { rejectStart = reject; });
+      const starting = rig.machine.startPayment(sale.saleId, crypto.randomUUID());
+      await new Promise(resolve => setImmediate(resolve)); assert.ok(rejectStart);
+      const providerSessionId = crypto.randomUUID();
+      const callback = (state, sequence) => rig.machine.handleProviderCallback({ callbackId: crypto.randomUUID(), saleId: sale.saleId, providerSessionId, sequence, state, occurredAt: rig.clock.now().toISOString(), evidence: {} });
+      await callback(outcome === 'SETTLED' ? 'AUTHORIZED' : outcome, 1);
+      if (outcome === 'SETTLED') await callback('SETTLED', 2);
+      const before = rig.machine.publicSale(sale.saleId).paymentState;
+      rejectStart(new Error('late start response loss')); await starting;
+      assert.equal(rig.machine.publicSale(sale.saleId).paymentState, before);
+      assert.equal(rig.store.one("SELECT count(*) AS n FROM machine_event WHERE type='PAYMENT_START_EFFECT_UNKNOWN'").n, 0);
+    } finally { rig.store.close(); }
+  }
+});
+
+test('restart retains the trusted clock floor for expired staff and configuration authority', async () => {
+  const temporary = tempDatabase(); let rig = await createRig({ databasePath: temporary.path }); let runtime;
+  try {
+    const actor = grant(rig, 'TECHNICIAN');
+    rig.store.run("UPDATE staff_grant SET expires_at='2026-08-16T12:01:00.000Z'");
+    rig.machine.stageConfig(makeConfig(rig.machineId, 2, rig.keyPair.privateKey));
+    rig.clock.advance(120_000); // Grant expires while offline, after the last cloud contact.
+    assert.throws(() => rig.machine.staff.authenticate(actor.userId, '123456'));
+    const options = { databasePath: temporary.path, machineId: rig.machineId, keyPair: rig.keyPair, configure: false, clock: new FakeClock() };
+    rig.store.close(); rig = await createRig(options); await rig.machine.initialize();
+    runtime = new vault.VaultRuntime(rig.machine, new vault.VaultCloudClient({ machineId: rig.machineId, origin: 'https://clock-test.invalid', credential: () => 'unused', fetch: async () => { throw Error('No cloud calls expected'); } }), { clock: rig.clock, broadcast: async () => {} });
+    assert.equal(rig.store.one('SELECT last_cloud_success_at FROM machine_meta').last_cloud_success_at, null);
+    assert.throws(() => rig.machine.staff.authenticate(actor.userId, '123456'), /safe local clock/);
+    assert.ok((await rig.machine.readiness()).reasons.includes('CLOCK_UNSAFE'));
+    assert.ok(rig.machine.activatePendingConfig().reasons.includes('CLOCK_UNSAFE'));
+    rig.machine.markCloudContact();
+    assert.equal(rig.store.one('SELECT last_trusted_wall_at FROM machine_meta').last_trusted_wall_at, '2026-08-16T12:02:00.000Z');
+    assert.throws(() => rig.machine.staff.authenticate(actor.userId, '123456'), /safe local clock/);
+  } finally { await runtime?.stop(); rig.store.close(); fs.rmSync(temporary.directory, { recursive: true, force: true }); }
+});
+
+test('a restarted machine with an unsafe clock retains exactly one original paid retry', async () => {
+  const temporary = tempDatabase(); let rig = await createRig({ databasePath: temporary.path });
+  try {
+    const sale = await reserve(rig); await rig.machine.startPayment(sale.saleId, crypto.randomUUID());
+    const options = { databasePath: temporary.path, machineId: rig.machineId, keyPair: rig.keyPair, configure: false, clock: new FakeClock('2026-08-16T11:00:00.000Z'), controller: rig.controller, payment: rig.payment };
+    rig.store.close(); rig = await createRig(options); await rig.machine.initialize();
+    assert.ok((await rig.machine.readiness()).reasons.includes('CLOCK_UNSAFE'));
+    await rig.machine.openPaidDoorsAgain(sale.saleId, crypto.randomUUID());
+    await assert.rejects(() => rig.machine.openPaidDoorsAgain(sale.saleId, crypto.randomUUID()));
+    assert.equal(rig.store.one('SELECT count(*) AS n FROM command_intent WHERE sale_id=?', sale.saleId).n, 2);
+    assert.equal(rig.controller.receipts.length, 2);
+  } finally { rig.store.close(); fs.rmSync(temporary.directory, { recursive: true, force: true }); }
+});
+
+test('mock certification rejects every physical or provider evidence class before persisting evidence', async () => {
+  const rig = await createRig();
+  try {
+    const actor = grant(rig, 'TECHNICIAN'); const cert = await rig.operations.startCertification(actor.sessionId);
+    const evidence = { evidenceId: crypto.randomUUID(), sessionId: cert.sessionId, doorId: cert.scheduledDoorId, outcome: 'PASS', expectedDoorIds: [cert.scheduledDoorId], observedDoorIds: [cert.scheduledDoorId], notes: 'Simulator only', artifactDigest: 'b'.repeat(64), observedAt: rig.clock.now().toISOString() };
+    for (const evidenceClass of ['OFFICIAL_SDK', 'BENCH', 'FULL_MACHINE', 'FIELD']) assert.throws(() => rig.operations.recordCertificationEvidence(actor.sessionId, { ...evidence, evidenceClass }), error => error.code === 'CERTIFICATION_EVIDENCE_CLASS_INVALID');
+    assert.equal(rig.store.one('SELECT count(*) AS n FROM certification_evidence').n, 0);
+    rig.operations.recordCertificationEvidence(actor.sessionId, { ...evidence, evidenceClass: 'AUTOMATED' });
+    assert.equal(rig.store.one('SELECT count(*) AS n FROM certification_evidence').n, 1);
+  } finally { rig.store.close(); }
+});
 
 test('a late reconciliation exception cannot overwrite a concurrently observed terminal settlement', async () => {
   const rig = await createRig(); let rejectReconciliation;

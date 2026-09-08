@@ -7,6 +7,9 @@ import { IdleWarningDialog } from "../src/components/IdleWarningDialog";
 import { PinEntry } from "../src/components/PinEntry";
 import { ProductRail } from "../src/components/ProductRail";
 import { StatusBanner } from "../src/components/StatusBanner";
+import { SupportPanel } from "../src/components/SupportPanel";
+import QRCode from "qrcode";
+import type { VaultDoorId } from "@tenkings/vault-contracts/browser";
 import { doors, products, sale, snapshot } from "./fixtures";
 import { click, renderReact } from "./render";
 
@@ -17,6 +20,33 @@ afterEach(() => {
 });
 
 describe("customer touchscreen components", () => {
+  it("keeps full pinned labels onscreen while large-contact QR codes use the short reference", async () => {
+    const items = Array.from({ length: 25 }, (_, index) => ({ ...sale.items[0], doorId: `door-${index}` as VaultDoorId, doorLabel: `${index}-${'界'.repeat(28)}` }));
+    const view = renderReact(<SupportPanel support={snapshot().support!} sale={{ ...sale, items, paidDoorIds: items.map(item => item.doorId) }} />);
+    await act(async () => {});
+    expect(view.container.textContent).toContain(items.at(-1)!.doorLabel);
+    for (const prefix of ['mailto:', 'sms:']) {
+      await click(view.container.querySelector(`a[href^="${prefix}"]`));
+      const encoded = vi.mocked(QRCode.toDataURL).mock.calls.at(-1)![0] as string;
+      expect(encoded.length).toBeLessThan(1500);
+      expect(decodeURIComponent(encoded)).toContain(sale.supportReference);
+      expect(decodeURIComponent(encoded)).not.toContain(items[0].doorLabel);
+    }
+    view.unmount();
+  });
+
+  it("replaces a failed QR spinner with usable contact instructions and recovers on another choice", async () => {
+    vi.mocked(QRCode.toDataURL).mockRejectedValueOnce(new Error('encoding unavailable'));
+    const view = renderReact(<SupportPanel support={snapshot().support!} sale={sale} />);
+    await act(async () => {});
+    expect(view.container.textContent).toContain('QR code unavailable');
+    expect(view.container.querySelector('[aria-label="Preparing support QR code"]')).toBeNull();
+    expect(view.container.textContent).toContain(snapshot().support!.phoneNumber);
+    await click(view.container.querySelector('a[href^="tel:"]'));
+    expect(view.container.querySelector('.support-qr img')).not.toBeNull();
+    expect(view.container.textContent).not.toContain('QR code unavailable');
+    view.unmount();
+  });
   it("contains keyboard focus even while the sole idle action is disabled awaiting a response", async () => {
     const outside = document.createElement("button");
     document.body.appendChild(outside);

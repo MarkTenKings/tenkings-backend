@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, sign } from "node:crypto";
 import { createRequire } from "node:module";
 
 // Refuse before importing any database-backed application code.
@@ -13,13 +13,13 @@ assert.equal(decodeURIComponent(target.pathname.slice(1)), "tenkings_ai_grader_n
 
 const require = createRequire(import.meta.url);
 const { prisma, hashVaultSecret } = require("../packages/database");
-const { createRig, makeConfig, contracts, vault } = require("../packages/vault-machine/tests/helpers.js");
+const { createRig, makeConfig, contracts, vault, FakeClock } = require("../packages/vault-machine/tests/helpers.js");
 const { startVaultNextTestServer } = await import("./vault-next-test-server.mjs");
 const { makeSyntheticConfig, makeSyntheticProfile } = require("../packages/vault-contracts/tests/profile-fixtures.js");
 const profileArgument = process.argv.find((argument) => argument.startsWith("--profile-doors="));
 const profileDoors = profileArgument ? Number(profileArgument.split("=")[1]) : null;
-assert.ok(profileDoors === null || [72, 125].includes(profileDoors));
-const rig = await createRig({ configure: false, ...(profileDoors ? { controller: new vault.DeterministicControllerSimulator(makeSyntheticProfile(profileDoors).doorMapping) } : {}) });
+assert.ok(profileDoors === null || [72, 125, 256].includes(profileDoors));
+const rig = await createRig({ configure: false, clock: new FakeClock(new Date().toISOString()), ...(profileDoors ? { controller: new vault.DeterministicControllerSimulator(makeSyntheticProfile(profileDoors).doorMapping) } : {}) });
 let publicServer;
 const credential = `vault_${randomBytes(32).toString("base64url")}`;
 let assertions = 0;
@@ -95,15 +95,25 @@ try {
   await rig.machine.initialize();
   rig.machine.stageConfig(pulledConfig.body.config); rig.machine.activatePendingConfig(); rig.machine.markCloudContact();
   const initialState = await rig.machine.publicState();
-  const heartbeat = await route("heartbeat", {
+  const heartbeatBody = {
     contractVersion: 1, appVersion: "0.1.0", sourceCommit: "a".repeat(40), localSchemaVersion: Number(rig.store.one("SELECT schema_version FROM machine_meta WHERE singleton=1").schema_version),
     configVersion: 1, configDigest: config.digest, health: initialState.health, readinessReasons: initialState.readinessReasons,
     availableDoorCount: 0, outboxPendingCount: rig.store.one("SELECT count(*) AS count FROM outbox").count, serviceLocked: initialState.serviceLocked, observedAt: rig.clock.now().toISOString(),
-  });
+  };
+  const heartbeat = await route("heartbeat", heartbeatBody);
   check(heartbeat.status, 200, "Actual heartbeat activates only the exact published pending config");
   check(heartbeat.body.machine.id, rig.machineId, "Heartbeat response is bound to the calling machine");
   const activatedMachine = await prisma.vaultMachine.findUnique({ where: { id: rig.machineId } });
   check([activatedMachine.activeConfigId, activatedMachine.pendingConfigId], [storedConfig.id, null], "Heartbeat transaction persists config activation");
+  if (profileDoors === 256) {
+    for (const count of [151, 256]) {
+      check((await route("heartbeat", { ...heartbeatBody, availableDoorCount: count })).status, 200, `Heartbeat persists ${count} available doors within the declared software envelope`);
+      check((await prisma.vaultMachine.findUnique({ where: { id: rig.machineId } })).availableDoorCount, count, "Database count constraint agrees with the contract");
+    }
+    check((await route("heartbeat", { ...heartbeatBody, availableDoorCount: 257 })).status, 400, "Counts beyond the software envelope are rejected");
+  } else {
+    check((await route("heartbeat", { ...heartbeatBody, availableDoorCount: contracts.configDoorIds(payload).length + 1 })).status, 422, "Counts beyond the active profile are rejected");
+  }
   rig.machine.staff.importGrant(pulled.body.grants[0]);
   const actor = rig.machine.staff.authenticate(staffGrant.userId, "123456");
   const restock = await rig.operations.startOrResumeRestock(actor.sessionId, [testDoorId]);
@@ -138,7 +148,61 @@ try {
   check(await prisma.vaultDoor.count({ where: { machineId: rig.machineId, state: { not: "EMPTY" } } }), 0, "Simulator facts cannot mutate production door inventory");
   check((await prisma.vaultRestockSession.findUnique({ where: { id: restock.sessionId } })).filledCount, 1, "Canonical restock projection");
   assert.ok(await prisma.vaultMachineEvent.findFirst({ where: { machineId: rig.machineId, actor: staffGrant.userId } }));
-  const last = envelopes.at(-1).sequence;
+  if (profileDoors === 256) {
+    const runtime = new vault.VaultRuntime(rig.machine, new vault.VaultCloudClient({ origin: publicServer.url, machineId: rig.machineId, credential: () => credential, allowInsecureLoopback: true }), { clock: rig.clock, broadcast: async () => {} });
+    const storePublished = async (signed, status = "PUBLISHED") => prisma.vaultConfigVersion.create({ data: {
+      machineId: rig.machineId, version: signed.payload.version, schemaVersion: 2, status, canonicalPayload: signed.payload, digest: signed.digest,
+      signingKeyId: signed.keyId, signingAlgorithm: signed.algorithm, detachedSignature: signed.signature, minimumAppVersion: signed.payload.minimumAppVersion,
+      createdByAdminId: "disposable-only-admin", ...(status === "DRAFT" ? {} : { publishedByAdminId: "disposable-only-admin", publishedAt: new Date() }), expiresAt: new Date(signed.payload.expiresAt),
+    } });
+    const signedPayload = next => ({ payload: next, digest: contracts.configDigest(next), keyId: "test-config-key", algorithm: "Ed25519", signature: sign(null, Buffer.from(contracts.canonicalJson(next)), rig.keyPair.privateKey).toString("base64") });
+    try {
+      await runtime.synchronize(); // ACK the duplicate batch and its exact persisted cursor.
+      let technician = rig.machine.staff.authenticate(staffGrant.userId, "123456");
+      const emptying = await rig.operations.startOrResumeRestock(technician.sessionId, [testDoorId]);
+      rig.operations.recordRestockOutcome(technician.sessionId, emptying.sessionId, testDoorId, "LEFT_EMPTY", "Synthetic empty-compartment observation");
+      rig.operations.finalizeRestock(technician.sessionId, emptying.sessionId, true);
+      const payload2 = structuredClone(payload); payload2.version = 2; payload2.machineProfile.revision++;
+      const newDoorId = `new-${testDoorId}`;
+      payload2.machineProfile.doors[0].doorId = newDoorId;
+      payload2.doorMapping.find(entry => entry.doorId === testDoorId).doorId = newDoorId;
+      payload2.assignments[newDoorId] = payload2.assignments[testDoorId]; delete payload2.assignments[testDoorId];
+      const signed2 = signedPayload(payload2); const config2 = await storePublished(signed2);
+      await prisma.vaultMachine.update({ where: { id: rig.machineId }, data: { pendingConfigId: config2.id } });
+      rig.machine.stageConfig(signed2);
+      assert.throws(() => rig.machine.activatePendingProfile(technician.sessionId, 2, signed2.digest, true, true), error => error.code === "PROFILE_CLOUD_RECONCILIATION_REQUIRED"); assertions++;
+      await runtime.synchronize(); // Old-profile heartbeat succeeds; old restock facts can drain.
+      check((await prisma.vaultRestockSession.findUnique({ where: { id: emptying.sessionId } })).state, "FINALIZED", "Reconciliation facts precede local profile activation");
+      rig.machine.activatePendingProfile(technician.sessionId, 2, signed2.digest, true, true);
+      const payload3 = structuredClone(payload2); payload3.version = 3; payload3.machineProfile.revision++; payload3.machineProfile.doors[0].label = "Next revision";
+      const signed3 = signedPayload(payload3); const config3 = await storePublished(signed3);
+      await prisma.vaultConfigVersion.update({ where: { id: config2.id }, data: { status: "SUPERSEDED" } });
+      await prisma.vaultMachine.update({ where: { id: rig.machineId }, data: { pendingConfigId: config3.id } });
+      // A new-profile restock proves heartbeat membership must still precede
+      // new-door events even while a still newer configuration waits.
+      rig.controller = new vault.DeterministicControllerSimulator(payload2.doorMapping);
+      rig.machine.controller.sendOpenCommand = command => rig.controller.sendOpenCommand(command);
+      technician = rig.machine.staff.authenticate(staffGrant.userId, "123456");
+      const newRestock = await rig.operations.startOrResumeRestock(technician.sessionId, [newDoorId]);
+      await runtime.synchronize();
+      const intermediate = await prisma.vaultMachine.findUnique({ where: { id: rig.machineId } });
+      check([intermediate.activeConfigId, intermediate.pendingConfigId], [config2.id, config3.id], "Intermediate published activation preserves the newer pending config");
+      check((await prisma.vaultRestockSession.findUnique({ where: { id: newRestock.sessionId } })).configVersionId, config2.id, "New-door events follow their membership activation and pin the intermediate config");
+      assert.ok(await prisma.vaultDoor.findUnique({ where: { machineId_doorId: { machineId: rig.machineId, doorId: newDoorId } } })); assertions++;
+      check((await route("heartbeat", heartbeatBody)).status, 409, "A previously published active version cannot downgrade the cloud");
+      check((await route("heartbeat", { ...heartbeatBody, configVersion: 2, configDigest: "f".repeat(64) })).status, 409, "Intermediate admission still requires the exact digest");
+      const payload4 = structuredClone(payload3); payload4.version = 4; const signed4 = signedPayload(payload4); await storePublished(signed4, "DRAFT");
+      check((await route("heartbeat", { ...heartbeatBody, configVersion: 4, configDigest: signed4.digest })).status, 409, "Draft configurations never become activation authority");
+      rig.operations.recordRestockOutcome(technician.sessionId, newRestock.sessionId, newDoorId, "LEFT_EMPTY", "Synthetic revised-profile observation");
+      rig.operations.finalizeRestock(technician.sessionId, newRestock.sessionId, true);
+      await runtime.synchronize();
+      rig.machine.activatePendingProfile(technician.sessionId, 3, signed3.digest, true, true);
+      await runtime.synchronize();
+      const latest = await prisma.vaultMachine.findUnique({ where: { id: rig.machineId } });
+      check([latest.activeConfigId, latest.pendingConfigId], [config3.id, null], "Exact latest activation clears only its own pending pointer");
+    } finally { await runtime.stop(); }
+  }
+  const last = Number((await prisma.vaultMachineEvent.findFirst({ where: { machineId: rig.machineId }, orderBy: { sequence: "desc" } })).sequence);
   const event = (sequence) => ({ eventId: randomUUID(), schemaVersion: 1, machineId: rig.machineId, sequence, type: "PUBLIC_ACTIVITY_RECORDED", mode: "CERTIFICATION", occurredAt: rig.clock.now().toISOString(), payload: { observedAt: rig.clock.now().toISOString() } });
   const first = event(last + 1), poison = { ...event(last + 2), payload: { observedAt: "invalid" } }, blocked = event(last + 3);
   check((await route("events:batch", { contractVersion: 1, events: [first, blocked] })).status, 400, "Within-batch noncontiguous order is rejected before projection");

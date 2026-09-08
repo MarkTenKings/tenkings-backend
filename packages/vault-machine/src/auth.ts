@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypt
 import { VaultStaffGrantSchema, roleMay, type VaultPermission, type VaultRole } from "../../vault-contracts/dist";
 import { EventRepository } from "./events";
 import { VaultStore } from "./store";
-import { digest, iso, json } from "./util";
+import { digest, iso, json, isVaultClockUnsafe } from "./util";
 import { VaultError, type Clock } from "./types";
 
 const PIN_PATTERN = /^\d{6}$/;
@@ -36,7 +36,9 @@ export class StaffAuthService {
     this.bootWall = clock.now().getTime(); this.bootMonotonic = clock.monotonicMs();
   }
 
-  private clockUnsafe(): boolean { return Math.abs((this.clock.now().getTime() - this.bootWall) - (this.clock.monotonicMs() - this.bootMonotonic)) > 5_000 || this.clock.monotonicMs() < this.bootMonotonic; }
+  private clockUnsafe(): boolean {
+    return isVaultClockUnsafe(this.store, this.clock, this.bootWall, this.bootMonotonic);
+  }
 
   importGrant(input: unknown): void {
     const grant = VaultStaffGrantSchema.parse(input);

@@ -22,7 +22,7 @@ The service listens only on `127.0.0.1` and `::1`. Mutations require a valid sam
 | `POST /api/v1/staff/authenticate` | Verifies individual six-digit machine grant with rate limit/backoff and returns scoped service session. |
 | `POST /api/v1/staff/lock` | Locks service mode; blocks new public sessions. |
 | `POST /api/v1/staff/safe-exit` | Requires authorized actor and explicit serviced-doors-closed confirmation before public mode. |
-| `POST /api/v1/staff/profile-activation` | Technician/Admin confirms the exact pending version/digest, empty compartments and serviced doors closed. Requires no pinned customer, financial, restock, certification or command work; activates atomically into service lock and requires reauthentication/safe exit. |
+| `POST /api/v1/staff/profile-activation` | Technician/Admin confirms the exact pending version/digest, empty compartments and serviced doors closed. Requires no pinned customer, financial, restock, certification or command work and cloud acknowledgment of earlier state-bearing facts; activates atomically into service lock and requires reauthentication/safe exit. |
 | `POST /api/v1/restocks` | Starts/resumes an authorized pinned-config restock session; exact expected doors only. Schedules at most one unobserved command and returns its intent/terminal/observation phase. |
 | `POST /api/v1/restocks/{id}/items/{doorId}` | After a terminal command receipt, records one per-door human observation: `FILLED`, `LEFT_EMPTY`, or `EXCEPTION`; only `FILLED` makes the planned assignment available. Schema 2 additionally requires `productFitConfirmed: true` for FILLED. |
 | `POST /api/v1/restocks/{id}/finalize` | Requires every door reviewed and physical-close confirmation; persists audit/outbox. |

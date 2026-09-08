@@ -198,7 +198,7 @@ export class VaultOperationsService {
     if (evidence.doorId !== command.door_id || evidence.expectedDoorIds.length !== 1 || evidence.expectedDoorIds[0] !== command.door_id) {
       throw new VaultError("CERTIFICATION_COMMAND_EVIDENCE_MISMATCH", "Certification evidence must describe the exact scheduled command door", 409);
     }
-    if (session.adapter_mode === "MOCK" && ["CONTROLLER_BENCH", "FULL_MACHINE", "FIELD_SOAK", "NAYAX_SDK"].includes(evidence.evidenceClass)) throw new VaultError("CERTIFICATION_EVIDENCE_CLASS_INVALID", "Simulator commands cannot produce physical or official provider evidence", 409);
+    if (session.adapter_mode === "MOCK" && evidence.evidenceClass !== "AUTOMATED") throw new VaultError("CERTIFICATION_EVIDENCE_CLASS_INVALID", "Simulator commands cannot produce physical or official provider evidence", 409);
     const unexpected = evidence.observedDoorIds.some((doorId) => !evidence.expectedDoorIds.includes(doorId));
     if (!unexpected && evidence.outcome === "PASS" && (!evidence.observedDoorIds.includes(command.door_id as VaultDoorId) || command.state !== "ACCEPTED")) throw new VaultError("CERTIFICATION_PASS_UNSUPPORTED", "PASS requires the expected observed door and accepted command evidence", 409);
     const critical = evidence.outcome === "CRITICAL" || unexpected;

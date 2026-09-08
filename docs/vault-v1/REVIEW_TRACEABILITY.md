@@ -6,7 +6,7 @@ Review started 2026-09-07 against PR #339 at `92ad20c7f1391b23c55d9c43318eced950
 
 ## Current integrated implementation — fresh software task
 
-Focused profile-contract, kiosk and machine commits now preserve the imported corrections and implement schema2 profiles across the product. Root Node20 build and240tests pass (11contracts,99machine,78kiosk,9database,43cloud); the safe full Next production rebuild,13 real public-route transport cases and72/125 disposable local HTTP demos also pass. Kiosk browser evidence covers17 scenarios. These results precede the final committed-candidate review and PR checks; those checks remain required.
+Focused profile-contract, kiosk and machine commits now preserve the imported corrections and implement schema2 profiles across the product. Root Node20 build and 251 tests pass (11 contracts, 105 machine, 81 kiosk, 9 database, 45 cloud); the safe full Next production rebuild,13 real public-route transport cases and72/125 disposable local HTTP demos also pass. Kiosk browser evidence covers17 scenarios. Three independent reviewers found seven actionable issues on candidate `0c5d9745`; all are corrected with regression evidence below. Review of the new committed candidate and exact-head PR checks remain required.
 
 | Requirement / discrepancy | Implemented correction and evidence | Remaining boundary |
 | --- | --- | --- |
@@ -15,9 +15,21 @@ Focused profile-contract, kiosk and machine commits now preserve the imported co
 | Runtime and external-effect recovery | CLI cloud/config/grant/heartbeat/outbox wiring; fresh pre-checkout proof; durable mock provider; serialization, cancellation, terminality and settlement progression; same original paid-group retry; immutable mode | Official Nayax/controller adapters and vendor-qualified behavior |
 | Staff, kiosk and support | Scoped grant revalidation; durable recovery after browser/service interruption; individual PIN, explicit workflow resume and lock; truthful certification FAIL/CRITICAL observations; stable touch/focus/labels and bounded public support | Real contacts, installed Windows/ViewSonic touch/TV/assigned-access acceptance |
 | Cloud/admin and transport | Human fresh step-up and machine scope rechecks; credential lifecycle; published-config/evidence integrity; settlement-aware complete reports and BigInt/date handling; bounded raw UTF-8 JSON; typed redacted legacy event parity | Production credentials, config values and authorized deployment |
-| Database lifecycle | Additive Vault integrity/profile migrations and receipt-derived legacy finality; full95-migration historical chain, active legacy upgrade/resume, Vault SQL invariants, public Next HTTP legacy150/72/125 projections and concurrent replay passed; second deploy was an unchanged-ledger no-op; container/storage cleanup verified | Separately authorized deployment and installed acceptance |
+| Database lifecycle | Additive Vault integrity/profile migrations and receipt-derived legacy finality; full95-migration historical chain, active legacy upgrade/resume, Vault SQL invariants, public Next HTTP legacy150/72/125/256 projections, 151/256 heartbeat counts, profile reconciliation/publication races and concurrent replay passed; second deploy was an unchanged-ledger no-op; container/storage cleanup verified | Separately authorized deployment and installed acceptance |
 | Windows, backup and release | Functional manifest/path/hash/link tests, staging-only scripts, bounded SQLite integrity/foreign-key checks and redacted support export | Final pinned runtime/nativeSQLite/service/protected storage and state-aware encrypted update/restore implementation |
 | Independent acceptance | Combined tests/builds and simulator/browser evidence; focused commits with append-only session history | Review exact final committed head, resolve findings, normal push to PR339, every exact-head check green, keep open |
+
+### Independent review corrections after candidate `0c5d9745`
+
+| Finding | Correction and regression evidence |
+| --- | --- |
+| P1: old stocked cloud projection blocks heartbeat before emptying events can sync | Physical reconfiguration waits for prior state-bearing events to be acknowledged; actual runtime/PostgreSQL test delivers old restock facts before activation and creates new membership before new-door events; an in-flight heartbeat race test defers delivery until the new digest is reported. |
+| P1: version 3 publication strands locally active version 2 | Exact signed/published intermediate versions advance monotonically while preserving newer pending configuration; actual HTTP rejects downgrade, draft and digest mismatch, then clears only exact latest pending activation. |
+| P2: late payment-start failure regresses provider evidence | Emit uncertainty only for an actual REQUESTED-to-UNKNOWN transition; cloud retains stronger observed states and avoids false support cases. Concurrent decline/cancel/authorization/settlement regressions pass. |
+| P2: heartbeat database limit remains 150 | Additive profile migration aligns the defensive 256-door envelope; real PostgreSQL accepts 151/256 and rejects oversized/profile-inconsistent counts. |
+| P2: mock certification accepts physical classes | Local and cloud reject every non-AUTOMATED class for mocked adapters; all four physical/provider enum values are exercised. |
+| P2: reboot revives expired offline staff authority after clock rollback | Shared clock guard persists safe observed wall progress, including offline expiry, and never lowers the retained floor; restart blocks staff/config authority while preserving the one original paid retry. |
+| P2: valid large carts overflow support QR capacity | Reference-only QR fallback preserves full pinned labels onscreen; real encoder checks cover 256 long IDs and Unicode labels; failed generation has a terminal contact-instruction state. |
 
 Implementation detail and the separately hashed CAD R01 proposals are in [MACHINE_PROFILES.md](MACHINE_PROFILES.md). Installed physical qualification,5purchase+2restock cycles per applicable door,500real observed sessions, certification and pilot remain open. Simulator results never replace them.
 

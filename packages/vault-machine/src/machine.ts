@@ -26,7 +26,7 @@ import { StaffAuthService } from "./auth";
 import { ConfigManager, type PublicKey } from "./config-manager";
 import { EventRepository } from "./events";
 import { VaultStore } from "./store";
-import { asBoolean, deterministicId, digest, iso, json, parseJson, supportReference } from "./util";
+import { asBoolean, deterministicId, digest, iso, json, parseJson, supportReference, isVaultClockUnsafe } from "./util";
 import {
   VaultError,
   systemClock,
@@ -135,7 +135,7 @@ export class VaultMachine {
 
   markCloudContact(at = this.clock.now()): void {
     this.store.transaction(() => {
-      this.store.run(`UPDATE machine_meta SET last_cloud_success_at=?,last_trusted_wall_at=?,last_trusted_monotonic_ms=? WHERE singleton=1`, iso(at), iso(at), this.clock.monotonicMs());
+      this.store.run(`UPDATE machine_meta SET last_cloud_success_at=?,last_trusted_wall_at=CASE WHEN last_trusted_wall_at>? THEN last_trusted_wall_at ELSE ? END,last_trusted_monotonic_ms=? WHERE singleton=1`, iso(at), iso(at), iso(at), this.clock.monotonicMs());
       this.events.append({ type: "CLOUD_FRESHNESS_PROVEN", payload: { observedAt: iso(at) } });
       this.store.bumpStateVersion();
     });
@@ -169,10 +169,7 @@ export class VaultMachine {
     if (asBoolean(meta.automation_halted)) reasons.push("PHYSICAL_AUTOMATION_HALTED");
     if (asBoolean(meta.recovery_required)) reasons.push("RECOVERY_REQUIRED");
     if (!this.store.storageStatus().ready) reasons.push("STORAGE_PRESSURE");
-    const wallElapsed = this.clock.now().getTime() - this.bootWall;
-    const monotonicElapsed = this.clock.monotonicMs() - this.bootMonotonic;
-    if (monotonicElapsed < 0 || Math.abs(wallElapsed - monotonicElapsed) > 5_000
-      || (meta.last_cloud_success_at && new Date(String(meta.last_cloud_success_at)).getTime() > this.clock.now().getTime() + 5_000)) reasons.push("CLOCK_UNSAFE");
+    if (isVaultClockUnsafe(this.store, this.clock, this.bootWall, this.bootMonotonic)) reasons.push("CLOCK_UNSAFE");
     const unknown = this.store.maybeOne(`SELECT 1 FROM sale WHERE payment_state IN ('UNKNOWN','RECONCILIATION_REQUIRED') LIMIT 1`);
     if (unknown) reasons.push("PAYMENT_RECONCILIATION_REQUIRED");
     if (this.store.maybeOne(`SELECT 1 FROM sale WHERE presentation_done_at IS NOT NULL AND payment_state NOT IN ('NOT_REQUESTED','DECLINED','CANCELLED','SETTLED') LIMIT 1`)) reasons.push("PAYMENT_FINALIZATION_PENDING");
@@ -376,9 +373,11 @@ export class VaultMachine {
     try { result = await this.payment.startSession(request); }
     catch (error) {
       this.store.transaction(() => {
-        this.store.run(`UPDATE sale SET state='PAYMENT_UNKNOWN',payment_state='UNKNOWN',state_version=state_version+1,updated_at=? WHERE sale_id=? AND payment_state='REQUESTED'`, iso(this.clock.now()), saleId);
-        this.events.append({ type: "PAYMENT_START_EFFECT_UNKNOWN", mode: sale.mode as VaultMode, correlationId: saleId, payload: { saleId, errorClass: error instanceof Error ? error.name : "UNKNOWN" } });
-        this.store.bumpStateVersion();
+        const changed = this.store.run(`UPDATE sale SET state='PAYMENT_UNKNOWN',payment_state='UNKNOWN',state_version=state_version+1,updated_at=? WHERE sale_id=? AND payment_state='REQUESTED'`, iso(this.clock.now()), saleId);
+        if (changed.changes) {
+          this.events.append({ type: "PAYMENT_START_EFFECT_UNKNOWN", mode: sale.mode as VaultMode, correlationId: saleId, payload: { saleId, errorClass: error instanceof Error ? error.name : "UNKNOWN" } });
+          this.store.bumpStateVersion();
+        }
       });
       return this.publicSale(saleId);
     }

@@ -10,6 +10,12 @@ function signConfig(payload, key) {
   return { payload, digest: contracts.configDigest(payload), keyId: 'test-config-key', algorithm: 'Ed25519', signature: crypto.sign(null, Buffer.from(contracts.canonicalJson(payload)), key).toString('base64') };
 }
 
+async function acknowledgeTestOutbox(rig) {
+  const sync = new vault.OutboxSynchronizer(rig.store, rig.clock, { send: async events => ({ acknowledgedEventIds: events.map(event => event.eventId), rejected: [] }) });
+  while (sync.pressure().count) assert.equal((await sync.flush()).rejected, 0);
+  rig.machine.markCloudContact(); // Successful runtime cycles leave this audit pending.
+}
+
 async function profileRig(count, options = {}) {
   const rig = await createRig({ ...options, configure: false });
   const generated = makeSyntheticConfig(rig.machineId, 1, rig.keyPair.privateKey, count);
@@ -105,6 +111,7 @@ test('profile activation is exact, empty-machine, service-authorized and preserv
     assert.throws(() => rig.machine.activatePendingProfile(actor.sessionId, 2, next.digest, true, true), /reconciled and empty/);
     assert.equal(rig.machine.staff.requireSession(actor.sessionId).sessionId, actor.sessionId, 'Failed activation leaves staff authority intact');
     rig.store.run("UPDATE door SET state='EMPTY',product_id=NULL WHERE door_id='X-01'"); // Disposable physical-empty fixture only.
+    await acknowledgeTestOutbox(rig);
     rig.machine.activatePendingProfile(actor.sessionId, 2, next.digest, true, true);
     assert.equal(rig.store.one('SELECT COUNT(*) AS n FROM door').n, 222);
     assert.equal(rig.store.one('SELECT COUNT(*) AS n FROM door WHERE active=0').n, 150);
@@ -124,14 +131,67 @@ test('retired stable IDs cannot be reintroduced with changed physical or address
     for (const mapping of otherPayload.doorMapping) mapping.doorId = `new-${mapping.doorId}`;
     otherPayload.assignments = Object.fromEntries(Object.entries(previous.assignments).map(([id, value]) => [`new-${id}`, value]));
     const other = signConfig(otherPayload, rig.keyPair.privateKey); rig.machine.stageConfig(other);
-    let actor = grant(rig, 'TECHNICIAN'); rig.machine.activatePendingProfile(actor.sessionId, 2, other.digest, true, true);
+    let actor = grant(rig, 'TECHNICIAN'); await acknowledgeTestOutbox(rig); rig.machine.activatePendingProfile(actor.sessionId, 2, other.digest, true, true);
     const changed = structuredClone(previous); changed.version = 3; changed.machineProfile.revision = 2; changed.machineProfile.doors[0].label = 'Relabeled old compartment';
     const bad = signConfig(changed, rig.keyPair.privateKey); rig.machine.stageConfig(bad);
     actor = rig.machine.staff.authenticate(actor.userId, '123456');
+    await acknowledgeTestOutbox(rig);
     assert.throws(() => rig.machine.activatePendingProfile(actor.sessionId, 3, bad.digest, true, true), error => error.code === 'RETIRED_DOOR_REBIND_FORBIDDEN');
     assert.equal(rig.machine.config.active().payload.version, 2); assert.equal(rig.machine.staff.requireSession(actor.sessionId).userId, actor.userId);
     assert.equal(rig.store.one('SELECT COUNT(*) AS n FROM door WHERE active=1').n, 7);
   } finally { rig.store.close(); }
+});
+
+test('emptying a compartment cannot activate a new profile until its ordered reconciliation facts are acknowledged', async () => {
+  const rig = await profileRig(7);
+  try {
+    const actor = grant(rig, 'TECHNICIAN'); const doorId = rig.signed.payload.machineProfile.doors[0].doorId;
+    const restock = await rig.operations.startOrResumeRestock(actor.sessionId, [doorId]);
+    rig.operations.recordRestockOutcome(actor.sessionId, restock.sessionId, doorId, 'LEFT_EMPTY', 'Observed empty');
+    rig.operations.finalizeRestock(actor.sessionId, restock.sessionId, true);
+    const nextPayload = structuredClone(rig.signed.payload); nextPayload.version = 2; nextPayload.machineProfile.revision++;
+    [nextPayload.doorMapping[0].controllerChannel, nextPayload.doorMapping[1].controllerChannel] = [nextPayload.doorMapping[1].controllerChannel, nextPayload.doorMapping[0].controllerChannel];
+    const next = signConfig(nextPayload, rig.keyPair.privateKey); rig.machine.stageConfig(next);
+    assert.throws(() => rig.machine.activatePendingProfile(actor.sessionId, 2, next.digest, true, true), error => error.code === 'PROFILE_CLOUD_RECONCILIATION_REQUIRED');
+    assert.equal(rig.machine.config.active().payload.version, 1);
+    assert.equal(rig.machine.staff.requireSession(actor.sessionId).userId, actor.userId);
+    const delivered = [];
+    const cloud = { machineId: rig.machineId, config: async () => ({ config: null, unchanged: true }), staffGrants: async () => ({ grants: [], latestGrantVersion: 0, hasMore: false }),
+      heartbeat: async input => { assert.equal(input.configVersion, delivered.length ? 2 : 1); return rig.clock.now(); },
+      send: async events => { delivered.push(...events); return { acknowledgedEventIds: events.map(event => event.eventId), rejected: [] }; } };
+    const runtime = new vault.VaultRuntime(rig.machine, cloud, { clock: rig.clock, broadcast: async () => {} });
+    try {
+      await runtime.synchronize();
+      assert.ok(delivered.some(event => event.payload.type === 'RESTOCK_SESSION_FINALIZED'));
+      assert.ok(runtime.outbox.pressure().count > 0);
+      rig.machine.activatePendingProfile(actor.sessionId, 2, next.digest, true, true);
+      await runtime.synchronize();
+      assert.equal(rig.machine.config.active().payload.version, 2);
+    } finally { await runtime.stop(); }
+  } finally { rig.store.close(); }
+});
+
+test('profile activation during an in-flight heartbeat defers new-profile events until matching cloud membership exists', async () => {
+  const rig = await profileRig(7); let runtime;
+  try {
+    const delivered = []; let cloudVersion = 1; let activateDuringHeartbeat;
+    const cloud = { machineId: rig.machineId, config: async () => ({ config: null, unchanged: true }), staffGrants: async () => ({ grants: [], latestGrantVersion: 0, hasMore: false }),
+      heartbeat: async input => { cloudVersion = input.configVersion; if (activateDuringHeartbeat) { const activate = activateDuringHeartbeat; activateDuringHeartbeat = null; activate(); } return rig.clock.now(); },
+      send: async events => { for (const event of events) if (event.payload.type === 'PROFILE_RECONFIGURATION_ACTIVATED') assert.equal(event.payload.payload.configVersion, cloudVersion); delivered.push(...events); return { acknowledgedEventIds: events.map(event => event.eventId), rejected: [] }; } };
+    runtime = new vault.VaultRuntime(rig.machine, cloud, { clock: rig.clock, broadcast: async () => {} });
+    await runtime.synchronize();
+    const actor = grant(rig, 'TECHNICIAN');
+    const nextPayload = structuredClone(rig.signed.payload); nextPayload.version = 2; nextPayload.machineProfile.revision++; nextPayload.machineProfile.doors[0].label = 'Updated';
+    const next = signConfig(nextPayload, rig.keyPair.privateKey); rig.machine.stageConfig(next);
+    activateDuringHeartbeat = () => rig.machine.activatePendingProfile(actor.sessionId, 2, next.digest, true, true);
+    const before = delivered.length;
+    await assert.rejects(() => runtime.synchronize(), error => error.code === 'CLOUD_CONFIG_CHANGED_DURING_SYNC');
+    assert.equal(rig.machine.config.active().payload.version, 2); assert.equal(cloudVersion, 1);
+    assert.equal(delivered.length, before, 'New-profile facts must not be flushed after an older heartbeat');
+    await runtime.synchronize();
+    assert.equal(cloudVersion, 2);
+    assert.ok(delivered.some(event => event.payload.type === 'PROFILE_RECONFIGURATION_ACTIVATED'));
+  } finally { await runtime?.stop(); rig.store.close(); }
 });
 
 test('finished customer presentation still pins configuration and staff while payment is unresolved', async () => {

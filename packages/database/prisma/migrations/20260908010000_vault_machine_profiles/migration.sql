@@ -2,6 +2,8 @@
 -- addresses remain unchanged. This source is applied only by the guarded
 -- disposable harness until separately authorized deployment.
 ALTER TABLE "VaultMachine" ADD COLUMN "draftMachineProfile" JSONB, ADD COLUMN "draftDoorMapping" JSONB;
+ALTER TABLE "VaultMachine" DROP CONSTRAINT "VaultMachine_door_counts_check";
+ALTER TABLE "VaultMachine" ADD CONSTRAINT "VaultMachine_door_counts_check" CHECK ("availableDoorCount" BETWEEN 0 AND 256 AND "outboxPendingCount" >= 0);
 ALTER TABLE "VaultDoor" ADD COLUMN "controllerEndpointId" TEXT NOT NULL DEFAULT 'legacy', ADD COLUMN "doorLabel" TEXT, ADD COLUMN "retiredAt" TIMESTAMP(3);
 ALTER TABLE "VaultSaleItem" ADD COLUMN "controllerEndpointIdSnapshot" TEXT NOT NULL DEFAULT 'legacy', ADD COLUMN "doorLabelSnapshot" TEXT,
   ADD COLUMN "initialCommandTerminalAt" TIMESTAMP(3), ADD COLUMN "retryCommandTerminalAt" TIMESTAMP(3);

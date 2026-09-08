@@ -91,6 +91,32 @@ test("higher callback sequences cannot reopen terminal payments or erase authori
   await assert.rejects(projectVaultMachineEvent(tx, callback("AUTHORIZED")), errorCode("PAYMENT_STATE_TRANSITION_INVALID"));
 });
 
+test("late legacy start-error events preserve stronger payment evidence without creating false support cases", async () => {
+  let writes = 0;
+  const sale: any = { id: saleId, mode: "CERTIFICATION", paymentState: "DECLINED" };
+  const tx: any = { vaultSale: { findFirst: async () => sale, updateMany: async () => { writes++; } }, vaultSupportCase: { upsert: async () => { writes++; } } };
+  for (const state of ["DECLINED", "CANCELLED", "AUTHORIZED", "VEND_RESULT_PENDING", "SETTLEMENT_PENDING", "SETTLED", "RECONCILIATION_REQUIRED"]) {
+    sale.paymentState = state;
+    await projectVaultMachineEvent(tx, event("PAYMENT_START_EFFECT_UNKNOWN", { saleId, errorClass: "Error" }, { correlationId: saleId }));
+  }
+  assert.equal(writes, 0);
+});
+
+test("cloud certification rejects physical evidence classes from either mocked adapter", async () => {
+  const rig = await createRig();
+  try {
+    const actor = grant(rig, "TECHNICIAN"); const cert = await rig.operations.startCertification(actor.sessionId);
+    rig.operations.recordCertificationEvidence(actor.sessionId, { evidenceId: randomUUID(), sessionId: cert.sessionId, doorId: cert.scheduledDoorId, evidenceClass: "AUTOMATED", outcome: "PASS", expectedDoorIds: [cert.scheduledDoorId], observedDoorIds: [cert.scheduledDoorId], notes: "Simulator only", artifactDigest: "b".repeat(64), observedAt: rig.clock.now().toISOString() });
+    const envelope = JSON.parse(rig.store.one("SELECT payload_json FROM outbox WHERE event_id=(SELECT event_id FROM machine_event WHERE type='CERTIFICATION_EVIDENCE_RECORDED')").payload_json);
+    for (const mockedIdentity of ["controllerIdentity", "nayaxFlowConfig"]) {
+      const tx: any = { vaultCertificationSession: { findFirst: async () => ({ status: "ACTIVE", [mockedIdentity]: { mode: "MOCK" } }) } };
+      for (const evidenceClass of ["OFFICIAL_SDK", "BENCH", "FULL_MACHINE", "FIELD"]) {
+        await assert.rejects(projectVaultMachineEvent(tx, normalizeTypedVaultEvent({ ...envelope, payload: { ...envelope.payload, evidenceClass } })), errorCode("CERTIFICATION_EVIDENCE_CLASS_INVALID"));
+      }
+    }
+  } finally { rig.store.close(); }
+});
+
 test("restock finalization proves exact terminal observations, mode and persisted outcome counts", async () => {
   const session: any = { id: restockSessionId, expectedDoorCount: 2, items: [{ state: "FILLED", commandTerminalAt: new Date() }, { state: "LEFT_EMPTY", commandTerminalAt: null }] };
   let writes = 0;

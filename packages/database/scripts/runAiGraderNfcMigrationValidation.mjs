@@ -588,7 +588,7 @@ try {
   }
   run(pnpm, ["--filter", "@tenkings/vault-contracts", "build"], { env: databaseEnv, label: "building Vault contracts for disposable cross-stack validation" });
   run(pnpm, ["--filter", "@tenkings/vault-machine", "build"], { env: databaseEnv, label: "building simulated Vault machine authority for disposable cross-stack validation" });
-  for (const profileDoors of [null, 72, 125]) {
+  for (const profileDoors of [null, 72, 125, 256]) {
     const vaultV1ServiceResult = run(process.execPath, [vaultV1ServiceScript, ...(profileDoors ? [`--profile-doors=${profileDoors}`] : [])], {
       env: databaseEnv, label: `projecting simulated ${profileDoors ?? "legacy150"}-door machine/payment/restock/retry events through public production Next HTTP into disposable PostgreSQL`,
     });

@@ -1,7 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { calculateCartTotals, createSupportUrl, mayIdleTimeout, mayShowOpenDoors, preserveCartConflicts, providerLimitViolation, staffOperationsForRole, VIEWPORT_TEST_CASES } from "../src/workflow/kioskWorkflow";
+import QRCode from "qrcode";
+import type { VaultDoorId } from "@tenkings/vault-contracts/browser";
+import { calculateCartTotals, createSupportUrl, mayIdleTimeout, mayShowOpenDoors, preserveCartConflicts, providerLimitViolation, staffOperationsForRole, supportQrUrl, VIEWPORT_TEST_CASES } from "../src/workflow/kioskWorkflow";
 import { assertSafeNoSensorLanguage, PUBLIC_STATES, statusContent } from "../src/workflow/statusContent";
 import { sale, snapshot } from "./fixtures";
+
+it("encodes support references at maximum cart/ID and Unicode-label boundaries with the real QR encoder", () => {
+  const ids = Array.from({ length: 256 }, (_, index) => `${String(index).padStart(4, '0')}${'a'.repeat(60)}` as VaultDoorId);
+  const url = createSupportUrl(snapshot().support!, sale.supportReference, ids);
+  expect(new URL(url).searchParams.get('ref')).toBe(sale.supportReference);
+  expect(new URL(url).searchParams.has('doors')).toBe(false);
+  expect(() => QRCode.create(url, { errorCorrectionLevel: 'M' })).not.toThrow();
+  for (const scheme of ['mailto:help@example.test?body=', 'sms:+15555550100?body=']) {
+    const full = scheme + encodeURIComponent(`Vault ${sale.supportReference}; ${Array(25).fill('界'.repeat(32)).join(',')}`);
+    expect(() => QRCode.create(full, { errorCorrectionLevel: 'M' })).toThrow();
+    const safe = supportQrUrl(full, scheme + encodeURIComponent(`Vault ${sale.supportReference}`));
+    expect(decodeURIComponent(safe)).toContain(sale.supportReference);
+    expect(() => QRCode.create(safe, { errorCorrectionLevel: 'M' })).not.toThrow();
+  }
+});
 
 describe("public workflow language", () => {
   it("defines safe visible copy for every public state", () => {

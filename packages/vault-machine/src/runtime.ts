@@ -109,6 +109,11 @@ export class VaultRuntime {
       outboxPendingCount: this.outbox.pressure().count, serviceLocked: state.serviceLocked, observedAt: iso(observedAt),
     });
     if (Math.abs(serverTime.getTime() - this.options.clock.now().getTime()) > 300_000) throw new VaultCloudError("CLOUD_CLOCK_UNSAFE");
+    // Staff can finish a safe reconfiguration while heartbeat is in flight.
+    // Its new-profile facts must wait until another heartbeat creates that
+    // membership. The following synchronous batch capture then prevents newer
+    // events arriving during delivery from entering this already-captured batch.
+    if (this.machine.config.active()?.digest !== active?.digest) throw new VaultCloudError("CLOUD_CONFIG_CHANGED_DURING_SYNC");
     const delivery = await this.outbox.flush();
     if (delivery.rejected) throw new VaultCloudError(delivery.failureCode ?? "CLOUD_EVENT_REJECTED");
     // A backed-off head cannot be skipped just because this cycle sent zero rows.
