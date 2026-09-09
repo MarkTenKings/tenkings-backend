@@ -16,8 +16,10 @@ export async function assertCustomerPrivileges(tx) {
         EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
             WHERE c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped AND n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
             AND (has_column_privilege(current_user,c.oid,a.attnum,'SELECT,INSERT,UPDATE,REFERENCES') OR has_table_privilege(current_user,c.oid,'DELETE,TRUNCATE,TRIGGER'))) AS table_access,
-        EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind='S' AND n.nspname NOT LIKE 'pg_%'
-            AND has_sequence_privilege(current_user,c.oid,'USAGE,SELECT,UPDATE')) AS sequence_access`;
+        EXISTS (WITH sequences AS MATERIALIZED (
+            SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE c.relkind='S' AND n.nspname NOT LIKE 'pg_%'
+        ) SELECT 1 FROM sequences WHERE has_sequence_privilege(current_user,oid,'USAGE,SELECT,UPDATE')) AS sequence_access`;
     if (!access || access.schema_write || access.table_access || access.sequence_access) deny(503, 'CUSTOMER_DATABASE_ROLE_INVALID');
     const functions = await tx.$queryRaw`SELECT n.nspname AS schema,p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS name,p.prosecdef AS definer
         FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'

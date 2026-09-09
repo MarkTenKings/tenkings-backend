@@ -70,8 +70,15 @@ export async function assertStaffPrivileges(tx) {
         if (allowed) seen.add(column.name);
     }
     if (seen.size !== Object.keys(STAFF_GRANTS).length) deny(503, 'STAFF_DATABASE_ROLE_INVALID');
-    const sequences = await tx.$queryRaw`SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-      WHERE c.relkind='S' AND n.nspname NOT LIKE 'pg_%' AND has_sequence_privilege(current_user,c.oid,'USAGE,SELECT,UPDATE')`;
+    // Materialize the already-filtered sequence set before calling the
+    // privilege helper. PostgreSQL 17 can otherwise evaluate
+    // has_sequence_privilege against an internal toast relation while
+    // reordering the join/filter, which raises "is not a sequence" for a
+    // valid non-owner serving role.
+    const sequences = await tx.$queryRaw`WITH sequences AS MATERIALIZED (
+        SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE c.relkind='S' AND n.nspname NOT LIKE 'pg_%'
+      ) SELECT oid FROM sequences WHERE has_sequence_privilege(current_user,oid,'USAGE,SELECT,UPDATE')`;
     const functions = await tx.$queryRaw`SELECT n.nspname AS schema, p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS name
       FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
       WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
