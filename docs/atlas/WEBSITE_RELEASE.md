@@ -1,6 +1,6 @@
 # ATLAS website release status
 
-Updated September 9, 2026 from Mark’s approved website and customer-account direction. The three-app candidate is implemented and verified locally. Actual-host activation and the supervised live pilot remain separate acceptance steps; local synthetic results do not establish live SMS, grading quality or physical finishing.
+Updated September 9, 2026 from Mark’s approved website and customer-account direction. The three-app candidate is implemented, verified locally and uploaded as three protected staged production builds on Vercel. The custom apex and private application controls are not activated. Live SMS, grading quality and physical finishing remain separate acceptance steps.
 
 ## Route ownership
 
@@ -26,6 +26,22 @@ The tracker follows actual records for submission, receipt, grading, human revie
 Actual dealer locations, mailing destinations, prices, postage/payment integration and turnaround commitments are not invented. The earlier public marketing draft’s dealer-only/no-mail and48-hour copy does not override the owner’s both-channel decision.
 
 ## Verification and remaining release steps
+
+### Hosted candidate
+
+All three provider deployments report READY with production target and exact source `ce70c574976ff9313a6cd0004c5e16f9acfc413b`. That commit adds upload exclusions and release records to application commit `54412eeb`; application and SQL bytes are unchanged. The projects have separate roots, Node 20.x, no Git connection and no application environment credentials. No branch push, custom-domain change or live migration occurred.
+
+| Area | Protected deployment | Provider deployment ID |
+| --- | --- | --- |
+| Public entry and gateway | [Public candidate](https://atlas-grading-public-dyfgk5h8e-ten-kings.vercel.app) | `dpl_D6yvokpV6Fuw9bDFeQ1YYgRmXG8a` |
+| Staff `/admin` | [Staff candidate](https://atlas-grading-staff-crdazsci6-ten-kings.vercel.app/admin) | `dpl_4aqev1ACV5MAd2XJedSCP9te4gmx` |
+| Customer `/account` | [Customer candidate](https://atlas-grading-customer-7c3wieixn-ten-kings.vercel.app/account) | `dpl_9yE9bnqVhQtRey26dnA4e7F1ZKJp` |
+
+These links require Vercel access and are not a working customer/admin login pilot. Six anonymous requests redirected to Vercel sign-in. Sixteen authenticated build-owner GET checks reached the actual applications: public entry 200, disabled private routes 503 with no-store caching, unmounted routes 404, and zero application session cookies. All temporary platform QA credentials were immediately revoked and verified absent. No ATLAS authentication or routing authority was supplied. Actual forwarding at `atlasgrading.com` with signed upstreams, real SMS, database controls and the supervised grading transport still needs verification.
+
+Vercel created generated team aliases even with `--skip-domain`; they are recorded in private provider evidence. The first preliminary upload included unnecessary tracked Docker templates and was removed after inspection; only the replacement candidates above are retained. The corrected dry manifests contain 1,986 committed source files and no environment or generated paths. The owner’s existing marketing Site and apex DNS remain unchanged.
+
+### Local acceptance and activation inputs
 
 The candidate passes147 full-chain PostgreSQL scenarios over93 public and15 ATLAS migrations, source/ledger checks and second no-op migration deploys. This includes15 customer lifecycle/ownership/intake scenarios and two real-service current-approval/finishing/shipping regressions. The combined three-app loopback site passes13 HTTP groups, including separate staff/customer cookies, deferred profile and channel snapshots, explicit intake, cross-account denial, process restart and logout. Chrome verification covers synthetic phone login/code paste, correct submission details, refresh and Back/Forward. All three Next builds pass their route/authority boundaries; exact final build/smoke counts and private evidence paths are recorded in `docs/handoffs/SESSION_LOG.md`.
 
