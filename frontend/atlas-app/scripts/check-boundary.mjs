@@ -14,6 +14,13 @@ const chunks = files(resolve(app, '.next/static')).filter(p => p.endsWith('.js')
 for (const path of chunks)
     assert.ok(!forbidden.test(readFileSync(path, 'utf8')), `Private/legacy dependency in browser chunk ${relative(app, path)}`);
 const traces = files(resolve(app, '.next/server')).filter(p => p.endsWith('.nft.json'));
+const database = resolve(app, '.generated/staff-database');
+const engines = readdirSync(database).filter(file => /^(?:libquery_engine-|query_engine-).+\.node$/.test(file));
+assert.ok(engines.length, 'Generated staff database engine is missing');
+const apiTrace = resolve(app, '.next/server', pages['/api/staff/[...path]']) + '.nft.json';
+const apiFiles = new Set(JSON.parse(readFileSync(apiTrace, 'utf8')).files.map(file => resolve(dirname(apiTrace), file)));
+for (const file of ['schema.prisma', ...engines])
+    assert.ok(apiFiles.has(resolve(database, file)), `Staff API deployment is missing database runtime file: ${file}`);
 let checkedFiles = 0;
 for (const trace of traces) {
     for (const file of JSON.parse(readFileSync(trace, 'utf8')).files) {
@@ -30,4 +37,4 @@ for (const trace of traces) {
 }
 assert.ok(traces.length > 0 && chunks.length > 0);
 console.log(JSON.stringify({ status: 'STAFF_BUILD_BOUNDARY_PASS', pages: Object.keys(pages), browserChunks: chunks.length, serverTraces: traces.length,
-    tracedFilesChecked: checkedFiles, basePath: routes.basePath, durableStore: 'atlas_staff', providerAdapters: ['explicitly activated ATLAS Verify'], certificationRoutes: 1 }));
+    tracedFilesChecked: checkedFiles, databaseEngines: engines, basePath: routes.basePath, durableStore: 'atlas_staff', providerAdapters: ['explicitly activated ATLAS Verify'], certificationRoutes: 1 }));

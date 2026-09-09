@@ -11,6 +11,15 @@ const chunks = files(resolve(app, '.next/static')).filter(p => p.endsWith('.js')
 for (const file of chunks) assert(!/StaffSession|StaffIdentity|StaffAssignment|staffReportApproval|__Host-atlas|twilio|@tenkings\/|reviewedDefects|admissionCanonical|sessionHash|sourceCanonical/.test(readFileSync(file, 'utf8')),
     `Private dependency in public browser output: ${relative(app, file)}`);
 const traces = files(resolve(app, '.next/server')).filter(p => p.endsWith('.nft.json'));
+const database = resolve(app, '.generated/public-database');
+const engines = readdirSync(database).filter(file => /^(?:libquery_engine-|query_engine-).+\.node$/.test(file));
+assert(engines.length, 'Generated public database engine is missing');
+for (const route of ['/reports/[token]', '/api/reports/[token]/images/[side]', '/api/reports/[token]/traces/[findingId]']) {
+    const trace = resolve(app, '.next/server', pages[route]) + '.nft.json';
+    const traced = new Set(JSON.parse(readFileSync(trace, 'utf8')).files.map(file => resolve(dirname(trace), file)));
+    for (const file of ['schema.prisma', ...engines])
+        assert(traced.has(resolve(database, file)), `Public deployment ${route} is missing database runtime file: ${file}`);
+}
 let checked = 0;
 for (const trace of traces) for (const file of JSON.parse(readFileSync(trace, 'utf8')).files) {
     const rel = relative(repo, resolve(dirname(trace), file));
@@ -26,5 +35,5 @@ for (const trace of traces) for (const file of JSON.parse(readFileSync(trace, 'u
 }
 assert(chunks.length && traces.length);
 console.log(JSON.stringify({ status: 'PUBLIC_BUILD_BOUNDARY_PASS', pages: Object.keys(pages), browserChunks: chunks.length,
-    serverTraces: traces.length, tracedFilesChecked: checked, staffRoutes: 0, writeRoutes: 0,
+    serverTraces: traces.length, tracedFilesChecked: checked, databaseEngines: engines, staffRoutes: 0, writeRoutes: 0,
     databasePorts: ['read_approved_report', 'read_approved_image', 'read_approved_trace'] }));

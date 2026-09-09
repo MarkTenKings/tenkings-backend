@@ -3,6 +3,7 @@ export default {
     poweredByHeader: false,
     reactStrictMode: true,
     experimental: { cpus: 2 },
+    outputFileTracingIncludes: { '/*': ['./.generated/customer-database/**/*'] },
     async headers() {
         return [{ source: '/:path*', headers: [
             { key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' },

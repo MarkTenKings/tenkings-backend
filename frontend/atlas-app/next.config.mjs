@@ -6,6 +6,7 @@ const config = {
     reactStrictMode: true,
     transpilePackages: ['@atlas/report-view'],
     experimental: { cpus: 2 },
+    outputFileTracingIncludes: { '/*': ['./.generated/staff-database/**/*'] },
     async headers() {
         return [{ source: '/:path*', headers: [
                     { key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' },
