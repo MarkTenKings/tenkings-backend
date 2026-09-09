@@ -29,6 +29,9 @@ import { finishingScenarios } from './finishing-fixture.mjs';
 import { resolutionScenarios } from './resolution-fixture.mjs';
 import { learningScenarios } from './learning-fixture.mjs';
 import { identityCorrectionScenarios } from './identity-correction-fixture.mjs';
+import { adminPathScenarios } from './admin-path-fixture.mjs';
+import { customerScenarios } from '../../atlas-customer/scripts/postgres-scenarios.mjs';
+import { trackingRegressionScenarios } from '../../atlas-customer/scripts/tracking-regression.mjs';
 
 // Execute the original pure TypeScript classifier in the fixture. No substitute
 // normalization/scoring code or private runtime activation is used here.
@@ -38,7 +41,7 @@ const { classifyAtlasIdentityCorrection } = await tsImport('../../nextjs-app/lib
 
 const fixture = await disposablePostgres(process.argv.slice(2));
 const results = [], clients = new Set();
-const check = (code, action) => assert.rejects(action, error => error.code === code, code);
+const check = (code, action) => assert.rejects(async () => action(), error => error.code === code, code);
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
 async function scenario(name, work, { emptyRoster = false, analyses = false, trained = false, traces = false } = {}) {
     const db = await fixture.database();
@@ -523,9 +526,16 @@ try {
         const entered = deferred(), release = deferred();
         const bridge = await bridgeFixture(context, { beforePerform: async () => { entered.resolve(); await release.promise; } });
         const signed = await context.login(), card = await bridge.review.read(signed.staff, bridge.specimenIds[0]);
-        const input = gradingInput(card), first = bridge.grading.run(signed.staff, card.id, input);
+        let dispatchNotifications = 0, committedState;
+        const input = gradingInput(card), first = bridge.grading.run(signed.staff, card.id, input, { onDispatched() {
+            dispatchNotifications++;
+            committedState = context.admin.staffGradingOperation.findUnique({ where: {
+                specimenId_operationId: { specimenId: card.id, operationId: input.operationId } } });
+        } });
         await entered.promise;
-        const duplicate = await bridge.grading.run(signed.staff, card.id, input);
+        assert.equal((await committedState).state, 'DISPATCHED'); assert.equal(dispatchNotifications, 1);
+        const duplicate = await bridge.grading.run(signed.staff, card.id, input, { onDispatched() { dispatchNotifications++; } });
+        assert.equal(dispatchNotifications, 1);
         assert.equal(duplicate.operation.state, 'DISPATCHED'); assert.equal(bridge.calls(), 1);
         await check('REQUEST_CONFLICT', () => bridge.grading.run(signed.staff, card.id, { ...input, action: { type: 'REMOVE', defectIds: ['other'] } }));
         release.resolve(); assert.equal((await first).operation.state, 'SUCCEEDED');
@@ -651,6 +661,9 @@ try {
     await resolutionScenarios(scenario);
     await learningScenarios(scenario);
     await identityCorrectionScenarios(scenario, { classify: classifyAtlasIdentityCorrection });
+    await adminPathScenarios(scenario);
+    await customerScenarios(scenario, check);
+    await trackingRegressionScenarios(scenario);
 } catch (caught) { error = caught; }
 finally {
     for (const client of clients) await client.$disconnect();

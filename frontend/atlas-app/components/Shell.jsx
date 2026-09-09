@@ -1,3 +1,4 @@
+import { STAFF_SIGN_IN_PATH } from '../lib/routes.mjs';
 import Link from 'next/link';
 import Head from 'next/head';
 import { useState } from 'react';
@@ -19,7 +20,7 @@ export default function Shell({ children, staff, title = 'Review queue', workspa
         try {
             const session = await api('session');
             await api('auth/logout', { body: {}, csrf: session.csrf });
-            window.location.replace('/');
+            window.location.replace(STAFF_SIGN_IN_PATH);
         }
         catch (e) {
             setError(e.message);

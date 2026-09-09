@@ -5,9 +5,11 @@ import { fileURLToPath } from 'node:url';
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(app, '../..');
 const pages = JSON.parse(readFileSync(resolve(app, '.next/server/pages-manifest.json'), 'utf8'));
+const routes = JSON.parse(readFileSync(resolve(app, '.next/routes-manifest.json'), 'utf8'));
+assert.equal(routes.basePath, '/admin', 'Staff artifact must mount only at /admin');
 assert.deepEqual(Object.keys(pages).sort(), ['/', '/404', '/_app', '/_document', '/_error', '/api/staff/[...path]', '/cards/[cardId]', '/grading', '/operations'].sort());
 function files(dir) { return readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? files(resolve(dir, entry.name)) : [resolve(dir, entry.name)]); }
-const forbidden = /@tenkings\/|requireAdminSession|buildAdminHeaders|QueenWidget|ATLAS_ADMIN_PHONES|AC_SYNTHETIC_ATLAS|VA_SYNTHETIC_ATLAS|__Host-atlas_staff/;
+const forbidden = /@tenkings\/|requireAdminSession|buildAdminHeaders|QueenWidget|ATLAS_ADMIN_PHONES|AC_SYNTHETIC_ATLAS|VA_SYNTHETIC_ATLAS|__(?:Host|Secure)-atlas_staff/;
 const chunks = files(resolve(app, '.next/static')).filter(p => p.endsWith('.js'));
 for (const path of chunks)
     assert.ok(!forbidden.test(readFileSync(path, 'utf8')), `Private/legacy dependency in browser chunk ${relative(app, path)}`);
@@ -18,7 +20,7 @@ for (const trace of traces) {
         const full = resolve(dirname(trace), file), rel = relative(repo, full);
         assert.ok(!rel.startsWith('..'), `External checkout dependency: ${file}`);
         assert.ok(rel.startsWith('frontend/atlas-app/') || rel.startsWith('node_modules/') || rel === 'package.json' || rel === 'packages/atlas-grading-core/package.json' || rel.startsWith('packages/atlas-grading-core/dist/') || rel.startsWith('packages/atlas-report-view/') || rel.startsWith('packages/atlas-service-bridge/')
-            || rel === 'packages/atlas-finishing/package.json' || rel === 'packages/atlas-finishing/src/nfc.mjs' || rel === 'packages/atlas-finishing/browser.mjs', `Non-app server dependency: ${rel}`);
+            || rel.startsWith('packages/atlas-site-router/') || rel === 'packages/atlas-finishing/package.json' || rel === 'packages/atlas-finishing/src/nfc.mjs' || rel === 'packages/atlas-finishing/browser.mjs', `Non-app server dependency: ${rel}`);
         assert.ok(!/@tenkings[+/]|stripe|mux-player|aws-sdk|ai-grader-capture-helper/i.test(rel)
             && (!/twilio/i.test(rel) || rel === 'frontend/atlas-app/lib/server/access/twilio.mjs'), `Forbidden effect dependency: ${rel}`);
         if (/prisma/i.test(rel)) assert.ok(rel === 'frontend/atlas-app/prisma/schema.prisma' || rel.startsWith('frontend/atlas-app/.generated/staff-database/')
@@ -28,4 +30,4 @@ for (const trace of traces) {
 }
 assert.ok(traces.length > 0 && chunks.length > 0);
 console.log(JSON.stringify({ status: 'STAFF_BUILD_BOUNDARY_PASS', pages: Object.keys(pages), browserChunks: chunks.length, serverTraces: traces.length,
-    tracedFilesChecked: checkedFiles, durableStore: 'atlas_staff', providerAdapters: ['explicitly activated ATLAS Verify'], certificationRoutes: 1 }));
+    tracedFilesChecked: checkedFiles, basePath: routes.basePath, durableStore: 'atlas_staff', providerAdapters: ['explicitly activated ATLAS Verify'], certificationRoutes: 1 }));

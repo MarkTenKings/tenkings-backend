@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { STAFF_BASE_PATH } from '../routes.mjs';
 export const LOCAL_ORIGIN = 'http://127.0.0.1:4318';
 export const LOCAL_HOST = '127.0.0.1:4318';
 export const BROWSER_COOKIE = 'atlas_local_browser';
@@ -69,8 +70,8 @@ export function cookies(header = '') {
     return result;
 }
 export function fixtureCookie(name, token, maxAge) {
-    // Deliberately different from the future Secure __Host-atlas_staff cookie.
-    return `${name}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}`;
+    // Local names never confer production access. Match production path scope.
+    return `${name}=${token}; HttpOnly; Path=${STAFF_BASE_PATH}; SameSite=Lax; Max-Age=${maxAge}`;
 }
 export function privateHeaders(res) {
     res.setHeader('Cache-Control', 'private, no-store, max-age=0');

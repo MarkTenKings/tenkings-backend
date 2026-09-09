@@ -238,7 +238,7 @@ export function createAtlasNfcBrowser({ fetchImpl = globalThis.fetch, cryptoImpl
 export function createFinishingRequests({ cardId, csrf, fetchImpl = globalThis.fetch, randomUUID = () => globalThis.crypto.randomUUID(), timeoutMs = 15000 } = {}) {
     requireThat(typeof cardId === 'string' && /^[a-f0-9-]{36}$/.test(cardId), 'CARD_REQUIRED');
     let pending = null, busy = false;
-    const base = `/api/staff/cards/${cardId}/finishing`;
+    const base = `/admin/api/staff/cards/${cardId}/finishing`;
     async function send() {
         requireThat(pending && !busy, 'REQUEST_IN_PROGRESS'); busy = true;
         try {

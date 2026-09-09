@@ -23,7 +23,7 @@ export default function OperationsPage({ unavailable, operationsUnavailable, sta
     if (unavailable) return <Unavailable />;
     return <Shell staff={staff} title="Operations"><main className="main-content">
         <div className="page-heading"><div><p className="eyebrow">STAFF ADMINISTRATION</p><h1>Operations</h1>
-            <p className="muted">Prepare the ten-card pilot and manage its staff, intake and recorded costs.</p></div>
+            <p className="muted">Manage customer submissions, staff assignments and the ten-card pilot.</p></div>
             <Link href="/grading" className="text-button">Review queue →</Link></div>
         {operationsUnavailable ? <section className="empty-state"><h2>Operations access is unavailable.</h2>
             <p>This workspace requires an enabled operations service and a current human operations grant.</p>

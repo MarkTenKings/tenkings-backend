@@ -284,7 +284,7 @@ export async function finishingScenarios(scenario) {
         const label = await f.issue(), job = await f.start(label), result = f.resultInput(job);
         const original = await f.admin.staffNfcControl.findUnique({ where: { id: 'active' } });
         for (const change of [{ configHash: 'a'.repeat(64) }, { signingKeyHash: 'b'.repeat(64) }, { trustHash: 'c'.repeat(64) },
-            { deploymentId: 'other-synthetic' }, { releaseSha: 'd'.repeat(40) }, { mode: 'PRODUCTION', origin: 'https://app.atlasgrading.com' }]) {
+            { deploymentId: 'other-synthetic' }, { releaseSha: 'd'.repeat(40) }, { mode: 'PRODUCTION', origin: 'https://app.atlasgrading.com', enabled: false }]) {
             await f.nfcControl(change);
             assert.equal((await f.finishing.read(f.signed.staff, f.ready.id)).nfcConfigured, false);
             await rejectsCode('NFC_NOT_CONFIGURED', () => f.start(label));

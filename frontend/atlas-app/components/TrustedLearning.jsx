@@ -1,3 +1,4 @@
+import { staffApiPath, STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { useEffect, useRef, useState } from 'react';
 import { operationsRequest } from './MachinePreparation';
 import styles from './TrustedLearning.module.css';
@@ -46,7 +47,7 @@ export async function learningRequest(specimenId, action = '', { body, csrf, fet
     const deadline = new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(failure()); }, timeoutMs); });
     try {
         return await Promise.race([deadline, (async () => {
-            const response = await fetchImpl(`/api/staff/cards/${specimenId}/learning${action ? `/${action}` : ''}`, {
+            const response = await fetchImpl(staffApiPath(`cards/${specimenId}/learning${action ? `/${action}` : ''}`), {
                 method: encoded === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
                 referrerPolicy: 'no-referrer', signal: controller.signal,
                 headers: encoded === undefined ? {} : { 'Content-Type': 'application/json', 'X-Atlas-Csrf': csrf ?? '' },
@@ -171,7 +172,7 @@ export default function TrustedLearning({ csrf, specimenId, approvalId, disabled
         {pending && <div className={styles.notice}><strong>Exact decision retained</strong><p>Keep this tab open until the save is resolved. Candidate selection, reason and operation reference are locked.</p>
             <p>Specimen {pending.specimenId} · Approval {pending.approvalId} · Operation {pending.operationId}</p>
             <p>{pending.decision === 'APPROVE' ? 'Approve for later application' : 'Reject'} · {pending.candidateIds.length} selected candidates</p>
-            <p>If your session ended, <a href="/?reauthenticate=1" target="_blank" rel="noreferrer">sign in in another tab</a>, then retry here. The exact decision stays retained.</p>
+            <p>If your session ended, <a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">sign in in another tab</a>, then retry here. The exact decision stays retained.</p>
             <button type="button" disabled={busy} onClick={() => send(pendingRef.current, true)}>Retry exact trusted-learning decision</button></div>}
         <div className={styles.actions}><button type="button" disabled={locked || !UUID.test(specimenId) || !UUID.test(approvalId)} onClick={loadPreview}>Load candidates from approved report</button>
             <button type="button" disabled={busy || Boolean(pending) || !UUID.test(specimenId)} onClick={() => read(() => loadHistory())}>Reload decision history</button></div>

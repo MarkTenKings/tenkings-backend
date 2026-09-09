@@ -15,7 +15,7 @@ let checked = 0;
 for (const trace of traces) for (const file of JSON.parse(readFileSync(trace, 'utf8')).files) {
     const rel = relative(repo, resolve(dirname(trace), file));
     assert(!rel.startsWith('..'));
-    assert(rel.startsWith('frontend/atlas-public/') || rel.startsWith('packages/atlas-report-view/')
+    assert(rel.startsWith('frontend/atlas-public/') || rel.startsWith('packages/atlas-report-view/') || rel.startsWith('packages/atlas-site-router/')
         || rel.startsWith('packages/atlas-grading-core/dist/') || rel === 'packages/atlas-grading-core/package.json'
         || rel.startsWith('packages/atlas-service-bridge/src/') || rel === 'packages/atlas-service-bridge/package.json'
         || rel.startsWith('node_modules/') || rel === 'package.json', `Unreviewed public server dependency: ${rel}`);

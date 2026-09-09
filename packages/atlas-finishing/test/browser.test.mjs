@@ -179,7 +179,7 @@ test('hosted saves retain exact operation and body across loss, session rejectio
     c.setCsrf('renewed-synthetic-csrf'); assert.deepEqual(await c.retry(), receipt);
     assert.equal(new Set(calls.map(call => call.body)).size, 1); assert.equal(calls[2].headers['X-Atlas-Csrf'], 'renewed-synthetic-csrf');
     assert.deepEqual(JSON.parse(calls[0].body), { jobId: job.id, result: vector.result, operationId: 'synthetic-operation-1' });
-    assert.equal(c.pending(), null); assert.equal(calls[0].url, `/api/staff/cards/${cardId}/finishing/nfc-verify`);
+    assert.equal(c.pending(), null); assert.equal(calls[0].url, `/admin/api/staff/cards/${cardId}/finishing/nfc-verify`);
     assert.equal(calls[0].credentials, 'same-origin'); assert.ok(!calls[0].headers['x-tenkings-nfc-token']);
 });
 
@@ -270,6 +270,6 @@ test('recovery retrieval is a same-origin read with explicit recovery marker, no
         return response({ receipt: { ...job, id: jobId, job: { ...job.job, specimenId: cardId } }, recoveryOnly: true, verification: null }); } });
     const recovered = await c.retrieveNfcJob(jobId);
     assert.equal(recovered.receipt.recoveryOnly, true); assert.equal(c.pending(), null);
-    assert.equal(calls[0].url, `/api/staff/cards/${cardId}/finishing/nfc-job/${jobId}`); assert.equal(calls[0].method, 'GET');
+    assert.equal(calls[0].url, `/admin/api/staff/cards/${cardId}/finishing/nfc-job/${jobId}`); assert.equal(calls[0].method, 'GET');
     assert.equal(calls[0].credentials, 'same-origin'); assert.equal(calls[0].body, undefined); assert.deepEqual(calls[0].headers, {});
 });

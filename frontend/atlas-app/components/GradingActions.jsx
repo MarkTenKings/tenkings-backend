@@ -1,3 +1,4 @@
+import { staffApiPath } from '../lib/routes.mjs';
 import { useEffect, useRef, useState } from 'react';
 import { api, approvalMessage } from '../lib/client';
 import { Notice } from './Shell';
@@ -109,7 +110,7 @@ function TraceEditor({ card, csrf, finding, side, disabled, onClose, onSave }) {
         <button disabled={blocked || !undo.current.length} onClick={() => { trace.current = undo.current.pop(); setEdits(n => n + 1); paint(); }}>Undo stroke</button>
         {!finding && <label>Defect type <select value={type} onChange={e => setType(e.target.value)} disabled={blocked}>{TYPES.map(t => <option key={t} value={t}>{label(t)}</option>)}</select></label>}</div>
       {message && <p role="status">{message}</p>}{error && <Notice error>{error}</Notice>}{!safeCorner && <Notice error>The saved corner geometry is required before editing.</Notice>}
-      <div className="trace-stage"><img src={`/api/staff/evidence/${card.id}/${side}`} alt={`Preserved ${label(side)} card image`} onLoad={() => setImageLoaded(true)} onError={() => setError('The source image could not be loaded. Close and reload the card.')}/>
+      <div className="trace-stage"><img src={staffApiPath(`evidence/${card.id}/${side}`)} alt={`Preserved ${label(side)} card image`} onLoad={() => setImageLoaded(true)} onError={() => setError('The source image could not be loaded. Close and reload the card.')}/>
         <canvas ref={canvas} width="1270" height="1778" aria-label="Canonical finding trace; draw using a pointer" onPointerDown={begin} onPointerMove={move} onPointerUp={finish}
           onPointerCancel={() => { stroke.current = null; paint(); }}/></div>
       <div className="trace-footer"><span>Original traces and earlier revisions are retained.</span><button className="primary" disabled={blocked || !edits || !isNonEmptySpeedsterTrace(trace.current)} onClick={save}>{disabled ? 'Measuring…' : 'Save and remeasure trace'}</button></div>

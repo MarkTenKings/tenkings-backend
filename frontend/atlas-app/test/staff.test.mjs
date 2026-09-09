@@ -184,7 +184,7 @@ test('unapproved number and caller-selected role never dispatch provider', async
 test('correct login sets separate opaque HttpOnly fixture cookie and never exposes token/list/SID', async () => {
     const f = fixture(), c = f.client();
     const login = await c.login();
-    assert.match(login.cookie, /^atlas_local_staff=[a-zA-Z0-9_-]+; HttpOnly; Path=\/; SameSite=Lax;/);
+    assert.match(login.cookie, /^atlas_local_staff=[a-zA-Z0-9_-]+; HttpOnly; Path=\/admin; SameSite=Lax;/);
     assert.doesNotMatch(login.cookie, /Domain=|__Host-atlas_staff/);
     assert.equal(login.staff.id, 'fixture-reviewer');
     assert.equal(login.staff.mode, 'SYNTHETIC');

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { staffClientRequest, staffRequestDeadline, STAFF_RESPONSE_LIMIT } from '../lib/client-request.mjs';
+import { GRADING_STREAM_HEADER, GRADING_STREAM_PROTOCOL } from '../lib/grading-response.mjs';
 const encode = text => new TextEncoder().encode(text);
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 function clock() {
@@ -14,11 +15,12 @@ function clock() {
         expire() { for (const callback of [...active.values()]) callback(); },
         advance(value) { milliseconds += value; } };
 }
-function response(parts = ['{"card":{"id":"one"}}'], status = 200, length = null) {
+function response(parts = ['{"card":{"id":"one"}}'], status = 200, length = null, stream = null) {
     let index = 0; const calls = { cancel: 0, release: 0, read: 0, bodyCancel: 0 };
     const reader = { async read() { calls.read++; return index < parts.length ? { done: false, value: typeof parts[index] === 'string' ? encode(parts[index++]) : parts[index++] } : { done: true }; },
         cancel() { calls.cancel++; return new Promise(() => {}); }, releaseLock() { calls.release++; } };
-    return { status, headers: { get: () => length }, body: { getReader: () => reader, cancel() { calls.bodyCancel++; return new Promise(() => {}); } }, reader, calls };
+    return { status, headers: { get: name => name === 'content-length' ? length : name === GRADING_STREAM_HEADER ? stream : null },
+        body: { getReader: () => reader, cancel() { calls.bodyCancel++; return new Promise(() => {}); } }, reader, calls };
 }
 const unknown = error => error.code === 'REQUEST_OUTCOME_UNCONFIRMED' && error.status === undefined;
 test('standard and exact grading deadlines preserve request interface and split UTF8 JSON', async () => {
@@ -28,7 +30,7 @@ test('standard and exact grading deadlines preserve request interface and split 
         fetchImpl: async (url, options) => { call = { url, options }; return r; } });
     assert.equal(result.data.card.name, 'é'); assert.equal(result.ok, true); assert.equal(result.status, 200);
     assert.deepEqual(timers.delays, [240_000]); assert.equal(timers.active.size, 0);
-    assert.equal(call.url, '/api/staff/cards/one/grade'); assert.equal(call.options.body, JSON.stringify(body));
+    assert.equal(call.url, '/admin/api/staff/cards/one/grade'); assert.equal(call.options.body, JSON.stringify(body));
     assert.equal(call.options.headers['X-Atlas-Csrf'], 'token'); assert.equal(call.options.credentials, 'same-origin'); assert.equal(call.options.cache, 'no-store');
     assert.equal(call.options.redirect, 'error'); assert.equal(call.options.referrerPolicy, 'no-referrer');
     assert.equal(staffRequestDeadline('cards/one/grade', undefined), 15_000);
@@ -88,6 +90,37 @@ test('valid bounded non-2xx errors retain status for existing api mapping, and n
         assert.deepEqual(data, { data: { error: 'CSRF_REQUIRED' }, ok: false, status });
     }
     await assert.rejects(staffClientRequest('session', {}, { fetchImpl: async () => { throw new TypeError('network'); } }), unknown);
+});
+test('grading keepalive whitespace is not success; its terminal envelope retains the actual result or denial', async () => {
+    for (const status of [200, 400, 401, 403, 409, 429, 500, 503]) {
+        const body = status === 200 ? { operation: { state: 'COMPLETED' }, card: { id: 'one' } } : { error: 'SIGN_IN_REQUIRED' };
+        const timers = clock(), parts = ['\n', '\n', JSON.stringify({ protocol: GRADING_STREAM_PROTOCOL, status, body })];
+        const result = await staffClientRequest('cards/one/grade', { body: { operationId: 'same' } }, { timers, now: timers.now,
+            fetchImpl: async () => response(parts, 200, null, GRADING_STREAM_PROTOCOL) });
+        assert.deepEqual(result, { data: body, ok: status === 200, status });
+        assert.deepEqual(timers.delays, [240_000]); assert.equal(timers.active.size, 0);
+    }
+});
+test('incomplete, unmarked, mismatched or malformed grading streams remain unknown and never clear a retained request', async () => {
+    const terminal = { protocol: GRADING_STREAM_PROTOCOL, status: 200, body: { card: { id: 'one' } } };
+    const attempts = [response(['\n'], 200, null, GRADING_STREAM_PROTOCOL),
+        response([JSON.stringify(terminal)]), response([JSON.stringify(terminal)], 200, null, 'unknown-v2'),
+        response([JSON.stringify(terminal)], 503, null, GRADING_STREAM_PROTOCOL),
+        ...[{ ...terminal, status: 202 }, { ...terminal, status: '200' }, { ...terminal, extra: true },
+            { ...terminal, protocol: 'unknown-v2' }, { ...terminal, body: { error: 'UNCONFIRMED' } },
+            { ...terminal, status: 403, body: { error: 'private detail' } }, { ...terminal, body: null }]
+            .map(body => response([JSON.stringify(body)], 200, null, GRADING_STREAM_PROTOCOL))];
+    for (const r of attempts) await assert.rejects(staffClientRequest('cards/one/grade', { body: { operationId: 'same' } }, { fetchImpl: async () => r }), unknown);
+    for (const [path, body] of [['session', undefined], ['cards/one/grade', undefined], ['cards/one/draft', {}]])
+        await assert.rejects(staffClientRequest(path, { body }, { fetchImpl: async () => response([JSON.stringify(terminal)], 200, null, GRADING_STREAM_PROTOCOL) }), unknown);
+    await assert.rejects(staffClientRequest('cards/one/grade', { body: {} }, { fetchImpl: async () => response(['{"error":"TEMPORARILY_UNAVAILABLE"}']) }), unknown);
+});
+test('grading heartbeat chunks cannot extend the independent deadline or authorize an automatic resend', async () => {
+    const timers = clock(), r = response([], 200, null, GRADING_STREAM_PROTOCOL); let sends = 0;
+    r.reader.read = async () => { timers.advance(60_000); return { done: false, value: encode('\n') }; };
+    await assert.rejects(staffClientRequest('cards/one/grade', { body: { operationId: 'same' } }, { timers, now: timers.now,
+        fetchImpl: async () => { sends++; return r; } }), unknown);
+    assert.equal(sends, 1); assert.equal(timers.now(), 240_000); assert.equal(timers.active.size, 0);
 });
 test('elapsed deadline is checked after body completion even before timer callback can run', async () => {
     const timers = clock(), r = response(); const read = r.reader.read;

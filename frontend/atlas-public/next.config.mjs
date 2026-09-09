@@ -1,5 +1,6 @@
 const config = {
-    poweredByHeader: false, reactStrictMode: true, transpilePackages: ['@atlas/report-view'], experimental: { cpus: 2 },
+    poweredByHeader: false, reactStrictMode: true, transpilePackages: ['@atlas/report-view'], experimental: { cpus: 2, proxyTimeout: 240_000 },
+    skipMiddlewareUrlNormalize: true,
     async headers() { return [{ source: '/:path*', headers: [
         { key: 'Referrer-Policy', value: 'no-referrer' }, { key: 'X-Content-Type-Options', value: 'nosniff' },
         { key: 'X-Frame-Options', value: 'DENY' },

@@ -1,3 +1,4 @@
+import { STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { useEffect, useRef, useState } from 'react';
 import { operationsRequest } from './MachinePreparation';
 import { usePendingNavigation } from '../lib/usePendingNavigation';
@@ -97,7 +98,7 @@ export default function IdentityCorrection({ card, csrf, disabled = false, onCor
         {card.grading?.pendingOperations > 0 && <p>Resolve the pending grading work before correcting this identity.</p>}
         {error && <p className={styles.error} role="alert">{error}</p>}
         {pending && <div className={styles.notice}><strong>Exact correction retained</strong><p>Keep this tab open until the save is resolved. The identity, reason and operation reference stay locked.</p>
-            <p>Specimen {pending.specimenId} · Operation {pending.body.operationId}</p><p><a href="/?reauthenticate=1" target="_blank" rel="noreferrer">Sign in in another tab</a>, then retry here.</p>
+            <p>Specimen {pending.specimenId} · Operation {pending.body.operationId}</p><p><a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">Sign in in another tab</a>, then retry here.</p>
             <button type="button" disabled={busy} onClick={() => send(saved.current, true)}>Retry exact identity correction</button></div>}
         <form onSubmit={submit}><fieldset disabled={locked} className={styles.form}>
             <label>Card category<select value={profile} onChange={event => { edited.current = true; setProfile(event.target.value); setConfirmed(false); setResult(null); }}>
@@ -110,7 +111,7 @@ export default function IdentityCorrection({ card, csrf, disabled = false, onCor
             <label className={styles.check}><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)}/>I checked this identity against the card and will review the checklist again if the correction is saved.</label>
             <button type="submit" disabled={!confirmed || !reason.trim()}>Check and save identity correction</button>
         </fieldset></form>
-        <p>A sign-in within five minutes and current review access are required. <a href="/?reauthenticate=1" target="_blank" rel="noreferrer">Complete a fresh sign-in</a>.</p>
+        <p>A sign-in within five minutes and current review access are required. <a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">Complete a fresh sign-in</a>.</p>
         {busy && <p role="status">Checking the saved correction…</p>}
         {result && <div className={styles.notice} role="status"><strong>{result.status === 'CORRECTED' ? 'Identity correction saved' : result.status === 'NO_CHANGE' ? 'No identity change' : 'Fresh processing required'}</strong>
             {result.status === 'CORRECTED' ? <p>Review the identity and both card sides again before approving a new report. Correction {result.receiptId}.</p>

@@ -1,0 +1,22 @@
+// Only this dedicated generated client is included in the customer build.
+// Runtime access uses the named function gateway; no table privileges are granted.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../.generated/customer-database"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("ATLAS_CUSTOMER_DATABASE_URL")
+}
+
+model CustomerAccount {
+  id            String   @id @db.Uuid
+  phoneHash     String   @unique @db.VarChar(64)
+  phone         String   @unique @db.VarChar(16)
+  profile       Json?
+  accessVersion Int      @default(1)
+  revokedAt     DateTime?
+  createdAt     DateTime @default(now())
+  lastLoginAt   DateTime @default(now())
+}

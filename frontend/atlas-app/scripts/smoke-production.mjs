@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createServer } from 'node:net';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
@@ -30,31 +30,51 @@ try {
     await delay(50);
   }
   let checks = 0;
+  let pageHtml;
   for (const path of ['/', '/grading', '/operations', '/cards/sample-001', '/api/staff/session', '/api/staff/cards', '/api/staff/cards/sample-001', '/api/staff/evidence/sample-001/FRONT']) {
-    const result = await fetch(`${origin}${path}`, { redirect: 'manual' });
+    const result = await fetch(`${origin}/admin${path === '/' ? '' : path}`, { redirect: 'manual' });
     assert.equal(result.status, 503, path);
     assert.match(result.headers.get('cache-control'), /no-store/);
     assert.equal(result.headers.get('set-cookie'), null);
     const text = await result.text();
     if (path.startsWith('/api/')) assert.deepEqual(JSON.parse(text), { error: 'STAFF_ACCESS_NOT_ENABLED' });
-    else assert.match(text, /Staff access is not enabled here/);
+    else { assert.match(text, /Staff access is not enabled here/); pageHtml = text; }
     checks++;
   }
-  const send = await fetch(`${origin}/api/staff/auth/request`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify({ phone: '+12025550141', requestId: 'production_probe_001' }) });
+  for (const path of ['/', '/grading', '/operations', '/cards/sample-001', '/api/staff/session',
+      '/administrator', '/administrator/api/staff/session', '/account', '/reports/unknown']) {
+    const response = await fetch(`${origin}${path}`, { redirect: 'manual' });
+    assert.equal(response.status, 404, `Unlisted staff mount: ${path}`);
+    assert.equal(response.headers.get('set-cookie'), null); checks++;
+  }
+  const assets = [...pageHtml.matchAll(/<script[^>]*src="([^"]+)"/g)].map(match => match[1]);
+  assert(assets.length > 0, 'Built staff page must contain its script assets');
+  for (const asset of assets) {
+    assert(asset.startsWith('/admin/_next/'), `Staff asset escaped its mount: ${asset}`);
+    const response = await fetch(`${origin}${asset}`, { redirect: 'manual' });
+    assert.equal(response.status, 200, asset); assert.equal(response.headers.get('set-cookie'), null); checks++;
+  }
+  const buildId = readFileSync(resolve(root, '.next/BUILD_ID'), 'utf8').trim();
+  const data = await fetch(`${origin}/admin/_next/data/${buildId}/grading.json`, { redirect: 'manual' });
+  assert.equal(data.status, 503); assert.equal(data.headers.get('set-cookie'), null);
+  assert.equal((await data.json()).pageProps.unavailable, true); checks++;
+  const send = await fetch(`${origin}/admin/api/staff/auth/request`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify({ phone: '+12025550141', requestId: 'production_probe_001' }) });
   assert.equal(send.status, 503); assert.deepEqual(await send.json(), { error: 'STAFF_ACCESS_NOT_ENABLED' }); checks++;
-  const approve = await fetch(`${origin}/api/staff/cards/00000000-0000-4000-8000-000000000000/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: '{}' });
+  const approve = await fetch(`${origin}/admin/api/staff/cards/00000000-0000-4000-8000-000000000000/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: '{}' });
   assert.equal(approve.status, 503); assert.equal(approve.headers.get('set-cookie'), null); checks++;
   for (const suffix of ['grade', 'trace', 'operations/00000000-0000-4000-8000-000000000000']) {
-    const response = await fetch(`${origin}/api/staff/cards/00000000-0000-4000-8000-000000000000/${suffix}`,
+    const response = await fetch(`${origin}/admin/api/staff/cards/00000000-0000-4000-8000-000000000000/${suffix}`,
       suffix.startsWith('operations/') ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: '{}' });
     assert.equal(response.status, 503); assert.equal(response.headers.get('set-cookie'), null); checks++;
+    assert.equal(response.headers.get('x-atlas-grading-stream'), null);
+    assert.deepEqual(await response.json(), { error: 'STAFF_ACCESS_NOT_ENABLED' });
   }
   const card = '00000000-0000-4000-8000-000000000000';
   for (const path of [`cards/${card}/identity-correction`, `cards/${card}/learning/preview`, `cards/${card}/learning/decisions`,
       ...['label', 'nfc-job', 'nfc-verify', 'physical'].map(action => `cards/${card}/finishing/${action}`),
       'operations/machine/admit', 'operations/resolution/inspect', 'operations/resolution/cancel-initialization',
       'operations/resolution/abandon', 'operations/intake/admit', 'operations/roster/update', 'operations/invoices/reconcile']) {
-    const response = await fetch(`${origin}/api/staff/${path}`, { method:'POST', headers:{'Content-Type':'application/json',Origin:origin},body:'{}' });
+    const response = await fetch(`${origin}/admin/api/staff/${path}`, { method:'POST', headers:{'Content-Type':'application/json',Origin:origin},body:'{}' });
     assert.equal(response.status,503,path);assert.equal(response.headers.get('set-cookie'),null);
     assert.deepEqual(await response.json(),{error:'STAFF_ACCESS_NOT_ENABLED'});checks++;
   }

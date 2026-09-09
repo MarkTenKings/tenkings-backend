@@ -1,4 +1,5 @@
 import test from 'node:test';
+import * as routes from '../lib/routes.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -23,6 +24,7 @@ function harness() {
     const api = async (path, options = {}) => { calls.push({ path, ...options, body: options.body && structuredClone(options.body) }); return f.respond(path, options); };
     const exports = {}, context = { exports, structuredClone, console, crypto: { randomUUID: () => `operation-${++serial}` }, window: { confirm: () => true },
         require(name) {
+            if (name === '../../lib/routes.mjs') return routes;
             if (name === 'react') return react;
             if (name === '../../lib/client') return { api, approvalMessage: code => code };
             if (name === '../../lib/usePendingNavigation') return { usePendingNavigation: callback => { guard = callback; } };

@@ -19,7 +19,7 @@ export function operationReceipt(op) {
 }
 export class StaffGrading {
     constructor({ auth, review, bridge }) { this.auth = auth; this.review = review; this.bridge = bridge; }
-    async run(staff, cardId, input) {
+    async run(staff, cardId, input, { onDispatched } = {}) {
         strictObject(input, ['operationId', 'expectedAnalysisRevision', 'analysisHash', 'expectedReviewRevision', 'reviewHash', 'evidenceHash', 'action']);
         identifier(input.operationId);
         if (!Number.isSafeInteger(input.expectedAnalysisRevision) || input.expectedAnalysisRevision < 0
@@ -74,6 +74,9 @@ export class StaffGrading {
             return { op: dispatched, scope: bridgeScope(context, card, assignment), dispatch: true };
         });
         if (claimed.dispatch) {
+            // Synchronous transport notification after commit. A socket failure
+            // cannot cancel this durable dispatch or authorize another call.
+            try { onDispatched?.(); } catch {}
             try { await this.bridge.call(claimed.scope, { action: 'RUN_REVIEW', operationId: claimed.op.id }); }
             catch {
                 // A lost reply cannot authorize another call. The adapter may

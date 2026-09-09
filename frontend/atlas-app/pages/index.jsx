@@ -1,3 +1,4 @@
+import { STAFF_GRADING_PATH } from '../lib/routes.mjs';
 import Head from 'next/head';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/client';
@@ -21,7 +22,7 @@ function SignInForm({ mode, reauthenticate }) {
         const controller = new AbortController();
         api(`session${reauthenticate ? '?reauthenticate=1' : ''}`, { signal: controller.signal }).then(s => {
             if (s.staff && !reauthenticate)
-                window.location.replace('/grading');
+                window.location.replace(STAFF_GRADING_PATH);
             else
                 setCsrf(s.csrf);
         }).catch(e => { if (!controller.signal.aborted)
@@ -41,7 +42,7 @@ function SignInForm({ mode, reauthenticate }) {
             }
             else {
                 await api('auth/verify', { body: { challengeId: challenge.challengeId, code }, csrf });
-                window.location.replace('/grading');
+                window.location.replace(STAFF_GRADING_PATH);
             }
         }
         catch (e) {

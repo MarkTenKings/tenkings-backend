@@ -10,7 +10,8 @@
     "db:generate": "node scripts/generate-database.mjs"
   },
   "dependencies": {
-    "next": "14.2.5",
+    "@atlas/site-router": "workspace:*",
+    "next": "15.5.25",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "@prisma/client": "5.22.0",
@@ -22,7 +23,7 @@
   },
   "devDependencies": {
     "eslint": "8.57.0",
-    "eslint-config-next": "14.2.5",
+    "eslint-config-next": "15.5.25",
     "prisma": "5.22.0"
   }
 }

@@ -1,3 +1,4 @@
+import * as routes from '../lib/routes.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -21,12 +22,13 @@ function harness(name, props = {}) {
         if (modules[name]) return modules[name]; const exports = {}; modules[name] = exports;
         vm.runInNewContext(compiled[name], { exports, structuredClone, crypto: { randomUUID }, TextEncoder, TextDecoder, Uint8Array, AbortController, setTimeout, clearTimeout,
             fetch: async (url, options) => {
-                const call = { path: url.replace('/api/staff/', ''), body: options.body === undefined ? undefined : JSON.parse(options.body), csrf: options.headers['X-Atlas-Csrf'] };
+                const call = { path: url.replace('/admin/api/staff/', ''), body: options.body === undefined ? undefined : JSON.parse(options.body), csrf: options.headers['X-Atlas-Csrf'] };
                 f.calls.push(call);
                 try { return new Response(JSON.stringify(await f.respond(call)), { status: 200 }); }
                 catch (e) { if (e.status) return new Response(JSON.stringify({ error: e.code }), { status: e.status }); throw e; }
             }, require(dep) {
                 if (dep === 'react') return react;
+                if (dep === '../lib/routes.mjs') return routes;
                 if (dep === './MachinePreparation') return load('MachinePreparation');
                 if (dep === '../lib/usePendingNavigation') return { usePendingNavigation: fn => { guard = fn; } };
                 if (dep.endsWith('.module.css')) return {};

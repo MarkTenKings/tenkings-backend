@@ -11,7 +11,7 @@ function fixture(){
     const identity={id:id(1),phoneHash:h(1),name:'Fixture reviewer',role:'REVIEWER',accessVersion:1,revokedAt:null,certificationUntil:null,trustedLearningUntil:null},
         browser={tokenHash:h(2),controlRevision:1,createdAt:new Date(+now-60_000),expiresAt:new Date(+now+600_000)},
         session={tokenHash:h(3),identityId:id(1),browserHash:h(2),accessVersion:1,controlRevision:1,createdAt:new Date(+now-30_000),expiresAt:new Date(+now+600_000),revokedAt:null,browser},
-        control={enabled:true,mode:'PRODUCTION',revision:1,origin:'https://app.atlasgrading.com',deploymentId:'staff-fixture.vercel.app',releaseSha:'a'.repeat(40),configHash:h(4),gradingPolicyHash:h(5)},
+        control={enabled:true,mode:'PRODUCTION',revision:1,origin:'https://atlasgrading.com',deploymentId:'staff-fixture.vercel.app',releaseSha:'a'.repeat(40),configHash:h(4),gradingPolicyHash:h(5)},
         assignment={identityId:id(1),specimenId:id(2),canReview:true,revokedAt:null,fence:1,expiresAt:new Date(+now+600_000)};
     const source={cardProfile:'SPORTS',identity:canonicalizeSpeedsterSessionIdentity('SPORTS',{playerName:'Fixture Player',year:'2026',manufacturer:'Synthetic',productSet:'Fixture Set'}),
         capture:{private:'retained capture'},reviewedDefects:[{rawFingerprint:[0.1,0.10000000000000002]}],gradeReport:{private:'retained report'},mapRevisionId:null,mapFilterPolicyVersion:null,mapRegistration:null};

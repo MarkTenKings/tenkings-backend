@@ -8,7 +8,7 @@ import { OPERATION_GRANTS, StaffOperationsAuthority, makeOperationsAuthorityConf
 
 const NOW = new Date('2026-09-08T18:00:00.000Z'), SHA = 'a'.repeat(64), BROWSER = 'b'.repeat(64);
 function fixture() {
-    const config = makeAccessConfig({ mode: 'LOCAL_FIXTURE', origin: 'http://127.0.0.1:4318', deploymentId: 'operations-authority-fixture',
+    const config = makeAccessConfig({ mode: 'LOCAL_FIXTURE', origin: 'http://127.0.0.1:4318', basePath: '/admin', deploymentId: 'operations-authority-fixture',
         releaseSha: '0'.repeat(40), databaseUrl: 'postgresql://staff_fixture:fictional@127.0.0.1:54329/fictional?schema=atlas_staff',
         sessionKey: Buffer.alloc(32, 1), phoneKey: Buffer.alloc(32, 2), approvedPhones: new Set(['+12025550141']),
         accountSid: `AC${'1'.repeat(32)}`, serviceSid: `VA${'2'.repeat(32)}`, providerLifetimeMs: 600_000 });
@@ -24,7 +24,8 @@ function fixture() {
         session: { tokenHash: SHA, identityId, browserHash: BROWSER, controlRevision: 3, accessVersion: 4,
             revokedAt: null, createdAt: new Date(+NOW - 60_000), expiresAt: new Date(+NOW + 1200_000) },
         role: { role: operationsConfig.roleName, database: operationsConfig.databaseName, unsafe: false },
-        schemas: [], sequences: [], functions: ['lock_control()', 'lock_operations_grants(uuid)', 'lock_source_admissions(uuid, text, uuid, text, text, text)', 'apply_operational_resolution(uuid)'].map(name => ({ name, schema: 'atlas_staff', definer: true })),
+        schemas: [], sequences: [], functions: ['lock_control()', 'lock_operations_grants(uuid)', 'lock_source_admissions(uuid, text, uuid, text, text, text)',
+            'apply_operational_resolution(uuid)', 'customer_operations(text, text, text, jsonb, jsonb)'].map(name => ({ name, schema: 'atlas_staff', definer: true })),
         columns: Object.entries(OPERATION_GRANTS).flatMap(([name, grants]) =>
             [...new Set(['id', ...(grants.INSERT ?? []), ...(grants.UPDATE ?? [])])].map(column => ({ schema: 'atlas_staff', name, column,
                 sel: true, ins: grants.INSERT?.includes(column) === true, upd: grants.UPDATE?.includes(column) === true, refs: false, extra: false }))),
@@ -106,6 +107,8 @@ test('copied or invented browser actor fields are not opaque authority', async (
 test('runtime grants exclude provisioning, activation, session issuance, execution and public schema', () => {
     const sql = operationsGrantSQL('operations_fixture');
     assert.match(sql, /GRANT SELECT ON atlas_staff\."StaffOperationsGrant"/);
+    assert.ok(sql.includes('GRANT EXECUTE ON FUNCTION atlas_staff.customer_operations(text, text, text, jsonb, jsonb)'));
+    assert.ok(!sql.includes('atlas_customer.'));
     assert.ok(!sql.includes('ON public.'));
     for (const name of ['StaffOperationsGrant', 'StaffControl', 'StaffSession', 'StaffBrowser', 'StaffOperatorRun', 'StaffGradingOperation']) {
         assert.deepEqual(OPERATION_GRANTS[name], {});

@@ -22,7 +22,7 @@ const fixture = await disposablePostgres(process.argv.slice(2));
 let server, publicServer, stopped = false, checks = 0;
 const jar = new Map();
 async function call(path, body, csrf) {
-    const response = await fetch(`${origin}${path}`, { redirect: 'manual', method: body === undefined ? 'GET' : 'POST',
+    const response = await fetch(`${origin}/admin${path === '/' ? '' : path}`, { redirect: 'manual', method: body === undefined ? 'GET' : 'POST',
         headers: { Cookie: [...jar].map(([k, v]) => `${k}=${v}`).join('; '), ...(body === undefined ? {} : {
             Origin: origin, 'Content-Type': 'application/json', 'X-Atlas-Csrf': csrf ?? '' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -214,7 +214,7 @@ try {
         publicPath: approval.path, imageHashes, mode: 'LOCAL_FIXTURE' }, null, 2));
     console.log(JSON.stringify({ status: 'PERSISTENT_STAFF_WEB_PASS', checks, directory: fixture.directory, actualWebProcessRestart: true, publicAppRestart: true }));
     if (process.argv.includes('--serve')) {
-        console.log(`Persistent synthetic ATLAS preview: ${origin}; public reports: ${PUBLIC_LOCAL_ORIGIN}`);
+        console.log(`Persistent synthetic ATLAS preview: ${origin}/admin; public reports: ${PUBLIC_LOCAL_ORIGIN}`);
         await new Promise(done => server.once('exit', done));
     }
 } finally { await stop(); }

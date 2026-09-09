@@ -13,7 +13,7 @@ function fixture() {
         runtimeHash: H, key: Buffer.alloc(32, 1), peerKeyHash: digest(Buffer.alloc(32, 2)) });
     const context = { now, actorKind: 'HUMAN', capability: 'OPERATIONS', capabilityUntil: new Date(+now + 300000), operationsGrantId: randomUUID(),
         identity: { id: staff.id, accessVersion: 1 }, session: { tokenHash: H, browserHash: 'b'.repeat(64) },
-        control: { mode: 'PRODUCTION', revision: 1, origin: 'https://app.atlasgrading.com', deploymentId: 'staff.vercel.app',
+        control: { mode: 'PRODUCTION', revision: 1, origin: 'https://atlasgrading.com', deploymentId: 'staff.vercel.app',
             releaseSha: 'a'.repeat(40), configHash: H }, tx: {
             staffMachineInitialization: { async findUnique({ where }) { return jobs.get(where.id) ?? null; } },
             staffOperatorRun: { async findUnique() { return state.run; } },

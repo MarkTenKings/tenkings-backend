@@ -1,3 +1,4 @@
+import { STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { useEffect, useRef, useState } from 'react';
 import { createAtlasNfcBrowser, createFinishingRequests } from '@atlas/finishing/browser';
 import ApprovedLabel from './ApprovedLabel';
@@ -15,7 +16,7 @@ const messages = {
     CSRF_REQUIRED: 'Your session changed. Refresh your sign-in before retrying this exact save.',
     NFC_JOB_NOT_FOUND: 'This saved NFC job is not available for the assigned card.',
     NFC_RECOVERY_STATUS_ONLY: 'This recovered job is limited to checking its saved result and cleanup. It cannot prepare another encoding.',
-    NFC_NOT_CONFIGURED: 'The ATLAS workstation signing connection is not configured for this workspace.',
+    NFC_NOT_CONFIGURED: 'Integrated Mac NFC finishing is not ready. Production writing, permanent locking and signed receipts still require qualification.',
     ATLAS_CAPABILITY_REQUIRED: 'This helper must advertise the separate ATLAS signed-report capability.',
     ATLAS_WORKSTATION_TOKEN_REQUIRED: 'Enter the separate ATLAS workstation token provided during workstation setup.',
     ATLAS_JOB_TRUST_MISMATCH: 'This helper does not trust the ATLAS key that signed this exact job.',
@@ -164,9 +165,9 @@ function Workspace({ cardId, csrf, approved = null, finishing = null, disabled =
       {loading && <p role="status">Loading finishing records…</p>}
       {error && <div className={styles.error} role="alert">{error}</div>}{notice && <div className={styles.notice} role="status">{notice}</div>}
       {disabled && <p className={styles.block}>Finishing changes are paused. Resolve the card edits or session state before issuing, encoding or recording new work. Saved helper status and cleanup remain available.</p>}
-      {state?.mutationBlock && <div className={styles.block}>{message(state.mutationBlock)}{['FRESH_SIGN_IN_REQUIRED', 'TRAINED_REVIEWER_REQUIRED'].includes(state.mutationBlock) && <a href="/?reauthenticate=1" target="_blank" rel="noreferrer"> Open sign-in in another tab</a>}</div>}
+      {state?.mutationBlock && <div className={styles.block}>{message(state.mutationBlock)}{['FRESH_SIGN_IN_REQUIRED', 'TRAINED_REVIEWER_REQUIRED'].includes(state.mutationBlock) && <a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer"> Open sign-in in another tab</a>}</div>}
       {pending && <div className={styles.pending}><strong>{pending.uncertain ? 'Save outcome unconfirmed' : 'Save needs attention'}</strong><p>This tab retains the exact {pending.kind} request. Keep it open until the save is resolved.</p>
-        <p>If your session ended, <a href="/?reauthenticate=1" target="_blank" rel="noreferrer">sign in in another tab</a>, then retry here.</p>
+        <p>If your session ended, <a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">sign in in another tab</a>, then retry here.</p>
         <button type="button" disabled={disabled || busy} onClick={retrySave}>Retry exact save</button>
         {pending.rejected && <button type="button" disabled={busy} onClick={() => { client.current.clearRejected(); setPending(null); pendingSuccess.current = null; }}>Dismiss rejected request</button>}</div>}
       {state && <div className={styles.status}><strong>{stageText[state.stage] ?? 'Finishing state available'}</strong>{approval && <span>{approval.reportNumber} · approved v{approval.approvalVersion}</span>}</div>}
@@ -180,10 +181,10 @@ function Workspace({ cardId, csrf, approved = null, finishing = null, disabled =
             <ApprovedLabel receipt={selected} printDisabled={disabled || locked}/></>}
         </section>
         <section className={styles.step}><div className={styles.stepHeading}><span>2</span><h3>Encode and verify NFC</h3></div>
-          <p>The dedicated ATLAS helper uses F8215 tags and the ACR1552U reader. You start encoding and place the tag in GoToTags.</p>
-          {!state?.nfcConfigured && <p className={styles.block}>ATLAS NFC signing is not configured in this workspace.</p>}
+          <p>The Mac workflow will use the ACR1552U reader and F8215 tags after native finishing qualification.</p>
+          {!state?.nfcConfigured && <p className={styles.block}>Integrated Mac NFC finishing is incomplete. Production writing, permanent locking and signed receipts are unavailable. Saved Windows helper records remain historical evidence.</p>}
           <div className={styles.connection}><label className={styles.field}>ATLAS workstation token<input ref={tokenInput} type="password" autoComplete="off" spellCheck={false} aria-label="Separate ATLAS workstation token" disabled={locked}/></label>
-            <button type="button" disabled={locked} onClick={() => local(connect)}>{connected ? 'Check ATLAS connection' : 'Connect ATLAS helper'}</button>
+            <button type="button" disabled={locked || !state?.nfcConfigured} onClick={() => local(connect)}>{connected ? 'Check ATLAS connection' : 'Connect ATLAS helper'}</button>
             {connected && <button type="button" disabled={locked} onClick={() => { bridge.current.disconnect(); setConnected(false); }}>Forget workstation token</button>}</div>
           <p className={styles.help}>The token stays in memory for this tab. Workstation access requires the production staff origin and a locally configured helper.</p>
           {Boolean(state?.jobs?.length) && !job && <div className={styles.job}><strong>Resume a saved NFC operation</strong><p>After a browser restart, retrieve the exact saved job to check the helper result or finish cleanup. Recovery cannot prepare another encoding.</p>

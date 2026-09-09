@@ -7,7 +7,7 @@ import { createHandler } from '../lib/server/http.mjs';
 import { deny, LOCAL_HOST, LOCAL_ORIGIN } from '../lib/server/policy.mjs';
 
 const fixture = () => {
-    const staff = makeAccessConfig({ mode: 'PRODUCTION', origin: 'https://app.atlasgrading.com', deploymentId: 'staff-fixture.vercel.app',
+    const staff = makeAccessConfig({ basePath: '/admin', mode: 'PRODUCTION', origin: 'https://atlasgrading.com', deploymentId: 'staff-fixture.vercel.app',
         releaseSha: 'a'.repeat(40), databaseUrl: 'postgresql://staff:fictional@db.invalid:5432/fixture?schema=atlas_staff&sslmode=require',
         sessionKey: Buffer.alloc(32, 1), phoneKey: Buffer.alloc(32, 2), approvedPhones: new Set(['+12025550141']),
         accountSid: `AC${'1'.repeat(32)}`, serviceSid: `VA${'2'.repeat(32)}`, providerLifetimeMs: 600_000 });

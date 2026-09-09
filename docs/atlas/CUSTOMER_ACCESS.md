@@ -1,10 +1,10 @@
 # ATLAS customer accounts and progress
 
-Owner direction: September 9, 2026. This implements the experience selected by Mark in the [canonical blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) and complements the [website release plan](WEBSITE_RELEASE.md). It is a build specification; the existing staff login and synthetic grading tests do not establish customer signup, customer data isolation or live SMS delivery.
+Owner direction: September 9, 2026. This records the experience selected by Mark in the [canonical blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) and complements the [website release plan](WEBSITE_RELEASE.md). The customer app and staff intake are now implemented locally. The complete145-scenario PostgreSQL run includes15 customer scenarios; live SMS, actual-host access and customer acceptance remain pending.
 
 ## Customer journey
 
-The public website explains ATLAS Grading and provides entry points to submit cards and sign in. The proposed customer account area is `/account`; the private grading workspace remains `/admin`.
+The public website provides entry points to submit cards and sign in. The customer account area is `/account`; the private grading workspace is `/admin`. The owner's separate marketing draft remains preserved while the new local homepage provides pilot entry points.
 
 1. Enter a mobile phone number.
 2. Receive an SMS verification code and enter it.
@@ -12,6 +12,8 @@ The public website explains ATLAS Grading and provides entry points to submit ca
 4. Open the customer dashboard. It shows the customer's submissions and each card's recorded progress; an account with no submissions has an appropriate empty state and a Submit cards action.
 
 Initial account creation requires only verified phone access. Do not add name/address fields, a password form or a separate signup path to this first interaction. Request the customer's name and shipping/return address as part of their first grading submission. Save those details to their profile for future submissions and let them review/edit them before submitting. Later profile edits must not silently alter an already-confirmed shipment's address; the submission retains its confirmed address snapshot.
+
+Mark confirmed during implementation on September 9 that customers can use **dealer drop-off or mail-in**. Capture the chosen intake method on the submission. This supersedes the earlier marketing draft's dealer-only claim. Show only configured dealer/mailing instructions and do not invent a destination, price, carrier label or turnaround guarantee.
 
 The code-entry screen supports mobile one-time-code autofill, clear invalid/expired-code feedback, correcting the phone number and a controlled resend. Normalize accepted phone formatting to the same canonical international number before uniqueness or rate checks. Show the same account-entry flow to new and returning customers without revealing account existence before verification.
 
@@ -33,8 +35,8 @@ Record stage transitions from authoritative grading/review events and explicit p
 
 ## Concrete implementation and verification
 
-First complete the `/admin` route/authentication migration and define the private customer route/service boundary without broadening the public report reader. Implement durable customer verification, atomic first-account/session creation and repeat-login recovery. A verified canonical phone number maps to one customer account under concurrent requests and repeated/lost replies. No account/session is created before successful verification. Rate limits, expiry, one-time challenge consumption, cookie/CSRF rules, logout and revocation cover both the SMS request and session lifecycle; an unknown provider outcome is not treated as a successful login or automatically retried.
+The `/admin` migration and dedicated `frontend/atlas-customer` app implement these separate routes. Customer serving credentials execute only the named `atlas_customer.customer_call` gateway; staff intake uses a separate fresh-operations gateway. The public report reader's permissions remain unchanged. Durable verification creates one account/session for the verified canonical phone under concurrent and repeated/lost replies. No account/session is created before verification. Rate limits, expiry, challenge consumption, cookie/CSRF rules, idempotent logout and revocation cover both the SMS request and session lifecycle; an unknown provider outcome is not treated as a successful login or automatically retried.
 
-Then add the phone-only customer dashboard and private submission/card projection. Add nullable name/address profile fields with requirements enforced at submission time, plus the per-submission address snapshot. Build the tracker from actual recorded events and verify cross-customer denial and truthful mixed-card progress. Payment, carrier and customer-submission business details outside this accepted flow remain their own scoped work.
+The dashboard, profile, submission form and per-card tracker are implemented. Profiles remain nullable until submission, which records the chosen channel and confirmed address snapshot. A tab retains the exact uncertain submission request and can reconcile its own request ID after navigation/reload; it stores no SMS code or session credential. Cross-customer lookup and staff/customer credential substitution are denied. Staff explicitly records physical receipt, customer-facing action messages and shipment; approval and finishing stages require the current corresponding evidence. Payment, postage purchase and actual dealer/mailing destinations remain outside this implementation.
 
 Verify the new/returning customer path, phone formatting/duplicate-account races, wrong/expired/reused codes, resend/lost replies, revoked sessions, customer-versus-staff denial, unapproved admin numbers, deferred profile completion and address snapshots. Exercise the real SMS provider only as part of a prepared live release with its actual dedicated configuration. No live customer account or SMS delivery is claimed by this specification.

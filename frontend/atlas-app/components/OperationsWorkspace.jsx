@@ -4,6 +4,7 @@ import { Notice } from './Shell';
 import { useStaffResource } from '../lib/client';
 import MachinePreparation, { operationsRequest } from './MachinePreparation';
 import OperationalRecovery from './OperationalRecovery';
+import CustomerIntakeWorkspace from './CustomerIntakeWorkspace';
 import { usePendingNavigation } from '../lib/usePendingNavigation';
 import styles from './OperationsWorkspace.module.css';
 
@@ -64,6 +65,7 @@ export default function OperationsWorkspace() {
 function Workspace({ initialRoster, csrf, mode }) {
     const [currentCsrf, setCurrentCsrf] = useState(csrf);
     const [tab, setTab] = useState('intake'), [roster, setRoster] = useState(initialRoster);
+    const [customerPending, setCustomerPending] = useState(false);
     const [busy, setBusy] = useState(false), [error, setError] = useState(''), [saved, setSaved] = useState(''), [signedOut, setSignedOut] = useState(false);
     const pending = useRef(null), busyRef = useRef(false), [pendingLabel, setPendingLabel] = useState('');
     usePendingNavigation(()=>Boolean(pending.current),setError);
@@ -75,7 +77,7 @@ function Workspace({ initialRoster, csrf, mode }) {
     const [selectedPerson, setSelectedPerson] = useState(''), [person, setPerson] = useState({ role: 'REVIEWER', revoked: false, certificationUntil: '', trustedLearningUntil: '' });
     const [assignment, setAssignment] = useState({ specimenId: '', identityId: '', existing: false, expectedFence: '', canReview: false, expiresAt: '', revoked: false });
     const [invoice, setInvoice] = useState({ recordKey: '', invoiceId: '', lineId: '', documentSha256: '', actualUsd: '' });
-    const locked = busy || Boolean(pendingLabel) || signedOut;
+    const locked = busy || Boolean(pendingLabel) || signedOut || customerPending;
     const selected = roster.find(row => row.id === selectedPerson);
     useEffect(() => {
         const leaving = event => { if (pending.current) { event.preventDefault(); event.returnValue = ''; } };
@@ -201,12 +203,15 @@ function Workspace({ initialRoster, csrf, mode }) {
             <button className="text-button" type="button" disabled={busy} onClick={refreshAccess}>Refresh access in this tab</button></p>}
         {pendingLabel && !busy && !signedOut && <Notice>The result of “{pendingLabel}” is unconfirmed. Your exact request is retained.
             <button className="text-button" type="button" onClick={() => void send(pending.current)}>Check the same request again</button></Notice>}
-        <details className={styles.authorization} open><summary>Authorization for changes</summary><p>Use the recorded authorization for the intake, staff or cost changes you are making.</p>
+        <details className={styles.authorization} open hidden={tab === 'customers'}><summary>Authorization for changes</summary><p>Use the recorded authorization for the intake, staff or cost changes you are making.</p>
             <fieldset disabled={locked} className={styles.grid}><Field label="Reason for this change"><textarea maxLength={500} rows={2} value={reason} onChange={e => setReason(e.target.value)} /></Field>
                 <Field label="Authorization record checksum" help="SHA-256 of the retained authorization record."><input value={authorizationHash} maxLength={64} spellCheck={false} autoComplete="off" onChange={e => setAuthorizationHash(e.target.value.trim())} /></Field></fieldset></details>
-        <nav className={styles.tabs} aria-label="Operations sections">{[['intake', 'Source intake'], ['staff', 'Staff & assignments'], ['pilot', `Ten-card pilot (${pilotCards.length}/10)`]].map(([key, label]) =>
-            <button type="button" key={key} aria-current={tab === key ? 'page' : undefined} className={tab === key ? styles.activeTab : ''} onClick={() => setTab(key)}>{label}</button>)}</nav>
+        <nav className={styles.tabs} aria-label="Operations sections">{[['intake', 'Source intake'], ['customers', 'Customer submissions'], ['staff', 'Staff & assignments'], ['pilot', `Ten-card pilot (${pilotCards.length}/10)`]].map(([key, label]) =>
+            <button type="button" key={key} disabled={locked} aria-current={tab === key ? 'page' : undefined} className={tab === key ? styles.activeTab : ''} onClick={() => setTab(key)}>{label}</button>)}</nav>
         <p className={styles.timezone}>Dates and times use this computer’s local time zone.</p>
+
+        <div hidden={tab !== 'customers'}><CustomerIntakeWorkspace csrf={currentCsrf} disabled={locked}
+            onPendingChange={setCustomerPending} onAssignSpecimen={specimenId => { setAssignment(value => ({ ...value, specimenId })); setTab('staff'); }}/></div>
 
         <div hidden={tab !== 'intake'}><Panel title="Admit a captured card" description="Locate the exact preserved capture and verify its source before creating an ATLAS specimen.">
             <form onSubmit={onSubmit(previewSource)}><fieldset disabled={locked}><div className={styles.grid}>

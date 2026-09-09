@@ -1,5 +1,7 @@
 import { DurableStaffAuth } from './auth.mjs';
 import { deny, hash } from '../policy.mjs';
+import { STAFF_APPLICATION, STAFF_BASE_PATH } from '../../routes.mjs';
+import { STAFF_ORIGIN } from './config.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const SHA = /^[a-f0-9]{64}$/;
@@ -30,7 +32,7 @@ export const OPERATION_GRANTS = Object.freeze(Object.fromEntries(Object.entries(
     .map(([operation, columns]) => [operation, Object.freeze(columns)])))])));
 
 const FUNCTIONS = Object.freeze(['lock_control()', 'lock_operations_grants(uuid)', 'lock_source_admissions(uuid, text, uuid, text, text, text)',
-    'apply_operational_resolution(uuid)']);
+    'apply_operational_resolution(uuid)', 'customer_operations(text, text, text, jsonb, jsonb)']);
 
 /** Offline reviewed provisioning helper only; the runtime never executes it. */
 export function operationsGrantSQL(role) {
@@ -108,11 +110,12 @@ export function makeOperationsAuthorityConfig({ databaseUrl, staffConfig }) {
         && keys.length === new Set(keys).size
         && keys.every(key => ['schema', 'sslmode', 'connection_limit', 'pool_timeout', 'connect_timeout'].includes(key))
         && ['PRODUCTION', 'LOCAL_FIXTURE'].includes(staffConfig.mode)
+        && staffConfig.application === STAFF_APPLICATION && staffConfig.basePath === STAFF_BASE_PATH
         && SHA.test(staffConfig.configHash ?? '') && /^[a-f0-9]{40}$/.test(staffConfig.releaseSha ?? ''),
     'OPERATIONS_CONFIGURATION_REQUIRED');
     if (staffConfig.mode === 'LOCAL_FIXTURE') fail(operations.hostname === '127.0.0.1'
         && staffConfig.releaseSha === '0'.repeat(40), 'OPERATIONS_CONFIGURATION_REQUIRED');
-    else fail(operations.searchParams.get('sslmode') === 'require' && staffConfig.origin === 'https://app.atlasgrading.com'
+    else fail(operations.searchParams.get('sslmode') === 'require' && staffConfig.origin === STAFF_ORIGIN
         && staffConfig.releaseSha !== '0'.repeat(40) && !['localhost', '127.0.0.1', '[::1]'].includes(operations.hostname),
     'OPERATIONS_CONFIGURATION_REQUIRED');
     return Object.freeze({ databaseUrl: operations.href, roleName, databaseName, databaseBindingHash: hash(operations.href),

@@ -3,10 +3,11 @@ import { LocalReviewStore } from '../review.mjs';
 import { hash, BROWSER_COOKIE, SESSION_COOKIE, LOCAL_ORIGIN } from '../policy.mjs';
 import { canonical } from '../review-contract.mjs';
 import { makeAccessConfig } from './config.mjs';
+import { STAFF_BASE_PATH } from '../../routes.mjs';
 import { fixtureAnalysis, FIXTURE_GRADING_POLICY } from './fixture-analysis.mjs';
 
 export function localAccessConfig({ databaseUrl, sessionKey, phoneKey, phones = ['+12025550141', '+12025550142'] }) {
-    return makeAccessConfig({ mode: 'LOCAL_FIXTURE', origin: LOCAL_ORIGIN, deploymentId: 'local-postgres-fixture',
+    return makeAccessConfig({ mode: 'LOCAL_FIXTURE', origin: LOCAL_ORIGIN, basePath: STAFF_BASE_PATH, deploymentId: 'local-postgres-fixture',
         releaseSha: '0'.repeat(40), accountSid: `AC${'1'.repeat(32)}`, serviceSid: `VA${'2'.repeat(32)}`,
         databaseUrl, cookies: { browser: BROWSER_COOKIE, session: SESSION_COOKIE },
         sessionKey, phoneKey, approvedPhones: new Set(phones), providerLifetimeMs: 600_000 });

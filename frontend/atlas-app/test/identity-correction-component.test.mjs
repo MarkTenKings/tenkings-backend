@@ -1,3 +1,4 @@
+import * as routes from '../lib/routes.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -30,6 +31,7 @@ function harness(){
     f.props.refreshAccess=async()=>{f.accessCalls++;return f.token;};
     const exports={};vm.runInNewContext(compiled,{exports,structuredClone,crypto:{randomUUID},require(name){
         if(name==='react')return react;
+        if(name==='../lib/routes.mjs')return routes;
         if(name==='./MachinePreparation')return{operationsRequest:async(path,options={})=>{f.calls.push({path,...options,body:options.body&&structuredClone(options.body)});return f.respond(path,options);}};
         if(name==='../lib/usePendingNavigation')return{usePendingNavigation:fn=>{guard=fn;}};
         if(name==='../lib/identity-correction-client.mjs')return client;

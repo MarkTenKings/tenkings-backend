@@ -1,3 +1,4 @@
+import { STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { useEffect, useState } from 'react';
 import { useRetainedOperation } from './MachinePreparation';
 import styles from './OperationalRecovery.module.css';
@@ -61,7 +62,7 @@ export default function OperationalRecovery({ csrf, pilotId, specimens = [], ini
         {request.error && <p className={styles.error} role="alert">{request.error}</p>}
         {request.pending && <div className={styles.notice}><strong>Recovery outcome unconfirmed</strong><p>The exact decision, evidence and operation reference remain in this tab. Resolve this save before changing targets.</p>
             <p>Pilot {request.pending.pilotId} · Operation {request.pending.id}</p>
-            <p><a href="/?reauthenticate=1" target="_blank" rel="noreferrer">Sign in in another tab</a>, then retry this same recovery decision here.</p>
+            <p><a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">Sign in in another tab</a>, then retry this same recovery decision here.</p>
             <button type="button" disabled={request.busy} onClick={request.retry}>Retry exact recovery decision</button></div>}
         <fieldset className={styles.form} disabled={request.locked}><label>Record to inspect<select value={target ? key : ''} onChange={e => { setKey(e.target.value); request.clearError(); }}>
             <option value="">Choose a queued or uncertain record…</option>{targets.map(row => <option key={`${row.kind}:${row.recordId}`} value={`${row.kind}:${row.recordId}`}>

@@ -1,3 +1,4 @@
+import { staffApiPath, STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { useEffect, useRef, useState } from 'react';
 import styles from './MachinePreparation.module.css';
 import { usePendingNavigation } from '../lib/usePendingNavigation';
@@ -31,7 +32,7 @@ export async function operationsRequest(path, { body, csrf, fetchImpl = globalTh
     const deadline = new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(problem()); }, timeoutMs); });
     try {
         return await Promise.race([deadline, (async () => {
-            const response = await fetchImpl(`/api/staff/${path}`, { method: body === undefined ? 'GET' : 'POST',
+            const response = await fetchImpl(staffApiPath(path), { method: body === undefined ? 'GET' : 'POST',
                 credentials: 'same-origin', cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal,
                 headers: body === undefined ? {} : { 'Content-Type': 'application/json', 'X-Atlas-Csrf': csrf ?? '' },
                 ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -139,7 +140,7 @@ export default function MachinePreparation({ csrf, pilotId, specimens = [], init
         {request.error && <p role="alert" className={styles.error}>{request.error}</p>}
         {request.pending && <div className={styles.notice}><strong>Admission outcome unconfirmed</strong><p>This tab retains the exact job reference and request. Retry it before choosing another specimen.</p>
             <p>Pilot {request.pending.pilotId} · Job {request.pending.id}</p>
-            <p><a href="/?reauthenticate=1" target="_blank" rel="noreferrer">Sign in in another tab</a>, then retry the exact retained admission here.</p>
+            <p><a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">Sign in in another tab</a>, then retry the exact retained admission here.</p>
             <button type="button" disabled={request.busy} onClick={request.retry}>Retry exact admission</button></div>}
         <fieldset disabled={request.locked} className={styles.form}>
             <label>Uninitialized pilot specimen<select value={selected} onChange={e => { setSelected(e.target.value); setConfirmed(false); request.clearError(); }}>

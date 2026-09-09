@@ -58,6 +58,14 @@ The private `/admin` workspace has its own login using the same simple phone-cod
 
 The customer tracker exposes only that customer's submissions/cards and meaningful recorded progress. Grading, review, physical finishing and shipping statuses must come from the appropriate confirmed workflow events; neither elapsed time nor an Astra statement proves physical receipt, assembly or shipment. Public report approval remains a human decision. The approved customer experience and next implementation work are recorded in `docs/atlas/CUSTOMER_ACCESS.md`; customer account creation, tracking and later address collection are new implementation scope, not features already proven by the existing staff tests. Carrier, payment and later commercial integrations are not inferred from this login/profile clarification.
 
+#### Owner clarification — both submission channels, 2026-09-09
+
+During the website build Mark explicitly selected **both authorized-dealer drop-off and mail-in submissions**. This supersedes the dealer-only/no-mail policy in the earlier public ATLAS website draft. Let customers choose their intake method when creating a submission and preserve it with that submission's confirmed address. Actual dealer locations, mailing destinations, carrier/payment integrations and service commitments require their real configured information. The draft's 48-hour claim is not a customer-tracker timer or a newly confirmed guarantee. Continue to derive status from recorded work and explicit physical receipt/shipping actions.
+
+#### Owner direction — parallel website implementation and pilot, 2026-09-09
+
+Mark explicitly requested fresh Astra MAX agents to build the `/admin` routing update and customer account/tracking implementation in parallel, followed by the live website pilot. This authorizes that scoped implementation and website release work; another general permission request is not required. Actual account access, an approved staff phone, bounded SMS/worker/model spending, the same ten-card cohort and current worker/hardware evidence still require their real inputs. Do not trigger unrelated Ten Kings deployments or infer an expanded commercial/physical pilot from source publication. The concrete three-project release procedure and exact-source verification are recorded in `docs/atlas/WEBSITE_DEPLOYMENT.md`.
+
 ---
 
 ## 1. Executive Decision

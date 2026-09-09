@@ -29,12 +29,13 @@
       {
         "name": "atlas-staff",
         "root": "frontend/atlas-app",
-        "host": "app.atlasgrading.com",
-        "purpose": "Dedicated staff app and capability-bound APIs",
+        "host": "atlasgrading.com",
+        "purpose": "Dedicated staff app at /admin with independently authorized APIs",
         "currentFiles": [
           "frontend/atlas-app/boundary-manifest.json"
         ],
-        "projectCreated": false
+        "projectCreated": false,
+        "basePath": "/admin"
       },
       {
         "name": "atlas-public",
@@ -50,16 +51,18 @@
       "action": "Redirect only reviewed public paths to apex after approved DNS/TLS setup"
     },
     "smallerInitialOption": {
-      "name": "One ATLAS project with two exact hosts",
-      "status": "OPTION_REQUIRES_OWNER_SELECTION",
-      "rule": "Use the same separate public/staff route manifests with host-only sessions and deny staff routes on apex; this isolates ATLAS from Ten Kings but public/staff still share an artifact, environment and release blast radius."
+      "name": "Former two-host option",
+      "status": "SUPERSEDED_BY_OWNER_2026_09_09",
+      "rule": "Public/customer/staff builds share the apex browser origin; checked path routing mounts only /admin and descendants into staff."
     },
     "tenKingsProject": "Existing project, routes and aliases remain unchanged by this artifact",
     "runtimeDefault": "DENY_UNLISTED_HOST_PATH_METHOD_AND_ACTION",
     "hostValidation": "Deployment owns accepted host; do not trust client X-Forwarded-Host or build URL from arbitrary Host. Preview origins must be explicitly registered and protected.",
     "routingRules": [
       "Public build contains no staff handler/auth credential/provider writer.",
-      "Staff routes cannot be mounted under public host; unknown path/action returns 404, wrong method 405.",
+      "Only /admin and descendants route to the staff artifact; /administrator and unknown paths have no staff fallback.",
+      "Next basePath controls pages, data and assets; native fetch/image/anchor URLs include /admin explicitly.",
+      "Staff/customer cookies, identities, roles and CSRF authority remain separate on their shared browser origin.",
       "Next page/API allowlist is enforced in build output plus server dispatch; navigation hiding is insufficient.",
       "No rewrite/proxy/catch-all to Ten Kings, no redirect for unrelated Ten Kings routes."
     ]
@@ -123,35 +126,35 @@
   "publicContentGate": "Contact/legal/standards routes require ATLAS owner-reviewed copy; do not copy Ten Kings terms, pricing promises, support identity, or emit draft/unknown certificate metadata. No customer submission or payment routes are assumed.",
   "staffInfrastructureRoutes": [
     {
-      "path": "/login",
+      "path": "/admin/login",
       "methods": [
         "GET"
       ],
       "state": "PROPOSED_AUTH_NOT_IMPLEMENTED"
     },
     {
-      "path": "/api/staff/session",
+      "path": "/admin/api/staff/session",
       "methods": [
         "GET"
       ],
       "state": "PROPOSED_AUTH_NOT_IMPLEMENTED"
     },
     {
-      "path": "/api/staff/logout",
+      "path": "/admin/api/staff/logout",
       "methods": [
         "POST"
       ],
       "state": "PROPOSED_AUTH_NOT_IMPLEMENTED"
     },
     {
-      "path": "/api/staff/release",
+      "path": "/admin/api/staff/release",
       "methods": [
         "GET"
       ],
       "state": "PROPOSED_SAFE_RELEASE_METADATA"
     },
     {
-      "path": "/api/staff/readiness",
+      "path": "/admin/api/staff/readiness",
       "methods": [
         "GET"
       ],
@@ -160,7 +163,7 @@
   ],
   "staffRouteManifest": [
     {
-      "path": "/grading",
+      "path": "/admin/grading",
       "methods": [
         "GET"
       ],
@@ -169,7 +172,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/card-maps",
+      "path": "/admin/card-maps",
       "methods": [
         "GET"
       ],
@@ -178,7 +181,7 @@
       "authority": "TRUSTED_LEARNING_HUMAN"
     },
     {
-      "path": "/cards",
+      "path": "/admin/cards",
       "methods": [
         "GET"
       ],
@@ -187,7 +190,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/cards/[sessionId]",
+      "path": "/admin/cards/[sessionId]",
       "methods": [
         "GET"
       ],
@@ -196,7 +199,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/audit/removed-findings",
+      "path": "/admin/audit/removed-findings",
       "methods": [
         "GET"
       ],
@@ -205,7 +208,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/audit/learning",
+      "path": "/admin/audit/learning",
       "methods": [
         "GET"
       ],
@@ -214,7 +217,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/comps",
+      "path": "/admin/comps",
       "methods": [
         "GET"
       ],
@@ -223,7 +226,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/capture/iphone",
+      "path": "/admin/api/capture/iphone",
       "methods": [
         "POST"
       ],
@@ -238,7 +241,7 @@
       }
     },
     {
-      "path": "/api/staff/sessions",
+      "path": "/admin/api/staff/sessions",
       "methods": [
         "POST"
       ],
@@ -247,7 +250,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/sessions/[sessionId]",
+      "path": "/admin/api/staff/sessions/[sessionId]",
       "methods": [
         "GET",
         "PATCH"
@@ -257,7 +260,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/capture/upload-plan",
+      "path": "/admin/api/staff/capture/upload-plan",
       "methods": [
         "POST"
       ],
@@ -266,7 +269,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/capture/iphone",
+      "path": "/admin/api/staff/capture/iphone",
       "methods": [
         "GET",
         "POST"
@@ -276,7 +279,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/image/[action]",
+      "path": "/admin/api/staff/image/[action]",
       "methods": [
         "POST"
       ],
@@ -298,7 +301,7 @@
       "note": "Automatic preparation only; machine tools and human teaching/rescue use separate ports, never this current handler."
     },
     {
-      "path": "/api/staff/geometry-score",
+      "path": "/admin/api/staff/geometry-score",
       "methods": [
         "GET"
       ],
@@ -307,7 +310,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/sessions/[sessionId]/review",
+      "path": "/admin/api/staff/sessions/[sessionId]/review",
       "methods": [
         "GET",
         "POST"
@@ -326,7 +329,7 @@
       }
     },
     {
-      "path": "/api/staff/sessions/[sessionId]/certification-review",
+      "path": "/admin/api/staff/sessions/[sessionId]/certification-review",
       "methods": [
         "POST"
       ],
@@ -336,7 +339,7 @@
       "note": "Records exact human approval through the new approval contract; does not import or proxy complete-label and does not by itself authorize issuance."
     },
     {
-      "path": "/api/staff/sessions/[sessionId]/original-image",
+      "path": "/admin/api/staff/sessions/[sessionId]/original-image",
       "methods": [
         "GET"
       ],
@@ -345,7 +348,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/sessions/[sessionId]/prepared-image",
+      "path": "/admin/api/staff/sessions/[sessionId]/prepared-image",
       "methods": [
         "GET"
       ],
@@ -354,7 +357,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/sessions/[sessionId]/review-images",
+      "path": "/admin/api/staff/sessions/[sessionId]/review-images",
       "methods": [
         "GET"
       ],
@@ -363,7 +366,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/sessions/[sessionId]/instrumentation",
+      "path": "/admin/api/staff/sessions/[sessionId]/instrumentation",
       "methods": [
         "POST"
       ],
@@ -372,7 +375,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/sessions/[sessionId]/map-authority",
+      "path": "/admin/api/staff/sessions/[sessionId]/map-authority",
       "methods": [
         "POST"
       ],
@@ -388,7 +391,7 @@
       }
     },
     {
-      "path": "/api/staff/sessions/[sessionId]/presentation",
+      "path": "/admin/api/staff/sessions/[sessionId]/presentation",
       "methods": [
         "POST"
       ],
@@ -397,7 +400,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/maps/[action]",
+      "path": "/admin/api/staff/maps/[action]",
       "methods": [
         "GET"
       ],
@@ -419,7 +422,7 @@
       "note": "Initial extraction reads maps. Future trusted-human writes require explicit activation/ownership integration."
     },
     {
-      "path": "/api/staff/cards",
+      "path": "/admin/api/staff/cards",
       "methods": [
         "GET"
       ],
@@ -428,7 +431,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/cards/[sessionId]",
+      "path": "/admin/api/staff/cards/[sessionId]",
       "methods": [
         "GET"
       ],
@@ -444,7 +447,7 @@
       "note": "Finishing writes require separately reviewed routes/authority; initial extraction is read-only."
     },
     {
-      "path": "/api/staff/cards/[sessionId]/label",
+      "path": "/admin/api/staff/cards/[sessionId]/label",
       "methods": [
         "GET"
       ],
@@ -453,7 +456,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/audit/removed-findings",
+      "path": "/admin/api/staff/audit/removed-findings",
       "methods": [
         "GET"
       ],
@@ -462,7 +465,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/audit/learning-history",
+      "path": "/admin/api/staff/audit/learning-history",
       "methods": [
         "GET"
       ],
@@ -471,7 +474,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/audit/learning/cards",
+      "path": "/admin/api/staff/audit/learning/cards",
       "methods": [
         "GET"
       ],
@@ -480,7 +483,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/audit/learning/compare",
+      "path": "/admin/api/staff/audit/learning/compare",
       "methods": [
         "GET"
       ],
@@ -489,7 +492,7 @@
       "authority": "STAFF_HUMAN"
     },
     {
-      "path": "/api/staff/comps/[action]",
+      "path": "/admin/api/staff/comps/[action]",
       "methods": [
         "GET",
         "POST"
@@ -522,7 +525,7 @@
       ],
       "disposition": "EXTRACT_UI_REPLACE_NETWORK_AUTH",
       "proposedTargets": [
-        "staff:/grading"
+        "staff:/admin/grading"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -561,7 +564,7 @@
       ],
       "disposition": "EXTRACT_UI_HUMAN_AUTHORITY",
       "proposedTargets": [
-        "staff:/card-maps"
+        "staff:/admin/card-maps"
       ],
       "requiredAuthority": "TRUSTED_LEARNING_HUMAN",
       "currentDirectDependencies": [
@@ -591,7 +594,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_READ_UI",
       "proposedTargets": [
-        "staff:/cards"
+        "staff:/admin/cards"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -613,7 +616,7 @@
       ],
       "disposition": "SPLIT_READ_AND_HUMAN_FINISHING",
       "proposedTargets": [
-        "staff:/cards/[sessionId]"
+        "staff:/admin/cards/[sessionId]"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -641,7 +644,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_READ_UI",
       "proposedTargets": [
-        "staff:/audit/removed-findings"
+        "staff:/admin/audit/removed-findings"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -666,7 +669,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_READ_UI",
       "proposedTargets": [
-        "staff:/audit/learning"
+        "staff:/admin/audit/learning"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -738,7 +741,7 @@
       ],
       "disposition": "SPLIT_RESEARCH_AND_HUMAN_CONFIRMATION",
       "proposedTargets": [
-        "staff:/comps"
+        "staff:/admin/comps"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -829,7 +832,7 @@
       ],
       "disposition": "REBUILD_DEVICE_CAPABILITY_ADAPTER",
       "proposedTargets": [
-        "staff:/api/capture/iphone"
+        "staff:/admin/api/capture/iphone"
       ],
       "requiredAuthority": "CAPTURE_DEVICE_ONLY",
       "currentDirectDependencies": [
@@ -855,7 +858,7 @@
       ],
       "disposition": "REBUILD_SCOPED_HANDLER",
       "proposedTargets": [
-        "staff:/api/staff/sessions"
+        "staff:/admin/api/staff/sessions"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -876,7 +879,7 @@
       ],
       "disposition": "SPLIT_READ_CAPTURE_AUTHORITY",
       "proposedTargets": [
-        "staff:/api/staff/sessions/[sessionId]"
+        "staff:/admin/api/staff/sessions/[sessionId]"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -907,7 +910,7 @@
       ],
       "disposition": "REBUILD_SCOPED_STORAGE_PLAN",
       "proposedTargets": [
-        "staff:/api/staff/capture/upload-plan"
+        "staff:/admin/api/staff/capture/upload-plan"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -928,7 +931,7 @@
       ],
       "disposition": "REBUILD_STAFF_DEVICE_BINDING",
       "proposedTargets": [
-        "staff:/api/staff/capture/iphone"
+        "staff:/admin/api/staff/capture/iphone"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -949,7 +952,7 @@
       ],
       "disposition": "SPLIT_PREPARATION_AND_HUMAN_RESCUE",
       "proposedTargets": [
-        "staff:/api/staff/image/[action]"
+        "staff:/admin/api/staff/image/[action]"
       ],
       "requiredAuthority": "PER_ACTION_HUMAN_OR_BROKER",
       "currentDirectDependencies": [
@@ -993,7 +996,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_READ_HANDLER",
       "proposedTargets": [
-        "staff:/api/staff/geometry-score"
+        "staff:/admin/api/staff/geometry-score"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1012,7 +1015,7 @@
       ],
       "disposition": "SPLIT_HUMAN_REVIEW_AND_MACHINE_PROPOSALS",
       "proposedTargets": [
-        "staff:/api/staff/sessions/[sessionId]/review"
+        "staff:/admin/api/staff/sessions/[sessionId]/review"
       ],
       "requiredAuthority": "TRAINED_HUMAN_REVIEW",
       "currentDirectDependencies": [
@@ -1052,7 +1055,7 @@
       ],
       "disposition": "DO_NOT_IMPORT_REDESIGN_CERTIFICATION_BOUNDARY",
       "proposedTargets": [
-        "staff:/api/staff/sessions/[sessionId]/certification-review"
+        "staff:/admin/api/staff/sessions/[sessionId]/certification-review"
       ],
       "requiredAuthority": "TRAINED_HUMAN_CERTIFIER",
       "currentDirectDependencies": [
@@ -1081,7 +1084,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_EVIDENCE_READ",
       "proposedTargets": [
-        "staff:/api/staff/sessions/[sessionId]/original-image"
+        "staff:/admin/api/staff/sessions/[sessionId]/original-image"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1101,7 +1104,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_EVIDENCE_READ",
       "proposedTargets": [
-        "staff:/api/staff/sessions/[sessionId]/prepared-image"
+        "staff:/admin/api/staff/sessions/[sessionId]/prepared-image"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1121,7 +1124,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_EVIDENCE_READ",
       "proposedTargets": [
-        "staff:/api/staff/sessions/[sessionId]/review-images"
+        "staff:/admin/api/staff/sessions/[sessionId]/review-images"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1141,7 +1144,7 @@
       ],
       "disposition": "REBUILD_SERVER_TELEMETRY_PORT",
       "proposedTargets": [
-        "staff:/api/staff/sessions/[sessionId]/instrumentation"
+        "staff:/admin/api/staff/sessions/[sessionId]/instrumentation"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1161,7 +1164,7 @@
       ],
       "disposition": "SPLIT_LOOKUP_AND_HUMAN_DECISION",
       "proposedTargets": [
-        "staff:/api/staff/sessions/[sessionId]/map-authority"
+        "staff:/admin/api/staff/sessions/[sessionId]/map-authority"
       ],
       "requiredAuthority": "PER_ACTION_HUMAN_OR_READ",
       "currentDirectDependencies": [
@@ -1191,7 +1194,7 @@
       ],
       "disposition": "REBUILD_APPROVED_PRESENTATION_ADAPTER",
       "proposedTargets": [
-        "staff:/api/staff/sessions/[sessionId]/presentation"
+        "staff:/admin/api/staff/sessions/[sessionId]/presentation"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1213,7 +1216,7 @@
       ],
       "disposition": "SPLIT_MAP_READ_AND_HUMAN_WRITE",
       "proposedTargets": [
-        "staff:/api/staff/maps/[action]"
+        "staff:/admin/api/staff/maps/[action]"
       ],
       "requiredAuthority": "TRUSTED_LEARNING_HUMAN",
       "currentDirectDependencies": [
@@ -1248,7 +1251,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_READ_HANDLER",
       "proposedTargets": [
-        "staff:/api/staff/cards"
+        "staff:/admin/api/staff/cards"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1267,7 +1270,7 @@
       ],
       "disposition": "SPLIT_READ_AND_FINISHING_WRITES",
       "proposedTargets": [
-        "staff:/api/staff/cards/[sessionId]"
+        "staff:/admin/api/staff/cards/[sessionId]"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1296,7 +1299,7 @@
       ],
       "disposition": "EXTRACT_SOURCE_LINKED_HERITAGE_REPRINT",
       "proposedTargets": [
-        "staff:/api/staff/cards/[sessionId]/label"
+        "staff:/admin/api/staff/cards/[sessionId]/label"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1315,7 +1318,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_AUDIT_READ",
       "proposedTargets": [
-        "staff:/api/staff/audit/removed-findings"
+        "staff:/admin/api/staff/audit/removed-findings"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1362,7 +1365,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_AUDIT_READ",
       "proposedTargets": [
-        "staff:/api/staff/audit/learning-history"
+        "staff:/admin/api/staff/audit/learning-history"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1425,7 +1428,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_AUDIT_READ",
       "proposedTargets": [
-        "staff:/api/staff/audit/learning/cards"
+        "staff:/admin/api/staff/audit/learning/cards"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1445,7 +1448,7 @@
       ],
       "disposition": "EXTRACT_SCOPED_AUDIT_READ",
       "proposedTargets": [
-        "staff:/api/staff/audit/learning/compare"
+        "staff:/admin/api/staff/audit/learning/compare"
       ],
       "requiredAuthority": "STAFF_HUMAN",
       "currentDirectDependencies": [
@@ -1466,7 +1469,7 @@
       ],
       "disposition": "SPLIT_COMPS_BROKER_AND_CARD_WRITER",
       "proposedTargets": [
-        "staff:/api/staff/comps/[action]"
+        "staff:/admin/api/staff/comps/[action]"
       ],
       "requiredAuthority": "RESEARCH_OR_HUMAN_VALUE_APPROVAL",
       "currentDirectDependencies": [
@@ -2768,12 +2771,12 @@
   "authDesign": {
     "status": "PROPOSED_NO_PROVIDER_OR_AUTH_ROUTING_CHANGE",
     "humanSession": {
-      "host": "app.atlasgrading.com",
-      "cookieNameProposal": "__Host-atlas_staff",
+      "host": "atlasgrading.com",
+      "cookieNameProposal": "__Secure-atlas_staff",
       "httpOnly": true,
       "secure": true,
       "sameSite": "Lax",
-      "path": "/",
+      "path": "/admin",
       "domainAttribute": null,
       "writes": "Exact Origin plus session-bound CSRF token; no state-changing GET",
       "identity": "Server-owned issuer/audience, expiry/revocation, role roster and assignment; shared identity federation only through explicit mapping, never a copied Ten Kings token",
@@ -2794,73 +2797,74 @@
       ],
       "legacyFallback": false
     },
-    "publicSession": "No staff session, no .atlasgrading.com domain cookie, no public access to internal API merely by guessing its path",
+    "publicSession": "Customer/public scripts share the staff browser origin; path cookies only scope delivery. Every staff API requires independently valid staff identity, role/assignment and CSRF. Customer sessions are never staff credentials.",
     "localState": "Legacy browser localStorage and loopback pairings remain on collect.tenkings.co; drain/export and deliberately re-pair after approved cutover. Do not transfer bearer tokens."
   },
   "machineRouteProposal": {
     "status": "NOT_REGISTERED_OFFLINE_CONTRACT_ONLY",
     "contractSource": "packages/atlas-contracts/src/contracts.mjs",
-    "host": "app.atlasgrading.com",
+    "host": "atlasgrading.com",
     "method": "POST",
     "exactRoutes": [
       {
-        "path": "/api/machine/tools/read_card_evidence",
+        "path": "/admin/api/machine/tools/read_card_evidence",
         "tool": "read_card_evidence"
       },
       {
-        "path": "/api/machine/tools/inspect_region",
+        "path": "/admin/api/machine/tools/inspect_region",
         "tool": "inspect_region"
       },
       {
-        "path": "/api/machine/tools/lookup_card_identity",
+        "path": "/admin/api/machine/tools/lookup_card_identity",
         "tool": "lookup_card_identity"
       },
       {
-        "path": "/api/machine/tools/propose_identity",
+        "path": "/admin/api/machine/tools/propose_identity",
         "tool": "propose_identity"
       },
       {
-        "path": "/api/machine/tools/propose_geometry",
+        "path": "/admin/api/machine/tools/propose_geometry",
         "tool": "propose_geometry"
       },
       {
-        "path": "/api/machine/tools/request_sam_trace",
+        "path": "/admin/api/machine/tools/request_sam_trace",
         "tool": "request_sam_trace"
       },
       {
-        "path": "/api/machine/tools/propose_finding_change",
+        "path": "/admin/api/machine/tools/propose_finding_change",
         "tool": "propose_finding_change"
       },
       {
-        "path": "/api/machine/tools/preview_grade",
+        "path": "/admin/api/machine/tools/preview_grade",
         "tool": "preview_grade"
       },
       {
-        "path": "/api/machine/tools/search_sold_comps",
+        "path": "/admin/api/machine/tools/search_sold_comps",
         "tool": "search_sold_comps"
       },
       {
-        "path": "/api/machine/tools/read_comp_evidence",
+        "path": "/admin/api/machine/tools/read_comp_evidence",
         "tool": "read_comp_evidence"
       },
       {
-        "path": "/api/machine/tools/propose_comp_selection",
+        "path": "/admin/api/machine/tools/propose_comp_selection",
         "tool": "propose_comp_selection"
       },
       {
-        "path": "/api/machine/tools/preview_valuation",
+        "path": "/admin/api/machine/tools/preview_valuation",
         "tool": "preview_valuation"
       },
       {
-        "path": "/api/machine/tools/render_review_draft",
+        "path": "/admin/api/machine/tools/render_review_draft",
         "tool": "render_review_draft"
       },
       {
-        "path": "/api/machine/tools/submit_for_human_review",
+        "path": "/admin/api/machine/tools/submit_for_human_review",
         "tool": "submit_for_human_review"
       }
     ],
-    "rule": "One exact tool registration per reviewed contract; no arbitrary tool name or proxy catch-all. Offline contract schemas are not authenticated live APIs. New network/auth/storage/provider implementations and owner-approved pilot are required."
+    "rule": "One exact tool registration per reviewed contract; no arbitrary tool name or proxy catch-all. Offline contract schemas are not authenticated live APIs. New network/auth/storage/provider implementations and owner-approved pilot are required.",
+    "basePath": "/admin"
   },
   "environmentDesign": {
     "inventoryContains": "Variable names only, not observed provider values or grants",
@@ -2874,7 +2878,9 @@
       "ATLAS_WORKER_*",
       "ATLAS_RECEIPT_*",
       "ATLAS_COMPS_*",
-      "ATLAS_RELEASE_*"
+      "ATLAS_RELEASE_*",
+      "ATLAS_STAFF_BASE_PATH",
+      "ATLAS_STAFF_ROUTER_KEY"
     ],
     "namesAreProposals": true,
     "existingAdaptersNeedReview": [
@@ -2984,5 +2990,15 @@
     "redaction": "No customer/owner/phone/payment data, credentials, signed URLs, raw storage keys, device secrets or raw provider payloads in public logs/health.",
     "rollback": "Pause new ATLAS work; drain/reconcile; select retained compatible ATLAS artifact and explicit capture routing. Keep issued records/URLs. App rollback does not undo DB/provider/DNS/auth/email changes; no retired worker fallback.",
     "noOperationalActionTaken": true
+  },
+  "currentStaffMount": {
+    "ownerApprovedAt": "2026-09-09",
+    "origin": "https://atlasgrading.com",
+    "basePath": "/admin",
+    "application": "atlas-staff",
+    "runtimeAuthority": "Code, actual deployed artifact and database controls; this design inventory is not activation evidence.",
+    "sharedBrowserOrigin": true,
+    "cookiePathIsScriptIsolation": false,
+    "historicalNfcProtocol": "Existing signed Windows receipts remain unchanged; integrated Mac production finishing is not yet qualified."
   }
 }

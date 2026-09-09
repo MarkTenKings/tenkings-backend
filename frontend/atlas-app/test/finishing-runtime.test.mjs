@@ -25,7 +25,7 @@ function fixture() {
 }
 const invalid = work => assert.throws(work, { code: 'NFC_NOT_CONFIGURED', status: 503 });
 
-test('explicit NFC activation requires independent production settings and exact staff deployment pins', () => {
+test('historical Windows NFC protocol retains its exact origin and independent deployment pins', () => {
     const f = fixture(), parsed = finishingRuntimeSettings(f.env, f.staff);
     assert.equal(parsed.signingKeyHash, f.server.entry.keyId);
     for (const change of [{ NODE_ENV: 'development' }, { VERCEL_ENV: 'preview' }, { ATLAS_NFC_ORIGIN: 'https://atlasgrading.com' },
@@ -40,6 +40,15 @@ test('explicit NFC activation requires independent production settings and exact
     const local = makeFinishingConfig({ ...f.staff, mode: 'LOCAL_FIXTURE', origin: 'http://127.0.0.1:4318',
         releaseSha: '0'.repeat(40), privateKeyPem: f.server.pem, trust: f.trust });
     assert.equal(local.mode, 'LOCAL_FIXTURE'); // Deliberate constructor, no runtime fallback.
+});
+
+test('admin staff origin cannot activate or relabel the legacy Windows NFC protocol', () => {
+    const f = fixture(), current = { ...f.staff, origin: 'https://atlasgrading.com', basePath: '/admin' };
+    invalid(() => finishingRuntimeSettings(f.env, current));
+    invalid(() => finishingRuntimeSettings({ ...f.env, ATLAS_NFC_ORIGIN: current.origin }, current));
+    invalid(() => makeFinishingConfig({ ...current, privateKeyPem: f.server.pem, trust: f.trust }));
+    assert.equal(finishingRuntimeSettings({ ...f.env, ATLAS_NFC_ENABLED: 'false' }, current), null);
+    assert.equal(ATLAS_NFC.staffOrigin, 'https://app.atlasgrading.com');
 });
 
 test('configuration hash is stable for equivalent trust ordering/PEM and changes with trust, signer or deployment', () => {

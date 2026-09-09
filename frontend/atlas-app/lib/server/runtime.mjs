@@ -20,6 +20,7 @@ import { StaffOperationalResolutionService } from './access/resolution.mjs';
 import { machineAdmissionRuntimeSettings, StaffMachinePreparation } from './access/machine.mjs';
 import { createLearningRuntime } from './access/learning-runtime.mjs';
 import { createIdentityCorrectionRuntime } from './access/identity-correction-runtime.mjs';
+import { StaffCustomerIntake } from './access/customer-intake.mjs';
 
 export function runtime(req, env = process.env) {
     if (env.ATLAS_LOCAL_SYNTHETIC === '1') {
@@ -68,6 +69,7 @@ export function runtime(req, env = process.env) {
         learning: createLearningRuntime({ auth: state.auth, review: state.review, staffConfig: config, env }),
         identityCorrection: createIdentityCorrectionRuntime({ auth: state.auth, review: state.review, staffConfig: config, env }),
         resolution: state.operations ? new StaffOperationalResolutionService({ admin: state.operations.admin }) : null,
+        customerIntake: state.operations ? new StaffCustomerIntake({ admin: state.operations.admin }) : null,
         machine: state.operations ? new StaffMachinePreparation({ admin: state.operations.admin, settings: machineSettings }) : null,
         cookie: local ? undefined : secureStaffCookie, assertRequest,
         // Global/phone budgets remain effective even if the platform cannot

@@ -32,7 +32,8 @@ try {
   let checks = 0;
   const token = 'ar_abcdefghijklmnopqrstuvwx';
   for (const [path, options, expected] of [
-      ['/', {}, 503], [`/reports/${token}?v=1`, {}, 503], [`/reports/${token}?v=2`, {}, 503],
+      ['/', {}, 200], ['/admin', {}, 503], ['/account', {}, 503], ['/administrator', {}, 404], ['/accounting', {}, 404],
+      [`/reports/${token}?v=1`, {}, 503], [`/reports/${token}?v=2`, {}, 503],
       [`/reports/${token}?v=1`, { method: 'POST' }, 503],
       [`/reports/${token}?v=1`, { headers: { 'x-forwarded-host': 'app.atlasgrading.com' } }, 503],
       ['/grading', {}, 404], ['/api/staff/session', {}, 404],

@@ -1,5 +1,7 @@
+import { staffApiPath } from './routes.mjs';
+import { GRADING_STREAM_HEADER, GRADING_STREAM_PROTOCOL, gradingResponseResult, isGradingRequest } from './grading-response.mjs';
 export const STAFF_RESPONSE_LIMIT = 8 * 1024 * 1024;
-export const staffRequestDeadline = (path, body) => body !== undefined && /^cards\/[^/?#]+\/grade$/.test(path) ? 240_000 : 15_000;
+export const staffRequestDeadline = (path, body) => isGradingRequest(path, body) ? 240_000 : 15_000;
 const unknown = (code = 'REQUEST_OUTCOME_UNCONFIRMED', message = 'The reply could not be confirmed. Your notes and exact pending request are kept. Refresh access and retry the retained request.') => Object.assign(new Error(message), { code });
 const cancelled = () => Object.assign(unknown('REQUEST_CANCELLED', 'The request was interrupted. Its outcome is unconfirmed; your exact pending request is kept.'), { name: 'AbortError' });
 const ignore = action => { try { Promise.resolve(action()).catch(() => {}); } catch {} };
@@ -31,7 +33,7 @@ export async function staffClientRequest(path, { body, csrf, signal } = {}, {
     if (signal?.aborted) abort();
     const work = (async () => {
         check();
-        response = await fetchImpl(`/api/staff/${path}`, { method: body === undefined ? 'GET' : 'POST',
+        response = await fetchImpl(staffApiPath(path), { method: body === undefined ? 'GET' : 'POST',
             credentials: 'same-origin', cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal,
             headers: body === undefined ? {} : { 'Content-Type': 'application/json', 'X-Atlas-Csrf': csrf ?? '' },
             ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -41,6 +43,8 @@ export async function staffClientRequest(path, { body, csrf, signal } = {}, {
         check();
         if (!response || !Number.isInteger(response.status) || response.status < 200 || response.status > 599
             || typeof response.body?.getReader !== 'function') throw unknown();
+        const stream = response.headers?.get(GRADING_STREAM_HEADER);
+        if (stream != null && (stream !== GRADING_STREAM_PROTOCOL || response.status !== 200 || !isGradingRequest(path, body))) throw unknown();
         const length = response.headers?.get('content-length');
         if (length != null && (!/^\d+$/.test(length) || Number(length) > STAFF_RESPONSE_LIMIT)) throw unknown();
         reader = response.body.getReader();
@@ -57,8 +61,10 @@ export async function staffClientRequest(path, { body, csrf, signal } = {}, {
         }
         text += decoder.decode(); check();
         const data = JSON.parse(text); check();
+        if (stream != null) return gradingResponseResult(data);
         const ok = response.status >= 200 && response.status < 300;
         if (!data || typeof data !== 'object' || Array.isArray(data)
+            || (ok && (Object.hasOwn(data, 'error') || Object.hasOwn(data, 'protocol')))
             || (!ok && (typeof data.error !== 'string' || !/^[A-Z][A-Z0-9_]{0,99}$/.test(data.error)))) throw unknown();
         return { data, ok, status: response.status };
     })();

@@ -1,7 +1,9 @@
 import { BROWSER_COOKIE, SESSION_COOKIE, isBoundaryError, assertLocalRequest, assertWrite, deny, fixtureCookie, identifier, privateHeaders, strictObject } from './policy.mjs';
+import { createGradingResponse } from './grading-response.mjs';
 export function createHandler(resolveRuntime, env = process.env) {
     return async function handler(req, res) {
         privateHeaders(res);
+        let gradingResponse;
         try {
             const state = typeof resolveRuntime === 'function' ? await resolveRuntime(req) : resolveRuntime;
             const { auth, review } = state;
@@ -29,6 +31,8 @@ export function createHandler(resolveRuntime, env = process.env) {
             if (state.resolution) patterns.push(['POST', /^\/api\/staff\/operations\/resolution\/(inspect|cancel-initialization|abandon)$/]);
             if (state.machine) patterns.push(['POST', /^\/api\/staff\/operations\/machine\/admit$/],
                 ['GET', /^\/api\/staff\/operations\/machine\/([a-f0-9-]{36})$/]);
+            if (state.customerIntake) patterns.push(['GET', /^\/api\/staff\/operations\/customers$/],
+                ['POST', /^\/api\/staff\/operations\/customers\/(bind|action|ship)$/]);
             if (state.operations) patterns.push(['GET', /^\/api\/staff\/operations\/roster$/],
                 ['POST', /^\/api\/staff\/operations\/(roster\/update|assign|intake\/preview|intake\/admit|pilots\/prepare|invoices\/reconcile)$/],
                 ['GET', /^\/api\/staff\/operations\/pilots\/([a-f0-9-]{36})$/]);
@@ -85,7 +89,17 @@ export function createHandler(resolveRuntime, env = process.env) {
                     body = { cards: await review.list(staff) };
                 else if (path.startsWith('/api/staff/operations/')) {
                     const operation = path.slice('/api/staff/operations/'.length);
-                    if (operation === 'machine/admit') body = { receipt: await state.machine.admit(staff, req.body) };
+                    if (operation === 'customers' || operation.startsWith('customers/')) {
+                        const query = new URL(req.url, state.origin ?? 'http://127.0.0.1').searchParams;
+                        if (operation === 'customers') {
+                            if ([...query.keys()].some(key => key !== 'cursor') || query.getAll('cursor').length > 1) deny(400, 'CUSTOMER_INTAKE_REQUEST_INVALID');
+                            body = await state.customerIntake.list(staff, { cursor: query.get('cursor') });
+                        } else {
+                            if (query.size) deny(400, 'CUSTOMER_INTAKE_REQUEST_INVALID');
+                            body = await state.customerIntake[match[1]](staff, req.body);
+                        }
+                    }
+                    else if (operation === 'machine/admit') body = { receipt: await state.machine.admit(staff, req.body) };
                     else if (operation.startsWith('machine/')) body = { receipt: await state.machine.status(staff, match[1]) };
                     else if (operation === 'resolution/inspect') body = { record: await state.resolution.inspect(staff, req.body) };
                     else if (operation === 'resolution/cancel-initialization') body = { receipt: await state.resolution.cancelUndispatchedInitialization(staff, req.body) };
@@ -124,8 +138,10 @@ export function createHandler(resolveRuntime, env = process.env) {
                     body = await state.proposals.decide(staff, match[1], req.body);
                 else if (path.endsWith('/identity-correction'))
                     body = { correction: await state.identityCorrection.correct(staff, match[1], req.body) };
-                else if (path.endsWith('/grade'))
-                    body = await state.grading.run(staff, match[1], req.body);
+                else if (path.endsWith('/grade')) {
+                    gradingResponse = createGradingResponse(res);
+                    body = await state.grading.run(staff, match[1], req.body, { onDispatched: gradingResponse.start });
+                }
                 else if (path.endsWith('/trace'))
                     body = await state.grading.trace(staff, match[1], req.body);
                 else if (path.includes('/operations/'))
@@ -135,10 +151,13 @@ export function createHandler(resolveRuntime, env = process.env) {
                 else
                     body = { card: await review.read(staff, match[1]) };
             }
-            return res.status(200).json(body);
+            return gradingResponse?.started ? gradingResponse.finish(200, body) : res.status(200).json(body);
         }
         catch (error) {
-            return res.status(isBoundaryError(error) ? error.status : 503).json({ error: isBoundaryError(error) ? error.code : 'TEMPORARILY_UNAVAILABLE' });
+            const status = isBoundaryError(error) ? error.status : 503;
+            const body = { error: isBoundaryError(error) ? error.code : 'TEMPORARILY_UNAVAILABLE' };
+            return gradingResponse?.started ? gradingResponse.finish(status, body) : res.status(status).json(body);
         }
+        finally { gradingResponse?.stop(); }
     };
 }

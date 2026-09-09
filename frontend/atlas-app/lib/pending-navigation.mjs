@@ -18,7 +18,7 @@ function controllerFor({ window, document, router }) {
     }
     const subscribers=new Set(),owners=new Set(),history=window.history;
     const originalPush=history.pushState,originalReplace=history.replaceState;
-    // Next 14 exposes one beforePopState callback. Preserve its existing owner;
+    // Next 15.5 exposes one beforePopState callback. Preserve its existing owner;
     // the pinned implementation updates _key immediately before this callback.
     const nextRouter=router.router??router,previousBeforePop=nextRouter._bps;
     let serial=0,settled,restoring=false,detached=false,restoreTimer=null,disposed=false;
@@ -63,7 +63,7 @@ function controllerFor({ window, document, router }) {
         if(!atSettled())restore();
         notify(detached);
         const error=Object.assign(new Error(MESSAGE),{cancelled:true});
-        // Installed Next 14 catches cancellation thrown from beforeHistoryChange.
+        // Installed Next 15.5 catches cancellation thrown from beforeHistoryChange.
         // routeChangeStart and hashChangeStart are outside that try/catch.
         router.events.emit('routeChangeError',error,url,routeProps);throw error;
     };

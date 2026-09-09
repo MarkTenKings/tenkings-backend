@@ -177,7 +177,7 @@ export const intakeScenarios = [
         // Direct SQL boundary fixture only: no promotion of local auth or ports
         // into production. The real operations credential calls its exact definer.
         const current = await f.admin.staffControl.update({ where: { id: 'active' }, data: { mode: 'PRODUCTION',
-            origin: 'https://app.atlasgrading.com', deploymentId: 'synthetic-sql-scope.vercel.app', releaseSha: 'd'.repeat(40), revision: { increment: 1 } } });
+            origin: 'https://atlasgrading.com', deploymentId: 'synthetic-sql-scope.vercel.app', releaseSha: 'd'.repeat(40), revision: { increment: 1 } } });
         await f.admin.staffIntakeControl.update({ where: { id: 'active' }, data: { mode: 'PRODUCTION',
             deploymentId: 'synthetic-intake-sql-scope.vercel.app', releaseSha: 'e'.repeat(40), revision: { increment: 1 } } });
         const receipt = await f.admin.staffSourceAdmission.create({ data: { ...row, id: randomUUID(), sourceType: 'SPEEDSTER', controlRevision: current.revision } });
