@@ -8,7 +8,7 @@ export type WorkflowUnitV2 = {
   product_id: string | null; pack_id: string | null; permanent_card_id: string | null;
   custody: { custody_id: string; location_id: string | null }; reservation: { custody_id: string; location_id: string | null } | null;
   intended_sale_price_cents: number | null; price_event_id: string | null; cost: WorkflowAllocationV2['units'][number] | null; cost_event_id: string | null;
-  batch_id: string | null; possession: 'recorded' | 'batch_identity_uncertain';
+  batch_id: string | null; possession: 'recorded' | 'batch_identity_uncertain'; state_event_id: string;
 };
 export type WorkflowBatchV2 = Omit<Event<'batch_loaded'>, 'event_kind' | 'data'> & { event_kind: 'batch_loaded' | 'opening_stock_recorded'; origin_kind: 'batch_loaded' | 'opening_stock_recorded'; data: Omit<Event<'batch_loaded'>['data'], 'from_custody_id'> & { from_custody_id: string | null } };
 export class WorkflowStateV2 {
@@ -45,6 +45,18 @@ function available(units: WorkflowUnitV2[]) {
 function bind(state: WorkflowStateV2, custody: WorkflowUnitV2['custody']) {
   if (state.custodyBindings.has(custody.custody_id) && state.custodyBindings.get(custody.custody_id) !== custody.location_id) conflict('Custody identity is already bound to another Location');
   state.custodyBindings.set(custody.custody_id, custody.location_id);
+}
+export function workflowPhysicalUnitIdsV2(e: WorkflowEventV2): string[] {
+  switch (e.event_kind) {
+    case 'purchase_received': case 'opening_stock_recorded': case 'processed': case 'custody_moved': case 'batch_loaded': case 'stock_corrected': return e.data.unit_ids;
+    case 'packed': return e.data.packs.map(p => p.unit_id);
+    case 'batch_removed': case 'physical_return_observed': return e.data.unit_ids ?? [];
+    default: return [];
+  }
+}
+export function workflowStockCorrectionBlockV2(unit: WorkflowUnitV2): string | null {
+  return unit.batch_id !== null || unit.possession !== 'recorded' || unit.custody.custody_id.startsWith('machine:')
+    ? 'Loaded membership does not prove which units remain held. Record an actual identified physical removal or return before correcting these units.' : null;
 }
 export function workflowPurchaseCancellationBlockV2(state: WorkflowStateV2, lotId: string): string | null {
   const receipt = state.lots.get(lotId);
@@ -97,7 +109,7 @@ export function applyWorkflowEventV2(state: WorkflowStateV2, supplied: WorkflowE
       if (d.total_cost_cents === null ? d.unknown_reason === null : d.unknown_reason !== null) conflict('Unknown total requires a reason; known total cannot carry an unknown reason');
       if (e.event_kind === 'purchase_received' && (!d.custody.custody_id.startsWith('hq:') || d.custody.location_id === null)) conflict('New purchases must be received as unprocessed HQ stock at an existing Location');
       bind(state, d.custody); state.lots.set(d.lot_id, e); state.costAuthorities.set(d.lot_id, e);
-      for (const unit_id of d.unit_ids) { state.receivedUnitIds.add(unit_id); state.units.set(unit_id, { unit_id, lot_id: d.lot_id, receipt_event_id: e.source_event_id, stage: 'unprocessed', product_id: null, pack_id: null, permanent_card_id: null, custody: { ...d.custody }, reservation: null, intended_sale_price_cents: null, price_event_id: null, cost: null, cost_event_id: null, batch_id: null, possession: 'recorded' }); }
+      for (const unit_id of d.unit_ids) { state.receivedUnitIds.add(unit_id); state.units.set(unit_id, { unit_id, lot_id: d.lot_id, receipt_event_id: e.source_event_id, stage: 'unprocessed', product_id: null, pack_id: null, permanent_card_id: null, custody: { ...d.custody }, reservation: null, intended_sale_price_cents: null, price_event_id: null, cost: null, cost_event_id: null, batch_id: null, possession: 'recorded', state_event_id: e.source_event_id }); }
       if (e.event_kind === 'opening_stock_recorded') {
         const d = e.data;
         if (d.custody.location_id === null) conflict('Historical opening needs an existing physical Location');
@@ -137,6 +149,32 @@ export function applyWorkflowEventV2(state: WorkflowStateV2, supplied: WorkflowE
       if (canonical(computed) !== canonical(e.data.allocation)) conflict('Saved allocation does not match the purchase, complete roster and explicit method');
       for (const row of computed.units) { const u = state.units.get(row.unit_id)!; u.cost = row; u.cost_event_id = e.source_event_id; }
       state.assignments.set(e.data.lot_id, e);
+      break;
+    }
+    case 'stock_corrected': {
+      const d = e.data, units = selected(state, d.unit_ids), c = d.correction;
+      if (d.expected_states.length !== units.length || new Set(d.expected_states.map(a => a.unit_id)).size !== units.length || units.some(u => d.expected_states.find(a => a.unit_id === u.unit_id)?.state_event_id !== u.state_event_id)) conflict('Correction must cite the exact current physical-state event for every selected unit; reload stale stock first');
+      for (const u of units) { const blocked = workflowStockCorrectionBlockV2(u); if (blocked) conflict(blocked); }
+      let changed = false;
+      if (c.kind === 'processing') {
+        if ((c.stage === 'unprocessed') !== (c.product_id === null)) conflict('Unprocessed stock has no product; processing and processed stock require an explicit product');
+        if (units.some(u => c.stage === 'packed' ? u.stage !== 'packed' || u.pack_id === null : u.pack_id !== null || u.stage === 'packed')) conflict('Use a packing correction to enter or leave packed state; a packed product correction retains the current pack');
+        if (units.some(u => u.permanent_card_id !== null) && !['processed', 'packed'].includes(c.stage)) conflict('A linked permanent card cannot be demoted below processed or unlinked by a holding correction');
+        for (const u of units) { changed ||= u.stage !== c.stage || u.product_id !== c.product_id; u.stage = c.stage; u.product_id = c.product_id; }
+      } else if (c.kind === 'packing') {
+        if (units.some(u => !['processed', 'packed'].includes(u.stage) || u.product_id === null)) conflict('Packing corrections require processed, identified stock');
+        if (c.packs.length && (c.packs.length !== units.length || new Set(c.packs.map(p => p.unit_id)).size !== units.length || new Set(c.packs.map(p => p.pack_id)).size !== units.length || c.packs.some(p => !d.unit_ids.includes(p.unit_id)))) conflict('Pack correction requires one unique pack per selected unit, or an empty unpacked roster');
+        for (const u of units) {
+          const pack = c.packs.find(p => p.unit_id === u.unit_id)?.pack_id ?? null;
+          if (pack !== null && pack !== u.pack_id && state.packIds.has(pack)) conflict('Retired or other-unit pack identities cannot be reused');
+          changed ||= u.pack_id !== pack; u.pack_id = pack; u.stage = pack === null ? 'processed' : 'packed'; if (pack) state.packIds.add(pack);
+        }
+      } else {
+        if (!c.to.custody_id.startsWith('hq:') && !c.to.custody_id.startsWith('transit:') || c.to.custody_id.startsWith('hq:') && !c.to.location_id) conflict('Custody correction requires explicit HQ at an existing Location or named transit; machine delivery needs a loading batch');
+        bind(state, c.to);
+        for (const u of units) { changed ||= canonical(u.custody) !== canonical(c.to); u.custody = { ...c.to }; }
+      }
+      if (!changed) conflict('Correction does not change any selected physical state');
       break;
     }
     case 'processed': {
@@ -264,6 +302,12 @@ export function applyWorkflowEventV2(state: WorkflowStateV2, supplied: WorkflowE
       }
       state.reconciliations.set(d.batch_id, e); break;
     }
+  }
+  for (const id of workflowPhysicalUnitIdsV2(e)) {
+    const u = state.units.get(id)!;
+    const previous = state.events.get(u.state_event_id);
+    if (previous?.event_kind === 'stock_corrected' && previous.source_sequence > e.source_sequence) conflict('A correction cannot be backdated before an already accepted later physical event');
+    u.state_event_id = e.source_event_id;
   }
   state.events.set(e.source_event_id, e);
 }

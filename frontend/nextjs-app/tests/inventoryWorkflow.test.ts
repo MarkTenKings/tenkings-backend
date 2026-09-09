@@ -18,3 +18,13 @@ test('receipt cancellation requires explicit confirmation and binds the original
   assert.throws(() => buildWorkflowCommand({ ...d, confirmCancellation: true }, 'fixture-cancel-request', [], { ...view, lots: [{ ...view.lots[0], cancellation_block_reason: 'Stock was processed' }] }), /Stock was processed/);
   assert.throws(() => buildWorkflowCommand({ ...d, confirmCancellation: true }, 'fixture-cancel-request', [], { ...view, lots: [{ ...view.lots[0], cancelled_event_id: 'fixture-previous-cancel' }] }), /receipt is cancelled/);
 });
+test('holding corrections capture server physical anchors and explicitly selected facts without cost or identity edits', () => {
+  const unit = { unit_id: 'fixture-unit', state_event_id: 'fixture-physical-event', stage: 'processed', product_id: 'fixture-product', pack_id: null, batch_id: null, possession: 'recorded', custody: { custody_id: 'hq:fixture', location_id: view.locations[0].id } } as any;
+  const held = { ...view, units: [unit] };
+  const draft = { ...base(), action: 'stock_corrected' as const, correctionKind: 'processing', stage: 'processed', product: 'correct-product', correctionReason: 'Fixture product entry corrected from observed stock.' };
+  const command = buildWorkflowCommand(draft, 'fixture-correction', ['fixture-unit'], held);
+  assert.deepEqual(command.data, { unit_ids: ['fixture-unit'], expected_states: [{ unit_id: 'fixture-unit', state_event_id: 'fixture-physical-event' }], reason: draft.correctionReason, correction: { kind: 'processing', stage: 'processed', product_id: 'correct-product' } });
+  assert.throws(() => buildWorkflowCommand(draft, 'fixture-correction', ['fixture-unit'], { ...held, units: [{ ...unit, batch_id: 'fixture-batch', possession: 'batch_identity_uncertain' }] }), /Loaded membership/);
+  assert.throws(() => buildWorkflowCommand(draft, 'fixture-correction', ['fixture-unit'], view), /Reload/);
+  assert.throws(() => buildWorkflowCommand({ ...draft, correctionKind: '' }, 'fixture-correction', ['fixture-unit'], held), /Choose the physical fact/);
+});

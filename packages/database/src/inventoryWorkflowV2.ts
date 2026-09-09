@@ -29,12 +29,18 @@ const allocation = z.object({
   residual_rule: z.literal('ascending_unit_id_utf16_v1').nullable(), residual_cent_unit_ids: eventIds,
   units: z.array(z.object({ unit_id: id, cost_cents: cents.nullable(), basis: z.enum(['unknown', 'documented_unit', 'allocated_acquisition']), evidence_ref: evidence, unknown_reason: evidence.nullable() }).strict()).min(1).max(WORKFLOW_MAX_UNITS_V2),
 }).strict();
+const stockCorrection = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('processing'), stage: z.enum(['unprocessed', 'processing', 'processed', 'packed']), product_id: id.nullable() }).strict(),
+  z.object({ kind: z.literal('packing'), packs: z.array(z.object({ unit_id: id, pack_id: id }).strict()).max(WORKFLOW_MAX_UNITS_V2) }).strict(),
+  z.object({ kind: z.literal('custody'), to: custody }).strict(),
+]);
 const payloads = {
   purchase_received: z.object({ lot_id: id, acquisition_cycle_id: id, quantity: positive, total_cost_cents: cents.nullable(), unknown_reason: evidence.nullable(), purchase_evidence_ref: evidence, unit_ids: ids, custody }).strict(),
   purchase_cancelled: z.object({ lot_id: id, purchase_event_id: id, reason: evidence }).strict(),
   opening_stock_recorded: z.object({ lot_id: id, acquisition_cycle_id: id, quantity: positive, total_cost_cents: cents.nullable(), unknown_reason: evidence.nullable(), purchase_evidence_ref: evidence, unit_ids: ids, custody, stage: z.enum(['unprocessed', 'processing', 'processed', 'packed']), product_id: id.nullable(), packs: z.array(z.object({ unit_id: id, pack_id: id }).strict()).max(WORKFLOW_MAX_UNITS_V2), machine_scope: WorkflowScopeInputV2.nullable(), loading_batch_id: id.nullable() }).strict(),
   purchase_cost_documented: z.object({ lot_id: id, total_cost_cents: cents.nullable(), unknown_reason: evidence.nullable(), purchase_evidence_ref: evidence, supersedes_event_id: id }).strict(),
   cost_assigned: z.object({ lot_id: id, assignment: WorkflowAssignmentInputV2, supersedes_event_id: id.nullable() }).strict(),
+  stock_corrected: z.object({ unit_ids: ids, expected_states: z.array(z.object({ unit_id: id, state_event_id: id }).strict()).min(1).max(WORKFLOW_MAX_UNITS_V2), reason: evidence, correction: stockCorrection }).strict(),
   processed: z.object({ unit_ids: ids, stage: z.enum(['processing', 'processed']), product_id: id, permanent_card_links: z.array(z.object({ unit_id: id, card_id: id }).strict()).max(WORKFLOW_MAX_UNITS_V2) }).strict(),
   packed: z.object({ packs: z.array(z.object({ unit_id: id, pack_id: id }).strict()).min(1).max(WORKFLOW_MAX_UNITS_V2) }).strict(),
   custody_moved: z.object({ unit_ids: ids, from_custody_id: id, to: custody, movement: z.enum(['dispatch', 'receipt', 'transfer']) }).strict(),
@@ -53,11 +59,11 @@ const commandMeta = { request_id: id, ...base };
 const eventMeta = { schema_version: z.literal(2), source_event_id: id, source_sequence: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), ...base, recorded_at: WorkflowTimeV2, recorded_by: id, currency: z.literal('USD') };
 const variant = <K extends keyof typeof payloads>(key: K) => z.object({ ...commandMeta, event_kind: z.literal(key), data: payloads[key] }).strict();
 export const WorkflowCommandInputV2 = z.discriminatedUnion('event_kind', [
-  variant('purchase_received'), variant('purchase_cancelled'), variant('opening_stock_recorded'), variant('purchase_cost_documented'), variant('cost_assigned'), variant('processed'), variant('packed'), variant('custody_moved'), variant('reserved'), variant('price_set'), variant('batch_loaded'), variant('sale_observed'), variant('stock_counted'), variant('batch_removed'), variant('physical_return_observed'), variant('refund_observed'), variant('batch_reconciled'),
+  variant('purchase_received'), variant('purchase_cancelled'), variant('opening_stock_recorded'), variant('purchase_cost_documented'), variant('cost_assigned'), variant('stock_corrected'), variant('processed'), variant('packed'), variant('custody_moved'), variant('reserved'), variant('price_set'), variant('batch_loaded'), variant('sale_observed'), variant('stock_counted'), variant('batch_removed'), variant('physical_return_observed'), variant('refund_observed'), variant('batch_reconciled'),
 ]);
 const eventVariant = <K extends keyof typeof payloads>(key: K) => z.object({ ...eventMeta, event_kind: z.literal(key), data: payloads[key] }).strict();
 export const WorkflowEventInputV2 = z.discriminatedUnion('event_kind', [
-  eventVariant('purchase_received'), eventVariant('purchase_cancelled'), eventVariant('opening_stock_recorded'), eventVariant('purchase_cost_documented'), z.object({ ...eventMeta, event_kind: z.literal('cost_assigned'), data: payloads.cost_assigned.extend({ allocation }).strict() }).strict(), eventVariant('processed'), eventVariant('packed'), eventVariant('custody_moved'), eventVariant('reserved'), eventVariant('price_set'), eventVariant('batch_loaded'), eventVariant('sale_observed'), eventVariant('stock_counted'), eventVariant('batch_removed'), eventVariant('physical_return_observed'), eventVariant('refund_observed'), eventVariant('batch_reconciled'),
+  eventVariant('purchase_received'), eventVariant('purchase_cancelled'), eventVariant('opening_stock_recorded'), eventVariant('purchase_cost_documented'), z.object({ ...eventMeta, event_kind: z.literal('cost_assigned'), data: payloads.cost_assigned.extend({ allocation }).strict() }).strict(), eventVariant('stock_corrected'), eventVariant('processed'), eventVariant('packed'), eventVariant('custody_moved'), eventVariant('reserved'), eventVariant('price_set'), eventVariant('batch_loaded'), eventVariant('sale_observed'), eventVariant('stock_counted'), eventVariant('batch_removed'), eventVariant('physical_return_observed'), eventVariant('refund_observed'), eventVariant('batch_reconciled'),
 ]);
 export type WorkflowCommandV2 = z.infer<typeof WorkflowCommandInputV2>;
 export type WorkflowEventV2 = z.infer<typeof WorkflowEventInputV2>;

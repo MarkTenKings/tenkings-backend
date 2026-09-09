@@ -227,6 +227,20 @@ The September 8 completion review also requires a bounded receipt-entry correcti
 
 ---
 
+### 3.7 Owner-approved held-stock corrections — 2026-09-09
+
+Mark's September 9 financial-completion authority requires usable corrections for known unsold stock already processed or moved. Extend the existing schema-2 `InventoryWorkflowEventV2` journal with additive `stock_corrected` evidence through the same sole `cardPlatformV2.ts` writer. Its payload contains selected `unit_ids`, a complete unique `expected_states` roster of `{unit_id,state_event_id}`, a sourced `reason`, and exactly one `correction`: processing stage/product, one-card pack membership or unpacking, or explicit current HQ/transit custody. The existing event envelope retains evidence, server actor, recording time and source sequence. No table or migration is added.
+
+Only explicitly identified, currently held units outside an active machine batch qualify. Exact latest physical-event anchors and complete causal replay reject stale or backdated corrections. Processing and custody remain separate facts. A packed product correction preserves the current pack; changing pack membership uses the packing variant, and retired pack IDs remain reserved. Receipt/lot/cycle identities, roster quantity, acquisition cents, permanent-card links and all prior evidence remain unchanged. A permanent-card link cannot be demoted below processed. The earlier unused-receipt cancellation remains available under its original restrictions.
+
+Aggregate machine sales cannot establish which card remains held. Loaded or otherwise ambiguous stock must first have actual identified physical removal/return evidence; neither that movement nor an exact sold identity may be invented to enable correction. Custody correction may identify only a sourced `hq:` with an existing Location or named `transit:` destination, preserving immutable custody-to-Location meaning. No HQ, machine, Location, product mapping, acquisition basis or ownership inference is authorized. No new HQ address is created or published by this control.
+
+The existing `/admin/physical-inventory` workspace provides **Correct held stock**, current-state/prior-event review and the ordinary preview/record/exact-retry path. Source and Financial Story independently validate the variant and preserve correction provenance through subsequent loading-batch and Story cost evidence. Both consumers must support the variant before operational use; it neither posts financial transactions nor invents a real pilot. The [holding-correction specification](V2_INVENTORY_HOLDING_CORRECTIONS_20260909.md) records isolated proof and release limits.
+
+The September 8 inventory release is now live: fresh September 9 metadata identifies main `e291263fda444f6147a995132f9aacfac9f8b69d` and READY Vercel deployment `dpl_FJxzTH4CEteY2xuQjADCrzii5zjn` serving `collect.tenkings.co`. This supersedes the earlier sections' historical candidate-only activation status, not their business-evidence boundaries. The September 9 correction candidate is prepared separately for normal exact-head checks and coordinator acceptance; this amendment does not claim it is deployed or that real stock coverage is complete.
+
+---
+
 ## 4. Target System Shape
 
 ```mermaid
