@@ -160,6 +160,39 @@ test('purchased-lot PostgreSQL workflow and authenticated export', { skip: !enab
       const cancellation_case = { lot: receiptCommand.data.lot_id, receipt: receipt.event, assignment: assignment.event, price: price.event, cancellation: cancelled.event, replacement: replacement.event };
       if (process.env.INVENTORY_WORKFLOW_CANCELLATION_TEST_EXPORT_PATH) await writeFile(process.env.INVENTORY_WORKFLOW_CANCELLATION_TEST_EXPORT_PATH, JSON.stringify({ test_only: true, source_system: 'ten-kings-card-platform-v2', cases, historical_case: historicalCase, cancellation_case, pages }), { mode: 0o600 });
     });
+    await t.test('used holding corrections preserve SQL history, exact retry, custody and acquisition cost through aggregate sale', async () => {
+      const unit_ids = ['fixture-holding-a', 'fixture-holding-b'], lot_id = 'fixture-holding-lot';
+      const correctionAt = '2026-02-01T00:00:00.000Z', saleAt = '2026-02-02T00:00:00.000Z';
+      const current = () => db.$transaction(tx => readWorkflowWorkspaceV2(tx, { lot_id }), { isolationLevel: 'RepeatableRead' });
+      const corrected = async correction => {
+        const view = await current();
+        return command('stock_corrected', { unit_ids, expected_states: view.units.map(u => ({ unit_id: u.unit_id, state_event_id: u.state_event_id })), reason: 'fixture:verified-holding-entry-correction', correction }, correctionAt);
+      };
+      const receipt = await record(command('purchase_received', { lot_id, acquisition_cycle_id: lot_id + ':cycle', quantity: 2, total_cost_cents: 701, unknown_reason: null, purchase_evidence_ref: 'fixture:holding-invoice', unit_ids, custody: hq }, correctionAt));
+      await record(command('cost_assigned', { lot_id, assignment: { method: 'equal_card', basis: 'allocated_acquisition', evidence_ref: 'fixture:chosen-equal-policy' }, supersedes_event_id: null }, correctionAt));
+      await record(command('processed', { unit_ids, stage: 'processed', product_id: 'fixture-holding-wrong-product', permanent_card_links: [] }, correctionAt));
+      await record(command('packed', { packs: unit_ids.map(unit_id => ({ unit_id, pack_id: unit_id + ':wrong-pack' })) }, correctionAt));
+      const unpack = await corrected({ kind: 'packing', packs: [] }), before = await maximum();
+      assert.equal((await record(unpack, true)).outcome, 'PREVIEW'); assert.equal(await maximum(), before);
+      await record(unpack); assert.equal((await record(unpack)).outcome, 'REPLAY');
+      await assert.rejects(record({ ...unpack, request_id: 'fixture-stale-unpack' }), /exact current physical-state/);
+      const productCorrection = await record(await corrected({ kind: 'processing', stage: 'processed', product_id: 'fixture-holding-product' }));
+      await record(await corrected({ kind: 'packing', packs: unit_ids.map(unit_id => ({ unit_id, pack_id: unit_id + ':correct-pack' })) }));
+      await record(command('custody_moved', { unit_ids, from_custody_id: hq.custody_id, to: transit, movement: 'dispatch' }, correctionAt));
+      const correctedCustody = { custody_id: 'hq:correction-custody', location_id: location.id };
+      await record(await corrected({ kind: 'custody', to: correctedCustody }));
+      const held = await current(); assert.equal(held.units.reduce((sum, u) => sum + u.cost.cost_cents, 0), 701); assert.ok(held.units.every(u => u.custody.custody_id === correctedCustody.custody_id && u.product_id === 'fixture-holding-product'));
+      const scope = { machine_id: 'fixture-holding-machine', product_id: 'fixture-holding-product', door_id: 'door' }, batch = 'fixture-holding-batch';
+      const opening = await record(command('stock_counted', { scope, quantity: 0, remaining_unit_ids: [] }, correctionAt));
+      const load = await record(command('batch_loaded', { batch_id: batch, scope, unit_ids, from_custody_id: correctedCustody.custody_id, to: { custody_id: 'machine:' + scope.machine_id, location_id: location.id } }, correctionAt));
+      const loadedCommand = await corrected({ kind: 'packing', packs: [] }); await assert.rejects(record(loadedCommand), /does not prove/);
+      const sale = await record(command('sale_observed', { scope, from_at: correctionAt, until_at: saleAt, quantity: 2, actual_revenue_cents: 8000 }, saleAt));
+      const closing = await record(command('stock_counted', { scope, quantity: 0, remaining_unit_ids: [] }, saleAt));
+      await record(command('batch_reconciled', { batch_id: batch, opening_count_event_id: opening.event.source_event_id, closing_count_event_id: closing.event.source_event_id, sales_event_ids: [sale.event.source_event_id], movement_event_ids: [], scope_complete: true, sales_attributed: true, scope_evidence_ref: 'fixture:complete-holding-cycle', attribution_evidence_ref: 'fixture:holding-batch-attribution', supersedes_event_id: null }, saleAt));
+      assert.equal((await record(unpack)).outcome, 'REPLAY', 'exact old correction retry survives later sale history');
+      const correction_case = { lot: lot_id, batch, scope, cost: 701, receipt: receipt.event, product_correction: productCorrection.event, load: load.event, sale: sale.event };
+      if (process.env.INVENTORY_WORKFLOW_CORRECTION_TEST_EXPORT_PATH) await writeFile(process.env.INVENTORY_WORKFLOW_CORRECTION_TEST_EXPORT_PATH, JSON.stringify({ test_only: true, source_system: 'ten-kings-card-platform-v2', cases, historical_case: historicalCase, cancellation_case: true, correction_case, pages: await exportPages() }), { mode: 0o600 });
+    });
     await t.test('linked permanent cards cannot enter ordinary commerce, ownership, location or void transitions', async () => {
       async function cardFixture(name) {
         const identity = { playerName: null, cardName: name, year: '2026', manufacturer: null, productSet: 'DISPOSABLE', parallel: null, insert: null, cardNumber: '1' };

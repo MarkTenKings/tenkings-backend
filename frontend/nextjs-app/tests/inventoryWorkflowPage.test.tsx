@@ -60,13 +60,45 @@ test('every guided control is available and allocation starts without a selected
   let posts = 0; const ui = await mount(async (_url, init) => { if (init?.method === 'POST') posts++; return json(initial); });
   try {
     const select = [...ui.container.querySelectorAll('label')].find(l => l.firstChild?.textContent === 'Record an actual workflow step')!.querySelector('select')!;
-    for (const kind of ['purchase_received', 'purchase_cancelled', 'opening_stock_recorded', 'purchase_cost_documented', 'cost_assigned', 'processed', 'packed', 'reserved', 'price_set', 'custody_moved', 'batch_loaded', 'sale_observed', 'stock_counted', 'batch_removed', 'physical_return_observed', 'refund_observed', 'batch_reconciled']) assert.ok([...select.options].some(o => o.value === kind));
+    for (const kind of ['purchase_received', 'purchase_cancelled', 'opening_stock_recorded', 'purchase_cost_documented', 'cost_assigned', 'processed', 'packed', 'stock_corrected', 'reserved', 'price_set', 'custody_moved', 'batch_loaded', 'sale_observed', 'stock_counted', 'batch_removed', 'physical_return_observed', 'refund_observed', 'batch_reconciled']) assert.ok([...select.options].some(o => o.value === kind));
     await ui.input('Record an actual workflow step', 'cost_assigned');
     const policy = [...ui.container.querySelectorAll('label')].find(l => l.firstChild?.textContent === 'Explicit acquisition cost method')!.querySelector('select')!; assert.equal(policy.value, '');
     await ui.click('Preview causal impact'); assert.equal(posts, 0);
     await ui.input('Record an actual workflow step', 'opening_stock_recorded'); assert.match(ui.container.textContent!, /does not invent a prior HQ receipt/);
     await ui.input('Record an actual workflow step', 'sale_observed'); assert.match(ui.container.textContent!, /do not select individual sold cards/);
     await ui.input('Record an actual workflow step', 'refund_observed'); assert.match(ui.container.textContent!, /changes no physical stock/);
+  } finally { await ui.close(); }
+});
+
+test('guided correction shows prior physical state, previews zero-write and recovers the exact saved correction after response loss', async () => {
+  const events: any[] = [];
+  const seed = (event_kind: string, data: unknown) => events.push({ schema_version: 2, source_event_id: 'fixture-correction-' + (events.length + 1), source_sequence: events.length + 1, event_kind, data, effective_at: '2026-01-01T00:00:00.000Z', recorded_at: '2026-02-01T00:00:00.000Z', recorded_by: 'fixture-admin', evidence_ref: 'fixture:physical-evidence', currency: 'USD' });
+  seed('purchase_received', { lot_id: 'fixture-correction-lot', acquisition_cycle_id: 'fixture-correction-cycle', quantity: 1, total_cost_cents: 125, unknown_reason: null, purchase_evidence_ref: 'fixture:invoice', unit_ids: ['fixture-correction-unit'], custody: { custody_id: 'hq:fixture', location_id: location.id } });
+  seed('processed', { unit_ids: ['fixture-correction-unit'], stage: 'processed', product_id: 'fixture-product', permanent_card_links: [] });
+  seed('custody_moved', { unit_ids: ['fixture-correction-unit'], from_custody_id: 'hq:fixture', to: { custody_id: 'transit:wrong-entry', location_id: null }, movement: 'dispatch' });
+  const currentView = () => { const state = replayWorkflowEventsV2(events); return { ...initial, units: [...state.units.values()], events: [...state.events.values()], events_total: events.length }; };
+  const posts: Array<{ mode: string; command: WorkflowCommandV2 }> = []; let lost = false;
+  const ui = await mount(async (_url, init) => {
+    if (init?.method !== 'POST') return json(currentView());
+    const submission = JSON.parse(String(init.body)) as { mode: string; command: WorkflowCommandV2 }; posts.push(submission);
+    const { command, mode } = submission, prior = events.find(e => e.source_event_id === workflowEventIdV2(command.request_id));
+    const event = prior ?? { schema_version: 2, source_event_id: workflowEventIdV2(command.request_id), source_sequence: events.length + 1, event_kind: command.event_kind, data: command.data, effective_at: command.effective_at, recorded_at: '2026-02-01T00:00:00.000Z', recorded_by: 'fixture-admin', evidence_ref: command.evidence_ref, currency: 'USD' };
+    if (!prior) { replayWorkflowEventsV2([...events, event]); if (mode === 'record') events.push(event); }
+    if (mode === 'record' && !lost) { lost = true; throw new Error('fixture lost response after commit'); }
+    return json({ outcome: mode === 'preview' ? 'PREVIEW' : prior ? 'REPLAY' : 'RECORDED', request_id: command.request_id, event, impact: null });
+  });
+  try {
+    await ui.click('Select entire roster'); await ui.input('Record an actual workflow step', 'stock_corrected');
+    assert.match(ui.container.textContent!, /Current physical evidence: fixture-correction-3/);
+    await ui.input('Physical fact to correct', 'custody');
+    for (const [label, value] of [['Event time (UTC)', '2026-01-02T00:00:00.000Z'], ['Event evidence reference', 'fixture:verified-custody'], ['Holding correction reason', 'Delivery entry used the wrong custody.'], ['Correct current custody', 'hq:fixture'], ['Existing Location', location.id]]) await ui.input(label, value);
+    await ui.click('Preview causal impact'); await until(() => !!ui.container.textContent?.includes('Preview passed causal replay')); assert.equal(events.length, 3);
+    await ui.submit(); await until(() => !!ui.container.textContent?.includes('exact submission is saved')); assert.equal(events.length, 4);
+    await ui.click('Retry exact saved submission'); await until(() => !!ui.container.textContent?.includes('Recovered accepted correct held stock'));
+    assert.equal(events.length, 4); assert.deepEqual(posts[0].command, posts[1].command); assert.deepEqual(posts[1].command, posts[2].command);
+    assert.deepEqual((posts[1].command.data as any).expected_states, [{ unit_id: 'fixture-correction-unit', state_event_id: 'fixture-correction-3' }]);
+    assert.equal(replayWorkflowEventsV2(events).units.get('fixture-correction-unit').custody.custody_id, 'hq:fixture');
+    assert.equal(sessionStorage.getItem('ten-kings:inventory-workflow:pending:fixture-admin'), null);
   } finally { await ui.close(); }
 });
 test('saved command is frozen through reload and a mismatched receipt cannot clear its retry evidence', async () => {
