@@ -133,7 +133,7 @@ export class DurableStaffAuth {
         }));
         if (claim.result) return claim.result;
         let result;
-        try { result = await this.provider.start(input.phone); } catch { result = null; }
+        try { result = await this.provider.start(phone); } catch { result = null; }
         return unwrap(await this.database.transaction(async ({ tx, now, control }) => {
             const challenge = await tx.staffChallenge.findUnique({ where: { id: claim.challenge.id } });
             if (!challenge || challenge.state !== 'SENDING' || challenge.sendClaimId !== claim.challenge.sendClaimId) return error(409, 'SIGN_IN_RESTART_REQUIRED');

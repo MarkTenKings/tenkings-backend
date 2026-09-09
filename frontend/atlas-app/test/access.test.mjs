@@ -38,6 +38,37 @@ test('durable staff phone aliases use the approved canonical identity and replay
     for (const phone of ['202555014', '447700900123', '+1 202 555 0141 ext 2', '++12025550141'])
         await assert.rejects(() => f.auth.send(f.cookie, '', { phone, requestId: '00000000-0000-4000-8000-000000000002' }, 'bad-input'), { message: 'USE_INTERNATIONAL_PHONE' });
 });
+test('a new durable staff challenge sends canonical E.164 through the strict Verify transport and replays without another send', async () => {
+    for (const phone of ['2025550141', '(202) 555-0141', '1-202-555-0141', '+1 (202) 555-0141']) {
+        const f = durableBootstrapFixture(), transaction = f.database.transaction;
+        let challenge = null, sends = 0;
+        f.auth.provider = transport(async (_url, options) => {
+            sends++;
+            assert.equal(new URLSearchParams(options.body).get('To'), '+12025550141');
+            return response({ ...fields(), status: 'pending' });
+        });
+        f.database.transaction = work => transaction(context => {
+            context.tx.staffIdentity = { findUnique: async () => f.state.identity };
+            context.tx.staffAudit = { create: async ({ data }) => data };
+            context.tx.staffChallenge = {
+                findUnique: async () => challenge,
+                findFirst: async () => challenge,
+                create: async ({ data }) => { challenge = structuredClone(data); return challenge; },
+                update: async ({ data }) => { Object.assign(challenge, data); return challenge; }
+            };
+            return work(context);
+        });
+        const request = { phone, requestId: '00000000-0000-4000-8000-000000000002' };
+        const csrf = f.auth.digest(`browser:${f.browserToken}`);
+        const first = await f.auth.send(f.cookie, csrf, request, 'phone-send-test');
+        const replay = await f.auth.send(f.cookie, csrf, { ...request, phone: '+12025550141' }, 'phone-send-test');
+        assert.equal(first.challengeId, replay.challengeId);
+        assert.equal(challenge.state, 'PENDING');
+        assert.equal(challenge.phoneHash, f.state.identity.phoneHash);
+        assert.equal(sends, 1);
+        assert.equal(request.phone, phone);
+    }
+});
 function productionRequest(config, { issuedAt = Date.now(), target = '/admin/api/staff/session', url = '/api/staff/session', method = 'GET' } = {}) {
     const proof = createHmac('sha256', config.routerKey).update(routeEnvelope({ zone: 'staff', deployment: `https://${config.deploymentId}`,
         method, target, issuedAt })).digest('hex');
