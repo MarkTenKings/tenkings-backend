@@ -32,6 +32,7 @@ import { identityCorrectionScenarios } from './identity-correction-fixture.mjs';
 import { adminPathScenarios } from './admin-path-fixture.mjs';
 import { customerScenarios } from '../../atlas-customer/scripts/postgres-scenarios.mjs';
 import { trackingRegressionScenarios } from '../../atlas-customer/scripts/tracking-regression.mjs';
+import { smsPilotScenarios } from '../../atlas-customer/scripts/sms-pilot-regression.mjs';
 
 // Execute the original pure TypeScript classifier in the fixture. No substitute
 // normalization/scoring code or private runtime activation is used here.
@@ -664,6 +665,7 @@ try {
     await adminPathScenarios(scenario);
     await customerScenarios(scenario, check);
     await trackingRegressionScenarios(scenario);
+    await smsPilotScenarios(scenario, check);
 } catch (caught) { error = caught; }
 finally {
     for (const client of clients) await client.$disconnect();
