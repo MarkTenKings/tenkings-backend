@@ -1,10 +1,10 @@
 # ATLAS customer accounts and progress
 
-Owner direction: September9,2026. This records the experience selected by Mark in the [canonical blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) and complements the [website release](WEBSITE_RELEASE.md). The customer app and staff intake are implemented and deployed in the acb2e007 release. The latest155-scenario PostgreSQL suite includes the retained customer scenarios and SMS-budget checks. Mark confirmed live customer delivery, resend after expiry and sign-in; database readback confirms one account/session and the browser shows the authenticated submission form. The initial SMS policy admits only the approved owner phone; broader customer and real-card acceptance remain pending.
+Owner direction: September9,2026. This records the experience selected by Mark in the [canonical blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) and complements the [website release](WEBSITE_RELEASE.md). The customer app and staff intake are implemented and deployed in the current c5ba35fb release. The latest155-scenario PostgreSQL suite includes the retained customer scenarios and SMS-budget checks. Mark confirmed live customer delivery, resend after expiry and sign-in; database readback confirms one account/session and the browser shows the authenticated submission form. The initial SMS policy admits only the approved owner phone; broader customer and real-card acceptance remain pending.
 
 ## Customer journey
 
-The public website provides entry points to submit cards and sign in. The customer account area is `/account`; the private grading workspace is `/admin`. The owner's separate marketing draft remains preserved while the deployed homepage provides pilot entry points.
+The public website provides entry points to submit cards and sign in. The customer account area is `/account`; the private grading workspace is `/admin`. The original marketing design is restored at the apex with working account/submission links; its separate Site version21 is also preserved.
 
 1. Enter a mobile phone number.
 2. Receive an SMS verification code and enter it.
@@ -15,7 +15,7 @@ Initial account creation requires only verified phone access. Do not add name/ad
 
 Mark confirmed during implementation on September 9 that customers can use **dealer drop-off or mail-in**. Capture the chosen intake method on the submission. This supersedes the earlier marketing draft's dealer-only claim. Show only configured dealer/mailing instructions and do not invent a destination, price, carrier label or turnaround guarantee.
 
-The code-entry screen supports mobile one-time-code autofill, clear invalid/expired-code feedback, correcting the phone number and a controlled resend. Mark subsequently requested ordinary10-digit U.S. entry: show U.S. as the default, add+1 automatically, accept common punctuation and preserve explicitly prefixed international numbers. Normalize all accepted aliases to the same canonical number before uniqueness or rate checks. This convenience is implemented in the current local correction and still needs its exact hosted release. Show the same account-entry flow to new and returning customers without revealing account existence before verification.
+The code-entry screen supports mobile one-time-code autofill, clear invalid/expired-code feedback, correcting the phone number and a controlled resend. Mark subsequently requested ordinary10-digit U.S. entry: show U.S. as the default, add+1 automatically, accept common punctuation and preserve explicitly prefixed international numbers. Normalize all accepted aliases to the same canonical number before uniqueness or rate checks. This convenience is deployed in c5ba35fb, including canonical input at the staff/provider handoff; existing pilot admission remains unchanged. Show the same account-entry flow to new and returning customers without revealing account existence before verification.
 
 ## Staff journey and authority
 
