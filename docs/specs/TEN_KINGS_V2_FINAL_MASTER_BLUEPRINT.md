@@ -66,6 +66,12 @@ During the website build Mark explicitly selected **both authorized-dealer drop-
 
 Mark explicitly requested fresh Astra MAX agents to build the `/admin` routing update and customer account/tracking implementation in parallel, followed by the live website pilot. This authorizes that scoped implementation and website release work; another general permission request is not required. Actual account access, an approved staff phone, bounded SMS/worker/model spending, the same ten-card cohort and current worker/hardware evidence still require their real inputs. Do not trigger unrelated Ten Kings deployments or infer an expanded commercial/physical pilot from source publication. The concrete three-project release procedure and exact-source verification are recorded in `docs/atlas/WEBSITE_DEPLOYMENT.md`.
 
+#### Owner clarification — admin priority, homepage continuity and U.S. phone entry, 2026-09-09
+
+After completing live customer SMS sign-in, Mark prioritized entering the ATLAS admin screens to test card grading and the Astra operator before further customer-submission iteration. Keep the established ATLAS marketing homepage design when connecting the live account/admin applications; the simpler pilot entry page is not its intended replacement.
+
+Mark explicitly requested that users not have to type `+1` before a U.S. mobile number. Both sign-in forms should accept the ordinary10-digit number, display U.S. as the default and add `+1` automatically; common phone formatting should resolve to the same canonical number. Preserve explicit international country codes and all existing staff approval, customer identity, rate-limit and spending boundaries. This changes input convenience, not who may sign in or receive pilot SMS.
+
 ---
 
 ## 1. Executive Decision

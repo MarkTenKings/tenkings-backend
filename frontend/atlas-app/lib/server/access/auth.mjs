@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { cookies, deny, equal, hash, identifier, strictObject } from '../policy.mjs';
+import { phoneInput } from '../../phone.mjs';
 
 const MINUTE = 60_000;
 const opaque = () => randomBytes(32).toString('base64url');
@@ -101,13 +102,14 @@ export class DurableStaffAuth {
     }
     async send(header, csrf, input, client) {
         strictObject(input, ['phone', 'requestId']); identifier(input.requestId);
-        if (typeof input.phone !== 'string' || !/^\+[1-9]\d{7,14}$/.test(input.phone)) deny(400, 'USE_INTERNATIONAL_PHONE');
+        const phone = phoneInput(input.phone);
+        if (!phone) deny(400, 'USE_INTERNATIONAL_PHONE');
         const claim = unwrap(await this.database.transaction(async context => {
             const { tx, now, control } = context;
             const browser = await this.browser(context, header, csrf);
             if (!browser) return error(403, 'SIGN_IN_SESSION_EXPIRED');
             if (!await this.rate(tx, now, [['send-global', 40], [`send-client:${hash(client)}`, 12]])) return error(429, 'PLEASE_WAIT');
-            const phoneHash = this.config.phoneHash(input.phone);
+            const phoneHash = this.config.phoneHash(phone);
             if (!this.config.phoneByHash.has(phoneHash)) return error(403, 'SIGN_IN_NOT_AVAILABLE');
             const identity = await tx.staffIdentity.findUnique({ where: { phoneHash } });
             if (identity?.revokedAt) return error(403, 'SIGN_IN_NOT_AVAILABLE');

@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { BROWSER_COOKIE, SESSION_COOKIE, FIXTURE_PHONE, FIXTURE_CODE, cookies, deny, equal, hash, parseApprovedPhones } from './policy.mjs';
+import { phoneInput } from '../phone.mjs';
 const opaque = () => randomBytes(32).toString('base64url');
 const ACCOUNT = 'AC_SYNTHETIC_ATLAS';
 const SERVICE = 'VA_SYNTHETIC_ATLAS';
@@ -128,8 +129,8 @@ export class LocalStaffAuth {
             this.prune();
             this.rate(`send-client:${client}`, 12);
             this.rate('send-global', 40);
-            if (typeof phone !== 'string' || !/^\+[1-9]\d{7,14}$/.test(phone))
-                deny(400, 'USE_INTERNATIONAL_PHONE');
+            phone = phoneInput(phone);
+            if (!phone) deny(400, 'USE_INTERNATIONAL_PHONE');
             this.approved(phone);
             const prior = [...this.challenges.values()].find(c => c.browserKey === browserKey && c.requestId === requestId);
             if (prior) {

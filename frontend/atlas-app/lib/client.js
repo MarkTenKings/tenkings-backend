@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { staffClientRequest } from './client-request.mjs';
 const messages = {
     SIGN_IN_NOT_AVAILABLE: 'Sign-in is not available for these details.',
-    USE_INTERNATIONAL_PHONE: 'Enter the full number with a country code, such as +1.',
+    USE_INTERNATIONAL_PHONE: 'Enter a 10-digit U.S. mobile number, or include + and the country code for another country.',
     CODE_NOT_ACCEPTED: 'That code was not accepted. Check the code and try again.',
     SIGN_IN_SESSION_EXPIRED: 'Your sign-in session expired. Reload to start again.',
     SIGN_IN_RESTART_REQUIRED: 'This attempt could not be confirmed. Please wait before starting a new sign-in attempt.',

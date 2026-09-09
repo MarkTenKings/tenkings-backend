@@ -1,10 +1,10 @@
 # ATLAS customer accounts and progress
 
-Owner direction: September 9, 2026. This records the experience selected by Mark in the [canonical blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) and complements the [website release plan](WEBSITE_RELEASE.md). The customer app and staff intake are now implemented locally. The complete145-scenario PostgreSQL run includes15 customer scenarios; live SMS, actual-host access and customer acceptance remain pending.
+Owner direction: September9,2026. This records the experience selected by Mark in the [canonical blueprint](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md) and complements the [website release](WEBSITE_RELEASE.md). The customer app and staff intake are implemented and deployed in the acb2e007 release. The latest155-scenario PostgreSQL suite includes the retained customer scenarios and SMS-budget checks. Mark confirmed live customer delivery, resend after expiry and sign-in; database readback confirms one account/session and the browser shows the authenticated submission form. The initial SMS policy admits only the approved owner phone; broader customer and real-card acceptance remain pending.
 
 ## Customer journey
 
-The public website provides entry points to submit cards and sign in. The customer account area is `/account`; the private grading workspace is `/admin`. The owner's separate marketing draft remains preserved while the new local homepage provides pilot entry points.
+The public website provides entry points to submit cards and sign in. The customer account area is `/account`; the private grading workspace is `/admin`. The owner's separate marketing draft remains preserved while the deployed homepage provides pilot entry points.
 
 1. Enter a mobile phone number.
 2. Receive an SMS verification code and enter it.
@@ -15,7 +15,7 @@ Initial account creation requires only verified phone access. Do not add name/ad
 
 Mark confirmed during implementation on September 9 that customers can use **dealer drop-off or mail-in**. Capture the chosen intake method on the submission. This supersedes the earlier marketing draft's dealer-only claim. Show only configured dealer/mailing instructions and do not invent a destination, price, carrier label or turnaround guarantee.
 
-The code-entry screen supports mobile one-time-code autofill, clear invalid/expired-code feedback, correcting the phone number and a controlled resend. Normalize accepted phone formatting to the same canonical international number before uniqueness or rate checks. Show the same account-entry flow to new and returning customers without revealing account existence before verification.
+The code-entry screen supports mobile one-time-code autofill, clear invalid/expired-code feedback, correcting the phone number and a controlled resend. Mark subsequently requested ordinary10-digit U.S. entry: show U.S. as the default, add+1 automatically, accept common punctuation and preserve explicitly prefixed international numbers. Normalize all accepted aliases to the same canonical number before uniqueness or rate checks. This convenience is implemented in the current local correction and still needs its exact hosted release. Show the same account-entry flow to new and returning customers without revealing account existence before verification.
 
 ## Staff journey and authority
 
@@ -39,4 +39,4 @@ The `/admin` migration and dedicated `frontend/atlas-customer` app implement the
 
 The dashboard, profile, submission form and per-card tracker are implemented. Profiles remain nullable until submission, which records the chosen channel and confirmed address snapshot. A tab retains the exact uncertain submission request and can reconcile its own request ID after navigation/reload; it stores no SMS code or session credential. Cross-customer lookup and staff/customer credential substitution are denied. Staff explicitly records physical receipt, customer-facing action messages and shipment; approval and finishing stages require the current corresponding evidence. Payment, postage purchase and actual dealer/mailing destinations remain outside this implementation.
 
-Verify the new/returning customer path, phone formatting/duplicate-account races, wrong/expired/reused codes, resend/lost replies, revoked sessions, customer-versus-staff denial, unapproved admin numbers, deferred profile completion and address snapshots. Exercise the real SMS provider only as part of a prepared live release with its actual dedicated configuration. No live customer account or SMS delivery is claimed by this specification.
+Retain lifecycle checks for new/returning customers, phone normalization/duplicate-account races, wrong/expired/reused codes, resend/lost replies, revoked sessions, customer-versus-staff denial, unapproved admin numbers, deferred profiles and address snapshots. The live owner test proves delivery, a user-requested resend, successful code approval and creation of one customer account/session; it does not repeat every synthetic lifecycle/ownership test or prove the complete real-card workflow. Staff live SMS verification and access to its empty Review queue are also confirmed; broader role/card/operator acceptance remains separate.

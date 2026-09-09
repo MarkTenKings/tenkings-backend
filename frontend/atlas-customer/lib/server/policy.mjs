@@ -29,10 +29,13 @@ export function cookies(header) {
     }
     return result;
 }
-// An explicit country code removes country-guessing and formatting aliases.
+// U.S. is the displayed default; explicit international prefixes are preserved.
+// All formatting aliases share identity, rate limits and request replay.
 export function normalizePhone(value) {
-    if (typeof value !== 'string' || value.length > 48 || !/^\s*\+[\d ().-]+\s*$/.test(value)) deny(400, 'USE_INTERNATIONAL_PHONE');
-    const phone = value.replace(/[\s().-]/g, '');
+    if (typeof value !== 'string' || value.length > 48 || !/^\s*\+?[\d ().-]+\s*$/.test(value)) deny(400, 'USE_INTERNATIONAL_PHONE');
+    let phone = value.replace(/[\s().-]/g, '');
+    if (/^\d{10}$/.test(phone)) phone = `+1${phone}`;
+    else if (/^1\d{10}$/.test(phone)) phone = `+${phone}`;
     if (!/^\+[1-9]\d{7,14}$/.test(phone)) deny(400, 'USE_INTERNATIONAL_PHONE');
     return phone;
 }

@@ -53,6 +53,16 @@ function draft(card, change = {}) {
         evidenceHash: card.evidenceHash, observations: { FRONT: 'Inspect the upper left edge.', BACK: 'No observation yet.' },
         reviewedSides: [], identityReviewed: false, disposition: 'IN_REVIEW', ...change };
 }
+test('U.S. formatted staff input sends once and its canonical alias reuses the same sign-in request', async () => {
+    const base = syntheticVerifyProvider(); let sends = 0;
+    const f = fixture({ provider: { ...base, async start(phone) { sends++; assert.equal(phone, FIXTURE_PHONE); return base.start(phone); } } });
+    const c = f.client(), first = await c.begin('(202) 555-0141');
+    assert(first.challengeId);
+    const repeat = await c.call('auth/request', { phone: '12025550141', requestId: first.requestId }, { 'x-atlas-csrf': first.csrf });
+    assert.equal(repeat.status, 200); assert.equal(repeat.body.challengeId, first.challengeId); assert.equal(sends, 1);
+    const verified = await c.call('auth/verify', { challengeId: first.challengeId, code: FIXTURE_CODE }, { 'x-atlas-csrf': first.csrf });
+    assert.equal(verified.status, 200); assert.equal(verified.body.staff.id, 'fixture-reviewer');
+});
 test('explicit reauthentication returns browser CSRF without replacing or refreshing the existing signed-in session', async () => {
     let now = 1000;
     const f = fixture({ now: () => now }), c = f.client(), login = await c.login();

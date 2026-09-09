@@ -19,6 +19,25 @@ const environment = () => ({ ATLAS_STAFF_RUNTIME: 'postgres', NODE_ENV: 'product
 const fields = () => ({ sid: sid('VE'), account_sid: sid('AC'), service_sid: sid('VA'), to: '+12025550141', channel: 'sms', status: 'approved' });
 const transport = fetch => twilioVerifyTransport({ accountSid: sid('AC'), serviceSid: sid('VA'), apiKeySid: sid('SK'), apiKeySecret: 'fixture-secret-never-used-for-network', fetch });
 const response = object => new Response(JSON.stringify(object), { headers: { 'Content-Type': 'application/json' } });
+test('durable staff phone aliases use the approved canonical identity and replay one existing challenge', async () => {
+    const f = durableBootstrapFixture(), transaction = f.database.transaction;
+    const challenge = { id: 'retained-challenge', phoneHash: f.state.identity.phoneHash, state: 'PENDING',
+        expiresAt: new Date(+f.state.now + 60000), controlRevision: 1 };
+    f.database.transaction = work => transaction(context => {
+        context.tx.staffIdentity = { findUnique: async ({ where }) => {
+            assert.equal(where.phoneHash, f.state.identity.phoneHash); return f.state.identity;
+        } };
+        context.tx.staffChallenge = { findUnique: async () => challenge };
+        return work(context);
+    });
+    for (const phone of ['2025550141', '(202) 555-0141', '1-202-555-0141', '+1 (202) 555-0141']) {
+        const result = await f.auth.send(f.cookie, f.auth.digest(`browser:${f.browserToken}`),
+            { phone, requestId: '00000000-0000-4000-8000-000000000002' }, 'phone-alias-test');
+        assert.equal(result.challengeId, challenge.id);
+    }
+    for (const phone of ['202555014', '447700900123', '+1 202 555 0141 ext 2', '++12025550141'])
+        await assert.rejects(() => f.auth.send(f.cookie, '', { phone, requestId: '00000000-0000-4000-8000-000000000002' }, 'bad-input'), { message: 'USE_INTERNATIONAL_PHONE' });
+});
 function productionRequest(config, { issuedAt = Date.now(), target = '/admin/api/staff/session', url = '/api/staff/session', method = 'GET' } = {}) {
     const proof = createHmac('sha256', config.routerKey).update(routeEnvelope({ zone: 'staff', deployment: `https://${config.deploymentId}`,
         method, target, issuedAt })).digest('hex');

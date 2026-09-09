@@ -17,9 +17,10 @@ const cfg = () => makeConfig({ mode: 'LOCAL_FIXTURE', origin: 'http://127.0.0.1:
     accountSid: `AC${'1'.repeat(32)}`, serviceSid: `VA${'2'.repeat(32)}` });
 const fails = (fn, code) => assert.throws(fn, error => error instanceof BoundaryError && error.code === code);
 
-test('canonical phone formatting shares identity and refuses guessed countries, extensions and unsupported punctuation', () => {
-    for (const raw of ['+1 (202) 555-0141', ' +1.202.555.0141 ', '+12025550141']) assert.equal(normalizePhone(raw), '+12025550141');
-    for (const raw of ['2025550141', '0012025550141', '+1 202 555 0141 ext 2', '+01 202 555 0141', '+1/202/555/0141', '+1234', null, 12025550141]) fails(() => normalizePhone(raw), 'USE_INTERNATIONAL_PHONE');
+test('U.S. phone aliases share identity while explicit international numbers retain their prefix', () => {
+    for (const raw of ['2025550141', '(202) 555-0141', '1-202-555-0141', '+1 (202) 555-0141', ' +1.202.555.0141 ', '+12025550141']) assert.equal(normalizePhone(raw), '+12025550141');
+    assert.equal(normalizePhone('+44 7700 900123'), '+447700900123');
+    for (const raw of ['447700900123', '0012025550141', '+1 202 555 0141 ext 2', '+01 202 555 0141', '+1/202/555/0141', '++12025550141', '+1234', '', null, 12025550141]) fails(() => normalizePhone(raw), 'USE_INTERNATIONAL_PHONE');
 });
 test('profile is deferred; submission requires confirmed bounded details and a delivery method', () => {
     assert.equal(profile({ ...returns, name: ' Alex Customer ', country: 'us' }).name, 'Alex Customer');

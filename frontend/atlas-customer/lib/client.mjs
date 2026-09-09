@@ -1,6 +1,6 @@
 const ERROR_MESSAGES = {
     PLEASE_WAIT: 'Please wait before trying again. Requests are limited to protect your number.',
-    USE_INTERNATIONAL_PHONE: 'Enter your mobile number with its country code, such as +1 202 555 0141.',
+    USE_INTERNATIONAL_PHONE: 'Enter a 10-digit U.S. mobile number, or include + and the country code for another country.',
     CODE_NOT_ACCEPTED: 'That code was not accepted. Check the six digits, or request a new code after the wait period.',
     SIGN_IN_RESTART_REQUIRED: 'This verification could not be confirmed. Wait 11 minutes before requesting a new code. We will not resend automatically.',
     SIGN_IN_SESSION_EXPIRED: 'Your sign-in page expired. Refresh the page and start again.',
