@@ -1,6 +1,6 @@
 # ATLAS Astra operator
 
-Updated September 8, 2026. The implemented operator lives in `packages/atlas-operator`; `packages/atlas-contracts` remains the earlier offline reference. The operator has locally verified source/runtime/ledger integration and no active production runner or scheduler. [COMPLETION.md](COMPLETION.md) describes the full staff workflow and operational acceptance gates.
+Updated September 9, 2026. The implemented operator lives in `packages/atlas-operator`; `packages/atlas-contracts` remains the earlier offline reference. The operator has locally verified source/runtime/ledger integration and no active production runner or scheduler. [COMPLETION.md](COMPLETION.md) describes the full staff workflow and operational acceptance gates.
 
 Mark grades and reviews in the ATLAS browser app on his MacBook. The background Astra runner host is a separate deployment choice. Windows NFC helper setup is not a requirement for either browser grading or this operator package.
 
@@ -31,5 +31,9 @@ The accepted native parser supports thin Darwin arm64 Mach-O with protected macO
 SIGINT/SIGTERM abort new work, preserve bounded receipt drain and disconnect handling, and emit only a projected result. A timeout does not claim rollback. Exit zero means a retained human-review handoff, never report approval. No provider response, token, private reasoning or raw exception is printed.
 
 ## Evidence
+
+The retained final package TAP contains passing results for all **79 operator-package tests**: image delivery/crop scope 4, release artifacts 15, Responses protocol/transport 12, runner orchestration 17 and runtime/initialization 31. These are a subset of the 186 combined package tests, not 79 additional checks. The operator source is unchanged since the final local acceptance. The provider is injected with synthetic responses; no live Astra model evaluated a real card in these tests.
+
+For example, the successful runner fixture executes `read_card_report` followed by `submit_for_human_review` against a synthetic report. It verifies exactly two applied steps, two persisted response receipts, current revision progression and terminal `READY_FOR_HUMAN`; receipt persistence precedes tool execution. Other cases inject lost replies, an unresponsive provider, expired authority, substituted images, missing usage, wrong model and invalid tools. Passing these cases establishes the tested orchestration and rejection behavior, not visual inspection accuracy, measured human labor savings or actual provider cost/latency. Those remain outcomes to measure in the approved ten-card supervised pilot.
 
 The final database suite passes 128 scenarios across all 93 original public and 13 additive staff migrations and both no-op replays. The final local verification and exact artifact hashes are recorded in the session log/private acceptance record. All card/provider examples are synthetic; current preparation remains unadmitted. Original graders and learning-harvest arithmetic are reused. MacBook browser and actual-host release verification, a real ten-card supervised evaluation and explicit live release actions remain. Physical printing/NFC acceptance now targets the MacBook and unchanged ACR1552U/F8215 hardware. The direct native writer and integrated queue are unfinished; [MAC_NFC.md](MAC_NFC.md) distinguishes Astra coordination from deterministic device execution. Windows tests concern only the earlier helper.

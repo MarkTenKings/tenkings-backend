@@ -42,6 +42,14 @@ Mark subsequently selected the MacBook for ATLAS NFC writing, reading and perman
 
 After exact human report approval and explicit association of the physical card with a bounded armed finishing session, ATLAS should automatically write, read back, permanently lock and record the tag when the human places it on the reader. Astra may coordinate eligible approved work and exceptions; deterministic code owns exact URLs, fixed device commands, lock verification and receipts. No model-supplied raw commands or invented physical success are permitted. Placement, removal, card/tag/slab assembly and welding remain physical human actions. Real F8215 command/lock qualification is required before production tag execution. The current research, implementation gaps and intended flow are recorded in `docs/atlas/MAC_NFC.md`; native automation is not yet operationally accepted.
 
+#### Owner clarification — customer website and private grading path, 2026-09-09
+
+Mark confirmed that `atlasgrading.com` is the customer-facing website for learning about ATLAS Grading and submitting cards. He requested an internal path such as `atlasgrading.com/admin` for the actual grading workflow. Use `/admin` as the private workspace release target. This supersedes the earlier `app.atlasgrading.com` staff URL target; it does not move private grading onto the customer home page or establish that customer submission functionality is already implemented.
+
+Preserve distinct public/staff application builds, server permissions and data projections. Staff routes and APIs under `/admin` require their own authenticated, authorized staff session; customer access does not grant grading authority. The shared hostname is one browser origin, so the earlier public/staff cross-origin isolation assumption no longer applies. The routing, assets, cookie scope, CSRF, deployment identity, native NFC origin bindings and additive database-policy changes must be implemented and verified together. Historical migration bytes, issued report URLs and prior receipts remain unchanged. Runtime still pins the old subdomain until that coordinated change is complete; a documentation correction is not live routing or login acceptance.
+
+The website release plan is `docs/atlas/WEBSITE_RELEASE.md`. Prioritize a supervised web grading/review release, then complete physical finishing within the same owner-selected ten-card acceptance cohort once the Mac NFC path is qualified. Human approval, trusted-learning separation, real worker/evidence acceptance and exact operational release/spend boundaries remain in force.
+
 ---
 
 ## 1. Executive Decision

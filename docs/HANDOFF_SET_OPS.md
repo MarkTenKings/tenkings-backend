@@ -12872,3 +12872,8 @@ Build Set Ops UI flow with:
 - Production pages `/live`, `/collection?section=live-rips`, and `/claim/live-rip/not-a-real-production-claim-token` returned `200`; all four new protected assignment/collection/claim/download API probes returned `401` without authentication.
 - Planned handoff action: merge these documentation-only Production results through protected `main`, then verify the ordinary Vercel deployment runs with migrations disabled and becomes healthy. No restart is planned.
 - The full real customer acceptance path still needs the actual authorized phone/account value: record or select one Production clip, assign it as an administrator, receive the exact SMS, authenticate/claim when applicable, and verify owner-only collection/watch/download access.
+
+
+## ATLAS September 9 current status and website target
+
+Owner confirmed phone reading of the Mac-written diagnostic tag. Exact permanent locking and the native finishing bridge/queue remain open. Astra operator has 79 retained passing synthetic tests; no real-card/live-model evaluation has run. Customer site stays at atlasgrading.com; owner selects /admin for private grading, superseding app.atlasgrading.com as the target. Canonical blueprint and docs/atlas/WEBSITE_RELEASE.md record the correction and coordinated routing/auth/additive-SQL/native-origin work still required. Runtime remains on the old subdomain contract; nothing was deployed or activated. Next build is the verified /admin candidate and concrete website pilot release, with the same final ten-card cohort and separate physical finishing acceptance. See docs/handoffs/SESSION_LOG.md for the evidence audit.

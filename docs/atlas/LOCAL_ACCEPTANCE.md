@@ -39,7 +39,7 @@ These packages have explicitly **synthetic, inactive release bindings**. They ar
 
 ## Remaining operational acceptance
 
-The preparation release remains **null**. Live staff/provider/worker/NFC controls remain inactive. No real-card processing, SMS, paid model/worker request, physical print, native print-dialog acceptance, real NFC encoding/lock, assembly or sonic weld occurred. Learning approvals record an exact reviewed subset as `APPROVED_PENDING_APPLICATION`; no global learning-bank writer was added.
+The preparation release remains **null**. Live staff/provider/worker/production-NFC controls remain inactive. At the M9–M13 acceptance checkpoint, no real-card processing, SMS, paid model/worker request, physical print, native print-dialog acceptance, real NFC encoding/lock, assembly or sonic weld occurred. Later, separately authorized Mac diagnostics successfully wrote/read back a fixed test URI and Mark confirmed phone reading on September 9; [MAC_NFC.md](MAC_NFC.md) records that sample-only result and the still-unverified permanent lock. Learning approvals record an exact reviewed subset as `APPROVED_PENDING_APPLICATION`; no global learning-bank writer was added.
 
 The grading release targets Mark's MacBook browser and needs selected staff/public/private and operator hosts, protected distinct credentials, current source/storage/preparation/worker evidence, assigned trained humans and explicit caps. Its publication, migration, deployment and activation actions require their exact operational scope. MacBook browser and physical label scale/QR acceptance remain.
 
