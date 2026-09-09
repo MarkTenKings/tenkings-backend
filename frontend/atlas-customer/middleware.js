@@ -10,4 +10,4 @@ export function middleware(request) {
     response.headers.set('Vercel-CDN-Cache-Control', 'no-store');
     return response;
 }
-export const config = { matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'] };
+export const config = { matcher: ['/', '/((?!_next/static|_next/image|favicon.ico).*)'] };
