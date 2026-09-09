@@ -51,6 +51,6 @@ The full native writer, Mac protected signer/pairing, new hosted result/acknowle
 
 ## Next hardware checks
 
-Direct discovery and the first header inspection have succeeded. Verify removal/re-presentation, then reconcile actual reader/card behavior with the exact chip documentation or independently reviewed qualification evidence. Prepare the exact write/lock operation and expected byte coverage before using a designated sacrificial tag. A real lock is irreversible; no ordinary graded-card tag is used to guess an undocumented mask.
+Direct discovery, initial header inspection and operator-confirmed removal/re-presentation have succeeded. Reconcile actual reader/card behavior with the exact chip documentation or independently reviewed qualification evidence. Prepare the exact write/lock operation and expected byte coverage before using a designated sacrificial tag. A real lock is irreversible; no ordinary graded-card tag is used to guess an undocumented mask.
 
 Qualification must establish full URL write/readback, physical lock coverage and an actual attempted hardware overwrite rejection after re-presentation, plus unplug/sleep/expiry/restart and duplicate-job behavior. One successful tag does not establish throughput or all failure paths. The final supervised ATLAS batch remains exactly ten real cards after the native flow and actual hardware are accepted.
