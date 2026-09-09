@@ -2,6 +2,8 @@
 
 Current owner target, September 9: private grading at `https://atlasgrading.com/admin`, with the root website serving customers. The [website release plan](WEBSITE_RELEASE.md) supersedes the staff URL and cross-origin assumptions below. Runtime still enforces the old subdomain. The new path-scoped cookies, authenticated staff boundary, deployment binding and additive database policy must be implemented and tested together; no `/admin` activation is claimed here.
 
+Both staff and customers use phone-code login, but customer self-registration has separate sessions and account-owned permissions. Only an independently approved staff number can enter `/admin`. The [customer flow](CUSTOMER_ACCESS.md) creates a first-time customer after successful verification and defers name/address until submission; it does not change staff enrollment into open signup.
+
 Status: implementation decision and live acceptance contract, September 7 Pacific / September 8 UTC, 2026. The [staff application](../../frontend/atlas-app/README.md) implements separate PostgreSQL-backed identity, verification/session, assignment and immutable review storage, plus a dedicated Verify transport. Local integration is tested with synthetic credentials and evidence. Live production and preview access remain inactive. No live provider service, credential, staff account, environment variable or deployment has been created.
 
 ## First version

@@ -26,6 +26,8 @@ This is local source acceptance. The preparation release remains null; no live p
 
 On September 9 Mark clarified that `atlasgrading.com` serves customers learning about ATLAS and submitting cards, while the actual grading workspace should live at a private path such as `/admin`. The current release target is `https://atlasgrading.com/admin`, superseding the staff subdomain target. The code still enforces the old subdomain; coordinated routing, cookie/auth, additive database-policy and native origin-binding changes remain required. See [website release plan](../atlas/WEBSITE_RELEASE.md). The existing public report reader does not establish a complete customer marketing/submission site. Astra's 79 operator-package tests passed with synthetic responses; no live model card-quality evaluation has run.
 
+Mark also selected one phone-code flow for customer signup/sign-in, a separate phone-code staff login, and customer-owned card progress tracking. A first verified phone creates the customer account and signs in; returning customers use the same flow. Initial registration is phone-only. Name and shipping/return address are collected when submitting cards. Customer registration never grants staff access, which remains approved-roster based. These are new implementation requirements in [customer access](../atlas/CUSTOMER_ACCESS.md), not existing live customer-account acceptance.
+
 ## Source-of-Truth Policy
 When there is a conflict, use this order:
 1. Runtime evidence (live API behavior, running deploy identity)

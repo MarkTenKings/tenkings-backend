@@ -50,6 +50,14 @@ Preserve distinct public/staff application builds, server permissions and data p
 
 The website release plan is `docs/atlas/WEBSITE_RELEASE.md`. Prioritize a supervised web grading/review release, then complete physical finishing within the same owner-selected ten-card acceptance cohort once the Mac NFC path is qualified. Human approval, trusted-learning separation, real worker/evidence acceptance and exact operational release/spend boundaries remain in force.
 
+#### Owner clarification — phone-code accounts and customer progress, 2026-09-09
+
+Customers have their own login and can track their submitted cards through grading, in the style of an order-progress tracker. Use one mobile-phone verification flow for customer signup and sign-in: enter the number, receive an SMS code, enter it, then enter the account. A first successfully verified number creates the customer account and session together; a returning verified number opens the existing account. Initial registration requires only phone verification. Collect the customer's name and shipping/return address later, as part of submitting cards for grading.
+
+The private `/admin` workspace has its own login using the same simple phone-code interaction. Customer registration never creates staff permissions; the verified number must independently belong to the approved staff roster for admin access. Preserve separate sessions, roles and access controls even when one person has both customer and staff access.
+
+The customer tracker exposes only that customer's submissions/cards and meaningful recorded progress. Grading, review, physical finishing and shipping statuses must come from the appropriate confirmed workflow events; neither elapsed time nor an Astra statement proves physical receipt, assembly or shipment. Public report approval remains a human decision. The approved customer experience and next implementation work are recorded in `docs/atlas/CUSTOMER_ACCESS.md`; customer account creation, tracking and later address collection are new implementation scope, not features already proven by the existing staff tests. Carrier, payment and later commercial integrations are not inferred from this login/profile clarification.
+
 ---
 
 ## 1. Executive Decision
