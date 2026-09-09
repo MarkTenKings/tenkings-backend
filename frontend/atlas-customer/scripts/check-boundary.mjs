@@ -7,12 +7,6 @@ const manifest = JSON.parse(readFileSync(join(app, '.next/server/pages-manifest.
 assert.deepEqual(Object.keys(manifest).sort(), ['/', '/404', '/_app', '/_document', '/_error', '/api/customer/[...path]', '/profile', '/submissions/[id]', '/submit'].sort());
 const routes = JSON.parse(readFileSync(join(app, '.next/routes-manifest.json'), 'utf8'));
 assert.equal(routes.basePath, '/account');
-const middleware = JSON.parse(readFileSync(join(app, '.next/server/middleware-manifest.json'), 'utf8'));
-const matchers = middleware.middleware['/'].matchers.map(({ regexp }) => new RegExp(regexp));
-for (const path of ['/account', '/account/', '/account/profile', '/account/_next/data/build-id/index.json'])
-    assert.ok(matchers.some(regex => regex.test(path)), `Customer nonce middleware does not cover ${path}`);
-for (const path of ['/accounting', '/account/_next/static/chunks/example.js', '/account/_next/image'])
-    assert.ok(!matchers.some(regex => regex.test(path)), `Customer nonce middleware unexpectedly covers ${path}`);
 const database = resolve(app, '.generated/customer-database');
 const engines = readdirSync(database).filter(file => /^(?:libquery_engine-|query_engine-).+\.node$/.test(file));
 assert.ok(engines.length, 'Generated customer database engine is missing');

@@ -4,8 +4,6 @@ export default {
     reactStrictMode: true,
     experimental: { cpus: 2 },
     outputFileTracingIncludes: { '/*': ['./.generated/customer-database/**/*'] },
-    // Preserve mounted Next data URLs through the nonce middleware on Vercel.
-    skipMiddlewareUrlNormalize: true,
     async headers() {
         return [{ source: '/:path*', headers: [
             { key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' },
