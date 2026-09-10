@@ -192,6 +192,74 @@ test('photo intake enables explicit reselect after a retained rejection and keep
     }
 });
 
+test('HEIC selection publishes only after local commit and a failed write preserves the previous draft for retry', async () => {
+    const react = reactHarness(), exported = {}, writes = [], selectedEntries = [];
+    const file = name => ({ name, type: name.endsWith('.heic') ? 'image/heic' : 'image/png', size: 20 });
+    const initial = { id: randomUUID(), title: 'Retained physical card', identity: { category: 'POKEMON' }, card: null,
+        files: { FRONT: file('old-front.png'), BACK: file('old-back.png') },
+        sourceFiles: { FRONT: file('old-front.heic'), BACK: file('old-back.heic') },
+        photoImports: { FRONT: { width: 2, height: 3, originalSha256: 'a'.repeat(64) }, BACK: { width: 3, height: 4, originalSha256: 'b'.repeat(64) } },
+        uploads: { FRONT: { phase: 'VERIFIED' }, BACK: { phase: 'VERIFIED' } }, pending: null, pairConfirmed: true };
+    const replacement = file('replacement.heic'), prepared = { file: file('replacement.heic.png'), original: replacement,
+        conversion: { width: 8, height: 6, originalSha256: 'c'.repeat(64), imported: { sha256: 'd'.repeat(64) } } };
+    let saved = [structuredClone(initial)], holdWrites = false, guard;
+    vm.runInNewContext(intakeCode, { exports: exported, structuredClone, AbortController, require(module) {
+        if (module === 'react') return react.react;
+        if (module === 'next/link') return 'link';
+        if (module === './Shell') return { Notice: 'notice' };
+        if (module === './WorkspaceShared') return { PhotoPreview: 'PhotoPreview', OriginalHeicDownload: 'OriginalHeicDownload', Readiness: 'Readiness', StateBadge: 'StateBadge' };
+        if (module === '../lib/workspace-drafts.mjs') return { createPhotoDraftStore: () => ({
+            read: async () => structuredClone(saved),
+            write: entries => {
+                const snapshot = structuredClone(entries);
+                if (!holdWrites) { saved = snapshot; return Promise.resolve(); }
+                return new Promise((resolve, reject) => writes.push({ snapshot, reject, commit() { saved = snapshot; resolve(); } }));
+            }
+        }) };
+        if (module === '../lib/workspace-client.mjs') return { ...client,
+            prepareIntakePhoto: async selected => { assert.equal(selected, replacement); return prepared; },
+            replaceIntakePhoto: (entry, ...args) => { selectedEntries.push(structuredClone(entry)); return client.replaceIntakePhoto(entry, ...args); },
+            workspaceRequest: () => assert.fail('Selection must not issue a server request'),
+            freshWorkspaceAccess: () => assert.fail('Selection must not obtain upload authority')
+        };
+        if (module === '../lib/routes.mjs') return { STAFF_REAUTHENTICATE_PATH: '/admin?reauthenticate=1' };
+        if (module === '../lib/usePendingNavigation') return { usePendingNavigation: action => { guard = action; } };
+        if (module.endsWith('.module.css')) return {};
+        return nextRequire(module.startsWith('@babel/runtime/') ? `next/dist/compiled/${module}` : module);
+    } });
+    let tree;
+    const render = () => { tree = react.render(() => exported.default({ staff: { id: 'fixture-reviewer', role: 'REVIEWER' } })); };
+    const previews = () => all(tree, node => node.type === 'PhotoPreview').map(node => node.props.file);
+    const originals = () => all(tree, node => node.type === 'OriginalHeicDownload').map(node => node.props.file);
+    const select = () => all(tree, node => node.type === 'input' && node.props.type === 'file')[0].props.onChange({ target: { files: [replacement], value: 'selected' } });
+    const settle = () => new Promise(resolve => setImmediate(resolve));
+    render(); await settle(); render(); holdWrites = true;
+    select(); await settle(); render();
+    assert.equal(writes.length, 1); assert.equal(guard(), true, 'Navigation stays guarded throughout the pending IndexedDB write');
+    assert.ok(all(tree, node => node.type === 'input' && node.props.type === 'file').every(node => node.props.disabled));
+    assert.deepEqual(previews(), [initial.files.FRONT, initial.files.BACK]);
+    assert.deepEqual(originals(), [initial.sourceFiles.FRONT, initial.sourceFiles.BACK]);
+    assert.deepEqual(saved, [initial]); assert.equal(text(tree).includes(prepared.file.name), false);
+
+    writes[0].reject(new Error('Quota exceeded')); await settle(); render();
+    assert.equal(guard(), false, 'Failed selection has left no unsaved replacement as the current draft');
+    assert.deepEqual(previews(), [initial.files.FRONT, initial.files.BACK]);
+    assert.deepEqual(originals(), [initial.sourceFiles.FRONT, initial.sourceFiles.BACK]);
+    assert.deepEqual(saved, [initial]); assert.equal(text(tree).includes(prepared.file.name), false);
+    assert.match(text(tree), /Your previous photo is kept/);
+
+    select(); await settle(); render();
+    assert.equal(writes.length, 2); assert.equal(guard(), true);
+    assert.doesNotMatch(text(tree), /Your previous photo is kept/, 'Retry clears the earlier selection error');
+    assert.deepEqual(selectedEntries, [initial, initial], 'The retry receives the entire unchanged prior photo, other side, uploads, confirmation and provenance');
+    assert.deepEqual(saved, [initial]);
+    writes[1].commit(); await settle(); render();
+    assert.equal(guard(), false); assert.deepEqual(previews(), [prepared.file, initial.files.BACK]);
+    assert.deepEqual(originals(), [replacement, initial.sourceFiles.BACK]);
+    assert.deepEqual(saved[0], client.replaceIntakePhoto(initial, 'FRONT', prepared.file, prepared));
+    assert.doesNotMatch(text(tree), /Your previous photo is kept/);
+});
+
 test('map review never treats missing map or integrity failure as a human override', () => {
     for (const status of ['NO_MAP', 'INTEGRITY_ERROR', 'HUMAN_REVIEW_WITHOUT_MAP']) {
         const initial = card(); initial.operator = { kind: 'HUMAN' }; initial.workspace.map = { status, name: null, scope: null, version: null, registration: {}, canRegister: false, bindingReady: false };

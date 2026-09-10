@@ -27,14 +27,30 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
         return () => { active = false; };
     }, [staff.id, focusId]);
     usePendingNavigation(() => working.current || saving, setError);
-    async function saveEntries(next) {
-        entriesRef.current = next; setEntries(next); setSaving(true);
+    async function saveEntries(next, { publishAfterWrite = false } = {}) {
+        if (!publishAfterWrite) { entriesRef.current = next; setEntries(next); }
+        setSaving(true);
         const snapshot = structuredClone(next);
         const write = writeChain.current.then(() => store.current.write(snapshot), () => store.current.write(snapshot));
         writeChain.current = write;
-        try { await write; } finally { if (writeChain.current === write) setSaving(false); }
+        let failed = false;
+        try {
+            await write;
+            if (publishAfterWrite) { entriesRef.current = next; setEntries(next); }
+        } catch (cause) {
+            failed = true;
+            if (publishAfterWrite) throw new Error('This photograph could not be saved in this browser. Your previous photo is kept. Check available browser storage, then select it again.');
+            throw cause;
+        } finally {
+            if (writeChain.current === write) {
+                setSaving(false);
+                // Failed selection never became the current draft; a later
+                // selection may retry without inheriting a rejected write.
+                if (failed && publishAfterWrite) writeChain.current = Promise.resolve();
+            }
+        }
     }
-    async function saveEntry(entry) { await saveEntries(entriesRef.current.map(value => value.id === entry.id ? entry : value)); if (entry.card) onCardUpdated?.(entry.card); }
+    async function saveEntry(entry, options) { await saveEntries(entriesRef.current.map(value => value.id === entry.id ? entry : value), options); if (entry.card) onCardUpdated?.(entry.card); }
     async function edit(id, values) {
         if (working.current) return;
         const entry = entriesRef.current.find(value => value.id === id);
@@ -56,7 +72,7 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
             const prepared = await prepareIntakePhoto(file, { signal: controller.signal,
                 onProgress: status => setProgress(previous => ({ ...previous, [`${id}:${side}`]: { status, percent: 0 } })) });
             if (controller.signal.aborted) return;
-            await saveEntry(replaceIntakePhoto(entry, side, prepared.file, prepared));
+            await saveEntry(replaceIntakePhoto(entry, side, prepared.file, prepared), { publishAfterWrite: true });
         } catch (cause) { setEntryError(previous => ({ ...previous, [id]: cause.message })); }
         finally {
             if (conversion.current === controller) conversion.current = null;
@@ -122,7 +138,7 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
                         const selected = entry.files[side], status = progress[`${entry.id}:${side}`], verified = verifiedSide(entry.card, side) && (!selected || entry.uploads[side]?.phase === 'VERIFIED');
                         const rejection = entry.uploads[side]?.phase === 'REJECTED' ? entry.uploads[side].rejection
                             : !selected ? cardSide(entry.card, side)?.rejection : null;
-                        return <div key={side} className={styles.photoSlot}><div className={styles.photoSlotHeading}><strong>{side === 'FRONT' ? 'Front' : 'Back'}</strong><span>{verified ? '✓ Verified' : rejection ? 'Needs replacement' : selected ? 'Selected' : 'Missing'}</span></div><PhotoPreview file={selected} card={entry.card} side={side} className={styles.photoThumb} /><label className={styles.filePicker}>{selected ? 'Replace photograph' : verified ? 'Replace original' : 'Choose photograph'}<input type="file" accept={PHOTO_ACCEPT} disabled={locked} onChange={event => { selectFile(entry.id, side, event.target.files?.[0]); event.target.value = ''; }} /></label><small className={styles.filename}>{selected?.name ?? (verified ? 'Original saved securely' : 'HEIC, HEIF, JPEG, PNG or WebP · up to 50 MB')}</small>{entry.photoImports?.[side] && <div className={styles.heicImport}><small>{entry.photoImports[side].width.toLocaleString()} × {entry.photoImports[side].height.toLocaleString()} PNG · {verified ? 'saved securely' : 'ready to upload'}. Original HEIC kept in this browser.</small>{entry.sourceFiles?.[side] && <OriginalHeicDownload file={entry.sourceFiles[side]} />}</div>}{rejection && <Notice error>{uploadRejectionMessage(rejection.reason)}</Notice>}{busyId === entry.id && status && <div className={styles.uploadProgress} role="status"><progress max="100" value={status.percent} aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} upload progress`} /><span>{status.status}{status.status === 'Uploading' ? ` · ${status.percent}%` : ''}</span></div>}</div>;
+                        return <div key={side} className={styles.photoSlot}><div className={styles.photoSlotHeading}><strong>{side === 'FRONT' ? 'Front' : 'Back'}</strong><span>{verified ? '✓ Verified' : rejection ? 'Needs replacement' : selected ? 'Selected' : 'Missing'}</span></div><PhotoPreview file={selected} card={entry.card} side={side} className={styles.photoThumb} /><label className={styles.filePicker}>{selected ? 'Replace photograph' : verified ? 'Replace original' : 'Choose photograph'}<input type="file" accept={PHOTO_ACCEPT} disabled={locked} onChange={event => { selectFile(entry.id, side, event.target.files?.[0]); event.target.value = ''; }} /></label><small className={styles.filename}>{selected?.name ?? (verified ? entry.photoImports?.[side] ? 'PNG saved securely' : 'Original saved securely' : 'HEIC, HEIF, JPEG, PNG or WebP · up to 50 MB')}</small>{entry.photoImports?.[side] && <div className={styles.heicImport}><small>{entry.photoImports[side].width.toLocaleString()} × {entry.photoImports[side].height.toLocaleString()} PNG · {verified ? 'saved securely' : 'ready to upload'}. Original HEIC kept in this browser.</small>{entry.sourceFiles?.[side] && <OriginalHeicDownload file={entry.sourceFiles[side]} />}</div>}{rejection && <Notice error>{uploadRejectionMessage(rejection.reason)}</Notice>}{busyId === entry.id && status && <div className={styles.uploadProgress} role="status"><progress max="100" value={status.percent} aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} upload progress`} /><span>{status.status}{status.status === 'Uploading' ? ` · ${status.percent}%` : ''}</span></div>}</div>;
                     })}</div>
                     {entryError[entry.id] && <Notice error>{entryError[entry.id]}</Notice>}
                     {entry.pending && <div className={styles.recovery}><strong>Saved request awaiting confirmation</strong><p>The same upload or queue request will be recovered.</p><div className={styles.actions}><button type="button" disabled={busy} onClick={() => run([entry.id])}>Recover saved request</button><a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">Sign in in another tab ↗</a></div></div>}
