@@ -680,8 +680,10 @@ jobs:
         shell: bash
         run: |
           corepack enable
+          # The closed packager requires one link per input file; pnpm's Linux
+          # default can hard-link dependency bytes to its shared package store.
           env -i PATH="$PATH" HOME="$HOME" LANG=C CI=true NEXT_TELEMETRY_DISABLED=1 \
-            pnpm install --frozen-lockfile
+            pnpm install --frozen-lockfile --package-import-method=copy
           env -i PATH="$PATH" HOME="$HOME" LANG=C NEXT_TELEMETRY_DISABLED=1 \
             pnpm --filter @atlas/grading-core build
           env -i PATH="$PATH" HOME="$HOME" LANG=C NEXT_TELEMETRY_DISABLED=1 PRISMA_GENERATE_SKIP_AUTOINSTALL=1 \
