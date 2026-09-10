@@ -175,7 +175,8 @@ async function fixture(context, work, options = {}) {
         const usage = async () => (await f.admin.$queryRaw`SELECT * FROM atlas_staff.workspace_pilot_budget_usage(${f.budget.pilotId}::uuid,${f.ids[0]}::uuid)`)[0];
         await work({ ...f, current, terminal, transaction, machineConfig: config, sourceConfigHash, ports, settings, intent, authority, sourceLedger,
             bound, initialization, admit, finishPermit, readControl, projectResult, successor, usage, workerCalls: () => calls });
-    }, { sourceType: options.sourceType ?? 'LOCAL_FIXTURE', identity: options.identity, preparationEnabled: true });
+    }, { sourceType: options.sourceType ?? 'LOCAL_FIXTURE', identity: options.identity, preparationEnabled: true,
+        rosterSize: options.rosterSize, effort: options.effort });
 }
 
 export async function workspaceSourceScenarios(scenario) {
@@ -260,7 +261,8 @@ export async function workspaceSourceScenarios(scenario) {
         await assert.rejects(() => f.control('TAKE_OVER')); assert.equal((await f.card()).claim.runId, f.current.run.id);
     }));
 
-    await scenario('machine fresh-photo admission initializes through original detector transaction and atomically links one continuous report successor', context => fixture(context, async f => {
+    for (const rosterSize of [1, 10]) await scenario(`${rosterSize} admitted workspace(s) initialize through original detector and atomically link one continuous MAX report successor`, context => fixture(context, async f => {
+        assert.equal(f.budget.workspaceCardIds.length, rosterSize); assert.equal(f.policy.astra.effort, 'max');
         const request = await f.intent(), initial = await f.card(), service = f.initialization(request);
         const result = await service.run();
         assert.deepEqual(result, { state: 'SUCCEEDED', specimenId: f.ids[0] }, f.settings.performError); assert.equal(f.workerCalls(), 1);
@@ -285,7 +287,7 @@ export async function workspaceSourceScenarios(scenario) {
         assert.equal((await f.usage()).card, '110000'); assert.equal((await f.usage()).total, '135000');
         assert.equal(await f.admin.staffReportApproval.count(), 0); assert.equal(await f.admin.staffPublicReport.count(), 0);
         assert.equal(await f.admin.staffOperatorStep.count({ where: { runId: f.current.run.id } }), 5);
-    }));
+    }, { rosterSize, effort: 'max' }));
 
     await scenario('STEP source initialization cannot silently grant the successor report a new machine request', context => fixture(context, async f => {
         await f.control('PAUSE'); await f.control('STEP'); const request = await f.intent();

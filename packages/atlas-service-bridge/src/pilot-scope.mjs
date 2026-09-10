@@ -1,7 +1,7 @@
-import { requireBridge } from './protocol.mjs';
+import { parsePilotPolicy, requireBridge } from './protocol.mjs';
 
-// The fresh-photo cohort has ten verified workspaces before any of them has a
-// report. Its later specimen is resolved by the database's exact source link.
+// Each admitted fresh-photo workspace must be verified before work begins.
+// Its later specimen is resolved by the database's exact source link.
 export async function pilotSubject(tx, policy, card) {
     if (policy.version === 'atlas-grading-bridge-policy-v1')
         return policy.specimenIds.includes(card.id) ? { specimenId: card.id, workspaceCardId: null } : null;
@@ -9,12 +9,14 @@ export async function pilotSubject(tx, policy, card) {
     return row?.id && policy.workspaceCardIds.includes(row.id) ? { specimenId: card.id, workspaceCardId: row.id } : null;
 }
 
-export async function requireTenPilotCards(tx, policy, sourceType) {
-    const [row] = policy.version === 'atlas-workspace-bridge-policy-v1'
+export async function requirePilotCards(tx, policy, sourceType) {
+    const workspace = parsePilotPolicy(policy).version === 'atlas-workspace-bridge-policy-v1';
+    const [row] = workspace
         ? await tx.$queryRaw`SELECT atlas_staff.operator_workspace_count(${policy.pilotId}::uuid) AS count`
         : await tx.$queryRaw`SELECT count(*)::int AS count FROM atlas_staff."StaffSpecimen"
             WHERE id::text = ANY(${policy.specimenIds}::text[]) AND "sourceType"=${sourceType}`;
-    requireBridge(row?.count === 10, 'PILOT_TEN_CARDS_REQUIRED');
+    requireBridge(row?.count === (workspace ? policy.workspaceCardIds.length : 10),
+        workspace ? 'PILOT_WORKSPACE_ROSTER_INCOMPLETE' : 'PILOT_TEN_CARDS_REQUIRED');
 }
 
 export async function pilotUsage(tx, policy, card) {

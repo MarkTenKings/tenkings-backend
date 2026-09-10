@@ -53,8 +53,7 @@ async function fixture(context, work, options = {}) {
                 const bytes = objects.get(upload.objectRef); assert(bytes);
                 return { objectRef: upload.objectRef, sha256: digest(bytes), byteCount: bytes.length, contentType: 'image/png', width: 8, height: 10 };
             } } });
-        const ids = [];
-        for (let index = 0; index < 10; index++) {
+        const createQueued = async index => {
             let { card } = await intake.create(f.signed.staff, { operationId: randomUUID(), title: `Synthetic new photograph ${index + 1}`,
                 identity: options.identity ?? { category: 'SPORTS', playerName: 'Synthetic supplied identity' } });
             for (const [sideIndex, side] of ['FRONT', 'BACK'].entries()) {
@@ -65,11 +64,13 @@ async function fixture(context, work, options = {}) {
                     uploadId: planned.upload.id }));
             }
             ({ card } = await intake.queue(f.signed.staff, card.id, { operationId: randomUUID(), expectedRevision: card.revision, pairConfirmed: true }));
-            ids.push(card.id);
-        }
+            return card.id;
+        };
+        const ids = [];
+        for (let index = 0; index < (options.rosterSize ?? 10); index++) ids.push(await createQueued(index));
         const { specimenIds: _oldSpecimens, ...limits } = f.budget;
         const budget = { ...limits, version: 'atlas-workspace-bridge-policy-v1', workspaceCardIds: ids, maxTotalMicroUsd: 90_000_000, maxCardMicroUsd: 90_000_000 };
-        const policy = { ...f.policy, captureTools: [...CAPTURE_TOOL_NAMES] };
+        const policy = { ...f.policy, astra: { ...f.policy.astra, effort: options.effort ?? f.policy.astra.effort }, captureTools: [...CAPTURE_TOOL_NAMES] };
         await f.admin.staffGradingBridgeControl.update({ where: { id: 'active' }, data: {
             policyCanonical: canonical(budget), policyHash: digest(canonical(budget)), revision: { increment: 1 } } });
         await f.admin.staffOperatorControl.update({ where: { id: 'active' }, data: {
@@ -130,7 +131,7 @@ async function fixture(context, work, options = {}) {
                 identityProposal: proposals.identityProposal, boundaries: proposals.boundaries, summary: 'Synthetic selections await original worker preparation.' });
             return { ...await apply(proposals.lease, request), request };
         };
-        await work({ ...f, budget, policy, ids, initialized, card, service, control, claim, apply, adapters, prepareProposals, submit, intake, store,
+        await work({ ...f, budget, policy, ids, initialized, card, createQueued, service, control, claim, apply, adapters, prepareProposals, submit, intake, store,
             reads: () => reads, afterRead: callback => { afterRead = callback; } });
     });
 }
@@ -138,6 +139,58 @@ async function fixture(context, work, options = {}) {
 export { fixture as workspaceCaptureFixture, updateCard as updateWorkspaceFixtureCard };
 
 export async function workspaceCaptureScenarios(scenario) {
+    await scenario('bridge SQL shape accepts one or ten workspace UUIDs and rejects empty oversized duplicate invalid or legacy-nine rosters', context => fixture(context, async f => {
+        const original = await f.admin.staffGradingBridgeControl.findUnique({ where: { id: 'active' } });
+        const update = policy => f.admin.staffGradingBridgeControl.update({ where: { id: 'active' }, data: {
+            policyCanonical: canonical(policy), policyHash: digest(canonical(policy)), revision: { increment: 1 } } });
+        for (const length of [1, 10]) {
+            await update({ ...f.budget, workspaceCardIds: f.ids.slice(0, length) });
+            const [{ count }] = await f.admin.$queryRaw`SELECT atlas_staff.operator_workspace_count(${f.budget.pilotId}::uuid) AS count`;
+            assert.equal(count, length);
+        }
+        for (const workspaceCardIds of [[], [...f.ids, randomUUID()], [f.ids[0], f.ids[0]], ['invalid'], [null], {}, null])
+            await assert.rejects(() => update({ ...f.budget, workspaceCardIds }), /StaffGradingBridgeControl_shape/);
+        await assert.rejects(() => update({ ...f.bridge.policy, specimenIds: f.bridge.specimenIds.slice(0, 9) }), /StaffGradingBridgeControl_shape/);
+        await update(f.bridge.policy); // The original exact-ten specimen policy still passes.
+        await update(f.budget);
+        for (const data of [{ configHash: 'invalid' }, { releaseSha: 'invalid' }, { policyHash: '0'.repeat(64) }])
+            await assert.rejects(() => f.admin.staffGradingBridgeControl.update({ where: { id: 'active' },
+                data: { ...data, revision: { increment: 1 } } }), /StaffGradingBridgeControl_shape/);
+        await assert.rejects(() => f.admin.staffGradingBridgeControl.update({ where: { id: 'active' }, data: { revision: 0 } }), /control revision must advance once/);
+        const retained = await f.admin.staffGradingBridgeControl.findUnique({ where: { id: 'active' } });
+        assert.equal(retained.policyCanonical, original.policyCanonical); assert.equal(retained.policyHash, original.policyHash);
+        assert.equal(await f.admin.staffOperatorRun.count(), 0); assert.equal(await f.admin.staffWorkspaceCard.count({ where: { state: 'WAITING' } }), 10);
+        await assert.rejects(() => f.client.$queryRaw`SELECT atlas_staff.workspace_pilot_ids_valid('[]'::jsonb)`, /permission denied/);
+    }));
+
+    await scenario('first verified workspace requires the complete explicit roster and continued intake preserves its claim and processing limit', context => fixture(context, async f => {
+        const first = await f.card(), update = ids => f.admin.staffGradingBridgeControl.update({ where: { id: 'active' }, data: {
+            policyCanonical: canonical({ ...f.budget, workspaceCardIds: ids }), policyHash: digest(canonical({ ...f.budget, workspaceCardIds: ids })),
+            revision: { increment: 1 } } });
+        const claim = async id => f.intake.claim(f.signed.staff, id, { operationId: randomUUID(), expectedRevision: (await f.card(id)).revision,
+            operator: 'ASTRA', mode: 'CONTINUOUS' });
+        await update([first.id, randomUUID()]);
+        await assert.rejects(() => claim(first.id), /admitted verified photo pair/);
+        assert.equal((await f.card()).state, 'WAITING'); assert.equal(await f.admin.staffOperatorRun.count(), 0);
+        await update([first.id]);
+        await claim(first.id);
+        const active = await f.card(), run = await f.admin.staffOperatorRun.findUnique({ where: { id: active.claim.runId } });
+        assert.equal(active.id, first.id); assert.equal(active.captureHash, first.captureHash); assert.equal(run.phase, 'CAPTURE_REVIEW');
+        assert.equal(run.specimenId, null); assert.equal(JSON.parse(run.policyCanonical).astra.effort, 'max');
+        const second = await f.createQueued(1);
+        assert.equal((await f.card(second)).state, 'WAITING'); assert.deepEqual(await f.card(), active);
+        const [{ count }] = await f.admin.$queryRaw`SELECT atlas_staff.operator_workspace_count(${f.budget.pilotId}::uuid) AS count`;
+        assert.equal(count, 1); await assert.rejects(() => claim(second));
+        await update([second]); // Another verified card cannot substitute for the admitted run's workspace.
+        await assert.rejects(() => f.ledger.claim(run.id, randomUUID()), /ASTRA_CAPTURE_NOT_CURRENT|ASTRA_RUN_NOT_CURRENT|ASTRA_PILOT_NOT_ACTIVE|ASTRA_CAPTURE_NOT_ADMITTED|ASTRA_RUN_SCOPE_CHANGED/);
+        await update([first.id, second]);
+        await assert.rejects(() => claim(second)); // Capacity remains ten; processing remains one.
+        assert.equal(await f.admin.staffOperatorRun.count(), 1); assert.equal((await f.card(second)).state, 'WAITING');
+        const control = await f.admin.staffWorkspaceControl.findUnique({ where: { id: 'active' } });
+        assert.equal(control.maxCards, 10); assert.equal(control.processingLimit, 1); assert.equal(control.intakeEnabled, true);
+        assert.deepEqual(await f.card(), active);
+    }, { rosterSize: 1, effort: 'max', captureRpc: true }));
+
     await scenario('capture operator enqueues exact new original pair without specimen report or broad machine workspace access', context => fixture(context, async f => {
         const beforeAnalyses = await f.admin.staffAnalysisRevision.count(), { run, lease } = await f.claim();
         assert.equal(run.phase, 'CAPTURE_REVIEW'); assert.equal(run.specimenId, null); assert.equal(run.expectedAnalysisRevision, 0);

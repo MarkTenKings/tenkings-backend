@@ -18,7 +18,7 @@ test('MAC binds exact purpose, destination, actor, case, payload, lifetime and c
     assert.throws(() => signRequest(c, s, { ...payload, url: 'https://elsewhere.example.test' }));
     assert.throws(() => keys({ 'a|b': 1 }, ['a', 'b']));
 });
-test('policy requires exactly ten distinct cards and bounded nonzero reservations', () => {
+test('legacy specimen policy requires exactly ten distinct cards and bounded nonzero reservations', () => {
     const policy = { version: 'atlas-grading-bridge-policy-v1', pilotId: randomUUID(), specimenIds: Array.from({ length: 10 }, randomUUID),
         expiresAt: '2026-09-09T01:00:00.000Z', maxOperationsPerCard: 20, maxTotalMicroUsd: 1_000_000,
         maxCardMicroUsd: 100_000, reservationPerOperationMicroUsd: 10_000, maxWorkerCalls: 4, deadlineMs: 200_000 };
@@ -26,6 +26,21 @@ test('policy requires exactly ten distinct cards and bounded nonzero reservation
     for (const update of [{ specimenIds: policy.specimenIds.slice(0, 9) }, { specimenIds: Array(10).fill(policy.specimenIds[0]) },
         { reservationPerOperationMicroUsd: 0 }, { maxWorkerCalls: 5 }, { deadlineMs: 200_001 }, { arbitraryTool: 'run' }])
         assert.throws(() => parsePilotPolicy({ ...policy, ...update }));
+});
+test('workspace policy admits one through ten distinct UUIDs without changing budget or expiry validation', () => {
+    const policy = { version: 'atlas-workspace-bridge-policy-v1', pilotId: randomUUID(), workspaceCardIds: [randomUUID()],
+        expiresAt: '2026-09-16T01:00:00.000Z', maxOperationsPerCard: 20, maxTotalMicroUsd: 90_000_000,
+        maxCardMicroUsd: 90_000_000, reservationPerOperationMicroUsd: 10_000, maxWorkerCalls: 4, deadlineMs: 200_000 };
+    for (const length of [1, 2, 9, 10]) {
+        const admitted = { ...policy, workspaceCardIds: Array.from({ length }, randomUUID) };
+        assert.equal(parsePilotPolicy(admitted), admitted);
+    }
+    for (const workspaceCardIds of [[], Array.from({ length: 11 }, randomUUID), [policy.workspaceCardIds[0], policy.workspaceCardIds[0]],
+        ['not-a-card'], [null], [1], [randomUUID().toUpperCase()], {}])
+        assert.throws(() => parsePilotPolicy({ ...policy, workspaceCardIds }), /BRIDGE_PILOT_POLICY_INVALID/);
+    for (const update of [{ reservationPerOperationMicroUsd: 0 }, { maxCardMicroUsd: 90_000_001 },
+        { maxOperationsPerCard: 101 }, { maxWorkerCalls: 5 }, { deadlineMs: 200_001 }, { expiresAt: '2026-09-16' }])
+        assert.throws(() => parsePilotPolicy({ ...policy, ...update }), /BRIDGE_PILOT_POLICY_INVALID/);
 });
 test('private client has one destination, one call and no redirect/retry on uncertainty', async () => {
     const c = config(); let calls = 0;

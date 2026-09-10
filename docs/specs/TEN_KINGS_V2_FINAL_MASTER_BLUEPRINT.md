@@ -82,6 +82,15 @@ The live review queue is only one stage of this requested workspace. Existing Sp
 
 Mark further clarified that humans supply the physical-card photographs and fill a **waiting-to-be-graded queue at the beginning**. Each queued item is one card with its associated Front/Back photographs. Astra or a human takes a card from that shared intake queue and operates the same grading workflow. The completed draft then enters a **separate final human review queue**. Human photo intake and final human approval are required; manual operation of the middle grading stages is an available choice. Support preparing multiple cards in advance, with visible readiness and current operator ownership. This queue requirement does not imply that Astra can photograph physical cards, certify its own results, or process beyond the admitted pilot/budget.
 
+
+#### Owner clarification — fast photo intake and Astra MAX activation, 2026-09-10 Pacific
+
+During live testing Mark explicitly requested minimal card intake, activation of Astra now, and fresh Astra MAX implementation agents. Front and Back photographs plus confirmation that they show the same physical card are sufficient to queue a card; a short label is optional. Astra may propose identity from the evidence during grading. Preserve verified uploads, recoverable drafts and original-photo retention, including HEIC imports.
+
+The first verified card may begin the supervised pilot immediately after its actual runtime and spending controls are ready. Queue capacity remains ten cards and the initial processing limit remains one distinct card; assembling all ten cards before starting the first is not required. Keep intake available while that first card is tested. Merely entering Waiting to grade does not dispatch paid work: the human starts Astra from the card, with step mode available for supervised testing. Final report approval remains an explicit human action.
+
+Use `gpt-6-astra` with `reasoning.effort=max` for the ATLAS operator and explicitly requested fresh build agents. Mark's Codex usage reset does not reset the existing ATLAS provider budget, reservations or pilot expiry. Preserve the original $100 total allocation, existing partitions, all known or uncertain liabilities and deterministic grading authority. This direction authorizes the scoped fixes and live activation; another general permission request is not required.
+
 ---
 
 ## 1. Executive Decision

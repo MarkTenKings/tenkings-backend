@@ -16,12 +16,12 @@ const astra = { version: 'atlas-astra-policy-v1', model: MODEL, returnedModel: M
     maxOutputTokens: 128, requestTimeoutMs: 1000, pricingVersion: PRICING.version,
     inputNanoUsdPerToken: PRICING.inputNanoUsdPerToken, outputNanoUsdPerToken: PRICING.outputNanoUsdPerToken };
 
-async function fixture({ year = '2026', authorizeCommand } = {}) {
+async function fixture({ year = '2026', authorizeCommand, rosterSize = 10 } = {}) {
     const cardId = randomUUID(), actorId = randomUUID(), creatorId = randomUUID(), pilotId = randomUUID(), runId = randomUUID();
     const operatorConfig = { mode: 'LOCAL_FIXTURE', releaseSha: 'a'.repeat(40), configHash: 'b'.repeat(64), buildHash: 'c'.repeat(64), providerBindingHash: 'd'.repeat(64) };
     const policy = { version: 'atlas-operator-control-policy-v1', pilotId, expiresAt: LATER.toISOString(), prompt: 'Fixture operator.', astra,
         tools: REPORT_TOOL_NAMES, captureTools: CAPTURE_TOOL_NAMES, maxAttemptsPerCard: 50, maxStepsPerRun: 64, maxRunMs: 3600000, leaseMs: 30000, concurrency: 1 };
-    const budget = { version: 'atlas-workspace-bridge-policy-v1', pilotId, workspaceCardIds: [cardId, ...Array.from({ length: 9 }, () => randomUUID())],
+    const budget = { version: 'atlas-workspace-bridge-policy-v1', pilotId, workspaceCardIds: [cardId, ...Array.from({ length: rosterSize - 1 }, () => randomUUID())],
         expiresAt: LATER.toISOString(), maxOperationsPerCard: 20, maxTotalMicroUsd: 90000000, maxCardMicroUsd: 9000000,
         reservationPerOperationMicroUsd: 100000, maxWorkerCalls: 2, deadlineMs: 200000 };
     const control = { ...operatorConfig, enabled: true, policyCanonical: canonical(policy), policyHash: digest(canonical(policy)) };
@@ -67,7 +67,7 @@ async function fixture({ year = '2026', authorizeCommand } = {}) {
     selected.resultHash = digest(selected.resultCanonical); steps.set(selected.id, selected);
     const images = assets.map(asset => { const canonicalText = canonical({ asset }); return { canonical: canonicalText, hash: digest(canonicalText) }; });
     const f = { state: { run, card, identity, control, bridge, steps, images, operations: new Map(), permits: new Map(),
-        sourceStates: new Map(), successor: null, enabled: true, now: NOW, count: 10, attempts: 0 }, calls: [], statuses: [],
+        sourceStates: new Map(), successor: null, enabled: true, now: NOW, count: rosterSize, attempts: 0 }, calls: [], statuses: [],
         permitClaims: 0, settlements: 0, successorCalls: 0, failPermit: false, failCommit: false, beforeReply: null, behavior: null };
     const inside = new AsyncLocalStorage(), current = () => inside.getStore() ?? f.state;
     const insert = event => current().operations.set(event.id, encoded(event));
@@ -202,6 +202,26 @@ async function fixture({ year = '2026', authorizeCommand } = {}) {
     return { ...f, f, runId, actorId, cardId, selected, manifest, database, client, authority, runner, humanControl, finishSource: finish,
         start: options => runner.run({ runId, ...options }) };
 }
+
+test('source coordinator: a single admitted workspace completes the exact three actions with MAX retained', async () => {
+    const f = await fixture({ rosterSize: 1 }), policy = f.f.state.control.policyCanonical, result = await f.start();
+    assert.equal(result.state, 'READY'); assert.equal(result.actions, 3); assert.equal(f.f.permitClaims, 3);
+    assert.equal(f.f.state.control.policyCanonical, policy); assert.equal(JSON.parse(policy).astra.effort, 'max');
+});
+
+test('source coordinator: one-card admission rejects count mismatch and a different or duplicate roster before permits', async () => {
+    for (const alter of [s => { s.count = 0; }, s => { s.count = 2; }, s => {
+        const p = JSON.parse(s.bridge.policyCanonical); p.workspaceCardIds = [randomUUID()];
+        s.bridge.policyCanonical = canonical(p); s.bridge.policyHash = digest(s.bridge.policyCanonical);
+    }, s => {
+        const p = JSON.parse(s.bridge.policyCanonical); p.workspaceCardIds.push(p.workspaceCardIds[0]);
+        s.bridge.policyCanonical = canonical(p); s.bridge.policyHash = digest(s.bridge.policyCanonical);
+    }]) {
+        const f = await fixture({ rosterSize: 1 }); alter(f.f.state);
+        assert.equal((await f.start()).state, 'HELD'); assert.equal(f.f.permitClaims, 0); assert.equal(f.f.calls.length, 0);
+        assert.equal(f.f.state.operations.size, 0);
+    }
+});
 
 test('source coordinator: exact Front, Back, initialization sequence and immutable machine receipts use no human flags', async () => {
     const f = await fixture(), before = clone(f.f.state.card.claim), result = await f.start();

@@ -1,0 +1,12 @@
+.optionalLabel { margin:0 23px 20px; font-size:12px; color:#566b50; }
+.optionalLabel summary,.saveOnly summary { cursor:pointer; width:fit-content; text-underline-offset:3px; }
+.optionalLabel summary:focus-visible,.saveOnly summary:focus-visible { outline:3px solid #8caa80; outline-offset:4px; border-radius:2px; }
+.optionalLabel fieldset { margin-top:14px; }
+.optionalLabel label { max-width:340px; }
+.optionalLabel input { margin-top:8px; font-size:12px; padding:11px; }
+.optionalLabel p,.saveOnly p,.nextStep { font-size:11px; line-height:1.7; color:#708166; }
+.optionalLabel p { margin-top:9px; }
+.nextStep { margin-top:-7px; }
+.saveOnly { margin:26px 0 0; padding-top:22px; border-top:1px solid var(--line); font-size:12px; color:#566b50; }
+.saveOnly p { margin:14px 0; }
+@media (max-width:650px) { .optionalLabel { margin-left:18px; margin-right:18px; } }

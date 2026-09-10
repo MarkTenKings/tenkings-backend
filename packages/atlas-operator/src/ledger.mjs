@@ -33,7 +33,8 @@ async function authority(tx, config) {
         ? await tx.$queryRaw`SELECT atlas_staff.operator_workspace_count(${budget.pilotId}::uuid) AS count`
         : await tx.$queryRaw`SELECT count(*)::int AS count FROM atlas_staff."StaffSpecimen"
             WHERE id::text=ANY(${budget.specimenIds}::text[]) AND "sourceType"=${control.mode === 'PRODUCTION' ? 'SPEEDSTER' : 'LOCAL_FIXTURE'}`;
-    check(count === 10, 'ASTRA_TEN_CARDS_REQUIRED');
+    check(count === (workspaceBudget(budget) ? budget.workspaceCardIds.length : 10),
+        workspaceBudget(budget) ? 'ASTRA_WORKSPACE_ROSTER_INCOMPLETE' : 'ASTRA_TEN_CARDS_REQUIRED');
     return { tx, now, control, bridge, staff, policy, budget };
 }
 

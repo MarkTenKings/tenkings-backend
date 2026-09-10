@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { previewAtlasReport } from '@atlas/grading-core/report';
 import { speedsterReviewPostSchema } from '@atlas/grading-core/review-action-contract';
 import { canonical, digest, parsePilotPolicy, requireBridge } from './protocol.mjs';
-import { pilotSubject, pilotUsage, requireTenPilotCards } from './pilot-scope.mjs';
+import { pilotSubject, pilotUsage, requirePilotCards } from './pilot-scope.mjs';
 
 const activeStates = ['DISPATCHED', 'UNKNOWN'];
 function checked(text, expected) {
@@ -93,7 +93,7 @@ export class ScopedGradingBridge {
             await this.operation(context, operationId, { committing: true });
             const { policy, now, card, bridge } = context;
             requireBridge(await pilotSubject(tx, policy, card) && +new Date(policy.expiresAt) > +now, 'PILOT_NOT_ACTIVE');
-            await requireTenPilotCards(tx, policy, card.sourceType);
+            await requirePilotCards(tx, policy, card.sourceType);
             const usage = await pilotUsage(tx, policy, card);
             const reserve = BigInt(policy.reservationPerOperationMicroUsd);
             requireBridge(!usage.overrun && BigInt(usage.total) + reserve <= BigInt(policy.maxTotalMicroUsd)
@@ -118,7 +118,7 @@ export class ScopedGradingBridge {
             await this.ports.afterExecutionClaim?.(tx, { operationId: op.id, claimId, sourceRevision: request.sourceRevision, now });
             return { context: { card, policy, bridge }, op, request, source, claimId, prior: false };
         }); } catch (error) {
-            const knownPreflight = new Set(['PILOT_NOT_ACTIVE', 'PILOT_TEN_CARDS_REQUIRED', 'PILOT_BUDGET_EXHAUSTED',
+            const knownPreflight = new Set(['PILOT_NOT_ACTIVE', 'PILOT_TEN_CARDS_REQUIRED', 'PILOT_WORKSPACE_ROSTER_INCOMPLETE', 'PILOT_BUDGET_EXHAUSTED',
                 'SOURCE_REVISION_CHANGED', 'PREPARATION_RELEASE_NOT_ADMITTED', 'FRESH_DETECTION_REQUIRED', 'GRADING_NOT_READY',
                 'GRADING_OPERATION_STALE']);
             if (!knownPreflight.has(error.code)) throw error;
