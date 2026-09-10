@@ -1,6 +1,10 @@
 # Set Ops Handoff (Living)
 
-## ATLAS local implementation checkpoint — September 8, 2026
+## Current ATLAS deployment pointer — September 10, 2026
+
+The active grading work remains in `d221`. CPU/database/role setup is accepted; staff/public B are staged and private startup correction plus successor activation are pending. Current status is in [WEBSITE_RELEASE.md](atlas/WEBSITE_RELEASE.md), with host isolation and Caddy maintenance in [DEPLOY_RUNBOOK.md](runbooks/DEPLOY_RUNBOOK.md). Set Ops behavior is unchanged.
+
+## Historical ATLAS local implementation checkpoint — September 8, 2026
 
 The owner-approved ATLAS workflow is implemented locally on `codex/atlas-completion-20260908`, including durable phone access/assignments, fresh supervised initialization and bounded Astra review, human report/proposal/identity corrections, exact public approvals, scoped label/NFC/physical finishing, operational recovery and separate trusted-learning decisions pending bank application. The current lead task is `01a08184-52a9-7493-8170-4e2e6b8230bb` in worktree `f4fe`; old lead/worktree `9545` is reporting-only.
 
