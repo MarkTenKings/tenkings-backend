@@ -264,7 +264,7 @@ public sealed class GoToTagsOperationFactory
             throw new NfcHelperException("gototags_job_conflict", "A protected Feiju job already exists.", false, 409);
 
         var operation = ReadAndValidateTemplate(options);
-        operation["name"] = "Ten Kings F8215 Job";
+        operation["name"] = callbackRoute == "gototags/atlas/callback" ? "ATLAS Approved Report F8215 Job" : "Ten Kings F8215 Job";
         operation["externalId"] = attemptId;
         operation["id"] = RandomText(10);
         operation["createdAt"] = now.ToString("O");
@@ -276,7 +276,7 @@ public sealed class GoToTagsOperationFactory
         // authority. Neither path logs, returns, or persists the raw value.
         operation.Remove("redactionKey");
         var integration = operation["integrations"]!.AsArray()[0]!.AsObject();
-        if (callbackRoute is not ("gototags/callback" or "gototags/v2/callback")) throw TemplateInvalid();
+        if (callbackRoute is not ("gototags/callback" or "gototags/v2/callback" or "gototags/atlas/callback")) throw TemplateInvalid();
         integration["urlString"] = $"http://127.0.0.1:{callbackPort}/{callbackRoute}/{callbackIdentity}";
         var tag = operation["tags"]!.AsArray()[0]!.AsObject();
         tag["id"] = RandomText(10);

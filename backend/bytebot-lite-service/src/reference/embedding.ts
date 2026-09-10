@@ -1,5 +1,8 @@
 import sharp from "sharp";
 import { createSpacesUploader } from "../storage/spaces";
+import { fetchReferenceBytes, fetchReferenceJson, REFERENCE_IMAGE_MAX_BYTES, REFERENCE_REQUEST_TIMEOUT_MS } from "./request";
+
+const openImage = (buffer: Buffer) => sharp(buffer, { limitInputPixels: 32_000_000 }).timeout({ seconds: 10 });
 
 export type CropEmbedding = {
   cropUrl: string;
@@ -50,7 +53,7 @@ function buildCrops(width: number, height: number): CropSpec[] {
 }
 
 async function detectCardBounds(buffer: Buffer) {
-  const resized = sharp(buffer).rotate().resize(256, 256, { fit: "inside" });
+  const resized = openImage(buffer).rotate().resize(256, 256, { fit: "inside" });
   const { data, info } = await resized.greyscale().raw().toBuffer({ resolveWithObject: true });
 
   const threshold = 230;
@@ -88,44 +91,40 @@ async function detectCardBounds(buffer: Buffer) {
   };
 }
 
-async function normalizeCard(buffer: Buffer) {
+async function normalizeCard(buffer: Buffer, signal?: AbortSignal) {
   const cornerService = process.env.VARIANT_CORNER_URL;
   if (cornerService) {
     try {
-      const response = await fetch(cornerService, {
+      const payload = await fetchReferenceJson(cornerService, {
         method: "POST",
+        signal,
+        maxBytes: REFERENCE_IMAGE_MAX_BYTES,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageUrl: "inline", imageBase64: buffer.toString("base64") }),
-      });
-      if (response.ok) {
-        const payload = await response.json();
-        if (payload?.normalizedBase64) {
-          const normalizedBuffer = Buffer.from(String(payload.normalizedBase64), "base64");
-          return sharp(normalizedBuffer).rotate().resize(800, 1100, { fit: "fill" });
-        }
-        if (payload?.normalizedUrl) {
-          const normalized = await fetch(payload.normalizedUrl);
-          if (normalized.ok) {
-            const normalizedBuffer = Buffer.from(await normalized.arrayBuffer());
-            return sharp(normalizedBuffer).rotate().resize(800, 1100, { fit: "fill" });
-          }
-        }
+      }) as { normalizedBase64?: string; normalizedUrl?: string };
+      if (typeof payload?.normalizedBase64 === "string") {
+        return openImage(Buffer.from(payload.normalizedBase64, "base64")).rotate().resize(800, 1100, { fit: "fill" });
+      }
+      if (typeof payload?.normalizedUrl === "string") {
+        const normalized = await fetchReferenceBytes(payload.normalizedUrl, { signal });
+        return openImage(normalized).rotate().resize(800, 1100, { fit: "fill" });
       }
     } catch {
       // fallback to heuristic bounds
     }
   }
+  signal?.throwIfAborted();
   const bounds = await detectCardBounds(buffer);
   if (!bounds) {
-    return sharp(buffer).rotate().resize(800, 1100, { fit: "inside" });
+    return openImage(buffer).rotate().resize(800, 1100, { fit: "inside" });
   }
 
-  const base = sharp(buffer).rotate();
+  const base = openImage(buffer).rotate();
   const metadata = await base.metadata();
   const width = metadata.width ?? 0;
   const height = metadata.height ?? 0;
   if (!width || !height) {
-    return sharp(buffer).rotate().resize(800, 1100, { fit: "inside" });
+    return openImage(buffer).rotate().resize(800, 1100, { fit: "inside" });
   }
 
   const scaleX = width / bounds.resizedWidth;
@@ -140,70 +139,51 @@ async function normalizeCard(buffer: Buffer) {
   });
 }
 
+export function hasUsableEmbeddings(value: unknown): value is CropEmbedding[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= 16 && value.every((entry) =>
+    entry && typeof entry.cropUrl === "string" && entry.cropUrl.length > 0 && entry.cropUrl.length <= 4096 &&
+    Array.isArray(entry.vector) && entry.vector.length > 0 && entry.vector.length <= 8192 &&
+    entry.vector.every((v: unknown) => typeof v === "number" && Number.isFinite(v)) &&
+    entry.vector.some((v: number) => v !== 0)
+  );
+}
+
 export async function computeReferenceEmbeddings(params: {
   imageUrl: string;
   referenceId: string;
+  loadImage?: () => Promise<Buffer>;
+  signal?: AbortSignal;
 }): Promise<ReferenceEmbeddingResult> {
-  const { imageUrl, referenceId } = params;
-  let buffer: Buffer | null = null;
-  const loadBuffer = async () => {
-    if (buffer) return buffer;
-    const response = await fetch(imageUrl);
-    if (!response.ok) {
-      return null;
-    }
-    buffer = Buffer.from(await response.arrayBuffer());
-    return buffer;
-  };
+  const empty = { cropUrls: [], embeddings: [] };
+  const embeddingService = process.env.VARIANT_EMBEDDING_URL?.trim();
+  if (!embeddingService) return empty;
+  const { imageUrl, referenceId, signal } = params;
   try {
-    const embeddingService = process.env.VARIANT_EMBEDDING_URL;
-    if (embeddingService) {
-      const response = await fetch(embeddingService, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrl, mode: "reference", referenceId }),
-      });
-      if (response.ok) {
-        const payload = await response.json();
-        const serviceEmbeddings = Array.isArray(payload?.embeddings) ? payload.embeddings : [];
-        const serviceCropUrls = Array.isArray(payload?.cropUrls) ? payload.cropUrls : [];
-        if (serviceEmbeddings.length > 0 && serviceCropUrls.length === 0) {
-          // We got embeddings but no crops; fall back to local crop generation for previews.
-          const localBuffer = await loadBuffer();
-          if (localBuffer) {
-            const local = await computeReferenceEmbeddingsLocal(localBuffer, referenceId);
-            return {
-              cropUrls: local.cropUrls,
-              embeddings: serviceEmbeddings,
-            };
-          }
-          return {
-            cropUrls: [],
-            embeddings: serviceEmbeddings,
-          };
-        }
-        if (serviceCropUrls.length > 0) {
-          return {
-            cropUrls: serviceCropUrls,
-            embeddings: serviceEmbeddings,
-          };
-        }
-      }
-    }
-
-    const localBuffer = await loadBuffer();
-    if (!localBuffer) {
-      return { cropUrls: [], embeddings: [] };
-    }
-    return await computeReferenceEmbeddingsLocal(localBuffer, referenceId);
+    const payload = await fetchReferenceJson(embeddingService, {
+      method: "POST",
+      signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageUrl, mode: "reference", referenceId }),
+    }) as { embeddings?: unknown; cropUrls?: unknown };
+    // Empty/invalid provider output is deferred before downloading an original or uploading crops.
+    if (!hasUsableEmbeddings(payload?.embeddings)) return empty;
+    const cropUrls = Array.isArray(payload.cropUrls) && payload.cropUrls.length <= 16 &&
+      payload.cropUrls.every((url: unknown) => typeof url === "string" && url.length > 0 && url.length <= 4096)
+      ? payload.cropUrls as string[] : [];
+    if (cropUrls.length) return { cropUrls, embeddings: payload.embeddings };
+    const buffer = await (params.loadImage?.() ?? fetchReferenceBytes(imageUrl, { signal }));
+    const local = await computeReferenceEmbeddingsLocal(buffer, referenceId, signal);
+    return { cropUrls: local.cropUrls, embeddings: payload.embeddings };
   } catch {
-    return { cropUrls: [], embeddings: [] };
+    return empty;
   }
 }
 
-async function computeReferenceEmbeddingsLocal(buffer: Buffer, referenceId: string): Promise<ReferenceEmbeddingResult> {
+async function computeReferenceEmbeddingsLocal(buffer: Buffer, referenceId: string, signal?: AbortSignal): Promise<ReferenceEmbeddingResult> {
   try {
-    const image = await normalizeCard(buffer);
+    signal?.throwIfAborted();
+    const normalized = await normalizeCard(buffer, signal);
+    const image = openImage(await normalized.toBuffer());
     const metadata = await image.metadata();
     const width = metadata.width ?? 0;
     const height = metadata.height ?? 0;
@@ -226,7 +206,8 @@ async function computeReferenceEmbeddingsLocal(buffer: Buffer, referenceId: stri
     const cropUrls: string[] = [];
 
     for (const crop of crops) {
-      const cropBuffer = await image
+      signal?.throwIfAborted();
+      const cropBuffer = await image.clone()
         .extract({
           left: crop.left,
           top: crop.top,
@@ -237,7 +218,7 @@ async function computeReferenceEmbeddingsLocal(buffer: Buffer, referenceId: stri
         .toBuffer();
 
       const key = `reference/${referenceId}/${crop.label}.jpg`;
-      const uploaded = await upload(cropBuffer, key, "image/jpeg");
+      const uploaded = await upload(cropBuffer, key, "image/jpeg", signal ?? AbortSignal.timeout(REFERENCE_REQUEST_TIMEOUT_MS));
       cropUrls.push(uploaded.url);
     }
 

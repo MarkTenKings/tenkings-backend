@@ -1,0 +1,73 @@
+{
+  "notice": "Synthetic hardware-free public-only interoperability vector; private keys discarded. Not enrollment or operational evidence.",
+  "now": "2026-09-08T12:00:00.000Z",
+  "approvedReport": {
+    "specimenId": "synthetic-specimen-1",
+    "approvalId": "synthetic-approval-1",
+    "approvalVersion": 2,
+    "publicToken": "ar_AAAAAAAAAAAAAAAAAAAAAAAA",
+    "publicHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "job": {
+    "schemaVersion": "atlas-approved-report-nfc-job-v1",
+    "algorithm": "ecdsa-p256-sha256-p1363",
+    "signingKeyId": "828385cd0b0df5980c004bf744f09cac33884ce0d645be216c2348ad8b127fc6",
+    "purpose": "atlas-program-approved-report-url-v1",
+    "nonce": "lJ3eyGfzNcmHrwSVOSALYykG5IUHIs-ge56OVJVnL3M",
+    "specimenId": "synthetic-specimen-1",
+    "approvalId": "synthetic-approval-1",
+    "approvalVersion": 2,
+    "publicToken": "ar_AAAAAAAAAAAAAAAAAAAAAAAA",
+    "publicHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "url": "https://atlasgrading.com/reports/ar_AAAAAAAAAAAAAAAAAAAAAAAA?v=2",
+    "chipType": "FEIJU_F8215",
+    "securityMode": "static_url_v1",
+    "programmingProfile": "gototags_manual_start_v1",
+    "issuedAt": "2026-09-08T12:00:00.000Z",
+    "expiresAt": "2026-09-08T12:10:00.000Z",
+    "signature": "P2O9G7hNxcdLx1r0ZBJ4_fC-Uogit-6nJS1q9Fa5hyIQxvspX8_VacS7qNneZ8WV6Il9sBNccpxMgPG6KNJisQ"
+  },
+  "result": {
+    "schemaVersion": "atlas-approved-report-nfc-result-v1",
+    "algorithm": "ecdsa-p256-sha256-p1363",
+    "workstationKeyId": "ae44a9dbdf96a7860a91c346c751f36ff0065e8e08b7537de0554a86f2db2925",
+    "jobEnvelopeSha256": "1363bc1327bdf8bca158c27aa8c53e2f3e835b841ac5b05ce36ea1d35063432c",
+    "nonce": "lJ3eyGfzNcmHrwSVOSALYykG5IUHIs-ge56OVJVnL3M",
+    "specimenId": "synthetic-specimen-1",
+    "approvalId": "synthetic-approval-1",
+    "approvalVersion": 2,
+    "publicToken": "ar_AAAAAAAAAAAAAAAAAAAAAAAA",
+    "publicHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "url": "https://atlasgrading.com/reports/ar_AAAAAAAAAAAAAAAAAAAAAAAA?v=2",
+    "chipType": "FEIJU_F8215",
+    "securityMode": "static_url_v1",
+    "programmingProfile": "gototags_manual_start_v1",
+    "readerModel": "ACS_ACR1552U",
+    "adapterIdentity": "gototags_desktop",
+    "adapterVersion": "4.37.0.1",
+    "readbackPayloadSha256": "737f711b7f32c0728ebb90d74e5e38aa0044f6e5ca98c9a63415b2ba7886829b",
+    "writeProtectionState": "permanently_read_only_verified",
+    "readerResultCode": "write_locked_verified_gototags_readback",
+    "helperCapability": "atlas-approved-report-f8215-v1",
+    "observedAt": "2026-09-08T12:00:00.000Z",
+    "signature": "OLAZVB7xYgHVgCviMffdYB2WMRCegp6NixdmyH1NnUmmdqXM5LN5wc0QGybBDphyc9vZfPPYYcJXg3zbvyw-5A"
+  },
+  "trust": {
+    "schemaVersion": "atlas-nfc-trust-v1",
+    "serverKeys": [
+      {
+        "keyId": "828385cd0b0df5980c004bf744f09cac33884ce0d645be216c2348ad8b127fc6",
+        "publicSpkiDerBase64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE/eq7FrQ7YUt2BqT+YP8Vae+xAcLUBGpxtM4ZJ/PNFEDWrDcA+Xv+Qr+CceDAL52FeeLMEBtcfh2XXRlWCl5Ing=="
+      }
+    ],
+    "workstationKeys": [
+      {
+        "keyId": "ae44a9dbdf96a7860a91c346c751f36ff0065e8e08b7537de0554a86f2db2925",
+        "publicSpkiDerBase64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEDeH9IhzaMKB9X3ZgS3OBzbzE61hKKEb1SxFO6gpXuOw2MGPKATJu2jL8RODkEN5Ie6rwxIiY8uuYx4wsMsvl5w==",
+        "enrollmentPolicy": "windows-current-user-nonexportable-p256-v1"
+      }
+    ]
+  },
+  "canonicalJob": "atlas-approved-report-nfc-job-v1\necdsa-p256-sha256-p1363\n828385cd0b0df5980c004bf744f09cac33884ce0d645be216c2348ad8b127fc6\natlas-program-approved-report-url-v1\nlJ3eyGfzNcmHrwSVOSALYykG5IUHIs-ge56OVJVnL3M\nsynthetic-specimen-1\nsynthetic-approval-1\n2\nar_AAAAAAAAAAAAAAAAAAAAAAAA\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nhttps://atlasgrading.com/reports/ar_AAAAAAAAAAAAAAAAAAAAAAAA?v=2\nFEIJU_F8215\nstatic_url_v1\ngototags_manual_start_v1\n2026-09-08T12:00:00.000Z\n2026-09-08T12:10:00.000Z",
+  "canonicalResult": "atlas-approved-report-nfc-result-v1\necdsa-p256-sha256-p1363\nae44a9dbdf96a7860a91c346c751f36ff0065e8e08b7537de0554a86f2db2925\n1363bc1327bdf8bca158c27aa8c53e2f3e835b841ac5b05ce36ea1d35063432c\nlJ3eyGfzNcmHrwSVOSALYykG5IUHIs-ge56OVJVnL3M\nsynthetic-specimen-1\nsynthetic-approval-1\n2\nar_AAAAAAAAAAAAAAAAAAAAAAAA\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nhttps://atlasgrading.com/reports/ar_AAAAAAAAAAAAAAAAAAAAAAAA?v=2\nFEIJU_F8215\nstatic_url_v1\ngototags_manual_start_v1\nACS_ACR1552U\ngototags_desktop\n4.37.0.1\n737f711b7f32c0728ebb90d74e5e38aa0044f6e5ca98c9a63415b2ba7886829b\npermanently_read_only_verified\nwrite_locked_verified_gototags_readback\natlas-approved-report-f8215-v1\n2026-09-08T12:00:00.000Z"
+}

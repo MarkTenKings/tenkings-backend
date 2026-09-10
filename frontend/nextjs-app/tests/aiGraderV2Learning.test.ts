@@ -78,6 +78,7 @@ test("one global bank is injected into every detect request and updated in compl
     `${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action.ts`,
     "utf8",
   );
+  const reviewDependencies = readFileSync(`${root}/lib/server/speedsterReviewDependencies.ts`, "utf8");
   const completion = readFileSync(
     `${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/complete-label.ts`,
     "utf8",
@@ -86,10 +87,11 @@ test("one global bank is injected into every detect request and updated in compl
   assert.match(schema, /model AiGraderV2LearningBank/);
   assert.match(migration, /CREATE TABLE "AiGraderV2LearningBank"/);
   assert.doesNotMatch(migration, /\bUPDATE\b|\bDELETE\b/i);
-  assert.match(reviewAction, /speedsterLearningBankForDetectRequest/);
-  assert.match(reviewAction, /learningBankForDetect:/);
-  assert.match(reviewAction, /return fetchSpeedsterDetectUpstream\(body/);
-  assert.match(reviewAction, /options\.serviceUrl\.replace[\s\S]+\/detect/);
+  assert.match(reviewAction, /createSpeedsterReviewDependencies\(prisma\)/);
+  assert.match(reviewDependencies, /speedsterLearningBankForDetectRequest/);
+  assert.match(reviewDependencies, /learningBankForDetect:/);
+  assert.match(reviewDependencies, /return fetchSpeedsterDetectUpstream\(body/);
+  assert.match(reviewDependencies, /options\.serviceUrl\.replace[\s\S]+\/detect/);
   assert.match(completion, /dispatchSpeedsterLearningBank/);
   assert.match(completion, /updateSpeedsterLearningBank\(learningBank\.bank, completedReview\.reviewedDefects\)/);
 });

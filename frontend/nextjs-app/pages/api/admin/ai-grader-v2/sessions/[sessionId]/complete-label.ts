@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { resolvePersistedSpeedsterPreparationCapture } from "../../../../../../lib/server/speedsterPreparationCaptureEvidence";
 import { createCardFromSpeedster, prisma, type Prisma } from "@tenkings/database";
 import { z } from "zod";
 import {
@@ -35,7 +36,7 @@ import {
   parsePersistedSpeedsterReviewFindings,
   parseSpeedsterReviewFindings,
 } from "../../../../../../lib/ai-grader-v2/review-findings";
-import type { SpeedsterCenteringBorders } from "../../../../../../lib/ai-grader-v2/scoring";
+import { speedsterCenteringFromConfirmedQuad } from "../../../../../../lib/server/speedsterCenteringAuthority";
 import {
   insertSpeedsterInstrumentationEvents,
   speedsterFindingFinalEvents,
@@ -81,6 +82,7 @@ const identitySchema = z
 
 type CompletionSession = {
   id: string;
+  createdByUserId?: string;
   cardProfile: string;
   workflowState: string;
   publicReportSlug: string | null;
@@ -122,20 +124,21 @@ const optional = (value: string | null | undefined) => value?.trim() || null;
 const record = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
-function serverOwnedReview(session: CompletionSession) {
-  const capture = record(session.capture);
+export function serverOwnedReview(session: CompletionSession) {
+  const capture = record(session.createdByUserId
+    ? resolvePersistedSpeedsterPreparationCapture({ ...session, createdByUserId: session.createdByUserId, capture: session.capture }).capture
+    : session.capture);
+  if (capture?.preparationEvidenceCanonical && !session.createdByUserId) throw new HttpError(409, "Prepared capture owner is unavailable");
   const front = record(capture?.front);
   const back = record(capture?.back);
-  const frontBorders = record(front?.centeringBorders);
-  const backBorders = record(back?.centeringBorders);
   const persistedGrade = record(session.gradeReport);
-  if (!frontBorders || !backBorders || typeof persistedGrade?.detectorVersion !== "string") {
+  if (!front || !back || typeof persistedGrade?.detectorVersion !== "string") {
     throw new HttpError(409, "Speedster server-owned review state is incomplete");
   }
   const defects = completeSpeedsterReview(parsePersistedSpeedsterReviewFindings(session.reviewedDefects));
   const review = calculateSpeedsterReview({
-    front: { centeringBorders: frontBorders as SpeedsterCenteringBorders },
-    back: { centeringBorders: backBorders as SpeedsterCenteringBorders },
+    front: { centeringBorders: speedsterCenteringFromConfirmedQuad(front.centeringQuad, "FRONT") },
+    back: { centeringBorders: speedsterCenteringFromConfirmedQuad(back.centeringQuad, "BACK") },
   }, defects);
   return {
     reviewedDefects: publicSpeedsterDefects(review.defects),
@@ -232,6 +235,7 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
       where: { id: input.sessionId, createdByUserId: input.createdByUserId },
       select: {
         id: true,
+        createdByUserId: true,
         cardProfile: true,
         workflowState: true,
         publicReportSlug: true,

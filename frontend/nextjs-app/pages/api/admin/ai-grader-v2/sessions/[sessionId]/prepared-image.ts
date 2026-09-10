@@ -4,8 +4,11 @@ import type { SpeedsterCardSide } from "../../../../../../lib/ai-grader-v2/contr
 import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
 import { headStorageObject, presignReadUrl } from "../../../../../../lib/server/storage";
 import { isAuthorizedSpeedsterRectifiedStorageKey } from "../../../../../../lib/server/aiGraderV2IphoneCapture";
+import { authorizeSpeedsterPreparationArtifactRead } from "../../../../../../lib/server/speedsterPreparationReads";
+import { SpeedsterPreparationConflict } from "../../../../../../lib/server/speedsterPreparationIntegrity";
 
 type Dependencies = {
+  authorizeArtifactRead?: typeof authorizeSpeedsterPreparationArtifactRead;
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
   findOwnedSession: (sessionId: string, createdByUserId: string) => Promise<{ id: string } | null>;
   headPreparedObject: (storageKey: string) => Promise<{ byteSize?: number; contentType?: string }>;
@@ -13,6 +16,7 @@ type Dependencies = {
 };
 
 const dependencies: Dependencies = {
+  authorizeArtifactRead: authorizeSpeedsterPreparationArtifactRead,
   requireAdminSession,
   findOwnedSession: (sessionId, createdByUserId) => prisma.aiGraderV2Session.findFirst({
     where: { id: sessionId, createdByUserId },
@@ -57,12 +61,12 @@ export function createSpeedsterPreparedImageHandler(deps: Dependencies = depende
         : req.query.storageKey;
       if (!sessionId) return res.status(400).json({ message: "Invalid Speedster session ID" });
       if (!side) return res.status(400).json({ message: "Card side must be FRONT or BACK" });
-      if (typeof requestedStorageKey !== "string" || !isAuthorizedSpeedsterRectifiedStorageKey({
+      if (typeof requestedStorageKey !== "string" || (!isAuthorizedSpeedsterRectifiedStorageKey({
         storageKey: requestedStorageKey,
         userId: admin.user.id,
         sessionId,
         side,
-      })) return res.status(400).json({ message: "Prepared image storage key is invalid" });
+      }) && !await deps.authorizeArtifactRead?.({ sessionId, createdByUserId: admin.user.id, side }, requestedStorageKey))) return res.status(400).json({ message: "Prepared image storage key is invalid" });
       const session = await deps.findOwnedSession(sessionId, admin.user.id);
       if (!session) return res.status(404).json({ message: "Speedster session not found" });
 
@@ -86,6 +90,7 @@ export function createSpeedsterPreparedImageHandler(deps: Dependencies = depende
         imageUrl: await deps.presignRead(storageKey),
       });
     } catch (error) {
+      if (error instanceof SpeedsterPreparationConflict) return res.status(409).json({ message: error.message });
       const response = toErrorResponse(error);
       return res.status(response.status).json({ message: response.message });
     }

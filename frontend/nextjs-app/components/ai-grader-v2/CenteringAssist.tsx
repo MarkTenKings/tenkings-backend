@@ -96,12 +96,16 @@ export function CenteringAssist({
   const imageReady = loadedImageIdentity === imageIdentity && !imageRefreshError;
   const measurements = useMemo(() => {
     if (!innerQuad) return null;
-    const borders = measureSpeedsterCenteringBorders(innerQuad);
-    return {
-      borders,
-      horizontal: calculateCenteringBalance(borders.leftMm, borders.rightMm),
-      vertical: calculateCenteringBalance(borders.topMm, borders.bottomMm),
-    };
+    try {
+      const borders = measureSpeedsterCenteringBorders(innerQuad);
+      return {
+        borders,
+        horizontal: calculateCenteringBalance(borders.leftMm, borders.rightMm),
+        vertical: calculateCenteringBalance(borders.topMm, borders.bottomMm),
+      };
+    } catch {
+      return null;
+    }
   }, [innerQuad]);
 
   const moveHandle = (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -295,7 +299,9 @@ export function CenteringAssist({
                 <span>TOP / BOTTOM</span>
                 <strong>{balance(measurements.vertical)}</strong>
               </div>
-            </div></> : <p role="status">Place all four printed-frame corners before measurements are calculated.</p>}
+            </div></> : <p role="status">{innerQuad
+              ? "Adjust the printed-frame corners to form a valid frame with measurable borders on both axes."
+              : "Place all four printed-frame corners before measurements are calculated."}</p>}
             {manualError ? <p role="alert">{manualError}</p> : null}
             {!innerQuad && manualPoints.length > 0 ? (
               <button type="button" disabled={disabled} onClick={() => {

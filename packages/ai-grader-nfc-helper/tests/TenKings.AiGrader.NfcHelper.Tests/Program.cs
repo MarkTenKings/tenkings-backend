@@ -26,6 +26,8 @@ var tests = new (string Name, Func<Task> Run)[]
     ("operational attestation canonical signing and tamper", TestAttestation),
     ("multi-profile attestation canonical signing and tamper", TestMultiProfileAttestation),
     ("Ten Kings V2 signed job and terminal-result contract", TestTenKingsV2Protocol),
+    ("ATLAS signed protocol Node interoperability and trust isolation", AtlasProtocolTests.Run),
+    ("ATLAS protected lifecycle and isolated HTTP routes", TestAtlasNfcLifecycle),
     ("Ten Kings V2 protected coordinator and closing recovery", TestTenKingsV2CoordinatorRecovery),
     ("Ten Kings V2 strict loopback HTTP lifecycle", TestTenKingsV2HttpBoundary),
     ("GoToTags terminal callback strict evidence and redaction", TestGoToTagsCallback),
@@ -51,6 +53,7 @@ var passed = 0;
 var skipped = 0;
 var windowsRuntimeTests = new HashSet<string>(StringComparer.Ordinal)
 {
+    "ATLAS protected lifecycle and isolated HTTP routes",
     "Ten Kings V2 protected coordinator and closing recovery",
     "Ten Kings V2 strict loopback HTTP lifecycle",
     "F8215 protected job lifecycle and idempotency",
@@ -83,7 +86,7 @@ Console.WriteLine($"{passed} passed, {skipped} skipped, {failed} failed ({tests.
 if (!OperatingSystem.IsWindows())
 {
     Console.WriteLine(
-        "WINDOWS GATES REQUIRED: rerun all 7 skipped C# runtime groups on Windows, then run " +
+        $"WINDOWS GATES REQUIRED: rerun all {skipped} skipped C# runtime groups on Windows, then run " +
         "scripts/ai-grader-nfc/tests/test-ai-grader-nfc-maintenance.ps1 and " +
         "scripts/ai-grader-nfc/tests/test-ai-grader-nfc-versioned-update.ps1 under Windows PowerShell.");
 }
@@ -343,6 +346,107 @@ static Task TestMultiProfileAttestation()
         CryptographicOperations.ZeroMemory(spki);
     }
     return Task.CompletedTask;
+}
+
+static async Task TestAtlasNfcLifecycle()
+{
+    var root = CreateProtectedTestDirectory();
+    try
+    {
+        var template = Path.Combine(root, "f8215-gototags-manual-start-v1.json");
+        File.Copy(Path.Combine(FindRepoRoot(), "packages", "ai-grader-nfc-helper", "src", "TenKings.AiGrader.NfcHelper", "Templates", "f8215-gototags-manual-start-v1.json"), template);
+        var adapter = new GoToTagsAdapterOptions(Path.Combine(root, "fake.exe"), template, NfcProtocol.ApprovedGoToTagsTemplateSha256, root);
+        File.WriteAllBytes(adapter.ExecutablePath, [0x4d, 0x5a]);
+        using var serverSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var serverSpki = serverSigner.ExportSubjectPublicKeyInfo();
+        using var trust = AtlasServerTrust.Parse(JsonSerializer.Serialize(new
+        {
+            schemaVersion = "atlas-nfc-helper-trust-v1", purpose = AtlasNfcProtocol.Purpose,
+            keys = new { current = new { algorithm = AtlasNfcProtocol.Algorithm, keyId = WorkstationAttestation.KeyId(serverSpki), publicSpkiDerBase64 = Convert.ToBase64String(serverSpki) }, prior = (object?)null }
+        }), Array.Empty<string>());
+        using var workstation = new EphemeralTestWorkstationAttestationSigner();
+        using var gate = new NfcOperationGate();
+        var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
+        var runtime = new FakeGoToTagsRuntime();
+        var port = FreePort();
+        var coordinator = new AtlasNfcCoordinator(adapter, runtime, new GoToTagsOperationFactory(), workstation, gate, trust, port, new CollectingSafeLogger(), clock);
+        using var vector = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(FindRepoRoot(), "packages", "atlas-finishing", "test", "nfc-vector.json")));
+        var job = AtlasNfcProtocol.ParseSignedJobJson(Encoding.UTF8.GetBytes(vector.RootElement.GetProperty("job").GetRawText())) with
+        {
+            SigningKeyId = WorkstationAttestation.KeyId(serverSpki),
+            IssuedAt = WorkstationAttestation.FormatObservedAt(clock.GetUtcNow()),
+            ExpiresAt = WorkstationAttestation.FormatObservedAt(clock.GetUtcNow().AddMinutes(10)),
+        };
+        job = job with { Signature = Base64Url(serverSigner.SignData(Encoding.UTF8.GetBytes(AtlasNfcProtocol.CanonicalJobStatement(job)), HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation)) };
+        Throws("atlas_nfc_fresh_tag_required", () => coordinator.Prepare(new AtlasNfcPrepareRequest(job, false), "fresh_required"));
+        False(gate.Busy);
+        var legacyToken = Base64Url(RandomNumberGenerator.GetBytes(32));
+        var atlasToken = Base64Url(RandomNumberGenerator.GetBytes(32));
+        var options = new NfcHttpServerOptions(port, NfcProtocol.ProductionOrigin, legacyToken, null, DateTimeOffset.MinValue);
+        await using var http = new NfcHttpServer(options, new NfcOperationsService(new FakeNfcReaderBackend(), workstation, operationGate: gate),
+            new CollectingSafeLogger(), atlas: coordinator, atlasToken: atlasToken);
+        using var stop = new CancellationTokenSource();
+        var running = http.RunAsync(stop.Token);
+        try
+        {
+            using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}"), Timeout = TimeSpan.FromSeconds(3) };
+            await WaitHttp(client, running);
+            async Task<HttpStatusCode> Send(string path, string token, string origin, string? json = null)
+            {
+                using var request = Request(json is null ? HttpMethod.Get : HttpMethod.Post, path, token, origin,
+                    json is null ? null : new StringContent(json, Encoding.UTF8, "application/json"));
+                using var response = await client.SendAsync(request);
+                return response.StatusCode;
+            }
+            Equal(HttpStatusCode.OK, await Send("/status", legacyToken, NfcProtocol.ProductionOrigin));
+            Equal(HttpStatusCode.Forbidden, await Send("/atlas/capabilities", atlasToken, NfcProtocol.ProductionOrigin));
+            Equal(HttpStatusCode.Forbidden, await Send("/status", atlasToken, AtlasNfcProtocol.StaffOrigin));
+            Equal(HttpStatusCode.Unauthorized, await Send("/atlas/capabilities", legacyToken, AtlasNfcProtocol.StaffOrigin));
+            Equal(HttpStatusCode.OK, await Send("/atlas/capabilities", atlasToken, AtlasNfcProtocol.StaffOrigin));
+            var jobJson = JsonSerializer.Serialize(job, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Equal(HttpStatusCode.BadRequest, await Send("/atlas/prepare", atlasToken, AtlasNfcProtocol.StaffOrigin, $"{{\"job\":{jobJson},\"freshTagConfirmed\":false}}"));
+            Equal(HttpStatusCode.BadRequest, await Send("/atlas/prepare", atlasToken, AtlasNfcProtocol.StaffOrigin, $"{{\"job\":{jobJson},\"freshTagConfirmed\":true,\"freshTagConfirmed\":true}}"));
+            Equal(HttpStatusCode.BadRequest, await Send("/atlas/prepare", atlasToken, AtlasNfcProtocol.StaffOrigin, $"{{\"job\":{jobJson},\"freshTagConfirmed\":true,\"extra\":true}}"));
+            Equal(HttpStatusCode.OK, await Send("/atlas/prepare", atlasToken, AtlasNfcProtocol.StaffOrigin, $"{{\"job\":{jobJson},\"freshTagConfirmed\":true}}"));
+            var hash = AtlasNfcProtocol.JobEnvelopeSha256(job);
+            Equal("awaiting_manual_start", coordinator.Status(new AtlasNfcStatusRequest(hash)).Phase);
+            True(gate.Busy);
+            var generated = ReadGeneratedOperation(runtime.LaunchedPath!);
+            Equal("ATLAS Approved Report F8215 Job", generated["name"]!.GetValue<string>());
+            var callback = new Uri(generated["integrations"]!.AsArray()[0]!["urlString"]!.GetValue<string>());
+            True(callback.AbsolutePath.StartsWith("/gototags/atlas/callback/", StringComparison.Ordinal));
+            var identity = callback.AbsolutePath.Split('/').Last();
+            var correlation = generated["tags"]!.AsArray()[0]!["encoding"]!["correlationId"]!.GetValue<string>();
+            var badReadback = GoToTagsCallback(correlation, job.Url.Replace("?v=2", "?v=3"));
+            Throws("gototags_url_mismatch", () => coordinator.AcceptCallback(identity, badReadback, "wrong_version"));
+            var uncertain = coordinator.Status(new AtlasNfcStatusRequest(hash));
+            Equal("uncertain", uncertain.Phase); True(uncertain.Result is null);
+            Throws("atlas_nfc_tag_removal_required", () => coordinator.AcknowledgeDiscard(new AtlasNfcDiscardAcknowledgeRequest(hash, uncertain.DiscardAcknowledgementNonce!, "uncertain", false), "not_removed"));
+            True(coordinator.AcknowledgeDiscard(new AtlasNfcDiscardAcknowledgeRequest(hash, uncertain.DiscardAcknowledgementNonce!, "uncertain", true), "discard").Cleaned);
+            False(gate.Busy);
+            coordinator.Prepare(new AtlasNfcPrepareRequest(job, true), "fresh_retry");
+            generated = ReadGeneratedOperation(runtime.LaunchedPath!);
+            identity = new Uri(generated["integrations"]!.AsArray()[0]!["urlString"]!.GetValue<string>()).AbsolutePath.Split('/').Last();
+            correlation = generated["tags"]!.AsArray()[0]!["encoding"]!["correlationId"]!.GetValue<string>();
+            coordinator.AcceptCallback(identity, GoToTagsCallback(correlation, job.Url), "verified_callback");
+            var complete = coordinator.Status(new AtlasNfcStatusRequest(hash));
+            True(complete.Result is not null); Equal("completed", complete.Phase);
+            True(AtlasNfcProtocol.VerifyTerminalResult(complete.Result!, job, workstation.ExportPublicSpki()));
+            Throws("gototags_callback_replayed", () => coordinator.AcceptCallback(identity, GoToTagsCallback(correlation, job.Url), "replay"));
+            var persisted = File.ReadAllText(Path.Combine(root, AtlasNfcCoordinator.StateFileName));
+            False(persisted.Contains("04112233445566", StringComparison.OrdinalIgnoreCase));
+            // Startup recovers the exact signed result using a new synthetic gate, never a new write.
+            using var recoveryGate = new NfcOperationGate();
+            var recovered = new AtlasNfcCoordinator(adapter, new FakeGoToTagsRuntime(), new GoToTagsOperationFactory(), workstation,
+                recoveryGate, trust, port, new CollectingSafeLogger(), clock);
+            Equal(complete.Result, recovered.Status(new AtlasNfcStatusRequest(hash)).Result);
+            Throws("atlas_nfc_tag_removal_required", () => recovered.AcknowledgeSuccess(new AtlasNfcSuccessAcknowledgeRequest(hash, false), "not_removed"));
+            True(recovered.AcknowledgeSuccess(new AtlasNfcSuccessAcknowledgeRequest(hash, true), "recorded_removed").Cleaned);
+            False(File.Exists(Path.Combine(root, AtlasNfcCoordinator.StateFileName))); False(recoveryGate.Busy);
+        }
+        finally { stop.Cancel(); http.Stop(); await running; }
+    }
+    finally { Directory.Delete(root, true); }
 }
 
 static Task TestTenKingsV2Protocol()

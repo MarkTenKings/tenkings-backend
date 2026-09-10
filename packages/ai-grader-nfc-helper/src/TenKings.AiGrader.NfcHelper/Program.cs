@@ -39,6 +39,22 @@ internal static class Program
                 timeout,
                 operationGate: operationGate);
             var options = NfcHttpServerOptions.FromEnvironment();
+            using var serverTrust = TenKingsV2ServerTrust.FromEnvironment();
+            using var atlasTrust = AtlasServerTrust.FromEnvironment(serverTrust);
+            var atlasOptions = GoToTagsAdapterOptions.FromEnvironment();
+            var atlasToken = Environment.GetEnvironmentVariable("ATLAS_NFC_WORKSTATION_TOKEN");
+            if (atlasTrust.Enabled) NfcHttpServer.ValidateAtlasToken(atlasToken, options.WorkstationToken);
+            if (atlasOptions.IsConfigured)
+            {
+                var stateCount = new[] { AtlasNfcCoordinator.V1StateFileName, TenKingsV2NfcCoordinator.StateFileName, AtlasNfcCoordinator.StateFileName }
+                    .Count(name => File.Exists(ProtectedJobDirectory.ContainedFile(atlasOptions.JobRoot, name)));
+                if (stateCount > 1)
+                    throw new NfcHelperException("nfc_recovery_conflict", "Multiple protected NFC operations conflict; no state was changed.", false, 503);
+                var atlasState = File.Exists(ProtectedJobDirectory.ContainedFile(atlasOptions.JobRoot, AtlasNfcCoordinator.StateFileName));
+                var atlasTemporary = Directory.EnumerateFiles(atlasOptions.JobRoot, "atlas-state-*.tmp", SearchOption.TopDirectoryOnly).Any();
+                if (atlasTemporary || atlasState && !atlasTrust.Enabled)
+                    throw new NfcHelperException("atlas_nfc_recovery_required", "Protected ATLAS state requires review and its dedicated trust before helper startup.", false, 503);
+            }
             var coordinator = new F8215JobCoordinator(
                 GoToTagsAdapterOptions.FromEnvironment(),
                 new WindowsGoToTagsAdapterRuntime(),
@@ -47,7 +63,6 @@ internal static class Program
                 operationGate,
                 options.Port,
                 logger);
-            using var serverTrust = TenKingsV2ServerTrust.FromEnvironment();
             var tenKingsV2 = new TenKingsV2NfcCoordinator(
                 GoToTagsAdapterOptions.FromEnvironment(),
                 new WindowsGoToTagsAdapterRuntime(),
@@ -57,7 +72,9 @@ internal static class Program
                 serverTrust,
                 options.Port,
                 logger);
-            await using var server = new NfcHttpServer(options, operations, logger, coordinator, tenKingsV2);
+            var atlas = new AtlasNfcCoordinator(atlasOptions, new WindowsGoToTagsAdapterRuntime(),
+                new GoToTagsOperationFactory(), signer, operationGate, atlasTrust, options.Port, logger);
+            await using var server = new NfcHttpServer(options, operations, logger, coordinator, tenKingsV2, atlas, atlasToken);
             using var shutdown = new CancellationTokenSource();
             Console.CancelKeyPress += (_, eventArgs) =>
             {

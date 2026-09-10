@@ -93,6 +93,7 @@ test("SAM Memory decisions reuse deterministic session and side diagnostics", ()
     `${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action.ts`,
     "utf8",
   );
+  const dependencies = readFileSync(`${root}/lib/server/speedsterReviewDependencies.ts`, "utf8");
 
   assert.match(service, /sessionId:\s*input\.sessionId/);
   assert.match(service, /speedsterDetectionOperationId\(\{/);
@@ -100,5 +101,6 @@ test("SAM Memory decisions reuse deterministic session and side diagnostics", ()
   assert.match(service, /requestOperation\s*=\s*recoveryEnabled\s*\?\s*`\$\{operationId\}:\$\{requestNonce\}`\s*:\s*operationId/);
   assert.match(service, /requestTraceId\s*=\s*`\$\{input\.sessionId\}:\$\{request\.side\}:detect:\$\{requestOperation\}:a\$\{attemptNumber\}`/);
   assert.match(service, /learningBank,/);
-  assert.match(route, /speedsterLearningBankForDetectRequest/);
+  assert.match(route, /createSpeedsterReviewDependencies\(prisma\)/);
+  assert.match(dependencies, /learningBankForDetect:\s*\(\) => speedsterLearningBankForDetectRequest\(/);
 });

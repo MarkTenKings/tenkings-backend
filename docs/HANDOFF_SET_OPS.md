@@ -1,5 +1,15 @@
 # Set Ops Handoff (Living)
 
+## ATLAS local implementation checkpoint — September 8, 2026
+
+The owner-approved ATLAS workflow is implemented locally on `codex/atlas-completion-20260908`, including durable phone access/assignments, fresh supervised initialization and bounded Astra review, human report/proposal/identity corrections, exact public approvals, scoped label/NFC/physical finishing, operational recovery and separate trusted-learning decisions pending bank application. The current lead task is `01a08184-52a9-7493-8170-4e2e6b8230bb` in worktree `f4fe`; old lead/worktree `9545` is reporting-only.
+
+Current local evidence: all 128 PostgreSQL scenarios on the original 93 public plus 13 additive staff migrations and both no-op replays; 55 paired-web/restart checks; private/staff/public builds; 70 built-production denials. Original committed migration bytes and grading arithmetic are retained. Detailed evidence and remaining inputs are in [ATLAS completion](atlas/COMPLETION.md) and [local acceptance](atlas/LOCAL_ACCEPTANCE.md).
+
+Mark selected his **MacBook for both ATLAS grading and physical NFC encoding** on September 8, using the same ACS ACR1552U reader and FEIJU F8215 tags. The target removes per-card GoToTags/account/app switching: an armed ATLAS session automatically writes, verifies and locks the approved report URL when a fresh tag is placed. Astra may coordinate approved work; deterministic code controls device operations. Human report approval, physical card association, placement/removal and assembly/welding remain explicit. The first native deliverable is read-only discovery; the full Mac writer, lock qualification and integrated automatic queue are not yet complete. See [Mac NFC rework](atlas/MAC_NFC.md).
+
+This is local source acceptance. The preparation release remains null; no live provider/SMS/worker/NFC, real card, deployment/migration, printing, assembly or welding has run. MacBook browser/actual-host acceptance, separate physical finishing acceptance and the explicitly capped batch of exactly ten real cards remain. Runtime/DB evidence still governs deployed state.
+
 ## Approved Ten Kings V2 Blueprint Authority (2026-08-06)
 
 - Mark approved `docs/specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md` as the canonical product and architecture planning authority for the future Ten Kings V2 card platform.
@@ -12863,6 +12873,10 @@ Build Set Ops UI flow with:
 - Planned handoff action: merge these documentation-only Production results through protected `main`, then verify the ordinary Vercel deployment runs with migrations disabled and becomes healthy. No restart is planned.
 - The full real customer acceptance path still needs the actual authorized phone/account value: record or select one Production clip, assign it as an administrator, receive the exact SMS, authenticate/claim when applicable, and verify owner-only collection/watch/download access.
 
+
+## ATLAS September 9 current status and website target
+
+Owner confirmed phone reading of the Mac-written diagnostic tag. Exact permanent locking and the native finishing bridge/queue remain open. Astra operator has 79 retained passing synthetic tests; no real-card/live-model evaluation has run. The September 9 three-agent website build implements `/admin`, dedicated `/account` phone signup/sign-in, deferred profiles, immutable dealer-drop-off/mail-in submissions, customer tracking and restricted staff receipt/action/shipment operations. All 147 PostgreSQL scenarios, 13 connected HTTP groups and actual Chrome form/navigation/logout checks pass. Three protected Vercel staged production builds are READY at exact source `ce70c574`; 16 hosted application GET checks confirm inactive private routes and zero application cookies. Temporary QA credentials were revoked. The custom apex, real SMS and application database controls are not activated; live grading resources and the same ten-card pilot remain pending. Direct reviewed source uploads avoided the legacy Preview triggers; no branch push or unrelated project change occurred. Canonical blueprint, docs/atlas/WEBSITE_RELEASE.md and WEBSITE_DEPLOYMENT.md describe scope, deployed candidates and activation inputs. See docs/handoffs/SESSION_LOG.md for exact evidence and remaining work.
 
 ## 2026-09-07 — V2 physical inventory evidence source, local candidate
 

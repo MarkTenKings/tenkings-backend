@@ -1,0 +1,1001 @@
+// A separate client and migration history for the atlas_staff schema only.
+// The connection URL must explicitly select ?schema=atlas_staff.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../.generated/staff-database"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("ATLAS_DATABASE_URL")
+}
+
+model StaffControl {
+  id           String   @id @default("active")
+  enabled      Boolean  @default(false)
+  mode         String
+  origin       String
+  deploymentId String
+  releaseSha   String   @db.VarChar(40)
+  configHash   String   @db.VarChar(64)
+  gradingPolicyHash String? @db.VarChar(64)
+  revision     Int      @default(1)
+  updatedAt    DateTime @default(now())
+}
+
+model StaffIdentity {
+  id                  String   @id @default(uuid()) @db.Uuid
+  phoneHash           String   @unique @db.VarChar(64)
+  name                String   @default("Staff member") @db.VarChar(100)
+  role                String   @default("REVIEWER")
+  accessVersion       Int      @default(1)
+  revokedAt           DateTime?
+  certificationUntil  DateTime?
+  trustedLearningUntil DateTime?
+  createdAt           DateTime @default(now())
+  lastLoginAt         DateTime @default(now())
+  sessions            StaffSession[]
+  assignments         StaffAssignment[]
+  operations          StaffOperation[]
+  approvals           StaffReportApproval[]
+}
+
+model StaffBrowser {
+  tokenHash       String   @id @db.VarChar(64)
+  controlRevision Int
+  createdAt       DateTime @default(now())
+  expiresAt       DateTime
+  challenges      StaffChallenge[]
+  sessions        StaffSession[]
+  @@index([expiresAt])
+}
+
+model StaffChallenge {
+  id              String   @id @db.VarChar(43)
+  browserHash     String   @db.VarChar(64)
+  browser         StaffBrowser @relation(fields: [browserHash], references: [tokenHash], onDelete: Restrict)
+  requestId       String   @db.VarChar(80)
+  phoneHash       String   @db.VarChar(64)
+  controlRevision Int
+  accountSid      String   @db.VarChar(34)
+  serviceSid      String   @db.VarChar(34)
+  verificationSid String?  @db.VarChar(34)
+  state           String
+  attempts        Int      @default(0)
+  sendClaimId     String   @unique @db.Uuid
+  checkClaimId    String?  @db.Uuid
+  replayHash      String?  @db.VarChar(64)
+  replayUntil     DateTime?
+  createdAt       DateTime @default(now())
+  expiresAt       DateTime
+  quarantineUntil DateTime
+  consumedAt      DateTime?
+  session         StaffSession?
+  @@unique([browserHash, requestId])
+  @@index([phoneHash, createdAt])
+}
+
+model StaffSession {
+  tokenHash       String   @id @db.VarChar(64)
+  identityId      String   @db.Uuid
+  identity        StaffIdentity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  browserHash     String   @db.VarChar(64)
+  browser         StaffBrowser @relation(fields: [browserHash], references: [tokenHash], onDelete: Restrict)
+  challengeId     String   @unique @db.VarChar(43)
+  challenge       StaffChallenge @relation(fields: [challengeId], references: [id], onDelete: Restrict)
+  controlRevision Int
+  accessVersion   Int
+  createdAt       DateTime @default(now())
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  @@index([identityId, expiresAt])
+}
+
+model StaffRateBucket {
+  key       String   @id @db.VarChar(100)
+  count     Int
+  expiresAt DateTime
+  @@index([expiresAt])
+}
+
+model StaffAudit {
+  id           String   @id @default(uuid()) @db.Uuid
+  event        String   @db.VarChar(60)
+  subjectId    String   @db.VarChar(100)
+  actorId      String?  @db.Uuid
+  details      String   @db.Text
+  createdAt    DateTime @default(now())
+  @@index([subjectId, createdAt])
+}
+
+model StaffSpecimen {
+  id                String   @id @default(uuid()) @db.Uuid
+  sourceType        String
+  sourceId          String   @db.VarChar(128)
+  sourceOwnerId     String?  @db.VarChar(128)
+  title             String   @db.VarChar(200)
+  subtitle          String   @db.VarChar(300)
+  evidenceCanonical String   @db.Text
+  evidenceHash      String   @db.VarChar(64)
+  evidenceRevision  Int      @default(1)
+  draftRevision     Int      @default(1)
+  analysisRevision  Int      @default(0)
+  createdAt         DateTime @default(now())
+  assignments       StaffAssignment[]
+  revisions         StaffReviewRevision[]
+  operations        StaffOperation[]
+  analyses          StaffAnalysisRevision[]
+  gradingOperations StaffGradingOperation[]
+  approvals         StaffReportApproval[]
+  publicReport      StaffPublicReport?
+  @@unique([sourceType, sourceId])
+}
+
+model StaffAssignment {
+  specimenId    String   @db.Uuid
+  specimen      StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  identityId    String   @db.Uuid
+  identity      StaffIdentity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  fence         Int      @default(1)
+  canReview     Boolean  @default(false)
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  @@id([specimenId, identityId])
+  @@index([identityId, expiresAt])
+}
+
+model StaffReviewRevision {
+  specimenId       String   @db.Uuid
+  specimen         StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  revision         Int
+  evidenceRevision Int
+  evidenceHash     String   @db.VarChar(64)
+  contentHash      String   @db.VarChar(64)
+  analysisRevision Int      @default(0)
+  canonical        String   @db.Text
+  savedById        String?  @db.Uuid
+  savedAt          DateTime @default(now())
+  @@id([specimenId, revision])
+}
+
+model StaffOperation {
+  identityId  String   @db.Uuid
+  identity    StaffIdentity @relation(fields: [identityId], references: [id], onDelete: Restrict)
+  operationId String   @db.VarChar(80)
+  specimenId  String   @db.Uuid
+  specimen    StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  inputHash   String   @db.VarChar(64)
+  revision    Int
+  createdAt   DateTime @default(now())
+  @@id([identityId, operationId])
+}
+
+
+model StaffAnalysisRevision {
+  identityCorrectionId String? @unique @db.Uuid
+  operationId       String?  @unique @db.Uuid
+  specimenId        String   @db.Uuid
+  specimen          StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  revision          Int
+  evidenceHash      String   @db.VarChar(64)
+  sourceCanonical   String   @db.Text
+  sourceHash        String   @db.VarChar(64)
+  reportCanonical   String   @db.Text
+  reportHash        String   @db.VarChar(64)
+  admissionCanonical String  @db.Text
+  admissionHash     String   @db.VarChar(64)
+  sourceRevision    String   @db.VarChar(80)
+  mode              String
+  createdAt         DateTime @default(now())
+  @@id([specimenId, revision])
+}
+
+model StaffGradingOperation {
+  id                       String   @id @default(uuid()) @db.Uuid
+  specimenId               String   @db.Uuid
+  specimen                 StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  operationId              String   @db.VarChar(80)
+  actorKind                String
+  actorId                  String   @db.VarChar(100)
+  sessionHash              String?  @db.VarChar(64)
+  assignmentFence          Int?
+  controlRevision          Int
+  evidenceHash             String   @db.VarChar(64)
+  expectedAnalysisRevision Int
+  expectedReviewRevision   Int
+  requestCanonical         String   @db.Text
+  inputHash                String   @db.VarChar(64)
+  state                    String
+  dispatchClaimId          String   @unique @db.Uuid
+  leaseFence               Int
+  leaseExpiresAt           DateTime
+  resultAnalysisRevision   Int?
+  failureCode              String?  @db.VarChar(80)
+  createdAt                DateTime @default(now())
+  dispatchedAt             DateTime?
+  finishedAt               DateTime?
+  @@unique([specimenId, operationId])
+  @@index([specimenId, state])
+}
+
+model StaffReportApproval {
+  id                   String   @id @default(uuid()) @db.Uuid
+  specimenId           String   @db.Uuid
+  specimen             StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  version              Int
+  analysisRevision     Int
+  reviewRevision       Int
+  evidenceHash         String   @db.VarChar(64)
+  analysisHash         String   @db.VarChar(64)
+  reviewHash           String   @db.VarChar(64)
+  publicCanonical      String   @db.Text
+  publicHash           String   @db.VarChar(64)
+  actorId              String   @db.Uuid
+  actor                StaffIdentity @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  sessionHash          String   @db.VarChar(64)
+  accessVersion        Int
+  assignmentFence      Int
+  controlRevision      Int
+  operationId          String   @db.VarChar(80)
+  inputHash            String   @db.VarChar(64)
+  approvedAt           DateTime @default(now())
+  @@unique([specimenId, version])
+  @@unique([actorId, operationId])
+}
+
+model StaffPublicReport {
+  specimenId         String   @id @db.Uuid
+  specimen           StaffSpecimen @relation(fields: [specimenId], references: [id], onDelete: Restrict)
+  publicToken        String   @unique @db.VarChar(40)
+  reportNumber       String   @unique @db.VarChar(24)
+  currentApprovalId  String   @unique @db.Uuid
+  createdAt          DateTime @default(now())
+}
+
+// Operator-owned public deployment activation. No staff serving privileges.
+model PublicReaderControl {
+  id           String @id @default("active")
+  enabled      Boolean @default(false)
+  mode         String
+  origin       String
+  deploymentId String
+  releaseSha   String @db.VarChar(40)
+  configHash   String @db.VarChar(64)
+  revision     Int @default(1)
+  updatedAt    DateTime @default(now())
+}
+
+// Operator-owned release and fixed ten-card budget. Serving roles cannot enable it.
+model StaffGradingBridgeControl {
+  id              String @id @default("active")
+  enabled         Boolean @default(false)
+  mode            String
+  origin          String
+  deploymentId    String
+  releaseSha      String @db.VarChar(40)
+  configHash      String @db.VarChar(64)
+  clientKeyHash   String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  policyCanonical String @db.Text
+  policyHash      String @db.VarChar(64)
+  revision        Int @default(1)
+  updatedAt       DateTime @default(now())
+}
+
+// Only the private adapter can claim execution. Cost reservations stay held
+// until an operator records actual cost evidence, even after a successful run.
+model StaffGradingExecution {
+  operationId           String @id @db.Uuid
+  claimId               String @unique @db.Uuid
+  pilotId               String @db.Uuid
+  bridgeRevision        Int
+  sourceRevision        String @db.VarChar(80)
+  reservedMicroUsd      BigInt
+  actualMicroUsd        BigInt?
+  costEvidenceHash      String? @db.VarChar(64)
+  state                 String
+  failureCode           String? @db.VarChar(80)
+  createdAt             DateTime @default(now())
+  finishedAt            DateTime?
+  @@index([pilotId])
+}
+
+model StaffApprovedImage {
+  approvalId          String @db.Uuid
+  side                String
+  descriptorCanonical String @db.Text
+  descriptorHash      String @db.VarChar(64)
+  @@id([approvalId, side])
+}
+
+model PublicMediaControl {
+  id           String @id @default("active")
+  enabled      Boolean @default(false)
+  mode         String
+  origin       String
+  deploymentId String
+  releaseSha   String @db.VarChar(40)
+  configHash   String @db.VarChar(64)
+  clientKeyHash String @db.VarChar(64)
+  revision     Int @default(1)
+  updatedAt    DateTime @default(now())
+}
+
+model StaffOperatorControl {
+  id                  String @id @default("active")
+  enabled             Boolean @default(false)
+  mode                String
+  releaseSha          String @db.VarChar(40)
+  buildHash           String @db.VarChar(64)
+  configHash          String @db.VarChar(64)
+  providerBindingHash String @db.VarChar(64)
+  policyCanonical     String @db.Text
+  policyHash          String @db.VarChar(64)
+  revision            Int @default(1)
+  updatedAt           DateTime @default(now())
+}
+
+model StaffOperatorRun {
+  phase                    String @default("REPORT_REVIEW")
+  workspaceCardId          String? @db.Uuid
+  captureRunId             String? @unique @db.Uuid
+  controlState             String @default("RUNNING")
+  controlRevision          Int @default(1)
+  executionMode            String @default("CONTINUOUS")
+  stepBudget               Int @default(0)
+  initializationId String? @unique @db.Uuid
+  id                       String @id @db.Uuid
+  specimenId               String? @db.Uuid
+  pilotId                  String @db.Uuid
+  evidenceHash             String @db.VarChar(64)
+  policyHash               String @db.VarChar(64)
+  policyCanonical          String @db.Text
+  runtimeHash              String @db.VarChar(64)
+  gradingPolicyHash        String @db.VarChar(64)
+  manifestCanonical        String @db.Text
+  manifestHash             String @db.VarChar(64)
+  expectedAnalysisRevision Int
+  expectedReviewRevision   Int
+  revision                 Int @default(1)
+  state                    String @default("QUEUED")
+  inputCanonical           String @db.Text
+  inputHash                String @db.VarChar(64)
+  leaseOwner               String? @db.Uuid
+  leaseFence               Int @default(0)
+  leaseMode                String?
+  leaseExpiresAt           DateTime?
+  summary                  String? @db.VarChar(1000)
+  failureCode              String? @db.VarChar(80)
+  deadlineAt               DateTime
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @default(now())
+  @@index([pilotId, state])
+}
+
+// Workflow metadata points to the original source and immutable upload
+// operation receipts. Image bytes, grades and provider continuations stay in
+// their existing authoritative stores.
+model StaffWorkspaceControl {
+  id                 String @id @default("active")
+  enabled            Boolean @default(false)
+  mode               String
+  releaseSha         String @db.VarChar(40)
+  configHash         String @db.VarChar(64)
+  cohortId           String @db.Uuid
+  maxCards           Int @default(10)
+  intakeEnabled      Boolean @default(false)
+  claimsEnabled      Boolean @default(false)
+  preparationEnabled Boolean @default(false)
+  astraEnabled       Boolean @default(false)
+  processingLimit    Int @default(1)
+  expiresAt          DateTime
+  revision           Int @default(1)
+  updatedAt          DateTime @default(now())
+}
+
+model StaffWorkspaceCard {
+  id                 String @id @db.Uuid
+  creatorId          String @db.Uuid
+  cohortId           String @db.Uuid
+  revision           Int
+  state              String
+  stage              String
+  specimenId         String? @unique @db.Uuid
+  canonical          String @db.Text
+  contentHash        String @db.VarChar(64)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @default(now())
+  @@index([cohortId, state, createdAt])
+}
+
+model StaffWorkspaceOperation {
+  id                 String @id @db.Uuid
+  actorId            String @db.Uuid
+  operationId        String @db.VarChar(80)
+  cardId             String @db.Uuid
+  action             String @db.VarChar(80)
+  inputHash          String @db.VarChar(64)
+  canonical          String @db.Text
+  contentHash        String @db.VarChar(64)
+  createdAt          DateTime @default(now())
+  @@unique([actorId, operationId])
+  @@index([cardId, createdAt])
+}
+
+// Private source execution and fixed infrastructure share the original pilot.
+// Serving credentials cannot read these rows or settle provider costs.
+model StaffWorkspaceSourceControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  sourceConfigHash String @db.VarChar(64)
+  sourceDeploymentId String @db.VarChar(120)
+  sourceReleaseSha String @db.VarChar(40)
+  cohortId String @db.Uuid
+  pilotId String @db.Uuid
+  physicalReserveMicroUsd BigInt
+  preparationReserveMicroUsd BigInt
+  registrationReserveMicroUsd BigInt @default(0)
+  infrastructureReserveMicroUsd BigInt
+  expiresAt DateTime
+  revision Int @default(1)
+  updatedAt DateTime
+}
+
+model StaffWorkspaceInfrastructureReservation {
+  id String @id @db.Uuid
+  pilotId String @db.Uuid
+  sourceConfigHash String @db.VarChar(64)
+  reservedMicroUsd BigInt
+  actualMicroUsd BigInt?
+  costEvidenceHash String? @db.VarChar(64)
+  createdAt DateTime
+  expiresAt DateTime
+  @@unique([pilotId, sourceConfigHash])
+}
+
+model StaffWorkspaceSourceOperation {
+  id String @id @db.Uuid
+  requestId String @db.Uuid
+  cardId String @db.Uuid
+  cohortId String @db.Uuid
+  pilotId String @db.Uuid
+  purpose String
+  side String
+  sourceConfigHash String @db.VarChar(64)
+  sourceControlRevision Int
+  bindingCanonical String @db.Text
+  bindingHash String @db.VarChar(64)
+  requestCanonical String @db.Text
+  requestHash String @db.VarChar(64)
+  runId String? @db.Uuid
+  runControlRevision Int?
+  gradingExecutionId String? @db.Uuid
+  state String
+  reservedMicroUsd BigInt
+  actualMicroUsd BigInt?
+  costEvidenceHash String? @db.VarChar(64)
+  resultCanonical String? @db.Text
+  resultHash String? @db.VarChar(64)
+  failureCode String? @db.VarChar(80)
+  createdAt DateTime
+  dispatchedAt DateTime?
+  finishedAt DateTime?
+  @@unique([requestId, purpose, side])
+  @@index([pilotId, cardId])
+  @@index([runId, state])
+}
+
+model StaffWorkspaceSourceActionPermit {
+  requestId String @id @db.Uuid
+  cardId String @db.Uuid
+  runId String @db.Uuid
+  runRevision Int
+  runControlRevision Int
+  claimFence Int
+  captureHash String @db.VarChar(64)
+  selectionStepId String @db.Uuid
+  selectionResultHash String @db.VarChar(64)
+  mode String
+  state String
+  createdAt DateTime
+  finishedAt DateTime?
+}
+
+model StaffWorkspaceSourceAdmission {
+  requestId String @id @db.Uuid
+  cardId String @unique @db.Uuid
+  specimenId String @unique @db.Uuid
+  sourceType String
+  sourceId String @db.VarChar(128)
+  sourceOwnerId String @db.VarChar(128)
+  sourceRevision String @db.VarChar(80)
+  sourceHash String @db.VarChar(64)
+  evidenceCanonical String @db.Text
+  evidenceHash String @db.VarChar(64)
+  admissionCanonical String @db.Text
+  admissionHash String @db.VarChar(64)
+  sourceConfigHash String @db.VarChar(64)
+  actorKind String
+  actorId String @db.Uuid
+  sessionHash String? @db.VarChar(64)
+  accessVersion Int
+  createdAt DateTime
+}
+
+model StaffOperatorAttempt {
+  id                      String @id @db.Uuid
+  runId                   String @db.Uuid
+  ordinal                 Int
+  runRevision             Int
+  leaseFence              Int
+  dispatchClaimId         String @unique @db.Uuid
+  requestCanonical        String @db.Text
+  requestHash             String @db.VarChar(64)
+  providerBindingHash     String @db.VarChar(64)
+  reservedMicroUsd        BigInt
+  usageCeilingMicroUsd     BigInt?
+  usageEnvelopeExceeded   Boolean @default(false)
+  actualMicroUsd          BigInt?
+  costEvidenceHash        String? @db.VarChar(64)
+  state                   String @default("RESERVED")
+  resultReceiptId         String? @unique @db.Uuid
+  createdAt               DateTime @default(now())
+  dispatchedAt            DateTime?
+  finishedAt              DateTime?
+  @@unique([runId, ordinal])
+}
+
+model StaffOperatorReceipt {
+  id         String @id @db.Uuid
+  attemptId  String @db.Uuid
+  canonical  String @db.Text
+  hash       String @db.VarChar(64)
+  createdAt  DateTime @default(now())
+  @@unique([attemptId, hash])
+}
+
+model StaffOperatorStep {
+  id                       String @id @db.Uuid
+  runId                    String @db.Uuid
+  attemptId                String @db.Uuid
+  revision                 Int
+  callId                   String @db.VarChar(160)
+  toolName                 String @db.VarChar(80)
+  requestCanonical         String @db.Text
+  requestHash              String @db.VarChar(64)
+  resultCanonical          String @db.Text
+  resultHash               String @db.VarChar(64)
+  nextInputHash            String @db.VarChar(64)
+  createdAt                DateTime @default(now())
+  @@unique([runId, revision])
+  @@unique([runId, callId])
+  @@unique([attemptId])
+}
+
+model StaffOperatorOutbox {
+  id          String @id @db.Uuid
+  runId       String @db.Uuid
+  revision    Int
+  type        String
+  payload     String @db.Text
+  payloadHash String @db.VarChar(64)
+  state       String @default("PENDING")
+  claimOwner  String? @db.Uuid
+  claimFence  Int @default(0)
+  claimUntil  DateTime?
+  deliveredAt DateTime?
+  createdAt   DateTime @default(now())
+  @@unique([runId, revision, type])
+}
+
+model StaffOperatorImage {
+  imageId String @id @db.Uuid
+  runId String @db.Uuid
+  stepId String @db.Uuid
+  canonical String @db.Text
+  hash String @db.VarChar(64)
+  createdAt DateTime @default(now())
+}
+model StaffOperatorImageDelivery {
+  attemptId String @db.Uuid
+  imageId String @db.Uuid
+  requestHash String @db.VarChar(64)
+  lineageHash String @db.VarChar(64)
+  createdAt DateTime @default(now())
+  @@id([attemptId,imageId])
+}
+model StaffOperatorImageControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  origin String
+  deploymentId String
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  clientKeyHash String @db.VarChar(64)
+  revision Int @default(1)
+  updatedAt DateTime @default(now())
+}
+model StaffProposalDecision {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  stepId String @db.Uuid
+  analysisRevision Int
+  analysisHash String @db.VarChar(64)
+  evidenceHash String @db.VarChar(64)
+  decision String
+  reason String @db.VarChar(1000)
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.Uuid
+  inputHash String @db.VarChar(64)
+  createdAt DateTime @default(now())
+  @@unique([stepId,analysisRevision])
+  @@unique([actorId,operationId])
+}
+
+model StaffOperationsGrant {
+  id String @id @db.Uuid
+  identityId String @db.Uuid
+  accessVersion Int
+  controlRevision Int
+  mode String
+  origin String
+  deploymentId String
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  authorizationEvidenceHash String @db.VarChar(64)
+  createdAt DateTime
+  expiresAt DateTime
+  revokedAt DateTime?
+  @@index([identityId], map: "StaffOperationsGrant_identity_idx")
+}
+model StaffIntakeControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  origin String
+  deploymentId String
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  clientKeyHash String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  revision Int @default(1)
+  updatedAt DateTime @default(now())
+}
+model StaffSourceAdmission {
+  id String @id @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  operationsGrantId String @db.Uuid
+  controlRevision Int
+  sourceType String
+  sourceId String @db.VarChar(128)
+  sourceOwnerId String @db.VarChar(128)
+  sourceRevision String @db.VarChar(80)
+  title String @db.VarChar(200)
+  subtitle String @db.VarChar(300)
+  evidenceCanonical String @db.Text
+  evidenceHash String @db.VarChar(64)
+  admissionCanonical String @db.Text
+  admissionHash String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  bridgeConfigHash String @db.VarChar(64)
+  createdAt DateTime
+  expiresAt DateTime
+  @@index([actorId,sessionHash,operationsGrantId,sourceType,sourceId,sourceOwnerId,createdAt], map: "StaffSourceAdmission_scope_idx")
+}
+
+model StaffMachineInitialization {
+  workspaceSourceRequestId String? @unique @db.Uuid
+  admissionKind String @default("HUMAN_OPERATIONS")
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  pilotId String @db.Uuid
+  gradingOperationId String @unique @db.Uuid
+  runtimeHash String @db.VarChar(64)
+  evidenceHash String @db.VarChar(64)
+  operatorPolicyHash String @db.VarChar(64)
+  bridgePolicyHash String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  sourceHash String @db.VarChar(64)
+  sourceRevision String @db.VarChar(80)
+  expectedAnalysisRevision Int
+  expectedReviewRevision Int
+  controlRevision Int
+  operatorRevision Int
+  bridgeRevision Int
+  admittedById String @db.Uuid
+  admittedSessionHash String? @db.VarChar(64)
+  admittedAccessVersion Int
+  operationsGrantId String? @db.Uuid
+  admissionReason String @db.VarChar(500)
+  authorizationEvidenceHash String @db.VarChar(64)
+  deadlineAt DateTime
+  createdAt DateTime
+  dispatchedAt DateTime?
+  finishedAt DateTime?
+  state String
+  failureCode String? @db.VarChar(80)
+  @@index([specimenId,state], map: "StaffMachineInitialization_specimen_state_idx")
+}
+
+model StaffNfcControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  origin String
+  deploymentId String
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  signingKeyHash String @db.VarChar(64)
+  trustHash String @db.VarChar(64)
+  revision Int @default(1)
+  updatedAt DateTime @default(now())
+}
+
+model StaffLabelIssue {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.VarChar(80)
+  inputHash String @db.VarChar(64)
+  createdAt DateTime
+  labelCanonical String @db.Text
+  labelHash String @db.VarChar(64)
+  @@unique([id,specimenId,approvalId])
+  @@unique([actorId,operationId])
+  @@index([specimenId,createdAt,id], map: "StaffLabelIssue_specimen_created_idx")
+}
+
+model StaffNfcJob {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.VarChar(80)
+  inputHash String @db.VarChar(64)
+  createdAt DateTime
+  labelIssueId String @db.Uuid
+  jobCanonical String @db.Text
+  jobHash String @db.VarChar(64)
+  jobEnvelopeSha256 String @unique @db.VarChar(64)
+  bindingHash String @db.VarChar(64)
+  expiresAt DateTime
+  nfcConfigHash String @db.VarChar(64)
+  nfcControlRevision Int
+  @@unique([id,specimenId,approvalId])
+  @@unique([actorId,operationId])
+  @@index([specimenId,createdAt,id], map: "StaffNfcJob_specimen_created_idx")
+}
+
+model StaffNfcVerification {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.VarChar(80)
+  inputHash String @db.VarChar(64)
+  createdAt DateTime
+  jobId String @unique @db.Uuid
+  resultCanonical String @db.Text
+  resultHash String @unique @db.VarChar(64)
+  readbackPayloadSha256 String @db.VarChar(64)
+  workstationKeyId String @db.VarChar(64)
+  observedAt DateTime
+  nfcConfigHash String @db.VarChar(64)
+  nfcControlRevision Int
+  @@unique([id,specimenId,approvalId])
+  @@unique([actorId,operationId])
+  @@index([specimenId,createdAt,id], map: "StaffNfcVerification_specimen_created_idx")
+}
+
+model StaffPhysicalFinish {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.VarChar(80)
+  inputHash String @db.VarChar(64)
+  createdAt DateTime
+  labelIssueId String @db.Uuid
+  verificationId String @db.Uuid
+  stage String
+  assemblyId String? @db.Uuid
+  physicalConfirmedAt DateTime
+  @@unique([labelIssueId,verificationId,stage])
+  @@unique([id,specimenId,approvalId,labelIssueId,verificationId])
+  @@unique([id,specimenId,approvalId])
+  @@unique([actorId,operationId])
+  @@index([specimenId,createdAt,id], map: "StaffPhysicalFinish_specimen_created_idx")
+}
+
+model StaffOperationalResolution {
+  id String @id @db.Uuid
+  kind String
+  recordId String @db.Uuid
+  specimenId String @db.Uuid
+  pilotId String @db.Uuid
+  operationId String @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  controlRevision Int
+  operationsGrantId String @db.Uuid
+  inputHash String @db.VarChar(64)
+  bindingHash String @db.VarChar(64)
+  sourceEvidenceHash String @db.VarChar(64)
+  evidenceHash String @db.VarChar(64)
+  reason String @db.VarChar(500)
+  createdAt DateTime
+  @@unique([actorId,operationId])
+  @@unique([kind,recordId])
+  @@index([specimenId,sourceEvidenceHash], map: "StaffOperationalResolution_evidence_idx")
+}
+
+model StaffLearningControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  origin String
+  deploymentId String @db.VarChar(120)
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  clientKeyHash String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  phoneAllowlistHash String @db.VarChar(64)
+  revision Int @default(1)
+  updatedAt DateTime @default(now())
+}
+
+model StaffLearningCandidates {
+  id String @id @db.Uuid
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  analysisRevision Int
+  reviewRevision Int
+  evidenceHash String @db.VarChar(64)
+  analysisHash String @db.VarChar(64)
+  reviewHash String @db.VarChar(64)
+  sourceRevision String @db.VarChar(80)
+  sourceType String
+  sourceId String @db.VarChar(128)
+  sourceOwnerId String @db.VarChar(128)
+  rawFindingsHash String @db.VarChar(64)
+  generatorVersion String @db.VarChar(80)
+  fingerprintVersion String @db.VarChar(160)
+  gradingPolicyHash String @db.VarChar(64)
+  bridgeConfigHash String @db.VarChar(64)
+  candidateCanonical String @db.Text
+  candidateHash String @db.VarChar(64)
+  bundleHash String @db.VarChar(64)
+  createdAt DateTime
+  expiresAt DateTime
+  @@unique([id,specimenId,approvalId])
+  @@index([actorId,sessionHash,specimenId,approvalId,createdAt], map: "StaffLearningCandidates_scope_idx")
+}
+
+model StaffTrustedLearningDecision {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  approvalId String @db.Uuid
+  candidatesId String @db.Uuid
+  bundleHash String @db.VarChar(64)
+  rawFindingsHash String @db.VarChar(64)
+  analysisRevision Int
+  reviewRevision Int
+  evidenceHash String @db.VarChar(64)
+  analysisHash String @db.VarChar(64)
+  reviewHash String @db.VarChar(64)
+  sourceRevision String @db.VarChar(80)
+  actorId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  operationId String @db.VarChar(80)
+  inputHash String @db.VarChar(64)
+  decisionCanonical String @db.Text
+  decisionHash String @db.VarChar(64)
+  status String
+  createdAt DateTime
+  @@unique([actorId,operationId])
+  @@index([specimenId,createdAt,id], map: "StaffTrustedLearningDecision_specimen_created_idx")
+}
+
+
+model StaffIdentityCorrectionControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  origin String
+  deploymentId String @db.VarChar(120)
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  clientKeyHash String @db.VarChar(64)
+  gradingPolicyHash String @db.VarChar(64)
+  phoneAllowlistHash String @db.VarChar(64)
+  revision Int @default(1)
+  updatedAt DateTime @default(now())
+}
+
+model StaffIdentityCorrection {
+  id String @id @db.Uuid
+  specimenId String @db.Uuid
+  actorId String @db.Uuid
+  operationId String @db.Uuid
+  sessionHash String @db.VarChar(64)
+  browserHash String @db.VarChar(64)
+  accessVersion Int
+  assignmentFence Int
+  controlRevision Int
+  correctionControlRevision Int
+  gradingPolicyHash String @db.VarChar(64)
+  bridgeConfigHash String @db.VarChar(64)
+  requestCanonical String @db.Text
+  inputHash String @db.VarChar(64)
+  sourceType String
+  sourceId String @db.VarChar(128)
+  sourceOwnerId String @db.VarChar(128)
+  expectedAnalysisRevision Int
+  expectedReviewRevision Int
+  expectedEvidenceRevision Int
+  resultAnalysisRevision Int
+  resultReviewRevision Int
+  resultEvidenceRevision Int
+  oldSourceRevision String @db.VarChar(80)
+  newSourceRevision String @db.VarChar(80)
+  oldSourceHash String @db.VarChar(64)
+  newSourceHash String @db.VarChar(64)
+  oldEvidenceHash String @db.VarChar(64)
+  newEvidenceHash String @db.VarChar(64)
+  oldReportHash String @db.VarChar(64)
+  newReportHash String @db.VarChar(64)
+  oldReviewHash String @db.VarChar(64)
+  newReviewHash String @db.VarChar(64)
+  oldAdmissionHash String @db.VarChar(64)
+  oldIdentityCanonical String @db.Text
+  newIdentityCanonical String @db.Text
+  oldEvidenceCanonical String @db.Text
+  newEvidenceCanonical String @db.Text
+  rawSourceCanonical String @db.Text
+  rawSourceHash String @db.VarChar(64)
+  nextRawSourceCanonical String @db.Text
+  nextRawSourceHash String @db.VarChar(64)
+  proofCanonical String @db.Text
+  proofHash String @db.VarChar(64)
+  priorApprovalId String? @db.Uuid
+  createdAt DateTime
+  @@unique([actorId,operationId])
+  @@unique([id,specimenId])
+  @@unique([specimenId,expectedAnalysisRevision])
+  @@index([sourceId,sourceOwnerId,createdAt], map: "StaffIdentityCorrection_source_idx")
+}

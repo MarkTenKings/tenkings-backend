@@ -33,8 +33,12 @@ if ($config.schemaVersion -in @("tenkings-ai-grader-nfc-helper-config-v3", "tenk
 }
 
 try {
-  & dotnet $dll
-  exit $LASTEXITCODE
+  $helperExitCode = Invoke-NfcWithAtlasEnvironment -Config $config -ArgumentList @($dll) -Action {
+    param($helperDll)
+    & dotnet $helperDll | Out-Host
+    return $LASTEXITCODE
+  }
+  exit $helperExitCode
 } finally {
   Remove-Item Env:\TENKINGS_NFC_HELPER_TOKEN -ErrorAction SilentlyContinue
   Remove-Item Env:\TENKINGS_NFC_PAIRING_CODE -ErrorAction SilentlyContinue

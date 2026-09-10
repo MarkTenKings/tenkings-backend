@@ -1,0 +1,24 @@
+{
+  "name": "@atlas/public-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node ../../packages/atlas-grading-core/scripts/build.mjs && node scripts/generate-database.mjs && next build && node scripts/check-boundary.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@atlas/site-router": "workspace:*",
+    "next": "15.5.25",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@prisma/client": "5.22.0",
+    "@atlas/report-view": "workspace:*",
+    "@atlas/grading-core": "workspace:*",
+    "@atlas/service-bridge": "workspace:*"
+  },
+  "devDependencies": {
+    "prisma": "5.22.0",
+    "eslint": "8.57.0",
+    "eslint-config-next": "15.5.25"
+  }
+}

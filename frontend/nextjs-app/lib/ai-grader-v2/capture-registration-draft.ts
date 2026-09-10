@@ -9,6 +9,7 @@ import {
   type SpeedsterMapRegistrationRequestFailure,
 } from "./image-service";
 import { sanitizeSpeedsterUnitQuad } from "./geometry";
+import { parseSpeedsterPreparationReference, type SpeedsterPreparationReference } from "./preparation";
 import { parseSpeedsterInspectionFrame, type SpeedsterInspectionFrame } from "./inspection-frame";
 import type { SpeedsterCenteringBorders } from "./scoring";
 import {
@@ -40,6 +41,7 @@ export type SpeedsterCaptureDraftCorrectedAnchor = Readonly<{
 }>;
 
 type SpeedsterCaptureDraftSideBase = Readonly<{
+  preparation?: SpeedsterPreparationReference;
   originalStorageKey: string;
   corners: SpeedsterQuad;
   automaticGeometry: boolean;
@@ -414,10 +416,13 @@ function sideState(
     ...(version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2 ? colorKeys : []),
   ];
   if (!isRecord(value) || !hasExactKeys(value, requiredKeys, [
+    "preparation",
     "centering",
     "mapRegistration",
     ...(version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2 ? ["physicalGeometryLearning"] : []),
   ])) return null;
+  const preparation = value.preparation === undefined ? undefined : parseSpeedsterPreparationReference(value.preparation);
+  if (value.preparation !== undefined && (!preparation || preparation.sessionId !== sessionId || preparation.side !== side)) return null;
   const corners = quad(value.corners);
   const proposedCentering = value.proposedCentering === null ? null : quad(value.proposedCentering);
   const inspectionFrame = parseSpeedsterInspectionFrame(value.inspectionFrame);
@@ -484,6 +489,7 @@ function sideState(
   }
   return {
     originalStorageKey: value.originalStorageKey as string,
+    ...(preparation ? { preparation } : {}),
     corners,
     automaticGeometry: value.automaticGeometry,
     geometryDiagnostic: value.geometryDiagnostic as SpeedsterCaptureDraftSide["geometryDiagnostic"],
@@ -586,20 +592,25 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     const exactRecaptureGeneration = "recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}";
     const originalGeneration = new RegExp(`/original/(${exactRecaptureGeneration})/${sideName}\\.(?:jpg|png|webp)$`, "i")
       .exec(target.originalStorageKey)?.[1]?.toLowerCase();
-    const preparedGenerations = [
+    const preparedArtifacts = [
       [target.rectifiedStorageKey, "rectified"],
       [target.inspectionStorageKey, "inspection"],
       [target.viewStorageKeys.NORMALIZED, "normalized"],
       [target.viewStorageKeys.MICRO_DEFECT, "micro_defect"],
       [target.viewStorageKeys.DIRECTIONAL, "directional"],
-    ].map(([storageKey, artifact]) => (
+    ];
+    const preparedGenerations = preparedArtifacts.map(([storageKey, artifact]) => (
       new RegExp(`/prepared/${sideName}/(${exactRecaptureGeneration})/${artifact}\\.webp$`, "i")
         .exec(storageKey)?.[1]?.toLowerCase()
     ));
     return unresolvedSides.length > 0
       && SIDES.every((candidate) => unresolvedSides.includes(candidate) !== Boolean(registrations[candidate]))
       && Boolean(originalGeneration)
-      && preparedGenerations.every((generation) => generation === originalGeneration);
+      && (target.preparation ? preparedArtifacts.every(([storageKey, artifact]) => {
+        const reference = target.preparation!;
+        const prefix = `ai-grader-v2/${reference.createdByUserId}/${reference.sessionId}/prepared-evidence/${sideName}/${reference.attemptId}/${artifact}-`;
+        return storageKey.startsWith(prefix) && /^[a-f0-9]{64}\.webp$/.test(storageKey.slice(prefix.length));
+      }) : preparedGenerations.every((generation) => generation === originalGeneration));
   })();
   const loadedCenteringRegistrationIsCoherent = registeredSides.length === 2
     && recordedFailureSides.length === 0
@@ -728,6 +739,7 @@ type PersistedCommittedCapture = Readonly<{
 function committedCaptureSide(side: SpeedsterCaptureDraftSide) {
   if (!side.centering) return null;
   return {
+    ...(side.preparation ? { preparation: side.preparation } : {}),
     originalStorageKey: side.originalStorageKey,
     rectifiedStorageKey: side.rectifiedStorageKey,
     inspectionStorageKey: side.inspectionStorageKey,
@@ -753,7 +765,12 @@ export function speedsterCaptureDraftMatchesCommittedSession(
     || !draft.captureSavePendingRetry) return false;
   const front = committedCaptureSide(draft.front);
   const back = committedCaptureSide(draft.back);
-  if (!front || !back || !sameJsonValue(session.capture, {
+  if (!front || !back || !isRecord(session.capture) || !isRecord(session.capture.front) || !isRecord(session.capture.back)) return false;
+  const project = (persisted: Record<string, unknown>, expected: NonNullable<typeof front>) => Object.fromEntries(
+    Object.keys(expected).map((key) => [key, persisted[key]]),
+  );
+  if ((!draft.front.preparation && session.capture.front.preparation) || (!draft.back.preparation && session.capture.back.preparation)) return false;
+  if (!sameJsonValue({ cornerShape: session.capture.cornerShape, front: project(session.capture.front, front), back: project(session.capture.back, back) }, {
     cornerShape: draft.cornerShape,
     front,
     back,
@@ -762,10 +779,25 @@ export function speedsterCaptureDraftMatchesCommittedSession(
   const frontRegistration = draft.front.mapRegistration;
   const backRegistration = draft.back.mapRegistration;
   if (frontRegistration || backRegistration) {
+    let capturedRegistration = session.mapRegistration;
+    // The authenticated session read includes the exact original capture text.
+    // Use that historical commit for response-loss reconciliation, while keeping
+    // current map columns authoritative for later TRAIN/review operations.
+    if (draft.front.preparation && draft.back.preparation && typeof session.capture.preparationEvidenceCanonical === "string") {
+      try {
+        const evidence = JSON.parse(session.capture.preparationEvidenceCanonical);
+        if (!isRecord(evidence) || evidence.version !== draft.front.preparation.version || evidence.sessionId !== draft.sessionId
+          || evidence.createdByUserId !== draft.front.preparation.createdByUserId
+          || !isRecord(evidence.front) || !isRecord(evidence.back)
+          || !sameJsonValue(parseSpeedsterPreparationReference(evidence.front.reference), draft.front.preparation)
+          || !sameJsonValue(parseSpeedsterPreparationReference(evidence.back.reference), draft.back.preparation)) return false;
+        capturedRegistration = evidence.mapRegistration;
+      } catch { return false; }
+    }
     return Boolean(frontRegistration && backRegistration
       && draft.activeMapRevisionId
       && session.mapRevisionId === draft.activeMapRevisionId
-      && sameJsonValue(session.mapRegistration, {
+      && sameJsonValue(capturedRegistration, {
         front: unsignedRegistration(frontRegistration),
         back: unsignedRegistration(backRegistration),
       }));

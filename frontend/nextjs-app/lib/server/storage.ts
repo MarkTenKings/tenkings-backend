@@ -486,6 +486,7 @@ export async function deleteStoragePrefix(storagePrefix: string): Promise<Storag
 }
 
 export async function writeLocalFile(storageKey: string, data: Buffer) {
+  rejectPreparationEvidenceOverwrite(storageKey);
   const filePath = getLocalFilePath(storageKey);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, data);
@@ -648,6 +649,7 @@ export function publicUrlFor(storageKey: string) {
 }
 
 export async function presignUploadUrl(storageKey: string, contentType: string, options: PresignUploadOptions = {}) {
+  rejectPreparationEvidenceOverwrite(storageKey);
   const client = getS3Client();
   const command = new PutObjectCommand({
     Bucket: s3Bucket,
@@ -694,6 +696,7 @@ export function createPrivateSpeedsterUploadCommand(input: {
   contentType: string;
   checksumSha256?: string;
 }, bucket = s3Bucket) {
+  rejectPreparationEvidenceOverwrite(input.storageKey);
   if (!bucket) throw new Error("CARD_STORAGE_BUCKET must be configured for private Speedster uploads.");
   const storageKey = normalizeStorageKeyCandidate(input.storageKey);
   if (
@@ -838,6 +841,7 @@ export async function uploadBuffer(
   contentType: string,
   options: UploadBufferOptions = {}
 ) {
+  rejectPreparationEvidenceOverwrite(storageKey);
   const mode = getStorageMode();
   if (mode === "s3") {
     const client = getS3Client();
@@ -865,7 +869,9 @@ export function privateChecksumPutObjectCommand(input: Readonly<{
   contentType: string;
   cacheControl?: string;
   checksumSha256: string;
+  ifNoneMatch?: "*";
 }>) {
+  if (input.ifNoneMatch !== "*") rejectPreparationEvidenceOverwrite(input.storageKey);
   return new PutObjectCommand({
     Bucket: input.bucket,
     Key: input.storageKey,
@@ -874,6 +880,7 @@ export function privateChecksumPutObjectCommand(input: Readonly<{
     CacheControl: input.cacheControl,
     ACL: "private",
     ChecksumSHA256: sha256HexToBase64(input.checksumSha256),
+    ...(input.ifNoneMatch ? { IfNoneMatch: input.ifNoneMatch } : {}),
   });
 }
 
@@ -889,6 +896,7 @@ export async function uploadPrivateChecksumBuffer(
     writeLocal?: typeof writeLocalFile;
   }> = {},
 ) {
+  rejectPreparationEvidenceOverwrite(storageKey);
   const normalizedKey = normalizeStorageKeyCandidate(storageKey);
   if (!normalizedKey || normalizedKey !== storageKey) {
     throw new Error("Immutable storage object key is invalid.");
@@ -916,6 +924,59 @@ export async function uploadPrivateChecksumBuffer(
   }
   await (dependencies.writeLocal ?? writeLocalFile)(storageKey, buffer);
   return { storageKey };
+}
+
+/** Reserved namespaces never receive browser/worker writes or overwrite PUTs. */
+function rejectPreparationEvidenceOverwrite(storageKey: string): void {
+  const normalized = normalizeStorageKeyCandidate(storageKey)?.replace(/\\/g, "/");
+  // Local path.join resolves dot segments; guard its actual target as well as
+  // the object key so an alias cannot reach the reserved namespace indirectly.
+  const localKey = path.relative(path.resolve(localRoot), path.resolve(getLocalFilePath(storageKey))).replace(/\\/g, "/");
+  const candidates = [normalized, normalized ? path.posix.normalize(normalized) : null, localKey];
+  if (candidates.some((key) => key && /^ai-grader-v2\/[^/]+\/[^/]+\/(?:source-evidence|prepared-evidence)(?:\/|$)/.test(key))) {
+    throw new Error("Preparation evidence requires the server create-only checksum writer.");
+  }
+}
+
+export async function createPrivatePreparationEvidenceBuffer(
+  storageKey: string,
+  buffer: Buffer,
+  contentType: "image/jpeg" | "image/png" | "image/webp",
+  checksumSha256: string,
+  dependencies: Readonly<{
+    storageMode?: StorageMode;
+    sendS3?: (command: PutObjectCommand) => Promise<unknown>;
+    createLocal?: (storageKey: string, buffer: Buffer) => Promise<unknown>;
+  }> = {},
+): Promise<void> {
+  const prefix = "ai-grader-v2/[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}/[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}";
+  const source = new RegExp(`^${prefix}/source-evidence/([a-f0-9]{64})\\.(jpg|png|webp)$`).exec(storageKey);
+  const artifact = new RegExp(`^${prefix}/prepared-evidence/(?:front|back)/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}/(?:rectified|inspection|normalized|micro_defect|directional)-([a-f0-9]{64})\\.(webp)$`).exec(storageKey);
+  const match = source ?? artifact;
+  const extension = contentType === "image/jpeg" ? "jpg" : contentType.slice("image/".length);
+  if (!match || match[1] !== checksumSha256 || match[2] !== extension
+    || buffer.byteLength < 1 || buffer.byteLength > AI_GRADER_STORAGE_MAX_OBJECT_BYTES
+    || createHash("sha256").update(buffer).digest("hex") !== checksumSha256) {
+    throw new Error("Preparation evidence key, type and exact bytes must agree.");
+  }
+  if ((dependencies.storageMode ?? getStorageMode()) === "s3") {
+    await (dependencies.sendS3 ?? ((command) => getS3Client().send(command)))(privateChecksumPutObjectCommand({
+      bucket: s3Bucket, storageKey, buffer, contentType, checksumSha256,
+      cacheControl: "private, immutable, max-age=31536000", ifNoneMatch: "*",
+    }));
+    return;
+  }
+  await (dependencies.createLocal ?? (async (key, bytes) => {
+    const filePath = getLocalFilePath(key);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, bytes, { flag: "wx", mode: 0o600 });
+  }))(storageKey, buffer);
+}
+
+export function isStorageCreateConflict(error: unknown): boolean {
+  const fields = error as { code?: unknown; name?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  return fields?.code === "EEXIST" || fields?.name === "PreconditionFailed"
+    || fields?.$metadata?.httpStatusCode === 412;
 }
 
 export function isStorageObjectNotFoundError(error: unknown) {
