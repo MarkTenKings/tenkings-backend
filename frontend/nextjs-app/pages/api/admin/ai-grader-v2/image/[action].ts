@@ -1,4 +1,5 @@
-import { prepareSpeedsterSide, loadCurrentSpeedsterPreparation } from "../../../../../lib/server/speedsterPreparationService";
+import { loadCurrentSpeedsterPreparation } from "../../../../../lib/server/speedsterPreparationService";
+import { prepareLegacySpeedsterSide } from "../../../../../lib/server/speedsterPreparationRuntime";
 import { createPrismaSpeedsterPreparationStore } from "../../../../../lib/server/speedsterPreparationStore";
 import { currentSpeedsterPreparationRelease } from "../../../../../lib/server/speedsterPreparationRelease";
 import { SpeedsterPreparationConflict, preparationHash, preparationRequire } from "../../../../../lib/server/speedsterPreparationIntegrity";
@@ -202,6 +203,7 @@ export async function fetchSpeedsterImageUpstream(input: Readonly<{
           headers: input.headers,
           body: input.body,
           signal: controller.signal,
+          ...(input.action === "prepare" ? { redirect: "error" as const } : {}),
         });
         let payload: unknown;
         try {
@@ -1099,14 +1101,12 @@ export async function speedsterServiceBody(
 }
 
 async function prepareRuntime(body: unknown, createdByUserId: string) {
-  return prepareSpeedsterSide(body, createdByUserId, {
+  return prepareLegacySpeedsterSide(body, createdByUserId, {
     store: createPrismaSpeedsterPreparationStore(), approvedRelease: currentSpeedsterPreparationRelease,
     readUrl: presignReadUrl,
     stagingUpload: (storageKey) => presignPrivateSpeedsterUploadUrl({ storageKey, contentType: "image/webp" }),
-    invokeWorker: async (request) => {
-      const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");
-      if (!serviceUrl) throw new Error("AI_GRADER_SPEEDSTER_SERVICE_URL is not configured");
-      const { response, payload } = await fetchSpeedsterImageUpstream({ url: `${serviceUrl}/prepare`, action: "prepare", headers: speedsterServiceHeaders(), body: JSON.stringify(request) });
+    invokeWorker: async (request, transport) => {
+      const { response, payload } = await fetchSpeedsterImageUpstream({ url: `${transport.origin}/prepare`, action: "prepare", headers: transport.headers, body: JSON.stringify(request) });
       return { ok: response.ok, status: response.status, payload };
     },
   });
