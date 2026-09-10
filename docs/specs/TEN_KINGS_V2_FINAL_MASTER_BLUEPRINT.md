@@ -92,7 +92,7 @@ Ten Kings will build a clean V2 card platform beside V1.
 - **The full V2 picture is designed now.** This prevents Speedster from creating another temporary card structure that must be replaced later.
 - **Every real completed Speedster grade becomes the permanent V2 card.** Speedster will not create V1 `CardAsset` or `Item` records.
 - **V1 becomes a frozen supply system, not a deleted system.** It stops creating new cards and packs after cutover, but old customer collections, reports, NFC/QR URLs, Live Rips, shipping rights, and buyback rights continue working.
-- **The V2 card platform starts small:** six new tables for the complete currently approved scope, one write module for lifecycle records, no copied Speedster media, no NFC-tag inventory table, no comps table, and no mutable inventory counters.
+- **The V2 card platform starts small:** six core lifecycle/reference tables plus the narrowly approved physical-evidence journal in Section 3.5, one write module for lifecycle records, no copied Speedster media, no NFC-tag inventory table, no comps table, and no mutable inventory counters.
 
 The execution order is:
 
@@ -167,6 +167,8 @@ Exactly one module, `card-platform-v2`, owns writes to:
 - `PackTypeV2`
 - `PackV2`
 - `ShipmentV2`
+- `CardInventoryEventV2` — the 2026-09-07 physical-evidence amendment below
+- `InventoryWorkflowEventV2` — the September 8 purchased-lot/loading-batch evidence journal below
 
 Every admin page, API route, payment webhook, NFC completion, online machine, DIRECT sale, buyback, and shipping action calls this module. Nothing else writes these tables directly.
 
@@ -265,6 +267,52 @@ The following remain in place unless a later approved blueprint explicitly chang
 
 ---
 
+### 3.5 Owner-approved physical inventory evidence amendment — 2026-09-07
+
+Mark explicitly authorized the complete local build of a durable V2 physical inventory source and read-only Financial Story pull. This is a narrow exception to the prior physical-evidence/build-order deferral; it does not declare Speedster, P1/P2, kiosk automation, or customer commerce accepted. The September 7 pass performed no deployment, production migration, backfill, real inventory write, server restart, commit or push. The subsequent September 8 completion/activation request is recorded in Section 3.6; do not treat the historical local-only scope as a fresh build-permission requirement.
+
+Add one table, `CardInventoryEventV2`, owned exclusively by `packages/database/src/cardPlatformV2.ts`. Its immutable, content-hashed events document opening/acquisition, one-card packing/unpacking, custody movements, successful physical sales, and explicit corrections. A transaction-scoped PostgreSQL lock assigns committed sequence numbers using `MAX + 1`; rollback consumes no number. There is no mutable stock counter. Permanent-card ownership/lifecycle/location projections and any ownership transfer are committed with their physical evidence, with database append-only and projection guards. Existing graded-card, label, report, media, identity-correction, comps, NFC, V1, wallet, and payment code is preserved.
+
+The source accepts exact permanent V2 card IDs, one-card physical pack IDs, acquisition lots/cycles, separately sourced product IDs, and explicit custody evidence. `machine:<external-device-id>` is independent of the existing Location UUID. Multiple devices can occupy one Location and multiple products/batches can occupy one device. Neither identity is inferred from names, prices, grades, market values, recipes, or HAHA/Location resemblance. The launch custody-to-Location binding is immutable; moving the same machine to a new site requires a separately reconciled custody-identity cutover or a later relocation extension, never silent rebinding.
+
+Only house inventory and documented anonymous `EXTERNAL` transfers are included. An operator-recorded sale requires explicit successful-payment and completed-dispatch evidence; this is evidence entry, not payment collection, vend control, fulfilment discovery, or a claim that the source verifies external documents. Refunds document money only. Returns/reacquisitions require sourced house title, and do not initiate TKD/cash buyback. Account-owned vault/shipping cards, V1 stock, aggregate ungraded lots, multi-card packs, shrinkage/loss, customer shipping/buyback/claims, machine hardware identification, NFC check-in, and automatic sale synchronization remain excluded. Physical pack assignment is recorded in this journal; it does not implement or replace `PackV2`/`PackTypeV2` commerce.
+
+Acquisition components preserve permanent identity, lot, acquisition cycle, and exact integer cents or an explicit unknown reason. Price, valuation, expected margin, and recipe targets never become cost. The financial wire format is the strict schema-v1 contract in `tk-financial-story/ledger-core/inventory/contract.ts`; `stock_id` is the originating opening/receipt/pack event ID. Actor, recording time, and global source sequence are server-owned. Export `GET /api/integrations/financial/inventory-events` is authenticated by a separate read-only bearer capability, fixes its high-water snapshot across pages, caps results, and rejects gaps/hash/schema drift. It grants no admin/write access. The financial app pulls outbound; no webhook or financial credential is introduced here.
+
+The implementation/runbook is [V2 physical inventory evidence](V2_PHYSICAL_INVENTORY_EVIDENCE_20260907.md). The exact reviewed SQL is now prepared for publication in Prisma migration `20260907190000_card_inventory_events_v2`, with the original proposal bytes retained for comparison. The purchased-lot journal is prepared as `20260908190000_inventory_workflow_events_v2`. Publication preparation is not production schema activation; release still requires target-environment verification and real machine/product/batch evidence under Mark's September 8 activation authority. Empty history never proves zero stock or complete coverage.
+
+---
+
+### 3.6 Owner-required purchased-lot and machine-batch workflow — 2026-09-08
+
+Mark directs completion of inventory-to-Story costs, inventory controls, connection activation and end-to-end proof. The operational entry point must precede grading: employees receive unprocessed purchases at HQ, then process/pack and deliver stock to machines. Processing state, planned assignment and physical custody are distinct. Purchases are bulk lots of about 500–2,000 cards at one total cost or individual cards at documented individual costs. Intended selling price is separate from acquisition basis and from actual sale proceeds.
+
+Exact fulfilled pack/card identity is not available today; RFID is future. Machine/product sales quantities and stocking times, with explicit vault-door loading assignments, must support loading-batch assessment without fabricating individual card sales. A fully reconciled batch can establish aggregate sold cost; partial mixed-cost consumption and cross-month cost timing remain unknown or explicitly allocated. Prior stock, overlapping loads, returns and removals must be accounted for. No automatic FIFO, valuation-derived cost, target-margin substitution or invented machine mapping is permitted.
+
+This requirement extends the earlier ungraded-lot/build-order deferral, not the permission to rewrite legacy V1 identities, duplicate stock writers, execute machine hardware/payment actions or change grading policy. Reuse appropriate intake/processing UI and identity links while documenting the new acquisition/stock lineage before persistent integration. Full raw receiving, source batch storage/export and guided controls are now implemented and tested in the isolated source candidate; the financial release coordinator records its separate integration and Story coverage proof. Actual release still requires verified compatible artifacts/schema, scoped credentials and the normal applicable checks; isolated tests do not establish real stock completeness.
+
+The persistent implementation is specified in [purchased lots and loading-batch workflow](V2_PURCHASED_LOT_WORKFLOW_20260908.md). It adds one separate append-only `InventoryWorkflowEventV2` journal through the same sole writer. Its intake roster uses durable bookkeeping unit IDs, never fictitious graded cards; optional permanent-card links require the real eligible card, mutually exclusive exact-journal tracking, and exclusion from separate commercial lifecycle changes. Purchases, explicit complete-roster cost assignments and sourced cost corrections, processing, one-card packing, planned reservation, asking price, custody, loading, sales/count observations, returns/refunds and referenced completeness/attribution assertions are immutable evidence. Historical counted stock may establish its actual machine opening without invented prior HQ custody, a load or a zero count; later backdated evidence must preserve complete causal replay. The schema-v2 financial endpoint shares the platform source authority but has its own contiguous sequence and snapshot namespace. Aggregate sales never create identified unit-sale or ownership events. This records implementation scope authorized by the September 8 continuation; compatible release and real physical evidence remain required.
+
+The first acquisition foundation is [the pure cost-assignment preview](V2_ACQUISITION_COST_ASSIGNMENT_20260908.md): unassigned costs, individually documented amounts, or an explicitly chosen cent-conserving equal/per-card allocation. The helper itself neither records purchases nor reserves cost. Its persistent sole-writer integration now atomically binds the accepted lot, complete roster, method/version and evidence; later corrections cite and supersede the exact prior authority rather than duplicating or overwriting a purchase. The full Node 22 candidate production build and scoped disposable source tests pass as recorded in the implementation specification. No live source activation has occurred in this source assignment.
+
+The September 8 completion review also requires a bounded receipt-entry correction: an unused erroneous `purchase_received` may be cancelled by a new sourced `purchase_cancelled` event with original receipt identity and reason. Cancellation preserves the original lot/cycle/roster identities permanently, removes its available holdings and never creates a replacement purchase. Cost/price documentation may precede cancellation; reservation, processing, pack, custody or other physical use prevents it. Historical opening stock and used stock cannot be cancelled through this control. This narrow correction supersedes the local build freeze; source and financial tests and the compatible production build must be repeated before release.
+
+---
+
+### 3.7 Owner-approved held-stock corrections — 2026-09-09
+
+Mark's September 9 financial-completion authority requires usable corrections for known unsold stock already processed or moved. Extend the existing schema-2 `InventoryWorkflowEventV2` journal with additive `stock_corrected` evidence through the same sole `cardPlatformV2.ts` writer. Its payload contains selected `unit_ids`, a complete unique `expected_states` roster of `{unit_id,state_event_id}`, a sourced `reason`, and exactly one `correction`: processing stage/product, one-card pack membership or unpacking, or explicit current HQ/transit custody. The existing event envelope retains evidence, server actor, recording time and source sequence. No table or migration is added.
+
+Only explicitly identified, currently held units outside an active machine batch qualify. Exact latest physical-event anchors and complete causal replay reject stale or backdated corrections. Processing and custody remain separate facts. A packed product correction preserves the current pack; changing pack membership uses the packing variant, and retired pack IDs remain reserved. Receipt/lot/cycle identities, roster quantity, acquisition cents, permanent-card links and all prior evidence remain unchanged. A permanent-card link cannot be demoted below processed. The earlier unused-receipt cancellation remains available under its original restrictions.
+
+Aggregate machine sales cannot establish which card remains held. Loaded or otherwise ambiguous stock must first have actual identified physical removal/return evidence; neither that movement nor an exact sold identity may be invented to enable correction. Custody correction may identify only a sourced `hq:` with an existing Location or named `transit:` destination, preserving immutable custody-to-Location meaning. No HQ, machine, Location, product mapping, acquisition basis or ownership inference is authorized. No new HQ address is created or published by this control.
+
+The existing `/admin/physical-inventory` workspace provides **Correct held stock**, current-state/prior-event review and the ordinary preview/record/exact-retry path. Source and Financial Story independently validate the variant and preserve correction provenance through subsequent loading-batch and Story cost evidence. Both consumers must support the variant before operational use; it neither posts financial transactions nor invents a real pilot. The [holding-correction specification](V2_INVENTORY_HOLDING_CORRECTIONS_20260909.md) records isolated proof and release limits.
+
+The September 8 inventory release is now live: fresh September 9 metadata identifies main `e291263fda444f6147a995132f9aacfac9f8b69d` and READY Vercel deployment `dpl_FJxzTH4CEteY2xuQjADCrzii5zjn` serving `collect.tenkings.co`. This supersedes the earlier sections' historical candidate-only activation status, not their business-evidence boundaries. The September 9 correction candidate is prepared separately for normal exact-head checks and coordinator acceptance; this amendment does not claim it is deployed or that real stock coverage is complete.
+
+---
+
 ## 4. Target System Shape
 
 ```mermaid
@@ -276,7 +324,7 @@ flowchart LR
     D -->|"candidate results only"| E["Completed-card workspace"]
     E -->|"save selection/value"| B
     F["Dell or future NFC workstation"] -->|"signed verified result"| B
-    B --> G["Six V2 tables"]
+    B --> G["Six core V2 tables + physical evidence journal"]
     G --> H["/c/tk2c_... public card page"]
     G --> I["Inventory / packs / DIRECT"]
     J["Stripe and TKD"] -->|"idempotent payment reference"| B
@@ -288,9 +336,9 @@ There is one shared PostgreSQL database and the existing Next.js application. V2
 
 ---
 
-## 5. The Six New V2 Tables
+## 5. The Six Core V2 Tables
 
-The approved system uses six new tables for the complete currently approved V2 scope:
+The approved core system uses six new tables:
 
 1. `CollectibleCardV2`
 2. `CardOwnershipEventV2`
@@ -298,6 +346,8 @@ The approved system uses six new tables for the complete currently approved V2 s
 4. `PackV2`
 5. `CardIdentityCatalogV2`
 6. `ShipmentV2`
+
+Section 3.5 additionally authorizes the append-only `CardInventoryEventV2` physical-evidence journal. It is not an inventory counter, pack-sales engine, or second ownership ledger.
 
 There is intentionally:
 
