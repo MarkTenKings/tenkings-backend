@@ -1,9 +1,9 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Notice } from './Shell';
-import { PhotoPreview, Readiness, StateBadge } from './WorkspaceShared';
+import { OriginalHeicDownload, PhotoPreview, Readiness, StateBadge } from './WorkspaceShared';
 import { createPhotoDraftStore } from '../lib/workspace-drafts.mjs';
-import { canQueue, cardSide, checkedCardResult, freshWorkspaceAccess, isNotDispatched, makePending, operationId, replaceIntakePhoto, uploadIntakeEntry, uploadRejectionMessage, verifiedSide, workspaceCardPath, workspaceMessage, workspaceRequest } from '../lib/workspace-client.mjs';
+import { canQueue, cardSide, checkedCardResult, freshWorkspaceAccess, isNotDispatched, makePending, operationId, PHOTO_ACCEPT, prepareIntakePhoto, replaceIntakePhoto, uploadIntakeEntry, uploadRejectionMessage, verifiedSide, workspaceCardPath, workspaceMessage, workspaceRequest } from '../lib/workspace-client.mjs';
 import { STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { usePendingNavigation } from '../lib/usePendingNavigation';
 import styles from './WorkspaceUi.module.css';
@@ -11,6 +11,8 @@ import styles from './WorkspaceUi.module.css';
 const blankEntry = number => ({ id: operationId(), title: `Card ${number}`, identity: { category: '' }, files: { FRONT: null, BACK: null }, uploads: {}, card: null, pending: null, pairConfirmed: false });
 export default function PhotoIntake({ staff, readiness, savedCards = [], focusCard = null, onCardUpdated }) {
     const entriesRef = useRef([]), store = useRef(null), writeChain = useRef(Promise.resolve()), working = useRef(false);
+    const conversion = useRef(null);
+    useEffect(() => () => conversion.current?.abort(), []);
     const focusedCardRef = useRef(focusCard), focusId = focusCard?.id; focusedCardRef.current = focusCard;
     const [entries, setEntries] = useState([]), [storageReady, setStorageReady] = useState(false), [busyId, setBusyId] = useState(''), [error, setError] = useState(''), [entryError, setEntryError] = useState({}), [progress, setProgress] = useState({}), [saving, setSaving] = useState(false);
     useEffect(() => {
@@ -46,11 +48,21 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
     }
     async function selectFile(id, side, file) {
         if (!file || working.current) return;
+        const entry = entriesRef.current.find(value => value.id === id);
+        if (!entry || entry.pending || entry.card && !['DRAFT', 'NEEDS_ATTENTION'].includes(entry.card.state)) return;
+        working.current = true; setBusyId(id); setEntryError(previous => ({ ...previous, [id]: '' }));
+        const controller = new AbortController(); conversion.current = controller;
         try {
-            const entry = entriesRef.current.find(value => value.id === id);
-            if (entry.pending || entry.card && !['DRAFT', 'NEEDS_ATTENTION'].includes(entry.card.state)) return;
-            await edit(id, replaceIntakePhoto(entry, side, file));
+            const prepared = await prepareIntakePhoto(file, { signal: controller.signal,
+                onProgress: status => setProgress(previous => ({ ...previous, [`${id}:${side}`]: { status, percent: 0 } })) });
+            if (controller.signal.aborted) return;
+            await saveEntry(replaceIntakePhoto(entry, side, prepared.file, prepared));
         } catch (cause) { setEntryError(previous => ({ ...previous, [id]: cause.message })); }
+        finally {
+            if (conversion.current === controller) conversion.current = null;
+            working.current = false; setBusyId('');
+            setProgress(previous => { const next = { ...previous }; delete next[`${id}:${side}`]; return next; });
+        }
     }
     async function uploadOne(id, access) {
         const entry = entriesRef.current.find(value => value.id === id);
@@ -73,6 +85,8 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
         try {
             const result = await workspaceRequest(pending.path, { body: pending.body, csrf: access.csrf });
             const card = checkedCardResult(result, pending);
+            // Release upload copies; retain camera HEIC files and import
+            // provenance in this staff member's local draft after queuing.
             await saveEntry({ ...entry, card, pending: null, files: { FRONT: null, BACK: null } });
         } catch (cause) { if (isNotDispatched(cause)) await saveEntry({ ...entry, pending: null }); throw cause; }
     }
@@ -95,7 +109,7 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
     if (staff.role === 'OBSERVER') return <Notice>This staff account has read-only access. A grader adds and confirms physical-card photographs.</Notice>;
     return <>
         {!focusCard && <><div className={styles.intakeIntro}><div><p className="eyebrow">PHOTO INTAKE</p><h1>Add cards</h1><p className="muted">One physical card, one Front and Back pair. Add all ten fresh-photo cards before grading begins.</p></div><Link href="/grading">View grading queues ↗</Link></div>
-        <div className={styles.intakeExplanation}><span>1 <strong>Choose the photos</strong></span><span>2 <strong>Upload and verify</strong></span><span>3 <strong>Confirm the pair and queue</strong></span><p>Uploading photos saves originals. Grading begins only when a human or Astra claims a ready card.</p></div></>}
+        <div className={styles.intakeExplanation}><span>1 <strong>Choose the photos</strong></span><span>2 <strong>Upload and verify</strong></span><span>3 <strong>Confirm the pair and queue</strong></span><p>Photos are saved securely. HEIC/HEIF photos are imported as full-resolution PNGs. Grading begins only when a human or Astra claims a ready card.</p></div></>}
         {error && <Notice error>{error}</Notice>}
         {!storageReady ? <div className="empty-state" role="status">{error ? 'Photo drafts could not be opened.' : 'Opening saved photo drafts…'}</div> : <>
             {!focusCard && <div className={styles.intakeToolbar}><p>{entries.length} of 10 card slots <span>· {saving ? 'Saving on this browser…' : 'Local photo drafts saved on this browser'}</span></p><div className={styles.actions}><button type="button" disabled={busy || entries.length >= 10} onClick={addCard}>+ Add another card</button><button className="primary" type="button" disabled={busy || !entries.some(entry => entry.files.FRONT || entry.files.BACK)} onClick={() => run(entries.filter(entry => !entry.card || ['DRAFT', 'NEEDS_ATTENTION'].includes(entry.card.state)).map(entry => entry.id))}>{busy ? 'Saving photos…' : 'Upload all selected photos'}</button></div></div>}
@@ -108,7 +122,7 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
                         const selected = entry.files[side], status = progress[`${entry.id}:${side}`], verified = verifiedSide(entry.card, side) && (!selected || entry.uploads[side]?.phase === 'VERIFIED');
                         const rejection = entry.uploads[side]?.phase === 'REJECTED' ? entry.uploads[side].rejection
                             : !selected ? cardSide(entry.card, side)?.rejection : null;
-                        return <div key={side} className={styles.photoSlot}><div className={styles.photoSlotHeading}><strong>{side === 'FRONT' ? 'Front' : 'Back'}</strong><span>{verified ? '✓ Verified' : rejection ? 'Needs replacement' : selected ? 'Selected' : 'Missing'}</span></div><PhotoPreview file={selected} card={entry.card} side={side} className={styles.photoThumb} /><label className={styles.filePicker}>{selected ? 'Replace photograph' : verified ? 'Replace original' : 'Choose photograph'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={locked} onChange={event => { selectFile(entry.id, side, event.target.files?.[0]); event.target.value = ''; }} /></label><small className={styles.filename}>{selected?.name ?? (verified ? 'Original saved securely' : 'JPEG, PNG or WebP · up to 50 MB')}</small>{rejection && <Notice error>{uploadRejectionMessage(rejection.reason)}</Notice>}{busyId === entry.id && status && <div className={styles.uploadProgress} role="status"><progress max="100" value={status.percent} aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} upload progress`} /><span>{status.status}{status.status === 'Uploading' ? ` · ${status.percent}%` : ''}</span></div>}</div>;
+                        return <div key={side} className={styles.photoSlot}><div className={styles.photoSlotHeading}><strong>{side === 'FRONT' ? 'Front' : 'Back'}</strong><span>{verified ? '✓ Verified' : rejection ? 'Needs replacement' : selected ? 'Selected' : 'Missing'}</span></div><PhotoPreview file={selected} card={entry.card} side={side} className={styles.photoThumb} /><label className={styles.filePicker}>{selected ? 'Replace photograph' : verified ? 'Replace original' : 'Choose photograph'}<input type="file" accept={PHOTO_ACCEPT} disabled={locked} onChange={event => { selectFile(entry.id, side, event.target.files?.[0]); event.target.value = ''; }} /></label><small className={styles.filename}>{selected?.name ?? (verified ? 'Original saved securely' : 'HEIC, HEIF, JPEG, PNG or WebP · up to 50 MB')}</small>{entry.photoImports?.[side] && <div className={styles.heicImport}><small>{entry.photoImports[side].width.toLocaleString()} × {entry.photoImports[side].height.toLocaleString()} PNG · {verified ? 'saved securely' : 'ready to upload'}. Original HEIC kept in this browser.</small>{entry.sourceFiles?.[side] && <OriginalHeicDownload file={entry.sourceFiles[side]} />}</div>}{rejection && <Notice error>{uploadRejectionMessage(rejection.reason)}</Notice>}{busyId === entry.id && status && <div className={styles.uploadProgress} role="status"><progress max="100" value={status.percent} aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} upload progress`} /><span>{status.status}{status.status === 'Uploading' ? ` · ${status.percent}%` : ''}</span></div>}</div>;
                     })}</div>
                     {entryError[entry.id] && <Notice error>{entryError[entry.id]}</Notice>}
                     {entry.pending && <div className={styles.recovery}><strong>Saved request awaiting confirmation</strong><p>The same upload or queue request will be recovered.</p><div className={styles.actions}><button type="button" disabled={busy} onClick={() => run([entry.id])}>Recover saved request</button><a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">Sign in in another tab ↗</a></div></div>}

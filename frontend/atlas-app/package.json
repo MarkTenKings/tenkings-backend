@@ -19,7 +19,8 @@
     "@atlas/finishing": "workspace:*",
     "qrcode": "^1.5.4",
     "@atlas/report-view": "workspace:*",
-    "@atlas/service-bridge": "workspace:*"
+    "@atlas/service-bridge": "workspace:*",
+    "libheif-js": "1.23.2"
   },
   "devDependencies": {
     "eslint": "8.57.0",

@@ -117,7 +117,7 @@ test('actual batch intake keeps verified pairs out of the queue until each human
         if (path.endsWith('/queue')) { assert.equal(body.pairConfirmed, true); assert.ok(current.sides.every(value => value.status === 'VERIFIED')); current.state = 'WAITING'; }
         return { card: structuredClone(current), operationId: body.operationId, ...(upload ? { upload } : {}) };
     };
-    vm.runInNewContext(intakeCode, { exports: exported, structuredClone, require(module) {
+    vm.runInNewContext(intakeCode, { exports: exported, structuredClone, AbortController, require(module) {
         if (module === 'react') return react.react;
         if (module === 'next/link') return 'link';
         if (module === './Shell') return { Notice: 'notice' };
@@ -166,7 +166,7 @@ test('photo intake enables explicit reselect after a retained rejection and keep
             pending: unresolved ? { path: `workspace/cards/${rejected.id}/upload-complete`, body: { operationId: randomUUID() } } : null,
             pairConfirmed: false }];
         const back = structuredClone(saved[0].files.BACK);
-        vm.runInNewContext(intakeCode, { exports: exported, structuredClone, require(module) {
+        vm.runInNewContext(intakeCode, { exports: exported, structuredClone, AbortController, require(module) {
             if (module === 'react') return react.react;
             if (module === 'next/link') return 'link';
             if (module === './Shell') return { Notice: 'notice' };

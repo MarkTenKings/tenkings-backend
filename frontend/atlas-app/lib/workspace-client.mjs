@@ -63,11 +63,35 @@ export async function freshWorkspaceAccess(request = workspaceRequest) {
 
 export const PHOTO_MAX_BYTES = 50 * 1024 * 1024;
 const photoTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const heicTypes = new Set(['image/heic', 'image/heif']);
+export const PHOTO_ACCEPT = 'image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif';
+export const isHeicPhoto = file => Boolean(file && (heicTypes.has(file.type?.toLowerCase())
+    || !photoTypes.has(file.type) && /\.hei[cf]$/i.test(file.name ?? '')));
 export function validatePhoto(file) {
-    if (!file || !photoTypes.has(file.type)) throw new Error('Choose a JPEG, PNG or WebP photograph. Export HEIC or TIFF photos to JPEG first.');
+    if (!file || !photoTypes.has(file.type)) throw new Error('Choose a JPEG, PNG or WebP photograph, or import an HEIC/HEIF photo first.');
     if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > PHOTO_MAX_BYTES) throw new Error('Each photograph must be between 1 byte and 50 MB.');
     if (typeof file.name !== 'string' || !file.name.trim() || file.name.length > 240) throw new Error('Choose a photograph with a shorter file name.');
     return file;
+}
+/** HEIC is an explicit import to a PNG grading source. The exact selected
+ * HEIC and local provenance are retained separately, never mislabeled as the
+ * cloud upload. Existing JPEG/PNG/WebP files remain byte-for-byte unchanged. */
+export async function prepareIntakePhoto(file, { convert, signal, onProgress = () => {} } = {}) {
+    if (!isHeicPhoto(file)) return { file: validatePhoto(file), original: null, conversion: null };
+    validatePhoto({ name: file.name, size: file.size, type: 'image/png' });
+    onProgress('Converting HEIC to PNG');
+    const { convertHeicPhoto, HEIC_IMPORT_VERSION } = await import('./heic-import.mjs');
+    const result = await (convert ?? convertHeicPhoto)(file, { signal });
+    if (signal?.aborted) throw new Error('HEIC conversion was cancelled. Your saved photographs are kept.');
+    const imported = new File([result.blob], `${file.name.slice(0, 236)}.png`, { type: 'image/png', lastModified: file.lastModified });
+    validatePhoto(imported);
+    const originalHash = await globalThis.crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+    return { file: imported, original: file, conversion: {
+        version: HEIC_IMPORT_VERSION, originalName: file.name, originalByteCount: file.size,
+        originalSha256: Array.from(new Uint8Array(originalHash), n => n.toString(16).padStart(2, '0')).join(''),
+        width: result.width, height: result.height, colorSpace: result.colorSpace,
+        imported: await describePhoto(imported)
+    } };
 }
 export function uploadRejectionMessage(reason) {
     return reason === 'BYTES_MISMATCH'
@@ -77,11 +101,12 @@ export function uploadRejectionMessage(reason) {
 /** Explicit file selection is the only way to replace a rejected upload. The
  * new plan uses the same card; immutable upload and rejection history stays on
  * the server. An uncertain request must first recover its recorded outcome. */
-export function replaceIntakePhoto(entry, side, file) {
+export function replaceIntakePhoto(entry, side, file, { original = null, conversion = null } = {}) {
     validatePhoto(file);
     if (!['FRONT', 'BACK'].includes(side) || entry.pending
         || entry.card && !['DRAFT', 'NEEDS_ATTENTION'].includes(entry.card.state)) throw new Error('Recover the saved request before replacing a photograph.');
-    return { ...entry, files: { ...entry.files, [side]: file }, uploads: { ...entry.uploads, [side]: null }, pairConfirmed: false };
+    return { ...entry, files: { ...entry.files, [side]: file }, uploads: { ...entry.uploads, [side]: null },
+        sourceFiles: { ...entry.sourceFiles, [side]: original }, photoImports: { ...entry.photoImports, [side]: conversion }, pairConfirmed: false };
 }
 export function checkedUploadRejection(result, pending, entry, side) {
     if (!Object.hasOwn(result, 'uploadResult')) return null;
