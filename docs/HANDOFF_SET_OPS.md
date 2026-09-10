@@ -2,7 +2,7 @@
 
 ## Current ATLAS deployment pointer — September 10, 2026
 
-The active grading work remains in `d221`. CPU/database/role setup is accepted; staff/public B are staged and private startup correction plus successor activation are pending. Current status is in [WEBSITE_RELEASE.md](atlas/WEBSITE_RELEASE.md), with host isolation and Caddy maintenance in [DEPLOY_RUNBOOK.md](runbooks/DEPLOY_RUNBOOK.md). Set Ops behavior is unchanged.
+The active grading work remains in `d221`. Merged C `89478881` passed all 14 PR/main checks and 39 private tests; staff/public C are live for photo intake and the signed private C service is running with all 15 HTTPS/denial checks passed. CPU A2, 95 public/22 staff migrations and the three scoped roles remain accepted. B is stopped and retained under its archival name. StaffControl7/workspace1/source1/STAFF SMS5 are verified; the original timestamp follow-up hold is retained and resolved read-only without SQL replay. All four public aliases point to C, with customer and legacy deployments preserved. Claims, preparation and Astra remain disabled. Final MacBook visual acceptance awaits desktop unlock; ten real photograph pairs, a fresh cost check before the first processed card, null owner reviewer certification and later Mac/NFC finishing remain. Current status is in [WEBSITE_RELEASE.md](atlas/WEBSITE_RELEASE.md), with host isolation and Caddy maintenance in [DEPLOY_RUNBOOK.md](runbooks/DEPLOY_RUNBOOK.md). Set Ops behavior is unchanged.
 
 ## Historical ATLAS local implementation checkpoint — September 8, 2026
 

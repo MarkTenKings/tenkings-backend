@@ -23,9 +23,18 @@ export function PhotoPreview({ file, card, side, className = '', onLoaded }) {
     const url = localUrl || (verifiedSide(card, side) ? originalImagePath(card.id, side) : '');
     return url && !failed ? <img className={className} src={url} alt={`${side === 'FRONT' ? 'Front' : 'Back'} original photograph`} onLoad={onLoaded} onError={() => setFailed(true)} /> : <div className={`${styles.photoEmpty} ${className}`}><span>{side === 'FRONT' ? 'Front' : 'Back'}</span><small>{failed ? 'Preview unavailable. Original upload remains saved.' : cardSide(card, side)?.status === 'PLANNED' ? 'Upload awaiting verification' : 'Add original photograph'}</small></div>;
 }
+export function OriginalHeicDownload({ file }) {
+    const [url, setUrl] = useState('');
+    useEffect(() => {
+        if (!file) { setUrl(''); return; }
+        const value = URL.createObjectURL(file); setUrl(value);
+        return () => URL.revokeObjectURL(value);
+    }, [file]);
+    return url ? <a href={url} download={file.name}>Download original HEIC</a> : null;
+}
 export function OriginalImages({ card }) {
     const [side, setSide] = useState('FRONT'), [zoom, setZoom] = useState(false);
-    return <section className={styles.originals}><div className={styles.panelHeading}><h2>Original photographs</h2><div className={styles.segmented}>{['FRONT', 'BACK'].map(value => <button type="button" key={value} aria-pressed={side === value} onClick={() => { setSide(value); setZoom(false); }}>{value === 'FRONT' ? 'Front' : 'Back'}</button>)}</div></div><div className={`${styles.imageStage} ${zoom ? styles.zoomed : ''}`}><PhotoPreview key={side} card={card} side={side} /></div><div className={styles.panelFooter}><span>{verifiedSide(card, side) ? 'Verified original · retained unchanged' : 'Original awaiting verification'}</span><button type="button" disabled={!verifiedSide(card, side)} onClick={() => setZoom(value => !value)}>{zoom ? 'Fit image' : 'Zoom image'}</button></div></section>;
+    return <section className={styles.originals}><div className={styles.panelHeading}><h2>Source photographs</h2><div className={styles.segmented}>{['FRONT', 'BACK'].map(value => <button type="button" key={value} aria-pressed={side === value} onClick={() => { setSide(value); setZoom(false); }}>{value === 'FRONT' ? 'Front' : 'Back'}</button>)}</div></div><div className={`${styles.imageStage} ${zoom ? styles.zoomed : ''}`}><PhotoPreview key={side} card={card} side={side} /></div><div className={styles.panelFooter}><span>{verifiedSide(card, side) ? 'Verified upload · retained unchanged' : 'Source awaiting verification'}</span><button type="button" disabled={!verifiedSide(card, side)} onClick={() => setZoom(value => !value)}>{zoom ? 'Fit image' : 'Zoom image'}</button></div></section>;
 }
 export function ReportLink({ card, label = 'Open report corrections and approval' }) {
     if (card?.workspace?.reportAccess === false) return <p className={styles.help}>Report review access is not assigned to this staff account.</p>;
