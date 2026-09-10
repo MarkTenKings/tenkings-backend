@@ -10,6 +10,8 @@ The producer checks every bundle input against the current checkout and checks t
 
 The image uses the exact official Linux amd64 Node 20.20.1 Bookworm image `sha256:abc255963bb4311b1f81bf45f2382df39a4041d2a975b1807d05809f1bc21bbe`, including `libc6=2.36-9+deb12u13` and `libssl3=3.0.18-1~deb12u2`. Application files are root-owned, read-only and inventoried; the process runs as UID/GID 65532. Startup verifies the actual Node executable hash (`a03953a7b16bff002b94d6fb58ada900b68241cbcaee6efc400b20dadd36dddc`) and the inventory before importing private or native modules. The shell checks the official Node/Yarn version metadata before removing only those two inert variables. Node loader, native-library, Prisma, OpenSSL, CA and debug overrides are rejected instead of being silently removed.
 
+When dispatch is configured, the operator host checks the original process before either database client connects. Prisma's native TLS initialization can then discover the trusted OS certificate paths without being mistaken for a caller-supplied CA override. Both COORDINATOR and SOURCE privilege checks must complete before the HTTP server is constructed; a later SOURCE failure closes the already constructed operator host.
+
 Build from the repository root using the canonical installed lock versions and Node 20.20.1:
 
 ```sh
@@ -42,7 +44,7 @@ docker run --rm --platform linux/amd64 --network none --read-only \
 
 ## Deployment boundary
 
-This package is a local candidate until its exact committed source, image digest, required checks, provenance/signature and release admission are recorded through the approved release process. The preparation release is currently unadmitted, so packaging and passing smoke tests do not enable preparation or real grading.
+This package is a candidate until its exact committed source, image digest, required checks, provenance/signature and release admission are recorded through the approved release process. CPU preparation release `6b75c9399b83f55cca55045b560c205cbe91920b` is admitted and serving as of September 10, 2026. Private release `fa317960b2f43b2ede298b73a1b565b8c3cfd01a` passed image verification but stopped during runtime startup; its replacement and private HTTPS acceptance remain pending. Packaging and smoke tests alone do not enable preparation or real grading.
 
 A serving container must use a dedicated private Docker network, the configured internal listener (`ATLAS_PRIVATE_LISTEN_HOST=0.0.0.0`, port 8091), a read-only root filesystem, dropped capabilities and no host port publication. The authorized private proxy supplies the external transport boundary. Runtime secrets are injected by the deployment owner through the validated configuration; they are never Docker build arguments, image layers or package inputs.
 

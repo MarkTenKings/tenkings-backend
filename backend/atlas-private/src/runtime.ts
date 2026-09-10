@@ -36,6 +36,15 @@ export async function createPrivateRuntime(env: NodeJS.ProcessEnv) {
     const storageClient = new S3Client({ endpoint: config.storage.endpoint, region: config.storage.region,
         forcePathStyle: true, maxAttempts: 1,
         credentials: { accessKeyId: config.credentials.storageAccessKey, secretAccessKey: config.credentials.storageSecretKey } });
+    async function close() {
+        // Drain operator work before closing its dependencies, while ensuring
+        // one failed cleanup cannot strand either remaining resource.
+        try { await operatorHost?.close(); }
+        finally {
+            try { storageClient.destroy(); }
+            finally { await database.$disconnect(); }
+        }
+    }
     // The original services use callback transactions. Reassert effective role
     // privileges for each transaction, including original source preparation.
     const client = new Proxy(database, { get(target, property) {
@@ -54,6 +63,13 @@ export async function createPrivateRuntime(env: NodeJS.ProcessEnv) {
         const value = Reflect.get(target, property, target); return typeof value === 'function' ? value.bind(target) : value;
     } });
     try {
+        // Check the original process before either Prisma client connects:
+        // native TLS initialization discovers the trusted OS certificate paths
+        // in SSL_CERT_FILE/SSL_CERT_DIR. Both roles still validate before HTTP.
+        operatorHost = await createPrivateOperatorHost({ config, makeClient, currentPeer,
+            onResult: (result: any) => process.stdout.write(JSON.stringify({ service: 'atlas-private-dispatch',
+                runId: result.runId, state: result.state,
+                code: /^(ASTRA|WORKSPACE)_[A-Z0-9_]{1,80}$/.test(result.code ?? '') ? result.code : null }) + '\n') });
         await client.$transaction(async () => {});
         const storage = createAtlasWorkspaceSourceStorage({ client: storageClient, bucket: config.storage.bucket,
             uploadOrigin: config.storage.uploadOrigin });
@@ -114,10 +130,6 @@ export async function createPrivateRuntime(env: NodeJS.ProcessEnv) {
                     sourceConfigHash: config.configHash, config: { ...config.grading, runtimeHash: config.operatorRuntimeHash,
                         staffDeploymentId: staff.deploymentId, staffReleaseSha: staff.releaseSha } }) });
         }
-        operatorHost = await createPrivateOperatorHost({ config, makeClient, currentPeer,
-            onResult: (result: any) => process.stdout.write(JSON.stringify({ service: 'atlas-private-dispatch',
-                runId: result.runId, state: result.state,
-                code: /^(ASTRA|WORKSPACE)_[A-Z0-9_]{1,80}$/.test(result.code ?? '') ? result.code : null }) + '\n') });
         const evidence = new OperatorEvidenceBridge({ client, config: config.image, ports: { ...ports,
             render: renderAtlasOperatorImage,
             loadCapture: async (_tx: unknown, { workspace, originals }: any) => {
@@ -159,6 +171,9 @@ export async function createPrivateRuntime(env: NodeJS.ProcessEnv) {
                 ...(operatorHost ? ['WORKSPACE_DISPATCH'] : [])] };
         return { server: createPrivateServer({ origin: config.origin, routes, health }), health,
             stop() { operatorHost?.stop(); },
-            async close() { await operatorHost?.close(); storageClient.destroy(); await database.$disconnect(); } };
-    } catch (error) { await operatorHost?.close(); storageClient.destroy(); await database.$disconnect(); throw error; }
+            close };
+    } catch (error) {
+        try { await close(); } catch { /* Retain the startup rejection after attempting every cleanup. */ }
+        throw error;
+    }
 }

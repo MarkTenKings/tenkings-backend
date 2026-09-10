@@ -1,8 +1,20 @@
 # ATLAS website release status
 
-Updated September 9, 2026 Pacific after restoring the original homepage and correcting U.S. phone entry. The exact c5ba35fb three-app release is live with enabled owner-only login controls. The corrected durable staff send passes the canonical number to the strict Verify adapter. Mark has now completed fresh staff sign-in on this release: the September10 00:06:06UTC readback confirms a current-revision staff session and the new challenge consumed at00:02:21UTC after one check. The screenshot shows the authenticated empty review queue. Seven retained SMS reservations total $3.50 (staff five/$2.50, customer two/$1); this is reserved exposure, not an invoice. SMS remains capped at $10 within the existing $100 total pilot authorization. Real-card grading and physical finishing remain separate acceptance steps.
+ATLAS deployment checkpoint: September 10, 2026, 11:40 UTC. Main `fa317960b2f43b2ede298b73a1b565b8c3cfd01a` passed all14 release checks. Its staff and public deployments are READY and staged; the public aliases and staff control still serve the prior c5ba35fb website. The new intake/manual/Astra screens are implemented, but their hosted activation is pending.
 
-The live staff portal does not yet provide new-photo card entry or the complete manual/Astra grading workflow. Those screens are unfinished integration work, not a hidden route that the owner needs to find. Mark selected fresh photos for all ten pilot cards and requires observable Astra actions with full human operation/correction; see [the grading workspace plan](GRADING_WORKSPACE.md).
+The signed CPU preparation service is running with verified HTTPS and exact admitted identity. All seven additive migrations and three scoped SOURCE/COORDINATOR/OPERATOR logins are installed and verified:95 public/22 staff migrations,13 historical rollbacks and zero unfinished migrations. Storage, OpenAI access and funded RunPod configuration are prepared. Private B passed image verification, then stopped at its startup process guard because native database TLS discovery populated certificate settings before the later operator check. A narrow startup-order correction and successor release are in progress. No private route, workspace control activation, public promotion or paid grading request has occurred.
+
+| Staged B component | Immutable deployment | State |
+| --- | --- | --- |
+| Staff | `atlas-grading-staff-jllm85caf-ten-kings.vercel.app` / `dpl_73LCpsQJPQGbT8r2iGKXKkBDvF1d` | READY; requires successor binding |
+| Public gateway | `atlas-grading-public-1wa7u3uoh-ten-kings.vercel.app` / `dpl_povXRKUC42kcbyX8kBa5diMKSw6e` | READY; unpromoted |
+| Private service | `atlas-workspace-private-20260910` / image digest `bea3117139844632491dd968d48deab9f71f7613b02b9fda974d00ab03c0d45c` | Stopped before listening; retained for diagnosis |
+
+CPU source remains `6b75c9399b83f55cca55045b560c205cbe91920b`, image digest `5a4f32f12b55a3fd9dce9d768eac11b5e4fa9ede6cbdd89f53df513166a66b90`. Customer remains `dpl_7MatgdikYDyvHuqEvYatyi3kTN67` on c5ba35fb; legacy Ten Kings remains `bf70940849ea9746969d70a25c733c5370d23211` with automatic main deployment held. Exact receipts and subsequent changes are in [SESSION_LOG](../handoffs/SESSION_LOG.md).
+
+Remaining release work is successor private/staff/public verification, private HTTPS acceptance and the guarded intake-only cutover. Then ten fresh Front/Back pairs and current cost/hold reconciliation precede the first supervised card. Claims, preparation and Astra remain inactive. The original seven SMS reservations/$3.50 exposure and $100 total/$10 SMS/$90 worker-model-infrastructure pilot limits remain; balances are not invoices and unknown liabilities stay held. Owner sign-in does not grant trained-reviewer certification. Real grading, human approval and physical finishing have separate acceptance requirements; see [the grading workspace plan](GRADING_WORKSPACE.md).
+
+The website and SMS results below describe the historical c5ba35fb release unless explicitly dated otherwise. Mark completed fresh staff sign-in on that release: the September10 00:06:06UTC readback confirmed a current-revision session and the challenge consumed at00:02:21UTC after one check. The screenshot showed the authenticated empty review queue.
 
 ## Route ownership
 
