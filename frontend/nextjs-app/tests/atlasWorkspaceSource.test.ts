@@ -11,7 +11,7 @@ import { canonicalizeNewSpeedsterSessionIdentity } from '../lib/ai-grader-v2/ide
 import { createAtlasWorkspaceSource, createAtlasWorkspacePhysicalGeometry, createPrismaAtlasWorkspaceSessions,
     type AtlasWorkspaceSourceAuthority, type AtlasWorkspaceGeometryLedger, type AtlasWorkspaceGeometryResult,
     type AtlasAuthorizedWorkspaceSource, type AtlasWorkspaceSourceDependencies, type AtlasWorkspaceSourceRequest } from '../lib/server/atlasWorkspaceSource';
-import { currentSpeedsterPreparationRelease } from '../lib/server/speedsterPreparationRelease';
+import { HttpError } from '../lib/server/adminSessionAuthority';
 import { preparationBytesHash, preparationHash } from '../lib/server/speedsterPreparationIntegrity';
 import { issueSpeedsterColorGeometryReceipt, verifySpeedsterColorGeometryReceipt } from '../lib/server/speedsterColorGeometryAuthority';
 import { savePreparedSpeedsterSessionCapture, validateSpeedsterSubmittedMapBinding } from '../lib/server/speedsterSessionCapture';
@@ -183,12 +183,25 @@ test('workspace source: report lifecycle recovery reads the admitted exact reque
     await assert.rejects(f.service().finalize(f.request), /WORKSPACE_SOURCE_CHANGED/);
 });
 
-test('workspace source: incomplete identity and absent preparation release cannot create a source or spend', async () => {
+test('workspace source: incomplete identity cannot create a source or spend', async () => {
     const f = await fixture(); f.current.card.workspace.identity.playerName = '';
     await assert.rejects(f.service().prepare(f.request)); assert.equal(f.counts().ensured, 0);
-    const g = await fixture(); g.deps.preparation.approvedRelease = currentSpeedsterPreparationRelease;
-    await assert.rejects(g.service().prepare(g.request), /compatible release/);
-    assert.equal(g.counts().ensured + g.counts().workerCalls + g.counts().physicalCalls, 0);
+});
+
+test('workspace source: absent preparation release denies source/storage/grants and all dispatch before durable mutation', async () => {
+    const f = await fixture(), unavailable = new HttpError(503, 'Fixture reviewed preparation authority is unavailable.');
+    let reads = 0, grants = 0, releaseChecks = 0;
+    f.storage.beforeRead = () => { reads++; };
+    f.deps.preparation.stagingUpload = async key => { grants++; return `fixture-put:${key}`; };
+    f.deps.preparation.approvedRelease = () => { releaseChecks++; throw unavailable; };
+    const before = structuredClone({ session: f.store.session, heads: f.store.heads, attempts: f.store.attempts,
+        manifests: f.store.manifests, events: f.store.events, physicalClaims: f.ledgerRows, objects: f.storage.objects });
+    await assert.rejects(f.service().prepare(f.request), error => error === unavailable && unavailable.statusCode === 503);
+    assert.equal(releaseChecks, 1); assert.equal(reads, 0); assert.equal(grants, 0); assert.equal(f.storage.writes.length, 0);
+    const counts = f.counts();
+    assert.equal(counts.ensured + counts.workerCalls + counts.physicalCalls + counts.bridgeCalls + counts.captureWrites, 0);
+    assert.deepEqual(structuredClone({ session: f.store.session, heads: f.store.heads, attempts: f.store.attempts,
+        manifests: f.store.manifests, events: f.store.events, physicalClaims: f.ledgerRows, objects: f.storage.objects }), before);
 });
 
 test('workspace source: original preparation is durable, sides independent, response excludes private proofs and URLs', async () => {
