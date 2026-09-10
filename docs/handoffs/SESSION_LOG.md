@@ -32734,6 +32734,13 @@ By enabling Rip It Live, I confirm:
 - Scoped Codex reviewer verdict: PASS against the eight foundation principles and frozen data model. The changes keep one source writer, immutable actuals, explicit unknowns/provenance, isolated fixtures, privacy boundaries and the accepted deployment hold. No source production migration, deployment, service restart, HQ creation, real inventory event or financial mutation has been performed. Final API guard/build review and the normal release/activation steps remain with the coordinator.
 
 
+## 2026-09-10 — Planned staff inventory production artifact
+
+- Exact release head is branch `codex/staff-inventory-release-20260910`, commit `766aa79b` (`feat: launch staff inventory workspace`), pushed to origin and represented by draft PR #371. Vercel Preview and Preview Comments checks are green for the exact head. The local Node 22 production build and Vercel dry-run file selection both pass; `frontend/nextjs-app/.env.local` is ignored and will be removed after the CLI operation.
+- Under Mark's explicit “make staff inventory usable now” request, publish this reviewed artifact directly to the existing `tenkings-backend-nextjs-app` production project with the existing `main:false` Git deployment hold preserved. The deployment is code-only: `RUN_DB_MIGRATIONS=false`; no Prisma migration, database write, payment, hardware or unrelated ATLAS release is included. Verify the resulting immutable deployment identity, custom alias, route responses and the staff inventory UI before activating the local consumer.
+- If the artifact or alias verification fails, retain the currently serving deployment and stop without creating inventory or location rows. The exact owner-supplied HQ remains a separate post-deployment UI setup action; no address is recorded in this public log.
+
+
 ## 2026-09-10 — Staff inventory API and HQ privacy verification
 
 - Continued the existing staff-inventory candidate under the coordinator's bounded API assignment. Reused the existing mobile admin allowlist, with strict bearer parsing and explicit financial-read/operator-key rejection at the staff, advanced inventory and location mutation boundaries. No new role, credential or auth system was added.
