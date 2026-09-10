@@ -5,7 +5,6 @@ import test from "node:test";
 import type { PrismaClient } from "@prisma/client";
 import sharp from "sharp";
 import { HttpError } from "../lib/server/adminSessionAuthority";
-import { currentSpeedsterPreparationRelease } from "../lib/server/speedsterPreparationRelease";
 import { legacySpeedsterPreparationTransport, prepareLegacySpeedsterSide } from "../lib/server/speedsterPreparationRuntime";
 import { createSpeedsterReviewDependencies } from "../lib/server/speedsterReviewDependencies";
 import { fetchSpeedsterImageUpstream } from "../pages/api/admin/ai-grader-v2/image/[action]";
@@ -110,11 +109,19 @@ test("preparation rejects redirects while other image actions preserve their exi
   }
 });
 
-test("valid CPU settings cannot bypass the currently null reviewed release admission", async () => {
+test("valid CPU settings cannot bypass absent reviewed release authority", async () => {
   const f = await fixture();
+  const unavailable = new HttpError(503, "Fixture reviewed preparation authority is unavailable.");
+  let releaseChecks = 0;
+  const before = structuredClone({ session: f.store.session, heads: f.store.heads, attempts: f.store.attempts,
+    manifests: f.store.manifests, events: f.store.events, objects: f.storage.objects });
   await assert.rejects(prepareLegacySpeedsterSide(f.request, fixturePreparationScope.createdByUserId,
-    { ...f.deps, approvedRelease: currentSpeedsterPreparationRelease }, configuredEnv()), /compatible release/);
-  assert.equal(f.sourceReads(), 0); assert.equal(f.grants(), 0); assert.equal(f.calls.length, 0); assert.equal(f.store.attempts.size, 0);
+    { ...f.deps, approvedRelease: () => { releaseChecks++; throw unavailable; } }, configuredEnv()),
+  (error) => error === unavailable && unavailable.statusCode === 503);
+  assert.equal(releaseChecks, 1); assert.equal(f.sourceReads(), 0); assert.equal(f.grants(), 0); assert.equal(f.calls.length, 0);
+  assert.equal(f.storage.writes.length, 0);
+  assert.deepEqual(structuredClone({ session: f.store.session, heads: f.store.heads, attempts: f.store.attempts,
+    manifests: f.store.manifests, events: f.store.events, objects: f.storage.objects }), before);
 });
 
 test("CPU transport cannot authorize a different worker release identity", async () => {

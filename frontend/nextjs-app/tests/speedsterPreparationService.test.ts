@@ -6,7 +6,7 @@ import { prepareSpeedsterSide, readSpeedsterPreparationStatus, loadCurrentSpeeds
 import { authorizeSpeedsterPreparationArtifactRead, resolveSpeedsterPreparationOriginalRead } from "../lib/server/speedsterPreparationReads";
 import { createSpeedsterPreparationStatusHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/preparation";
 import type { NextApiRequest, NextApiResponse } from "next";
-import { currentSpeedsterPreparationRelease } from "../lib/server/speedsterPreparationRelease";
+import { HttpError } from "../lib/server/adminSessionAuthority";
 import { issueSpeedsterColorGeometryReceipt, verifySpeedsterColorGeometryReceipt } from "../lib/server/speedsterColorGeometryAuthority";
 import { FixturePreparationStorage, FixturePreparationStore, fixturePreparationColor, fixturePreparationIdentity, fixturePreparationInput, fixturePreparationScope, fixturePreparationTransform } from "./fixtures/speedsterPreparation";
 
@@ -125,10 +125,27 @@ test("preparation service: malformed result cannot restore the previous adoption
   assert.ok(f.store.manifests.has(a.preparation.manifestId));
 });
 
-test("preparation service: absent approved release and browser-provided write grants fail before storage/provider work", async () => {
+test("preparation service: absent approved release fails before source reads, grants, dispatch, or durable mutation", async () => {
   const f = await fixture();
-  await assert.rejects(prepareSpeedsterSide(f.request, fixturePreparationScope.createdByUserId, { ...f.deps, approvedRelease: currentSpeedsterPreparationRelease }), /compatible release/);
+  const unavailable = new HttpError(503, "Fixture reviewed preparation authority is unavailable.");
+  let reads = 0, releaseChecks = 0;
+  f.storage.beforeRead = () => { reads++; };
+  const before = structuredClone({ session: f.store.session, heads: f.store.heads, attempts: f.store.attempts,
+    manifests: f.store.manifests, events: f.store.events, objects: f.storage.objects });
+  await assert.rejects(prepareSpeedsterSide(f.request, fixturePreparationScope.createdByUserId, { ...f.deps,
+    approvedRelease: () => { releaseChecks++; throw unavailable; } }), (error) => error === unavailable && unavailable.statusCode === 503);
+  assert.equal(releaseChecks, 1); assert.equal(reads, 0);
+  assert.equal(f.storage.writes.length, 0); assert.equal(f.grants.length, 0); assert.equal(f.calls(), 0); assert.equal(f.receipts(), 0);
+  assert.deepEqual(structuredClone({ session: f.store.session, heads: f.store.heads, attempts: f.store.attempts,
+    manifests: f.store.manifests, events: f.store.events, objects: f.storage.objects }), before);
+});
+
+test("preparation service: browser-provided write grants fail before storage/provider work", async () => {
+  const f = await fixture();
+  let reads = 0;
+  f.storage.beforeRead = () => { reads++; };
   await assert.rejects(prepareSpeedsterSide({ ...f.request, outputUploads: { rectified: "attacker" } }, fixturePreparationScope.createdByUserId, f.deps), /exact request/);
+  assert.equal(reads, 0);
   assert.equal(f.storage.writes.length, 0);
   assert.equal(f.grants.length, 0);
   assert.equal(f.calls(), 0);
