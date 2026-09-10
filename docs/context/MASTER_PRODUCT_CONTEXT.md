@@ -1,5 +1,8 @@
 # Ten Kings Master Product Context
 
+Latest first-card test evidence — September 10, 22:52–22:56 UTC: **IDENTITY_RUN_HELD_PENDING_RECOVERY**. Mark started the verified Charmander. Astra MAX successfully returned two responses; the first `read_original_photos` step was applied at22:47 UTC. After Mark continued, the second response arrived HTTP200/completed at22:50 UTC and requested `inspect_region`. Run `c615d6d6-4b86-4acb-9ecc-1c06601eb576` is now UNKNOWN with `ASTRA_RUNNER_FAILED`, no active lease; attempt `15781e12-f44a-4fad-9826-9842d28f33f5` remains RECEIVED, with its exact response retained. The card remains IN_PROGRESS/IDENTITY, revision8. The current UI incorrectly projects controlState RUNNING over the UNKNOWN run state. Offline inspection confirms the response parses successfully; its requested1900×620 crop is1,178,000 pixels, above the1,048,576 server crop limit, a confirmed incompatibility and likely cause that is not uniquely established by the generic runtime failure. No source-preparation operation exists, no grade or approval has completed, and root performed only read-only diagnosis with no retry/replay or control change. Detailed protected evidence is under `astra-max-20260910/first-live-test/`. This supersedes the earlier pending-sign-in/no-inference checkpoint below.
+
+
 last_verified_at: 2026-08-18
 verified_by: Codex from current code, Production runtime/API/database evidence, the owner-approved atomic FAMILY + EXACT Card Map correction, and the 2026-08-18 Color Geometry release-skew incident evidence, in addition to the retained protected-main and Mathematical Calibration V1 evidence below
 v2_blueprint_approved_at: 2026-08-06
