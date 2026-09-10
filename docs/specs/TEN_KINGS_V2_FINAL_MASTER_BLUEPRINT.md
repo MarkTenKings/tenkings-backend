@@ -72,6 +72,16 @@ After completing live customer SMS sign-in, Mark prioritized entering the ATLAS 
 
 Mark explicitly requested that users not have to type `+1` before a U.S. mobile number. Both sign-in forms should accept the ordinary10-digit number, display U.S. as the default and add `+1` automatically; common phone formatting should resolve to the same canonical number. Preserve explicit international country codes and all existing staff approval, customer identity, rate-limit and spending boundaries. This changes input convenience, not who may sign in or receive pilot SMS.
 
+#### Owner clarification — complete grading workspace and fresh-photo pilot, 2026-09-09 Pacific
+
+After successfully signing back into the live staff workspace, Mark selected **brand-new card photographs for all ten pilot cards**, superseding his earlier answer selecting saved Speedster captures. Do not substitute historical captures for this acceptance cohort. The pilot must exercise adding cards as well as grading and review.
+
+Mark requires the complete grading workflow inside ATLAS, starting with adding Front/Back photos. The human can operate every grading stage personally or let Astra operate while watching the recorded work. Show the inspected images/regions, observations and finding changes, deterministic measurements and report changes, and the current stage. Preserve Astra's original proposals and subsequent human corrections so missed findings and incorrect decisions can be compared during the pilot. Observability means recorded actions and evidence; it does not imply access to private model reasoning or invented progress. Human grading continues to use the existing deterministic scoring and evidence tools.
+
+The live review queue is only one stage of this requested workspace. Existing Speedster capture/geometry/centering screens and ATLAS correction/report tools are implementation sources, not proof that a complete ATLAS workflow is available. The initial Astra runtime has report/crop/proposal tools; capture-stage operation, workflow controls and watchable activity still need implementation and live acceptance. Exact human report approval and separate trusted-learning approval remain unchanged. The product requirements, current gaps and first-card acceptance sequence are recorded in [the grading workspace plan](../atlas/GRADING_WORKSPACE.md).
+
+Mark further clarified that humans supply the physical-card photographs and fill a **waiting-to-be-graded queue at the beginning**. Each queued item is one card with its associated Front/Back photographs. Astra or a human takes a card from that shared intake queue and operates the same grading workflow. The completed draft then enters a **separate final human review queue**. Human photo intake and final human approval are required; manual operation of the middle grading stages is an available choice. Support preparing multiple cards in advance, with visible readiness and current operator ownership. This queue requirement does not imply that Astra can photograph physical cards, certify its own results, or process beyond the admitted pilot/budget.
+
 ---
 
 ## 1. Executive Decision

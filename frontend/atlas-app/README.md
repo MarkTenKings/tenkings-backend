@@ -1,6 +1,8 @@
 # ATLAS staff application
 
-Separate Next.js staff application with phone-code access, assigned review queue, private Front/Back evidence and immutable saved draft history. Production access requires dedicated ATLAS configuration and an enabled database control record bound to the exact release/deployment/configuration. No live provider, database, DNS or deployment has been configured by this work.
+Separate Next.js staff application with phone-code access, assigned review queue, private Front/Back evidence and immutable saved draft history. Production access requires dedicated ATLAS configuration and an enabled database control record bound to the exact release/deployment/configuration.
+
+Current checkpoint, September9,2026 Pacific: the c5ba35fb website release is live with owner-only staff/customer SMS, enabled revision6 access controls, sixteen installed ATLAS migrations and the restored original homepage. The complete new-photo intake queue/manual grading/Astra observation workspace remains unfinished. See [WEBSITE_RELEASE](../../docs/atlas/WEBSITE_RELEASE.md), [COMPLETION](../../docs/atlas/COMPLETION.md), [GRADING_WORKSPACE](../../docs/atlas/GRADING_WORKSPACE.md) and [the fresh lead handoff](../../docs/handoffs/ATLAS_GRADING_FRESH_LEAD_20260909.md). Fixture commands and older test counts below describe local component milestones, not complete current production acceptance.
 
 ## Local previews
 
@@ -52,7 +54,7 @@ node frontend/atlas-app/scripts/validate-postgres.mjs \
 
 Evidence at this milestone: 41 unit checks; 22 real PostgreSQL scenarios using the restricted role; 12 HTTP/SSR checks including an actual app-process restart; 8 built production-denial probes. The build checks actual route manifests, browser chunks and dependency traces. It permits only the app-owned generated database runtime and schema; no broad shared database/auth/wallet/provider SDK is imported. These checks prove software behavior with synthetic evidence, not live message delivery, optical grading quality or physical NFC/slab readiness.
 
-`vercel.json` disables automatic Git deployment in this local app configuration. The exact operational activation process is documented in [STAFF_ACCESS.md](../../docs/atlas/STAFF_ACCESS.md); it has not run. The complete remaining workflow is tracked in [COMPLETION.md](../../docs/atlas/COMPLETION.md).
+`vercel.json` disables automatic Git deployment in this local app configuration. Website activation has now run through the isolated three-project release process in [WEBSITE_DEPLOYMENT.md](../../docs/atlas/WEBSITE_DEPLOYMENT.md); do not repeat first activation or reset the retained SMS pilot. Avoid Git push because unrelated legacy previews have a separate credential hazard. The complete remaining workflow is tracked in [COMPLETION.md](../../docs/atlas/COMPLETION.md).
 
 ## Exact report approval
 

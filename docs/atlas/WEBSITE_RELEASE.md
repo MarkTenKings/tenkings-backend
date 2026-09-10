@@ -1,6 +1,8 @@
 # ATLAS website release status
 
-Updated September 9, 2026 after restoring the original homepage and correcting U.S. phone entry. The exact c5ba35fb three-app release is live with enabled owner-only login controls. Customer and staff SMS sign-ins previously succeeded on acb2e007; release revision changes require fresh sessions. The corrected durable staff send passes the canonical number to the strict Verify adapter. The latest live sign-in outcome is recorded below and in SESSION_LOG. SMS remains capped at $10 within the existing $100 total pilot authorization. Real-card grading and physical finishing remain separate acceptance steps.
+Updated September 9, 2026 Pacific after restoring the original homepage and correcting U.S. phone entry. The exact c5ba35fb three-app release is live with enabled owner-only login controls. The corrected durable staff send passes the canonical number to the strict Verify adapter. Mark has now completed fresh staff sign-in on this release: the September10 00:06:06UTC readback confirms a current-revision staff session and the new challenge consumed at00:02:21UTC after one check. The screenshot shows the authenticated empty review queue. Seven retained SMS reservations total $3.50 (staff five/$2.50, customer two/$1); this is reserved exposure, not an invoice. SMS remains capped at $10 within the existing $100 total pilot authorization. Real-card grading and physical finishing remain separate acceptance steps.
+
+The live staff portal does not yet provide new-photo card entry or the complete manual/Astra grading workflow. Those screens are unfinished integration work, not a hidden route that the owner needs to find. Mark selected fresh photos for all ten pilot cards and requires observable Astra actions with full human operation/correction; see [the grading workspace plan](GRADING_WORKSPACE.md).
 
 ## Route ownership
 
