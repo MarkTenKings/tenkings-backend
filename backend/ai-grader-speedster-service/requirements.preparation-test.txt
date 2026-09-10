@@ -1,0 +1,4 @@
+-r requirements.preparation.txt
+httpx==0.27.2
+httpcore==1.0.9
+sniffio==1.3.1

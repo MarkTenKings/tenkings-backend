@@ -40,7 +40,7 @@ def preparation_identity():
     }
 
 
-def load_preparation_bytes(image_url, image_base64):
+def load_preparation_bytes(image_url, image_base64, *, get=None):
     if image_base64:
         encoded = image_base64.split(",", 1)[-1]
         if len(encoded) > 4 * ((MAX_BYTES + 2) // 3):
@@ -49,7 +49,7 @@ def load_preparation_bytes(image_url, image_base64):
     elif image_url:
         chunks = []
         received = 0
-        with requests.get(image_url, timeout=(10, 20), stream=True) as response:
+        with (get or requests.get)(image_url, timeout=(10, 20), stream=True) as response:
             response.raise_for_status()
             declared = response.headers.get("Content-Length")
             if declared and (not declared.isdigit() or int(declared) > MAX_BYTES):
