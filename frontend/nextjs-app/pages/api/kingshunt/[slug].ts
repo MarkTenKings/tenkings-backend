@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { getKingsHuntLocationBySlug } from "../../../lib/server/kingsHunt";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  res.setHeader("Cache-Control", "private, no-store");
   if (req.method !== "GET") {
     return res.status(405).json({ message: "Method not allowed" });
   }

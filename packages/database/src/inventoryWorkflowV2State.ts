@@ -4,6 +4,7 @@ import { canonical, WorkflowEventInputV2, type WorkflowCommandV2, type WorkflowE
 
 type Event<K extends WorkflowEventV2['event_kind']> = Extract<WorkflowEventV2, { event_kind: K }>;
 export type WorkflowUnitV2 = {
+  description?: import('./inventoryWorkflowV2').InventoryItemDescription; description_event_id?: string;
   unit_id: string; lot_id: string; receipt_event_id: string; stage: 'unprocessed' | 'processing' | 'processed' | 'packed';
   product_id: string | null; pack_id: string | null; permanent_card_id: string | null;
   custody: { custody_id: string; location_id: string | null }; reservation: { custody_id: string; location_id: string | null } | null;
@@ -65,7 +66,7 @@ export function workflowPurchaseCancellationBlockV2(state: WorkflowStateV2, lotI
   if (state.cancellations.has(lotId)) return 'This purchase receipt is already cancelled';
   const ids = new Set(receipt.data.unit_ids);
   for (const row of state.events.values()) {
-    if (['purchase_received', 'cost_assigned', 'purchase_cost_documented', 'price_set'].includes(row.event_kind)) continue;
+    if (['purchase_received', 'cost_assigned', 'purchase_cost_documented', 'price_set', 'item_described'].includes(row.event_kind)) continue;
     if ('lot_id' in row.data && row.data.lot_id === lotId ||
       'unit_ids' in row.data && row.data.unit_ids?.some(id => ids.has(id)) ||
       row.event_kind === 'packed' && row.data.packs.some(p => ids.has(p.unit_id)) ||
@@ -107,7 +108,7 @@ export function applyWorkflowEventV2(state: WorkflowStateV2, supplied: WorkflowE
       if (state.lots.has(d.lot_id) || [...state.lots.values()].some(l => l.data.acquisition_cycle_id === d.acquisition_cycle_id)) conflict('Lot or acquisition cycle is already received');
       if (d.unit_ids.length !== d.quantity || d.unit_ids.some(id => state.receivedUnitIds.has(id))) conflict('Receipt requires a complete new unique roster');
       if (d.total_cost_cents === null ? d.unknown_reason === null : d.unknown_reason !== null) conflict('Unknown total requires a reason; known total cannot carry an unknown reason');
-      if (e.event_kind === 'purchase_received' && (!d.custody.custody_id.startsWith('hq:') || d.custody.location_id === null)) conflict('New purchases must be received as unprocessed HQ stock at an existing Location');
+      if (e.event_kind === 'purchase_received' && (! /^(hq|store|kiosk):/.test(d.custody.custody_id) || d.custody.location_id === null)) conflict('New purchases need an actual receiving HQ, store or kiosk location');
       bind(state, d.custody); state.lots.set(d.lot_id, e); state.costAuthorities.set(d.lot_id, e);
       for (const unit_id of d.unit_ids) { state.receivedUnitIds.add(unit_id); state.units.set(unit_id, { unit_id, lot_id: d.lot_id, receipt_event_id: e.source_event_id, stage: 'unprocessed', product_id: null, pack_id: null, permanent_card_id: null, custody: { ...d.custody }, reservation: null, intended_sale_price_cents: null, price_event_id: null, cost: null, cost_event_id: null, batch_id: null, possession: 'recorded', state_event_id: e.source_event_id }); }
       if (e.event_kind === 'opening_stock_recorded') {
@@ -212,6 +213,9 @@ export function applyWorkflowEventV2(state: WorkflowStateV2, supplied: WorkflowE
       for (const u of units) u.reservation = e.data.destination ? { ...e.data.destination } : null;
       break;
     }
+    case 'item_described':
+      for (const u of selected(state, e.data.unit_ids)) { u.description = { ...e.data.description }; u.description_event_id = e.source_event_id; }
+      break;
     case 'price_set':
       for (const u of selected(state, e.data.unit_ids)) { u.intended_sale_price_cents = e.data.intended_sale_price_cents; u.price_event_id = e.source_event_id; }
       break;

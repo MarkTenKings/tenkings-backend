@@ -1,3 +1,4 @@
+import { StaffInventoryCommandV2, buildStaffInventoryCommandsV2, staffInventoryProofV2 } from './staffInventoryV2';
 import { randomBytes } from "crypto";
 
 import { Prisma } from "@prisma/client";
@@ -1835,4 +1836,37 @@ export async function recordInventoryWorkflowEventV2(
   const [persisted] = await tx.$queryRaw<WorkflowRowV2[]>(Prisma.sql`SELECT * FROM "InventoryWorkflowEventV2" WHERE "id" = ${id}`);
   if (!persisted || canonical(verifyWorkflowRowV2(persisted)) !== text) throw new CardInventoryErrorV2('INTEGRITY', 'Workflow evidence was not stored exactly');
   return { outcome: 'RECORDED', request_id: command.request_id, event, impact };
+}
+
+/** One staff save is one transaction, including receipt, cost, description and price. */
+export async function recordStaffInventoryV2(tx: CardPlatformV2Transaction, input: unknown, adminId: string) {
+  const parsed = StaffInventoryCommandV2.safeParse(input);
+  if (!parsed.success) throw new CardInventoryErrorV2('INVALID_INPUT', parsed.error.issues[0].message);
+  const actor = requireAdminText(adminId, 'Authenticated inventory admin');
+  if (actor.length > 200) throw new CardInventoryErrorV2('INVALID_INPUT', 'Admin identity is too long');
+  const d = parsed.data, id = workflowEventIdV2(`staff:${d.request_id}:0`);
+  await tx.$queryRaw(Prisma.sql`SELECT true AS locked FROM pg_advisory_xact_lock(20260907, 4201)`);
+  await tx.$queryRaw(Prisma.sql`SELECT true AS locked FROM pg_advisory_xact_lock(20260908, 4201)`);
+  const [existing] = await tx.$queryRaw<WorkflowRowV2[]>(Prisma.sql`SELECT * FROM "InventoryWorkflowEventV2" WHERE "id" = ${id}`);
+  if (existing) {
+    const first = verifyWorkflowRowV2(existing).event;
+    if (first.recorded_by !== actor || first.evidence_ref !== staffInventoryProofV2(d)) throw new CardInventoryErrorV2('CONFLICT', 'This saved request belongs to different inventory details. Restore the original request before retrying.');
+    // The advanced event path shares this journal. A matching first step alone
+    // cannot establish that the entire staff save committed. Rebuild from the
+    // original accepted history so later moves or edits do not change a retry.
+    const history = await readWorkflowHistoryV2(tx);
+    const original = replayWorkflowEventsV2(history.filter(e => e.source_sequence < first.source_sequence));
+    const commands = buildStaffInventoryCommandsV2(d, original).map(parseWorkflowCommandV2);
+    const rows = await tx.$queryRaw<WorkflowRowV2[]>(Prisma.sql`SELECT * FROM "InventoryWorkflowEventV2" WHERE "id" IN (${Prisma.join(commands.map(c => workflowEventIdV2(c.request_id)))})`);
+    const byId = new Map(rows.map(row => [row.id, row]));
+    for (const [index, command] of commands.entries()) {
+      const row = byId.get(workflowEventIdV2(command.request_id));
+      if (!row || row.requestHash !== inventoryHash({ command, actor }) || verifyWorkflowRowV2(row).event.source_sequence !== first.source_sequence + index) throw new CardInventoryErrorV2('INTEGRITY', 'Saved staff inventory request is incomplete or differs from its original steps');
+    }
+    return { outcome: 'REPLAY' as const, request_id: d.request_id };
+  }
+  const state = replayWorkflowEventsV2(await readWorkflowHistoryV2(tx));
+  const commands = buildStaffInventoryCommandsV2(d, state);
+  for (const command of commands) await recordInventoryWorkflowEventV2(tx, command, actor);
+  return { outcome: 'RECORDED' as const, request_id: d.request_id };
 }

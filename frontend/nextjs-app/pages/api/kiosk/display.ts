@@ -6,6 +6,7 @@ import {
   serializeKioskSession,
 } from "../../../lib/server/kioskSession";
 import { ensureFreshKioskSession } from "../../../lib/server/kioskSessionLifecycle";
+import { isInternalLocation } from "../../../lib/locationVisibility";
 
 const querySchema = z.object({
   locationId: z.string().min(1).optional(),
@@ -21,6 +22,7 @@ const DISPLAY_DB_MAX_RETRIES = Number(process.env.KIOSK_DISPLAY_DB_RETRIES ?? 2)
 const DISPLAY_DB_RETRY_DELAY_MS = Number(process.env.KIOSK_DISPLAY_DB_RETRY_DELAY_MS ?? 750);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  res.setHeader("Cache-Control", "private, no-store");
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
     return res.status(405).json({ message: "Method not allowed" });
@@ -35,10 +37,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       const location = await prisma.location.findFirst({
         where: locationId ? { id: locationId } : { slug: slug! },
-        select: { id: true, name: true, slug: true },
+        select: { id: true, name: true, slug: true, locationType: true, locationStatus: true },
       });
 
-      if (!location) {
+      if (!location || isInternalLocation(location)) {
         return res.status(404).json({ message: "Location not found" });
       }
 
@@ -56,7 +58,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       return res.status(200).json({
-        location,
+        location: { id: location.id, name: location.name, slug: location.slug },
         session: session ? serializeKioskSession(session) : null,
       });
     } catch (error) {

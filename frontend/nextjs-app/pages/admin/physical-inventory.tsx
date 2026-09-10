@@ -1,5 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import AppShell from "../../components/AppShell";
 import InventoryWorkflowWorkspace from "../../components/admin/InventoryWorkflowWorkspace";
@@ -27,6 +28,12 @@ const actionDescriptions: Record<PhysicalInventoryAction, string> = {
   return: "Record the exact original sold card or one-card pack physically returning to house custody. Its original acquisition cost and cycle stay attached.",
   refund: "Record an already completed money refund against its original sale. Physical return is captured separately; this record changes no stock or acquisition cost.",
 };
+
+// Keep the staff workspace as a client-only route. Besides avoiding the cost of
+// loading its dense workspace bundle for the legacy evidence views, this keeps
+// the page module safe for the lightweight Node regression tests that exercise
+// the exact-record workspace without a CSS loader.
+const StaffInventoryWorkspace = dynamic(() => import("../../components/admin/StaffInventoryWorkspace"), { ssr: false });
 
 function Field({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
   return <label className="block text-sm font-medium text-white/85">{label}{children}{help && <span className="mt-1.5 block text-xs font-normal leading-5 text-white/55">{help}</span>}</label>;
@@ -340,7 +347,8 @@ export function PhysicalInventoryWorkspace({ token, adminId }: { token: string; 
 
 export default function PhysicalInventoryPage() {
   const { session, loading, ensureSession } = useSession();
-  const [inventoryMode, setInventoryMode] = useState<"workflow" | "exact">("workflow");
+  const [inventoryMode, setInventoryMode] = useState<"staff" | "workflow" | "exact">("staff");
   const isAdmin = hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone);
-  return <AppShell background="black" hideFooter><Head><title>Physical inventory | Ten Kings</title><meta name="robots" content="noindex,nofollow" /></Head>{loading ? <p className="p-8 text-white/65">Loading admin session…</p> : !session ? <div className="p-8"><button className={buttonClass} onClick={() => void ensureSession()}>Sign in to physical inventory</button></div> : !isAdmin ? <p className="p-8 text-white/65">Human admin access is required.</p> : <div className="mx-auto max-w-7xl space-y-5 px-4 py-8"><nav className="flex flex-wrap gap-3"><Link href="/admin" className={buttonClass}>Admin home</Link><button className={buttonClass} onClick={() => setInventoryMode("workflow")}>Purchased lots / batches</button><button className={buttonClass} onClick={() => setInventoryMode("exact")}>Exact permanent-card evidence</button></nav>{inventoryMode === "workflow" ? <InventoryWorkflowWorkspace key={session.user.id} token={session.token} adminId={session.user.id} /> : <PhysicalInventoryWorkspace key={session.user.id} token={session.token} adminId={session.user.id} />}</div>}</AppShell>;
+  if (session && isAdmin && inventoryMode === "staff") return <AppShell background="black" hideHeader hideFooter><Head><title>Inventory | Ten Kings</title><meta name="robots" content="noindex,nofollow" /></Head><StaffInventoryWorkspace key={session.user.id} token={session.token} adminId={session.user.id} displayName={session.user.displayName} onAdvanced={() => setInventoryMode("workflow")} /></AppShell>;
+  return <AppShell background="black" hideFooter><Head><title>Physical inventory | Ten Kings</title><meta name="robots" content="noindex,nofollow" /></Head>{loading ? <p className="p-8 text-white/65">Loading admin session…</p> : !session ? <div className="p-8"><button className={buttonClass} onClick={() => void ensureSession()}>Sign in to physical inventory</button></div> : !isAdmin ? <p className="p-8 text-white/65">Human admin access is required.</p> : <div className="mx-auto max-w-7xl space-y-5 px-4 py-8"><nav className="flex flex-wrap gap-3"><button className={buttonClass} onClick={() => setInventoryMode("staff")}>Back to inventory</button><Link href="/admin" className={buttonClass}>Admin home</Link><button className={buttonClass} onClick={() => setInventoryMode("workflow")}>Purchased lots / batches</button><button className={buttonClass} onClick={() => setInventoryMode("exact")}>Exact permanent-card evidence</button></nav>{inventoryMode === "workflow" ? <InventoryWorkflowWorkspace key={session.user.id} token={session.token} adminId={session.user.id} /> : <PhysicalInventoryWorkspace key={session.user.id} token={session.token} adminId={session.user.id} />}</div>}</AppShell>;
 }

@@ -2,8 +2,10 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, type Prisma as DatabasePrisma } from "@tenkings/database";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { isInternalLocation } from "../../../lib/locationVisibility";
+import { requireInventoryAdminSession } from "../../../lib/server/inventoryAdmin";
 import { slugify } from "../../../lib/slugify";
-import { requireAdminSession, toErrorResponse } from "../../../lib/server/admin";
+import { toErrorResponse } from "../../../lib/server/admin";
 
 const nullableString = z.string().nullable().optional();
 const nullableNumber = z.number().finite().nullable().optional();
@@ -80,6 +82,7 @@ async function findLocationByIdentifier(identifier: string) {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<LocationApiResponse>) {
+  res.setHeader("Cache-Control", "private, no-store");
   const locationId = Array.isArray(req.query.locationId) ? req.query.locationId[0] : req.query.locationId;
   const identifier = typeof locationId === "string" ? locationId.trim() : "";
   if (!identifier) {
@@ -87,11 +90,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   if (req.method === "GET") {
-    const location = await findLocationByIdentifier(identifier);
-    if (!location) {
-      return res.status(404).json({ message: "Location not found" });
+    try {
+      const location = await findLocationByIdentifier(identifier);
+      if (!location) {
+        return res.status(404).json({ message: "Location not found" });
+      }
+      if (isInternalLocation(location)) {
+        try { await requireInventoryAdminSession(req); }
+        catch { return res.status(404).json({ message: "Location not found" }); }
+      }
+      return res.status(200).json(serializeLocation(location));
+    } catch {
+      return res.status(503).json({ message: "The location could not be loaded." });
     }
-    return res.status(200).json(serializeLocation(location));
   }
 
   if (req.method !== "PUT") {
@@ -100,7 +111,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   try {
-    await requireAdminSession(req);
+    await requireInventoryAdminSession(req);
 
     const parsed = locationUpdateSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -188,8 +199,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       updateData.machineGeofenceM = currentLocation.machineGeofenceM ?? 20;
     }
 
+    if (isInternalLocation(currentLocation) && !isInternalLocation({
+      locationType: data.locationType === undefined ? currentLocation.locationType : data.locationType,
+      locationStatus: data.locationStatus === undefined ? currentLocation.locationStatus : data.locationStatus,
+    })) {
+      return res.status(400).json({ message: "Internal inventory locations must stay private." });
+    }
+
     const updated = await prisma.location.update({
-      where: { id: currentLocation.id },
+      // Bind privacy validation to the exact flags read above. Concurrent edits
+      // cannot independently remove the two fields that keep HQ private.
+      where: { id: currentLocation.id, locationType: currentLocation.locationType, locationStatus: currentLocation.locationStatus },
       data: updateData as DatabasePrisma.LocationUpdateInput,
     });
 
@@ -200,11 +220,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         return res.status(409).json({ message: "A location with that slug already exists." });
       }
       if (error.code === "P2025") {
-        return res.status(404).json({ message: "Location not found" });
+        return res.status(409).json({ message: "The location changed. Reload it before saving." });
       }
     }
 
     const response = toErrorResponse(error);
-    return res.status(response.status).json({ message: response.message });
+    return res.status(response.status).json({ message: response.status < 500 ? response.message : "The location could not be saved." });
   }
 }

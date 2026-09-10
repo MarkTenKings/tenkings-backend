@@ -141,6 +141,9 @@ export default function AppShell({
                     <Link className="transition hover:text-white" href="/admin" onClick={handleCloseMenu}>
                       Admin Portal
                     </Link>
+                    <Link className="transition hover:text-white" href="/admin/physical-inventory" onClick={handleCloseMenu}>
+                      Inventory
+                    </Link>
                     <Link className="transition hover:text-white" href="/admin/live" onClick={handleCloseMenu}>
                       Live Rips Admin
                     </Link>

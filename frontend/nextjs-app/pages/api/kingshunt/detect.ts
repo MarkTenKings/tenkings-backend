@@ -8,6 +8,7 @@ const payloadSchema = z.object({
 });
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  res.setHeader("Cache-Control", "private, no-store");
   if (req.method !== "POST") {
     return res.status(405).json({ message: "Method not allowed" });
   }

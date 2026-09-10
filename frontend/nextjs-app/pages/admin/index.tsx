@@ -54,14 +54,14 @@ const ADMIN_SECTIONS: AdminSection[] = [
         priority: true,
       },
       {
-        label: "Inventory",
+        label: "Card Catalog",
         href: "/admin/inventory",
         posterSrc: "/admin/launch/inventory-ready-poster.jpg",
         videoSrc: "/admin/launch/inventory-ready.mp4",
         priority: true,
       },
       {
-        label: "Physical Inventory V2",
+        label: "Inventory",
         href: "/admin/physical-inventory",
         posterSrc: "/admin/launch/inventory-ready-poster.jpg",
         videoSrc: "/admin/launch/inventory-ready.mp4",

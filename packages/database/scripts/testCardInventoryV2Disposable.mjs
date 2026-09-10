@@ -81,6 +81,7 @@ try {
   console.log(`Full Prisma chain: ${after.length} migrations; second deploy unchanged.`);
   await run(['--test', join(dbRoot, 'tests/cardInventoryV2Postgres.test.js')]);
   await run(['--test', join(dbRoot, 'tests/inventoryWorkflowV2Postgres.test.js')]);
+  await run(['--test', join(dbRoot, 'tests/staffInventoryV2Postgres.test.js')]);
   if (process.env.INVENTORY_TEST_EXPORT_PATH) {
     const { PrismaClient } = localRequire('@prisma/client');
     const { exportCardInventoryPageV2 } = localRequire('./dist/database/src/cardInventoryV2Read.js');

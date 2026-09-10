@@ -241,6 +241,10 @@ The September 8 inventory release is now live: fresh September 9 metadata identi
 
 ---
 
+### 3.8 Staff inventory continuation — September 10, 2026
+
+Mark explicitly requests implementing and activating intuitive batch/individual inventory entry, descriptive names/categories/photos, acquisition costs, expected sale prices/profit/margins, actual/planned locations and automatic Financial Story reads. This supersedes the earlier operator-UI-only scope for these specific capabilities. The existing immutable workflow journal gains `item_described` metadata for received bookkeeping units. It does not create a graded identity or duplicate stock. Staff-friendly commands compose existing events in one sole-writer transaction. Private photos reuse storage; names and categories describe stock without changing authoritative grading identity. Expected profit is expected sale proceeds less acquisition cost, before fees and overhead, and is never actual revenue. Financial imports are automatic, outbound and read-scoped; financial confirmation and evidenced sold-cost recognition stay separate. Reuse existing authenticated staff/admin authority; no staff member, HQ address, physical count or sale is invented. See [staff inventory plan](../plans/2026-09-10-staff-inventory.md).
+
 ## 4. Target System Shape
 
 ```mermaid

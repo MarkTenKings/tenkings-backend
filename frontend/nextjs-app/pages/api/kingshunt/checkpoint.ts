@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { z } from "zod";
+import { isInternalLocation } from "../../../lib/locationVisibility";
 
 const payloadSchema = z.object({
   sessionId: z.string().min(1),
@@ -10,12 +11,16 @@ const payloadSchema = z.object({
 });
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  res.setHeader("Cache-Control", "private, no-store");
   if (req.method !== "POST") {
     return res.status(405).json({ message: "Method not allowed" });
   }
 
   try {
     const payload = payloadSchema.parse(req.body ?? {});
+
+    const existing = await prisma.navigationSession.findUnique({ where: { id: payload.sessionId }, select: { location: { select: { locationType: true, locationStatus: true } } } });
+    if (!existing || isInternalLocation(existing.location)) return res.status(404).json({ message: "Navigation session not found" });
 
     const session = await prisma.navigationSession.update({
       where: { id: payload.sessionId },

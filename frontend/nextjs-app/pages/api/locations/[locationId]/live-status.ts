@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
+import { isInternalLocation } from "../../../../lib/locationVisibility";
 import { type LocationLiveStatusResponse, isEventOnlyLocationType } from "../../../../lib/locationStatus";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -29,6 +30,7 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<LocationLiveStatusResponse | { error: string }>,
 ) {
+  res.setHeader("Cache-Control", "private, no-store");
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
     return res.status(405).json({ error: "Method not allowed" });
@@ -39,22 +41,24 @@ export default async function handler(
     return res.status(400).json({ error: "locationId is required" });
   }
 
-  const cached = statusCache.get(locationId);
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-    return res.status(200).json(cached.data);
-  }
-
   const location = await prisma.location.findUnique({
     where: { slug: locationId },
     select: {
       name: true,
       address: true,
       locationType: true,
+      locationStatus: true,
     },
   });
 
-  if (!location) {
+  if (!location || isInternalLocation(location)) {
+    statusCache.delete(locationId);
     return res.status(404).json({ error: "Not found" });
+  }
+
+  const cached = statusCache.get(locationId);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return res.status(200).json(cached.data);
   }
 
   if (isEventOnlyLocationType(location.locationType)) {

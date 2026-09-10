@@ -1,9 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, type Prisma } from "@tenkings/database";
 import { z } from "zod";
-import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
 import { buildLocationMapsUrl, geocodeLocationAddress } from "../../../lib/server/locationGeocoding";
-import { requireUserSession, toUserErrorResponse } from "../../../lib/server/session";
+import { isInternalLocation, publicLocationWhere } from "../../../lib/locationVisibility";
+import { requireInventoryAdminSession } from "../../../lib/server/inventoryAdmin";
+import { toErrorResponse } from "../../../lib/server/admin";
 
 const ripSchema = z
   .object({
@@ -50,6 +51,7 @@ const slugify = (value: string) =>
     .replace(/(^-|-$)+/g, "");
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  res.setHeader("Cache-Control", "private, no-store");
   if (req.method === "GET") {
     try {
       const mapOnly = req.query.mapOnly === "true";
@@ -59,6 +61,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         typeof req.query.locationType === "string" ? req.query.locationType.trim().toLowerCase() : null;
 
       const where: Prisma.LocationWhereInput = {
+        ...publicLocationWhere,
         ...(stateFilter ? { state: stateFilter } : {}),
         ...(locationTypeFilter ? { locationType: locationTypeFilter } : {}),
         ...(includeInactive
@@ -80,7 +83,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
 
       const enrichedLocations = await Promise.all(
-        locations.map(async (location) => {
+        locations.filter(location => !isInternalLocation(location)).map(async (location) => {
           const needsGeocodeFallback =
             location.locationType !== "online" &&
             Boolean(location.address?.trim()) &&
@@ -144,19 +147,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         locations: publicLocations,
       });
     } catch (error) {
-      const result = toUserErrorResponse(error);
-      res.status(result.status).json({ message: result.message });
+      const result = toErrorResponse(error);
+      res.status(result.status).json({ message: result.status < 500 ? result.message : "Locations could not be loaded." });
     }
     return;
   }
 
   if (req.method === "POST") {
     try {
-      const session = await requireUserSession(req);
-      const isAdmin = hasAdminAccess(session.user.id) || hasAdminPhoneAccess(session.user.phone);
-      if (!isAdmin) {
-        return res.status(403).json({ message: "Admin access required" });
-      }
+      await requireInventoryAdminSession(req);
 
       const payload = locationPayloadSchema.parse(req.body ?? {});
       const slug = payload.slug ? slugify(payload.slug) : slugify(payload.name);
@@ -196,8 +195,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: error.issues[0]?.message ?? "Invalid payload" });
       }
-      const result = toUserErrorResponse(error);
-      res.status(result.status).json({ message: result.message });
+      const result = toErrorResponse(error);
+      res.status(result.status).json({ message: result.status < 500 ? result.message : "The location could not be saved." });
     }
     return;
   }

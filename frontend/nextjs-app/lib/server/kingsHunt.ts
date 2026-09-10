@@ -1,4 +1,5 @@
 import { prisma, type Prisma } from "@tenkings/database";
+import { isInternalLocation, publicLocationWhere } from "../locationVisibility";
 import { checkGeofence, haversineDistance } from "../geo";
 import {
   getMachinePosition,
@@ -80,6 +81,7 @@ export function mapLocationRecordToDTO(location: KingsHuntLocationRecord): Kings
 export async function listActiveKingsHuntLocations(): Promise<KingsHuntLocation[]> {
   const locations = await prisma.location.findMany({
     where: {
+      ...publicLocationWhere,
       OR: [{ locationStatus: "active" }, { locationStatus: null }],
       NOT: { locationType: "online" },
     },
@@ -88,7 +90,7 @@ export async function listActiveKingsHuntLocations(): Promise<KingsHuntLocation[
   });
 
   return locations
-    .filter((location: KingsHuntLocationRecord) => isLocationActive(location.locationStatus))
+    .filter((location: KingsHuntLocationRecord) => isLocationActive(location.locationStatus) && !isInternalLocation(location))
     .map(mapLocationRecordToDTO);
 }
 
@@ -98,7 +100,7 @@ export async function getKingsHuntLocationBySlug(slug: string): Promise<KingsHun
     select: kingsHuntLocationSelect,
   });
 
-  return location ? mapLocationRecordToDTO(location) : null;
+  return location && !isInternalLocation(location) ? mapLocationRecordToDTO(location) : null;
 }
 
 export async function detectKingsHuntLocations(lat: number, lng: number): Promise<{
@@ -107,6 +109,7 @@ export async function detectKingsHuntLocations(lat: number, lng: number): Promis
 }> {
   const locations = await prisma.location.findMany({
     where: {
+      ...publicLocationWhere,
       OR: [{ locationStatus: "active" }, { locationStatus: null }],
       NOT: { locationType: "online" },
       venueCenterLat: { not: null },
@@ -119,7 +122,7 @@ export async function detectKingsHuntLocations(lat: number, lng: number): Promis
   });
 
   const detected = locations
-    .filter((location: KingsHuntLocationRecord) => isLocationActive(location.locationStatus))
+    .filter((location: KingsHuntLocationRecord) => isLocationActive(location.locationStatus) && !isInternalLocation(location))
     .map((location: KingsHuntLocationRecord) => {
       const geofence = checkGeofence(
         {

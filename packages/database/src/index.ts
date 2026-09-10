@@ -52,3 +52,6 @@ export * from "./inventoryWorkflowV2";
 export * from "./inventoryWorkflowV2State";
 export * from "./inventoryWorkflowV2Read";
 export * from "./inventoryWorkflowV2Http";
+
+export * from "./staffInventoryV2";
+export * from "./staffInventoryV2Read";

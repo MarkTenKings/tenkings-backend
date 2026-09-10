@@ -3,6 +3,7 @@ import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import { computeDistanceToMachine } from "../../../lib/server/kingsHunt";
 import { checkGeofence } from "../../../lib/geo";
+import { isInternalLocation } from "../../../lib/locationVisibility";
 
 const payloadSchema = z.object({
   sessionId: z.string().min(1).optional(),
@@ -19,6 +20,7 @@ const payloadSchema = z.object({
 });
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  res.setHeader("Cache-Control", "private, no-store");
   if (req.method !== "POST") {
     return res.status(405).json({ message: "Method not allowed" });
   }
@@ -34,7 +36,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         },
       });
 
-      if (!existingSession) {
+      if (!existingSession || isInternalLocation(existingSession.location)) {
         return res.status(404).json({ message: "Navigation session not found" });
       }
 
@@ -75,7 +77,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       where: { id: payload.locationId },
     });
 
-    if (!location) {
+    if (!location || isInternalLocation(location)) {
       return res.status(404).json({ message: "Location not found" });
     }
 
