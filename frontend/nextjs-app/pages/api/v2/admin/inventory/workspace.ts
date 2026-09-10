@@ -49,7 +49,7 @@ export function createStaffInventoryWorkspaceHandler(deps: {
 
 export default createStaffInventoryWorkspaceHandler({
   requireAdmin: requireInventoryAdminSession,
-  readWorkspace: () => prisma.$transaction(async tx => staffInventoryWorkspaceV2(await readWorkflowHistoryV2(tx), await tx.location.findMany({ select: { id: true, name: true, slug: true, address: true, locationType: true }, orderBy: { name: 'asc' } })), { isolationLevel: 'RepeatableRead', timeout: 30000 }),
+  readWorkspace: () => prisma.$transaction(async tx => staffInventoryWorkspaceV2(await readWorkflowHistoryV2(tx), await tx.location.findMany({ select: { id: true, name: true, slug: true, address: true, locationType: true, latitude: true, longitude: true }, orderBy: { name: 'asc' } })), { isolationLevel: 'RepeatableRead', timeout: 30000 }),
   signPhoto: presignReadUrl,
   verifyPhoto: verifyInventoryPhoto,
   record: (command, adminId) => prisma.$transaction(tx => recordStaffInventoryV2(tx, command, adminId), { isolationLevel: 'ReadCommitted', maxWait: 5000, timeout: 30000 }),

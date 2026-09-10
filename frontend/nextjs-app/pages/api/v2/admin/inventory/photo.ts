@@ -9,7 +9,8 @@ export const config = { api: { bodyParser: { sizeLimit: '4.1mb' } } };
 const MAX_PHOTO_BYTES = MAX_INVENTORY_PHOTO_BYTES;
 class InvalidPhotoError extends Error {}
 
-/** Decode trusted image formats and strip original metadata before private upload. */
+/** Validate browser-prepared photos independently and strip metadata before private upload.
+ * HEIC/HEIF decoding stays in the browser: Vercel's prebuilt Sharp has no HEVC guarantee. */
 export async function prepareInventoryPhoto(encoded: unknown) {
   if (typeof encoded !== 'string' || encoded.length > 4 * Math.ceil(MAX_PHOTO_BYTES / 3) + 23) throw new InvalidPhotoError();
   const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(encoded);
@@ -49,7 +50,7 @@ export function createStaffInventoryPhotoHandler(deps: {
       return res.status(200).json({ photo_key: key, photo_url: await deps.sign(key) });
     } catch (error) {
       const status = error instanceof InvalidPhotoError ? 400 : error && typeof error === 'object' && 'statusCode' in error && (error.statusCode === 401 || error.statusCode === 403) ? error.statusCode : 503;
-      return res.status(status).json({ message: status === 401 || status === 403 ? 'Sign in with your Ten Kings admin account.' : status === 400 ? 'Choose a clear JPG, PNG or WebP photo under 3 MB.' : 'The photo could not be uploaded. Your entry is preserved; please retry.' });
+      return res.status(status).json({ message: status === 401 || status === 403 ? 'Sign in with your Ten Kings admin account.' : status === 400 ? 'The prepared photo could not be read. Select your photo again or take a new photo. Your entry is preserved.' : 'The photo could not be uploaded. Your entry is preserved; please retry.' });
     }
   };
 }

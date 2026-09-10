@@ -7,6 +7,7 @@ type GoogleGeocodeAddressComponent = {
 type GoogleGeocodeResponse = {
   status?: string;
   results?: Array<{
+    partial_match?: boolean;
     place_id?: string;
     geometry?: {
       location?: {
@@ -58,7 +59,7 @@ export function buildLocationMapsUrl(input: {
   return `https://www.google.com/maps/search/?${searchParams.toString()}`;
 }
 
-export async function geocodeLocationAddress(address: string): Promise<ResolvedLocationAddress | null> {
+export async function geocodeLocationAddress(address: string, options: { signal?: AbortSignal; requireCompleteMatch?: boolean } = {}): Promise<ResolvedLocationAddress | null> {
   const trimmedAddress = address.trim();
   const apiKey = process.env.GOOGLE_MAPS_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -72,21 +73,21 @@ export async function geocodeLocationAddress(address: string): Promise<ResolvedL
       key: apiKey,
     });
 
-    const response = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?${searchParams.toString()}`);
+    const response = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?${searchParams.toString()}`, { signal: options.signal });
     if (!response.ok) {
       return null;
     }
 
     const payload = (await response.json()) as GoogleGeocodeResponse;
     const result = payload.results?.[0];
-    if (!result) {
+    if (!result || (options.requireCompleteMatch && (payload.status !== 'OK' || result.partial_match))) {
       return null;
     }
 
     const latitude = result?.geometry?.location?.lat;
     const longitude = result?.geometry?.location?.lng;
 
-    if (typeof latitude !== "number" || typeof longitude !== "number") {
+    if (typeof latitude !== "number" || !Number.isFinite(latitude) || Math.abs(latitude) > 90 || typeof longitude !== "number" || !Number.isFinite(longitude) || Math.abs(longitude) > 180) {
       return null;
     }
 

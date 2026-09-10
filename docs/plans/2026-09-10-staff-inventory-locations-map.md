@@ -1,0 +1,11 @@
+# Staff inventory Locations map — September 10, 2026
+
+This scoped component continues Mark's request for an inventory map alongside the existing Locations list. It reads authenticated workspace data only. The coordinator owns the list/map selector, authenticated coordinates/resolution, shared workspace integration and release. This assignment owns new map component, CSS, pure display helpers and isolated tests; it performs no persistence, deployment, geocoding or public-location change.
+
+1. Reuse the installed `useGoogleMaps` loader and Advanced Markers. Plot only finite, in-range supplied coordinates. A missing point remains selectable with an honest unavailable state. No address is sent by this component and no location position is guessed.
+2. Present a large neutral map, gold selectable location pins, fit/zoom controls and a focused location inventory panel. Keep every location available through a keyboard-accessible selector even when Google Maps is unavailable. Phone layouts place details below the map.
+3. Group visually overlapping points according to zoom while anchoring each group at a real supplied member coordinate. Group selection exposes the exact member names; zooming separates distinct points, and co-located locations remain individually selectable.
+4. Aggregate recorded on-hand cards separately from loaded machine rosters. Cost and expected proceeds/profit apply only to on-hand records, require complete known values and safe integer arithmetic, and never imply current machine stock, actual revenue or complete physical coverage. Deduplicate count observations by event identity and preserve their machine/product scope.
+5. Test invalid/missing coordinates, group overlap and split behavior, exact shared coordinates, empty/unknown/zero/overflow values, loaded-roster separation and observation identity. Verify component selection/fallback/cleanup with a disposable browser or DOM fixture and run scoped lint/type checks. Record the evidence and principle review in the session log before handoff.
+
+The existing Google Maps accessibility contract supplies clickable Advanced Markers with descriptive titles and keyboard support; the native location selector remains an equivalent navigation path. Reference: https://developers.google.com/maps/documentation/javascript/advanced-markers/accessible-markers.

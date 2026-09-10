@@ -34,6 +34,7 @@
     "busboy": "^1.6.0",
     "canvas-confetti": "^1.9.4",
     "leaflet": "^1.9.4",
+    "libheif-js": "1.23.2",
     "livekit-client": "2.16.1",
     "maplibre-gl": "^5.21.1",
     "nanoid": "^5.1.6",

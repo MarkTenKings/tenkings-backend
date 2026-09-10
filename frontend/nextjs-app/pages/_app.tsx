@@ -22,7 +22,7 @@ export default function App({ Component, pageProps }: AppProps) {
   const content = (
     <SessionProvider>
       <Component {...pageProps} />
-      <QueenWidget />
+      {router.pathname !== "/admin/physical-inventory" && <QueenWidget />}
     </SessionProvider>
   );
 
