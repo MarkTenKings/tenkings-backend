@@ -164,12 +164,15 @@ test('capture terminal supports separate supervised source permits without reope
     assert.throws(() => planOperatorControl(run, [{ state: 'UNKNOWN' }], 'STEP'), /ASTRA_CONTROL_NOT_SETTLED/);
 });
 
-test('workspace pilot discriminator requires ten fresh IDs while retaining exact legacy budgets and object bytes', () => {
+test('workspace pilot discriminator accepts one through ten fresh IDs while retaining exact budgets and object bytes', () => {
     const policy = { version: 'atlas-workspace-bridge-policy-v1', pilotId: randomUUID(), workspaceCardIds: Array.from({ length: 10 }, randomUUID),
         expiresAt: '2026-09-10T01:00:00.000Z', maxOperationsPerCard: 20, maxTotalMicroUsd: 90_000_000,
         maxCardMicroUsd: 90_000_000, reservationPerOperationMicroUsd: 1_000_000, maxWorkerCalls: 4, deadlineMs: 200_000 };
     assert.equal(parsePilotPolicy(policy), policy);
-    for (const changed of [{ workspaceCardIds: policy.workspaceCardIds.slice(1) }, { workspaceCardIds: Array(10).fill(policy.workspaceCardIds[0]) },
+    const first = { ...policy, workspaceCardIds: policy.workspaceCardIds.slice(0, 1) };
+    assert.equal(parsePilotPolicy(first), first);
+    for (const changed of [{ workspaceCardIds: [] }, { workspaceCardIds: [...policy.workspaceCardIds, randomUUID()] },
+        { workspaceCardIds: Array(10).fill(policy.workspaceCardIds[0]) },
         { specimenIds: policy.workspaceCardIds }, { maxCardMicroUsd: 90_000_001 }, { fresh: true }])
         assert.throws(() => parsePilotPolicy({ ...policy, ...changed }));
 });

@@ -18,7 +18,7 @@ const astra = { version: 'atlas-astra-policy-v1', model: MODEL, returnedModel: M
     maxOutputTokens: 128, requestTimeoutMs: 1000, pricingVersion: PRICING.version,
     inputNanoUsdPerToken: PRICING.inputNanoUsdPerToken, outputNanoUsdPerToken: PRICING.outputNanoUsdPerToken };
 
-function fixture() {
+function fixture({ rosterSize = 10 } = {}) {
     const env = { NODE_ENV: 'production', ATLAS_OPERATOR_ENABLED: 'true', ATLAS_OPERATOR_RELEASE_SHA: 'a'.repeat(40), ATLAS_OPERATOR_BUILD_HASH: 'b'.repeat(64),
         ATLAS_OPERATOR_DATABASE_URL: 'postgresql://synthetic_operator:synthetic_password@db.invalid:5432/fixture?schema=atlas_staff',
         ATLAS_OPERATOR_OPENAI_PROJECT_ID: 'proj_fixture000000', ATLAS_OPERATOR_OPENAI_API_KEY: 'sk-synthetic-fixture-key-only-00000000',
@@ -36,7 +36,7 @@ function fixture() {
     const policy = { version: 'atlas-operator-control-policy-v1', pilotId, expiresAt: LATER.toISOString(), prompt: 'Fixture.', astra,
         tools: REPORT_TOOL_NAMES, captureTools: CAPTURE_TOOL_NAMES, maxAttemptsPerCard: 50, maxStepsPerRun: 64,
         maxRunMs: 3600000, leaseMs: 30000, concurrency: 1 };
-    const budget = { version: 'atlas-workspace-bridge-policy-v1', pilotId, workspaceCardIds: [cardId, ...Array.from({ length: 9 }, () => randomUUID())],
+    const budget = { version: 'atlas-workspace-bridge-policy-v1', pilotId, workspaceCardIds: [cardId, ...Array.from({ length: rosterSize - 1 }, () => randomUUID())],
         expiresAt: LATER.toISOString(), maxOperationsPerCard: 20, maxTotalMicroUsd: 90000000, maxCardMicroUsd: 9000000,
         reservationPerOperationMicroUsd: 100000, maxWorkerCalls: 2, deadlineMs: 200000 };
     const control = { ...operatorConfig, enabled: true, policyCanonical: canonical(policy), policyHash: digest(canonical(policy)) };
@@ -61,7 +61,7 @@ function fixture() {
         manifestCanonical: canonical(manifest), manifestHash: digest(canonical(manifest)), inputCanonical: canonical([]), inputHash: digest(canonical([])),
         deadlineAt: new Date(+NOW + 3600000) };
     const f = { env, release, operatorConfig, card, run, runs: new Map([[runId, run]]), operations: new Map(), admissions: new Map(),
-        jobs: new Map(), permits: new Map(), sources: new Map(), events: [], queries: [], mutations: [], now: NOW, count: 10,
+        jobs: new Map(), permits: new Map(), sources: new Map(), events: [], queries: [], mutations: [], now: NOW, count: rosterSize,
         roleUnsafe: false, extraGrant: false, missingFunction: false, transactions: 0, inside: false, sourceCalls: 0, operatorCalls: [],
         work: new Map(), control, bridge, identity: { id: actorId, role: 'REVIEWER', accessVersion: 2, revokedAt: null },
         staff: { enabled: true, mode: operatorConfig.mode, revision: 1, gradingPolicyHash: bridge.gradingPolicyHash },
@@ -222,6 +222,26 @@ function fixture() {
     f.admit = (input = { runId }) => f.dispatcher.admit({ commandId: f.command.id, ...input });
     return f;
 }
+
+test('one-card admission dispatches the complete capture and report flow with the same MAX policy', async () => {
+    const f = fixture({ rosterSize: 1 }), policy = copy(f.control.policyCanonical), result = await f.start();
+    assert.equal(result.state, 'READY_FOR_HUMAN'); assert.equal(result.operatorRuns, 2); assert.equal(result.sourceActions, 3);
+    assert.deepEqual(f.events, ['CAPTURE_REVIEW', 'SOURCE', 'REPORT_REVIEW']);
+    assert.equal(f.control.policyCanonical, policy); assert.equal(JSON.parse(policy).astra.effort, 'max');
+});
+
+test('one-card dispatcher rejects missing, excess, duplicate and non-admitted workspace records before effects', async () => {
+    for (const alter of [f => { f.count = 0; }, f => { f.count = 2; }, f => {
+        const p = JSON.parse(f.bridge.policyCanonical); p.workspaceCardIds = [randomUUID()];
+        f.bridge.policyCanonical = canonical(p); f.bridge.policyHash = digest(f.bridge.policyCanonical);
+    }, f => {
+        const p = JSON.parse(f.bridge.policyCanonical); p.workspaceCardIds.push(p.workspaceCardIds[0]);
+        f.bridge.policyCanonical = canonical(p); f.bridge.policyHash = digest(f.bridge.policyCanonical);
+    }]) {
+        const f = fixture({ rosterSize: 1 }); alter(f);
+        assert.equal((await f.start()).state, 'HELD'); assert.deepEqual(f.events, []); assert.equal(f.sourceCalls, 0);
+    }
+});
 
 test('continuous dispatch follows one capture, finite source work and the proven original report successor', async () => {
     const f = fixture(), result = await f.start();

@@ -99,7 +99,7 @@ export function createWorkspaceSourceRunner({ client, authority, source, operato
             && budget.version === 'atlas-workspace-bridge-policy-v1' && +new Date(policy.expiresAt) > +now && +new Date(budget.expiresAt) > +now
             && workspaceControl.claimsEnabled && workspaceControl.astraEnabled && workspaceControl.preparationEnabled, 'ASTRA_PILOT_NOT_ACTIVE');
         const [{ count }] = await tx.$queryRaw`SELECT atlas_staff.operator_workspace_count(${budget.pilotId}::uuid) AS count`;
-        check(count === 10, 'ASTRA_TEN_CARDS_REQUIRED');
+        check(count === budget.workspaceCardIds.length, 'ASTRA_WORKSPACE_ROSTER_INCOMPLETE');
         const [run] = await tx.$queryRaw`SELECT * FROM atlas_staff.lock_workspace_private_run(${runId}::uuid)`;
         check(run && run.id === runId && run.phase === 'CAPTURE_REVIEW' && run.state === 'PREPARATION_READY'
             && run.runtimeHash === operatorConfig.configHash && run.policyHash === control.policyHash && run.gradingPolicyHash === bridge.gradingPolicyHash

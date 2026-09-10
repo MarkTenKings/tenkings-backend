@@ -208,7 +208,7 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
                 && +new Date(policy.expiresAt) > +now && +new Date(budget.expiresAt) > +now
                 && workspace?.claimsEnabled && workspace.astraEnabled && workspace.preparationEnabled, 'ASTRA_PILOT_NOT_ACTIVE');
             const [{ count }] = await tx.$queryRaw`SELECT atlas_staff.operator_workspace_count(${budget.pilotId}::uuid) AS count`;
-            check(count === 10, 'ASTRA_TEN_CARDS_REQUIRED');
+            check(count === budget.workspaceCardIds.length, 'ASTRA_WORKSPACE_ROSTER_INCOMPLETE');
             const context = { ...privateContext, control, bridge, policy, budget };
             const requested = await runRow(tx, requestedId); validateRun(requested, context, false);
             const [row] = await tx.$queryRaw`SELECT * FROM atlas_staff.lock_workspace_private_card(${requested.workspaceCardId}::uuid)`;

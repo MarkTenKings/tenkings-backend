@@ -6,12 +6,12 @@ import { enqueueWorkspaceMachineInitializationInTransaction } from '../src/works
 
 const clone = value => structuredClone(value);
 const hash = value => digest(canonical(value));
-function fixture() {
+function fixture({ rosterSize = 10 } = {}) {
     const now = new Date('2026-09-09T22:00:00.000Z'), id = randomUUID(), actorId = randomUUID(), requestId = randomUUID();
     const sourceIdentity = { sourceType: 'LOCAL_FIXTURE', sourceId: `atlas-${id}`, sourceOwnerId: `atlas-staff-${actorId}` };
     const captureHash = 'a'.repeat(64), sourceConfigHash = 'b'.repeat(64), runtimeHash = 'c'.repeat(64);
     const identity = { id: actorId, role: 'REVIEWER', accessVersion: 4, revokedAt: null };
-    const policy = { version: 'atlas-workspace-bridge-policy-v1', pilotId: randomUUID(), workspaceCardIds: [id, ...Array.from({ length: 9 }, () => randomUUID())],
+    const policy = { version: 'atlas-workspace-bridge-policy-v1', pilotId: randomUUID(), workspaceCardIds: [id, ...Array.from({ length: rosterSize - 1 }, () => randomUUID())],
         expiresAt: new Date(+now + 100_000).toISOString(), maxOperationsPerCard: 3, maxTotalMicroUsd: 90_000_000,
         maxCardMicroUsd: 9_000_000, reservationPerOperationMicroUsd: 100_000, maxWorkerCalls: 2, deadlineMs: 5000 };
     const operatorPolicy = { version: 'atlas-operator-control-policy-v1', pilotId: policy.pilotId, expiresAt: policy.expiresAt,
@@ -64,7 +64,7 @@ function fixture() {
     let state = { job: null, op: null, audits: [] };
     const card = { id, ...sourceIdentity, evidenceCanonical: admission.evidenceCanonical, evidenceHash: admission.evidenceHash,
         analysisRevision: 0, draftRevision: 1 };
-    const settings = { count: 10, current: true, pending: 0, otherGrading: 0, otherRuns: 0,
+    const settings = { count: rosterSize, current: true, pending: 0, otherGrading: 0, otherRuns: 0,
         usage: { total: '500000', card: '300000', operations: 0, overrun: false }, failAudit: false, cached: false };
     const events = [], writes = [], usageCalls = [];
     const row = value => ({ ...value, canonical: canonical(value), contentHash: hash(value) });
@@ -131,6 +131,17 @@ function fixture() {
             catch (error) { state = before; throw error; }
         } };
 }
+
+test('one verified admitted workspace can initialize with existing cost and capacity checks intact', async () => {
+    const f = fixture({ rosterSize: 1 }), job = await f.enqueue();
+    assert.equal(job.specimenId, f.id); assert.equal(job.state, 'QUEUED'); assert.equal(f.workspaceControl.maxCards, 10);
+    assert.deepEqual(f.usageCalls, [[f.policy.pilotId, f.id]]); assert.equal(f.settings.usage.total, '500000');
+    for (const count of [0, 2]) {
+        const invalid = fixture({ rosterSize: 1 }); invalid.settings.count = count;
+        await assert.rejects(invalid.enqueue(), /PILOT_WORKSPACE_ROSTER_INCOMPLETE/); assert.equal(invalid.state().job, null);
+        assert.deepEqual(invalid.events, []);
+    }
+});
 
 test('workspace initialization retains the original operation bytes and real admission actor without a human session or grant', async () => {
     const f = fixture(), job = await f.enqueue(), { op, audits } = f.state();

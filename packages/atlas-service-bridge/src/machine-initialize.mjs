@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { previewAtlasReport } from '@atlas/grading-core/report';
 import { canonical, digest, keys, parsePilotPolicy, requireBridge as check, UUID, SHA } from './protocol.mjs';
-import { pilotSubject, pilotUsage, requireTenPilotCards } from './pilot-scope.mjs';
+import { pilotSubject, pilotUsage, requirePilotCards } from './pilot-scope.mjs';
 
 const machineActor = id => `ASTRA_INITIALIZE:${id}`;
 const checked = (text,hash) => {
@@ -48,7 +48,7 @@ export class MachineInitializationBridge {
         check(operatorPolicy.version==='atlas-operator-control-policy-v1' && operatorPolicy.astra?.model==='gpt-6-astra'
             && operatorPolicy.astra.returnedModel==='gpt-6-astra' && operatorPolicy.pilotId===policy.pilotId
             && +new Date(operatorPolicy.expiresAt)>+now && +new Date(policy.expiresAt)>+now, 'MACHINE_PILOT_NOT_ACTIVE');
-        await requireTenPilotCards(tx, policy, bridge.mode==='PRODUCTION'?'SPEEDSTER':'LOCAL_FIXTURE');
+        await requirePilotCards(tx, policy, bridge.mode==='PRODUCTION'?'SPEEDSTER':'LOCAL_FIXTURE');
         return {tx,operator,bridge,control,now,policy,operatorPolicy};
     }
     async authorize(tx,claims,{committing=false}={}) {
