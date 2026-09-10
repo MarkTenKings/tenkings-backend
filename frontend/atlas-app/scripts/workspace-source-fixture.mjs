@@ -13,6 +13,7 @@ import { fixtureAnalysis } from '../lib/server/access/fixture-analysis.mjs';
 import { calculateSpeedsterReview } from '@atlas/grading-core/review';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
 import { workspaceCaptureFixture, updateWorkspaceFixtureCard } from './workspace-capture-fixture.mjs';
+import { workspaceUploadRecoveryScenarios } from './workspace-upload-recovery-fixture.mjs';
 
 const privateRequire = createRequire(new URL('../../nextjs-app/package.json', import.meta.url));
 const { tsImport } = await import(pathToFileURL(privateRequire.resolve('tsx/esm/api')).href);
@@ -178,6 +179,7 @@ async function fixture(context, work, options = {}) {
 }
 
 export async function workspaceSourceScenarios(scenario) {
+    await workspaceUploadRecoveryScenarios(scenario);
     await scenario('source STEP permit is consumed once and unknown worker results keep their reservation and block takeover', context => fixture(context, async f => {
         await f.control('PAUSE'); await f.control('STEP');
         const request = await f.intent('PREPARE_SIDE', 'FRONT'), input = f.bound(request, 'PHYSICAL_GEOMETRY', 'FRONT'), ledger = f.sourceLedger(request);

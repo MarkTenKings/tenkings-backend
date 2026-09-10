@@ -22,6 +22,8 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @tenkings/database generate
+      - name: Build the pure grading core before its Next.js consumers
+        run: pnpm --filter @atlas/grading-core build
       - run: pnpm --filter @tenkings/* run --if-present build
 
   disposable-postgres-migration-chain:
@@ -95,7 +97,7 @@ jobs:
           const lines = readFileSync(join(process.env.RUNNER_TEMP, 'atlas-postgres-validation.log'), 'utf8').trim().split('\n');
           const summary = JSON.parse(lines.at(-1));
           assert.equal(summary.ok, true); assert.equal(summary.stopped, true);
-          assert(summary.passed >= 190, 'The complete ATLAS scenario set must run');
+          assert(summary.passed >= 193, 'The complete ATLAS scenario set must run');
           const directory = realpathSync(summary.directory), relativeDirectory = relative(realpathSync(tmpdir()), directory);
           assert(relativeDirectory.startsWith('atlas-staff-db-') && !relativeDirectory.includes(sep));
           const ownership = JSON.parse(readFileSync(join(directory, 'ownership.json'), 'utf8'));
@@ -622,6 +624,205 @@ jobs:
             --deny-self-hosted-runners --format json > preparation-provenance-verification.json
           printf '### Exact CPU preparation release candidate\n\n`%s@%s`\n\nSource `%s`, tree `%s`, Linux amd64, PREPARE_SIDE only.\n\nPublishing does not admit or deploy this separate package.\n' \
             "$PREPARATION_IMAGE_NAME" "$PREPARATION_IMAGE_DIGEST" "$GITHUB_SHA" "$SOURCE_TREE_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+  atlas-private-tested-release-image:
+    name: Test, Publish & Attest Exact ATLAS Private OCI
+    runs-on: ubuntu-latest
+    needs:
+      - quality
+      - disposable-postgres-migration-chain
+      - speedster-frontend-tests
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      image-name: ${{ steps.private-paths.outputs.image-name }}
+      tested-digest: ${{ steps.tested-private-image.outputs.digest }}
+      published-digest: ${{ steps.publish-private-image.outputs.digest }}
+    env:
+      PRIVATE_BASE_IMAGE: node:20.20.1-bookworm@sha256:abc255963bb4311b1f81bf45f2382df39a4041d2a975b1807d05809f1bc21bbe
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20.20.1
+          cache: pnpm
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Reserve isolated outputs and verify the exact committed source
+        id: private-paths
+        shell: bash
+        run: |
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
+          checkout="$(realpath "$GITHUB_WORKSPACE")"
+          base="$(realpath "$RUNNER_TEMP")/atlas-private-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir "$base" "$base/evidence" "$base/cache"
+          image_name="ghcr.io/${GITHUB_REPOSITORY,,}-atlas-private"
+          image="${image_name}:${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "PRIVATE_CHECKOUT=$checkout" >> "$GITHUB_ENV"
+          echo "PRIVATE_CONTEXT=$base/context" >> "$GITHUB_ENV"
+          echo "PRIVATE_CACHE=$base/cache" >> "$GITHUB_ENV"
+          echo "PRIVATE_EVIDENCE=$base/evidence" >> "$GITHUB_ENV"
+          echo "PRIVATE_IMAGE_NAME=$image_name" >> "$GITHUB_ENV"
+          echo "PRIVATE_IMAGE=$image" >> "$GITHUB_ENV"
+          echo "PRIVATE_SOURCE_TREE=$(git rev-parse HEAD^{tree})" >> "$GITHUB_ENV"
+          echo "image-name=$image_name" >> "$GITHUB_OUTPUT"
+          env -i PATH="$PATH" HOME="$HOME" LANG=C node .github/scripts/atlas-private-image.mjs source \
+            --root "$checkout" --expected-sha "$GITHUB_SHA" --output "$base/evidence/source-before.json"
+      - name: Build and test canonical private inputs without runtime credentials
+        shell: bash
+        run: |
+          corepack enable
+          env -i PATH="$PATH" HOME="$HOME" LANG=C CI=true NEXT_TELEMETRY_DISABLED=1 \
+            pnpm install --frozen-lockfile
+          env -i PATH="$PATH" HOME="$HOME" LANG=C NEXT_TELEMETRY_DISABLED=1 \
+            pnpm --filter @atlas/grading-core build
+          env -i PATH="$PATH" HOME="$HOME" LANG=C NEXT_TELEMETRY_DISABLED=1 PRISMA_GENERATE_SKIP_AUTOINSTALL=1 \
+            pnpm --filter @atlas/private-service build | tee "$PRIVATE_EVIDENCE/build.log"
+          env -i PATH="$PATH" HOME="$HOME" LANG=C \
+            node --test backend/atlas-private/test/*.test.mjs .github/scripts/atlas-private-image.test.mjs \
+            | tee "$PRIVATE_EVIDENCE/unit-tests.log"
+      - name: Package the closed Linux context and bind it to clean committed source
+        shell: bash
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" LANG=C node backend/atlas-private/scripts/package-container.mjs \
+            --cache "$PRIVATE_CACHE" --output "$PRIVATE_CONTEXT" --download \
+            | tee "$PRIVATE_EVIDENCE/package.log"
+          env -i PATH="$PATH" HOME="$HOME" LANG=C node .github/scripts/atlas-private-image.mjs context \
+            --root "$PRIVATE_CHECKOUT" --expected-sha "$GITHUB_SHA" --context "$PRIVATE_CONTEXT" \
+            --before "$PRIVATE_EVIDENCE/source-before.json" --output "$PRIVATE_EVIDENCE/context.json"
+          cp "$PRIVATE_CONTEXT/app/container-manifest.json" "$PRIVATE_EVIDENCE/container-manifest.json"
+          cp "$PRIVATE_CONTEXT/app/dist/build-manifest.json" "$PRIVATE_EVIDENCE/build-manifest.json"
+          cp "$PRIVATE_CONTEXT/Dockerfile" "$PRIVATE_EVIDENCE/Dockerfile"
+          manifest_hash="$(node -p 'JSON.parse(require("fs").readFileSync(process.env.PRIVATE_EVIDENCE + "/context.json")).manifestHash')"
+          [[ "$manifest_hash" =~ ^[a-f0-9]{64}$ ]]
+          echo "PRIVATE_MANIFEST_HASH=$manifest_hash" >> "$GITHUB_ENV"
+      - name: Build the exact Linux amd64 image without networked image build steps
+        shell: bash
+        run: |
+          docker pull --platform linux/amd64 "$PRIVATE_BASE_IMAGE"
+          docker buildx build --platform linux/amd64 --load --provenance=false \
+            --network=none --pull=false --tag "$PRIVATE_IMAGE" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "io.atlas.source-tree=$PRIVATE_SOURCE_TREE" \
+            --label "io.atlas.container-manifest=$PRIVATE_MANIFEST_HASH" \
+            --metadata-file "$PRIVATE_EVIDENCE/build-metadata.json" "$PRIVATE_CONTEXT" \
+            | tee "$PRIVATE_EVIDENCE/container-build.log"
+      - name: Verify actual image isolation, Sharp, Prisma and all startup denials
+        id: tested-private-image
+        shell: bash
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" LANG=C node .github/scripts/atlas-private-image.mjs runtime \
+            --image "$PRIVATE_IMAGE" --context "$PRIVATE_CONTEXT" \
+            --metadata "$PRIVATE_EVIDENCE/build-metadata.json" --output "$PRIVATE_EVIDENCE/runtime"
+          digest="$(node -p 'JSON.parse(require("fs").readFileSync(process.env.PRIVATE_EVIDENCE + "/runtime/result.json")).candidateDigest')"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "PRIVATE_CANDIDATE_DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Generate SPDX SBOM from the same tested private image
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ env.PRIVATE_IMAGE }}
+          format: spdx-json
+          output-file: ${{ env.PRIVATE_EVIDENCE }}/private-sbom.spdx.json
+          artifact-name: atlas-private-sbom-${{ github.sha }}.spdx.json
+      - name: Recheck source and packaged input hashes after container tests
+        shell: bash
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" LANG=C node .github/scripts/atlas-private-image.mjs context \
+            --root "$PRIVATE_CHECKOUT" --expected-sha "$GITHUB_SHA" --context "$PRIVATE_CONTEXT" \
+            --before "$PRIVATE_EVIDENCE/source-before.json" --output "$PRIVATE_EVIDENCE/context-final.json"
+      - name: Login to GHCR only for a main push after all required checks
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install cosign only for a main push after all required checks
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - name: Publish, compare, sign and attest the exact tested private digest
+        id: publish-private-image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          docker push "$PRIVATE_IMAGE"
+          digest="$(docker buildx imagetools inspect "$PRIVATE_IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ && "$digest" == "$PRIVATE_CANDIDATE_DIGEST" ]]
+          exact_image="${PRIVATE_IMAGE_NAME}@${digest}"
+          docker pull --platform linux/amd64 "$exact_image"
+          docker image inspect "$exact_image" > "$PRIVATE_EVIDENCE/published-image.json"
+          env -i PATH="$PATH" HOME="$HOME" LANG=C node .github/scripts/atlas-private-image.mjs published \
+            --tested "$PRIVATE_EVIDENCE/runtime/image.json" --published "$PRIVATE_EVIDENCE/published-image.json" \
+            --output "$PRIVATE_EVIDENCE/published-image-comparison.json"
+          echo "PRIVATE_IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          cosign sign --yes "$exact_image"
+          cosign attest --yes --type spdxjson --predicate "$PRIVATE_EVIDENCE/private-sbom.spdx.json" "$exact_image"
+          timeout 120s cosign verify \
+            --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$exact_image" \
+            > "$PRIVATE_EVIDENCE/signature-verification.json"
+          timeout 120s cosign verify-attestation --type spdxjson \
+            --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$exact_image" \
+            > "$PRIVATE_EVIDENCE/sbom-verification.json"
+      - name: Retain GitHub build provenance for the exact private digest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ${{ env.PRIVATE_IMAGE_NAME }}
+          subject-digest: ${{ env.PRIVATE_IMAGE_DIGEST }}
+          push-to-registry: true
+      - name: Verify main source provenance and record the private release candidate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          timeout 120s gh attestation verify "oci://${PRIVATE_IMAGE_NAME}@${PRIVATE_IMAGE_DIGEST}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --cert-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+            --cert-oidc-issuer https://token.actions.githubusercontent.com \
+            --source-ref refs/heads/main --source-digest "$GITHUB_SHA" \
+            --deny-self-hosted-runners --format json > "$PRIVATE_EVIDENCE/provenance-verification.json"
+          node - <<'JS'
+          const fs = require('node:fs'), crypto = require('node:crypto'), path = require('node:path'), assert = require('node:assert/strict');
+          const root = process.env.PRIVATE_EVIDENCE, read = name => JSON.parse(fs.readFileSync(path.join(root, name)));
+          const context = read('context-final.json'), runtime = read('runtime/result.json');
+          assert.equal(context.cleanCommittedSourceVerified, true); assert.equal(context.sourceCommit, process.env.GITHUB_SHA);
+          assert.equal(context.manifestHash, runtime.manifestHash); assert.equal(runtime.candidateDigest, process.env.PRIVATE_IMAGE_DIGEST);
+          assert.equal(runtime.status, 'ATLAS_PRIVATE_CI_RUNTIME_PASS'); assert.equal(runtime.results.length, 7);
+          const files = ['source-before.json', 'context-final.json', 'container-manifest.json', 'build-manifest.json',
+            'build-metadata.json', 'runtime/result.json', 'published-image-comparison.json', 'private-sbom.spdx.json',
+            'signature-verification.json', 'sbom-verification.json', 'provenance-verification.json'];
+          const evidence = files.map(file => ({ file, sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex') }));
+          fs.writeFileSync(path.join(root, 'release-candidate.json'), JSON.stringify({ version: 'atlas-private-ci-release-v1',
+            image: process.env.PRIVATE_IMAGE_NAME, digest: process.env.PRIVATE_IMAGE_DIGEST,
+            sourceCommit: context.sourceCommit, sourceTree: context.sourceTree, manifestHash: context.manifestHash,
+            sourceInventoryHash: context.sourceInventoryHash, baseImage: context.baseImage, platform: 'linux/amd64',
+            packagedCandidate: context.packagedCandidate, cleanCommittedSourceVerified: true, evidence,
+            operatorArtifactIncluded: false, admitted: false, deployed: false }, null, 2), { flag: 'wx' });
+          JS
+          printf '### Exact ATLAS private release candidate\n\n`%s@%s`\n\nSource `%s`, tree `%s`, Linux amd64.\n\nThe separately bound operator artifact and runtime admission are not included.\n' \
+            "$PRIVATE_IMAGE_NAME" "$PRIVATE_IMAGE_DIGEST" "$GITHUB_SHA" "$PRIVATE_SOURCE_TREE" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain source, context, native-runtime and publication evidence
+        if: always() && steps.private-paths.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: atlas-private-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PRIVATE_EVIDENCE }}
+          if-no-files-found: error
+          retention-days: 30
 
   docker-images:
     name: Build Docker Images

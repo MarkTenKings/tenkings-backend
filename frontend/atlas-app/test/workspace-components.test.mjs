@@ -155,6 +155,43 @@ test('map review checks automatically once, while failure consent stays explicit
     f.props.card.operator = { kind: 'ASTRA' }; f.render(); assert.equal(all(f.tree, node => node.type === 'input' && node.props.type === 'checkbox').length, 0);
 });
 
+test('photo intake enables explicit reselect after a retained rejection and keeps unresolved uploads locked', async () => {
+    for (const unresolved of [false, true]) {
+        const react = reactHarness(), exported = {}, original = { name: 'front.png', type: 'image/png', size: 20 }, replacement = { ...original, name: 'replacement.png' };
+        const rejected = { ...card(), state: 'DRAFT', stage: 'PHOTOS', title: 'Same physical card',
+            sides: [{ side: 'FRONT', status: 'REJECTED', uploadId: randomUUID(), rejection: { reason: 'BYTES_MISMATCH' } }, { side: 'BACK', status: 'VERIFIED', uploadId: randomUUID() }] };
+        let saved = [{ id: randomUUID(), title: rejected.title, identity: { category: 'POKEMON' }, card: rejected,
+            files: { FRONT: original, BACK: { name: 'back.png', type: 'image/png', size: 20 } },
+            uploads: { FRONT: { phase: unresolved ? 'COMPLETE' : 'REJECTED', rejection: { reason: 'BYTES_MISMATCH' } }, BACK: { phase: 'VERIFIED' } },
+            pending: unresolved ? { path: `workspace/cards/${rejected.id}/upload-complete`, body: { operationId: randomUUID() } } : null,
+            pairConfirmed: false }];
+        const back = structuredClone(saved[0].files.BACK);
+        vm.runInNewContext(intakeCode, { exports: exported, structuredClone, require(module) {
+            if (module === 'react') return react.react;
+            if (module === 'next/link') return 'link';
+            if (module === './Shell') return { Notice: 'notice' };
+            if (module === './WorkspaceShared') return { PhotoPreview: 'PhotoPreview', Readiness: 'Readiness', StateBadge: 'StateBadge' };
+            if (module === '../lib/workspace-drafts.mjs') return { createPhotoDraftStore: () => ({ read: async () => structuredClone(saved), write: async entries => { saved = structuredClone(entries); } }) };
+            if (module === '../lib/workspace-client.mjs') return client;
+            if (module === '../lib/routes.mjs') return { STAFF_REAUTHENTICATE_PATH: '/admin?reauthenticate=1' };
+            if (module === '../lib/usePendingNavigation') return { usePendingNavigation() {} };
+            if (module.endsWith('.module.css')) return {};
+            return nextRequire(module.startsWith('@babel/runtime/') ? `next/dist/compiled/${module}` : module);
+        } });
+        const render = () => react.render(() => exported.default({ staff: { id: 'fixture-reviewer', role: 'REVIEWER' } }));
+        render(); await new Promise(resolve => setImmediate(resolve)); const tree = render();
+        const files = all(tree, node => node.type === 'input' && node.props.type === 'file');
+        assert.equal(files[0].props.disabled, unresolved);
+        if (!unresolved) assert.match(text(tree), /Needs replacement/);
+        files[0].props.onChange({ target: { files: [replacement], value: 'selected' } });
+        await new Promise(resolve => setImmediate(resolve)); render();
+        assert.equal(saved[0].card.id, rejected.id); assert.deepEqual(saved[0].files.BACK, back);
+        assert.equal(saved[0].files.FRONT.name, unresolved ? original.name : replacement.name);
+        assert.equal(saved[0].uploads.FRONT?.phase ?? null, unresolved ? 'COMPLETE' : null);
+        assert.equal(saved[0].pairConfirmed, false);
+    }
+});
+
 test('map review never treats missing map or integrity failure as a human override', () => {
     for (const status of ['NO_MAP', 'INTEGRITY_ERROR', 'HUMAN_REVIEW_WITHOUT_MAP']) {
         const initial = card(); initial.operator = { kind: 'HUMAN' }; initial.workspace.map = { status, name: null, scope: null, version: null, registration: {}, canRegister: false, bindingReady: false };

@@ -106,6 +106,13 @@ export function verifiedWorkspaceUpload(value, upload) {
     return { ...value };
 }
 
+export function rejectedWorkspaceUpload(value, upload) {
+    workspaceObject(value, ['state', 'cardId', 'uploadId', 'reason'], [], 'WORKSPACE_UPLOAD_UNVERIFIED');
+    requireWorkspace(value.state === 'REJECTED' && value.cardId === upload.cardId && value.uploadId === upload.id
+        && ['BYTES_MISMATCH', 'INVALID_IMAGE'].includes(value.reason), 503, 'WORKSPACE_UPLOAD_UNVERIFIED');
+    return { ...value };
+}
+
 export function workspaceUploadGrant(value, upload, now) {
     workspaceObject(value, ['id', 'url', 'method', 'headers', 'expiresAt'], [], 'WORKSPACE_STORAGE_UNAVAILABLE');
     let url;

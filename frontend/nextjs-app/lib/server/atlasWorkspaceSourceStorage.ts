@@ -2,7 +2,7 @@ import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, type S3Client } 
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'node:crypto';
 import { inspectSpeedsterPreparationSourceBytes, type SpeedsterPreparationStorage } from './speedsterPreparationStorage';
-import { preparationRequire } from './speedsterPreparationIntegrity';
+import { preparationRequire, SpeedsterPreparationConflict } from './speedsterPreparationIntegrity';
 
 const MAX_BYTES = 50 * 1024 * 1024;
 const uuid = '[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
@@ -14,6 +14,26 @@ export type AtlasWorkspacePhotoDescriptor = Readonly<{ objectRef: string; sha256
     contentType: string; width?: number; height?: number; versionId?: string }>;
 export type AtlasWorkspaceUpload = AtlasWorkspacePhotoDescriptor & Readonly<{ id: string; cardId: string; side: 'FRONT' | 'BACK';
     sourceId: string; sourceOwnerId: string }>;
+export class AtlasWorkspaceUploadRejected extends Error {
+    readonly cardId: string;
+    readonly uploadId: string;
+    constructor(upload: AtlasWorkspaceUpload, readonly reason: 'BYTES_MISMATCH' | 'INVALID_IMAGE') {
+        super('WORKSPACE_UPLOAD_UNVERIFIED'); this.cardId = upload.cardId; this.uploadId = upload.id;
+    }
+}
+// Only known data-validation failures from the original full-buffer decoder
+// conclude that the photograph is invalid. Resource, runtime and unknown native
+// failures remain uncertain, including any timeout or interrupted storage read.
+export function isWorkspaceImageRejection(error: unknown) {
+    if (!(error instanceof Error)) return false;
+    if (/out of memory|allocat(?:ion|e).*fail|unable to allocate|ENOMEM|\bEIO\b|time(?:d? ?out)|abort|unavailable|not initialized|cannot load|module not found/i.test(error.message)) return false;
+    if (error instanceof SpeedsterPreparationConflict) return [
+        'Preparation requires a single-frame JPEG, PNG or WebP with valid EXIF orientation.',
+        'This WebP has unsupported orientation metadata. Its photo is preserved; select the original JPEG or PNG before preparing.',
+    ].includes(error.message);
+    return /^(?:Input buffer contains unsupported image format|Input buffer has corrupt header|Input image exceeds pixel limit)(?:$|:)/.test(error.message)
+        || /^(?:VipsJpeg: (?:Premature end of|premature end of|Corrupt JPEG data|Invalid JPEG file structure)|(?:pngload_buffer|webpload_buffer): (?:end of stream|unexpected end|invalid|Invalid|bad|Bad|truncated|Truncated))/.test(error.message);
+}
 
 function scopedKey(key: string, source?: Source) {
     const match = typeof key === 'string' && namespace.exec(key);
@@ -40,7 +60,7 @@ export function createAtlasWorkspaceSourceStorage({ client, bucket, uploadOrigin
     let origin: URL; try { origin = new URL(uploadOrigin); } catch { throw new Error('WORKSPACE_STORAGE_CONFIGURATION_INVALID'); }
     check(origin.protocol === 'https:' && origin.origin === uploadOrigin && !origin.username && !origin.password
         && /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket), 'WORKSPACE_STORAGE_CONFIGURATION_INVALID');
-    async function read(key: string, maximum = MAX_BYTES, signal?: AbortSignal, versionId?: string, selectedReference = false) {
+    async function read(key: string, maximum = MAX_BYTES, signal?: AbortSignal, versionId?: string, selectedReference = false, expectedLength?: number) {
         if (!selectedReference) scopedKey(key); check(Number.isSafeInteger(maximum) && maximum > 0 && maximum <= MAX_BYTES);
         const controller = new AbortController(), abort = () => controller.abort(signal?.reason);
         signal?.addEventListener('abort', abort, { once: true }); if (signal?.aborted) abort();
@@ -55,6 +75,8 @@ export function createAtlasWorkspaceSourceStorage({ client, bucket, uploadOrigin
             const response = await within(client.send(new GetObjectCommand({ Bucket: bucket, Key: key, ...(versionId ? { VersionId: versionId } : {}) }), { abortSignal: controller.signal }));
             check(response.Body && Number.isSafeInteger(response.ContentLength) && response.ContentLength! > 0 && response.ContentLength! <= maximum, 'WORKSPACE_UPLOAD_UNVERIFIED');
             stream = response.Body; check(typeof stream[Symbol.asyncIterator] === 'function', 'WORKSPACE_STORAGE_READ_INVALID');
+            if (expectedLength !== undefined) check(response.ContentLength === expectedLength && response.ContentRange === undefined,
+                'WORKSPACE_UPLOAD_UNVERIFIED');
             iterator = stream[Symbol.asyncIterator](); const chunks: Buffer[] = []; let count = 0;
             while (true) {
                 const next = await within(iterator!.next()); if (next.done) break;
@@ -97,11 +119,17 @@ export function createAtlasWorkspaceSourceStorage({ client, bucket, uploadOrigin
         async verify(upload: AtlasWorkspaceUpload) {
             descriptor(upload); scopedKey(upload.objectRef, upload);
             const head = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: upload.objectRef, ChecksumMode: 'ENABLED' }), { abortSignal: AbortSignal.timeout(15000) });
-            check(head.ContentLength === upload.byteCount && head.ContentType === upload.contentType, 'WORKSPACE_UPLOAD_UNVERIFIED');
-            if (head.ChecksumSHA256 !== undefined) check(head.ChecksumSHA256 === Buffer.from(upload.sha256, 'hex').toString('base64'), 'WORKSPACE_UPLOAD_UNVERIFIED');
+            check(Number.isSafeInteger(head.ContentLength) && head.ContentLength! > 0 && head.ContentLength! <= MAX_BYTES
+                && head.ContentType === upload.contentType, 'WORKSPACE_UPLOAD_UNVERIFIED');
             const value = { ...upload, ...(head.VersionId ? { versionId: head.VersionId } : {}) };
-            const bytes = await readExact(value), image = await inspectSpeedsterPreparationSourceBytes(bytes);
-            check(`image/${image.format}` === upload.contentType, 'WORKSPACE_UPLOAD_UNVERIFIED');
+            const bytes = await read(value.objectRef, Math.max(value.byteCount, head.ContentLength!), undefined, value.versionId, false, head.ContentLength!);
+            if (bytes.length !== upload.byteCount || createHash('sha256').update(bytes).digest('hex') !== upload.sha256)
+                throw new AtlasWorkspaceUploadRejected(upload, 'BYTES_MISMATCH');
+            if (head.ChecksumSHA256 !== undefined) check(head.ChecksumSHA256 === Buffer.from(upload.sha256, 'hex').toString('base64'), 'WORKSPACE_UPLOAD_UNVERIFIED');
+            let image: Awaited<ReturnType<typeof inspectSpeedsterPreparationSourceBytes>>;
+            try { image = await inspectSpeedsterPreparationSourceBytes(bytes); }
+            catch (error) { if (isWorkspaceImageRejection(error)) throw new AtlasWorkspaceUploadRejected(upload, 'INVALID_IMAGE'); throw error; }
+            if (`image/${image.format}` !== upload.contentType) throw new AtlasWorkspaceUploadRejected(upload, 'INVALID_IMAGE');
             return { objectRef: upload.objectRef, sha256: upload.sha256, byteCount: upload.byteCount, contentType: upload.contentType,
                 width: image.width, height: image.height, ...(head.VersionId ? { versionId: head.VersionId } : {}) };
         },

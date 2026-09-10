@@ -7,7 +7,7 @@ import { createAtlasWorkspaceSource, createAtlasWorkspacePhysicalGeometry, creat
     type AtlasWorkspaceSourceDependencies, type AtlasWorkspaceSourceRequest, type AtlasAuthorizedWorkspaceSource } from './atlasWorkspaceSource';
 import { createAtlasWorkspaceSourceLedger, atlasWorkspacePhysicalLedger,
     type AtlasWorkspaceSourceLedger, type createAtlasWorkspaceSourceAuthority } from './atlasWorkspaceSourceAuthority';
-import { type createAtlasWorkspaceSourceStorage, type AtlasWorkspaceUpload, type AtlasWorkspacePhotoDescriptor } from './atlasWorkspaceSourceStorage';
+import { AtlasWorkspaceUploadRejected, type createAtlasWorkspaceSourceStorage, type AtlasWorkspaceUpload, type AtlasWorkspacePhotoDescriptor } from './atlasWorkspaceSourceStorage';
 import { createPrismaSpeedsterPreparationStore } from './speedsterPreparationStore';
 import { currentSpeedsterPreparationRelease } from './speedsterPreparationRelease';
 import { createHash } from 'node:crypto';
@@ -185,7 +185,15 @@ export function createAtlasWorkspaceSourceHost(deps: AtlasWorkspaceSourceHostDep
                 if (packet.claims.action === 'UPLOAD_GRANT') {
                     check(!before.verification, 'WORKSPACE_UPLOAD_ALREADY_VERIFIED');
                     result = await storage.grant(before.upload as AtlasWorkspaceUpload, before.workspace.expiresAt, before.now);
-                } else if (packet.claims.action === 'VERIFY_UPLOAD') result = await storage.verify(before.upload as AtlasWorkspaceUpload);
+                } else if (packet.claims.action === 'VERIFY_UPLOAD') {
+                    try { result = await storage.verify(before.upload as AtlasWorkspaceUpload); }
+                    catch (error) {
+                        if (!(error instanceof AtlasWorkspaceUploadRejected)) throw error;
+                        check(error.cardId === input.cardId && error.uploadId === input.uploadId
+                            && ['BYTES_MISMATCH', 'INVALID_IMAGE'].includes(error.reason), 'WORKSPACE_SERVICE_RESPONSE_INVALID');
+                        result = { state: 'REJECTED', cardId: input.cardId, uploadId: input.uploadId, reason: error.reason };
+                    }
+                }
                 else { check(before.verification, 'WORKSPACE_PHOTOS_REQUIRED');
                     binary = { bytes: await storage.readCapture(before.verification as AtlasWorkspacePhotoDescriptor), contentType: before.verification.contentType }; }
                 const after = await authorizedUpload(input, mutable);

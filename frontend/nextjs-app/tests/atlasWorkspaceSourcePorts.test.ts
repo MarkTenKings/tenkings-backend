@@ -9,7 +9,7 @@ import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, type S3Client } 
 import { canonical } from '@atlas/service-bridge/protocol';
 import { signWorkspaceRequest, workspaceResponseSignature } from '@atlas/service-bridge/workspace';
 import { preparationBytesHash, preparationHash } from '../lib/server/speedsterPreparationIntegrity';
-import { createAtlasWorkspaceSourceStorage, type AtlasWorkspaceUpload } from '../lib/server/atlasWorkspaceSourceStorage';
+import { AtlasWorkspaceUploadRejected, createAtlasWorkspaceSourceStorage, isWorkspaceImageRejection, type AtlasWorkspaceUpload } from '../lib/server/atlasWorkspaceSourceStorage';
 import { createAtlasWorkspacePreparationWorker, createAtlasWorkspacePreparationStore, createAtlasWorkspaceSourceHost,
     type AtlasWorkspaceSourceHostDependencies } from '../lib/server/atlasWorkspaceSourceHost';
 import { createAtlasWorkspaceSourceAuthority, createAtlasWorkspaceSourceLedger } from '../lib/server/atlasWorkspaceSourceAuthority';
@@ -77,6 +77,46 @@ test('private storage: dishonest metadata, truncated bytes, decoder failures and
     f.state.presignOrigin = 'https://different.example.invalid';
     await assert.rejects(f.storage.grant(f.upload, LATER, NOW), /WORKSPACE_STORAGE_GRANT_INVALID/);
     await assert.rejects(f.storage.grant(f.upload, NOW, NOW), /WORKSPACE_UPLOAD_EXPIRED/);
+});
+
+test('private storage: only complete bad bytes or conclusive image failures produce an exact upload rejection', async () => {
+    const f = await storageFixture();
+    // Spaces may omit or echo a caller checksum without checking the body.
+    f.state.checksum = undefined as never;
+    assert.equal((await f.storage.verify(f.upload)).sha256, f.upload.sha256);
+    f.state.body = () => Readable.from([Buffer.alloc(f.bytes.length)]);
+    await assert.rejects(f.storage.verify(f.upload), error => error instanceof AtlasWorkspaceUploadRejected
+        && error.reason === 'BYTES_MISMATCH' && error.cardId === f.upload.cardId && error.uploadId === f.upload.id);
+    f.state.checksum = Buffer.from(f.upload.sha256, 'hex').toString('base64');
+    await assert.rejects(f.storage.verify(f.upload), error => error instanceof AtlasWorkspaceUploadRejected && error.reason === 'BYTES_MISMATCH');
+    for (const stored of [f.bytes.subarray(0, 20), Buffer.concat([f.bytes, Buffer.from('extra')])]) {
+        const next = await storageFixture(); next.state.bytes = stored; next.state.getLength = stored.length;
+        next.state.checksum = Buffer.from(preparationBytesHash(stored), 'hex').toString('base64');
+        next.state.body = () => Readable.from([stored]);
+        await assert.rejects(next.storage.verify(next.upload), error => error instanceof AtlasWorkspaceUploadRejected && error.reason === 'BYTES_MISMATCH');
+    }
+    const png = await sharp({ create: { width: 32, height: 48, channels: 3, background: 'red' } }).png().toBuffer();
+    const badCrc = Buffer.from(png); badCrc[29] ^= 1;
+    for (const bytes of [Buffer.alloc(256, 'x'), await sharp({ create: { width: 1, height: 48, channels: 3, background: 'red' } }).jpeg().toBuffer(),
+        (await image).subarray(0, (await image).length - 20), png.subarray(0, png.length - 25), badCrc]) {
+        const next = await storageFixture(); next.state.bytes = bytes; next.state.getLength = bytes.length;
+        next.state.checksum = undefined as never; next.state.body = () => Readable.from([bytes]);
+        const contentType = bytes === badCrc || bytes.subarray(0, 8).equals(png.subarray(0, 8)) ? 'image/png' : 'image/jpeg';
+        next.state.contentType = contentType;
+        await assert.rejects(next.storage.verify({ ...next.upload, contentType, sha256: preparationBytesHash(bytes), byteCount: bytes.length }),
+            error => error instanceof AtlasWorkspaceUploadRejected && error.reason === 'INVALID_IMAGE');
+    }
+    for (const message of ['out of memory', 'WORKSPACE_STORAGE_READ_TIMEOUT', 'VipsJpeg: allocation failed', 'decoder unavailable', 'AbortError',
+        'Input buffer has corrupt header: decoder unavailable', 'Input buffer has corrupt header: out of memory']) {
+        assert.equal(isWorkspaceImageRejection(new Error(message)), false);
+    }
+    for (const body of [() => Readable.from([f.bytes.subarray(0, 20)]),
+        () => Readable.from((async function* () { yield f.bytes.subarray(0, 20); throw new Error('stream interrupted'); })())]) {
+        f.state.body = body;
+        await assert.rejects(f.storage.verify(f.upload), error => !(error instanceof AtlasWorkspaceUploadRejected));
+    }
+    f.state.getLength = 20; f.state.body = () => Readable.from([f.bytes.subarray(0, 20)]);
+    await assert.rejects(f.storage.verify(f.upload), error => !(error instanceof AtlasWorkspaceUploadRejected), 'a shorter GET than HEAD is not proof of the complete object');
 });
 
 test('private storage: source capabilities reject cross-owner, mutable writes, corrupt evidence and abort uncooperative streams', async () => {
@@ -355,6 +395,25 @@ test('private host: signature validation precedes all side effects; current auth
     assert.equal(result.signature, workspaceResponseSignature(bridgeConfig, packet.claims, result.bytes, result.contentType));
     denied = true; await assert.rejects(host.receive(packet.body, packet.signature), /WORKSPACE_SOURCE_SCOPE_CHANGED/);
     assert.equal(loads, 4);
+});
+
+test('private host: complete upload rejection is signed only after exact post-read authority; unknown failures escape', async () => {
+    const f = await storageFixture(); let loads = 0, revoke = false;
+    const card = { id: f.upload.cardId, sides: { FRONT: { uploadId: f.upload.id } }, state: 'DRAFT', claim: null, specimenId: null };
+    const authority = { loadUpload: async () => { loads++; if (revoke && loads % 2 === 0) throw new Error('WORKSPACE_SOURCE_SCOPE_CHANGED');
+        return { card, upload: f.upload, verification: null, workspace: { intakeEnabled: true, expiresAt: LATER }, now: NOW }; } };
+    const host = createAtlasWorkspaceSourceHost({ bridgeConfig, worker: workerConfig, client: {} as PrismaClient,
+        authority: authority as never, storage: f.storage, initialization: () => { throw new Error('no initialization'); } });
+    f.state.body = () => Readable.from([Buffer.alloc(f.bytes.length)]);
+    const packet = signWorkspaceRequest(bridgeConfig, 'VERIFY_UPLOAD', { cardId: f.upload.cardId, uploadId: f.upload.id });
+    const result = await host.receive(packet.body, packet.signature);
+    assert.deepEqual(JSON.parse(result.bytes.toString('utf8')), { state: 'REJECTED', cardId: f.upload.cardId, uploadId: f.upload.id, reason: 'BYTES_MISMATCH' });
+    assert.equal(loads, 2); assert.equal(result.signature, workspaceResponseSignature(bridgeConfig, packet.claims, result.bytes, result.contentType));
+    revoke = true; await assert.rejects(host.receive(packet.body, packet.signature), /WORKSPACE_SOURCE_SCOPE_CHANGED/);
+    revoke = false; f.storage.verify = async () => { throw new Error('WORKSPACE_UPLOAD_UNVERIFIED'); };
+    await assert.rejects(host.receive(packet.body, packet.signature), error => !(error instanceof AtlasWorkspaceUploadRejected));
+    f.storage.verify = async () => { throw new AtlasWorkspaceUploadRejected({ ...f.upload, id: randomUUID() }, 'BYTES_MISMATCH'); };
+    await assert.rejects(host.receive(packet.body, packet.signature), /WORKSPACE_SERVICE_RESPONSE_INVALID/);
 });
 
 test('private worker: preparation and registration use explicit separate credentials and pinned endpoints', async () => {

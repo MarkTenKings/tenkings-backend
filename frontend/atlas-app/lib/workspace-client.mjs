@@ -69,6 +69,35 @@ export function validatePhoto(file) {
     if (typeof file.name !== 'string' || !file.name.trim() || file.name.length > 240) throw new Error('Choose a photograph with a shorter file name.');
     return file;
 }
+export function uploadRejectionMessage(reason) {
+    return reason === 'BYTES_MISMATCH'
+        ? 'The saved upload did not match the selected photograph. Choose the photograph again. Your card and other side are kept.'
+        : 'The saved photograph could not be decoded as a supported image. Choose a valid JPEG, PNG or WebP. Your card and other side are kept.';
+}
+/** Explicit file selection is the only way to replace a rejected upload. The
+ * new plan uses the same card; immutable upload and rejection history stays on
+ * the server. An uncertain request must first recover its recorded outcome. */
+export function replaceIntakePhoto(entry, side, file) {
+    validatePhoto(file);
+    if (!['FRONT', 'BACK'].includes(side) || entry.pending
+        || entry.card && !['DRAFT', 'NEEDS_ATTENTION'].includes(entry.card.state)) throw new Error('Recover the saved request before replacing a photograph.');
+    return { ...entry, files: { ...entry.files, [side]: file }, uploads: { ...entry.uploads, [side]: null }, pairConfirmed: false };
+}
+export function checkedUploadRejection(result, pending, entry, side) {
+    if (!Object.hasOwn(result, 'uploadResult')) return null;
+    const value = result.uploadResult, card = checkedCardResult(result, pending), current = cardSide(card, side);
+    if (!value || Object.keys(value).sort().join(',') !== 'cardId,reason,revision,side,state,uploadId'
+        || value.state !== 'REJECTED' || !['BYTES_MISMATCH', 'INVALID_IMAGE'].includes(value.reason)
+        || value.cardId !== entry.card.id || value.side !== side || value.uploadId !== entry.uploads[side].uploadId
+        || value.uploadId !== pending.body.uploadId || !pending.path.endsWith('/upload-complete')
+        || !['DRAFT', 'NEEDS_ATTENTION'].includes(card.state) || current?.status !== 'REJECTED'
+        || current.uploadId !== value.uploadId || current.rejection?.reason !== value.reason
+        || current.rejection?.operationId !== pending.body.operationId || current.rejection?.revision !== value.revision
+        || value.revision !== pending.body.expectedRevision + 1 || value.revision > card.revision) {
+        throw Object.assign(new Error('The rejected upload could not be matched to this request. Recover the same request before continuing.'), { code: 'REQUEST_OUTCOME_UNCONFIRMED' });
+    }
+    return { ...value, operationId: pending.body.operationId };
+}
 export async function describePhoto(file, cryptoImpl = globalThis.crypto) {
     validatePhoto(file);
     const bytes = await file.arrayBuffer();
@@ -124,6 +153,7 @@ export async function uploadIntakeEntry(initial, { request, persist, put = uploa
         const file = entry.files?.[side]; if (!file) continue;
         if (entry.uploads?.[side]?.phase === 'VERIFIED') continue;
         let phase = entry.uploads?.[side];
+        if (phase?.phase === 'REJECTED') throw new Error(uploadRejectionMessage(phase.rejection.reason));
         if (!phase) {
             onProgress(side, 'Checking photograph', 0);
             const descriptor = await describe(file);
@@ -143,7 +173,13 @@ export async function uploadIntakeEntry(initial, { request, persist, put = uploa
             await save({ ...entry, uploads: { ...entry.uploads, [side]: phase } });
         }
         onProgress(side, 'Verifying original', 100);
-        const { card } = await post(`${workspaceCardPath(entry.card.id)}/upload-complete`, { expectedRevision: entry.card.revision, uploadId: phase.uploadId }, entry.card.id);
+        const { card, result, pending } = await post(`${workspaceCardPath(entry.card.id)}/upload-complete`, { expectedRevision: entry.card.revision, uploadId: phase.uploadId }, entry.card.id);
+        const rejection = checkedUploadRejection(result, pending, entry, side);
+        if (rejection) {
+            await save({ ...entry, card, pending: null, pairConfirmed: false,
+                uploads: { ...entry.uploads, [side]: { ...phase, phase: 'REJECTED', rejection } } });
+            throw new Error(uploadRejectionMessage(rejection.reason));
+        }
         if (!verifiedSide(card, side)) throw new Error('The saved upload is awaiting verification. Recover its recorded result.');
         await save({ ...entry, card, pending: null, uploads: { ...entry.uploads, [side]: { ...phase, phase: 'VERIFIED' } } });
         onProgress(side, 'Verified', 100);

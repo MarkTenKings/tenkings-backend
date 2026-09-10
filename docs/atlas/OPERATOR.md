@@ -1,6 +1,6 @@
 # ATLAS Astra operator
 
-Updated September 9, 2026. The implemented operator lives in `packages/atlas-operator`; `packages/atlas-contracts` remains the earlier offline reference. The operator has locally verified source/runtime/ledger integration and no active production runner or scheduler. [COMPLETION.md](COMPLETION.md) describes the full staff workflow and operational acceptance gates.
+Updated September 10, 2026. The implemented operator lives in `packages/atlas-operator`; `packages/atlas-contracts` remains the earlier offline reference. The operator has locally verified source/runtime/ledger integration and no active production runner or scheduler. [COMPLETION.md](COMPLETION.md) describes the full staff workflow and operational acceptance gates.
 
 Mark grades and reviews in the ATLAS browser app on his MacBook. The background Astra runner host is a separate deployment choice. Windows NFC helper setup is not a requirement for either browser grading or this operator package.
 
@@ -26,13 +26,13 @@ Each tool result, next continuation/revision and outbox event commits atomically
 
 Environment guards reject debug/Node loader, Prisma/engine, native loader, OpenSSL and certificate-file overrides. This does not make a same-owner writable deployment tamper-proof or undo pre-JavaScript initialization. Trusted executable provenance, launcher, operating-system trust base and deployment ownership remain necessary.
 
-The accepted native parser supports thin Darwin arm64 Mach-O with protected macOS system libraries. Two synthetic inactive Node 22.23.2 artifacts reproduce and include M13. Linux/Docker needs a selected architecture/libc/OpenSSL baseline, exact Linux Node/Prisma engine and reviewed ELF closure checker; a Darwin artifact is not Linux acceptance. No live operator host or credentials were chosen.
+The native parser supports the retained Darwin Mach-O baseline and the implemented Linux x64 ELF closure. The Linux candidate uses the exact official Node20.20.1 Bookworm amd64 image recorded in README.runtime.md, Prisma5.22 and its Debian/OpenSSL3 engine. All100 operator source inputs are verified; actual native imports and launch/control-revision rejection pass with no network and a read-only artifact as UID/GID65532. Dedicated OpenAI project/key access is verified, but the artifact still requires real database/evidence bindings, its final independent manifest and installation on the selected host. Local synthetic bindings do not activate a runner.
 
 SIGINT/SIGTERM abort new work, preserve bounded receipt drain and disconnect handling, and emit only a projected result. A timeout does not claim rollback. Exit zero means a retained human-review handoff, never report approval. No provider response, token, private reasoning or raw exception is printed.
 
 ## Evidence
 
-The retained final package TAP contains passing results for all **79 operator-package tests**: image delivery/crop scope 4, release artifacts 15, Responses protocol/transport 12, runner orchestration 17 and runtime/initialization 31. These are a subset of the 186 combined package tests, not 79 additional checks. The operator source is unchanged since the final local acceptance. The provider is injected with synthetic responses; no live Astra model evaluated a real card in these tests.
+The current operator package passes **176 tests**, including original-photo inspection/proposals, source coordination, pause/STEP/takeover, atomic command admission, report handoff and recovery. The combined core/operator/bridge/private/staff suite passes606 tests after the inventory merge and corrupt-upload correction; the full Speedster/source/adversarial suite passes821. The provider is injected with synthetic responses; no live Astra model evaluated a real card in these tests. Earlier79-test totals remain historical checkpoints in SESSION_LOG.
 
 For example, the successful runner fixture executes `read_card_report` followed by `submit_for_human_review` against a synthetic report. It verifies exactly two applied steps, two persisted response receipts, current revision progression and terminal `READY_FOR_HUMAN`; receipt persistence precedes tool execution. Other cases inject lost replies, an unresponsive provider, expired authority, substituted images, missing usage, wrong model and invalid tools. Passing these cases establishes the tested orchestration and rejection behavior, not visual inspection accuracy, measured human labor savings or actual provider cost/latency. Those remain outcomes to measure in the approved ten-card supervised pilot.
 

@@ -224,6 +224,57 @@ test('Front and Back plans stay independent and superseded upload completion can
     assert.equal(completedBack.card.sides[1].status, 'VERIFIED'); assert.equal(completedBack.card.sides[0].status, 'PLANNED');
 });
 
+test('rejected completion keeps immutable receipt through replay, later side revisions and explicit replacement', async () => {
+    const f = fixture(), front = await f.plan((await f.create()).card, 'FRONT');
+    const input = { operationId: operationId(), expectedRevision: front.card.revision, uploadId: front.upload.id };
+    const verifier = f.storage.verify; let rejectionReads = 0;
+    f.storage.verify = async ({ upload }) => { rejectionReads++; return { state: 'REJECTED', cardId: upload.cardId, uploadId: upload.id, reason: 'BYTES_MISMATCH' }; };
+    const rejected = await f.service.completeUpload(f.staff, front.card.id, input);
+    assert.equal(rejected.card.state, 'DRAFT'); assert.equal(rejected.card.sides[0].status, 'REJECTED');
+    assert.equal(rejected.card.sides[0].imageUrl, null); assert.equal(f.calls.record, 0);
+    const pointer = clone(f.state.cards.get(front.card.id).sides.FRONT), receipt = clone(f.state.operationIds.get(pointer.rejectionId));
+    assert.equal(pointer.verificationId, null); assert.equal(receipt.operationId, input.operationId);
+    assert.equal(receipt.result.outcome, 'REJECTED');
+    await assert.rejects(f.service.queue(f.staff, front.card.id, { operationId: operationId(), expectedRevision: rejected.card.revision, pairConfirmed: true }), /WORKSPACE_PHOTOS_REQUIRED/);
+    f.storage.verify = verifier;
+    const back = await f.plan(rejected.card, 'BACK'), paired = await f.complete(back.card, back.upload);
+    f.restart();
+    const replay = await f.service.completeUpload(f.staff, front.card.id, input);
+    assert.deepEqual(replay.uploadResult, rejected.uploadResult); assert.equal(replay.card.revision, paired.card.revision);
+    assert.equal(rejectionReads, 1); assert.equal(replay.operationId, input.operationId);
+    const replacement = await f.plan(replay.card, 'FRONT', 'a new selected original');
+    const complete = await f.complete(replacement.card, replacement.upload);
+    assert.equal(complete.card.id, front.card.id); assert.equal(f.state.cards.size, 1);
+    assert.notEqual(replacement.upload.objectRef, front.upload.objectRef);
+    assert.equal(complete.card.sides[1].uploadId, back.upload.id); assert.equal(complete.card.sides[1].status, 'VERIFIED');
+    const late = await f.service.completeUpload(f.staff, front.card.id, input);
+    assert.deepEqual(late.uploadResult, rejected.uploadResult); assert.equal(late.card.sides[0].uploadId, replacement.upload.id);
+    assert.deepEqual(f.state.operationIds.get(pointer.rejectionId), receipt);
+    assert.deepEqual(f.state.operationIds.get(front.upload.id).result.upload, front.upload);
+    assert.equal(f.calls.claim, 0);
+});
+
+test('malformed, stale or unauthorized verifier rejections cannot settle the browser request or change evidence', async () => {
+    for (const change of [value => ({ ...value, cardId: randomUUID() }), value => ({ ...value, uploadId: randomUUID() }),
+        value => ({ ...value, reason: 'TIMEOUT' }), value => ({ ...value, extra: true })]) {
+        const f = fixture(), plan = await f.plan((await f.create()).card, 'FRONT'), count = f.state.operations.size;
+        f.storage.verify = async ({ upload }) => change({ state: 'REJECTED', cardId: upload.cardId, uploadId: upload.id, reason: 'BYTES_MISMATCH' });
+        await assert.rejects(f.complete(plan.card, plan.upload), /WORKSPACE_UPLOAD_UNVERIFIED/);
+        assert.equal(f.state.operations.size, count); assert.equal(f.state.cards.get(plan.card.id).sides.FRONT.rejectionId, undefined);
+    }
+    for (const revoke of [false, true]) {
+        const f = fixture(), plan = await f.plan((await f.create()).card, 'FRONT');
+        f.storage.verify = async ({ upload }) => {
+            if (revoke) f.identities.delete(f.staff);
+            else await f.plan(plan.card, 'BACK');
+            return { state: 'REJECTED', cardId: upload.cardId, uploadId: upload.id, reason: 'INVALID_IMAGE' };
+        };
+        await assert.rejects(f.complete(plan.card, plan.upload), revoke ? /SIGN_IN_REQUIRED/ : /WORKSPACE_REVISION_CHANGED/);
+        assert.equal(f.state.cards.get(plan.card.id).sides.FRONT.rejectionId, undefined);
+        assert.equal([...f.state.operations.values()].some(row => row.result.outcome === 'REJECTED'), false);
+    }
+});
+
 test('verified originals and expired pilot plans never receive a fresh overwrite grant', async () => {
     const f = fixture(), plan = await f.plan((await f.create()).card, 'FRONT');
     await f.complete(plan.card, plan.upload);

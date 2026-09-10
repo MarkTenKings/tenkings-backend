@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Notice } from './Shell';
 import { PhotoPreview, Readiness, StateBadge } from './WorkspaceShared';
 import { createPhotoDraftStore } from '../lib/workspace-drafts.mjs';
-import { canQueue, checkedCardResult, freshWorkspaceAccess, isNotDispatched, makePending, operationId, uploadIntakeEntry, validatePhoto, verifiedSide, workspaceCardPath, workspaceMessage, workspaceRequest } from '../lib/workspace-client.mjs';
+import { canQueue, cardSide, checkedCardResult, freshWorkspaceAccess, isNotDispatched, makePending, operationId, replaceIntakePhoto, uploadIntakeEntry, uploadRejectionMessage, verifiedSide, workspaceCardPath, workspaceMessage, workspaceRequest } from '../lib/workspace-client.mjs';
 import { STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import { usePendingNavigation } from '../lib/usePendingNavigation';
 import styles from './WorkspaceUi.module.css';
@@ -47,10 +47,9 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
     async function selectFile(id, side, file) {
         if (!file || working.current) return;
         try {
-            validatePhoto(file);
             const entry = entriesRef.current.find(value => value.id === id);
             if (entry.pending || entry.card && !['DRAFT', 'NEEDS_ATTENTION'].includes(entry.card.state)) return;
-            await edit(id, { files: { ...entry.files, [side]: file }, uploads: { ...entry.uploads, [side]: null }, pairConfirmed: false });
+            await edit(id, replaceIntakePhoto(entry, side, file));
         } catch (cause) { setEntryError(previous => ({ ...previous, [id]: cause.message })); }
     }
     async function uploadOne(id, access) {
@@ -107,7 +106,9 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
                     <fieldset disabled={locked || Boolean(entry.card)} className={styles.intakeDetails}><label>Short name<input value={entry.title} maxLength={120} onChange={event => edit(entry.id, { title: event.target.value })} /></label><label>Card type<select value={entry.identity.category} onChange={event => edit(entry.id, { identity: { category: event.target.value } })}><option value="">Choose type</option><option value="SPORTS">Sports</option><option value="POKEMON">Pokémon</option></select></label></fieldset>
                     <div className={styles.photoPair}>{['FRONT', 'BACK'].map(side => {
                         const selected = entry.files[side], status = progress[`${entry.id}:${side}`], verified = verifiedSide(entry.card, side) && (!selected || entry.uploads[side]?.phase === 'VERIFIED');
-                        return <div key={side} className={styles.photoSlot}><div className={styles.photoSlotHeading}><strong>{side === 'FRONT' ? 'Front' : 'Back'}</strong><span>{verified ? '✓ Verified' : selected ? 'Selected' : 'Missing'}</span></div><PhotoPreview file={selected} card={entry.card} side={side} className={styles.photoThumb} /><label className={styles.filePicker}>{selected ? 'Replace photograph' : verified ? 'Replace original' : 'Choose photograph'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={locked} onChange={event => { selectFile(entry.id, side, event.target.files?.[0]); event.target.value = ''; }} /></label><small className={styles.filename}>{selected?.name ?? (verified ? 'Original saved securely' : 'JPEG, PNG or WebP · up to 50 MB')}</small>{busyId === entry.id && status && <div className={styles.uploadProgress} role="status"><progress max="100" value={status.percent} aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} upload progress`} /><span>{status.status}{status.status === 'Uploading' ? ` · ${status.percent}%` : ''}</span></div>}</div>;
+                        const rejection = entry.uploads[side]?.phase === 'REJECTED' ? entry.uploads[side].rejection
+                            : !selected ? cardSide(entry.card, side)?.rejection : null;
+                        return <div key={side} className={styles.photoSlot}><div className={styles.photoSlotHeading}><strong>{side === 'FRONT' ? 'Front' : 'Back'}</strong><span>{verified ? '✓ Verified' : rejection ? 'Needs replacement' : selected ? 'Selected' : 'Missing'}</span></div><PhotoPreview file={selected} card={entry.card} side={side} className={styles.photoThumb} /><label className={styles.filePicker}>{selected ? 'Replace photograph' : verified ? 'Replace original' : 'Choose photograph'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={locked} onChange={event => { selectFile(entry.id, side, event.target.files?.[0]); event.target.value = ''; }} /></label><small className={styles.filename}>{selected?.name ?? (verified ? 'Original saved securely' : 'JPEG, PNG or WebP · up to 50 MB')}</small>{rejection && <Notice error>{uploadRejectionMessage(rejection.reason)}</Notice>}{busyId === entry.id && status && <div className={styles.uploadProgress} role="status"><progress max="100" value={status.percent} aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} upload progress`} /><span>{status.status}{status.status === 'Uploading' ? ` · ${status.percent}%` : ''}</span></div>}</div>;
                     })}</div>
                     {entryError[entry.id] && <Notice error>{entryError[entry.id]}</Notice>}
                     {entry.pending && <div className={styles.recovery}><strong>Saved request awaiting confirmation</strong><p>The same upload or queue request will be recovered.</p><div className={styles.actions}><button type="button" disabled={busy} onClick={() => run([entry.id])}>Recover saved request</button><a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">Sign in in another tab ↗</a></div></div>}

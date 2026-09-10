@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { canQueue, checkedCardResult, isNotDispatched, makePending, PHOTO_MAX_BYTES, queueCards, uploadIntakeEntry, uploadPhoto, validatePhoto } from '../lib/workspace-client.mjs';
+import { canQueue, checkedCardResult, isNotDispatched, makePending, PHOTO_MAX_BYTES, queueCards, replaceIntakePhoto, uploadIntakeEntry, uploadPhoto, validatePhoto } from '../lib/workspace-client.mjs';
 
 const makeCard = () => ({ id: randomUUID(), title: 'Fresh card', revision: 1, state: 'DRAFT', stage: 'PHOTOS', sides: [{ side: 'FRONT', status: 'MISSING' }, { side: 'BACK', status: 'MISSING' }] });
 const makeEntry = () => ({ id: randomUUID(), title: 'Card one', identity: { category: 'POKEMON' }, files: { FRONT: { name: 'front.jpg', size: 20, type: 'image/jpeg' }, BACK: { name: 'back.png', size: 24, type: 'image/png' } }, card: null, uploads: {}, pending: null });
@@ -124,4 +124,28 @@ test('create-only PUT replay reaches exact server verification and cannot mark m
     f.options.request = request; await f.run();
     assert.deepEqual(f.calls.find(call => call.path.endsWith('/upload-complete')).body, pending.body);
     assert.equal(f.saved.uploads.FRONT.phase, 'VERIFIED');
+});
+
+test('only an exact retained rejection unlocks explicit replacement; malformed or reordered receipts remain pending', async () => {
+    for (const change of [value => { value.uploadResult.uploadId = randomUUID(); }, value => { value.uploadResult.cardId = randomUUID(); },
+        value => { value.uploadResult.side = 'BACK'; }, value => { value.uploadResult.revision--; },
+        value => { value.uploadResult.extra = true; }, value => { value.uploadResult.reason = 'TIMEOUT'; },
+        value => { value.card.sides[0].rejection.operationId = randomUUID(); }, value => { value.card.sides[0].uploadId = randomUUID(); },
+        value => { delete value.card.sides[0].rejection; }]) {
+        const f = fixture(), request = f.options.request;
+        f.options.request = async (path, options) => {
+            const result = await request(path, options);
+            if (path.endsWith('/upload-complete')) {
+                result.card.sides[0].status = 'REJECTED';
+                result.card.sides[0].rejection = { operationId: options.body.operationId, revision: options.body.expectedRevision + 1, reason: 'BYTES_MISMATCH' };
+                result.uploadResult = { state: 'REJECTED', cardId: result.card.id, uploadId: options.body.uploadId,
+                    side: 'FRONT', reason: 'BYTES_MISMATCH', revision: options.body.expectedRevision + 1 };
+                change(result);
+            }
+            return result;
+        };
+        await assert.rejects(f.run(), /could not be matched/);
+        assert.equal(f.saved.uploads.FRONT.phase, 'COMPLETE'); assert.ok(f.saved.pending);
+        assert.throws(() => replaceIntakePhoto(f.saved, 'FRONT', f.saved.files.FRONT), /Recover the saved request/);
+    }
 });

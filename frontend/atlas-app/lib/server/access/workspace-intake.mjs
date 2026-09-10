@@ -4,7 +4,7 @@ import { canonical } from '../review-contract.mjs';
 import { WORKSPACE_ACTIONS } from '../../workspace-contract.mjs';
 import { staffApiPath } from '../../routes.mjs';
 import { MAX_WORKSPACE_REVISION, PHOTO_SIDES, WORKSPACE_SHA, WORKSPACE_UUID,
-    parseWorkspaceIntakeRequest, requireWorkspace, verifiedWorkspaceUpload, workspaceCardId,
+    parseWorkspaceIntakeRequest, rejectedWorkspaceUpload, requireWorkspace, verifiedWorkspaceUpload, workspaceCardId,
     workspaceTimestamp, workspaceUploadGrant } from './workspace-intake-validation.mjs';
 import { readWorkspacePhotoBytes } from './workspace-intake-storage.mjs';
 
@@ -95,6 +95,14 @@ export class StaffWorkspaceIntake {
             || WORKSPACE_UUID.test(pointer.verificationId ?? '')), 503, 'WORKSPACE_DATA_UNAVAILABLE');
         const upload = await this.retainedUpload(context, card, pointer.uploadId);
         requireWorkspace(upload.side === side, 503, 'WORKSPACE_DATA_UNAVAILABLE');
+        if (pointer.rejectionId !== undefined) {
+            requireWorkspace(WORKSPACE_UUID.test(pointer.rejectionId) && pointer.verificationId === null, 503, 'WORKSPACE_DATA_UNAVAILABLE');
+            const operation = await context.tx.getOperationById(pointer.rejectionId);
+            const rejection = this.uploadRejection(operation, upload);
+            requireWorkspace(rejection.revision <= card.revision, 503, 'WORKSPACE_DATA_UNAVAILABLE');
+            return { upload, verification: null, rejection: { reason: rejection.reason,
+                operationId: operation.operationId, revision: rejection.revision } };
+        }
         if (!pointer.verificationId) return { upload, verification: null };
         const completed = await context.tx.getOperationById(pointer.verificationId);
         requireWorkspace(completed?.action === 'upload-complete' && completed.cardId === card.id
@@ -103,13 +111,30 @@ export class StaffWorkspaceIntake {
         return { upload, verification };
     }
 
+    uploadRejection(operation, upload) {
+        const result = operation?.result;
+        requireWorkspace(operation?.action === 'upload-complete' && operation.cardId === upload.cardId
+            && result?.outcome === 'REJECTED' && Number.isSafeInteger(result.revision) && result.revision > 1,
+        503, 'WORKSPACE_DATA_UNAVAILABLE');
+        return { ...rejectedWorkspaceUpload({ state: 'REJECTED', cardId: operation.cardId,
+            uploadId: result.uploadId, reason: result.reason }, upload), side: upload.side, revision: result.revision };
+    }
+
+    async completionReply(context, card, operation) {
+        const reply = { card: await this.project(context, card), operationId: operation.operationId };
+        if (operation.result.outcome !== undefined) reply.uploadResult = this.uploadRejection(operation,
+            await this.retainedUpload(context, card, operation.result.uploadId));
+        return reply;
+    }
+
     async project(context, card) {
         const sides = await Promise.all(PHOTO_SIDES.map(async side => {
-            const { upload, verification } = await this.retainedSide(context, card, side);
-            return { side, status: !upload ? 'MISSING' : verification ? 'VERIFIED' : 'PLANNED', uploadId: upload?.id ?? null,
+            const { upload, verification, rejection } = await this.retainedSide(context, card, side);
+            return { side, status: !upload ? 'MISSING' : verification ? 'VERIFIED' : rejection ? 'REJECTED' : 'PLANNED', uploadId: upload?.id ?? null,
                 name: upload?.name ?? null, contentType: upload?.contentType ?? null, byteCount: upload?.byteCount ?? null,
                 sha256: upload?.sha256 ?? null, width: verification?.width ?? null, height: verification?.height ?? null,
-                imageUrl: verification ? staffApiPath(`workspace/cards/${card.id}/evidence/${side}`) : null };
+                imageUrl: verification ? staffApiPath(`workspace/cards/${card.id}/evidence/${side}`) : null,
+                ...(rejection ? { rejection } : {}) };
         }));
         const claim = card.claim;
         const identity = card.identity ?? {};
@@ -269,7 +294,7 @@ export class StaffWorkspaceIntake {
         const retained = await this.store.transaction(staff, async context => {
             this.authority(context, true);
             const card = await this.card(context, id), { prior } = await this.prior(context, 'upload-complete', id, input);
-            if (prior) return { result: { card: await this.project(context, card), operationId: prior.operationId } };
+            if (prior) return { result: await this.completionReply(context, card, prior) };
             this.intakeEnabled(context); this.editablePhotos(card); changed(card.revision === input.expectedRevision);
             const upload = await this.retainedUpload(context, card, input.uploadId);
             requireWorkspace(card.sides[upload.side]?.uploadId === upload.id, 409, 'WORKSPACE_UPLOAD_SUPERSEDED');
@@ -277,14 +302,29 @@ export class StaffWorkspaceIntake {
         });
         if (retained.result) return retained.result;
         available(typeof this.storage?.verify === 'function');
-        const verification = verifiedWorkspaceUpload(await this.storage.verify({ upload: json(retained.upload), source: json(retained.source) }), retained.upload);
+        const outcome = await this.storage.verify({ upload: json(retained.upload), source: json(retained.source) });
+        const rejection = outcome?.state === 'REJECTED' ? rejectedWorkspaceUpload(outcome, retained.upload) : null;
+        const verification = rejection ? null : verifiedWorkspaceUpload(outcome, retained.upload);
         return this.store.transaction(staff, async context => {
             this.authority(context, true);
             const card = await this.card(context, id), { prior, inputHash } = await this.prior(context, 'upload-complete', id, input);
-            if (prior) return { card: await this.project(context, card), operationId: prior.operationId };
+            if (prior) return this.completionReply(context, card, prior);
             this.intakeEnabled(context); this.editablePhotos(card); changed(card.revision === input.expectedRevision);
             const upload = await this.retainedUpload(context, card, input.uploadId);
             requireWorkspace(card.sides[upload.side]?.uploadId === upload.id, 409, 'WORKSPACE_UPLOAD_SUPERSEDED');
+            if (rejection) {
+                requireWorkspace(card.sides[upload.side].verificationId === null, 409, 'WORKSPACE_UPLOAD_ALREADY_VERIFIED');
+                // The signed verifier resolved this exact request. Retain its
+                // failure as immutably as success so a lost reply can recover
+                // without rereading or replacing the rejected object.
+                const operation = await this.record(context, 'upload-complete', id, input, inputHash,
+                    { uploadId: upload.id, outcome: 'REJECTED', reason: rejection.reason, revision: card.revision + 1 });
+                const next = { ...card, revision: card.revision + 1,
+                    sides: { ...card.sides, [upload.side]: { uploadId: upload.id, verificationId: null, rejectionId: operation.id } },
+                    updatedAt: context.now.toISOString() };
+                await context.tx.updateCard(next, card.revision);
+                return this.completionReply(context, next, operation);
+            }
             if (card.sides[upload.side].verificationId) {
                 // A different request may recover a side already verified; it
                 // records its own receipt but cannot revise original evidence.
