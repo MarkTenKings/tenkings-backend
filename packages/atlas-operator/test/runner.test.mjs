@@ -142,6 +142,46 @@ test('a reconciliation-only fresh claim never reserves, dispatches, renews or ex
     const result = await f.start(); assert.equal(result.state, 'RECONCILIATION_REQUIRED'); assert.deepEqual(f.events, ['claim']);
 });
 
+test('an already paused or taken-over claim returns without constructing a provider or reserving work', async () => {
+    for (const mode of ['PAUSED', 'TAKEN_OVER']) {
+        const f = fixture(); f.ledger.claim = async () => { f.events.push('claim'); return { mode, lease: null }; };
+        const result = await f.start({ createProvider: () => { throw new Error('provider must not be constructed'); } });
+        assert.equal(result.state, mode); assert.equal(result.stepsApplied, 0); assert.deepEqual(f.events, ['claim']);
+    }
+});
+
+test('STEP records one action then releases only after commit, with no second reservation or failure stop', async () => {
+    const f = fixture(), apply = f.ledger.applyTool.bind(f.ledger);
+    f.ledger.applyTool = async (...args) => ({ ...await apply(...args), state: 'PAUSED' });
+    f.ledger.releasePause = async lease => { assert.equal(lease.revision, 2); assert.equal(f.events.at(-1), 'commit');
+        f.events.push('release-pause'); return { state: 'PAUSED' }; };
+    const result = await f.start();
+    assert.equal(result.state, 'PAUSED'); assert.equal(result.stepsApplied, 1); assert.equal(f.calls.length, 1);
+    assert.equal(f.events.at(-1), 'release-pause'); assert(!f.events.some(x => x.startsWith('stop:')));
+    assert.deepEqual((await Promise.all(result.receiptWrites)).map(r => r.state), ['PERSISTED']);
+});
+
+test('pause during an in-flight response still records that one action before stopping', async () => {
+    const f = fixture(), gate = deferred(), apply = f.ledger.applyTool.bind(f.ledger);
+    f.setFetch(async () => { await gate.promise; return Response.json(f.response('read_card_report')); });
+    f.ledger.applyTool = async (...args) => ({ ...await apply(...args), state: 'PAUSED' });
+    f.ledger.releasePause = async () => { f.events.push('release-pause'); return { state: 'PAUSED' }; };
+    const pending = f.start(); await flush(); assert.equal(f.calls[0].state, 'DISPATCHED');
+    assert.equal(f.receipts.length, 0); gate.resolve();
+    const result = await pending; assert.equal(result.state, 'PAUSED'); assert.equal(result.stepsApplied, 1);
+    assert.equal(f.calls.length, 1); assert.equal(f.receipts.length, 1); assert.equal(f.calls[0].state, 'APPLIED');
+    assert(f.events.indexOf('receipt') < f.events.indexOf('commit')); assert(f.events.indexOf('commit') < f.events.indexOf('release-pause'));
+});
+
+test('pause denied at dispatch releases an idle reservation without fetching or marking the run failed', async () => {
+    const f = fixture(); f.ledger.takeDispatch = async () => fail('ASTRA_WORKFLOW_PAUSED');
+    f.ledger.releasePause = async () => { f.events.push('release-pause'); return { state: 'PAUSED' }; };
+    f.setFetch(async () => { throw new Error('provider must not be reached'); });
+    const result = await f.start(); assert.equal(result.state, 'PAUSED'); assert.equal(result.stepsApplied, 0);
+    assert.equal(f.calls.length, 1); assert.equal(f.receipts.length, 0);
+    assert(!f.events.includes('dispatch') && !f.events.some(x => x.startsWith('stop:')));
+});
+
 test('serialized heartbeats cover slow provider and slow preparation, then stop before revision mutation', async () => {
     const f = fixture(), providerGate = deferred(), prepareGate = deferred(); let prepared = false;
     f.setFetch(async () => { if (f.calls.length === 1) await providerGate.promise; return Response.json(f.response(f.calls.length === 1 ? 'read_card_report' : 'submit_for_human_review')); });

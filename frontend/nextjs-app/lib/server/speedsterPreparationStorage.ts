@@ -53,7 +53,7 @@ async function exactRead(key: string, storage: SpeedsterPreparationStorage): Pro
   return bytes;
 }
 
-async function decode(bytes: Buffer): Promise<Readonly<{ width: number; height: number; orientation: number; format: "jpeg" | "png" | "webp" }>> {
+export async function inspectSpeedsterPreparationSourceBytes(bytes: Buffer): Promise<Readonly<{ width: number; height: number; orientation: number; format: "jpeg" | "png" | "webp" }>> {
   const decoder = sharp(bytes, { failOn: "warning", limitInputPixels: 64 * 1024 * 1024 });
   const metadata = await decoder.metadata();
   preparationRequire(["jpeg", "png", "webp"].includes(metadata.format ?? "")
@@ -101,7 +101,7 @@ export async function freezeSpeedsterPreparationSource(
   const sha256 = preparationBytesHash(bytes);
   const encodedHash = /\/original\/(?:iphone-v[1-9][0-9]*-)?sha256-([a-f0-9]{64})\//.exec(originalStorageKey)?.[1];
   preparationRequire(!encodedHash || encodedHash === sha256, "Original generation checksum differs from its exact bytes.");
-  const dimensions = await decode(bytes);
+  const dimensions = await inspectSpeedsterPreparationSourceBytes(bytes);
   const storageKey = preparationSourceKey(scope, sha256, dimensions.format);
   await freezeExactBytes(storageKey, bytes, dimensions.format, storage);
   return { originalStorageKey, originalSha256: sha256, storageKey, sha256, byteCount: bytes.length, ...dimensions, decoder: SPEEDSTER_PREPARATION_DECODER };
@@ -135,7 +135,7 @@ export async function verifyAndFreezeSpeedsterPreparation(
   // or second staging read can substitute bytes between hash and final upload.
   const verified = await Promise.all(SPEEDSTER_PREPARATION_ROLES.map(async (role) => {
     const bytes = await exactRead(preparationStagingKey(attempt, attempt.id, role), storage);
-    const dimensions = await decode(bytes);
+    const dimensions = await inspectSpeedsterPreparationSourceBytes(bytes);
     preparationRequire(dimensions.format === "webp" && dimensions.orientation === 1 && dimensions.width === (role === "RECTIFIED" ? 1270 : 1350)
       && dimensions.height === (role === "RECTIFIED" ? 1778 : 1858), "Prepared image type or dimensions do not match its role.");
     const sha256 = preparationBytesHash(bytes);

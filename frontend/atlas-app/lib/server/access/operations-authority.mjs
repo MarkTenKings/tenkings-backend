@@ -25,6 +25,7 @@ export const OPERATION_GRANTS = Object.freeze(Object.fromEntries(Object.entries(
     StaffGradingExecution: { UPDATE: ['actualMicroUsd', 'costEvidenceHash'] },
     StaffOperatorAttempt: { UPDATE: ['actualMicroUsd', 'costEvidenceHash'] },
     StaffGradingOperation: {}, StaffOperatorRun: {}, StaffMachineInitialization: {}, StaffAnalysisRevision: {},
+    StaffWorkspaceSourceOperation: {}, StaffWorkspaceInfrastructureReservation: {},
     StaffOperationalResolution: { INSERT: ['id', 'kind', 'recordId', 'specimenId', 'pilotId', 'operationId', 'actorId',
         'sessionHash', 'accessVersion', 'controlRevision', 'operationsGrantId', 'inputHash', 'bindingHash',
         'sourceEvidenceHash', 'evidenceHash', 'reason', 'createdAt'] },

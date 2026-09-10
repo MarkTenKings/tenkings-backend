@@ -86,6 +86,7 @@ test("current Color Geometry runtime contains no retired-engine identity", () =>
     "../lib/server/speedsterColorGeometryAuthority.ts",
     "../pages/api/admin/ai-grader-v2/image/[action].ts",
     "../pages/api/admin/ai-grader-v2/sessions/[sessionId].ts",
+    "../lib/server/speedsterSessionCapture.ts",
     "../../../backend/ai-grader-speedster-service/color_geometry.py",
   ];
   for (const runtimeFile of runtimeFiles) {
@@ -380,9 +381,9 @@ test("color is permitted to seed only the matching editable geometry assist and 
   assert.doesNotMatch(workspace, /projectedZones\s*[:=].*color/s);
   assert.doesNotMatch(workspace, /filter.*colorGeometry/i);
   assert.doesNotMatch(workspace, /(?:gradeReport|reviewedDefects|grading)[^\n]*colorGeometry|colorGeometry[^\n]*(?:gradeReport|reviewedDefects|grading)/i);
-  const sessionRoute = readFileSync(new URL("../pages/api/admin/ai-grader-v2/sessions/[sessionId].ts", import.meta.url), "utf8");
+  const sessionRoute = readFileSync(new URL("../lib/server/speedsterSessionCapture.ts", import.meta.url), "utf8");
   const persistenceStart = sessionRoute.indexOf("export async function parseSpeedsterColorGeometryCaptureRows");
-  const persistenceEnd = sessionRoute.indexOf("export function createAiGraderV2SessionHandler", persistenceStart);
+  const persistenceEnd = sessionRoute.length;
   const persistenceBody = persistenceStart >= 0 && persistenceEnd > persistenceStart
     ? sessionRoute.slice(persistenceStart, persistenceEnd)
     : "";

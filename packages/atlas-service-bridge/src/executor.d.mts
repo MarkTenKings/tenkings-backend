@@ -8,6 +8,7 @@ export class ScopedGradingBridge<Tx, Source extends { id: string; createdByUserI
         client: { $transaction<T>(work: (tx: Tx) => Promise<T>, options?: { maxWait?: number; timeout?: number }): Promise<T> };
         config: BridgeServerConfig;
         ports: {
+            afterExecutionClaim?(tx: Tx, execution: { operationId: string; claimId: string; sourceRevision: string; now: Date }): Promise<void>;
             loadSource(tx: Tx, card: BridgeCase): Promise<Source>;
             sourceEvidence(source: Source, sourceRevision?: string): unknown;
             assertSourceAdmission(source: Source): void;

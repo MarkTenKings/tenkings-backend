@@ -8,6 +8,31 @@ importers:
 
   .: {}
 
+  backend/atlas-private:
+    dependencies:
+      '@atlas/operator':
+        specifier: workspace:*
+        version: link:../../packages/atlas-operator
+      '@atlas/service-bridge':
+        specifier: workspace:*
+        version: link:../../packages/atlas-service-bridge
+      '@aws-sdk/client-s3':
+        specifier: 3.914.0
+        version: 3.914.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: 3.982.0
+        version: 3.982.0
+      '@prisma/client':
+        specifier: 5.22.0
+        version: 5.22.0(prisma@5.22.0)
+      sharp:
+        specifier: 0.33.5
+        version: 0.33.5
+    devDependencies:
+      prisma:
+        specifier: 5.22.0
+        version: 5.22.0
+
   backend/auth-service:
     dependencies:
       '@tenkings/database':

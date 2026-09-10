@@ -204,6 +204,7 @@ export class StaffOperations {
     preparePilot(staff, input) {
         strictObject(input, ['operationId', 'reason', 'authorizationEvidenceHash', 'policy', 'specimens']);
         const policy = parsePilotPolicy(input.policy);
+        check(policy.version === 'atlas-grading-bridge-policy-v1', 'PILOT_REQUIRES_WORKSPACE_ADMISSION', 409);
         check(Array.isArray(input.specimens) && input.specimens.length === 10);
         const bindings = input.specimens.map(value => {
             strictObject(value, ['specimenId', 'evidenceHash', 'sourceBindingHash']);
@@ -285,9 +286,23 @@ export class StaffOperations {
             const attempts = await context.tx.staffOperatorAttempt.findMany({ where: { runId: { in: runs.map(row => row.id) } }, take: 1001, select: ASTRA_COST });
             check(attempts.length <= 1000, 'PILOT_SUMMARY_LIMIT', 409);
             const operations = await context.tx.staffGradingOperation.findMany({ where: { id: { in: workers.map(row => row.operationId) } }, take: 1001, select: WORKER_PARENT });
+            const sources = await context.tx.staffWorkspaceSourceOperation.findMany({ where: { pilotId }, take: 1001,
+                select: { id: true, cardId: true, purpose: true, side: true, sourceConfigHash: true, requestHash: true, state: true,
+                    reservedMicroUsd: true, actualMicroUsd: true, costEvidenceHash: true, dispatchedAt: true } });
+            const infrastructure = await context.tx.staffWorkspaceInfrastructureReservation.findMany({ where: { pilotId }, take: 101,
+                select: { id: true, sourceConfigHash: true, reservedMicroUsd: true, actualMicroUsd: true, costEvidenceHash: true } });
+            check(sources.length <= 1000 && infrastructure.length <= 100, 'PILOT_SUMMARY_LIMIT', 409);
             const operationById = new Map(operations.map(row => [row.id, row])), runById = new Map(runs.map(row => [row.id, row]));
             const costs = [...workers.map(row => this.costView('WORKER', row, operationById.get(row.operationId))),
-                ...attempts.map(row => this.costView('ASTRA', row, runById.get(row.runId)))];
+                ...attempts.map(row => this.costView('ASTRA', row, runById.get(row.runId))),
+                ...sources.filter(row => row.purpose !== 'INITIALIZE_REPORT').map(row => ({ kind: 'SOURCE', recordId: row.id, pilotId,
+                    cardId: row.cardId, purpose: row.purpose, side: row.side, state: row.state, sourceConfigHash: row.sourceConfigHash,
+                    reservedMicroUsd: row.reservedMicroUsd.toString(), actualMicroUsd: row.actualMicroUsd?.toString() ?? null,
+                    costEvidenceHash: row.costEvidenceHash, usageCeilingMicroUsd: null, usageEnvelopeExceeded: false, dispatched: row.dispatchedAt !== null })),
+                ...infrastructure.map(row => ({ kind: 'INFRASTRUCTURE', recordId: row.id, pilotId, state: 'RESERVED',
+                    sourceConfigHash: row.sourceConfigHash, reservedMicroUsd: row.reservedMicroUsd.toString(),
+                    actualMicroUsd: row.actualMicroUsd?.toString() ?? null, costEvidenceHash: row.costEvidenceHash,
+                    usageCeilingMicroUsd: null, usageEnvelopeExceeded: false, dispatched: true }))];
             // Match the SQL admission function exactly, retaining unsettled usage
             // ceilings/reservations and distinguishing them from actual invoices.
             let actual = 0n, held = 0n, overrun = false;
@@ -295,7 +310,7 @@ export class StaffOperations {
                 const reservation = BigInt(cost.reservedMicroUsd), ceiling = cost.usageCeilingMicroUsd === null ? reservation : BigInt(cost.usageCeilingMicroUsd);
                 const invoiced = cost.actualMicroUsd === null ? null : BigInt(cost.actualMicroUsd);
                 if (invoiced !== null) actual += invoiced;
-                else if (!(cost.kind === 'ASTRA' && cost.state === 'FAILED' && !cost.dispatched)) held += ceiling;
+                else if (!(['ASTRA', 'SOURCE'].includes(cost.kind) && cost.state === 'FAILED' && !cost.dispatched)) held += ceiling;
                 overrun ||= cost.usageEnvelopeExceeded || ceiling > reservation || invoiced !== null && invoiced > ceiling;
             }
             const preparations = await context.tx.staffAudit.findMany({ where: { event: 'TEN_CARD_PILOT_PREPARED', subjectId: pilotId },
@@ -304,7 +319,7 @@ export class StaffOperations {
             if (preparations[0]) {
                 const details = JSON.parse(preparations[0].details), prepared = details.receipt;
                 const policy = parsePilotPolicy(checked(prepared.policyCanonical, prepared.policyHash, 16_384));
-                check(policy.pilotId === pilotId && Array.isArray(details.specimens) && details.specimens.length === 10,
+                check(policy.version === 'atlas-grading-bridge-policy-v1' && policy.pilotId === pilotId && Array.isArray(details.specimens) && details.specimens.length === 10,
                     'PILOT_CONFIGURATION_INVALID', 409);
                 preparedConfiguration = { policyHash: prepared.policyHash, policy, state: 'PREPARED_ONLY',
                     preparedAt: preparations[0].createdAt.toISOString(), expired: date(policy.expiresAt) <= context.now };

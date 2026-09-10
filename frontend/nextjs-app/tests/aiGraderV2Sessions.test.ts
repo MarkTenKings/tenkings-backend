@@ -2171,7 +2171,9 @@ test("review changes use the one owned review-action route and never call client
     `${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action.ts`,
     "utf8",
   );
-  assert.match(reviewRoute, /z\.object\(\{ type: z\.literal\("INITIALIZE"\) \}\)\.strict\(\)/);
+  const reviewContract = readFileSync(`${root}/../../packages/atlas-grading-core/src/review-action-contract.ts`, "utf8");
+  assert.match(reviewRoute, /speedsterReviewPostSchema as postSchema/);
+  assert.match(reviewContract, /z\.object\(\{ type: z\.literal\("INITIALIZE"\) \}\)\.strict\(\)/);
   assert.doesNotMatch(reviewRoute, /initialDefects/);
 });
 
@@ -2179,7 +2181,7 @@ test("review CAS is short, serializable, and compares the exact persisted update
   const root = fileURLToPath(new URL("..", import.meta.url));
   const core = readFileSync(`${root}/lib/server/aiGraderV2ReviewAction.ts`, "utf8");
   const route = readFileSync(
-    `${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action.ts`,
+    `${root}/lib/server/speedsterReviewDependencies.ts`,
     "utf8",
   );
   assert.ok(core.indexOf("await deps.measure") < core.lastIndexOf("await deps.persistReviewIfRevision"));
@@ -2207,7 +2209,7 @@ test("final capture persistence compares the exact draft revision before replaci
   const route = readFileSync(
     fileURLToPath(new URL("../pages/api/admin/ai-grader-v2/sessions/[sessionId].ts", import.meta.url)),
     "utf8",
-  );
+  ) + readFileSync(fileURLToPath(new URL("../lib/server/speedsterSessionCapture.ts", import.meta.url)), "utf8");
   assert.match(route, /updatedAt: expectedUpdatedAt/);
   assert.match(route, /colorGeometryEvidence, existing\.updatedAt/);
   assert.match(route, /if \(updated\.count !== 1\) return null/);

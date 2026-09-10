@@ -74,11 +74,13 @@ export function verifyRequest(config, body, signature, now = Date.now()) {
 }
 
 export function parsePilotPolicy(value) {
-    keys(value, ['version', 'pilotId', 'specimenIds', 'expiresAt', 'maxOperationsPerCard', 'maxTotalMicroUsd',
+    const workspace = value?.version === 'atlas-workspace-bridge-policy-v1';
+    const cohortKey = workspace ? 'workspaceCardIds' : 'specimenIds', ids = value?.[cohortKey];
+    keys(value, ['version', 'pilotId', cohortKey, 'expiresAt', 'maxOperationsPerCard', 'maxTotalMicroUsd',
         'maxCardMicroUsd', 'reservationPerOperationMicroUsd', 'maxWorkerCalls', 'deadlineMs']);
-    requireBridge(value.version === 'atlas-grading-bridge-policy-v1' && UUID.test(value.pilotId)
-        && Array.isArray(value.specimenIds) && value.specimenIds.length === 10
-        && value.specimenIds.every(id => UUID.test(id)) && new Set(value.specimenIds).size === 10
+    requireBridge((workspace || value.version === 'atlas-grading-bridge-policy-v1') && UUID.test(value.pilotId)
+        && Array.isArray(ids) && ids.length === 10
+        && ids.every(id => UUID.test(id)) && new Set(ids).size === 10
         && typeof value.expiresAt === 'string' && new Date(value.expiresAt).toISOString() === value.expiresAt
         && Number.isSafeInteger(value.maxOperationsPerCard) && value.maxOperationsPerCard > 0 && value.maxOperationsPerCard <= 100
         && ['maxTotalMicroUsd', 'maxCardMicroUsd', 'reservationPerOperationMicroUsd'].every(k => Number.isSafeInteger(value[k]) && value[k] > 0 && value[k] <= 1e12)

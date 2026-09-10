@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": { "./responses": "./src/responses.mjs", "./provider": "./src/provider.mjs", "./ledger": { "types": "./src/ledger.d.mts", "default": "./src/ledger.mjs" },
+    "./capture-protocol": { "types": "./src/capture-protocol.d.mts", "default": "./src/capture-protocol.mjs" },
+    "./workspace-source-runner": { "types": "./src/workspace-source-runner.d.mts", "default": "./src/workspace-source-runner.mjs" },
+    "./workspace-dispatcher": { "types": "./src/workspace-dispatcher.d.mts", "default": "./src/workspace-dispatcher.mjs" },
+    "./workspace-runner": "./src/workspace-runner.mjs", "./workflow-control": "./src/workflow-control.mjs",
     "./policy": "./src/policy.mjs", "./privileges": "./src/privileges.mjs", "./runner": "./src/runner.mjs", "./adapters": "./src/adapters.mjs" },
   "dependencies": { "@atlas/service-bridge": "workspace:*", "@atlas/grading-core": "workspace:*", "zod": "4.1.11" },
   "scripts": { "test": "node --test test/*.test.mjs" }

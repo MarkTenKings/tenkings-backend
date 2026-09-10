@@ -1,14 +1,29 @@
 import { z } from 'zod';
 import { canonical, digest, requireBridge as check } from '@atlas/service-bridge/protocol';
-import { operatorPolicySchema, toolDefinitions } from './responses.mjs';
+import { operatorPolicySchema, toolDefinitions, REPORT_TOOL_NAMES } from './responses.mjs';
+import { CAPTURE_TOOL_NAMES } from './capture-protocol.mjs';
 
 export const controlPolicySchema = z.strictObject({ version: z.literal('atlas-operator-control-policy-v1'), pilotId: z.uuidv4(),
     expiresAt: z.iso.datetime(), prompt: z.string().min(1).max(12_000), astra: operatorPolicySchema,
-    tools: z.array(z.string()).min(1).max(5), maxAttemptsPerCard: z.number().int().min(1).max(100),
+    tools: z.array(z.string()).min(1).max(REPORT_TOOL_NAMES.length), maxAttemptsPerCard: z.number().int().min(1).max(100),
+    captureTools: z.array(z.string()).min(1).max(CAPTURE_TOOL_NAMES.length).optional(),
     maxStepsPerRun: z.number().int().min(1).max(64), maxRunMs: z.number().int().min(60_000).max(3_600_000),
     leaseMs: z.number().int().min(10_000).max(60_000), concurrency: z.literal(1) });
 export function parseControlPolicy(value) {
-    const policy = controlPolicySchema.parse(value); toolDefinitions(policy.tools); return policy;
+    const policy = controlPolicySchema.parse(value); toolDefinitions(policy.tools);
+    check(policy.tools.every(name => REPORT_TOOL_NAMES.includes(name)), 'ASTRA_TOOLS_INVALID');
+    if (policy.captureTools) {
+        toolDefinitions(policy.captureTools);
+        check(policy.captureTools.every(name => CAPTURE_TOOL_NAMES.includes(name)), 'ASTRA_TOOLS_INVALID');
+    }
+    return policy;
+}
+export function toolsForRun(policy, run) {
+    const phase = run.phase ?? 'REPORT_REVIEW';
+    check(['REPORT_REVIEW', 'CAPTURE_REVIEW'].includes(phase), 'ASTRA_PHASE_INVALID');
+    const names = phase === 'CAPTURE_REVIEW' ? policy.captureTools : policy.tools;
+    check(Array.isArray(names) && names.length > 0, 'ASTRA_CAPTURE_NOT_ADMITTED');
+    return names;
 }
 export function checked(text, hash) {
     check(typeof text === 'string' && digest(text) === hash, 'ASTRA_STORED_EVIDENCE_INVALID');

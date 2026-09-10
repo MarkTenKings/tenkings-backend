@@ -14,6 +14,7 @@ export type MachineInitializationJob = {
 };
 export type FreshDetection = { jobId: string; claimId: string; sourceRevision: string };
 export type MachineInitializationPorts<Tx,Source,Data> = {
+    afterExecutionClaim?(tx: Tx, execution: { operationId: string; claimId: string; sourceRevision: string; now: Date }): Promise<void>;
     loadSource(tx: Tx,card: BridgeCase): Promise<Source>;
     sourceEvidence(source: Source,sourceRevision?: string): unknown;
     reportSource(source: Source): unknown;

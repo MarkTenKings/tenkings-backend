@@ -10,7 +10,8 @@ const SHA = 'a'.repeat(64);
 const AUTH = () => ({ operationId: randomUUID(), reason: 'Explicit synthetic operator instruction', authorizationEvidenceHash: SHA });
 function fixture() {
     const names = ['staffIdentity', 'staffSpecimen', 'staffReviewRevision', 'staffAudit', 'staffAssignment',
-        'staffGradingExecution', 'staffGradingOperation', 'staffOperatorRun', 'staffOperatorAttempt', 'staffMachineInitialization'];
+        'staffGradingExecution', 'staffGradingOperation', 'staffOperatorRun', 'staffOperatorAttempt', 'staffMachineInitialization',
+        'staffWorkspaceSourceOperation', 'staffWorkspaceInfrastructureReservation'];
     const state = Object.fromEntries(names.map(name => [name, []]));
     const actorId = randomUUID(), reviewerId = randomUUID();
     state.staffIdentity.push(...[actorId, reviewerId].map(id => ({ id, role: 'REVIEWER', name: 'Synthetic reviewer',
@@ -266,6 +267,24 @@ test('pilot summary keeps unknown reservations/usage ceilings distinct from invo
     f.state.staffOperatorAttempt[0].state = 'FAILED'; f.state.staffOperatorAttempt[0].dispatchedAt = null;
     assert.equal((await f.operations.pilotSummary(f.staff, target.pilotId)).unsettledMicroUsd, '0');
     await rejected(f.operations.reconcileInvoice(f.staff, await invoice(f, target)), 'INVOICE_DISPATCH_REQUIRED');
+});
+
+test('pilot totals retain source unknowns and every infrastructure release without double charging initialization', async () => {
+    const f = fixture(), pilotId = randomUUID(), cardId = randomUUID();
+    const source = { id: randomUUID(), pilotId, cardId, purpose: 'PREPARATION', side: 'FRONT', sourceConfigHash: SHA,
+        state: 'UNKNOWN', reservedMicroUsd: 500n, actualMicroUsd: null, costEvidenceHash: null, dispatchedAt: NOW };
+    f.state.staffWorkspaceSourceOperation.push(source,
+        { ...source, id: randomUUID(), purpose: 'INITIALIZE_REPORT', reservedMicroUsd: 0n },
+        { ...source, id: randomUUID(), purpose: 'PHYSICAL_GEOMETRY', state: 'FAILED', dispatchedAt: null, reservedMicroUsd: 300n });
+    f.state.staffWorkspaceInfrastructureReservation.push(...[1000n, 2000n].map((reservedMicroUsd, i) => ({
+        id: randomUUID(), pilotId, sourceConfigHash: String(i + 1).repeat(64), reservedMicroUsd, actualMicroUsd: null, costEvidenceHash: null })));
+    let summary = await f.operations.pilotSummary(f.staff, pilotId);
+    assert.equal(summary.accountedMicroUsd, '3500'); assert.equal(summary.actualMicroUsd, '0');
+    assert.equal(summary.costs.length, 4); assert.equal(summary.costs.some(row => row.purpose === 'INITIALIZE_REPORT'), false);
+    source.actualMicroUsd = 600n; source.costEvidenceHash = SHA;
+    summary = await f.operations.pilotSummary(f.staff, pilotId);
+    assert.equal(summary.actualMicroUsd, '600'); assert.equal(summary.unsettledMicroUsd, '3000'); assert.equal(summary.overrun, true);
+    assert.equal(summary.costs.some(row => 'requestCanonical' in row || 'resultCanonical' in row), false);
 });
 
 test('operation id reused for another request conflicts and fractional/negative invoice input is refused', async () => {

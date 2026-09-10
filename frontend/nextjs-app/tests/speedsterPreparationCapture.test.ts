@@ -31,7 +31,7 @@ async function fixture() {
   let rows = 0;
   let now = Date.now();
   const deps: Parameters<typeof savePreparedSpeedsterSessionCapture>[0] = {
-    preparationStore: adapter, preparationStorage: storage, requireAdminSession: async () => ({ user: { id: store.session.createdByUserId } }),
+    preparationStore: adapter, preparationStorage: storage,
     findSession: async () => store.session, updateSession: async () => { throw new Error("legacy save must not run"); },
     validateMapBinding: (session, binding, input) => validateSpeedsterSubmittedMapBinding(session, binding, input, {
       loadActiveMap: async () => { assert.equal(store.locked, false); return null; }, hashEvidence: async () => { throw new Error("NO_MAP has no external map evidence"); },

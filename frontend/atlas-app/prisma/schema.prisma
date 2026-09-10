@@ -336,9 +336,16 @@ model StaffOperatorControl {
 }
 
 model StaffOperatorRun {
+  phase                    String @default("REPORT_REVIEW")
+  workspaceCardId          String? @db.Uuid
+  captureRunId             String? @unique @db.Uuid
+  controlState             String @default("RUNNING")
+  controlRevision          Int @default(1)
+  executionMode            String @default("CONTINUOUS")
+  stepBudget               Int @default(0)
   initializationId String? @unique @db.Uuid
   id                       String @id @db.Uuid
-  specimenId               String @db.Uuid
+  specimenId               String? @db.Uuid
   pilotId                  String @db.Uuid
   evidenceHash             String @db.VarChar(64)
   policyHash               String @db.VarChar(64)
@@ -363,6 +370,159 @@ model StaffOperatorRun {
   createdAt                DateTime @default(now())
   updatedAt                DateTime @default(now())
   @@index([pilotId, state])
+}
+
+// Workflow metadata points to the original source and immutable upload
+// operation receipts. Image bytes, grades and provider continuations stay in
+// their existing authoritative stores.
+model StaffWorkspaceControl {
+  id                 String @id @default("active")
+  enabled            Boolean @default(false)
+  mode               String
+  releaseSha         String @db.VarChar(40)
+  configHash         String @db.VarChar(64)
+  cohortId           String @db.Uuid
+  maxCards           Int @default(10)
+  intakeEnabled      Boolean @default(false)
+  claimsEnabled      Boolean @default(false)
+  preparationEnabled Boolean @default(false)
+  astraEnabled       Boolean @default(false)
+  processingLimit    Int @default(1)
+  expiresAt          DateTime
+  revision           Int @default(1)
+  updatedAt          DateTime @default(now())
+}
+
+model StaffWorkspaceCard {
+  id                 String @id @db.Uuid
+  creatorId          String @db.Uuid
+  cohortId           String @db.Uuid
+  revision           Int
+  state              String
+  stage              String
+  specimenId         String? @unique @db.Uuid
+  canonical          String @db.Text
+  contentHash        String @db.VarChar(64)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @default(now())
+  @@index([cohortId, state, createdAt])
+}
+
+model StaffWorkspaceOperation {
+  id                 String @id @db.Uuid
+  actorId            String @db.Uuid
+  operationId        String @db.VarChar(80)
+  cardId             String @db.Uuid
+  action             String @db.VarChar(80)
+  inputHash          String @db.VarChar(64)
+  canonical          String @db.Text
+  contentHash        String @db.VarChar(64)
+  createdAt          DateTime @default(now())
+  @@unique([actorId, operationId])
+  @@index([cardId, createdAt])
+}
+
+// Private source execution and fixed infrastructure share the original pilot.
+// Serving credentials cannot read these rows or settle provider costs.
+model StaffWorkspaceSourceControl {
+  id String @id @default("active")
+  enabled Boolean @default(false)
+  mode String
+  releaseSha String @db.VarChar(40)
+  configHash String @db.VarChar(64)
+  sourceConfigHash String @db.VarChar(64)
+  sourceDeploymentId String @db.VarChar(120)
+  sourceReleaseSha String @db.VarChar(40)
+  cohortId String @db.Uuid
+  pilotId String @db.Uuid
+  physicalReserveMicroUsd BigInt
+  preparationReserveMicroUsd BigInt
+  registrationReserveMicroUsd BigInt @default(0)
+  infrastructureReserveMicroUsd BigInt
+  expiresAt DateTime
+  revision Int @default(1)
+  updatedAt DateTime
+}
+
+model StaffWorkspaceInfrastructureReservation {
+  id String @id @db.Uuid
+  pilotId String @db.Uuid
+  sourceConfigHash String @db.VarChar(64)
+  reservedMicroUsd BigInt
+  actualMicroUsd BigInt?
+  costEvidenceHash String? @db.VarChar(64)
+  createdAt DateTime
+  expiresAt DateTime
+  @@unique([pilotId, sourceConfigHash])
+}
+
+model StaffWorkspaceSourceOperation {
+  id String @id @db.Uuid
+  requestId String @db.Uuid
+  cardId String @db.Uuid
+  cohortId String @db.Uuid
+  pilotId String @db.Uuid
+  purpose String
+  side String
+  sourceConfigHash String @db.VarChar(64)
+  sourceControlRevision Int
+  bindingCanonical String @db.Text
+  bindingHash String @db.VarChar(64)
+  requestCanonical String @db.Text
+  requestHash String @db.VarChar(64)
+  runId String? @db.Uuid
+  runControlRevision Int?
+  gradingExecutionId String? @db.Uuid
+  state String
+  reservedMicroUsd BigInt
+  actualMicroUsd BigInt?
+  costEvidenceHash String? @db.VarChar(64)
+  resultCanonical String? @db.Text
+  resultHash String? @db.VarChar(64)
+  failureCode String? @db.VarChar(80)
+  createdAt DateTime
+  dispatchedAt DateTime?
+  finishedAt DateTime?
+  @@unique([requestId, purpose, side])
+  @@index([pilotId, cardId])
+  @@index([runId, state])
+}
+
+model StaffWorkspaceSourceActionPermit {
+  requestId String @id @db.Uuid
+  cardId String @db.Uuid
+  runId String @db.Uuid
+  runRevision Int
+  runControlRevision Int
+  claimFence Int
+  captureHash String @db.VarChar(64)
+  selectionStepId String @db.Uuid
+  selectionResultHash String @db.VarChar(64)
+  mode String
+  state String
+  createdAt DateTime
+  finishedAt DateTime?
+}
+
+model StaffWorkspaceSourceAdmission {
+  requestId String @id @db.Uuid
+  cardId String @unique @db.Uuid
+  specimenId String @unique @db.Uuid
+  sourceType String
+  sourceId String @db.VarChar(128)
+  sourceOwnerId String @db.VarChar(128)
+  sourceRevision String @db.VarChar(80)
+  sourceHash String @db.VarChar(64)
+  evidenceCanonical String @db.Text
+  evidenceHash String @db.VarChar(64)
+  admissionCanonical String @db.Text
+  admissionHash String @db.VarChar(64)
+  sourceConfigHash String @db.VarChar(64)
+  actorKind String
+  actorId String @db.Uuid
+  sessionHash String? @db.VarChar(64)
+  accessVersion Int
+  createdAt DateTime
 }
 
 model StaffOperatorAttempt {
@@ -533,6 +693,8 @@ model StaffSourceAdmission {
 }
 
 model StaffMachineInitialization {
+  workspaceSourceRequestId String? @unique @db.Uuid
+  admissionKind String @default("HUMAN_OPERATIONS")
   id String @id @db.Uuid
   specimenId String @db.Uuid
   pilotId String @db.Uuid
@@ -550,9 +712,9 @@ model StaffMachineInitialization {
   operatorRevision Int
   bridgeRevision Int
   admittedById String @db.Uuid
-  admittedSessionHash String @db.VarChar(64)
+  admittedSessionHash String? @db.VarChar(64)
   admittedAccessVersion Int
-  operationsGrantId String @db.Uuid
+  operationsGrantId String? @db.Uuid
   admissionReason String @db.VarChar(500)
   authorizationEvidenceHash String @db.VarChar(64)
   deadlineAt DateTime

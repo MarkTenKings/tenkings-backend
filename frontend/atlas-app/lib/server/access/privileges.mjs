@@ -26,8 +26,16 @@ export const STAFF_GRANTS = Object.freeze({
     StaffNfcVerification: { INSERT: '*' },
     StaffPhysicalFinish: { INSERT: '*' },
     StaffTrustedLearningDecision: { INSERT: '*' },
+    StaffWorkspaceControl: {},
+    StaffWorkspaceCard: { INSERT: '*', UPDATE: ['revision', 'state', 'stage', 'specimenId', 'canonical', 'contentHash', 'updatedAt'] },
+    StaffWorkspaceOperation: { INSERT: '*' },
 });
 const FUNCTIONS = new Set(['lock_control()', 'lock_assignment(uuid, uuid)', 'operator_work_pending(uuid)',
+    'lock_workspace_control()',
+    'enqueue_workspace_capture(uuid, uuid, text, text)',
+    'workspace_source_admitted(uuid, uuid)',
+    'read_workspace_operator_control(uuid)', 'control_workspace_operator(uuid, integer, text, uuid, text, integer)',
+    'read_workspace_operator_activity(uuid, integer)',
     'read_operator_proposals(uuid)', 'operator_proposals_pending(uuid)', 'lock_nfc_control()',
     'lock_learning_candidates(uuid, text, uuid, uuid, uuid)',
     'read_identity_correction_receipt(uuid, uuid, uuid, text, text, text, integer, integer, integer)']);

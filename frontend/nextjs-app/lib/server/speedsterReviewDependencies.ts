@@ -2,22 +2,29 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { HttpError } from "./adminSessionAuthority";
 import type { SpeedsterReviewActionDependencies } from "./aiGraderV2ReviewAction";
 import { boundedDuration, boundedWorkerIdentity, SPEEDSTER_DETECT_TRANSPORT_FIELD, speedsterDetectFailureEvidence, SpeedsterDetectUpstreamError } from "./aiGraderV2DetectTransport";
-import { presignReadUrl } from "./storage";
+import { presignReadUrl, type openStorageObjectRead } from "./storage";
 import { speedsterLearningBankForDetectRequest, type SpeedsterLearningDetectClient } from "./aiGraderV2LearningBank";
-import { loadPinnedSpeedsterMapRevision, hashSpeedsterMapStorageEvidence } from "./speedsterCardTypeMaps";
+import { loadPinnedSpeedsterMapRevision, hashSpeedsterMapStorageEvidence, type SpeedsterMapLookupDependencies } from "./speedsterCardTypeMaps";
 import { insertSpeedsterInstrumentationEvents, insertSpeedsterInstrumentationEventWithConflictDetection } from "./aiGraderV2Instrumentation";
 import { parseSpeedsterDetectionSideCheckpoint, sealSpeedsterDetectionSideCheckpoint, speedsterDetectionSideCheckpointEvent } from "./speedsterDetectionSideCheckpoint";
 
 type CommitArguments = Parameters<SpeedsterReviewActionDependencies["persistReviewIfRevision"]>;
 export type SpeedsterReviewDependencyOptions = {
+  /** Capture one host configuration for the complete operation and its receipts. */
+  env?: Readonly<NodeJS.ProcessEnv>;
+  serviceUrl?: string;
+  serviceHeaders?: Readonly<Record<string, string>>;
+  presignReadUrl?: typeof presignReadUrl;
+  openEvidence?: typeof openStorageObjectRead;
+  mapLookup?: SpeedsterMapLookupDependencies;
   beforeSessionLock?: (tx: Prisma.TransactionClient, ...args: CommitArguments) => Promise<void>;
   afterPersist?: (tx: Prisma.TransactionClient, ...args: CommitArguments) => Promise<void>;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
 };
 
-function serviceHeaders() {
-  const apiKey = process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY?.trim();
+function serviceHeaders(env: Readonly<NodeJS.ProcessEnv>) {
+  const apiKey = env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY?.trim();
   return {
     "Content-Type": "application/json",
     ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
@@ -100,7 +107,7 @@ export async function fetchSpeedsterDetectUpstream(
   };
 }
 
-function detectionReceiptAuthority(env: NodeJS.ProcessEnv = process.env) {
+function detectionReceiptAuthority(env: Readonly<NodeJS.ProcessEnv>) {
   const keyId = env.AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_HMAC_KEY_ID?.trim() ?? "";
   const secret = env.AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_HMAC_SECRET?.trim() ?? "";
   if (!keyId || keyId.length > 80 || secret.length < 32) {
@@ -109,7 +116,7 @@ function detectionReceiptAuthority(env: NodeJS.ProcessEnv = process.env) {
   return { keyId, secret };
 }
 
-export function assertSpeedsterDetectionRuntimeAuthority(env: NodeJS.ProcessEnv = process.env) {
+export function assertSpeedsterDetectionRuntimeAuthority(env: Readonly<NodeJS.ProcessEnv> = process.env) {
   detectionReceiptAuthority(env);
   if (env.AI_GRADER_SPEEDSTER_REQUIRE_DETECTOR_IDENTITY_V1?.trim().toLowerCase() !== "true") {
     throw new Error("AI_GRADER_SPEEDSTER_REQUIRE_DETECTOR_IDENTITY_V1 must be explicitly true.");
@@ -129,10 +136,10 @@ export function assertSpeedsterDetectionRuntimeAuthority(env: NodeJS.ProcessEnv 
   }
 }
 
-function detectionReceiptSecret(keyId: string): string | null {
-  const current = detectionReceiptAuthority();
+function detectionReceiptSecret(keyId: string, env: Readonly<NodeJS.ProcessEnv>): string | null {
+  const current = detectionReceiptAuthority(env);
   if (keyId === current.keyId) return current.secret;
-  const previousJson = process.env.AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_PREVIOUS_KEYS_JSON?.trim();
+  const previousJson = env.AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_PREVIOUS_KEYS_JSON?.trim();
   if (!previousJson) return null;
   let previous: unknown;
   try {
@@ -150,9 +157,19 @@ function detectionReceiptSecret(keyId: string): string | null {
  * The existing review service still owns all worker/map/Memory/checkpoint checks.
  * Hooks run inside the same serializable review transaction, never around it. */
 export function createSpeedsterReviewDependencies(prisma: PrismaClient, options: SpeedsterReviewDependencyOptions = {}): SpeedsterReviewActionDependencies {
+  options = { ...options };
+  const env = Object.freeze({ ...(options.env ?? process.env) });
+  const serviceUrl = (options.serviceUrl ?? env.AI_GRADER_SPEEDSTER_SERVICE_URL)?.replace(/\/$/, "");
+  const headers = Object.freeze(options.serviceHeaders
+    ? { "Content-Type": "application/json", ...options.serviceHeaders }
+    : serviceHeaders(env));
+  const receiptSecret = (keyId: string) => detectionReceiptSecret(keyId, env);
+  // A scoped caller supplies the same original parser with its own database
+  // reads. Legacy callers retain the established default lookup and storage.
+  const mapLookup = options.mapLookup ? { ...options.mapLookup } : undefined;
   return {
-  assertDetectionRuntimeAuthority: assertSpeedsterDetectionRuntimeAuthority,
-  presignRead: presignReadUrl,
+  assertDetectionRuntimeAuthority: () => assertSpeedsterDetectionRuntimeAuthority(env),
+  presignRead: options.presignReadUrl ?? presignReadUrl,
   loadOwnedSession: (identity) => prisma.aiGraderV2Session.findFirst({
     where: { id: identity.sessionId, createdByUserId: identity.createdByUserId },
     select: {
@@ -175,7 +192,7 @@ export function createSpeedsterReviewDependencies(prisma: PrismaClient, options:
       revision: await loadPinnedSpeedsterMapRevision({
         sessionId: session.id,
         mapRevisionId: session.mapRevisionId,
-      }),
+      }, mapLookup),
       registration: session.mapRegistration,
     };
   },
@@ -183,7 +200,7 @@ export function createSpeedsterReviewDependencies(prisma: PrismaClient, options:
     prisma as unknown as SpeedsterLearningDetectClient,
     (error) => console.error("[Speedster] SAM Memory catch-up failed before server detect:", error),
   ),
-  hashDetectionEvidence: hashSpeedsterMapStorageEvidence,
+  hashDetectionEvidence: storageKey => hashSpeedsterMapStorageEvidence(storageKey, options.openEvidence),
   async loadDetectionSideCheckpoints(lookup) {
     const rows = await prisma.aiGraderV2InstrumentationEvent.findMany({
       where: {
@@ -197,7 +214,7 @@ export function createSpeedsterReviewDependencies(prisma: PrismaClient, options:
     });
     const sides: Partial<Record<"FRONT" | "BACK", ReturnType<typeof parseSpeedsterDetectionSideCheckpoint>>> = {};
     for (const row of rows) {
-      const checkpoint = parseSpeedsterDetectionSideCheckpoint(row.details, detectionReceiptSecret);
+      const checkpoint = parseSpeedsterDetectionSideCheckpoint(row.details, receiptSecret);
       if (
         checkpoint.sessionRevision !== lookup.sessionRevision
         || checkpoint.captureBindingSha256 !== lookup.captureBindingSha256
@@ -211,7 +228,7 @@ export function createSpeedsterReviewDependencies(prisma: PrismaClient, options:
     return sides;
   },
   async persistDetectionSideCheckpoint(unsigned) {
-    const checkpoint = sealSpeedsterDetectionSideCheckpoint(unsigned, detectionReceiptAuthority());
+    const checkpoint = sealSpeedsterDetectionSideCheckpoint(unsigned, detectionReceiptAuthority(env));
     await insertSpeedsterInstrumentationEventWithConflictDetection(
       prisma,
       speedsterDetectionSideCheckpointEvent(checkpoint),
@@ -219,25 +236,23 @@ export function createSpeedsterReviewDependencies(prisma: PrismaClient, options:
     return checkpoint;
   },
   detectionDeadlineMs: (() => {
-    const raw = Number(process.env.AI_GRADER_SPEEDSTER_DETECT_DEADLINE_MS ?? 55_000);
+    const raw = Number(env.AI_GRADER_SPEEDSTER_DETECT_DEADLINE_MS ?? 55_000);
     return Number.isSafeInteger(raw) ? Math.max(1_000, Math.min(120_000, raw)) : 55_000;
   })(),
   async detect(body, request) {
-    const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");
     if (!serviceUrl) throw new HttpError(503, "AI_GRADER_SPEEDSTER_SERVICE_URL is not configured");
     return fetchSpeedsterDetectUpstream(body, {
       serviceUrl,
-      headers: serviceHeaders(),
+      headers,
       signal: options.signal && request?.signal ? AbortSignal.any([options.signal, request.signal]) : request?.signal ?? options.signal,
       fetchImpl: options.fetchImpl,
     });
   },
   async measure(body) {
-    const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");
     if (!serviceUrl) throw new HttpError(503, "AI_GRADER_SPEEDSTER_SERVICE_URL is not configured");
     const response = await (options.fetchImpl ?? fetch)(`${serviceUrl}/measure`, {
       method: "POST",
-      headers: serviceHeaders(),
+      headers,
       body: JSON.stringify(body),
       signal: options.signal,
     });
@@ -299,7 +314,7 @@ export function createSpeedsterReviewDependencies(prisma: PrismaClient, options:
         throw new HttpError(409, "Speedster Front/Back detector checkpoints are incomplete.");
       }
       const checkpoints = rows.map((row) => (
-        parseSpeedsterDetectionSideCheckpoint(row.details, detectionReceiptSecret)
+        parseSpeedsterDetectionSideCheckpoint(row.details, receiptSecret)
       ));
       const front = checkpoints.find(({ side }) => side === "FRONT");
       const back = checkpoints.find(({ side }) => side === "BACK");

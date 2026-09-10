@@ -1,0 +1,20 @@
+import type { ZodType } from 'zod';
+export type CaptureManifest = {
+    version: 'atlas-operator-capture-manifest-v1'; phase: 'CAPTURE_REVIEW'; runId: string; workspaceCardId: string;
+    claimId: string; claimFence: number; captureRevision: number; workflowRevision: number; evidenceHash: string;
+    identity: { category: 'SPORTS' | 'POKEMON' } & Record<string, string>;
+    cornerShape: 'SQUARE' | 'ROUNDED_3_18_MM' | null;
+    assets: Array<{ assetId: string; side: 'FRONT' | 'BACK'; view: 'ORIGINAL'; sha256: string; byteCount: number;
+        width: number; height: number; contentType: 'image/jpeg' | 'image/png' | 'image/webp' }>;
+};
+export const CAPTURE_TOOL_NAMES: readonly string[];
+export const CAPTURE_TOOL_SCHEMAS: Readonly<Record<string, ZodType<any>>>;
+export const CAPTURE_TOOL_DESCRIPTIONS: Readonly<Record<string, string>>;
+export const CAPTURE_INSTRUCTIONS: string;
+export const captureManifestSchema: ZodType<CaptureManifest>;
+export function parseCaptureManifest(value: unknown): CaptureManifest;
+export function captureIdentityFields(category: string): string[];
+export function assertCaptureScope(run: any, card: any, value: unknown): CaptureManifest;
+export function validateCaptureProposal(call: { name: string; args: any }, manifest: CaptureManifest): void;
+export function captureProposalRef(stepId: string, call: { args: unknown }): { stepId: string; requestHash: string };
+export function selectedCapturePreparation(data: any, delivered: (data: any, references: any[]) => Promise<void>): Promise<Record<string, unknown>>;

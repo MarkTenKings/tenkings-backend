@@ -21,6 +21,8 @@ import { machineAdmissionRuntimeSettings, StaffMachinePreparation } from './acce
 import { createLearningRuntime } from './access/learning-runtime.mjs';
 import { createIdentityCorrectionRuntime } from './access/identity-correction-runtime.mjs';
 import { StaffCustomerIntake } from './access/customer-intake.mjs';
+import { createWorkspaceRuntime, workspaceRuntimeSettings } from './access/workspace-runtime.mjs';
+import { localWorkspaceFixture } from './access/workspace-fixture.mjs';
 
 export function runtime(req, env = process.env) {
     if (env.ATLAS_LOCAL_SYNTHETIC === '1') {
@@ -64,7 +66,13 @@ export function runtime(req, env = process.env) {
     Object.setPrototypeOf(state.proposals, StaffProposals.prototype);
     let machineSettings = null;
     try { machineSettings = machineAdmissionRuntimeSettings(env, config); } catch { /* New admission denies below; retained records remain readable. */ }
+    let workspaceSettings;
+    try { workspaceSettings = workspaceRuntimeSettings(env, config); }
+    catch { workspaceSettings = workspaceRuntimeSettings({}, config); }
     return { ...state, mode: config.mode, origin: config.origin, cookies: config.cookies,
+        workspace: local && env.ATLAS_LOCAL_WORKSPACE_FIXTURE === '1'
+            ? localWorkspaceFixture({ auth: state.auth, review: state.review, staffConfig: config, env })
+            : createWorkspaceRuntime({ auth: state.auth, review: state.review, staffConfig: config, env, settings: workspaceSettings }),
         finishing: createFinishingRuntime({ auth: state.auth, review: state.review, staffConfig: config, env }),
         learning: createLearningRuntime({ auth: state.auth, review: state.review, staffConfig: config, env }),
         identityCorrection: createIdentityCorrectionRuntime({ auth: state.auth, review: state.review, staffConfig: config, env }),

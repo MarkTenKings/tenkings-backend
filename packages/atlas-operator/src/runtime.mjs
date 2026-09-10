@@ -3,13 +3,15 @@ import { canonical, digest, keys, keyBytes, bridgeOrigin, requireBridge as check
 import { operatorEvidenceClient } from '@atlas/service-bridge/operator-evidence';
 import { makeMachineInitializationExecutionConfig, machineInitializationExecutionClient } from '@atlas/service-bridge/machine-initialize-transport';
 import { MODEL } from './responses.mjs';
+import { CAPTURE_TOOL_NAMES } from './capture-protocol.mjs';
 import { makeOperatorConfig } from './policy.mjs';
 import { OperatorLedger } from './ledger.mjs';
 import { openAiBinding, responsesTransport } from './provider.mjs';
 import { operatorAdapters } from './adapters.mjs';
 import { runOperator } from './runner.mjs';
 
-export const RUNTIME_TOOLS = Object.freeze(['read_card_report','inspect_region','propose_identity','propose_finding_change','submit_for_human_review']);
+export const RUNTIME_TOOLS = Object.freeze(['read_card_report','inspect_region','inspect_card_geometry','measure_centering','inspect_finding',
+    'propose_identity','propose_finding_change','submit_for_human_review',...CAPTURE_TOOL_NAMES.filter(name=>name!=='inspect_region')]);
 export const INITIALIZATION_MS = 220_000;
 export const CONNECT_MS = 15_000, RECEIPT_DRAIN_MS = 30_000, DISCONNECT_MS = 15_000;
 const timers = { setTimeout, clearTimeout };
@@ -81,7 +83,7 @@ async function bounded(promise, ms, clock) {
  * All return values are deliberately projected; no exception text/credentials,
  * provider receipts, model text or private image URLs enter the CLI report.
  */
-export async function executeOperatorRun({ env, manifest, manifestHash, runId, signal, artifactRoot, expectedInitializationId }, {
+export async function executeOperatorRun({ env, manifest, manifestHash, runId, signal, artifactRoot, expectedInitializationId, expectedControlRevision }, {
     createClient, createLedger = value => new OperatorLedger(value),
     makeEvidenceClient = operatorEvidenceClient, makeAdapters = operatorAdapters,
     makeProvider = responsesTransport, run = runOperator, clock = timers, nodeVersion = process.version,
@@ -94,6 +96,8 @@ export async function executeOperatorRun({ env, manifest, manifestHash, runId, s
         check(typeof runId === 'string' && UUID.test(runId), 'ASTRA_RUN_ID_REQUIRED');
         check(expectedInitializationId === undefined || typeof expectedInitializationId === 'string' && UUID.test(expectedInitializationId),
             'ASTRA_INITIALIZATION_ID_REQUIRED');
+        check(expectedControlRevision === undefined || Number.isSafeInteger(expectedControlRevision) && expectedControlRevision > 0,
+            'ASTRA_CONTROL_REVISION_REQUIRED');
         configuration = productionOperatorConfig({ env, manifest, manifestHash, nodeVersion });
         assertReleaseProcess({ env, execArgv });
         await verifyArtifact({ root: artifactRoot, expectedBuildHash: manifest.buildHash });
@@ -106,7 +110,9 @@ export async function executeOperatorRun({ env, manifest, manifestHash, runId, s
         check(client && typeof client.$connect === 'function' && typeof client.$disconnect === 'function', 'ASTRA_DATABASE_CLIENT_REQUIRED');
         phase = 'CONNECT'; await bounded(Promise.resolve().then(() => client.$connect()), CONNECT_MS, clock);
         connected = true; databaseOpen = true;
-        const ledger = createLedger({ client, config: configuration.config });
+        const ledger = createLedger({ client, config: configuration.config, ...(expectedControlRevision === undefined ? {} : {
+            expectedClaim: { runId, controlRevision: expectedControlRevision },
+        }) });
         // Includes the exact role/grant assertion and current deployment/pilot
         // authority, before even constructing evidence/provider adapters.
         phase = 'ADMISSION'; await bounded(ledger.transaction(async context => {
@@ -132,8 +138,8 @@ export async function executeOperatorRun({ env, manifest, manifestHash, runId, s
             phase = 'RUN'; result = await run({ ledger: guardedLedger, runId, adapters, signal,
                 createProvider: ({ takeDispatch, signal: runSignal }) => makeProvider({ binding: configuration.provider,
                     takeDispatch, signal: runSignal }) });
-            check(result && result.runId === runId && ['READY_FOR_HUMAN','NEEDS_RECAPTURE','NEEDS_EXPERT','FAILED',
-                'NOT_CLAIMED','RECONCILIATION_REQUIRED'].includes(result.state)
+            check(result && result.runId === runId && ['READY_FOR_HUMAN','PREPARATION_READY','NEEDS_RECAPTURE','NEEDS_EXPERT','FAILED',
+                'NOT_CLAIMED','RECONCILIATION_REQUIRED','PAUSED','TAKEN_OVER'].includes(result.state)
                 && Number.isSafeInteger(result.stepsApplied) && result.stepsApplied >= 0 && result.stepsApplied <= 64
                 && Array.isArray(result.receiptWrites) && result.receiptWrites.length <= 100, 'ASTRA_RUN_RESULT_INVALID');
         }
@@ -167,7 +173,7 @@ export async function executeOperatorRun({ env, manifest, manifestHash, runId, s
     return { runId, state: result?.state ?? (connected ? 'RECONCILIATION_REQUIRED' : 'NOT_STARTED'),
         code: result?.code && /^ASTRA_[A-Z0-9_]{1,74}$/.test(result.code) ? result.code : null,
         stepsApplied: safeSteps(result?.stepsApplied), receipts, disconnect,
-        exitCode: result?.state === 'READY_FOR_HUMAN' ? 0 : result?.state === 'RECONCILIATION_REQUIRED' ? 3 : 2 };
+        exitCode: ['READY_FOR_HUMAN','PREPARATION_READY'].includes(result?.state) ? 0 : result?.state === 'RECONCILIATION_REQUIRED' ? 3 : 2 };
 }
 
 
@@ -236,8 +242,8 @@ export async function executeOperatorInitialization(input, {
         phase = 'OPERATOR';
         const result = await executeRun({env,manifest,manifestHash,artifactRoot,signal,runId:initializedRunId,expectedInitializationId:initializationId},
             {...runDependencies,verifyArtifact,nodeVersion,execArgv,clock});
-        check(result && result.runId === initializedRunId && ['READY_FOR_HUMAN','NEEDS_RECAPTURE','NEEDS_EXPERT','FAILED','NOT_CLAIMED',
-            'RECONCILIATION_REQUIRED','CONFIGURATION_REJECTED','INACTIVE','NOT_STARTED'].includes(result.state)
+        check(result && result.runId === initializedRunId && ['READY_FOR_HUMAN','PREPARATION_READY','NEEDS_RECAPTURE','NEEDS_EXPERT','FAILED','NOT_CLAIMED',
+            'RECONCILIATION_REQUIRED','CONFIGURATION_REJECTED','INACTIVE','NOT_STARTED','PAUSED','TAKEN_OVER'].includes(result.state)
             && [0,2,3,64,78].includes(result.exitCode), 'ASTRA_RUN_RESULT_INVALID');
         keys(result,['runId','state','code','stepsApplied','receipts','disconnect','exitCode']);
         return {...result,initializationId,initializationState:'SUCCEEDED'};

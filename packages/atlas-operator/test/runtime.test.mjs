@@ -84,6 +84,33 @@ test('one exact admitted run uses current role validation before adapters and di
     assert.deepEqual(f.events,['client','connect','authority','evidence-client','adapters','run','provider','disconnect']);assert.equal(f.clock.count(),0);
 });
 
+test('optional control revision rejects malformed input before verification or any database work',async()=>{
+    for(const expectedControlRevision of [0,-1,1.5,NaN,Infinity,Number.MAX_SAFE_INTEGER+1,null,'2',true,{}]) {
+        const f=fixture();f.input.expectedControlRevision=expectedControlRevision;let verified=0;
+        const result=await f.start({verifyArtifact:async()=>{verified++;}});
+        assert.equal(result.code,'ASTRA_CONTROL_REVISION_REQUIRED');assert.equal(result.state,'CONFIGURATION_REJECTED');
+        assert.equal(verified,0);assert.deepEqual(f.events,[]);
+    }
+});
+
+test('run invocation retains its exact control generation across verification and connection delays',async()=>{
+    const f=fixture(),verification=deferred(),connection=deferred(),originalRunId=f.input.runId;f.input.expectedControlRevision=7;let construction;
+    f.client.$connect=()=>connection.promise;
+    const pending=f.start({verifyArtifact:()=>verification.promise,createLedger:options=>{construction=options;return f.ledger;},
+        run:async({runId})=>{assert.equal(runId,originalRunId);return {runId,state:'READY_FOR_HUMAN',stepsApplied:0,receiptWrites:[]};}});
+    await flush();f.input.expectedControlRevision=9;verification.resolve();await flush();
+    assert.equal(construction,undefined);f.input.runId=randomUUID();connection.resolve();
+    // The custom runner validates the captured run instead of the now-mutated
+    // input holder. Both identifiers were fixed at invocation, before awaits.
+    const result=await pending;assert.equal(result.state,'READY_FOR_HUMAN');assert.equal(result.runId,originalRunId);
+    assert.equal(construction.expectedClaim.runId,originalRunId);assert.notEqual(originalRunId,f.input.runId);
+    assert.equal(construction.expectedClaim.controlRevision,7);assert.equal(construction.client,f.client);
+    assert.deepEqual(construction.config,f.config);
+    const legacy=fixture();let legacyConstruction;
+    await legacy.start({createLedger:options=>{legacyConstruction=options;return legacy.ledger;}});
+    assert.equal(Object.hasOwn(legacyConstruction,'expectedClaim'),false);
+});
+
 test('role or activation rejection cannot construct evidence adapters or dispatch',async()=>{
     const f=fixture();f.ledger.transaction=async()=>{throw Object.assign(new Error('secret database information'),{code:'ASTRA_DATABASE_ROLE_INVALID'});};
     const r=await f.start();assert.equal(r.exitCode,3);assert.equal(r.code,'ASTRA_DATABASE_ROLE_INVALID');

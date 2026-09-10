@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { canonical, requireBridge as check } from '@atlas/service-bridge/protocol';
-import { checked, parseControlPolicy } from './policy.mjs';
+import { checked, parseControlPolicy, toolsForRun } from './policy.mjs';
 
-const TERMINAL = new Set(['READY_FOR_HUMAN', 'NEEDS_RECAPTURE', 'NEEDS_EXPERT']);
+const TERMINAL = new Set(['PREPARATION_READY', 'READY_FOR_HUMAN', 'NEEDS_RECAPTURE', 'NEEDS_EXPERT']);
 const DB_TIMEOUT_MS = 15_000;
 const systemClock = { now: () => performance.now(), setTimeout, clearTimeout };
 const failure = code => Object.assign(new Error(code), { code });
@@ -77,7 +77,7 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
         // Account conservatively for the snapshot round trip; a slow database
         // response must not extend the absolute deadline observed inside it.
         deadline = Math.min(deadline, requestedAt + remaining);
-        for (const name of policy.tools) check(Object.hasOwn(adapters, name) && typeof adapters[name]?.apply === 'function'
+        for (const name of toolsForRun(policy,snap.run)) check(Object.hasOwn(adapters, name) && typeof adapters[name]?.apply === 'function'
             && (adapters[name].prepare === undefined || typeof adapters[name].prepare === 'function'), 'ASTRA_ADAPTER_NOT_ADMITTED');
         return snap;
     }
@@ -100,7 +100,10 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
     const result = (state, code = null) => ({ runId, state, code, stepsApplied, receiptWrites: [...receiptWrites] });
     try {
         alive();
-        const claimed = await db(() => { claimStarted = true; return ledger.claim(runId, owner); }); lease = claimed.lease;
+        const claimed = await db(() => { claimStarted = true; return ledger.claim(runId, owner); });
+        if (claimed.mode === 'PAUSED' || claimed.mode === 'TAKEN_OVER') return result(claimed.mode,
+            claimed.mode === 'PAUSED' ? 'ASTRA_WORKFLOW_PAUSED' : 'ASTRA_HUMAN_TAKEOVER');
+        lease = claimed.lease;
         check(lease?.runId === runId && lease.owner === owner, 'ASTRA_RUNNER_LEASE_INVALID');
         if (claimed.mode === 'RECONCILE_ONLY') return result('RECONCILIATION_REQUIRED', 'ASTRA_RECONCILIATION_ONLY');
         check(claimed.mode === 'WORK', 'ASTRA_RUNNER_LEASE_INVALID');
@@ -142,7 +145,7 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
             });
             check(receipt.state === 'RECEIVED' && receipt.httpStatus === 200, 'ASTRA_PROVIDER_RECONCILIATION_REQUIRED');
             const tool = await db(() => ledger.inspectTool(lease, reserved.attemptId));
-            check(policy.tools.includes(tool.call.name) && Object.hasOwn(adapters, tool.call.name), 'ASTRA_ADAPTER_NOT_ADMITTED');
+            check(toolsForRun(policy,tool.run).includes(tool.call.name) && Object.hasOwn(adapters, tool.call.name), 'ASTRA_ADAPTER_NOT_ADMITTED');
             const adapter = adapters[tool.call.name];
             const prepared = adapter.prepare ? await external(() => adapter.prepare(tool, { signal: controller.signal })) : undefined;
             const applied = await db(() => ledger.applyTool(lease, reserved.attemptId, data => {
@@ -154,7 +157,18 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
                 && applied.lease.fence === lease.fence && applied.lease.revision === lease.revision + 1,
             'ASTRA_RUNNER_APPLY_INVALID');
             lease = applied.lease; stepsApplied++;
+            if (applied.requiresPauseRelease) {
+                check(applied.state === 'PREPARATION_READY' && typeof ledger.releasePause === 'function', 'ASTRA_CONTROL_ADAPTER_REQUIRED');
+                const paused = await db(() => ledger.releasePause(lease));
+                check(paused?.state === 'PAUSED', 'ASTRA_CONTROL_NOT_SETTLED');
+            }
             if (TERMINAL.has(applied.state)) return result(applied.state);
+            if (applied.state === 'PAUSED') {
+                check(typeof ledger.releasePause === 'function', 'ASTRA_CONTROL_ADAPTER_REQUIRED');
+                const paused = await db(() => ledger.releasePause(lease));
+                check(paused?.state === 'PAUSED', 'ASTRA_CONTROL_NOT_SETTLED');
+                return result('PAUSED', 'ASTRA_WORKFLOW_PAUSED');
+            }
             check(applied.state === 'RUNNING', 'ASTRA_RUNNER_APPLY_INVALID');
         }
     } catch (error) {
@@ -162,6 +176,12 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
         // A lost claim reply can conceal a committed lease. Do not claim that
         // no lease exists; a subsequent owner must use normal fenced recovery.
         if (!lease) return result(claimStarted ? 'RECONCILIATION_REQUIRED' : 'NOT_CLAIMED', code);
+        if (code === 'ASTRA_WORKFLOW_PAUSED' && typeof ledger.releasePause === 'function') {
+            try {
+                const paused = await bounded(() => ledger.releasePause(lease), DB_TIMEOUT_MS, { independent: true });
+                if (paused?.state === 'PAUSED') return result('PAUSED', code);
+            } catch { return result('RECONCILIATION_REQUIRED', code); }
+        }
         try {
             const stopped = await bounded(() => ledger.stop(lease, { code }), DB_TIMEOUT_MS, { independent: true });
             // A timeout or lost transaction reply never proves rollback. Only

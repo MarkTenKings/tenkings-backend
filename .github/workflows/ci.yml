@@ -26,10 +26,12 @@ jobs:
 
   disposable-postgres-migration-chain:
     name: Disposable PostgreSQL Migration Chain
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: quality
     permissions:
       contents: read
+    env:
+      ATLAS_POSTGRES_BIN: /usr/lib/postgresql/16/bin
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -42,9 +44,71 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @tenkings/shared build
+      - name: Build the pure grading core used by the ATLAS database fixtures
+        run: pnpm --filter @atlas/grading-core build
+      - name: Generate the canonical staff database client
+        run: pnpm --filter @atlas/staff-app db:generate
+      - name: Generate private source client for restricted PostgreSQL fixtures
+        env:
+          PRISMA_GENERATE_SKIP_AUTOINSTALL: "1"
+        run: node backend/atlas-private/scripts/generate-database.mjs
       - run: pnpm --filter @tenkings/database generate
       - name: Complete disposable migration chain and second-deploy no-op
         run: pnpm --filter @tenkings/database validate:nfc:migration:disposable -- --ack-disposable-local-postgres
+      - name: Install fixture-only PostgreSQL 16 and the pinned JavaScript client
+        shell: bash
+        run: |
+          # initdb must run as the ordinary runner, never root. The fixture
+          # creates its own loopback cluster; no installed cluster is selected.
+          [[ "$(id -u)" -ne 0 ]]
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends postgresql-16 postgresql-client-16
+          for command in initdb pg_ctl postgres; do
+            test -x "$ATLAS_POSTGRES_BIN/$command"
+            "$ATLAS_POSTGRES_BIN/$command" --version
+          done
+          [[ "$("$ATLAS_POSTGRES_BIN/postgres" --version)" == "postgres (PostgreSQL) 16."* ]]
+          npm install --prefix "$RUNNER_TEMP/atlas-postgres-tools" --ignore-scripts --no-audit --no-fund --save-exact pg@8.16.3
+          node - <<'JS'
+          const assert = require('node:assert/strict');
+          const { join } = require('node:path');
+          const client = require(join(process.env.RUNNER_TEMP, 'atlas-postgres-tools/node_modules/pg/package.json'));
+          assert.equal(client.name, 'pg'); assert.equal(client.version, '8.16.3');
+          assert.notEqual(process.getuid(), 0);
+          JS
+      - name: Run the complete ATLAS PostgreSQL chain and restricted-role scenarios
+        shell: bash
+        run: |
+          # env -i prevents inherited production URLs, PG service settings,
+          # activation keys, or NODE_ENV=production from entering the fixture.
+          env -i PATH="$PATH" HOME="$HOME" LANG=C CI=true NEXT_TELEMETRY_DISABLED=1 \
+            node frontend/atlas-app/scripts/validate-postgres.mjs \
+              --ack-disposable-local-postgres \
+              --postgres-bin "$ATLAS_POSTGRES_BIN" \
+              --pg-module "$RUNNER_TEMP/atlas-postgres-tools/node_modules/pg" \
+            | tee "$RUNNER_TEMP/atlas-postgres-validation.log"
+          node - <<'JS'
+          const assert = require('node:assert/strict');
+          const { readFileSync, realpathSync, statSync } = require('node:fs');
+          const { tmpdir } = require('node:os');
+          const { join, relative, sep } = require('node:path');
+          const lines = readFileSync(join(process.env.RUNNER_TEMP, 'atlas-postgres-validation.log'), 'utf8').trim().split('\n');
+          const summary = JSON.parse(lines.at(-1));
+          assert.equal(summary.ok, true); assert.equal(summary.stopped, true);
+          assert(summary.passed >= 190, 'The complete ATLAS scenario set must run');
+          const directory = realpathSync(summary.directory), relativeDirectory = relative(realpathSync(tmpdir()), directory);
+          assert(relativeDirectory.startsWith('atlas-staff-db-') && !relativeDirectory.includes(sep));
+          const ownership = JSON.parse(readFileSync(join(directory, 'ownership.json'), 'utf8'));
+          assert.equal(ownership.createdByHarness, true); assert.equal(ownership.uid, process.getuid());
+          assert.equal(statSync(directory).uid, process.getuid());
+          const result = JSON.parse(readFileSync(join(directory, 'result.json'), 'utf8'));
+          assert.equal(result.ok, true); assert.equal(result.results.length, summary.passed);
+          assert(result.results.every(row => row.ok));
+          const cleanup = JSON.parse(readFileSync(join(directory, 'cleanup.json'), 'utf8'));
+          assert.equal(cleanup.stoppedVerified, true); assert.equal(cleanup.evidenceRetained, true);
+          console.log(JSON.stringify({ status: 'ATLAS_COMPLETE_POSTGRES_PASS', passed: summary.passed,
+              ownedByCurrentUser: true, stoppedVerified: true, evidenceDirectory: directory }));
+          JS
 
   speedster-frontend-tests:
     name: Protected Speedster Frontend & Adversarial Tests
@@ -64,11 +128,29 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @tenkings/database generate
-      - name: Run all Speedster frontend, authority, recovery, and adversarial tests
+      - name: Build and test the original pure grading core
+        run: pnpm --filter @atlas/grading-core test
+      - name: Run all Speedster and ATLAS source, authority, recovery, and adversarial tests
         run: >-
-          pnpm --filter @tenkings/nextjs-app exec sh -c
+          env -u NODE_ENV pnpm --filter @tenkings/nextjs-app exec sh -c
           'tsx --test tests/aiGraderV2*.test.ts tests/aiGraderV2*.test.tsx
-          tests/speedster*.test.ts tests/speedster*.test.tsx'
+          tests/speedster*.test.ts tests/speedster*.test.tsx tests/atlasWorkspace*.test.ts'
+      - name: Run ATLAS operator unit and recovery tests
+        run: pnpm --filter @atlas/operator test
+      - name: Run ATLAS service bridge unit and authority tests
+        run: pnpm --filter @atlas/service-bridge test
+      - name: Build the scoped private service and its canonical database client
+        env:
+          PRISMA_GENERATE_SKIP_AUTOINSTALL: "1"
+        run: pnpm --filter @atlas/private-service build
+      - name: Run private service configuration and HTTP tests
+        run: pnpm --filter @atlas/private-service test
+      - name: Build the staff app and verify its route and dependency boundaries
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: pnpm --filter @atlas/staff-app build
+      - name: Run all staff workflow, recovery, and client tests
+        run: env -u NODE_ENV pnpm --filter @atlas/staff-app test
 
   speedster-tested-release-image:
     name: Test, Publish & Attest Exact Speedster OCI
@@ -243,6 +325,303 @@ jobs:
           subject-name: ${{ env.SPEEDSTER_IMAGE_NAME }}
           subject-digest: ${{ env.SPEEDSTER_IMAGE_DIGEST }}
           push-to-registry: true
+
+  speedster-preparation-tested-release-image:
+    name: Test, Publish & Attest Exact CPU Preparation OCI
+    runs-on: ubuntu-latest
+    needs:
+      - quality
+      - disposable-postgres-migration-chain
+      - speedster-frontend-tests
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      PYTHON_BASE_IMAGE: "python@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Validate CPU locks and resolve exact source identity
+        shell: bash
+        run: |
+          [[ "$PYTHON_BASE_IMAGE" =~ ^python@sha256:[a-f0-9]{64}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ -z "$(git status --porcelain)" ]]
+          echo "PREPARATION_IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}-speedster-preparation" >> "$GITHUB_ENV"
+          echo "SOURCE_TREE_SHA=$(git rev-parse HEAD^{tree})" >> "$GITHUB_ENV"
+          echo "SPEEDSTER_BUILD_ID=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+          python - <<'PY'
+          import json, re
+          from pathlib import Path
+          source = Path("backend/ai-grader-speedster-service")
+          runtime = {
+              "annotated-types": "0.8.0", "anyio": "4.15.1", "certifi": "2026.7.22",
+              "charset-normalizer": "3.5.1", "click": "8.5.0", "fastapi": "0.115.2",
+              "h11": "0.16.0", "idna": "3.19", "uvicorn": "0.30.6",
+              "opencv-python-headless": "4.10.0.84", "numpy": "1.26.4", "requests": "2.32.3",
+              "pillow": "11.3.0", "pydantic": "2.13.5", "pydantic_core": "2.46.5",
+              "starlette": "0.40.0", "typing-inspection": "0.4.4", "typing_extensions": "4.16.0",
+              "urllib3": "2.7.0",
+          }
+          tests = {"httpx": "0.27.2", "httpcore": "1.0.9", "sniffio": "1.3.1"}
+          runtime_lines = (source / "requirements.preparation.txt").read_text().splitlines()
+          test_lines = (source / "requirements.preparation-test.txt").read_text().splitlines()
+          assert len(runtime_lines) == 19 and len(test_lines) == 4
+          assert test_lines[0] == "-r requirements.preparation.txt"
+          for lines, expected in ((runtime_lines, runtime), (test_lines[1:], tests)):
+              assert all(re.fullmatch(r"[A-Za-z0-9_-]+==[0-9]+(?:\.[0-9]+)+", line) for line in lines)
+              assert dict(line.split("==") for line in lines) == expected
+          Path("preparation-locks.json").write_text(json.dumps({"runtime": runtime, "tests": tests}, sort_keys=True))
+          print("Verified 19 runtime and 3 test-only pins; the digest-pinned base supplies pip 25.0.1.")
+          PY
+      - name: Build Linux amd64 release and test targets from the same runtime layers
+        shell: bash
+        run: |
+          image="${PREPARATION_IMAGE_NAME}:${GITHUB_SHA}-${SPEEDSTER_BUILD_ID}"
+          test_image="${image}-test"
+          echo "PREPARATION_IMAGE=$image" >> "$GITHUB_ENV"
+          echo "PREPARATION_TEST_IMAGE=$test_image" >> "$GITHUB_ENV"
+          build_args=(
+            --file backend/ai-grader-speedster-service/Dockerfile.preparation
+            --platform linux/amd64 --load --provenance=false
+            --build-arg "PYTHON_BASE_IMAGE=$PYTHON_BASE_IMAGE"
+            --build-arg "SPEEDSTER_SOURCE_REPOSITORY=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+            --build-arg "SPEEDSTER_SOURCE_COMMIT_SHA=$GITHUB_SHA"
+            --build-arg "SPEEDSTER_SOURCE_TREE_SHA=$SOURCE_TREE_SHA"
+            --build-arg "SPEEDSTER_BUILD_ID=$SPEEDSTER_BUILD_ID"
+          )
+          # The test target only adds test files/dependencies. The release target
+          # is published unchanged; attestations are attached after exact tests.
+          docker buildx build "${build_args[@]}" --target release --tag "$image" \
+            --metadata-file preparation-release-build.json backend/ai-grader-speedster-service
+          docker buildx build "${build_args[@]}" --target preparation-test --tag "$test_image" \
+            --metadata-file preparation-test-build.json backend/ai-grader-speedster-service
+          docker image inspect "$image" "$test_image" > preparation-images.json
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          release, tests = json.loads(Path("preparation-images.json").read_text())
+          layers = release["RootFS"]["Layers"]
+          assert tests["RootFS"]["Layers"][:len(layers)] == layers, "Test image must extend the exact release runtime"
+          assert len(tests["RootFS"]["Layers"]) > len(layers)
+          labels = {
+              "org.opencontainers.image.source": os.environ["GITHUB_SERVER_URL"] + "/" + os.environ["GITHUB_REPOSITORY"],
+              "org.opencontainers.image.revision": os.environ["GITHUB_SHA"],
+              "org.opencontainers.image.version": os.environ["SPEEDSTER_BUILD_ID"],
+              "io.tenkings.speedster.source-tree": os.environ["SOURCE_TREE_SHA"],
+              "io.tenkings.speedster.capabilities": "PREPARE_SIDE",
+          }
+          for image in (release, tests):
+              assert (image["Os"], image["Architecture"]) == ("linux", "amd64")
+              assert image["Config"]["User"] == "65532:65532"
+              assert all(image["Config"]["Labels"].get(key) == value for key, value in labels.items())
+          config = release["Config"]
+          assert config["Entrypoint"] == ["/usr/local/bin/preparation-entrypoint"]
+          assert config["Cmd"] == ["sh", "-c", 'exec uvicorn preparation_app:app --host 0.0.0.0 --port "${PORT}" --workers 1']
+          environment = dict(value.split("=", 1) for value in config["Env"])
+          assert environment["SPEEDSTER_SOURCE_COMMIT_SHA"] == os.environ["GITHUB_SHA"]
+          assert environment["SPEEDSTER_SOURCE_TREE_SHA"] == os.environ["SOURCE_TREE_SHA"]
+          assert environment["SPEEDSTER_BUILD_ID"] == os.environ["SPEEDSTER_BUILD_ID"]
+          assert not {"ATLAS_PREPARATION_API_KEY", "ATLAS_PREPARATION_OBJECT_ORIGIN", "SPEEDSTER_OCI_IMAGE_DIGEST"}.intersection(environment)
+          digest = json.loads(Path("preparation-release-build.json").read_text())["containerimage.digest"]
+          assert re.fullmatch(r"sha256:[a-f0-9]{64}", digest)
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write("PREPARATION_CANDIDATE_DIGEST=" + digest + "\n")
+          print("Verified matching source labels, shared runtime layers, Linux amd64 and nonroot configuration.")
+          PY
+      - name: Run all 11 isolated CPU preparation groups with the exact test lock
+        shell: bash
+        run: |
+          docker run --rm -i --platform linux/amd64 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/preparation-locks.json,target=/locks.json,readonly" \
+            --entrypoint python "$PREPARATION_TEST_IMAGE" - <<'PY'
+          import importlib.metadata, json, re, unittest
+          from pathlib import Path
+          normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+          locks = json.loads(Path("/locks.json").read_text())
+          expected = {normalize(key): value for key, value in {**locks["runtime"], **locks["tests"], "pip": "25.0.1"}.items()}
+          observed = {normalize(package.metadata["Name"]): package.version for package in importlib.metadata.distributions()}
+          assert observed == expected, (observed, expected)
+          suite = unittest.defaultTestLoader.loadTestsFromName("test_preparation_cpu")
+          assert suite.countTestCases() == 11
+          if not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful():
+              raise SystemExit(1)
+          PY
+      - name: Run unchanged original preparation and Color geometry tests against image modules
+        shell: bash
+        run: |
+          docker run --rm -i --platform linux/amd64 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/backend/ai-grader-speedster-service,target=/source,readonly" \
+            --workdir /app --entrypoint python "$PREPARATION_TEST_IMAGE" - <<'PY'
+          import sys, unittest
+          from pathlib import Path
+          # Only unchanged legacy adapters/tests/fixtures come from the checkout.
+          # The CPU implementation must resolve from the tested image first.
+          sys.path.append("/source")
+          import preparation_core, preparation_evidence, card_geometry, color_geometry, defect_math
+          for module in (preparation_core, preparation_evidence, card_geometry, color_geometry, defect_math):
+              assert Path(module.__file__).parent == Path("/app"), module.__file__
+          suite = unittest.defaultTestLoader.loadTestsFromNames(["test_preparation_evidence", "test_color_geometry"])
+          assert suite.countTestCases() == 19
+          if not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful():
+              raise SystemExit(1)
+          assert not {"torch", "torchvision", "sam3", "triton"}.intersection(sys.modules)
+          PY
+      - name: Verify exact nonroot CPU-only release closure and original source bytes
+        shell: bash
+        run: |
+          docker run --rm -i --platform linux/amd64 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/backend/ai-grader-speedster-service,target=/source,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/preparation-locks.json,target=/locks.json,readonly" \
+            --entrypoint python "$PREPARATION_IMAGE" - > preparation-closure.json <<'PY'
+          import hashlib, importlib.metadata, importlib.util, json, os, platform, re
+          from pathlib import Path
+          import cv2, numpy
+          normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+          locks = json.loads(Path("/locks.json").read_text())
+          expected = {normalize(key): value for key, value in {**locks["runtime"], "pip": "25.0.1"}.items()}
+          observed = {normalize(package.metadata["Name"]): package.version for package in importlib.metadata.distributions()}
+          assert observed == expected, (observed, expected)
+          assert (platform.system(), platform.machine(), platform.python_version()) == ("Linux", "x86_64", "3.12.14")
+          assert (cv2.__version__, numpy.__version__) == ("4.10.0", "1.26.4")
+          assert (os.getuid(), os.getgid()) == (65532, 65532)
+          assert not os.access("/app", os.W_OK)
+          files = {"preparation_app.py", "preparation_core.py", "preparation_evidence.py", "preparation_runtime.py",
+                   "preparation_security.py", "card_geometry.py", "color_geometry.py", "defect_math.py", "requirements.preparation.txt"}
+          assert {path.name for path in Path("/app").iterdir()} == files
+          hashes = {}
+          for name in sorted(files):
+              image = Path("/app", name).read_bytes()
+              assert image == Path("/source", name).read_bytes(), name
+              hashes[name] = hashlib.sha256(image).hexdigest()
+          assert Path("/usr/local/bin/preparation-entrypoint").read_bytes() == Path("/source/preparation-entrypoint.sh").read_bytes()
+          assert Path("/usr/local/bin/preparation-entrypoint").stat().st_mode & 0o777 == 0o555
+          for module in ("app", "sam3_detector", "sam_memory_v2", "torch", "torchvision", "sam3", "triton", "httpx", "httpcore", "sniffio"):
+              assert importlib.util.find_spec(module) is None, module
+          assert cv2.cuda.getCudaEnabledDeviceCount() == 0
+          assert not list(Path("/app").rglob("*.pt")) and not list(Path("/app").rglob("*.safetensors"))
+          print(json.dumps({"platform": "linux/amd64", "uid": os.getuid(), "gid": os.getgid(),
+                            "python": platform.python_version(), "packages": observed, "sourceSha256": hashes,
+                            "capabilities": ["PREPARE_SIDE"], "modelDependencies": []}, sort_keys=True))
+          PY
+          cat preparation-closure.json
+      - name: Verify normal startup against the actual candidate digest and private transport gate
+        shell: bash
+        run: |
+          # This throwaway key/origin exercise startup only, with networking disabled.
+          # They are never built into the image or used for source storage requests.
+          ATLAS_PREPARATION_API_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+          echo "::add-mask::$ATLAS_PREPARATION_API_KEY"
+          export ATLAS_PREPARATION_API_KEY
+          docker run --rm --platform linux/amd64 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            -e ATLAS_PREPARATION_API_KEY -e ATLAS_PREPARATION_OBJECT_ORIGIN=https://preparation-ci.invalid \
+            -e "SPEEDSTER_OCI_IMAGE_DIGEST=$PREPARATION_CANDIDATE_DIGEST" \
+            "$PREPARATION_IMAGE" --validate-only > preparation-runtime.json
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          result = json.loads(Path("preparation-runtime.json").read_text())
+          identity = result["preparationIdentity"]
+          assert identity["sourceCommitSha"] == os.environ["GITHUB_SHA"]
+          assert identity["sourceTreeSha"] == os.environ["SOURCE_TREE_SHA"]
+          assert identity["buildId"] == os.environ["SPEEDSTER_BUILD_ID"]
+          assert identity["ociDigest"] == os.environ["PREPARATION_CANDIDATE_DIGEST"]
+          assert (identity["pythonVersion"], identity["opencvVersion"], identity["numpyVersion"]) == ("3.12.14", "4.10.0", "1.26.4")
+          assert result["capabilities"] == ["PREPARE_SIDE"]
+          assert result["runtime"]["packages"] == json.loads(Path("preparation-locks.json").read_text())["runtime"]
+          assert (result["runtime"]["system"], result["runtime"]["machine"]) == ("Linux", "x86_64")
+          assert result["transport"] == {"authentication": "BEARER_REQUIRED", "objectOrigin": "https://preparation-ci.invalid", "redirects": False}
+          print(json.dumps(result, sort_keys=True))
+          PY
+          if docker run --rm --platform linux/amd64 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            -e "SPEEDSTER_OCI_IMAGE_DIGEST=$PREPARATION_CANDIDATE_DIGEST" \
+            "$PREPARATION_IMAGE" --validate-only > preparation-missing-transport.log 2>&1; then
+            echo "Preparation startup accepted missing private transport authority." >&2
+            exit 1
+          fi
+          grep -F 'Preparation private transport configuration is unavailable' preparation-missing-transport.log
+          if docker run --rm --platform linux/amd64 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            "$PREPARATION_IMAGE" --validate-only > preparation-missing-digest.log 2>&1; then
+            echo "Preparation startup accepted a missing exact artifact digest." >&2
+            exit 1
+          fi
+          grep -F 'Preparation release identity is unavailable: SPEEDSTER_OCI_IMAGE_DIGEST' preparation-missing-digest.log
+      - name: Generate SPDX SBOM from the tested CPU release image
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ env.PREPARATION_IMAGE }}
+          format: spdx-json
+          output-file: preparation-sbom.spdx.json
+          artifact-name: speedster-preparation-sbom-${{ github.sha }}.spdx.json
+      - name: Login to GHCR for a main push after all required checks
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install cosign for a main push after all required checks
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - name: Publish, verify, sign and attest the exact tested CPU digest
+        id: publish-preparation-image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          docker push "$PREPARATION_IMAGE"
+          digest="$(docker buildx imagetools inspect "$PREPARATION_IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$digest" == "$PREPARATION_CANDIDATE_DIGEST" ]]
+          exact_image="${PREPARATION_IMAGE_NAME}@${digest}"
+          docker pull --platform linux/amd64 "$exact_image"
+          docker image inspect "$exact_image" > preparation-published-image.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          tested = json.loads(Path("preparation-images.json").read_text())[0]
+          published = json.loads(Path("preparation-published-image.json").read_text())[0]
+          for key in ("RootFS", "Config", "Architecture", "Os"):
+              assert tested[key] == published[key], key
+          PY
+          echo "PREPARATION_IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          cosign sign --yes "$exact_image"
+          cosign attest --yes --type spdxjson --predicate preparation-sbom.spdx.json "$exact_image"
+          timeout 120s cosign verify \
+            --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" "$exact_image" > /dev/null
+          timeout 120s cosign verify-attestation --type spdxjson \
+            --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" "$exact_image" > /dev/null
+      - name: Retain GitHub build provenance for the tested CPU digest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ${{ env.PREPARATION_IMAGE_NAME }}
+          subject-digest: ${{ env.PREPARATION_IMAGE_DIGEST }}
+          push-to-registry: true
+      - name: Verify main workflow provenance before recording a release candidate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          timeout 120s gh attestation verify "oci://${PREPARATION_IMAGE_NAME}@${PREPARATION_IMAGE_DIGEST}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --cert-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+            --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --source-ref refs/heads/main --source-digest "$GITHUB_SHA" \
+            --deny-self-hosted-runners --format json > preparation-provenance-verification.json
+          printf '### Exact CPU preparation release candidate\n\n`%s@%s`\n\nSource `%s`, tree `%s`, Linux amd64, PREPARE_SIDE only.\n\nPublishing does not admit or deploy this separate package.\n' \
+            "$PREPARATION_IMAGE_NAME" "$PREPARATION_IMAGE_DIGEST" "$GITHUB_SHA" "$SOURCE_TREE_SHA" >> "$GITHUB_STEP_SUMMARY"
 
   docker-images:
     name: Build Docker Images

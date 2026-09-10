@@ -1,14 +1,17 @@
 import { canonical, requireBridge as check } from '@atlas/service-bridge/protocol';
 import { parseOperatorImagePacket, operatorImageTransform } from '@atlas/service-bridge/operator-images';
 import { presentAtlasFindings } from '@atlas/grading-core/report';
+import { sanitizeSpeedsterUnitQuad } from '@atlas/grading-core/geometry';
+import { measureSpeedsterCenteringBorders, calculateCenteringBalance, calculateCenteringScore } from '@atlas/grading-core/scoring';
 import { checked } from './policy.mjs';
+import { CAPTURE_TOOL_NAMES, parseCaptureManifest, validateCaptureProposal, captureProposalRef, selectedCapturePreparation } from './capture-protocol.mjs';
 
 const scope = (run,attemptId,callId) => ({runId:run.id,owner:run.leaseOwner,fence:run.leaseFence,revision:run.revision,attemptId,callId});
 function imageRequests({call,run,manifest}) {
     if (call.name==='inspect_region') return [{...call.args,purpose:'CROP'}];
-    if (call.name!=='read_card_report') return [null];
+    if (!['read_card_report','read_original_photos'].includes(call.name)) return [null];
     return ['FRONT','BACK'].map(side=>{
-        const asset=manifest.assets.find(a=>a.side===side&&a.view==='RECTIFIED'); check(asset,'ASTRA_EVIDENCE_REQUIRED');
+        const asset=manifest.assets.find(a=>a.side===side&&a.view===(call.name==='read_original_photos'?'ORIGINAL':'RECTIFIED')); check(asset,'ASTRA_EVIDENCE_REQUIRED');
         return {runId:run.id,expectedRevision:run.revision,evidenceHash:run.evidenceHash,manifestHash:run.manifestHash,
             assetId:asset.assetId,sourceSha256:asset.sha256,side,purpose:'OVERVIEW',rect:{x:0,y:0,width:asset.width,height:asset.height}};
     });
@@ -48,9 +51,48 @@ export function operatorAdapters({evidenceClient}) {
                 const asset=manifest.assets.find(a=>a.assetId===entry.request.assetId);
                 parseOperatorImagePacket(result.image,entry.request,asset); return [{packet:result.image,asset}];
             });
+            if (run.phase === 'CAPTURE_REVIEW') {
+                parseCaptureManifest(manifest); validateCaptureProposal(call,manifest);
+                if (call.name === 'read_original_photos') return { result: { actor: 'MACHINE', phase: 'CAPTURE_REVIEW',
+                    identity: manifest.identity, cornerShape: manifest.cornerShape, assets: manifest.assets,
+                    status: 'ORIGINAL_PHOTOS_DELIVERED', preparation: 'NOT_STARTED' }, images };
+                if (call.name === 'inspect_region') return { result: { assetId: call.args.assetId, rect: call.args.rect }, images };
+                if (['propose_capture_identity','propose_physical_boundary'].includes(call.name)) {
+                    const references = call.name === 'propose_capture_identity' ? call.args.fields.flatMap(f => f.evidence) : call.args.evidence;
+                    await evidenceDelivered(data,references);
+                    return { result: { actor: 'MACHINE', status: 'PROPOSED_FOR_PREPARATION',
+                        proposal: captureProposalRef(data.stepId,call) } };
+                }
+                check(call.name === 'submit_capture_preparation','ASTRA_CAPTURE_TOOL_INVALID');
+                if (call.args.disposition !== 'READY_FOR_PREPARATION') return { result: { actor: 'MACHINE',
+                    status: 'PREPARATION_ATTENTION_REQUIRED', disposition: call.args.disposition } };
+                await evidenceDelivered(data,manifest.assets.map(a => ({ assetId:a.assetId,sha256:a.sha256,side:a.side })));
+                return { result: await selectedCapturePreparation(data,evidenceDelivered) };
+            }
             const analysis=await tx.staffAnalysisRevision.findUnique({where:{specimenId_revision:{specimenId:run.specimenId,revision:run.expectedAnalysisRevision}}});
             check(analysis?.sourceHash===manifest.sourceHash&&analysis.reportHash===manifest.reportHash,'ASTRA_REPORT_CHANGED');
             const report=checked(analysis.reportCanonical,analysis.reportHash);
+            if (['inspect_card_geometry','measure_centering'].includes(call.name)) {
+                const source=checked(analysis.sourceCanonical,analysis.sourceHash), side=source.capture?.[call.args.side.toLowerCase()];
+                const centeringQuad=sanitizeSpeedsterUnitQuad(side?.centeringQuad);
+                if (call.name==='inspect_card_geometry') return {result:{side:call.args.side,sourceHash:analysis.sourceHash,
+                    reportHash:analysis.reportHash,corners:sanitizeSpeedsterUnitQuad(side?.corners),centeringQuad,
+                    cornerShape:['SQUARE','ROUNDED'].includes(source.capture?.cornerShape)?source.capture.cornerShape:null,
+                    status:centeringQuad?'RECORDED_GEOMETRY':'GEOMETRY_UNAVAILABLE'},images};
+                check(centeringQuad,'ASTRA_CENTERING_EVIDENCE_REQUIRED');
+                const borders=measureSpeedsterCenteringBorders(centeringQuad);
+                return {result:{side:call.args.side,sourceHash:analysis.sourceHash,reportHash:analysis.reportHash,
+                    ruleVersion:report.ruleVersion,centeringQuad,borders,
+                    leftRightBalance:calculateCenteringBalance(borders.leftMm,borders.rightMm),
+                    topBottomBalance:calculateCenteringBalance(borders.topMm,borders.bottomMm),
+                    score:calculateCenteringScore(borders),basis:'SAVED_BOUNDARY_DETERMINISTIC_ATLAS'},images};
+            }
+            if (call.name==='inspect_finding') {
+                const finding=report.findings.find(f=>f.id===call.args.findingId);
+                check(finding,'ASTRA_FINDING_NOT_IN_REPORT');
+                return {result:{reportHash:analysis.reportHash,analysisRevision:run.expectedAnalysisRevision,
+                    finding:presentAtlasFindings([finding],'DRAFT')[0]},images};
+            }
             if (call.name==='read_card_report') return {result:{reportHash:manifest.reportHash,analysisRevision:run.expectedAnalysisRevision,
                 report:{version:report.version,ruleVersion:report.ruleVersion,cardProfile:report.cardProfile,identity:report.identity,
                     grade:report.grade,findings:presentAtlasFindings(report.findings,'DRAFT'),findingCounts:report.findingCounts},
@@ -88,5 +130,6 @@ export function operatorAdapters({evidenceClient}) {
             return {result:{status:'HANDED_TO_HUMAN',reportHash:manifest.reportHash}};
         },
     };
-    return Object.fromEntries(['read_card_report','inspect_region','propose_identity','propose_finding_change','submit_for_human_review'].map(n=>[n,adapter]));
+    return Object.fromEntries([...new Set(['read_card_report','inspect_region','inspect_card_geometry','measure_centering','inspect_finding',
+        'propose_identity','propose_finding_change','submit_for_human_review',...CAPTURE_TOOL_NAMES])].map(n=>[n,adapter]));
 }

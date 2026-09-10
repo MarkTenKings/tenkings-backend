@@ -21,6 +21,11 @@ export function createHandler(resolveRuntime, env = process.env) {
                 ['GET', new RegExp(`^/api/staff/evidence/${cardPattern}/(FRONT|BACK)$`)]
             ];
             if (state.reports) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/approve$`)]);
+            if (state.workspace) patterns.push(['GET', /^\/api\/staff\/workspace$/], ['POST', /^\/api\/staff\/workspace\/cards$/],
+                ['GET', new RegExp(`^/api/staff/workspace/cards/${cardPattern}$`)],
+                ['GET', new RegExp(`^/api/staff/workspace/cards/${cardPattern}/(evidence|prepared)/(FRONT|BACK)$`)],
+                ['GET', new RegExp(`^/api/staff/workspace/cards/${cardPattern}/activity$`)],
+                ['POST', new RegExp(`^/api/staff/workspace/cards/${cardPattern}/(upload-plan|upload-complete|queue|claim|action|recover|control)$`)]);
             if (state.proposals) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/proposals$`)]);
             if (state.identityCorrection) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/identity-correction$`)]);
             if (state.learning) patterns.push(['GET', new RegExp(`^/api/staff/cards/${cardPattern}/learning$`)],
@@ -87,6 +92,25 @@ export function createHandler(resolveRuntime, env = process.env) {
                 }
                 else if (path === '/api/staff/cards')
                     body = { cards: await review.list(staff) };
+                else if (path === '/api/staff/workspace' || path.startsWith('/api/staff/workspace/')) {
+                    const query = new URL(req.url, state.origin ?? 'http://127.0.0.1').searchParams;
+                    if (query.size) deny(400, 'WORKSPACE_REQUEST_INVALID');
+                    const { intake, manual, operator } = state.workspace;
+                    if (path === '/api/staff/workspace') body = await state.workspace.list(staff);
+                    else if (path === '/api/staff/workspace/cards') body = await intake.create(staff, req.body);
+                    else if (req.method === 'GET' && ['evidence', 'prepared'].includes(match[2])) {
+                        const asset = match[2] === 'evidence' ? await intake.evidence(staff, match[1], match[3])
+                            : await manual.preparedImage(staff, match[1], match[3]);
+                        res.setHeader('Content-Type', asset.contentType);
+                        res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+                        return res.status(200).send(asset.bytes);
+                    } else if (path.endsWith('/activity')) body = await operator.activity(staff, match[1]);
+                    else if (req.method === 'GET') body = await state.workspace.read(staff, match[1]);
+                    else if (match[2] === 'action') body = await manual.action(staff, match[1], req.body);
+                    else if (match[2] === 'recover') body = await manual.recover(staff, match[1], req.body);
+                    else if (match[2] === 'control') body = await operator.control(staff, match[1], req.body);
+                    else body = await intake[({ 'upload-plan': 'planUpload', 'upload-complete': 'completeUpload', queue: 'queue', claim: 'claim' })[match[2]]](staff, match[1], req.body);
+                }
                 else if (path.startsWith('/api/staff/operations/')) {
                     const operation = path.slice('/api/staff/operations/'.length);
                     if (operation === 'customers' || operation.startsWith('customers/')) {
@@ -156,6 +180,7 @@ export function createHandler(resolveRuntime, env = process.env) {
         catch (error) {
             const status = isBoundaryError(error) ? error.status : 503;
             const body = { error: isBoundaryError(error) ? error.code : 'TEMPORARILY_UNAVAILABLE' };
+            if (isBoundaryError(error) && error.outcome === 'NOT_DISPATCHED') body.outcome = 'NOT_DISPATCHED';
             return gradingResponse?.started ? gradingResponse.finish(status, body) : res.status(status).json(body);
         }
         finally { gradingResponse?.stop(); }

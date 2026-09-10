@@ -87,6 +87,7 @@ export function withSourceIntake({ operations, admin, intake }) {
         async preparePilot(staff, input) {
             keys(input, ['operationId', 'reason', 'authorizationEvidenceHash', 'policy', 'specimens']);
             const policy = parsePilotPolicy(input.policy);
+            check(policy.version === 'atlas-grading-bridge-policy-v1', 'PILOT_REQUIRES_WORKSPACE_ADMISSION');
             check(Array.isArray(input.specimens) && input.specimens.length === 10, 'INTAKE_SOURCE_INVALID');
             const retained = await replay(staff, 'TEN_CARD_PILOT_PREPARED', policy.pilotId, input);
             if (retained.found) return retained.receipt;

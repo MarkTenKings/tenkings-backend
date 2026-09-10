@@ -47,7 +47,10 @@ export class StaffGrading {
                 || bridgeControl.gradingPolicyHash !== control.gradingPolicyHash
                 || hash(bridgeControl.policyCanonical) !== bridgeControl.policyHash) deny(503, 'GRADING_NOT_ENABLED');
             let policy; try { policy = parsePilotPolicy(JSON.parse(bridgeControl.policyCanonical)); } catch { deny(503, 'GRADING_NOT_ENABLED'); }
-            if (!policy.specimenIds.includes(cardId) || +new Date(policy.expiresAt) <= +now) deny(409, 'PILOT_NOT_ACTIVE');
+            const workspace = policy.version === 'atlas-workspace-bridge-policy-v1'
+                ? await tx.staffWorkspaceCard.findUnique({ where: { specimenId: cardId } }) : null;
+            if (!(policy.version === 'atlas-workspace-bridge-policy-v1' ? workspace && policy.workspaceCardIds.includes(workspace.id)
+                : policy.specimenIds.includes(cardId)) || +new Date(policy.expiresAt) <= +now) deny(409, 'PILOT_NOT_ACTIVE');
             const analysis = await loadAnalysis(context, card);
             const draft = await tx.staffReviewRevision.findUnique({ where: { specimenId_revision: { specimenId: cardId, revision: card.draftRevision } } });
             if (input.evidenceHash !== card.evidenceHash) deny(409, 'EVIDENCE_CHANGED');

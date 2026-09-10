@@ -77,7 +77,15 @@ export function assertAtlasSpeedsterSourceAdmission(source: SpeedsterReviewActio
         assertPreparationIdentity(authority!.input.preparationIdentity, approved);
     }
 }
-export function createAtlasGradingPorts(client: PrismaClient, config: ReturnType<typeof atlasGradingBridgeConfig>) {
+export type AtlasGradingPortOptions = Omit<SpeedsterReviewDependencyOptions, 'beforeSessionLock' | 'afterPersist' | 'signal' | 'serviceUrl'> & {
+    readEvidence?: (descriptor: { sourceRef: string; byteCount: number }) => Promise<Buffer>;
+};
+
+export function createAtlasGradingPorts(client: PrismaClient, config: ReturnType<typeof atlasGradingBridgeConfig>, options: AtlasGradingPortOptions = {}) {
+    const scoped = { ...options, env: Object.freeze({ ...(options.env ?? process.env) }),
+        serviceHeaders: options.serviceHeaders ? Object.freeze({ ...options.serviceHeaders }) : undefined,
+        mapLookup: options.mapLookup ? Object.freeze({ ...options.mapLookup }) : undefined };
+    const serviceUrl = config.serviceUrl;
     return {
         async loadSource(tx: Prisma.TransactionClient, card: { sourceId: string; sourceOwnerId: string }) {
             const [row] = await tx.$queryRaw<SpeedsterReviewActionSession[]>`SELECT id,"createdByUserId","cardProfile","workflowState",identity,
@@ -97,12 +105,13 @@ export function createAtlasGradingPorts(client: PrismaClient, config: ReturnType
                 mapRevisionId: source.mapRevisionId ?? null, mapFilterPolicyVersion: source.mapFilterPolicyVersion ?? null,
                 mapRegistration: source.mapRegistration ?? null };
         },
-        readEvidence: (descriptor: { sourceRef: string; byteCount: number }) => readStorageBufferBounded(descriptor.sourceRef, descriptor.byteCount),
+        readEvidence: scoped.readEvidence ?? ((descriptor: { sourceRef: string; byteCount: number }) =>
+            readStorageBufferBounded(descriptor.sourceRef, descriptor.byteCount, { openRead: scoped.openEvidence })),
         async perform(input: { source: SpeedsterReviewActionSession; action: SpeedsterReviewAction;
             policy: { maxWorkerCalls: number }; signal: AbortSignal;
             beforeSessionLock: SpeedsterReviewDependencyOptions['beforeSessionLock']; afterPersist: SpeedsterReviewDependencyOptions['afterPersist'] }) {
-            const fetchImpl = boundedWorkerFetch({ serviceUrl: config.serviceUrl, maxCalls: input.policy.maxWorkerCalls, signal: input.signal });
-            const original = createSpeedsterReviewDependencies(client, { fetchImpl, signal: input.signal,
+            const fetchImpl = boundedWorkerFetch({ serviceUrl, maxCalls: input.policy.maxWorkerCalls, signal: input.signal, fetchImpl: scoped.fetchImpl });
+            const original = createSpeedsterReviewDependencies(client, { ...scoped, serviceUrl, fetchImpl, signal: input.signal,
                 beforeSessionLock: input.beforeSessionLock, afterPersist: input.afterPersist });
             const deps = input.action.type === 'INITIALIZE' ? withAtlasFreshDetection(input.source, original) : original;
             const load = deps.loadOwnedSession;
@@ -116,6 +125,6 @@ export function createAtlasGradingPorts(client: PrismaClient, config: ReturnType
         },
     };
 }
-export function createAtlasGradingBridge(client: PrismaClient, config: ReturnType<typeof atlasGradingBridgeConfig>) {
-    return new ScopedGradingBridge({ client, config, ports: createAtlasGradingPorts(client, config) });
+export function createAtlasGradingBridge(client: PrismaClient, config: ReturnType<typeof atlasGradingBridgeConfig>, options: AtlasGradingPortOptions = {}) {
+    return new ScopedGradingBridge({ client, config, ports: createAtlasGradingPorts(client, config, options) });
 }

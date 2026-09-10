@@ -124,7 +124,6 @@ async function validate() {
   const captureDeps: Parameters<typeof savePreparedSpeedsterSessionCapture>[0] = {
     preparationStore: store, preparationStorage: storage, loadLockedMap: loadLockedEffectiveSpeedsterMapRevision,
     persistPreparedCapture: persistPreparedSpeedsterCaptureTransaction,
-    requireAdminSession: async () => ({ user: { id: scope.createdByUserId } }),
     findSession: (id, createdByUserId) => database.aiGraderV2Session.findFirst({ where: { id, createdByUserId } }),
     updateSession: async () => { throw new Error("Legacy write cannot run"); },
     verifyColorGeometryReceipt: (receipt, binding) => verifySpeedsterColorGeometryReceipt(receipt, binding, { env: preparedCaptureReceiptEnv }),

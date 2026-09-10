@@ -51,7 +51,7 @@ function fixture({clock}={}) {
         },
         async $executeRaw(strings,...a) {
             const q=strings.join('?');
-            if(q.includes('pg_advisory_xact_lock')||q.includes('SET CONSTRAINTS'))return 0;
+            if(q.includes('pg_advisory_xact_lock')||q.includes('lock_workspace_private_controls')||q.includes('SET CONSTRAINTS'))return 0;
             if(q.startsWith('INSERT INTO atlas_staff."StaffMachineInitialization"')){
                 assert(q.includes("AT TIME ZONE 'UTC'"));
                 const names=['id','specimenId','pilotId','gradingOperationId','runtimeHash','evidenceHash','operatorPolicyHash','bridgePolicyHash','gradingPolicyHash',

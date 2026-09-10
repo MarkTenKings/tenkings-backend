@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { previewAtlasReport } from '@atlas/grading-core/report';
 import { canonical, digest, keys, parsePilotPolicy, requireBridge as check, UUID, SHA } from './protocol.mjs';
+import { pilotSubject, pilotUsage, requireTenPilotCards } from './pilot-scope.mjs';
 
 const machineActor = id => `ASTRA_INITIALIZE:${id}`;
 const checked = (text,hash) => {
@@ -33,10 +34,10 @@ export class MachineInitializationBridge {
             {maxWait:5000,timeout:10_000});
     }
     async controls(tx) {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('atlas-staff-access-v1',0))`;
-        const [operator]=await tx.$queryRaw`SELECT * FROM atlas_staff."StaffOperatorControl" WHERE id='active' FOR SHARE`;
-        const [bridge]=await tx.$queryRaw`SELECT * FROM atlas_staff."StaffGradingBridgeControl" WHERE id='active' FOR SHARE`;
-        const [control]=await tx.$queryRaw`SELECT * FROM atlas_staff."StaffControl" WHERE id='active' FOR SHARE`;
+        await tx.$executeRaw`SELECT atlas_staff.lock_workspace_private_controls()`;
+        const [operator]=await tx.$queryRaw`SELECT * FROM atlas_staff."StaffOperatorControl" WHERE id='active'`;
+        const [bridge]=await tx.$queryRaw`SELECT * FROM atlas_staff."StaffGradingBridgeControl" WHERE id='active'`;
+        const [control]=await tx.$queryRaw`SELECT * FROM atlas_staff."StaffControl" WHERE id='active'`;
         const [{now}]=await tx.$queryRaw`SELECT clock_timestamp() AS now`;
         check(bridge?.enabled && ['mode','origin','deploymentId','releaseSha','configHash','clientKeyHash','gradingPolicyHash']
             .every(k=>bridge[k]===this.config[k]) && operator?.enabled && control?.enabled
@@ -47,9 +48,7 @@ export class MachineInitializationBridge {
         check(operatorPolicy.version==='atlas-operator-control-policy-v1' && operatorPolicy.astra?.model==='gpt-6-astra'
             && operatorPolicy.astra.returnedModel==='gpt-6-astra' && operatorPolicy.pilotId===policy.pilotId
             && +new Date(operatorPolicy.expiresAt)>+now && +new Date(policy.expiresAt)>+now, 'MACHINE_PILOT_NOT_ACTIVE');
-        const [{count}]=await tx.$queryRaw`SELECT count(*)::int AS count FROM atlas_staff."StaffSpecimen"
-            WHERE id::text = ANY(${policy.specimenIds}::text[]) AND "sourceType"=${bridge.mode==='PRODUCTION'?'SPEEDSTER':'LOCAL_FIXTURE'}`;
-        check(count===10,'PILOT_TEN_CARDS_REQUIRED');
+        await requireTenPilotCards(tx, policy, bridge.mode==='PRODUCTION'?'SPEEDSTER':'LOCAL_FIXTURE');
         return {tx,operator,bridge,control,now,policy,operatorPolicy};
     }
     async authorize(tx,claims,{committing=false}={}) {
@@ -59,7 +58,7 @@ export class MachineInitializationBridge {
             && job.pilotId===policy.pilotId && job.operatorPolicyHash===operator.policyHash && job.bridgePolicyHash===bridge.policyHash
             && job.gradingPolicyHash===bridge.gradingPolicyHash && job.controlRevision===control.revision
             && job.operatorRevision===operator.revision && job.bridgeRevision===bridge.revision
-            && policy.specimenIds.includes(job.specimenId), 'MACHINE_INITIALIZATION_SCOPE_CHANGED');
+            && await pilotSubject(tx,policy,{id:job.specimenId}), 'MACHINE_INITIALIZATION_SCOPE_CHANGED');
         const [card]=await tx.$queryRaw`SELECT * FROM atlas_staff."StaffSpecimen" WHERE id=${job.specimenId}::uuid FOR UPDATE`;
         check(card && card.evidenceHash===job.evidenceHash && card.sourceType===(bridge.mode==='PRODUCTION'?'SPEEDSTER':'LOCAL_FIXTURE'),
             'MACHINE_EVIDENCE_CHANGED');
@@ -103,7 +102,7 @@ export class MachineInitializationBridge {
                 return {prior:true,state:job.state==='SUCCEEDED'&&execution?.state==='COMMITTED'&&op.state==='SUCCEEDED'?'SUCCEEDED':'UNKNOWN',
                     analysisRevision:job.state==='SUCCEEDED'?op.resultAnalysisRevision:undefined};
             await this.noOtherWork(context);const source=await this.source(context);await this.ports.assertFreshDetection(tx,source);
-            const [usage]=await tx.$queryRaw`SELECT * FROM atlas_staff.pilot_budget_usage(${policy.pilotId}::uuid,${card.id}::uuid)`;
+            const usage=await pilotUsage(tx,policy,card);
             const reserve=BigInt(policy.reservationPerOperationMicroUsd);
             check(!usage.overrun && BigInt(usage.total)+reserve<=BigInt(policy.maxTotalMicroUsd)
                 && BigInt(usage.card)+reserve<=BigInt(policy.maxCardMicroUsd) && usage.operations<policy.maxOperationsPerCard,
@@ -114,6 +113,7 @@ export class MachineInitializationBridge {
                 ("operationId","claimId","pilotId","bridgeRevision","sourceRevision","reservedMicroUsd",state,"createdAt")
                 VALUES (${op.id}::uuid,${claimId}::uuid,${policy.pilotId}::uuid,${bridge.revision},${job.sourceRevision},${reserve},'RUNNING',(${now}::timestamptz AT TIME ZONE 'UTC'))`;
             await tx.$executeRaw`UPDATE atlas_staff."StaffMachineInitialization" SET state='DISPATCHED',"dispatchedAt"=(${now}::timestamptz AT TIME ZONE 'UTC') WHERE id=${job.id}::uuid`;
+            await this.ports.afterExecutionClaim?.(tx, { operationId: op.id, claimId, sourceRevision: job.sourceRevision, now });
             return {prior:false,job,op,source,claimId,policy,bridge,now};
         });
         if (claim.prior) return {state:claim.state,...(claim.analysisRevision?{analysisRevision:claim.analysisRevision}:{})};
@@ -226,7 +226,7 @@ export async function enqueueMachineInitialization({admin,staff,config,ports},in
             &&existing.admittedById===identity.id&&existing.admissionReason===reason&&existing.authorizationEvidenceHash===authorizationEvidenceHash,
             'MACHINE_ADMISSION_CONFLICT');return existing;}
         const [card]=await tx.$queryRaw`SELECT * FROM atlas_staff."StaffSpecimen" WHERE id=${specimenId}::uuid FOR UPDATE`;
-        check(card&&policy.specimenIds.includes(card.id)&&card.analysisRevision===0&&card.sourceType===(bridge.mode==='PRODUCTION'?'SPEEDSTER':'LOCAL_FIXTURE'),
+        check(card&&await pilotSubject(tx,policy,card)&&card.analysisRevision===0&&card.sourceType===(bridge.mode==='PRODUCTION'?'SPEEDSTER':'LOCAL_FIXTURE'),
             'MACHINE_INITIALIZATION_STALE');
         const source=await ports.loadSource(tx,card);fresh(source);await ports.assertSourceAdmission(source);
         check(source.id===card.sourceId&&source.createdByUserId===card.sourceOwnerId

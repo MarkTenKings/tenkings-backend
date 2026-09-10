@@ -12,6 +12,31 @@ function native(dependencies=['/usr/lib/libSystem.B.dylib'],{arch='arm64',comman
     const header=Buffer.alloc(32);header.writeUInt32LE(0xfeedfacf,0);header.writeUInt32LE(arch==='arm64'?0x0100000c:0x01000007,4);
     header.writeUInt32LE(commands.length,16);header.writeUInt32LE(commands.reduce((n,b)=>n+b.length,0),20);return Buffer.concat([header,...commands]);
 }
+const linuxEngine=`${PRISMA_ROOT}/libquery_engine-debian-openssl-3.0.x.so.node`;
+function elf({kind='executable',dependencies=['libc.so.6'],extra=[]}={}) {
+    const bytes=Buffer.alloc(0x2000),base=kind==='executable'?0x400000:0,phoff=64,phnum=kind==='executable'?5:4;
+    bytes.writeUInt32LE(0x464c457f);bytes[4]=2;bytes[5]=1;bytes[6]=1;bytes.writeUInt16LE(kind==='executable'?2:3,16);
+    bytes.writeUInt16LE(62,18);bytes.writeUInt32LE(1,20);bytes.writeBigUInt64LE(BigInt(base+0x500),24);
+    bytes.writeBigUInt64LE(BigInt(phoff),32);bytes.writeUInt16LE(64,52);bytes.writeUInt16LE(56,54);bytes.writeUInt16LE(phnum,56);
+    const headers={};let number=0;
+    const segment=(name,tag,offset,size,flags,align)=>{const p=phoff+number++*56;headers[name]=p;
+        bytes.writeUInt32LE(tag,p);bytes.writeUInt32LE(flags,p+4);bytes.writeBigUInt64LE(BigInt(offset),p+8);
+        bytes.writeBigUInt64LE(BigInt(base+offset),p+16);bytes.writeBigUInt64LE(BigInt(base+offset),p+24);
+        bytes.writeBigUInt64LE(BigInt(size),p+32);bytes.writeBigUInt64LE(BigInt(size),p+40);bytes.writeBigUInt64LE(BigInt(align),p+48);};
+    const interpreter=Buffer.from('/lib64/ld-linux-x86-64.so.2\0');
+    if(kind==='executable') {segment('interpreter',3,0x400,interpreter.length,4,1);interpreter.copy(bytes,0x400);}
+    segment('code',1,0,0x1000,5,4096);segment('data',1,0x1000,0x1000,6,4096);
+    const stringOffset=0x1600, strings=[Buffer.from([0])],needed=[];let size=1;
+    for(const name of dependencies) {needed.push([1,size]);const value=Buffer.from(`${name}\0`);strings.push(value);size+=value.length;}
+    const tags=[...needed,[5,base+stringOffset],[10,size],...extra,[0,0]],dynamicOffset=0x1200;
+    segment('dynamic',2,dynamicOffset,(tags.length+2)*16,6,8);segment('stack',0x6474e551,0,0,6,16);
+    tags.forEach(([tag,value],index)=>{bytes.writeBigUInt64LE(BigInt(tag),dynamicOffset+index*16);bytes.writeBigUInt64LE(BigInt(value),dynamicOffset+index*16+8);});
+    Buffer.concat(strings).copy(bytes,stringOffset);
+    return {bytes,headers,base,stringOffset,stringSize:size,dynamicOffset,tags,kind};
+}
+const linuxOptions=kind=>({platform:'linux',arch:'x64',kind});
+const rejectElf=(fixture,kind=fixture.kind)=>assert.throws(()=>assertClosedNative(fixture.bytes,linuxOptions(kind)),
+    error=>error.code==='ASTRA_NATIVE_DEPENDENCY_UNCLOSED');
 const engine=`${PRISMA_ROOT}/libquery_engine-darwin-arm64.dylib.node`;
 const sources=['packages/atlas-operator/src/runtime.mjs','packages/atlas-operator/src/ledger.mjs','packages/atlas-operator/src/provider.mjs',
     'packages/atlas-operator/src/adapters.mjs','packages/atlas-service-bridge/src/operator-evidence.mjs','packages/atlas-service-bridge/src/machine-initialize-transport.mjs','packages/atlas-grading-core/dist/report.js'];
@@ -157,6 +182,104 @@ test('native parser rejects Homebrew linkage, loader indirection, malformed bina
     for(const [bytes,options] of [[Buffer.from('not a binary'),{platform:'darwin',arch:'arm64'}],[native(),{platform:'linux',arch:'arm64'}],
         [native(),{platform:'darwin',arch:'x64'}]])assert.throws(()=>assertClosedNative(bytes,options),/NATIVE_DEPENDENCY_UNCLOSED/);
 });
+
+test('ELF checker accepts the scoped system dependencies for Node and Debian OpenSSL 3 Prisma',()=>{
+    for(const [kind,dependencies] of [
+        ['executable',['libdl.so.2','libstdc++.so.6','libm.so.6','libgcc_s.so.1','libpthread.so.0','libc.so.6','ld-linux-x86-64.so.2']],
+        ['library',['libssl.so.3','libcrypto.so.3','libgcc_s.so.1','librt.so.1','libpthread.so.0','libm.so.6','libdl.so.2','libc.so.6','ld-linux-x86-64.so.2']],
+    ]) assert.deepEqual(assertClosedNative(elf({kind,dependencies}).bytes,linuxOptions(kind)),dependencies.sort());
+    assert.deepEqual(assertClosedNative(native(undefined,{arch:'x64'}),{platform:'darwin',arch:'x64'}),['/usr/lib/libSystem.B.dylib']);
+});
+test('ELF architecture, encoding, type, header tables and integer bounds fail closed',()=>{
+    const changes=[
+        f=>{f.bytes=f.bytes.subarray(0,63);},f=>{f.bytes[4]=1;},f=>{f.bytes[5]=2;},f=>{f.bytes[6]=2;},
+        f=>{f.bytes[7]=9;},f=>{f.bytes[8]=1;},f=>f.bytes.writeUInt16LE(183,18),f=>f.bytes.writeUInt32LE(1,48),
+        f=>f.bytes.writeUInt16LE(3,16),f=>f.bytes.writeUInt16LE(63,52),f=>f.bytes.writeUInt16LE(64,54),
+        f=>f.bytes.writeUInt16LE(0xffff,56),f=>f.bytes.writeUInt16LE(0,56),
+        f=>f.bytes.writeBigUInt64LE(2n**63n,32),f=>f.bytes.writeBigUInt64LE(0x1fffn,32),
+        f=>f.bytes.writeUInt16LE(1,60),f=>{f.bytes.writeBigUInt64LE(0x1ff0n,40);f.bytes.writeUInt16LE(64,58);f.bytes.writeUInt16LE(2,60);},
+        f=>{f.bytes.writeBigUInt64LE(0x1800n,40);f.bytes.writeUInt16LE(64,58);f.bytes.writeUInt16LE(2,60);f.bytes.writeUInt16LE(2,62);},
+    ];
+    for(const change of changes) {const f=elf();change(f);rejectElf(f);}
+    for(const options of [{platform:'linux',arch:'arm64',kind:'executable'},linuxOptions(undefined)])
+        assert.throws(()=>assertClosedNative(elf().bytes,options),/NATIVE_DEPENDENCY_UNCLOSED/);
+    rejectElf(elf({kind:'library'}),'executable');rejectElf(elf(),'library');
+});
+test('ELF interpreter, executable mappings, dynamic mapping ambiguity and stack restrictions are exact',()=>{
+    const changes=[
+        f=>f.bytes.write('/lib64/ld-musl-x86-64.so.1\0',0x400),f=>{f.bytes[0x419]=65;},
+        f=>f.bytes.writeUInt32LE(0,f.headers.interpreter),f=>f.bytes.writeUInt32LE(3,f.headers.stack),
+        f=>f.bytes.writeBigUInt64LE(BigInt(f.base+0x3000),f.headers.interpreter+16),
+        f=>f.bytes.writeBigUInt64LE(BigInt(f.base+0x1000),24),
+        f=>f.bytes.writeBigUInt64LE(BigInt(f.base+0x800),f.headers.data+16),
+        f=>f.bytes.writeBigUInt64LE(0x1001n,f.headers.code+40),
+        f=>f.bytes.writeUInt32LE(7,f.headers.code+4),f=>f.bytes.writeUInt32LE(7,f.headers.stack+4),
+        f=>f.bytes.writeUInt32LE(5,f.headers.stack),f=>f.bytes.writeBigUInt64LE(3n,f.headers.data+48),
+        f=>f.bytes.writeUInt32LE(2,f.headers.stack),f=>f.bytes.writeUInt32LE(0,f.headers.dynamic),
+        f=>f.bytes.writeBigUInt64LE(BigInt(f.base+0x1210),f.headers.dynamic+16),
+        f=>f.bytes.writeBigUInt64LE(17n,f.headers.dynamic+32),f=>f.bytes.writeBigUInt64LE(2n**53n,f.headers.dynamic+32),
+    ];
+    for(const change of changes) {const f=elf();change(f);rejectElf(f);}
+});
+test('ELF loader redirection, unexpected metadata, foreign system libraries and duplicate dependencies are denied',()=>{
+    for(const tag of [14,15,29,30,0x6ffffefa,0x6ffffefb,0x6ffffefc,0x7fffffff,0x7ffffffd,22,0x12345678])
+        rejectElf(elf({extra:[[tag,1]]}));
+    for(const value of [0,2,0x08000001]) rejectElf(elf({extra:[[0x6ffffffb,value]]}));
+    for(const name of ['libssl.so.1.1','libcrypto.so.1.1','libssl.so.3','libvendor.so','/lib/libc.so.6','$ORIGIN/libc.so.6','libc.so.6/../evil','libc.so.\u00e96'])
+        rejectElf(elf({dependencies:[name]}));
+    rejectElf(elf({dependencies:['libc.so.6','libc.so.6']}));
+    rejectElf(elf({kind:'library',dependencies:['libstdc++.so.6']}));
+});
+test('ELF dynamic termination and file-backed string ranges cannot be truncated, duplicated or redirected',()=>{
+    const changes=[
+        f=>{f.bytes.writeBigUInt64LE(5n,f.dynamicOffset+48);f.bytes.writeBigUInt64LE(BigInt(f.base+f.stringOffset),f.dynamicOffset+56);},
+        f=>f.bytes.writeBigUInt64LE(0n,f.dynamicOffset+8),
+        f=>f.bytes.writeBigUInt64LE(BigInt(f.stringSize),f.dynamicOffset+8),
+        f=>f.bytes.writeBigUInt64LE(BigInt(f.base+0x3000),f.dynamicOffset+24),
+        f=>f.bytes.writeBigUInt64LE(BigInt(f.base+0x1fff),f.dynamicOffset+24),
+        f=>f.bytes.writeBigUInt64LE(BigInt(16*1024*1024+1),f.dynamicOffset+40),
+        f=>{f.bytes[f.stringOffset+f.stringSize-1]=65;},f=>{f.bytes[f.stringOffset]=65;},
+        f=>f.bytes.writeBigUInt64LE(1n,f.dynamicOffset+(f.tags.length-1)*16+8),
+        f=>f.bytes.writeBigUInt64LE(1n,f.dynamicOffset+f.tags.length*16),
+        f=>{for(let p=f.dynamicOffset+(f.tags.length-1)*16;p<f.dynamicOffset+(f.tags.length+2)*16;p+=16) f.bytes.writeBigUInt64LE(1n,p);},
+        f=>f.bytes.writeBigUInt64LE(0x500n,f.headers.data+32),
+    ];
+    for(const change of changes) {const f=elf();change(f);rejectElf(f);}
+});
+
+async function linuxProducerFixture(root) {
+    const f=await producerFixture(root);
+    await rm(join(f.request.sourceRoot,engine));await f.put(linuxEngine,elf({kind:'library',dependencies:['libssl.so.3','libcrypto.so.3']}).bytes);
+    await f.put(CLIENT_PATH,(await readFile(join(f.request.sourceRoot,CLIENT_PATH),'utf8')).replace('libquery_engine-darwin-arm64.dylib.node','libquery_engine-debian-openssl-3.0.x.so.node'));
+    await writeFile(f.options.executablePath,elf().bytes);f.options.platform='linux';f.options.arch='x64';return f;
+}
+test('Linux producer and verifier bind exact Debian OpenSSL 3 engine and Node 20 without changing manifest v2',()=>folder(async root=>{
+    const f=await linuxProducerFixture(root),result=await packageOperatorRelease(f.request,f.options);
+    assert.equal(result.inventory.prismaEngine,linuxEngine);assert.equal(result.manifest.version,'atlas-operator-release-v2');
+    assert.equal(result.manifest.nodeVersion,'v20.20.1');await verifyOperatorArtifact({root:result.root,expectedBuildHash:result.buildHash},f.options);
+    await assert.rejects(()=>verifyOperatorArtifact({root:result.root,expectedBuildHash:result.buildHash},{...f.options,arch:'arm64'}),/PLATFORM_CHANGED/);
+}));
+test('Linux producer rejects other architectures, Node versions and Prisma engine families before bundling',()=>folder(async root=>{
+    for(const [index,change] of [
+        async f=>{f.options.arch='arm64';},async f=>{f.options.nodeVersion='v22.23.2';},async f=>{f.options.platform='win32';},
+        ...['libquery_engine-linux-musl-openssl-3.0.x.so.node','libquery_engine-debian-openssl-1.1.x.so.node',
+            'libquery_engine-linux-arm64-openssl-3.0.x.so.node'].map(name=>async f=>{
+                const bytes=await readFile(join(f.request.sourceRoot,linuxEngine));await rm(join(f.request.sourceRoot,linuxEngine));await f.put(`${PRISMA_ROOT}/${name}`,bytes);
+            }),
+    ].entries()) {
+        const path=join(root,`case${index}`);await mkdir(path);const f=await linuxProducerFixture(path);await change(f);
+        let calls=0;f.options.bundle=async()=>{calls++;return f.result;};await assert.rejects(()=>packageOperatorRelease(f.request,f.options));
+        assert.equal(calls,0);await assert.rejects(()=>lstat(f.request.outputRoot),error=>error.code==='ENOENT');
+    }
+}));
+test('ELF restrictions remain enforced when a malformed native file has a matching inventory hash',()=>folder(async root=>{
+    const input=files();input.delete(engine);input.set(linuxEngine,{bytes:elf({kind:'library',extra:[[29,1]]}).bytes,executable:true});
+    input.get(NODE_PATH).bytes=elf().bytes;
+    const artifact=await writeOperatorArtifact({root:join(root,'artifact'),files:input,platform:'linux',arch:'x64',prismaEngine:linuxEngine});
+    const executablePath=join(root,'synthetic-node');await writeFile(executablePath,input.get(NODE_PATH).bytes);
+    await assert.rejects(()=>verifyOperatorArtifact({root:artifact.root,expectedBuildHash:artifact.buildHash},
+        {...linuxOptions('executable'),executablePath,nodeVersion:FIXED_NODE_VERSION}),/NATIVE_DEPENDENCY_UNCLOSED/);
+}));
 
 
 test('generated inline datasource credentials and schema substitutions cannot enter a release',()=>folder(async root=>{

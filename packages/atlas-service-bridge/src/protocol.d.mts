@@ -18,7 +18,8 @@ export type BridgePayload = { action: 'RUN_REVIEW'; operationId: string } | { ac
 export function validatePayload(value: unknown): BridgePayload;
 export function signRequest(config: BridgeConfig, scope: BridgeScope, payload: BridgePayload, now?: number): { body: string; signature: string };
 export function verifyRequest(config: Pick<BridgeConfig, 'key' | 'origin'>, body: string, signature: unknown, now?: number): { claims: BridgeClaims; payload: BridgePayload };
-export type PilotPolicy = { version: 'atlas-grading-bridge-policy-v1'; pilotId: string; specimenIds: string[]; expiresAt: string;
+export type PilotPolicy = ({ version: 'atlas-grading-bridge-policy-v1'; specimenIds: string[] }
+    | { version: 'atlas-workspace-bridge-policy-v1'; workspaceCardIds: string[] }) & { pilotId: string; expiresAt: string;
     maxOperationsPerCard: number; maxTotalMicroUsd: number; maxCardMicroUsd: number; reservationPerOperationMicroUsd: number;
     maxWorkerCalls: number; deadlineMs: number };
 export function parsePilotPolicy(value: unknown): PilotPolicy;

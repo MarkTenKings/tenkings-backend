@@ -5,7 +5,8 @@ import { requireBridge as check } from '@atlas/service-bridge/protocol';
 export const OPERATOR_GRANTS = Object.freeze({
     StaffOperatorControl: {}, StaffGradingBridgeControl: {}, StaffControl: {}, StaffSpecimen: {}, StaffAnalysisRevision: {},
     StaffGradingOperation: {},
-    StaffOperatorRun: { UPDATE: ['revision','state','inputCanonical','inputHash','leaseOwner','leaseFence','leaseMode','leaseExpiresAt','summary','failureCode','updatedAt'] },
+    StaffOperatorRun: { UPDATE: ['revision','state','inputCanonical','inputHash','leaseOwner','leaseFence','leaseMode','leaseExpiresAt','summary','failureCode','updatedAt',
+        'controlState','controlRevision','stepBudget'] },
     StaffOperatorAttempt: { INSERT: ['id','runId','ordinal','runRevision','leaseFence','dispatchClaimId','requestCanonical','requestHash','providerBindingHash','reservedMicroUsd','state','createdAt'],
         UPDATE: ['state','usageCeilingMicroUsd','usageEnvelopeExceeded','resultReceiptId','dispatchedAt','finishedAt'] },
     StaffOperatorReceipt: { INSERT: '*' }, StaffOperatorStep: { INSERT: '*' },
@@ -13,7 +14,8 @@ export const OPERATOR_GRANTS = Object.freeze({
     StaffOperatorOutbox: { INSERT: '*', UPDATE: ['state','claimOwner','claimFence','claimUntil','deliveredAt'] },
 });
 const FUNCTIONS = new Set(['lock_control()', 'lock_operator_control()', 'lock_operator_bridge_control()',
-    'lock_operator_specimen(uuid)', 'pilot_budget_usage(uuid, uuid)']);
+    'lock_operator_specimen(uuid)', 'pilot_budget_usage(uuid, uuid)', 'operator_workspace_count(uuid)',
+    'lock_operator_workspace(uuid, uuid)', 'workspace_pilot_budget_usage(uuid, uuid)']);
 export function operatorGrantSQL(role) {
     check(/^[a-z][a-z0-9_]{0,62}$/.test(role), 'ASTRA_DATABASE_ROLE_INVALID');
     const grantee = `"${role}"`;

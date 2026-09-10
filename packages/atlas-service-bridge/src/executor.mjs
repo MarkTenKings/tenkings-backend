@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { previewAtlasReport } from '@atlas/grading-core/report';
 import { speedsterReviewPostSchema } from '@atlas/grading-core/review-action-contract';
 import { canonical, digest, parsePilotPolicy, requireBridge } from './protocol.mjs';
+import { pilotSubject, pilotUsage, requireTenPilotCards } from './pilot-scope.mjs';
 
 const activeStates = ['DISPATCHED', 'UNKNOWN'];
 function checked(text, expected) {
@@ -19,9 +20,9 @@ export class ScopedGradingBridge {
         }, { maxWait: 5000, timeout: 10_000 });
     }
     async authorize(tx, claims) {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('atlas-staff-access-v1', 0))`;
-        const [bridge] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffGradingBridgeControl" WHERE id='active' FOR SHARE`;
-        const [control] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffControl" WHERE id='active' FOR SHARE`;
+        await tx.$executeRaw`SELECT atlas_staff.lock_workspace_private_controls()`;
+        const [bridge] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffGradingBridgeControl" WHERE id='active'`;
+        const [control] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffControl" WHERE id='active'`;
         const [{ now }] = await tx.$queryRaw`SELECT clock_timestamp() AS now`;
         requireBridge(bridge?.enabled && bridge.mode === this.config.mode && bridge.origin === this.config.origin
             && bridge.deploymentId === this.config.deploymentId && bridge.releaseSha === this.config.releaseSha
@@ -32,9 +33,9 @@ export class ScopedGradingBridge {
         requireBridge(control?.enabled && control.mode === bridge.mode && control.revision === claims.controlRevision
             && control.deploymentId === claims.deploymentId && control.releaseSha === claims.releaseSha,
         'STAFF_ACCESS_NOT_ENABLED');
-        const [identity] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffIdentity" WHERE id=${claims.actorId}::uuid FOR SHARE`;
-        const [session] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffSession" WHERE "tokenHash"=${claims.sessionHash} FOR SHARE`;
-        const browsers = session ? await tx.$queryRaw`SELECT * FROM atlas_staff."StaffBrowser" WHERE "tokenHash"=${session.browserHash} FOR SHARE` : [];
+        const [identity] = await tx.$queryRaw`SELECT * FROM atlas_staff.lock_workspace_private_actor(${claims.actorId}::uuid,${claims.sessionHash}::text)`;
+        const [session] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffSession" WHERE "tokenHash"=${claims.sessionHash}`;
+        const browsers = session ? await tx.$queryRaw`SELECT * FROM atlas_staff."StaffBrowser" WHERE "tokenHash"=${session.browserHash}` : [];
         const browser = browsers[0];
         const [assignment] = await tx.$queryRaw`SELECT * FROM atlas_staff.lock_assignment(${claims.specimenId}::uuid,${claims.actorId}::uuid)`;
         const [card] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffSpecimen" WHERE id=${claims.specimenId}::uuid FOR UPDATE`;
@@ -91,11 +92,9 @@ export class ScopedGradingBridge {
             requireBridge(op.state === 'DISPATCHED', 'GRADING_RECONCILIATION_REQUIRED');
             await this.operation(context, operationId, { committing: true });
             const { policy, now, card, bridge } = context;
-            requireBridge(policy.specimenIds.includes(card.id) && +new Date(policy.expiresAt) > +now, 'PILOT_NOT_ACTIVE');
-            const [{ count }] = await tx.$queryRaw`SELECT count(*)::int AS count FROM atlas_staff."StaffSpecimen"
-                WHERE id::text = ANY(${policy.specimenIds}::text[]) AND "sourceType"=${card.sourceType}`;
-            requireBridge(count === 10, 'PILOT_TEN_CARDS_REQUIRED');
-            const [usage] = await tx.$queryRaw`SELECT * FROM atlas_staff.pilot_budget_usage(${policy.pilotId}::uuid,${card.id}::uuid)`;
+            requireBridge(await pilotSubject(tx, policy, card) && +new Date(policy.expiresAt) > +now, 'PILOT_NOT_ACTIVE');
+            await requireTenPilotCards(tx, policy, card.sourceType);
+            const usage = await pilotUsage(tx, policy, card);
             const reserve = BigInt(policy.reservationPerOperationMicroUsd);
             requireBridge(!usage.overrun && BigInt(usage.total) + reserve <= BigInt(policy.maxTotalMicroUsd)
                 && BigInt(usage.card) + reserve <= BigInt(policy.maxCardMicroUsd)
@@ -116,6 +115,7 @@ export class ScopedGradingBridge {
             await tx.$executeRaw`INSERT INTO atlas_staff."StaffGradingExecution"
                 ("operationId","claimId","pilotId","bridgeRevision","sourceRevision","reservedMicroUsd",state,"createdAt")
                 VALUES (${op.id}::uuid,${claimId}::uuid,${policy.pilotId}::uuid,${bridge.revision},${request.sourceRevision},${reserve},'RUNNING',(${now}::timestamptz AT TIME ZONE 'UTC'))`;
+            await this.ports.afterExecutionClaim?.(tx, { operationId: op.id, claimId, sourceRevision: request.sourceRevision, now });
             return { context: { card, policy, bridge }, op, request, source, claimId, prior: false };
         }); } catch (error) {
             const knownPreflight = new Set(['PILOT_NOT_ACTIVE', 'PILOT_TEN_CARDS_REQUIRED', 'PILOT_BUDGET_EXHAUSTED',

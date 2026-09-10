@@ -12,9 +12,14 @@
     "./operator-evidence": { "types": "./src/operator-evidence.d.mts", "default": "./src/operator-evidence.mjs" },
     "./intake": { "types": "./src/intake.d.mts", "default": "./src/intake.mjs" },
     "./machine-initialize": { "types": "./src/machine-initialize.d.mts", "default": "./src/machine-initialize.mjs" },
+    "./workspace-initialize": { "types": "./src/workspace-initialize.d.mts", "default": "./src/workspace-initialize.mjs" },
+    "./workspace-privileges": { "types": "./src/workspace-privileges.d.mts", "default": "./src/workspace-privileges.mjs" },
     "./machine-initialize-transport": { "types": "./src/machine-initialize-transport.d.mts", "default": "./src/machine-initialize-transport.mjs" },
     "./trusted-learning": { "types": "./src/trusted-learning.d.mts", "default": "./src/trusted-learning.mjs" },
-    "./identity-correction": { "types": "./src/identity-correction.d.mts", "default": "./src/identity-correction.mjs" }
+    "./identity-correction": { "types": "./src/identity-correction.d.mts", "default": "./src/identity-correction.mjs" },
+    "./workspace-admission": { "types": "./src/workspace-admission.d.mts", "default": "./src/workspace-admission.mjs" },
+    "./workspace-initialization-service": { "types": "./src/workspace-initialization-service.d.mts", "default": "./src/workspace-initialization-service.mjs" },
+    "./workspace": { "types": "./src/workspace.d.mts", "default": "./src/workspace.mjs" }
   },
   "dependencies": { "@atlas/grading-core": "workspace:*" },
   "scripts": { "test": "node --test test/*.test.mjs" }

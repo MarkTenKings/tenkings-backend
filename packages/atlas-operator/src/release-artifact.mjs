@@ -40,13 +40,107 @@ export function artifactPath(value) {
 }
 const within = (root, path) => path === root || path.startsWith(`${root}${sep}`);
 
-/** Parse native linkage without executing a tool or binary. This reviewed
- * release supports thin little-endian macOS Mach-O 64 only. OS protected system
- * libraries are the platform trust base; Homebrew/@rpath/vendor dylibs fail.
- * Linux/Windows/universal binaries need a separately reviewed native checker.
+const LINUX_ENGINE = 'libquery_engine-debian-openssl-3.0.x.so.node';
+const LINUX_INTERPRETER = '/lib64/ld-linux-x86-64.so.2';
+const LINUX_DEPENDENCIES = Object.freeze({
+    executable: ['libdl.so.2','libstdc++.so.6','libm.so.6','libgcc_s.so.1','libpthread.so.0','libc.so.6','ld-linux-x86-64.so.2'],
+    library: ['libssl.so.3','libcrypto.so.3','libgcc_s.so.1','librt.so.1','libpthread.so.0','libm.so.6','libdl.so.2','libc.so.6','ld-linux-x86-64.so.2'],
+});
+const nativeTarget = ({nodeVersion,platform,arch}) => (platform==='darwin' && ['arm64','x64'].includes(arch)
+    && SUPPORTED_NODE_VERSIONS.includes(nodeVersion)) || (platform==='linux' && arch==='x64' && nodeVersion===FIXED_NODE_VERSION);
+const engineTarget = ({platform,arch}) => platform==='linux' ? LINUX_ENGINE : `libquery_engine-darwin${arch==='arm64'?'-arm64':''}.dylib.node`;
+
+/** The ELF branch deliberately accepts only the reviewed Node 20 / Prisma 5.22
+ * Debian OpenSSL 3 x64 load format. It is not a general ELF loader or an OS
+ * integrity check: the immutable Debian container supplies the trusted loader
+ * and system libraries. Nothing here invokes ldd, readelf or the input binary.
  */
-export function assertClosedNative(bytes,{platform,arch}) {
+function assertClosedElf(bytes,kind,fail) {
+    fail(Buffer.isBuffer(bytes) && bytes.length>=64 && bytes.length<=LIMIT && ['executable','library'].includes(kind));
+    fail(bytes.readUInt32LE(0)===0x464c457f && bytes[4]===2 && bytes[5]===1 && bytes[6]===1
+        && [0,3].includes(bytes[7]) && bytes.subarray(8,16).every(value=>value===0));
+    const uint64=offset=>{const value=bytes.readBigUInt64LE(offset);fail(value<=BigInt(Number.MAX_SAFE_INTEGER));return Number(value);};
+    const sum=(a,b)=>{fail(Number.isSafeInteger(a+b));return a+b;};
+    const range=(offset,length)=>{fail(offset>=0 && length>=0 && sum(offset,length)<=bytes.length);};
+    const type=bytes.readUInt16LE(16), entry=uint64(24), phoff=uint64(32), shoff=uint64(40);
+    const phnum=bytes.readUInt16LE(56), shnum=bytes.readUInt16LE(60), shstr=bytes.readUInt16LE(62);
+    fail(type===(kind==='executable'?2:3) && bytes.readUInt16LE(18)===62 && bytes.readUInt32LE(20)===1
+        && bytes.readUInt32LE(48)===0 && bytes.readUInt16LE(52)===64 && bytes.readUInt16LE(54)===56
+        && phoff>=64 && phnum>0 && phnum<=128);
+    range(phoff,phnum*56);
+    // Extended/ambiguous table numbering is outside this fixed build format.
+    if(shoff===0) fail(shnum===0 && shstr===0 && [0,64].includes(bytes.readUInt16LE(58)));
+    else {fail(shoff>=64 && bytes.readUInt16LE(58)===64 && shnum>0 && shnum<=4096 && shstr<shnum);range(shoff,shnum*64);}
+    const loads=[],dynamics=[],interpreters=[];let stackCount=0;
+    const types=new Set([0,1,2,3,4,6,7,0x6474e550,0x6474e551,0x6474e552,0x6474e553]);
+    for(let n=0;n<phnum;n++) {
+        const p=phoff+n*56, tag=bytes.readUInt32LE(p), flags=bytes.readUInt32LE(p+4);
+        const offset=uint64(p+8), address=uint64(p+16), physical=uint64(p+24), size=uint64(p+32), memory=uint64(p+40), align=uint64(p+48);
+        fail(types.has(tag) && flags<=7 && size<=memory);range(offset,size);sum(address,memory);sum(physical,memory);
+        fail(align===0 || (BigInt(align)&(BigInt(align)-1n))===0n);
+        if(align>1) fail(offset%align===address%align);
+        const segment={offset,address,size,memory,flags};
+        if(tag===1) {
+            fail(memory>0 && align>=4096 && align<=2*1024*1024 && (flags&3)!==3);
+            // Do not let a second load remap even part of a page used to
+            // resolve the dynamic/string table. These builds use 4 KiB pages.
+            fail(!loads.length || Math.floor(address/4096)>=Math.ceil(sum(loads.at(-1).address,loads.at(-1).memory)/4096));
+            loads.push(segment);
+        }
+        if(tag===2) dynamics.push(segment);
+        if(tag===3) {fail(loads.length===0);interpreters.push(segment);}
+        if(tag===0x6474e551) {stackCount++;fail(!(flags&1));}
+    }
+    fail(loads.length>0 && dynamics.length===1 && stackCount===1);
+    const mapped=(address,size)=>{
+        const end=sum(address,size), matches=loads.filter(load=>address>=load.address && end<=sum(load.address,load.size));
+        fail(matches.length===1);const offset=sum(matches[0].offset,address-matches[0].address);range(offset,size);return offset;
+    };
+    if(kind==='executable') {
+        fail(interpreters.length===1 && entry>0);
+        const interp=interpreters[0], expected=Buffer.from(`${LINUX_INTERPRETER}\0`);
+        fail(interp.size===expected.length && mapped(interp.address,interp.size)===interp.offset
+            && bytes.subarray(interp.offset,interp.offset+interp.size).equals(expected));
+    } else fail(interpreters.length===0);
+    // The actual Prisma shared library has an entry point too; it must still
+    // refer to executable file-backed bytes, never an unmapped/BSS address.
+    if(entry) fail(loads.filter(load=>load.flags&1 && entry>=load.address && entry<sum(load.address,load.size)).length===1);
+    const dynamic=dynamics[0];
+    fail(dynamic.size>=16 && dynamic.size%16===0 && dynamic.size<=4096*16 && mapped(dynamic.address,dynamic.size)===dynamic.offset);
+    const tags=new Map(), needed=[];
+    // Unknown dynamic tags can introduce additional loader behavior. Only the
+    // relocation/version/init metadata in the two reviewed binaries is admitted.
+    const allowed=new Set([1,2,3,5,6,7,8,9,10,11,12,13,20,21,23,24,25,26,27,28,
+        0x6ffffef5,0x6ffffff0,0x6ffffff9,0x6ffffffb,0x6ffffffe,0x6fffffff]);
+    let ended=false;
+    for(let offset=dynamic.offset;offset<dynamic.offset+dynamic.size;offset+=16) {
+        const tag=uint64(offset),value=uint64(offset+8);
+        if(ended || tag===0) {fail(tag===0 && value===0);ended=true;continue;}
+        fail(allowed.has(tag));
+        if(tag===1) {needed.push(value);fail(needed.length<=32);}
+        else {fail(!tags.has(tag));tags.set(tag,value);}
+    }
+    fail(ended && needed.length>0 && tags.has(5) && tags.has(10) && tags.get(10)>0 && tags.get(10)<=16*1024*1024);
+    fail(!tags.has(0x6ffffffb) || tags.get(0x6ffffffb)===1);
+    fail(!tags.has(24) || tags.get(24)===0);
+    const stringSize=tags.get(10),strings=mapped(tags.get(5),stringSize);
+    fail(bytes[strings]===0 && bytes[strings+stringSize-1]===0);
+    const dependencies=needed.map(index=>{
+        fail(index>0 && index<stringSize);const start=strings+index;
+        const length=bytes.subarray(start,Math.min(strings+stringSize,start+129)).indexOf(0);fail(length>0);
+        const raw=bytes.subarray(start,start+length);fail(raw.every(value=>value>=0x21 && value<=0x7e));
+        const name=raw.toString('ascii');fail(LINUX_DEPENDENCIES[kind].includes(name));return name;
+    });
+    fail(new Set(dependencies).size===dependencies.length);return dependencies.sort();
+}
+
+/** Parse native linkage without executing a tool or binary. Darwin retains
+ * the existing protected-system Mach-O policy; Linux uses the bounded ELF
+ * policy above. Unsupported architectures, libc families and loaders fail.
+ */
+export function assertClosedNative(bytes,{platform,arch,kind}) {
     const fail=condition=>releaseCheck(condition,'ASTRA_NATIVE_DEPENDENCY_UNCLOSED');
+    if(platform==='linux') {fail(arch==='x64');return assertClosedElf(bytes,kind,fail);}
     fail(Buffer.isBuffer(bytes)&&bytes.length>=32&&platform==='darwin'&&['arm64','x64'].includes(arch));
     fail(bytes.readUInt32LE(0)===0xfeedfacf && bytes.readUInt32LE(4)===(arch==='arm64'?0x0100000c:0x01000007));
     const count=bytes.readUInt32LE(16),commandBytes=bytes.readUInt32LE(20);fail(count<=4096&&commandBytes<=bytes.length-32);
@@ -118,11 +212,10 @@ export function assertReleaseProcess({ env = process.env, execArgv = process.exe
 }
 function inventoryShape(inventory) {
     exact(inventory, ['version','nodeVersion','platform','arch','prismaEngine','files']);
-    releaseCheck(inventory.version === 'atlas-operator-artifact-v1' && SUPPORTED_NODE_VERSIONS.includes(inventory.nodeVersion)
-        && ['darwin','linux'].includes(inventory.platform) && ['arm64','x64'].includes(inventory.arch)
+    releaseCheck(inventory.version === 'atlas-operator-artifact-v1' && nativeTarget(inventory)
         && Array.isArray(inventory.files) && inventory.files.length >= REQUIRED.length + 1 && inventory.files.length < FILE_LIMIT, 'ASTRA_ARTIFACT_CLOSURE_INCOMPLETE');
     artifactPath(inventory.prismaEngine);
-    releaseCheck(inventory.prismaEngine.startsWith(`${PRISMA_ROOT}/libquery_engine-`) && inventory.prismaEngine.endsWith('.node'));
+    releaseCheck(inventory.prismaEngine===`${PRISMA_ROOT}/${engineTarget(inventory)}`, 'ASTRA_PRISMA_ENGINE_REQUIRED');
     const paths = inventory.files.map(row => {
         exact(row, ['path','sha256','bytes','mode']); artifactPath(row.path);
         releaseCheck(row.path !== ARTIFACT_FILE && SHA.test(row.sha256) && Number.isSafeInteger(row.bytes)
@@ -130,6 +223,7 @@ function inventoryShape(inventory) {
     });
     releaseCheck(new Set(paths).size === paths.length && releaseCanonical(paths) === releaseCanonical([...paths].sort())
         && [...REQUIRED, inventory.prismaEngine].every(path => paths.includes(path))
+        && paths.filter(path=>path.endsWith('.node')).length===1
         && inventory.files.reduce((n,row) => n+row.bytes,0) <= TOTAL_LIMIT, 'ASTRA_ARTIFACT_CLOSURE_INCOMPLETE');
     // Only bootstrap/verifier/bundle, provenance and generated client bytes.
     // No node_modules lookup, .env, service code or user-selected executable.
@@ -176,8 +270,8 @@ export async function verifyOperatorArtifact({ root, expectedBuildHash }, {
     }
     const node = inventory.files.find(row => row.path === NODE_PATH);
     releaseCheck(releaseDigest(await releaseReadFile(await realpath(executablePath))) === node.sha256, 'ASTRA_NODE_BINARY_CHANGED');
-    assertClosedNative(await releaseReadFile(join(root,NODE_PATH)),{platform,arch});
-    assertClosedNative(await releaseReadFile(join(root,inventory.prismaEngine)),{platform,arch});
+    assertClosedNative(await releaseReadFile(join(root,NODE_PATH)),{platform,arch,kind:'executable'});
+    assertClosedNative(await releaseReadFile(join(root,inventory.prismaEngine)),{platform,arch,kind:'library'});
     const closureBytes = await releaseReadFile(join(root,'closure.json'),128*1024), closure = JSON.parse(closureBytes.toString('utf8'));
     releaseCheck(releaseCanonical(closure) === closureBytes.toString('utf8')); closureShape(closure);
     releaseCheck(closure.runtimeHash === inventory.files.find(row=>row.path===RUNTIME_PATH).sha256, 'ASTRA_ARTIFACT_CLOSURE_INCOMPLETE');
@@ -259,7 +353,7 @@ export async function packageOperatorRelease({ sourceRoot, outputRoot, releaseSh
     bundle = bundleOperatorRuntime, nodeVersion = process.version, platform = process.platform, arch = process.arch,
     executablePath = process.execPath,
 } = {}) {
-    releaseCheck(SUPPORTED_NODE_VERSIONS.includes(nodeVersion) && isAbsolute(sourceRoot) && await realpath(sourceRoot) === sourceRoot,
+    releaseCheck(nativeTarget({nodeVersion,platform,arch}) && isAbsolute(sourceRoot) && await realpath(sourceRoot) === sourceRoot,
         'ASTRA_ARTIFACT_PLATFORM_CHANGED');
     releaseCheck(/^[a-f0-9]{40}$/.test(releaseSha??'') && releaseSha !== '0'.repeat(40), 'ASTRA_RELEASE_MANIFEST_INVALID');
     exact(bindings,['databaseBindingHash','providerBindingHash','imageBridge','machineInitialization']); exact(bindings.imageBridge,['origin','keyHash']);
@@ -281,7 +375,7 @@ export async function packageOperatorRelease({ sourceRoot, outputRoot, releaseSh
     const engines = listing.paths.filter(path=>/^libquery_engine-[a-z0-9.-]+\.node$/.test(path));
     // One actual generated target. Cross-platform releases must be generated
     // separately by the release owner; this producer never fetches an engine.
-    releaseCheck(engines.length===1 && (platform!=='darwin' || engines[0]===`libquery_engine-darwin${arch==='arm64'?'-arm64':''}.dylib.node`),
+    releaseCheck(engines.length===1 && engines[0]===engineTarget({platform,arch}),
         'ASTRA_PRISMA_ENGINE_REQUIRED');
     const generatedFiles=new Map();
     for(const path of listing.paths)generatedFiles.set(path,await fixedSource(sourceRoot,`${PRISMA_ROOT}/${path}`));
@@ -290,8 +384,8 @@ export async function packageOperatorRelease({ sourceRoot, outputRoot, releaseSh
     releaseCheck(pkg.version==='5.22.0' && clientText.includes(`path.join(__dirname, "${engines[0]}")`), 'ASTRA_PRISMA_CLIENT_CHANGED');
     validateGeneratedClient(clientText,generatedFiles.get('schema.prisma').toString('utf8'));
     const nodeBytes=await releaseReadFile(await realpath(executablePath));
-    assertClosedNative(nodeBytes,{platform,arch});
-    assertClosedNative(generatedFiles.get(engines[0]),{platform,arch});
+    assertClosedNative(nodeBytes,{platform,arch,kind:'executable'});
+    assertClosedNative(generatedFiles.get(engines[0]),{platform,arch,kind:'library'});
     const result = await bundle(sourceRoot);
     releaseCheck(result.outputFiles?.length===1 && result.metafile?.inputs && result.metafile?.outputs, 'ASTRA_ARTIFACT_CLOSURE_INCOMPLETE');
     const output = result.outputFiles[0], bundleBytes = Buffer.from(output.contents), inputs=[];
@@ -321,6 +415,7 @@ export async function packageOperatorRelease({ sourceRoot, outputRoot, releaseSh
     const manifest={version:'atlas-operator-release-v2',mode:'PRODUCTION',model:'gpt-6-astra',nodeVersion,
         releaseSha,buildHash:artifact.buildHash,
         runtimeHash,...bindings,machineInitialization:bindings.machineInitialization===null?null:{...bindings.machineInitialization,runtimeHash},
-        tools:['read_card_report','inspect_region','propose_identity','propose_finding_change','submit_for_human_review']};
+        tools:['read_card_report','inspect_region','inspect_card_geometry','measure_centering','inspect_finding',
+            'propose_identity','propose_finding_change','submit_for_human_review','read_original_photos','propose_capture_identity','propose_physical_boundary','submit_capture_preparation']};
     return {...artifact,manifest,manifestBytes:releaseCanonical(manifest),manifestHash:releaseDigest(releaseCanonical(manifest))};
 }
