@@ -5,9 +5,12 @@ import type { StaffInventoryCommand, StaffInventoryWorkspace as Workspace } from
 import { prepareStaffInventoryPhoto, STAFF_INVENTORY_PHOTO_ACCEPT } from '../../lib/inventoryPhotoUpload';
 import StaffInventoryLocationBrowser from './StaffInventoryLocationBrowser';
 import type { StaffInventoryMapLocation } from '../../lib/staffInventoryLocationsMap';
+import StaffInventoryCardCapture from './StaffInventoryCardCapture';
+import { isStaffInventoryIdentificationResponse } from '../../lib/staffInventoryIdentification';
+import { createStaffInventoryLocator, staffInventoryLocationKind, type StaffLocationFix } from '../../lib/staffInventoryGeolocation';
 import styles from './StaffInventoryWorkspace.module.css';
 
-type Item = Workspace['items'][number] & { photo_url?: string | null };
+type Item = Workspace['items'][number] & { photo_url?: string | null; back_photo_url?: string | null };
 type Data = Omit<Workspace, 'items' | 'locations'> & { items: Item[]; locations: StaffInventoryMapLocation[] };
 type Mode = 'add' | 'edit' | 'move' | 'prepare' | 'cost' | 'count' | 'location' | null;
 type Pending = StaffInventoryCommand | { action: 'location'; request_id: string; name: string; address: string; inventoryKind: 'hq' | 'store' | 'kiosk' };
@@ -22,7 +25,9 @@ const cents = (s: string) => {
 };
 const amount = (n: number | null) => n === null ? '' : (n / 100).toFixed(2);
 const localNow = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
-const fresh = () => ({ origin: '', type: '', name: '', category: '', quantity: '', cost: '', price: '', location: '', kind: '', machine: '', product: '', door: '', stage: '', date: localNow(), note: '', photo_key: null as string | null, photo_url: null as string | null, address: '', planned: false, costSplit: 'equal', cardCosts: {} as Record<string, string> });
+const cardFields = ['manufacturer', 'card_number', 'year', 'set_name', 'variant', 'card_type'] as const;
+const cardFieldLabels: Record<typeof cardFields[number], string> = { manufacturer: 'Manufacturer', card_number: 'Card number', year: 'Year', set_name: 'Set / product', variant: 'Parallel / variant', card_type: 'Card type' };
+const fresh = () => ({ origin: 'existing', type: 'single', name: '', category: '', quantity: '', cost: '', price: '', location: '', kind: '', machine: '', product: '', door: '', stage: 'unprocessed', date: localNow(), note: '', photo_key: null as string | null, photo_url: null as string | null, back_photo_key: null as string | null, back_photo_url: null as string | null, manufacturer: '', card_number: '', year: '', set_name: '', variant: '', card_type: '', address: '', loadedConfirmed: false, planned: false, costSplit: 'equal', cardCosts: {} as Record<string, string> });
 type Draft = ReturnType<typeof fresh>;
 function Icon({ name, size = 20 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
@@ -52,14 +57,24 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
   const [item, setItem] = useState<Item | null>(null), [selected, setSelected] = useState<string[]>([]), [mode, setMode] = useState<Mode>(null), [draft, setDraft] = useState<Draft>(fresh);
   const [busy, setBusy] = useState(false), [uploading, setUploading] = useState(false), [pending, setPending] = useState<Pending | null>(null), [rejected, setRejected] = useState(false);
   const [photoStatus, setPhotoStatus] = useState(''), [photoError, setPhotoError] = useState(''), [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [autoStartCamera, setAutoStartCamera] = useState(true);
+  const aiFields = useRef(new Set<keyof Draft>());
+  const [captureOpen, setCaptureOpen] = useState(false), [captureCycle, setCaptureCycle] = useState(0), [captureSource, setCaptureSource] = useState<'camera' | 'library'>('camera');
+  const [identityError, setIdentityError] = useState(''), [identityNotes, setIdentityNotes] = useState<string[]>([]), [locationStatus, setLocationStatus] = useState('');
+  const pairFiles = useRef<[File, File] | null>(null), editedFields = useRef<Record<string, number>>({}), locationRevision = useRef(0), geoAttempt = useRef(0), geoController = useRef<AbortController | null>(null);
+  const draftRef = useRef(draft); draftRef.current = draft;
+  const autoLocation = useRef(false), locationUpdatedAt = useRef(0);
+  const sessionLocation = useRef({ location: '', kind: '' });
+  const locator = useRef<ReturnType<typeof createStaffInventoryLocator> | null>(null);
   const dialog = useRef<HTMLDivElement>(null), active = useRef(true), saveLock = useRef(false), buttonRef = useRef<HTMLButtonElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null), libraryInput = useRef<HTMLInputElement>(null), photoFile = useRef<File | null>(null);
   const photoAttempt = useRef(0), photoLock = useRef(false), photoController = useRef<AbortController | null>(null);
+  const cancelLocation = useCallback(() => { geoAttempt.current++; geoController.current?.abort(); }, []);
   const releasePhotoAttempt = useCallback(() => {
-    photoAttempt.current++; photoController.current?.abort(); photoController.current = null; photoFile.current = null; photoLock.current = false;
+    photoAttempt.current++; photoController.current?.abort(); photoController.current = null; photoFile.current = null; pairFiles.current = null; photoLock.current = false;
   }, []);
   const cancelPhoto = useCallback((message = '') => {
-    releasePhotoAttempt(); setUploading(false); setPhotoError(''); setPhotoStatus(message); setPhotoPreview(null);
+    releasePhotoAttempt(); setUploading(false); setPhotoError(''); setPhotoStatus(message); setPhotoPreview(null); setIdentityError('');
   }, [releasePhotoAttempt]);
   const pendingKey = `tenkings:staff-inventory:pending:${adminId}`, draftKey = `tenkings:staff-inventory:draft:${adminId}`;
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -74,7 +89,7 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
   useEffect(() => {
     active.current = true; void load();
     try { const saved = sessionStorage.getItem(pendingKey); if (saved) { const value = JSON.parse(saved); if (value.actor !== adminId || !value.command?.request_id) throw new Error(); setPending(value.command); if (value.ui) { setDraft({ ...fresh(), ...value.ui.draft }); setMode(value.ui.mode); setItem(value.ui.item); setSelected(value.ui.selected ?? []); } setNotice('Your last save needs confirmation. Retry it below to finish without adding a duplicate.'); } } catch { setError('Your last saved request could not be read. Keep this tab open and contact your administrator.'); }
-    return () => { active.current = false; releasePhotoAttempt(); };
+    return () => { active.current = false; releasePhotoAttempt(); cancelLocation(); };
   // Session changes remount this component. Never copy requests between accounts.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminId, token]);
@@ -85,12 +100,13 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     document.body.style.overflow = 'hidden';
     dialog.current?.querySelector<HTMLElement>('button, input, select, textarea')?.focus();
     const key = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !saveLock.current && !pending) { cancelPhoto(); setMode(null); setItem(null); }
-      if (e.key === 'Tab') { const nodes = dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled):not([tabindex="-1"]), select:not(:disabled), textarea:not(:disabled), a[href]'); if (!nodes?.length) return; const first = nodes[0], last = nodes[nodes.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); } }
+      if (captureOpen) return;
+      if (e.key === 'Escape' && !saveLock.current && !pending) { cancelPhoto(); cancelLocation(); setMode(null); setItem(null); }
+      if (e.key === 'Tab') { const candidates = dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled):not([tabindex="-1"]), select:not(:disabled), textarea:not(:disabled), a[href], summary'); const nodes = [...(candidates ?? [])].filter(node => !node.closest('[hidden]') && (!node.closest('details:not([open])') || node.tagName === 'SUMMARY')); if (!nodes.length) return; const first = nodes[0], last = nodes[nodes.length - 1]; if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); } }
     };
     document.addEventListener('keydown', key);
     return () => { document.body.style.overflow = previousOverflow; document.removeEventListener('keydown', key); previous?.focus(); };
-  }, [mode, item, pending, cancelPhoto]);
+  }, [mode, item, pending, cancelPhoto, cancelLocation, captureOpen]);
   useEffect(() => {
     if (!mode && !item) return;
     const viewport = window.visualViewport, overlay = dialog.current?.parentElement;
@@ -105,18 +121,21 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     inputs.forEach(input => input?.addEventListener('cancel', cancel));
     return () => inputs.forEach(input => input?.removeEventListener('cancel', cancel));
   }, [mode]);
-  function changeFields(values: Partial<Draft>) { setDraft(d => { const next = { ...d, ...values }; if (mode === 'add') { try { sessionStorage.setItem(draftKey, JSON.stringify(next)); } catch { /* An unsaved form can still be used; exact save persistence is required separately. */ } } return next; }); }
-  function change<K extends keyof Draft>(key: K, value: Draft[K]) { changeFields({ [key]: value }); }
+  function changeFields(values: Partial<Draft>) { setDraft(d => { const next = { ...d, ...values }; if (mode === 'add') { try { sessionStorage.setItem(draftKey, JSON.stringify({ ...next, manuallyEditedFields: Object.keys(editedFields.current).filter(key => editedFields.current[key] > 0), automaticallyReadFields: [...aiFields.current], autoSelectedLocation: autoLocation.current, autoLocationUpdatedAt: locationUpdatedAt.current })); } catch { /* An unsaved form can still be used; exact save persistence is required separately. */ } } return next; }); }
+  function change<K extends keyof Draft>(key: K, value: Draft[K]) { aiFields.current.delete(key); editedFields.current[key] = (editedFields.current[key] ?? 0) + 1; if (key === 'location' || key === 'kind') locationRevision.current++; changeFields({ [key]: value }); }
   function addInventory() {
-    if (pending) return; cancelPhoto(); setError(''); setNotice(''); setItem(null); setSelected([]);
-    let next = fresh(); try { const saved = sessionStorage.getItem(draftKey); if (saved) next = { ...next, ...JSON.parse(saved) }; } catch { /* Start a clean unsaved form. */ }
-    setDraft(next); setMode('add');
+    if (pending) return; cancelPhoto(); setCaptureOpen(false); setIdentityNotes([]); editedFields.current = {}; aiFields.current.clear(); setError(''); setNotice(''); setItem(null); setSelected([]);
+    let next = { ...fresh(), ...sessionLocation.current }; try { const saved = sessionStorage.getItem(draftKey); if (saved) { const stored = JSON.parse(saved); autoLocation.current = stored.autoSelectedLocation === true; locationUpdatedAt.current = Number.isFinite(stored.autoLocationUpdatedAt) ? stored.autoLocationUpdatedAt : 0; next = { ...next, ...stored, origin: stored.origin || 'existing', type: stored.type || 'single', stage: stored.stage || 'unprocessed' }; const restoredFields = Array.isArray(stored.manuallyEditedFields) ? stored.manuallyEditedFields : ['name', 'category', ...cardFields].filter(key => stored[key]); editedFields.current = Object.fromEntries(restoredFields.map((key: string) => [key, 1])); aiFields.current = new Set((Array.isArray(stored.automaticallyReadFields) ? stored.automaticallyReadFields : []).filter((key: keyof Draft) => !editedFields.current[key])); } } catch { /* Start a clean unsaved form. */ }
+    sessionLocation.current = { location: next.location, kind: next.kind }; setDraft(next); setMode('add');
   }
   function openItem(i: Item) { setItem(i); setSelected(i.unit_ids); setError(''); setMode(null); }
   function edit(next: Exclude<Mode, 'add' | 'location' | null>) {
     if (!item) return;
     cancelPhoto();
     const d = fresh(); Object.assign(d, { name: item.name ?? '', category: item.category ?? '', photo_key: item.photo_key, photo_url: item.photo_url ?? null, note: item.notes, price: amount(item.expected_price_cents), cost: amount(item.purchase_total_cents), type: item.receipt_quantity === 1 ? 'single' : 'batch', product: next === 'move' && item.product_id?.startsWith('inventory-product:') ? '' : item.product_id ?? '', date: localNow(), cardCosts: Object.fromEntries((data?.items.filter(i => i.lot_id === item.lot_id) ?? []).flatMap(i => i.units.map(u => [u.id, amount(u.cost_cents)]))) });
+    d.back_photo_key = item.back_photo_key ?? null; d.back_photo_url = item.back_photo_url ?? null;
+    for (const field of cardFields) d[field] = item.card_details?.[field] ?? '';
+    setIdentityNotes([]); editedFields.current = {}; aiFields.current.clear();
     setDraft(d); setMode(next); setError('');
   }
   const destination = () => {
@@ -127,14 +146,14 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     if (mode === 'location') { if (!draft.name.trim() || !draft.address.trim() || !['hq', 'store', 'kiosk'].includes(draft.kind)) throw new Error('Enter a location name, address and type.'); return { action: 'location', request_id: crypto.randomUUID(), name: draft.name.trim(), address: draft.address.trim(), inventoryKind: draft.kind as 'hq' | 'store' | 'kiosk' }; }
     const time = new Date(draft.date); if (!Number.isFinite(time.getTime()) || time > new Date()) throw new Error('Choose the actual date and time, today or earlier.');
     const meta = { request_id: crypto.randomUUID(), effective_at: time.toISOString(), note: draft.note.trim() };
-    const description = { name: draft.name.trim(), category: draft.category, notes: draft.note.trim(), photo_key: draft.photo_key };
+    const description = { name: draft.name.trim(), category: draft.category, notes: draft.note.trim(), photo_key: draft.photo_key, ...(draft.back_photo_key ? { back_photo_key: draft.back_photo_key } : {}), ...(cardFields.some(key => draft[key].trim()) ? { card_details: Object.fromEntries(cardFields.map(key => [key, draft[key].trim() || null])) as Record<typeof cardFields[number], string | null> } : {}) };
     if (mode === 'add') {
-      if (!draft.origin || !draft.type) throw new Error('Choose Current stock or New purchase, then Batch or Individual card.');
-      if (!description.name || !description.category || !draft.stage) throw new Error('Add a name, category and current condition.');
+      if (!description.name || !description.category) throw new Error('Add the card name and category, or take clear front and back photos.');
       const quantity = draft.type === 'single' ? 1 : Number(draft.quantity);
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > 2000) throw new Error('Enter a quantity from 1 to 2,000 cards.');
       const cost = cents(draft.cost);
-      return { ...meta, action: 'add', origin: draft.origin as 'existing' | 'purchase', quantity, description, total_cost_cents: cost, cost_method: cost === null ? 'unassigned' : quantity === 1 ? 'documented_unit' : 'equal_card', expected_price_cents: cents(draft.price), destination: destination(), stage: draft.stage as 'unprocessed' | 'processing' | 'processed' | 'packed' };
+      if (draft.kind === 'machine' && (!draft.loadedConfirmed || draft.origin !== 'existing')) throw new Error('Confirm these cards are already packed inside this machine. Receive a new purchase at HQ, a store or a kiosk first.');
+      return { ...meta, action: 'add', origin: draft.origin as 'existing' | 'purchase', quantity, description, total_cost_cents: cost, cost_method: cost === null ? 'unassigned' : quantity === 1 ? 'documented_unit' : 'equal_card', expected_price_cents: cents(draft.price), destination: destination(), stage: draft.kind === 'machine' ? 'packed' : draft.stage as 'unprocessed' | 'processing' | 'processed' | 'packed' };
     }
     if (!item) throw new Error('Select an inventory item first.');
     if (mode === 'count') { const quantity = Number(draft.quantity); if (!draft.quantity || !Number.isInteger(quantity) || quantity < 0 || !item.machine_scope) throw new Error('Enter the number of cards physically counted in this machine product.'); return { ...meta, action: 'count', scope: item.machine_scope, quantity }; }
@@ -146,7 +165,7 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     throw new Error('Choose an action.');
   }
   async function save(retry?: Pending) {
-    if (saveLock.current || photoLock.current || photoFile.current) return;
+    if (saveLock.current || photoLock.current || photoFile.current || pairFiles.current) return;
     let value: Pending;
     try { value = retry ?? command(); sessionStorage.setItem(pendingKey, JSON.stringify({ actor: adminId, command: value, ui: { mode, draft, item, selected } })); }
     catch (e) { setError(e instanceof Error ? e.message : 'Your entry could not be saved safely in this browser.'); return; }
@@ -158,7 +177,13 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
       if (result.request_id !== value.request_id || !['RECORDED', 'REPLAY'].includes(result.outcome)) throw new Error('Save could not be confirmed. Retry this saved entry.');
       sessionStorage.removeItem(pendingKey); if (value.action === 'add') sessionStorage.removeItem(draftKey);
       if (!active.current) return;
-      setPending(null); setMode(null); setItem(null); setDraft(fresh()); setNotice(value.action === 'location' ? 'Location added. You can now assign inventory here.' : value.action === 'add' ? 'Inventory added. Your team can now find and manage it here.' : 'Inventory updated.'); await load(); buttonRef.current?.focus();
+      setPending(null); setItem(null); cancelPhoto(); setIdentityNotes([]); editedFields.current = {}; aiFields.current.clear();
+      if (value.action === 'add' && value.quantity === 1) {
+        sessionLocation.current = { location: value.destination.location_id, kind: value.destination.kind };
+        setDraft({ ...fresh(), ...sessionLocation.current, origin: value.origin }); setMode('add'); setAutoStartCamera(false); setCaptureSource('camera'); setCaptureCycle(cycle => cycle + 1); setCaptureOpen(true);
+        setNotice('Card added. Ready for the next card.');
+      } else { setMode(null); setDraft(fresh()); setNotice(value.action === 'location' ? 'Location added. You can now assign inventory here.' : value.action === 'add' ? 'Inventory added.' : 'Inventory updated.'); buttonRef.current?.focus(); }
+      void load();
     } catch (e) { if (active.current) setError(e instanceof Error ? e.message : 'Connection interrupted. Retry your saved entry to confirm it.'); }
     finally { clearTimeout(timer); saveLock.current = false; if (active.current) setBusy(false); }
   }
@@ -187,17 +212,118 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     const input = source === 'camera' ? cameraInput.current : libraryInput.current;
     if (input) { input.value = ''; if (!photoError) setPhotoStatus(source === 'camera' ? 'If your camera is unavailable, choose a photo from your library.' : ''); input.click(); }
   }
+  async function locateInventory(retry = false) {
+    if (!data || mode !== 'add') return;
+    if (!retry && draftRef.current.location && (!autoLocation.current || Date.now() - locationUpdatedAt.current < 300000)) return;
+    const previousLocation = { ...sessionLocation.current };
+    if (autoLocation.current) { changeFields({ location: '', kind: '' }); sessionLocation.current = { location: '', kind: '' }; }
+    const attempt = ++geoAttempt.current, revision = locationRevision.current;
+    geoController.current?.abort(); const controller = new AbortController(); geoController.current = controller;
+    setLocationStatus('Finding your location…');
+    if (!locator.current) locator.current = createStaffInventoryLocator({
+      getPosition: () => new Promise<StaffLocationFix>((resolve, reject) => {
+        if (!navigator.geolocation) { reject(new Error('Location is unavailable')); return; }
+        navigator.geolocation.getCurrentPosition(position => resolve({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy, timestamp: position.timestamp }), reject, { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 });
+      }),
+      resolvePoint: async (id, signal) => {
+        const response = await fetch(`/api/v2/admin/inventory/location-map?location_id=${encodeURIComponent(id)}`, { headers, signal, cache: 'no-store' });
+        if (!response.ok) return null; const body = await response.json(); return body.location_id === id ? body.point : null;
+      },
+    });
+    const result = await locator.current(data.locations, controller.signal, retry);
+    if (!active.current || controller.signal.aborted || attempt !== geoAttempt.current || revision !== locationRevision.current) return;
+    setLocationStatus(result.message);
+    if (result.location) {
+      const kind = (previousLocation.location === result.location.id ? previousLocation.kind : '') || staffInventoryLocationKind(result.location, data.items);
+      autoLocation.current = true; locationUpdatedAt.current = Date.now();
+      changeFields({ location: result.location.id, kind }); sessionLocation.current = { location: result.location.id, kind };
+      if (!kind) setLocationStatus('Location found. Choose its inventory type once for this session.');
+    }
+  }
+  useEffect(() => { if (captureOpen && mode === 'add') void locateInventory();
+  // Capture cycles refresh expired automatic locations; manual selections remain staff-owned.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captureOpen, captureCycle, mode]);
+  function startCapture(source: 'camera' | 'library') {
+    if (photoLock.current || saveLock.current || pending) return;
+    cancelPhoto(); setIdentityNotes([]); setAutoStartCamera(true); setCaptureSource(source); setCaptureCycle(cycle => cycle + 1); setCaptureOpen(true);
+
+  }
+  async function readCardIdentity(front: string, back: string, controller: AbortController, attempt: number) {
+    const timer = setTimeout(() => controller.abort(), 75000);
+    try {
+      setPhotoStatus('Reading the front and back… You can enter the cost and price now.');
+      const response = await fetch('/api/v2/admin/inventory/identify', { method: 'POST', headers, signal: controller.signal, body: JSON.stringify({ front_photo_key: front, back_photo_key: back }) });
+      const result = await response.json();
+      if (!active.current || attempt !== photoAttempt.current) return;
+      if (!response.ok || !isStaffInventoryIdentificationResponse(result, { front_photo_key: front, back_photo_key: back })) throw new Error('Card details could not be read. Enter them below or retry identification.');
+      const values: Partial<Draft> = {}, review: string[] = [];
+      for (const field of ['name', 'category', ...cardFields] as const) {
+        const suggestion = result.suggestions[field];
+        if (!suggestion || typeof suggestion.value !== 'string' || !suggestion.value.trim() || !['high', 'medium'].includes(suggestion.confidence)) continue;
+        if ((editedFields.current[field] ?? 0) > 0) continue;
+        values[field] = suggestion.value.trim(); aiFields.current.add(field);
+        if (suggestion.confidence === 'medium') review.push(field === 'name' ? 'card name' : field === 'category' ? 'category' : cardFieldLabels[field].toLowerCase());
+      }
+      changeFields(values); setIdentityError('');
+      setIdentityNotes([review.length ? `Double-check ${review.join(', ')}.` : 'Details read from your photos. Check them before saving.', ...(Array.isArray(result.warnings) ? result.warnings.filter((warning: unknown): warning is string => typeof warning === 'string').slice(0, 3) : [])]);
+      setPhotoStatus('Both photos are ready.');
+    } catch {
+      if (active.current && attempt === photoAttempt.current) { setPhotoStatus('Both photos are ready.'); setIdentityError('Card details could not be read. Enter them below or retry identification.'); }
+    } finally { clearTimeout(timer); }
+  }
+  async function pairCaptured(front: File, back: File) {
+    if (photoLock.current || saveLock.current || pending) return;
+    const attempt = ++photoAttempt.current, controller = new AbortController();
+    const current = () => active.current && attempt === photoAttempt.current;
+    setCaptureOpen(false); pairFiles.current = [front, back]; photoLock.current = true; photoController.current = controller;
+    setUploading(true); setPhotoError(''); setIdentityError(''); setIdentityNotes([]); setPhotoStatus('Preparing both photos…');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const prepared = await Promise.all([front, back].map(file => prepareStaffInventoryPhoto(file, { signal: controller.signal })));
+      if (!current()) return;
+      setPhotoStatus('Saving both photos…'); timer = setTimeout(() => controller.abort(), 35000);
+      const uploads = await Promise.all(prepared.map(async photo => {
+        const response = await fetch('/api/v2/admin/inventory/photo', { method: 'POST', headers, signal: controller.signal, body: JSON.stringify({ image: photo.image }) }); const result = await response.json();
+        if (!response.ok || typeof result.photo_key !== 'string' || !result.photo_key || typeof result.photo_url !== 'string' || !result.photo_url) throw new Error('Both photos must finish uploading. Please retry.');
+        return result as { photo_key: string; photo_url: string };
+      }));
+      clearTimeout(timer);
+      if (!current()) return;
+      const cleared: Partial<Draft> = {}; for (const field of aiFields.current) { if (!editedFields.current[field] && typeof draftRef.current[field] === 'string') Object.assign(cleared, { [field]: '' }); } aiFields.current.clear();
+      changeFields({ ...cleared, photo_key: uploads[0].photo_key, photo_url: uploads[0].photo_url, back_photo_key: uploads[1].photo_key, back_photo_url: uploads[1].photo_url }); pairFiles.current = null;
+      await readCardIdentity(uploads[0].photo_key, uploads[1].photo_key, controller, attempt);
+    } catch {
+      if (current()) { setPhotoStatus(''); setPhotoError('Both photos could not be saved. Retry the photos, or keep entering this card manually.'); }
+    } finally { clearTimeout(timer); if (current()) { photoLock.current = false; photoController.current = null; setUploading(false); } }
+  }
+  async function retryIdentity() {
+    if (photoLock.current || !draft.photo_key || !draft.back_photo_key) return;
+    const attempt = ++photoAttempt.current, controller = new AbortController(); photoController.current = controller; photoLock.current = true; setUploading(true); setIdentityError('');
+    await readCardIdentity(draft.photo_key, draft.back_photo_key, controller, attempt);
+    if (active.current && attempt === photoAttempt.current) { photoLock.current = false; photoController.current = null; setUploading(false); }
+  }
   const items = (data?.items ?? []).filter(i => (!location || i.location_id === location) && (!category || i.category === category) && (!query || [i.name, i.category, i.location_name, i.notes].some(v => v?.toLowerCase().includes(query.toLowerCase()))));
   const categories = [...new Set((data?.items ?? []).flatMap(i => i.category ? [i.category] : []))];
-  const close = () => { if (!saveLock.current && !pending) { cancelPhoto(); setMode(null); setItem(null); setError(''); } };
+  const close = () => { if (!saveLock.current && !pending) { cancelPhoto(); cancelLocation(); setCaptureOpen(false); setMode(null); setItem(null); setError(''); } };
   const retryControls = pending && <div className={styles.pending}><strong>{rejected ? 'Your entry needs a change.' : 'Finish your last save'}</strong><p>{rejected ? 'Nothing from this attempt was added. Edit the entry or retry after signing in.' : 'Retry the saved entry to confirm it. This will not add a second copy.'}</p><button type="button" disabled={busy} className={styles.primary} onClick={() => void save(pending)}>{busy ? 'Saving…' : 'Retry saved entry'}</button>{rejected && <button type="button" className={styles.secondary} disabled={busy} onClick={() => { sessionStorage.removeItem(pendingKey); setPending(null); setRejected(false); }}>Edit entry</button>}</div>;
   const locationFields = <>
-    <Field label={mode === 'move' ? 'Destination' : 'Current location'}><select required value={draft.location} onChange={e => { change('location', e.target.value); const l = data?.locations.find(l => l.id === e.target.value); change('kind', l?.locationType && ['hq', 'store', 'kiosk', 'machine'].includes(l.locationType) ? l.locationType : ''); }}><option value="">Choose a location</option>{data?.locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
-    <Field label="Location type"><select required value={draft.kind} onChange={e => change('kind', e.target.value)}><option value="">Choose type</option><option value="hq">HQ / storage</option><option value="store">Store</option><option value="kiosk">Kiosk</option><option value="machine">Vending machine</option></select></Field>
-    {draft.kind === 'machine' && <><Field label="Machine number" help="Use the number on the machine’s sticker."><input required list="inventory-machines" value={draft.machine} onChange={e => change('machine', e.target.value)} /><datalist id="inventory-machines">{data?.machines.filter(m => m.location_id === draft.location).map((m, i) => <option key={i} value={m.machine_id} />)}</datalist></Field><Field label="Machine product number" help="Use the product number from this machine’s sales records. The selected cards will be assigned to this product."><input required value={draft.product} onChange={e => change('product', e.target.value)} /></Field><Field label="Door / slot (optional)"><input value={draft.door} onChange={e => change('door', e.target.value)} /></Field></>}
+    <Field label={mode === 'move' ? 'Destination' : 'Current location'}><select required value={draft.location} onChange={e => { autoLocation.current = false; change('location', e.target.value); const l = data?.locations.find(l => l.id === e.target.value); const kind = l ? staffInventoryLocationKind(l, data?.items ?? []) : ''; change('kind', kind); sessionLocation.current = { location: e.target.value, kind }; setLocationStatus('Using your selected location for this session.'); }}><option value="">Choose a location</option>{data?.locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
+    <Field label="Location type"><select required value={draft.kind} onChange={e => { change('kind', e.target.value); sessionLocation.current = { location: draft.location, kind: e.target.value }; }}><option value="">Choose type</option><option value="hq">HQ / storage</option><option value="store">Store</option><option value="kiosk">Kiosk</option><option value="machine">Vending machine</option></select></Field>
+    {draft.kind === 'machine' && <>{mode === 'add' && <label className={styles.checkbox}><input type="checkbox" required checked={draft.loadedConfirmed} onChange={e => change('loadedConfirmed', e.target.checked)} />These cards are already packed and loaded inside this machine.</label>}<Field label="Machine number" help="Use the number on the machine’s sticker."><input required list="inventory-machines" value={draft.machine} onChange={e => change('machine', e.target.value)} /><datalist id="inventory-machines">{data?.machines.filter(m => m.location_id === draft.location).map((m, i) => <option key={i} value={m.machine_id} />)}</datalist></Field><Field label="Machine product number" help="Use the product number from this machine’s sales records. The selected cards will be assigned to this product."><input required value={draft.product} onChange={e => change('product', e.target.value)} /></Field><Field label="Door / slot (optional)"><input value={draft.door} onChange={e => change('door', e.target.value)} /></Field></>}
   </>;
+  const fastCardPhoto = mode === 'add' && draft.type === 'single' || mode === 'edit' && selected.length === 1;
   const descriptionFields = <>
-    <div className={styles.photoField}>
+    {fastCardPhoto ? <div className={styles.photoField}>
+      <div className={styles.pairPreview}>{[['Front', draft.photo_url], ['Back', draft.back_photo_url]].map(([side, url]) => <div key={side}>{url ? <img src={url} alt={`${side} of inventory card`} /> : <Icon name="cards" size={32} />}<span>{side}</span></div>)}</div>
+      <div className={styles.photoControls}><button type="button" className={styles.primary} disabled={uploading || busy || !!pending} onClick={() => startCapture('camera')}><Icon name="photo" />{draft.photo_key && draft.back_photo_key ? 'Retake photos' : 'Take photo'}</button><button type="button" className={styles.secondary} disabled={uploading || busy || !!pending} onClick={() => startCapture('library')}><Icon name="library" />Choose photos</button></div>
+      <p className={styles.helper}>Front, then back. We read the card details for you. HEIC / HEIF supported.</p>
+      {photoStatus && <p role="status" className={styles.photoStatus}>{photoStatus}</p>}
+      {uploading && <button type="button" className={styles.photoCancel} onClick={() => cancelPhoto('You can enter the card details below.')}>Continue manually</button>}
+      {photoError && <div className={styles.photoError}><p role="alert">{photoError}</p><div><button type="button" className={styles.secondary} onClick={() => { const pair = pairFiles.current; if (pair) void pairCaptured(...pair); }}>Retry photos</button><button type="button" className={styles.photoCancel} onClick={() => cancelPhoto('Your saved photos and other details are unchanged.')}>Keep current photos</button></div></div>}
+      {identityError && <div className={styles.photoError}><p role="alert">{identityError}</p><button type="button" className={styles.secondary} disabled={uploading} onClick={() => void retryIdentity()}>Retry identification</button></div>}
+      {!!identityNotes.length && <div className={styles.identityNotes} role="status">{identityNotes.map((note, index) => <p key={index}>{note}</p>)}</div>}
+    </div> : <div className={styles.photoField}>
       <div className={styles.photoUpload} aria-busy={uploading}>{photoPreview || draft.photo_url ? <img src={photoPreview || draft.photo_url!} alt={photoPreview ? 'New inventory photo' : 'Inventory photo'} /> : <Icon name="photo" size={30} />}<span>{draft.photo_url || photoPreview ? 'Your inventory photo' : 'Add a photo'}<small>Optional · private to your team</small></span></div>
       <div className={styles.photoControls}>
         <button type="button" className={styles.secondary} disabled={uploading || busy || !!pending} onClick={() => choosePhoto('camera')}><Icon name="photo" />Take photo</button>
@@ -209,9 +335,10 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
       {photoStatus && <p role="status" className={styles.photoStatus}>{photoStatus}</p>}
       {uploading && <button type="button" className={styles.photoCancel} onClick={() => cancelPhoto(draft.photo_key ? 'Your current photo is unchanged.' : 'Photo cancelled. Your other details are still here.')}>Cancel photo</button>}
       {photoError && <div className={styles.photoError}><p role="alert">{photoError} Your other details are still here.</p><div><button type="button" className={styles.secondary} onClick={() => void photo(photoFile.current ?? undefined)}>Retry photo</button><button type="button" className={styles.photoCancel} onClick={() => cancelPhoto(draft.photo_key ? 'Your current photo is unchanged.' : 'Continue with your entry. You can add a photo later.')}>{draft.photo_key ? 'Keep current photo' : 'Continue without photo'}</button></div></div>}
-    </div>
+    </div>}
     <Field label={draft.type === 'single' || mode === 'edit' && selected.length === 1 ? 'Card name' : 'Inventory name'}><input required autoComplete="off" maxLength={160} value={draft.name} onChange={e => change('name', e.target.value)} /></Field>
     <Field label="Category"><select required value={draft.category} onChange={e => change('category', e.target.value)}><option value="">Choose a category</option>{[...new Set(['Sports cards', 'Pokémon', 'Other trading cards', ...categories])].map(c => <option key={c}>{c}</option>)}</select></Field>
+    <details className={styles.cardMetadata}><summary>Card details <span>{[draft.year, draft.manufacturer, draft.card_number ? `#${draft.card_number}` : ''].filter(Boolean).join(' · ') || 'Manufacturer, year, number & more'}</span></summary><div className={styles.formGrid}>{cardFields.map(field => <Field key={field} label={cardFieldLabels[field]}><input autoComplete="off" maxLength={field === 'year' ? 20 : field === 'card_number' ? 80 : 160} value={draft[field]} onChange={e => change(field, e.target.value)} /></Field>)}</div></details>
   </>;
   let previewProfit: number | null = null, previewMargin: number | null = null, previewOverflow = false;
   try { const cost = cents(draft.cost), price = cents(draft.price), quantity = draft.type === 'single' ? 1 : Number(draft.quantity); if (cost !== null && price !== null && quantity > 0) { const sales = price * quantity; previewOverflow = !Number.isSafeInteger(sales) || !Number.isSafeInteger(sales - cost); if (!previewOverflow) { previewProfit = sales - cost; previewMargin = price > 0 ? previewProfit / sales * 100 : null; } } } catch { /* A malformed amount receives an inline save error. */ }
@@ -230,19 +357,23 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
       <footer className={styles.footer}><button className={styles.mobileAdvanced} onClick={onAdvanced}>Advanced records</button><span>Staff records are saved securely in Ten Kings.</span><span>{data?.updated_at ? `Latest activity ${new Date(data.updated_at).toLocaleString()}` : 'Ready for your first entry'}</span></footer>
     </main>
     {(mode || item) && <div className={styles.overlay} onMouseDown={e => { if (e.target === e.currentTarget) close(); }}><div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="inventory-dialog-title" className={styles.drawer}>
-      <div className={styles.drawerHeader}><div><span className={styles.eyebrow}>{mode === 'add' ? 'BUILD YOUR INVENTORY' : 'INVENTORY DETAILS'}</span><h2 id="inventory-dialog-title">{mode === 'add' ? 'Add inventory' : mode === 'edit' ? 'Edit selected cards' : mode === 'move' ? 'Move inventory' : mode === 'prepare' ? 'Update condition' : mode === 'cost' ? 'Update purchase cost' : mode === 'count' ? 'Record machine count' : mode === 'location' ? 'Add location' : item?.name || 'Inventory details'}</h2></div><button className={styles.iconButton} aria-label="Close inventory details" disabled={busy || !!pending} onClick={close}><Icon name="close" /></button></div>
-      {error && <div role="alert" className={styles.error}>{error}</div>}{retryControls}
-      {mode ? <form onSubmit={e => { e.preventDefault(); void save(); }}><fieldset disabled={busy || !!pending} className={styles.formBody}>
+      <div className={styles.drawerHeader} hidden={captureOpen}><div><span className={styles.eyebrow}>{mode === 'add' ? 'BUILD YOUR INVENTORY' : 'INVENTORY DETAILS'}</span><h2 id="inventory-dialog-title">{mode === 'add' ? 'Add inventory' : mode === 'edit' ? 'Edit selected cards' : mode === 'move' ? 'Move inventory' : mode === 'prepare' ? 'Update condition' : mode === 'cost' ? 'Update purchase cost' : mode === 'count' ? 'Record machine count' : mode === 'location' ? 'Add location' : item?.name || 'Inventory details'}</h2></div><button className={styles.iconButton} aria-label="Close inventory details" disabled={busy || !!pending} onClick={close}><Icon name="close" /></button></div>
+      {(mode === 'add' && draft.type === 'single' || mode === 'edit' && selected.length === 1) && <StaffInventoryCardCapture autoStartCamera={autoStartCamera} open={captureOpen} cycle={captureCycle} initialSource={captureSource} disabled={busy || uploading || !!pending} onPair={(front, back) => void pairCaptured(front, back)} onClose={() => setCaptureOpen(false)} onError={message => setPhotoStatus(message)} />}
+      {!captureOpen && <>{error && <div role="alert" className={styles.error}>{error}</div>}{retryControls}{mode === 'add' && notice && <div className={styles.intakeNotice} role="status">{notice}</div>}</>}
+      {mode ? <form hidden={captureOpen} onSubmit={e => { e.preventDefault(); void save(); }}><fieldset disabled={busy || !!pending} className={styles.formBody}>
         {mode === 'location' && <section className={styles.formSection}><Field label="Location name"><input required value={draft.name} onChange={e => change('name', e.target.value)} /></Field><Field label="Street address"><input required value={draft.address} onChange={e => change('address', e.target.value)} /></Field><Field label="Location type"><select required value={draft.kind} onChange={e => change('kind', e.target.value)}><option value="">Choose a type</option><option value="hq">HQ / storage</option><option value="store">Store</option><option value="kiosk">Kiosk</option></select></Field><p className={styles.helper}>HQ and storage locations are private to your team. Use an existing venue location when assigning stock to a vending machine.</p></section>}
-        {mode === 'add' && <><div className={styles.choiceGrid}>{[['existing', 'Current stock', 'Cards your company already owns.'], ['purchase', 'New purchase', 'Cards you have just received.']].map(([key, title, help]) => <button type="button" key={key} className={draft.origin === key ? styles.choiceSelected : styles.choice} onClick={() => change('origin', key)}><Icon name={key === 'existing' ? 'box' : 'plus'} /><strong>{title}</strong><small>{help}</small></button>)}</div><div className={styles.segment} aria-label="Inventory type">{[['batch', 'Batch of cards'], ['single', 'Individual card']].map(([key, name]) => <button type="button" key={key} aria-pressed={draft.type === key} onClick={() => change('type', key)}>{name}</button>)}</div></>}
+        {mode === 'add' && <><div className={styles.segment} aria-label="Inventory type">{[['single', 'Individual card'], ['batch', 'Batch of cards']].map(([key, name]) => <button type="button" key={key} aria-pressed={draft.type === key} disabled={uploading} onClick={() => { cancelPhoto(); change('type', key); }}>{name}</button>)}</div><p className={styles.helper}>Add cards you own and have on hand. {draft.type === 'single' ? 'Save a card, then go straight to the next one.' : 'Enter one batch and its total cost.'}</p></>}
+
         {(mode === 'add' || mode === 'edit') && <section className={styles.formSection}><h3>{mode === 'add' ? '1. What are you adding?' : `${selected.length} selected ${selected.length === 1 ? 'card' : 'cards'}`}</h3>{descriptionFields}{mode === 'add' && draft.type === 'batch' && <Field label="Number of cards"><input required type="number" inputMode="numeric" min="1" max="2000" step="1" value={draft.quantity} onChange={e => change('quantity', e.target.value)} /></Field>}</section>}
-        {(mode === 'add' || mode === 'move') && <section className={styles.formSection}><h3>{mode === 'add' ? '2. Where is it?' : `Move ${selected.length} selected ${selected.length === 1 ? 'card' : 'cards'}`}</h3><div className={styles.formGrid}>{locationFields}</div>{mode === 'move' && <label className={styles.checkbox}><input type="checkbox" checked={draft.planned} onChange={e => change('planned', e.target.checked)} /><span>Plan this move for later<small>Leave unchecked if the cards have already arrived.</small></span></label>}{mode === 'add' && <Field label="Current condition"><select required value={draft.stage} onChange={e => change('stage', e.target.value)}><option value="">Choose the condition you see</option>{Object.entries(stageNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field>}</section>}
+        {(mode === 'add' || mode === 'move') && <section className={styles.formSection}><h3>{mode === 'add' ? '2. Where is it?' : `Move ${selected.length} selected ${selected.length === 1 ? 'card' : 'cards'}`}</h3><div className={styles.formGrid}>{locationFields}</div>{mode === 'move' && <label className={styles.checkbox}><input type="checkbox" checked={draft.planned} onChange={e => change('planned', e.target.checked)} /><span>Plan this move for later<small>Leave unchecked if the cards have already arrived.</small></span></label>}{mode === 'add' && <div className={styles.locationAssist}><p role="status">{locationStatus || (draft.location ? 'Using this location for your next cards.' : 'Take photos to find your location, or choose it above.')}</p><button type="button" onClick={() => void locateInventory(true)} disabled={busy || !!pending}><Icon name="pin" size={15} />Use my location</button></div>}</section>}
         {(mode === 'add' || mode === 'edit' || mode === 'cost') && <section className={styles.formSection}><h3>{mode === 'add' ? '3. Cost & expected price' : mode === 'cost' ? 'Purchase cost' : 'Expected selling price'}</h3><div className={styles.formGrid}>{mode !== 'edit' && <Field label={draft.type === 'single' ? 'Card acquisition cost' : 'Total batch acquisition cost'} help={draft.type === 'single' ? 'What you paid. Leave blank if unknown.' : mode === 'cost' && draft.costSplit === 'custom' ? 'The total paid for every card in the original purchase.' : `This total is divided equally across ${mode === 'cost' ? item?.receipt_quantity : draft.quantity || 'the'} cards. Leave blank if unknown.`}><div className={styles.currencyInput}><span>$</span><input inputMode="decimal" value={draft.cost} onChange={e => change('cost', e.target.value)} /></div></Field>}{mode !== 'cost' && <Field label="Expected sale price per card" help="Your planned price. Leave blank if not decided."><div className={styles.currencyInput}><span>$</span><input inputMode="decimal" value={draft.price} onChange={e => change('price', e.target.value)} /></div></Field>}</div>{mode === 'add' && <div className={styles.profitPreview}><div><span>Expected gross profit</span><strong>{money(previewProfit)}</strong></div><div><span>Expected margin</span><strong>{previewMargin === null ? '—' : `${previewMargin.toFixed(1)}%`}</strong></div><small>{previewOverflow ? 'The expected total exceeds the supported calculation range.' : 'Based on selling every card at your entered price. Before fees and overhead.'}</small></div>}{mode === 'cost' && item && item.receipt_quantity > 1 && <><Field label="How should the batch cost be split?"><select value={draft.costSplit} onChange={e => change('costSplit', e.target.value)}><option value="equal">Split evenly across every card</option><option value="custom">Enter a different cost for each card</option></select></Field>{draft.costSplit === 'custom' && <div className={styles.cardCosts}>{(data?.items.filter(i => i.lot_id === item.lot_id) ?? []).flatMap(i => i.units.map(u => <Field key={u.id} label={`Card ${u.number} · ${i.name || 'Unnamed card'}`}><div className={styles.currencyInput}><span>$</span><input inputMode="decimal" value={draft.cardCosts[u.id] ?? ''} onChange={e => change('cardCosts', { ...draft.cardCosts, [u.id]: e.target.value })} /></div></Field>))}<p className={styles.helper}>All card costs must add up to the total batch cost above.</p></div>}</>}{mode === 'cost' && <p className={styles.helper}>This updates the acquisition cost of the entire original purchase ({item?.receipt_quantity} cards), including cards moved to other locations. The original entry stays in history.</p>}</section>}
         {mode === 'count' && <section className={styles.formSection}><Field label="Cards physically counted" help="Count this product across the selected machine scope, including all loading batches."><input required type="number" min="0" step="1" inputMode="numeric" value={draft.quantity} onChange={e => change('quantity', e.target.value)} /></Field><p className={styles.helper}>{item?.location_name} · machine {item?.machine_scope?.machine_id} · product {item?.machine_scope?.product_id}{item?.machine_scope?.door_id ? ` · slot ${item.machine_scope.door_id}` : ' · all slots'}</p><p className={styles.helper}>This records what staff counted at the time below. It does not guess which individual cards sold.</p></section>}
         {mode === 'prepare' && <section className={styles.formSection}><Field label="New condition"><select required value={draft.stage} onChange={e => change('stage', e.target.value)}><option value="">Choose completed work</option><option value="processing">Being prepared</option><option value="processed">Ready to pack</option><option value="packed">Packed — one card per pack</option></select></Field><Field label="Product"><select value={draft.product} onChange={e => change('product', e.target.value)}><option value="">{item?.name || 'This inventory'}</option>{data?.products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><p className={styles.helper}>Record work that has actually been completed. Packing keeps each card’s purchase cost attached.</p></section>}
-        {mode !== 'location' && <section className={styles.formSection}><Field label={mode === 'add' ? 'Count / receipt date and time' : 'Date and time'}><input required type="datetime-local" value={draft.date} max={localNow()} onChange={e => change('date', e.target.value)} /></Field><Field label={mode === 'cost' ? 'Receipt reference / reason' : 'Notes or receipt reference (optional)'}><textarea rows={3} maxLength={1600} value={draft.note} onChange={e => change('note', e.target.value)} /></Field></section>}
+        {mode === 'add' ? <details className={styles.entryDetails}><summary>More details <span>Receipt, date and notes</span></summary><div className={styles.formSection}><label className={styles.checkbox}><input type="checkbox" checked={draft.origin === 'purchase'} onChange={e => change('origin', e.target.checked ? 'purchase' : 'existing')} /><span>This is a newly received purchase<small>Optional receipt history. Both choices add inventory you currently own; neither records a bank payment or sale.</small></span></label><Field label="Entry date and time"><input required type="datetime-local" value={draft.date} max={localNow()} onChange={e => change('date', e.target.value)} /></Field><Field label="Notes or receipt reference (optional)"><textarea rows={3} maxLength={1600} value={draft.note} onChange={e => change('note', e.target.value)} /></Field></div></details> : mode !== 'location' && <section className={styles.formSection}><Field label="Date and time"><input required type="datetime-local" value={draft.date} max={localNow()} onChange={e => change('date', e.target.value)} /></Field><Field label={mode === 'cost' ? 'Receipt reference / reason' : 'Notes or receipt reference (optional)'}><textarea rows={3} maxLength={1600} value={draft.note} onChange={e => change('note', e.target.value)} /></Field></section>}
       </fieldset><div className={styles.drawerFooter}>{(uploading || photoError) && <p className={styles.footerPhotoStatus} role="status">{uploading ? photoStatus : 'Retry the photo or choose how to continue above.'}</p>}<button type="button" className={styles.secondary} disabled={busy || !!pending} onClick={close}>Cancel</button><button type="submit" className={styles.primary} disabled={busy || uploading || !!photoError || !!pending}>{busy ? 'Saving…' : uploading ? 'Preparing photo…' : mode === 'add' ? 'Add inventory' : mode === 'location' ? 'Add location' : mode === 'move' ? draft.planned ? 'Save planned move' : 'Save move' : 'Save changes'}<Icon name="arrow" size={18} /></button></div></form> : item && <div className={styles.itemDetail}>
         <div className={styles.detailHero}>{item.photo_url ? <img src={item.photo_url} alt={item.name || 'Inventory'} /> : <Icon name="cards" size={65} />}<span>{item.category || 'Category not set'}</span></div>
+        {item.back_photo_url && <div className={styles.detailBack}><img src={item.back_photo_url} alt="Back of inventory card" /><span>Back</span></div>}
+        {item.card_details && <dl className={styles.savedCardMetadata}>{cardFields.filter(field => item.card_details?.[field]).map(field => <div key={field}><dt>{cardFieldLabels[field]}</dt><dd>{item.card_details?.[field]}</dd></div>)}</dl>}
         <div className={styles.detailFacts}><div><span>Location</span><strong>{item.location_name || 'Not named'}</strong></div><div><span>Condition</span><strong>{stageNames[item.stage]}</strong></div><div><span>{item.quantity_kind === 'loaded_roster' ? 'Loaded roster' : 'On hand'}</span><strong>{item.quantity} cards</strong></div><div><span>Acquisition cost</span><strong>{money(item.cost_cents)}</strong></div><div><span>Expected sale / card</span><strong>{money(item.expected_price_cents)}</strong></div><div><span>Expected gross profit</span><strong className={styles.profit}>{money(item.expected_profit_cents)}</strong></div></div>
         {item.quantity_kind === 'loaded_roster' && <p className={styles.helper}>This is a machine’s loading record. A physical count is needed to establish what remains; individual sold cards are not identified by aggregate sales.</p>}
         {item.last_count && <p className={styles.helper}>Last physical count for this machine product: <strong>{item.last_count.quantity} cards</strong> on {new Date(item.last_count.at).toLocaleString()}.</p>}

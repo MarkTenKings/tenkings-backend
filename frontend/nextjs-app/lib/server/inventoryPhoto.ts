@@ -8,6 +8,11 @@ import {
 export const MAX_INVENTORY_PHOTO_BYTES = 3 * 1024 * 1024;
 const PHOTO_KEY = /^inventory-photos\/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\/([a-f0-9]{64})\.jpg$/;
 
+/** Every descriptive-photo path uses the same complete, deduplicated side roster. */
+export function inventoryDescriptionPhotoKeys(description: { photo_key?: string | null; back_photo_key?: string | null }) {
+  return [...new Set([description.photo_key, description.back_photo_key].filter((key): key is string => typeof key === 'string' && key.length > 0))];
+}
+
 /** A content-addressed name or caller metadata is not proof of stored bytes. */
 export async function verifyInventoryPhoto(key: string, deps: StorageObjectIntegrityDependencies = {}) {
   const checksum = PHOTO_KEY.exec(key)?.[1];

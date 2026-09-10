@@ -14,8 +14,11 @@ export function createFinancialInventoryWorkspaceHandler(deps: {
     if (Object.keys(req.query).length) return res.status(400).json({ message: 'No query parameters supported' });
     try {
       const view = await deps.readWorkspace();
-      // Financial consumers need groups and provenance, not every roster entry or private photo key.
-      const snapshot = { version: view.version, sequence: view.sequence, updated_at: view.updated_at, totals: view.totals, locations: view.locations, items: view.items.map(({ units: _units, unit_ids: _unitIds, photo_key: _photoKey, ...item }) => item) };
+      // Keep the existing snapshot wire shape; full descriptions remain in the immutable journal.
+      const snapshot = { version: view.version, sequence: view.sequence, updated_at: view.updated_at, totals: view.totals, locations: view.locations, items: view.items.map((privateItem: StaffInventoryWorkspace['items'][number] & { photo_url?: string | null; back_photo_url?: string | null }) => {
+        const { units: _units, unit_ids: _unitIds, photo_key: _photoKey, back_photo_key: _backPhotoKey, photo_url: _photoUrl, back_photo_url: _backPhotoUrl, card_details: _cardDetails, ...item } = privateItem;
+        return item;
+      }) };
       if (Buffer.byteLength(JSON.stringify(snapshot)) > 10 * 1024 * 1024) return res.status(503).json({ message: 'Inventory snapshot exceeds the read limit.' });
       return res.status(200).json(snapshot);
     } catch { return res.status(503).json({ message: 'Inventory snapshot could not be verified.' }); }

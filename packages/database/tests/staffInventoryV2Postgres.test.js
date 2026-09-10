@@ -14,7 +14,8 @@ test('staff inventory PostgreSQL atomic commands and exact retries', { skip: pro
   const db = new PrismaClient({ datasources: { db: { url: url.href } } });
   const location = await db.location.create({ data: { name: 'DISPOSABLE STAFF FIXTURE', slug: 'staff-fixture', address: 'test only', recentRips: [], locationType: 'hq' } });
   const at = '2026-06-01T00:00:00.000Z', meta = () => ({ request_id: randomUUID(), effective_at: at, note: 'disposable staff fixture' });
-  const command = { ...meta(), action: 'add', origin: 'existing', quantity: 3, total_cost_cents: 1001, cost_method: 'equal_card', expected_price_cents: 1000, description: { name: 'Disposable staff cards', category: 'Sports cards', notes: '', photo_key: null }, stage: 'packed', destination: { location_id: location.id, kind: 'hq', machine_id: null, product_id: null, door_id: null } };
+  const description = { name: 'Disposable staff cards', category: 'Sports cards', notes: '', photo_key: null, back_photo_key: `inventory-photos/11111111-1111-4111-8111-111111111111/${'b'.repeat(64)}.jpg`, card_details: { manufacturer: 'Fixture manufacturer', card_number: '007/100', year: '2026', set_name: 'Fixture set', variant: null, card_type: 'Trading card' } };
+  const command = { ...meta(), action: 'add', origin: 'existing', quantity: 3, total_cost_cents: 1001, cost_method: 'equal_card', expected_price_cents: 1000, description, stage: 'packed', destination: { location_id: location.id, kind: 'hq', machine_id: null, product_id: null, door_id: null } };
   const save = (c, actor = 'fixture-staff') => db.$transaction(tx => recordStaffInventoryV2(tx, c, actor), { isolationLevel: 'ReadCommitted', timeout: 30000 });
   const advanced = c => db.$transaction(tx => recordInventoryWorkflowEventV2(tx, c, 'fixture-staff'), { isolationLevel: 'ReadCommitted', timeout: 30000 });
   const count = async () => (await readWorkflowHistoryV2(db)).length;
@@ -33,6 +34,7 @@ test('staff inventory PostgreSQL atomic commands and exact retries', { skip: pro
       await assert.rejects(save(command, 'another-fixture-admin'), /different inventory/); assert.equal(await count(), before + 4);
     });
     const initial = staffInventoryWorkspaceV2(await readWorkflowHistoryV2(db), [location]).items.find(i => i.name === command.description.name);
+    assert.deepEqual(initial.card_details, description.card_details); assert.equal(initial.back_photo_key, description.back_photo_key);
     await t.test('unequal cost allocation is atomic when amounts fail to conserve purchase cents', async () => {
       const before = await count(); const c = { ...meta(), action: 'cost', lot_id: initial.lot_id, total_cost_cents: 1200, cost_method: 'explicit_per_card', card_costs: initial.unit_ids.map(unit_id => ({ unit_id, cost_cents: 500 })) };
       await assert.rejects(save(c), /equal/); assert.equal(await count(), before);

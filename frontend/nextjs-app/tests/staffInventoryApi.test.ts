@@ -131,6 +131,42 @@ test('the workspace passes only validated facts and the session actor to the sol
   }
 });
 
+test('staff and advanced descriptions verify both photos before recording reviewed card details', async () => {
+  const description = { ...add().description, photo_key: photoKey(Buffer.from('front fixture')), back_photo_key: photoKey(Buffer.from('back fixture')), card_details: { manufacturer: null, card_number: '007/100', year: '2026', set_name: 'Fixture set', variant: null, card_type: 'Trading card' } };
+  for (const mode of ['staff', 'preview', 'record']) {
+    const verified: string[] = [], calls: unknown[] = []; let backValid = false;
+    const verifyPhoto = async (key: string) => { verified.push(key); return key === description.photo_key || backValid; };
+    const handler = mode === 'staff' ? createStaffInventoryWorkspaceHandler({ ...workspaceDeps(), verifyPhoto, record: async command => { calls.push(command); return { request_id: UUID, outcome: 'RECORDED' }; } }) : createInventoryWorkflowRoute({ requireAdmin: async () => ADMIN, tokenHash: () => undefined, verifyPhoto, read: async () => { assert.fail('not a read'); }, record: async input => { calls.push(input); return { outcome: 'RECORDED' } as any; } });
+    const command = mode === 'staff' ? { ...add(), description } : { request_id: 'fixture-description-request', effective_at: '2026-01-01T00:00:00.000Z', evidence_ref: 'fixture:description-evidence', event_kind: 'item_described', data: { unit_ids: ['fixture-unit'], description } };
+    const body = mode === 'staff' ? command : { mode, command };
+    const failed = response(); await handler(request('POST', body), failed.res);
+    assert.equal(failed.result.code, 400); assert.deepEqual(calls, []);
+    assert.deepEqual(verified, [description.photo_key, description.back_photo_key]);
+    backValid = true; verified.length = 0;
+    const accepted = response(); await handler(request('POST', body), accepted.res);
+    assert.equal(accepted.result.code, 200); assert.deepEqual(calls, [command]);
+    assert.deepEqual(verified, [description.photo_key, description.back_photo_key]);
+  }
+});
+
+test('staff refreshes sign both unique sides without re-reading photo objects or hiding inventory', async () => {
+  const front = photoKey(Buffer.from('front read fixture')), back = photoKey(Buffer.from('back read fixture'));
+  const deps = workspaceDeps(), signed: string[] = []; let verified = 0;
+  deps.readWorkspace = async () => ({ ...workspace(), items: [{ photo_key: front, back_photo_key: back }, { photo_key: back, back_photo_key: front }, { photo_key: null, back_photo_key: back }] } as StaffInventoryWorkspace);
+  deps.signPhoto = async key => { signed.push(key); return `https://fixture.invalid/${key}`; };
+  const handler = createStaffInventoryWorkspaceHandler(deps);
+  for (const storageFailure of ['missing', 'unavailable']) {
+    deps.verifyPhoto = async () => { verified++; if (storageFailure === 'unavailable') throw new Error('Photo storage unavailable'); return false; };
+    signed.length = 0; const accepted = response();
+    await handler(request(), accepted.res);
+    assert.equal(accepted.result.code, 200); assert.deepEqual(signed.sort(), [front, back].sort());
+    assert.equal(accepted.result.body.items.length, 3);
+    assert.equal(accepted.result.body.items[0].back_photo_url, accepted.result.body.items[1].photo_url);
+    assert.equal(accepted.result.body.items[2].photo_url, null);
+    assert.equal(verified, 0, 'workspace refresh does not HEAD or stream photo bytes');
+  }
+});
+
 test('workspace reads cap response size and bound/deduplicate photo signing', async () => {
   const deps = workspaceDeps();
   let active = 0, maxActive = 0, calls = 0;
@@ -207,8 +243,8 @@ test('photo upload forces private/no-store storage and verifies the stored objec
 
 test('financial snapshots accept only their read bearer, refuse writes and omit private photo/roster data', async () => {
   let reads = 0;
-  const item = { name: 'Fixture item', quantity: 2, photo_key: 'private-key', unit_ids: ['fixture-unit'], units: [{ id: 'fixture-unit' }] };
-  const handler = createFinancialInventoryWorkspaceHandler({ readTokenHash: () => READ_HASH, readWorkspace: async () => { reads++; return { ...workspace(), items: [item] } as StaffInventoryWorkspace; } });
+  const item = { name: 'Fixture item', quantity: 2, photo_key: 'private-key', back_photo_key: 'private-back-key', photo_url: 'https://fixture.invalid/private-front', back_photo_url: 'https://fixture.invalid/private-back', card_details: { manufacturer: null, card_number: '007/100', year: '2026', set_name: 'Fixture set', variant: null, card_type: null }, unit_ids: ['fixture-unit'], units: [{ id: 'fixture-unit' }] };
+  const handler = createFinancialInventoryWorkspaceHandler({ readTokenHash: () => READ_HASH, readWorkspace: async () => { reads++; return { ...workspace(), items: [item] } as unknown as StaffInventoryWorkspace; } });
   for (const [method, authorization, query, expected] of [['GET', '', {}, 401], ['GET', 'Bearer fixture-mobile-admin', {}, 401], ['POST', `Bearer ${READ_TOKEN}`, {}, 405], ['GET', `Bearer ${READ_TOKEN}`, { page: '1' }, 400]] as const) {
     const output = response(); await handler(request(method, {}, { authorization }, query), output.res);
     assert.equal(output.result.code, expected); assert.equal(output.result.headers['Cache-Control'], 'private, no-store');

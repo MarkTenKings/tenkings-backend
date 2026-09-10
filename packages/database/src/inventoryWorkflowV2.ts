@@ -34,10 +34,18 @@ const stockCorrection = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('packing'), packs: z.array(z.object({ unit_id: id, pack_id: id }).strict()).max(WORKFLOW_MAX_UNITS_V2) }).strict(),
   z.object({ kind: z.literal('custody'), to: custody }).strict(),
 ]);
+const cardDetail = (maximum: number) => z.string().min(1).max(maximum).refine(v => v.trim() === v && !/[\u0000-\u001f\u007f]/.test(v), 'Use an exact nonblank card detail').nullable();
+export const InventoryCardDetailsV2 = z.object({
+  manufacturer: cardDetail(160), card_number: cardDetail(80), year: cardDetail(20),
+  set_name: cardDetail(160), variant: cardDetail(160), card_type: cardDetail(160),
+}).strict();
 export const InventoryItemDescriptionV2 = z.object({
   name: z.string().trim().min(1).max(160), category: z.string().trim().min(1).max(80),
   notes: z.string().trim().max(2000),
   photo_key: z.string().regex(/^inventory-photos\/[a-f0-9-]{36}\/[a-f0-9]{64}\.jpg$/).nullable(),
+  // Missing keys stay absent: adding defaults would change immutable historical hashes.
+  back_photo_key: z.string().regex(/^inventory-photos\/[a-f0-9-]{36}\/[a-f0-9]{64}\.jpg$/).nullable().optional(),
+  card_details: InventoryCardDetailsV2.optional(),
 }).strict();
 export type InventoryItemDescription = z.infer<typeof InventoryItemDescriptionV2>;
 const payloads = {

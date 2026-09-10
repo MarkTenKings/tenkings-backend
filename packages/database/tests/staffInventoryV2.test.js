@@ -2,7 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { WorkflowStateV2, replayWorkflowEventsV2, calculateWorkflowAllocationV2 } = require('../dist/database/src/inventoryWorkflowV2State');
-const { workflowEventIdV2, parseWorkflowCommandV2, canonical, WORKFLOW_MAX_EVENT_BYTES_V2 } = require('../dist/database/src/inventoryWorkflowV2');
+const { workflowEventIdV2, parseWorkflowCommandV2, canonical, inventoryHash, InventoryItemDescriptionV2, WORKFLOW_MAX_EVENT_BYTES_V2 } = require('../dist/database/src/inventoryWorkflowV2');
+const { verifyWorkflowRowV2 } = require('../dist/database/src/inventoryWorkflowV2Read');
 const { buildStaffInventoryCommandsV2 } = require('../dist/database/src/staffInventoryV2');
 const { staffInventoryWorkspaceV2 } = require('../dist/database/src/staffInventoryV2Read');
 const location = { id: '11111111-1111-4111-8111-111111111111', name: 'Disposable HQ', slug: 'fixture-hq', address: 'test fixture', locationType: 'hq' };
@@ -33,6 +34,30 @@ test('current stock records description, exact cent allocation, expected margin 
   f.save({ ...meta(), action: 'edit', unit_ids: [item.unit_ids[1]], description: { name: 'Individual fixture card', category: 'Sports cards', notes: 'identified card', photo_key: null }, expected_price_cents: 2000 });
   assert.equal(f.view().items.length, 2); assert.equal(f.view().totals.on_hand, 3); assert.equal(f.view().totals.cost_cents, 1001); assert.equal(f.view().totals.expected_profit_cents, 2999);
   assert.ok(f.events.every(e => !['sale_observed', 'sale'].includes(e.event_kind)));
+});
+test('legacy description rows retain canonical bytes and request/event hashes with missing card metadata', () => {
+  const description = { name: 'Legacy fixture card', category: 'Sports cards', notes: '', photo_key: null };
+  const command = { request_id: 'fixture-legacy-description', effective_at: '2026-01-01T00:00:00.000Z', evidence_ref: 'fixture:legacy-description', event_kind: 'item_described', data: { unit_ids: ['fixture-unit'], description } };
+  const event = { schema_version: 2, source_event_id: workflowEventIdV2(command.request_id), source_sequence: 2, effective_at: command.effective_at, evidence_ref: command.evidence_ref, event_kind: command.event_kind, recorded_at: '2026-02-01T00:00:00.000Z', recorded_by: 'fixture-admin', currency: 'USD', data: command.data };
+  const content = canonical({ command, event });
+  const verified = verifyWorkflowRowV2({ sequence: 2n, id: event.source_event_id, recordedAt: new Date(event.recorded_at), content, contentHash: inventoryHash({ command, event }), requestHash: inventoryHash({ command, actor: event.recorded_by }) });
+  assert.equal(canonical(verified), content); assert.deepEqual(verified.command.data.description, description);
+  assert.equal('back_photo_key' in verified.event.data.description, false); assert.equal('card_details' in verified.event.data.description, false);
+});
+test('front/back photos and card details persist as description history without changing physical or cost truth', () => {
+  const f = fixture(); f.save(added()); const initial = f.view().items[0], originalEvents = canonical(f.events);
+  const details = { manufacturer: 'Fixture manufacturer', card_number: '007/100', year: '2026', set_name: 'Fixture set', variant: null, card_type: 'Trading card' };
+  const photo = suffix => `inventory-photos/${location.id}/${suffix.repeat(64)}.jpg`;
+  const description = { ...added().description, back_photo_key: photo('b'), photo_key: photo('a'), card_details: details };
+  f.save({ ...meta(), effective_at: '2026-01-03T00:00:00.000Z', action: 'edit', unit_ids: [initial.unit_ids[1]], description, expected_price_cents: 1000 });
+  const item = f.view().items.find(i => i.card_details);
+  assert.equal(item.photo_key, photo('a')); assert.equal(item.back_photo_key, photo('b')); assert.deepEqual(item.card_details, details);
+  assert.equal(item.quantity, 1); assert.equal(item.units[0].permanent_card_id, null);
+  assert.equal(f.view().totals.on_hand, 3); assert.equal(f.view().totals.cost_cents, initial.cost_cents);
+  assert.equal(canonical(f.events.slice(0, JSON.parse(originalEvents).length)), originalEvents);
+  const legacy = f.view().items.find(i => !i.card_details); assert.equal(legacy.back_photo_key, null);
+  const stored = f.events.findLast(e => e.event_kind === 'item_described'); assert.deepEqual(stored.data.description, description);
+  for (const patch of [{ back_photo_key: 'https://fixture.invalid/photo' }, { card_details: { ...details, year: 2026 } }, { card_details: { ...details, variant: '' } }, { card_details: { ...details, card_number: ' 007 ' } }, { card_details: { ...details, grade: '10' } }, { card_details: { ...details, card_number: 'a'.repeat(81) } }]) assert.equal(InventoryItemDescriptionV2.safeParse({ ...description, ...patch }).success, false);
 });
 test('receipt at HQ, store and kiosk preserves actual receiving location', () => {
   for (const kind of ['hq', 'store', 'kiosk']) { const f = fixture(); const c = added({ origin: 'purchase' }); c.destination.kind = kind; f.save(c); assert.equal(f.events[0].event_kind, 'purchase_received'); assert.equal(f.view().items[0].custody_id, `${kind}:${location.id}`); }

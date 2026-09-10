@@ -1,7 +1,7 @@
 import type { NextApiRequest } from 'next';
 import { createInventoryWorkflowAdminHandlerV2, readWorkflowWorkspaceV2, recordInventoryWorkflowEventV2, prisma, WorkflowCommandInputV2, CardInventoryErrorV2 } from '@tenkings/database';
 import { requireInventoryAdminSession } from '../../../../../lib/server/inventoryAdmin';
-import { verifyInventoryPhoto } from '../../../../../lib/server/inventoryPhoto';
+import { inventoryDescriptionPhotoKeys, verifyInventoryPhoto } from '../../../../../lib/server/inventoryPhoto';
 export const config = { api: { bodyParser: { sizeLimit: '1mb' }, responseLimit: '10mb' } };
 
 export function createInventoryWorkflowRoute(deps: Parameters<typeof createInventoryWorkflowAdminHandlerV2>[0] & { verifyPhoto: typeof verifyInventoryPhoto }) {
@@ -9,8 +9,10 @@ export function createInventoryWorkflowRoute(deps: Parameters<typeof createInven
     ...deps,
     record: async (input, adminId, preview) => {
       const parsed = WorkflowCommandInputV2.safeParse(input);
-      if (parsed.success && parsed.data.event_kind === 'item_described' && parsed.data.data.description.photo_key && !await deps.verifyPhoto(parsed.data.data.description.photo_key)) {
-        throw new CardInventoryErrorV2('INVALID_INPUT', 'Upload the inventory photo again before saving.');
+      if (parsed.success && parsed.data.event_kind === 'item_described') {
+        for (const key of inventoryDescriptionPhotoKeys(parsed.data.data.description)) {
+          if (!await deps.verifyPhoto(key)) throw new CardInventoryErrorV2('INVALID_INPUT', 'Upload the inventory photo again before saving.');
+        }
       }
       return deps.record(input, adminId, preview);
     },

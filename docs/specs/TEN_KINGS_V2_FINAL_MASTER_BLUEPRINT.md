@@ -247,6 +247,8 @@ Mark explicitly requests implementing and activating intuitive batch/individual 
 
 Mark's September 10 follow-up extends this staff workspace with iPhone HEIC/HEIF display-photo conversion on the device, separate native camera/photo-library controls and a mobile form with safe-area actions. The Locations page offers a list/map choice using the existing Google Maps setup. Pins use saved coordinates or an authenticated read-only lookup of the saved address, with address-match provenance; the lookup does not edit Locations or expose internal HQ through public APIs. Map inventory values retain the distinction between held stock, historical loading rosters and actual counts. No financial contract, journal semantics, schema or staff authority changes are part of this extension. See [mobile photos and map plan](../plans/2026-09-10-staff-mobile-photos-map.md).
 
+Mark's next September 10 correction authorizes rapid individual-card intake: default single card, paired front/back camera, Google OCR plus GPT-6 Astra descriptive suggestions, optional browser-geolocation matching to existing staff locations, manual cost/price and confirmed-save continuation to the next card. Initial condition selection and prominent opening-stock/purchase choices leave the normal flow. Descriptive metadata may add optional back-photo and typed card details without creating a graded identity; old event bytes remain compatible. Saved fields are staff-reviewed descriptions, never inferred financial actuals. See [rapid card intake plan](../plans/2026-09-10-rapid-card-intake.md).
+
 ## 4. Target System Shape
 
 ```mermaid

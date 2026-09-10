@@ -17,6 +17,7 @@ export function staffInventoryWorkspaceV2(events: WorkflowEventV2[], locations: 
     return {
       id: inventoryHash(key), lot_id: first.lot_id, name: first.description?.name ?? null, category: first.description?.category ?? null,
       notes: first.description?.notes ?? '', photo_key: first.description?.photo_key ?? null,
+      back_photo_key: first.description?.back_photo_key ?? null, card_details: first.description?.card_details ?? null,
       location_id: first.custody.location_id, custody_id: first.custody.custody_id,
       location_name: locations.find(l => l.id === first.custody.location_id)?.name ?? null,
       batch_id: first.batch_id, machine_scope: scope, last_count: lastCount && lastCount.event_kind === 'stock_counted' ? { quantity: lastCount.data.quantity, at: lastCount.effective_at, event_id: lastCount.source_event_id } : null,
