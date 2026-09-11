@@ -61,7 +61,7 @@ function fixture({ rosterSize = 10 } = {}) {
         manifestCanonical: canonical(manifest), manifestHash: digest(canonical(manifest)), inputCanonical: canonical([]), inputHash: digest(canonical([])),
         deadlineAt: new Date(+NOW + 3600000) };
     const f = { env, release, operatorConfig, card, run, runs: new Map([[runId, run]]), operations: new Map(), admissions: new Map(),
-        jobs: new Map(), permits: new Map(), sources: new Map(), events: [], queries: [], mutations: [], now: NOW, count: rosterSize,
+        jobs: new Map(), permits: new Map(), sources: new Map(), recoveries: [], events: [], queries: [], mutations: [], now: NOW, count: rosterSize,
         roleUnsafe: false, extraGrant: false, missingFunction: false, transactions: 0, inside: false, sourceCalls: 0, operatorCalls: [],
         work: new Map(), control, bridge, identity: { id: actorId, role: 'REVIEWER', accessVersion: 2, revokedAt: null },
         staff: { enabled: true, mode: operatorConfig.mode, revision: 1, gradingPolicyHash: bridge.gradingPolicyHash },
@@ -99,6 +99,8 @@ function fixture({ rosterSize = 10 } = {}) {
             if (sql.includes('lock_workspace_private_actor')) return [copy(f.identity)];
             if (sql.includes('lock_workspace_private_card') || sql.includes('FROM atlas_staff."StaffWorkspaceCard"')) return [encoded(f.card)];
             if (sql.includes('AS attempts')) return [workFor(values[0])];
+            if (sql.includes('"StaffOperatorRecovery"')) return f.recoveries.filter(g => g.runId === values[0]
+                && g.runRevision === values[1] && g.leaseFence === values[2]).map(copy);
             if (sql.includes('AS applied')) return [{ applied: f.appliedSteps.filter(step => step.runId === values[0] && step.revision === values[1]).length,
                 prepared: f.preparedProof.filter(proof => proof.runId === values[4] && proof.controlRevision === values[5]).length }];
             if (sql.includes('"StaffWorkspaceOperation"') && sql.includes("action='OPERATOR_CONTROL'")) return [...f.operations.values()]
@@ -228,6 +230,37 @@ test('one-card admission dispatches the complete capture and report flow with th
     assert.equal(result.state, 'READY_FOR_HUMAN'); assert.equal(result.operatorRuns, 2); assert.equal(result.sourceActions, 3);
     assert.deepEqual(f.events, ['CAPTURE_REVIEW', 'SOURCE', 'REPORT_REVIEW']);
     assert.equal(f.control.policyCanonical, policy); assert.equal(JSON.parse(policy).astra.effort, 'max');
+});
+
+function grantRecovery(f) {
+    f.run.state = 'WAITING_TOOL'; f.run.leaseFence = 2; f.run.controlRevision++;
+    f.work.set(f.run.id, { attempts: 1, held: 1 }); f.commandFor('RECOVER');
+    const grant = { version: 'atlas-operator-recovery-v1', id: randomUUID(), runId: f.run.id,
+        attemptId: randomUUID(), receiptId: randomUUID(), commandId: f.command.id, ordinal: 1,
+        runRevision: f.run.revision, controlRevision: f.run.controlRevision, leaseFence: f.run.leaseFence + 1,
+        policyHash: f.run.policyHash, evidenceHash: f.run.evidenceHash, manifestHash: f.run.manifestHash,
+        inputHash: f.run.inputHash, gradingPolicyHash: f.run.gradingPolicyHash, newRuntimeHash: f.run.runtimeHash,
+        newDeadlineAt: f.run.deadlineAt.toISOString() };
+    f.recoveries.push({ ...grant, canonical: canonical(grant), hash: digest(canonical(grant)) }); return grant;
+}
+
+test('only the exact recovery command admits a saved completed tool and continues the full pipeline', async () => {
+    const f = fixture({ rosterSize: 1 }); grantRecovery(f);
+    assert.equal((await f.admit()).state, 'ADMITTED');
+    f.afterOperator = async ({ runId }) => f.work.delete(runId);
+    const result = await f.start(); assert.equal(result.state, 'READY_FOR_HUMAN');
+    assert.deepEqual(f.events, ['CAPTURE_REVIEW', 'SOURCE', 'REPORT_REVIEW']);
+});
+
+test('a missing or mismatched grant, uncertain work or source activity cannot use recovery admission', async () => {
+    for (const alter of [f => { f.recoveries = []; }, f => { f.commandFor('RECOVER'); },
+        f => { f.run.leaseFence++; }, f => { f.run.controlRevision++; },
+        f => { f.work.set(f.run.id, { attempts: 1, held: 1, unknown: 1, unknownAttempts: 1 }); },
+        f => { f.work.set(f.run.id, { attempts: 1, held: 1, permits: 1 }); },
+        f => { f.run.state = 'UNKNOWN'; }, f => { f.run.leaseOwner = randomUUID(); f.run.leaseExpiresAt = LATER; }]) {
+        const f = fixture(); grantRecovery(f); alter(f);
+        assert.notEqual((await f.admit()).state, 'ADMITTED'); assert.deepEqual(f.events, []);
+    }
 });
 
 test('one-card dispatcher rejects missing, excess, duplicate and non-admitted workspace records before effects', async () => {

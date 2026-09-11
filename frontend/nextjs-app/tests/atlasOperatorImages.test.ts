@@ -4,7 +4,7 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { renderAtlasOperatorImage } from '../lib/server/atlasOperatorImages';
 import { canonical, digest } from '@atlas/service-bridge/protocol';
-import { OPERATOR_IMAGE_DECODER, operatorImageTransform, parseOperatorImagePacket,
+import { IMAGE_TRANSFORM, LEGACY_IMAGE_TRANSFORM, MAX_OPERATOR_CROP_PIXELS, OPERATOR_IMAGE_DECODER, operatorImageTransform, parseOperatorImagePacket,
     type OperatorImageAsset, type OperatorImageRequest } from '@atlas/service-bridge/operator-images';
 import { operatorEvidenceClient, MAX_OPERATOR_EVIDENCE_RESPONSE_BYTES } from '@atlas/service-bridge/operator-evidence';
 
@@ -84,13 +84,61 @@ test('original JPEG crop coordinates follow preserved EXIF orientation, verified
     }
     assert.equal((await sharp(Buffer.from(packet.bytesBase64,'base64')).metadata()).orientation,undefined);
 });
-test('overview includes the full side with bounded dimensions; native crops cannot silently shrink',async()=>{
+test('overview includes the full side and large crops retain an explicit source-to-output transform',async()=>{
     const f=await fixture(2048,1024);
     const request={...f.request,purpose:'OVERVIEW' as const,rect:{x:0,y:0,width:2048,height:1024}};
     const packet=await renderAtlasOperatorImage({...f,request}); assert.equal(packet.width,1024); assert.equal(packet.height,512);
     assert.equal(JSON.parse(packet.transformCanonical).rect.width,2048);
-    await assert.rejects(()=>renderAtlasOperatorImage({...f,request:{...request,purpose:'CROP'}}),/ASTRA_CROP_TOO_LARGE/);
+    const crop=await renderAtlasOperatorImage({...f,request:{...request,purpose:'CROP'}});
+    assert.equal(crop.width,1448); assert.equal(crop.height,724);
+    assert.equal(JSON.parse(crop.transformCanonical).version,IMAGE_TRANSFORM);
+    assert.deepEqual(JSON.parse(crop.transformCanonical).rect,request.rect);
     await assert.rejects(()=>renderAtlasOperatorImage({...f,request:{...request,rect:{x:1,y:0,width:2047,height:1024}}}),/ASTRA_OVERVIEW_INCOMPLETE/);
+});
+test('the live 1900 by 620 request delivers its entire exact source region within the output limit',async()=>{
+    const f=await fixture(2048,1024),preserved=Buffer.from(f.sourceBytes);
+    const rect={x:74,y:101,width:1900,height:620},request={...f.request,rect};
+    const packet=await renderAtlasOperatorImage({...f,request}),parsed=parseOperatorImagePacket(packet,request,f.asset);
+    assert.equal(rect.width*rect.height,1_178_000); assert.equal(packet.width,1792); assert.equal(packet.height,584);
+    assert(packet.width*packet.height<=MAX_OPERATOR_CROP_PIXELS);
+    assert.deepEqual(parsed.transform.rect,rect); assert.deepEqual(parsed.transform.output,{width:1792,height:584});
+    assert.equal(parsed.transform.sourceSha256,f.asset.sha256); assert.equal(parsed.transform.sourceAssetId,f.asset.assetId);
+    assert.equal(parsed.transform.version,IMAGE_TRANSFORM); assert.deepEqual(f.sourceBytes,preserved);
+    // Select the pixels by row offsets, independently of the renderer's Sharp
+    // extract operation, then compare the versioned resampling exactly.
+    const selected=Buffer.concat(Array.from({length:rect.height},(_,row)=>{
+        const offset=((rect.y+row)*f.asset.width+rect.x)*3;
+        return f.raw.subarray(offset,offset+rect.width*3);
+    }));
+    const expected=await sharp(selected,{raw:{width:rect.width,height:rect.height,channels:3}})
+        .resize(1792,584,{fit:'fill',kernel:'lanczos3',withoutEnlargement:true}).raw().toBuffer();
+    assert.deepEqual(await sharp(parsed.bytes).raw().toBuffer(),expected);
+    const repeat=await renderAtlasOperatorImage({...f,request});
+    assert.equal(repeat.sha256,packet.sha256); assert.equal(repeat.transformHash,packet.transformHash);
+    const changed={...parsed.transform,version:LEGACY_IMAGE_TRANSFORM},transformCanonical=canonical(changed);
+    assert.throws(()=>parseOperatorImagePacket({...packet,transformCanonical,transformHash:digest(transformCanonical)},request,f.asset),/ASTRA_CROP_TOO_LARGE/);
+});
+test('saved v1 native crops and overviews keep their original transform hashes and bytes',async()=>{
+    const f=await fixture(2048,1024);
+    for(const request of [f.request,{...f.request,purpose:'OVERVIEW' as const,rect:{x:0,y:0,width:2048,height:1024}}]) {
+        const packet=await renderAtlasOperatorImage({...f,request});
+        const legacy=operatorImageTransform(request,f.asset,1,LEGACY_IMAGE_TRANSFORM),transformCanonical=canonical(legacy);
+        const saved={...packet,transformCanonical,transformHash:digest(transformCanonical)},before=canonical(saved);
+        const parsed=parseOperatorImagePacket(saved,request,f.asset);
+        assert.equal(parsed.transform.version,LEGACY_IMAGE_TRANSFORM); assert.equal(canonical(saved),before);
+        assert.equal(parsed.packet.sha256,packet.sha256); assert.deepEqual(parsed.transform.output,{width:packet.width,height:packet.height});
+    }
+});
+test('bounded crop dimensions cover square rounding and extreme aspect ratios without enlargement',async()=>{
+    const f=await fixture();
+    for(const [width,height] of [[1024,1024],[1024,1025],[1025,1024],[1025,1025],[1793,585],[8192,8192],[20000,3355],[3355,20000],[20000,1],[1,20000]]) {
+        const asset={...f.asset,width:Math.max(2,width),height:Math.max(2,height)};
+        const request={...f.request,rect:{x:0,y:0,width,height}},transform=operatorImageTransform(request,asset,1);
+        assert(transform.output.width*transform.output.height<=MAX_OPERATOR_CROP_PIXELS);
+        assert(transform.output.width<=width && transform.output.height<=height);
+        assert.deepEqual(transform.rect,request.rect);
+        if(width*height<=MAX_OPERATOR_CROP_PIXELS) assert.deepEqual(transform.output,{width,height});
+    }
 });
 test('crop admission rejects wrong source, dimensions, side, URL fields and out-of-bounds rectangles',async()=>{
     const f=await fixture();
@@ -108,6 +156,9 @@ test('PNG packet rejects substituted bytes, dimensions, transform or decoder ide
     const transform=JSON.parse(packet.transformCanonical); transform.annotations='MODEL_MARKINGS';
     const transformCanonical=canonical(transform);
     assert.throws(()=>parseOperatorImagePacket({...packet,transformCanonical,transformHash:digest(transformCanonical)},f.request,f.asset),/ASTRA_IMAGE_TRANSFORM_CHANGED/);
+    const unknown=canonical({...JSON.parse(packet.transformCanonical),version:'unreviewed-transform'});
+    assert.throws(()=>parseOperatorImagePacket({...packet,transformCanonical:unknown,transformHash:digest(unknown)},f.request,f.asset),/ASTRA_IMAGE_TRANSFORM_UNSUPPORTED/);
+    assert.throws(()=>parseOperatorImagePacket({...packet,transformCanonical:'{',transformHash:digest('{')},f.request,f.asset),/ASTRA_IMAGE_TRANSFORM_INVALID/);
 });
 test('unsupported content, truncated rasters and cancellation cannot produce an image receipt',async()=>{
     const f=await fixture(),svg=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="128" height="96"></svg>');

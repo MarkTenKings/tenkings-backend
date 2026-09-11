@@ -243,7 +243,10 @@ export async function workspaceSourceScenarios(scenario) {
         assert.equal(projected.settled, true); assert.equal(projected.canResume, true); assert.equal(projected.canStep, true); assert.equal(projected.canTakeOver, true);
         const [retained] = await f.admin.$queryRaw`SELECT * FROM atlas_staff."StaffWorkspaceSourceActionPermit" WHERE "requestId"=${request.requestId}::uuid`;
         assert.deepEqual(retained, permit); assert.deepEqual(await f.usage(), costs);
-        await f.finishPermit(request); assert.deepEqual(await f.readControl(), projected);
+        await f.finishPermit(request);
+        const repeated = await f.readControl();
+        assert(+new Date(repeated.timingHistory.asOf) >= +new Date(projected.timingHistory.asOf));
+        assert.deepEqual({ ...repeated, timingHistory: { ...repeated.timingHistory, asOf: projected.timingHistory.asOf } }, projected);
         await f.control('RESUME'); assert.equal((await f.readControl()).state, 'RUNNING');
         assert.equal(await f.admin.staffWorkspaceSourceOperation.count({ where: { requestId: request.requestId } }), 2);
         assert.equal(f.workerCalls(), 0);

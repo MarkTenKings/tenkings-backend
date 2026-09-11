@@ -111,6 +111,19 @@ function fixture({ names = ['read_card_report', 'submit_for_human_review'], step
             return fetchImpl(url, { ...init, runnerSignal: signal });
         }, signal });
     return { clock, ledger, run, policy, owner, runId, events, receipts, calls, adapters, response,
+        recover(name) {
+            const request = buildRequest({ policy: policy.astra, prompt: policy.prompt, names: policy.tools, input });
+            const receipt = { state: 'RECEIVED', httpStatus: 200, body: response(name) };
+            current = { attemptId: randomUUID(), dispatchClaimId: randomUUID(), requestHash: request.requestHash,
+                request, state: 'RECEIVED', receipt };
+            calls.push(current); receipts.push(structuredClone(receipt)); run.state = 'UNKNOWN';
+            const claim = ledger.claim;
+            ledger.claim = async (...args) => {
+                const result = await claim(...args); run.state = 'WAITING_TOOL';
+                return { ...result, mode: 'RECOVER_TOOL', attemptId: current.attemptId };
+            };
+            return current.attemptId;
+        },
         setFetch(fn) { fetchImpl = fn; }, createProvider,
         start(options = {}) { return runOperator({ ledger, runId, owner, adapters, createProvider, clock, ...options }); } };
 }
@@ -140,6 +153,34 @@ test('a reconciliation-only fresh claim never reserves, dispatches, renews or ex
     const f = fixture(); const claim = f.ledger.claim;
     f.ledger.claim = async (...args) => ({ ...await claim(...args), mode: 'RECONCILE_ONLY' });
     const result = await f.start(); assert.equal(result.state, 'RECONCILIATION_REQUIRED'); assert.deepEqual(f.events, ['claim']);
+});
+
+test('a granted recovery applies the saved tool before any new reservation, then continues to human review', async () => {
+    const f = fixture(), savedAttemptId = f.recover('read_card_report'); let posts = 0;
+    f.setFetch(async () => { posts++; return Response.json(f.response('submit_for_human_review')); });
+    const result = await f.start();
+    assert.equal(result.state, 'READY_FOR_HUMAN'); assert.equal(result.stepsApplied, 2);
+    assert.equal(posts, 1); assert.equal(f.calls.length, 2); assert.equal(f.calls[0].attemptId, savedAttemptId);
+    assert.equal(f.calls[0].state, 'APPLIED');
+    assert(f.events.indexOf('apply') < f.events.indexOf('reserve'));
+    assert.equal(result.receiptWrites.length, 1); assert.equal(f.clock.count(), 0);
+});
+
+test('a saved final tool reaches human review without constructing a provider or recording the receipt again', async () => {
+    const f = fixture(); f.recover('submit_for_human_review');
+    const result = await f.start({ createProvider() { assert.fail('Saved response must not cause a provider request'); } });
+    assert.equal(result.state, 'READY_FOR_HUMAN'); assert.equal(result.stepsApplied, 1);
+    assert.equal(f.calls.length, 1); assert.equal(f.receipts.length, 1); assert.equal(result.receiptWrites.length, 0);
+    assert(!f.events.includes('reserve')); assert(!f.events.includes('dispatch')); assert(!f.events.includes('receipt'));
+});
+
+test('failed saved-tool application retains uncertainty and performs no paid retry', async () => {
+    const f = fixture(); f.recover('read_card_report');
+    f.adapters.read_card_report.prepare = () => fail('ASTRA_TOOL_PREPARATION_FAILED');
+    const result = await f.start({ createProvider() { assert.fail('Local recovery failure cannot retry the provider'); } });
+    assert.equal(result.state, 'RECONCILIATION_REQUIRED'); assert.equal(result.code, 'ASTRA_TOOL_PREPARATION_FAILED');
+    assert.equal(f.run.state, 'UNKNOWN'); assert.equal(f.calls[0].state, 'RECEIVED'); assert.equal(f.calls.length, 1);
+    assert.equal(f.receipts.length, 1); assert.equal(result.stepsApplied, 0); assert.equal(f.clock.count(), 0);
 });
 
 test('an already paused or taken-over claim returns without constructing a provider or reserving work', async () => {

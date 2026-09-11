@@ -9,7 +9,7 @@ export const OPERATOR_GRANTS = Object.freeze({
         'controlState','controlRevision','stepBudget'] },
     StaffOperatorAttempt: { INSERT: ['id','runId','ordinal','runRevision','leaseFence','dispatchClaimId','requestCanonical','requestHash','providerBindingHash','reservedMicroUsd','state','createdAt'],
         UPDATE: ['state','usageCeilingMicroUsd','usageEnvelopeExceeded','resultReceiptId','dispatchedAt','finishedAt'] },
-    StaffOperatorReceipt: { INSERT: '*' }, StaffOperatorStep: { INSERT: '*' },
+    StaffOperatorReceipt: { INSERT: '*' }, StaffOperatorStep: { INSERT: '*' }, StaffOperatorRecovery: {},
     StaffOperatorImage: { INSERT: '*' }, StaffOperatorImageDelivery: { INSERT: '*' },
     StaffOperatorOutbox: { INSERT: '*', UPDATE: ['state','claimOwner','claimFence','claimUntil','deliveredAt'] },
 });

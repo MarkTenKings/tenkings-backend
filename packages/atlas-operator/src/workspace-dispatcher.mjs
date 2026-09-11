@@ -4,7 +4,7 @@ import { assertWorkspacePrivileges } from '@atlas/service-bridge/workspace-privi
 import { assertCaptureScope } from './capture-protocol.mjs';
 import { parseControlPolicy, toolsForRun } from './policy.mjs';
 import { operatorControl, ACTIVE_RUN_STATES } from './workflow-control.mjs';
-import { enqueueWorkspaceReportSuccessorInTransaction } from './ledger.mjs';
+import { enqueueWorkspaceReportSuccessorInTransaction, readOperatorRecovery } from './ledger.mjs';
 import { createWorkspaceSourceRunner } from './workspace-source-runner.mjs';
 
 const uuid = z.uuidv4(), hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -140,7 +140,7 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
         const event = operationRecord(row), value = event.result;
         const initial = event.action === 'claim', claim = initial ? value?.claim : value?.priorClaim;
         check(event.id === commandId && event.actorId === card.claim.actorId && event.cardId === card.id
-            && (initial || event.action === 'OPERATOR_CONTROL' && ['RESUME', 'STEP'].includes(value?.action))
+            && (initial || event.action === 'OPERATOR_CONTROL' && ['RESUME', 'STEP', 'RECOVER'].includes(value?.action))
             && claim?.kind === 'ASTRA' && ['id', 'actorId', 'accessVersion', 'controlRevision', 'fence', 'captureRevision', 'captureHash', 'workflowRevision']
                 .every(key => claim[key] === card.claim[key])
             && claim.runId === requested.id && (initial ? value.cardId === card.id && value.revision === claim.workflowRevision
@@ -158,11 +158,11 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
                     OR (${run.id}::uuid<>${requested.id}::uuid AND canonical::jsonb#>>'{result,runId}'=${run.id}))
             ORDER BY "createdAt" DESC,(canonical::jsonb#>>'{result,runControlRevision}')::integer DESC,id DESC LIMIT 1`;
         const later = rows[0] ? operationRecord(rows[0]) : null;
-        if (later) check(later.cardId === card.id && ['PAUSE', 'RESUME', 'STEP', 'TAKE_OVER'].includes(later.result?.action)
+        if (later) check(later.cardId === card.id && ['PAUSE', 'RESUME', 'STEP', 'TAKE_OVER', 'RECOVER'].includes(later.result?.action)
             && later.result.claimFence === card.claimFence && later.result.priorClaim?.id === card.claim.id
             && later.result.priorClaim.captureHash === card.captureHash && later.result.priorClaim.captureRevision === card.captureRevision
             && integer.safeParse(later.result.runControlRevision).success && +new Date(later.createdAt) >= +createdAt
-            && (!['RESUME', 'STEP'].includes(later.result.action) || later.actorId === card.claim.actorId
+            && (!['RESUME', 'STEP', 'RECOVER'].includes(later.result.action) || later.actorId === card.claim.actorId
                 && later.result.priorClaim.accessVersion === card.claim.accessVersion
                 && later.result.priorClaim.controlRevision === card.claim.controlRevision), 'ASTRA_DISPATCH_COMMAND_CHANGED');
         return { id: commandId, hash: row.contentHash, mode, revision, runRevision, createdAt, later };
@@ -243,7 +243,7 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
             const scoped = value => ({ ...value, command, run, card });
             // A later committed Start/Resume/STEP can only follow a settled
             // boundary. Recover this older command; never consume the newer one.
-            if (command.later && ['RESUME', 'STEP'].includes(command.later.result.action))
+            if (command.later && ['RESUME', 'STEP', 'RECOVER'].includes(command.later.result.action))
                 return scoped({ state: 'SETTLED', settledState: 'YIELDED', code: 'ASTRA_DISPATCH_COMMAND_SUPERSEDED' });
             const [work] = await tx.$queryRaw`SELECT
                 (SELECT count(*)::integer FROM atlas_staff."StaffOperatorAttempt" WHERE "runId"=${run.id}::uuid
@@ -263,6 +263,11 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
             const controlState = operatorControl(run), pending = card.workspace?.pending;
             const leased = run.leaseOwner && (!instant(run.leaseExpiresAt) || run.leaseExpiresAt > now);
             if (run.state === 'UNKNOWN' || work.unknownAttempts > 0) return scoped({ state: 'HELD', code: 'ASTRA_WORK_UNRESOLVED' });
+            if (run.state==='WAITING_TOOL' && !leased && work.held===1 && work.attempts===1 && !work.unknown
+                && !work.permits && !work.sources && !pending && !command.later && controlState.state==='RUNNING') {
+                const recovery=await readOperatorRecovery(tx,run,{claiming:true,commandId});
+                if (recovery) return scoped({state:'OPERATOR'});
+            }
             if (work.held > 0) return scoped({ state: leased ? 'IN_FLIGHT' : 'HELD', code: 'ASTRA_WORK_UNRESOLVED' });
             if (controlState.state === 'TAKEN_OVER') return scoped({ state: 'TAKEN_OVER' });
             if (run.state === 'PREPARATION_READY' && run.phase === 'CAPTURE_REVIEW' && pending && work.attempts === 0) {

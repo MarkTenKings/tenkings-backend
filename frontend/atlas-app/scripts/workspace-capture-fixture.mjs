@@ -102,12 +102,13 @@ async function fixture(context, work, options = {}) {
                 assert.equal(digest(sourceBytes), asset.sha256);
                 return createOperatorImagePacket({ imageId: randomUUID(), request, asset, orientation: 1, decoder: OPERATOR_IMAGE_DECODER, bytes: sourceBytes });
             } } });
-        const imageClient = operatorEvidenceClient({ origin: imageConfig.origin, key, runtimeHash: f.config.configHash }, async (_url, request) => {
+        const imageClientFor = runtimeHash => operatorEvidenceClient({ origin: imageConfig.origin, key, runtimeHash }, async (_url, request) => {
             const claims = verifyOperatorEvidenceRequest(imageConfig, request.body, request.headers['x-atlas-operator-evidence-signature']);
             const result = await imageBridge.read(claims);
             return new Response(result.text, { status: 200, headers: { 'content-type': 'application/json', 'x-atlas-operator-evidence-signature': result.signature } });
         });
-        const adapters = operatorAdapters({ evidenceClient: imageClient });
+        const adaptersFor = runtimeHash => operatorAdapters({ evidenceClient: imageClientFor(runtimeHash) });
+        const adapters = adaptersFor(f.config.configHash);
         const apply = async (lease, attempt) => {
             const snapshot = await f.ledger.inspectTool(lease, attempt.attemptId), adapter = adapters[snapshot.call.name];
             const prepared = await adapter.prepare(snapshot, {});
@@ -131,7 +132,7 @@ async function fixture(context, work, options = {}) {
                 identityProposal: proposals.identityProposal, boundaries: proposals.boundaries, summary: 'Synthetic selections await original worker preparation.' });
             return { ...await apply(proposals.lease, request), request };
         };
-        await work({ ...f, budget, policy, ids, initialized, card, createQueued, service, control, claim, apply, adapters, prepareProposals, submit, intake, store,
+        await work({ ...f, budget, policy, ids, initialized, card, createQueued, service, control, claim, apply, adapters, adaptersFor, prepareProposals, submit, intake, store,
             reads: () => reads, afterRead: callback => { afterRead = callback; } });
     });
 }

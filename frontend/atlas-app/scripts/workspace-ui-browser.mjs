@@ -182,7 +182,8 @@ export async function verifyWorkspaceBrowser({ directory, toolModules, assets, r
         await page.goto(`${origin}/admin/workspace/${saved[1].id}`);
         await page.getByRole('button', { name: 'Grade this card', exact: true }).waitFor();
         assert.equal(await page.getByRole('button', { name: 'Grade this card', exact: true }).isDisabled(), true);
-        assert.equal(await page.getByRole('button', { name: 'Start Astra · step mode', exact: true }).isDisabled(), true);
+        assert.equal(await page.getByRole('button', { name: /^Start Astra/ }).isDisabled(), true);
+        assert.equal(await page.getByRole('button', { name: 'Step mode', exact: true }).isDisabled(), true);
         await screenshot('10-second-card-held');
         const second = (await get(`workspace/cards/${saved[1].id}`)).card;
         const denied = await context.request.post(`${origin}/admin/api/staff/workspace/cards/${second.id}/claim`, { headers: { Origin: origin, 'X-Atlas-Csrf': (await get('session')).csrf }, data: { operationId: randomUUID(), expectedRevision: second.revision, operator: 'HUMAN' } });

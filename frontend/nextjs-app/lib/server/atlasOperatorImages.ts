@@ -34,7 +34,8 @@ export async function renderAtlasOperatorImage(input: { sourceBytes: Buffer; ass
     const rect = request.rect;
     let crop = sharp(bytes,{ failOn: 'warning', limitInputPixels: 64*1024*1024 }).rotate()
         .extract({ left: rect.x, top: rect.y, width: rect.width, height: rect.height });
-    if (request.purpose === 'OVERVIEW') crop = crop.resize(transform.output.width,transform.output.height,{ fit: 'fill', kernel: 'lanczos3', withoutEnlargement: true });
+    if (transform.output.width !== rect.width || transform.output.height !== rect.height)
+        crop = crop.resize(transform.output.width,transform.output.height,{ fit: 'fill', kernel: 'lanczos3', withoutEnlargement: true });
     const output = await crop.toColourspace('srgb').png({ compressionLevel: 9, adaptiveFiltering: false, palette: false }).toBuffer({ resolveWithObject: true });
     signal?.throwIfAborted();
     requireBridge(output.info.width === transform.output.width && output.info.height === transform.output.height

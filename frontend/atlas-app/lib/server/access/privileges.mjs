@@ -36,6 +36,7 @@ const FUNCTIONS = new Set(['lock_control()', 'lock_assignment(uuid, uuid)', 'ope
     'workspace_source_admitted(uuid, uuid)',
     'read_workspace_operator_control(uuid)', 'control_workspace_operator(uuid, integer, text, uuid, text, integer)',
     'read_workspace_operator_activity(uuid, integer)',
+    'recover_workspace_operator(uuid, integer, uuid, text, integer, uuid)',
     'read_operator_proposals(uuid)', 'operator_proposals_pending(uuid)', 'lock_nfc_control()',
     'lock_learning_candidates(uuid, text, uuid, uuid, uuid)',
     'read_identity_correction_receipt(uuid, uuid, uuid, text, text, text, integer, integer, integer)']);

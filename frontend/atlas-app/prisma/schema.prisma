@@ -557,6 +557,24 @@ model StaffOperatorReceipt {
   @@unique([attemptId, hash])
 }
 
+// A bounded human recovery grant retains the old request/receipt and records
+// the new execution generation without rewriting provider history.
+model StaffOperatorRecovery {
+  id          String @id @db.Uuid
+  runId       String @db.Uuid
+  attemptId   String @db.Uuid
+  receiptId   String @db.Uuid
+  commandId   String @unique @db.Uuid
+  ordinal     Int
+  runRevision Int
+  leaseFence  Int
+  canonical   String @db.Text
+  hash        String @db.VarChar(64)
+  createdAt   DateTime
+  @@unique([runId, ordinal])
+  @@unique([runId, leaseFence])
+}
+
 model StaffOperatorStep {
   id                       String @id @db.Uuid
   runId                    String @db.Uuid

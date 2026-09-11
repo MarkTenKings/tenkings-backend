@@ -23,6 +23,8 @@ import { bridgeFixture, gradingInput } from './bridge-fixture.mjs';
 import { operatorScenarios } from './operator-fixture.mjs';
 import { workspaceOperatorScenarios } from './workspace-operator-fixture.mjs';
 import { workspaceCaptureScenarios } from './workspace-capture-fixture.mjs';
+import { workspaceTimingScenarios } from './workspace-timing-fixture.mjs';
+import { workspaceReceiptRecoveryScenarios } from './workspace-receipt-recovery-fixture.mjs';
 import { workspaceSourceScenarios } from './workspace-source-fixture.mjs';
 import { workspacePrivilegeScenarios } from './workspace-privileges-fixture.mjs';
 import { workspaceDispatcherScenarios } from '../../../packages/atlas-operator/test/workspace-dispatcher-postgres.mjs';
@@ -661,6 +663,8 @@ try {
     await operatorScenarios(scenario);
     await workspaceOperatorScenarios(scenario);
     await workspaceCaptureScenarios(scenario);
+    await workspaceTimingScenarios(scenario);
+    await workspaceReceiptRecoveryScenarios(scenario);
     await workspaceSourceScenarios(scenario);
     await workspacePrivilegeScenarios(scenario);
     await workspaceDispatcherScenarios(scenario);

@@ -7,7 +7,7 @@ export const WORKSPACE_MAP_STATES = Object.freeze(['LOADED', 'NO_MAP', 'LOOKUP_F
 export const WORKSPACE_MAP_ACTIONS = Object.freeze({ RESOLVE_MAP: 'resolveMap', REGISTER_MAP: 'registerMap', CONTINUE_WITHOUT_MAP: 'continueWithoutMap' });
 export const workspaceMapReady = map => map?.status === 'NO_MAP' || map?.status === 'HUMAN_REVIEW_WITHOUT_MAP'
     || ['LOADED', 'APPLIED'].includes(map?.status) && map.bindingReady === true;
-export const WORKSPACE_CONTROLS = Object.freeze(['PAUSE', 'RESUME', 'STEP', 'TAKE_OVER']);
+export const WORKSPACE_CONTROLS = Object.freeze(['PAUSE', 'RESUME', 'STEP', 'TAKE_OVER', 'RECOVER']);
 export const WORKSPACE_MAX_CARDS = 10;
 export const WORKSPACE_MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 export const WORKSPACE_IMAGE_TYPES = Object.freeze(['image/jpeg', 'image/png', 'image/webp']);

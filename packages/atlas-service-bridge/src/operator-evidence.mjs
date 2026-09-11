@@ -142,8 +142,13 @@ export class OperatorEvidenceBridge {
                 }
             }
             const [attempt]=await tx.$queryRaw`SELECT * FROM atlas_staff."StaffOperatorAttempt" WHERE id=${claims.scope.attemptId}::uuid`;
+            let currentFence=attempt?.leaseFence===run.leaseFence;
+            if (attempt && !currentFence) {
+                const [recovery]=await tx.$queryRaw`SELECT atlas_staff.operator_attempt_fence_matches(${run.id}::uuid,${attempt.id}::uuid,${run.leaseFence}::integer) AS matched`;
+                currentFence=recovery?.matched===true;
+            }
             check(attempt?.runId===run.id && attempt.state==='RECEIVED' && attempt.runRevision===run.revision
-                && attempt.leaseFence===run.leaseFence && attempt.usageCeilingMicroUsd!==null && !attempt.usageEnvelopeExceeded,'ASTRA_TOOL_NOT_READY');
+                && currentFence && attempt.usageCeilingMicroUsd!==null && !attempt.usageEnvelopeExceeded,'ASTRA_TOOL_NOT_READY');
             const [receipt]=await tx.$queryRaw`SELECT * FROM atlas_staff."StaffOperatorReceipt" WHERE id=${attempt.resultReceiptId}::uuid`;
             const body=checked(receipt.canonical,receipt.hash).body, calls=body?.output?.filter(c=>c.type==='function_call');
             check(body?.model==='gpt-6-astra' && body.status==='completed' && body.service_tier==='default' && calls?.length===1

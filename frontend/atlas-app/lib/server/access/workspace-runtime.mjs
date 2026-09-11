@@ -7,6 +7,8 @@ import { StaffWorkspaceStore } from './workspace-store.mjs';
 import { StaffWorkspaceIntake } from './workspace-intake.mjs';
 import { StaffWorkspaceManual } from './workspace-manual.mjs';
 import { StaffWorkspaceOperator, projectWorkspaceSourceActivity } from './workspace-operator.mjs';
+import { workspaceReviewSession } from './workspace-review-session.mjs';
+import { workspaceOperatorSqlPort, projectWorkspaceControl, projectWorkspaceControlTiming } from './workspace-operator.mjs';
 import { attachWorkspaceDispatch } from './workspace-dispatch.mjs';
 
 export function workspaceRuntimeSettings(env, staffConfig) {
@@ -131,7 +133,18 @@ export function createWorkspaceRuntime({ auth, review, staffConfig, env, setting
         if (!connected.claimSource) result.capabilities.astraClaim = false;
         return result;
     };
-    intake.project = manual.project;
+    async function observedCard(context, saved) {
+        const card = await manual.project(context, saved);
+        const rawControl = await workspaceOperatorSqlPort.read(context, { card: saved });
+        if (rawControl?.timingHistory) card.timing = projectWorkspaceControlTiming(rawControl);
+        if (rawControl) {
+            const observedControl = projectWorkspaceControl(rawControl, { canControl: false });
+            card.observedOperator = { state: observedControl.state, failureCode: observedControl.failureCode ?? null };
+            if (observedControl.state === 'NEEDS_ATTENTION' && card.state === 'IN_PROGRESS') card.state = 'NEEDS_ATTENTION';
+        }
+        return card;
+    }
+    intake.project = observedCard;
     const operator = new StaffWorkspaceOperator({ store, projectCard: manual.project });
     attachWorkspaceDispatch({ intake, operator, store, dispatch: connected.dispatch });
     const operatorActivity = operator.activity.bind(operator);
@@ -153,8 +166,11 @@ export function createWorkspaceRuntime({ auth, review, staffConfig, env, setting
         });
         return { ...machine, activity: [...machine.activity, ...human].sort((a, b) => a.at.localeCompare(b.at)).slice(-100) };
     };
-    return { intake, manual, operator, list: staff => intake.list(staff),
+    return { intake, manual, operator, reviewSession: workspaceReviewSession({ store, intake, projectCard: manual.project }), list: staff => intake.list(staff),
         async read(staff, id) {
-            return store.transaction(staff, async context => ({ card: await manual.project(context, await intake.card(context, id)), readiness: readiness(context) }));
+            return store.transaction(staff, async context => {
+                const saved = await intake.card(context, id), card = await observedCard(context, saved);
+                return { card, readiness: readiness(context) };
+            });
         } };
 }

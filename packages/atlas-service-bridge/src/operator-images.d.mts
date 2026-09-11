@@ -7,13 +7,17 @@ export type OperatorImagePacket = { version: 'atlas-operator-image-v1'; imageId:
     transformCanonical: string; transformHash: string; decoder: string; contentType: 'image/png'; width: number; height: number;
     byteCount: number; sha256: string; bytesBase64: string };
 export const IMAGE_TRANSFORM: string;
+export const LEGACY_IMAGE_TRANSFORM: string;
 export const OPERATOR_IMAGE_DECODER: string;
 export const MAX_OPERATOR_IMAGE_BYTES: number;
 export const MAX_OPERATOR_CROP_PIXELS: number;
 export const OVERVIEW_LONG_EDGE: number;
 export function assertOperatorPngContainer(bytes: Buffer): void;
-export function operatorImageTransform(request: OperatorImageRequest, asset: OperatorImageAsset, orientation: number): {
+export function operatorImageTransform(request: OperatorImageRequest, asset: OperatorImageAsset, orientation: number, version?: string): {
     output: { width: number; height: number }; rect: OperatorImageRect; [key: string]: unknown };
+export function operatorCropRejection(request: OperatorImageRequest, asset: OperatorImageAsset): {
+    status: 'REGION_NOT_AVAILABLE'; code: 'ASTRA_CROP_OUTSIDE_SOURCE'; assetId: string; rect: OperatorImageRect;
+    sourceWidth: number; sourceHeight: number } | null;
 export function createOperatorImagePacket(input: { imageId: string; request: OperatorImageRequest; asset: OperatorImageAsset;
     orientation: number; decoder: string; bytes: Buffer }): OperatorImagePacket;
 export function parseOperatorImagePacket(packet: OperatorImagePacket, request: OperatorImageRequest, asset: OperatorImageAsset): {
