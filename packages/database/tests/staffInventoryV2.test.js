@@ -43,6 +43,46 @@ test('legacy description rows retain canonical bytes and request/event hashes wi
   const verified = verifyWorkflowRowV2({ sequence: 2n, id: event.source_event_id, recordedAt: new Date(event.recorded_at), content, contentHash: inventoryHash({ command, event }), requestHash: inventoryHash({ command, actor: event.recorded_by }) });
   assert.equal(canonical(verified), content); assert.deepEqual(verified.command.data.description, description);
   assert.equal('back_photo_key' in verified.event.data.description, false); assert.equal('card_details' in verified.event.data.description, false);
+  assert.equal('planned_sales_channel' in verified.event.data.description, false);
+});
+test('planned sales channels accept exact staff labels or null and never default legacy descriptions', () => {
+  const legacy = added().description;
+  assert.deepEqual(InventoryItemDescriptionV2.parse(legacy), legacy);
+  for (const planned_sales_channel of ['Vending machines', 'Stores', 'Kiosks', 'Ten Kings online', 'eBay', 'Whatnot', 'Amazon', 'Explicit custom fixture channel', 'x'.repeat(160), null]) {
+    const description = { ...legacy, planned_sales_channel };
+    assert.deepEqual(InventoryItemDescriptionV2.parse(description), description);
+    const commands = buildStaffInventoryCommandsV2(added({ description }), new WorkflowStateV2());
+    assert.deepEqual(commands.find(c => c.event_kind === 'item_described').data.description, description);
+  }
+  for (const planned_sales_channel of ['', ' ', ' eBay', 'eBay ', 'What\nnot', 'eBay\u007f', 'x'.repeat(161), 1, ['eBay'], { channel: 'eBay' }]) {
+    assert.equal(InventoryItemDescriptionV2.safeParse({ ...legacy, planned_sales_channel }).success, false);
+    assert.throws(() => buildStaffInventoryCommandsV2(added({ description: { ...legacy, planned_sales_channel } }), new WorkflowStateV2()));
+  }
+});
+test('per-card planned channels stay distinct through older batch edits and only explicit null clears them', () => {
+  const f = fixture(), description = { ...added().description, planned_sales_channel: 'Vending machines' };
+  f.save(added({ description })); const original = f.view(), ids = original.items[0].unit_ids;
+  const edit = (unit_ids, data, at) => f.save({ ...meta(), effective_at: at, action: 'edit', unit_ids, description: data, expected_price_cents: 1000 });
+  edit([ids[0]], { ...description, planned_sales_channel: 'eBay' }, '2026-01-02T00:00:00.000Z');
+  edit([ids[1]], { ...description, planned_sales_channel: 'Whatnot' }, '2026-01-02T00:00:00.000Z');
+  const legacy = { ...added().description, name: 'Same edited fixture title' };
+  const historical = canonical(f.events);
+  edit(ids, legacy, '2026-01-10T00:00:00.000Z');
+  assert.deepEqual(f.view().items.map(i => i.planned_sales_channel).sort(), ['Vending machines', 'Whatnot', 'eBay'].sort());
+  assert.ok(f.view().items.every(i => i.quantity === 1 && i.name === legacy.name));
+  const omitted = f.events.findLast(e => e.event_kind === 'item_described');
+  assert.equal('planned_sales_channel' in omitted.data.description, false, 'retained intent is derived without rewriting the new event');
+  assert.equal(canonical(f.events.slice(0, -2)), historical);
+  edit([ids[0]], { ...description, planned_sales_channel: 'Amazon' }, '2026-01-05T00:00:00.000Z');
+  assert.equal(f.state.units.get(ids[0]).description.planned_sales_channel, 'Amazon', 'effective-time backfill flows through the later omitted field');
+  assert.equal(f.state.units.get(ids[0]).description.name, legacy.name);
+  edit([ids[0]], { ...legacy, planned_sales_channel: null }, '2026-01-11T00:00:00.000Z');
+  edit([ids[0]], legacy, '2026-01-12T00:00:00.000Z');
+  assert.equal(f.state.units.get(ids[0]).description.planned_sales_channel, null);
+  assert.equal(f.state.units.get(ids[1]).description.planned_sales_channel, 'Whatnot');
+  assert.deepEqual(f.view().totals, { ...original.totals, groups: 3 });
+  assert.ok(f.view().items.every(i => i.custody_id === original.items[0].custody_id && i.expected_price_cents === 1000 && i.stage === 'unprocessed'));
+  assert.ok(f.events.every(e => !['sale_observed', 'batch_loaded', 'custody_moved'].includes(e.event_kind)));
 });
 test('front/back photos and card details persist as description history without changing physical or cost truth', () => {
   const f = fixture(); f.save(added()); const initial = f.view().items[0], originalEvents = canonical(f.events);

@@ -1694,3 +1694,10 @@ The goal is not maximum theoretical architecture. The goal is the smallest durab
 ---
 
 *End of final master blueprint.*
+
+
+## Owner-authorized staff inventory extension — September 11, 2026
+
+Mark requested a Sales channel field beside acquisition cost and expected sale price in the existing staff inventory workflow. It describes the intended selling route for each individual card or batch: Vending machines, Stores, Kiosks, Ten Kings online, eBay, Whatnot, and Amazon. The additive `planned_sales_channel` field lives in the existing append-only item description, with an explicit nullable value and backward-compatible omission handling. Staff can select, edit, clear, search and filter this intent; it never establishes an actual sale, changes custody, maps a financial channel, or changes expected gross-profit arithmetic. The compatible financial journal reader is activated before source emission; there is no database migration or second writer. See `docs/plans/2026-09-11-planned-sales-channel.md`.
+
+The same request proposes warehouse labels/slots and reviewed automatic restocking. The separate feasibility/design notes record the physical setup and business-policy inputs still required. They do not authorize fabricated bins, capacities, par levels, margins or current machine quantities; warehouse/restock implementation is not part of this sales-channel release.

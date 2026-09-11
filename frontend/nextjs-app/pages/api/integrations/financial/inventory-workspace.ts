@@ -16,7 +16,7 @@ export function createFinancialInventoryWorkspaceHandler(deps: {
       const view = await deps.readWorkspace();
       // Keep the existing snapshot wire shape; full descriptions remain in the immutable journal.
       const snapshot = { version: view.version, sequence: view.sequence, updated_at: view.updated_at, totals: view.totals, locations: view.locations, items: view.items.map((privateItem: StaffInventoryWorkspace['items'][number] & { photo_url?: string | null; back_photo_url?: string | null }) => {
-        const { units: _units, unit_ids: _unitIds, photo_key: _photoKey, back_photo_key: _backPhotoKey, photo_url: _photoUrl, back_photo_url: _backPhotoUrl, card_details: _cardDetails, ...item } = privateItem;
+        const { units: _units, unit_ids: _unitIds, photo_key: _photoKey, back_photo_key: _backPhotoKey, photo_url: _photoUrl, back_photo_url: _backPhotoUrl, card_details: _cardDetails, planned_sales_channel: _plannedSalesChannel, ...item } = privateItem;
         return item;
       }) };
       if (Buffer.byteLength(JSON.stringify(snapshot)) > 10 * 1024 * 1024) return res.status(503).json({ message: 'Inventory snapshot exceeds the read limit.' });

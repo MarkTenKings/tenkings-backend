@@ -46,6 +46,7 @@ export const InventoryItemDescriptionV2 = z.object({
   // Missing keys stay absent: adding defaults would change immutable historical hashes.
   back_photo_key: z.string().regex(/^inventory-photos\/[a-f0-9-]{36}\/[a-f0-9]{64}\.jpg$/).nullable().optional(),
   card_details: InventoryCardDetailsV2.optional(),
+  planned_sales_channel: z.string().min(1).max(160).refine(v => v.trim() === v && !/[\u0000-\u001f\u007f]/.test(v), 'Use an exact nonblank planned sales channel').nullable().optional(),
 }).strict();
 export type InventoryItemDescription = z.infer<typeof InventoryItemDescriptionV2>;
 const payloads = {

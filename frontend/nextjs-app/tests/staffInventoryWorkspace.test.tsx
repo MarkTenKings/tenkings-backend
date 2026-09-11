@@ -34,7 +34,7 @@ const values = { cost_cents: 100, expected_sales_cents: 200, expected_profit_cen
 const item: WorkspaceData['items'][number] & { photo_url: string } = {
   id: 'fixture-item', lot_id: 'fixture-lot', name: 'Fixture card', category: 'Sports cards', notes: 'Existing description',
   photo_key: 'inventory-photos/fixture/existing.jpg', photo_url: 'https://fixture.invalid/private/existing.jpg',
-  back_photo_key: null, card_details: null, location_id: location.id, location_name: location.name, custody_id: 'hq:fixture', batch_id: null, machine_scope: null, last_count: null,
+  back_photo_key: null, card_details: null, planned_sales_channel: null, location_id: location.id, location_name: location.name, custody_id: 'hq:fixture', batch_id: null, machine_scope: null, last_count: null,
   stage: 'unprocessed', product_id: null, quantity: 1, quantity_kind: 'on_hand', expected_price_cents: 200, ...values,
   unit_ids: ['fixture-unit'], units: [{ id: 'fixture-unit', number: 1, cost_cents: 100, expected_price_cents: 200, permanent_card_id: null, pack_id: null, planned_location_name: null }],
   receipt_quantity: 1, purchase_total_cents: 100, created_at: '2026-01-01T00:00:00.000Z', origin: 'existing',
@@ -113,10 +113,10 @@ test('paired upload and Astra fill only untouched descriptive fields; staff edit
     await ui.fill('Card name', 'Staff corrected during upload');
     await ui.fill('Card acquisition cost', '10.50'); await ui.fill('Expected sale price per card', '42.00');
     await act(async () => decode.resolve(prepared)); await until(() => !!identityBody);
-    await ui.fill('Manufacturer', 'Staff corrected during analysis');
+    await ui.fill('Manufacturer', 'Staff corrected during analysis'); await ui.fill('Sales channel', 'Whatnot');
     await act(async () => identity.resolve(json(identification(identityBody)))); await until(() => !ui.submitButton().disabled);
     assert.equal(ui.input('Card name').value, 'Staff corrected during upload'); assert.equal(ui.input('Manufacturer').value, 'Staff corrected during analysis');
-    assert.equal(ui.input('Card number').value, '007'); assert.equal(ui.input('Year').value, '2024');
+    assert.equal(ui.input('Card number').value, '007'); assert.equal(ui.input('Year').value, '2024'); assert.equal(ui.input('Sales channel').value, 'Whatnot');
     assert.equal(ui.input('Card acquisition cost').value, '10.50'); assert.equal(ui.input('Expected sale price per card').value, '42.00');
     const saved = JSON.parse(sessionStorage.getItem(draftKey)!); assert.ok(saved.photo_key && saved.back_photo_key); assert.notEqual(saved.photo_key, saved.back_photo_key);
   } finally { await ui.close(); }
@@ -126,18 +126,18 @@ test('uncertain saves retry exact bytes; only acknowledgement resets the card an
   const posts: string[] = []; const ui = await mount(api({ save: async body => { posts.push(body); if (posts.length === 1) throw new Error('Response lost'); return json({ outcome: posts.length === 2 ? 'REPLAY' : 'RECORDED', request_id: JSON.parse(body).request_id }); } }));
   try {
     await ui.click('Add inventory'); await ui.click('Choose photos'); await ui.pair(); await until(() => !ui.submitButton().disabled);
-    await ui.submit(); await until(() => !!sessionStorage.getItem(pendingKey));
+    await ui.fill('Sales channel', 'Amazon'); await ui.submit(); await until(() => !!sessionStorage.getItem(pendingKey));
     assert.equal(ui.camera().open, false); const first = JSON.parse(posts[0]);
-    assert.equal(first.description.card_details.card_number, '007'); assert.ok(first.description.back_photo_key);
+    assert.equal(first.description.planned_sales_channel, 'Amazon'); assert.equal(first.description.card_details.card_number, '007'); assert.ok(first.description.back_photo_key);
     await ui.click('Retry saved entry'); await until(() => !sessionStorage.getItem(pendingKey));
     assert.equal(posts[0], posts[1]); assert.equal(ui.camera().open, true); assert.equal(ui.camera().initialSource, 'camera');
     assert.equal(ui.input('Card name').value, ''); assert.equal(ui.input('Card acquisition cost').value, ''); assert.equal(ui.input('Expected sale price per card').value, '');
-    assert.equal(ui.input('Current location').value, location.id); assert.equal(ui.input('Location type').value, 'hq');
+    assert.equal(ui.input('Current location').value, location.id); assert.equal(ui.input('Location type').value, 'hq'); assert.equal(ui.input('Sales channel').value, '');
     assert.equal(ui.container.querySelectorAll('img[alt="Front of inventory card"]').length, 0);
     await ui.pair(); await until(() => !ui.submitButton().disabled); await ui.fill('Card acquisition cost', '3.00'); await ui.fill('Expected sale price per card', '8.00');
     await ui.submit(); await until(() => posts.length === 3 && ui.camera().open);
     const second = JSON.parse(posts[2]); assert.notEqual(first.request_id, second.request_id); assert.notEqual(first.description.photo_key, second.description.photo_key);
-    assert.equal(second.total_cost_cents, 300); assert.equal(second.expected_price_cents, 800);
+    assert.equal(second.description.planned_sales_channel, null); assert.equal(second.total_cost_cents, 300); assert.equal(second.expected_price_cents, 800);
   } finally { await ui.close(); }
 });
 
@@ -263,5 +263,54 @@ test('a late GPS result cannot overwrite a location selected by staff', async ()
     await ui.click('Add inventory'); await ui.click('Take photo'); await until(() => !!complete); await ui.click('Close camera fixture');
     await ui.fill('Current location', 'manual-site'); await act(async () => complete!({ coords: { latitude: 38, longitude: -121, accuracy: 10 }, timestamp: Date.now() }));
     assert.equal(ui.input('Current location').value, 'manual-site');
+  } finally { await ui.close(); }
+});
+
+
+test('sales channel offers approved choices and an old draft starts undecided; cancel restores a chosen channel', async () => {
+  const ui = await mount(api());
+  try {
+    await ui.click('Add inventory');
+    const select = ui.input('Sales channel') as unknown as HTMLSelectElement;
+    assert.equal(select.value, '');
+    assert.deepEqual([...select.options].map(o => o.text), ['Not decided yet', 'Vending machines', 'Stores', 'Kiosks', 'Ten Kings online', 'eBay', 'Whatnot', 'Amazon']);
+    const section = select.closest('section')!; assert.ok(section.textContent?.includes('3. Cost & expected price'));
+    const before = section.textContent?.slice(section.textContent.indexOf('Expected gross profit'));
+    await ui.fill('Sales channel', 'eBay');
+    assert.equal(section.textContent?.slice(section.textContent.indexOf('Expected gross profit')), before);
+    await ui.click('Cancel'); await ui.click('Add inventory'); assert.equal(ui.input('Sales channel').value, 'eBay');
+  } finally { await ui.close(); }
+});
+
+test('editing retains a saved custom channel and staff can explicitly clear it without changing price or custody', async () => {
+  const posts: any[] = [];
+  const data = { ...initial, items: [{ ...item, planned_sales_channel: 'Card convention' }] };
+  const ui = await mount(async (_url, init) => {
+    if (init?.method === 'POST') { const body = JSON.parse(String(init.body)); posts.push(body); return json({ outcome: 'RECORDED', request_id: body.request_id }); }
+    return json(data);
+  });
+  try {
+    await ui.edit(); assert.equal(ui.input('Sales channel').value, 'Card convention');
+    await ui.fill('Card name', 'Updated fixture'); await ui.submit(); await until(() => posts.length === 1);
+    assert.equal(posts[0].description.planned_sales_channel, 'Card convention'); assert.equal(posts[0].expected_price_cents, 200);
+    assert.equal(posts[0].destination, undefined); assert.equal(posts[0].total_cost_cents, undefined);
+    await ui.edit(); await ui.fill('Sales channel', ''); await ui.submit(); await until(() => posts.length === 2);
+    assert.equal(posts[1].description.planned_sales_channel, null);
+  } finally { await ui.close(); }
+});
+
+test('saved channels are visible and searchable; channel filters and clear filters include undecided stock', async () => {
+  const data = { ...initial, items: [{ ...item, planned_sales_channel: 'Whatnot' }, { ...item, id: 'second', name: 'Another card' }] };
+  const ui = await mount(async () => json(data));
+  const visible = () => [...ui.container.querySelectorAll('tbody tr')].map(row => row.textContent);
+  try {
+    assert.equal(visible().length, 2); assert.match(visible()[0] || '', /Whatnot/);
+    await ui.fill('Filter by sales channel', 'channel:Whatnot'); assert.equal(visible().length, 1); assert.match(visible()[0] || '', /Fixture card/);
+    await ui.fill('Filter by sales channel', '__unset'); assert.equal(visible().length, 1); assert.match(visible()[0] || '', /Another card/);
+    await ui.fill('Filter by sales channel', 'channel:Amazon'); assert.ok(ui.container.textContent?.includes('No matching inventory'));
+    await ui.click('Clear filters'); assert.equal(visible().length, 2);
+    await ui.fill('Search inventory', 'whatnot'); assert.equal(visible().length, 1);
+    const open = ui.container.querySelector<HTMLButtonElement>('button[aria-label="Open Fixture card"]')!; await act(async () => open.click());
+    assert.ok(ui.container.querySelector('[role="dialog"]')?.textContent?.includes('Sales channelWhatnot'));
   } finally { await ui.close(); }
 });

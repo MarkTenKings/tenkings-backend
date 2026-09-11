@@ -214,7 +214,11 @@ export function applyWorkflowEventV2(state: WorkflowStateV2, supplied: WorkflowE
       break;
     }
     case 'item_described':
-      for (const u of selected(state, e.data.unit_ids)) { u.description = { ...e.data.description }; u.description_event_id = e.source_event_id; }
+      for (const u of selected(state, e.data.unit_ids)) {
+        // Older clients omit this new field. Retain only its prior explicit evidence; null clears it.
+        const priorChannel = e.data.description.planned_sales_channel === undefined && u.description?.planned_sales_channel !== undefined ? { planned_sales_channel: u.description.planned_sales_channel } : {};
+        u.description = { ...e.data.description, ...priorChannel }; u.description_event_id = e.source_event_id;
+      }
       break;
     case 'price_set':
       for (const u of selected(state, e.data.unit_ids)) { u.intended_sale_price_cents = e.data.intended_sale_price_cents; u.price_event_id = e.source_event_id; }

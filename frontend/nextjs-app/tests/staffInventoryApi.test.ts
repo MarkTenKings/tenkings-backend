@@ -243,7 +243,7 @@ test('photo upload forces private/no-store storage and verifies the stored objec
 
 test('financial snapshots accept only their read bearer, refuse writes and omit private photo/roster data', async () => {
   let reads = 0;
-  const item = { name: 'Fixture item', quantity: 2, photo_key: 'private-key', back_photo_key: 'private-back-key', photo_url: 'https://fixture.invalid/private-front', back_photo_url: 'https://fixture.invalid/private-back', card_details: { manufacturer: null, card_number: '007/100', year: '2026', set_name: 'Fixture set', variant: null, card_type: null }, unit_ids: ['fixture-unit'], units: [{ id: 'fixture-unit' }] };
+  const item = { name: 'Fixture item', quantity: 2, planned_sales_channel: 'Whatnot', photo_key: 'private-key', back_photo_key: 'private-back-key', photo_url: 'https://fixture.invalid/private-front', back_photo_url: 'https://fixture.invalid/private-back', card_details: { manufacturer: null, card_number: '007/100', year: '2026', set_name: 'Fixture set', variant: null, card_type: null }, unit_ids: ['fixture-unit'], units: [{ id: 'fixture-unit' }] };
   const handler = createFinancialInventoryWorkspaceHandler({ readTokenHash: () => READ_HASH, readWorkspace: async () => { reads++; return { ...workspace(), items: [item] } as unknown as StaffInventoryWorkspace; } });
   for (const [method, authorization, query, expected] of [['GET', '', {}, 401], ['GET', 'Bearer fixture-mobile-admin', {}, 401], ['POST', `Bearer ${READ_TOKEN}`, {}, 405], ['GET', `Bearer ${READ_TOKEN}`, { page: '1' }, 400]] as const) {
     const output = response(); await handler(request(method, {}, { authorization }, query), output.res);

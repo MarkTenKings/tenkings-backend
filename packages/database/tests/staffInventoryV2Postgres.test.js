@@ -14,7 +14,7 @@ test('staff inventory PostgreSQL atomic commands and exact retries', { skip: pro
   const db = new PrismaClient({ datasources: { db: { url: url.href } } });
   const location = await db.location.create({ data: { name: 'DISPOSABLE STAFF FIXTURE', slug: 'staff-fixture', address: 'test only', recentRips: [], locationType: 'hq' } });
   const at = '2026-06-01T00:00:00.000Z', meta = () => ({ request_id: randomUUID(), effective_at: at, note: 'disposable staff fixture' });
-  const description = { name: 'Disposable staff cards', category: 'Sports cards', notes: '', photo_key: null, back_photo_key: `inventory-photos/11111111-1111-4111-8111-111111111111/${'b'.repeat(64)}.jpg`, card_details: { manufacturer: 'Fixture manufacturer', card_number: '007/100', year: '2026', set_name: 'Fixture set', variant: null, card_type: 'Trading card' } };
+  const description = { name: 'Disposable staff cards', category: 'Sports cards', notes: '', photo_key: null, back_photo_key: `inventory-photos/11111111-1111-4111-8111-111111111111/${'b'.repeat(64)}.jpg`, card_details: { manufacturer: 'Fixture manufacturer', card_number: '007/100', year: '2026', set_name: 'Fixture set', variant: null, card_type: 'Trading card' }, planned_sales_channel: 'Vending machines' };
   const command = { ...meta(), action: 'add', origin: 'existing', quantity: 3, total_cost_cents: 1001, cost_method: 'equal_card', expected_price_cents: 1000, description, stage: 'packed', destination: { location_id: location.id, kind: 'hq', machine_id: null, product_id: null, door_id: null } };
   const save = (c, actor = 'fixture-staff') => db.$transaction(tx => recordStaffInventoryV2(tx, c, actor), { isolationLevel: 'ReadCommitted', timeout: 30000 });
   const advanced = c => db.$transaction(tx => recordInventoryWorkflowEventV2(tx, c, 'fixture-staff'), { isolationLevel: 'ReadCommitted', timeout: 30000 });
@@ -35,6 +35,7 @@ test('staff inventory PostgreSQL atomic commands and exact retries', { skip: pro
     });
     const initial = staffInventoryWorkspaceV2(await readWorkflowHistoryV2(db), [location]).items.find(i => i.name === command.description.name);
     assert.deepEqual(initial.card_details, description.card_details); assert.equal(initial.back_photo_key, description.back_photo_key);
+    assert.equal(initial.planned_sales_channel, 'Vending machines');
     await t.test('unequal cost allocation is atomic when amounts fail to conserve purchase cents', async () => {
       const before = await count(); const c = { ...meta(), action: 'cost', lot_id: initial.lot_id, total_cost_cents: 1200, cost_method: 'explicit_per_card', card_costs: initial.unit_ids.map(unit_id => ({ unit_id, cost_cents: 500 })) };
       await assert.rejects(save(c), /equal/); assert.equal(await count(), before);
@@ -67,6 +68,30 @@ test('staff inventory PostgreSQL atomic commands and exact retries', { skip: pro
       const before = await count();
       await assert.rejects(save({ ...historical, request_id: randomUUID(), effective_at: '2026-05-31T00:00:00.000Z' }), /roster/);
       assert.equal(await count(), before); assert.equal((await save(historical)).outcome, 'REPLAY');
+    });
+    await t.test('planned sales channels preserve per-unit evidence, older-client omissions, explicit clears and exact retry', async () => {
+      const { planned_sales_channel: _channel, ...legacy } = description;
+      const base = { ...meta(), action: 'edit', unit_ids: initial.unit_ids, description: { ...legacy, name: 'Disposable channel routing' }, expected_price_cents: 2000 };
+      await save({ ...base, request_id: randomUUID(), effective_at: '2026-06-11T00:00:00.000Z', unit_ids: [initial.unit_ids[0]], description: { ...base.description, planned_sales_channel: 'eBay' } });
+      await save({ ...base, request_id: randomUUID(), effective_at: '2026-06-11T00:00:00.000Z', unit_ids: [initial.unit_ids[1]], description: { ...base.description, planned_sales_channel: 'Whatnot' } });
+      const older = { ...base, effective_at: '2026-06-13T00:00:00.000Z' };
+      await save(older); assert.equal((await save(older)).outcome, 'REPLAY');
+      assert.deepEqual((await workspace()).items.filter(i => i.lot_id === initial.lot_id).map(i => i.planned_sales_channel).sort(), ['Vending machines', 'Whatnot', 'eBay'].sort());
+      const historical = JSON.stringify(await readWorkflowHistoryV2(db));
+      await save({ ...base, request_id: randomUUID(), effective_at: '2026-06-12T00:00:00.000Z', unit_ids: [initial.unit_ids[0]], description: { ...base.description, planned_sales_channel: 'Amazon' } });
+      assert.equal(replayWorkflowEventsV2(await readWorkflowHistoryV2(db)).units.get(initial.unit_ids[0]).description.planned_sales_channel, 'Amazon');
+      const clear = { ...base, request_id: randomUUID(), effective_at: '2026-06-14T00:00:00.000Z', unit_ids: [initial.unit_ids[0]], description: { ...base.description, planned_sales_channel: null } };
+      await save(clear); assert.equal((await save(clear)).outcome, 'REPLAY');
+      await assert.rejects(save({ ...clear, description: { ...clear.description, planned_sales_channel: 'Amazon' } }), /different inventory/);
+      const history = await readWorkflowHistoryV2(db), state = replayWorkflowEventsV2(history);
+      assert.equal(JSON.stringify(history.slice(0, JSON.parse(historical).length)), historical);
+      assert.equal(state.units.get(initial.unit_ids[0]).description.planned_sales_channel, null);
+      assert.equal(state.units.get(initial.unit_ids[1]).description.planned_sales_channel, 'Whatnot');
+      assert.equal(state.units.get(initial.unit_ids[2]).description.planned_sales_channel, 'Vending machines');
+      assert.ok(history.filter(e => e.event_kind === 'item_described' && e.effective_at === older.effective_at).every(e => !('planned_sales_channel' in e.data.description)));
+      const items = (await workspace()).items.filter(i => i.lot_id === initial.lot_id);
+      assert.equal(items.length, 3); assert.equal(items.reduce((n, i) => n + i.cost_cents, 0), 1001);
+      assert.ok(items.every(i => i.expected_price_cents === 2000 && i.quantity_kind === 'loaded_roster' && i.custody_id === 'machine:staff-fixture-machine'));
     });
     await t.test('a first step created through advanced records is not mistaken for a complete staff save', async () => {
       const partial = { ...command, ...meta(), origin: 'purchase', stage: 'unprocessed', description: { ...command.description, name: 'Disposable partial request' } };

@@ -59,3 +59,8 @@
   .rosterTitle{flex-wrap:wrap}
   .rosterTitle button{min-height:44px}
 }
+
+/* Let all inventory filters wrap while keeping the search field usable. */
+.filters{flex-wrap:wrap}.filters .search{min-width:min(220px,100%)}
+.filters select{appearance:none;min-height:44px;padding-right:36px;background-image:linear-gradient(45deg,transparent 50%,#747e68 50%),linear-gradient(135deg,#747e68 50%,transparent 50%);background-position:calc(100% - 19px) 50%,calc(100% - 14px) 50%;background-size:5px 5px;background-repeat:no-repeat}
+.detailFacts strong{overflow-wrap:anywhere}
