@@ -11,6 +11,7 @@ import { operatorAdapters } from '../../../packages/atlas-operator/src/adapters.
 import { CAPTURE_TOOL_NAMES } from '../../../packages/atlas-operator/src/capture-protocol.mjs';
 import { StaffWorkspaceStore } from '../lib/server/access/workspace-store.mjs';
 import { StaffWorkspaceIntake } from '../lib/server/access/workspace-intake.mjs';
+import { readCaptureReadiness } from '../lib/server/access/workspace-capture-readiness.mjs';
 import { StaffWorkspaceOperator } from '../lib/server/access/workspace-operator.mjs';
 import { operatorFixture } from './operator-fixture.mjs';
 
@@ -39,6 +40,7 @@ async function fixture(context, work, options = {}) {
         })) } : store;
         const intake = new StaffWorkspaceIntake({ store: intakeStore,
             source: { reserve: ({ cardId, creatorId }) => ({ sourceType: 'SPEEDSTER', sourceId: `atlas-${cardId}`, sourceOwnerId: `atlas-staff-${creatorId}` }),
+                captureReadiness: readCaptureReadiness,
                 ...(options.captureRpc ? { async assertClaimable(context, { card, operator, claim }) {
                     if (operator !== 'ASTRA') return null;
                     const [row] = await context.databaseTx.$queryRaw`SELECT atlas_staff.enqueue_workspace_capture(${card.id}::uuid,
@@ -178,7 +180,8 @@ export async function workspaceCaptureScenarios(scenario) {
         const claim = async id => f.intake.claim(f.signed.staff, id, { operationId: randomUUID(), expectedRevision: (await f.card(id)).revision,
             operator: 'ASTRA', mode: 'CONTINUOUS' });
         await update([first.id, randomUUID()]);
-        await assert.rejects(() => claim(first.id), /admitted verified photo pair/);
+        await assert.rejects(() => claim(first.id), error => error.code === 'WORKSPACE_ASTRA_NOT_READY'
+            && error.status === 409 && error.outcome === 'NOT_DISPATCHED');
         assert.equal((await f.card()).state, 'WAITING'); assert.equal(await f.admin.staffOperatorRun.count(), 0);
         await update([first.id]);
         await claim(first.id);

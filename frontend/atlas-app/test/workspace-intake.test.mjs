@@ -54,6 +54,7 @@ function fixture(overrides = {}) {
         } finally { f.inTransaction = false; release(); }
     } };
     f.source = { reserve: sourceBinding,
+        async captureReadiness() { assert(f.inTransaction); return f.admission ?? { ready: true, code: null }; },
         async recordVerifiedUpload() { assert(f.inTransaction); f.calls.record++; },
         async confirmPair() { assert(f.inTransaction); f.calls.pair++; },
         async assertClaimable(context, value) { assert(f.inTransaction); f.calls.claim++; f.lastClaim = clone(value); return null; },
@@ -428,6 +429,56 @@ test('source claim hook denial rolls back ownership and no upload is eligible fo
     await assert.rejects(f.service.claim(f.staff, card.id, { operationId: operationId(), expectedRevision: card.revision, operator: 'ASTRA' }), /GRADING_WORK_UNRESOLVED/);
     assert.equal(canonical(f.state.cards.get(card.id)), before);
     assert.equal(f.calls.record, 2); assert.equal(f.calls.pair, 1); assert.equal(f.calls.claim, 0);
+});
+
+test('the explicit Astra roster controls the button and rejects a new claim before any mutation', async () => {
+    const f = fixture(), ready = await f.ready();
+    f.state.cards.get(ready.id).identity = { category: 'SPORTS', playerName: 'Verified test card' };
+    f.admission = { ready: false, code: 'WORKSPACE_ASTRA_NOT_ADMITTED' };
+    const before = clone(f.state), view = (await f.service.read(f.staff, ready.id)).card;
+    assert.equal(view.capabilities.astraClaim, false); assert.equal(view.capabilities.humanClaim, true);
+    assert.equal(view.capabilities.astraClaimUnavailableReason, 'WORKSPACE_ASTRA_NOT_ADMITTED');
+    const input = { operationId: operationId(), expectedRevision: ready.revision, operator: 'ASTRA' };
+    await assert.rejects(f.service.claim(f.staff, ready.id, input), error => error.status === 409
+        && error.code === 'WORKSPACE_ASTRA_NOT_ADMITTED' && error.outcome === 'NOT_DISPATCHED');
+    assert.deepEqual(f.state, before); assert.equal(f.calls.claim, 0);
+    f.admission = { ready: true, code: null };
+    assert.equal((await f.service.read(f.staff, ready.id)).card.capabilities.astraClaim, true);
+    const committed = await f.service.claim(f.staff, ready.id, input);
+    f.admission = { ready: false, code: 'WORKSPACE_ASTRA_NOT_ADMITTED' };
+    const replay = await f.service.claim(f.staff, ready.id, input);
+    assert.equal(replay.operationId, committed.operationId); assert.equal(replay.card.revision, committed.card.revision);
+    assert.equal(f.calls.claim, 1);
+});
+
+test('missing or changed readiness never advertises Astra and rechecks before a new claim', async () => {
+    const f = fixture(), ready = await f.ready(); f.state.cards.get(ready.id).identity = { category: 'POKEMON' };
+    assert.equal((await f.service.read(f.staff, ready.id)).card.capabilities.astraClaim, true);
+    for (const admission of [{ ready: false, code: 'WORKSPACE_ASTRA_NOT_READY' }, { ready: true }, null]) {
+        f.admission = admission; if (admission === null) f.source.captureReadiness = async () => null;
+        const before = clone(f.state);
+        assert.equal((await f.service.read(f.staff, ready.id)).card.capabilities.astraClaim, false);
+        await assert.rejects(f.service.claim(f.staff, ready.id, { operationId: operationId(), expectedRevision: ready.revision, operator: 'ASTRA' }),
+            error => error.code === 'WORKSPACE_ASTRA_NOT_READY' && error.outcome === 'NOT_DISPATCHED');
+        assert.deepEqual(f.state, before); assert.equal(f.calls.claim, 0);
+    }
+});
+
+test('an older unsaved claim is definitively rejected after another command claimed the card', async () => {
+    const f = fixture(), ready = await f.ready(), input = { operationId: operationId(), expectedRevision: ready.revision, operator: 'ASTRA' };
+    const committed = await f.service.claim(f.staff, ready.id, { ...input, operationId: operationId() });
+    const before = clone(f.state);
+    await assert.rejects(f.service.claim(f.staff, ready.id, input), error => error.code === 'WORKSPACE_CLAIM_CONFLICT'
+        && error.status === 409 && error.outcome === 'NOT_DISPATCHED');
+    assert.deepEqual(f.state, before); assert.equal(f.calls.claim, 1);
+    assert.equal((await f.service.read(f.staff, ready.id)).card.revision, committed.card.revision);
+});
+
+test('errors from the claim hook are not relabeled as safe preflight refusals', async () => {
+    const f = fixture(), ready = await f.ready();
+    f.source.assertClaimable = async () => deny(409, 'WORKSPACE_CLAIM_CONFLICT');
+    await assert.rejects(f.service.claim(f.staff, ready.id, { operationId: operationId(), expectedRevision: ready.revision, operator: 'ASTRA' }),
+        error => error.code === 'WORKSPACE_CLAIM_CONFLICT' && error.outcome === undefined);
 });
 
 test('saved evidence exposes only exact verified bytes after post-read auth and revision recheck', async () => {

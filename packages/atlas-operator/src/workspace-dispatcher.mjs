@@ -6,6 +6,7 @@ import { parseControlPolicy, toolsForRun } from './policy.mjs';
 import { operatorControl, ACTIVE_RUN_STATES } from './workflow-control.mjs';
 import { enqueueWorkspaceReportSuccessorInTransaction, readOperatorRecovery } from './ledger.mjs';
 import { createWorkspaceSourceRunner } from './workspace-source-runner.mjs';
+import { MAX_REQUEST_BYTES } from './responses.mjs';
 
 const uuid = z.uuidv4(), hash = z.string().regex(/^[a-f0-9]{64}$/);
 const integer = z.number().int().min(1).max(2147483646);
@@ -109,7 +110,8 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
             && budget.workspaceCardIds.includes(run.workspaceCardId) && instant(run.deadlineAt) && (!live || run.deadlineAt > now),
         'ASTRA_DISPATCH_RUN_NOT_CURRENT');
         toolsForRun(policy, run); operatorControl(run);
-        checked(run.inputCanonical, run.inputHash, 4 * 1024 * 1024);
+        // Re-admit the same bounded continuation that appendToolResult can persist.
+        checked(run.inputCanonical, run.inputHash, MAX_REQUEST_BYTES);
         return checked(run.manifestCanonical, run.manifestHash);
     }
     async function reportProof(tx, context, run, card) {

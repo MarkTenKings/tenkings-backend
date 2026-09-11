@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { hash } from '../policy.mjs';
+import { hash, isBoundaryError } from '../policy.mjs';
 import { canonical } from '../review-contract.mjs';
 import { WORKSPACE_ACTIONS } from '../../workspace-contract.mjs';
 import { staffApiPath } from '../../routes.mjs';
@@ -8,6 +8,7 @@ import { MAX_WORKSPACE_REVISION, PHOTO_SIDES, WORKSPACE_SHA, WORKSPACE_UUID,
     workspaceTimestamp, workspaceUploadGrant } from './workspace-intake-validation.mjs';
 import { readWorkspacePhotoBytes } from './workspace-intake-storage.mjs';
 import { workspaceIdentificationPairKey } from '../../workspace-identification.mjs';
+import { captureReadiness, requireCaptureReadiness } from './workspace-capture-readiness.mjs';
 
 const STAGES = new Set(['PHOTOS', 'IDENTITY', 'PREPARATION', 'CENTERING', 'INSPECTION', 'REPORT', 'REVIEW', 'FINISHING']);
 const STATES = new Set(['DRAFT', 'WAITING', 'IN_PROGRESS', 'NEEDS_ATTENTION', 'HUMAN_REVIEW', 'APPROVED']);
@@ -16,6 +17,8 @@ const json = value => JSON.parse(JSON.stringify(value));
 const safe = (value, max) => typeof value === 'string' && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
 const changed = condition => requireWorkspace(condition, 409, 'WORKSPACE_REVISION_CHANGED');
 const available = condition => requireWorkspace(condition, 409, 'WORKSPACE_CAPABILITY_UNAVAILABLE');
+const claimPreflightCodes = new Set(['WORKSPACE_CAPABILITY_UNAVAILABLE', 'WORKSPACE_CLAIM_CONFLICT',
+    'WORKSPACE_REVISION_CHANGED', 'WORKSPACE_PAIR_REQUIRED']);
 
 /** Only short local database work may run in store.transaction. Its adapter
  * authenticates the current staff/browser/control, locks the cohort and rows,
@@ -152,8 +155,10 @@ export class StaffWorkspaceIntake {
         const processingLimit = context.policy.processingLimit;
         const waiting = candidate && Number.isSafeInteger(processingLimit) && processingLimit >= 1 && processingLimit <= 10
             && (Boolean(card.startedAt) || cohort.filter(row => row.startedAt).length < processingLimit);
-        const astraClaim = waiting && identityReady && context.policy.astraEnabled === true
+        const astraCandidate = waiting && identityReady && context.policy.astraEnabled === true
             && !cohort.some(row => row.id !== card.id && row.claim?.kind === 'ASTRA' && activeStates.has(row.state));
+        const admission = astraCandidate ? captureReadiness(await this.source.captureReadiness?.(context, card)) : null;
+        const astraClaim = astraCandidate && admission.ready;
         const canEdit = reviewer && ((card.state === 'DRAFT' && !claim && context.policy.intakeEnabled === true && currentPolicy)
             || (activeStates.has(card.state) && claim?.kind === 'HUMAN' && claim.actorId === context.identity.id));
         const supplied = card.capabilities ?? {};
@@ -169,6 +174,7 @@ export class StaffWorkspaceIntake {
             identityReady, ...(card.identityReview ? { identityReview: json(card.identityReview) } : {}),
             pairConfirmed: card.pairConfirmedAt !== null && Boolean(card.captureHash),
             canClaim: waiting, capabilities: { humanClaim: waiting, astraClaim,
+                ...(admission && !admission.ready ? { astraClaimUnavailableReason: admission.code } : {}),
                 canEdit, actions, controls } };
         // These are pre-reviewed product projections supplied by the manual
         // adapter, not raw source documents, provider payloads or grading state.
@@ -449,19 +455,28 @@ export class StaffWorkspaceIntake {
             this.authority(context, true);
             const card = await this.card(context, id), { prior, inputHash } = await this.prior(context, 'claim', id, input);
             if (prior) return { card: await this.project(context, card), operationId: prior.operationId };
-            available(context.policy.claimsEnabled === true && +new Date(context.policy.expiresAt) > +context.now);
-            requireWorkspace(card.state === 'WAITING' && card.claim === null, 409, 'WORKSPACE_CLAIM_CONFLICT');
-            changed(card.revision === input.expectedRevision);
-            const { front, back } = await this.confirmedPhotos(context, card);
-            requireWorkspace(card.pairConfirmedAt && card.admittedAt && card.captureRevision > 0
-                && card.captureHash === this.pairHash(card, front, back, card.captureRevision), 409, 'WORKSPACE_PAIR_REQUIRED');
-            const rows = await context.tx.listCards(context.policy.cohortId), limit = context.policy.processingLimit;
-            available(Number.isSafeInteger(limit) && limit >= 1 && limit <= context.policy.maxCards
-                && (card.startedAt || rows.filter(row => row.startedAt).length < limit));
-            if (input.operator === 'ASTRA') {
-                available(context.policy.astraEnabled === true);
-                requireWorkspace(!rows.some(row => row.id !== id && row.claim?.kind === 'ASTRA' && activeStates.has(row.state)),
-                    409, 'WORKSPACE_CLAIM_CONFLICT');
+            try {
+                available(context.policy.claimsEnabled === true && +new Date(context.policy.expiresAt) > +context.now);
+                requireWorkspace(card.state === 'WAITING' && card.claim === null, 409, 'WORKSPACE_CLAIM_CONFLICT');
+                changed(card.revision === input.expectedRevision);
+                const { front, back } = await this.confirmedPhotos(context, card);
+                requireWorkspace(card.pairConfirmedAt && card.admittedAt && card.captureRevision > 0
+                    && card.captureHash === this.pairHash(card, front, back, card.captureRevision), 409, 'WORKSPACE_PAIR_REQUIRED');
+                const rows = await context.tx.listCards(context.policy.cohortId), limit = context.policy.processingLimit;
+                available(Number.isSafeInteger(limit) && limit >= 1 && limit <= context.policy.maxCards
+                    && (card.startedAt || rows.filter(row => row.startedAt).length < limit));
+                if (input.operator === 'ASTRA') {
+                    available(context.policy.astraEnabled === true);
+                    requireWorkspace(!rows.some(row => row.id !== id && row.claim?.kind === 'ASTRA' && activeStates.has(row.state)),
+                        409, 'WORKSPACE_CLAIM_CONFLICT');
+                    requireCaptureReadiness(await this.source.captureReadiness?.(context, card));
+                }
+            } catch (error) {
+                // Absence of this exact operation was established above, and
+                // no claim hook or write has run. A concurrent automatic claim
+                // can therefore reject this old command without a save replay.
+                if (isBoundaryError(error) && claimPreflightCodes.has(error.code)) error.outcome = 'NOT_DISPATCHED';
+                throw error;
             }
             const mode = input.operator === 'HUMAN' ? 'MANUAL' : input.mode ?? 'CONTINUOUS';
             const revision = card.revision + 1, fence = card.claimFence + 1;

@@ -6,8 +6,12 @@ export const stageNames = { PHOTOS: 'Photos', IDENTITY: 'Identity', PREPARATION:
 export const stageOrder = Object.keys(stageNames);
 const denialCodes = new Set(['INVALID_REQUEST', 'WORKSPACE_REQUEST_INVALID', 'WORKSPACE_REVISION_CHANGED', 'WORKSPACE_CLAIM_CONFLICT', 'WORKSPACE_CLAIM_CHANGED', 'WORKSPACE_REVIEW_NOT_READY', 'WORKSPACE_REVIEW_CLAIMED', 'WORKSPACE_REVIEW_NOT_ACTIVE', 'WORKSPACE_CAPABILITY_UNAVAILABLE', 'WORKSPACE_PAIR_REQUIRED', 'WORKSPACE_PHOTOS_REQUIRED', 'WORKSPACE_PILOT_FULL', 'WORKSPACE_PHOTO_ALREADY_USED',
     'ASTRA_ABANDONMENT_AUTHORITY_REQUIRED', 'ASTRA_ABANDONMENT_FRESH_OPERATIONS_REQUIRED',
-    'ASTRA_ABANDONMENT_NOT_AVAILABLE', 'ASTRA_ABANDONMENT_REVIEW_CHANGED']);
+    'ASTRA_ABANDONMENT_NOT_AVAILABLE', 'ASTRA_ABANDONMENT_REVIEW_CHANGED',
+    'WORKSPACE_ASTRA_NOT_ADMITTED', 'WORKSPACE_ASTRA_NOT_READY']);
 const messages = {
+    WORKSPACE_ASTRA_NOT_ADMITTED: 'This card is waiting for test admission. Its photographs are saved; Astra can start once this card is admitted.',
+    WORKSPACE_ASTRA_NOT_READY: 'Astra is not ready to start this card yet. Refresh the card to check its current availability.',
+    WORKSPACE_ASTRA_DISPATCH_UNCONFIRMED: 'Astra’s start confirmation was interrupted. Checking the recorded action before another start.',
     ASTRA_CAPTURE_IDENTITY_CONFLICT: 'Astra found a conflict with the saved card details. Review the recorded response before continuing.',
     WORKSPACE_REVIEW_NOT_READY: 'Astra’s draft is not ready for human review yet. The saved card is kept.',
     WORKSPACE_REVIEW_CLAIMED: 'Another reviewer has picked up this card. You can continue watching its progress.',
@@ -27,12 +31,12 @@ const messages = {
     WORKSPACE_PILOT_FULL: 'The ten-card pilot is full. Existing drafts are kept.',
     WORKSPACE_PHOTO_ALREADY_USED: 'A photograph in this pair already belongs to another card. Choose new Front and Back photos of this physical card, or open its existing grading workspace.',
     WORKSPACE_REQUEST_INVALID: 'Check the highlighted card details and try again.',
-    SIGN_IN_REQUIRED: 'Your session ended. Sign in again, then recover the saved request.',
+    SIGN_IN_REQUIRED: 'Your session ended. Sign in again to continue.',
     CSRF_REQUIRED: 'Refresh your staff access before continuing.',
     PREPARATION_RELEASE_NOT_ADMITTED: 'Image preparation is awaiting its approved service release. Your saved photos and boundary edits are kept.',
     GRADING_WORK_UNRESOLVED: 'Recorded work still needs to settle before this card can change operators.'
 };
-export const workspaceMessage = error => messages[error?.code] ?? error?.message ?? 'This request could not be confirmed. Recover the saved request before continuing.';
+export const workspaceMessage = error => messages[error?.code] ?? error?.message ?? 'This action could not be confirmed. Its recorded status will be checked before another action.';
 export const isNotDispatched = error => error?.outcome === 'NOT_DISPATCHED' && denialCodes.has(error?.code);
 export const operationId = () => globalThis.crypto.randomUUID();
 export const workspaceCardPath = id => `workspace/cards/${id}`;
@@ -63,6 +67,17 @@ export function checkedCardResult(result, pending) {
         || (pending.cardId && card.id !== pending.cardId)
         || (pending.body.expectedRevision != null && card.revision < pending.body.expectedRevision)) {
         throw Object.assign(new Error('The saved result could not be matched to this request. Recover the same request before continuing.'), { code: 'REQUEST_OUTCOME_UNCONFIRMED' });
+    }
+    return card;
+}
+/** A read after a proven rejection refreshes the view; it is not a receipt for
+ * the rejected command and must never settle an uncertain write. */
+export function checkedCardRefresh(result, pending) {
+    const card = result?.card;
+    if (!card || card.id !== pending.cardId || !Number.isSafeInteger(card.revision)
+        || card.revision < (pending.body.expectedRevision ?? 1)
+        || !Object.hasOwn(stateNames, card.state) || !Object.hasOwn(stageNames, card.stage)) {
+        throw new Error('The latest card could not be confirmed. Refresh the card to try again.');
     }
     return card;
 }
