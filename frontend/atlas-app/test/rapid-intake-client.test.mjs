@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { uploadRapidIntakeEntry } from '../lib/rapid-intake.mjs';
 import { captureRapidCameraPhoto } from '../lib/rapid-camera.mjs';
-import { fixture, photo, clone, settle } from './rapid-intake-harness.mjs';
+import { fixture, photo, clone, settle, waitFor } from './rapid-intake-harness.mjs';
 function uploadFixture() {
     const f = fixture();
     f.saved = [{ id: randomUUID(), title: 'Staff label', files: { FRONT: photo('front'), BACK: photo('back') }, identity: {}, uploads: {}, card: null, pending: null, pairConfirmed: true }];
@@ -14,7 +14,7 @@ function uploadFixture() {
 test('large object PUTs overlap while manifests/completions retain exact revision order', async () => {
     const f = uploadFixture(), release = new Map(), originalPut = f.put;
     f.put = (grant, file) => new Promise(resolve => release.set(file.name, async () => { await originalPut(grant, file); resolve(); }));
-    const run = f.run(); for (let i = 0; i < 8; i++) await settle();
+    const run = f.run(); await waitFor(() => release.size === 2, 'both original photo PUTs to start');
     assert.equal(release.size, 2, 'Both PUTs start without waiting for Front bytes');
     assert.deepEqual(f.requests.map(value => value.path.split('/').at(-1)), ['cards', 'upload-plan', 'upload-plan']);
     await release.get('back.png')(); await settle(); assert.equal(f.requests.length, 3);

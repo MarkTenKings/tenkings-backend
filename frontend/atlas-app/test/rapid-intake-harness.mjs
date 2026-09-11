@@ -11,6 +11,15 @@ const require = createRequire(import.meta.url), babel = require('next/dist/compi
 const code = babel.transformSync(readFileSync(new URL('../components/PhotoIntake.jsx', import.meta.url), 'utf8'), { filename: 'PhotoIntake.jsx', presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false }).code;
 export const photo = name => new File([`original photograph ${name}`], `${name}.png`, { type: 'image/png', lastModified: 1 });
 export const settle = () => new Promise(resolve => setImmediate(resolve));
+// Event-loop turns do not bound WebCrypto, Blob reads or uploads. Yield until
+// the test's observable state arrives, with a deadline that names the wait.
+export async function waitFor(predicate, description, { timeoutMs = 5000 } = {}) {
+    const deadline = performance.now() + timeoutMs;
+    while (!predicate()) {
+        assert.ok(performance.now() < deadline, `Timed out waiting for ${description}`);
+        await settle();
+    }
+}
 export function clone(value) {
     if (value instanceof File) return new File([value], value.name, { type: value.type, lastModified: value.lastModified });
     if (value instanceof Blob) return value.slice(0, value.size, value.type);
@@ -36,6 +45,7 @@ export function fixture() {
     const f = { saved: [], cards: new Map(), receipts: new Map(), requests: [], puts: [], grants: new Map(), objects: new Map(), failAfter: new Map(), accessCalls: 0 };
     f.access = async () => { f.accessCalls++; return { csrf: 'a'.repeat(64) }; };
     f.prepare = client.prepareIntakePhoto;
+    f.describe = client.describePhoto;
     f.write = async entries => { if (f.failWrite) { f.failWrite = false; throw new Error('Quota exceeded'); } f.saved = clone(entries); };
     f.request = async (path, { body }) => {
         const action = path === 'workspace/cards' ? 'create' : path.split('/').at(-1);
@@ -99,7 +109,7 @@ export async function mount(f, props = {}) {
         if (module === './WorkspaceShared') return { PhotoPreview: 'PhotoPreview', OriginalHeicDownload: 'OriginalHeicDownload', Readiness: 'Readiness', StateBadge: 'StateBadge' };
         if (module === '../lib/workspace-drafts.mjs') return { createPhotoDraftStore: () => ({ read: async () => clone(f.saved), write: entries => f.write(entries) }) };
         if (module === '../lib/workspace-client.mjs') return { ...client, workspaceRequest: f.request, freshWorkspaceAccess: () => f.access(), prepareIntakePhoto: (...args) => f.prepare(...args) };
-        if (module === '../lib/rapid-intake.mjs') return { ...rapid, uploadRapidIntakeEntry: (entry, options) => rapid.uploadRapidIntakeEntry(entry, { ...options, put: f.put }) };
+        if (module === '../lib/rapid-intake.mjs') return { ...rapid, uploadRapidIntakeEntry: (entry, options) => rapid.uploadRapidIntakeEntry(entry, { ...options, put: (...args) => f.put(...args), describe: (...args) => f.describe(...args) }) };
         if (module === '../lib/workspace-identification.mjs') return identity;
         if (module === '../lib/routes.mjs') return { STAFF_REAUTHENTICATE_PATH: '/admin?reauthenticate=1' };
         if (module === '../lib/usePendingNavigation') return { usePendingNavigation() {} };
@@ -110,11 +120,12 @@ export async function mount(f, props = {}) {
         nodes: predicate => all(tree, predicate), text: () => text(tree),
         button(label, index = 0) { const value = all(tree, node => node.type === 'button' && text(node).includes(label))[index]; assert.ok(value, label); return value; },
         files: () => all(tree, node => node.type === 'input' && node.props.type === 'file'),
-        async flush(rounds = 8) { for (let i = 0; i < rounds; i++) { await settle(); h.render(); } },
+        async flush() { await settle(); h.render(); },
+        waitFor(predicate, description, options) { return waitFor(() => { h.render(); return predicate(); }, description, options); },
         async select(index, file) { h.files()[index].props.onChange({ target: { files: [file], value: 'selected' } }); await h.flush(); },
         async click(label, index) { await h.button(label, index).props.onClick(); await h.flush(); },
         async change(label, value, index = 0) { const labels = all(tree, node => node.type === 'label' && text(node).startsWith(label)); const input = all(labels[index], node => ['input', 'select'].includes(node.type))[0]; assert.ok(input, label); await input.props.onChange({ target: { value } }); await h.flush(); },
         async event(name) { listeners.get(name)?.(); await h.flush(); }
     };
-    h.render(); await h.flush(); return h;
+    h.render(); await h.waitFor(() => !h.text().includes('Opening your saved photographs…'), 'saved draft storage to open'); return h;
 }
