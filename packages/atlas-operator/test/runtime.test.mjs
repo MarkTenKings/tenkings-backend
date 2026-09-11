@@ -11,13 +11,14 @@ import { machineInitializationExecutionClient, verifyMachineInitializationExecut
     MACHINE_INITIALIZATION_EXECUTION_SIGNATURE_HEADER } from '@atlas/service-bridge/machine-initialize-transport';
 import { makeOperatorConfig } from '../src/policy.mjs';
 import { productionOperatorConfig, executeOperatorRun, executeOperatorInitialization, INITIALIZATION_MS, RUNTIME_TOOLS, CONNECT_MS, RECEIPT_DRAIN_MS, DISCONNECT_MS } from '../src/runtime.mjs';
+import { reportOperatorFailure } from '../src/runner.mjs';
 import { main, parseArguments, readReleaseManifest } from '../scripts/run.mjs';
 
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return { promise,resolve,reject }; };
 const flush = async () => { for (let i=0;i<100;i++) await Promise.resolve(); };
 function fakeClock() {
     let time=0, serial=0; const timers=new Map();
-    return { setTimeout(fn,ms) { const id=++serial; timers.set(id,{at:time+ms,fn}); return id; }, clearTimeout(id) { timers.delete(id); },
+    return { now:()=>time, setTimeout(fn,ms) { const id=++serial; timers.set(id,{at:time+ms,fn}); return id; }, clearTimeout(id) { timers.delete(id); },
         async advance(ms) { const end=time+ms; await flush();
             for (;;) { const entry=[...timers.entries()].filter(([,v])=>v.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];
                 if (!entry) break; timers.delete(entry[0]);time=entry[1].at;entry[1].fn();await flush(); }
@@ -82,6 +83,36 @@ test('one exact admitted run uses current role validation before adapters and di
     const f=fixture(),r=await f.start();assert.equal(r.state,'READY_FOR_HUMAN');assert.equal(r.exitCode,0);assert.equal(r.disconnect,'CLOSED');
     assert.deepEqual(r.receipts,{total:1,persisted:1,unconfirmed:0,pending:0});
     assert.deepEqual(f.events,['client','connect','authority','evidence-client','adapters','run','provider','disconnect']);assert.equal(f.clock.count(),0);
+});
+
+test('runtime forwards private runner diagnostics without changing its strict result shape',async()=>{
+    const f=fixture(),diagnostics=[];
+    const result=await f.start({onDiagnostic:event=>diagnostics.push(event),run:async options=>{
+        reportOperatorFailure(options.onDiagnostic,{runId:options.runId,phase:'LEDGER',operation:'reserve',
+            error:Object.assign(new Error('private request and SQL'),{code:'P2028'}),elapsedMs:125});
+        return {runId:options.runId,state:'FAILED',code:'ASTRA_DATABASE_TRANSACTION_FAILED',stepsApplied:0,receiptWrites:[]};
+    }});
+    assert.deepEqual(diagnostics,[{runId:f.input.runId,phase:'LEDGER',operation:'reserve',
+        code:'ASTRA_DATABASE_TRANSACTION_FAILED',errorCode:'P2028',elapsedMs:125}]);
+    assert.equal(result.state,'FAILED');assert.equal(result.disconnect,'CLOSED');
+    assert(!Object.hasOwn(result,'diagnostics'));assert(!JSON.stringify({result,diagnostics}).includes('private request'));
+});
+
+test('runtime admission and disconnect failures identify their phase while retaining bounded cleanup',async()=>{
+    const f=fixture(),gate=deferred(),diagnostics=[];
+    f.ledger.transaction=()=>gate.promise;
+    f.client.$disconnect=async()=>{throw Object.assign(new Error('private connection metadata'),{code:'P1017'});};
+    const pending=f.start({onDiagnostic:event=>diagnostics.push(event)});
+    await flush();await f.clock.advance(400);
+    gate.reject(Object.assign(new Error('private SQL parameters'),{code:'P2028'}));
+    const result=await pending;
+    assert.deepEqual(diagnostics,[
+        {runId:f.input.runId,phase:'RUNTIME',operation:'ADMISSION',code:'ASTRA_DATABASE_TRANSACTION_FAILED',errorCode:'P2028',elapsedMs:400},
+        {runId:f.input.runId,phase:'RUNTIME',operation:'DISCONNECT',code:'ASTRA_DATABASE_CONNECTION_CLOSED',errorCode:'P1017',elapsedMs:0},
+    ]);
+    assert.equal(result.state,'RECONCILIATION_REQUIRED');assert.equal(result.disconnect,'UNCONFIRMED');
+    assert(!f.events.includes('provider'));assert(!f.events.includes('run'));assert.equal(f.clock.count(),0);
+    assert(!JSON.stringify({result,diagnostics}).includes('private'));
 });
 
 test('optional control revision rejects malformed input before verification or any database work',async()=>{

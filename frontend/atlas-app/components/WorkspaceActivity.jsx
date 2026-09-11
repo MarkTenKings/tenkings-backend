@@ -14,10 +14,15 @@ const recordedDollars = microUsd => {
     return `$${String(cents / 100n).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${String(cents % 100n).padStart(2, '0')}`;
 };
 
-export function operatorPresentation(control, card) {
+export function operatorPresentation(control, card, { interrupted = false, watch = true, connecting = false } = {}) {
+    if (!watch) return { label: 'Activity updates paused', tone: 'idle', description: 'The last saved activity is shown below. Turn live updates on to check Astra’s current progress.' };
+    if (interrupted) return { label: 'Reconnecting to Astra', tone: 'attention', description: 'Current progress is unconfirmed. Activity updates will retry automatically; your saved photographs and activity are kept.' };
+    if (connecting) return { label: 'Checking Astra’s progress', tone: 'idle', description: 'Loading a current activity update. Your previously saved activity remains available below.' };
     if (!control) return { label: card.operator?.kind === 'HUMAN' ? 'Human at the controls' : 'Connecting to Astra', tone: 'idle', description: 'Opening the saved activity for this card.' };
     const attention = ['NEEDS_ATTENTION', 'UNKNOWN', 'FAILED'].includes(control.state);
-    if (attention) return { label: 'Astra needs attention', tone: 'attention', description: control.pending ? 'A saved action needs recovery. Your photos and earlier results are retained.' : 'Work has stopped at a recorded issue. Your card and its saved results are kept.' };
+    if (attention) return { label: 'Astra needs attention', tone: 'attention', description: control.pending ? 'A saved action needs recovery. Your photos and earlier results are retained.'
+        : control.failureCode === 'ASTRA_DATABASE_TRANSACTION_FAILED' ? 'Astra stopped because it could not confirm its saved progress. Your photographs and completed results are kept.'
+            : 'Work has stopped at a recorded issue. Your card and its saved results are kept.' };
     if (control.state === 'WAITING_REVIEW' || card.state === 'HUMAN_REVIEW') return { label: 'Ready for human review', tone: 'complete', description: 'The draft is ready. A human reviewer makes the final call.' };
     const description = control.state === 'RUNNING' ? `${stageNames[card.stage] ?? 'Grading'} is in progress. ${control.mode === 'STEP' ? 'Astra will pause after this step.' : 'Astra continues through the grading stages.'}`
         : control.state === 'QUEUED' ? 'The next action is queued and will start when the operator is available.'
@@ -38,13 +43,16 @@ function SavedEvidence({ entry, card }) {
     </>;
 }
 
-export default function WorkspaceActivity({ card, disabled, onControl, onObservedCard }) {
+export default function WorkspaceActivity({ card, disabled, onControl, onObservedCard, onConnectionChange }) {
     const [snapshot, setSnapshot] = useState(null), [error, setError] = useState(''), [refreshing, setRefreshing] = useState(false), [watch, setWatch] = useState(true), [generation, setGeneration] = useState(0), [lastReadAt, setLastReadAt] = useState(null);
+    const [connectionState, setConnectionState] = useState('CONNECTING');
     const observed = useRef(onObservedCard); observed.current = onObservedCard;
+    const connectionChanged = useRef(onConnectionChange); connectionChanged.current = onConnectionChange;
     const [recoveryReview, setRecoveryReview] = useState(null), [recoveryReason, setRecoveryReason] = useState('');
     const recoverySending = useRef(false);
     useEffect(() => {
         let active = true, timer; const controller = new AbortController();
+        setConnectionState(watch ? 'CONNECTING' : 'PAUSED'); connectionChanged.current?.(watch ? 'CONNECTING' : 'PAUSED');
         async function load() {
             setRefreshing(true); let failed = false;
             try {
@@ -54,18 +62,27 @@ export default function WorkspaceActivity({ card, disabled, onControl, onObserve
                 if (!active) return;
                 if (latest.card?.id === card.id) observed.current?.(latest.card);
                 const next = await workspaceRequest(`${workspaceCardPath(card.id)}/activity`, { signal: controller.signal });
-                if (active) { setSnapshot({ ...next, cardId: card.id }); setLastReadAt(new Date().toISOString()); setError(''); }
-            } catch (cause) { failed = true; if (active) setError(workspaceMessage(cause)); }
+                if (active) { setSnapshot({ ...next, cardId: card.id }); setLastReadAt(new Date().toISOString()); setError(''); setConnectionState(watch ? 'CONNECTED' : 'PAUSED'); connectionChanged.current?.(watch ? 'CONNECTED' : 'PAUSED'); }
+            } catch (cause) {
+                failed = true;
+                if (active) {
+                    setError(['SIGN_IN_REQUIRED', 'CSRF_REQUIRED'].includes(cause?.code) ? workspaceMessage(cause)
+                        : cause?.code === 'WORKSPACE_CARD_NOT_FOUND' ? 'This card is outside the active workspace. Return to the grading queue to view current cards.'
+                            : watch ? 'Astra’s activity could not be refreshed. Reconnecting automatically; your saved work is kept.'
+                                : 'Astra’s activity could not be refreshed. Turn live updates on or refresh the saved activity to check its current progress.');
+                    setConnectionState(watch ? 'INTERRUPTED' : 'PAUSED'); connectionChanged.current?.(watch ? 'INTERRUPTED' : 'PAUSED');
+                }
+            }
             finally { if (active) { setRefreshing(false); if (watch) timer = setTimeout(load, failed ? 8000 : 4000); } }
         }
         load(); return () => { active = false; clearTimeout(timer); controller.abort(); };
     }, [card.id, watch, generation]);
     const current = snapshot?.cardId === card.id ? snapshot : null, control = current?.control;
     const activity = [...(current?.activity ?? [])].sort((first, second) => Date.parse(second.at) - Date.parse(first.at));
-    const presentation = operatorPresentation(control, card), pausedView = !watch || Boolean(error);
-    const connection = error ? 'Updates interrupted' : !watch ? 'Updates paused' : current ? 'Live updates on' : 'Connecting';
+    const pausedView = !watch || Boolean(error) || connectionState !== 'CONNECTED', presentation = operatorPresentation(control, card, { interrupted: Boolean(error), watch, connecting: connectionState === 'CONNECTING' });
+    const connection = !watch ? 'Updates paused' : error ? 'Updates interrupted' : current && connectionState === 'CONNECTED' ? 'Live updates on' : 'Connecting';
     const currentRecovery = control?.canAbandon === true ? control.attemptRecovery : null;
-    const reviewCurrent = recoveryReview && currentRecovery?.reviewHash === recoveryReview.reviewHash
+    const reviewCurrent = !pausedView && recoveryReview && currentRecovery?.reviewHash === recoveryReview.reviewHash
         && recoveryReview.cardId === card.id && recoveryReview.cardRevision === card.revision;
     async function continueReviewedStep() {
         if (disabled || recoverySending.current || !reviewCurrent || !recoveryReason.trim()) return;
@@ -77,12 +94,13 @@ export default function WorkspaceActivity({ card, disabled, onControl, onObserve
     }
     return <section className={`${styles.activity} ${styles[`activity${presentation.tone}`] ?? ''}`} aria-label="Astra controls and live activity">
         <div className={styles.controllerHeading}><div><p>ASTRA CONTROL</p><h2>Watch Astra</h2></div><label className={styles.liveToggle}><input type="checkbox" checked={watch} onChange={event => setWatch(event.target.checked)} aria-label="Keep activity updated" /><span aria-hidden="true" /></label></div>
-        <div className={styles.connectionState}><span className={watch && !error && current ? styles.connectedDot : styles.disconnectedDot} aria-hidden="true" />{connection}<span className={styles.connectionMode}>{control?.mode === 'CONTINUOUS' ? 'Continuous' : control?.mode === 'STEP' ? 'Step mode' : 'Workspace'}</span></div>
+        <div className={styles.connectionState}><span className={!pausedView && current ? styles.connectedDot : styles.disconnectedDot} aria-hidden="true" />{connection}<span className={styles.connectionMode}>{control?.mode === 'CONTINUOUS' ? 'Continuous' : control?.mode === 'STEP' ? 'Step mode' : 'Workspace'}</span></div>
         <div className={styles.operatorStatus}><div className={styles.operatorEmblem} aria-hidden="true"><span>A</span><i /><i /><i /><i /></div><div>{pausedView && <small>Last saved state</small>}<strong role="status">{presentation.label}</strong><p>{presentation.description}</p></div></div>
         <div className={styles.controllerReadout}><div><span>CURRENT STAGE</span><strong>{stageNames[card.stage] ?? 'Grading'}</strong></div><div><span>RECENT ACTIONS</span><strong>{current ? String(activity.length).padStart(2, '0') : '—'}</strong></div></div>
-        {Boolean(control?.pending) && <div className={`${styles.pendingAction} ${presentation.tone === 'attention' ? styles.pendingAttention : ''}`}><WorkspaceIcon name={presentation.tone === 'attention' ? 'ATTENTION' : 'FEED'} /><p>{control?.canRecover ? 'Astra’s response is saved. Continue from that response to pick up where this card stopped.' : presentation.tone === 'attention' ? 'A previous action has not been confirmed. Recovery must finish before another action can start.' : `${control.pending === 1 ? 'One action is' : `${control.pending} actions are`} in progress. The saved result will appear in the feed.`}</p></div>}
-        {control?.canRecover === true && <div className={styles.continueSaved}><button type="button" disabled={disabled} onClick={() => onControl('RECOVER')}><WorkspaceIcon name="PLAY" /><span>Continue Astra</span><span aria-hidden="true">→</span></button><p>Continue from the saved response</p></div>}
-        {currentRecovery && !recoveryReview && <div className={styles.continueSaved}><button type="button" disabled={disabled} onClick={() => {
+        {Boolean(control?.pending) && <div className={`${styles.pendingAction} ${presentation.tone === 'attention' ? styles.pendingAttention : ''}`}><WorkspaceIcon name={presentation.tone === 'attention' ? 'ATTENTION' : 'FEED'} /><p>{pausedView ? 'An earlier update showed an unfinished action. Its current status is unconfirmed.' : control?.canRecover ? 'Astra’s response is saved. Continue from that response to pick up where this card stopped.' : presentation.tone === 'attention' ? 'A previous action has not been confirmed. Recovery must finish before another action can start.' : `${control.pending === 1 ? 'One action is' : `${control.pending} actions are`} in progress. The saved result will appear in the feed.`}</p></div>}
+        {control?.canRecover === true && <div className={styles.continueSaved}><button type="button" disabled={disabled || pausedView} onClick={() => { if (!disabled && !pausedView) onControl('RECOVER'); }}><WorkspaceIcon name="PLAY" /><span>Continue Astra</span><span aria-hidden="true">→</span></button><p>Continue from the saved response</p></div>}
+        {currentRecovery && !recoveryReview && <div className={styles.continueSaved}><button type="button" disabled={disabled || pausedView} onClick={() => {
+            if (disabled || pausedView) return;
             setRecoveryReview({ ...currentRecovery, cardId: card.id, cardRevision: card.revision });
             setRecoveryReason('Continue from the last saved step while retaining the unconfirmed request and its recorded cost.');
         }}><WorkspaceIcon name="ATTENTION" /><span>Review recovery</span><span aria-hidden="true">→</span></button><p>The last request has no saved result.</p></div>}
@@ -95,7 +113,7 @@ export default function WorkspaceActivity({ card, disabled, onControl, onObserve
             <div><button type="button" disabled={disabled || !reviewCurrent || !recoveryReason.trim()} onClick={continueReviewedStep}>Continue one step</button><button type="button" disabled={disabled} onClick={() => setRecoveryReview(null)}>Keep paused</button></div>
         </div>}
         {control?.unconfirmedCost?.attempts > 0 && <p className={styles.controllerHelp}>{control.unconfirmedCost.attempts === 1 ? 'One earlier request has' : `${control.unconfirmedCost.attempts} earlier requests have`} an unconfirmed charge. {recordedDollars(control.unconfirmedCost.reservedMicroUsd)} remains in the spending history.</p>}
-        <div className={styles.operatorControls}>{[['PAUSE', 'Pause Astra', 'canPause', 'PAUSE'], ['RESUME', 'Resume Astra', 'canResume', 'PLAY'], ['STEP', 'Run next step', 'canStep', 'STEP'], ['TAKE_OVER', 'Take over manually', 'canTakeOver', 'TAKE_OVER']].map(([action, label, capability, icon]) => <button type="button" key={action} className={action === 'RESUME' && control?.canResume ? styles.resumeControl : ''} disabled={disabled || control?.[capability] !== true || (['STEP', 'TAKE_OVER'].includes(action) && Boolean(control?.pending))} onClick={() => onControl(action)}><WorkspaceIcon name={icon} /><span>{label}</span></button>)}</div>
+        <div className={styles.operatorControls}>{[['PAUSE', 'Pause Astra', 'canPause', 'PAUSE'], ['RESUME', 'Resume Astra', 'canResume', 'PLAY'], ['STEP', 'Run next step', 'canStep', 'STEP'], ['TAKE_OVER', 'Take over manually', 'canTakeOver', 'TAKE_OVER']].map(([action, label, capability, icon]) => <button type="button" key={action} className={action === 'RESUME' && control?.canResume && !pausedView ? styles.resumeControl : ''} disabled={disabled || control?.[capability] !== true || (pausedView && action !== 'PAUSE') || (['STEP', 'TAKE_OVER'].includes(action) && Boolean(control?.pending))} onClick={() => { if (!pausedView || action === 'PAUSE') onControl(action); }}><WorkspaceIcon name={icon} /><span>{label}</span></button>)}</div>
         <p className={styles.controllerHelp}>Pause saves your place after the current action. Manual takeover keeps Astra’s original proposals.</p>
         {error && <Notice error>{error}</Notice>}
         <div className={styles.feedHeading}><div><WorkspaceIcon name="FEED" /><h3>Activity feed</h3><span>{activity.length}</span></div><button type="button" aria-label="Refresh recorded activity" title="Refresh recorded activity" disabled={refreshing} onClick={() => setGeneration(value => value + 1)}><WorkspaceIcon name="REFRESH" /></button></div>

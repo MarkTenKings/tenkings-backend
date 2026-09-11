@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { canonical, requireBridge as check } from '@atlas/service-bridge/protocol';
+import { canonical, requireBridge as check, UUID } from '@atlas/service-bridge/protocol';
 import { checked, parseControlPolicy, toolsForRun } from './policy.mjs';
 
 const TERMINAL = new Set(['PREPARATION_READY', 'READY_FOR_HUMAN', 'NEEDS_RECAPTURE', 'NEEDS_EXPERT']);
@@ -26,6 +26,24 @@ const databaseFailureCodes = new Map([
 ]);
 const safeCode = error => /^ASTRA_[A-Z0-9_]{1,74}$/.test(error?.code ?? error?.message)
     ? error.code ?? error.message : databaseFailureCodes.get(error?.code) ?? 'ASTRA_RUNNER_FAILED';
+const diagnosticOperations = {
+    LEDGER: new Set(['claim','snapshot','renew','reserve','takeDispatch','recordReceipt','inspectTool','applyTool','releasePause','stop']),
+    RUNTIME: new Set(['CONFIGURATION','CONNECT','ADMISSION','RUN','DRAIN','DISCONNECT']),
+};
+/** Failure-only private telemetry. Never include exception text, metadata,
+ * arguments, request bodies or model output; observers cannot affect execution. */
+export function reportOperatorFailure(observer, { runId, phase, operation, error, elapsedMs }) {
+    try {
+        if (typeof observer !== 'function' || typeof runId !== 'string' || !UUID.test(runId)
+            || typeof phase !== 'string' || !Object.hasOwn(diagnosticOperations, phase) || !diagnosticOperations[phase].has(operation)
+            || !Number.isFinite(elapsedMs)) return;
+        const driverCode = typeof error?.code === 'string' ? error.code : undefined;
+        const errorCode = /^P[0-9]{4}$/.test(driverCode ?? '') || transientReceiptCodes.has(driverCode) ? driverCode : null;
+        const event = Object.freeze({ runId, phase, operation, code: safeCode({ code: driverCode }), errorCode,
+            elapsedMs: Math.min(86_400_000, Math.max(0, Math.round(elapsedMs))) });
+        void Promise.resolve(observer(event)).catch(() => {});
+    } catch { /* A failed logger never changes a retained outcome. */ }
+}
 
 /** Run one already-enqueued job. This function never schedules/retries a job.
  *
@@ -46,7 +64,7 @@ const safeCode = error => /^ASTRA_[A-Z0-9_]{1,74}$/.test(error?.code ?? error?.m
  * it must never restart processing merely because a late receipt arrives.
  */
 export async function runOperator({ ledger, runId, owner = randomUUID(), createProvider, adapters,
-    signal, clock = systemClock }) {
+    signal, clock = systemClock, onDiagnostic }) {
     check(ledger && ['claim','snapshot','renew','reserve','takeDispatch','recordReceipt','inspectTool','applyTool','stop']
         .every(name => typeof ledger[name] === 'function') && typeof createProvider === 'function'
         && adapters && typeof adapters === 'object', 'ASTRA_RUNNER_CONFIGURATION_REQUIRED');
@@ -78,7 +96,14 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
         try { return await Promise.race([Promise.resolve().then(() => { if (!independent) alive(); return work(); }), expiry]); }
         finally { clock.clearTimeout(timer); if (listener) controller.signal.removeEventListener('abort', listener); }
     }
-    const db = work => bounded(work, DB_TIMEOUT_MS);
+    async function db(operation, work, options) {
+        const startedAt = clock.now();
+        try { return await bounded(work, DB_TIMEOUT_MS, options); }
+        catch (error) {
+            reportOperatorFailure(onDiagnostic, { runId, phase: 'LEDGER', operation, error, elapsedMs: clock.now() - startedAt });
+            throw error;
+        }
+    }
     async function persistReceipt(binding) {
         // The ledger deduplicates the exact attempt/receipt hash, including a
         // committed write whose reply was lost. Retry only settled transient
@@ -87,7 +112,7 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
         const until = clock.now() + DB_TIMEOUT_MS;
         let open = true, retryTimer;
         try {
-            await bounded(async () => {
+            await db('recordReceipt', async () => {
                 for (let attempt = 0; ; attempt++) {
                     if (!open || clock.now() >= until) throw failure('ASTRA_RECEIPT_PERSISTENCE_UNCONFIRMED');
                     try { return await ledger.recordReceipt(binding); }
@@ -98,7 +123,7 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
                         await new Promise(resolve => { retryTimer = clock.setTimeout(resolve, delay); });
                     }
                 }
-            }, DB_TIMEOUT_MS, { independent: true, code: 'ASTRA_RECEIPT_PERSISTENCE_UNCONFIRMED' });
+            }, { independent: true, code: 'ASTRA_RECEIPT_PERSISTENCE_UNCONFIRMED' });
         } finally {
             // An unresolved timed-out write may still settle. It must never
             // start another write after this receipt promise has been closed.
@@ -107,7 +132,7 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
     }
     async function snapshot() {
         const requestedAt = clock.now();
-        const snap = await db(() => ledger.snapshot(lease));
+        const snap = await db('snapshot', () => ledger.snapshot(lease));
         const parsed = parseControlPolicy(checked(snap.run.policyCanonical, snap.run.policyHash));
         check(canonical(parsed) === canonical(snap.policy) && snap.run.id === runId
             && snap.run.revision === lease.revision && snap.run.state === (recoveryAttemptId?'WAITING_TOOL':'RUNNING'), 'ASTRA_RUNNER_SNAPSHOT_INVALID');
@@ -127,11 +152,11 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
     async function external(work) {
         // Renew immediately, then serialize heartbeats only while external work
         // is outstanding. Drain an in-flight renewal before advancing revision.
-        await db(() => ledger.renew(lease));
+        await db('renew', () => ledger.renew(lease));
         let timer, pending = Promise.resolve(), done = false;
         const schedule = () => { timer = clock.setTimeout(() => {
             if (done || controller.signal.aborted) return;
-            pending = db(() => ledger.renew(lease)).catch(error => { abort(safeCode(error)); });
+            pending = db('renew', () => ledger.renew(lease)).catch(error => { abort(safeCode(error)); });
             void pending.then(() => { if (!done && !controller.signal.aborted) schedule(); });
         }, Math.floor(policy.leaseMs / 3)); };
         schedule();
@@ -143,7 +168,7 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
     const result = (state, code = null) => ({ runId, state, code, stepsApplied, receiptWrites: [...receiptWrites] });
     try {
         alive();
-        const claimed = await db(() => { claimStarted = true; return ledger.claim(runId, owner); });
+        const claimed = await db('claim', () => { claimStarted = true; return ledger.claim(runId, owner); });
         if (claimed.mode === 'PAUSED' || claimed.mode === 'TAKEN_OVER') return result(claimed.mode,
             claimed.mode === 'PAUSED' ? 'ASTRA_WORKFLOW_PAUSED' : 'ASTRA_HUMAN_TAKEOVER');
         lease = claimed.lease;
@@ -160,14 +185,14 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
             let attemptId=recoveryAttemptId;
             if (recoveryAttemptId) recoveryAttemptId=null;
             else {
-                const reserved = await db(() => ledger.reserve(lease));
+                const reserved = await db('reserve', () => ledger.reserve(lease));
                 attemptId=reserved.attemptId;
                 let dispatchRequested = false, dispatched = false;
                 const dispatchLease = { ...lease }, startedAt = new Date().toISOString();
                 const takeDispatch = async attemptId => {
                     alive(); check(attemptId === reserved.attemptId && !dispatchRequested, 'ASTRA_DISPATCH_ALREADY_CONSUMED');
                     dispatchRequested = true;
-                    const grant = await db(() => ledger.takeDispatch(dispatchLease, attemptId));
+                    const grant = await db('takeDispatch', () => ledger.takeDispatch(dispatchLease, attemptId));
                     dispatched = true; alive(); return grant;
                 };
                 const receipt = await external(async () => {
@@ -197,11 +222,11 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
             }
             // A recovery claim applies the retained response first. No request
             // reservation, provider construction or POST occurs for that tool.
-            const tool = await db(() => ledger.inspectTool(lease, attemptId));
+            const tool = await db('inspectTool', () => ledger.inspectTool(lease, attemptId));
             check(toolsForRun(policy,tool.run).includes(tool.call.name) && Object.hasOwn(adapters, tool.call.name), 'ASTRA_ADAPTER_NOT_ADMITTED');
             const adapter = adapters[tool.call.name];
             const prepared = adapter.prepare ? await external(() => adapter.prepare(tool, { signal: controller.signal })) : undefined;
-            const applied = await db(() => ledger.applyTool(lease, attemptId, data => {
+            const applied = await db('applyTool', () => ledger.applyTool(lease, attemptId, data => {
                 alive();
                 check(canonical(data.call) === canonical(tool.call), 'ASTRA_TOOL_CHANGED');
                 return adapter.apply(data, prepared);
@@ -212,13 +237,13 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
             lease = applied.lease; stepsApplied++;
             if (applied.requiresPauseRelease) {
                 check(applied.state === 'PREPARATION_READY' && typeof ledger.releasePause === 'function', 'ASTRA_CONTROL_ADAPTER_REQUIRED');
-                const paused = await db(() => ledger.releasePause(lease));
+                const paused = await db('releasePause', () => ledger.releasePause(lease));
                 check(paused?.state === 'PAUSED', 'ASTRA_CONTROL_NOT_SETTLED');
             }
             if (TERMINAL.has(applied.state)) return result(applied.state);
             if (applied.state === 'PAUSED') {
                 check(typeof ledger.releasePause === 'function', 'ASTRA_CONTROL_ADAPTER_REQUIRED');
-                const paused = await db(() => ledger.releasePause(lease));
+                const paused = await db('releasePause', () => ledger.releasePause(lease));
                 check(paused?.state === 'PAUSED', 'ASTRA_CONTROL_NOT_SETTLED');
                 return result('PAUSED', 'ASTRA_WORKFLOW_PAUSED');
             }
@@ -231,12 +256,12 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
         if (!lease) return result(claimStarted ? 'RECONCILIATION_REQUIRED' : 'NOT_CLAIMED', code);
         if (code === 'ASTRA_WORKFLOW_PAUSED' && typeof ledger.releasePause === 'function') {
             try {
-                const paused = await bounded(() => ledger.releasePause(lease), DB_TIMEOUT_MS, { independent: true });
+                const paused = await db('releasePause', () => ledger.releasePause(lease), { independent: true });
                 if (paused?.state === 'PAUSED') return result('PAUSED', code);
             } catch { return result('RECONCILIATION_REQUIRED', code); }
         }
         try {
-            const stopped = await bounded(() => ledger.stop(lease, { code }), DB_TIMEOUT_MS, { independent: true });
+            const stopped = await db('stop', () => ledger.stop(lease, { code }), { independent: true });
             // A timeout or lost transaction reply never proves rollback. Only
             // the durable fenced stop may report a safely failed run.
             return result(stopped?.state === 'FAILED' ? 'FAILED' : 'RECONCILIATION_REQUIRED', code);

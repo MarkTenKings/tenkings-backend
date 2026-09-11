@@ -1,6 +1,47 @@
 # ATLAS website release status
 
-Current Start repair checkpoint — September 11, 2026, 11:04 UTC: the owner’s real iPhone capture saved verified Ja Morant and Jalen Brunson pairs in the new cohort. A stale bridge roster still containing retired Charmander caused Start to fail, while the UI incorrectly offered Start and treated that definite refusal as an uncertain saved request. The owner explicitly requested removal of the blocking yellow recovery panel. The exact Ja Morant card `60d05aed-6ccc-46d7-82d8-97128f7e5575` is now admitted; grading control is revision5 with policy hash `4c32decb12aab03854fc6526b3364723a744cf320d6426f11c5216bcea2860c7`. All other controls, cohort, accounting, expiry and processing limit1 remain as at the clearance checkpoint. Jalen Brunson remains saved and waiting.
+> Current fresh-start state (2026-09-11 13:05 UTC): active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` is independently verified empty. Automatic first-pair enrollment and connection-state fixes pass focused local tests; production rollout and the actual database-transaction failure fix remain pending. See the latest session-log entry.
+
+Historical H deployment checkpoint before the fresh-start reset — September 11, 2026: source `6cf6e66434c151c76d92590b1262cb1d1e62af83` is deployed to staff, public and private H. All 14 actual main checks passed; production has 95 public/33 staff migrations and all four canonical role checks pass. Independent readback verifies the G→H private route, exact eight-field health and all four public aliases. All 20 final public/asset GET acceptance checks passed. The owner has since canceled Ja continuation and requested clearing every active card to zero for a fresh test; that clearance is pending verification. The prior Ja sign-in/Resume request is canceled.
+
+The completed H adoption readback found the same Ja Morant run control `PAUSED`, with card revision9 and all three applied attempts, receipts and steps preserved. Owner-only deployment maintenance changed only the eight control bindings, this card/run metadata and one immutable NULL-actor audit. It excluded the proven outage from the remaining active-time allowance: 3,483,543ms remain, with deadline `2026-09-11T13:29:05.990Z`, capped by original expiry. No HUMAN OPERATIONS grant, recovery command or model request was created. The active cohort, exact Ja roster, `ACCOUNTING_ONLY`, processing limit1, original pilot/expiry and all financial history remain intact; Jalen is saved and waiting. Both Charmander recovery and Ja continuation are canceled. Clearing the active cohort does not itself admit a new card: the live bridge roster must be rebound to the exact next verified pair before processing; no empty or wildcard roster is supported.
+
+H fixes the confirmed Start refusal loop: current admission and capacity now gate Start before claim creation; a definite `NOT_DISPATCHED` refusal clears the browser journal, while an unknown reply automatically reconciles the same operation ID and body. The blocking client saved-request panel and alternate-tab sign-in link are removed. Genuine source-operation and provider-response recovery controls remain authority-gated.
+
+The valid Ja continuation contained 10,219,398 bytes. Its former 4MiB dispatcher guard caused repeat re-admission failure; H uses the existing shared 12MiB Responses request bound without relaxing canonical/hash/evidence validation. This does not establish the cause of the original generic runner stop at 10:56:29 UTC. That cause remains unproven; safe database error categories improve future diagnosis. A fresh-card test, subsequent grading through human review, approval/publication and physical finishing acceptance remain unverified.
+
+## Current H deployment and evidence
+
+H tree `4f8f2218d96e76133c0b7da7858c0c9cb9b1c4a2` passed all 14 actual main checks in [run 34595486734](https://github.com/MarkTenKings/tenkings-backend/actions/runs/34595486734), attempt1. Final acceptance plan `release-6cf6e66434c1-r13.json` preserves the immutable promotion plan and appends its actual readback. The completed migration plan's `pending` list records the two intended additions; the independent after-ledger establishes that both are now applied.
+
+| H component | Verified identity | Observed state |
+| --- | --- | --- |
+| Staff | `dpl_FrzapPN27fEXM9sncqHJ3oygAkMY` / `atlas-grading-staff-hci67hr7t-ten-kings.vercel.app` | READY; exact H constructor binding |
+| Public gateway | `dpl_6v2h5PguYpbCJkHHrqtGY7qcUqpA` / `atlas-grading-public-h3phaovi6-ten-kings.vercel.app` | All four aliases independently verified on H at 12:35 UTC; customer/legacy preserved |
+| Private H | `atlas-workspace-private-h-20260911`; container `64ed047cd24670ade48b707522a2731b2d2a13c284e5ca38280a1b00894a031e` | Exact eight-field health and G→H route verified; logical deployment remains `atlas-workspace-private-20260910`; all 19 prior containers preserved |
+| Native operator | Build `50d8f3d8ee96107e2f0769bad2871e7fe1fb97559a1405e282dbdbb97651ea04`; runtime `500529c748deb4494a6b8a261ec61d727da584dc2f20bbe2f418d9e6a85151b9` | Actual Linux x64 Node v20.20.1 native load verified; manifest SHA256 `1abfd2b83684046bce25b3a64129153e3f2b236a6f26b7394f9bcf795f9c5321` |
+| Database and controls | 95 public / 33 staff migrations; readiness700 and maintenance800 applied | staff14/workspace10/source9/grading6/image5/operator5/identification4 and STAFF SMS12; unchanged policies and canonical role access |
+| Active test | Ja card `60d05aed-6ccc-46d7-82d8-97128f7e5575`; run `6674413d-de4f-4359-bd43-5c91fa949986` | Card9; control PAUSED; three original applied responses; owner canceled Ja continuation; clearance of Ja/Jalen is pending verification |
+
+H evidence is retained under `/Users/markthomas/.codex/atlas-handoffs/atlas-start-fix-20260911/`. These actual receipts supersede the older deployment checkpoints below.
+
+| H evidence | SHA256 and observed result |
+| --- | --- |
+| `release-6cf6e66434c1-r13.json` | `c7061527ecddb3dabb516414c2abc011dc4f17e32f173f7de582318ea003509f`; final source, main CI, deployment and route references |
+| `main-ci-6cf6e66434c1.json` | `27445400a0cc4c29af05366a6345e5e439d1841b5b40bef75233136b3b645f7b`; all 14 actual main checks passed |
+| `provider-staff-binding-6cf6e66434c1.json` | `4cf90ed0e338f9556734e4448ee2d9d322fede07276cb6e2d97de18f8a16d719`; exact H staff binding |
+| `provider-public-binding-6cf6e66434c1.json` | `2a4fecfab4a0c89aa1f980a696b8e857e150ac707ca58d671dd26978d35fe759`; exact H public-to-staff origin |
+| `migration-apply-1789129114978-result.private.json` | `a51c07342388ba975680bf072613986aa992b170bd9416b121e4152d6f3f98ee`; 12:18:55 UTC: both additive migrations verified, public95/staff33 |
+| `h-runtime-operator-linux-6cf6e66434c1/h-runtime-native-verified.json` | `bad5693f71418adcefa7b8b5b020708ee690802515e106363394fbdd1fbe5571`; unchanged offline verifier passed all six startup and four control-revision checks, with zero database/provider clients |
+| `h-rebind-6cf6e66434c1.verified.json` | `d39518633ca5bb74a6ece20505323b2a06e1d6b7f2d1c4dcd1f5c64da1bc92ca`; independent controls and settled Ja maintenance verification; audit `12e43005-1a20-4220-91cf-9cf8e6e93606`; all unrelated rows and attempt history preserved |
+| `h-route-review-6cf6e66434c1.json` | `bd414f8aac9c96546d05687ad6a00b2ae62f9c7dd103d862b8611bc6f367357d`; exact H private health, mounted/active Caddy route and retained-container readback |
+| `provider-public-promote-6cf6e66434c1.readback-1789130101651.private.json` | `97e70b35786f078f814041fef20d745cbed4c2d64fe267fb78dcb7ce2a4bffc0`; all four public aliases, H staff origin/private health and customer/legacy preservation independently verified |
+
+Local validation passed: staff426, operator/service319, production staff build and the complete disposable PostgreSQL242 scenarios with the 95/33 migration chain and repeat no-op check. The owned database was stopped and removed. HTTP helper correction passed 14 focused offline tests; live HTTP acceptance is recorded separately when complete. Its client source proof cannot establish authenticated rendering, actual fresh-card processing, camera hardware or complete grading.
+
+The earlier Start, clearance and G/F/E checkpoints below retain their original observations. Their deployment identities, revision counts, pending release tasks and acceptance claims are historical wherever superseded by this H checkpoint.
+
+Historical Start repair checkpoint — September 11, 2026, 11:04 UTC: the owner’s real iPhone capture saved verified Ja Morant and Jalen Brunson pairs in the new cohort. A stale bridge roster still containing retired Charmander caused Start to fail, while the UI incorrectly offered Start and treated that definite refusal as an uncertain saved request. The owner explicitly requested removal of the blocking yellow recovery panel. The exact Ja Morant card `60d05aed-6ccc-46d7-82d8-97128f7e5575` is now admitted; grading control is revision5 with policy hash `4c32decb12aab03854fc6526b3364723a744cf320d6426f11c5216bcea2860c7`. All other controls, cohort, accounting, expiry and processing limit1 remain as at the clearance checkpoint. Jalen Brunson remains saved and waiting.
 
 Automatic pickup started Ja Morant at 10:54:54 UTC. Run `6674413d-de4f-4359-bd43-5c91fa949986` has three saved/applied photo-inspection responses and no unresolved provider attempt at the 11:04 readback, but its RUNNING/CAPTURE_REVIEW state has an expired lease and has not advanced since 10:56:29; that continuation is being investigated. Evidence `g-ja-morant-progress-1789124693013.private.json` SHA256 `57cbc888ce394ea82e6221360043eb25e74a5ecd4c5704d6a3b1f4b265560a65` is retained under the G handoff root. Completed grading and human approval are not claimed.
 
@@ -18,7 +59,7 @@ G includes smaller ledger projections, bounded retries of the same captured resp
 
 The superseded F server was stopped at 10:08:24 UTC after public acceptance. Its original helper then failed a stdout assertion; independent readback at 10:09:26 UTC confirmed F exited, current G health, unchanged routing and all 18 other containers. The stop was not replayed. F and earlier C/D/E containers and rollback files are retained. Earlier F/C/D/E bindings, spending ceilings and acceptance checkpoints below are historical where superseded by this G checkpoint.
 
-## Current G deployment and evidence
+## Historical G deployment and evidence
 
 Merged source `3f341e64531ea231ad262a3816aecefd9c5cbdc7`, tree `f4ea8beb44b0f216948ebc879f027f726238b68f`, passed all 14 actual main checks in [run 34580560213](https://github.com/MarkTenKings/tenkings-backend/actions/runs/34580560213). The final root-reviewed deployment acceptance plan is `release-3f341e64531e-r13.json`; it appends the observed promotion receipt to the immutable promotion plan. The later 10:31 UTC active-test clearance changes only the three cohort controls recorded below; deployment identities and the original release receipts remain unchanged.
 

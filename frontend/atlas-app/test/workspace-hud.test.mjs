@@ -8,7 +8,7 @@ import * as client from '../lib/workspace-client.mjs';
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core');
 const compiled = path => babel.transformSync(readFileSync(new URL(path, import.meta.url), 'utf8'), { filename: path,
     presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false }).code;
-const stagesCode = compiled('../components/WorkspaceStages.jsx'), activityCode = compiled('../components/WorkspaceActivity.jsx'), viewCode = compiled('../components/AstraStageView.jsx');
+const stagesCode = compiled('../components/WorkspaceStages.jsx'), activityCode = compiled('../components/WorkspaceActivity.jsx'), viewCode = compiled('../components/AstraStageView.jsx'), workspaceCode = compiled('../components/CardGradingWorkspace.jsx');
 const at = '2026-09-10T22:50:00.000Z';
 const card = () => ({ id: 'test-card', revision: 7, title: 'Saved card', stage: 'IDENTITY', state: 'IN_PROGRESS', operator: { kind: 'ASTRA', mode: 'CONTINUOUS' },
     observedOperator: { state: 'RUNNING' }, identity: {}, workspace: {}, sides: [{ side: 'FRONT', status: 'VERIFIED', width: 3024, height: 4032 }, { side: 'BACK', status: 'VERIFIED', width: 3024, height: 4032 }] });
@@ -23,14 +23,19 @@ function harness(code, props, injected = {}) {
         useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial; return [slots[index], next => { slots[index] = typeof next === 'function' ? next(slots[index]) : next; }]; },
         useRef(initial) { const index = cursor++; if (!(index in slots)) slots[index] = { current: initial }; return slots[index]; },
         useEffect(action, deps) { const index = cursor++, old = slots[index]; if (!old || deps.some((value, i) => value !== old.deps[i])) { const next = { deps }; slots[index] = next; effects.push(() => { old?.cleanup?.(); next.cleanup = action(); }); } } };
-    vm.runInNewContext(code, { exports, AbortController, performance: { now: () => elapsed },
+    vm.runInNewContext(code, { exports, AbortController, performance: { now: () => elapsed }, sessionStorage: { getItem: () => null },
         setInterval(callback, ms) { const id = ++timerId; timers.set(id, { callback, ms, interval: true }); return id; }, clearInterval(id) { timers.delete(id); },
         setTimeout(callback, ms) { const id = ++timerId; timers.set(id, { callback, ms, interval: false }); return id; }, clearTimeout(id) { timers.delete(id); },
         require(name) {
             if (name === 'react') return react;
+            if (name === 'next/link') return 'link';
             if (name === './Shell') return { Notice: 'notice' };
             if (name === './WorkspaceIcon') return 'icon';
             if (name === './WorkspaceShared') return { PhotoPreview: 'photo', ReportLink: 'report-link' };
+            if (['./PhotoIntake', './WorkspaceActivity', './WorkspaceStages', './AstraStageView'].includes(name)) return name.slice(2);
+            if (name === './WorkspaceGeometry') return {};
+            if (name === '../lib/useWorkspaceMutation') return { useWorkspaceMutation: () => ({ ready: true, busy: false, pending: null }) };
+            if (name === '../lib/usePendingNavigation') return { usePendingNavigation() {} };
             if (name === '../lib/workspace-client.mjs') return { ...client, ...injected };
             if (name.endsWith('.module.css')) return new Proxy({}, { get: (_, name) => name === '__esModule' ? false : name });
             return require(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
@@ -97,6 +102,50 @@ test('activity feed orders actual saved events newest first and cannot recover w
     assert.match(text(f.nodes(node => node.type === 'li')[0]), /Identity proposed/); assert.doesNotMatch(f.text(), /Astra is working/); f.dispose();
 });
 
+for (const failedRead of ['card', 'activity']) test(`interrupted ${failedRead} reads retain the feed without claiming Astra is working or permitting a stale restart`, async () => {
+    const initial = card(), actions = [], connection = []; let fail = false, stopped = false;
+    const saved = [{ id: 'saved-inspection', at, stage: 'PHOTOS', actor: 'ASTRA', summary: 'Both original photographs inspected', status: 'RECORDED' }];
+    const f = harness(activityCode, { card: initial, disabled: false, onControl: action => actions.push(action), onObservedCard() {}, onConnectionChange: value => connection.push(value) }, {
+        async workspaceRequest(path) {
+            if (fail && path.endsWith('/activity') === (failedRead === 'activity')) throw Object.assign(new Error('The request could not be completed.'), { code: 'INTERNAL_ERROR' });
+            return path.endsWith('/activity') ? { activity: saved, control: stopped
+                ? { state: 'NEEDS_ATTENTION', mode: 'CONTINUOUS', pending: 0, failureCode: 'ASTRA_DATABASE_TRANSACTION_FAILED', canPause: false, canResume: false, canStep: false, canTakeOver: true }
+                : { state: 'RUNNING', mode: 'CONTINUOUS', pending: 0, canRecover: true, canPause: true, canResume: true, canStep: true, canTakeOver: true } } : { card: initial };
+        }
+    });
+    const button = label => f.nodes(node => node.type === 'button' && text(node).includes(label))[0];
+    const poll = async () => { const [id, timer] = [...f.timers].find(([, value]) => !value.interval); f.timers.delete(id); await timer.callback(); await f.settle(); };
+    await f.settle(); assert.match(f.text(), /Astra is working/); assert.equal(connection.at(-1), 'CONNECTED');
+    fail = true; await poll();
+    assert.match(f.text(), /Reconnecting to Astra/); assert.match(f.text(), /Current progress is unconfirmed/);
+    assert.match(f.text(), /Both original photographs inspected/); assert.doesNotMatch(f.text(), /Astra is working|The request could not be completed/);
+    assert.equal(connection.at(-1), 'INTERRUPTED');
+    for (const label of ['Continue Astra', 'Resume Astra', 'Run next step', 'Take over manually']) { assert.equal(button(label).props.disabled, true); button(label).props.onClick(); }
+    assert.equal(actions.length, 0); assert.equal(button('Pause Astra').props.disabled, false); button('Pause Astra').props.onClick(); assert.deepEqual(actions, ['PAUSE']);
+    assert.equal(f.nodes(node => node.props['aria-label'] === 'Refresh recorded activity')[0].props.disabled, false);
+    assert.equal([...f.timers.values()].some(timer => timer.ms === 8000), true, 'Failed reads still reconnect automatically.');
+    fail = false; stopped = true; await poll();
+    assert.match(f.text(), /Astra needs attention/); assert.match(f.text(), /could not confirm its saved progress/);
+    assert.doesNotMatch(f.text(), /Astra is working|Reconnecting to Astra|ASTRA_DATABASE_TRANSACTION_FAILED/);
+    assert.equal(connection.at(-1), 'CONNECTED'); assert.equal(button('Take over manually').props.disabled, false);
+    assert.equal(button('Resume Astra').props.disabled, true); assert.match(f.text(), /Both original photographs inspected/); f.dispose();
+});
+
+test('pausing activity updates does not claim to pause Astra and suppresses stale start controls', async () => {
+    let fail = false;
+    const initial = card(), connection = [], f = harness(activityCode, { card: initial, disabled: false, onObservedCard() {}, onConnectionChange: value => connection.push(value), onControl() {} }, {
+        async workspaceRequest(path) { if (fail) throw Error('Synthetic interrupted update'); return path.endsWith('/activity') ? { control: { state: 'RUNNING', mode: 'CONTINUOUS', pending: 1, canPause: true, canResume: true }, activity: [] } : { card: initial }; }
+    });
+    await f.settle(); fail = true; f.nodes(node => node.props['aria-label'] === 'Keep activity updated')[0].props.onChange({ target: { checked: false } }); f.render(); await f.settle();
+    assert.match(f.text(), /Activity updates paused/); assert.match(f.text(), /current status is unconfirmed/);
+    assert.doesNotMatch(f.text(), /Astra is working|Astra is paused|One action is in progress|Reconnecting|retry automatically/);
+    assert.equal(connection.at(-1), 'PAUSED'); assert.equal(f.timers.size, 0);
+    assert.equal(f.nodes(node => node.type === 'button' && text(node).includes('Resume Astra'))[0].props.disabled, true);
+    fail = false; f.nodes(node => node.props['aria-label'] === 'Keep activity updated')[0].props.onChange({ target: { checked: true } }); f.render(); f.render();
+    assert.doesNotMatch(f.text(), /Astra is working/); assert.equal(connection.at(-1), 'CONNECTING'); await f.settle();
+    assert.match(f.text(), /Astra is working/); assert.equal(connection.at(-1), 'CONNECTED'); f.dispose();
+});
+
 test('unconfirmed-request recovery requires reviewing the recorded charge and explicitly authorizing one step', async () => {
     const initial = card(), actions = [], control = { state: 'NEEDS_ATTENTION', pending: 1, mode: 'CONTINUOUS',
         canAbandon: true, attemptRecovery: { attemptId: 'original-attempt', reviewHash: 'a'.repeat(64),
@@ -149,4 +198,26 @@ test('Astra workbench exposes actual source evidence and marks attention without
     f.props.stage = 'PREPARATION'; f.props.card.workspace.preparation = { BACK: { corners: [{ x: .1, y: .1 }, { x: .9, y: .1 }, { x: .9, y: .9 }, { x: .1, y: .9 }] } }; f.render();
     assert.equal(f.nodes(node => node.type === 'svg' && node.props['aria-label'] === 'Saved physical card boundary').length, 1);
     f.props.card.workspace.preparation.BACK.corners[0].x = 2; f.render(); assert.equal(f.nodes(node => node.type === 'svg' && node.props['aria-label'] === 'Saved physical card boundary').length, 0); f.dispose();
+});
+
+test('workbench distinguishes unconfirmed progress from the last saved running or failed state', () => {
+    const f = harness(viewCode, { card: card(), stage: 'IDENTITY', activityConnection: 'INTERRUPTED' });
+    assert.match(f.text(), /Progress unconfirmed/); assert.doesNotMatch(f.text(), /Astra at work/);
+    f.props.activityConnection = 'PAUSED'; f.render(); assert.match(f.text(), /Activity updates paused/); assert.doesNotMatch(f.text(), /Astra at work/);
+    f.props.activityConnection = 'CONNECTED'; f.props.card.observedOperator.state = 'NEEDS_ATTENTION'; f.render();
+    assert.match(f.text(), /Needs attention/); assert.doesNotMatch(f.text(), /Astra at work/);
+    assert.equal(f.nodes(node => node.type === 'photo').length, 1, 'Original photograph remains visible.'); f.dispose();
+});
+
+test('activity connection status also keeps the workspace claim bar and workbench honest', () => {
+    const initial = card(), f = harness(workspaceCode, { initial, staff: { id: 'reviewer', role: 'REVIEWER' }, csrf: 'test-csrf' });
+    const activity = () => f.nodes(node => node.type === 'WorkspaceActivity')[0];
+    const workbench = () => f.nodes(node => node.type === 'AstraStageView')[0];
+    assert.match(f.text(), /Checking Astra’s saved progress/); assert.doesNotMatch(f.text(), /Astra is operating this card/);
+    activity().props.onConnectionChange('CONNECTED'); f.render(); assert.match(f.text(), /Astra is operating this card/);
+    activity().props.onConnectionChange('INTERRUPTED'); f.render(); assert.match(f.text(), /Astra’s current progress is unconfirmed/);
+    assert.doesNotMatch(f.text(), /Astra is operating this card/); assert.equal(workbench().props.activityConnection, 'INTERRUPTED');
+    activity().props.onObservedCard({ ...initial, observedOperator: { state: 'NEEDS_ATTENTION', failureCode: 'ASTRA_DATABASE_TRANSACTION_FAILED' } });
+    activity().props.onConnectionChange('CONNECTED'); f.render(); assert.match(f.text(), /Astra needs attention/);
+    assert.doesNotMatch(f.text(), /Astra is operating this card/); assert.equal(workbench().props.card.sides.length, 2); f.dispose();
 });

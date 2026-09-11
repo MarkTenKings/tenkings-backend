@@ -87,7 +87,7 @@ export function dispatchHost({ makeDispatcher, onResult = () => {}, automaticPic
  * The operator module and generated client are imported only after their
  * independently pinned manifest and complete read-only artifact verify.
  */
-export async function createPrivateOperatorHost({ config, makeClient, currentPeer, onResult }) {
+export async function createPrivateOperatorHost({ config, makeClient, currentPeer, onResult, onDiagnostic }) {
     if (!config.dispatch) return null;
     // Check the actual process before constructing the deliberately narrower
     // operator credential environment. Filtering must not hide loader options.
@@ -120,6 +120,7 @@ export async function createPrivateOperatorHost({ config, makeClient, currentPee
             return runtime.executeOperatorRun({ env: selected.operatorEnv,
                 manifest, manifestHash: selected.manifestHash, runId, expectedControlRevision,
                 signal, artifactRoot: selected.artifactRoot }, {
+                onDiagnostic,
                 async createClient(databaseUrl) {
                     const { PrismaClient } = await import(pathToFileURL(artifact.clientPath).href);
                     return new PrismaClient({ datasources: { db: { url: databaseUrl } }, errorFormat: 'minimal', log: [],

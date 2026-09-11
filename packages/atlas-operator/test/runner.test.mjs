@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '@atlas/service-bridge/protocol';
-import { runOperator } from '../src/runner.mjs';
+import { runOperator, reportOperatorFailure } from '../src/runner.mjs';
 import { responsesTransport, openAiBinding } from '../src/provider.mjs';
 import { MODEL, PRICING, buildRequest, inspectResponse, usageCeiling, appendToolResult } from '../src/responses.mjs';
 
@@ -442,6 +442,51 @@ test('database failure categories remain actionable without exposing messages or
     assert.equal(beforeDispatch.state, 'FAILED'); assert.equal(g.calls.length, 0);
 });
 
+test('failure diagnostics name the ledger operation and elapsed time without exposing private error data', async () => {
+    const f = fixture(), gate = deferred(), diagnostics = [];
+    const secret = 'private SQL parameters, credentials, image bytes and model reasoning';
+    f.ledger.reserve = () => gate.promise;
+    const pending = f.start({ onDiagnostic: event => diagnostics.push(event) });
+    await flush(); await f.clock.advance(237);
+    gate.reject(Object.assign(new Error(secret), { code: 'P2028', meta: { error: secret }, requestCanonical: secret }));
+    const result = await pending;
+    assert.deepEqual(diagnostics, [{ runId: f.runId, phase: 'LEDGER', operation: 'reserve',
+        code: 'ASTRA_DATABASE_TRANSACTION_FAILED', errorCode: 'P2028', elapsedMs: 237 }]);
+    assert.equal(result.state, 'FAILED'); assert.equal(result.code, 'ASTRA_DATABASE_TRANSACTION_FAILED');
+    assert.equal(f.calls.length, 0); assert.equal(f.clock.count(), 0);
+    assert(!JSON.stringify({ result, diagnostics }).includes(secret));
+});
+
+test('cleanup failure has its own diagnostic without replacing the original outcome or retrying work', async () => {
+    const f = fixture(), diagnostics = []; let reservations = 0, stops = 0;
+    f.ledger.reserve = async () => { reservations++; fail('P2028'); };
+    f.ledger.stop = async () => { stops++; fail('P2024'); };
+    const result = await f.start({ onDiagnostic: event => diagnostics.push(event) });
+    assert.deepEqual(diagnostics.map(({ operation, errorCode }) => ({ operation, errorCode })),
+        [{ operation: 'reserve', errorCode: 'P2028' }, { operation: 'stop', errorCode: 'P2024' }]);
+    assert.equal(result.code, 'ASTRA_DATABASE_TRANSACTION_FAILED'); assert.equal(result.state, 'RECONCILIATION_REQUIRED');
+    assert.equal(reservations, 1); assert.equal(stops, 1); assert.equal(f.calls.length, 0);
+});
+
+test('diagnostic observers are optional and their synchronous or asynchronous failures cannot change execution', async () => {
+    for (const observer of [undefined, () => { throw new Error('logger unavailable'); }, async () => { throw new Error('logger unavailable'); }]) {
+        const f = fixture(); f.ledger.reserve = async () => fail('P2028');
+        const result = await f.start({ onDiagnostic: observer });
+        assert.equal(result.state, 'FAILED'); assert.equal(result.code, 'ASTRA_DATABASE_TRANSACTION_FAILED');
+        assert.equal(f.calls.length, 0); assert.equal(f.clock.count(), 0);
+    }
+    const events = [], runId = randomUUID(), secret = 'private driver detail';
+    reportOperatorFailure(event => events.push(event), { runId, phase: 'LEDGER', operation: 'reserve',
+        error: { code: secret, message: 'ASTRA_PRIVATE_REASONING', meta: { code: secret } }, elapsedMs: 2.4 });
+    assert.deepEqual(events, [{ runId, phase: 'LEDGER', operation: 'reserve', code: 'ASTRA_RUNNER_FAILED', errorCode: null, elapsedMs: 2 }]);
+    reportOperatorFailure(event => events.push(event), { runId, phase: 'LEDGER', operation: secret, error: { code: 'P2028' }, elapsedMs: 2 });
+    assert.equal(events.length, 1);
+    reportOperatorFailure(event => events.push(event), { runId, phase: 'LEDGER', operation: 'reserve',
+        error: { code: { toString: () => 'P2028', private: secret } }, elapsedMs: 2 });
+    assert.equal(events[1].code, 'ASTRA_RUNNER_FAILED'); assert.equal(events[1].errorCode, null);
+    assert(!JSON.stringify(events).includes(secret));
+});
+
 test('step and attempt limits terminate durably without another provider request', async () => {
     for (const [options, code] of [[{ steps: 1 }, 'ASTRA_STEP_LIMIT'], [{ attempts: 1 }, 'ASTRA_BUDGET_EXHAUSTED']]) {
         const f = fixture(options); const result = await f.start(); assert.equal(result.state, 'FAILED'); assert.equal(result.code, code);
@@ -468,10 +513,12 @@ test('deadline is bounded from database time even when external preparation keep
 });
 
 test('a lost claim reply is bounded and cannot be reported as an unclaimed job', async () => {
-    const f = fixture(), gate = deferred(), claim = f.ledger.claim;
+    const f = fixture(), gate = deferred(), claim = f.ledger.claim, diagnostics = [];
     f.ledger.claim = async (...args) => { const value = await claim(...args); await gate.promise; return value; };
-    const pending = f.start(); await flush(); await f.clock.advance(15_001); const result = await pending;
+    const pending = f.start({ onDiagnostic: event => diagnostics.push(event) }); await flush(); await f.clock.advance(15_001); const result = await pending;
     assert.equal(result.state, 'RECONCILIATION_REQUIRED'); assert.equal(result.code, 'ASTRA_LEDGER_TIMEOUT');
+    assert.deepEqual(diagnostics, [{ runId: f.runId, phase: 'LEDGER', operation: 'claim',
+        code: 'ASTRA_LEDGER_TIMEOUT', errorCode: null, elapsedMs: 15_000 }]);
     assert.equal(f.calls.length, 0); gate.resolve(); await flush(); assert.equal(f.calls.length, 0);
 });
 

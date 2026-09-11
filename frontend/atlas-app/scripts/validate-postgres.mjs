@@ -24,6 +24,7 @@ import { operatorScenarios } from './operator-fixture.mjs';
 import { workspaceOperatorScenarios } from './workspace-operator-fixture.mjs';
 import { workspaceCaptureScenarios } from './workspace-capture-fixture.mjs';
 import { workspaceCaptureReadinessScenarios } from './workspace-capture-readiness-fixture.mjs';
+import { workspaceFirstPairEnrollmentScenarios } from './workspace-first-pair-enrollment-fixture.mjs';
 import { workspaceIdentificationScenarios } from './workspace-identification-fixture.mjs';
 import { workspaceCornerShapeScenarios } from './workspace-corner-shape-fixture.mjs';
 import { workspaceTimingScenarios } from './workspace-timing-fixture.mjs';
@@ -671,6 +672,7 @@ try {
     await workspaceOperatorScenarios(scenario);
     await workspaceCaptureScenarios(scenario);
     await workspaceCaptureReadinessScenarios(scenario);
+    await workspaceFirstPairEnrollmentScenarios(scenario);
     await workspaceIdentificationScenarios(scenario);
     await workspaceCornerShapeScenarios(scenario);
     await workspaceTimingScenarios(scenario);

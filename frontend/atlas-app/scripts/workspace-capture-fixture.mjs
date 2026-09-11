@@ -53,13 +53,15 @@ async function fixture(context, work, options = {}) {
                     headers: { 'Content-Type': upload.contentType }, expiresAt: new Date(Date.now() + 60_000).toISOString() };
             }, async verify({ upload }) {
                 const bytes = objects.get(upload.objectRef); assert(bytes);
-                return { objectRef: upload.objectRef, sha256: digest(bytes), byteCount: bytes.length, contentType: 'image/png', width: 8, height: 10 };
+                return { objectRef: upload.objectRef, sha256: digest(bytes), byteCount: bytes.length, contentType: 'image/png',
+                    width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
             } } });
         const createQueued = async index => {
             let { card } = await intake.create(f.signed.staff, { operationId: randomUUID(), title: `Synthetic new photograph ${index + 1}`,
                 identity: options.identity ?? { category: 'SPORTS', playerName: 'Synthetic supplied identity' } });
             for (const [sideIndex, side] of ['FRONT', 'BACK'].entries()) {
-                const bytes = syntheticPng(8, 10, 10 + index * 20 + sideIndex * 5); byteRoster.set(digest(bytes), bytes);
+                const bytes = options.imageFactory?.({ index, sideIndex, side })
+                    ?? syntheticPng(8, 10, 10 + index * 20 + sideIndex * 5); byteRoster.set(digest(bytes), bytes);
                 const planned = await intake.planUpload(f.signed.staff, card.id, { operationId: randomUUID(), expectedRevision: card.revision,
                     side, file: { name: `${side}.png`, contentType: 'image/png', byteCount: bytes.length, sha256: digest(bytes) } });
                 ({ card } = await intake.completeUpload(f.signed.staff, card.id, { operationId: randomUUID(), expectedRevision: planned.card.revision,
