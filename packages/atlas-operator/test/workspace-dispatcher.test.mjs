@@ -91,6 +91,10 @@ function fixture({ rosterSize = 10 } = {}) {
             if (sql.includes('FROM pg_proc p')) return WORKSPACE_FUNCTIONS.COORDINATOR.slice(f.missingFunction ? 1 : 0)
                 .map(name => ({ schema: 'atlas_staff', name, definer: true, grants: false }));
             if (sql.includes('clock_timestamp() AS now')) return [{ now: f.now }];
+            if (sql.includes('pickup_workspace_queue')) {
+                assert.equal(values[0], f.operatorConfig.configHash);
+                return [{ command: f.emptyQueue ? null : { runId: f.run.id, commandId: f.command.id } }];
+            }
             if (sql.includes('operator_workspace_count')) return [{ count: f.count }];
             if (sql.includes('"StaffOperatorControl"') || sql.includes('lock_operator_control()')) return [f.control];
             if (sql.includes('"StaffGradingBridgeControl"') || sql.includes('lock_operator_bridge_control()')) return [f.bridge];
@@ -230,6 +234,45 @@ test('one-card admission dispatches the complete capture and report flow with th
     assert.equal(result.state, 'READY_FOR_HUMAN'); assert.equal(result.operatorRuns, 2); assert.equal(result.sourceActions, 3);
     assert.deepEqual(f.events, ['CAPTURE_REVIEW', 'SOURCE', 'REPORT_REVIEW']);
     assert.equal(f.control.policyCanonical, policy); assert.equal(JSON.parse(policy).astra.effort, 'max');
+});
+
+test('automatic pickup uses the same continuous capture, source and report dispatcher and stops at human review', async () => {
+    const f = fixture({ rosterSize: 1 });
+    const command = await f.dispatcher.pickup();
+    assert.deepEqual(command, { runId: f.run.id, commandId: f.command.id });
+    assert.equal(f.operatorCalls.length, 0);
+    const result = await f.dispatcher.run(command);
+    assert.equal(result.state, 'READY_FOR_HUMAN');
+    assert.deepEqual(f.events, ['CAPTURE_REVIEW', 'SOURCE', 'REPORT_REVIEW']);
+    assert.equal(result.operatorRuns, 2); assert.equal(result.sourceActions, 3);
+    assert.equal(JSON.parse(f.control.policyCanonical).astra.effort, 'max');
+    assert.equal(await f.dispatcher.pickup(), null);
+});
+
+test('automatic pickup rechecks the current reviewer and skips held or empty commands without dispatch', async () => {
+    const f = fixture({ rosterSize: 1 }); f.emptyQueue = true;
+    assert.equal(await f.dispatcher.pickup(), null);
+    f.emptyQueue = false; f.run.state = 'UNKNOWN'; f.work.set(f.run.id, { attempts: 1, held: 1, unknown: 1 });
+    assert.equal(await f.dispatcher.pickup(), null);
+    f.work.clear(); f.run.state = 'QUEUED'; f.identity.accessVersion++;
+    await assert.rejects(f.dispatcher.pickup()); assert.equal(f.operatorCalls.length, 0);
+});
+
+test('a durable human-review handoff settles immediately with its real retained terminal lease', async () => {
+    const f = fixture({ rosterSize: 1 });
+    f.afterOperator = async ({ runId }) => {
+        const run = f.runs.get(runId);
+        if (run.phase === 'REPORT_REVIEW') {
+            run.leaseOwner = randomUUID(); run.leaseExpiresAt = new Date(+f.now + 30000);
+        }
+    };
+    assert.equal((await f.start()).state, 'READY_FOR_HUMAN');
+    const calls = f.operatorCalls.length;
+    assert.equal((await f.admit()).state, 'SETTLED');
+    assert.equal((await f.start()).state, 'READY_FOR_HUMAN');
+    assert.equal(f.operatorCalls.length, calls);
+    f.work.set(f.card.claim.runId, { attempts: 1, held: 1 });
+    assert.equal((await f.start()).state, 'HELD');
 });
 
 function grantRecovery(f) {

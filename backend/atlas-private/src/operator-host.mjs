@@ -10,11 +10,43 @@ import { assertReleaseProcess, readCanonicalRelease, verifyOperatorArtifact } fr
  * saved commands distinguish retries from newly granted STEP work. Existing
  * durable command/run/lease/source records remain the restart authority.
  */
-export function dispatchHost({ makeDispatcher, onResult = () => {} }) {
-    const running = new Map(); let closing = false;
-    function stop() { closing = true; for (const value of running.values()) value.controller.abort(); }
+export function dispatchHost({ makeDispatcher, onResult = () => {}, automaticPickup = false,
+    intervalMs = 5000, clock = { setTimeout, clearTimeout } }) {
+    check(typeof automaticPickup === 'boolean' && Number.isSafeInteger(intervalMs) && intervalMs >= 1 && intervalMs <= 60000,
+        'ASTRA_DISPATCH_CONFIGURATION_REQUIRED');
+    const running = new Map(); let closing = false, timer = null, polling = null, lastPickupFailure = null;
+    function stop() {
+        closing = true;
+        if (timer !== null) { clock.clearTimeout(timer); timer = null; }
+        for (const value of running.values()) value.controller.abort();
+    }
     function report(result) { try { onResult(result); } catch { /* Logging cannot change a retained outcome. */ } }
-    return {
+    function schedule() {
+        if (!automaticPickup || closing) return;
+        timer = clock.setTimeout(() => {
+            timer = null;
+            polling = pickup().finally(() => { polling = null; schedule(); });
+        }, intervalMs);
+        timer?.unref?.();
+    }
+    async function pickup() {
+        if (closing || running.size) return;
+        try {
+            const dispatcher = await makeDispatcher();
+            check(typeof dispatcher?.pickup === 'function', 'ASTRA_DISPATCH_CONFIGURATION_REQUIRED');
+            const command = await dispatcher.pickup();
+            if (command !== null && !closing) await host.accept(command);
+            lastPickupFailure = null;
+        } catch (error) {
+            // A failed local admission is never permission to retry a paid
+            // request. The next pass only re-reads durable queue/command state.
+            const code = /^(?:ASTRA|WORKSPACE)_[A-Z0-9_]{1,69}$/.test(error?.code ?? '')
+                ? error.code : 'ASTRA_QUEUE_PICKUP_UNAVAILABLE';
+            if (code !== lastPickupFailure) report({ state: 'HELD', phase: 'QUEUE', code });
+            lastPickupFailure = code;
+        }
+    }
+    const host = {
         async accept({ runId, commandId }) {
             check(!closing && UUID.test(runId ?? '') && UUID.test(commandId ?? ''), 'ASTRA_DISPATCH_UNAVAILABLE');
             const dispatcher = await makeDispatcher();
@@ -41,8 +73,14 @@ export function dispatchHost({ makeDispatcher, onResult = () => {} }) {
             return { state: 'ACCEPTED', runId, commandId };
         },
         stop,
-        async close() { stop(); await Promise.allSettled([...running.values()].map(value => value.promise)); },
+        async close() {
+            stop();
+            if (polling) await polling;
+            await Promise.allSettled([...running.values()].map(value => value.promise));
+        },
     };
+    schedule();
+    return host;
 }
 
 /** Source, coordinator and operator clients have separate credentials/grants.
@@ -89,7 +127,7 @@ export async function createPrivateOperatorHost({ config, makeClient, currentPee
                 },
             });
         };
-        const host = dispatchHost({ onResult, async makeDispatcher() {
+        const host = dispatchHost({ onResult, automaticPickup: true, async makeDispatcher() {
             const { authority, bridgeConfig } = await currentPeer(client);
             const transport = workspaceServiceClient(bridgeConfig);
             return createWorkspaceDispatcher({ client, authority, operatorConfig: operator.config, executeOperator,

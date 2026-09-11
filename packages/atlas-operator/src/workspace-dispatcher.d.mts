@@ -45,10 +45,10 @@ export type WorkspaceDispatcherOptions<Tx> = Readonly<{
     executeOperator(input: WorkspaceOperatorInput): Promise<WorkspaceOperatorExecution>;
 }>;
 
-/** Explicit Start/Resume/STEP consumes only this already-claimed run. A linked
+/** Explicit control or automatic pickup consumes an already-claimed run. A linked
  * capture predecessor may be supplied for recovery; immutable admission and
- * successor proof determine the current report run. No queue discovery, new
- * claim, control mutation, timer, scheduler, provider retry or human approval.
+ * successor proof determine the current report run. run does not mutate a
+ * control, retry an uncertain provider request, or approve a report.
  * YIELDED means a STEP action ended while a newer human control is already
  * recorded; a separate explicit invocation can consume that newer control. */
 export function createWorkspaceDispatcher<Tx>(options: WorkspaceDispatcherOptions<Tx>,
@@ -60,6 +60,10 @@ export function createWorkspaceDispatcher<Tx>(options: WorkspaceDispatcherOption
         }>;
         verifySuccessor?: (tx: Tx, config: OperatorEnqueueConfig, input: { requestId: string }) => Promise<any>;
     }>): Readonly<{
+        /** DB-only queue admission and exact command discovery. Rechecks the
+         * current private binding, real reviewer, original pair, identity,
+         * pilot, concurrency and initial distinct-card cap atomically. */
+        pickup(): Promise<WorkspaceDispatchCommand | null>;
         /** Read-only admission for a private trigger acknowledgment. ADMITTED
          * means the finite operation may start or recover. It reserves nothing;
          * run rechecks current authority. Invalid DTOs throw before database

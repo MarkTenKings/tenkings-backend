@@ -1,7 +1,8 @@
 import { staffApiPath } from './routes.mjs';
 import { GRADING_STREAM_HEADER, GRADING_STREAM_PROTOCOL, gradingResponseResult, isGradingRequest } from './grading-response.mjs';
 export const STAFF_RESPONSE_LIMIT = 8 * 1024 * 1024;
-export const staffRequestDeadline = (path, body) => isGradingRequest(path, body) ? 240_000 : 15_000;
+export const staffRequestDeadline = (path, body) => isGradingRequest(path, body) ? 240_000
+    : body !== undefined && /^workspace\/cards\/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\/identify$/.test(path) ? 60_000 : 15_000;
 const unknown = (code = 'REQUEST_OUTCOME_UNCONFIRMED', message = 'The reply could not be confirmed. Your notes and exact pending request are kept. Refresh access and retry the retained request.') => Object.assign(new Error(message), { code });
 const cancelled = () => Object.assign(unknown('REQUEST_CANCELLED', 'The request was interrupted. Its outcome is unconfirmed; your exact pending request is kept.'), { name: 'AbortError' });
 const ignore = action => { try { Promise.resolve(action()).catch(() => {}); } catch {} };

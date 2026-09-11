@@ -174,7 +174,7 @@ export async function smsPilotScenarios(scenario, check) {
             assert.deepEqual(app.calls, { sends: 1, checks: 2 }); assert.equal((await c.reservations(app)).length, 1);
         }
     });
-    await run('last-slot races stop at ten claims per service and ten dollars total', async c => {
+    await run('retired test limits allow concurrent claims beyond ten per app while preserving auth isolation', async c => {
         for (const app of c.apps) {
             await c.activate(app); const browser = await app.browser();
             // Independent raw inserts stress the DB budget gate itself; the staff
@@ -194,19 +194,18 @@ export async function smsPilotScenarios(scenario, check) {
             }
             for (let i = 0; i < 9; i++) await c.rawClaim(app, browser, {}, execute);
             const race = await Promise.allSettled([c.rawClaim(app, browser, {}, execute), c.rawClaim(app, browser, {}, execute)]);
-            assert.equal(race.filter(result => result.status === 'fulfilled').length, 1);
-            assert.equal(race.filter(result => result.status === 'rejected' && unavailable.test(result.reason.message)).length, 1);
-            assert.equal((await c.reservations(app)).length, 10);
-            await assert.rejects(() => c.rawClaim(app, browser, {}, execute), unavailable);
-            // A fresh real auth request reaches the exhausted budget once old
-            // synthetic challenges leave their active quarantine states.
+            assert.equal(race.filter(result => result.status === 'fulfilled').length, 2);
+            assert.equal((await c.reservations(app)).length, 11);
+            await c.rawClaim(app, browser, {}, execute);
+            // A real auth request also succeeds after the old test threshold,
+            // once synthetic challenges leave their active quarantine states.
             if (app.name === 'STAFF') {
                 // The production staff transition guard correctly keeps an
                 // in-flight/unknown challenge quarantined until its provider
                 // lifetime ends. This local-only budget case has already
                 // asserted that quarantine behavior above; disable only that
                 // trigger while retiring synthetic rows so the test can reach
-                // the exhausted-ledger assertion immediately.
+                // the post-threshold send assertion immediately.
                 // Keep the ALTER statements in their own autocommit calls;
                 // PostgreSQL cannot re-enable a trigger in the same
                 // transaction after row events have been queued.
@@ -214,12 +213,12 @@ export async function smsPilotScenarios(scenario, check) {
                 await c.sql(`UPDATE ${app.schema}."${app.table}" SET state='SUPERSEDED'`);
                 await c.sql(`ALTER TABLE ${app.schema}."${app.table}" ENABLE TRIGGER "StaffChallenge_transition"`);
             } else await c.sql(`UPDATE ${app.schema}."${app.table}" SET state='SUPERSEDED'`);
-            const denied = await app.httpSend(await app.browser());
-            assert.equal(denied.statusCode, 503); assert.deepEqual(denied.body, { error: 'TEMPORARILY_UNAVAILABLE' });
-            assert.equal(app.calls.sends, 0);
+            const admitted = await app.httpSend(await app.browser());
+            assert.equal(admitted.statusCode, 200); assert.equal(typeof admitted.body.challengeId, 'string');
+            assert.equal(app.calls.sends, 1); assert.equal((await c.reservations(app)).length, 13);
         }
         assert.deepEqual((await c.sql('SELECT count(*)::int AS claims,sum("reservedMicroUsd")::text AS held FROM atlas_staff."SmsPilotReservation"')).rows[0],
-            { claims: 20, held: '10000000' });
+            { claims: 26, held: '13000000' });
     });
     await run('recipient, provider and release substitution cannot escape the pilot', async c => {
         for (const app of c.apps) {
@@ -278,7 +277,7 @@ export async function smsPilotScenarios(scenario, check) {
             'DELETE FROM atlas_staff."SmsPilotControl"', 'TRUNCATE atlas_staff."SmsPilotControl" CASCADE'])
             await assert.rejects(() => c.sql(query), /immutable/);
     });
-    await run('transaction rollback spends nothing; elapsed expiry denies new claims and reactivation', async c => {
+    await run('transaction rollback creates no hold; historical SMS expiry no longer blocks current approved sends', async c => {
         for (const app of c.apps) {
             await c.activate(app); const browser = await app.browser();
             await assert.rejects(() => c.admin.$transaction(async tx => {
@@ -294,10 +293,12 @@ export async function smsPilotScenarios(scenario, check) {
             await c.sql(`BEGIN; ALTER TABLE atlas_staff."SmsPilotControl" DISABLE TRIGGER "SmsPilotControl_revision";
                 UPDATE atlas_staff."SmsPilotControl" SET "activatedAt"="activatedAt"-interval '8 days',"expiresAt"="expiresAt"-interval '8 days' WHERE application='${app.name}';
                 ALTER TABLE atlas_staff."SmsPilotControl" ENABLE TRIGGER "SmsPilotControl_revision"; COMMIT;`);
-            await assert.rejects(() => c.rawClaim(app, browser), unavailable);
-            await assert.rejects(() => c.sql('UPDATE atlas_staff."SmsPilotControl" SET enabled=true,revision=revision+1 WHERE application=$1', [app.name]), /SMS pilot expired/);
+            await c.rawClaim(app, browser);
+            await c.sql('UPDATE atlas_staff."SmsPilotControl" SET enabled=true,revision=revision+1 WHERE application=$1', [app.name]);
             await c.sql('UPDATE atlas_staff."SmsPilotControl" SET enabled=false,revision=revision+1 WHERE application=$1', [app.name]);
-            assert.deepEqual(await c.reservations(app), before); assert.equal(app.calls.sends, 0);
+            await assert.rejects(() => c.rawClaim(app, browser), unavailable);
+            const after = await c.reservations(app); assert.equal(after.length, 2);
+            assert.deepEqual(after[0], before[0]); assert.equal(app.calls.sends, 0);
         }
     });
 }

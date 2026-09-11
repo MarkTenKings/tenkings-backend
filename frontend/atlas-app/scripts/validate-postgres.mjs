@@ -23,6 +23,8 @@ import { bridgeFixture, gradingInput } from './bridge-fixture.mjs';
 import { operatorScenarios } from './operator-fixture.mjs';
 import { workspaceOperatorScenarios } from './workspace-operator-fixture.mjs';
 import { workspaceCaptureScenarios } from './workspace-capture-fixture.mjs';
+import { workspaceIdentificationScenarios } from './workspace-identification-fixture.mjs';
+import { workspaceCornerShapeScenarios } from './workspace-corner-shape-fixture.mjs';
 import { workspaceTimingScenarios } from './workspace-timing-fixture.mjs';
 import { workspaceReceiptRecoveryScenarios } from './workspace-receipt-recovery-fixture.mjs';
 import { workspaceSourceScenarios } from './workspace-source-fixture.mjs';
@@ -40,6 +42,7 @@ import { adminPathScenarios } from './admin-path-fixture.mjs';
 import { customerScenarios } from '../../atlas-customer/scripts/postgres-scenarios.mjs';
 import { trackingRegressionScenarios } from '../../atlas-customer/scripts/tracking-regression.mjs';
 import { smsPilotScenarios } from '../../atlas-customer/scripts/sms-pilot-regression.mjs';
+import { smsTestLimitsScenarios } from './sms-test-limits-fixture.mjs';
 
 // Execute the original pure TypeScript classifier in the fixture. No substitute
 // normalization/scoring code or private runtime activation is used here.
@@ -663,6 +666,8 @@ try {
     await operatorScenarios(scenario);
     await workspaceOperatorScenarios(scenario);
     await workspaceCaptureScenarios(scenario);
+    await workspaceIdentificationScenarios(scenario);
+    await workspaceCornerShapeScenarios(scenario);
     await workspaceTimingScenarios(scenario);
     await workspaceReceiptRecoveryScenarios(scenario);
     await workspaceSourceScenarios(scenario);
@@ -680,6 +685,7 @@ try {
     await customerScenarios(scenario, check);
     await trackingRegressionScenarios(scenario);
     await smsPilotScenarios(scenario, check);
+    await smsTestLimitsScenarios(scenario);
 } catch (caught) { error = caught; }
 finally {
     for (const client of clients) await client.$disconnect();

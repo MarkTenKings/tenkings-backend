@@ -71,7 +71,7 @@ export function operatorAdapters({evidenceClient}) {
                 parseOperatorImagePacket(result.image,entry.request,asset); return [{packet:result.image,asset}];
             });
             if (run.phase === 'CAPTURE_REVIEW') {
-                parseCaptureManifest(manifest); validateCaptureProposal(call,manifest);
+                parseCaptureManifest(manifest); validateCaptureProposal(call,manifest,data.card);
                 if (call.name === 'read_original_photos') return { result: { actor: 'MACHINE', phase: 'CAPTURE_REVIEW',
                     identity: manifest.identity, cornerShape: manifest.cornerShape, assets: manifest.assets,
                     status: 'ORIGINAL_PHOTOS_DELIVERED', preparation: 'NOT_STARTED' }, images };

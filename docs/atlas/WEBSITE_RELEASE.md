@@ -1,5 +1,7 @@
 # ATLAS website release status
 
+Sign-in incident — September 11, 04:09 UTC: the approved staff identity is active, but the last 30-minute session expired and all ten STAFF SMS reservations ($5) are consumed. CUSTOMER retains two reservations ($1), leaving $4 inside the original $10 SMS ceiling. The generic sign-in error is a budget-allocation refusal. Mark subsequently authorized removing the SMS test count, cost and window limits entirely; this supersedes the proposed redistribution. Rapid intake, automatic pickup and that scoped SMS-limit removal are being validated in `d6cb`; four additive staff migrations are planned, with no live change yet. Current runtime remains the release below. See the latest SESSION_LOG entry for exact read-only evidence.
+
 Latest verified release — September 11, 2026, 02:16 UTC (September 10, 19:16 Pacific): **the recovery and live-workspace release is deployed; authenticated card recovery remains pending**. Merged source `dff540c4782856e393f5db8470a647a7c35c6b6f`, tree `bff42c012947a66756bebf0e4791acc4be3a3e49`, passed the complete 14-check main CI run `34547730135`. The corrected staff/public deployments and private E now serve that source.
 
 | Current component | Verified deployment | Host/location |

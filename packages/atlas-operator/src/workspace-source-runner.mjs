@@ -147,7 +147,7 @@ export function createWorkspaceSourceRunner({ client, authority, source, operato
             && delivered.some(value => value.assetId === asset.assetId && value.sha256 === asset.sha256 && value.side === asset.side),
         'ASTRA_SOURCE_ORIGINALS_CHANGED');
         const selection = await selectedCapturePreparation({ call: { name: 'submit_capture_preparation', args: submitted },
-            run: { ...run, revision: run.revision - 1 }, manifest, tx: { staffOperatorStep: {
+            run: { ...run, revision: run.revision - 1 }, manifest, card, tx: { staffOperatorStep: {
                 async findUnique({ where }) { const [value] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffOperatorStep" WHERE id=${where.id}::uuid`; return value; },
             } } }, async (_data, refs) => check(refs.every(ref => manifest.assets.some(asset => asset.assetId === ref.assetId
                 && asset.sha256 === ref.sha256 && asset.side === ref.side) && delivered.some(asset => asset.assetId === ref.assetId
@@ -209,7 +209,8 @@ export function createWorkspaceSourceRunner({ client, authority, source, operato
             const payload = { ...(chosen.side ? { side: chosen.side } : {}), machine };
             next.workspace.pending = { requestId, operationId: chosen.operationId, action, ...(chosen.side ? { side: chosen.side } : {}), binding };
             next.workspace.machineCapture = { actor: 'MACHINE', runId, selectionStepId: selected.id, selectionResultHash: selected.resultHash,
-                manifestHash: run.manifestHash, identity: selection.identity, cornerShape: selection.cornerShape, boundaries: selection.boundaries };
+                manifestHash: run.manifestHash, identity: selection.identity, cornerShape: selection.cornerShape,
+                ...(selection.cornerShapeBasis ? { cornerShapeBasis: selection.cornerShapeBasis } : {}), boundaries: selection.boundaries };
             const event = { id: requestId, actorId: card.claim.actorId, operationId: chosen.operationId, cardId: card.id, action: 'MACHINE_SOURCE_ACTION',
                 inputHash: digest(canonical({ action, cardId: card.id, input: { payload, binding } })), createdAt: now.toISOString(),
                 result: { actor: 'MACHINE', actorId: card.claim.actorId, accessVersion: card.claim.accessVersion,

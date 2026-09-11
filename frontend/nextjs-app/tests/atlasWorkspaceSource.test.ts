@@ -354,15 +354,17 @@ test('workspace source: narrow draft INSERT derives namespace and identity witho
     await assert.rejects(source.find(f.request, authorized), /WORKSPACE_SOURCE_CHANGED/);
 });
 
-async function machineFixture() {
+async function machineFixture(cornerShape: 'SQUARE' | 'ROUNDED_3_18_MM' | null = 'SQUARE') {
     const f = await fixture(), current = f.current as typeof f.current & { machine: AtlasWorkspaceMachineProof };
+    if (cornerShape === null) delete (current.card.workspace as { cornerShape?: string }).cornerShape;
+    else current.card.workspace.cornerShape = cornerShape;
     const runId = randomUUID(), createdAt = new Date();
     Object.assign(current.card.claim, { kind: 'ASTRA', runId, workflowRevision: current.card.revision });
     const manifest = { version: 'atlas-operator-capture-manifest-v1', phase: 'CAPTURE_REVIEW', runId,
         workspaceCardId: current.card.id, claimId: current.card.claim.id, claimFence: current.card.claimFence,
         captureRevision: current.card.captureRevision, workflowRevision: current.card.revision, evidenceHash: current.card.captureHash,
         identity: Object.fromEntries(Object.entries(current.card.identity).map(([key, value]) => [key, value ?? ''])),
-        cornerShape: 'SQUARE', assets: SIDES.map(side => ({ assetId: randomUUID(), side, view: 'ORIGINAL', sha256: current.originals[side].verification.sha256,
+        cornerShape, assets: SIDES.map(side => ({ assetId: randomUUID(), side, view: 'ORIGINAL', sha256: current.originals[side].verification.sha256,
             ...Object.fromEntries(['sha256', 'byteCount', 'width', 'height', 'contentType'].map(key =>
                 [key, (current.originals[side].verification as unknown as Record<string, unknown>)[key]])) })) };
     const manifestCanonical = canonical(manifest), manifestHash = preparationHash(manifest);
@@ -432,6 +434,20 @@ test('workspace machine source: exact immutable selections and genuine worker ev
     assert.equal(f.provenance[0].selectionResultHash, f.current.machine.selectionStep.resultHash);
     const source = parseSpeedsterMapSourceSession(resolvePersistedSpeedsterPreparationCapture(f.store.session));
     assert(source.front.centeringBorders.leftMm > 0); assert.equal(f.counts().captureWrites, 1);
+});
+
+test('workspace machine source: null capture shape uses explicit preparation-default provenance through both validated workers', async () => {
+    const f = await machineFixture(null), manifest = f.run.manifestCanonical;
+    const physical = f.physical.invoke; let physicalChecks = 0;
+    f.physical.invoke = async (...args: Parameters<typeof physical>) => { physicalChecks++; return physical(...args); };
+    assert.equal(JSON.parse(manifest).cornerShape, null); assert.equal(f.current.card.workspace.cornerShape, undefined);
+    await f.pair(); const result = await f.service().finalize(f.request); assert.equal(result.state, 'SUCCEEDED');
+    assert.equal(f.counts().workerCalls, 2); assert.equal(physicalChecks, 2);
+    assert.equal(f.provenance.length, 1); assert.equal(f.provenance[0].actor, 'MACHINE');
+    assert.equal(f.provenance[0].cornerShapeBasis, 'PREPARATION_DEFAULT');
+    assert.equal(f.run.manifestCanonical, manifest); assert.equal(f.current.card.workspace.cornerShape, undefined);
+    assert.deepEqual(f.current.card.workspace.centering, {});
+    assert.equal((f.store.session.capture as Record<string, unknown>).cornerShape, 'ROUNDED_3_18_MM');
 });
 
 test('workspace machine source: stale run fence, rewritten selection/proposal, undelivered evidence, and unresolved attempts are denied', async () => {

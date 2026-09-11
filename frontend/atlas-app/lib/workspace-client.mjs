@@ -4,8 +4,9 @@ import { staffApiPath } from './routes.mjs';
 export const stateNames = { DRAFT: 'Photo drafts', WAITING: 'Waiting to grade', IN_PROGRESS: 'In progress', NEEDS_ATTENTION: 'Needs attention', HUMAN_REVIEW: 'Human review', APPROVED: 'Approved' };
 export const stageNames = { PHOTOS: 'Photos', IDENTITY: 'Identity', PREPARATION: 'Prepare images', CENTERING: 'Centering', INSPECTION: 'Inspection', REPORT: 'Report', REVIEW: 'Human review', FINISHING: 'Finishing' };
 export const stageOrder = Object.keys(stageNames);
-const denialCodes = new Set(['INVALID_REQUEST', 'WORKSPACE_REQUEST_INVALID', 'WORKSPACE_REVISION_CHANGED', 'WORKSPACE_CLAIM_CONFLICT', 'WORKSPACE_CLAIM_CHANGED', 'WORKSPACE_REVIEW_NOT_READY', 'WORKSPACE_REVIEW_CLAIMED', 'WORKSPACE_REVIEW_NOT_ACTIVE', 'WORKSPACE_CAPABILITY_UNAVAILABLE', 'WORKSPACE_PAIR_REQUIRED', 'WORKSPACE_PHOTOS_REQUIRED', 'WORKSPACE_PILOT_FULL']);
+const denialCodes = new Set(['INVALID_REQUEST', 'WORKSPACE_REQUEST_INVALID', 'WORKSPACE_REVISION_CHANGED', 'WORKSPACE_CLAIM_CONFLICT', 'WORKSPACE_CLAIM_CHANGED', 'WORKSPACE_REVIEW_NOT_READY', 'WORKSPACE_REVIEW_CLAIMED', 'WORKSPACE_REVIEW_NOT_ACTIVE', 'WORKSPACE_CAPABILITY_UNAVAILABLE', 'WORKSPACE_PAIR_REQUIRED', 'WORKSPACE_PHOTOS_REQUIRED', 'WORKSPACE_PILOT_FULL', 'WORKSPACE_PHOTO_ALREADY_USED']);
 const messages = {
+    ASTRA_CAPTURE_IDENTITY_CONFLICT: 'Astra found a conflict with the saved card details. Review the recorded response before continuing.',
     WORKSPACE_REVIEW_NOT_READY: 'Astra’s draft is not ready for human review yet. The saved card is kept.',
     WORKSPACE_REVIEW_CLAIMED: 'Another reviewer has picked up this card. You can continue watching its progress.',
     WORKSPACE_REVIEW_NOT_ACTIVE: 'The review timer is already paused. Refresh the card to see its current state.',
@@ -18,6 +19,7 @@ const messages = {
     WORKSPACE_PAIR_REQUIRED: 'Confirm that the Front and Back show the same physical card.',
     WORKSPACE_PHOTOS_REQUIRED: 'Both original photographs must finish verification before this card can join the queue.',
     WORKSPACE_PILOT_FULL: 'The ten-card pilot is full. Existing drafts are kept.',
+    WORKSPACE_PHOTO_ALREADY_USED: 'A photograph in this pair already belongs to another card. Choose new Front and Back photos of this physical card, or open its existing grading workspace.',
     WORKSPACE_REQUEST_INVALID: 'Check the highlighted card details and try again.',
     SIGN_IN_REQUIRED: 'Your session ended. Sign in again, then recover the saved request.',
     CSRF_REQUIRED: 'Refresh your staff access before continuing.',
@@ -87,11 +89,16 @@ export async function prepareIntakePhoto(file, { convert, signal, onProgress = (
     validatePhoto({ name: file.name, size: file.size, type: 'image/png' });
     onProgress('Converting HEIC to PNG');
     const { convertHeicPhoto, HEIC_IMPORT_VERSION } = await import('./heic-import.mjs');
-    const result = await (convert ?? convertHeicPhoto)(file, { signal });
+    // Hash the selected evidence while the independent decoder works. The
+    // imported descriptor below is reused during upload, avoiding a second
+    // read/hash of a large lossless PNG.
+    const [result, originalHash] = await Promise.all([
+        (convert ?? convertHeicPhoto)(file, { signal, onProgress }),
+        file.arrayBuffer().then(bytes => globalThis.crypto.subtle.digest('SHA-256', bytes))
+    ]);
     if (signal?.aborted) throw new Error('HEIC conversion was cancelled. Your saved photographs are kept.');
     const imported = new File([result.blob], `${file.name.slice(0, 236)}.png`, { type: 'image/png', lastModified: file.lastModified });
     validatePhoto(imported);
-    const originalHash = await globalThis.crypto.subtle.digest('SHA-256', await file.arrayBuffer());
     return { file: imported, original: file, conversion: {
         version: HEIC_IMPORT_VERSION, originalName: file.name, originalByteCount: file.size,
         originalSha256: Array.from(new Uint8Array(originalHash), n => n.toString(16).padStart(2, '0')).join(''),

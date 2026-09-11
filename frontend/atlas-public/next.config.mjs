@@ -5,6 +5,9 @@ const config = {
     async headers() { return [{ source: '/:path*', headers: [
         { key: 'Referrer-Policy', value: 'no-referrer' }, { key: 'X-Content-Type-Options', value: 'nosniff' },
         { key: 'X-Frame-Options', value: 'DENY' },
+    ] }, { source: '/admin/:path*', headers: [
+        { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=()' },
+    ] }, { source: '/((?!admin(?:/|$)).*)', headers: [
         { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
     ] }, { source: '/((?!admin(?:/|$)|account(?:/|$)).*)', headers: [
         // Mounted apps provide their own CSP for their pages and static assets.

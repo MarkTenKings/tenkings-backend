@@ -79,8 +79,15 @@ async function fixture(context, work, options = {}) {
         const service = new StaffWorkspaceOperator({ store, projectCard: (context, value) => intake.project(context, value) });
         const control = async action => service.control(f.signed.staff, ids[0], { operationId: randomUUID(), expectedRevision: (await card()).revision, action });
         const claim = async (mode = 'CONTINUOUS') => {
-            await intake.claim(f.signed.staff, ids[0], { operationId: randomUUID(), expectedRevision: (await card()).revision, operator: 'ASTRA', mode });
+            if (!options.automaticCapture) await intake.claim(f.signed.staff, ids[0], { operationId: randomUUID(), expectedRevision: (await card()).revision, operator: 'ASTRA', mode });
             const run = await f.admin.$transaction(async tx => {
+                if (options.automaticCapture) {
+                    assert.equal(mode, 'CONTINUOUS'); assert.equal((await card()).workspace, undefined);
+                    const [{ command }] = await tx.$queryRaw`SELECT atlas_staff.pickup_workspace_queue(${f.config.configHash}) AS command`;
+                    assert(command); const run = await tx.staffOperatorRun.findUnique({ where: { id: command.runId } });
+                    assert.equal(JSON.parse(run.manifestCanonical).cornerShape, null);
+                    await tx.$executeRaw`SET CONSTRAINTS ALL IMMEDIATE`; return run;
+                }
                 await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('atlas-staff-access-v1',0))`;
                 const current = JSON.parse((await tx.staffWorkspaceCard.findUnique({ where: { id: ids[0] } })).canonical);
                 const next = await updateCard(tx, current, { workspace: { cornerShape: 'SQUARE' }, claim: { ...current.claim, runId: randomUUID() } });
@@ -118,7 +125,7 @@ async function fixture(context, work, options = {}) {
             let lease = (await apply(current.lease, await f.request(current.lease, 'read_original_photos'))).lease;
             const manifest = JSON.parse(current.run.manifestCanonical), refs = manifest.assets.map(({ assetId, sha256, side }) => ({ assetId, sha256, side }));
             const identity = await apply(lease, await f.request(lease, 'propose_capture_identity', { fields: [
-                { field: 'playerName', value: 'Recorded synthetic player', evidence: [refs[0]] }], summary: 'Observed synthetic original text.' })); lease = identity.lease;
+                { field: 'playerName', value: manifest.identity.playerName || 'Recorded synthetic player', evidence: [refs[0]] }], summary: 'Observed synthetic original text.' })); lease = identity.lease;
             const boundaries = [];
             for (const reference of refs) {
                 const proposed = await apply(lease, await f.request(lease, 'propose_physical_boundary', {

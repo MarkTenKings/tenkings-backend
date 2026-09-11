@@ -329,6 +329,47 @@ test('cohort duplicate originals cannot be admitted as another fresh physical-ca
     assert.equal(f.state.cards.get(second.id).state, 'DRAFT'); assert.equal(f.calls.claim, 0);
 });
 
+test('the exact already queued pair resolves to its original card durably without another admission or claim', async () => {
+    const f = fixture(), photos = { FRONT: 'same verified front', BACK: 'same verified back' };
+    const first = await f.photos(undefined, photos);
+    const original = (await f.service.queue(f.staff, first.id,
+        { operationId: operationId(), expectedRevision: first.revision, pairConfirmed: true })).card;
+    await f.service.claim(f.staff, original.id, { operationId: operationId(), expectedRevision: original.revision, operator: 'ASTRA' });
+    const before = canonical(f.state.cards.get(original.id)), second = await f.photos(undefined, photos);
+    const input = { operationId: operationId(), expectedRevision: second.revision, pairConfirmed: true };
+    const reply = await f.service.queue(f.staff, second.id, input);
+    assert.equal(reply.card.id, second.id); assert.equal(reply.card.state, 'DRAFT');
+    assert.equal(reply.card.revision, second.revision);
+    assert.deepEqual(reply.queueResult, { state: 'EXISTING_CARD', cardId: original.id,
+        title: original.title, cardState: 'IN_PROGRESS', stage: 'IDENTITY' });
+    assert.equal(canonical(f.state.cards.get(original.id)), before);
+    assert.equal(f.calls.pair, 1); assert.equal(f.calls.claim, 1);
+    const count = f.state.operationIds.size;
+    f.restart();
+    assert.deepEqual(await f.service.queue(f.staff, second.id, input), reply);
+    assert.equal(f.state.operationIds.size, count);
+    await assert.rejects(f.service.queue(f.staff, second.id, { ...input, expectedRevision: second.revision + 1 }), /WORKSPACE_REQUEST_CONFLICT/);
+    f.policy.cohortId = 'another-cohort';
+    await assert.rejects(f.service.queue(f.staff, second.id, input), /WORKSPACE_CARD_NOT_FOUND/);
+});
+
+test('partial, reversed and unconfirmed pairs return a known refusal and never resolve to another card', async () => {
+    for (const variant of ['partial', 'reversed', 'unconfirmed']) {
+        const f = fixture(), photos = { FRONT: 'verified original front', BACK: 'verified original back' };
+        const first = await f.photos(undefined, photos);
+        if (variant !== 'unconfirmed') await f.service.queue(f.staff, first.id,
+            { operationId: operationId(), expectedRevision: first.revision, pairConfirmed: true });
+        const second = await f.photos(undefined, variant === 'partial' ? { ...photos, BACK: 'different back' }
+            : variant === 'reversed' ? { FRONT: photos.BACK, BACK: photos.FRONT } : photos);
+        const count = f.state.operationIds.size;
+        await assert.rejects(f.service.queue(f.staff, second.id,
+            { operationId: operationId(), expectedRevision: second.revision, pairConfirmed: true }), error =>
+            error.code === 'WORKSPACE_PHOTO_ALREADY_USED' && error.outcome === 'NOT_DISPATCHED');
+        assert.equal(f.state.operationIds.size, count);
+        assert.equal(f.state.cards.get(second.id).state, 'DRAFT'); assert.equal(f.calls.claim, 0);
+    }
+});
+
 test('competing human and Astra claims acquire exactly one fenced owner and replay cannot reacquire', async () => {
     const f = fixture(), card = await f.ready(), human = { operationId: operationId(), expectedRevision: card.revision, operator: 'HUMAN' };
     const astra = { operationId: operationId(), expectedRevision: card.revision, operator: 'ASTRA', mode: 'STEP' };

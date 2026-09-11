@@ -10,6 +10,7 @@ import { StaffWorkspaceOperator, projectWorkspaceSourceActivity } from './worksp
 import { workspaceReviewSession } from './workspace-review-session.mjs';
 import { workspaceOperatorSqlPort, projectWorkspaceControl, projectWorkspaceControlTiming } from './workspace-operator.mjs';
 import { attachWorkspaceDispatch } from './workspace-dispatch.mjs';
+import { StaffWorkspaceIdentification, workspaceIdentificationSettings } from './workspace-identification.mjs';
 
 export function workspaceRuntimeSettings(env, staffConfig) {
     const disabled = { configHash: hash(canonical({ purpose: 'atlas-workspace-disabled-v1', staffConfigHash: staffConfig.configHash })), enabled: false };
@@ -127,6 +128,8 @@ export function createWorkspaceRuntime({ auth, review, staffConfig, env, setting
                 return null;
             } } });
     const manual = new StaffWorkspaceManual({ intake, source: connected.source, sourceReady });
+    const identification = new StaffWorkspaceIdentification({ intake, settings: workspaceIdentificationSettings(env, staffConfig),
+        ...(connected.identification ?? {}) });
     const baseProject = manual.project.bind(manual);
     manual.project = async (context, card) => {
         const result = await baseProject(context, await reportCard(context, card, review));
@@ -141,6 +144,11 @@ export function createWorkspaceRuntime({ auth, review, staffConfig, env, setting
             const observedControl = projectWorkspaceControl(rawControl, { canControl: false });
             card.observedOperator = { state: observedControl.state, failureCode: observedControl.failureCode ?? null };
             if (observedControl.state === 'NEEDS_ATTENTION' && card.state === 'IN_PROGRESS') card.state = 'NEEDS_ATTENTION';
+            if (observedControl.state === 'WAITING_REVIEW' && rawControl.settled === true && rawControl.pending === 0 && card.state !== 'APPROVED') {
+                // Machine completion queues the draft for human review. It
+                // does not complete the human's checklist or approve a grade.
+                card.state = 'HUMAN_REVIEW'; card.stage = 'REVIEW';
+            }
         }
         return card;
     }
@@ -166,7 +174,7 @@ export function createWorkspaceRuntime({ auth, review, staffConfig, env, setting
         });
         return { ...machine, activity: [...machine.activity, ...human].sort((a, b) => a.at.localeCompare(b.at)).slice(-100) };
     };
-    return { intake, manual, operator, reviewSession: workspaceReviewSession({ store, intake, projectCard: manual.project }), list: staff => intake.list(staff),
+    return { intake, manual, operator, identification, reviewSession: workspaceReviewSession({ store, intake, projectCard: observedCard }), list: staff => intake.list(staff),
         async read(staff, id) {
             return store.transaction(staff, async context => {
                 const saved = await intake.card(context, id), card = await observedCard(context, saved);

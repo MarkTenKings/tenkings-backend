@@ -105,6 +105,12 @@ The normal successful flow should move a verified Front/Back pair automatically 
 
 Mark requested a fresh independent `gpt-6-astra` / `max` lead task with three to four fresh Astra MAX subagents to own the implementation, deployment and actual live acceptance. Existing spending, pilot and final human-approval boundaries remain in force; this clarification changes intake and dispatch interaction, not deterministic grading or certification authority. Validate the original retained card and the complete mobile/photo-to-human-review flow before reporting it ready. The outgoing handoff is `docs/handoffs/2026-09-10_ATLAS_FAST_INTAKE_FRESH_LEAD.md`.
 
+#### Owner clarification — remove SMS test limits, 2026-09-10 Pacific
+
+After the temporary staff SMS allowance prevented sign-in, Mark explicitly instructed: “we dont need to have sms test limits, so you can remove those.” Staff and customer sign-in must no longer stop because a temporary SMS request count, reserved dollar amount or seven-day SMS test window has been reached. This supersedes the SMS portion of the earlier pilot spending restrictions and the proposed redistribution of unused customer allowance. Preserve every historical SMS reservation and receipt; removing a limit does not refund or erase prior exposure.
+
+Keep ordinary phone verification, approved staff access, the current customer destination admission, provider/control bindings, idempotency, session and CSRF protections, and normal authentication rate limits. This direction does not widen the phone roster or change the $90 model/worker/infrastructure budget, grading cohort/expiry, deterministic grading, or human report-approval requirements. Source implementation and actual deployed sign-in acceptance must still be recorded separately.
+
 ---
 
 ## 1. Executive Decision

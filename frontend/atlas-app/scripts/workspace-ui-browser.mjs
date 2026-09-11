@@ -80,47 +80,46 @@ export async function verifyWorkspaceBrowser({ directory, toolModules, assets, r
         await page.getByRole('button', { name: 'Verify & open workspace' }).click();
         await page.waitForURL('**/admin/grading'); await page.locator('main').getByRole('link', { name: '+ Add cards', exact: true }).click();
         await page.getByRole('heading', { name: 'Add cards', exact: true }).waitFor();
-        await until(async () => await page.getByLabel('Short name', { exact: true }).count() === 1, 'Initial local photo draft did not open');
-        await screenshot('01-add-cards-empty'); mark('real fictional-code staff login opens Add cards');
+        const intakeCards = page.locator('section[aria-labelledby^="intake-"]');
+        await until(async () => await intakeCards.count() === 1, 'Initial saved photo entry did not open');
+        await screenshot('01-add-cards-empty'); mark('fictional-code staff login opens rapid intake without a separate confirmation');
+        assert.equal(await page.getByRole('checkbox').count(), 0);
         for (let index = 0; index < 10; index++) {
-            if (index) { await page.getByRole('button', { name: '+ Add another card', exact: true }).click(); await until(async () => await page.getByLabel('Short name', { exact: true }).count() === index + 1, 'Next card draft did not open'); }
-            await page.getByLabel('Short name', { exact: true }).nth(index).fill(`Synthetic fixture ${String(index + 1).padStart(2, '0')}`);
-            await page.getByRole('combobox', { name: /^Card type/ }).nth(index).selectOption('SPORTS');
+            await until(async () => await intakeCards.count() >= index + 1, 'Next physical-card entry did not open');
+            const entry = intakeCards.nth(index);
+            await entry.locator('summary').filter({ hasText: 'Card details' }).click();
+            await entry.getByLabel('Category', { exact: true }).selectOption('SPORTS');
+            await entry.getByLabel('Player name', { exact: true }).fill(`Synthetic fixture ${String(index + 1).padStart(2, '0')}`);
             for (const [sideIndex, side] of ['FRONT', 'BACK'].entries()) {
                 const asset = assets.find(asset => asset.index === index + 1 && asset.side === side);
-                await page.locator('input[type="file"]').nth(index * 2 + sideIndex).setInputFiles(join(directory, 'workspace-assets', asset.file));
+                await entry.locator('input[type="file"]').nth(sideIndex).setInputFiles(join(directory, 'workspace-assets', asset.file));
+            }
+            if (index === 0) {
+                // One create-only PUT reply and one completion reply are lost.
+                // The bounded automatic retry reaches completion; a reload then
+                // settles the exact retained operation without reselecting files.
+                await until(async () => lostComplete && await page.getByRole('button', { name: 'Continue saving', exact: true }).count() > 0, 'Interrupted verification did not retain resumable work');
+                await screenshot('03-upload-recovery');
+                const originalComplete = operations.find(operation => operation.path.endsWith('/upload-complete'));
+                await page.reload();
+                await until(async () => (await get('workspace')).cards[0]?.state === 'WAITING', 'Saved pair did not resume and queue automatically');
+                const completions = operations.filter(operation => operation.path === originalComplete.path && operation.body.uploadId === originalComplete.body.uploadId);
+                assert.equal(completions.length, 2); assert.deepEqual(completions[1].body, originalComplete.body);
+                const repeatedPuts = puts.filter(put => put.id === puts[0].id);
+                assert.equal(repeatedPuts.length, 2); assert.equal(repeatedPuts[1].existing, true);
+                mark('reload retains original Files and resumes the exact PUT/completion before automatic queueing');
             }
         }
         await page.evaluate(() => scrollTo(0, 0)); await screenshot('02-batch-pairs-selected');
-        assert.equal(await page.getByRole('button', { name: '+ Add another card', exact: true }).isDisabled(), true);
-        await page.getByRole('button', { name: 'Upload all selected photos', exact: true }).click();
-        await page.getByText('The upload reply was interrupted. Your photograph and saved upload are kept.', { exact: true }).waitFor();
-        await page.reload(); await page.getByRole('button', { name: 'Upload all selected photos', exact: true }).click();
-        await until(async () => lostComplete && await page.getByRole('button', { name: 'Recover saved request', exact: true }).isEnabled(), 'Lost completion did not settle into recoverable state');
-        await page.getByRole('button', { name: 'Recover saved request', exact: true }).scrollIntoViewIfNeeded();
-        await screenshot('03-upload-recovery');
-        const originalComplete = operations.find(operation => operation.path.endsWith('/upload-complete'));
-        await page.reload(); await page.getByRole('button', { name: 'Recover saved request', exact: true }).click();
-        await until(async () => await page.getByRole('button', { name: 'Recover saved request', exact: true }).count() === 0
-            && await page.getByRole('button', { name: 'Upload all selected photos', exact: true }).isEnabled()
-            && (await get('workspace')).cards[0].sides.every(side => side.status === 'VERIFIED'), 'Exact completion did not recover');
-        const completions = operations.filter(operation => operation.path === originalComplete.path && operation.body.uploadId === originalComplete.body.uploadId);
-        assert.equal(completions.length, 2); assert.deepEqual(completions[1].body, originalComplete.body);
-        assert.equal(puts.filter(put => put.id === puts[0].id).length, 2); assert.equal(puts[1].existing, true);
-        mark('real reload retains photo Files, same PUT object and exact lost completion operation');
-        await page.getByRole('button', { name: 'Upload all selected photos', exact: true }).click();
-        await until(async () => (await get('workspace')).cards.length === 10 && (await get('workspace')).cards.every(card => card.sides.every(side => side.status === 'VERIFIED')), 'Ten real database photo pairs did not verify', 90_000);
-        const queueButtons = page.getByRole('button', { name: 'Add to Waiting to grade' });
-        assert.equal(await queueButtons.count(), 10); assert.equal(await queueButtons.first().isDisabled(), true);
-        assert.equal((await get('workspace')).cards.filter(card => card.state !== 'DRAFT').length, 0);
-        for (let index = 0; index < 10; index++) {
-            await page.getByRole('checkbox').first().check(); await queueButtons.first().click();
-            await until(async () => await queueButtons.count() === 9 - index, 'Confirmed card did not enter Waiting');
-        }
-        await page.getByRole('link', { name: 'View grading queues' }).click();
+        assert.equal(await page.getByRole('button', { name: '+ Add another card', exact: true }).count(), 0);
+        await until(async () => {
+            const cards = (await get('workspace')).cards;
+            return cards.length === 10 && cards.every(card => card.state === 'WAITING' && card.sides.every(side => side.status === 'VERIFIED'));
+        }, 'Ten verified pairs did not automatically join the queue', 90_000);
+        await page.getByRole('link', { name: /^Watch grading/ }).click();
         await page.getByRole('heading', { name: 'Waiting to grade', exact: true }).waitFor();
         await until(async () => await page.getByRole('button', { name: 'Grade this card', exact: true }).count() === 10, 'Waiting queue did not show all ten cards');
-        await screenshot('04-ten-waiting-cards'); mark('ten verified Front/Back pairs require separate human confirmation before queue');
+        await screenshot('04-ten-waiting-cards'); mark('ten verified Front/Back pairs automatically queue; owned fixture leaves paid dispatch disabled');
         const saved = (await get('workspace')).cards, first = saved[0];
         const access = await get('session');
         const overflow = await context.request.post(`${origin}/admin/api/staff/workspace/cards`, { headers: { Origin: origin, 'X-Atlas-Csrf': access.csrf }, data: { operationId: randomUUID(), title: 'Synthetic overflow', identity: {} } });

@@ -122,7 +122,7 @@ export const WORKSPACE_FUNCTIONS = freeze({
         'workspace_pilot_budget_usage(uuid, uuid)','operator_workspace_count(uuid)','lock_control()','lock_operator_control()',
         'lock_operator_bridge_control()','lock_operator_specimen(uuid)','lock_operator_workspace(uuid, uuid)',
         'lock_workspace_private_controls()','lock_workspace_private_actor(uuid, text)','lock_workspace_private_card(uuid)',
-        'lock_workspace_private_run(uuid)','lock_workspace_private_permit(uuid)'],
+        'lock_workspace_private_run(uuid)','lock_workspace_private_permit(uuid)','pickup_workspace_queue(text)'],
 });
 const kindOf = kind => { check(Object.hasOwn(WORKSPACE_GRANTS, kind), 'WORKSPACE_DATABASE_ROLE_INVALID'); return kind; };
 

@@ -11,7 +11,9 @@ import { workspaceSourceFixture } from '../../../frontend/atlas-app/scripts/work
 import { workspaceGrantSQL } from '@atlas/service-bridge/workspace-privileges';
 import { canonical, digest } from '@atlas/service-bridge/protocol';
 import { OperatorLedger } from '../src/ledger.mjs';
+import { makeOperatorConfig } from '../src/policy.mjs';
 import { StaffWorkspaceOperator, workspaceOperatorSqlPort } from '../../../frontend/atlas-app/lib/server/access/workspace-operator.mjs';
+import { createWorkspaceRuntime } from '../../../frontend/atlas-app/lib/server/access/workspace-runtime.mjs';
 import { createWorkspaceDispatcher } from '../src/workspace-dispatcher.mjs';
 
 const privateRequire = createRequire(new URL('../../../frontend/nextjs-app/package.json', import.meta.url));
@@ -34,7 +36,7 @@ async function setupSource(f) {
         (${randomUUID()}::uuid,${f.budget.pilotId}::uuid,${sourceConfigHash},25000,clock_timestamp() AT TIME ZONE 'UTC',
             (${expiresAt}::timestamptz AT TIME ZONE 'UTC'))`;
 }
-async function withDispatcher(context, f, work) {
+async function withDispatcher(context, f, work, { syntheticSource = false } = {}) {
     const role = `atlas_test_dispatch_${randomBytes(6).toString('hex')}`, password = randomBytes(24).toString('hex');
     await context.sql(`CREATE ROLE ${role} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
     await context.sql(workspaceGrantSQL(role, 'COORDINATOR'));
@@ -44,11 +46,27 @@ async function withDispatcher(context, f, work) {
         const staff = await client.staffControl.findUnique({ where: { id: 'active' } });
         const workspace = await client.staffWorkspaceControl.findUnique({ where: { id: 'active' } });
         const control = await client.staffWorkspaceSourceControl.findUnique({ where: { id: 'active' } });
-        const card = await f.card(), identity = await client.staffIdentity.findUnique({ where: { id: card.claim.actorId } });
-        const authority = createAtlasWorkspaceSourceAuthority(client, { mode: 'LOCAL_FIXTURE', staffOrigin: staff.origin,
+        const card = await f.card(), identity = await client.staffIdentity.findUnique({ where: { id: card.claim?.actorId ?? card.creatorId } });
+        const sourceAuthority = createAtlasWorkspaceSourceAuthority(client, { mode: 'LOCAL_FIXTURE', staffOrigin: staff.origin,
             staffDeploymentId: staff.deploymentId, staffReleaseSha: staff.releaseSha, staffConfigHash: staff.configHash,
             configHash: workspace.configHash, sourceConfigHash: control.sourceConfigHash, sourceDeploymentId: control.sourceDeploymentId,
             sourceReleaseSha: control.sourceReleaseSha, allowedPhoneHashes: [identity.phoneHash] });
+        // The full detector fixture owns a LOCAL_FIXTURE source namespace.
+        // Keep its real SQL controls, card, actor, run, receipt and successor
+        // proofs; only the source namespace adapter is synthetic here.
+        const authority = syntheticSource ? { ...sourceAuthority, async current(tx, request) {
+            const controls = await sourceAuthority.controls(tx);
+            const [row] = await tx.$queryRaw`SELECT * FROM atlas_staff.lock_workspace_private_card(${request.cardId}::uuid)`;
+            const card = JSON.parse(row.canonical); assert.equal(digest(canonical(card)), row.contentHash);
+            assert.equal(card.source.sourceType, 'LOCAL_FIXTURE');
+            const [actor] = await tx.$queryRaw`SELECT * FROM atlas_staff.lock_workspace_private_actor(${request.scope.actorId}::uuid,NULL)`;
+            assert.equal(actor.id, card.claim.actorId); assert.equal(actor.role, 'REVIEWER'); assert.equal(actor.revokedAt, null);
+            assert.equal(actor.phoneHash, identity.phoneHash); assert.equal(actor.accessVersion, card.claim.accessVersion);
+            assert.equal(controls.staff.revision, card.claim.controlRevision);
+            assert.deepEqual(request.binding, { captureHash: card.captureHash, captureRevision: card.captureRevision,
+                claimFence: card.claimFence, workflowRevision: card.revision });
+            return { ...controls, card, identity: actor };
+        } } : sourceAuthority;
         let effects = 0;
         const forbidden = async () => { effects++; throw Error('No external execution is allowed in the admission fixture.'); };
         const dispatcher = createWorkspaceDispatcher({ client, authority, operatorConfig: f.config,
@@ -65,6 +83,193 @@ async function commandFor(f, operationId, actorId = f.signed.staff.id) {
 }
 
 export async function workspaceDispatcherScenarios(scenario) {
+    await scenario('automatic queue pickup is atomic, concurrent, browser-independent and settles the original saved queue operation',
+        context => workspaceCaptureFixture(context, async f => {
+            await setupSource(f);
+            const before = await f.card();
+            const queued = await f.admin.staffWorkspaceOperation.findFirst({ where: { cardId: before.id, action: 'queue' } });
+            const queueInput = { operationId: queued.operationId, expectedRevision: before.revision - 1, pairConfirmed: true };
+            await withDispatcher(context, f, async ({ dispatcher, client }) => {
+                const [first, concurrent] = await Promise.all([dispatcher.pickup(), dispatcher.pickup()]);
+                assert(first); assert.deepEqual(concurrent, first);
+                assert.equal((await dispatcher.admit(first)).state, 'ADMITTED');
+                const card = await f.card();
+                assert.equal(card.claim.kind, 'ASTRA'); assert.equal(card.claim.mode, 'CONTINUOUS');
+                assert.equal(card.claim.actorId, before.creatorId); assert.equal(card.claimFence, before.claimFence + 1);
+                assert.equal(card.captureHash, before.captureHash); assert.equal(card.revision, before.revision + 1);
+                assert.equal(await client.staffOperatorRun.count(), 1); assert.equal(await client.staffOperatorAttempt.count(), 0);
+                const command = await client.staffWorkspaceOperation.findUnique({ where: { id: first.commandId } });
+                assert.equal(JSON.parse(command.canonical).result.queueOperationId, queued.id);
+                assert.equal(JSON.parse(command.canonical).result.automatic, true);
+                const run = await client.staffOperatorRun.findUnique({ where: { id: first.runId } });
+                assert.equal(run.policyCanonical, canonical(f.policy)); assert.equal(run.deadlineAt <= new Date(f.policy.expiresAt), true);
+                const replay = await f.intake.queue(f.signed.staff, before.id, queueInput);
+                assert.equal(replay.operationId, queued.operationId); assert.equal(replay.card.state, 'IN_PROGRESS');
+                await context.auth.logout(f.signed.cookie, f.signed.csrf);
+                assert.deepEqual(await dispatcher.pickup(), first);
+                assert.equal((await dispatcher.admit(first)).state, 'ADMITTED');
+                assert.equal(await client.staffOperatorRun.count(), 1); assert.equal(await client.staffOperatorAttempt.count(), 0);
+                assert.equal((await f.card(f.ids[1])).state, 'WAITING');
+            });
+        }, { sourceType: 'SPEEDSTER', preparationEnabled: true, captureRpc: true, rosterSize: 2, effort: 'max' }));
+
+    await scenario('automatic pickup preserves unknown receipts and only consumes a separately saved recovery command',
+        context => workspaceCaptureFixture(context, async f => {
+            await setupSource(f);
+            await withDispatcher(context, f, async ({ dispatcher, client }) => {
+                const first = await dispatcher.pickup(); assert(first);
+                const { lease } = await f.ledger.claim(first.runId, randomUUID());
+                await f.request(lease, 'read_original_photos');
+                await f.ledger.stop(lease, { code: 'ASTRA_RUNNER_FAILED' });
+                const run = await client.staffOperatorRun.findUnique({ where: { id: first.runId } });
+                const attempt = await client.staffOperatorAttempt.findFirst({ where: { runId: first.runId } });
+                assert.equal(run.state, 'UNKNOWN'); assert.equal(attempt.state, 'RECEIVED');
+                await f.admin.staffWorkspaceControl.update({ where: { id: 'active' }, data: { processingLimit: 10, revision: { increment: 1 } } });
+                assert.equal(await dispatcher.pickup(), null); assert.equal(await dispatcher.pickup(), null);
+                assert.equal(await client.staffOperatorRun.count(), 1); assert.equal((await f.card(f.ids[1])).state, 'WAITING');
+                const recovery = await commandFor(f, (await f.control('RECOVER')).operationId);
+                assert.deepEqual(await dispatcher.pickup(), recovery);
+                assert.equal((await dispatcher.admit(recovery)).state, 'ADMITTED');
+                assert.deepEqual(await client.staffOperatorAttempt.findUnique({ where: { id: attempt.id } }), attempt);
+                assert.equal(await client.staffOperatorAttempt.count(), 1);
+            });
+        }, { sourceType: 'SPEEDSTER', preparationEnabled: true, captureRpc: true, rosterSize: 2, effort: 'max' }));
+
+    await scenario('automatic queue identity, runtime, pause and revoked-reviewer fences cannot allocate another run',
+        context => workspaceCaptureFixture(context, async f => {
+            await setupSource(f);
+            await withDispatcher(context, f, async ({ dispatcher, client }) => {
+                const [{ command }] = await client.$queryRaw`SELECT atlas_staff.pickup_workspace_queue(${digest('unadmitted runtime')}) AS command`;
+                assert.equal(command, null); assert.equal(await client.staffOperatorRun.count(), 0);
+                const before = await f.card();
+                const held = { ...before, identityReview: { status: 'UNKNOWN', pairHash: digest('not accepted') },
+                    revision: before.revision + 1, updatedAt: new Date().toISOString() };
+                await f.admin.staffWorkspaceCard.update({ where: { id: held.id }, data: { revision: held.revision,
+                    canonical: canonical(held), contentHash: digest(canonical(held)), updatedAt: new Date(held.updatedAt) } });
+                assert.equal(await dispatcher.pickup(), null); assert.equal(await client.staffOperatorRun.count(), 0);
+                const restored = { ...held, revision: held.revision + 1, updatedAt: new Date().toISOString() }; delete restored.identityReview;
+                await f.admin.staffWorkspaceCard.update({ where: { id: restored.id }, data: { revision: restored.revision,
+                    canonical: canonical(restored), contentHash: digest(canonical(restored)), updatedAt: new Date(restored.updatedAt) } });
+                const first = await dispatcher.pickup(); assert(first);
+                await f.control('PAUSE'); assert.equal(await dispatcher.pickup(), null);
+                await f.control('RESUME'); assert(await dispatcher.pickup());
+                const saved = await f.card();
+                await f.admin.staffIdentity.update({ where: { id: saved.claim.actorId }, data: { accessVersion: { increment: 1 } } });
+                await assert.rejects(dispatcher.pickup());
+                assert.equal(await client.staffOperatorRun.count(), 1); assert.equal(await client.staffOperatorAttempt.count(), 0);
+            });
+        }, { sourceType: 'SPEEDSTER', preparationEnabled: true, captureRpc: true, rosterSize: 1, effort: 'max' }));
+
+    await scenario('automatic pickup consumes the exact saved recovery across a runtime release without repeating the completed response',
+        context => workspaceCaptureFixture(context, async f => {
+            await setupSource(f);
+            let original;
+            await withDispatcher(context, f, async ({ dispatcher }) => { original = await dispatcher.pickup(); assert(original); });
+            const first = await f.ledger.claim(original.runId, randomUUID());
+            const read = await f.request(first.lease, 'read_original_photos');
+            const applied = await f.apply(first.lease, read);
+            const run = await f.admin.staffOperatorRun.findUnique({ where: { id: original.runId } });
+            const asset = JSON.parse(run.manifestCanonical).assets[0];
+            const saved = await f.request(applied.lease, 'inspect_region', {
+                assetId: asset.assetId, sourceSha256: asset.sha256, side: asset.side,
+                rect: { x: 0, y: 0, width: asset.width, height: asset.height } });
+            await f.ledger.stop(applied.lease, { code: 'ASTRA_TOOL_PREPARATION_FAILED' });
+            const before = await f.admin.staffOperatorRun.findUnique({ where: { id: original.runId } });
+            const attempt = await f.admin.staffOperatorAttempt.findUnique({ where: { id: saved.attemptId } });
+            const receipt = await f.admin.staffOperatorReceipt.findUnique({ where: { id: attempt.resultReceiptId } });
+            assert.equal(before.state, 'UNKNOWN'); assert.equal(attempt.state, 'RECEIVED');
+            assert.equal(await f.admin.staffOperatorAttempt.count({ where: { state: 'APPLIED' } }), 1);
+            const nextConfig = makeOperatorConfig({ ...f.config, databaseUrl: f.db.operatorUrl,
+                buildHash: digest('synthetic automatic pickup release') });
+            await f.admin.staffOperatorControl.update({ where: { id: 'active' }, data: { ...nextConfig, revision: { increment: 1 } } });
+            await f.admin.staffControl.update({ where: { id: 'active' }, data: { revision: { increment: 1 } } });
+            await withDispatcher(context, { ...f, config: nextConfig }, async ({ dispatcher }) => {
+                assert.equal(await dispatcher.pickup(), null);
+                assert.equal((await dispatcher.admit(original)).state, 'HELD');
+            });
+            await assert.rejects(() => f.control('RECOVER'));
+            const signed = await f.login(), card = await f.card();
+            const input = { action: 'RECOVER', operationId: randomUUID(), expectedRevision: card.revision };
+            await f.service.control(signed.staff, card.id, input);
+            await f.service.control(signed.staff, card.id, input);
+            const recovery = await commandFor(f, input.operationId, signed.staff.id);
+            const recovered = await f.admin.staffOperatorRun.findUnique({ where: { id: before.id } });
+            const grant = JSON.parse((await f.admin.staffOperatorRecovery.findFirst({ where: { runId: before.id } })).canonical);
+            assert.equal(grant.oldRuntimeHash, before.runtimeHash); assert.equal(grant.newRuntimeHash, nextConfig.configHash);
+            assert.equal(recovered.runtimeHash, nextConfig.configHash); assert.equal(recovered.state, 'WAITING_TOOL');
+            assert.equal(recovered.policyCanonical, before.policyCanonical); assert.equal(recovered.inputCanonical, before.inputCanonical);
+            await withDispatcher(context, { ...f, config: nextConfig }, async ({ dispatcher, client }) => {
+                assert.deepEqual(await dispatcher.pickup(), recovery);
+                assert.equal((await dispatcher.admit(recovery)).state, 'ADMITTED');
+                assert.deepEqual(await client.staffOperatorAttempt.findUnique({ where: { id: attempt.id } }), attempt);
+                const ledger = new OperatorLedger({ client: f.client, config: nextConfig,
+                    expectedClaim: { runId: recovered.id, controlRevision: recovered.controlRevision } });
+                const claim = await ledger.claim(recovered.id, randomUUID());
+                assert.equal(claim.mode, 'RECOVER_TOOL'); assert.equal(claim.attemptId, attempt.id);
+                const snapshot = await ledger.inspectTool(claim.lease, attempt.id), adapter = f.adaptersFor(nextConfig.configHash)[snapshot.call.name];
+                const prepared = await adapter.prepare(snapshot, {});
+                await ledger.applyTool(claim.lease, attempt.id, data => adapter.apply(data, prepared));
+                assert.equal(await client.staffOperatorAttempt.count(), 2); assert.equal(f.calls(), 2);
+                assert.equal(await client.staffOperatorStep.count({ where: { attemptId: attempt.id } }), 1);
+                assert.equal((await client.staffOperatorAttempt.findUnique({ where: { id: attempt.id } })).state, 'APPLIED');
+                assert.deepEqual(await f.admin.staffOperatorReceipt.findUnique({ where: { id: receipt.id } }), receipt);
+                assert.equal(await dispatcher.pickup(), null);
+            });
+        }, { sourceType: 'SPEEDSTER', preparationEnabled: true, captureRpc: true, rosterSize: 1, effort: 'max' }));
+
+    await scenario('automatic capacity releases an actual terminal report lease only within the admitted distinct-card limit',
+        context => workspaceSourceFixture(context, async f => {
+            await f.control('PAUSE'); const command = await commandFor(f, (await f.control('RESUME')).operationId);
+            const request = await f.intent();
+            assert.equal((await f.initialization(request).run()).state, 'SUCCEEDED');
+            await f.finishPermit(request); await f.projectResult(request, { clearPending: false });
+            const report = await f.successor(request), { lease } = await f.ledger.claim(report.id, randomUUID());
+            const read = await f.request(lease, 'read_card_report');
+            const step = await f.ledger.applyTool(lease, read.attemptId, async ({ manifest }) => ({ reportHash: manifest.reportHash, synthetic: true }));
+            const submit = await f.request(step.lease, 'submit_for_human_review', {
+                reportHash: JSON.parse(report.manifestCanonical).reportHash, disposition: 'READY_FOR_REVIEW', summary: 'Synthetic report awaits the human.' });
+            const done = await f.ledger.applyTool(step.lease, submit.attemptId, async () => ({ proposals: 0 }));
+            assert.equal(done.state, 'READY_FOR_HUMAN');
+            const terminal = await f.admin.staffOperatorRun.findUnique({ where: { id: report.id } });
+            assert(terminal.leaseOwner); assert(terminal.leaseExpiresAt > new Date());
+            await withDispatcher(context, f, async ({ dispatcher, client }) => {
+                assert.equal((await dispatcher.admit(command)).state, 'SETTLED');
+                assert.equal((await dispatcher.run(command)).state, 'READY_FOR_HUMAN');
+                const workspace = await f.admin.staffWorkspaceControl.findUnique({ where: { id: 'active' } });
+                const app = createWorkspaceRuntime({ auth: context.auth, review: f.bridge.review, staffConfig: context.config,
+                    env: {}, settings: { enabled: false, configHash: workspace.configHash }, ports: {} });
+                const humanDraft = await f.admin.staffReviewRevision.findFirst({ where: { specimenId: report.specimenId }, orderBy: { revision: 'desc' } });
+                assert.equal(JSON.parse(humanDraft.canonical).identityReviewed, false);
+                assert.deepEqual(JSON.parse(humanDraft.canonical).reviewedSides, []);
+                const waiting = (await app.read(f.signed.staff, f.ids[0])).card;
+                assert.equal(waiting.state, 'HUMAN_REVIEW'); assert.equal(waiting.stage, 'REVIEW');
+                assert.equal(waiting.timing.runningSince, null); assert.equal(waiting.timing.pausedReason, 'HUMAN_REVIEW');
+                const observed = (await app.read(f.signed.staff, f.ids[0])).card;
+                assert.equal(observed.timing.totalActiveMs, waiting.timing.totalActiveMs);
+                // The saved card has not been picked up by a human. Its real
+                // terminal ledger alone releases machine capacity, while the
+                // initial distinct-card cap still prevents a second claim.
+                assert.equal((await f.card()).state, 'IN_PROGRESS');
+                assert.equal(await dispatcher.pickup(), null);
+                assert.equal((await f.card(f.ids[1])).state, 'WAITING');
+                await f.admin.staffWorkspaceControl.update({ where: { id: 'active' }, data: { processingLimit: 10, revision: { increment: 1 } } });
+                const next = await dispatcher.pickup(); assert(next);
+                assert.notEqual(next.runId, report.id); assert.equal((await f.card(f.ids[1])).claim.runId, next.runId);
+                const pickedUp = await app.reviewSession(f.signed.staff, f.ids[0], {
+                    operationId: randomUUID(), expectedRevision: waiting.revision, action: 'START' });
+                assert.equal(pickedUp.card.state, 'HUMAN_REVIEW'); assert.equal(pickedUp.card.timing.activeStage, 'REVIEW');
+                assert(pickedUp.card.timing.runningSince);
+                const paused = await app.reviewSession(f.signed.staff, f.ids[0], {
+                    operationId: randomUUID(), expectedRevision: pickedUp.card.revision, action: 'PAUSE' });
+                assert.equal(paused.card.timing.runningSince, null); assert.equal(paused.card.timing.pausedReason, 'PAUSED');
+                assert(paused.card.timing.totalActiveMs >= waiting.timing.totalActiveMs);
+                assert.deepEqual(await f.admin.staffReviewRevision.findUnique({ where: {
+                    specimenId_revision: { specimenId: humanDraft.specimenId, revision: humanDraft.revision } } }), humanDraft);
+                assert.deepEqual(await client.staffOperatorRun.findUnique({ where: { id: report.id } }), terminal);
+                assert.equal(await f.admin.staffReportApproval.count(), 0); assert.equal(await f.admin.staffPublicReport.count(), 0);
+            }, { syntheticSource: true });
+        }, { sourceType: 'LOCAL_FIXTURE', rosterSize: 2, effort: 'max' }));
+
     await scenario('dispatcher proves exact Start and STEP settlement under restricted grants; stale control cannot claim or dispatch',
         context => workspaceCaptureFixture(context, async f => {
             await setupSource(f);

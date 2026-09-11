@@ -25,7 +25,7 @@ export function createHandler(resolveRuntime, env = process.env) {
                 ['GET', new RegExp(`^/api/staff/workspace/cards/${cardPattern}$`)],
                 ['GET', new RegExp(`^/api/staff/workspace/cards/${cardPattern}/(evidence|prepared)/(FRONT|BACK)$`)],
                 ['GET', new RegExp(`^/api/staff/workspace/cards/${cardPattern}/activity$`)],
-                ['POST', new RegExp(`^/api/staff/workspace/cards/${cardPattern}/(upload-plan|upload-complete|queue|claim|action|recover|control|review-session)$`)]);
+                ['POST', new RegExp(`^/api/staff/workspace/cards/${cardPattern}/(upload-plan|upload-complete|queue|claim|action|recover|control|review-session|identify|identity)$`)]);
             if (state.proposals) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/proposals$`)]);
             if (state.identityCorrection) patterns.push(['POST', new RegExp(`^/api/staff/cards/${cardPattern}/identity-correction$`)]);
             if (state.learning) patterns.push(['GET', new RegExp(`^/api/staff/cards/${cardPattern}/learning$`)],
@@ -58,7 +58,7 @@ export function createHandler(resolveRuntime, env = process.env) {
             if (req.method === 'POST') {
                 assertWrite(req, state.origin);
                 if (Buffer.byteLength(JSON.stringify(req.body ?? {})) > (path.endsWith('/grade') ? 1_040_000
-                    : path.endsWith('/learning/decisions') ? 32768 : 16384))
+                    : path.endsWith('/identify') ? 2048 : path.endsWith('/learning/decisions') ? 32768 : 16384))
                     deny(413, 'REQUEST_TOO_LARGE');
             }
             let body;
@@ -110,6 +110,10 @@ export function createHandler(resolveRuntime, env = process.env) {
                     else if (match[2] === 'recover') body = await manual.recover(staff, match[1], req.body);
                     else if (match[2] === 'control') body = await operator.control(staff, match[1], req.body);
                     else if (match[2] === 'review-session') body = await state.workspace.reviewSession(staff, match[1], req.body);
+                    else if (match[2] === 'identify' || match[2] === 'identity') {
+                        if (!state.workspace.identification) deny(503, 'WORKSPACE_IDENTIFICATION_UNAVAILABLE');
+                        body = await state.workspace.identification[match[2] === 'identify' ? 'identify' : 'saveIdentity'](staff, match[1], req.body);
+                    }
                     else body = await intake[({ 'upload-plan': 'planUpload', 'upload-complete': 'completeUpload', queue: 'queue', claim: 'claim' })[match[2]]](staff, match[1], req.body);
                 }
                 else if (path.startsWith('/api/staff/operations/')) {

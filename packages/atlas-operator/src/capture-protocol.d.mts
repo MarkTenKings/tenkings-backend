@@ -15,6 +15,6 @@ export const captureManifestSchema: ZodType<CaptureManifest>;
 export function parseCaptureManifest(value: unknown): CaptureManifest;
 export function captureIdentityFields(category: string): string[];
 export function assertCaptureScope(run: any, card: any, value: unknown): CaptureManifest;
-export function validateCaptureProposal(call: { name: string; args: any }, manifest: CaptureManifest): void;
+export function validateCaptureProposal(call: { name: string; args: any }, manifest: CaptureManifest, card?: any): void;
 export function captureProposalRef(stepId: string, call: { args: unknown }): { stepId: string; requestHash: string };
 export function selectedCapturePreparation(data: any, delivered: (data: any, references: any[]) => Promise<void>): Promise<Record<string, unknown>>;

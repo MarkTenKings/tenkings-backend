@@ -4,22 +4,78 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createPrivateOperatorHost, dispatchHost } from '../src/operator-host.mjs';
 import { assertPrivateProcess } from '../src/process.mjs';
 
-function fixture() {
+function fixture(options = {}) {
     const runId = randomUUID(), commandId = randomUUID(), cardId = randomUUID(), results = [];
     let resolve;
     const pending = new Promise(done => { resolve = done; });
     const value = { runId, commandId, request: { runId, commandId }, cardId, calls: [], state: 'ADMITTED', finish: resolve, results };
-    value.host = dispatchHost({ onResult: result => { if (value.loggerFails) throw new Error('log unavailable'); results.push(result); }, async makeDispatcher() {
-        return { async admit({ runId: selected, commandId: command }) { value.calls.push(['admit', selected, command]);
+    value.options = { ...options, onResult: result => { if (value.loggerFails) throw new Error('log unavailable'); results.push(result); }, async makeDispatcher() {
+        return { async pickup() {
+            value.calls.push(['pickup']);
+            if (value.pickupFailure) throw value.pickupFailure;
+            if (value.pickupWait) await value.pickupWait;
+            return value.queueEmpty ? null : value.request;
+        }, async admit({ runId: selected, commandId: command }) { value.calls.push(['admit', selected, command]);
             return { runId: selected, commandId: command,
                 commandHash: createHash('sha256').update(command).digest('hex'),
                 activeRunId: runId, workspaceCardId: cardId, state: value.state }; },
         async run({ runId: selected, commandId: command, signal }) {
             value.calls.push(['run', selected, command]); value.signal = signal; return pending;
         } };
-    } });
+    } };
+    value.host = dispatchHost(value.options);
     return value;
 }
+function pollingClock() {
+    const timers = new Map(); let sequence = 0;
+    return {
+        setTimeout(fn, ms) { assert.equal(ms, 5000); timers.set(++sequence, fn); return sequence; },
+        clearTimeout(id) { timers.delete(id); },
+        async tick() {
+            assert.equal(timers.size, 1);
+            const [id, fn] = timers.entries().next().value; timers.delete(id); fn();
+            await new Promise(setImmediate);
+        },
+        get size() { return timers.size; },
+    };
+}
+test('automatic queue pickup starts without HTTP or an open browser and remains concurrency one', async () => {
+    const clock = pollingClock(), f = fixture({ automaticPickup: true, clock });
+    assert.equal(f.calls.length, 0);
+    await clock.tick();
+    assert.deepEqual(f.calls.map(([kind]) => kind), ['pickup', 'admit', 'run']);
+    await clock.tick();
+    assert.equal(f.calls.filter(([kind]) => kind === 'pickup').length, 1);
+    await f.host.accept(f.request);
+    assert.equal(f.calls.filter(([kind]) => kind === 'run').length, 1);
+    f.finish({ runId: f.runId, state: 'READY_FOR_HUMAN' });
+    await f.host.close(); assert.equal(clock.size, 0);
+});
+test('a fresh private host discovers the same durable command after restart', async () => {
+    const clock = pollingClock(), f = fixture({ automaticPickup: true, clock });
+    await f.host.close(); assert.equal(f.calls.length, 0);
+    f.host = dispatchHost(f.options);
+    await clock.tick();
+    assert.deepEqual(f.calls.find(([kind]) => kind === 'run'), ['run', f.runId, f.commandId]);
+    f.finish({ runId: f.runId, state: 'PAUSED' }); await f.host.close();
+});
+test('held pickup stays bounded, logs safe changes only, and never dispatches', async () => {
+    const clock = pollingClock(), f = fixture({ automaticPickup: true, clock });
+    f.pickupFailure = Object.assign(Error('secret provider configuration'), { code: 'ASTRA_PILOT_NOT_ACTIVE' });
+    await clock.tick(); await clock.tick();
+    assert.deepEqual(f.results, [{ state: 'HELD', phase: 'QUEUE', code: 'ASTRA_PILOT_NOT_ACTIVE' }]);
+    assert.equal(f.calls.filter(([kind]) => kind === 'run').length, 0);
+    f.pickupFailure = null; f.queueEmpty = true;
+    await clock.tick(); assert.equal(f.results.length, 1);
+    await f.host.close();
+});
+test('shutdown waits for an in-progress DB pickup without starting its committed command', async () => {
+    const clock = pollingClock(), f = fixture({ automaticPickup: true, clock }); let done;
+    f.pickupWait = new Promise(resolve => { done = resolve; });
+    await clock.tick(); assert.deepEqual(f.calls, [['pickup']]);
+    const stopped = f.host.close(); done(); await stopped;
+    assert.equal(clock.size, 0); assert.deepEqual(f.calls, [['pickup']]);
+});
 test('private acknowledgment follows exact-command admission; retry aliases cannot create two executions', async () => {
     const f = fixture();
     assert.deepEqual(await f.host.accept(f.request), { state: 'ACCEPTED', ...f.request });

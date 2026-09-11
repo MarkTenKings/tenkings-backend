@@ -56,8 +56,9 @@ function requestFor(card, run) {
  * artifact and separate OPERATOR client factory. The supplied client has only
  * COORDINATOR grants; it never receives provider or original-storage authority.
  *
- * This does not claim a waiting workspace, alter a control, poll, retry a lost
- * effect, or approve a result. One invocation performs at most one capture run,
+ * pickup atomically admits a saved eligible queue item or finds its existing
+ * command; run never alters a control, retries a lost effect, or approves a
+ * result. One invocation performs at most one capture run,
  * one bounded source continuation (three actions), and one linked report run.
  */
 export function createWorkspaceDispatcher({ client, authority, source, operatorConfig, executeOperator }, {
@@ -195,7 +196,9 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
         return proof.applied + proof.prepared === 1;
     }
     async function snapshot(requestedId, commandId) {
-        return coordinator.$transaction(async tx => {
+        return coordinator.$transaction(tx => snapshotInTransaction(tx, requestedId, commandId));
+    }
+    async function snapshotInTransaction(tx, requestedId, commandId) {
             const privateContext = await privateAuthority.controls(tx), { staff, workspace, source: sourceControl, now } = privateContext;
             const [control] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffOperatorControl" WHERE id='active'`;
             const [bridge] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffGradingBridgeControl" WHERE id='active'`;
@@ -282,8 +285,11 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
             if (work.unknown > 0) return scoped({ state: 'HELD', code: 'ASTRA_WORK_UNRESOLVED' });
             if (pending || work.permits > 0 || work.sources > 0 || run.state === 'PREPARATION_READY' && work.attempts > 0)
                 return scoped({ state: 'HELD', code: 'ASTRA_SOURCE_WORK_UNRESOLVED' });
-            if (work.attempts === 0 && !leased && (run.state === 'READY_FOR_HUMAN' && run.phase === 'REPORT_REVIEW'
-                || ['NEEDS_RECAPTURE', 'NEEDS_EXPERT', 'FAILED'].includes(run.state)))
+            // A terminal report cannot perform another operator action. Its
+            // durable review step and settled receipts end machine work even
+            // when the final lease timestamp has not expired yet.
+            if (work.attempts === 0 && (run.state === 'READY_FOR_HUMAN' && run.phase === 'REPORT_REVIEW'
+                || !leased && ['NEEDS_RECAPTURE', 'NEEDS_EXPERT', 'FAILED'].includes(run.state)))
                 return scoped({ state: 'SETTLED', settledState: run.state === 'READY_FOR_HUMAN' ? run.state : 'NEEDS_ATTENTION' });
             if (['PAUSED', 'PAUSE_REQUESTED'].includes(controlState.state)
                 || controlState.mode === 'STEP' && controlState.stepBudget !== 1) {
@@ -300,10 +306,21 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
             check(ACTIVE_RUN_STATES.includes(run.state), 'ASTRA_DISPATCH_RUN_NOT_CURRENT');
             if (leased) return scoped({ state: 'IN_FLIGHT', code: 'ASTRA_LEASE_BUSY' });
             return scoped({ state: 'OPERATOR' });
-        });
     }
 
-    return Object.freeze({ async admit(value) {
+    return Object.freeze({ async pickup() {
+        return coordinator.$transaction(async tx => {
+            // The private binding and current staff roster are checked before
+            // and after the DB-only claim, in the same transaction. A browser
+            // session is not a machine lease and need not stay open.
+            await privateAuthority.controls(tx);
+            const [row] = await tx.$queryRaw`SELECT atlas_staff.pickup_workspace_queue(${config.configHash}) AS command`;
+            if (row?.command === null) return null;
+            const command = commandSchema.parse(row?.command);
+            const current = await snapshotInTransaction(tx, command.runId, command.commandId);
+            return ['OPERATOR', 'SOURCE'].includes(current.state) ? command : null;
+        });
+    }, async admit(value) {
         const { runId, commandId } = commandSchema.parse(value);
         try {
             const current = await snapshot(runId, commandId);

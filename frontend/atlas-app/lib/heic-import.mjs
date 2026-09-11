@@ -6,6 +6,7 @@ export const HEIC_IMPORT_VERSION = 'libheif-js-1.23.2-png-v1';
  * browser during conversion. The caller persists both original and PNG. */
 export function convertHeicPhoto(file, {
     signal,
+    onProgress = () => {},
     workerFactory = () => new Worker(new URL('./heic-import.worker.mjs', import.meta.url), { type: 'module' }),
     timeoutMs = 90_000
 } = {}) {
@@ -31,6 +32,10 @@ export function convertHeicPhoto(file, {
             };
             worker.onmessageerror = () => finish(new Error('The converted photograph could not be read. Select it again.'));
             worker.onmessage = ({ data }) => {
+                if (data?.progress && ['Reading HEIC', 'Decoding full-resolution image', 'Encoding lossless PNG'].includes(data.progress)) {
+                    if (!settled) onProgress(data.progress);
+                    return;
+                }
                 if (data?.ok !== true) {
                     finish(new Error(typeof data?.error === 'string' ? data.error : 'This HEIC photograph could not be converted.'));
                     return;

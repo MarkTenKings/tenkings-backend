@@ -102,46 +102,7 @@ test('centering uses only the prepared image and fixed physical frame, preservin
     assert.deepEqual(f.find('ImageQuadEditor').props.points, inner, 'The human outline stays visible in the local draft state.');
 });
 
-test('actual batch intake keeps verified pairs out of the queue until each human confirmation', async () => {
-    const react = reactHarness(), exported = {}, saved = { entries: [] }, cards = new Map(), requests = [], puts = [];
-    const entry = number => ({ id: randomUUID(), title: `Card ${number}`, identity: { category: 'POKEMON' }, files: { FRONT: { name: `front-${number}.jpg`, type: 'image/jpeg', size: 20 }, BACK: { name: `back-${number}.jpg`, type: 'image/jpeg', size: 20 } }, uploads: {}, card: null, pending: null, pairConfirmed: false });
-    saved.entries = [entry(1), entry(2)];
-    const request = async (path, { body }) => {
-        requests.push({ path, body: structuredClone(body) });
-        let current;
-        if (path === 'workspace/cards') { current = { ...card(), title: body.title, state: 'DRAFT', stage: 'PHOTOS', revision: 1, sides: [{ side: 'FRONT', status: 'MISSING' }, { side: 'BACK', status: 'MISSING' }] }; cards.set(current.id, current); }
-        else { current = cards.get(path.split('/')[2]); assert.equal(body.expectedRevision, current.revision); current.revision++; }
-        let upload;
-        if (path.endsWith('/upload-plan')) { upload = { id: randomUUID() }; Object.assign(current.sides.find(value => value.side === body.side), { status: 'PLANNED', uploadId: upload.id }); }
-        if (path.endsWith('/upload-complete')) current.sides.find(value => value.uploadId === body.uploadId).status = 'VERIFIED';
-        if (path.endsWith('/queue')) { assert.equal(body.pairConfirmed, true); assert.ok(current.sides.every(value => value.status === 'VERIFIED')); current.state = 'WAITING'; }
-        return { card: structuredClone(current), operationId: body.operationId, ...(upload ? { upload } : {}) };
-    };
-    vm.runInNewContext(intakeCode, { exports: exported, structuredClone, AbortController, require(module) {
-        if (module === 'react') return react.react;
-        if (module === 'next/link') return 'link';
-        if (module === './Shell') return { Notice: 'notice' };
-        if (module === './WorkspaceShared') return { PhotoPreview: 'PhotoPreview', Readiness: 'Readiness', StateBadge: 'StateBadge' };
-        if (module === '../lib/workspace-drafts.mjs') return { createPhotoDraftStore: () => ({ read: async () => structuredClone(saved.entries), write: async entries => { saved.entries = structuredClone(entries); } }) };
-        if (module === '../lib/workspace-client.mjs') return { ...client, workspaceRequest: request, freshWorkspaceAccess: async () => ({ csrf: 'a'.repeat(64) }), uploadIntakeEntry: (entry, options) => client.uploadIntakeEntry(entry, { ...options, describe: async file => ({ name: file.name, contentType: file.type, byteCount: file.size, sha256: 'a'.repeat(64) }), put: async (upload, file) => { puts.push(file.name); } }) };
-        if (module === '../lib/routes.mjs') return { STAFF_REAUTHENTICATE_PATH: '/admin?reauthenticate=1' };
-        if (module === '../lib/usePendingNavigation') return { usePendingNavigation() {} };
-        if (module.endsWith('.module.css')) return {};
-        return nextRequire(module.startsWith('@babel/runtime/') ? `next/dist/compiled/${module}` : module);
-    } });
-    let tree; const render = () => { tree = react.render(() => exported.default({ staff: { id: 'reviewer', role: 'REVIEWER' } })); }, find = (type, label) => all(tree, node => node.type === type && text(node).includes(label));
-    render(); await new Promise(resolve => setImmediate(resolve)); render();
-    await find('button', 'Upload all selected photos')[0].props.onClick(); render();
-    assert.equal(puts.length, 4); assert.equal(cards.size, 2); assert.ok([...cards.values()].every(value => value.state === 'DRAFT'));
-    assert.equal(requests.filter(value => value.path.endsWith('/queue')).length, 0);
-    const queueButtons = find('button', 'Add to Waiting to grade'); assert.equal(queueButtons.length, 2); assert.ok(queueButtons.every(button => button.props.disabled));
-    const checks = all(tree, node => node.type === 'input' && node.props.type === 'checkbox'); checks[0].props.onChange({ target: { checked: true } }); await new Promise(resolve => setImmediate(resolve)); render();
-    assert.equal(find('button', 'Add to Waiting to grade')[0].props.disabled, false); assert.equal(find('button', 'Add to Waiting to grade')[1].props.disabled, true);
-    await find('button', 'Add to Waiting to grade')[0].props.onClick(); render();
-    assert.equal(requests.filter(value => value.path.endsWith('/queue')).length, 1); assert.equal([...cards.values()].filter(value => value.state === 'WAITING').length, 1);
-    assert.equal(saved.entries[0].files.FRONT, null); assert.equal(saved.entries[0].files.BACK, null); assert.notEqual(saved.entries[1].files.FRONT, null);
-    assert.ok(requests.every(value => !/claim|action/.test(value.path)), 'Queue population never starts grading.');
-});
+// Rapid intake, retained rejection and local-commit regression coverage is in photo-intake-flow.test.mjs.
 
 test('map review checks automatically once, while failure consent stays explicitly human and revision-bound', () => {
     const initial = card(); initial.operator = { kind: 'HUMAN', name: 'Fixture reviewer' }; initial.capabilities.actions.push('RESOLVE_MAP');
@@ -155,110 +116,9 @@ test('map review checks automatically once, while failure consent stays explicit
     f.props.card.operator = { kind: 'ASTRA' }; f.render(); assert.equal(all(f.tree, node => node.type === 'input' && node.props.type === 'checkbox').length, 0);
 });
 
-test('photo intake enables explicit reselect after a retained rejection and keeps unresolved uploads locked', async () => {
-    for (const unresolved of [false, true]) {
-        const react = reactHarness(), exported = {}, original = { name: 'front.png', type: 'image/png', size: 20 }, replacement = { ...original, name: 'replacement.png' };
-        const rejected = { ...card(), state: 'DRAFT', stage: 'PHOTOS', title: 'Same physical card',
-            sides: [{ side: 'FRONT', status: 'REJECTED', uploadId: randomUUID(), rejection: { reason: 'BYTES_MISMATCH' } }, { side: 'BACK', status: 'VERIFIED', uploadId: randomUUID() }] };
-        let saved = [{ id: randomUUID(), title: rejected.title, identity: { category: 'POKEMON' }, card: rejected,
-            files: { FRONT: original, BACK: { name: 'back.png', type: 'image/png', size: 20 } },
-            uploads: { FRONT: { phase: unresolved ? 'COMPLETE' : 'REJECTED', rejection: { reason: 'BYTES_MISMATCH' } }, BACK: { phase: 'VERIFIED' } },
-            pending: unresolved ? { path: `workspace/cards/${rejected.id}/upload-complete`, body: { operationId: randomUUID() } } : null,
-            pairConfirmed: false }];
-        const back = structuredClone(saved[0].files.BACK);
-        vm.runInNewContext(intakeCode, { exports: exported, structuredClone, AbortController, require(module) {
-            if (module === 'react') return react.react;
-            if (module === 'next/link') return 'link';
-            if (module === './Shell') return { Notice: 'notice' };
-            if (module === './WorkspaceShared') return { PhotoPreview: 'PhotoPreview', Readiness: 'Readiness', StateBadge: 'StateBadge' };
-            if (module === '../lib/workspace-drafts.mjs') return { createPhotoDraftStore: () => ({ read: async () => structuredClone(saved), write: async entries => { saved = structuredClone(entries); } }) };
-            if (module === '../lib/workspace-client.mjs') return client;
-            if (module === '../lib/routes.mjs') return { STAFF_REAUTHENTICATE_PATH: '/admin?reauthenticate=1' };
-            if (module === '../lib/usePendingNavigation') return { usePendingNavigation() {} };
-            if (module.endsWith('.module.css')) return {};
-            return nextRequire(module.startsWith('@babel/runtime/') ? `next/dist/compiled/${module}` : module);
-        } });
-        const render = () => react.render(() => exported.default({ staff: { id: 'fixture-reviewer', role: 'REVIEWER' } }));
-        render(); await new Promise(resolve => setImmediate(resolve)); const tree = render();
-        const files = all(tree, node => node.type === 'input' && node.props.type === 'file');
-        assert.equal(files[0].props.disabled, unresolved);
-        if (!unresolved) assert.match(text(tree), /Needs replacement/);
-        files[0].props.onChange({ target: { files: [replacement], value: 'selected' } });
-        await new Promise(resolve => setImmediate(resolve)); render();
-        assert.equal(saved[0].card.id, rejected.id); assert.deepEqual(saved[0].files.BACK, back);
-        assert.equal(saved[0].files.FRONT.name, unresolved ? original.name : replacement.name);
-        assert.equal(saved[0].uploads.FRONT?.phase ?? null, unresolved ? 'COMPLETE' : null);
-        assert.equal(saved[0].pairConfirmed, false);
-    }
-});
+// Rapid intake, retained rejection and local-commit regression coverage is in photo-intake-flow.test.mjs.
 
-test('HEIC selection publishes only after local commit and a failed write preserves the previous draft for retry', async () => {
-    const react = reactHarness(), exported = {}, writes = [], selectedEntries = [];
-    const file = name => ({ name, type: name.endsWith('.heic') ? 'image/heic' : 'image/png', size: 20 });
-    const initial = { id: randomUUID(), title: 'Retained physical card', identity: { category: 'POKEMON' }, card: null,
-        files: { FRONT: file('old-front.png'), BACK: file('old-back.png') },
-        sourceFiles: { FRONT: file('old-front.heic'), BACK: file('old-back.heic') },
-        photoImports: { FRONT: { width: 2, height: 3, originalSha256: 'a'.repeat(64) }, BACK: { width: 3, height: 4, originalSha256: 'b'.repeat(64) } },
-        uploads: { FRONT: { phase: 'VERIFIED' }, BACK: { phase: 'VERIFIED' } }, pending: null, pairConfirmed: true };
-    const replacement = file('replacement.heic'), prepared = { file: file('replacement.heic.png'), original: replacement,
-        conversion: { width: 8, height: 6, originalSha256: 'c'.repeat(64), imported: { sha256: 'd'.repeat(64) } } };
-    let saved = [structuredClone(initial)], holdWrites = false, guard;
-    vm.runInNewContext(intakeCode, { exports: exported, structuredClone, AbortController, require(module) {
-        if (module === 'react') return react.react;
-        if (module === 'next/link') return 'link';
-        if (module === './Shell') return { Notice: 'notice' };
-        if (module === './WorkspaceShared') return { PhotoPreview: 'PhotoPreview', OriginalHeicDownload: 'OriginalHeicDownload', Readiness: 'Readiness', StateBadge: 'StateBadge' };
-        if (module === '../lib/workspace-drafts.mjs') return { createPhotoDraftStore: () => ({
-            read: async () => structuredClone(saved),
-            write: entries => {
-                const snapshot = structuredClone(entries);
-                if (!holdWrites) { saved = snapshot; return Promise.resolve(); }
-                return new Promise((resolve, reject) => writes.push({ snapshot, reject, commit() { saved = snapshot; resolve(); } }));
-            }
-        }) };
-        if (module === '../lib/workspace-client.mjs') return { ...client,
-            prepareIntakePhoto: async selected => { assert.equal(selected, replacement); return prepared; },
-            replaceIntakePhoto: (entry, ...args) => { selectedEntries.push(structuredClone(entry)); return client.replaceIntakePhoto(entry, ...args); },
-            workspaceRequest: () => assert.fail('Selection must not issue a server request'),
-            freshWorkspaceAccess: () => assert.fail('Selection must not obtain upload authority')
-        };
-        if (module === '../lib/routes.mjs') return { STAFF_REAUTHENTICATE_PATH: '/admin?reauthenticate=1' };
-        if (module === '../lib/usePendingNavigation') return { usePendingNavigation: action => { guard = action; } };
-        if (module.endsWith('.module.css')) return {};
-        return nextRequire(module.startsWith('@babel/runtime/') ? `next/dist/compiled/${module}` : module);
-    } });
-    let tree;
-    const render = () => { tree = react.render(() => exported.default({ staff: { id: 'fixture-reviewer', role: 'REVIEWER' } })); };
-    const previews = () => all(tree, node => node.type === 'PhotoPreview').map(node => node.props.file);
-    const originals = () => all(tree, node => node.type === 'OriginalHeicDownload').map(node => node.props.file);
-    const select = () => all(tree, node => node.type === 'input' && node.props.type === 'file')[0].props.onChange({ target: { files: [replacement], value: 'selected' } });
-    const settle = () => new Promise(resolve => setImmediate(resolve));
-    render(); await settle(); render(); holdWrites = true;
-    select(); await settle(); render();
-    assert.equal(writes.length, 1); assert.equal(guard(), true, 'Navigation stays guarded throughout the pending IndexedDB write');
-    assert.ok(all(tree, node => node.type === 'input' && node.props.type === 'file').every(node => node.props.disabled));
-    assert.deepEqual(previews(), [initial.files.FRONT, initial.files.BACK]);
-    assert.deepEqual(originals(), [initial.sourceFiles.FRONT, initial.sourceFiles.BACK]);
-    assert.deepEqual(saved, [initial]); assert.equal(text(tree).includes(prepared.file.name), false);
-
-    writes[0].reject(new Error('Quota exceeded')); await settle(); render();
-    assert.equal(guard(), false, 'Failed selection has left no unsaved replacement as the current draft');
-    assert.deepEqual(previews(), [initial.files.FRONT, initial.files.BACK]);
-    assert.deepEqual(originals(), [initial.sourceFiles.FRONT, initial.sourceFiles.BACK]);
-    assert.deepEqual(saved, [initial]); assert.equal(text(tree).includes(prepared.file.name), false);
-    assert.match(text(tree), /Your previous photo is kept/);
-
-    select(); await settle(); render();
-    assert.equal(writes.length, 2); assert.equal(guard(), true);
-    assert.doesNotMatch(text(tree), /Your previous photo is kept/, 'Retry clears the earlier selection error');
-    assert.deepEqual(selectedEntries, [initial, initial], 'The retry receives the entire unchanged prior photo, other side, uploads, confirmation and provenance');
-    assert.deepEqual(saved, [initial]);
-    writes[1].commit(); await settle(); render();
-    assert.equal(guard(), false); assert.deepEqual(previews(), [prepared.file, initial.files.BACK]);
-    assert.deepEqual(originals(), [replacement, initial.sourceFiles.BACK]);
-    assert.deepEqual(saved[0], client.replaceIntakePhoto(initial, 'FRONT', prepared.file, prepared));
-    assert.doesNotMatch(text(tree), /Your previous photo is kept/);
-});
+// Rapid intake, retained rejection and local-commit regression coverage is in photo-intake-flow.test.mjs.
 
 test('map review never treats missing map or integrity failure as a human override', () => {
     for (const status of ['NO_MAP', 'INTEGRITY_ERROR', 'HUMAN_REVIEW_WITHOUT_MAP']) {
