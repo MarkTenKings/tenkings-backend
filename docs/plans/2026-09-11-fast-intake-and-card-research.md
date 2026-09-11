@@ -1,6 +1,6 @@
 # Fast staff intake and after-save card research
 
-Status: implementation authorized by Mark in this conversation on 2026-09-11. Source is the isolated `codex/staff-inventory-release-20260910` checkout; preserve collect lineage, unrelated ATLAS work and the existing financial evidence contract.
+Status: deployed and live-verified on 2026-09-11. Application commit `bb10f235d5bddd2ca30ba19e5389e80d43cd2fec` serves collect.tenkings.co through production deployment `dpl_64gfjZqaugS6sm4Pprb83HbeX51Z`. Source is the isolated `codex/staff-inventory-release-20260910` checkout; preserve collect lineage, unrelated ATLAS work and the existing financial evidence contract.
 
 ## Final product plan
 
@@ -23,3 +23,11 @@ Status: implementation authorized by Mark in this conversation on 2026-09-11. So
 ## Verification and release
 
 Use isolated fixtures/databases for business mutations. Live vendor probes, if needed, are bounded read-only research using the already authorized services; no synthetic production inventory is created. Additive production schema work requires the normal preflight/backup/migration record. Do not alter financial ledger schema or emit new workflow evidence fields solely for research. Persist and present all source-backed estimates separately so the existing financial consumer remains compatible.
+
+## Released evidence and remaining limits
+
+- Three Astra Max agents completed mobile, research-engine and persistence work; coordinator integration and independent review passed. Final focused tests passed 183/183, full migration/no-op validation passed 51 PostgreSQL checks, native capture passed eight Chrome/WebKit viewport cases, and research details passed four phone/desktop browser cases. Production build and both application-head Vercel checks passed. Twelve unrelated pre-existing grader-test TypeScript diagnostics remain.
+- Browser instrumentation measured four to two JPEG encodes per photo pair and front upload starting before back capture. Real iPhone software-keyboard activation remains a hardware acceptance item; initial recognition accuracy improvements are not claimed as measured.
+- Additive production migration completed after a protected logical backup. The original twelve immutable workflow events and financial snapshot sequence12 (three cards,1200-cent cost,5400-cent expected proceeds) remained unchanged after release and research.
+- The production one-minute cron picked up a real previously saved Ja Morant card, started through the sole-writer research action under the explicit maintenance actor `codex:owner-authorized-inventory-research`. Its first attempt completed in35.7seconds, retained24 SoldCompsAPI candidates and12 privately archived images, and used actual gpt-6-astra analysis. These are one-run observations, not general latency promises. Cron authentication, query/method rejection and private API protection passed live.
+- That card's exact Panini Phoenix set has no reviewed catalog entry. The result correctly retained evidence but left variant and market value unresolved. This release uses approved existing catalog/reference records; it does not create missing manufacturer checklists automatically or promote seller/model guesses into catalog authority. Every new eligible individual card receives research, but a supported value still requires adequate identity/reference coverage and at least two safe matching sales. Warehouse planning remains deferred.
