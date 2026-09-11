@@ -1,6 +1,47 @@
 # ATLAS website release status
 
-> Current fresh-start state (2026-09-11 13:05 UTC): active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` is independently verified empty. Automatic first-pair enrollment and connection-state fixes pass focused local tests; production rollout and the actual database-transaction failure fix remain pending. See the latest session-log entry.
+> Current I release (2026-09-11 14:36 UTC): source `89c55d916130` (tree `73ed4a1f9a78`) is verified on staff, public and private I, with 95 public/35 staff migrations. Automatic first-pair enrollment, connection-state handling, request-validation optimization and safe ledger diagnostics are deployed. Active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` was independently verified empty at 14:33 UTC. Actual fresh-card Astra processing and end-to-end grading acceptance remain pending; all old-card recovery is canceled. See [current I evidence](WEBSITE_RELEASE.md#current-i-deployment-and-evidence).
+
+## Current I deployment and evidence
+
+Merged source `89c55d916130d914f6a989197538c8bbd31c9594`, tree `73ed4a1f9a78b4d757db109a74dd5291b05725e7`, passed all 14 actual main checks in [run 34605844130](https://github.com/MarkTenKings/tenkings-backend/actions/runs/34605844130). I is deployed to staff, public and private. The private route and exact eight-field health are verified; all four public aliases serve I with customer and legacy configuration preserved. Final HTTP acceptance passed 19 GET checks with zero SMS sends or authenticated writes. Signed-in fresh-card processing remains unverified.
+
+Production has 95 public/35 staff migrations. Migration900 automatically admits the first eligible verified Front/Back pair committed by a real current staff queue operation in the new active cohort. It replaces only a retired-cohort roster and keeps the admitted current-cohort roster fixed. Exact source/photo provenance, source and identity readiness, the original September 16 pilot expiry, max10 intake, processing limit1, `ACCOUNTING_ONLY` and final human report approval remain required. No manual card UUID insertion is needed for that first eligible pair.
+
+Migration1000 parses the request JSON once within the existing attempt guard and reuses it for the same checks. Real PostgreSQL large-image validation passed with unchanged transaction and runtime limits. The old 12:50 UTC production stop was recorded as `ASTRA_DATABASE_TRANSACTION_FAILED` / Prisma `P2028`; its exact failed ledger query and phase were not captured and remain unproven. I adds bounded operation/phase/error-code/elapsed-time diagnostics without recording requests, credentials, SQL parameters or model reasoning. Actual fresh-card behavior and processing latency still require observation.
+
+Verified control revisions are staff15/workspace12/source11/grading7/image6/operator6/identification6 and STAFF SMS13; CUSTOMER SMS4 and canonical STAFF/SOURCE/COORDINATOR/OPERATOR access are preserved. The 14:33:19 UTC readback of active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` found zero cards, runs, source operations, attempts and enrollment events. The reversible cohort reset and I control rebind preserve all historical business rows, attempts, receipts, photos and accounting. No old-card recovery or HUMAN OPERATIONS grant was created. A fresh ordinary sign-in and real Front/Back capture are still needed to observe automatic admission and actual Astra progress; human review, report approval/publication and physical finishing acceptance remain pending.
+
+| I component | Verified identity |
+| --- | --- |
+| Staff | `dpl_V8k7yMUQQhKDaqYsyFSpgArh5A6L` / `atlas-grading-staff-fhhgiscxz-ten-kings.vercel.app` |
+| Public gateway | `dpl_BCAwpEVqZRkTNgaVD5boqkBELCi3` / `atlas-grading-public-306sltg50-ten-kings.vercel.app` |
+| Private I | `atlas-workspace-private-i-20260911`; container `e57e358949a42e0524f1f95aa548a266d6d736efdf4008a5fecc97d1e0348352`; logical deployment `atlas-workspace-private-20260910` |
+| Native operator | Linux x64 Node v20.20.1; build `7527ea6b2dbab175599939cf1c6b9ac145ef412088dfdac0ebfdf30dc2dc8999`; runtime `3845051cee70b86c2f1c55fa90f6db7c2818b32250a4659a254816f02588f290`; manifest SHA256 `ec3ea5e95a05f46a869cd41895f6bd3921f27c776828dd67b1035d2f3f62330c` |
+
+
+Superseded H container `64ed047cd24670ade48b707522a2731b2d2a13c284e5ca38280a1b00894a031e` exited successfully at 14:37:42 UTC after one stop. Independent readback verifies I still running with matching health, I as the sole private upstream, the other 20 of 21 containers unchanged and zero active work in the quiet database check. H artifacts and historical evidence are retained.
+
+I evidence is retained under `/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-start-20260911/`.
+
+| I evidence | SHA256 and observed result |
+| --- | --- |
+| `ci-34605844130-1789135372431.json` | `78884572270e4e0b397906db1cb52ec65ac0dccb69c3a926ababb2607d13f73f`; all 14 actual main checks passed |
+| `migration-apply-1789136075602-result.private.json` | `ffeb45b7ad29fe5127bcfd79325230d125690bba935ca511fadb20bfb9138948`; both additive migrations verified, public95/staff35; existing state preserved |
+| `i-runtime-operator-linux-89c55d916130/i-runtime-native-verified.json` | `d93cb4e3172285244f8c170bdc2c5bcb104e78e5ff4cd4261b1a16695c8dddfb`; exact closed native artifact verified with zero database/provider clients |
+| `i-cutover-rebind-summary-89c55d916130.json` | `6b2fc1038cbc8d270b11c6d313dcef10b28324c786c757a74fd35b0e5dce509e`; seven I bindings plus STAFF SMS independently verified; unrelated rows and attempt history preserved |
+| `fresh-progress-1789137200039.json` | `04eb538f5d21cbaf58c1ad4536fb9fa2c4ee9b96498964eeb062164bab99b348`; 14:33:19 UTC: active I cohort empty, enrollmentEvents0 |
+| `i-route-review-89c55d916130.json` | `a9020be2d6ebf0d8b2356e4f8500f29c09aff2acbd397e113a18bc0013d7c6de`; exact I private health and route verified |
+| `provider-public-promote-89c55d916130.readback-1789137345042.private.json` | `a852054e9cca22ea9d73b710740cc26cd359fdd8aeed734cfe016ed275f7f2a0`; all four public aliases verified; customer/legacy preserved |
+| `i-public-http-1789137382435.json` | `957f77956697904bc106e82b0dfbf806880af7b670e15cdbff6dce1529418cf2`; 19 GET checks passed; zero SMS sends/authenticated writes; real fresh-card acceptance pending |
+| `stop-obsolete-h-once.verified.json` | `eb93c9bb4aa7dab9388acb09405de1bb16af41ff2807c959ebc51f0b7945276f`; exactly one H stop independently verified; I healthy and the sole private upstream |
+| `i-release-closeout-89c55d916130.json` | `db20df86020be696de801a9aaa46307ca06126d9809419782c77233d928d04a4`; final deployed-I closeout with actual migration results and verified H retirement; real-card acceptance remains pending |
+
+The runtime assembly review is retained at `/Users/markthomas/.codex/atlas-handoffs/2026-09-09-grading-lead/release-readiness/runtime-binding-20260910/release-89c55d916130/review.json`, SHA256 `e7c70f2f08c5c5387a9f9c02df5058021b78a237537ee62f91c3a86cf5cb5560`. Its assembly state is historical preparation evidence; the later route, promotion and control readbacks establish live I.
+
+The dated H/G/F/E checkpoints below preserve their original observations. Their runtime identities, pending actions and old-card recovery instructions are historical where superseded by I and the owner's cancellation.
+
+## Historical H deployment and evidence
 
 Historical H deployment checkpoint before the fresh-start reset — September 11, 2026: source `6cf6e66434c151c76d92590b1262cb1d1e62af83` is deployed to staff, public and private H. All 14 actual main checks passed; production has 95 public/33 staff migrations and all four canonical role checks pass. Independent readback verifies the G→H private route, exact eight-field health and all four public aliases. All 20 final public/asset GET acceptance checks passed. The owner has since canceled Ja continuation and requested clearing every active card to zero for a fresh test; that clearance is pending verification. The prior Ja sign-in/Resume request is canceled.
 
@@ -10,7 +51,7 @@ H fixes the confirmed Start refusal loop: current admission and capacity now gat
 
 The valid Ja continuation contained 10,219,398 bytes. Its former 4MiB dispatcher guard caused repeat re-admission failure; H uses the existing shared 12MiB Responses request bound without relaxing canonical/hash/evidence validation. This does not establish the cause of the original generic runner stop at 10:56:29 UTC. That cause remains unproven; safe database error categories improve future diagnosis. A fresh-card test, subsequent grading through human review, approval/publication and physical finishing acceptance remain unverified.
 
-## Current H deployment and evidence
+### H identities and receipts
 
 H tree `4f8f2218d96e76133c0b7da7858c0c9cb9b1c4a2` passed all 14 actual main checks in [run 34595486734](https://github.com/MarkTenKings/tenkings-backend/actions/runs/34595486734), attempt1. Final acceptance plan `release-6cf6e66434c1-r13.json` preserves the immutable promotion plan and appends its actual readback. The completed migration plan's `pending` list records the two intended additions; the independent after-ledger establishes that both are now applied.
 

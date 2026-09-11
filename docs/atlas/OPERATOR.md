@@ -1,6 +1,10 @@
 # ATLAS Astra operator
 
-> Current fresh-start state (2026-09-11 13:05 UTC): active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` is independently verified empty. Automatic first-pair enrollment and connection-state fixes pass focused local tests; production rollout and the actual database-transaction failure fix remain pending. See the latest session-log entry.
+> Current I release (2026-09-11 14:36 UTC): source `89c55d916130` (tree `73ed4a1f9a78`) is verified on staff, public and private I, with 95 public/35 staff migrations. Automatic first-pair enrollment, connection-state handling, request-validation optimization and safe ledger diagnostics are deployed. Active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` was independently verified empty at 14:33 UTC. Actual fresh-card Astra processing and end-to-end grading acceptance remain pending; all old-card recovery is canceled. See [current I evidence](WEBSITE_RELEASE.md#current-i-deployment-and-evidence).
+
+## Historical runtime checkpoints
+
+The dated H/G/F/E checkpoints below preserve their original observations. Their runtime identities, pending actions and old-card recovery instructions are historical where superseded by I and the owner's cancellation.
 
 Historical H deployment checkpoint before the fresh-start reset — September 11, 2026: source `6cf6e66434c151c76d92590b1262cb1d1e62af83` is deployed to staff, public and private H. All 14 actual main checks passed; production has 95 public/33 staff migrations and all four canonical role checks pass. Independent readback verifies the G→H private route, exact eight-field health and all four public aliases. All 20 final public/asset GET acceptance checks passed. The owner has since canceled Ja continuation and requested clearing every active card to zero for a fresh test; that clearance is pending verification. The prior Ja sign-in/Resume request is canceled.
 
@@ -8,7 +12,7 @@ The completed H adoption readback found the same Ja Morant run control `PAUSED`,
 
 The dispatcher now accepts retained canonical input within the existing shared 12MiB Responses request bound. The actual 10,219,398-byte Ja continuation exceeded the old 4MiB admission guard; canonical, input-hash and evidence validation remain required. This fixes repeat continuation refusal, while the original 10:56:29 generic runner failure remains unexplained. Safe Prisma error categories were added without changing provider retry or unknown-hold behavior.
 
-Maintenance800 requires owner-only CAS authority, expired/no active lease, every prior attempt APPLIED with exact receipt/step evidence and no source work. The same run is rebound to the actual H runtime and paused with an immutable NULL-actor deployment audit; no human command or model grant is fabricated. Remaining time is `oldDeadline - max(oldUpdatedAt, oldLeaseExpiresAt)`, bounded by unchanged `maxRunMs`; the restored deadline is capped by original policy/workspace/pilot expiry. The maintenance contract requires a subsequent ordinary owner Resume for dispatch; the owner has canceled that action for Ja and instead requested active-card clearance. See [H evidence](WEBSITE_RELEASE.md#current-h-deployment-and-evidence).
+Maintenance800 requires owner-only CAS authority, expired/no active lease, every prior attempt APPLIED with exact receipt/step evidence and no source work. The same run is rebound to the actual H runtime and paused with an immutable NULL-actor deployment audit; no human command or model grant is fabricated. Remaining time is `oldDeadline - max(oldUpdatedAt, oldLeaseExpiresAt)`, bounded by unchanged `maxRunMs`; the restored deadline is capped by original policy/workspace/pilot expiry. The maintenance contract requires a subsequent ordinary owner Resume for dispatch; the owner has canceled that action for Ja and instead requested active-card clearance. See [H evidence](WEBSITE_RELEASE.md#historical-h-deployment-and-evidence).
 
 The earlier Start, clearance and G/F/E checkpoints below retain their original observations. Their deployment identities, revision counts, pending release tasks and acceptance claims are historical wherever superseded by this H checkpoint.
 

@@ -1,6 +1,10 @@
 # ATLAS website deployment runbook
 
-> Current fresh-start state (2026-09-11 13:05 UTC): active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` is independently verified empty. Automatic first-pair enrollment and connection-state fixes pass focused local tests; production rollout and the actual database-transaction failure fix remain pending. See the latest session-log entry.
+> Current I release (2026-09-11 14:36 UTC): source `89c55d916130` (tree `73ed4a1f9a78`) is verified on staff, public and private I, with 95 public/35 staff migrations. Automatic first-pair enrollment, connection-state handling, request-validation optimization and safe ledger diagnostics are deployed. Active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` was independently verified empty at 14:33 UTC. Actual fresh-card Astra processing and end-to-end grading acceptance remain pending; all old-card recovery is canceled. See [current I evidence](WEBSITE_RELEASE.md#current-i-deployment-and-evidence).
+
+## Historical runtime checkpoints
+
+The dated H/G/F/E checkpoints below preserve their original observations. Their runtime identities, pending actions and old-card recovery instructions are historical where superseded by I and the owner's cancellation.
 
 Historical H deployment checkpoint before the fresh-start reset — September 11, 2026: source `6cf6e66434c151c76d92590b1262cb1d1e62af83` is deployed to staff, public and private H. All 14 actual main checks passed; production has 95 public/33 staff migrations and all four canonical role checks pass. Independent readback verifies the G→H private route, exact eight-field health and all four public aliases. All 20 final public/asset GET acceptance checks passed. The owner has since canceled Ja continuation and requested clearing every active card to zero for a fresh test; that clearance is pending verification. The prior Ja sign-in/Resume request is canceled.
 
@@ -8,7 +12,7 @@ The completed H adoption readback found the same Ja Morant run control `PAUSED`,
 
 H staff is `dpl_FrzapPN27fEXM9sncqHJ3oygAkMY` (`atlas-grading-staff-hci67hr7t-ten-kings.vercel.app`); H public is `dpl_6v2h5PguYpbCJkHHrqtGY7qcUqpA` (`atlas-grading-public-h3phaovi6-ten-kings.vercel.app`). The native artifact passed the unchanged Linux x64 verifier and is mounted in private container `64ed047cd24670ade48b707522a2731b2d2a13c284e5ca38280a1b00894a031e`. Both additive migrations, exact runtime/constructor binding, settled Ja adoption and public promotion have independent receipts. G and all earlier artifacts remain retained.
 
-Use the [current H deployment and evidence](WEBSITE_RELEASE.md#current-h-deployment-and-evidence) for exact hashes. GET policy/asset acceptance is separate from signed-in fresh-card processing and saved grading progress; neither deployment success nor HTTP camera headers establishes end-to-end acceptance.
+Use the [current I deployment and evidence](WEBSITE_RELEASE.md#current-i-deployment-and-evidence) for exact hashes. GET policy/asset acceptance is separate from signed-in fresh-card processing and saved grading progress; neither deployment success nor HTTP camera headers establishes end-to-end acceptance.
 
 The earlier Start, clearance and G/F/E checkpoints below retain their original observations. Their deployment identities, revision counts, pending release tasks and acceptance claims are historical wherever superseded by this H checkpoint.
 

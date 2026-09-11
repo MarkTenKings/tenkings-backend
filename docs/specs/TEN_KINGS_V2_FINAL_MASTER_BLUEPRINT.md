@@ -134,6 +134,8 @@ Mark canceled recovery or continuation of every current ATLAS test card, includi
 
 A newly saved, verified Front/Back pair in the active workspace must enter normal Astra processing without staff manually inserting its UUID into a test roster. This supersedes the earlier per-card manual admission requirement. Implement automatic admission through the existing bounded intake/dispatch controls, retaining exact verified-pair provenance, active-cohort isolation, the original pilot expiry and one-card acceptance scope, queue/concurrency/attempt limits, ACCOUNTING_ONLY accounting and final human report approval. Verify actual Astra processing of a fresh real card; deployment or synthetic checks alone do not complete this request.
 
+Implementation evidence — September 11, 2026, 14:36 UTC: I source `89c55d916130d914f6a989197538c8bbd31c9594` (tree `73ed4a1f9a78b4d757db109a74dd5291b05725e7`) is deployed and verified on staff, public and private, with 95 public/35 staff migrations and automatic first-pair enrollment. Active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` was independently verified empty at 14:33 UTC; historical card and accounting evidence is preserved. This records implementation of the direction above. Actual fresh-card Astra processing and complete grading acceptance remain pending; see [current release evidence](../atlas/WEBSITE_RELEASE.md#current-i-deployment-and-evidence).
+
 ---
 
 ## 1. Executive Decision

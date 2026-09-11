@@ -1,6 +1,10 @@
 # Ten Kings Master Product Context
 
-> Current fresh-start state (2026-09-11 13:05 UTC): active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` is independently verified empty. Automatic first-pair enrollment and connection-state fixes pass focused local tests; production rollout and the actual database-transaction failure fix remain pending. See the latest session-log entry.
+> Current I release (2026-09-11 14:36 UTC): source `89c55d916130` (tree `73ed4a1f9a78`) is verified on staff, public and private I, with 95 public/35 staff migrations. Automatic first-pair enrollment, connection-state handling, request-validation optimization and safe ledger diagnostics are deployed. Active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` was independently verified empty at 14:33 UTC. Actual fresh-card Astra processing and end-to-end grading acceptance remain pending; all old-card recovery is canceled. See [current I evidence](../atlas/WEBSITE_RELEASE.md#current-i-deployment-and-evidence).
+
+## Historical runtime checkpoints
+
+The dated H/G/F/E checkpoints below preserve their original observations. Their runtime identities, pending actions and old-card recovery instructions are historical where superseded by I and the owner's cancellation.
 
 Historical H deployment checkpoint before the fresh-start reset — September 11, 2026: source `6cf6e66434c151c76d92590b1262cb1d1e62af83` is deployed to staff, public and private H. All 14 actual main checks passed; production has 95 public/33 staff migrations and all four canonical role checks pass. Independent readback verifies the G→H private route, exact eight-field health and all four public aliases. All 20 final public/asset GET acceptance checks passed. The owner has since canceled Ja continuation and requested clearing every active card to zero for a fresh test; that clearance is pending verification. The prior Ja sign-in/Resume request is canceled.
 
@@ -8,7 +12,7 @@ The completed H adoption readback found the same Ja Morant run control `PAUSED`,
 
 H removes the confirmed blocking Start-refusal loop and admits a valid retained continuation within the existing shared 12MiB request bound. The earlier 4MiB guard explains repeat re-admission failure; the original generic runner stop remains unproven. Start now reflects actual roster/capacity; definite refusals clear, and unknown replies reconcile the same recorded command automatically. The owner canceled continuation of the preserved paused Ja run and requested a fresh test after active-card clearance.
 
-The active cohort remains `0315c8fa-ba4a-41ec-9c8d-d7aac58d5a4a`, with actual Ja/Jalen pairs saved. Release controls are staff14/workspace10/source9/grading6/image5/operator5/identification4 and STAFF SMS12. Original policy/expiry, one-card processing capacity, financial history and canceled Charmander recovery are preserved. The approved blueprint's product scope is unchanged; [current H evidence](../atlas/WEBSITE_RELEASE.md#current-h-deployment-and-evidence) establishes deployment, not completion of the physical grading workflow.
+The active cohort remains `0315c8fa-ba4a-41ec-9c8d-d7aac58d5a4a`, with actual Ja/Jalen pairs saved. Release controls are staff14/workspace10/source9/grading6/image5/operator5/identification4 and STAFF SMS12. Original policy/expiry, one-card processing capacity, financial history and canceled Charmander recovery are preserved. The approved blueprint's product scope is unchanged; [historical H evidence](../atlas/WEBSITE_RELEASE.md#historical-h-deployment-and-evidence) establishes deployment, not completion of the physical grading workflow.
 
 The earlier Start, clearance and G/F/E checkpoints below retain their original observations. Their deployment identities, revision counts, pending release tasks and acceptance claims are historical wherever superseded by this H checkpoint.
 
