@@ -276,6 +276,96 @@ test('recovery rejects revoked generations, other claimants and changed photo ow
     }
 });
 
+test('attempt recovery projects only the exact review and keeps financial uncertainty separate from pending work', () => {
+    const review = { attemptId: randomUUID(), reviewHash: 'a'.repeat(64), reservedMicroUsd: '23650000',
+        dispatchedAt: new Date().toISOString(), requestCanonical: 'private continuation', dispatchClaimId: 'private claim' };
+    const value = { runId: randomUUID(), state: 'NEEDS_ATTENTION', runState: 'UNKNOWN', mode: 'CONTINUOUS', pending: 1,
+        settled: false, canAbandon: true, attemptRecovery: review, unconfirmedCost: { attempts: 1, reservedMicroUsd: '23650000' } };
+    const projected = projectWorkspaceControl(value);
+    assert.equal(projected.canAbandon, true); assert.equal(projected.pending, 1);
+    assert.deepEqual(projected.attemptRecovery, { attemptId: review.attemptId, reviewHash: review.reviewHash,
+        reservedMicroUsd: review.reservedMicroUsd, dispatchedAt: review.dispatchedAt });
+    assert(!JSON.stringify(projected).includes('private'));
+    const observer = projectWorkspaceControl(value, { canControl: false });
+    assert.equal(observer.canAbandon, false); assert.equal(observer.attemptRecovery, null);
+    assert.deepEqual(observer.unconfirmedCost, value.unconfirmedCost);
+    assert.equal(projectWorkspaceControl({ ...value, pending: 0, settled: true, canAbandon: false, attemptRecovery: null }).pending, 0);
+    for (const change of [{ reviewHash: 'bad' }, { reservedMicroUsd: '-1' }, { dispatchedAt: 'invalid' }])
+        assert.throws(() => projectWorkspaceControl({ ...value, attemptRecovery: { ...review, ...change } }), /WORKSPACE_OPERATOR_UNAVAILABLE/);
+    assert.throws(() => projectWorkspaceControl({ ...value, unconfirmedCost: { attempts: 0, reservedMicroUsd: '10' } }), /WORKSPACE_OPERATOR_UNAVAILABLE/);
+});
+
+test('pausing an uncertain request returns a fresh recovery review and retains the original audit projection', async () => {
+    const f = fixture({ state: 'UNKNOWN', pending: [{ id: randomUUID(), state: 'DISPATCHED' }] });
+    const mutate = f.runPort.control, read = f.runPort.read, attemptId = f.saved.pending[0].id;
+    const review = context => ({ canAbandon: true, attemptRecovery: { attemptId,
+        reviewHash: hash(canonical({ revision: context.data.card.revision, commands: context.data.operations.length })),
+        reservedMicroUsd: '23650000', dispatchedAt: new Date().toISOString() } });
+    let firstReview, reads = 0;
+    f.runPort.control = async (context, input) => {
+        const result = await mutate(context, input); firstReview = review(context);
+        return { ...result, ...firstReview };
+    };
+    f.runPort.read = async context => { reads++; return { ...await read(context), ...review(context) }; };
+    const result = await f.control('PAUSE');
+    assert.equal(reads, 1); assert.equal(result.control.canAbandon, true);
+    assert.notEqual(result.control.attemptRecovery.reviewHash, firstReview.attemptRecovery.reviewHash);
+    assert.equal(result.control.attemptRecovery.reviewHash,
+        hash(canonical({ revision: f.saved.card.revision, commands: f.saved.operations.length })));
+    assert.deepEqual(f.saved.operations[0].result.control.attemptRecovery, firstReview.attemptRecovery);
+    assert.equal(f.saved.pending[0].state, 'DISPATCHED');
+});
+
+test('explicit attempt abandonment binds the reviewed incident to one durable STEP command and preserves prior work', async () => {
+    const attempt = { id: randomUUID(), state: 'DISPATCHED', reservedMicroUsd: 23_650_000n },
+        f = fixture({ state: 'UNKNOWN', pending: [attempt] }), before = structuredClone(f.saved);
+    f.staffControl.revision = 2;
+    const input = { operationId: randomUUID(), expectedRevision: 3, action: 'ABANDON_AND_STEP',
+        recovery: { reviewHash: 'a'.repeat(64), reason: 'Continue one step and retain the unconfirmed request.' } };
+    const abandonmentId = randomUUID(); let calls = 0;
+    f.runPort.control = async (context, { card, action, commandId, recovery }) => {
+        calls++; assert.equal(action, input.action); assert.deepEqual(recovery, input.recovery); assert.notEqual(commandId, input.operationId);
+        context.data.pending[0].state = 'ABANDONED';
+        Object.assign(context.data.run, { state: 'RUNNING', controlRevision: 2, executionMode: 'STEP', stepBudget: 1 });
+        return { runId: before.run.id, runRevision: before.run.revision, state: 'RUNNING', mode: 'STEP',
+            stepBudget: 1, controlRevision: 2, pending: 0, settled: true, abandonmentId,
+            recoveredClaim: { ...card.claim, controlRevision: 2, mode: 'STEP' } };
+    };
+    await f.service.control({}, f.cardId, input);
+    const saved = f.saved.operations[0];
+    assert.equal(saved.result.abandonmentId, abandonmentId); assert.deepEqual(saved.result.recovery, input.recovery);
+    assert.deepEqual(saved.result.originalClaim, before.card.claim); assert.deepEqual(saved.result.priorClaim, f.saved.card.claim);
+    assert.equal(f.saved.card.startedAt, before.card.startedAt); assert.equal(f.saved.card.captureHash, before.card.captureHash);
+    assert.equal(f.saved.run.inputCanonical, before.run.inputCanonical); assert.equal(f.saved.run.revision, before.run.revision);
+    assert.equal(f.saved.pending[0].reservedMicroUsd, before.pending[0].reservedMicroUsd);
+    await f.service.control({}, f.cardId, input); assert.equal(calls, 1); assert.equal(f.saved.operations.length, 1);
+    await assert.rejects(() => f.service.control({}, f.cardId, { ...input, recovery: { ...input.recovery, reason: 'Different incident' } }), /WORKSPACE_REQUEST_CONFLICT/);
+});
+
+test('attempt abandonment rejects malformed review, nonowners and a wider-than-one-step RPC result', async () => {
+    const base = { operationId: randomUUID(), expectedRevision: 3, action: 'ABANDON_AND_STEP',
+        recovery: { reviewHash: 'a'.repeat(64), reason: 'Keep the old request and continue once.' } };
+    for (const recovery of [undefined, {}, { ...base.recovery, reviewHash: 'invalid' }, { ...base.recovery, reason: '' },
+        { ...base.recovery, reason: 'A\nB' }, { ...base.recovery, override: true }]) {
+        const f = fixture({ state: 'UNKNOWN' }); let calls = 0;
+        f.runPort.control = async () => { calls++; };
+        await assert.rejects(async () => f.service.control({}, f.cardId, { ...base, recovery }));
+        assert.equal(calls, 0); assert.equal(f.saved.operations.length, 0);
+    }
+    for (const mutate of [f => { f.identity.id = randomUUID(); }, f => { f.identity.accessVersion++; },
+        f => { f.policy.astraEnabled = false; }]) {
+        const f = fixture({ state: 'UNKNOWN' }); mutate(f);
+        f.runPort.control = async () => assert.fail('Unadmitted abandonment reached SQL port');
+        await assert.rejects(() => f.service.control({}, f.cardId, base)); assert.equal(f.saved.operations.length, 0);
+    }
+    const f = fixture({ state: 'UNKNOWN' }), before = structuredClone(f.saved);
+    f.runPort.control = async (_context, { card }) => ({ runId: before.run.id, runRevision: 1,
+        state: 'RUNNING', mode: 'CONTINUOUS', pending: 0, settled: true, stepBudget: 0,
+        abandonmentId: randomUUID(), recoveredClaim: { ...card.claim, mode: 'CONTINUOUS' } });
+    await assert.rejects(() => f.service.control({}, f.cardId, base), /WORKSPACE_CLAIM_CHANGED/);
+    assert.deepEqual(f.saved, before);
+});
+
 
 test('unavailable crop outcomes never claim an image was inspected', () => {
     const row = step('inspect_region'), output = JSON.parse(row.resultCanonical);

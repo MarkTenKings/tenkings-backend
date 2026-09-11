@@ -8,6 +8,12 @@ const MAX_ACTIVITY = 100, UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a
 const SHA = /^[a-f0-9]{64}$/;
 const check = (ok, code = 'WORKSPACE_OPERATOR_UNAVAILABLE', status = 503) => { if (!ok) deny(status, code); };
 const preflight = (ok, code, status = 409) => { if (!ok) throw Object.assign(new BoundaryError(status, code), { outcome: 'NOT_DISPATCHED' }); };
+const abandonmentDenials = Object.freeze({
+    ASTRA_ABANDONMENT_AUTHORITY_REQUIRED: 403,
+    ASTRA_ABANDONMENT_FRESH_OPERATIONS_REQUIRED: 403,
+    ASTRA_ABANDONMENT_NOT_AVAILABLE: 409,
+    ASTRA_ABANDONMENT_REVIEW_CHANGED: 409,
+});
 const instant = value => { const time = new Date(value); check(Number.isFinite(+time)); return time.toISOString(); };
 const boundedText = (value, max = 500) => {
     if (typeof value !== 'string') return null;
@@ -162,10 +168,30 @@ export function projectWorkspaceControl(value, { canControl = true, canStart = c
         && value.pending <= 100 && typeof value.settled === 'boolean'
         && (value.runId === null || UUID.test(value.runId ?? '')));
     const state = value.state === 'TAKEN_OVER' ? value.state : ['UNKNOWN', 'FAILED', 'NEEDS_RECAPTURE', 'NEEDS_EXPERT'].includes(value.runState) ? 'NEEDS_ATTENTION' : value.runState === 'READY_FOR_HUMAN' ? 'WAITING_REVIEW' : value.state;
+    let attemptRecovery = null, unconfirmedCost;
+    if (value.attemptRecovery != null) {
+        const review = value.attemptRecovery;
+        check(UUID.test(review.attemptId ?? '') && SHA.test(review.reviewHash ?? '')
+            && typeof review.reservedMicroUsd === 'string' && /^[1-9][0-9]{0,18}$/.test(review.reservedMicroUsd)
+            && typeof review.dispatchedAt === 'string');
+        attemptRecovery = { attemptId: review.attemptId, reviewHash: review.reviewHash,
+            reservedMicroUsd: review.reservedMicroUsd, dispatchedAt: instant(review.dispatchedAt) };
+    }
+    if (value.unconfirmedCost != null) {
+        const cost = value.unconfirmedCost;
+        check(Number.isSafeInteger(cost.attempts) && cost.attempts >= 0 && cost.attempts <= 100
+            && typeof cost.reservedMicroUsd === 'string' && /^(0|[1-9][0-9]{0,20})$/.test(cost.reservedMicroUsd)
+            && (cost.attempts === 0) === (cost.reservedMicroUsd === '0'));
+        unconfirmedCost = { attempts: cost.attempts, reservedMicroUsd: cost.reservedMicroUsd };
+    }
     return { state, mode: value.mode, pending: value.pending,
         ...(typeof value.failureCode === 'string' && /^(ASTRA|WORKSPACE)_[A-Z0-9_]{1,69}$/.test(value.failureCode) ? { failureCode: value.failureCode } : {}),
         ...(value.lastUpdatedAt ? { lastUpdatedAt: instant(value.lastUpdatedAt) } : {}),
         canRecover: canControl && canRecover && value.canRecover === true,
+        ...(typeof value.canAbandon === 'boolean' ? { canAbandon: canControl && canRecover
+            && value.canAbandon && attemptRecovery !== null } : {}),
+        ...(Object.hasOwn(value, 'attemptRecovery') ? { attemptRecovery: canControl && canRecover ? attemptRecovery : null } : {}),
+        ...(unconfirmedCost ? { unconfirmedCost } : {}),
         canPause: canControl && value.canPause === true, canResume: canControl && canStart && value.canResume === true,
         canStep: canControl && canStart && value.canStep === true, canTakeOver: canControl && value.canTakeOver === true && value.settled };
 }
@@ -200,7 +226,22 @@ export const workspaceOperatorSqlPort = Object.freeze({
         const [row] = await context.databaseTx.$queryRaw`SELECT atlas_staff.read_workspace_operator_control(${card.id}::uuid) AS control`;
         return row?.control;
     },
-    async control(context, { card, action, commandId }) {
+    async control(context, { card, action, commandId, recovery }) {
+        if (action === 'ABANDON_AND_STEP') {
+            try {
+                const [row] = await context.databaseTx.$queryRaw`SELECT atlas_staff.abandon_workspace_operator_attempt(${card.id}::uuid,${card.claimFence}::integer,
+                    ${context.identity.id}::uuid,${context.session.tokenHash}::text,${card.revision}::integer,${commandId}::uuid,
+                    ${recovery.reviewHash}::text,${recovery.reason}::text) AS control`;
+                return row?.control;
+            } catch (error) {
+                // Only these exact PostgreSQL denials prove no command was
+                // admitted. Unknown failures retain the same pending request.
+                const code = error?.meta?.code === 'P0001' && typeof error.meta.message === 'string'
+                    ? error.meta.message.replace(/^ERROR: /, '') : null;
+                if (Object.hasOwn(abandonmentDenials, code)) preflight(false, code, abandonmentDenials[code]);
+                throw error;
+            }
+        }
         if (action === 'RECOVER') {
             const [row] = await context.databaseTx.$queryRaw`SELECT atlas_staff.recover_workspace_operator(${card.id}::uuid,${card.claimFence}::integer,
                 ${context.identity.id}::uuid,${context.session.tokenHash}::text,${card.revision}::integer,${commandId}::uuid) AS control`;
@@ -234,8 +275,15 @@ export class StaffWorkspaceOperator {
         });
     }
     control(staff, cardId, input) {
-        strictObject(input, ['operationId', 'expectedRevision', 'action']); identifier(input.operationId);
+        const abandonment = input?.action === 'ABANDON_AND_STEP';
+        strictObject(input, ['operationId', 'expectedRevision', 'action', ...(abandonment ? ['recovery'] : [])]); identifier(input.operationId);
         check(positive(input.expectedRevision) && WORKSPACE_CONTROLS.includes(input.action), 'INVALID_REQUEST', 400);
+        if (abandonment) {
+            strictObject(input.recovery, ['reviewHash', 'reason']);
+            check(SHA.test(input.recovery.reviewHash ?? '') && typeof input.recovery.reason === 'string'
+                && input.recovery.reason.trim().length > 0 && input.recovery.reason.length <= 500
+                && !/[\x00-\x1f\x7f]/.test(input.recovery.reason), 'INVALID_REQUEST', 400);
+        }
         const inputHash = hash(canonical({ cardId, input }));
         return this.store.transaction(staff, async context => {
             const card = await this.card(context, cardId), { identity, tx, now } = context;
@@ -254,14 +302,15 @@ export class StaffWorkspaceOperator {
                 && ['IN_PROGRESS', 'NEEDS_ATTENTION'].includes(card.state), 'WORKSPACE_CLAIM_CHANGED', 409);
             // Stopping/taking over remains possible after pilot expiry. Starting
             // new work must still satisfy the unchanged current admission.
-            if (['RESUME', 'STEP', 'RECOVER'].includes(input.action)) {
+            if (['RESUME', 'STEP', 'RECOVER', 'ABANDON_AND_STEP'].includes(input.action)) {
                 preflight(card.claim.actorId === identity.id && positive(identity.accessVersion)
                     && card.claim.accessVersion === identity.accessVersion && positive(context.control?.revision)
-                    && (input.action === 'RECOVER' || card.claim.controlRevision === context.control.revision), 'WORKSPACE_CLAIM_CONFLICT', 409);
+                    && (input.action === 'RECOVER' || abandonment || card.claim.controlRevision === context.control.revision), 'WORKSPACE_CLAIM_CONFLICT', 409);
                 check(context.policy?.astraEnabled && +new Date(context.policy.expiresAt) > +now, 'WORKSPACE_ASTRA_NOT_READY', 503);
             }
             const commandId = randomUUID();
-            const control = await this.runPort.control(context, { card, action: input.action, commandId });
+            const control = await this.runPort.control(context, { card, action: input.action, commandId,
+                ...(abandonment ? { recovery: input.recovery } : {}) });
             check(positive(control?.runRevision), 'WORKSPACE_OPERATOR_UNAVAILABLE');
             const safeControl = projectWorkspaceControl(control);
             const next = { ...card, revision: card.revision + 1, updatedAt: instant(now) };
@@ -273,19 +322,28 @@ export class StaffWorkspaceOperator {
                     actorName: boundedText(identity.name, 120) ?? 'Staff grader', mode: 'MANUAL', fence: next.claimFence,
                     workflowRevision: next.revision, captureRevision: card.captureRevision, captureHash: card.captureHash,
                     runId: null, claimedAt: instant(now) };
-            } else if (input.action === 'RECOVER') {
-                check(UUID.test(control.recoveryId ?? '') && control.recoveredClaim
+            } else if (input.action === 'RECOVER' || abandonment) {
+                check(UUID.test((abandonment ? control.abandonmentId : control.recoveryId) ?? '') && control.recoveredClaim
                     && ['id','kind','actorId','accessVersion','fence','workflowRevision','captureRevision','captureHash','runId'].every(key => control.recoveredClaim[key] === card.claim[key])
-                    && control.recoveredClaim.controlRevision === context.control.revision && control.recoveredClaim.mode === 'CONTINUOUS', 'WORKSPACE_CLAIM_CHANGED');
+                    && control.recoveredClaim.controlRevision === context.control.revision
+                    && control.recoveredClaim.mode === (abandonment ? 'STEP' : 'CONTINUOUS')
+                    && (!abandonment || control.mode === 'STEP' && control.stepBudget === 1
+                        && control.pending === 0 && control.settled === true && control.state === 'RUNNING'), 'WORKSPACE_CLAIM_CHANGED');
                 next.claim = control.recoveredClaim; next.state = 'IN_PROGRESS'; next.attention = null;
             } else next.claim = { ...card.claim, mode: control.mode };
             await tx.updateCard(next, card.revision);
             await tx.insertOperation({ id: commandId, actorId: identity.id, operationId: input.operationId,
-                action: 'OPERATOR_CONTROL', cardId, inputHash, result: { action: input.action, control: safeControl, priorClaim: input.action === 'RECOVER' ? next.claim : card.claim,
+                action: 'OPERATOR_CONTROL', cardId, inputHash, result: { action: input.action, control: safeControl, priorClaim: input.action === 'RECOVER' || abandonment ? next.claim : card.claim,
                     ...(input.action === 'RECOVER' ? { originalClaim: card.claim, recoveryId: control.recoveryId } : {}),
+                    ...(abandonment ? { originalClaim: card.claim, abandonmentId: control.abandonmentId,
+                        recovery: input.recovery } : {}),
                     runId: control.runId, runRevision: control.runRevision, runControlRevision: control.controlRevision ?? control.revision,
                     claimFence: next.claimFence, revision: next.revision }, createdAt: instant(now) });
-            return { card: await this.projectCard(context, next), control: projectWorkspaceControl(control,
+            // A recovery review binds the card revision and latest command. Keep
+            // the SQL mutation's projection in its immutable audit, then return
+            // a review of the committed card and command to the caller.
+            const current = control.canAbandon ? await this.runPort.read(context, { card: next }) : control;
+            return { card: await this.projectCard(context, next), control: projectWorkspaceControl(current,
                 controlCapabilities(context, next)), operationId: input.operationId };
         });
     }

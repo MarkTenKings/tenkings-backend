@@ -8,6 +8,11 @@ import styles from './WorkspaceUi.module.css';
 const stateLabel = { UNAVAILABLE: 'Awaiting connection', QUEUED: 'Astra is ready', RUNNING: 'Astra is working', PAUSE_REQUESTED: 'Finishing the current action', PAUSED: 'Astra is paused', TAKEN_OVER: 'Human at the controls', COMPLETED: 'Astra draft complete', NEEDS_ATTENTION: 'Astra needs attention', UNKNOWN: 'Astra needs attention', FAILED: 'Astra needs attention', WAITING_REVIEW: 'Ready for human review' };
 const statusLabel = { PROPOSED: 'Proposal saved', REQUESTED: 'Requested', RECORDED: 'Saved', NEEDS_ATTENTION: 'Needs attention', APPLIED: 'Applied', UNKNOWN: 'Awaiting confirmation', UNAVAILABLE: 'Details unavailable' };
 const clockTime = value => { const date = new Date(value); return Number.isFinite(+date) ? date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '—'; };
+const recordedDollars = microUsd => {
+    if (typeof microUsd !== 'string' || !/^(0|[1-9][0-9]{0,20})$/.test(microUsd)) return 'an unconfirmed amount';
+    const cents = (BigInt(microUsd) + 9999n) / 10000n;
+    return `$${String(cents / 100n).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${String(cents % 100n).padStart(2, '0')}`;
+};
 
 export function operatorPresentation(control, card) {
     if (!control) return { label: card.operator?.kind === 'HUMAN' ? 'Human at the controls' : 'Connecting to Astra', tone: 'idle', description: 'Opening the saved activity for this card.' };
@@ -36,6 +41,8 @@ function SavedEvidence({ entry, card }) {
 export default function WorkspaceActivity({ card, disabled, onControl, onObservedCard }) {
     const [snapshot, setSnapshot] = useState(null), [error, setError] = useState(''), [refreshing, setRefreshing] = useState(false), [watch, setWatch] = useState(true), [generation, setGeneration] = useState(0), [lastReadAt, setLastReadAt] = useState(null);
     const observed = useRef(onObservedCard); observed.current = onObservedCard;
+    const [recoveryReview, setRecoveryReview] = useState(null), [recoveryReason, setRecoveryReason] = useState('');
+    const recoverySending = useRef(false);
     useEffect(() => {
         let active = true, timer; const controller = new AbortController();
         async function load() {
@@ -57,6 +64,17 @@ export default function WorkspaceActivity({ card, disabled, onControl, onObserve
     const activity = [...(current?.activity ?? [])].sort((first, second) => Date.parse(second.at) - Date.parse(first.at));
     const presentation = operatorPresentation(control, card), pausedView = !watch || Boolean(error);
     const connection = error ? 'Updates interrupted' : !watch ? 'Updates paused' : current ? 'Live updates on' : 'Connecting';
+    const currentRecovery = control?.canAbandon === true ? control.attemptRecovery : null;
+    const reviewCurrent = recoveryReview && currentRecovery?.reviewHash === recoveryReview.reviewHash
+        && recoveryReview.cardId === card.id && recoveryReview.cardRevision === card.revision;
+    async function continueReviewedStep() {
+        if (disabled || recoverySending.current || !reviewCurrent || !recoveryReason.trim()) return;
+        recoverySending.current = true;
+        try {
+            const result = await onControl('ABANDON_AND_STEP', { reviewHash: recoveryReview.reviewHash, reason: recoveryReason.trim() });
+            if (result) setRecoveryReview(null);
+        } finally { recoverySending.current = false; }
+    }
     return <section className={`${styles.activity} ${styles[`activity${presentation.tone}`] ?? ''}`} aria-label="Astra controls and live activity">
         <div className={styles.controllerHeading}><div><p>ASTRA CONTROL</p><h2>Watch Astra</h2></div><label className={styles.liveToggle}><input type="checkbox" checked={watch} onChange={event => setWatch(event.target.checked)} aria-label="Keep activity updated" /><span aria-hidden="true" /></label></div>
         <div className={styles.connectionState}><span className={watch && !error && current ? styles.connectedDot : styles.disconnectedDot} aria-hidden="true" />{connection}<span className={styles.connectionMode}>{control?.mode === 'CONTINUOUS' ? 'Continuous' : control?.mode === 'STEP' ? 'Step mode' : 'Workspace'}</span></div>
@@ -64,6 +82,19 @@ export default function WorkspaceActivity({ card, disabled, onControl, onObserve
         <div className={styles.controllerReadout}><div><span>CURRENT STAGE</span><strong>{stageNames[card.stage] ?? 'Grading'}</strong></div><div><span>RECENT ACTIONS</span><strong>{current ? String(activity.length).padStart(2, '0') : '—'}</strong></div></div>
         {Boolean(control?.pending) && <div className={`${styles.pendingAction} ${presentation.tone === 'attention' ? styles.pendingAttention : ''}`}><WorkspaceIcon name={presentation.tone === 'attention' ? 'ATTENTION' : 'FEED'} /><p>{control?.canRecover ? 'Astra’s response is saved. Continue from that response to pick up where this card stopped.' : presentation.tone === 'attention' ? 'A previous action has not been confirmed. Recovery must finish before another action can start.' : `${control.pending === 1 ? 'One action is' : `${control.pending} actions are`} in progress. The saved result will appear in the feed.`}</p></div>}
         {control?.canRecover === true && <div className={styles.continueSaved}><button type="button" disabled={disabled} onClick={() => onControl('RECOVER')}><WorkspaceIcon name="PLAY" /><span>Continue Astra</span><span aria-hidden="true">→</span></button><p>Continue from the saved response</p></div>}
+        {currentRecovery && !recoveryReview && <div className={styles.continueSaved}><button type="button" disabled={disabled} onClick={() => {
+            setRecoveryReview({ ...currentRecovery, cardId: card.id, cardRevision: card.revision });
+            setRecoveryReason('Continue from the last saved step while retaining the unconfirmed request and its recorded cost.');
+        }}><WorkspaceIcon name="ATTENTION" /><span>Review recovery</span><span aria-hidden="true">→</span></button><p>The last request has no saved result.</p></div>}
+        {recoveryReview && <div className={styles.attemptRecovery} role="group" aria-label="Review recovery of the unconfirmed request">
+            <h3>Continue from the last saved step?</h3>
+            <p>The request sent at {clockTime(recoveryReview.dispatchedAt)} has no saved result. {recordedDollars(recoveryReview.reservedMicroUsd)} remains recorded for that request; its final charge is unconfirmed.</p>
+            <p>Your photos and completed steps are saved. Continuing ends this request’s ability to change the card and authorizes one new Astra step. Astra will then pause for review.</p>
+            <label htmlFor={`attempt-recovery-${card.id}`}>Recovery note</label><textarea id={`attempt-recovery-${card.id}`} rows={3} maxLength={500} value={recoveryReason} disabled={disabled} onChange={event => setRecoveryReason(event.target.value)} />
+            {!reviewCurrent && <p role="status">The card’s recovery details changed. Close this review and load its current recovery options.</p>}
+            <div><button type="button" disabled={disabled || !reviewCurrent || !recoveryReason.trim()} onClick={continueReviewedStep}>Continue one step</button><button type="button" disabled={disabled} onClick={() => setRecoveryReview(null)}>Keep paused</button></div>
+        </div>}
+        {control?.unconfirmedCost?.attempts > 0 && <p className={styles.controllerHelp}>{control.unconfirmedCost.attempts === 1 ? 'One earlier request has' : `${control.unconfirmedCost.attempts} earlier requests have`} an unconfirmed charge. {recordedDollars(control.unconfirmedCost.reservedMicroUsd)} remains in the spending history.</p>}
         <div className={styles.operatorControls}>{[['PAUSE', 'Pause Astra', 'canPause', 'PAUSE'], ['RESUME', 'Resume Astra', 'canResume', 'PLAY'], ['STEP', 'Run next step', 'canStep', 'STEP'], ['TAKE_OVER', 'Take over manually', 'canTakeOver', 'TAKE_OVER']].map(([action, label, capability, icon]) => <button type="button" key={action} className={action === 'RESUME' && control?.canResume ? styles.resumeControl : ''} disabled={disabled || control?.[capability] !== true || (['STEP', 'TAKE_OVER'].includes(action) && Boolean(control?.pending))} onClick={() => onControl(action)}><WorkspaceIcon name={icon} /><span>{label}</span></button>)}</div>
         <p className={styles.controllerHelp}>Pause saves your place after the current action. Manual takeover keeps Astra’s original proposals.</p>
         {error && <Notice error>{error}</Notice>}

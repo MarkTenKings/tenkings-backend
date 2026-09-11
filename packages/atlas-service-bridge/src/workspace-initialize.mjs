@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { canonical, digest, keys, requireBridge as check, SHA, UUID } from './protocol.mjs';
+import { canonical, digest, keys, pilotDollarLimitsAllow, requireBridge as check, SHA, UUID } from './protocol.mjs';
 import { MachineInitializationBridge } from './machine-initialize.mjs';
 import { pilotSubject, pilotUsage } from './pilot-scope.mjs';
 
@@ -162,8 +162,7 @@ export async function enqueueWorkspaceMachineInitializationInTransaction(tx, con
     const source = await executor.source({ ...context, card, job });
     await ports.assertFreshDetection(tx, source);
     const usage = await pilotUsage(tx, policy, card), reserve = BigInt(policy.reservationPerOperationMicroUsd);
-    check(!usage.overrun && BigInt(usage.total) + reserve <= BigInt(policy.maxTotalMicroUsd)
-        && BigInt(usage.card) + reserve <= BigInt(policy.maxCardMicroUsd) && usage.operations < policy.maxOperationsPerCard,
+    check(pilotDollarLimitsAllow(policy, usage, reserve) && usage.operations < policy.maxOperationsPerCard,
     'PILOT_BUDGET_EXHAUSTED');
     await tx.$executeRaw`INSERT INTO atlas_staff."StaffMachineInitialization"
         (id,"specimenId","pilotId","gradingOperationId","runtimeHash","evidenceHash","operatorPolicyHash","bridgePolicyHash","gradingPolicyHash",

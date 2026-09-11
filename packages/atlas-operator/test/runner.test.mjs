@@ -277,11 +277,141 @@ test('unknown replies, HTTP rejection, wrong model and missing usage never reach
     }
 });
 
-test('receipt failure prevents tools, remains unresolved, and is never automatically retried', async () => {
+test('a non-transient receipt failure prevents tools, remains unresolved, and is never automatically retried', async () => {
     const f = fixture(); let writes = 0;
     f.ledger.recordReceipt = async () => { writes++; throw new Error('synthetic lost database reply'); };
     const result = await f.start(); assert.equal(result.state, 'RECONCILIATION_REQUIRED'); assert.equal(writes, 1);
     assert.deepEqual((await Promise.all(result.receiptWrites)).map(x => x.state), ['UNCONFIRMED']); assert(!f.events.includes('inspect'));
+});
+
+test('transient receipt failures retry the identical receipt serially without another provider dispatch', async () => {
+    const f = fixture({ names: ['submit_for_human_review'] }), record = f.ledger.recordReceipt;
+    const writes = []; let posts = 0;
+    f.setFetch(async () => { posts++; return Response.json(f.response('submit_for_human_review')); });
+    f.ledger.recordReceipt = async binding => {
+        writes.push({ binding, canonical: canonical(binding) });
+        if (writes.length <= 2) fail(writes.length === 1 ? 'P2028' : 'P2024');
+        return record(binding);
+    };
+    const pending = f.start(); await flush(); assert.equal(writes.length, 1); assert(!f.events.includes('inspect'));
+    await f.clock.advance(249); assert.equal(writes.length, 1);
+    await f.clock.advance(1); assert.equal(writes.length, 2); assert(!f.events.includes('inspect'));
+    await f.clock.advance(500); const result = await pending;
+    assert.equal(writes.length, 3); assert.equal(posts, 1); assert.equal(f.calls.length, 1);
+    assert.equal(f.events.filter(event => event === 'dispatch').length, 1);
+    for (const write of writes) {
+        assert.equal(write.binding, writes[0].binding); assert.equal(write.canonical, writes[0].canonical);
+    }
+    assert.equal(f.receipts.length, 1); assert.equal(result.state, 'READY_FOR_HUMAN'); assert.equal(result.stepsApplied, 1);
+    assert.deepEqual((await Promise.all(result.receiptWrites)).map(x => x.state), ['PERSISTED']); assert.equal(f.clock.count(), 0);
+});
+
+test('a committed receipt with a lost reply reuses its idempotent record and applies its tool only once', async () => {
+    const f = fixture({ names: ['submit_for_human_review'] }), record = f.ledger.recordReceipt;
+    let saved, original, writes = 0;
+    f.ledger.recordReceipt = async binding => {
+        writes++;
+        if (!saved) {
+            original = canonical(binding); saved = await record(binding);
+            fail('P1017'); // The database committed before this connection closed.
+        }
+        // Model OperatorLedger's existing attempt/hash replay branch. Its real
+        // persistence behavior is covered by ledger-projections.test.mjs.
+        assert.equal(canonical(binding), original); return saved;
+    };
+    const pending = f.start(); await flush(); assert.equal(f.receipts.length, 1); assert(!f.events.includes('apply'));
+    await f.clock.advance(250); const result = await pending;
+    assert.equal(writes, 2); assert.equal(f.receipts.length, 1); assert.equal(f.calls.length, 1);
+    assert.equal(result.state, 'READY_FOR_HUMAN'); assert.equal(result.stepsApplied, 1);
+    assert.equal(f.events.filter(event => event === 'apply').length, 1);
+    assert.deepEqual((await Promise.all(result.receiptWrites)).map(x => x.state), ['PERSISTED']); assert.equal(f.clock.count(), 0);
+});
+
+test('cancellation or lease loss during receipt persistence retains its retry without executing tools', async () => {
+    for (const stop of ['cancel', 'lease']) {
+        const f = fixture(), controller = new AbortController(), firstWrite = deferred(), record = f.ledger.recordReceipt;
+        let writes = 0, original;
+        f.ledger.recordReceipt = async binding => {
+            if (++writes === 1) { original = canonical(binding); return firstWrite.promise; }
+            assert.equal(canonical(binding), original); return record(binding);
+        };
+        if (stop === 'lease') {
+            const renew = f.ledger.renew; let renewals = 0;
+            f.ledger.renew = given => { if (++renewals > 1) fail('ASTRA_LEASE_STALE'); return renew(given); };
+        }
+        const pending = f.start({ signal: controller.signal }); await flush(); assert.equal(writes, 1);
+        if (stop === 'cancel') controller.abort(); else await f.clock.advance(3334);
+        const result = await pending;
+        assert.equal(result.state, 'RECONCILIATION_REQUIRED'); assert.equal(f.run.state, 'UNKNOWN');
+        assert.equal(result.code, stop === 'cancel' ? 'ASTRA_RUNNER_STOPPED' : 'ASTRA_LEASE_STALE');
+        firstWrite.reject(Object.assign(new Error('synthetic transaction failure'), { code: 'P2028' }));
+        await f.clock.advance(250);
+        assert.deepEqual((await Promise.all(result.receiptWrites)).map(x => x.state), ['PERSISTED']);
+        assert.equal(writes, 2); assert.equal(f.receipts.length, 1); assert.equal(f.calls.length, 1);
+        assert.equal(f.run.state, 'UNKNOWN'); assert.equal(result.stepsApplied, 0); assert(!f.events.includes('inspect'));
+        assert(!f.events.includes('apply')); assert.equal(f.clock.count(), 0);
+    }
+});
+
+test('a receipt arriving after cancellation can retry persistence while the run stays held', async () => {
+    const f = fixture(), controller = new AbortController(), provider = deferred(), record = f.ledger.recordReceipt;
+    let writes = 0, original;
+    f.setFetch(() => provider.promise);
+    f.ledger.recordReceipt = binding => {
+        if (++writes === 1) { original = canonical(binding); fail('ECONNRESET'); }
+        assert.equal(canonical(binding), original); return record(binding);
+    };
+    const pending = f.start({ signal: controller.signal }); await flush(); controller.abort(); const result = await pending;
+    assert.equal(writes, 0); provider.resolve(Response.json(f.response('read_card_report')));
+    await f.clock.advance(250);
+    assert.deepEqual((await Promise.all(result.receiptWrites)).map(x => x.state), ['PERSISTED']);
+    assert.equal(writes, 2); assert.equal(f.calls.length, 1); assert.equal(f.receipts.length, 1);
+    assert.equal(f.run.state, 'UNKNOWN'); assert(!f.events.includes('inspect')); assert.equal(f.clock.count(), 0);
+});
+
+test('persistent transient failures stop after three writes and retain the unresolved dispatch', async () => {
+    const f = fixture(); let writes = 0;
+    f.ledger.recordReceipt = async () => { writes++; fail('P2024'); };
+    const pending = f.start(); await flush(); await f.clock.advance(750); const result = await pending;
+    assert.equal(writes, 3); assert.equal(f.calls.length, 1); assert.equal(f.calls[0].state, 'DISPATCHED');
+    assert.equal(f.run.state, 'UNKNOWN'); assert.equal(result.state, 'RECONCILIATION_REQUIRED');
+    assert.deepEqual((await Promise.all(result.receiptWrites)).map(x => x.state), ['UNCONFIRMED']);
+    assert(!f.events.includes('inspect')); assert.equal(f.clock.count(), 0);
+});
+
+test('an unresolved retry shares the original 15-second bound and cannot write again after a late rejection', async () => {
+    const f = fixture(), gate = deferred(); let writes = 0;
+    f.ledger.recordReceipt = async () => { if (++writes === 1) fail('P2028'); return gate.promise; };
+    const pending = f.start(); await flush(); await f.clock.advance(250); assert.equal(writes, 2);
+    await f.clock.advance(14_750); const result = await pending;
+    assert.equal(f.clock.now(), 15_000); assert.equal(result.code, 'ASTRA_RECEIPT_PERSISTENCE_UNCONFIRMED');
+    assert.equal(result.state, 'RECONCILIATION_REQUIRED'); assert.equal(f.run.state, 'UNKNOWN');
+    assert.deepEqual((await Promise.all(result.receiptWrites)).map(x => x.state), ['UNCONFIRMED']);
+    gate.reject(Object.assign(new Error('settled too late'), { code: 'P2028' })); await f.clock.advance(30_000);
+    assert.equal(writes, 2); assert.equal(f.calls.length, 1); assert(!f.events.includes('inspect')); assert.equal(f.clock.count(), 0);
+});
+
+test('receipt retries admit transient database codes but never retry authority, scope or closed-database errors', async () => {
+    for (const [error, retry] of [
+        [{ code: 'P2010', meta: { code: '40001' } }, true],
+        [{ code: 'P2010', meta: { code: '53300' } }, true],
+        [{ code: '08006' }, true],
+        [{ code: 'ASTRA_DATABASE_CLOSED' }, false],
+        [{ code: 'ASTRA_RECEIPT_SCOPE_INVALID' }, false],
+        [{ code: 'ASTRA_STORED_EVIDENCE_INVALID' }, false],
+        [{ code: 'P2010', meta: { code: '42501' } }, false],
+        [{ code: 'P2004' }, false],
+    ]) {
+        const f = fixture({ names: ['submit_for_human_review'] }), record = f.ledger.recordReceipt; let writes = 0;
+        f.ledger.recordReceipt = binding => {
+            if (++writes === 1) throw Object.assign(new Error('synthetic database failure'), error); return record(binding);
+        };
+        const pending = f.start(); await flush(); if (retry) await f.clock.advance(250); const result = await pending;
+        assert.equal(writes, retry ? 2 : 1); assert.equal(f.calls.length, 1);
+        assert.equal(result.state, retry ? 'READY_FOR_HUMAN' : 'RECONCILIATION_REQUIRED');
+        if (!retry) assert(!f.events.includes('inspect'));
+        assert.equal(f.clock.count(), 0);
+    }
 });
 
 test('preparation failure and unknown apply outcome never redispatch or replay the adapter', async () => {

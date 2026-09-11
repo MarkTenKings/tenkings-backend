@@ -97,6 +97,47 @@ test('activity feed orders actual saved events newest first and cannot recover w
     assert.match(text(f.nodes(node => node.type === 'li')[0]), /Identity proposed/); assert.doesNotMatch(f.text(), /Astra is working/); f.dispose();
 });
 
+test('unconfirmed-request recovery requires reviewing the recorded charge and explicitly authorizing one step', async () => {
+    const initial = card(), actions = [], control = { state: 'NEEDS_ATTENTION', pending: 1, mode: 'CONTINUOUS',
+        canAbandon: true, attemptRecovery: { attemptId: 'original-attempt', reviewHash: 'a'.repeat(64),
+            reservedMicroUsd: '23650000', dispatchedAt: at } };
+    const f = harness(activityCode, { card: initial, disabled: false, onObservedCard() {},
+        onControl: async (...args) => { actions.push(args); return { card: initial }; } }, {
+        async workspaceRequest(path) { return path.endsWith('/activity') ? { control, activity: [] } : { card: initial }; }
+    });
+    await f.settle(); assert.equal(actions.length, 0);
+    const review = f.nodes(node => node.type === 'button' && text(node).includes('Review recovery'))[0]; review.props.onClick(); f.render();
+    assert.equal(actions.length, 0); assert.match(f.text(), /\$23\.65 remains recorded/); assert.match(f.text(), /one new Astra step/);
+    assert.match(f.text(), /Astra will then pause/);
+    const note = f.nodes(node => node.type === 'textarea')[0]; note.props.onChange({ target: { value: 'Keep the unconfirmed request; continue once.' } }); f.render();
+    const confirm = f.nodes(node => node.type === 'button' && text(node) === 'Continue one step')[0];
+    assert.equal(confirm.props.disabled, false); await confirm.props.onClick(); f.render();
+    assert.equal(actions.length, 1); assert.equal(actions[0][0], 'ABANDON_AND_STEP');
+    assert.equal(actions[0][1].reviewHash, control.attemptRecovery.reviewHash);
+    assert.equal(actions[0][1].reason, 'Keep the unconfirmed request; continue once.');
+    f.dispose();
+});
+
+test('recovery review cannot silently adopt a changed card or dispatch when cancelled or unavailable', async () => {
+    const initial = card(), actions = [], control = { state: 'NEEDS_ATTENTION', pending: 1, mode: 'CONTINUOUS',
+        canAbandon: true, attemptRecovery: { attemptId: 'original-attempt', reviewHash: 'a'.repeat(64),
+            reservedMicroUsd: '23650000', dispatchedAt: at } };
+    const f = harness(activityCode, { card: initial, disabled: false, onObservedCard() {}, onControl: action => actions.push(action) }, {
+        async workspaceRequest(path) { return path.endsWith('/activity') ? { control, activity: [] } : { card: initial }; }
+    });
+    await f.settle();
+    f.nodes(node => node.type === 'button' && text(node).includes('Review recovery'))[0].props.onClick(); f.render();
+    f.props.card = { ...initial, revision: initial.revision + 1 }; f.render();
+    assert.match(f.text(), /recovery details changed/);
+    const confirm = f.nodes(node => node.type === 'button' && text(node) === 'Continue one step')[0];
+    assert.equal(confirm.props.disabled, true); await confirm.props.onClick(); assert.equal(actions.length, 0);
+    f.nodes(node => node.type === 'button' && text(node) === 'Keep paused')[0].props.onClick(); f.render();
+    assert.equal(actions.length, 0); assert.equal(f.nodes(node => node.type === 'textarea').length, 0);
+    control.canAbandon = false; f.render();
+    assert.equal(f.nodes(node => node.type === 'button' && text(node).includes('Review recovery')).length, 0);
+    f.dispose();
+});
+
 test('Astra workbench exposes actual source evidence and marks attention without inventing saved identity or approval', () => {
     const initial = { ...card(), observedOperator: { state: 'NEEDS_ATTENTION' } }, f = harness(viewCode, { card: initial, stage: 'IDENTITY' });
     assert.match(f.text(), /Needs attention/); assert.match(f.text(), /Card details will appear here once they are saved/);

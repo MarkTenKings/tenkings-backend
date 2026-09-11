@@ -59,3 +59,16 @@ test('changed original claim or wrong acknowledgment cannot clear the retained c
         assert.equal(f.commands.size, 1);
     }
 });
+
+test('reviewed abandonment dispatches only its committed command and retains that ID after a lost acknowledgment', async () => {
+    const f = fixture(), input = f.input({ action: 'ABANDON_AND_STEP',
+        recovery: { reviewHash: 'a'.repeat(64), reason: 'Continue from the last saved step.' } });
+    f.fail = true;
+    await assert.rejects(f.operator.control({}, f.cardId, input), /WORKSPACE_ASTRA_DISPATCH_UNCONFIRMED/);
+    const saved = f.commands.get(input.operationId); assert.equal(saved.action, 'OPERATOR_CONTROL');
+    f.fail = false; f.settled = true;
+    await f.operator.control({}, f.cardId, input);
+    assert.equal(f.commands.size, 1); assert.deepEqual(f.calls, [
+        { runId: f.runId, commandId: saved.id }, { runId: f.runId, commandId: saved.id }]);
+    assert(!JSON.stringify(f.calls).includes(input.recovery.reviewHash));
+});

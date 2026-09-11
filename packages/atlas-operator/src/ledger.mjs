@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { canonical, digest, parsePilotPolicy, requireBridge as check } from '@atlas/service-bridge/protocol';
+import { canonical, digest, parsePilotPolicy, pilotDollarLimitsAllow, requireBridge as check } from '@atlas/service-bridge/protocol';
 import { buildRequest, inspectResponse, appendToolResult, requestReservation, usageCeiling,
     instructionsFor, toolDefinitions, toolImageOutput, MAX_RESPONSE_BYTES } from './responses.mjs';
 import { parseControlPolicy, checked, toolsForRun } from './policy.mjs';
@@ -376,7 +376,7 @@ export class OperatorLedger {
             // No HTTP occurred for a merely reserved claim. Cancel it durably;
             // the old owner can never consume that dispatch token afterward.
             for (const attempt of pending.filter(a => a.state === 'RESERVED'))
-                await tx.staffOperatorAttempt.update({ where: { id: attempt.id }, data: { state: 'FAILED', finishedAt: now } });
+                await tx.staffOperatorAttempt.update({ where: { id: attempt.id }, data: { state: 'FAILED', finishedAt: now }, select: { id: true } });
             const recovery=run.state==='WAITING_TOOL' && pending.length===1 && pending[0].state==='RECEIVED'
                 ? await readOperatorRecovery(tx,run,{claiming:true}):null;
             if (recovery) check(run.state==='WAITING_TOOL' && pending.length===1 && pending[0].id===recovery.attemptId
@@ -386,7 +386,8 @@ export class OperatorLedger {
             const reconcile = !recovery && (run.state === 'UNKNOWN' || pending.some(a => a.state !== 'RESERVED'));
             const updated = await tx.staffOperatorRun.update({ where: { id: runId }, data: { leaseOwner: owner,
                 leaseFence: { increment: 1 }, leaseMode: reconcile ? 'RECONCILE_ONLY' : 'WORK',
-                leaseExpiresAt: new Date(Math.min(+now + policy.leaseMs,+run.deadlineAt)), state: recovery?'WAITING_TOOL':reconcile ? 'UNKNOWN' : 'RUNNING', updatedAt: now } });
+                leaseExpiresAt: new Date(Math.min(+now + policy.leaseMs,+run.deadlineAt)), state: recovery?'WAITING_TOOL':reconcile ? 'UNKNOWN' : 'RUNNING', updatedAt: now },
+                select: { leaseFence: true, revision: true, leaseMode: true } });
             return { lease: { runId, owner, fence: updated.leaseFence, revision: updated.revision },
                 mode: recovery?'RECOVER_TOOL':updated.leaseMode,...(recovery?{attemptId:recovery.attemptId}:{}) };
         });
@@ -394,8 +395,10 @@ export class OperatorLedger {
     async renew(lease) {
         return this.transaction(async context => {
             const { run, tx, now, policy } = await this.leased(context,lease,{ work: false });
+            // Keep the full locked validation above; do not return the large
+            // canonical continuation a second time for this metadata write.
             await tx.staffOperatorRun.update({ where: { id: run.id }, data: {
-                leaseExpiresAt: new Date(Math.min(+now + policy.leaseMs,+run.deadlineAt)), updatedAt: now } }); return lease;
+                leaseExpiresAt: new Date(Math.min(+now + policy.leaseMs,+run.deadlineAt)), updatedAt: now }, select: { id: true } }); return lease;
         });
     }
     async snapshot(lease) {
@@ -417,10 +420,10 @@ export class OperatorLedger {
             const pending = await tx.staffOperatorAttempt.findMany({ where: { runId: run.id, state: { in: unresolved } } });
             check(run.state !== 'UNKNOWN' && pending.every(a => a.state === 'RESERVED'), 'ASTRA_WORK_UNRESOLVED');
             for (const attempt of pending) await tx.staffOperatorAttempt.update({ where: { id: attempt.id },
-                data: { state: 'FAILED', finishedAt: now } });
+                data: { state: 'FAILED', finishedAt: now }, select: { id: true } });
             await tx.staffOperatorRun.update({ where: { id: run.id }, data: { controlState: 'PAUSED',
                 ...(run.controlState === 'PAUSED' ? {} : { controlRevision: { increment: 1 } }),
-                stepBudget: 0, leaseOwner: null, leaseMode: null, leaseExpiresAt: null, updatedAt: now } });
+                stepBudget: 0, leaseOwner: null, leaseMode: null, leaseExpiresAt: null, updatedAt: now }, select: { id: true } });
             return { state: 'PAUSED' };
         }, { active: false });
     }
@@ -434,11 +437,11 @@ export class OperatorLedger {
                 && run.leaseFence === lease.fence && run.revision === lease.revision && active.includes(run.state), 'ASTRA_LEASE_STALE');
             const attempts = await tx.staffOperatorAttempt.findMany({ where: { runId: run.id, state: { in: unresolved } } });
             for (const a of attempts.filter(a => a.state === 'RESERVED'))
-                await tx.staffOperatorAttempt.update({ where: { id: a.id }, data: { state: 'FAILED', finishedAt: now } });
+                await tx.staffOperatorAttempt.update({ where: { id: a.id }, data: { state: 'FAILED', finishedAt: now }, select: { id: true } });
             const unknown = run.state === 'UNKNOWN' || attempts.some(a => a.state !== 'RESERVED');
             const state = unknown ? 'UNKNOWN' : 'FAILED';
             await tx.staffOperatorRun.update({ where: { id: run.id }, data: { state, failureCode: code,
-                leaseOwner: null, leaseMode: null, leaseExpiresAt: null, updatedAt: now } });
+                leaseOwner: null, leaseMode: null, leaseExpiresAt: null, updatedAt: now }, select: { id: true } });
             return { state };
         }, { active: false });
     }
@@ -450,8 +453,7 @@ export class OperatorLedger {
             check(!await tx.staffOperatorAttempt.count({ where: { runId: run.id, state: { in: unresolved } } }), 'ASTRA_WORK_UNRESOLVED');
             const usage = await budgetUsage(tx, run);
             const reserve = BigInt(requestReservation(policy.astra));
-            check(!usage.overrun && BigInt(usage.total)+reserve <= BigInt(budget.maxTotalMicroUsd)
-                && BigInt(usage.card)+reserve <= BigInt(budget.maxCardMicroUsd) && usage.attempts < policy.maxAttemptsPerCard, 'ASTRA_BUDGET_EXHAUSTED');
+            check(pilotDollarLimitsAllow(budget,usage,reserve) && usage.attempts < policy.maxAttemptsPerCard, 'ASTRA_BUDGET_EXHAUSTED');
             const request = buildRequest({ policy: policy.astra, prompt: policy.prompt, names: toolsForRun(policy, run), input, phase: run.phase });
             const id = randomUUID(), claimId = randomUUID(), ordinal = await tx.staffOperatorAttempt.count({ where: { runId: run.id } }) + 1;
             await tx.$executeRaw`INSERT INTO atlas_staff."StaffOperatorAttempt"
@@ -474,13 +476,12 @@ export class OperatorLedger {
             check(attempt?.runId === run.id && attempt.state === 'RESERVED' && attempt.runRevision === run.revision
                 && attempt.leaseFence === run.leaseFence, 'ASTRA_DISPATCH_ALREADY_CONSUMED');
             const usage = await budgetUsage(tx, run);
-            check(!usage.overrun && BigInt(usage.total) <= BigInt(budget.maxTotalMicroUsd)
-                && BigInt(usage.card) <= BigInt(budget.maxCardMicroUsd), 'ASTRA_BUDGET_EXHAUSTED');
-            await tx.staffOperatorAttempt.update({ where: { id: attemptId }, data: { state: 'DISPATCHED', dispatchedAt: now } });
+            check(pilotDollarLimitsAllow(budget,usage), 'ASTRA_BUDGET_EXHAUSTED');
+            await tx.staffOperatorAttempt.update({ where: { id: attemptId }, data: { state: 'DISPATCHED', dispatchedAt: now }, select: { id: true } });
             // The attempt's BEFORE guard must observe the single STEP permit.
             // Consume it afterward in this same locked, atomic transaction.
             if (control.mode === 'STEP') await tx.staffOperatorRun.update({ where: { id: run.id }, data: {
-                stepBudget: 0, controlRevision: { increment: 1 }, updatedAt: now } });
+                stepBudget: 0, controlRevision: { increment: 1 }, updatedAt: now }, select: { id: true } });
             return { attemptId, requestCanonical: attempt.requestCanonical, requestHash: attempt.requestHash,
                 providerBindingHash: attempt.providerBindingHash, policy: policy.astra, promptHash: digest(instructionsFor(policy.prompt, run.phase)),
                 toolsHash: digest(canonical(toolDefinitions(toolsForRun(policy, run)))),
@@ -496,20 +497,31 @@ export class OperatorLedger {
         // Receipt/cost persistence intentionally survives revocation or an
         // expired lease. This method has no authority to execute a tool.
         return this.transaction(async ({ tx, now }) => {
-            const [attempt] = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffOperatorAttempt" WHERE id=${attemptId}::uuid FOR UPDATE`;
+            // The dispatch body can contain megabytes of images. Receipt
+            // validation/accounting needs its immutable binding, not that body.
+            const [attempt] = await tx.$queryRaw`SELECT "runId","dispatchClaimId","providerBindingHash","dispatchedAt",state,
+                "resultReceiptId","finishedAt","leaseFence","runRevision"
+                FROM atlas_staff."StaffOperatorAttempt" WHERE id=${attemptId}::uuid FOR UPDATE`;
             check(attempt?.dispatchClaimId === dispatchClaimId && attempt.providerBindingHash === this.config.providerBindingHash
-                && attempt.dispatchedAt && ['DISPATCHED','UNKNOWN','RECEIVED','APPLIED'].includes(attempt.state), 'ASTRA_RECEIPT_SCOPE_INVALID');
-            const prior = await tx.staffOperatorReceipt.findUnique({ where: { attemptId_hash: { attemptId, hash } } });
+                && attempt.dispatchedAt && ['DISPATCHED','UNKNOWN','RECEIVED','APPLIED','ABANDONED'].includes(attempt.state), 'ASTRA_RECEIPT_SCOPE_INVALID');
+            const prior = await tx.staffOperatorReceipt.findUnique({ where: { attemptId_hash: { attemptId, hash } }, select: { id: true } });
             if (prior) return { receiptId: prior.id, state: attempt.state };
-            const stored = await tx.staffOperatorReceipt.create({ data: { id: randomUUID(), attemptId, canonical: text, hash, createdAt: now } });
+            const stored = await tx.staffOperatorReceipt.create({ data: { id: randomUUID(), attemptId, canonical: text, hash, createdAt: now }, select: { id: true } });
             if (attempt.resultReceiptId) {
-                const run = await tx.staffOperatorRun.findUnique({ where: { id: attempt.runId } });
+                // Human abandonment ends execution authority, not evidence or
+                // accounting. A late/conflicting result cannot disturb the
+                // separately admitted continuation or become an applicable tool.
+                if (attempt.state === 'ABANDONED') return { receiptId: stored.id, state: 'ABANDONED' };
+                const run = await tx.staffOperatorRun.findUnique({ where: { id: attempt.runId }, select: { id: true, state: true } });
                 if ([...active, 'PREPARATION_READY'].includes(run.state)) await tx.staffOperatorRun.update({ where: { id: run.id }, data: {
-                    state: 'UNKNOWN', failureCode: 'ASTRA_CONFLICTING_RECEIPT', updatedAt: now } });
+                    state: 'UNKNOWN', failureCode: 'ASTRA_CONFLICTING_RECEIPT', updatedAt: now }, select: { id: true } });
                 return { receiptId: stored.id, state: attempt.state };
             }
-            const run = await tx.staffOperatorRun.findUnique({ where: { id: attempt.runId } });
-            const control = await tx.staffOperatorControl.findUnique({ where: { id: 'active' } });
+            const run = await tx.staffOperatorRun.findUnique({ where: { id: attempt.runId }, select: { id: true, state: true,
+                policyCanonical: true, policyHash: true, runtimeHash: true, leaseFence: true, revision: true,
+                leaseMode: true, leaseExpiresAt: true, deadlineAt: true } });
+            const control = await tx.staffOperatorControl.findUnique({ where: { id: 'active' },
+                select: { enabled: true, policyHash: true, configHash: true } });
             let accounting;
             // Retain the exact admitted policy for late cost accounting even
             // after an operator changes the active pilot's configuration.
@@ -520,16 +532,18 @@ export class OperatorLedger {
                     accounting = usageCeiling(receipt.body.usage,policy.astra);
                 } catch { /* Missing/invalid usage never means a free attempt. */ }
             }
-            const state = receipt.state === 'RECEIVED' ? 'RECEIVED' : 'UNKNOWN';
-            await tx.staffOperatorAttempt.update({ where: { id: attemptId }, data: { state, finishedAt: attempt.finishedAt ?? now,
-                ...(state === 'RECEIVED' ? { resultReceiptId: stored.id } : {}),
-                ...(accounting ? { usageCeilingMicroUsd: BigInt(accounting.microUsd), usageEnvelopeExceeded: accounting.envelopeExceeded } : {}) } });
-            if (active.includes(run.state)) {
+            const received = receipt.state === 'RECEIVED';
+            const state = attempt.state === 'ABANDONED' ? 'ABANDONED' : received ? 'RECEIVED' : 'UNKNOWN';
+            await tx.staffOperatorAttempt.update({ where: { id: attemptId }, data: { state,
+                ...(state === 'ABANDONED' ? {} : { finishedAt: attempt.finishedAt ?? now }),
+                ...(received ? { resultReceiptId: stored.id } : {}),
+                ...(accounting ? { usageCeilingMicroUsd: BigInt(accounting.microUsd), usageEnvelopeExceeded: accounting.envelopeExceeded } : {}) }, select: { id: true } });
+            if (state !== 'ABANDONED' && active.includes(run.state)) {
                 const current = run.state !== 'UNKNOWN' && control?.enabled && control.policyHash === run.policyHash && control.configHash === run.runtimeHash
                     && run.leaseFence === attempt.leaseFence
                     && run.revision === attempt.runRevision && run.leaseMode === 'WORK' && +run.leaseExpiresAt > +now && +run.deadlineAt > +now;
                 await tx.staffOperatorRun.update({ where: { id: run.id }, data: { state: state === 'RECEIVED' && current ? 'WAITING_TOOL' : 'UNKNOWN',
-                    failureCode: state === 'UNKNOWN' ? receipt.failureCode ?? 'ASTRA_OUTCOME_UNCONFIRMED' : current ? null : 'ASTRA_LATE_RECEIPT', updatedAt: now } });
+                    failureCode: state === 'UNKNOWN' ? receipt.failureCode ?? 'ASTRA_OUTCOME_UNCONFIRMED' : current ? null : 'ASTRA_LATE_RECEIPT', updatedAt: now }, select: { id: true } });
             }
             return { receiptId: stored.id, state };
         }, { active: false });
@@ -585,9 +599,9 @@ export class OperatorLedger {
             const nextInput = canonical(appendToolResult(input,receipt.body,call,output,images)), nextInputHash = digest(nextInput);
             await tx.staffOperatorStep.create({ data: { id: stepId, runId: run.id, attemptId, revision: binding.expectedRevision,
                 callId: call.callId, toolName: call.name, requestCanonical, requestHash: digest(requestCanonical),
-                resultCanonical, resultHash: digest(resultCanonical), nextInputHash, createdAt: now } });
+                resultCanonical, resultHash: digest(resultCanonical), nextInputHash, createdAt: now }, select: { id: true } });
             for (const { packet, asset } of images) await tx.staffOperatorImage.create({ data: {
-                ...imageRecord(packet,asset), runId: run.id, stepId, createdAt: now } });
+                ...imageRecord(packet,asset), runId: run.id, stepId, createdAt: now }, select: { imageId: true } });
             let state = 'RUNNING';
             if (call.name === 'submit_capture_preparation') {
                 check(run.phase === 'CAPTURE_REVIEW', 'ASTRA_CAPTURE_TOOL_INVALID');
@@ -599,7 +613,7 @@ export class OperatorLedger {
                     disposition: state, summary: call.args.summary });
                 await tx.staffOperatorOutbox.create({ data: { id: randomUUID(), runId: run.id, revision: binding.expectedRevision,
                     type: state === 'PREPARATION_READY' ? 'CAPTURE_PREPARATION_READY' : 'OPERATOR_ATTENTION_REQUIRED',
-                    payload, payloadHash: digest(payload), createdAt: now } });
+                    payload, payloadHash: digest(payload), createdAt: now }, select: { id: true } });
             }
             if (call.name === 'submit_for_human_review') {
                 check(run.phase !== 'CAPTURE_REVIEW', 'ASTRA_REPORT_CHANGED');
@@ -608,13 +622,13 @@ export class OperatorLedger {
                     revision: binding.expectedRevision, evidenceHash: run.evidenceHash, reportHash: manifest.reportHash,
                     analysisRevision: run.expectedAnalysisRevision, reviewRevision: run.expectedReviewRevision, disposition: state, summary: call.args.summary });
                 await tx.staffOperatorOutbox.create({ data: { id: randomUUID(), runId: run.id, revision: binding.expectedRevision,
-                    type: state === 'READY_FOR_HUMAN' ? 'HUMAN_REVIEW_READY' : 'OPERATOR_ATTENTION_REQUIRED', payload, payloadHash: digest(payload), createdAt: now } });
+                    type: state === 'READY_FOR_HUMAN' ? 'HUMAN_REVIEW_READY' : 'OPERATOR_ATTENTION_REQUIRED', payload, payloadHash: digest(payload), createdAt: now }, select: { id: true } });
             }
-            await tx.staffOperatorAttempt.update({ where: { id: attemptId }, data: { state: 'APPLIED' } });
+            await tx.staffOperatorAttempt.update({ where: { id: attemptId }, data: { state: 'APPLIED' }, select: { id: true } });
             const paused = pauseAfterAppliedAction(run,state);
             await tx.staffOperatorRun.update({ where: { id: run.id }, data: { revision: binding.expectedRevision, inputCanonical: nextInput,
                 inputHash: nextInputHash, state, ...(state !== 'RUNNING' ? { summary: call.args.summary } : {}),
-                ...(paused ? { controlState: 'PAUSED', controlRevision: { increment: 1 } } : {}), updatedAt: now } });
+                ...(paused ? { controlState: 'PAUSED', controlRevision: { increment: 1 } } : {}), updatedAt: now }, select: { id: true } });
             return { lease: { ...lease, revision: binding.expectedRevision }, state: paused && state !== 'PREPARATION_READY' ? 'PAUSED' : state,
                 ...(paused && state === 'PREPARATION_READY' ? { requiresPauseRelease: true } : {}), output };
         });
@@ -626,7 +640,7 @@ export class OperatorLedger {
             if (!row) return null;
             const payload = checked(row.payload,row.payloadHash);
             const claimed = await tx.staffOperatorOutbox.update({ where: { id: row.id }, data: {
-                state: 'CLAIMED', claimOwner: owner, claimFence: { increment: 1 }, claimUntil: new Date(+now+30_000) } });
+                state: 'CLAIMED', claimOwner: owner, claimFence: { increment: 1 }, claimUntil: new Date(+now+30_000) }, select: { claimFence: true } });
             return { id: row.id, owner, fence: claimed.claimFence, type: row.type, payload, payloadHash: row.payloadHash };
         }, { active: false });
     }
@@ -637,7 +651,7 @@ export class OperatorLedger {
             check(row?.claimOwner === owner && row.claimFence === fence && row.payloadHash === payloadHash, 'ASTRA_OUTBOX_STALE');
             if (row.state === 'DELIVERED') return { delivered: true };
             check(row.state === 'CLAIMED' && +row.claimUntil > +now, 'ASTRA_OUTBOX_STALE');
-            await tx.staffOperatorOutbox.update({ where: { id }, data: { state: 'DELIVERED', deliveredAt: now } }); return { delivered: true };
+            await tx.staffOperatorOutbox.update({ where: { id }, data: { state: 'DELIVERED', deliveredAt: now }, select: { id: true } }); return { delivered: true };
         }, { active: false });
     }
 }

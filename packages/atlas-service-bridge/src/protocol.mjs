@@ -76,17 +76,37 @@ export function verifyRequest(config, body, signature, now = Date.now()) {
 export function parsePilotPolicy(value) {
     const workspace = value?.version === 'atlas-workspace-bridge-policy-v1';
     const cohortKey = workspace ? 'workspaceCardIds' : 'specimenIds', ids = value?.[cohortKey];
+    const explicitEnforcement = Object.hasOwn(value ?? {}, 'budgetEnforcement');
     keys(value, ['version', 'pilotId', cohortKey, 'expiresAt', 'maxOperationsPerCard', 'maxTotalMicroUsd',
-        'maxCardMicroUsd', 'reservationPerOperationMicroUsd', 'maxWorkerCalls', 'deadlineMs']);
+        'maxCardMicroUsd', 'reservationPerOperationMicroUsd', 'maxWorkerCalls', 'deadlineMs',
+        ...(explicitEnforcement ? ['budgetEnforcement'] : [])]);
     requireBridge((workspace || value.version === 'atlas-grading-bridge-policy-v1') && UUID.test(value.pilotId)
+        && (!explicitEnforcement || value.budgetEnforcement === 'ACCOUNTING_ONLY')
         && Array.isArray(ids) && ids.length >= (workspace ? 1 : 10) && ids.length <= 10
         && ids.every(id => UUID.test(id)) && new Set(ids).size === ids.length
         && typeof value.expiresAt === 'string' && new Date(value.expiresAt).toISOString() === value.expiresAt
         && Number.isSafeInteger(value.maxOperationsPerCard) && value.maxOperationsPerCard > 0 && value.maxOperationsPerCard <= 100
         && ['maxTotalMicroUsd', 'maxCardMicroUsd', 'reservationPerOperationMicroUsd'].every(k => Number.isSafeInteger(value[k]) && value[k] > 0 && value[k] <= 1e12)
-        && value.reservationPerOperationMicroUsd <= value.maxCardMicroUsd && value.maxCardMicroUsd <= value.maxTotalMicroUsd
+        && (explicitEnforcement || value.reservationPerOperationMicroUsd <= value.maxCardMicroUsd && value.maxCardMicroUsd <= value.maxTotalMicroUsd)
         && Number.isSafeInteger(value.maxWorkerCalls) && value.maxWorkerCalls >= 1 && value.maxWorkerCalls <= 4
         && Number.isSafeInteger(value.deadlineMs) && value.deadlineMs >= 1000 && value.deadlineMs <= 200_000,
     'BRIDGE_PILOT_POLICY_INVALID');
     return value;
+}
+
+/** Dollar enforcement is distinct from durable accounting and work authority.
+ * An omitted mode preserves the original enforced policy bytes. Only the
+ * explicit admitted mode disables dollar comparisons; null/unknown modes fail.
+ * Callers still enforce their own expiry, roster and operation/attempt limits. */
+export function pilotDollarLimitsAllow(policy, usage, reserve = 0n) {
+    parsePilotPolicy(policy);
+    const amount = value => typeof value === 'bigint' || typeof value === 'number' && Number.isSafeInteger(value)
+        || typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value);
+    requireBridge(usage && typeof usage.overrun === 'boolean'
+        && [usage.total, usage.card, reserve].every(amount), 'BRIDGE_PILOT_USAGE_INVALID');
+    const total = BigInt(usage.total), card = BigInt(usage.card), reservation = BigInt(reserve);
+    requireBridge(total >= 0n && card >= 0n && reservation >= 0n, 'BRIDGE_PILOT_USAGE_INVALID');
+    return policy.budgetEnforcement === 'ACCOUNTING_ONLY'
+        || !usage.overrun && total + reservation <= BigInt(policy.maxTotalMicroUsd)
+            && card + reservation <= BigInt(policy.maxCardMicroUsd);
 }

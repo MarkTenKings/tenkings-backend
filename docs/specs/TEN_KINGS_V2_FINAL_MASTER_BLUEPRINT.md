@@ -111,6 +111,12 @@ After the temporary staff SMS allowance prevented sign-in, Mark explicitly instr
 
 Keep ordinary phone verification, approved staff access, the current customer destination admission, provider/control bindings, idempotency, session and CSRF protections, and normal authentication rate limits. This direction does not widen the phone roster or change the $90 model/worker/infrastructure budget, grading cohort/expiry, deterministic grading, or human report-approval requirements. Source implementation and actual deployed sign-in acceptance must still be recorded separately.
 
+#### Owner clarification — remove processing dollar limits, 2026-09-11 Pacific
+
+During first-card recovery Mark explicitly instructed: “dont worry about the budget. remove the budget constraint as it might be getting in the way of progress.” ATLAS application dollar ceilings for model, image-identification, worker and infrastructure processing must no longer block this authorized workflow. This supersedes the dollar ceilings and partitions in the earlier ATLAS pilot instructions. Implement an explicit non-enforcing mode rather than inventing a very large allowance. This instruction does not itself alter external provider-account limits.
+
+Preserve all request reservations, provider usage, invoice evidence and known or uncertain liabilities as actual accounting history. Removing a ceiling does not prove an unknown request failed, authorize blind duplicate dispatch, release its historical charge or establish free usage. Keep the original card cohort, distinct-card acceptance scope, pilot expiry, queue/concurrency/attempt limits, deterministic grading and exact final human report approval. Source changes, deployed enforcement and complete live grading acceptance must be recorded separately. At this instruction the observed conservative exposure was $33.9257, below the previous $90 ceiling; the current stalled request has no saved result, so budget removal alone is not its recovery.
+
 ---
 
 ## 1. Executive Decision

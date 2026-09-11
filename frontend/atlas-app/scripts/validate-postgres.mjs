@@ -27,6 +27,8 @@ import { workspaceIdentificationScenarios } from './workspace-identification-fix
 import { workspaceCornerShapeScenarios } from './workspace-corner-shape-fixture.mjs';
 import { workspaceTimingScenarios } from './workspace-timing-fixture.mjs';
 import { workspaceReceiptRecoveryScenarios } from './workspace-receipt-recovery-fixture.mjs';
+import { workspaceAttemptAbandonmentScenarios } from './workspace-attempt-abandonment-fixture.mjs';
+import { processingDollarLimitsScenarios } from './processing-dollar-limits-fixture.mjs';
 import { workspaceSourceScenarios } from './workspace-source-fixture.mjs';
 import { workspacePrivilegeScenarios } from './workspace-privileges-fixture.mjs';
 import { workspaceDispatcherScenarios } from '../../../packages/atlas-operator/test/workspace-dispatcher-postgres.mjs';
@@ -670,6 +672,8 @@ try {
     await workspaceCornerShapeScenarios(scenario);
     await workspaceTimingScenarios(scenario);
     await workspaceReceiptRecoveryScenarios(scenario);
+    await workspaceAttemptAbandonmentScenarios(scenario);
+    await processingDollarLimitsScenarios(scenario);
     await workspaceSourceScenarios(scenario);
     await workspacePrivilegeScenarios(scenario);
     await workspaceDispatcherScenarios(scenario);

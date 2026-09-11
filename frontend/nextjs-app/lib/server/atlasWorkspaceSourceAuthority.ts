@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
-import { canonical, parsePilotPolicy } from '@atlas/service-bridge/protocol';
+import { canonical, parsePilotPolicy, pilotDollarLimitsAllow } from '@atlas/service-bridge/protocol';
 import { preparationHash, preparationRequire } from './speedsterPreparationIntegrity';
 import type { AtlasAuthorizedWorkspaceSource, AtlasWorkspaceSourceAuthority, AtlasWorkspaceSourceRequest,
     AtlasWorkspaceGeometryLedger, AtlasWorkspaceGeometryResult } from './atlasWorkspaceSource';
@@ -295,11 +295,12 @@ export function createAtlasWorkspaceSourceLedger(client: PrismaClient, authority
                     || authorized.card.claim.kind === 'ASTRA' && authorized.operation.result.action === 'INITIALIZE_REPORT', 'WORKSPACE_MAP_REGISTRATION_INTENT_REQUIRED');
                 reserve = BigInt(input.purpose === 'PHYSICAL_GEOMETRY' ? source.physicalReserveMicroUsd
                     : input.purpose === 'MAP_REGISTRATION' ? source.registrationReserveMicroUsd : source.preparationReserveMicroUsd);
-                check(reserve > 0n && reserve <= BigInt(budget.maxCardMicroUsd), 'WORKSPACE_SOURCE_RESERVATION_INVALID');
+                check(reserve > 0n && (budget.budgetEnforcement === 'ACCOUNTING_ONLY'
+                    || reserve <= BigInt(budget.maxCardMicroUsd)), 'WORKSPACE_SOURCE_RESERVATION_INVALID');
             }
             const [usage] = await database.$queryRaw<Row[]>`SELECT * FROM atlas_staff.workspace_pilot_budget_usage(${budget.pilotId}::uuid,${input.cardId}::uuid)`;
-            check(usage && !usage.overrun && BigInt(usage.total) + reserve <= BigInt(budget.maxTotalMicroUsd)
-                && BigInt(usage.card) + reserve <= BigInt(budget.maxCardMicroUsd), 'WORKSPACE_SOURCE_BUDGET_EXHAUSTED');
+            check(usage && pilotDollarLimitsAllow(budget, { total: usage.total, card: usage.card, overrun: usage.overrun }, reserve),
+                'WORKSPACE_SOURCE_BUDGET_EXHAUSTED');
             const id = randomUUID(), bindingCanonical = canonical(request.binding), requestCanonical = canonical({ binding: input.binding, request: input.request });
             check(Buffer.byteLength(bindingCanonical) <= 262144 && Buffer.byteLength(requestCanonical) <= 262144);
             await database.$executeRaw`INSERT INTO atlas_staff."StaffWorkspaceSourceOperation"

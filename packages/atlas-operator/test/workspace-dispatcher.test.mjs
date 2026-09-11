@@ -295,6 +295,21 @@ test('only the exact recovery command admits a saved completed tool and continue
     assert.deepEqual(f.events, ['CAPTURE_REVIEW', 'SOURCE', 'REPORT_REVIEW']);
 });
 
+test('the separately committed abandonment command permits one STEP and settles the same command afterward', async () => {
+    const f = fixture({ rosterSize: 1 });
+    Object.assign(f.run, { state: 'RUNNING', revision: 3, leaseFence: 3, controlRevision: 6,
+        executionMode: 'STEP', stepBudget: 1 });
+    f.card.claim.mode = 'STEP'; f.commandFor('ABANDON_AND_STEP');
+    assert.equal((await f.admit()).state, 'ADMITTED');
+    const first = await f.start(); assert.equal(first.state, 'PAUSED');
+    assert.equal(f.operatorCalls.length, 1); assert.equal(f.sourceCalls, 0);
+    assert.equal((await f.admit()).state, 'SETTLED');
+    assert.equal((await f.start()).state, 'PAUSED'); assert.equal(f.operatorCalls.length, 1);
+    const invalid = fixture({ rosterSize: 1 }); invalid.commandFor('ABANDON_AND_STEP');
+    const held = await invalid.admit(); assert.equal(held.state, 'HELD'); assert.equal(held.code, 'ASTRA_DISPATCH_COMMAND_CHANGED');
+    assert.equal(invalid.operatorCalls.length, 0);
+});
+
 test('a missing or mismatched grant, uncertain work or source activity cannot use recovery admission', async () => {
     for (const alter of [f => { f.recoveries = []; }, f => { f.commandFor('RECOVER'); },
         f => { f.run.leaseFence++; }, f => { f.run.controlRevision++; },
