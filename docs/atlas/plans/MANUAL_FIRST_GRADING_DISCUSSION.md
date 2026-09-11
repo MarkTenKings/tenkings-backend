@@ -5,6 +5,8 @@ Planning discussion, September 11, 2026. No application code, deployed controls 
 ## Owner instructions and current decisions
 
 - Preserve high-quality grading photographs. Speed improvements should remove redundant uploads, reads, copying and waiting. The preceding audit's compact JPEG experiment is not approval to lower image quality or adopt a lossy conversion policy.
+- Confirmed intake: native iPhone Camera now, then upload the selected originals from the phone. Future high-end camera integration should deliver originals through the same intake contract. Retaining the old browser-capture implementation in its existing app does not require importing that UI into the new shell.
+- Confirmed desktop layout: Front left, Back right, with successive grading tools in the same workspace. One source upload per side; server reads and useful derived images are separate from reuploading originals.
 - Support many human graders and many Astra-operated cards concurrently. Remove application-imposed card allowances, spend ceilings and arbitrary one-card execution limits. One failed card must not prevent other cards or graders from working. External provider limits and finite hardware still exist; there is no established ten-card timing guarantee.
 - The boundary and printed-border engines find the lines first. Astra reviews their results and adjusts them when needed, using the same precise tools available to a human.
 - Discuss each grading stage and Astra's actions before building. Manual-first implementation is the current recommendation under discussion, not a completed build or a separately approved detailed implementation.
@@ -22,7 +24,7 @@ Target: one source upload per side. Engines read that source when required and c
 
 ## Proposed first review screen
 
-Desktop: Front and Back visible together, with physical boundary and printed border distinguishable on each image. Both start with engine-generated proposals. Retain accurate zoom and an original/prepared view as needed. On a phone, keep the same review step but stack or enlarge images rather than squeezing away useful detail. Layout, controls and confirmation behavior remain discussion items.
+Desktop: Front left and Back right, visible together, with physical boundary and printed border distinguishable on each image. Both start with engine-generated proposals. Retain accurate zoom and an original/prepared view as needed. On a phone, keep the same review step but stack or enlarge images rather than squeezing away useful detail. The desktop side order is confirmed; mobile layout, controls and confirmation behavior remain discussion items.
 
 | Step | Engine work | Manual reviewer | Astra reviewer, later |
 | --- | --- | --- | --- |
@@ -55,6 +57,33 @@ The audit observed failures in the added operator database path and identified s
 Resume needs small stage/coordinate/action records and retained completed results; it does not require loading the entire image conversation on each update. After a disconnect, read the last committed action and continue from the next unfinished one. If the reply to an action was lost, look up that action before repeating it. An adjustment never saved may need repeating; completed grading should not restart. No system can guarantee that a phone, network or database will never fail, so make ordinary interruption inexpensive to handle.
 
 ## Proposed build order, still under discussion
+
+Owner clarification: identify the operator failure's initiating cause before designing/building the replacement Astra layer. The audit proves the failing subsystem and the subsequent terminal-state defect, but its retained logs do not identify the exact SQL statement, lock wait or application processing that exhausted the latest reservation transaction. The isolated earlier benchmark passed, so it cannot establish a production root-cause fix. A timed reproduction must cover reservation with representative image history and concurrent staff reads, separating connection acquisition, lock waiting, SQL, payload transfer and application processing. Provider transport can remain disabled. Merely forcing a timeout proves failure handling, not the historical initiating cause.
+
+### Clean extraction approach
+
+Start a separate minimal grading shell alongside the current app and explicitly import only the required engine modules, runtime dependencies and model/calibration assets. Do not copy the old application and then strip it down. This supersedes the audit's earlier in-place replacement recommendation as the proposed implementation approach; the audit's source observations remain historical evidence.
+
+| Bring into the clean build | Leave outside its dependency graph |
+| --- | --- |
+| Existing `@atlas/grading-core` calculations, geometry, trace/review and report content | `@atlas/operator`, its run/attempt ledger and dispatch controls |
+| CPU boundary, printed-border, rectification and defect-measurement functions | Existing `atlasWorkspace*` orchestration, enrollment and global staff locking |
+| Existing snapping math and reusable geometry controls | The old all-purpose capture/workflow components and route handlers |
+| Required detector checkpoint, pinned runtime, calibration, approved Memory and card-map data | Wholesale copies of the old database schema, triggers and application migrations |
+
+`@atlas/grading-core` already has an extraction manifest and an enforced import boundary: its own modules plus `zod`, with no ambient database/provider/storage client. That package alone is not the full detector. Python geometry/measurement and SAM runtime dependencies must also be included. Where an engine mixes image I/O with computation, give it a small new input/output adapter rather than importing the old orchestration chain. Essential map/calibration data is an engine dependency, not a reason to copy all workflow tables.
+
+Before connecting a UI, run the same fixtures through the existing engine and its clean entry point; compare geometry, measured defects and grades, and record timings. Deterministic outputs should match; model-backed operations require agreed tolerances. Use those checks to catch missing dependencies, coordinate changes and accidental scoring changes. This establishes extraction parity, not full grading accuracy or production readiness. The new manual path is then tested from originals to reviewed report, including independent concurrent cards, before Astra is connected to those shared actions.
+
+### OpenAI integration comparison: checked source
+
+Both the inventory identification handler and ATLAS operator call `https://api.openai.com/v1/responses`. ATLAS is the application name; its operator explicitly selects `gpt-6-astra`. The checked inventory flow performs Google Vision OCR, structured text extraction, optional image-URL extraction and a `CardAsset` suggestion update, including compatibility/fallback behavior. It does not import the ATLAS per-tool run/attempt/image-delivery ledger. Its deployment can override source model defaults; the effective deployed inventory model was not checked in this follow-up, so identical Astra/MAX settings are not established.
+
+The distinction is the surrounding workflow, not a different OpenAI endpoint. ATLAS retains a growing image-filled conversation and repeatedly checks it inside its own database transactions. The latest recorded reservation failure preceded the next provider dispatch. That establishes the failing subsystem and rules out the next OpenAI response as the cause of that particular failure; it does not isolate the exact initiating database wait or statement. Upload conversion overhead is a separate pre-operator issue.
+
+Source entry points: [operator endpoint/model](../../../packages/atlas-operator/src/responses.mjs), [operator transactions and reservation](../../../packages/atlas-operator/src/ledger.mjs), [inventory OCR handler](../../../frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts), [core dependency boundary](../../../packages/atlas-grading-core/scripts/build.mjs), [CPU preparation](../../../backend/ai-grader-speedster-service/preparation_core.py), and [legacy snapping](../../../frontend/nextjs-app/lib/ai-grader-v2/gradient-snap.ts).
+
+### Sequence after the discussion
 
 1. Agree the capture and combined boundary/border review behavior.
 2. Rebuild the manual path using the existing engines, shared precise tools and small progress records; measure it against the relevant Ten Kings flow.

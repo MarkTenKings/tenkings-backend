@@ -4,6 +4,8 @@
 
 > Subsequent owner planning direction, September 11: preserve grading-quality originals, review engine-generated boundaries/borders together, support many human/Astra cards without application-imposed card/spend allowances, and discuss every stage before implementation. Manual-first rebuilding is under discussion. These requirements supersede the earlier pilot restrictions for the intended rebuilt workflow; live controls are unchanged. See the [canonical clarification](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md#owner-direction--quality-parallel-grading-and-step-by-step-design-september-11-2026) and [planning record](../atlas/plans/MANUAL_FIRST_GRADING_DISCUSSION.md).
 
+> Latest confirmed choices: native iPhone Camera originals uploaded from the phone; Front left / Back right in one continuing workspace; future direct-camera intake through the same image path. Owner requests clean engine extraction rather than dismantling the old app, and root-cause evidence before a replacement Astra layer. Details remain in discussion; no rebuild or live change has begun.
+
 ## Historical runtime checkpoints
 
 The dated H/G/F/E checkpoints below preserve their original observations. Their runtime identities, pending actions and old-card recovery instructions are historical where superseded by I and the owner's cancellation.

@@ -148,6 +148,8 @@ Mark explicitly superseded the application-imposed card allowances and concurren
 
 Mark favors continuing from saved progress after interruptions, but would accept simpler restart behavior if preserving progress required substantial bloat. Prefer a small progress/action record and independently stored image/results; do not treat this conditional tradeoff as authorization to discard work. A manual-first rebuild, followed by connecting Astra to the same working tools, is being discussed. The owner requested continued discussion and stage design before implementation. No application code, deployed limit, provider setting, card or runtime has changed as a result of this clarification. See the [manual-first planning record](../atlas/plans/MANUAL_FIRST_GRADING_DISCUSSION.md).
 
+Further owner clarification, September 11: use the iPhone native Camera app now and upload its highest-quality selected originals from the phone. The intended grading workspace keeps Front on the left and Back on the right, with the successive tools brought to that workspace and one source upload per side. A future high-end camera connected to the MacBook must be able to feed the same intake; its hardware/SDK integration is not selected yet. Mark rejects dismantling the existing application around its engines as the extraction strategy and requests a clean build that imports only the needed engines and their genuine dependencies. Establish the cause of the operator failure before designing/building its replacement. These are planning constraints, not authorization to begin the discussed rebuild or to delete the current application/data.
+
 ---
 
 ## 1. Executive Decision
