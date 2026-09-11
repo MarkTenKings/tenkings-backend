@@ -149,6 +149,21 @@ test('staff and advanced descriptions verify both photos before recording review
   }
 });
 
+test('final save verifies front and back concurrently and waits for both before recording', async () => {
+  const deps = workspaceDeps(), command = add();
+  const front = photoKey(Buffer.from('front')), back = photoKey(Buffer.from('back'));
+  Object.assign(command.description, { photo_key: front, back_photo_key: back });
+  const pending = new Map<string, (ok: boolean) => void>(); let writes = 0;
+  deps.verifyPhoto = key => new Promise(resolve => { pending.set(key, resolve); });
+  deps.record = async () => { writes++; return { request_id: UUID, outcome: 'RECORDED', events: [] }; };
+  const output = response(), running = createStaffInventoryWorkspaceHandler(deps)(request('POST', command), output.res);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([...pending.keys()], [front, back]); assert.equal(writes, 0);
+  pending.get(back)!(true); await new Promise(resolve => setImmediate(resolve)); assert.equal(writes, 0);
+  pending.get(front)!(false); await running;
+  assert.equal(output.result.code, 400); assert.equal(writes, 0);
+});
+
 test('staff refreshes sign both unique sides without re-reading photo objects or hiding inventory', async () => {
   const front = photoKey(Buffer.from('front read fixture')), back = photoKey(Buffer.from('back read fixture'));
   const deps = workspaceDeps(), signed: string[] = []; let verified = 0;
@@ -239,6 +254,19 @@ test('photo upload forces private/no-store storage and verifies the stored objec
   assert.equal(disabled.result.code, 503);
   const denied = response(); await createStaffInventoryPhotoHandler({ ...deps, requireAdmin: async () => { throw new HttpError(403, 'Denied'); }, upload: async () => { assert.fail('unauthorized upload'); } })(request('POST', {}), denied.res);
   assert.equal(denied.result.code, 403);
+});
+
+test('private evidence uploads pass cancellation to storage and reject a late success', async () => {
+  const bytes = Buffer.from('private evidence'), controller = new AbortController();
+  const checksumSha256 = createHash('sha256').update(bytes).digest('hex');
+  let sends = 0;
+  const deps = { storageMode: 's3' as const, sendS3: async (_: unknown, options?: { abortSignal?: AbortSignal }) => {
+    sends++; assert.equal(options?.abortSignal, controller.signal); controller.abort();
+  } };
+  await assert.rejects(uploadPrivateChecksumBuffer(`research-evidence/${checksumSha256}.jpg`, bytes, 'image/jpeg', { checksumSha256, signal: controller.signal }, deps), /cancelled/);
+  assert.equal(sends, 1);
+  await assert.rejects(uploadPrivateChecksumBuffer(`research-evidence/${checksumSha256}.jpg`, bytes, 'image/jpeg', { checksumSha256, signal: controller.signal }, deps), /cancelled/);
+  assert.equal(sends, 1);
 });
 
 test('financial snapshots accept only their read bearer, refuse writes and omit private photo/roster data', async () => {

@@ -49,6 +49,8 @@ async function until(check: () => boolean) { for (let i = 0; i < 100 && !check()
 async function mount(fetcher: typeof fetch = async () => json(initial), saved: typeof addDraft | null = addDraft) {
   prepare = async () => prepared;
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'https://fixture.invalid/admin/physical-inventory', pretendToBeVisual: true });
+  // React is imported before the DOM in this fixture; its legacy focus shim is inert.
+  Object.defineProperties(dom.window.HTMLElement.prototype, { attachEvent: { configurable: true, value() {} }, detachEvent: { configurable: true, value() {} } });
   const previous = new Map<string, PropertyDescriptor | undefined>();
   const set = (key: string, value: unknown) => { previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key)); Object.defineProperty(globalThis, key, { configurable: true, writable: true, value }); };
   set('window', dom.window); set('self', dom.window); set('document', dom.window.document); set('navigator', dom.window.navigator);
@@ -64,10 +66,10 @@ async function mount(fetcher: typeof fetch = async () => json(initial), saved: t
     button(text: string) { const button = [...container.querySelectorAll('button')].find(b => b.textContent === text); assert.ok(button, `Missing button ${text}`); return button; },
     async click(text: string) { const button = this.button(text); assert.equal(button.disabled, false, text); await act(async () => button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))); },
     async edit() { const button = container.querySelector<HTMLButtonElement>('button[aria-label="Open Fixture card"]')!; await act(async () => button.click()); await this.click('Edit details & price'); },
-    input(label: string) { const input = container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`); assert.ok(input, `Missing input ${label}`); return input; },
+    input(label: string) { const input = label === 'Sales channel' && container.querySelector('input[name="inventory-sales-channel"]') ? container.querySelector<HTMLInputElement>('input[name="inventory-sales-channel"]:checked') : container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`); assert.ok(input, `Missing input ${label}`); return input; },
     async choose(file: File, source: 'camera' | 'library' = 'library') { const input = this.input(source === 'camera' ? 'Take inventory photo' : 'Choose inventory photo'); Object.defineProperty(input, 'files', { configurable: true, value: [file] }); await act(async () => Simulate.change(input)); },
-    async fill(label: string, value: string) { await act(async () => Simulate.change(this.input(label), { target: { value } } as any)); },
-    async pair() { const files = [new dom.window.File(['front'], 'front.jpg', { type: 'image/jpeg' }), new dom.window.File(['back'], 'back.jpg', { type: 'image/jpeg' })] as unknown as [File, File]; await act(async () => { captureProps.onPair(...files); }); return files; },
+    async fill(label: string, value: string) { await act(async () => { const radio = label === 'Sales channel' ? [...container.querySelectorAll<HTMLInputElement>('input[name="inventory-sales-channel"]')].find(input => input.value === value) : null; if (radio) radio.click(); else Simulate.change(this.input(label), { target: { value } } as any); }); },
+    async pair(advance = true) { const files = [new dom.window.File(['front'], 'front.jpg', { type: 'image/jpeg' }), new dom.window.File(['back'], 'back.jpg', { type: 'image/jpeg' })] as unknown as [File, File]; await act(async () => { captureProps.onPair(...files); }); if (advance) for (let index = 0; index < 2 && container.querySelector('button[aria-label^="Next:"]'); index++) await this.click('Next'); return files; },
     camera() { return captureProps; },
     async submit() { await act(async () => container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))); },
     submitButton() { return container.querySelector<HTMLButtonElement>('button[type="submit"]')!; },
@@ -312,5 +314,97 @@ test('saved channels are visible and searchable; channel filters and clear filte
     await ui.fill('Search inventory', 'whatnot'); assert.equal(visible().length, 1);
     const open = ui.container.querySelector<HTMLButtonElement>('button[aria-label="Open Fixture card"]')!; await act(async () => open.click());
     assert.ok(ui.container.querySelector('[role="dialog"]')?.textContent?.includes('Sales channelWhatnot'));
+  } finally { await ui.close(); }
+});
+
+test('back capture focuses Cost immediately; visible Next controls advance during uploads and AI never steals focus', async () => {
+  const frontUpload = deferred<Response>(), backUpload = deferred<Response>(), identity = deferred<Response>();
+  let uploads = 0, identityBody = '', writes = 0;
+  const ui = await mount(api({ upload: async () => ++uploads === 1 ? frontUpload.promise : backUpload.promise, identify: async body => { identityBody = body; return identity.promise; }, save: async body => { writes++; return json({ outcome: 'RECORDED', request_id: JSON.parse(body).request_id }); } }));
+  try {
+    await ui.click('Add inventory'); await ui.click('Take photo');
+    const front = new ui.dom.window.File(['front'], 'front.jpg') as unknown as File, back = new ui.dom.window.File(['back'], 'back.jpg') as unknown as File;
+    await act(async () => ui.camera().onSideReady!('front', front));
+    await until(() => uploads === 1);
+    assert.equal(ui.camera().disabled, false, 'front upload must not disable the back camera');
+    await act(async () => { ui.camera().onPricingStart!(); assert.equal(document.activeElement, ui.input('Card acquisition cost')); });
+    assert.equal(ui.container.querySelector('form')!.hidden, false);
+    assert.equal(ui.input('Card acquisition cost').inputMode, 'decimal');
+    assert.ok(ui.input('Expected sale price per card').closest('[hidden]'));
+    assert.equal(ui.container.querySelector('button[type="submit"]'), null);
+    await ui.fill('Card acquisition cost', '3.25'); await ui.click('Next');
+    assert.equal(document.activeElement, ui.input('Expected sale price per card'));
+    await ui.fill('Expected sale price per card', '19.50'); await ui.click('Next');
+    const choices = [...ui.container.querySelectorAll<HTMLInputElement>('input[name="inventory-sales-channel"]')];
+    assert.deepEqual(choices.map(input => input.value), ['', 'Vending machines', 'Stores', 'Kiosks', 'Ten Kings online', 'eBay', 'Whatnot', 'Amazon']);
+    assert.ok(choices.every(input => !input.closest('[hidden]'))); assert.equal(writes, 0);
+    assert.equal(ui.submitButton().disabled, true);
+    await act(async () => { ui.camera().onSideReady!('back', back); ui.camera().onPair(front, back); });
+    await until(() => uploads === 2);
+    ui.input('Expected sale price per card').focus();
+    await act(async () => { backUpload.resolve(json({ photo_key: keyFor(52), photo_url: `${photoUrl}-back` })); frontUpload.resolve(json({ photo_key: keyFor(51), photo_url: `${photoUrl}-front` })); });
+    await until(() => !!identityBody);
+    await ui.fill('Manufacturer', 'Staff manufacturer');
+    await act(async () => identity.resolve(json(identification(identityBody))));
+    await until(() => !ui.submitButton().disabled);
+    assert.equal(document.activeElement, ui.input('Expected sale price per card'));
+    assert.equal(ui.input('Card acquisition cost').value, '3.25'); assert.equal(ui.input('Expected sale price per card').value, '19.50');
+    assert.equal(ui.input('Manufacturer').value, 'Staff manufacturer'); assert.equal(writes, 0);
+    await ui.fill('Sales channel', 'Whatnot'); assert.equal(writes, 0);
+    await act(async () => ui.submitButton().click()); await until(() => writes === 1 && ui.camera().open);
+    assert.equal(ui.input('Card acquisition cost').value, ''); assert.equal(ui.input('Expected sale price per card').value, ''); assert.equal(ui.input('Sales channel').value, '');
+  } finally { await ui.close(); }
+});
+
+test('pricing Next rejects malformed and unsafe amounts, preserves blank as unknown, and never saves on the second Next', async () => {
+  const posts: any[] = [];
+  const ui = await mount(api({ save: async body => { const posted = JSON.parse(body); posts.push(posted); return json({ outcome: 'RECORDED', request_id: posted.request_id }); } }));
+  try {
+    await ui.click('Add inventory'); await ui.pair(false);
+    for (const value of ['-1', '1.234', '1,000', 'NaN', '90071992547409.92']) {
+      await ui.fill('Card acquisition cost', value); await ui.click('Next');
+      assert.equal(ui.input('Card acquisition cost').getAttribute('aria-invalid'), 'true');
+      assert.equal(document.activeElement, ui.input('Card acquisition cost'));
+      assert.ok(ui.container.querySelector('button[aria-label="Next: expected sale price"]')); assert.equal(posts.length, 0);
+    }
+    await ui.fill('Card acquisition cost', ''); await ui.click('Next');
+    await ui.fill('Expected sale price per card', '-1'); await ui.submit();
+    assert.equal(ui.input('Expected sale price per card').getAttribute('aria-invalid'), 'true'); assert.equal(posts.length, 0);
+    await ui.fill('Expected sale price per card', ''); await ui.click('Next');
+    assert.equal(ui.submitButton().disabled, false); assert.equal(posts.length, 0, 'Next must not become a submit through synchronous button replacement');
+    await act(async () => ui.submitButton().click()); await until(() => posts.length === 1);
+    const posted = posts[0]; assert.ok(posted);
+    assert.equal(posted.total_cost_cents, null); assert.equal(posted.cost_method, 'unassigned'); assert.equal(posted.expected_price_cents, null); assert.equal(posted.description.planned_sales_channel, null);
+  } finally { await ui.close(); }
+});
+
+test('each side uploads as soon as its own preparation completes and retry reuses the successful side', async () => {
+  const backPreparation = deferred<PreparedStaffInventoryPhoto>();
+  const preparedFiles: string[] = []; let uploads = 0, identityBody = '';
+  const ui = await mount(api({ upload: async () => { uploads++; return uploads === 2 ? json({}, 503) : json({ photo_key: keyFor(60 + uploads), photo_url: `${photoUrl}-${uploads}` }); }, identify: async body => { identityBody = body; return json(identification(body)); } }));
+  try {
+    await ui.edit(); prepare = file => { preparedFiles.push(file.name); return file.name === 'back.jpg' && preparedFiles.filter(name => name === 'back.jpg').length === 1 ? backPreparation.promise : Promise.resolve(prepared); };
+    await ui.pair(); await until(() => uploads === 1);
+    assert.equal(identityBody, '');
+    await act(async () => backPreparation.resolve(prepared));
+    await until(() => !!ui.container.textContent?.includes('Both photos could not be saved'));
+    assert.equal(uploads, 2); assert.equal(identityBody, '');
+    await ui.click('Retry photos'); await until(() => !ui.submitButton().disabled);
+    assert.equal(uploads, 3); assert.deepEqual(preparedFiles, ['front.jpg', 'back.jpg', 'back.jpg']);
+    assert.equal(JSON.parse(identityBody).front_photo_key, keyFor(61));
+    assert.equal(JSON.parse(identityBody).back_photo_key, keyFor(63));
+  } finally { await ui.close(); }
+});
+
+test('closing the camera cancels an eager front upload before a pair exists and ignores its late response', async () => {
+  const uploaded = deferred<Response>(); let signal: AbortSignal | undefined, identities = 0;
+  const ui = await mount(api({ upload: async (_number, init) => { signal = init?.signal as AbortSignal; return uploaded.promise; }, identify: async body => { identities++; return json(identification(body)); } }));
+  try {
+    await ui.click('Add inventory'); await ui.click('Take photo');
+    await act(async () => ui.camera().onSideReady!('front', new ui.dom.window.File(['front'], 'front.jpg') as unknown as File));
+    await until(() => !!signal); await ui.click('Close camera fixture'); assert.equal(signal!.aborted, true);
+    await act(async () => uploaded.resolve(json({ photo_key: keyFor(71), photo_url: photoUrl })));
+    assert.equal(identities, 0); assert.equal(ui.input('Card name').value, addDraft.name);
+    assert.equal(ui.container.querySelector('img[alt="Front of inventory card"]'), null); assert.equal(ui.submitButton().disabled, false);
   } finally { await ui.close(); }
 });

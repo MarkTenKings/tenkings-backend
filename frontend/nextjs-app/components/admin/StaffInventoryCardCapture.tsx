@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
-import { prepareStaffInventoryPhoto, STAFF_INVENTORY_PHOTO_ACCEPT, STAFF_PHOTO_LONG_EDGE } from '../../lib/inventoryPhotoUpload';
+import { prepareStaffInventoryCanvasPhoto, prepareStaffInventoryPhoto, staffInventoryPreparedPhotoFile, STAFF_INVENTORY_PHOTO_ACCEPT, STAFF_PHOTO_LONG_EDGE } from '../../lib/inventoryPhotoUpload';
 import styles from './StaffInventoryCardCapture.module.css';
 
 type Side = 'front' | 'back';
@@ -17,6 +17,11 @@ export type StaffInventoryCardCaptureProps = {
   autoStartCamera?: boolean;
   /** Local normalized JPEG files only. Upload, identify and save in the parent. */
   onPair: (front: File, back: File) => void;
+  /** A finished side may upload while the next side is being captured. */
+  onSideReady?: (side: Side, file: File) => void;
+  /** Called on the final shutter tap, before asynchronous encoding loses activation. */
+  onPricingStart?: () => void;
+  onPricingCancel?: () => void;
   onClose: () => void;
   onError?: (message: string) => void;
   locationStatus?: string;
@@ -34,15 +39,8 @@ function cameraError(error: unknown) {
   return 'The camera could not start. Tap Resume camera to try again, or choose photos.';
 }
 
-function preparedFile(image: string, side: Side) {
-  const encoded = image.split(',')[1];
-  if (!image.startsWith('data:image/jpeg;base64,') || !encoded) throw new Error('This photo could not be prepared. Choose it again.');
-  const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
-  return new File([bytes], `card-${side}.jpg`, { type: 'image/jpeg' });
-}
-
 /** One component instance is one add-modal camera session. Keep it mounted while pricing. */
-export default function StaffInventoryCardCapture({ open, cycle, disabled = false, initialSource = 'camera', autoStartCamera = true, onPair, onClose, onError, locationStatus }: StaffInventoryCardCaptureProps) {
+export default function StaffInventoryCardCapture({ open, cycle, disabled = false, initialSource = 'camera', autoStartCamera = true, onPair, onSideReady, onPricingStart, onPricingCancel, onClose, onError, locationStatus }: StaffInventoryCardCaptureProps) {
   const headingId = useId();
   const [source, setSource] = useState<Source>(initialSource);
   const [side, setSide] = useState<Side>('front');
@@ -50,6 +48,7 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
   const [camera, setCamera] = useState<CameraState>('idle');
   const [busy, setBusy] = useState(false);
   const [delivered, setDelivered] = useState(false);
+  const [handingOff, setHandingOff] = useState(false);
   const [error, setError] = useState('');
   const dialog = useRef<HTMLElement>(null);
   const video = useRef<HTMLVideoElement>(null);
@@ -73,11 +72,12 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
   const currentCycle = useRef(cycle);
   const isBusy = useRef(false);
   const isDelivered = useRef(false);
-  const callbacks = useRef({ onPair, onClose, onError });
+  const isHandingOff = useRef(false);
+  const callbacks = useRef({ onPair, onSideReady, onPricingStart, onPricingCancel, onClose, onError });
   isOpen.current = open;
   isDisabled.current = disabled;
   currentSource.current = source;
-  callbacks.current = { onPair, onClose, onError };
+  callbacks.current = { onPair, onSideReady, onPricingStart, onPricingCancel, onClose, onError };
 
   const pauseCamera = useCallback(() => {
     playbackAttempt.current++;
@@ -104,6 +104,11 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
     preparation.current = null;
     isBusy.current = false;
     setBusy(false);
+    if (isHandingOff.current && !isDelivered.current) {
+      isHandingOff.current = false;
+      setHandingOff(false);
+      callbacks.current.onPricingCancel?.();
+    }
   }, []);
 
   const reportError = useCallback((message: string) => {
@@ -113,9 +118,9 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
 
   const playCamera = useCallback(async (active: MediaStream) => {
     const element = video.current;
-    if (!element || !isMounted.current || !isOpen.current || isDisabled.current || currentSource.current !== 'camera' || isDelivered.current) return;
+    if (!element || !isMounted.current || !isOpen.current || isDisabled.current || currentSource.current !== 'camera' || isDelivered.current || isHandingOff.current) return;
     const attempt = ++playbackAttempt.current;
-    const current = () => isMounted.current && attempt === playbackAttempt.current && stream.current === active && isOpen.current && !isDisabled.current && currentSource.current === 'camera' && !isDelivered.current;
+    const current = () => isMounted.current && attempt === playbackAttempt.current && stream.current === active && isOpen.current && !isDisabled.current && currentSource.current === 'camera' && !isDelivered.current && !isHandingOff.current;
     active.getTracks().forEach(track => { track.enabled = true; });
     element.srcObject = active;
     setCamera('starting');
@@ -194,6 +199,8 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
     setPhotos({});
     isDelivered.current = false;
     setDelivered(false);
+    isHandingOff.current = false;
+    setHandingOff(false);
     setSide('front');
     setSource(initialSource);
     currentSource.current = initialSource;
@@ -201,7 +208,7 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
   }, [cycle, initialSource, cancelPhoto]);
 
   useEffect(() => {
-    if (!open || disabled || currentSource.current !== 'camera' || delivered) {
+    if (!open || disabled || currentSource.current !== 'camera' || delivered || handingOff) {
       mediaAttempt.current++;
       requestingCamera.current = false;
       pauseCamera();
@@ -212,7 +219,7 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
     else if (!hasRequestedCamera.current && autoStartCamera) void startCamera();
     else if (!requestingCamera.current) setCamera('paused');
     // A saved next-card cycle only resumes an existing stream. A stopped camera needs a tap.
-  }, [open, disabled, source, delivered, cycle, autoStartCamera, pauseCamera, cancelPhoto, playCamera, startCamera]);
+  }, [open, disabled, source, delivered, handingOff, cycle, autoStartCamera, pauseCamera, cancelPhoto, playCamera, startCamera]);
 
   useEffect(() => {
     isMounted.current = true;
@@ -236,11 +243,11 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
   }, [cancelPhoto, stopCamera]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || handingOff) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     dialog.current?.focus();
-    return () => { if (previous?.isConnected) previous.focus(); };
-  }, [open]);
+    return () => { if (!isHandingOff.current && previous?.isConnected) previous.focus(); };
+  }, [open, handingOff]);
 
   const acceptPhoto = (capturedSide: Side, file: File) => {
     const photo = { file, url: URL.createObjectURL(file) };
@@ -250,6 +257,7 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
     currentPhotos.current = next;
     setPhotos(next);
     setError('');
+    callbacks.current.onSideReady?.(capturedSide, file);
     if (!next.front || !next.back) {
       setSide(next.front ? 'back' : 'front');
       return;
@@ -258,16 +266,23 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
     isDelivered.current = true;
     setDelivered(true);
     pauseCamera();
+    if (!isHandingOff.current && callbacks.current.onPricingStart) {
+      isHandingOff.current = true;
+      setHandingOff(true);
+      callbacks.current.onPricingStart();
+    }
     callbacks.current.onPair(next.front.file, next.back.file);
   };
 
   const capture = async () => {
     const element = video.current;
-    if (isBusy.current || isDelivered.current || disabled || camera !== 'ready' || !element || !element.videoWidth || !element.videoHeight) return;
+    if (!isOpen.current || isDisabled.current || isBusy.current || isDelivered.current || isHandingOff.current || currentSource.current !== 'camera' || camera !== 'ready' || !element || !element.videoWidth || !element.videoHeight) return;
     isBusy.current = true;
     setBusy(true);
     setError('');
     const attempt = ++photoAttempt.current;
+    const controller = new AbortController();
+    preparation.current = controller;
     const capturedSide = side;
     const canvas = document.createElement('canvas');
     try {
@@ -277,14 +292,23 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
       const context = canvas.getContext('2d');
       if (!context) throw new Error('The photo could not be captured. Try again or choose a photo.');
       context.drawImage(element, 0, 0, canvas.width, canvas.height);
-      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value?.size ? resolve(value) : reject(new Error('The photo could not be captured. Try again.')), 'image/jpeg', 0.9));
-      if (!isMounted.current || attempt !== photoAttempt.current || !isOpen.current) return;
-      acceptPhoto(capturedSide, new File([blob], `card-${capturedSide}.jpg`, { type: 'image/jpeg' }));
+      if (capturedSide === 'back' && currentPhotos.current.front && callbacks.current.onPricingStart) {
+        isHandingOff.current = true;
+        setHandingOff(true);
+        pauseCamera();
+        callbacks.current.onPricingStart();
+      }
+      const prepared = await prepareStaffInventoryCanvasPhoto(canvas, { signal: controller.signal });
+      if (!isMounted.current || attempt !== photoAttempt.current || !isOpen.current || controller.signal.aborted) return;
+      acceptPhoto(capturedSide, staffInventoryPreparedPhotoFile(prepared, `card-${capturedSide}.jpg`));
     } catch (failure) {
-      if (isMounted.current && attempt === photoAttempt.current) reportError(failure instanceof Error ? failure.message : 'The photo could not be captured. Try again.');
+      if (isMounted.current && attempt === photoAttempt.current && isOpen.current && !controller.signal.aborted) {
+        if (isHandingOff.current) { isHandingOff.current = false; setHandingOff(false); callbacks.current.onPricingCancel?.(); }
+        reportError(failure instanceof Error ? failure.message : 'The photo could not be captured. Try again.');
+      }
     } finally {
       canvas.width = canvas.height = 1;
-      if (isMounted.current && attempt === photoAttempt.current) { isBusy.current = false; setBusy(false); }
+      if (isMounted.current && attempt === photoAttempt.current) { preparation.current = null; isBusy.current = false; setBusy(false); }
     }
   };
 
@@ -299,7 +323,7 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
     try {
       const prepared = await prepareStaffInventoryPhoto(file, { signal: controller.signal });
       if (!isMounted.current || attempt !== photoAttempt.current || !isOpen.current || controller.signal.aborted) return;
-      acceptPhoto(capturedSide, preparedFile(prepared.image, capturedSide));
+      acceptPhoto(capturedSide, staffInventoryPreparedPhotoFile(prepared, `card-${capturedSide}.jpg`));
     } catch (failure) {
       if (isMounted.current && attempt === photoAttempt.current && !controller.signal.aborted) reportError(failure instanceof Error ? failure.message : 'This photo could not be opened. Choose it again.');
     } finally {
@@ -331,7 +355,7 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
     else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog.current)) { event.preventDefault(); first.focus(); }
   };
 
-  return <section ref={dialog} data-inventory-camera className={styles.overlay} hidden={!open} role="dialog" aria-modal="true" aria-labelledby={headingId} tabIndex={-1} onKeyDown={keyboard}>
+  return <section ref={dialog} data-inventory-camera className={styles.overlay} hidden={!open || handingOff} role="dialog" aria-modal="true" aria-labelledby={headingId} tabIndex={-1} onKeyDown={keyboard}>
     <div className={styles.panel}>
       <header className={styles.header}>
         <div><p className={styles.eyebrow}>ADD A CARD</p><h2 id={headingId}>{delivered ? 'Photos ready' : side === 'front' ? 'Capture the front' : 'Now flip to the back'}</h2></div>

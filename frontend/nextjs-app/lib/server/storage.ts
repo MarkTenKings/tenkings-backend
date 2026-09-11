@@ -62,6 +62,7 @@ export interface UploadBufferOptions {
 
 export interface PrivateChecksumUploadBufferOptions extends UploadBufferOptions {
   checksumSha256: string;
+  signal?: AbortSignal;
 }
 
 export interface PresignUploadOptions {
@@ -885,10 +886,11 @@ export async function uploadPrivateChecksumBuffer(
   options: PrivateChecksumUploadBufferOptions,
   dependencies: Readonly<{
     storageMode?: StorageMode;
-    sendS3?: (command: PutObjectCommand) => Promise<unknown>;
+    sendS3?: (command: PutObjectCommand, options?: { abortSignal?: AbortSignal }) => Promise<unknown>;
     writeLocal?: typeof writeLocalFile;
   }> = {},
 ) {
+  if (options.signal?.aborted) throw new Error('Immutable storage upload was cancelled.');
   const normalizedKey = normalizeStorageKeyCandidate(storageKey);
   if (!normalizedKey || normalizedKey !== storageKey) {
     throw new Error("Immutable storage object key is invalid.");
@@ -911,7 +913,8 @@ export async function uploadPrivateChecksumBuffer(
       cacheControl: options.cacheControl,
       checksumSha256: options.checksumSha256,
     });
-    await (dependencies.sendS3 ?? ((request) => getS3Client().send(request)))(command);
+    await (dependencies.sendS3 ?? ((request, requestOptions) => getS3Client().send(request, requestOptions)))(command, { abortSignal: options.signal });
+    if (options.signal?.aborted) throw new Error('Immutable storage upload was cancelled.');
     return { storageKey };
   }
   await (dependencies.writeLocal ?? writeLocalFile)(storageKey, buffer);

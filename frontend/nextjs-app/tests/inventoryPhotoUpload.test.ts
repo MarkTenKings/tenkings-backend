@@ -5,6 +5,8 @@ import {
   MAX_STAFF_PHOTO_UPLOAD_BYTES,
   STAFF_INVENTORY_PHOTO_ACCEPT,
   prepareStaffInventoryPhoto,
+  prepareStaffInventoryCanvasPhoto,
+  staffInventoryPreparedPhotoFile,
   staffInventoryPhotoDimensions,
   staffInventoryPhotoKind,
 } from '../lib/inventoryPhotoUpload';
@@ -21,6 +23,52 @@ test('photo recognition uses bytes and accepts normal iPhone HEIC/HEIF brands', 
   assert.ok(STAFF_INVENTORY_PHOTO_ACCEPT.includes('.heic')); assert.ok(STAFF_INVENTORY_PHOTO_ACCEPT.includes('image/heif'));
   for (const bytes of [Buffer.from('<svg></svg>'), Buffer.from('GIF89a'), heif('avif', ['mif1', 'avif']), heif('msf1'), heif().subarray(0, 18), Buffer.from(''), Buffer.from('0000ftyp')]) assert.equal(staffInventoryPhotoKind(bytes), null);
   const malformed = heif(); malformed.writeUInt32BE(15); assert.equal(staffInventoryPhotoKind(malformed), null);
+});
+
+test('component-owned normalized JPEGs upload and retry with one encode; lookalike files cannot claim the cache', async t => {
+  const previousReader = Object.getOwnPropertyDescriptor(globalThis, 'FileReader'), previousImage = Object.getOwnPropertyDescriptor(globalThis, 'Image');
+  let encodes = 0, decodes = 0;
+  class Reader {
+    result: string | null = null; onload: (() => void) | null = null;
+    async readAsDataURL(blob: Blob) { this.result = `data:image/jpeg;base64,${Buffer.from(await blob.arrayBuffer()).toString('base64')}`; this.onload?.(); }
+    abort() {}
+  }
+  class RejectedImage {
+    onerror: (() => void) | null = null;
+    set src(value: string) { if (value) { decodes++; queueMicrotask(() => this.onerror?.()); } }
+  }
+  Object.defineProperty(globalThis, 'FileReader', { configurable: true, value: Reader });
+  Object.defineProperty(globalThis, 'Image', { configurable: true, value: RejectedImage });
+  t.after(() => { for (const [name, descriptor] of [['FileReader', previousReader], ['Image', previousImage]] as const) if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); });
+  const jpeg = new Blob([Uint8Array.of(0xff, 0xd8, 0xff, 0x01)], { type: 'image/jpeg' });
+  const canvas = { width: 1050, height: 1400, toBlob(callback: BlobCallback) { encodes++; queueMicrotask(() => callback(jpeg)); } } as HTMLCanvasElement;
+  const prepared = await prepareStaffInventoryCanvasPhoto(canvas);
+  const file = staffInventoryPreparedPhotoFile(prepared, 'card-front.jpg');
+  assert.equal(Object.isFrozen(prepared), true);
+  assert.deepEqual(new Uint8Array(await file.arrayBuffer()), new Uint8Array(await jpeg.arrayBuffer()));
+  assert.equal(await prepareStaffInventoryPhoto(file), prepared);
+  assert.equal(await prepareStaffInventoryPhoto(file), prepared);
+  assert.equal(encodes, 1); assert.equal(decodes, 0);
+  assert.throws(() => staffInventoryPreparedPhotoFile({ ...prepared }, 'spoof.jpg'), /must be prepared/);
+  await assert.rejects(prepareStaffInventoryPhoto(new File([jpeg], file.name, { type: file.type })), /could not be opened/);
+  assert.equal(decodes, 1);
+  const cancelled = new AbortController(); cancelled.abort();
+  await assert.rejects(prepareStaffInventoryPhoto(file, { signal: cancelled.signal }), { name: 'AbortError' });
+});
+
+test('the camera fast path retains bounded dimensions, JPEG bytes and cancellation during toBlob', async () => {
+  const huge = { width: 4032, height: 3024, toBlob() { assert.fail('full-resolution canvas encoded'); } } as unknown as HTMLCanvasElement;
+  await assert.rejects(prepareStaffInventoryCanvasPhoto(huge), /too large/);
+  let encodes = 0;
+  const oversized = { width: 1400, height: 1050, toBlob(callback: BlobCallback) { encodes++; callback({ size: MAX_STAFF_PHOTO_UPLOAD_BYTES + 1, type: 'image/jpeg' } as Blob); } } as HTMLCanvasElement;
+  await assert.rejects(prepareStaffInventoryCanvasPhoto(oversized), /too detailed/);
+  assert.equal(encodes, 3);
+  let finish!: BlobCallback;
+  const delayed = { width: 1400, height: 1050, toBlob(callback: BlobCallback) { finish = callback; } } as HTMLCanvasElement;
+  const controller = new AbortController();
+  const result = prepareStaffInventoryCanvasPhoto(delayed, { signal: controller.signal });
+  controller.abort(); finish(new Blob(['late'], { type: 'image/jpeg' }));
+  await assert.rejects(result, { name: 'AbortError' });
 });
 
 test('12 MP and 48 MP phone dimensions preserve portrait/landscape and never crop or enlarge', () => {

@@ -27,6 +27,8 @@ export type StaffInventoryIdentificationResponse = {
     reasoning_effort: 'low';
     identified_at: string;
     elapsed_ms: number;
+    /** Optional for backwards-compatible restored drafts; emitted by new requests. */
+    stage_timings_ms?: { photo_read: number; ocr: number; model: number };
     photos: { front: { key: string; sha256: string }; back: { key: string; sha256: string } };
     ocr: { provider: 'google_vision'; front: 'read' | 'empty' | 'unavailable'; back: 'read' | 'empty' | 'unavailable' };
   };
@@ -59,12 +61,16 @@ export function isStaffInventoryIdentificationResponse(value: unknown, expected:
   }
   if (!Array.isArray(value.warnings) || value.warnings.length > 4 || !value.warnings.every(warning => boundedText(warning, 240))) return false;
   const provenance = value.provenance;
-  if (!recordWithKeys(provenance, ['model', 'reasoning_effort', 'identified_at', 'elapsed_ms', 'photos', 'ocr']) ||
+  if (!(recordWithKeys(provenance, ['model', 'reasoning_effort', 'identified_at', 'elapsed_ms', 'photos', 'ocr']) ||
+      recordWithKeys(provenance, ['model', 'reasoning_effort', 'identified_at', 'elapsed_ms', 'stage_timings_ms', 'photos', 'ocr'])) ||
       provenance.model !== STAFF_INVENTORY_IDENTIFICATION_MODEL || provenance.reasoning_effort !== 'low' ||
       typeof provenance.identified_at !== 'string' || provenance.identified_at.length !== 24 ||
       !Number.isFinite(Date.parse(provenance.identified_at)) || new Date(provenance.identified_at).toISOString() !== provenance.identified_at ||
       typeof provenance.elapsed_ms !== 'number' || !Number.isSafeInteger(provenance.elapsed_ms) || provenance.elapsed_ms < 0 || provenance.elapsed_ms > 45000 ||
       !recordWithKeys(provenance.photos, ['front', 'back']) || !recordWithKeys(provenance.ocr, ['provider', 'front', 'back']) || provenance.ocr.provider !== 'google_vision') return false;
+  if (Object.prototype.hasOwnProperty.call(provenance, 'stage_timings_ms') &&
+      (!recordWithKeys(provenance.stage_timings_ms, ['photo_read', 'ocr', 'model']) ||
+       !Object.values(provenance.stage_timings_ms).every(value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= (provenance.elapsed_ms as number)))) return false;
   for (const side of ['front', 'back'] as const) {
     const photo = provenance.photos[side], expectedKey = expected[`${side}_photo_key`];
     if (!recordWithKeys(photo, ['key', 'sha256']) || photo.key !== expectedKey || photo.sha256 !== expectedKey.slice(expectedKey.lastIndexOf('/') + 1, -4) ||

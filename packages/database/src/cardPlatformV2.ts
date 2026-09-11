@@ -1,4 +1,5 @@
 import { StaffInventoryCommandV2, buildStaffInventoryCommandsV2, staffInventoryProofV2 } from './staffInventoryV2';
+import { syncStaffInventoryResearchV2, readStaffInventoryResearchV2, StaffInventoryResearchStartV2 } from './staffInventoryResearchV2';
 import { randomBytes } from "crypto";
 
 import { Prisma } from "@prisma/client";
@@ -1835,6 +1836,10 @@ export async function recordInventoryWorkflowEventV2(
   await tx.$executeRaw(Prisma.sql`INSERT INTO "InventoryWorkflowEventV2" ("sequence", "id", "recordedAt", "content", "contentHash", "requestHash") VALUES (${BigInt(event.source_sequence)}, ${id}, ${recordedAt}, ${text}, ${inventoryHash(content)}, ${requestHash})`);
   const [persisted] = await tx.$queryRaw<WorkflowRowV2[]>(Prisma.sql`SELECT * FROM "InventoryWorkflowEventV2" WHERE "id" = ${id}`);
   if (!persisted || canonical(verifyWorkflowRowV2(persisted)) !== text) throw new CardInventoryErrorV2('INTEGRITY', 'Workflow evidence was not stored exactly');
+  // Durable proposals are committed with the accepted description. No provider
+  // work or research output participates in this inventory/financial journal.
+  if (event.event_kind === 'item_described') await syncStaffInventoryResearchV2(tx, after, event.data.unit_ids);
+  if (event.event_kind === 'purchase_cancelled') await syncStaffInventoryResearchV2(tx, after, after.lots.get(event.data.lot_id)!.data.unit_ids);
   return { outcome: 'RECORDED', request_id: command.request_id, event, impact };
 }
 
@@ -1869,4 +1874,26 @@ export async function recordStaffInventoryV2(tx: CardPlatformV2Transaction, inpu
   const commands = buildStaffInventoryCommandsV2(d, state);
   for (const command of commands) await recordInventoryWorkflowEventV2(tx, command, actor);
   return { outcome: 'RECORDED' as const, request_id: d.request_id };
+}
+
+/** Human-requested research for a pre-existing individual receipt. It reads the
+ * same locked, verified inventory state and writes proposals only: no new
+ * inventory event, price, cost, physical fact or identity correction. */
+export async function startStaffInventoryResearchV2(tx: CardPlatformV2Transaction, input: unknown, adminId: string) {
+  const parsed = StaffInventoryResearchStartV2.safeParse(input);
+  if (!parsed.success) throw new CardInventoryErrorV2('INVALID_INPUT', 'Research requires one exact card and its current description');
+  const actor = requireAdminText(adminId, 'Authenticated inventory admin');
+  if (actor.length > 200) throw new CardInventoryErrorV2('INVALID_INPUT', 'Admin identity is too long');
+  const d = parsed.data;
+  await tx.$queryRaw(Prisma.sql`SELECT true AS locked FROM pg_advisory_xact_lock(20260907, 4201)`);
+  await tx.$queryRaw(Prisma.sql`SELECT true AS locked FROM pg_advisory_xact_lock(20260908, 4201)`);
+  const state = replayWorkflowEventsV2(await readWorkflowHistoryV2(tx));
+  const unit = state.units.get(d.unitId);
+  if (!unit || !unit.description || unit.description_event_id !== d.descriptionEventId) throw new CardInventoryErrorV2('CONFLICT', 'This card or its description changed. Refresh before starting research.');
+  if (state.lots.get(unit.lot_id)?.data.quantity !== 1) throw new CardInventoryErrorV2('CONFLICT', 'Research requires an individually received card. A batch does not identify one physical card.');
+  const [before] = await readStaffInventoryResearchV2(tx, { unitIds: [d.unitId] });
+  await syncStaffInventoryResearchV2(tx, state, [d.unitId], { requestId: d.requestId, actor });
+  const [job] = await readStaffInventoryResearchV2(tx, { unitIds: [d.unitId] });
+  if (!job) throw new CardInventoryErrorV2('INTEGRITY', 'Research job did not persist for the current card');
+  return { outcome: before?.job_id === job.job_id || job.status !== 'queued' ? 'REPLAY' as const : 'QUEUED' as const, request_id: d.requestId, job };
 }

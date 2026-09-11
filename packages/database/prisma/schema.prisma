@@ -3893,4 +3893,47 @@ model InventoryWorkflowEventV2 {
   content     String
   contentHash String
   requestHash String
+  staffResearchJobs StaffInventoryResearchJobV2[]
+}
+
+// Private, non-authoritative research; never exported as financial evidence.
+model StaffInventoryResearchJobV2 {
+  id                 String   @id
+  unitId             String
+  descriptionEventId String
+  descriptionEvent   InventoryWorkflowEventV2 @relation(fields: [descriptionEventId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  descriptionHash    String
+  inputHash          String
+  input              String
+  status             String   @default("queued")
+  attemptCount       Int      @default(0)
+  maxAttempts        Int      @default(3)
+  leaseToken         String?
+  leaseExpiresAt     DateTime? @db.Timestamptz(3)
+  nextAttemptAt      DateTime @db.Timestamptz(3)
+  createdAt          DateTime @db.Timestamptz(3)
+  updatedAt          DateTime @db.Timestamptz(3)
+  startedAt          DateTime? @db.Timestamptz(3)
+  completedAt        DateTime? @db.Timestamptz(3)
+  errorCode          String?
+  errorMessage       String?
+  result             String?
+  resultHash         String?
+  attempts           Json @default("[]") @db.JsonB
+  retries            Json @default("[]") @db.JsonB
+  startRequestId     String? @unique
+  requestedBy        String?
+
+  @@unique([unitId, descriptionEventId, inputHash], map: "StaffInventoryResearchJobV2_revision_key")
+  @@index([status, nextAttemptAt])
+  @@index([unitId, createdAt])
+}
+
+// Short-lived server-owned claims share intake headroom across web instances.
+model StaffInventoryIntakeLeaseV2 {
+  id        String @id
+  createdAt DateTime @db.Timestamptz(3)
+  expiresAt DateTime @db.Timestamptz(3)
+
+  @@index([expiresAt])
 }

@@ -13,11 +13,17 @@ require.cache[helperId] = { id: helperId, filename: helperId, loaded: true, expo
   STAFF_PHOTO_LONG_EDGE: 1400,
   STAFF_INVENTORY_PHOTO_ACCEPT: 'image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif',
   prepareStaffInventoryPhoto: (file: File, options: { signal: AbortSignal }) => prepare(file, options),
+  prepareStaffInventoryCanvasPhoto: (canvas: HTMLCanvasElement, options: { signal: AbortSignal }) => new Promise((resolve, reject) => canvas.toBlob(blob => {
+    if (options.signal.aborted) reject(new DOMException('Cancelled', 'AbortError'));
+    else if (!blob) reject(new Error('The photo could not be captured. Try again.'));
+    else resolve({ blob });
+  }, 'image/jpeg', 0.9)),
+  staffInventoryPreparedPhotoFile: (photo: { image?: string; blob?: Blob }, name: string) => new File([photo.blob ?? Uint8Array.from(atob(photo.image!.split(',')[1]), character => character.charCodeAt(0))], name, { type: 'image/jpeg' }),
 } } as NodeModule;
 const Capture = require('../components/admin/StaffInventoryCardCapture').default;
 
 async function mount(overrides: Partial<StaffInventoryCardCaptureProps> = {}) {
-  const dom = new JSDOM('<button id="opener">Take photo</button><div id="root"></div>', { url: 'https://fixture.invalid', pretendToBeVisual: true });
+  const dom = new JSDOM('<button id="opener">Take photo</button><input id="cost" inputmode="decimal"><div id="root"></div>', { url: 'https://fixture.invalid', pretendToBeVisual: true });
   const saved = new Map<string, PropertyDescriptor | undefined>();
   for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true })) {
     saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key)); Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
@@ -67,7 +73,7 @@ async function mount(overrides: Partial<StaffInventoryCardCaptureProps> = {}) {
     setMedia(next: typeof getMedia) { getMedia = next; },
     setPlay(next: typeof play) { play = next; },
     holdCapture() { holdBlob = true; },
-    async finishCapture() { await act(async () => finishBlob!(new Blob(['late'], { type: 'image/jpeg' }))); },
+    async finishCapture(blob: Blob | null = new Blob(['late'], { type: 'image/jpeg' })) { await act(async () => finishBlob!(blob)); },
     async close() { await act(async () => root.unmount()); dom.window.close(); URL.createObjectURL = create; URL.revokeObjectURL = revoke; for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } },
   };
 }
@@ -106,7 +112,7 @@ test('library entry requests no camera, preserves front on cancel or failed back
   prepare = async file => { inputs.push(file); if (file.name === 'bad.heic') throw new Error('Cannot decode this photo.'); return { image: 'data:image/jpeg;base64,/9j/AA==' }; };
   const ui = await mount({ initialSource: 'library' });
   try {
-    assert.equal(ui.counts.mediaCalls, 0); assert.ok(document.querySelector('input')!.accept.includes('heic'));
+    assert.equal(ui.counts.mediaCalls, 0); assert.ok(document.querySelector<HTMLInputElement>('input[type="file"]')!.accept.includes('heic'));
     await ui.select('front', new File(['fixture'], 'front.heic', { type: 'image/heic' }));
     await ui.select('back'); assert.equal(ui.pairs.length, 0); assert.ok(ui.button('Choose back photo'));
     await ui.select('back', new File(['fixture'], 'bad.heic')); assert.equal(ui.errors.at(-1), 'Cannot decode this photo.'); assert.ok(document.querySelector('img[alt="Captured card front"]'));
@@ -198,5 +204,46 @@ test('closing during canvas encoding ignores its stale completion and keyboard f
     await ui.key('Escape'); assert.equal(ui.counts.closed, 1); assert.equal(ui.counts.stopped, 1);
     await ui.render({ open: false }); await ui.finishCapture(); assert.equal(ui.pairs.length, 0); assert.equal(document.querySelectorAll('img').length, 0);
     assert.equal(document.activeElement?.id, 'opener');
+  } finally { await ui.close(); }
+});
+
+test('the back shutter hands focus to Cost before delayed encoding and never restores the opener over it', async () => {
+  const ready: string[] = [];
+  let handoffs = 0;
+  const ui = await mount({ onSideReady: side => ready.push(side), onPricingStart: () => { handoffs++; document.getElementById('cost')!.focus(); } });
+  try {
+    await ui.click('Capture front'); assert.deepEqual(ready, ['front']);
+    ui.holdCapture(); await ui.click('Capture back');
+    assert.equal(handoffs, 1); assert.equal(ui.pairs.length, 0);
+    assert.equal(document.activeElement?.id, 'cost');
+    assert.equal(document.querySelector<HTMLElement>('[data-inventory-camera]')!.hidden, true);
+    await ui.finishCapture(); assert.deepEqual(ready, ['front', 'back']); assert.equal(ui.pairs.length, 1);
+    await ui.render({ open: false }); assert.equal(document.activeElement?.id, 'cost');
+    await ui.render({ open: true, cycle: 2 }); assert.equal(ui.counts.mediaCalls, 1);
+    assert.ok(ui.button('Capture front')); assert.equal(ui.track.enabled, true);
+  } finally { await ui.close(); }
+});
+
+test('failed back encoding restores its camera and keeps the captured front for retry', async () => {
+  let cancelled = 0;
+  const ui = await mount({ onPricingStart: () => document.getElementById('cost')!.focus(), onPricingCancel: () => { cancelled++; } });
+  try {
+    await ui.click('Capture front'); ui.holdCapture(); await ui.click('Capture back');
+    await ui.finishCapture(null);
+    assert.equal(cancelled, 1); assert.equal(ui.pairs.length, 0);
+    assert.ok(document.querySelector('img[alt="Captured card front"]')); assert.ok(ui.button('Capture back'));
+    assert.equal(ui.counts.mediaCalls, 1); assert.match(ui.errors.at(-1)!, /could not be captured/);
+    await ui.click('Capture back'); await ui.finishCapture(); assert.equal(ui.pairs.length, 1);
+  } finally { await ui.close(); }
+});
+
+test('closing during the back-to-Cost handoff cancels its late photo and does not deliver into a new cycle', async () => {
+  const ui = await mount({ onPricingStart: () => document.getElementById('cost')!.focus() });
+  try {
+    await ui.click('Capture front'); ui.holdCapture(); await ui.click('Capture back');
+    await ui.render({ open: false }); await ui.render({ open: true, cycle: 2 });
+    await ui.finishCapture();
+    assert.equal(ui.pairs.length, 0); assert.equal(document.querySelectorAll('img').length, 0);
+    assert.ok(ui.button('Capture front')); assert.equal(ui.counts.mediaCalls, 1);
   } finally { await ui.close(); }
 });

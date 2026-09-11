@@ -38,8 +38,9 @@ export function createStaffInventoryWorkspaceHandler(deps: {
       const parsed = StaffInventoryCommandV2.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message ?? 'Invalid inventory entry.' });
       const command = parsed.data;
-      if ('description' in command) for (const key of inventoryDescriptionPhotoKeys(command.description)) {
-        if (!await deps.verifyPhoto(key)) return res.status(400).json({ message: 'Upload the inventory photo again before saving.' });
+      if ('description' in command) {
+        const verified = await Promise.all(inventoryDescriptionPhotoKeys(command.description).map(key => deps.verifyPhoto(key)));
+        if (verified.some(ok => !ok)) return res.status(400).json({ message: 'Upload the inventory photo again before saving.' });
       }
       return res.status(200).json(await deps.record(command, admin.user.id));
     } catch (error) {

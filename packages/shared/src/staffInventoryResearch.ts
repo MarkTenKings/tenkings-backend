@@ -1,0 +1,163 @@
+import { z } from 'zod';
+
+export const STAFF_INVENTORY_RESEARCH_MODEL = 'gpt-6-astra' as const;
+export const STAFF_INVENTORY_RESEARCH_ENGINE_VERSION = 'staff-inventory-research-v1' as const;
+export const STAFF_INVENTORY_RESEARCH_LIMITS = { candidates: 24, candidateImages: 12, references: 24, referenceImages: 4, minimumComps: 2 } as const;
+
+const unsafeText = /[\u0000-\u001f\u007f]|https?:\/\/|data:|\b(?:sk|sess|proj)-[A-Za-z0-9_-]{8,}|(?:^|\s)(?:\/[\w.-]+){2,}|<\/?[a-z][^>]*>/i;
+const text = (max: number) => z.string().min(1).max(max).refine(value => value === value.trim() && !unsafeText.test(value));
+const id = z.string().min(1).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
+const sourceId = z.string().min(1).max(200).refine(value => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value));
+const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
+const timestamp = z.string().datetime().refine(value => value.length === 24 && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value);
+const cents = z.number().int().min(1).max(2_147_483_647);
+const category = text(80);
+export const StaffInventoryResearchPhotoKeySchema = z.string().regex(/^inventory-photos\/[a-f0-9-]{36}\/[a-f0-9]{64}\.jpg$/);
+
+/** Public provenance only. Query strings, fragments, credentials and ports are not retained. */
+export function isStaffInventoryResearchSourceUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 2048) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port && !url.search && !url.hash &&
+      !/^(?:localhost|.*\.localhost|\d+(?:\.\d+){3}|\[.*\])$/.test(url.hostname) && url.toString() === value;
+  } catch { return false; }
+}
+export function isStaffInventoryResearchImageUrl(value: unknown): value is string {
+  if (!isStaffInventoryResearchSourceUrl(value)) return false;
+  const host = new URL(value).hostname;
+  return host === 'ebayimg.com' || host.endsWith('.ebayimg.com') || host === 'ebaystatic.com' || host.endsWith('.ebaystatic.com');
+}
+const sourceUrl = z.string().refine(isStaffInventoryResearchSourceUrl);
+const imageUrl = z.string().refine(isStaffInventoryResearchImageUrl);
+const listingUrl = z.string().regex(/^https:\/\/www\.ebay\.com\/itm\/\d{6,20}$/);
+
+const savedDetail = (max: number) => z.string().min(1).max(max).refine(value => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value)).nullable();
+/** Accept every existing saved description verbatim; research cannot tighten the save contract. */
+export const StaffInventoryResearchDescriptionSchema = z.object({
+  name: z.string().min(1).max(160).refine(value => value.trim() === value).nullable(), category: z.string().min(1).max(80).refine(value => value.trim() === value).nullable(), manufacturer: savedDetail(160),
+  card_number: savedDetail(80), year: savedDetail(20), set_name: savedDetail(160),
+  variant: savedDetail(160), card_type: savedDetail(160),
+}).strict();
+export const StaffInventoryResearchInputSchema = z.object({
+  schema_version: z.literal(1), unit_id: sourceId, description_event_id: sourceId, description_hash: sha256,
+  description: StaffInventoryResearchDescriptionSchema,
+  front_photo_key: StaffInventoryResearchPhotoKeySchema.nullable(), back_photo_key: StaffInventoryResearchPhotoKeySchema.nullable(),
+}).strict();
+export type StaffInventoryResearchInput = z.infer<typeof StaffInventoryResearchInputSchema>;
+export type StaffInventoryResearchDescription = z.infer<typeof StaffInventoryResearchDescriptionSchema>;
+
+const referenceIdentity = z.object({ name: text(160).nullable(), category: category.nullable(), year: text(20).nullable(), manufacturer: text(160).nullable(), set_name: text(160).nullable(), card_number: text(80).nullable() }).strict();
+export const StaffInventoryResearchReferenceSchema = z.object({
+  id, kind: z.enum(['catalog', 'reference']), trust: z.enum(['published_catalog', 'approved_reference']),
+  identity: referenceIdentity, catalog_id: id, variant_name: text(160), variant_kind: z.enum(['BASE', 'PARALLEL', 'VARIANT']),
+  source_url: sourceUrl.nullable(), source_sha256: sha256, captured_at: timestamp,
+  distinguishing_features: z.array(text(240)).max(16),
+  image: z.object({ source_url: imageUrl, sha256, storage_key: z.string().min(1).max(512).nullable(), content_type: z.enum(['image/jpeg', 'image/png', 'image/webp']) }).strict().nullable(),
+}).strict().refine(value => value.kind === 'catalog' ? value.trust === 'published_catalog' : value.trust === 'approved_reference');
+export type StaffInventoryResearchReference = z.infer<typeof StaffInventoryResearchReferenceSchema>;
+
+const photo = z.object({ key: StaffInventoryResearchPhotoKeySchema, sha256 }).strict()
+  .refine(value => value.sha256 === value.key.slice(value.key.lastIndexOf('/') + 1, -4));
+const downloadedImage = z.object({
+  source_url: imageUrl, sha256, retrieved_at: timestamp, content_type: z.enum(['image/jpeg', 'image/png', 'image/webp']), byte_size: z.number().int().min(1).max(2 * 1024 * 1024),
+  storage_key: z.string().regex(/^research-evidence\/[a-f0-9]{64}\.(?:jpg|png|webp)$/).nullable(),
+}).strict();
+export const StaffInventoryResearchCandidateSchema = z.object({
+  id: z.string().regex(/^ebay:\d{6,20}$/), source: z.literal('SoldCompsAPI'), listing_url: listingUrl,
+  retrieved_at: timestamp, source_response_sha256: sha256, title: text(500),
+  sold_price: text(80).nullable(), sold_price_cents: cents.nullable(), sold_currency: z.string().regex(/^[A-Z]{3}$/).nullable(),
+  best_offer_accepted: z.boolean().nullable(), sold_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(), sold_date_raw: text(80).nullable(),
+  condition: text(200).nullable(), grader: z.enum(['PSA', 'BGS', 'SGC', 'CGC']).nullable(), numeric_grade: z.number().min(1).max(10).nullable(), raw: z.boolean(),
+  image_url: imageUrl.nullable(), image: downloadedImage.nullable(), source_eligible: z.boolean(), exclusion_reason: text(400).nullable(),
+}).strict().superRefine((value, ctx) => {
+  if (value.listing_url !== `https://www.ebay.com/itm/${value.id.slice(5)}`) ctx.addIssue({ code: 'custom', message: 'Listing identity mismatch.' });
+  if (value.image && value.image.source_url !== value.image_url) ctx.addIssue({ code: 'custom', message: 'Image source mismatch.' });
+  if (value.image?.storage_key) {
+    const extension = value.image.content_type === 'image/jpeg' ? 'jpg' : value.image.content_type === 'image/png' ? 'png' : 'webp';
+    if (value.image.storage_key !== `research-evidence/${value.image.sha256}.${extension}`) ctx.addIssue({ code: 'custom', message: 'Stored image hash mismatch.' });
+  }
+  const match = value.sold_price?.match(/^(\d{1,8})(?:\.(\d{1,2}))?$/);
+  const parsedPrice = match ? Number(BigInt(match[1]) * 100n + BigInt((match[2] ?? '').padEnd(2, '0') || '0')) : null;
+  if (value.sold_price_cents !== null && (value.sold_price_cents !== parsedPrice || value.best_offer_accepted !== false || value.sold_currency !== 'USD')) ctx.addIssue({ code: 'custom', message: 'Price evidence mismatch.' });
+  if (value.sold_date && (!Number.isFinite(Date.parse(value.sold_date)) || new Date(value.sold_date).toISOString().slice(0, 10) !== value.sold_date)) ctx.addIssue({ code: 'custom', message: 'Invalid sold date.' });
+  if (value.source_eligible && (value.sold_price_cents === null || value.sold_date === null || value.sold_date > value.retrieved_at.slice(0, 10) || value.exclusion_reason !== null)) ctx.addIssue({ code: 'custom', message: 'Ineligible sale evidence.' });
+  if (value.raw ? value.grader !== null || value.numeric_grade !== null : value.grader === null || value.numeric_grade === null) ctx.addIssue({ code: 'custom', message: 'Inconsistent sale grade evidence.' });
+});
+export type StaffInventoryResearchCandidate = z.infer<typeof StaffInventoryResearchCandidateSchema>;
+
+export const StaffInventoryResearchPhotoFeatureSchema = z.object({
+  side: z.enum(['front', 'back']), photo_sha256: sha256, reference_id: id,
+  evidence_type: z.enum(['printed_variant_name', 'catalog_feature', 'reference_image']), reference_feature: text(240), observation: text(400),
+}).strict();
+export const StaffInventoryResearchIdentitySchema = z.object({
+  status: z.enum(['base', 'variant', 'unresolved']), variant_name: text(160).nullable(), suggestion: text(160).nullable(), reason: text(400),
+  reference_ids: z.array(id).max(24), photo_features: z.array(StaffInventoryResearchPhotoFeatureSchema).max(12),
+}).strict();
+export const StaffInventoryResearchConditionSchema = z.object({
+  status: z.enum(['raw', 'graded', 'unresolved']), grader: z.enum(['PSA', 'BGS', 'SGC', 'CGC']).nullable(), numeric_grade: z.number().min(1).max(10).nullable(), photo_evidence: text(240).nullable(),
+}).strict().refine(value => value.status === 'graded' ? value.grader !== null && value.numeric_grade !== null && value.photo_evidence !== null : value.grader === null && value.numeric_grade === null && (value.status === 'unresolved' || value.photo_evidence !== null));
+const timings = z.object({ photos: z.number().int().min(0).max(90000), sources: z.number().int().min(0).max(90000), images: z.number().int().min(0).max(90000), model: z.number().int().min(0).max(90000), total: z.number().int().min(0).max(95000) }).strict();
+
+/** This validates the private persistence boundary as well as the engine output. */
+export const StaffInventoryResearchResultSchema = z.object({
+  schema_version: z.literal(1), unit_id: sourceId, description_event_id: sourceId, description_hash: sha256,
+  engine_version: z.literal(STAFF_INVENTORY_RESEARCH_ENGINE_VERSION), model: z.literal(STAFF_INVENTORY_RESEARCH_MODEL), researched_at: timestamp, timings_ms: timings,
+  photos: z.object({ front: photo.nullable(), back: photo.nullable() }).strict(), query: text(400).nullable(),
+  identity: StaffInventoryResearchIdentitySchema, target_condition: StaffInventoryResearchConditionSchema,
+  references: z.array(StaffInventoryResearchReferenceSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.references),
+  candidates: z.array(StaffInventoryResearchCandidateSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates),
+  selected_candidate_ids: z.array(z.string().regex(/^ebay:\d{6,20}$/)).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates),
+  rejections: z.array(z.object({ candidate_id: z.string().regex(/^ebay:\d{6,20}$/), reason: text(400) }).strict()).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates),
+  estimate: z.object({ status: z.enum(['estimated', 'unknown']), value_cents: cents.nullable(), low_cents: cents.nullable(), high_cents: cents.nullable(), currency: z.literal('USD'), count: z.number().int().min(0).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates), reason: text(400) }).strict(),
+  warnings: z.array(text(400)).max(12),
+}).strict().superRefine((value, ctx) => {
+  const fail = (message: string) => ctx.addIssue({ code: 'custom', message });
+  const candidates = new Map(value.candidates.map(candidate => [candidate.id, candidate]));
+  const references = new Map(value.references.map(reference => [reference.id, reference]));
+  if (candidates.size !== value.candidates.length || references.size !== value.references.length || new Set(value.selected_candidate_ids).size !== value.selected_candidate_ids.length) fail('Duplicate evidence identity.');
+  if (value.candidates.length && value.query === null) fail('Missing source query.');
+  const rejected = new Set(value.rejections.map(rejection => rejection.candidate_id));
+  if (rejected.size !== value.rejections.length || value.rejections.some(rejection => !candidates.has(rejection.candidate_id)) || value.selected_candidate_ids.some(selected => rejected.has(selected))) fail('Invalid rejected evidence.');
+  if (rejected.size + value.selected_candidate_ids.length !== candidates.size) fail('Incomplete selection evidence.');
+  if (new Set(value.identity.reference_ids).size !== value.identity.reference_ids.length || value.identity.reference_ids.some(reference => !references.has(reference))) fail('Unknown identity reference.');
+  if (value.identity.photo_features.some(feature => value.photos[feature.side]?.sha256 !== feature.photo_sha256 || !value.identity.reference_ids.includes(feature.reference_id))) fail('Unbound photo evidence.');
+  if (value.identity.status === 'unresolved') {
+    if (value.identity.variant_name !== null || value.selected_candidate_ids.length) fail('Unresolved identity cannot establish a value.');
+  } else {
+    if (!value.photos.front || !value.photos.back || value.photos.front.sha256 === value.photos.back.sha256 || !value.identity.photo_features.length || value.identity.variant_name === null) fail('Missing exact photo evidence.');
+    const authority = value.identity.reference_ids.map(reference => references.get(reference)).find(reference => reference?.kind === 'catalog' && reference.variant_name === value.identity.variant_name && (value.identity.status === 'base' ? reference.variant_kind === 'BASE' : reference.variant_kind !== 'BASE'));
+    if (!authority) fail('Missing catalog authority.');
+    if (!value.identity.photo_features.some(feature => {
+      const reference = references.get(feature.reference_id);
+      if (!reference || !authority || reference.catalog_id !== authority.catalog_id || reference.variant_name !== authority.variant_name) return false;
+      if (feature.evidence_type === 'catalog_feature') return reference.distinguishing_features.includes(feature.reference_feature);
+      if (feature.evidence_type === 'reference_image') return reference.kind === 'reference' && reference.image?.sha256 === feature.reference_feature;
+      return feature.reference_feature === reference.variant_name && feature.observation.toLocaleLowerCase().includes(reference.variant_name.toLocaleLowerCase());
+    })) fail('Missing distinguishing source evidence.');
+  }
+  const selected = value.selected_candidate_ids.map(id => candidates.get(id));
+  if (selected.some(candidate => !candidate || !candidate.source_eligible || !candidate.image || candidate.sold_price_cents === null)) fail('Unsafe selected sale.');
+  if (value.estimate.status === 'unknown') {
+    if (value.estimate.value_cents !== null || value.estimate.low_cents !== null || value.estimate.high_cents !== null || value.estimate.count !== 0 || selected.length) fail('Unknown estimate has invented amounts.');
+  } else {
+    const prices = selected.flatMap(candidate => candidate?.sold_price_cents == null ? [] : [candidate.sold_price_cents]);
+    const sum = prices.reduce((total, price) => total + BigInt(price), 0n);
+    const mean = prices.length ? Number((sum * 2n + BigInt(prices.length)) / (2n * BigInt(prices.length))) : null;
+    if (prices.length < STAFF_INVENTORY_RESEARCH_LIMITS.minimumComps || value.estimate.count !== prices.length || value.estimate.value_cents !== mean || value.estimate.low_cents !== Math.min(...prices) || value.estimate.high_cents !== Math.max(...prices)) fail('Estimate does not match source cents.');
+    if (new Set(selected.map(candidate => candidate?.image?.sha256)).size < STAFF_INVENTORY_RESEARCH_LIMITS.minimumComps) fail('Independent image comparisons are required.');
+    if (value.target_condition.status === 'unresolved' || selected.some(candidate => !candidate || (value.target_condition.status === 'raw' ? !candidate.raw || /\b(?:PSA|BGS|SGC|CGC|HGA|GMA|AGS|TAG|graded|slab(?:bed)?)\b/i.test(`${candidate.title} ${candidate.condition ?? ''}`) : candidate.raw || candidate.grader !== value.target_condition.grader || candidate.numeric_grade !== value.target_condition.numeric_grade))) fail('Condition mismatch.');
+  }
+});
+export type StaffInventoryResearchResult = z.infer<typeof StaffInventoryResearchResultSchema>;
+
+export const STAFF_INVENTORY_RESEARCH_ERROR_MESSAGES = {
+  invalid_input: 'The saved card research input is invalid.',
+  unavailable: 'Card research is not configured.',
+  unverified_photo: 'A saved card photo could not be verified.',
+  provider_error: 'The card research provider could not complete the request.',
+  malformed_response: 'Card research returned evidence that could not be verified.',
+  timeout: 'Card research exceeded its time limit.',
+  cancelled: 'Card research was cancelled.',
+} as const;
+export type StaffInventoryResearchErrorCode = keyof typeof STAFF_INVENTORY_RESEARCH_ERROR_MESSAGES;

@@ -1,0 +1,11 @@
+export {
+  STAFF_INVENTORY_RESEARCH_MODEL, STAFF_INVENTORY_RESEARCH_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_LIMITS,
+  STAFF_INVENTORY_RESEARCH_ERROR_MESSAGES, StaffInventoryResearchInputSchema, StaffInventoryResearchResultSchema,
+  StaffInventoryResearchDescriptionSchema, StaffInventoryResearchPhotoKeySchema, StaffInventoryResearchReferenceSchema,
+  StaffInventoryResearchCandidateSchema, StaffInventoryResearchPhotoFeatureSchema, StaffInventoryResearchIdentitySchema,
+  StaffInventoryResearchConditionSchema, isStaffInventoryResearchSourceUrl, isStaffInventoryResearchImageUrl,
+} from '@tenkings/shared';
+export type {
+  StaffInventoryResearchInput, StaffInventoryResearchResult, StaffInventoryResearchDescription,
+  StaffInventoryResearchReference, StaffInventoryResearchCandidate, StaffInventoryResearchErrorCode,
+} from '@tenkings/shared';

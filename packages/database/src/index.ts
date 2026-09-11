@@ -55,3 +55,4 @@ export * from "./inventoryWorkflowV2Http";
 
 export * from "./staffInventoryV2";
 export * from "./staffInventoryV2Read";
+export * from "./staffInventoryResearchV2";

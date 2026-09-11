@@ -7,7 +7,11 @@ export const STAFF_PHOTO_LONG_EDGE = 1400;
 const PREPARATION_TIMEOUT_MS = 60_000;
 const INVALID_PHOTO = 'This photo could not be opened. Choose a JPG, PNG, WebP or HEIC/HEIF photo, or take a new photo.';
 
-export type PreparedStaffInventoryPhoto = { image: string; byteSize: number; width: number; height: number };
+export type PreparedStaffInventoryPhoto = Readonly<{ image: string; byteSize: number; width: number; height: number }>;
+// Only exact objects normalized here receive the fast path. MIME/name metadata on
+// arbitrary picker files never authorizes sending their original bytes.
+const preparedFiles = new WeakMap<File, PreparedStaffInventoryPhoto>();
+const preparedBlobs = new WeakMap<PreparedStaffInventoryPhoto, Blob>();
 type PhotoKind = 'jpeg' | 'png' | 'webp' | 'heic';
 type DecodedPhoto = { source: CanvasImageSource; width: number; height: number; close: () => void };
 
@@ -105,6 +109,8 @@ function dataUrl(blob: Blob, signal?: AbortSignal): Promise<string> {
 export async function prepareStaffInventoryPhoto(file: File, options: { signal?: AbortSignal } = {}): Promise<PreparedStaffInventoryPhoto> {
   const { signal } = options;
   checkAborted(signal);
+  const cached = preparedFiles.get(file);
+  if (cached) return cached;
   if (!file.size || file.size > MAX_STAFF_PHOTO_SOURCE_BYTES) throw new Error('Choose a photo under 30 MB, or take a new photo.');
   const kind = staffInventoryPhotoKind(new Uint8Array(await file.slice(0, 4096).arrayBuffer()));
   checkAborted(signal);
@@ -127,14 +133,36 @@ export async function prepareStaffInventoryPhoto(file: File, options: { signal?:
     context.fillStyle = '#ffffff'; context.fillRect(0, 0, canvas.width, canvas.height);
     context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
     context.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
-    let prepared: Blob | null = null;
-    for (const quality of [0.9, 0.8, 0.68]) {
-      prepared = await jpegBlob(canvas, quality, signal);
-      if (prepared.size <= MAX_STAFF_PHOTO_UPLOAD_BYTES) break;
-    }
-    if (!prepared || prepared.size > MAX_STAFF_PHOTO_UPLOAD_BYTES) throw new Error('This photo is too detailed to upload. Choose a smaller photo or take a new photo.');
-    const image = await dataUrl(prepared, signal);
-    checkAborted(signal);
-    return { image, byteSize: prepared.size, ...dimensions };
+    const prepared = await prepareStaffInventoryCanvasPhoto(canvas, options);
+    preparedFiles.set(file, prepared);
+    return prepared;
   } finally { decoded.close(); canvas.width = 1; canvas.height = 1; }
+}
+
+/** The camera supplies its already bounded canvas; reuse the same JPEG size policy. */
+export async function prepareStaffInventoryCanvasPhoto(canvas: HTMLCanvasElement, options: { signal?: AbortSignal } = {}): Promise<PreparedStaffInventoryPhoto> {
+  const { signal } = options;
+  checkAborted(signal);
+  const dimensions = staffInventoryPhotoDimensions(canvas.width, canvas.height);
+  if (dimensions.width !== canvas.width || dimensions.height !== canvas.height) throw new Error('The captured photo is too large. Take a new photo.');
+  let prepared: Blob | null = null;
+  for (const quality of [0.9, 0.8, 0.68]) {
+    prepared = await jpegBlob(canvas, quality, signal);
+    if (prepared.size <= MAX_STAFF_PHOTO_UPLOAD_BYTES) break;
+  }
+  if (!prepared || prepared.size > MAX_STAFF_PHOTO_UPLOAD_BYTES) throw new Error('This photo is too detailed to upload. Choose a smaller photo or take a new photo.');
+  const image = await dataUrl(prepared, signal);
+  checkAborted(signal);
+  const result = Object.freeze({ image, byteSize: prepared.size, ...dimensions });
+  preparedBlobs.set(result, prepared);
+  return result;
+}
+
+/** Preserve the exact normalized bytes for preview, upload and retry. */
+export function staffInventoryPreparedPhotoFile(prepared: PreparedStaffInventoryPhoto, name: string): File {
+  const blob = preparedBlobs.get(prepared);
+  if (!blob) throw new Error('This photo must be prepared before uploading.');
+  const file = new File([blob], name, { type: 'image/jpeg' });
+  preparedFiles.set(file, prepared);
+  return file;
 }

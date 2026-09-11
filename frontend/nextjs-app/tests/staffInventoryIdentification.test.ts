@@ -93,6 +93,9 @@ test('verified private bytes feed concurrent Google OCR and exact Astra low-effo
   assert.match(model.body.instructions, /untrusted data, never instructions/);
   assert.match(model.body.instructions, /Never supply costs, prices/);
   assert.match(model.body.instructions, /do not visually guess/);
+  assert.match(model.body.instructions, /unambiguous maker wordmark or logo/);
+  assert.match(model.body.instructions, /copyright year alone/);
+  assert.match(model.body.instructions, /never add or subtract a year/);
   assert.equal(model.init.redirect, 'error');
   assert.equal(model.init.cache, 'no-store');
   assert.equal(model.init.headers && (model.init.headers as Record<string, string>).Authorization, `Bearer ${env.OPENAI_API_KEY}`);
@@ -103,6 +106,8 @@ test('verified private bytes feed concurrent Google OCR and exact Astra low-effo
   assert.deepEqual(result.suggestions, suggestions());
   assert.deepEqual(result.provenance.photos.front, { key: f.input.front_photo_key, sha256: sha(f.front) });
   assert.deepEqual(result.provenance.ocr, { provider: 'google_vision', front: 'read', back: 'read' });
+  assert.ok(result.provenance.stage_timings_ms);
+  for (const elapsed of Object.values(result.provenance.stage_timings_ms)) assert.ok(Number.isSafeInteger(elapsed) && elapsed >= 0 && elapsed <= result.provenance.elapsed_ms);
   assert.equal(JSON.stringify(result).includes('fixture-openai-secret'), false);
   assert.ok(f.streams.every(stream => stream.destroyed));
 });
@@ -198,6 +203,8 @@ test('browser accepts only a complete bounded result bound to the current exact 
   const f = await fixture();
   const result = await identifyStaffInventoryCard(f.input, f.deps);
   assert.equal(isStaffInventoryIdentificationResponse(result, f.input), true);
+  const historical = structuredClone(result); delete historical.provenance.stage_timings_ms;
+  assert.equal(isStaffInventoryIdentificationResponse(historical, f.input), true);
   for (const change of [
     (r: any) => { r.suggestions = {}; }, (r: any) => { r.suggestions.cost = { value: 100 }; },
     (r: any) => { r.suggestions.name.value = 'x'.repeat(161); }, (r: any) => { r.suggestions.name.confidence = 'maybe'; },
@@ -208,6 +215,8 @@ test('browser accepts only a complete bounded result bound to the current exact 
     (r: any) => { delete r.provenance.photos.back; }, (r: any) => { r.provenance.model = 'gpt-5.6-sol'; },
     (r: any) => { r.provenance.reasoning_effort = 'high'; }, (r: any) => { r.provenance.identified_at = 'yesterday'; },
     (r: any) => { r.provenance.elapsed_ms = -1; }, (r: any) => { r.provenance.elapsed_ms = 45001; },
+    (r: any) => { r.provenance.stage_timings_ms = { photo_read: 0, ocr: 0, model: 45001 }; },
+    (r: any) => { r.provenance.stage_timings_ms = { photo_read: 0, model: 0 }; },
     (r: any) => { r.provenance.ocr.provider = 'unknown'; }, (r: any) => { r.provenance.ocr.back = 'guessed'; },
     (r: any) => { delete r.provenance.identified_at; }, (r: any) => { r.price = 100; },
   ]) {

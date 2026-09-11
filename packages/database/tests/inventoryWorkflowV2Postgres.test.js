@@ -99,7 +99,9 @@ test('purchased-lot PostgreSQL workflow and authenticated export', { skip: !enab
     await t.test('SQL append-only, gap, content hash and actor/request identity guards fail closed', async () => {
       await assert.rejects(db.$executeRawUnsafe('UPDATE "InventoryWorkflowEventV2" SET "content" = "content"'), /append-only/);
       await assert.rejects(db.$executeRawUnsafe('DELETE FROM "InventoryWorkflowEventV2"'), /append-only/);
-      await assert.rejects(db.$executeRawUnsafe('TRUNCATE "InventoryWorkflowEventV2"'), /append-only/);
+      // The additive research FK may reject TRUNCATE before the existing
+      // append-only trigger runs; either database guard preserves the journal.
+      await assert.rejects(db.$executeRawUnsafe('TRUNCATE "InventoryWorkflowEventV2"'), /append-only|foreign key constraint/);
       await assert.rejects(db.$transaction(async tx => { await tx.$executeRawUnsafe('ALTER TABLE "InventoryWorkflowEventV2" DISABLE TRIGGER "InventoryWorkflowEventV2_no_update_delete"'); await tx.$executeRawUnsafe('DELETE FROM "InventoryWorkflowEventV2" WHERE "sequence" = 2'); await exportInventoryWorkflowPageV2(tx, { after_sequence: 0, limit: 1000 }); }), /integrity/);
       await assert.rejects(db.$transaction(async tx => { await tx.$executeRawUnsafe('ALTER TABLE "InventoryWorkflowEventV2" DISABLE TRIGGER "InventoryWorkflowEventV2_no_update_delete"'); await tx.$executeRawUnsafe('UPDATE "InventoryWorkflowEventV2" SET "requestHash" = repeat(\'0\', 64) WHERE "sequence" = 1'); await exportInventoryWorkflowPageV2(tx, { after_sequence: 0, limit: 1000 }); }), /integrity/);
     });
