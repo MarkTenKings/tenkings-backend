@@ -11,6 +11,7 @@ import { operatorAdapters } from '../../../packages/atlas-operator/src/adapters.
 import { CAPTURE_TOOL_NAMES } from '../../../packages/atlas-operator/src/capture-protocol.mjs';
 import { StaffWorkspaceStore } from '../lib/server/access/workspace-store.mjs';
 import { StaffWorkspaceIntake } from '../lib/server/access/workspace-intake.mjs';
+import { readCaptureReadiness } from '../lib/server/access/workspace-capture-readiness.mjs';
 import { StaffWorkspaceOperator } from '../lib/server/access/workspace-operator.mjs';
 import { operatorFixture } from './operator-fixture.mjs';
 
@@ -39,6 +40,7 @@ async function fixture(context, work, options = {}) {
         })) } : store;
         const intake = new StaffWorkspaceIntake({ store: intakeStore,
             source: { reserve: ({ cardId, creatorId }) => ({ sourceType: 'SPEEDSTER', sourceId: `atlas-${cardId}`, sourceOwnerId: `atlas-staff-${creatorId}` }),
+                captureReadiness: readCaptureReadiness,
                 ...(options.captureRpc ? { async assertClaimable(context, { card, operator, claim }) {
                     if (operator !== 'ASTRA') return null;
                     const [row] = await context.databaseTx.$queryRaw`SELECT atlas_staff.enqueue_workspace_capture(${card.id}::uuid,

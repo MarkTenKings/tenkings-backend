@@ -85,6 +85,15 @@ test('pending assigned reports do not prevent an accurate waiting count or claim
     assert.equal(f.count('HUMAN_REVIEW'), '0'); assert.match(f.text(), /No cards in human review/);
 });
 
+test('a waiting card explains the disabled Start admission inline without recovery or sign-in prompts', () => {
+    const f = harness({ workspace: loaded([{ ...waitingCard, capabilities: { astraClaim: false, humanClaim: true,
+        astraClaimUnavailableReason: 'WORKSPACE_ASTRA_NOT_ADMITTED' } }]) });
+    const start = f.nodes(node => node.type === 'button' && text(node).includes('Start Astra'));
+    assert.equal(start.length, 1); assert.equal(start[0].props.disabled, true);
+    assert.match(f.text(), /waiting for test admission/); assert.doesNotMatch(f.text(), /Recover saved request|another tab/);
+    assert.equal(f.mutations.length, 0);
+});
+
 test('the Waiting page renders its saved card while the assigned-report read is still pending', () => {
     const f = harness({ assigned: { ...loaded([]), loading: true, data: null } });
     assert.match(f.text(), /Saved photo pair/); assert.equal(f.count('WAITING'), '1');

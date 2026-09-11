@@ -11,6 +11,7 @@ import { workspaceReviewSession } from './workspace-review-session.mjs';
 import { workspaceOperatorSqlPort, projectWorkspaceControl, projectWorkspaceControlTiming } from './workspace-operator.mjs';
 import { attachWorkspaceDispatch } from './workspace-dispatch.mjs';
 import { StaffWorkspaceIdentification, workspaceIdentificationSettings } from './workspace-identification.mjs';
+import { readCaptureReadiness } from './workspace-capture-readiness.mjs';
 
 export function workspaceRuntimeSettings(env, staffConfig) {
     const disabled = { configHash: hash(canonical({ purpose: 'atlas-workspace-disabled-v1', staffConfigHash: staffConfig.configHash })), enabled: false };
@@ -120,6 +121,9 @@ export function createWorkspaceRuntime({ auth, review, staffConfig, env, setting
     });
     const intake = new StaffWorkspaceIntake({ store, storage: connected.storage, readiness,
         source: { reserve: ({ cardId, creatorId }) => ({ sourceType: 'SPEEDSTER', sourceId: `atlas-${cardId}`, sourceOwnerId: `atlas-staff-${creatorId}` }),
+            async captureReadiness(context, card) {
+                return connected.claimSource ? readCaptureReadiness(context, card) : { ready: false, code: 'WORKSPACE_ASTRA_NOT_READY' };
+            },
             async assertClaimable(context, claim) {
                 if (claim.operator === 'ASTRA') {
                     if (!connected.claimSource) deny(503, 'WORKSPACE_ASTRA_NOT_READY');

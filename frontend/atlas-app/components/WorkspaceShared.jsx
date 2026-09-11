@@ -15,7 +15,7 @@ export function Readiness({ readiness }) {
     })}</div></details>;
 }
 export function RecoveryNotice({ mutation }) {
-    return <>{mutation.error && <Notice error>{mutation.error}</Notice>}{mutation.pending && <div className={styles.recovery} role="status"><strong>A saved request needs its result confirmed.</strong><p>Your exact card action is retained. Recovering it checks the same request.</p><div className={styles.actions}><button type="button" disabled={mutation.busy} onClick={mutation.recover}>{mutation.busy ? 'Checking recorded result…' : 'Recover saved request'}</button><a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">Sign in in another tab ↗</a></div></div>}</>;
+    return <>{mutation.error && <Notice error>{mutation.error}{mutation.errorCode === 'SIGN_IN_REQUIRED' && <p><a href={STAFF_REAUTHENTICATE_PATH}>Sign in again</a></p>}</Notice>}{mutation.busy && mutation.pending && <p className={styles.help} role="status">{mutation.reconciling ? 'Checking this action’s recorded result…' : 'Saving this action…'}</p>}</>;
 }
 export function PhotoPreview({ file, card, side, className = '', onLoaded }) {
     const [localUrl, setLocalUrl] = useState(''), [failed, setFailed] = useState(false);
