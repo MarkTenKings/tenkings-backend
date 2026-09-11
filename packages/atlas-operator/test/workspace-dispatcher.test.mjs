@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
+import { deflateSync } from 'node:zlib';
 import { canonical, digest } from '@atlas/service-bridge/protocol';
+import { createOperatorImagePacket, OPERATOR_IMAGE_DECODER } from '@atlas/service-bridge/operator-images';
 import { WORKSPACE_FUNCTIONS, WORKSPACE_GRANTS } from '@atlas/service-bridge/workspace-privileges';
 import { CAPTURE_TOOL_NAMES } from '../src/capture-protocol.mjs';
-import { MODEL, PRICING, REPORT_TOOL_NAMES } from '../src/responses.mjs';
+import { MODEL, PRICING, REPORT_TOOL_NAMES, MAX_REQUEST_BYTES, appendToolResult, buildRequest } from '../src/responses.mjs';
 import { makeOperatorConfig } from '../src/policy.mjs';
 import { openAiBinding } from '../src/provider.mjs';
 import { executeOperatorRun, productionOperatorConfig, RUNTIME_TOOLS } from '../src/runtime.mjs';
@@ -468,6 +470,88 @@ test('existing active operator lease is held; an expired lease with only a never
     f.run.leaseExpiresAt = new Date(+NOW - 1); f.work.set(f.run.id, { attempts: 1 });
     f.execute = async ({ runId }) => { f.work.delete(runId); return f.completeOperator(runId); };
     assert.equal((await f.start()).state, 'READY_FOR_HUMAN'); assert.equal(f.operatorCalls.length, 2);
+});
+
+function retainedImageContinuation(f) {
+    // Valid lossless RGB packets, with stored DEFLATE blocks so the fixture has
+    // deterministic photo-sized bytes without a native decoder or private data.
+    const chunk = (type, bytes) => {
+        const name = Buffer.from(type), data = Buffer.concat([name, bytes]); let crc = 0xffffffff;
+        for (const byte of data) { crc ^= byte; for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); }
+        const prefix = Buffer.alloc(4), suffix = Buffer.alloc(4);
+        prefix.writeUInt32BE(bytes.length); suffix.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+        return Buffer.concat([prefix, data, suffix]);
+    };
+    const header = Buffer.alloc(13); header.writeUInt32BE(800); header.writeUInt32BE(800, 4); header[8] = 8; header[9] = 2;
+    const pixels = Buffer.alloc((800 * 3 + 1) * 800, 123);
+    for (let y = 0; y < 800; y++) pixels[y * (800 * 3 + 1)] = 0;
+    const bytes = Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), chunk('IHDR', header),
+        chunk('IDAT', deflateSync(pixels, { level: 0 })), chunk('IEND', Buffer.alloc(0))]);
+    const manifest = JSON.parse(f.run.manifestCanonical);
+    manifest.assets = manifest.assets.map(asset => ({ ...asset, width: 800, height: 800,
+        byteCount: bytes.length, sha256: digest(bytes), contentType: 'image/png' }));
+    f.run.manifestCanonical = canonical(manifest); f.run.manifestHash = digest(f.run.manifestCanonical);
+    let input = [{ role: 'user', content: 'Synthetic capture inspection.' }];
+    for (let step = 0; step < 3; step++) {
+        const binding = { runId: f.run.id, expectedRevision: step + 1, evidenceHash: f.run.evidenceHash, manifestHash: f.run.manifestHash };
+        const images = (step === 0 ? manifest.assets : [manifest.assets[step - 1]]).map(asset => {
+            const request = { ...binding, assetId: asset.assetId, sourceSha256: asset.sha256, side: asset.side,
+                purpose: step === 0 ? 'OVERVIEW' : 'CROP', rect: { x: 0, y: 0, width: 800, height: 800 } };
+            return { asset, packet: createOperatorImagePacket({ imageId: randomUUID(), request, asset,
+                orientation: 1, decoder: OPERATOR_IMAGE_DECODER, bytes }) };
+        });
+        const call = { name: step === 0 ? 'read_original_photos' : 'inspect_region', callId: `call_retained_${step}`,
+            args: step === 0 ? binding : { ...binding, assetId: images[0].asset.assetId, sourceSha256: images[0].asset.sha256,
+                side: images[0].asset.side, rect: images[0].packet.request.rect } };
+        const response = { output: [{ type: 'reasoning', encrypted_content: `opaque_retained_${step}`, summary: [] },
+            { type: 'function_call', name: call.name, call_id: call.callId, arguments: canonical(call.args) }] };
+        input = appendToolResult(input, response, call, { binding: { ...binding, expectedRevision: step + 2 } }, images);
+    }
+    Object.assign(f.run, { state: 'RUNNING', revision: 4, leaseFence: 1, leaseOwner: randomUUID(),
+        leaseExpiresAt: new Date(+NOW - 1), inputCanonical: canonical(input), inputHash: digest(canonical(input)) });
+    return input;
+}
+
+test('expired settled capture resumes the original command with its full four-image continuation inside the request bound', async () => {
+    const f = fixture({ rosterSize: 1 }), input = retainedImageContinuation(f);
+    assert(Buffer.byteLength(f.run.inputCanonical) > 10_000_000);
+    const request = buildRequest({ policy: astra, prompt: 'Fixture.', names: CAPTURE_TOOL_NAMES, input, phase: 'CAPTURE_REVIEW' });
+    assert(Buffer.byteLength(request.requestCanonical) <= MAX_REQUEST_BYTES);
+    assert.equal(input.flatMap(item => Array.isArray(item.output) ? item.output : []).filter(item => item.type === 'input_image').length, 4);
+    const retained = copy(f.run), command = await f.dispatcher.pickup();
+    assert.deepEqual(command, { runId: f.run.id, commandId: f.command.id });
+    assert.equal((await f.dispatcher.admit(command)).state, 'ADMITTED');
+    assert.deepEqual(f.run, retained); assert.equal(f.operatorCalls.length, 0);
+    f.execute = async ({ runId }) => {
+        if (runId === retained.id) assert.deepEqual(f.run, retained);
+        return f.completeOperator(runId);
+    };
+    assert.equal((await f.dispatcher.run(command)).state, 'READY_FOR_HUMAN');
+    assert.equal(f.operatorCalls.filter(id => id === retained.id).length, 1);
+    assert.equal(f.run.inputCanonical, retained.inputCanonical); assert.equal(f.run.inputHash, retained.inputHash);
+    assert.equal(f.run.manifestCanonical, retained.manifestCanonical); assert.equal(f.operations.get(command.commandId).id, command.commandId);
+});
+
+test('large retained continuations still refuse changed hashes and hash-valid noncanonical input before dispatch', async () => {
+    const f = fixture({ rosterSize: 1 }); retainedImageContinuation(f);
+    const retained = copy(f.run);
+    for (const change of [{ inputHash: '0'.repeat(64) }, { inputCanonical: retained.inputCanonical + '\n',
+        inputHash: digest(retained.inputCanonical + '\n') }]) {
+        Object.assign(f.run, retained, change);
+        await assert.rejects(f.dispatcher.pickup(), error => error.code === 'ASTRA_DISPATCH_RECORD_CHANGED');
+        assert.equal((await f.admit()).code, 'ASTRA_DISPATCH_RECORD_CHANGED');
+        assert.equal((await f.start()).code, 'ASTRA_DISPATCH_RECORD_CHANGED');
+    }
+    assert.equal(f.operatorCalls.length, 0); assert.equal(f.sourceCalls, 0); assert.equal(f.operations.size, 1);
+});
+
+test('hash-valid canonical continuation above the existing request maximum stays held without dispatch', async () => {
+    const f = fixture({ rosterSize: 1 }), inputCanonical = canonical([{ role: 'user', content: 'x'.repeat(MAX_REQUEST_BYTES) }]);
+    Object.assign(f.run, { state: 'RUNNING', revision: 4, inputCanonical, inputHash: digest(inputCanonical) });
+    await assert.rejects(f.dispatcher.pickup(), error => error.code === 'ASTRA_DISPATCH_RECORD_CHANGED');
+    const result = await f.start(); assert.equal(result.state, 'HELD'); assert.equal(result.code, 'ASTRA_DISPATCH_RECORD_CHANGED');
+    assert.equal(f.operatorCalls.length, 0); assert.equal(f.sourceCalls, 0); assert.equal(f.operations.size, 1);
+    assert.equal(f.run.inputCanonical, inputCanonical); assert.equal(f.run.inputHash, digest(inputCanonical));
 });
 
 test('lost source reply preserves one recovery invocation even with settled permit and PAUSE_REQUESTED', async () => {

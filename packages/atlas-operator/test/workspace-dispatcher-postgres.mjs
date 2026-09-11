@@ -20,7 +20,7 @@ const privateRequire = createRequire(new URL('../../../frontend/nextjs-app/packa
 const { tsImport } = await import(pathToFileURL(privateRequire.resolve('tsx/esm/api')).href);
 const { createAtlasWorkspaceSourceAuthority } = await tsImport('../../../frontend/nextjs-app/lib/server/atlasWorkspaceSourceAuthority.ts', import.meta.url);
 
-async function setupSource(f) {
+export async function setupSource(f) {
     const staff = await f.admin.staffControl.findUnique({ where: { id: 'active' } });
     const workspace = await f.admin.staffWorkspaceControl.findUnique({ where: { id: 'active' } });
     const sourceConfigHash = digest('owned dispatcher source fixture');
@@ -36,7 +36,7 @@ async function setupSource(f) {
         (${randomUUID()}::uuid,${f.budget.pilotId}::uuid,${sourceConfigHash},25000,clock_timestamp() AT TIME ZONE 'UTC',
             (${expiresAt}::timestamptz AT TIME ZONE 'UTC'))`;
 }
-async function withDispatcher(context, f, work, { syntheticSource = false } = {}) {
+export async function withDispatcher(context, f, work, { syntheticSource = false } = {}) {
     const role = `atlas_test_dispatch_${randomBytes(6).toString('hex')}`, password = randomBytes(24).toString('hex');
     await context.sql(`CREATE ROLE ${role} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
     await context.sql(workspaceGrantSQL(role, 'COORDINATOR'));

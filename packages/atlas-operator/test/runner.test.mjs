@@ -424,6 +424,24 @@ test('preparation failure and unknown apply outcome never redispatch or replay t
     }
 });
 
+test('database failure categories remain actionable without exposing messages or retrying unknown tool writes', async () => {
+    const f = fixture(); let applications = 0;
+    f.ledger.applyTool = async () => {
+        applications++;
+        throw Object.assign(new Error('private SQL and image data must stay private'), { code: 'P2028' });
+    };
+    const result = await f.start();
+    assert.equal(result.code, 'ASTRA_DATABASE_TRANSACTION_FAILED');
+    assert.equal(result.state, 'RECONCILIATION_REQUIRED');
+    assert.equal(applications, 1); assert.equal(f.calls.length, 1); assert.equal(f.receipts.length, 1);
+    assert(!JSON.stringify(result).includes('private SQL'));
+    const g = fixture();
+    g.ledger.snapshot = async () => { throw Object.assign(new Error('private connection detail'), { code: 'P2024' }); };
+    const beforeDispatch = await g.start();
+    assert.equal(beforeDispatch.code, 'ASTRA_DATABASE_POOL_TIMEOUT');
+    assert.equal(beforeDispatch.state, 'FAILED'); assert.equal(g.calls.length, 0);
+});
+
 test('step and attempt limits terminate durably without another provider request', async () => {
     for (const [options, code] of [[{ steps: 1 }, 'ASTRA_STEP_LIMIT'], [{ attempts: 1 }, 'ASTRA_BUDGET_EXHAUSTED']]) {
         const f = fixture(options); const result = await f.start(); assert.equal(result.state, 'FAILED'); assert.equal(result.code, code);

@@ -16,8 +16,16 @@ const retryableReceiptFailure = error => {
 };
 const systemClock = { now: () => performance.now(), setTimeout, clearTimeout };
 const failure = code => Object.assign(new Error(code), { code });
+// Preserve actionable driver categories without exposing SQL, credentials or
+// image-bearing exception messages. This does not authorize any retry.
+const databaseFailureCodes = new Map([
+    ['P1001', 'ASTRA_DATABASE_UNREACHABLE'], ['P1002', 'ASTRA_DATABASE_TIMEOUT'],
+    ['P1008', 'ASTRA_DATABASE_TIMEOUT'], ['P1017', 'ASTRA_DATABASE_CONNECTION_CLOSED'],
+    ['P2024', 'ASTRA_DATABASE_POOL_TIMEOUT'], ['P2028', 'ASTRA_DATABASE_TRANSACTION_FAILED'],
+    ['P2034', 'ASTRA_DATABASE_TRANSACTION_CONFLICT']
+]);
 const safeCode = error => /^ASTRA_[A-Z0-9_]{1,74}$/.test(error?.code ?? error?.message)
-    ? error.code ?? error.message : 'ASTRA_RUNNER_FAILED';
+    ? error.code ?? error.message : databaseFailureCodes.get(error?.code) ?? 'ASTRA_RUNNER_FAILED';
 
 /** Run one already-enqueued job. This function never schedules/retries a job.
  *

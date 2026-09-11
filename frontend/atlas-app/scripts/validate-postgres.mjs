@@ -29,6 +29,7 @@ import { workspaceCornerShapeScenarios } from './workspace-corner-shape-fixture.
 import { workspaceTimingScenarios } from './workspace-timing-fixture.mjs';
 import { workspaceReceiptRecoveryScenarios } from './workspace-receipt-recovery-fixture.mjs';
 import { workspaceAttemptAbandonmentScenarios } from './workspace-attempt-abandonment-fixture.mjs';
+import { workspaceReleaseAdoptionScenarios } from './workspace-release-adoption-fixture.mjs';
 import { processingDollarLimitsScenarios } from './processing-dollar-limits-fixture.mjs';
 import { workspaceSourceScenarios } from './workspace-source-fixture.mjs';
 import { workspacePrivilegeScenarios } from './workspace-privileges-fixture.mjs';
@@ -675,6 +676,7 @@ try {
     await workspaceTimingScenarios(scenario);
     await workspaceReceiptRecoveryScenarios(scenario);
     await workspaceAttemptAbandonmentScenarios(scenario);
+    await workspaceReleaseAdoptionScenarios(scenario);
     await processingDollarLimitsScenarios(scenario);
     await workspaceSourceScenarios(scenario);
     await workspacePrivilegeScenarios(scenario);
