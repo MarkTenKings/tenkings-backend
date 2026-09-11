@@ -127,6 +127,13 @@ After real iPhone capture of Ja Morant and Jalen Brunson, Mark explicitly reques
 
 Implementation evidence for this incident: Ja Morant is now exactly admitted and has three saved/applied inspection responses. Its valid 10.2 MB retained image continuation exposed an inconsistent 4 MiB dispatcher limit, which must use the existing 12 MiB request bound. The compatible successor release also needs to carry this fully settled, expired-lease run into a paused state with its original photos, inputs, completed steps and costs intact. The planned narrow deployment-maintenance transaction is an administrator action with an immutable audit, not a human grading approval or fabricated recovery session. It may preserve the remaining execution-time allowance by excluding only the verified outage after lease expiry, bounded by the unchanged original pilot expiry and maximum run duration. A subsequent ordinary human Resume creates the real continuation command. This implementation note does not authorize adoption of unresolved requests or changes to grading, cohort, financial history, certification, or unrelated cards; deployment and complete live acceptance remain separately evidenced in the session log.
 
+
+### Owner direction — fresh workspace and ordinary card admission, September 11, 2026
+
+Mark canceled recovery or continuation of every current ATLAS test card, including Ja Morant, Jalen Brunson and the earlier Charmander. Clear the active workspace to zero through the existing reversible workspace/source/identification cohort selection, preserving all historical card, photo, run, request, receipt, audit and accounting evidence. The already deployed H release remains the starting point; do not repeat its deployment or require an old-card Resume.
+
+A newly saved, verified Front/Back pair in the active workspace must enter normal Astra processing without staff manually inserting its UUID into a test roster. This supersedes the earlier per-card manual admission requirement. Implement automatic admission through the existing bounded intake/dispatch controls, retaining exact verified-pair provenance, active-cohort isolation, the original pilot expiry and one-card acceptance scope, queue/concurrency/attempt limits, ACCOUNTING_ONLY accounting and final human report approval. Verify actual Astra processing of a fresh real card; deployment or synthetic checks alone do not complete this request.
+
 ---
 
 ## 1. Executive Decision

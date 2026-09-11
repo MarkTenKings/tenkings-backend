@@ -14,7 +14,7 @@ const stageCopy = {
 };
 const safeQuad = value => Array.isArray(value) && value.length === 4 && value.every(point => point && Number.isFinite(point.x) && Number.isFinite(point.y) && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1);
 
-export default function AstraStageView({ card, stage = card.stage }) {
+export default function AstraStageView({ card, stage = card.stage, activityConnection = 'CONNECTED' }) {
     const [side, setSide] = useState('FRONT'), [zoom, setZoom] = useState(false);
     const copy = stageCopy[stage] ?? stageCopy.PHOTOS, source = cardSide(card, side), preparation = card.workspace?.preparation?.[side];
     const identity = card.workspace?.identity ?? card.identity ?? {}, ratios = card.workspace?.centering?.[side]?.ratios;
@@ -23,7 +23,8 @@ export default function AstraStageView({ card, stage = card.stage }) {
     const sourceSize = Number.isFinite(source?.width) && source.width > 0 && Number.isFinite(source?.height) && source.height > 0 ? { width: source.width, height: source.height } : null;
     const currentStage = card.timing?.currentStage ?? card.stage, isCurrent = stage === currentStage;
     const state = card.observedOperator?.state;
-    const status = state === 'NEEDS_ATTENTION' ? 'Needs attention' : !isCurrent ? 'Saved stage view' : state === 'RUNNING' ? 'Astra at work' : state === 'PAUSED' ? 'Astra paused' : state === 'QUEUED' ? 'Astra queued' : 'Recorded workspace';
+    const status = !isCurrent ? 'Saved stage view' : ({ CONNECTING: 'Checking saved progress', INTERRUPTED: 'Progress unconfirmed', PAUSED: 'Activity updates paused' })[activityConnection]
+        ?? (state === 'NEEDS_ATTENTION' ? 'Needs attention' : state === 'RUNNING' ? 'Astra at work' : state === 'PAUSED' ? 'Astra paused' : state === 'QUEUED' ? 'Astra queued' : 'Recorded workspace');
     const identityFields = [['cardName', 'Card'], ['playerName', 'Player'], ['year', 'Year'], ['manufacturer', 'Manufacturer'], ['productSet', 'Set'], ['parallel', 'Parallel'], ['cardNumber', 'Number']].filter(([key]) => typeof identity[key] === 'string' && identity[key].trim());
     const grades = (card.workspace?.comparison ?? []).filter(entry => ['overall', 'centering', 'corners', 'edges', 'surface'].includes(entry.id)
         && ['string', 'number'].includes(typeof entry.humanValue));
