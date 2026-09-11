@@ -140,6 +140,16 @@ Implementation evidence — September 11, 2026, 19:05 UTC: the owner’s subsequ
 
 ---
 
+### Owner direction — quality, parallel grading and step-by-step design, September 11, 2026
+
+After the architecture audit, Mark clarified that grading image quality takes priority: remove redundant uploads and image movement rather than assuming lower-quality photographs are acceptable. A combined Front/Back review should start from the existing engines' automatically detected physical boundaries and printed borders. Astra reviews and corrects those results through the same precise adjustment/snapping tools a human uses; it does not replace the engines by proposing all geometry from scratch. Discuss the behavior of each grading stage and Astra's actual actions together before building.
+
+Mark explicitly superseded the application-imposed card allowances and concurrency restrictions: many graders and many Astra-operated cards must be able to work at the same time, with no artificial card-count, spending or speed allowance blocking grading. A failed card must not block other cards or graders from starting Astra. This direction replaces the prior one-distinct-card acceptance restriction, ten-card product allowance and single-card machine execution requirement for the intended rebuilt workflow. Actual provider quotas and finite compute/network capacity are external facts, not a promise of infinite capacity or identical one-card/ten-card elapsed time. Accounting records and final human approval remain separate from spending ceilings.
+
+Mark favors continuing from saved progress after interruptions, but would accept simpler restart behavior if preserving progress required substantial bloat. Prefer a small progress/action record and independently stored image/results; do not treat this conditional tradeoff as authorization to discard work. A manual-first rebuild, followed by connecting Astra to the same working tools, is being discussed. The owner requested continued discussion and stage design before implementation. No application code, deployed limit, provider setting, card or runtime has changed as a result of this clarification. See the [manual-first planning record](../atlas/plans/MANUAL_FIRST_GRADING_DISCUSSION.md).
+
+---
+
 ## 1. Executive Decision
 
 Ten Kings will build a clean V2 card platform beside V1.

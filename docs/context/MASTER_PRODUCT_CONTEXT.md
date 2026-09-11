@@ -2,6 +2,8 @@
 
 > Current I acceptance outcome (2026-09-11, observed through 19:05 UTC): source `89c55d916130` remains deployed, but the owner’s fresh-card test failed. Automatic first-pair enrollment succeeded; the first run stopped in IDENTITY after database timeouts, and the next card is blocked by the one-distinct-card pilot allowance. A settled FAILED run also lacks manual takeover. The cohort is no longer empty. See the [architecture dissection and repair recommendation](../atlas/audits/2026-09-11/README.md). No application or production-state change was made by this audit; old-card recovery remains canceled.
 
+> Subsequent owner planning direction, September 11: preserve grading-quality originals, review engine-generated boundaries/borders together, support many human/Astra cards without application-imposed card/spend allowances, and discuss every stage before implementation. Manual-first rebuilding is under discussion. These requirements supersede the earlier pilot restrictions for the intended rebuilt workflow; live controls are unchanged. See the [canonical clarification](../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md#owner-direction--quality-parallel-grading-and-step-by-step-design-september-11-2026) and [planning record](../atlas/plans/MANUAL_FIRST_GRADING_DISCUSSION.md).
+
 ## Historical runtime checkpoints
 
 The dated H/G/F/E checkpoints below preserve their original observations. Their runtime identities, pending actions and old-card recovery instructions are historical where superseded by I and the owner's cancellation.
