@@ -67,6 +67,9 @@ export async function createPrivateRuntime(env: NodeJS.ProcessEnv) {
         // native TLS initialization discovers the trusted OS certificate paths
         // in SSL_CERT_FILE/SSL_CERT_DIR. Both roles still validate before HTTP.
         operatorHost = await createPrivateOperatorHost({ config, makeClient, currentPeer,
+            onDiagnostic: (event: any) => process.stdout.write(JSON.stringify({ service: 'atlas-private-operator',
+                runId: event.runId, phase: event.phase, operation: event.operation, code: event.code,
+                errorCode: event.errorCode, elapsedMs: event.elapsedMs }) + '\n'),
             onResult: (result: any) => process.stdout.write(JSON.stringify({ service: 'atlas-private-dispatch',
                 runId: result.runId, state: result.state,
                 code: /^(ASTRA|WORKSPACE)_[A-Z0-9_]{1,80}$/.test(result.code ?? '') ? result.code : null }) + '\n') });

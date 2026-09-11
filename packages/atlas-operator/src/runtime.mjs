@@ -8,7 +8,8 @@ import { makeOperatorConfig } from './policy.mjs';
 import { OperatorLedger } from './ledger.mjs';
 import { openAiBinding, responsesTransport } from './provider.mjs';
 import { operatorAdapters } from './adapters.mjs';
-import { runOperator } from './runner.mjs';
+import { runOperator, reportOperatorFailure } from './runner.mjs';
+import { performance } from 'node:perf_hooks';
 
 export const RUNTIME_TOOLS = Object.freeze(['read_card_report','inspect_region','inspect_card_geometry','measure_centering','inspect_finding',
     'propose_identity','propose_finding_change','submit_for_human_review',...CAPTURE_TOOL_NAMES.filter(name=>name!=='inspect_region')]);
@@ -87,10 +88,13 @@ export async function executeOperatorRun({ env, manifest, manifestHash, runId, s
     createClient, createLedger = value => new OperatorLedger(value),
     makeEvidenceClient = operatorEvidenceClient, makeAdapters = operatorAdapters,
     makeProvider = responsesTransport, run = runOperator, clock = timers, nodeVersion = process.version,
-    verifyArtifact = verifyOperatorArtifact, execArgv = process.execArgv,
+    verifyArtifact = verifyOperatorArtifact, execArgv = process.execArgv, onDiagnostic,
 } = {}) {
     let configuration, client, databaseOpen = false, connected = false, result, failureCode = null;
     let phase = 'CONFIGURATION', disconnect = 'NOT_OPENED';
+    const now = () => typeof clock.now === 'function' ? clock.now() : performance.now();
+    let phaseStartedAt = now();
+    const enterPhase = name => { phase = name; phaseStartedAt = now(); };
     const receiptStates = [];
     try {
         check(typeof runId === 'string' && UUID.test(runId), 'ASTRA_RUN_ID_REQUIRED');
@@ -108,14 +112,14 @@ export async function executeOperatorRun({ env, manifest, manifestHash, runId, s
         // it must not connect or obtain credentials on its own.
         client = await createClient(configuration.databaseUrl);
         check(client && typeof client.$connect === 'function' && typeof client.$disconnect === 'function', 'ASTRA_DATABASE_CLIENT_REQUIRED');
-        phase = 'CONNECT'; await bounded(Promise.resolve().then(() => client.$connect()), CONNECT_MS, clock);
+        enterPhase('CONNECT'); await bounded(Promise.resolve().then(() => client.$connect()), CONNECT_MS, clock);
         connected = true; databaseOpen = true;
         const ledger = createLedger({ client, config: configuration.config, ...(expectedControlRevision === undefined ? {} : {
             expectedClaim: { runId, controlRevision: expectedControlRevision },
         }) });
         // Includes the exact role/grant assertion and current deployment/pilot
         // authority, before even constructing evidence/provider adapters.
-        phase = 'ADMISSION'; await bounded(ledger.transaction(async context => {
+        enterPhase('ADMISSION'); await bounded(ledger.transaction(async context => {
             if (expectedInitializationId !== undefined) {
                 const row = await context.tx.staffOperatorRun.findUnique({ where: { id: runId } });
                 check(row && row.id === runId && row.initializationId === expectedInitializationId
@@ -135,7 +139,7 @@ export async function executeOperatorRun({ env, manifest, manifestHash, runId, s
                     check(databaseOpen, 'ASTRA_DATABASE_CLOSED'); return value.apply(target, args);
                 };
             } });
-            phase = 'RUN'; result = await run({ ledger: guardedLedger, runId, adapters, signal,
+            enterPhase('RUN'); result = await run({ ledger: guardedLedger, runId, adapters, signal, onDiagnostic,
                 createProvider: ({ takeDispatch, signal: runSignal }) => makeProvider({ binding: configuration.provider,
                     takeDispatch, signal: runSignal }) });
             check(result && result.runId === runId && ['READY_FOR_HUMAN','PREPARATION_READY','NEEDS_RECAPTURE','NEEDS_EXPERT','FAILED',
@@ -143,7 +147,7 @@ export async function executeOperatorRun({ env, manifest, manifestHash, runId, s
                 && Number.isSafeInteger(result.stepsApplied) && result.stepsApplied >= 0 && result.stepsApplied <= 64
                 && Array.isArray(result.receiptWrites) && result.receiptWrites.length <= 100, 'ASTRA_RUN_RESULT_INVALID');
         }
-        phase = 'DRAIN';
+        enterPhase('DRAIN');
         const writes = result.receiptWrites.map((write, index) => {
             receiptStates[index] = 'PENDING';
             return Promise.resolve(write).then(value => {
@@ -153,12 +157,17 @@ export async function executeOperatorRun({ env, manifest, manifestHash, runId, s
         await bounded(Promise.all(writes), RECEIPT_DRAIN_MS, clock);
         if (receiptStates.some(state => state !== 'PERSISTED')) failureCode = 'ASTRA_RECEIPT_DRAIN_UNCONFIRMED';
     } catch (error) {
+        reportOperatorFailure(onDiagnostic, { runId, phase: 'RUNTIME', operation: phase, error, elapsedMs: now() - phaseStartedAt });
         failureCode = phase === 'DRAIN' ? 'ASTRA_RECEIPT_DRAIN_UNCONFIRMED' : codeOf(error);
     } finally {
         databaseOpen = false;
         if (client && typeof client.$disconnect === 'function') {
+            const disconnectStartedAt = now();
             try { await bounded(Promise.resolve().then(() => client.$disconnect()), DISCONNECT_MS, clock); disconnect = 'CLOSED'; }
-            catch { disconnect = 'UNCONFIRMED'; failureCode = 'ASTRA_DATABASE_DISCONNECT_UNCONFIRMED'; }
+            catch (error) {
+                reportOperatorFailure(onDiagnostic, { runId, phase: 'RUNTIME', operation: 'DISCONNECT', error, elapsedMs: now() - disconnectStartedAt });
+                disconnect = 'UNCONFIRMED'; failureCode = 'ASTRA_DATABASE_DISCONNECT_UNCONFIRMED';
+            }
         }
     }
     const receipts = { total: receiptStates.length, persisted: receiptStates.filter(s => s === 'PERSISTED').length,
