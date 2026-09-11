@@ -16,20 +16,20 @@ const corners = [{ x: .1, y: .1 }, { x: .9, y: .1 }, { x: .9, y: .9 }, { x: .1, 
 const astra = { version: 'atlas-astra-policy-v1', model: MODEL, returnedModel: MODEL, effort: 'max', serviceTier: 'default',
     maxOutputTokens: 128, requestTimeoutMs: 1000, pricingVersion: PRICING.version,
     inputNanoUsdPerToken: PRICING.inputNanoUsdPerToken, outputNanoUsdPerToken: PRICING.outputNanoUsdPerToken };
-function fixture() {
+function fixture(cornerShape = 'SQUARE') {
     const run = { id: randomUUID(), workspaceCardId: randomUUID(), phase: 'CAPTURE_REVIEW', specimenId: null,
         initializationId: null, captureRunId: null, expectedAnalysisRevision: 0, expectedReviewRevision: 0,
         evidenceHash: 'a'.repeat(64), revision: 5, leaseOwner: randomUUID(), leaseFence: 1, state: 'RUNNING',
         pilotId: randomUUID(), controlState: 'RUNNING', controlRevision: 1, executionMode: 'CONTINUOUS', stepBudget: 0 };
     const claim = { id: randomUUID(), kind: 'ASTRA', runId: run.id, fence: 3, workflowRevision: 2, captureRevision: 2, captureHash: run.evidenceHash };
     const card = { id: run.workspaceCardId, state: 'IN_PROGRESS', claim, captureHash: run.evidenceHash, captureRevision: 2, claimFence: 3,
-        identity: { category: 'SPORTS', playerName: '' }, workspace: { cornerShape: 'SQUARE' } };
+        identity: { category: 'SPORTS', playerName: '' }, workspace: cornerShape === null ? {} : { cornerShape } };
     const bytes = ['FRONT', 'BACK'].map((_, i) => syntheticPng(8,10,i ? 20 : 200));
     const assets = ['FRONT', 'BACK'].map((side, i) => ({ assetId: randomUUID(), side, view: 'ORIGINAL', sha256: digest(bytes[i]),
         byteCount: bytes[i].length, width: 8, height: 10, contentType: 'image/png' }));
     const manifest = { version: 'atlas-operator-capture-manifest-v1', phase: 'CAPTURE_REVIEW', runId: run.id,
         workspaceCardId: card.id, claimId: claim.id, claimFence: 3, captureRevision: 2, workflowRevision: 2,
-        evidenceHash: run.evidenceHash, identity: { category: 'SPORTS', playerName: '' }, cornerShape: 'SQUARE', assets };
+        evidenceHash: run.evidenceHash, identity: { category: 'SPORTS', playerName: '' }, cornerShape, assets };
     run.manifestCanonical = canonical(manifest); run.manifestHash = digest(run.manifestCanonical);
     const binding = { runId: run.id, evidenceHash: run.evidenceHash, manifestHash: run.manifestHash, expectedRevision: 5 };
     const refs = assets.map(({ assetId, sha256, side }) => ({ assetId, sha256, side }));
@@ -122,6 +122,28 @@ test('identity hypotheses retain unknowns and cannot change human-supplied categ
     await assert.rejects(f.apply(f.call('propose_capture_identity', args)), /ASTRA_PROPOSAL_IMAGE_NOT_DELIVERED/);
 });
 
+test('capture identity preserves accepted machine values and explicit human clears with an observable conflict hold', async () => {
+    for (const actor of ['MACHINE', 'HUMAN']) {
+        const f = fixture();
+        f.manifest.identity.playerName = 'Accepted visible player'; f.card.identity.playerName = 'Accepted visible player';
+        f.card.identityAuthority = { playerName: { actor } };
+        const args = { fields: [{ field: 'playerName', value: 'Another player', evidence: [f.refs[0]] }], summary: 'Conflicting visible text.' };
+        await assert.rejects(f.apply(f.call('propose_capture_identity', args)), /ASTRA_CAPTURE_IDENTITY_CONFLICT/);
+        await assert.rejects(f.apply(submit(f)), /ASTRA_CAPTURE_IDENTITY_CONFLICT/);
+        args.fields[0].value = 'Accepted visible player';
+        assert.equal((await f.apply(f.call('propose_capture_identity', args))).result.actor, 'MACHINE');
+    }
+    for (const remove of [false, true]) {
+        const f = fixture(); f.card.identityAuthority = { playerName: { actor: 'HUMAN' } };
+        if (remove) { delete f.card.identity.playerName; delete f.manifest.identity.playerName; }
+        const before = structuredClone(f.manifest.identity);
+        await assert.rejects(f.apply(submit(f)), /ASTRA_CAPTURE_IDENTITY_CONFLICT/);
+        const selection = (await f.apply({ ...submit(f), args: { ...submit(f).args, identityProposal: null } })).result;
+        assert.deepEqual(selection.identity, before);
+        assert.equal(f.card.identityAuthority.playerName.actor, 'HUMAN');
+    }
+});
+
 test('source handoff selects exact immutable machine proposals and retains worker preparation as unresolved', async () => {
     const f = fixture(), output = await f.apply(submit(f)), selection = output.result;
     assert.equal(selection.version, 'atlas-machine-capture-selection-v1'); assert.equal(selection.actor, 'MACHINE');
@@ -132,13 +154,29 @@ test('source handoff selects exact immutable machine proposals and retains worke
     assert.equal(selection.boundaries[0].proposal.resultHash, f.steps.get(f.boundaries[0].proposal.stepId).resultHash);
 });
 
+test('unspecified shape uses the existing preparation default only in a machine selection; explicit choices and manifest stay exact', async () => {
+    for (const shape of [null, 'SQUARE', 'ROUNDED_3_18_MM']) {
+        const f = fixture(shape), original = f.run.manifestCanonical;
+        assertCaptureScope(f.run, f.card, f.manifest);
+        const read = await f.apply(f.call('read_original_photos')); assert.equal(read.result.cornerShape, shape);
+        const selection = (await f.apply(submit(f))).result;
+        assert.equal(selection.cornerShape, shape ?? 'ROUNDED_3_18_MM'); assert.equal(selection.actor, 'MACHINE');
+        assert.equal(selection.cornerShapeBasis, shape === null ? 'PREPARATION_DEFAULT' : undefined);
+        assert.equal(selection.status, 'PENDING_ORIGINAL_PREPARATION');
+        assert.equal(selection.printedFrameSelection, 'REQUIRE_VALIDATED_WORKER_PROPOSAL');
+        assert.equal(f.run.manifestCanonical, original); assert.equal(canonical(f.manifest), original);
+        assert.equal(f.card.workspace.cornerShape, shape ?? undefined);
+        assert.equal(Object.hasOwn(selection, 'confirmed'), false);
+    }
+});
+
 test('submission cannot select future, cross-run, changed, human or unobserved proposals', async () => {
     for (const mutate of [row => { row.runId = randomUUID(); }, row => { row.revision = 100; }, row => { row.requestHash = 'f'.repeat(64); },
         row => { const result = JSON.parse(row.resultCanonical); result.result.actor = 'HUMAN'; row.resultCanonical = canonical(result); row.resultHash = digest(row.resultCanonical); }]) {
         const f = fixture(); mutate(f.steps.get(f.boundaries[0].proposal.stepId));
         await assert.rejects(f.apply(submit(f)), /ASTRA_CAPTURE_PROPOSAL_CHANGED/);
     }
-    const f = fixture(); f.manifest.cornerShape = null; await assert.rejects(f.apply(submit(f)), /ASTRA_CAPTURE_SELECTION_INCOMPLETE/);
+    const f = fixture(); f.boundaries.pop(); await assert.rejects(f.apply(submit(f)), /ASTRA_CAPTURE_SELECTION_INCOMPLETE/);
     const g = fixture(); g.boundaries[1].side = 'FRONT'; await assert.rejects(g.apply(submit(g)), /ASTRA_CAPTURE_SELECTION_INCOMPLETE/);
 });
 

@@ -77,7 +77,7 @@ export function assertCaptureScope(run, card, value) {
         && ['IN_PROGRESS', 'NEEDS_ATTENTION'].includes(card.state), 'ASTRA_CAPTURE_SCOPE_CHANGED');
     return manifest;
 }
-export function validateCaptureProposal(call, manifest) {
+export function validateCaptureProposal(call, manifest, card) {
     check(CAPTURE_TOOL_NAMES.includes(call.name), 'ASTRA_CAPTURE_TOOL_INVALID');
     if (call.name === 'propose_capture_identity') {
         const allowed = captureIdentityFields(manifest.identity.category);
@@ -85,6 +85,16 @@ export function validateCaptureProposal(call, manifest) {
         for (const field of call.args.fields) check(allowed.includes(field.field)
             && (field.field !== 'layoutType' || field.value === null || ['POKEMON', 'TRAINER', 'ENERGY'].includes(field.value)),
         'ASTRA_IDENTITY_CATEGORY_CHANGED');
+        const authority = card?.workspace?.identityAuthority ?? card?.identityAuthority ?? {};
+        for (const field of call.args.fields) {
+            const supplied = manifest.identity[field.field];
+            // Accepted intake suggestions remain MACHINE provenance. Both
+            // those nonblank values and explicit HUMAN blanks are protected
+            // by the current capture claim; disagreement needs review. The
+            // original paid reply remains retained when this fence rejects it.
+            if (typeof supplied === 'string' && supplied.trim() !== '' || authority[field.field]?.actor === 'HUMAN')
+                check(field.value === supplied, 'ASTRA_CAPTURE_IDENTITY_CONFLICT');
+        }
     }
     if (call.name === 'propose_physical_boundary') check(sanitizeSpeedsterUnitQuad(call.args.corners)
         && call.args.evidence.every(ref => ref.side === call.args.side), 'ASTRA_CAPTURE_BOUNDARY_INVALID');
@@ -99,7 +109,7 @@ export function captureProposalRef(stepId, call) {
 export async function selectedCapturePreparation(data, delivered) {
     const { call, run, manifest, tx } = data, args = call.args;
     check(args.disposition === 'READY_FOR_PREPARATION' && args.boundaries.length === 2
-        && new Set(args.boundaries.map(p => p.side)).size === 2 && manifest.cornerShape !== null,
+        && new Set(args.boundaries.map(p => p.side)).size === 2,
     'ASTRA_CAPTURE_SELECTION_INCOMPLETE');
     const read = async (ref, name) => {
         const row = await tx.staffOperatorStep.findUnique({ where: { id: ref.stepId } });
@@ -114,7 +124,7 @@ export async function selectedCapturePreparation(data, delivered) {
             && result.result?.status === 'PROPOSED_FOR_PREPARATION' && result.result.actor === 'MACHINE'
             && canonical(result.result.proposal) === canonical(ref), 'ASTRA_CAPTURE_PROPOSAL_CHANGED');
         const parsed = CAPTURE_TOOL_SCHEMAS[name].parse(request), proposal = { name, args: parsed };
-        validateCaptureProposal(proposal, manifest);
+        validateCaptureProposal(proposal, manifest, data.card);
         const references = name === 'propose_capture_identity' ? parsed.fields.flatMap(f => f.evidence) : parsed.evidence;
         await delivered(data, references);
         return { request: parsed, reference: { ...ref, resultHash: row.resultHash } };
@@ -133,6 +143,10 @@ export async function selectedCapturePreparation(data, delivered) {
     return { version: 'atlas-machine-capture-selection-v1', actor: 'MACHINE', runId: run.id, workspaceCardId: manifest.workspaceCardId,
         captureHash: run.evidenceHash, captureRevision: manifest.captureRevision, claimId: manifest.claimId,
         claimFence: manifest.claimFence, workflowRevision: manifest.workflowRevision,
-        manifestHash: run.manifestHash, identity, identityProposal, cornerShape: manifest.cornerShape, boundaries,
+        // SAVE_IDENTITY already uses this preparation default. Apply it only
+        // to the new machine selection: the original null manifest and all
+        // saved provider requests stay immutable. This is not a human finding.
+        manifestHash: run.manifestHash, identity, identityProposal, cornerShape: manifest.cornerShape ?? 'ROUNDED_3_18_MM',
+        ...(manifest.cornerShape === null ? { cornerShapeBasis: 'PREPARATION_DEFAULT' } : {}), boundaries,
         printedFrameSelection: 'REQUIRE_VALIDATED_WORKER_PROPOSAL', status: 'PENDING_ORIGINAL_PREPARATION' };
 }

@@ -7,6 +7,7 @@ import { MAX_WORKSPACE_REVISION, PHOTO_SIDES, WORKSPACE_SHA, WORKSPACE_UUID,
     parseWorkspaceIntakeRequest, rejectedWorkspaceUpload, requireWorkspace, verifiedWorkspaceUpload, workspaceCardId,
     workspaceTimestamp, workspaceUploadGrant } from './workspace-intake-validation.mjs';
 import { readWorkspacePhotoBytes } from './workspace-intake-storage.mjs';
+import { workspaceIdentificationPairKey } from '../../workspace-identification.mjs';
 
 const STAGES = new Set(['PHOTOS', 'IDENTITY', 'PREPARATION', 'CENTERING', 'INSPECTION', 'REPORT', 'REVIEW', 'FINISHING']);
 const STATES = new Set(['DRAFT', 'WAITING', 'IN_PROGRESS', 'NEEDS_ATTENTION', 'HUMAN_REVIEW', 'APPROVED']);
@@ -138,6 +139,12 @@ export class StaffWorkspaceIntake {
         }));
         const claim = card.claim;
         const identity = card.identity ?? {};
+        const photos = Object.fromEntries(sides.map(photo => [photo.side, { uploadId: photo.uploadId, sha256: photo.sha256 }]));
+        let identityReady = ['SPORTS', 'POKEMON'].includes(identity.category) && !card.identityReview;
+        if (card.identityReview?.status === 'READY' && sides.every(photo => photo.status === 'VERIFIED')) {
+            identityReady = ['SPORTS', 'POKEMON'].includes(identity.category)
+                && card.identityReview.pairHash === hash(workspaceIdentificationPairKey(photos));
+        }
         const reviewer = context.identity.role === 'REVIEWER';
         const currentPolicy = +new Date(context.policy.expiresAt) > +context.now;
         const candidate = reviewer && card.state === 'WAITING' && !claim && context.policy.claimsEnabled === true && currentPolicy;
@@ -145,7 +152,7 @@ export class StaffWorkspaceIntake {
         const processingLimit = context.policy.processingLimit;
         const waiting = candidate && Number.isSafeInteger(processingLimit) && processingLimit >= 1 && processingLimit <= 10
             && (Boolean(card.startedAt) || cohort.filter(row => row.startedAt).length < processingLimit);
-        const astraClaim = waiting && context.policy.astraEnabled === true
+        const astraClaim = waiting && identityReady && context.policy.astraEnabled === true
             && !cohort.some(row => row.id !== card.id && row.claim?.kind === 'ASTRA' && activeStates.has(row.state));
         const canEdit = reviewer && ((card.state === 'DRAFT' && !claim && context.policy.intakeEnabled === true && currentPolicy)
             || (activeStates.has(card.state) && claim?.kind === 'HUMAN' && claim.actorId === context.identity.id));
@@ -159,6 +166,7 @@ export class StaffWorkspaceIntake {
             subtitle, revision: card.revision, state: card.state, stage: card.stage, sides,
             operator: claim ? { kind: claim.kind, name: claim.kind === 'ASTRA' ? 'Astra' : claim.actorName, mode: claim.mode } : null,
             specimenId: card.specimenId ?? null, updatedAt: workspaceTimestamp(card.updatedAt), identity: json(identity),
+            identityReady, ...(card.identityReview ? { identityReview: json(card.identityReview) } : {}),
             pairConfirmed: card.pairConfirmedAt !== null && Boolean(card.captureHash),
             canClaim: waiting, capabilities: { humanClaim: waiting, astraClaim,
                 canEdit, actions, controls } };
@@ -236,6 +244,7 @@ export class StaffWorkspaceIntake {
             const now = context.now.toISOString();
             const card = { id, creatorId: context.identity.id, cohortId: context.policy.cohortId, title: input.title,
                 identity: input.identity, revision: 1, state: 'DRAFT', stage: 'PHOTOS', source, specimenId: null,
+                identityAuthority: Object.fromEntries(Object.keys(input.identity).map(field => [field, { actor: 'HUMAN', operationId: input.operationId }])),
                 captureRevision: 0, captureHash: null, sides: { FRONT: null, BACK: null }, pairConfirmedAt: null,
                 admittedAt: null, startedAt: null, claimFence: 0, claim: null, createdAt: now, updatedAt: now };
             await context.tx.insertCard(card);
@@ -272,6 +281,19 @@ export class StaffWorkspaceIntake {
             const next = { ...card, sides: { ...card.sides, [input.side]: { uploadId, verificationId: null } },
                 revision: card.revision + 1, state: 'DRAFT', stage: 'PHOTOS', pairConfirmedAt: null, captureHash: null,
                 updatedAt: context.now.toISOString() };
+            if (card.identityReview || Object.values(card.identityAuthority ?? {}).some(value => value.actor === 'MACHINE')) {
+                next.identity = { ...card.identity }; next.identityAuthority = { ...card.identityAuthority };
+                const dependent = card.identity.category === 'SPORTS' ? ['playerName', 'manufacturer', 'insert'] : ['cardName', 'layoutType'];
+                const humanCategoryContext = dependent.some(field => Object.hasOwn(next.identity, field)
+                    && next.identityAuthority[field]?.actor === 'HUMAN');
+                for (const [field, authority] of Object.entries(next.identityAuthority)) if (authority.actor === 'MACHINE') {
+                    // Keep category context for a category-specific human
+                    // correction, while the new pair still requires review.
+                    if (field === 'category' && humanCategoryContext) continue;
+                    delete next.identity[field]; delete next.identityAuthority[field];
+                }
+                next.identityReview = { status: 'UNKNOWN' };
+            }
             await this.record(context, 'upload-plan', id, input, inputHash, { upload, revision: next.revision }, uploadId);
             await context.tx.updateCard(next, card.revision);
             return { upload, source: card.source, operationId: input.operationId };
@@ -356,24 +378,59 @@ export class StaffWorkspaceIntake {
                 { uploadId: value.upload.id, ...value.verification }])) }));
     }
 
+    async queueReply(context, card, operation) {
+        const reply = { card: await this.project(context, card), operationId: operation.operationId };
+        if (operation.result.queueResult) {
+            const result = operation.result.queueResult;
+            requireWorkspace(result.state === 'EXISTING_CARD' && WORKSPACE_UUID.test(result.cardId)
+                && result.cardId !== card.id && safe(result.title, 200) && STATES.has(result.cardState)
+                && STAGES.has(result.stage), 503, 'WORKSPACE_DATA_UNAVAILABLE');
+            // Recheck access to the referenced card even when replaying the
+            // immutable resolution. The original queue/claim is never replayed.
+            await this.card(context, result.cardId);
+            reply.queueResult = json(result);
+        }
+        return reply;
+    }
+
     async queue(staff, id, value) {
         workspaceCardId(id);
         const input = parseWorkspaceIntakeRequest('queue', value);
         return this.store.transaction(staff, async context => {
             this.authority(context, true);
             const card = await this.card(context, id), { prior, inputHash } = await this.prior(context, 'queue', id, input);
-            if (prior) return { card: await this.project(context, card), operationId: prior.operationId };
+            if (prior) return this.queueReply(context, card, prior);
             this.intakeEnabled(context); this.editablePhotos(card); changed(card.revision === input.expectedRevision);
             const { front, back } = await this.confirmedPhotos(context, card);
             const captureRevision = card.captureRevision + 1, captureHash = this.pairHash(card, front, back, captureRevision);
             const all = await context.tx.listCards(context.policy.cohortId);
+            const existingPairs = [];
+            let overlappingPhoto = false;
             for (const other of all) {
                 if (other.id === card.id) continue;
-                for (const side of PHOTO_SIDES) {
-                    const existing = await this.retainedSide(context, other, side);
-                    requireWorkspace(!existing.verification || ![front.verification.sha256, back.verification.sha256].includes(existing.verification.sha256),
-                        409, 'WORKSPACE_PHOTO_ALREADY_USED');
+                const [existingFront, existingBack] = await Promise.all(PHOTO_SIDES.map(side => this.retainedSide(context, other, side)));
+                overlappingPhoto ||= [existingFront, existingBack].some(existing => existing.verification
+                    && [front.verification.sha256, back.verification.sha256].includes(existing.verification.sha256));
+                if (other.state !== 'DRAFT' && other.pairConfirmedAt && other.captureRevision > 0
+                    && existingFront.verification?.sha256 === front.verification.sha256
+                    && existingBack.verification?.sha256 === back.verification.sha256
+                    && other.captureHash === this.pairHash(other, existingFront, existingBack, other.captureRevision)) {
+                    existingPairs.push(other);
                 }
+            }
+            if (existingPairs.length === 1) {
+                const existing = existingPairs[0], projected = await this.project(context, existing);
+                const queueResult = { state: 'EXISTING_CARD', cardId: existing.id, title: projected.title,
+                    cardState: existing.state, stage: existing.stage };
+                const operation = await this.record(context, 'queue', id, input, inputHash,
+                    { cardId: id, revision: card.revision, queueResult, existingCaptureHash: existing.captureHash });
+                return this.queueReply(context, card, operation);
+            }
+            if (overlappingPhoto) {
+                // Both photos must match one already confirmed pair. Partial,
+                // reversed or ambiguous matches cannot invent another card.
+                try { requireWorkspace(false, 409, 'WORKSPACE_PHOTO_ALREADY_USED'); }
+                catch (error) { error.outcome = 'NOT_DISPATCHED'; throw error; }
             }
             if (this.source.confirmPair) await this.source.confirmPair(context, { card, front, back, captureRevision, captureHash });
             const next = { ...card, revision: card.revision + 1, captureRevision, captureHash,

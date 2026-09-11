@@ -6,6 +6,7 @@ import type { SpeedsterQuad } from '../ai-grader-v2/contracts';
 
 type RecordValue = Record<string, unknown>;
 type MachineSelection = Readonly<{ identity: RecordValue; cornerShape: 'SQUARE' | 'ROUNDED_3_18_MM';
+    cornerShapeBasis?: 'PREPARATION_DEFAULT';
     boundaries: readonly Readonly<{ side: 'FRONT' | 'BACK'; corners: SpeedsterQuad; matColor: 'BLACK' | 'WHITE' | 'MAGENTA' }>[] }>;
 export type AtlasWorkspaceMachineStep = Readonly<{ id: string; runId: string; revision: number; toolName: string;
     requestCanonical: string; requestHash: string; resultCanonical: string; resultHash: string; createdAt: Date | string }>;
@@ -94,7 +95,7 @@ export async function validateAtlasWorkspaceMachineSource(request: AtlasWorkspac
         && proposalSteps.length <= 3 && new Set(proposalSteps.map(row => row.id)).size === proposalSteps.length,
     'WORKSPACE_MACHINE_SELECTION_CHANGED');
     const selection = await selectedCapturePreparation({ call: { name: 'submit_capture_preparation', args: submitted },
-        run: { ...run, revision: selectionStep.revision - 1 }, manifest,
+        run: { ...run, revision: selectionStep.revision - 1 }, manifest, card,
         tx: { staffOperatorStep: { findUnique: async ({ where }: { where: { id: string } }) => proposalSteps.find(row => row.id === where.id) ?? null } } },
     async (_data, refs) => {
         preparationRequire(refs.every((ref: Readonly<{ assetId: string; side: string; sha256: string }>) => manifest.assets.some(asset =>
@@ -107,6 +108,7 @@ export async function validateAtlasWorkspaceMachineSource(request: AtlasWorkspac
         runRevision: run.revision, leaseFence: run.leaseFence, runControlRevision: permit?.runControlRevision ?? run.controlRevision,
         selectionStepId: selectionStep.id, selectionResultHash: selectionStep.resultHash,
         selectionHash: preparationHash(selection), manifestHash: run.manifestHash,
+        ...(selection.cornerShapeBasis ? { cornerShapeBasis: selection.cornerShapeBasis } : {}),
         ...(run.executionMode === 'STEP' ? { permitOperationId: intent.permitOperationId } : {}) } };
 }
 

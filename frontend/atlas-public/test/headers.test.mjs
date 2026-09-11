@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 import config from '../next.config.mjs';
+import staffConfig from '../../atlas-app/next.config.mjs';
+import customerConfig from '../../atlas-customer/next.config.mjs';
 
 const require = createRequire(import.meta.url);
 const { getPathMatch } = require('next/dist/shared/lib/router/utils/path-match.js');
 const { modifyRouteRegex } = require('next/dist/lib/redirect-status.js');
 const { buildCustomRoute } = require('next/dist/lib/build-custom-route.js');
 
-test('public CSP leaves mounted staff/customer policies intact while common headers stay global', async () => {
+test('public router permits the staff camera while preserving customer/public denial and mounted CSP', async () => {
     const rules = (await config.headers()).map(rule => ({ ...rule,
         match: getPathMatch(rule.source, { strict: true, sensitive: false, removeUnnamedParams: true,
             regexModifier: regex => modifyRouteRegex(regex) }),
@@ -18,7 +20,6 @@ test('public CSP leaves mounted staff/customer policies intact while common head
         { key: 'Referrer-Policy', value: 'no-referrer' },
         { key: 'X-Content-Type-Options', value: 'nosniff' },
         { key: 'X-Frame-Options', value: 'DENY' },
-        { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
     ];
     const publicPolicy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
     const mounted = ['/admin', '/admin/', '/admin/add-cards', '/admin/workspace/card',
@@ -31,8 +32,18 @@ test('public CSP leaves mounted staff/customer policies intact while common head
         for (const path of paths) {
             for (const rule of rules) assert.equal(Boolean(rule.match(path)), rule.built.test(path), path);
             const headers = rules.filter(rule => rule.match(path)).flatMap(rule => rule.headers);
-            assert.deepEqual(headers.filter(h => h.key !== 'Content-Security-Policy'), common, path);
+            const staffPath = /^\/admin(?:\/|$)/i.test(path);
+            assert.deepEqual(headers.filter(h => h.key !== 'Content-Security-Policy'), [...common,
+                { key: 'Permissions-Policy', value: `camera=${staffPath ? '(self)' : '()'}, microphone=(), geolocation=()` }], path);
             assert.deepEqual(headers.filter(h => h.key === 'Content-Security-Policy'), expectedCsp, path);
         }
     }
+});
+
+test('direct staff camera permission matches its mounted policy and supports a local video stream', async () => {
+    const headers = (await staffConfig.headers()).flatMap(rule => rule.headers);
+    assert.equal(headers.find(h => h.key === 'Permissions-Policy').value, 'camera=(self), microphone=(), geolocation=()');
+    assert.match(headers.find(h => h.key === 'Content-Security-Policy').value, /(?:^|;) media-src 'self' blob:;/);
+    const customer = (await customerConfig.headers()).flatMap(rule => rule.headers);
+    assert.equal(customer.find(h => h.key === 'Permissions-Policy').value, 'camera=(), microphone=(), geolocation=()');
 });

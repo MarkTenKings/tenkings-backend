@@ -32,6 +32,7 @@ export const STAFF_GRANTS = Object.freeze({
 });
 const FUNCTIONS = new Set(['lock_control()', 'lock_assignment(uuid, uuid)', 'operator_work_pending(uuid)',
     'lock_workspace_control()',
+    'lock_workspace_identification_control()',
     'enqueue_workspace_capture(uuid, uuid, text, text)',
     'workspace_source_admitted(uuid, uuid)',
     'read_workspace_operator_control(uuid)', 'control_workspace_operator(uuid, integer, text, uuid, text, integer)',

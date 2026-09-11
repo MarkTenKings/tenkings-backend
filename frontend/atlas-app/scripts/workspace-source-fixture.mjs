@@ -176,7 +176,7 @@ async function fixture(context, work, options = {}) {
         await work({ ...f, current, terminal, transaction, machineConfig: config, sourceConfigHash, ports, settings, intent, authority, sourceLedger,
             bound, initialization, admit, finishPermit, readControl, projectResult, successor, usage, workerCalls: () => calls });
     }, { sourceType: options.sourceType ?? 'LOCAL_FIXTURE', identity: options.identity, preparationEnabled: true,
-        rosterSize: options.rosterSize, effort: options.effort });
+        rosterSize: options.rosterSize, effort: options.effort, automaticCapture: options.automaticCapture });
 }
 
 export async function workspaceSourceScenarios(scenario) {

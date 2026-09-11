@@ -19,9 +19,11 @@ self.onmessage = async ({ data }) => {
     try {
         const file = data?.file;
         if (!(file instanceof Blob) || file.size < 1 || file.size > MAX_BYTES) throw new Error('Each photograph must be between 1 byte and 50 MB.');
+        self.postMessage({ progress: 'Reading HEIC' });
         const bytes = new Uint8Array(await file.arrayBuffer());
         if (bytes.byteLength !== file.size) throw new Error('The photograph changed while reading. Select it again.');
         const libheif = await createLibheif({ print() {}, printErr() {} });
+        self.postMessage({ progress: 'Decoding full-resolution image' });
         const decoded = await decodeHeicPixels(bytes, libheif);
         canvas = new OffscreenCanvas(decoded.width, decoded.height);
         const context = canvas.getContext('2d', { colorSpace: decoded.colorSpace });
@@ -33,6 +35,7 @@ self.onmessage = async ({ data }) => {
         context.putImageData(pixels, 0, 0);
         // PNG adds no lossy compression. No resizing, crop, enhancement or
         // grading operation occurs here; the source color space is retained.
+        self.postMessage({ progress: 'Encoding lossless PNG' });
         const blob = await canvas.convertToBlob({ type: 'image/png' });
         if (blob.type !== 'image/png' || blob.size < 1 || blob.size > MAX_BYTES) {
             throw new Error('The full-resolution PNG exceeds the 50 MB upload limit. Export a smaller photograph before uploading.');

@@ -6,7 +6,8 @@
       "codex/atlas-staff-app-20260908": false,
       "codex/atlas-grading-workflow-lead-20260909": false,
       "main": false,
-      "codex/atlas-live-workspace-recovery-20260910": false
+      "codex/atlas-live-workspace-recovery-20260910": false,
+      "codex/atlas-fast-intake-autopilot-20260910": false
     }
   }
 }
