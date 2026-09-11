@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { previewAtlasReport } from '@atlas/grading-core/report';
 import { speedsterReviewPostSchema } from '@atlas/grading-core/review-action-contract';
-import { canonical, digest, parsePilotPolicy, requireBridge } from './protocol.mjs';
+import { canonical, digest, parsePilotPolicy, pilotDollarLimitsAllow, requireBridge } from './protocol.mjs';
 import { pilotSubject, pilotUsage, requirePilotCards } from './pilot-scope.mjs';
 
 const activeStates = ['DISPATCHED', 'UNKNOWN'];
@@ -96,8 +96,7 @@ export class ScopedGradingBridge {
             await requirePilotCards(tx, policy, card.sourceType);
             const usage = await pilotUsage(tx, policy, card);
             const reserve = BigInt(policy.reservationPerOperationMicroUsd);
-            requireBridge(!usage.overrun && BigInt(usage.total) + reserve <= BigInt(policy.maxTotalMicroUsd)
-                && BigInt(usage.card) + reserve <= BigInt(policy.maxCardMicroUsd)
+            requireBridge(pilotDollarLimitsAllow(policy, usage, reserve)
                 && usage.operations < policy.maxOperationsPerCard, 'PILOT_BUDGET_EXHAUSTED');
             const source = await this.ports.loadSource(tx, card);
             requireBridge(source.updatedAt.toISOString() === request.sourceRevision

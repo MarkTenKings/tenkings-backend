@@ -73,9 +73,10 @@ export default function CardGradingWorkspace({ initial, staff, csrf, readiness }
         const next = await mutation.mutate(`${workspaceCardPath(card.id)}/claim`, { expectedRevision: card.revision, operator, ...(operator === 'ASTRA' ? { mode } : {}) }, card.id);
         if (next) { setStage(next.stage); setSaved(operator === 'HUMAN' ? 'You have claimed this card for manual grading.' : 'Astra has claimed this card. Recorded activity appears alongside the workspace.'); }
     }
-    async function control(action) {
+    async function control(action, recovery) {
         if (disabled || Object.keys(formsRef.current).length) return;
-        await mutation.mutate(`${workspaceCardPath(card.id)}/control`, { expectedRevision: card.revision, action }, card.id);
+        return mutation.mutate(`${workspaceCardPath(card.id)}/control`, { expectedRevision: card.revision, action,
+            ...(action === 'ABANDON_AND_STEP' ? { recovery } : {}) }, card.id);
     }
     async function reviewSession(action) {
         if (disabled || Object.keys(formsRef.current).length) return;

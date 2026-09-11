@@ -156,8 +156,11 @@ test('actual ledger dispatch consumes STEP after the admitted attempt transition
     };
     const ledger = new OperatorLedger({ client: null, config: {} });
     const context = { tx, run: current, policy: { astra, prompt: 'Synthetic policy.', tools: ['read_card_report'],
-        expiresAt: new Date(Date.now() + 120_000).toISOString() }, budget: { maxTotalMicroUsd: 90_000_000,
-        maxCardMicroUsd: 30_000_000, expiresAt: new Date(Date.now() + 120_000).toISOString() }, now: new Date() };
+        expiresAt: new Date(Date.now() + 120_000).toISOString() }, budget: { version: 'atlas-grading-bridge-policy-v1',
+        pilotId: current.pilotId, specimenIds: [current.specimenId, ...Array.from({ length: 9 }, randomUUID)],
+        maxTotalMicroUsd: 90_000_000, maxCardMicroUsd: 30_000_000, reservationPerOperationMicroUsd: 1_000_000,
+        maxOperationsPerCard: 20, maxWorkerCalls: 4, deadlineMs: 200_000,
+        expiresAt: new Date(Date.now() + 120_000).toISOString() }, now: new Date() };
     ledger.transaction = async work => work(context); ledger.leased = async () => context;
     const grant = await ledger.takeDispatch({}, id);
     assert.deepEqual(events, ['attempt-dispatched', 'permit-consumed']); assert.equal(grant.attemptId, id);

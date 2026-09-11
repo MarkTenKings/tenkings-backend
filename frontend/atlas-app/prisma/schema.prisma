@@ -575,6 +575,25 @@ model StaffOperatorRecovery {
   @@unique([runId, leaseFence])
 }
 
+// Explicit human execution abandonment retains the original financial hold.
+model StaffOperatorAttemptAbandonment {
+  id                String @id @db.Uuid
+  runId             String @db.Uuid
+  attemptId         String @unique @db.Uuid
+  commandId         String @unique @db.Uuid
+  actorId           String @db.Uuid
+  sessionHash       String @db.VarChar(64)
+  operationsGrantId String @db.Uuid
+  runRevision       Int
+  leaseFence        Int
+  controlRevision   Int
+  reviewHash        String @db.VarChar(64)
+  reason            String @db.VarChar(500)
+  canonical         String @db.Text
+  hash              String @db.VarChar(64)
+  createdAt         DateTime
+}
+
 model StaffOperatorStep {
   id                       String @id @db.Uuid
   runId                    String @db.Uuid

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { previewAtlasReport } from '@atlas/grading-core/report';
-import { canonical, digest, keys, parsePilotPolicy, requireBridge as check, UUID, SHA } from './protocol.mjs';
+import { canonical, digest, keys, parsePilotPolicy, pilotDollarLimitsAllow, requireBridge as check, UUID, SHA } from './protocol.mjs';
 import { pilotSubject, pilotUsage, requirePilotCards } from './pilot-scope.mjs';
 
 const machineActor = id => `ASTRA_INITIALIZE:${id}`;
@@ -104,8 +104,7 @@ export class MachineInitializationBridge {
             await this.noOtherWork(context);const source=await this.source(context);await this.ports.assertFreshDetection(tx,source);
             const usage=await pilotUsage(tx,policy,card);
             const reserve=BigInt(policy.reservationPerOperationMicroUsd);
-            check(!usage.overrun && BigInt(usage.total)+reserve<=BigInt(policy.maxTotalMicroUsd)
-                && BigInt(usage.card)+reserve<=BigInt(policy.maxCardMicroUsd) && usage.operations<policy.maxOperationsPerCard,
+            check(pilotDollarLimitsAllow(policy,usage,reserve) && usage.operations<policy.maxOperationsPerCard,
             'PILOT_BUDGET_EXHAUSTED');
             parentSignal?.throwIfAborted();const claimId=randomUUID();
             await tx.$executeRaw`UPDATE atlas_staff."StaffGradingOperation" SET state='DISPATCHED',"dispatchedAt"=(${now}::timestamptz AT TIME ZONE 'UTC') WHERE id=${op.id}::uuid`;

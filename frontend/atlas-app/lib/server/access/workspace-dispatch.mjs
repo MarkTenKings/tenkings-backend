@@ -45,7 +45,7 @@ export function attachWorkspaceDispatch({ intake, operator, store, dispatch }) {
     };
     operator.control = async (staff, cardId, input) => {
         const result = await control(staff, cardId, input);
-        if (['RESUME', 'STEP', 'RECOVER'].includes(input.action)) await start(staff, cardId, input, result, 'OPERATOR_CONTROL');
+        if (['RESUME', 'STEP', 'RECOVER', 'ABANDON_AND_STEP'].includes(input.action)) await start(staff, cardId, input, result, 'OPERATOR_CONTROL');
         return result;
     };
 }

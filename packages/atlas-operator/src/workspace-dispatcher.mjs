@@ -141,7 +141,7 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
         const event = operationRecord(row), value = event.result;
         const initial = event.action === 'claim', claim = initial ? value?.claim : value?.priorClaim;
         check(event.id === commandId && event.actorId === card.claim.actorId && event.cardId === card.id
-            && (initial || event.action === 'OPERATOR_CONTROL' && ['RESUME', 'STEP', 'RECOVER'].includes(value?.action))
+            && (initial || event.action === 'OPERATOR_CONTROL' && ['RESUME', 'STEP', 'RECOVER', 'ABANDON_AND_STEP'].includes(value?.action))
             && claim?.kind === 'ASTRA' && ['id', 'actorId', 'accessVersion', 'controlRevision', 'fence', 'captureRevision', 'captureHash', 'workflowRevision']
                 .every(key => claim[key] === card.claim[key])
             && claim.runId === requested.id && (initial ? value.cardId === card.id && value.revision === claim.workflowRevision
@@ -151,7 +151,7 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
         const runRevision = initial ? 1 : value.runRevision, createdAt = new Date(event.createdAt);
         check(['CONTINUOUS', 'STEP'].includes(mode) && integer.safeParse(revision).success && integer.safeParse(runRevision).success
             && requested.controlRevision >= revision && requested.revision >= runRevision && instant(createdAt)
-            && (initial || mode === (value.action === 'STEP' ? 'STEP' : 'CONTINUOUS')), 'ASTRA_DISPATCH_COMMAND_CHANGED');
+            && (initial || mode === (['STEP', 'ABANDON_AND_STEP'].includes(value.action) ? 'STEP' : 'CONTINUOUS')), 'ASTRA_DISPATCH_COMMAND_CHANGED');
         const rows = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffWorkspaceOperation"
             WHERE "cardId"=${card.id}::uuid AND action='OPERATOR_CONTROL'
                 AND ((canonical::jsonb#>>'{result,runId}'=${requested.id}
@@ -159,11 +159,11 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
                     OR (${run.id}::uuid<>${requested.id}::uuid AND canonical::jsonb#>>'{result,runId}'=${run.id}))
             ORDER BY "createdAt" DESC,(canonical::jsonb#>>'{result,runControlRevision}')::integer DESC,id DESC LIMIT 1`;
         const later = rows[0] ? operationRecord(rows[0]) : null;
-        if (later) check(later.cardId === card.id && ['PAUSE', 'RESUME', 'STEP', 'TAKE_OVER', 'RECOVER'].includes(later.result?.action)
+        if (later) check(later.cardId === card.id && ['PAUSE', 'RESUME', 'STEP', 'TAKE_OVER', 'RECOVER', 'ABANDON_AND_STEP'].includes(later.result?.action)
             && later.result.claimFence === card.claimFence && later.result.priorClaim?.id === card.claim.id
             && later.result.priorClaim.captureHash === card.captureHash && later.result.priorClaim.captureRevision === card.captureRevision
             && integer.safeParse(later.result.runControlRevision).success && +new Date(later.createdAt) >= +createdAt
-            && (!['RESUME', 'STEP', 'RECOVER'].includes(later.result.action) || later.actorId === card.claim.actorId
+            && (!['RESUME', 'STEP', 'RECOVER', 'ABANDON_AND_STEP'].includes(later.result.action) || later.actorId === card.claim.actorId
                 && later.result.priorClaim.accessVersion === card.claim.accessVersion
                 && later.result.priorClaim.controlRevision === card.claim.controlRevision), 'ASTRA_DISPATCH_COMMAND_CHANGED');
         return { id: commandId, hash: row.contentHash, mode, revision, runRevision, createdAt, later };
@@ -246,7 +246,7 @@ export function createWorkspaceDispatcher({ client, authority, source, operatorC
             const scoped = value => ({ ...value, command, run, card });
             // A later committed Start/Resume/STEP can only follow a settled
             // boundary. Recover this older command; never consume the newer one.
-            if (command.later && ['RESUME', 'STEP', 'RECOVER'].includes(command.later.result.action))
+            if (command.later && ['RESUME', 'STEP', 'RECOVER', 'ABANDON_AND_STEP'].includes(command.later.result.action))
                 return scoped({ state: 'SETTLED', settledState: 'YIELDED', code: 'ASTRA_DISPATCH_COMMAND_SUPERSEDED' });
             const [work] = await tx.$queryRaw`SELECT
                 (SELECT count(*)::integer FROM atlas_staff."StaffOperatorAttempt" WHERE "runId"=${run.id}::uuid

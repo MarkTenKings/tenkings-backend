@@ -189,6 +189,15 @@
 .continueSaved>button { width:100%; display:flex; align-items:center; gap:10px; border:1px solid #d4d399; background:linear-gradient(125deg,#e3dfb0,#c7ce92); color:#2c4328; border-radius:7px; padding:14px; font-size:12px; box-shadow:0 2px 7px #06180820; }
 .continueSaved>button>span:last-child { margin-left:auto; }
 .continueSaved>p { color:#c8d0ae; font-size:9px; text-align:center; margin-top:8px; }
+.attemptRecovery { margin:0 20px 18px; padding:18px; border:1px solid #c9b98a88; border-radius:8px; background:#203c30; color:#f3f0df; }
+.attemptRecovery h3 { margin:0 0 12px; font-size:16px; }
+.attemptRecovery p { font-size:12px; line-height:1.65; margin:10px 0; }
+.attemptRecovery label { display:block; font-size:12px; margin:16px 0 7px; }
+.attemptRecovery textarea { box-sizing:border-box; width:100%; resize:vertical; padding:10px; color:#19382b; background:#f4f5eb; border:1px solid #bac7ad; border-radius:5px; font:inherit; font-size:12px; }
+.attemptRecovery>div { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+.attemptRecovery button { border:1px solid #becd9c; border-radius:5px; padding:10px 12px; background:#d5dfb1; color:#20391f; font-size:12px; }
+.attemptRecovery button+button { background:transparent; color:#f3f0df; }
+.attemptRecovery button:disabled { opacity:.55; cursor:not-allowed; }
 .operatorControls { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:0 20px; margin-bottom:14px; }
 .activity .operatorControls button { display:flex; align-items:center; justify-content:center; gap:8px; border:1px solid #7b977065; border-bottom-color:#93a27a88; border-radius:7px; font-size:11px; padding:14px 8px; background:linear-gradient(#42584077,#344b3577); color:#eff0e1; box-shadow:0 1px 0 #c7d5a411 inset,0 2px 3px #06160822; transition:background .15s,transform .15s,border-color .15s; }
 .activity .operatorControls button:not(:disabled):hover { border-color:#b4c58c; background:#4b644099; transform:translateY(-1px); }

@@ -26,7 +26,8 @@ export function workspaceIdentificationSettings(env, staffConfig) {
             && Number.isFinite(+new Date(policy.expiresAt)) && new Date(policy.expiresAt).toISOString() === policy.expiresAt
             && /^[a-f0-9]{64}$/.test(policy.costEvidenceHash)
             && [policy.ocrReserveMicroUsd, policy.modelReserveMicroUsd].every(value => Number.isSafeInteger(value) && value > 0)
-            && policy.modelReserveMicroUsd >= 589600 && policy.ocrReserveMicroUsd + policy.modelReserveMicroUsd <= 5_000_000);
+            && policy.modelReserveMicroUsd >= 589600
+            && Number.isSafeInteger(policy.ocrReserveMicroUsd + policy.modelReserveMicroUsd));
         const openaiKey = env.ATLAS_IDENTIFICATION_OPENAI_API_KEY?.trim(), googleKey = env.ATLAS_IDENTIFICATION_GOOGLE_VISION_API_KEY?.trim();
         configured(openaiKey?.length >= 16 && googleKey?.length >= 16 && !/[\s\x00-\x1f]/.test(openaiKey + googleKey));
         const policyCanonical = canonical(policy), policyHash = hash(policyCanonical);

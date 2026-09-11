@@ -21,5 +21,6 @@ export function verifyRequest(config: Pick<BridgeConfig, 'key' | 'origin'>, body
 export type PilotPolicy = ({ version: 'atlas-grading-bridge-policy-v1'; specimenIds: string[] }
     | { version: 'atlas-workspace-bridge-policy-v1'; workspaceCardIds: string[] }) & { pilotId: string; expiresAt: string;
     maxOperationsPerCard: number; maxTotalMicroUsd: number; maxCardMicroUsd: number; reservationPerOperationMicroUsd: number;
-    maxWorkerCalls: number; deadlineMs: number };
+    maxWorkerCalls: number; deadlineMs: number; budgetEnforcement?: 'ACCOUNTING_ONLY' };
 export function parsePilotPolicy(value: unknown): PilotPolicy;
+export function pilotDollarLimitsAllow(policy: PilotPolicy, usage: { total: string | number | bigint; card: string | number | bigint; overrun: boolean }, reserve?: bigint): boolean;

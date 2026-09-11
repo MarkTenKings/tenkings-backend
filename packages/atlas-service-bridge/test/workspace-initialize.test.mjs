@@ -258,3 +258,17 @@ test('enqueue input accepts only the retained request ID and cannot select an ac
         const f = fixture(); await assert.rejects(f.enqueue({ requestId: f.requestId, [key]: randomUUID() })); assert.equal(f.writes.length, 0);
     }
 });
+
+test('accounting-only workspace enqueue preserves work counts and expiry with over-budget accounting', async () => {
+    const enable = f => {
+        f.policy.budgetEnforcement = 'ACCOUNTING_ONLY'; f.policy.maxTotalMicroUsd = 1; f.policy.maxCardMicroUsd = 1;
+        f.bridge.policyCanonical = canonical(f.policy); f.bridge.policyHash = digest(f.bridge.policyCanonical);
+        f.settings.usage.total = '100000000000'; f.settings.usage.card = '100000000000'; f.settings.usage.overrun = true;
+    };
+    const f = fixture({ rosterSize: 1 }); enable(f);
+    assert.equal((await f.enqueue()).state, 'QUEUED'); assert.equal(f.settings.usage.overrun, true);
+    const exhausted = fixture({ rosterSize: 1 }); enable(exhausted); exhausted.settings.usage.operations = exhausted.policy.maxOperationsPerCard;
+    await assert.rejects(exhausted.enqueue(), /BUDGET/); assert.equal(exhausted.writes.length, 0);
+    const expired = fixture({ rosterSize: 1 }); enable(expired); expired.workspaceControl.expiresAt = expired.now;
+    await assert.rejects(expired.enqueue()); assert.equal(expired.writes.length, 0);
+});

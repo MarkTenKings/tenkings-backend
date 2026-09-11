@@ -183,7 +183,10 @@ test('submission cannot select future, cross-run, changed, human or unobserved p
 test('capture reservation shares workspace costs and cannot spend after preparation handoff', async () => {
     const f = fixture(), ledger = new OperatorLedger({ client: null, config: {} }); let inserted = false, usage = { total: 89_000_000n, card: 1n, attempts: 2, overrun: false };
     const context = { ...f.data, input: [], policy: { astra, prompt: 'Synthetic.', captureTools: [...CAPTURE_TOOL_NAMES], maxStepsPerRun: 20, maxAttemptsPerCard: 20 },
-        budget: { maxTotalMicroUsd: 90_000_000, maxCardMicroUsd: 90_000_000 }, now: new Date(),
+        budget: { version: 'atlas-workspace-bridge-policy-v1', pilotId: randomUUID(), workspaceCardIds: [f.run.workspaceCardId],
+            expiresAt: new Date(Date.now() + 120_000).toISOString(), maxOperationsPerCard: 20,
+            maxTotalMicroUsd: 90_000_000, maxCardMicroUsd: 90_000_000, reservationPerOperationMicroUsd: 1_000_000,
+            maxWorkerCalls: 4, deadlineMs: 200_000 }, now: new Date(),
         tx: { staffOperatorAttempt: { count: async () => 0 }, $queryRaw: async strings => {
             assert(strings.join('').includes('workspace_pilot_budget_usage')); return [usage]; }, $executeRaw: async () => { inserted = true; } } };
     ledger.transaction = async work => work(context); ledger.leased = async () => context;

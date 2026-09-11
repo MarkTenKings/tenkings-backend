@@ -267,3 +267,18 @@ test('same-human replay retains exact original admission evidence and conflicts 
     const other=randomUUID();f.elevated.identity.id=other;f.elevated.session.identityId=other;
     await assert.rejects(()=>f.enqueue(),/MACHINE_ADMISSION_CONFLICT/);assert.equal(f.state.audits.length,1);assert.equal(f.state.execution,null);
 });
+
+test('explicit accounting-only initialization keeps its exact reservation and operation limit', async () => {
+    const enable = f => {
+        const policy = { ...JSON.parse(f.bridge.policyCanonical), budgetEnforcement: 'ACCOUNTING_ONLY' };
+        f.bridge.policyCanonical = canonical(policy); f.bridge.policyHash = digest(f.bridge.policyCanonical);
+        f.settings.total = 1_000_000_000; f.settings.cardCost = 1_000_000_000; f.settings.overrun = true;
+    };
+    const f = fixture(); enable(f); await f.enqueue();
+    assert.deepEqual(await f.run(), { state: 'SUCCEEDED', analysisRevision: 1 });
+    assert.equal(f.state.execution.reservedMicroUsd, 100n);
+    assert.equal(f.settings.overrun, true); assert.equal(f.events.filter(event => event === 'perform').length, 1);
+    const exhausted = fixture(); enable(exhausted); exhausted.settings.operations = 3;
+    await exhausted.enqueue(); await assert.rejects(() => exhausted.run(), /BUDGET/);
+    assert.equal(exhausted.state.execution, null); assert(!exhausted.events.includes('perform'));
+});

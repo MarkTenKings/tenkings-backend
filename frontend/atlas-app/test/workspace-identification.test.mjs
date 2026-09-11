@@ -22,6 +22,18 @@ const jsonResponse = data => new Response(JSON.stringify(data), { status: 200, h
 const providerResponse = (value = suggestions({ category: 'SPORTS', name: 'Example Player' })) => ({ id: 'resp_fixture', model: 'gpt-6-astra', service_tier: 'default', status: 'completed',
     usage: { input_tokens: 1000, output_tokens: 200, total_tokens: 1200 }, output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: JSON.stringify(value) }] }] });
 
+test('identification reservations retain price and safe-integer integrity without a five-dollar cap', () => {
+    const policy = { version: 'atlas-intake-identification-policy-v1', pilotId: uuid(), expiresAt: new Date(+now + 3600000).toISOString(),
+        ocrReserveMicroUsd: 10000, modelReserveMicroUsd: 6000000, costEvidenceHash: hash('reviewed fixture pricing') };
+    const settings = patch => workspaceIdentificationSettings({ ATLAS_IDENTIFICATION_ENABLED: 'true',
+        ATLAS_IDENTIFICATION_OPENAI_API_KEY: 'fixture-openai-secret', ATLAS_IDENTIFICATION_GOOGLE_VISION_API_KEY: 'fixture-vision-secret',
+        ATLAS_IDENTIFICATION_POLICY_JSON: JSON.stringify({ ...policy, ...patch }) }, { configHash: hash('staff') });
+    assert.equal(settings({}).enabled, true);
+    for (const patch of [{ modelReserveMicroUsd: 589599 }, { ocrReserveMicroUsd: 0 },
+        { modelReserveMicroUsd: Number.MAX_SAFE_INTEGER }, { modelReserveMicroUsd: 6000000.1 }])
+        assert.equal(settings(patch).enabled, false);
+});
+
 function fixture() {
     const f = { cards: new Map(), operations: new Map(), objects: new Map(), time: new Date(now), calls: 0, reads: 0, derives: 0,
         actor: { id: uuid(), role: 'REVIEWER', name: 'Grader', accessVersion: 1 }, staff: {}, pending: Promise.resolve() };

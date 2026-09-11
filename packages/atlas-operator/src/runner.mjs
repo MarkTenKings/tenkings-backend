@@ -5,6 +5,15 @@ import { checked, parseControlPolicy, toolsForRun } from './policy.mjs';
 
 const TERMINAL = new Set(['PREPARATION_READY', 'READY_FOR_HUMAN', 'NEEDS_RECAPTURE', 'NEEDS_EXPERT']);
 const DB_TIMEOUT_MS = 15_000;
+const RECEIPT_WRITE_ATTEMPTS = 3;
+const transientReceiptCodes = new Set(['P1001','P1002','P1008','P1017','P2024','P2028','P2034',
+    'ECONNRESET','ECONNREFUSED','EPIPE','ETIMEDOUT']);
+const transientSqlStates = new Set(['40001','40P01','53300','57P01','57P02','57P03']);
+const retryableReceiptFailure = error => {
+    const code = error?.code, sqlState = code === 'P2010' ? error?.meta?.code : code;
+    return transientReceiptCodes.has(code) || transientSqlStates.has(sqlState)
+        || typeof sqlState === 'string' && /^08[0-9A-Z]{3}$/.test(sqlState);
+};
 const systemClock = { now: () => performance.now(), setTimeout, clearTimeout };
 const failure = code => Object.assign(new Error(code), { code });
 const safeCode = error => /^ASTRA_[A-Z0-9_]{1,74}$/.test(error?.code ?? error?.message)
@@ -62,6 +71,32 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
         finally { clock.clearTimeout(timer); if (listener) controller.signal.removeEventListener('abort', listener); }
     }
     const db = work => bounded(work, DB_TIMEOUT_MS);
+    async function persistReceipt(binding) {
+        // The ledger deduplicates the exact attempt/receipt hash, including a
+        // committed write whose reply was lost. Retry only settled transient
+        // failures, serially, inside the original single-write time bound.
+        // Cancellation stops tools but must not discard this captured receipt.
+        const until = clock.now() + DB_TIMEOUT_MS;
+        let open = true, retryTimer;
+        try {
+            await bounded(async () => {
+                for (let attempt = 0; ; attempt++) {
+                    if (!open || clock.now() >= until) throw failure('ASTRA_RECEIPT_PERSISTENCE_UNCONFIRMED');
+                    try { return await ledger.recordReceipt(binding); }
+                    catch (error) {
+                        const delay = 250 * 2 ** attempt;
+                        if (!open || attempt + 1 >= RECEIPT_WRITE_ATTEMPTS || !retryableReceiptFailure(error)
+                            || clock.now() + delay >= until) throw error;
+                        await new Promise(resolve => { retryTimer = clock.setTimeout(resolve, delay); });
+                    }
+                }
+            }, DB_TIMEOUT_MS, { independent: true, code: 'ASTRA_RECEIPT_PERSISTENCE_UNCONFIRMED' });
+        } finally {
+            // An unresolved timed-out write may still settle. It must never
+            // start another write after this receipt promise has been closed.
+            open = false; clock.clearTimeout(retryTimer);
+        }
+    }
     async function snapshot() {
         const requestedAt = clock.now();
         const snap = await db(() => ledger.snapshot(lease));
@@ -131,7 +166,7 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
                     const provider = createProvider({ takeDispatch, signal: controller.signal });
                     check(typeof provider?.dispatch === 'function', 'ASTRA_PROVIDER_CONFIGURATION_REQUIRED');
                     // Install this continuation before racing cancellation, so a
-                    // response arriving after lease loss is still retained once.
+                    // response arriving after lease loss is still retained.
                     const delivery = (async () => {
                         let value;
                         try {
@@ -142,9 +177,8 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
                             value = { state: 'UNKNOWN', attemptId: reserved.attemptId, startedAt,
                                 receivedAt: new Date().toISOString(), httpStatus: null, failureCode: 'ASTRA_OUTCOME_UNCONFIRMED' };
                         }
-                        await bounded(() => ledger.recordReceipt({ attemptId: reserved.attemptId,
-                            dispatchClaimId: reserved.dispatchClaimId, receipt: value }), DB_TIMEOUT_MS,
-                            { independent: true, code: 'ASTRA_RECEIPT_PERSISTENCE_UNCONFIRMED' });
+                        await persistReceipt({ attemptId: reserved.attemptId,
+                            dispatchClaimId: reserved.dispatchClaimId, receipt: value });
                         return value;
                     })();
                     receiptWrites.push(delivery.then(() => ({ attemptId: reserved.attemptId, state: 'PERSISTED' }),
