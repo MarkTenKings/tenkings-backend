@@ -1,13 +1,14 @@
 /* eslint-disable @next/next/no-img-element */
-import { Children, cloneElement, isValidElement, useCallback, useEffect, useRef, useState, type ReactNode, type ReactElement } from 'react';
+import { Children, cloneElement, createContext, isValidElement, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode, type ReactElement } from 'react';
 import Link from 'next/link';
 import type { StaffInventoryCommand, StaffInventoryWorkspace as Workspace } from '@tenkings/database';
 import { prepareStaffInventoryPhoto, STAFF_INVENTORY_PHOTO_ACCEPT } from '../../lib/inventoryPhotoUpload';
 import StaffInventoryLocationBrowser from './StaffInventoryLocationBrowser';
-import type { StaffInventoryMapLocation } from '../../lib/staffInventoryLocationsMap';
+import { createStaffInventoryPointCache, parseStaffInventoryMapPointResponse, type StaffInventoryMapLocation } from '../../lib/staffInventoryLocationsMap';
 import StaffInventoryCardCapture from './StaffInventoryCardCapture';
 import { isStaffInventoryIdentificationResponse } from '../../lib/staffInventoryIdentification';
-import { createStaffInventoryLocator, staffInventoryLocationKind, type StaffLocationFix } from '../../lib/staffInventoryGeolocation';
+import { createStaffInventoryLocator, staffInventoryLocationKind } from '../../lib/staffInventoryGeolocation';
+import { readStaffInventoryPosition } from '../../lib/staffInventoryBrowserPosition';
 import styles from './StaffInventoryWorkspace.module.css';
 
 type Item = Workspace['items'][number] & { photo_url?: string | null; back_photo_url?: string | null };
@@ -42,17 +43,20 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name] ?? paths.box}</svg>;
 }
+const FieldErrors = createContext<Record<string, string>>({});
 function Field({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
+  const error = useContext(FieldErrors)[label], errorId = useId();
   const nameControl = (nodes: ReactNode): ReactNode => Children.map(nodes, node => {
     if (!isValidElement(node)) return node;
-    const el = node as ReactElement<{ children?: ReactNode; 'aria-label'?: string }>;
-    return ['input', 'select', 'textarea'].includes(String(el.type)) ? cloneElement(el, { 'aria-label': label }) : el.props.children ? cloneElement(el, {}, nameControl(el.props.children)) : el;
+    const el = node as ReactElement<{ children?: ReactNode; 'aria-label'?: string; 'aria-invalid'?: boolean; 'aria-describedby'?: string }>;
+    return ['input', 'select', 'textarea'].includes(String(el.type)) ? cloneElement(el, { 'aria-label': label, 'aria-invalid': !!error, 'aria-describedby': error ? errorId : undefined }) : el.props.children ? cloneElement(el, {}, nameControl(el.props.children)) : el;
   });
-  return <label className={styles.field}><span>{label}</span>{nameControl(children)}{help && <small>{help}</small>}</label>;
+  return <label className={styles.field}><span>{label}</span>{nameControl(children)}{error && <small id={errorId} className={styles.fieldError}>{error}</small>}{help && <small>{help}</small>}</label>;
 }
 
 export default function StaffInventoryWorkspace({ token, adminId, displayName, onAdvanced }: { token: string; adminId: string; displayName?: string | null; onAdvanced: () => void }) {
   const [data, setData] = useState<Data | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [tab, setTab] = useState('inventory'), [query, setQuery] = useState(''), [location, setLocation] = useState(''), [category, setCategory] = useState('');
   const [item, setItem] = useState<Item | null>(null), [selected, setSelected] = useState<string[]>([]), [mode, setMode] = useState<Mode>(null), [draft, setDraft] = useState<Draft>(fresh);
   const [busy, setBusy] = useState(false), [uploading, setUploading] = useState(false), [pending, setPending] = useState<Pending | null>(null), [rejected, setRejected] = useState(false);
@@ -66,6 +70,8 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
   const autoLocation = useRef(false), locationUpdatedAt = useRef(0);
   const sessionLocation = useRef({ location: '', kind: '' });
   const locator = useRef<ReturnType<typeof createStaffInventoryLocator> | null>(null);
+  const pointCache = useRef(createStaffInventoryPointCache());
+  const form = useRef<HTMLFormElement>(null);
   const dialog = useRef<HTMLDivElement>(null), active = useRef(true), saveLock = useRef(false), buttonRef = useRef<HTMLButtonElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null), libraryInput = useRef<HTMLInputElement>(null), photoFile = useRef<File | null>(null);
   const photoAttempt = useRef(0), photoLock = useRef(false), photoController = useRef<AbortController | null>(null);
@@ -83,14 +89,14 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
       const response = await fetch(API, { headers, cache: 'no-store' }); const value = await response.json();
       if (!response.ok) throw new Error(value.message || 'Inventory is temporarily unavailable.');
       if (value.version !== 1 || !Array.isArray(value.items) || !Array.isArray(value.locations)) throw new Error('Inventory returned an unreadable response.');
-      if (active.current) { setData(value); setError(''); }
+      if (active.current) { setData(value); if (!dialog.current) setError(''); }
     } catch (e) { if (active.current) setError(e instanceof Error ? e.message : 'Inventory could not be loaded.'); }
   }
   useEffect(() => {
-    active.current = true; void load();
+    active.current = true; locator.current = null; void load();
     try { const saved = sessionStorage.getItem(pendingKey); if (saved) { const value = JSON.parse(saved); if (value.actor !== adminId || !value.command?.request_id) throw new Error(); setPending(value.command); if (value.ui) { setDraft({ ...fresh(), ...value.ui.draft }); setMode(value.ui.mode); setItem(value.ui.item); setSelected(value.ui.selected ?? []); } setNotice('Your last save needs confirmation. Retry it below to finish without adding a duplicate.'); } } catch { setError('Your last saved request could not be read. Keep this tab open and contact your administrator.'); }
     return () => { active.current = false; releasePhotoAttempt(); cancelLocation(); };
-  // Session changes remount this component. Never copy requests between accounts.
+  // Accounts remount this component; refreshed tokens must also refresh lookup authorization.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminId, token]);
   useEffect(() => { if (mode || busy || pending) return; const timer = setInterval(() => { if (!document.hidden) void load(); }, 10000); return () => clearInterval(timer); });
@@ -122,9 +128,9 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     return () => inputs.forEach(input => input?.removeEventListener('cancel', cancel));
   }, [mode]);
   function changeFields(values: Partial<Draft>) { setDraft(d => { const next = { ...d, ...values }; if (mode === 'add') { try { sessionStorage.setItem(draftKey, JSON.stringify({ ...next, manuallyEditedFields: Object.keys(editedFields.current).filter(key => editedFields.current[key] > 0), automaticallyReadFields: [...aiFields.current], autoSelectedLocation: autoLocation.current, autoLocationUpdatedAt: locationUpdatedAt.current })); } catch { /* An unsaved form can still be used; exact save persistence is required separately. */ } } return next; }); }
-  function change<K extends keyof Draft>(key: K, value: Draft[K]) { aiFields.current.delete(key); editedFields.current[key] = (editedFields.current[key] ?? 0) + 1; if (key === 'location' || key === 'kind') locationRevision.current++; changeFields({ [key]: value }); }
+  function change<K extends keyof Draft>(key: K, value: Draft[K]) { setFieldErrors({}); if (!pending) setError(''); aiFields.current.delete(key); editedFields.current[key] = (editedFields.current[key] ?? 0) + 1; if (key === 'location' || key === 'kind') { locationRevision.current++; cancelLocation(); } changeFields({ [key]: value }); }
   function addInventory() {
-    if (pending) return; cancelPhoto(); setCaptureOpen(false); setIdentityNotes([]); editedFields.current = {}; aiFields.current.clear(); setError(''); setNotice(''); setItem(null); setSelected([]);
+    if (pending) return; cancelPhoto(); setCaptureOpen(false); setIdentityNotes([]); editedFields.current = {}; aiFields.current.clear(); setError(''); setFieldErrors({}); setNotice(''); setItem(null); setSelected([]);
     let next = { ...fresh(), ...sessionLocation.current }; try { const saved = sessionStorage.getItem(draftKey); if (saved) { const stored = JSON.parse(saved); autoLocation.current = stored.autoSelectedLocation === true; locationUpdatedAt.current = Number.isFinite(stored.autoLocationUpdatedAt) ? stored.autoLocationUpdatedAt : 0; next = { ...next, ...stored, origin: stored.origin || 'existing', type: stored.type || 'single', stage: stored.stage || 'unprocessed' }; const restoredFields = Array.isArray(stored.manuallyEditedFields) ? stored.manuallyEditedFields : ['name', 'category', ...cardFields].filter(key => stored[key]); editedFields.current = Object.fromEntries(restoredFields.map((key: string) => [key, 1])); aiFields.current = new Set((Array.isArray(stored.automaticallyReadFields) ? stored.automaticallyReadFields : []).filter((key: keyof Draft) => !editedFields.current[key])); } } catch { /* Start a clean unsaved form. */ }
     sessionLocation.current = { location: next.location, kind: next.kind }; setDraft(next); setMode('add');
   }
@@ -136,7 +142,7 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     d.back_photo_key = item.back_photo_key ?? null; d.back_photo_url = item.back_photo_url ?? null;
     for (const field of cardFields) d[field] = item.card_details?.[field] ?? '';
     setIdentityNotes([]); editedFields.current = {}; aiFields.current.clear();
-    setDraft(d); setMode(next); setError('');
+    setDraft(d); setMode(next); setError(''); setFieldErrors({});
   }
   const destination = () => {
     if (!draft.location || !draft.kind) throw new Error('Choose where the inventory is and what kind of location it is.');
@@ -164,8 +170,33 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     if (mode === 'prepare') { if (!draft.stage) throw new Error('Choose the new condition.'); return { ...meta, action: 'prepare', unit_ids: selected, stage: draft.stage as 'processing' | 'processed' | 'packed', product_id: draft.product || `inventory-product:${item.lot_id}` }; }
     throw new Error('Choose an action.');
   }
+  function validateEntry() {
+    const errors: Record<string, string> = {};
+    let first: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | undefined;
+    for (const control of form.current?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea') ?? []) {
+      if (!control.willValidate) continue;
+      const label = control.getAttribute('aria-label') || control.closest('label')?.textContent?.trim() || 'This field';
+      let message = '';
+      if (control.validity.valueMissing || control.required && !control.value.trim()) message = control.type === 'checkbox' ? 'Confirm these cards are already packed and loaded inside this machine.' : `${control.tagName === 'SELECT' ? 'Choose' : 'Enter'} ${label.toLowerCase()}.`;
+      else if (control.type === 'datetime-local' && (!control.validity.valid || !Number.isFinite(new Date(control.value).getTime()) || new Date(control.value) > new Date())) message = 'Choose the actual date and time, today or earlier.';
+      else if (!control.validity.valid) message = `${label}: ${control.validationMessage}`;
+      else if (control.getAttribute('inputmode') === 'decimal') { try { cents(control.value); } catch (e) { message = e instanceof Error ? e.message : 'Enter a valid amount.'; } }
+      if (message) {
+        errors[label] = message; first ??= control;
+        let parent = control.parentElement;
+        while (parent) { if (parent.tagName === 'DETAILS') (parent as HTMLDetailsElement).open = true; parent = parent.parentElement; }
+      }
+    }
+    setFieldErrors(errors);
+    if (!first) return true;
+    setError(Object.keys(errors).length === 1 ? errors[first.getAttribute('aria-label') || first.closest('label')?.textContent?.trim() || 'This field'] : `Complete ${Object.keys(errors).length} highlighted fields to save this entry.`);
+    first.focus({ preventScroll: true }); first.scrollIntoView?.({ block: 'center', behavior: 'auto' });
+    return false;
+  }
   async function save(retry?: Pending) {
-    if (saveLock.current || photoLock.current || photoFile.current || pairFiles.current) return;
+    if (saveLock.current) return;
+    if (photoLock.current || photoFile.current || pairFiles.current) { setError('Finish or cancel the photo step before saving this entry.'); return; }
+    if (!retry && !validateEntry()) return;
     let value: Pending;
     try { value = retry ?? command(); sessionStorage.setItem(pendingKey, JSON.stringify({ actor: adminId, command: value, ui: { mode, draft, item, selected } })); }
     catch (e) { setError(e instanceof Error ? e.message : 'Your entry could not be saved safely in this browser.'); return; }
@@ -177,7 +208,7 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
       if (result.request_id !== value.request_id || !['RECORDED', 'REPLAY'].includes(result.outcome)) throw new Error('Save could not be confirmed. Retry this saved entry.');
       sessionStorage.removeItem(pendingKey); if (value.action === 'add') sessionStorage.removeItem(draftKey);
       if (!active.current) return;
-      setPending(null); setItem(null); cancelPhoto(); setIdentityNotes([]); editedFields.current = {}; aiFields.current.clear();
+      setPending(null); setItem(null); cancelPhoto(); setFieldErrors({}); setIdentityNotes([]); editedFields.current = {}; aiFields.current.clear();
       if (value.action === 'add' && value.quantity === 1) {
         sessionLocation.current = { location: value.destination.location_id, kind: value.destination.kind };
         setDraft({ ...fresh(), ...sessionLocation.current, origin: value.origin }); setMode('add'); setAutoStartCamera(false); setCaptureSource('camera'); setCaptureCycle(cycle => cycle + 1); setCaptureOpen(true);
@@ -221,23 +252,21 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     geoController.current?.abort(); const controller = new AbortController(); geoController.current = controller;
     setLocationStatus('Finding your location…');
     if (!locator.current) locator.current = createStaffInventoryLocator({
-      getPosition: () => new Promise<StaffLocationFix>((resolve, reject) => {
-        if (!navigator.geolocation) { reject(new Error('Location is unavailable')); return; }
-        navigator.geolocation.getCurrentPosition(position => resolve({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy, timestamp: position.timestamp }), reject, { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 });
-      }),
+      getPosition: signal => readStaffInventoryPosition({ signal, onProgress: message => { if (active.current && !signal.aborted) setLocationStatus(message); } }),
+      pointCache: pointCache.current,
       resolvePoint: async (id, signal) => {
         const response = await fetch(`/api/v2/admin/inventory/location-map?location_id=${encodeURIComponent(id)}`, { headers, signal, cache: 'no-store' });
-        if (!response.ok) return null; const body = await response.json(); return body.location_id === id ? body.point : null;
+        if (!response.ok) return null; return parseStaffInventoryMapPointResponse(id, await response.json());
       },
     });
-    const result = await locator.current(data.locations, controller.signal, retry);
+    const result = await locator.current(data.locations, controller.signal, retry, progress => { if (active.current && !controller.signal.aborted && attempt === geoAttempt.current && revision === locationRevision.current) setLocationStatus(progress.message); });
     if (!active.current || controller.signal.aborted || attempt !== geoAttempt.current || revision !== locationRevision.current) return;
     setLocationStatus(result.message);
     if (result.location) {
       const kind = (previousLocation.location === result.location.id ? previousLocation.kind : '') || staffInventoryLocationKind(result.location, data.items);
       autoLocation.current = true; locationUpdatedAt.current = Date.now();
       changeFields({ location: result.location.id, kind }); sessionLocation.current = { location: result.location.id, kind };
-      if (!kind) setLocationStatus('Location found. Choose its inventory type once for this session.');
+      if (!kind) setLocationStatus(`${result.message} Choose its inventory type once for this session.`);
     }
   }
   useEffect(() => { if (captureOpen && mode === 'add') void locateInventory();
@@ -310,7 +339,7 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
   const locationFields = <>
     <Field label={mode === 'move' ? 'Destination' : 'Current location'}><select required value={draft.location} onChange={e => { autoLocation.current = false; change('location', e.target.value); const l = data?.locations.find(l => l.id === e.target.value); const kind = l ? staffInventoryLocationKind(l, data?.items ?? []) : ''; change('kind', kind); sessionLocation.current = { location: e.target.value, kind }; setLocationStatus('Using your selected location for this session.'); }}><option value="">Choose a location</option>{data?.locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
     <Field label="Location type"><select required value={draft.kind} onChange={e => { change('kind', e.target.value); sessionLocation.current = { location: draft.location, kind: e.target.value }; }}><option value="">Choose type</option><option value="hq">HQ / storage</option><option value="store">Store</option><option value="kiosk">Kiosk</option><option value="machine">Vending machine</option></select></Field>
-    {draft.kind === 'machine' && <>{mode === 'add' && <label className={styles.checkbox}><input type="checkbox" required checked={draft.loadedConfirmed} onChange={e => change('loadedConfirmed', e.target.checked)} />These cards are already packed and loaded inside this machine.</label>}<Field label="Machine number" help="Use the number on the machine’s sticker."><input required list="inventory-machines" value={draft.machine} onChange={e => change('machine', e.target.value)} /><datalist id="inventory-machines">{data?.machines.filter(m => m.location_id === draft.location).map((m, i) => <option key={i} value={m.machine_id} />)}</datalist></Field><Field label="Machine product number" help="Use the product number from this machine’s sales records. The selected cards will be assigned to this product."><input required value={draft.product} onChange={e => change('product', e.target.value)} /></Field><Field label="Door / slot (optional)"><input value={draft.door} onChange={e => change('door', e.target.value)} /></Field></>}
+    {draft.kind === 'machine' && <>{mode === 'add' && <label className={styles.checkbox}><input type="checkbox" required aria-label="Loaded machine confirmation" aria-invalid={!!fieldErrors["Loaded machine confirmation"]} checked={draft.loadedConfirmed} onChange={e => change('loadedConfirmed', e.target.checked)} />These cards are already packed and loaded inside this machine.</label>}<Field label="Machine number" help="Use the number on the machine’s sticker."><input required list="inventory-machines" value={draft.machine} onChange={e => change('machine', e.target.value)} /><datalist id="inventory-machines">{data?.machines.filter(m => m.location_id === draft.location).map((m, i) => <option key={i} value={m.machine_id} />)}</datalist></Field><Field label="Machine product number" help="Use the product number from this machine’s sales records. The selected cards will be assigned to this product."><input required value={draft.product} onChange={e => change('product', e.target.value)} /></Field><Field label="Door / slot (optional)"><input value={draft.door} onChange={e => change('door', e.target.value)} /></Field></>}
   </>;
   const fastCardPhoto = mode === 'add' && draft.type === 'single' || mode === 'edit' && selected.length === 1;
   const descriptionFields = <>
@@ -346,21 +375,21 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     <aside className={styles.sidebar}><Link href="/admin" className={styles.brand}><svg className={styles.crown} width="32" height="30" viewBox="0 0 32 30" fill="none" aria-hidden="true"><path d="m3 8 7 6 6-11 6 11 7-6-3 15H6L3 8Z" stroke="currentColor" strokeWidth="1.5"/><path d="M7 27h18" stroke="currentColor" strokeWidth="1.5"/></svg><span>TEN KINGS<small>TEAM WORKSPACE</small></span></Link><div className={styles.navLabel}>WORKSPACE</div><button className={tab === 'inventory' ? styles.navActive : styles.nav} onClick={() => setTab('inventory')}><Icon name="box" />Inventory</button><button className={tab === 'locations' ? styles.navActive : styles.nav} onClick={() => setTab('locations')}><Icon name="pin" />Locations</button><div className={styles.sidebarBottom}><button className={styles.nav} onClick={onAdvanced}>Advanced records<Icon name="chevron" size={15} /></button><Link className={styles.nav} href="/admin"><Icon name="back" />Admin home</Link><div className={styles.person}><span>{(displayName || 'TK').slice(0, 2).toUpperCase()}</span><div>{displayName || 'Ten Kings team'}<small>Inventory access</small></div></div></div></aside>
     <main className={styles.main}>
       <div className={styles.topline}><span>OPERATIONS <i>/</i> {tab === 'locations' ? 'LOCATIONS' : 'INVENTORY'}</span><span className={styles.saved}><i />{error ? 'Connection needs attention' : data ? 'Team inventory' : 'Connecting…'}</span></div>
-      <header className={styles.header}><div><p className={styles.eyebrow}>EVERY CARD. ONE PLACE.</p><h1>{tab === 'locations' ? 'Your locations' : 'Inventory'}</h1><p>{tab === 'locations' ? 'See what is recorded at each Ten Kings location.' : 'Add stock, give it a home, and keep your team in sync.'}</p></div><div className={styles.headerActions}>{tab === 'locations' && <button className={styles.secondary} disabled={!!pending || !data} onClick={() => { setMode('location'); setDraft(fresh()); setItem(null); setError(''); }}>Add location</button>}<button ref={buttonRef} className={styles.primary} onClick={addInventory} disabled={!!pending || !data}><Icon name="plus" />Add inventory</button></div></header>
+      <header className={styles.header}><div><p className={styles.eyebrow}>EVERY CARD. ONE PLACE.</p><h1>{tab === 'locations' ? 'Your locations' : 'Inventory'}</h1><p>{tab === 'locations' ? 'See what is recorded at each Ten Kings location.' : 'Add stock, give it a home, and keep your team in sync.'}</p></div><div className={styles.headerActions}>{tab === 'locations' && <button className={styles.secondary} disabled={!!pending || !data} onClick={() => { setMode('location'); setDraft(fresh()); setItem(null); setError(''); setFieldErrors({}); }}>Add location</button>}<button ref={buttonRef} className={styles.primary} onClick={addInventory} disabled={!!pending || !data}><Icon name="plus" />Add inventory</button></div></header>
       {!mode && !item && <>{error && <div role="alert" className={styles.error}>{error}<button onClick={() => { setError(''); void load(); }}>Try again</button></div>}{notice && <div role="status" className={styles.success}><Icon name="check" />{notice}</div>}{retryControls}</>}
       <section className={styles.stats} aria-label="Inventory overview"><div><span>Recorded on hand</span><strong>{data?.totals.on_hand.toLocaleString() ?? '—'}<small>cards</small></strong><p>{data?.totals.machine_roster ? `${data.totals.machine_roster.toLocaleString()} additional cards in machine loading records` : 'At HQ, stores and kiosks'}</p></div><div><span>Acquisition cost</span><strong>{money(data?.totals.cost_cents)}</strong><p>{data?.totals.value_overflow ? 'Total exceeds supported range' : data?.totals.on_hand ? `${data.totals.costed_units} of ${data.totals.on_hand} held cards have a cost` : 'Enter costs when you add stock'}</p></div><div><span>Expected gross profit</span><strong className={data?.totals.expected_profit_cents != null && data.totals.expected_profit_cents < 0 ? styles.loss : styles.profit}>{money(data?.totals.expected_profit_cents)}</strong><p>{data?.totals.expected_margin_pct != null ? `${data.totals.expected_margin_pct.toFixed(1)}% margin · before fees & overhead` : 'Expected sale price less acquisition cost'}</p></div></section>
       {tab === 'inventory' ? <section className={styles.panel}>
         <div className={styles.panelHeading}><h2>All inventory <span>{data?.items.length ?? '—'}</span></h2><button className={styles.iconButton} aria-label="Refresh inventory" onClick={() => void load()}><Icon name="refresh" size={18} /></button></div>
         {!!data?.items.length && <div className={styles.filters}><label className={styles.search}><Icon name="search" size={18} /><input aria-label="Search inventory" placeholder="Search inventory" value={query} onChange={e => setQuery(e.target.value)} /></label><select aria-label="Filter by location" value={location} onChange={e => setLocation(e.target.value)}><option value="">All locations</option>{data.locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select><select aria-label="Filter by category" value={category} onChange={e => setCategory(e.target.value)}><option value="">All categories</option>{categories.map(c => <option key={c}>{c}</option>)}</select></div>}
         {!data ? <div className={styles.empty}><span className={styles.emptyIcon}><Icon name="box" size={36} /></span><h3>Loading your inventory…</h3></div> : !data.items.length ? <div className={styles.empty}><span className={styles.emptyIcon}><Icon name="box" size={42} /></span><span className={styles.eyebrow}>LET’S GET YOUR STOCK ORGANIZED</span><h3>Your inventory starts here.</h3><p>Add the cards you already have or record a new purchase.<br />Start with one card or an entire batch.</p><button className={styles.primary} onClick={addInventory} disabled={!!pending}><Icon name="plus" />Add your first inventory</button><div className={styles.emptySteps}><span><b>1</b>Add your cards</span><span><b>2</b>Set cost & price</span><span><b>3</b>Choose a location</span></div></div> : !items.length ? <div className={styles.empty}><h3>No matching inventory</h3><p>Try another name or clear your filters.</p><button className={styles.secondary} onClick={() => { setQuery(''); setLocation(''); setCategory(''); }}>Clear filters</button></div> : <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Inventory</th><th>Location</th><th>Quantity</th><th>Cost</th><th>Expected sale</th><th>Expected profit</th><th><span className={styles.srOnly}>Open item</span></th></tr></thead><tbody>{items.map(i => <tr key={i.id}><td><button className={styles.itemButton} onClick={() => openItem(i)}><span className={styles.thumb}>{i.photo_url ? <img src={i.photo_url} alt="" /> : <Icon name="cards" size={25} />}</span><span><strong>{i.name || 'Unnamed inventory'}</strong><small>{i.category || 'Category not set'} <i>·</i> {stageNames[i.stage]}</small></span></button></td><td data-label="Location"><span className={styles.locationName}>{i.location_name || 'Location not named'}</span><small>{i.custody_id.startsWith('machine:') ? 'Vending machine' : i.custody_id.startsWith('store:') ? 'Store' : i.custody_id.startsWith('kiosk:') ? 'Kiosk' : 'HQ / storage'}</small></td><td data-label="Quantity"><strong>{i.quantity.toLocaleString()}</strong><small>{i.quantity_kind === 'loaded_roster' ? 'loaded · count needed' : i.quantity === 1 ? 'card on hand' : 'cards on hand'}</small></td><td data-label="Cost">{money(i.cost_cents)}<small>{i.value_overflow ? 'Total exceeds supported range' : i.cost_cents === null ? 'Cost not fully entered' : 'Total cost'}</small></td><td data-label="Expected sale">{money(i.expected_price_cents)}<small>per card</small></td><td data-label="Expected profit" className={i.expected_profit_cents !== null && i.expected_profit_cents < 0 ? styles.loss : styles.profit}>{money(i.expected_profit_cents)}<small>{i.expected_margin_pct === null ? 'Price or cost not set' : `${i.expected_margin_pct.toFixed(1)}% margin`}</small></td><td><button className={styles.iconButton} aria-label={`Open ${i.name || 'inventory'}`} onClick={() => openItem(i)}><Icon name="chevron" /></button></td></tr>)}</tbody></table></div>}
-      </section> : <StaffInventoryLocationBrowser locations={data?.locations ?? []} items={data?.items ?? []} token={token} onViewInventory={id => { setLocation(id); setCategory(''); setQuery(''); setTab('inventory'); }} />}
+      </section> : <StaffInventoryLocationBrowser locations={data?.locations ?? []} items={data?.items ?? []} token={token} pointCache={pointCache.current} onViewInventory={id => { setLocation(id); setCategory(''); setQuery(''); setTab('inventory'); }} />}
       <footer className={styles.footer}><button className={styles.mobileAdvanced} onClick={onAdvanced}>Advanced records</button><span>Staff records are saved securely in Ten Kings.</span><span>{data?.updated_at ? `Latest activity ${new Date(data.updated_at).toLocaleString()}` : 'Ready for your first entry'}</span></footer>
     </main>
     {(mode || item) && <div className={styles.overlay} onMouseDown={e => { if (e.target === e.currentTarget) close(); }}><div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="inventory-dialog-title" className={styles.drawer}>
       <div className={styles.drawerHeader} hidden={captureOpen}><div><span className={styles.eyebrow}>{mode === 'add' ? 'BUILD YOUR INVENTORY' : 'INVENTORY DETAILS'}</span><h2 id="inventory-dialog-title">{mode === 'add' ? 'Add inventory' : mode === 'edit' ? 'Edit selected cards' : mode === 'move' ? 'Move inventory' : mode === 'prepare' ? 'Update condition' : mode === 'cost' ? 'Update purchase cost' : mode === 'count' ? 'Record machine count' : mode === 'location' ? 'Add location' : item?.name || 'Inventory details'}</h2></div><button className={styles.iconButton} aria-label="Close inventory details" disabled={busy || !!pending} onClick={close}><Icon name="close" /></button></div>
-      {(mode === 'add' && draft.type === 'single' || mode === 'edit' && selected.length === 1) && <StaffInventoryCardCapture autoStartCamera={autoStartCamera} open={captureOpen} cycle={captureCycle} initialSource={captureSource} disabled={busy || uploading || !!pending} onPair={(front, back) => void pairCaptured(front, back)} onClose={() => setCaptureOpen(false)} onError={message => setPhotoStatus(message)} />}
-      {!captureOpen && <>{error && <div role="alert" className={styles.error}>{error}</div>}{retryControls}{mode === 'add' && notice && <div className={styles.intakeNotice} role="status">{notice}</div>}</>}
-      {mode ? <form hidden={captureOpen} onSubmit={e => { e.preventDefault(); void save(); }}><fieldset disabled={busy || !!pending} className={styles.formBody}>
+      {(mode === 'add' && draft.type === 'single' || mode === 'edit' && selected.length === 1) && <StaffInventoryCardCapture autoStartCamera={autoStartCamera} open={captureOpen} cycle={captureCycle} initialSource={captureSource} disabled={busy || uploading || !!pending} onPair={(front, back) => void pairCaptured(front, back)} onClose={() => setCaptureOpen(false)} onError={message => setPhotoStatus(message)} locationStatus={mode === 'add' ? locationStatus : undefined} />}
+      {!captureOpen && <>{!mode && error && <div role="alert" className={styles.error}>{error}</div>}{!mode && retryControls}{mode === 'add' && notice && <div className={styles.intakeNotice} role="status">{notice}</div>}</>}
+      {mode ? <FieldErrors.Provider value={fieldErrors}><form ref={form} noValidate hidden={captureOpen} onSubmit={e => { e.preventDefault(); void save(); }}><fieldset disabled={busy || !!pending} className={styles.formBody}>
         {mode === 'location' && <section className={styles.formSection}><Field label="Location name"><input required value={draft.name} onChange={e => change('name', e.target.value)} /></Field><Field label="Street address"><input required value={draft.address} onChange={e => change('address', e.target.value)} /></Field><Field label="Location type"><select required value={draft.kind} onChange={e => change('kind', e.target.value)}><option value="">Choose a type</option><option value="hq">HQ / storage</option><option value="store">Store</option><option value="kiosk">Kiosk</option></select></Field><p className={styles.helper}>HQ and storage locations are private to your team. Use an existing venue location when assigning stock to a vending machine.</p></section>}
         {mode === 'add' && <><div className={styles.segment} aria-label="Inventory type">{[['single', 'Individual card'], ['batch', 'Batch of cards']].map(([key, name]) => <button type="button" key={key} aria-pressed={draft.type === key} disabled={uploading} onClick={() => { cancelPhoto(); change('type', key); }}>{name}</button>)}</div><p className={styles.helper}>Add cards you own and have on hand. {draft.type === 'single' ? 'Save a card, then go straight to the next one.' : 'Enter one batch and its total cost.'}</p></>}
 
@@ -370,7 +399,7 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
         {mode === 'count' && <section className={styles.formSection}><Field label="Cards physically counted" help="Count this product across the selected machine scope, including all loading batches."><input required type="number" min="0" step="1" inputMode="numeric" value={draft.quantity} onChange={e => change('quantity', e.target.value)} /></Field><p className={styles.helper}>{item?.location_name} · machine {item?.machine_scope?.machine_id} · product {item?.machine_scope?.product_id}{item?.machine_scope?.door_id ? ` · slot ${item.machine_scope.door_id}` : ' · all slots'}</p><p className={styles.helper}>This records what staff counted at the time below. It does not guess which individual cards sold.</p></section>}
         {mode === 'prepare' && <section className={styles.formSection}><Field label="New condition"><select required value={draft.stage} onChange={e => change('stage', e.target.value)}><option value="">Choose completed work</option><option value="processing">Being prepared</option><option value="processed">Ready to pack</option><option value="packed">Packed — one card per pack</option></select></Field><Field label="Product"><select value={draft.product} onChange={e => change('product', e.target.value)}><option value="">{item?.name || 'This inventory'}</option>{data?.products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><p className={styles.helper}>Record work that has actually been completed. Packing keeps each card’s purchase cost attached.</p></section>}
         {mode === 'add' ? <details className={styles.entryDetails}><summary>More details <span>Receipt, date and notes</span></summary><div className={styles.formSection}><label className={styles.checkbox}><input type="checkbox" checked={draft.origin === 'purchase'} onChange={e => change('origin', e.target.checked ? 'purchase' : 'existing')} /><span>This is a newly received purchase<small>Optional receipt history. Both choices add inventory you currently own; neither records a bank payment or sale.</small></span></label><Field label="Entry date and time"><input required type="datetime-local" value={draft.date} max={localNow()} onChange={e => change('date', e.target.value)} /></Field><Field label="Notes or receipt reference (optional)"><textarea rows={3} maxLength={1600} value={draft.note} onChange={e => change('note', e.target.value)} /></Field></div></details> : mode !== 'location' && <section className={styles.formSection}><Field label="Date and time"><input required type="datetime-local" value={draft.date} max={localNow()} onChange={e => change('date', e.target.value)} /></Field><Field label={mode === 'cost' ? 'Receipt reference / reason' : 'Notes or receipt reference (optional)'}><textarea rows={3} maxLength={1600} value={draft.note} onChange={e => change('note', e.target.value)} /></Field></section>}
-      </fieldset><div className={styles.drawerFooter}>{(uploading || photoError) && <p className={styles.footerPhotoStatus} role="status">{uploading ? photoStatus : 'Retry the photo or choose how to continue above.'}</p>}<button type="button" className={styles.secondary} disabled={busy || !!pending} onClick={close}>Cancel</button><button type="submit" className={styles.primary} disabled={busy || uploading || !!photoError || !!pending}>{busy ? 'Saving…' : uploading ? 'Preparing photo…' : mode === 'add' ? 'Add inventory' : mode === 'location' ? 'Add location' : mode === 'move' ? draft.planned ? 'Save planned move' : 'Save move' : 'Save changes'}<Icon name="arrow" size={18} /></button></div></form> : item && <div className={styles.itemDetail}>
+      </fieldset><div className={styles.drawerFooter}>{error && <p className={styles.saveError} role="alert">{error}</p>}{!busy && retryControls}{(busy || uploading || photoError) && <p className={styles.footerPhotoStatus} role="status">{busy ? 'Saving your entry…' : uploading ? photoStatus : 'Retry the photo or choose how to continue above.'}</p>}<div className={styles.saveActions} hidden={!!pending && !busy}><button type="button" className={styles.secondary} disabled={busy || !!pending} onClick={close}>Cancel</button><button type="submit" className={styles.primary} disabled={busy || uploading || !!photoError || !!pending}>{busy ? 'Saving…' : uploading ? 'Preparing photo…' : mode === 'add' ? 'Add inventory' : mode === 'location' ? 'Add location' : mode === 'move' ? draft.planned ? 'Save planned move' : 'Save move' : 'Save changes'}<Icon name="arrow" size={18} /></button></div></div></form></FieldErrors.Provider> : item && <div className={styles.itemDetail}>
         <div className={styles.detailHero}>{item.photo_url ? <img src={item.photo_url} alt={item.name || 'Inventory'} /> : <Icon name="cards" size={65} />}<span>{item.category || 'Category not set'}</span></div>
         {item.back_photo_url && <div className={styles.detailBack}><img src={item.back_photo_url} alt="Back of inventory card" /><span>Back</span></div>}
         {item.card_details && <dl className={styles.savedCardMetadata}>{cardFields.filter(field => item.card_details?.[field]).map(field => <div key={field}><dt>{cardFieldLabels[field]}</dt><dd>{item.card_details?.[field]}</dd></div>)}</dl>}

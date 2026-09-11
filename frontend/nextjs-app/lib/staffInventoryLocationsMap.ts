@@ -12,11 +12,40 @@ export type StaffInventoryMapItem = Pick<StaffInventoryWorkspace['items'][number
   'costed_units' | 'priced_units' | 'machine_scope' | 'last_count'>;
 
 export type MappedInventoryLocation = StaffInventoryMapLocation & { latitude: number; longitude: number };
+export type StaffInventoryMapPoint = { latitude: number; longitude: number; coordinateSource?: 'saved' | 'address_lookup' };
+export type StaffInventoryPointCache = {
+  get(location: StaffInventoryMapLocation): StaffInventoryMapPoint | undefined;
+  set(location: StaffInventoryMapLocation, point: StaffInventoryMapPoint): void;
+};
 
 export function hasInventoryMapPoint(location: StaffInventoryMapLocation): location is MappedInventoryLocation {
   return location.slug !== ONLINE_LOCATION_SLUG &&
     typeof location.latitude === 'number' && Number.isFinite(location.latitude) && Math.abs(location.latitude) <= 90 &&
     typeof location.longitude === 'number' && Number.isFinite(location.longitude) && Math.abs(location.longitude) <= 180;
+}
+
+/** Only successful, validated points are shared within the authenticated workspace's memory. */
+export function createStaffInventoryPointCache(): StaffInventoryPointCache {
+  const points = new Map<string, StaffInventoryMapPoint>();
+  const key = (location: StaffInventoryMapLocation) => JSON.stringify([location.id, location.address]);
+  return {
+    get(location) {
+      if (hasInventoryMapPoint(location)) return { latitude: location.latitude, longitude: location.longitude, coordinateSource: location.coordinateSource ?? 'saved' };
+      const point = points.get(key(location));
+      return point ? { ...point } : undefined;
+    },
+    set(location, point) {
+      if (hasInventoryMapPoint({ ...location, ...point })) points.set(key(location), { latitude: point.latitude, longitude: point.longitude, coordinateSource: point.coordinateSource });
+    },
+  };
+}
+
+/** The map and intake consume the same authenticated location-map response shape. */
+export function parseStaffInventoryMapPointResponse(locationId: string, body: unknown): StaffInventoryMapPoint | null {
+  if (!body || typeof body !== 'object' || !('location_id' in body) || body.location_id !== locationId || !('point' in body) || !body.point || typeof body.point !== 'object') return null;
+  const point = body.point;
+  if (!('latitude' in point) || typeof point.latitude !== 'number' || !Number.isFinite(point.latitude) || Math.abs(point.latitude) > 90 || !('longitude' in point) || typeof point.longitude !== 'number' || !Number.isFinite(point.longitude) || Math.abs(point.longitude) > 180) return null;
+  return { latitude: point.latitude, longitude: point.longitude, coordinateSource: 'coordinateSource' in point && point.coordinateSource === 'saved' ? 'saved' : 'address_lookup' };
 }
 
 function safeSum(values: (number | null)[]): number | null {

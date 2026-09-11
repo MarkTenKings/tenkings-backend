@@ -39,6 +39,15 @@
 .drawerFooter{flex-wrap:wrap;padding-bottom:calc(18px + env(safe-area-inset-bottom,0px))}
 .footerPhotoStatus{flex-basis:100%;font-size:12px;line-height:1.5;color:#747e68;margin:0}
 .drawer input,.drawer select,.drawer textarea,.drawer button{touch-action:manipulation}
+.field [aria-invalid=true]{border-color:#a95639;box-shadow:0 0 0 1px #a9563920}
+.field select{appearance:none;min-height:48px;padding-right:36px;background-image:linear-gradient(45deg,transparent 50%,#747e68 50%),linear-gradient(135deg,#747e68 50%,transparent 50%);background-position:calc(100% - 19px) 50%,calc(100% - 14px) 50%;background-size:5px 5px;background-repeat:no-repeat}
+.field .fieldError{color:#934526;font-size:12px;font-weight:500}
+.saveError{width:100%;margin:0;padding:10px 12px;border-left:3px solid #b86747;background:#fff6ef;color:#8e452b;border-radius:4px;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.saveActions{display:flex;justify-content:space-between;gap:12px;width:100%}
+.drawerFooter>.pending{width:100%;margin:0;padding:10px 12px}
+.drawerFooter>.pending p{margin:5px 0 8px;line-height:1.4}
+.drawerFooter>.pending .primary,.drawerFooter>.pending .secondary{min-width:0;padding:9px 12px}
+.drawerFooter{max-height:calc(var(--inventory-viewport-height,100dvh) - 112px);overflow-y:auto}
 @media(max-width:600px){
   .drawerHeader{padding-top:calc(20px + env(safe-area-inset-top,0px))}
   .drawerFooter{padding-bottom:calc(16px + env(safe-area-inset-bottom,0px))}

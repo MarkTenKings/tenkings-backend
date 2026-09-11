@@ -19,6 +19,7 @@ export type StaffInventoryCardCaptureProps = {
   onPair: (front: File, back: File) => void;
   onClose: () => void;
   onError?: (message: string) => void;
+  locationStatus?: string;
 };
 
 function CameraIcon() {
@@ -41,7 +42,7 @@ function preparedFile(image: string, side: Side) {
 }
 
 /** One component instance is one add-modal camera session. Keep it mounted while pricing. */
-export default function StaffInventoryCardCapture({ open, cycle, disabled = false, initialSource = 'camera', autoStartCamera = true, onPair, onClose, onError }: StaffInventoryCardCaptureProps) {
+export default function StaffInventoryCardCapture({ open, cycle, disabled = false, initialSource = 'camera', autoStartCamera = true, onPair, onClose, onError, locationStatus }: StaffInventoryCardCaptureProps) {
   const headingId = useId();
   const [source, setSource] = useState<Source>(initialSource);
   const [side, setSide] = useState<Side>('front');
@@ -364,6 +365,7 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
           </div>)}
         </div>}
         <div aria-live="polite" role="status" className={styles.status}>{busy ? source === 'library' ? 'Preparing photo…' : 'Capturing photo…' : delivered ? 'Both sides are ready. Continue with the card details.' : side === 'back' ? 'Front captured. One more photo and your card details will fill in.' : 'Two quick photos. Then review the details and add your prices.'}</div>
+        {locationStatus && <p className={styles.locationStatus} role="status">{locationStatus}</p>}
         {error && <p role="alert" className={styles.error}>{error}</p>}
       </div>
       <footer className={styles.footer}>

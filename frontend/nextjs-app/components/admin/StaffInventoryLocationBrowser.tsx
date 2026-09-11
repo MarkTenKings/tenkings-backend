@@ -1,17 +1,18 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ONLINE_LOCATION_SLUG } from '../../lib/locationUtils';
-import { hasInventoryMapPoint, summarizeInventoryLocations, type StaffInventoryMapItem, type StaffInventoryMapLocation } from '../../lib/staffInventoryLocationsMap';
+import { createStaffInventoryPointCache, hasInventoryMapPoint, parseStaffInventoryMapPointResponse, summarizeInventoryLocations, type StaffInventoryMapItem, type StaffInventoryMapLocation, type StaffInventoryPointCache } from '../../lib/staffInventoryLocationsMap';
 import styles from './StaffInventoryLocationBrowser.module.css';
 
 const LocationsMap = dynamic(() => import('./StaffInventoryLocationsMap'), { ssr: false, loading: () => <div className={styles.loading} role="status">Opening your map…</div> });
 type Point = Pick<StaffInventoryMapLocation, 'latitude' | 'longitude' | 'coordinateSource'>;
 type Lookup = { point?: Point; message?: string };
 
-export default function StaffInventoryLocationBrowser({ locations, items, token, onViewInventory }: {
+export default function StaffInventoryLocationBrowser({ locations, items, token, pointCache: sharedPointCache, onViewInventory }: {
   locations: StaffInventoryMapLocation[];
   items: StaffInventoryMapItem[];
   token: string;
+  pointCache?: StaffInventoryPointCache;
   onViewInventory(locationId: string): void;
 }) {
   const [view, setView] = useState<'list' | 'map'>('list');
@@ -19,6 +20,9 @@ export default function StaffInventoryLocationBrowser({ locations, items, token,
   const [resolving, setResolving] = useState<string[]>([]);
   const [retry, setRetry] = useState(0);
   const cache = useRef<Record<string, Lookup>>({});
+  const localPointCache = useRef<StaffInventoryPointCache>();
+  if (!localPointCache.current) localPointCache.current = createStaffInventoryPointCache();
+  const pointCache = sharedPointCache ?? localPointCache.current;
   const lookupKey = (location: StaffInventoryMapLocation) => JSON.stringify([location.id, location.address]);
   // Only location/address changes restart lookups; inventory refreshes do not repeat provider calls.
   const candidateSignature = JSON.stringify(locations.filter(location => !hasInventoryMapPoint(location) && location.slug !== ONLINE_LOCATION_SLUG && location.address?.trim()).map(location => [location.id, location.address]));
@@ -26,7 +30,14 @@ export default function StaffInventoryLocationBrowser({ locations, items, token,
   useEffect(() => {
     if (view !== 'map') return;
     const controller = new AbortController();
-    const candidates = (JSON.parse(candidateSignature) as [string, string][]).filter(entry => !cache.current[JSON.stringify(entry)]);
+    const entries = JSON.parse(candidateSignature) as [string, string][];
+    const reused: Record<string, Lookup> = {};
+    for (const [id, address] of entries) {
+      const point = pointCache.get({ id, address, name: '', slug: '', locationType: null });
+      if (point) { const key = JSON.stringify([id, address]); cache.current[key] = { point }; reused[key] = { point }; }
+    }
+    if (Object.keys(reused).length) setLookups(previous => ({ ...previous, ...reused }));
+    const candidates = entries.filter(entry => !cache.current[JSON.stringify(entry)]);
     setResolving(candidates.map(([id]) => id));
     let next = 0;
     const work = async () => {
@@ -38,15 +49,16 @@ export default function StaffInventoryLocationBrowser({ locations, items, token,
           const response = await fetch(`/api/v2/admin/inventory/location-map?location_id=${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal, cache: 'no-store' });
           const body = await response.json();
           if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'Sign in again to view this map point.' : 'Map point unavailable. Please try again.');
-          const point = body.point;
-          result = body.location_id === id && point && hasInventoryMapPoint({ id, name: '', slug: '', address, locationType: null, ...point })
-            ? { point: { latitude: point.latitude, longitude: point.longitude, coordinateSource: point.coordinateSource === 'saved' ? 'saved' : 'address_lookup' } }
+          const point = parseStaffInventoryMapPointResponse(id, body);
+          result = point
+            ? { point }
             : { message: typeof body.message === 'string' ? body.message : 'Map point unavailable. Check the saved address.' };
         } catch (error) {
           if (controller.signal.aborted) return;
           result = { message: error instanceof Error ? error.message : 'Map point unavailable. Please try again.' };
         }
         if (controller.signal.aborted) return;
+        if (result.point && typeof result.point.latitude === 'number' && typeof result.point.longitude === 'number') pointCache.set({ id, address, name: '', slug: '', locationType: null }, { latitude: result.point.latitude, longitude: result.point.longitude, coordinateSource: result.point.coordinateSource });
         cache.current[key] = result;
         setLookups(previous => ({ ...previous, [key]: result }));
         setResolving(previous => previous.filter(locationId => locationId !== id));
@@ -54,12 +66,12 @@ export default function StaffInventoryLocationBrowser({ locations, items, token,
     };
     void Promise.all(Array.from({ length: Math.min(3, candidates.length) }, work));
     return () => controller.abort();
-  }, [view, candidateSignature, token, retry]);
+  }, [view, candidateSignature, token, retry, pointCache]);
 
-  const merged = locations.map(location => hasInventoryMapPoint(location) ? { ...location, coordinateSource: 'saved' as const } : { ...location, ...lookups[lookupKey(location)]?.point });
+  const merged = locations.map(location => hasInventoryMapPoint(location) ? { ...location, coordinateSource: 'saved' as const } : { ...location, ...(pointCache.get(location) ?? lookups[lookupKey(location)]?.point) });
   const errors = Object.fromEntries(locations.flatMap(location => {
     const message = lookups[lookupKey(location)]?.message;
-    return !hasInventoryMapPoint(location) && message ? [[location.id, message]] : [];
+    return !hasInventoryMapPoint(location) && !pointCache.get(location) && message ? [[location.id, message]] : [];
   }));
   const summaries = useMemo(() => summarizeInventoryLocations(locations, items), [locations, items]);
 

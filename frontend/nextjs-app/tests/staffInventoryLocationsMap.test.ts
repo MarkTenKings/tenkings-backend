@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  groupInventoryMapPoints, hasInventoryMapPoint, summarizeInventoryLocations,
+  createStaffInventoryPointCache, groupInventoryMapPoints, hasInventoryMapPoint, parseStaffInventoryMapPointResponse, summarizeInventoryLocations,
   type StaffInventoryMapItem, type StaffInventoryMapLocation,
 } from '../lib/staffInventoryLocationsMap';
 import { ONLINE_LOCATION_SLUG } from '../lib/locationUtils';
@@ -17,6 +17,24 @@ test('map coordinates require real finite numeric pairs in bounds and omit the o
   }
   assert.equal(hasInventoryMapPoint({ ...location('online'), slug: ONLINE_LOCATION_SLUG }), false);
   assert.equal(hasInventoryMapPoint({ ...location('string'), latitude: '34' as unknown as number }), false);
+});
+
+test('the shared map response parser validates identity and numeric coordinates without changing API shape', () => {
+  const point = { latitude: 0, longitude: 0, coordinateSource: 'saved' };
+  assert.deepEqual(parseStaffInventoryMapPointResponse('site', { location_id: 'site', point }), point);
+  assert.equal(parseStaffInventoryMapPointResponse('site', { location_id: 'other', point }), null);
+  for (const body of [null, {}, { location_id: 'site', point: null }, { location_id: 'site', point: { lat: 0, lng: 0 } }, { location_id: 'site', point: { latitude: '0', longitude: 0 } }, { location_id: 'site', point: { latitude: 0, longitude: 181 } }]) assert.equal(parseStaffInventoryMapPointResponse('site', body), null);
+});
+
+test('the shared point cache keeps exact address identity, native precedence and isolated immutable values', () => {
+  const cache = createStaffInventoryPointCache(), site = location('site', null, null);
+  const point = { latitude: 0, longitude: 0, coordinateSource: 'address_lookup' as const };
+  cache.set(site, point); point.latitude = 5;
+  const saved = cache.get(site)!; assert.equal(saved.latitude, 0); saved.latitude = 10;
+  assert.equal(cache.get(site)?.latitude, 0); assert.equal(cache.get({ ...site, address: 'Changed fixture address' }), undefined);
+  assert.equal(cache.get({ ...site, latitude: 20, longitude: 30 })?.latitude, 20);
+  cache.set(site, { latitude: Infinity, longitude: 0 }); assert.equal(cache.get(site)?.latitude, 0);
+  assert.equal(createStaffInventoryPointCache().get(site), undefined, 'a new authenticated workspace has a separate cache');
 });
 
 test('on-hand values exclude machine rosters and other locations, with exact cent totals', () => {

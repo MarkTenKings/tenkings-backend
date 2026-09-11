@@ -7,6 +7,8 @@ import { createInventoryAdminSessionRequirement } from '../lib/server/inventoryA
 import { geocodeLocationAddress } from '../lib/server/locationGeocoding';
 import { createHash } from 'node:crypto';
 import { ONLINE_LOCATION_SLUG } from '../lib/locationUtils';
+import { createStaffInventoryLocator } from '../lib/staffInventoryGeolocation';
+import { parseStaffInventoryMapPointResponse } from '../lib/staffInventoryLocationsMap';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const admin = { sessionId: 'fixture-admin', tokenHash: 'fixture-hash', authority: 'auth-service', user: { id: 'fixture-admin' } } as AdminSession;
@@ -62,6 +64,17 @@ test('saved coordinate pairs bypass the provider, including legitimate zero coor
 test('a private address may resolve after authorization with explicit address-lookup provenance', async () => {
   const s = setup(); const output = await call(s.deps);
   assert.equal(output.code, 200); assert.deepEqual(output.body, { location_id: id, point: { latitude: 38.5, longitude: -121.5, coordinateSource: 'address_lookup' } });
+  assert.deepEqual(s.counts(), { reads: 1, geocodes: 1 });
+});
+
+test('the actual authenticated location-map response feeds the intake matcher without coordinate renaming', async () => {
+  const s = setup(); const now = Date.now();
+  const locate = createStaffInventoryLocator({ now: () => now, getPosition: async () => ({ latitude: 38.5, longitude: -121.5, accuracy: 120, timestamp: now }), resolvePoint: async requested => {
+    const output = await call(s.deps, { query: { location_id: requested } });
+    assert.equal(output.code, 200); return parseStaffInventoryMapPointResponse(requested, output.body);
+  } });
+  const result = await locate([{ id, name: 'Fixture HQ', slug: 'internal-hq', address: 'Private fixture address', locationType: 'hq' }], new AbortController().signal);
+  assert.equal(result.location?.id, id); assert.equal(result.location?.coordinateSource, 'address_lookup'); assert.equal(result.confidence, 'contained'); assert.equal(result.accuracyM, 120);
   assert.deepEqual(s.counts(), { reads: 1, geocodes: 1 });
 });
 
