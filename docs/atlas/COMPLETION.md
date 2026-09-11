@@ -1,6 +1,6 @@
 # ATLAS implementation and operational acceptance
 
-> Current I release (2026-09-11 14:36 UTC): source `89c55d916130` (tree `73ed4a1f9a78`) is verified on staff, public and private I, with 95 public/35 staff migrations. Automatic first-pair enrollment, connection-state handling, request-validation optimization and safe ledger diagnostics are deployed. Active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` was independently verified empty at 14:33 UTC. Actual fresh-card Astra processing and end-to-end grading acceptance remain pending; all old-card recovery is canceled. See [current I evidence](WEBSITE_RELEASE.md#current-i-deployment-and-evidence).
+> Current I acceptance outcome (2026-09-11, observed through 19:05 UTC): source `89c55d916130` remains deployed, but the owner’s fresh-card test failed. Automatic first-pair enrollment succeeded; the first run stopped in IDENTITY after database timeouts, and the next card is blocked by the one-distinct-card pilot allowance. A settled FAILED run also lacks manual takeover. The cohort is no longer empty. See the [architecture dissection and repair recommendation](audits/2026-09-11/README.md). No application or production-state change was made by this audit; old-card recovery remains canceled.
 
 ## Historical runtime checkpoints
 

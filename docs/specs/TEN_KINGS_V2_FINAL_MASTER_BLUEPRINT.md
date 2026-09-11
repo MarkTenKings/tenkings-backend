@@ -136,6 +136,8 @@ A newly saved, verified Front/Back pair in the active workspace must enter norma
 
 Implementation evidence — September 11, 2026, 14:36 UTC: I source `89c55d916130d914f6a989197538c8bbd31c9594` (tree `73ed4a1f9a78b4d757db109a74dd5291b05725e7`) is deployed and verified on staff, public and private, with 95 public/35 staff migrations and automatic first-pair enrollment. Active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` was independently verified empty at 14:33 UTC; historical card and accounting evidence is preserved. This records implementation of the direction above. Actual fresh-card Astra processing and complete grading acceptance remain pending; see [current release evidence](../atlas/WEBSITE_RELEASE.md#current-i-deployment-and-evidence).
 
+Implementation evidence — September 11, 2026, 19:05 UTC: the owner’s subsequent fresh-card test disproved end-to-end readiness. Automatic first-pair admission succeeded, but the first run failed in IDENTITY with all three attempts APPLIED; the latest observed reserve operation failed with Prisma P2028 after 10,215 ms. The second waiting card is blocked by the existing one-distinct-card pilot rule, and settled FAILED runs cannot be taken over manually. The [architecture audit](../atlas/audits/2026-09-11/README.md) distinguishes owner requirements from implementation choices and recommends simplifying the workflow around the existing grading engines. This is observed implementation evidence and a recommendation, not a change to approved product scope, pilot limits or final human authority.
+
 ---
 
 ## 1. Executive Decision

@@ -1,8 +1,12 @@
 # ATLAS website release status
 
-> Current I release (2026-09-11 14:36 UTC): source `89c55d916130` (tree `73ed4a1f9a78`) is verified on staff, public and private I, with 95 public/35 staff migrations. Automatic first-pair enrollment, connection-state handling, request-validation optimization and safe ledger diagnostics are deployed. Active cohort `ee83f95e-b3c5-47a9-8ccf-059612b97919` was independently verified empty at 14:33 UTC. Actual fresh-card Astra processing and end-to-end grading acceptance remain pending; all old-card recovery is canceled. See [current I evidence](WEBSITE_RELEASE.md#current-i-deployment-and-evidence).
+> Current I acceptance outcome (2026-09-11, observed through 19:05 UTC): source `89c55d916130` remains deployed, but the owner’s fresh-card test failed. Automatic first-pair enrollment succeeded; the first run stopped in IDENTITY after database timeouts, and the next card is blocked by the one-distinct-card pilot allowance. A settled FAILED run also lacks manual takeover. The cohort is no longer empty. See the [architecture dissection and repair recommendation](audits/2026-09-11/README.md). No application or production-state change was made by this audit; old-card recovery remains canceled.
 
 ## Current I deployment and evidence
+
+**Fresh-card acceptance failed after deployment.** At 18:54 UTC the first fresh card was stored IN_PROGRESS/IDENTITY with run FAILED and three APPLIED attempts; the second was WAITING/PHOTOS. The latest private log identifies ledger reserve → Prisma P2028 after 10,215 ms at 18:31:29 UTC. At 19:02 UTC the live continuation was 12,207,165 bytes, the uploaded HEIC-derived PNG pair totaled 30,096,524 bytes, and processingLimit remained 1. Current grading-control revision is 8, compared with 7 in the earlier release snapshot. Final human review/approval remains untested and reviewer certification is not currently valid. See [the complete audit](audits/2026-09-11/README.md). This supersedes pending/empty-state statements in the earlier deployment observations below.
+
+### Historical I deployment observation, 14:36–14:43 UTC
 
 Merged source `89c55d916130d914f6a989197538c8bbd31c9594`, tree `73ed4a1f9a78b4d757db109a74dd5291b05725e7`, passed all 14 actual main checks in [run 34605844130](https://github.com/MarkTenKings/tenkings-backend/actions/runs/34605844130). I is deployed to staff, public and private. The private route and exact eight-field health are verified; all four public aliases serve I with customer and legacy configuration preserved. Final HTTP acceptance passed 19 GET checks with zero SMS sends or authenticated writes. Signed-in fresh-card processing remains unverified.
 
