@@ -21,6 +21,7 @@ const COLUMNS = {
         StaffOperatorStep: 'id runId attemptId revision callId toolName requestCanonical requestHash resultCanonical resultHash nextInputHash createdAt'.split(' '),
         StaffOperatorAttempt: 'id runId ordinal runRevision leaseFence dispatchClaimId requestCanonical requestHash providerBindingHash reservedMicroUsd usageCeilingMicroUsd usageEnvelopeExceeded actualMicroUsd costEvidenceHash state resultReceiptId createdAt dispatchedAt finishedAt'.split(' '),
         StaffOperatorReceipt: 'id attemptId canonical hash createdAt'.split(' '),
+        StaffOperatorRecovery: 'id runId attemptId receiptId commandId ordinal runRevision leaseFence canonical hash createdAt'.split(' '),
         StaffOperatorImage: 'imageId runId stepId canonical hash createdAt'.split(' '),
         StaffOperatorImageDelivery: 'attemptId imageId requestHash lineageHash createdAt'.split(' '),
         StaffMachineInitialization: 'workspaceSourceRequestId admissionKind id specimenId pilotId gradingOperationId runtimeHash evidenceHash operatorPolicyHash bridgePolicyHash gradingPolicyHash sourceHash sourceRevision expectedAnalysisRevision expectedReviewRevision controlRevision operatorRevision bridgeRevision admittedById admittedSessionHash admittedAccessVersion operationsGrantId admissionReason authorizationEvidenceHash deadlineAt createdAt dispatchedAt finishedAt state failureCode'.split(' '),
@@ -54,7 +55,7 @@ const freeze = value => {
 };
 freeze(COLUMNS);
 const select = (schema, tables) => Object.fromEntries(tables.map(name => [name, { SELECT: COLUMNS[schema][name] }]));
-const common = ["StaffControl","StaffWorkspaceControl","StaffWorkspaceSourceControl","StaffIdentity","StaffWorkspaceCard","StaffWorkspaceOperation","StaffWorkspaceSourceAdmission","StaffWorkspaceSourceActionPermit","StaffWorkspaceSourceOperation","StaffOperatorControl","StaffGradingBridgeControl","StaffOperatorRun","StaffOperatorStep","StaffOperatorAttempt","StaffOperatorImage","StaffOperatorImageDelivery","StaffMachineInitialization","StaffAnalysisRevision"];
+const common = ["StaffControl","StaffWorkspaceControl","StaffWorkspaceSourceControl","StaffIdentity","StaffWorkspaceCard","StaffWorkspaceOperation","StaffWorkspaceSourceAdmission","StaffWorkspaceSourceActionPermit","StaffWorkspaceSourceOperation","StaffOperatorControl","StaffGradingBridgeControl","StaffOperatorRun","StaffOperatorStep","StaffOperatorAttempt","StaffOperatorImage","StaffOperatorImageDelivery","StaffMachineInitialization","StaffAnalysisRevision","StaffOperatorRecovery"];
 const source = {
     atlas_staff: select('atlas_staff', [...common, 'StaffOperatorImageControl', 'StaffOperatorReceipt', 'StaffSession', 'StaffBrowser', 'StaffSpecimen',
         'StaffGradingOperation', 'StaffGradingExecution', 'StaffReviewRevision']),
@@ -115,7 +116,8 @@ export const WORKSPACE_FUNCTIONS = freeze({
         'workspace_pilot_budget_usage(uuid, uuid)','admit_workspace_source(uuid, text, text)','operator_capture_current(uuid)',
         'operator_workspace_count(uuid)','workspace_pilot_subject(uuid, uuid)','lock_assignment(uuid, uuid)',
         'lock_operator_workspace(uuid, uuid)','lock_workspace_private_controls()','lock_workspace_private_actor(uuid, text)',
-        'lock_workspace_private_card(uuid)','lock_workspace_private_run(uuid)','lock_workspace_private_permit(uuid)'],
+        'lock_workspace_private_card(uuid)','lock_workspace_private_run(uuid)','lock_workspace_private_permit(uuid)',
+        'operator_attempt_fence_matches(uuid, uuid, integer)'],
     COORDINATOR: ['claim_workspace_source_permit(uuid)','finish_workspace_source_permit(uuid, text)',
         'workspace_pilot_budget_usage(uuid, uuid)','operator_workspace_count(uuid)','lock_control()','lock_operator_control()',
         'lock_operator_bridge_control()','lock_operator_specimen(uuid)','lock_operator_workspace(uuid, uuid)',

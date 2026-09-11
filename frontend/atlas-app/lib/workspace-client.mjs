@@ -4,8 +4,14 @@ import { staffApiPath } from './routes.mjs';
 export const stateNames = { DRAFT: 'Photo drafts', WAITING: 'Waiting to grade', IN_PROGRESS: 'In progress', NEEDS_ATTENTION: 'Needs attention', HUMAN_REVIEW: 'Human review', APPROVED: 'Approved' };
 export const stageNames = { PHOTOS: 'Photos', IDENTITY: 'Identity', PREPARATION: 'Prepare images', CENTERING: 'Centering', INSPECTION: 'Inspection', REPORT: 'Report', REVIEW: 'Human review', FINISHING: 'Finishing' };
 export const stageOrder = Object.keys(stageNames);
-const denialCodes = new Set(['INVALID_REQUEST', 'WORKSPACE_REQUEST_INVALID', 'WORKSPACE_REVISION_CHANGED', 'WORKSPACE_CLAIM_CONFLICT', 'WORKSPACE_CAPABILITY_UNAVAILABLE', 'WORKSPACE_PAIR_REQUIRED', 'WORKSPACE_PHOTOS_REQUIRED', 'WORKSPACE_PILOT_FULL']);
+const denialCodes = new Set(['INVALID_REQUEST', 'WORKSPACE_REQUEST_INVALID', 'WORKSPACE_REVISION_CHANGED', 'WORKSPACE_CLAIM_CONFLICT', 'WORKSPACE_CLAIM_CHANGED', 'WORKSPACE_REVIEW_NOT_READY', 'WORKSPACE_REVIEW_CLAIMED', 'WORKSPACE_REVIEW_NOT_ACTIVE', 'WORKSPACE_CAPABILITY_UNAVAILABLE', 'WORKSPACE_PAIR_REQUIRED', 'WORKSPACE_PHOTOS_REQUIRED', 'WORKSPACE_PILOT_FULL']);
 const messages = {
+    WORKSPACE_REVIEW_NOT_READY: 'Astra’s draft is not ready for human review yet. The saved card is kept.',
+    WORKSPACE_REVIEW_CLAIMED: 'Another reviewer has picked up this card. You can continue watching its progress.',
+    WORKSPACE_REVIEW_NOT_ACTIVE: 'The review timer is already paused. Refresh the card to see its current state.',
+    WORKSPACE_CLAIM_CHANGED: 'The card’s operator or photographs changed. Refresh the card before continuing.',
+    ASTRA_RECOVERY_NOT_AVAILABLE: 'This request needs further attention before Astra can continue. Its saved response is kept.',
+    ASTRA_RECOVERY_AUTHORITY_REQUIRED: 'Sign in as the reviewer who started Astra to continue this saved request.',
     WORKSPACE_REVISION_CHANGED: 'This card changed. Load its current state before continuing. Your local edits are kept.',
     WORKSPACE_CLAIM_CONFLICT: 'Another operator has this card. Open it to watch the recorded work.',
     WORKSPACE_CAPABILITY_UNAVAILABLE: 'This stage is not available yet. Your saved card and photos are kept.',

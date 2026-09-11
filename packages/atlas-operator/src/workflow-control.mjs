@@ -45,7 +45,11 @@ export function projectOperatorControl(run, attempts = []) {
     const control = operatorControl(run), pending = attempts.filter(a => UNRESOLVED_ATTEMPTS.includes(a.state)).length;
     const active = CONTROLLABLE_RUN_STATES.includes(run.state), held = run.state === 'UNKNOWN'
         || attempts.some(a => ['DISPATCHED', 'RECEIVED', 'UNKNOWN'].includes(a.state));
-    return { runId: run.id, runState: run.state, ...control, pending, settled: !held,
+    const displayed = control.state === 'TAKEN_OVER' ? control.state
+        : ['UNKNOWN', 'FAILED', 'NEEDS_RECAPTURE', 'NEEDS_EXPERT'].includes(run.state) ? 'NEEDS_ATTENTION'
+        : run.state === 'READY_FOR_HUMAN' ? 'WAITING_REVIEW'
+        : run.state === 'QUEUED' && control.state === 'RUNNING' ? 'QUEUED' : control.state;
+    return { runId: run.id, runState: run.state, ...control, state: displayed, pending, settled: !held,
         canPause: active && control.state === 'RUNNING',
         canResume: active && control.state === 'PAUSED' && !pending && !held,
         canStep: active && control.state === 'PAUSED' && !pending && !held,
@@ -58,7 +62,7 @@ export function projectOperatorControl(run, attempts = []) {
  * This helper cannot itself grant authority or perform a provider request. */
 export function planOperatorControl(run, attempts, action) {
     check(['PAUSE', 'RESUME', 'STEP', 'TAKE_OVER'].includes(action), 'ASTRA_CONTROL_ACTION_INVALID');
-    const current = projectOperatorControl(run, attempts);
+    const projected = projectOperatorControl(run, attempts), current = { ...projected, state: run ? operatorControl(run).state : projected.state };
     check(run && CONTROLLABLE_RUN_STATES.includes(run.state) && current.state !== 'TAKEN_OVER', 'ASTRA_CONTROL_NOT_ACTIVE');
     const cancelAttemptIds = attempts.filter(a => a.state === 'RESERVED').map(a => a.id);
     const clearLease = { leaseOwner: null, leaseMode: null, leaseExpiresAt: null };

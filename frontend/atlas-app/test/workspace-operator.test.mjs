@@ -235,3 +235,53 @@ test('revoked and re-enabled claimant generations cannot commit another step and
         assert.equal((await f.service.activity({}, f.cardId)).control.canStep, false);
     }
 });
+
+test('unknown and failed operator runs never display as running or completed', () => {
+    const base = { runId: randomUUID(), state: 'RUNNING', mode: 'CONTINUOUS', pending: 1, settled: false,
+        canPause: true, canResume: false, canStep: false, canTakeOver: false };
+    for (const runState of ['UNKNOWN', 'FAILED', 'NEEDS_RECAPTURE', 'NEEDS_EXPERT'])
+        assert.equal(projectWorkspaceControl({ ...base, runState }).state, 'NEEDS_ATTENTION');
+    assert.equal(projectWorkspaceControl({ ...base, runState: 'READY_FOR_HUMAN', pending: 0 }).state, 'WAITING_REVIEW');
+    assert.equal(projectWorkspaceControl({ ...base, canRecover: true }, { canControl: false }).canRecover, false);
+});
+
+test('saved-response recovery binds one durable command, preserves the claim and is idempotent across a release revision', async () => {
+    const f = fixture({ state: 'UNKNOWN', pending: [{ id: randomUUID(), state: 'RECEIVED' }] });
+    const original = structuredClone(f.saved.card.claim), recoveryId = randomUUID(), operationId = randomUUID();
+    f.staffControl.revision = 2;
+    let calls = 0, command;
+    f.runPort.control = async (context, { card, action, commandId }) => {
+        assert.equal(action, 'RECOVER'); assert.notEqual(commandId, operationId); calls++; command = commandId;
+        context.data.run.state = 'QUEUED'; context.data.run.controlRevision++;
+        return { runId: original.runId, state: 'QUEUED', mode: 'CONTINUOUS', pending: 1, settled: false,
+            canPause: true, canResume: false, canStep: false, canTakeOver: false, canRecover: false,
+            runRevision: 1, controlRevision: 2, recoveryId, recoveredClaim: { ...card.claim, controlRevision: 2, mode: 'CONTINUOUS' } };
+    };
+    await f.control('RECOVER', 3, operationId);
+    const operation = f.saved.operations[0];
+    assert.equal(operation.id, command); assert.equal(operation.operationId, operationId);
+    assert.equal(operation.result.recoveryId, recoveryId); assert.deepEqual(operation.result.originalClaim, original);
+    assert.deepEqual(operation.result.priorClaim, f.saved.card.claim);
+    assert.equal(f.saved.card.claim.fence, original.fence); assert.equal(f.saved.card.claim.controlRevision, 2);
+    await f.control('RECOVER', 3, operationId); assert.equal(calls, 1); assert.equal(f.saved.operations.length, 1);
+    assert.equal(f.saved.pending[0].state, 'RECEIVED');
+});
+
+test('recovery rejects revoked generations, other claimants and changed photo ownership', async () => {
+    for (const mutate of [f => f.identity.accessVersion++, f => { f.identity.id = randomUUID(); }, f => { f.saved.card.captureHash = 'd'.repeat(64); }]) {
+        const f = fixture({ state: 'UNKNOWN' }); mutate(f); let calls = 0;
+        f.runPort.control = async () => { calls++; throw Error('unexpected recovery'); };
+        await assert.rejects(f.control('RECOVER'), /WORKSPACE_CLAIM_(CONFLICT|CHANGED)/);
+        assert.equal(calls, 0); assert.equal(f.saved.operations.length, 0);
+    }
+});
+
+
+test('unavailable crop outcomes never claim an image was inspected', () => {
+    const row = step('inspect_region'), output = JSON.parse(row.resultCanonical);
+    output.result = { status: 'REGION_NOT_AVAILABLE', code: 'ASTRA_CROP_OUTSIDE_SOURCE' };
+    row.resultCanonical = canonical(output); row.resultHash = hash(row.resultCanonical);
+    const [event] = projectWorkspaceActivity([row]);
+    assert.match(event.summary, /extended beyond/); assert.deepEqual(event.evidence, []);
+    assert.equal(event.status, 'RECORDED');
+});

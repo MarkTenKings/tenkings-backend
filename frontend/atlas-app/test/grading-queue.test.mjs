@@ -23,18 +23,19 @@ const waitingCard = { id: 'waiting-card', title: 'Saved photo pair', state: 'WAI
 const loaded = cards => ({ loading: false, data: { cards }, session: { csrf: 'fixture-csrf' }, error: '', signedOut: false });
 function harness({ queue = 'WAITING', assigned = loaded([]), workspace = loaded([waitingCard]) } = {}) {
     const slots = [], effects = [], exports = {}; let cursor = 0, tree;
-    const f = { assigned, workspace, queue, reloads: 0 };
+    const f = { assigned, workspace, queue, reloads: 0, claimingEnabled: false, mutations: [], destinations: [], liveEvents: [] };
     const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
         useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = initial; return [slots[index], next => { slots[index] = typeof next === 'function' ? next(slots[index]) : next; }]; },
         useEffect(effect, deps) { const index = cursor++; if (!slots[index] || deps.some((value, i) => slots[index][i] !== value)) { slots[index] = deps; effects.push(effect); } } };
     vm.runInNewContext(compiled, { exports, require(name) {
         if (name === 'react') return react;
         if (name === 'next/link') return 'link';
-        if (name === 'next/router') return { useRouter: () => ({ query: { queue: f.queue }, push() { assert.fail('Queue reads must not navigate or claim a card'); } }) };
+        if (name === 'next/router') return { useRouter: () => ({ query: { queue: f.queue }, push(path) { assert.equal(f.claimingEnabled, true, 'Queue reads never navigate'); f.destinations.push(path); return Promise.resolve(true); } }) };
         if (name === '../components/Shell') return { default: 'shell', Notice: 'notice', Unavailable: 'unavailable', __esModule: true };
         if (name === '../components/WorkspaceShared') return { PhotoPreview: 'photo', Readiness: 'readiness', RecoveryNotice: 'recovery', StateBadge: 'badge' };
-        if (name === '../lib/useGradingQueue') return { useGradingQueue: () => ({ resource: f.workspace, assigned: { ...f.assigned, reload: () => { f.reloads++; } } }) };
-        if (name === '../lib/useWorkspaceMutation') return { useWorkspaceMutation: () => ({ ready: true, busy: false, pending: null, mutate() { assert.fail('Queue reads must not mutate'); } }) };
+        if (name === '../components/WorkspaceIcon') return 'icon';
+        if (name === '../lib/useGradingQueue') return { useGradingQueue: () => ({ resource: f.workspace, assigned: { ...f.assigned, reload: () => { f.reloads++; } }, suspend() { f.liveEvents.push('suspend'); }, resume() { f.liveEvents.push('resume'); } }) };
+        if (name === '../lib/useWorkspaceMutation') return { useWorkspaceMutation: () => ({ ready: true, busy: false, pending: null, async mutate(path, body) { assert.equal(f.claimingEnabled, true, 'Queue reads never mutate'); f.mutations.push({ path, body }); return { ...waitingCard, state: 'IN_PROGRESS' }; } }) };
         if (name === '../lib/workspace-client.mjs') return workspaceClient;
         if (name === '../lib/server/runtime.mjs' || name.endsWith('.module.css')) return {};
         return require(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
@@ -94,6 +95,23 @@ test('the Waiting page renders its saved card while the assigned-report read is 
 test('a workspace load error cannot produce complete-looking queue counts', () => {
     const f = harness({ workspace: { ...loaded([]), error: 'Workspace unavailable' } });
     for (const state of Object.keys(workspaceClient.stateNames)) assert.equal(f.count(state), '—');
+});
+
+test('Start Astra runs continuously, with one-step operation kept as a separate explicit choice', async () => {
+    for (const [label, mode] of [['Start Astra', 'CONTINUOUS'], ['Start one step', 'STEP']]) {
+        const f = harness({ workspace: loaded([{ ...waitingCard, capabilities: { astraClaim: true, humanClaim: true } }]) }); f.claimingEnabled = true;
+        const start = f.nodes(node => node.type === 'button' && text(node) === label)[0]; assert.ok(start); assert.equal(start.props.disabled, false);
+        await start.props.onClick();
+        assert.equal(f.mutations.length, 1); assert.equal(f.mutations[0].body.operator, 'ASTRA'); assert.equal(f.mutations[0].body.mode, mode);
+        assert.equal(f.mutations[0].body.expectedRevision, waitingCard.revision); assert.deepEqual(f.destinations, ['/workspace/waiting-card']);
+        assert.deepEqual(f.liveEvents, ['suspend', 'resume']);
+    }
+});
+
+test('a background read interruption preserves the visible saved queue and identifies it as a saved state', () => {
+    const f = harness({ workspace: { ...loaded([waitingCard]), refreshError: 'The service is temporarily unavailable.' } });
+    assert.match(f.text(), /Saved photo pair/); assert.match(f.text(), /Showing saved state/); assert.match(f.text(), /last saved cards remain visible/);
+    assert.equal(f.count('WAITING'), '1'); assert.doesNotMatch(f.text(), /Loading saved cards/);
 });
 
 test('assigned-report reads remain available with no processing runtime and never convert a genuine failure to an empty success', async () => {

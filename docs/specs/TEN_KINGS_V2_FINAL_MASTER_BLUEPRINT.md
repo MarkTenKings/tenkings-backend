@@ -91,6 +91,12 @@ The first verified card may begin the supervised pilot immediately after its act
 
 Use `gpt-6-astra` with `reasoning.effort=max` for the ATLAS operator and explicitly requested fresh build agents. Mark's Codex usage reset does not reset the existing ATLAS provider budget, reservations or pilot expiry. Preserve the original $100 total allocation, existing partitions, all known or uncertain liabilities and deterministic grading authority. This direction authorizes the scoped fixes and live activation; another general permission request is not required.
 
+#### Owner clarification — continuous Astra and live grading workspace, 2026-09-10 Pacific
+
+After the first live card stalled, Mark directed a recovery fix and a single primary **Start Astra** action that operates the card through Photos, Identity, Preparation, Centering, Inspection and Report, then hands the draft to Human review. Step mode remains an optional control. Known local tool errors should produce recoverable recorded outcomes; uncertain paid requests must not be blindly repeated. The current pilot and spending limits remain unchanged while the first card is validated.
+
+Mark also approved a premium, on-brand game-like staff workspace for both operators and observers: visibly completed stages, an illuminated current stage, a live action/evidence feed and controller, and durable per-stage and total active-work timing. The clock stops while a completed draft waits for human review and resumes only when a human explicitly picks it up; pause/stall time is excluded. Historical stages with no independent measurement must not receive invented durations. Observers can watch without taking control. This visual direction does not gamify scores or alter deterministic grading, human approval or physical finishing authority.
+
 ---
 
 ## 1. Executive Decision

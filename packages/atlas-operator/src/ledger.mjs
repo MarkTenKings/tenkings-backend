@@ -14,6 +14,25 @@ const unresolved = ['RESERVED','DISPATCHED','RECEIVED','UNKNOWN'];
 const leaseSchema = z.strictObject({ runId: z.uuidv4(), owner: z.uuidv4(), fence: z.number().int().positive(), revision: z.number().int().positive() });
 const claimBindingSchema = z.strictObject({ runId: z.uuidv4(), controlRevision: z.number().int().positive() });
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
+/** Read only the exact unconsumed human recovery grant for this generation.
+ * The original attempt/receipt/dispatch fence is never rewritten. */
+export async function readOperatorRecovery(tx, run, { claiming = false, commandId } = {}) {
+    const fence=run.leaseFence+(claiming?1:0);
+    const rows=await tx.$queryRaw`SELECT * FROM atlas_staff."StaffOperatorRecovery"
+        WHERE "runId"=${run.id}::uuid AND "runRevision"=${run.revision}::integer AND "leaseFence"=${fence}::integer
+        ORDER BY ordinal DESC LIMIT 1`;
+    if (!rows.length) return null;
+    const row=rows[0],grant=checked(row.canonical,row.hash);
+    check(grant.version==='atlas-operator-recovery-v1' && grant.id===row.id && grant.runId===run.id
+        && grant.attemptId===row.attemptId && grant.receiptId===row.receiptId && grant.commandId===row.commandId
+        && grant.runRevision===run.revision && grant.leaseFence===fence && grant.ordinal===row.ordinal
+        && grant.policyHash===run.policyHash && grant.evidenceHash===run.evidenceHash && grant.manifestHash===run.manifestHash
+        && grant.inputHash===run.inputHash && grant.gradingPolicyHash===run.gradingPolicyHash
+        && grant.newRuntimeHash===run.runtimeHash && +new Date(grant.newDeadlineAt)===+run.deadlineAt
+        && (!claiming || grant.controlRevision===run.controlRevision)
+        && (commandId===undefined || grant.commandId===commandId), 'ASTRA_RECOVERY_GRANT_CHANGED');
+    return grant;
+}
 const receiptSchema = z.strictObject({ state: z.enum(['RECEIVED','UNKNOWN']), attemptId: z.uuidv4(), startedAt: z.iso.datetime(),
     receivedAt: z.iso.datetime(), httpStatus: z.number().int().min(100).max(599).nullable(),
     providerRequestId: z.string().regex(/^[A-Za-z0-9_-]{1,180}$/).nullable().optional(), bodyHash: sha.optional(),
@@ -358,11 +377,18 @@ export class OperatorLedger {
             // the old owner can never consume that dispatch token afterward.
             for (const attempt of pending.filter(a => a.state === 'RESERVED'))
                 await tx.staffOperatorAttempt.update({ where: { id: attempt.id }, data: { state: 'FAILED', finishedAt: now } });
-            const reconcile = run.state === 'UNKNOWN' || pending.some(a => a.state !== 'RESERVED');
+            const recovery=run.state==='WAITING_TOOL' && pending.length===1 && pending[0].state==='RECEIVED'
+                ? await readOperatorRecovery(tx,run,{claiming:true}):null;
+            if (recovery) check(run.state==='WAITING_TOOL' && pending.length===1 && pending[0].id===recovery.attemptId
+                && pending[0].state==='RECEIVED' && pending[0].resultReceiptId===recovery.receiptId
+                && pending[0].requestHash===recovery.requestHash && pending[0].providerBindingHash===this.config.providerBindingHash,
+            'ASTRA_RECOVERY_ATTEMPT_CHANGED');
+            const reconcile = !recovery && (run.state === 'UNKNOWN' || pending.some(a => a.state !== 'RESERVED'));
             const updated = await tx.staffOperatorRun.update({ where: { id: runId }, data: { leaseOwner: owner,
                 leaseFence: { increment: 1 }, leaseMode: reconcile ? 'RECONCILE_ONLY' : 'WORK',
-                leaseExpiresAt: new Date(Math.min(+now + policy.leaseMs,+run.deadlineAt)), state: reconcile ? 'UNKNOWN' : 'RUNNING', updatedAt: now } });
-            return { lease: { runId, owner, fence: updated.leaseFence, revision: updated.revision }, mode: updated.leaseMode };
+                leaseExpiresAt: new Date(Math.min(+now + policy.leaseMs,+run.deadlineAt)), state: recovery?'WAITING_TOOL':reconcile ? 'UNKNOWN' : 'RUNNING', updatedAt: now } });
+            return { lease: { runId, owner, fence: updated.leaseFence, revision: updated.revision },
+                mode: recovery?'RECOVER_TOOL':updated.leaseMode,...(recovery?{attemptId:recovery.attemptId}:{}) };
         });
     }
     async renew(lease) {
@@ -512,8 +538,17 @@ export class OperatorLedger {
         const data = await this.leased(context,lease), { tx, run, policy } = data;
         assertOperatorApply(run);
         const attempt = await tx.staffOperatorAttempt.findUnique({ where: { id: attemptId } });
+        let recovered=false;
+        if (attempt && attempt.leaseFence!==run.leaseFence) {
+            const grant=await readOperatorRecovery(tx,run);
+            const receipts=await tx.staffOperatorReceipt.findMany({where:{attemptId}});
+            recovered=grant?.attemptId===attempt.id && grant.receiptId===attempt.resultReceiptId
+                && grant.attemptLeaseFence===attempt.leaseFence && grant.requestHash===attempt.requestHash
+                && grant.providerBindingHash===attempt.providerBindingHash && grant.providerBindingHash===this.config.providerBindingHash
+                && receipts.length===1 && receipts[0].id===grant.receiptId && receipts[0].hash===grant.receiptHash;
+        }
         check(run.state === 'WAITING_TOOL' && attempt?.runId === run.id && attempt.state === 'RECEIVED'
-            && attempt.runRevision === run.revision && attempt.leaseFence === run.leaseFence && !attempt.usageEnvelopeExceeded, 'ASTRA_TOOL_NOT_READY');
+            && attempt.runRevision === run.revision && (attempt.leaseFence === run.leaseFence || recovered) && !attempt.usageEnvelopeExceeded, 'ASTRA_TOOL_NOT_READY');
         const stored = await tx.staffOperatorReceipt.findUnique({ where: { id: attempt.resultReceiptId } });
         const receipt = checked(stored.canonical,stored.hash);
         check(receipt.state === 'RECEIVED' && receipt.httpStatus === 200 && attempt.usageCeilingMicroUsd !== null, 'ASTRA_PROVIDER_RECONCILIATION_REQUIRED');

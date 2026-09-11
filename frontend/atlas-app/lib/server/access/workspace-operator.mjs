@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { deny, hash, identifier, strictObject } from '../policy.mjs';
+import { BoundaryError, deny, hash, identifier, strictObject } from '../policy.mjs';
 import { canonical } from '../review-contract.mjs';
+import { projectWorkspaceTiming } from '../../workspace-timing.mjs';
 import { WORKSPACE_CONTROLS } from '../../workspace-contract.mjs';
 
 const MAX_ACTIVITY = 100, UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const SHA = /^[a-f0-9]{64}$/;
 const check = (ok, code = 'WORKSPACE_OPERATOR_UNAVAILABLE', status = 503) => { if (!ok) deny(status, code); };
+const preflight = (ok, code, status = 409) => { if (!ok) throw Object.assign(new BoundaryError(status, code), { outcome: 'NOT_DISPATCHED' }); };
 const instant = value => { const time = new Date(value); check(Number.isFinite(+time)); return time.toISOString(); };
 const boundedText = (value, max = 500) => {
     if (typeof value !== 'string') return null;
@@ -86,6 +88,7 @@ export function projectWorkspaceActivity(rows) {
         const decision = row.decision && ['ACCEPTED', 'REJECTED', 'INSPECTED'].includes(row.decision.decision)
             && positive(row.decision.analysisRevision) ? { decision: row.decision.decision,
                 analysisRevision: row.decision.analysisRevision, reason: boundedText(row.decision.reason, 1000) } : null;
+        const unavailableRegion = row.toolName === 'inspect_region' && output.result?.status === 'REGION_NOT_AVAILABLE' && output.result?.code === 'ASTRA_CROP_OUTSIDE_SOURCE';
         const attention = row.toolName === 'submit_for_human_review' && request.disposition !== 'READY_FOR_REVIEW'
             || row.toolName === 'submit_capture_preparation' && request.disposition !== 'READY_FOR_PREPARATION';
         const measurement = row.toolName === 'measure_centering' ? measurements(output.result) : null;
@@ -97,9 +100,9 @@ export function projectWorkspaceActivity(rows) {
                     .filter(p => UUID.test(p?.stepId ?? '') && SHA.test(p?.requestHash ?? ''))
                     .slice(0,3).map(p => ({ stepId:p.stepId,requestHash:p.requestHash })) } : null;
         return { id: row.id, at: instant(row.createdAt), actor: 'ASTRA', stage: stages[row.toolName], type: row.toolName,
-            summary: boundedText(request.summary) ?? summaries[row.toolName],
+            summary: unavailableRegion ? 'The requested area extended beyond the photograph. Astra received the image bounds to choose another area.' : boundedText(request.summary) ?? summaries[row.toolName],
             status: proposal ? 'PROPOSED' : attention ? 'NEEDS_ATTENTION' : 'RECORDED',
-            runId: row.runId, revision: row.revision, evidence, ...(proposal ? { proposal, decision } : {}),
+            runId: row.runId, revision: row.revision, evidence: unavailableRegion ? [] : evidence, ...(proposal ? { proposal, decision } : {}),
             ...(selection ? { selection } : {}), ...(measurement ? { measurements: measurement } : {}), ...(geometry ? { geometry } : {}),
             ...(row.toolName === 'inspect_finding' ? { findingId: boundedText(request.findingId, 180) } : {}),
             ...(SHA.test(request.reportHash ?? output.result?.reportHash ?? '')
@@ -153,19 +156,33 @@ export function projectWorkspaceSourceActivity(rows) {
     });
 }
 
-export function projectWorkspaceControl(value, { canControl = true, canStart = canControl } = {}) {
-    check(value && ['UNAVAILABLE', 'QUEUED', 'RUNNING', 'PAUSE_REQUESTED', 'PAUSED', 'TAKEN_OVER', 'COMPLETED'].includes(value.state)
+export function projectWorkspaceControl(value, { canControl = true, canStart = canControl, canRecover = canStart } = {}) {
+    check(value && ['UNAVAILABLE', 'QUEUED', 'RUNNING', 'PAUSE_REQUESTED', 'PAUSED', 'TAKEN_OVER', 'COMPLETED', 'NEEDS_ATTENTION', 'WAITING_REVIEW'].includes(value.state)
         && ['CONTINUOUS', 'STEP'].includes(value.mode) && Number.isSafeInteger(value.pending) && value.pending >= 0
         && value.pending <= 100 && typeof value.settled === 'boolean'
         && (value.runId === null || UUID.test(value.runId ?? '')));
-    return { state: value.state, mode: value.mode, pending: value.pending,
+    const state = value.state === 'TAKEN_OVER' ? value.state : ['UNKNOWN', 'FAILED', 'NEEDS_RECAPTURE', 'NEEDS_EXPERT'].includes(value.runState) ? 'NEEDS_ATTENTION' : value.runState === 'READY_FOR_HUMAN' ? 'WAITING_REVIEW' : value.state;
+    return { state, mode: value.mode, pending: value.pending,
+        ...(typeof value.failureCode === 'string' && /^(ASTRA|WORKSPACE)_[A-Z0-9_]{1,69}$/.test(value.failureCode) ? { failureCode: value.failureCode } : {}),
+        ...(value.lastUpdatedAt ? { lastUpdatedAt: instant(value.lastUpdatedAt) } : {}),
+        canRecover: canControl && canRecover && value.canRecover === true,
         canPause: canControl && value.canPause === true, canResume: canControl && canStart && value.canResume === true,
         canStep: canControl && canStart && value.canStep === true, canTakeOver: canControl && value.canTakeOver === true && value.settled };
 }
 
+export function projectWorkspaceControlTiming(control) {
+    if (!control?.timingHistory) return null;
+    return projectWorkspaceTiming({ ...control.timingHistory,
+        events: [...control.timingHistory.events, ...(control.extraTimingEvents ?? [])],
+        leaseRequired: ['RUNNING','WAITING_TOOL'].includes(control.runState) && control.state === 'RUNNING',
+        leaseExpiresAt: control.leaseExpiresAt ?? null });
+}
+
 function controlCapabilities(context, card) {
     const canControl = context.identity.role === 'REVIEWER' && card.claim?.kind === 'ASTRA';
-    return { canControl, canStart: canControl && card.claim.actorId === context.identity.id
+    return { canControl, canRecover: canControl && card.claim.actorId === context.identity.id
+        && card.claim.accessVersion === context.identity.accessVersion && context.policy?.astraEnabled === true
+        && +new Date(context.policy.expiresAt) > +context.now, canStart: canControl && card.claim.actorId === context.identity.id
         && positive(context.identity.accessVersion) && card.claim.accessVersion === context.identity.accessVersion
         && positive(context.control?.revision) && card.claim.controlRevision === context.control.revision
         && context.policy?.astraEnabled === true && +new Date(context.policy.expiresAt) > +context.now };
@@ -183,7 +200,12 @@ export const workspaceOperatorSqlPort = Object.freeze({
         const [row] = await context.databaseTx.$queryRaw`SELECT atlas_staff.read_workspace_operator_control(${card.id}::uuid) AS control`;
         return row?.control;
     },
-    async control(context, { card, action }) {
+    async control(context, { card, action, commandId }) {
+        if (action === 'RECOVER') {
+            const [row] = await context.databaseTx.$queryRaw`SELECT atlas_staff.recover_workspace_operator(${card.id}::uuid,${card.claimFence}::integer,
+                ${context.identity.id}::uuid,${context.session.tokenHash}::text,${card.revision}::integer,${commandId}::uuid) AS control`;
+            return row?.control;
+        }
         const [row] = await context.databaseTx.$queryRaw`SELECT atlas_staff.control_workspace_operator(${card.id}::uuid,${card.claimFence}::integer,${action}::text,
             ${context.identity.id}::uuid,${context.session.tokenHash}::text,${card.revision}::integer) AS control`;
         return row?.control;
@@ -207,7 +229,7 @@ export class StaffWorkspaceOperator {
             const card = await this.card(context, cardId);
             const rows = await this.runPort.activity(context, { card, limit: MAX_ACTIVITY });
             const control = await this.runPort.read(context, { card });
-            return { activity: projectWorkspaceActivity(rows), control: projectWorkspaceControl(control,
+            return { activity: projectWorkspaceActivity(rows), ...(control.timingHistory ? { timing: projectWorkspaceControlTiming(control) } : {}), control: projectWorkspaceControl(control,
                 controlCapabilities(context, card)) };
         });
     }
@@ -226,19 +248,20 @@ export class StaffWorkspaceOperator {
                 return { card: await this.projectCard(context, card), control: projectWorkspaceControl(current,
                     controlCapabilities(context, card)), operationId: input.operationId };
             }
-            check(card.revision === input.expectedRevision, 'WORKSPACE_REVISION_CHANGED', 409);
-            check(card.claim?.kind === 'ASTRA' && card.claim.fence === card.claimFence
+            preflight(card.revision === input.expectedRevision, 'WORKSPACE_REVISION_CHANGED', 409);
+            preflight(card.claim?.kind === 'ASTRA' && card.claim.fence === card.claimFence
                 && card.claim.captureRevision === card.captureRevision && card.claim.captureHash === card.captureHash
                 && ['IN_PROGRESS', 'NEEDS_ATTENTION'].includes(card.state), 'WORKSPACE_CLAIM_CHANGED', 409);
             // Stopping/taking over remains possible after pilot expiry. Starting
             // new work must still satisfy the unchanged current admission.
-            if (['RESUME', 'STEP'].includes(input.action)) {
-                check(card.claim.actorId === identity.id && positive(identity.accessVersion)
+            if (['RESUME', 'STEP', 'RECOVER'].includes(input.action)) {
+                preflight(card.claim.actorId === identity.id && positive(identity.accessVersion)
                     && card.claim.accessVersion === identity.accessVersion && positive(context.control?.revision)
-                    && card.claim.controlRevision === context.control.revision, 'WORKSPACE_CLAIM_CONFLICT', 409);
+                    && (input.action === 'RECOVER' || card.claim.controlRevision === context.control.revision), 'WORKSPACE_CLAIM_CONFLICT', 409);
                 check(context.policy?.astraEnabled && +new Date(context.policy.expiresAt) > +now, 'WORKSPACE_ASTRA_NOT_READY', 503);
             }
-            const control = await this.runPort.control(context, { card, action: input.action });
+            const commandId = randomUUID();
+            const control = await this.runPort.control(context, { card, action: input.action, commandId });
             check(positive(control?.runRevision), 'WORKSPACE_OPERATOR_UNAVAILABLE');
             const safeControl = projectWorkspaceControl(control);
             const next = { ...card, revision: card.revision + 1, updatedAt: instant(now) };
@@ -250,10 +273,16 @@ export class StaffWorkspaceOperator {
                     actorName: boundedText(identity.name, 120) ?? 'Staff grader', mode: 'MANUAL', fence: next.claimFence,
                     workflowRevision: next.revision, captureRevision: card.captureRevision, captureHash: card.captureHash,
                     runId: null, claimedAt: instant(now) };
+            } else if (input.action === 'RECOVER') {
+                check(UUID.test(control.recoveryId ?? '') && control.recoveredClaim
+                    && ['id','kind','actorId','accessVersion','fence','workflowRevision','captureRevision','captureHash','runId'].every(key => control.recoveredClaim[key] === card.claim[key])
+                    && control.recoveredClaim.controlRevision === context.control.revision && control.recoveredClaim.mode === 'CONTINUOUS', 'WORKSPACE_CLAIM_CHANGED');
+                next.claim = control.recoveredClaim; next.state = 'IN_PROGRESS'; next.attention = null;
             } else next.claim = { ...card.claim, mode: control.mode };
             await tx.updateCard(next, card.revision);
-            await tx.insertOperation({ id: randomUUID(), actorId: identity.id, operationId: input.operationId,
-                action: 'OPERATOR_CONTROL', cardId, inputHash, result: { action: input.action, control: safeControl, priorClaim: card.claim,
+            await tx.insertOperation({ id: commandId, actorId: identity.id, operationId: input.operationId,
+                action: 'OPERATOR_CONTROL', cardId, inputHash, result: { action: input.action, control: safeControl, priorClaim: input.action === 'RECOVER' ? next.claim : card.claim,
+                    ...(input.action === 'RECOVER' ? { originalClaim: card.claim, recoveryId: control.recoveryId } : {}),
                     runId: control.runId, runRevision: control.runRevision, runControlRevision: control.controlRevision ?? control.revision,
                     claimFence: next.claimFence, revision: next.revision }, createdAt: instant(now) });
             return { card: await this.projectCard(context, next), control: projectWorkspaceControl(control,

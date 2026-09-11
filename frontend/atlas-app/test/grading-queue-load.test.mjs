@@ -13,8 +13,9 @@ const error = code => Object.assign(new Error(code), { code });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function harness() {
-    const slots = [], effects = [], listeners = new Map(), exports = {}; let cursor = 0;
-    const f = { staffId: 'reviewer', calls: [], maximumPending: 0 };
+    const slots = [], effects = [], listeners = new Map(), timers = new Map(), exports = {}; let cursor = 0, timerId = 0;
+    const page = { visibilityState: 'visible', addEventListener(name, callback) { listeners.set(name, callback); }, removeEventListener(name, callback) { if (listeners.get(name) === callback) listeners.delete(name); } };
+    const f = { staffId: 'reviewer', calls: [], maximumPending: 0, timers };
     const react = {
         useState(initial) { const index = cursor++; if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
             return [slots[index], next => { slots[index] = typeof next === 'function' ? next(slots[index]) : next; }]; },
@@ -26,7 +27,8 @@ function harness() {
             }
         }
     };
-    vm.runInNewContext(compiled, { exports, AbortController, window: {
+    vm.runInNewContext(compiled, { exports, AbortController, document: page,
+        setTimeout(callback, milliseconds) { const id = ++timerId; timers.set(id, { callback, milliseconds }); return id; }, clearTimeout(id) { timers.delete(id); }, window: {
         addEventListener(name, callback) { listeners.set(name, callback); },
         removeEventListener(name, callback) { if (listeners.get(name) === callback) listeners.delete(name); }
     }, require(name) {
@@ -46,7 +48,9 @@ function harness() {
     f.resolve = async (index, value) => { f.calls[index].resolve(value); await f.settle(); };
     f.reject = async (index, value) => { f.calls[index].reject(value); await f.settle(); };
     f.event = name => { listeners.get(name)?.({ persisted: true }); f.render(); f.render(); };
-    f.dispose = () => { for (const slot of slots) slot?.cleanup?.(); assert.equal(listeners.size, 0); };
+    f.tick = () => { const [id, timer] = timers.entries().next().value ?? []; assert.ok(timer, 'A visible-page refresh is scheduled'); timers.delete(id); timer.callback(); f.render(); f.render(); };
+    f.visibility = value => { page.visibilityState = value; f.event('visibilitychange'); };
+    f.dispose = () => { for (const slot of slots) slot?.cleanup?.(); assert.equal(listeners.size, 0); assert.equal(timers.size, 0); };
     f.paths = () => f.calls.map(call => call.path);
     f.render(); f.render(); return f;
 }
@@ -132,4 +136,47 @@ test('malformed success cannot be mistaken for an empty report list; changed sta
     await f.resolve(5, { ...session, staff: { id: 'new-reviewer' } }); assert.equal(f.calls[6].path, 'workspace');
     await f.resolve(6, { cards: [] });
     assert.equal(f.calls[7].path, 'cards'); await f.resolve(7, { cards: [] }); assert.equal(f.maximumPending, 1); f.dispose();
+});
+
+test('live queue refresh keeps cards and counts visible while all authenticated reads remain ordered', async () => {
+    const f = harness(), workspace = { cards: [{ id: 'card', state: 'IN_PROGRESS' }] }, reports = { cards: [{ id: 'report', disposition: 'IN_REVIEW' }] };
+    await f.resolve(0, session); await f.resolve(1, workspace); await f.resolve(2, reports);
+    assert.equal(f.timers.size, 1); assert.equal([...f.timers.values()][0].milliseconds, 6000);
+    f.tick(); assert.deepEqual(f.paths(), ['session', 'workspace', 'cards', 'session']);
+    assert.equal(f.value.resource.data, workspace); assert.equal(f.value.resource.loading, false); assert.equal(f.value.resource.refreshing, true);
+    assert.equal(f.value.assigned.data, reports); assert.equal(f.value.assigned.loading, false);
+    await f.resolve(3, session); assert.equal(f.calls[4].path, 'workspace');
+    await f.resolve(4, { cards: [{ id: 'card', state: 'HUMAN_REVIEW' }] });
+    assert.equal(f.value.resource.data.cards[0].state, 'HUMAN_REVIEW'); assert.equal(f.value.assigned.data, reports);
+    await f.resolve(5, { cards: [{ id: 'report', disposition: 'READY_FOR_HUMAN' }] });
+    assert.equal(f.value.assigned.data.cards[0].disposition, 'READY_FOR_HUMAN'); assert.equal(f.value.resource.refreshing, false);
+    assert.equal(f.maximumPending, 1); assert.equal(f.timers.size, 1); f.dispose();
+});
+
+test('live read failure retains and marks the saved snapshot, while expired access clears it and stops polling', async () => {
+    const f = harness(), workspace = { cards: [{ id: 'card', state: 'WAITING' }] };
+    await f.resolve(0, session); await f.resolve(1, workspace); await f.resolve(2, { cards: [] });
+    f.tick(); await f.reject(3, error('TEMPORARILY_UNAVAILABLE'));
+    assert.equal(f.value.resource.data, workspace); assert.equal(f.value.resource.loading, false); assert.equal(f.value.resource.error, '');
+    assert.match(f.value.resource.refreshError, /temporarily unavailable/); assert.equal(f.value.resource.refreshing, false);
+    f.tick(); await f.reject(4, error('SIGN_IN_REQUIRED'));
+    assert.equal(f.value.resource.data, null); assert.equal(f.value.assigned.data, null);
+    assert.equal(f.value.resource.signedOut, true); assert.equal(f.timers.size, 0); f.dispose();
+});
+
+test('hidden pages stop queue polling and ignore interrupted replies; returning refreshes after fresh access', async () => {
+    const f = harness(), workspace = { cards: [{ id: 'saved-card' }] };
+    await f.resolve(0, session); await f.resolve(1, workspace); await f.resolve(2, { cards: [] });
+    f.visibility('hidden'); assert.equal(f.timers.size, 0); assert.equal(f.calls.length, 3); assert.equal(f.value.resource.data, workspace);
+    f.visibility('visible'); assert.equal(f.calls[3].path, 'session'); await f.resolve(3, session);
+    f.visibility('hidden'); assert.equal(f.calls[4].options.signal.aborted, true);
+    await f.resolve(4, { cards: [{ id: 'ignored-reply' }] }); assert.equal(f.value.resource.data, workspace); assert.equal(f.calls.length, 5); assert.equal(f.timers.size, 0);
+    f.visibility('visible'); assert.equal(f.calls[5].path, 'session'); await f.resolve(5, session); await f.resolve(6, { cards: [{ id: 'current-card' }] }); await f.resolve(7, { cards: [] });
+    assert.equal(f.value.resource.data.cards[0].id, 'current-card'); assert.equal(f.maximumPending, 1); f.dispose();
+});
+
+test('claim suspension stops background reads until the queue explicitly resumes', async () => {
+    const f = harness(); await f.resolve(0, session); await f.resolve(1, { cards: [] }); await f.resolve(2, { cards: [] });
+    f.value.suspend(); assert.equal(f.timers.size, 0); f.visibility('hidden'); f.visibility('visible'); assert.equal(f.calls.length, 3);
+    f.value.resume(); f.render(); assert.equal(f.calls[3].path, 'session'); f.dispose();
 });

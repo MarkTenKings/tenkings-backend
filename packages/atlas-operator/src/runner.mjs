@@ -33,7 +33,7 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
     check(ledger && ['claim','snapshot','renew','reserve','takeDispatch','recordReceipt','inspectTool','applyTool','stop']
         .every(name => typeof ledger[name] === 'function') && typeof createProvider === 'function'
         && adapters && typeof adapters === 'object', 'ASTRA_RUNNER_CONFIGURATION_REQUIRED');
-    let lease, policy, pinnedPolicy, pinnedRuntime, deadline = Infinity, claimStarted = false, stepsApplied = 0;
+    let lease, policy, pinnedPolicy, pinnedRuntime, recoveryAttemptId=null, deadline = Infinity, claimStarted = false, stepsApplied = 0;
     const controller = new AbortController(), receiptWrites = [];
     const abort = code => { if (!controller.signal.aborted) controller.abort(failure(code)); };
     const callerAbort = () => abort('ASTRA_RUNNER_STOPPED');
@@ -67,7 +67,7 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
         const snap = await db(() => ledger.snapshot(lease));
         const parsed = parseControlPolicy(checked(snap.run.policyCanonical, snap.run.policyHash));
         check(canonical(parsed) === canonical(snap.policy) && snap.run.id === runId
-            && snap.run.revision === lease.revision && snap.run.state === 'RUNNING', 'ASTRA_RUNNER_SNAPSHOT_INVALID');
+            && snap.run.revision === lease.revision && snap.run.state === (recoveryAttemptId?'WAITING_TOOL':'RUNNING'), 'ASTRA_RUNNER_SNAPSHOT_INVALID');
         if (pinnedPolicy) check(snap.run.policyHash === pinnedPolicy && snap.run.runtimeHash === pinnedRuntime,
             'ASTRA_RUNNER_POLICY_CHANGED');
         pinnedPolicy = snap.run.policyHash; pinnedRuntime = snap.run.runtimeHash; policy = parsed;
@@ -106,49 +106,60 @@ export async function runOperator({ ledger, runId, owner = randomUUID(), createP
         lease = claimed.lease;
         check(lease?.runId === runId && lease.owner === owner, 'ASTRA_RUNNER_LEASE_INVALID');
         if (claimed.mode === 'RECONCILE_ONLY') return result('RECONCILIATION_REQUIRED', 'ASTRA_RECONCILIATION_ONLY');
-        check(claimed.mode === 'WORK', 'ASTRA_RUNNER_LEASE_INVALID');
+        check(['WORK','RECOVER_TOOL'].includes(claimed.mode), 'ASTRA_RUNNER_LEASE_INVALID');
+        if (claimed.mode==='RECOVER_TOOL') {
+            check(typeof claimed.attemptId==='string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(claimed.attemptId),'ASTRA_RECOVERY_ATTEMPT_CHANGED');
+            recoveryAttemptId=claimed.attemptId;
+        }
         for (;;) {
             await snapshot(); alive();
             check(lease.revision <= policy.maxStepsPerRun && stepsApplied < policy.maxStepsPerRun, 'ASTRA_STEP_LIMIT');
-            const reserved = await db(() => ledger.reserve(lease));
-            let dispatchRequested = false, dispatched = false;
-            const dispatchLease = { ...lease }, startedAt = new Date().toISOString();
-            const takeDispatch = async attemptId => {
-                alive(); check(attemptId === reserved.attemptId && !dispatchRequested, 'ASTRA_DISPATCH_ALREADY_CONSUMED');
-                dispatchRequested = true;
-                const grant = await db(() => ledger.takeDispatch(dispatchLease, attemptId));
-                dispatched = true; alive(); return grant;
-            };
-            const receipt = await external(async () => {
-                const provider = createProvider({ takeDispatch, signal: controller.signal });
-                check(typeof provider?.dispatch === 'function', 'ASTRA_PROVIDER_CONFIGURATION_REQUIRED');
-                // Install this continuation before racing cancellation, so a
-                // response arriving after lease loss is still retained once.
-                const delivery = (async () => {
-                    let value;
-                    try {
-                        value = await provider.dispatch(reserved.attemptId);
-                        check(dispatched, 'ASTRA_DISPATCH_NOT_ADMITTED');
-                    } catch (error) {
-                        if (!dispatched) throw error;
-                        value = { state: 'UNKNOWN', attemptId: reserved.attemptId, startedAt,
-                            receivedAt: new Date().toISOString(), httpStatus: null, failureCode: 'ASTRA_OUTCOME_UNCONFIRMED' };
-                    }
-                    await bounded(() => ledger.recordReceipt({ attemptId: reserved.attemptId,
-                        dispatchClaimId: reserved.dispatchClaimId, receipt: value }), DB_TIMEOUT_MS,
-                        { independent: true, code: 'ASTRA_RECEIPT_PERSISTENCE_UNCONFIRMED' });
-                    return value;
-                })();
-                receiptWrites.push(delivery.then(() => ({ attemptId: reserved.attemptId, state: 'PERSISTED' }),
-                    () => ({ attemptId: reserved.attemptId, state: 'UNCONFIRMED' })));
-                return delivery;
-            });
-            check(receipt.state === 'RECEIVED' && receipt.httpStatus === 200, 'ASTRA_PROVIDER_RECONCILIATION_REQUIRED');
-            const tool = await db(() => ledger.inspectTool(lease, reserved.attemptId));
+            let attemptId=recoveryAttemptId;
+            if (recoveryAttemptId) recoveryAttemptId=null;
+            else {
+                const reserved = await db(() => ledger.reserve(lease));
+                attemptId=reserved.attemptId;
+                let dispatchRequested = false, dispatched = false;
+                const dispatchLease = { ...lease }, startedAt = new Date().toISOString();
+                const takeDispatch = async attemptId => {
+                    alive(); check(attemptId === reserved.attemptId && !dispatchRequested, 'ASTRA_DISPATCH_ALREADY_CONSUMED');
+                    dispatchRequested = true;
+                    const grant = await db(() => ledger.takeDispatch(dispatchLease, attemptId));
+                    dispatched = true; alive(); return grant;
+                };
+                const receipt = await external(async () => {
+                    const provider = createProvider({ takeDispatch, signal: controller.signal });
+                    check(typeof provider?.dispatch === 'function', 'ASTRA_PROVIDER_CONFIGURATION_REQUIRED');
+                    // Install this continuation before racing cancellation, so a
+                    // response arriving after lease loss is still retained once.
+                    const delivery = (async () => {
+                        let value;
+                        try {
+                            value = await provider.dispatch(reserved.attemptId);
+                            check(dispatched, 'ASTRA_DISPATCH_NOT_ADMITTED');
+                        } catch (error) {
+                            if (!dispatched) throw error;
+                            value = { state: 'UNKNOWN', attemptId: reserved.attemptId, startedAt,
+                                receivedAt: new Date().toISOString(), httpStatus: null, failureCode: 'ASTRA_OUTCOME_UNCONFIRMED' };
+                        }
+                        await bounded(() => ledger.recordReceipt({ attemptId: reserved.attemptId,
+                            dispatchClaimId: reserved.dispatchClaimId, receipt: value }), DB_TIMEOUT_MS,
+                            { independent: true, code: 'ASTRA_RECEIPT_PERSISTENCE_UNCONFIRMED' });
+                        return value;
+                    })();
+                    receiptWrites.push(delivery.then(() => ({ attemptId: reserved.attemptId, state: 'PERSISTED' }),
+                        () => ({ attemptId: reserved.attemptId, state: 'UNCONFIRMED' })));
+                    return delivery;
+                });
+                check(receipt.state === 'RECEIVED' && receipt.httpStatus === 200, 'ASTRA_PROVIDER_RECONCILIATION_REQUIRED');
+            }
+            // A recovery claim applies the retained response first. No request
+            // reservation, provider construction or POST occurs for that tool.
+            const tool = await db(() => ledger.inspectTool(lease, attemptId));
             check(toolsForRun(policy,tool.run).includes(tool.call.name) && Object.hasOwn(adapters, tool.call.name), 'ASTRA_ADAPTER_NOT_ADMITTED');
             const adapter = adapters[tool.call.name];
             const prepared = adapter.prepare ? await external(() => adapter.prepare(tool, { signal: controller.signal })) : undefined;
-            const applied = await db(() => ledger.applyTool(lease, reserved.attemptId, data => {
+            const applied = await db(() => ledger.applyTool(lease, attemptId, data => {
                 alive();
                 check(canonical(data.call) === canonical(tool.call), 'ASTRA_TOOL_CHANGED');
                 return adapter.apply(data, prepared);

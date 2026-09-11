@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Notice } from './Shell';
 import PhotoIntake from './PhotoIntake';
 import WorkspaceActivity from './WorkspaceActivity';
+import WorkspaceStages from './WorkspaceStages';
+import AstraStageView from './AstraStageView';
 import { ImageQuadEditor, fullCardFrame } from './WorkspaceGeometry';
 import { OriginalImages, Readiness, RecoveryNotice, ReportLink, StateBadge } from './WorkspaceShared';
 import { allowedAction, checkedCardResult, freshWorkspaceAccess, originalImagePath, stageNames, stageOrder, verifiedSide, workspaceCardPath, workspaceMessage, workspaceRequest } from '../lib/workspace-client.mjs';
@@ -17,8 +19,11 @@ export function identityPayload(values) {
 }
 export default function CardGradingWorkspace({ initial, staff, csrf, readiness }) {
     const [card, setCard] = useState(initial), [stage, setStage] = useState(initial.stage), [forms, setForms] = useState({}), [formReady, setFormReady] = useState(false), [localError, setLocalError] = useState(''), [saved, setSaved] = useState(''), [refreshing, setRefreshing] = useState(false);
+    const [followLive, setFollowLive] = useState(true);
+    const liveStage = card.state === 'HUMAN_REVIEW' ? 'REVIEW' : card.state === 'APPROVED' ? 'FINISHING' : card.timing?.currentStage ?? card.stage;
+    useEffect(() => { if (followLive) setStage(liveStage); }, [liveStage, followLive]);
     const formsRef = useRef({}), loadingRef = useRef(false), journalKey = `atlas-workspace-edits-v1:${staff.id}:${initial.id}`;
-    const adopt = next => setCard(previous => next?.id === previous.id && next.revision >= previous.revision ? next : previous);
+    const adopt = next => setCard(previous => next?.id === previous.id && next.revision >= previous.revision ? { ...next, timing: next.timing ?? previous.timing } : previous);
     const mutation = useWorkspaceMutation({ staffId: staff.id, cardId: initial.id, csrf, onCard: adopt });
     useEffect(() => {
         try { const value = JSON.parse(sessionStorage.getItem(journalKey) ?? '{}'); formsRef.current = value && typeof value === 'object' && !Array.isArray(value) ? value : {}; setForms(formsRef.current); setFormReady(true); }
@@ -63,7 +68,7 @@ export default function CardGradingWorkspace({ initial, staff, csrf, readiness }
         } catch (cause) { setLocalError(workspaceMessage(cause)); }
         finally { loadingRef.current = false; setRefreshing(false); }
     }
-    async function claim(operator, mode = 'STEP') {
+    async function claim(operator, mode = 'CONTINUOUS') {
         if (disabled || Object.keys(formsRef.current).length || card.capabilities?.[operator === 'HUMAN' ? 'humanClaim' : 'astraClaim'] !== true) return;
         const next = await mutation.mutate(`${workspaceCardPath(card.id)}/claim`, { expectedRevision: card.revision, operator, ...(operator === 'ASTRA' ? { mode } : {}) }, card.id);
         if (next) { setStage(next.stage); setSaved(operator === 'HUMAN' ? 'You have claimed this card for manual grading.' : 'Astra has claimed this card. Recorded activity appears alongside the workspace.'); }
@@ -72,25 +77,36 @@ export default function CardGradingWorkspace({ initial, staff, csrf, readiness }
         if (disabled || Object.keys(formsRef.current).length) return;
         await mutation.mutate(`${workspaceCardPath(card.id)}/control`, { expectedRevision: card.revision, action }, card.id);
     }
+    async function reviewSession(action) {
+        if (disabled || Object.keys(formsRef.current).length) return;
+        await mutation.mutate(`${workspaceCardPath(card.id)}/review-session`, { expectedRevision: card.revision, action }, card.id);
+    }
     const common = { card, forms, edit, act, discard, disabled };
+    const watchAstra = card.operator?.kind === 'ASTRA' && !['REVIEW', 'FINISHING'].includes(stage);
+    const operatorLabel = card.state === 'HUMAN_REVIEW' ? card.workspace?.reviewSession?.state === 'ACTIVE' ? `${card.workspace.reviewSession.reviewerName} is reviewing this card` : 'Ready for human review'
+        : card.state === 'APPROVED' ? 'Human review complete'
+            : card.operator?.kind === 'ASTRA' ? ({ NEEDS_ATTENTION: 'Astra needs attention', PAUSED: 'Astra is paused', QUEUED: 'Astra is preparing to start' })[card.observedOperator?.state] ?? 'Astra is operating this card'
+                : card.operator ? `${card.operator.name || 'A human grader'} is operating this card` : card.state === 'WAITING' ? 'Ready for a grader' : 'No active grader';
     return <>
         <div className={styles.workspaceHeading}><div><Link className="back-link" href={`/grading?queue=${card.state}`}>← Back to {card.state === 'WAITING' ? 'Waiting to grade' : 'grading queues'}</Link><h1>{card.title}</h1><p className="muted">{card.subtitle || 'New-photo grading workspace'}</p></div><div className={styles.workspaceStatus}><StateBadge state={card.state} /><span>Saved revision {card.revision}</span><button type="button" onClick={refresh} disabled={disabled}>{refreshing ? 'Loading…' : 'Refresh saved card'}</button></div></div>
         {card.attention && <Notice error>{typeof card.attention === 'string' ? card.attention : card.attention.message}</Notice>}
-        <div className={styles.claimBar}><div><strong>{card.operator ? card.operator.kind === 'ASTRA' ? 'Astra is operating this card' : `${card.operator.name || 'A human grader'} is operating this card` : card.state === 'WAITING' ? 'Ready for a grader' : 'No active grader'}</strong><p>{card.operator ? `Recorded stage: ${stageNames[card.stage]}. You may view every stage without taking control.` : card.state === 'WAITING' ? 'One operator can claim this exact photo pair at a time.' : 'Complete and verify the photo pair before claiming it.'}</p></div>{card.state === 'WAITING' && <div className={styles.actions}><button className="primary" type="button" disabled={disabled || card.capabilities?.humanClaim !== true} onClick={() => claim('HUMAN')}>Grade this card</button><button type="button" disabled={disabled || card.capabilities?.astraClaim !== true} onClick={() => claim('ASTRA', 'STEP')}>Start Astra · step mode</button><button type="button" disabled={disabled || card.capabilities?.astraClaim !== true} onClick={() => claim('ASTRA', 'CONTINUOUS')}>Start Astra · continuous</button></div>}</div>
+        <div className={styles.claimBar}><div><strong>{operatorLabel}</strong><p>{card.operator ? `Recorded stage: ${stageNames[liveStage]}. You may view every stage without taking control.` : card.state === 'WAITING' ? 'One operator can claim this exact photo pair at a time.' : 'Complete and verify the photo pair before claiming it.'}</p></div>{card.state === 'WAITING' && <div className={styles.actions}><button className="primary" type="button" disabled={disabled || card.capabilities?.humanClaim !== true} onClick={() => claim('HUMAN')}>Grade this card</button><button className="primary" type="button" disabled={disabled || card.capabilities?.astraClaim !== true} onClick={() => claim('ASTRA')}>Start Astra <span>→</span></button><button type="button" disabled={disabled || card.capabilities?.astraClaim !== true} onClick={() => claim('ASTRA', 'STEP')}>Step mode</button></div>}</div>
         <RecoveryNotice mutation={mutation} />{localError && <Notice error>{localError}</Notice>}{saved && <Notice>{saved}</Notice>}
         {card.workspace?.pending && <div className={styles.recovery}><strong>{({ PREPARE_SIDE: 'Image preparation', INITIALIZE_REPORT: 'Report initialization', RESOLVE_MAP: 'Card map lookup', REGISTER_MAP: 'Card map registration', CONTINUE_WITHOUT_MAP: 'Your map review decision' })[card.workspace.pending.action] ?? 'Grading'} has a saved operation awaiting confirmation.</strong><p>The current request remains held until its result settles. Checking its saved result does not start another grading attempt.</p><button type="button" disabled={refreshing || mutation.busy || Boolean(mutation.pending)} onClick={recoverSource}>{refreshing ? 'Checking saved result…' : 'Check saved result'}</button></div>}
-        <nav className={styles.stageNavigation} aria-label="Card grading stages">{stageOrder.map((value, index) => <button key={value} type="button" aria-current={stage === value ? 'step' : undefined} className={`${stage === value ? styles.activeStage : ''} ${card.stage === value ? styles.recordedStage : ''}`} onClick={() => setStage(value)}><span>{index + 1}</span>{stageNames[value]}{card.stage === value && <small>Current</small>}</button>)}</nav>
+        <WorkspaceStages card={{ ...card, stage: liveStage }} selectedStage={stage} onSelectStage={value => { setFollowLive(false); setStage(value); }} followLive={followLive} onFollowLiveChange={setFollowLive} />
         <div className={styles.workspaceLayout}><div className={styles.stageContent}>
+            {watchAstra ? <AstraStageView card={card} stage={stage} /> : <>
             {stage === 'PHOTOS' && (['DRAFT', 'NEEDS_ATTENTION'].includes(card.state) && staff.role !== 'OBSERVER' ? <PhotoIntake staff={staff} focusCard={card} onCardUpdated={adopt} /> : <><OriginalImages card={card} /><p className={styles.help}>The original Front and Back are retained unchanged. A replacement evidence request must settle active grading first.</p></>)}
             {stage === 'IDENTITY' && <IdentityStage {...common} />}
             {stage === 'PREPARATION' && <PreparationStage {...common} />}
             {stage === 'CENTERING' && <CenteringStage {...common} />}
             {stage === 'INSPECTION' && <section className={styles.panel}><p className="eyebrow">MANUAL INSPECTION</p><h2>Inspect corners, edges and surface</h2><p className={styles.help}>The grading report provides the saved findings, original pixel traces, defect-type corrections and deterministic remeasurement tools.</p><OriginalImages card={card} />{card.specimenId ? <ReportLink card={card} label="Open finding and trace tools" /> : <><MapReview {...common} /><p className={styles.help}>Finish image preparation, centering and the card map check, then initialize the report to inspect and correct findings. Astra is optional.</p><button className="primary" type="button" disabled={disabled || Object.keys(forms).length > 0 || !allowedAction(card, 'INITIALIZE_REPORT')} onClick={() => act('INITIALIZE_REPORT', {})}>Initialize grading report <span>→</span></button></>}</section>}
             {stage === 'REPORT' && <section className={styles.panel}><p className="eyebrow">GRADING DRAFT</p><h2>Prepare the report for human review</h2><p className={styles.help}>Open the current report to inspect the computed grades, correct findings and complete the review checklist. Saving it as ready moves the same card into Human review.</p><ReportLink card={card} />{!card.specimenId && <MapReview {...common} />}{!card.specimenId && <button className="primary" type="button" disabled={disabled || Object.keys(forms).length > 0 || !allowedAction(card, 'INITIALIZE_REPORT')} onClick={() => act('INITIALIZE_REPORT', {})}>Initialize grading report <span>→</span></button>}<p className={styles.help}>Scores come from the existing grading engine. Original machine proposals and each saved human correction remain available for comparison.</p><ReportComparison comparison={card.workspace?.comparison} /></section>}
-            {stage === 'REVIEW' && <section className={styles.panel}><p className="eyebrow">FINAL HUMAN REVIEW</p><h2>Correct and approve the exact report</h2><p className={styles.help}>Review the card identity, both evidence sides, findings and calculated grades. Any correction creates a new saved revision for your approval.</p><ReportLink card={card} label="Open exact report review" /><p className={styles.help}>Report publication requires an explicit trained human approval. A finished Astra run does not approve the report or any trusted-learning change.</p></section>}
+            </>}
+            {stage === 'REVIEW' && <section className={styles.panel}><p className="eyebrow">FINAL HUMAN REVIEW</p><h2>Correct and approve the exact report</h2><p className={styles.help}>Review the card identity, both evidence sides, findings and calculated grades. Any correction creates a new saved revision for your approval.</p>{card.state === 'HUMAN_REVIEW' && staff.role === 'REVIEWER' && <div className={styles.actions}>{card.workspace?.reviewSession?.state === 'ACTIVE' ? <><span>Review in progress · {card.workspace.reviewSession.reviewerName}</span>{card.workspace.reviewSession.reviewerId === staff.id && <button type="button" disabled={disabled} onClick={() => reviewSession('PAUSE')}>Pause review timer</button>}</> : <button className="primary" type="button" disabled={disabled} onClick={() => reviewSession('START')}>{card.workspace?.reviewSession ? 'Resume review' : 'Pick up for review'} <span>→</span></button>}</div>}<ReportLink card={card} label="Open exact report review" /><p className={styles.help}>Report publication requires an explicit trained human approval. A finished Astra run does not approve the report or any trusted-learning change.</p></section>}
             {stage === 'FINISHING' && <section className={styles.panel}><p className="eyebrow">AFTER HUMAN APPROVAL</p><h2>Label, NFC and slab finishing</h2><p className={styles.help}>Open the approved report’s finishing workspace to print the associated label and follow the MacBook NFC and physical assembly steps.</p><ReportLink card={card} label="Open report and finishing" /><p className={styles.help}>The recorded approval, tag verification and human assembly confirmations track separate parts of the physical card’s completion.</p></section>}
             <Readiness readiness={readiness ?? card.readiness} />
-        </div><WorkspaceActivity card={card} disabled={disabled || Object.keys(forms).length > 0} onControl={control} onObservedCard={adopt} /></div>
+        </div><WorkspaceActivity card={{ ...card, stage: liveStage }} disabled={disabled || Object.keys(forms).length > 0} onControl={control} onObservedCard={adopt} /></div>
     </>;
 }
 function LocalDraftNotice({ scope, card, forms, discard }) {

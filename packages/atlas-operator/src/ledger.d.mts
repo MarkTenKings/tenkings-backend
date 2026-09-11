@@ -15,3 +15,6 @@ export function enqueueOperatorRunInTransaction(tx: any, config: OperatorEnqueue
  * SUCCEEDED. Atomically relinks the existing claim and records its successor.
  * STEP successors start PAUSED without a new dispatch permit. Caller commits. */
 export function enqueueWorkspaceReportSuccessorInTransaction(tx: any, config: OperatorEnqueueConfig, input: { requestId: string }): Promise<any>;
+
+/** Exact retained human grant; never creates a recovery or repeats a request. */
+export function readOperatorRecovery(tx: any, run: any, options?: { claiming?: boolean; commandId?: string }): Promise<any | null>;

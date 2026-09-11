@@ -1,6 +1,7 @@
 import { canonical, digest, keys, requireBridge as check, UUID, SHA } from './protocol.mjs';
 
-export const IMAGE_TRANSFORM = 'atlas-oriented-source-crop-srgb-png-v1';
+export const LEGACY_IMAGE_TRANSFORM = 'atlas-oriented-source-crop-srgb-png-v1';
+export const IMAGE_TRANSFORM = 'atlas-oriented-source-crop-srgb-png-v2';
 // Exact current decoder imported by the legacy application (distinct from
 // the calibration package's separately traced Sharp version).
 export const OPERATOR_IMAGE_DECODER = 'sharp-0.33.5/vips-8.15.3';
@@ -31,7 +32,11 @@ export function assertOperatorPngContainer(bytes) {
     check(ended && bytes.subarray(-12).equals(Buffer.from([0,0,0,0,73,69,78,68,174,66,96,130])), 'ASTRA_SOURCE_CONTAINER_TRUNCATED');
 }
 
-export function operatorImageTransform(request, asset, orientation) {
+export function operatorImageTransform(request, asset, orientation, version = IMAGE_TRANSFORM) {
+    // V1 receipts remain verifiable under their original native-crop contract.
+    // V2 keeps the complete requested source rectangle, while bounding only
+    // the delivered raster. A large evidence region is not an invalid crop.
+    check([LEGACY_IMAGE_TRANSFORM,IMAGE_TRANSFORM].includes(version), 'ASTRA_IMAGE_TRANSFORM_UNSUPPORTED');
     keys(request,['runId','expectedRevision','evidenceHash','manifestHash','assetId','sourceSha256','side','purpose','rect']);
     check(uuid(request.runId) && integer(request.expectedRevision,1,2147483647) && sha(request.evidenceHash) && sha(request.manifestHash)
         && uuid(request.assetId) && sha(request.sourceSha256) && ['FRONT','BACK'].includes(request.side)
@@ -46,13 +51,32 @@ export function operatorImageTransform(request, asset, orientation) {
         && integer(rect.width,1,asset.width) && integer(rect.height,1,asset.height)
         && rect.x+rect.width <= asset.width && rect.y+rect.height <= asset.height, 'ASTRA_CROP_OUTSIDE_SOURCE');
     if (request.purpose === 'OVERVIEW') check(rect.x === 0 && rect.y === 0 && rect.width === asset.width && rect.height === asset.height, 'ASTRA_OVERVIEW_INCOMPLETE');
-    else check(rect.width*rect.height <= MAX_OPERATOR_CROP_PIXELS, 'ASTRA_CROP_TOO_LARGE');
-    const scale = request.purpose === 'OVERVIEW' ? Math.min(1,OVERVIEW_LONG_EDGE/Math.max(rect.width,rect.height)) : 1;
-    const output = { width: Math.max(1,Math.round(rect.width*scale)), height: Math.max(1,Math.round(rect.height*scale)) };
-    return { version: IMAGE_TRANSFORM, sourceAssetId: asset.assetId, sourceSha256: asset.sha256,
+    else if (version === LEGACY_IMAGE_TRANSFORM) check(rect.width*rect.height <= MAX_OPERATOR_CROP_PIXELS, 'ASTRA_CROP_TOO_LARGE');
+    const scale = request.purpose === 'OVERVIEW' ? Math.min(1,OVERVIEW_LONG_EDGE/Math.max(rect.width,rect.height))
+        : Math.min(1,Math.sqrt(MAX_OPERATOR_CROP_PIXELS/(rect.width*rect.height)));
+    // Preserve V1/overview rounding exactly. Floor resized crops so even a
+    // nearly square region cannot exceed the pixel cap after rounding.
+    const dimension = request.purpose === 'CROP' && scale < 1 ? Math.floor : Math.round;
+    const output = { width: Math.max(1,dimension(rect.width*scale)), height: Math.max(1,dimension(rect.height*scale)) };
+    return { version, sourceAssetId: asset.assetId, sourceSha256: asset.sha256,
         sourceWidth: asset.width, sourceHeight: asset.height, coordinateFrame: 'EXIF_ORIENTED_SOURCE_PIXELS',
         exifOrientation: orientation, rect: structuredClone(rect), output, purpose: request.purpose,
         kernel: 'lanczos3', colourSpace: 'srgb', metadata: 'REMOVED', annotations: 'NONE' };
+}
+
+/** An ordinary source-bound region mistake can be returned to Astra without
+ * image delivery or another external request. Identity, schema and hash errors
+ * are not recoverable region mistakes and must retain their failure status. */
+export function operatorCropRejection(request, asset) {
+    try { operatorImageTransform(request,asset,1); return null; }
+    catch (error) {
+        if (error?.code !== 'ASTRA_CROP_OUTSIDE_SOURCE') throw error;
+        const rect = request.rect;
+        check(request.purpose === 'CROP' && integer(rect.x,0,19_999) && integer(rect.y,0,19_999)
+            && integer(rect.width,1,20_000) && integer(rect.height,1,20_000), 'ASTRA_IMAGE_REQUEST_INVALID');
+        return { status: 'REGION_NOT_AVAILABLE', code: 'ASTRA_CROP_OUTSIDE_SOURCE', assetId: asset.assetId,
+            rect: structuredClone(rect), sourceWidth: asset.width, sourceHeight: asset.height };
+    }
 }
 function pngDimensions(bytes) {
     check(Buffer.isBuffer(bytes) && bytes.length >= 45 && bytes.length <= MAX_OPERATOR_IMAGE_BYTES
@@ -80,7 +104,10 @@ export function parseOperatorImagePacket(packet, request, asset) {
         && integer(packet.byteCount,45,MAX_OPERATOR_IMAGE_BYTES) && sha(packet.sha256)
         && typeof packet.bytesBase64 === 'string' && packet.bytesBase64.length <= Math.ceil(MAX_OPERATOR_IMAGE_BYTES/3)*4,
     'ASTRA_IMAGE_PACKET_INVALID');
-    const supplied = JSON.parse(packet.transformCanonical), transform = operatorImageTransform(request,asset,supplied.exifOrientation);
+    let supplied;
+    try { supplied = JSON.parse(packet.transformCanonical); }
+    catch { check(false,'ASTRA_IMAGE_TRANSFORM_INVALID'); }
+    const transform = operatorImageTransform(request,asset,supplied?.exifOrientation,supplied?.version);
     check(canonical(transform) === packet.transformCanonical && packet.width === transform.output.width && packet.height === transform.output.height,
         'ASTRA_IMAGE_TRANSFORM_CHANGED');
     const bytes = Buffer.from(packet.bytesBase64,'base64');

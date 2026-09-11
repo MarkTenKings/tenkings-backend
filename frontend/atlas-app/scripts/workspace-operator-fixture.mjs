@@ -87,7 +87,7 @@ export async function workspaceOperatorScenarios(scenario) {
     await scenario('workspace unknown paid work remains held through pause and blocks step or takeover', context => fixture(context, async f => {
         const request = await f.request(f.lease, 'read_card_report', {}, { unknown: true });
         const before = await f.admin.staffOperatorAttempt.findUnique({ where: { id: request.attemptId } });
-        const paused = await f.control('PAUSE'); assert.equal(paused.control.state, 'PAUSE_REQUESTED'); assert.equal(paused.control.pending, 1);
+        const paused = await f.control('PAUSE'); assert.equal(paused.control.state, 'NEEDS_ATTENTION'); assert.equal(paused.control.pending, 1);
         assert.equal(paused.control.canStep || paused.control.canTakeOver, false);
         await assert.rejects(() => f.control('STEP'), /cannot resume/);
         await assert.rejects(() => f.control('TAKE_OVER'), /unresolved work prevents takeover/);
