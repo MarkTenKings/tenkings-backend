@@ -180,7 +180,8 @@ export async function workspaceCaptureScenarios(scenario) {
         const claim = async id => f.intake.claim(f.signed.staff, id, { operationId: randomUUID(), expectedRevision: (await f.card(id)).revision,
             operator: 'ASTRA', mode: 'CONTINUOUS' });
         await update([first.id, randomUUID()]);
-        await assert.rejects(() => claim(first.id), /admitted verified photo pair/);
+        await assert.rejects(() => claim(first.id), error => error.code === 'WORKSPACE_ASTRA_NOT_READY'
+            && error.status === 409 && error.outcome === 'NOT_DISPATCHED');
         assert.equal((await f.card()).state, 'WAITING'); assert.equal(await f.admin.staffOperatorRun.count(), 0);
         await update([first.id]);
         await claim(first.id);
