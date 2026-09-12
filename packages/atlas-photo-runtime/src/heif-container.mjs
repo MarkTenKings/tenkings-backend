@@ -20,7 +20,7 @@ export function boxes(bytes, start = 0, end = bytes.length) {
   return out;
 }
 
-export function inspectHeif(bytes) {
+export function inspectHeif(bytes, { allowAppleSdrBase = false } = {}) {
   const roots = boxes(bytes);
   need(!roots.some(box => box.type === 'moov'), 'PHOTO_MULTIFRAME_UNSUPPORTED');
   need(roots.filter(box => box.type === 'ftyp').length === 1 && roots[0].type === 'ftyp');
@@ -44,7 +44,7 @@ export function inspectHeif(bytes) {
     const type = data.toString('latin1', 6 + idSize, 10 + idSize);
     need(!items.has(id)); items.set(id, type);
     // A HEVC ftyp is not enough: no AV1/JPEG/overlay/identity derived item silently becomes HEIC.
-    need(['hvc1', 'grid', 'Exif', 'mime', 'uri '].includes(type), 'PHOTO_HEIC_UNSUPPORTED');
+    need(['hvc1', 'grid', 'Exif', 'mime', 'uri ', ...(allowAppleSdrBase ? ['tmap'] : [])].includes(type), 'PHOTO_HEIC_UNSUPPORTED');
   }
   need([...items.values()].includes('hvc1'), 'PHOTO_HEIC_UNSUPPORTED');
   const association = one(iprp, 'ipma').data; need(association.length >= 8 && association[0] <= 1);
@@ -64,8 +64,23 @@ export function inspectHeif(bytes) {
     itemProperties.set(id, indices.map(index => properties[index - 1]));
   }
   need(at === association.length);
+  const references = [];
+  const irefs = meta.filter(box => box.type === 'iref'); need(irefs.length <= 1);
+  if (irefs.length) {
+    const data = irefs[0].data; need(data.length >= 4 && [0, 0x01000000].includes(data.readUInt32BE(0)));
+    const idSize = data[0] === 0 ? 2 : 4;
+    for (const ref of boxes(data, 4)) {
+      need(ref.data.length >= idSize + 2);
+      const idAt = at => idSize === 2 ? ref.data.readUInt16BE(at) : ref.data.readUInt32BE(at);
+      const from = idAt(0), count = ref.data.readUInt16BE(idSize);
+      need(items.has(from) && count > 0 && count <= 4096 && ref.data.length === idSize + 2 + count * idSize);
+      const to = Array.from({ length: count }, (_, i) => idAt(idSize + 2 + i * idSize));
+      need(to.every(id => items.has(id)) && new Set(to).size === count);
+      references.push({ type: ref.type, from, to });
+    }
+  }
   // Native property IDs are 1-based in an item's associated list, NOT global ipco indices.
-  return { properties, items, itemProperties };
+  return { properties, items, itemProperties, references };
 }
 
 // clap is rational. Native border getters round; use exact box fractions to refuse

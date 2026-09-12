@@ -214,12 +214,13 @@ function treatment(value) {
   oneOf(value.channels, [3, 4]); oneOf(value.bitDepth, [8, 16]);
   if (value.colorSpace !== null) text(value.colorSpace);
   oneOf(value.colorTreatment, ['preserved', 'converted', 'unmanaged']);
-  oneOf(value.hdrTreatment, ['not-present', 'preserved', 'tone-mapped', 'unknown']);
+  oneOf(value.hdrTreatment, ['not-present', 'preserved', 'tone-mapped', 'unknown', 'sdr-base']);
   if (value.colorTreatment === 'converted') requireThat(value.colorSpace !== null);
 }
 function decodedShape(value) {
-  object(value, ['schemaVersion', 'kind', 'id', 'originalDescriptorSha256', 'decodePlanSha256', 'raster', 'sourceToFrame', 'treatment']);
-  requireThat(value.schemaVersion === 1 && value.kind === 'decoded-frame'); text(value.id);
+  object(value, ['schemaVersion', 'kind', 'id', 'originalDescriptorSha256', 'decodePlanSha256', 'raster', 'sourceToFrame', 'treatment',
+    ...(value.schemaVersion === 2 ? ['workingImage'] : [])]);
+  requireThat([1, 2].includes(value.schemaVersion) && value.kind === 'decoded-frame'); text(value.id);
   sha(value.originalDescriptorSha256); sha(value.decodePlanSha256); raster(value.raster);
   matrix(value.sourceToFrame); treatment(value.treatment);
 }
@@ -234,6 +235,39 @@ export function parseDecodedFrame(value, originalValue, decodePlan) {
   requireThat(Number.isSafeInteger(rasterBytes) && rasterBytes <= decodePlan.limits.maxRasterBytes
     && value.raster.content.byteCount <= decodePlan.limits.maxOutputBytes, 'PHOTO_DECODE_LIMIT');
   if (decodePlan.metadata.dynamicRange !== 'SDR') requireThat(value.treatment.hdrTreatment !== 'not-present');
+  if (value.treatment.hdrTreatment === 'sdr-base') requireThat(original.content.mime === 'image/heic'
+    && decodePlan.metadata.dynamicRange === 'HDR' && decodePlan.metadata.bitDepth === 8
+    && decodePlan.metadata.iccSha256 === '20789fdbea9835251a4f0796c8bf45cbd964896044886540da21ffc7457af0ab'
+    && value.treatment.bitDepth === 8 && value.treatment.channels === 3);
+  if (value.schemaVersion === 1 && value.treatment.hdrTreatment === 'sdr-base') requireThat(
+    value.treatment.policyVersion === 'atlas-heif-apple-sdr-base-v1'
+    && value.treatment.colorSpace === 'Display P3' && value.treatment.colorTreatment === 'preserved');
+  if (value.schemaVersion === 2) {
+    const working = value.workingImage;
+    object(working, ['policyVersion', 'sourceRaster', 'sourceTreatment', 'outputIccSha256', 'geometryTreatment']);
+    requireThat(working.policyVersion === 'atlas-sdr-working-srgb8-v1'
+      && working.geometryTreatment === 'identity-no-resampling');
+    object(working.sourceRaster, ['content', 'dimensions']);
+    content(working.sourceRaster.content, ['image/png']); dimensions(working.sourceRaster.dimensions);
+    requireThat(equal(working.sourceRaster.dimensions, value.raster.dimensions));
+    treatment(working.sourceTreatment);
+    requireThat(working.outputIccSha256 === 'c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353');
+    // Validate the richer source against the same original and plan, including
+    // HDR semantics and resource limits. No extra rotation, crop or resize occurs.
+    parseDecodedFrame({ schemaVersion: 1, kind: 'decoded-frame', id: 'working-source-validation',
+      originalDescriptorSha256: value.originalDescriptorSha256, decodePlanSha256: value.decodePlanSha256,
+      raster: { ...working.sourceRaster, object: value.raster.object }, sourceToFrame: value.sourceToFrame,
+      treatment: working.sourceTreatment }, original, decodePlan);
+    requireThat(working.sourceTreatment.channels === 3
+      && ['Display P3', 'sRGB'].includes(working.sourceTreatment.colorSpace)
+      && working.sourceTreatment.colorTreatment !== 'unmanaged'
+      && ['not-present', 'sdr-base', 'unknown'].includes(working.sourceTreatment.hdrTreatment)
+      && (decodePlan.metadata.dynamicRange !== 'HDR' || working.sourceTreatment.hdrTreatment === 'sdr-base'));
+    requireThat(value.raster.content.mime === 'image/png' && value.treatment.channels === 3
+      && value.treatment.bitDepth === 8 && value.treatment.colorSpace === 'sRGB'
+      && value.treatment.colorTreatment === 'converted' && value.treatment.policyVersion === working.policyVersion
+      && value.treatment.hdrTreatment === working.sourceTreatment.hdrTreatment);
+  }
   return copy(value);
 }
 

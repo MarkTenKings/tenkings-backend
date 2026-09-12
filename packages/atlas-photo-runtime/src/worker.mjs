@@ -7,6 +7,7 @@ import { completeUpload, planDecode } from '@atlas/photo-core';
 import { inspectContainer } from './container.mjs';
 import { PhotoRuntimeError } from './process.mjs';
 import { decodeHeif } from './heif.mjs';
+import { decodeSdrWorking } from './working.mjs';
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const reject = code => { throw new PhotoRuntimeError(code); };
@@ -15,13 +16,14 @@ async function decode(request) {
   const { inputPath, outputPath, plan, observedObject, limits, existingOriginal } = request;
   if ((await stat(inputPath)).size > limits.maxInputBytes) reject('PHOTO_DECODE_LIMIT');
   const bytes = await readFile(inputPath);
-  if (bytes.length !== plan.expected.byteCount || sha256(bytes) !== plan.expected.sha256) reject('PHOTO_SOURCE_MISMATCH');
-  const container = inspectContainer(bytes);
   let sharp;
   try { sharp = (await import('sharp')).default; } catch { reject('PHOTO_DECODER_UNAVAILABLE'); }
   if (sharp.versions.sharp !== '0.33.5') reject('PHOTO_DECODER_UNAVAILABLE');
   sharp.cache(false);
   sharp.concurrency(1);
+  if (request.mode === 'sdr-working') return decodeSdrWorking(bytes, request, sharp);
+  if (bytes.length !== plan.expected.byteCount || sha256(bytes) !== plan.expected.sha256) reject('PHOTO_SOURCE_MISMATCH');
+  const container = inspectContainer(bytes);
   const options = { limitInputPixels: limits.maxPixels, failOn: 'warning', sequentialRead: true };
   if (container.format === 'heif') {
     const decoded = await decodeHeif(bytes, request);

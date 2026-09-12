@@ -21,7 +21,7 @@ export function frameFromGeometry(geometry, side) {
  * Full geometry, measured findings, edit bitmaps and reports live in verified
  * immutable artifacts. No photo, mask or model call occurs in a DB transaction.
  */
-export function createManualWorkflow({ repository, artifacts, pythonExecutable, measurementLimits, prepare = null }) {
+export function createManualWorkflow({ repository, artifacts, pythonExecutable, measurementLimits, prepare = null, replaceSources = null, assertCurrent = null, measure = measureDefectWorkspaceEdit }) {
   const domain = work => async (...args) => {
     try { return await work(...args); }
     catch (error) {
@@ -44,31 +44,45 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
   }
   async function hydrate(card) {
     const draft = card.draft;
-    object(draft, ['version', 'geometry', 'defects', 'identity', 'identityRevision']);
-    requireThat(draft.version === 'atlas-manual-workflow-v1', 503, 'MANUAL_DRAFT_INVALID');
+    object(draft, ['version', 'geometry', 'defects', 'identity', 'identityRevision', ...(draft.version === 'atlas-manual-workflow-v2' ? ['source'] : [])]);
+    requireThat(['atlas-manual-workflow-v1', 'atlas-manual-workflow-v2'].includes(draft.version), 503, 'MANUAL_DRAFT_INVALID');
     const [g, d] = await Promise.all([read(card.cardId, 'GEOMETRY', draft.geometry.ref, draft.geometry.sourceHash),
-      read(card.cardId, 'DEFECTS', draft.defects.ref, draft.defects.sourceHash)]);
-    const geometry = parseGeometryWorkspace(g), defects = parseDefectWorkspace(d);
-    requireThat(geometry.cardId === card.cardId && defects.cardId === card.cardId && geometry.profile === defects.profile,
+      draft.defects ? read(card.cardId, 'DEFECTS', draft.defects.ref, draft.defects.sourceHash) : null]);
+    const geometry = parseGeometryWorkspace(g), defects = d ? parseDefectWorkspace(d) : null;
+    requireThat(geometry.cardId === card.cardId && (!defects || defects.cardId === card.cardId && geometry.profile === defects.profile),
       503, 'MANUAL_DRAFT_INVALID');
-    for (const side of SIDES) if (geometry.sides[side].prepared) {
+    for (const side of SIDES) if (defects && geometry.sides[side].prepared) {
       requireThat(equal(frameFromGeometry(geometry, side), defects.sides[side].frame)
         && geometry.sides[side].cornerShape === defects.sides[side].cornerShape, 503, 'MANUAL_FRAME_MISMATCH');
     }
     return { geometry, defects, identity: draft.identity };
   }
-  async function provision(staff, { geometry: input, identity }) {
+  function initialDefects(geometry) {
+    return SIDES.every(side => geometry.sides[side].prepared) ? createDefectWorkspace({cardId:geometry.cardId,profile:geometry.profile,
+      sides:Object.fromEntries(SIDES.map(side=>[side,{frame:frameFromGeometry(geometry,side),cornerShape:geometry.sides[side].cornerShape}]))}) : null;
+  }
+  async function provision(staff, { geometry: input, identity, source = null }) {
     const geometry = parseGeometryWorkspace(input), cardId = geometry.cardId;
-    const defects = createDefectWorkspace({ cardId, profile: geometry.profile, sides: Object.fromEntries(SIDES.map(side => [side,
-      { frame: frameFromGeometry(geometry, side), cornerShape: geometry.sides[side].cornerShape }])) });
-    const draft = { version: 'atlas-manual-workflow-v1', geometry: await store(geometry, cardId, 'GEOMETRY'),
-      defects: await store(defects, cardId, 'DEFECTS'), identity: canonicalizeNewSpeedsterSessionIdentity(geometry.profile, identity), identityRevision: 1 };
+    const defects = initialDefects(geometry);
+    const draft = { version: source ? 'atlas-manual-workflow-v2' : 'atlas-manual-workflow-v1', ...(source ? { source } : {}), geometry: await store(geometry, cardId, 'GEOMETRY'),
+      defects: defects ? await store(defects, cardId, 'DEFECTS') : null, identity: canonicalizeNewSpeedsterSessionIdentity(geometry.profile, identity), identityRevision: 1 };
     return repository.provision(staff, { cardId, draft });
   }
-  async function reduce({ card, action }) {
+  async function reduce({ card, action, principal }, staff) {
     let { geometry, defects } = await hydrate(card);
     let draft = card.draft;
-    if (action.type === 'GEOMETRY_EDIT') {
+    if (action.type === 'REPLACE_SOURCES') {
+      object(action, ['type', 'sourceHash']);
+      requireThat(typeof replaceSources === 'function', 503, 'MANUAL_PREPARATION_UNAVAILABLE');
+      const profile = geometry.profile;
+      const replaced = await replaceSources({ card, geometry, principal, sourceHash: action.sourceHash, staff });
+      geometry = parseGeometryWorkspace(replaced.geometry);
+      requireThat(geometry.cardId === card.cardId && geometry.profile === profile, 409, 'MANUAL_SOURCE_PROFILE_MISMATCH');
+      if(defects){for(const side of replaced.changedSides){if(geometry.sides[side].prepared)defects=replaceDefectFrame(defects,{side,base:defectBase(defects,side),
+        frame:frameFromGeometry(geometry,side),cornerShape:geometry.sides[side].cornerShape}).state;}}
+      else defects = initialDefects(geometry);
+      draft = { ...draft, version: 'atlas-manual-workflow-v2', source: replaced.source };
+    } else if (action.type === 'GEOMETRY_EDIT') {
       object(action, ['type', 'edit']);
       object(action.edit, ['side', 'kind', 'base', 'quad']);
       geometry = applyGeometryEdit(geometry, { ...action.edit, actor: 'HUMAN', proposal: null }).state;
@@ -76,13 +90,17 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       // saved physical outline and a reload still exposes Retry preparation.
     } else if (action.type === 'PREPARE_SIDE') {
       object(action, ['type', 'side']); requireThat(SIDES.includes(action.side) && typeof prepare === 'function', 503, 'MANUAL_PREPARATION_UNAVAILABLE');
-      try { geometry = parseGeometryWorkspace(await prepare({ geometry, side: action.side })); }
+      try {
+        const prepared = await prepare({ geometry, side: action.side, source: draft.source, staff });
+        geometry = parseGeometryWorkspace(prepared.geometry ?? prepared);
+        if (prepared.source) draft = { ...draft, source: prepared.source };
+      }
       catch (error) {
         if (error?.name === 'PreparationError') throw new ManualServiceError(422, 'MANUAL_PREPARATION_FAILED');
         throw error;
       }
-      defects = replaceDefectFrame(defects, { side: action.side, base: defectBase(defects, action.side),
-        frame: frameFromGeometry(geometry, action.side), cornerShape: geometry.sides[action.side].cornerShape }).state;
+      defects = defects ? replaceDefectFrame(defects, { side: action.side, base: defectBase(defects, action.side),
+        frame: frameFromGeometry(geometry, action.side), cornerShape: geometry.sides[action.side].cornerShape }).state : initialDefects(geometry);
     } else if (action.type === 'CONFIRM_GEOMETRY') {
       object(action, ['type', 'base', 'reviewed']);
       geometry = confirmBothGeometry(geometry, { base: action.base, reviewed: action.reviewed, actor: 'HUMAN' }).state;
@@ -90,7 +108,7 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       object(action, ['type', 'identity']);
       draft = { ...draft, identity: canonicalizeNewSpeedsterSessionIdentity(geometry.profile, action.identity), identityRevision: draft.identityRevision + 1 };
     } else {
-      requireThat(geometryStatus(geometry).confirmed, 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
+      requireThat(defects && geometryStatus(geometry).confirmed, 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
       if (action.type === 'DEFECT_EDIT' || action.type === 'TRACE_SAVE') {
         let edit;
         if (action.type === 'TRACE_SAVE') {
@@ -102,7 +120,7 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
         defects = beginDefectEdit(defects, { side: action.side, base: action.base, actor: 'HUMAN', action: edit }).state;
       } else if (action.type === 'MEASURE_SIDE') {
         object(action, ['type', 'side']);
-        defects = applyDefectMeasurement(defects, await measureDefectWorkspaceEdit({ workspace: defects, side: action.side,
+        defects = applyDefectMeasurement(defects, await measure({ workspace: defects, side: action.side,
           pythonExecutable, limits: measurementLimits })).state;
       } else if (action.type === 'DISCARD_PENDING') {
         object(action, ['type', 'side', 'base']);
@@ -115,11 +133,12 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
         defects = confirmDefectFindings(defects, { base: action.base, reviewed: action.reviewed, actor: 'HUMAN' }).state;
       } else requireThat(false, 400, 'MANUAL_ACTION_UNSUPPORTED');
     }
-    return { ...draft, geometry: await store(geometry, card.cardId, 'GEOMETRY'), defects: await store(defects, card.cardId, 'DEFECTS') };
+    return { ...draft, geometry: await store(geometry, card.cardId, 'GEOMETRY'), defects: defects ? await store(defects, card.cardId, 'DEFECTS') : null };
   }
-  async function buildReport({ card }) {
+  async function buildReport({ card, principal }, staff) {
+    if (assertCurrent) await assertCurrent({ card, principal, staff });
     const { geometry, defects, identity } = await hydrate(card);
-    requireThat(geometryStatus(geometry).confirmed, 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
+    requireThat(defects && geometryStatus(geometry).confirmed, 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
     const full = previewDefectReport(defects, { identity, centeringQuads: Object.fromEntries(SIDES.map(side => [side, geometry.sides[side].printed.quad])),
       draftRevision: geometry.reportRevision + defects.draftRevision + card.draft.identityRevision });
     const report = await store(full, card.cardId, 'REPORT');

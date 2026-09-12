@@ -1,5 +1,7 @@
 # Deploy Runbook (Source of Truth for Commands)
 
+> Connected manual candidate — September 12, 2026: source implementation and local Node20/Linux qualification are recorded in [the connected manual audit](../atlas/audits/2026-09-12/connected-manual-workflow.md). Use the [concrete candidate release procedure](../atlas/runbooks/CONNECTED_MANUAL_RELEASE.md) for separate manual schemas, private CPU/web bindings, storage acceptance and fresh-card checks. This candidate has not migrated or activated production; historical serving checkpoints below remain historical.
+
 > Current I acceptance outcome (2026-09-11, observed through 19:05 UTC): source `89c55d916130` remains deployed, but the owner’s fresh-card test failed. Automatic first-pair enrollment succeeded; the first run stopped in IDENTITY after database timeouts, and the next card is blocked by the one-distinct-card pilot allowance. A settled FAILED run also lacks manual takeover. The cohort is no longer empty. See the [architecture dissection and repair recommendation](../atlas/audits/2026-09-11/README.md). No application or production-state change was made by this audit; old-card recovery remains canceled.
 
 ## Historical runtime checkpoints

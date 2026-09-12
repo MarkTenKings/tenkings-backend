@@ -74,7 +74,7 @@ small. These are resource bounds, not a new product upload allowance. No default
 are silently imposed. The actual decoder must additionally bound temporary
 codec memory and enforce cancellation/termination and output limits.
 
-The future adapter must probe headers under those bounds **before** allocating
+The runtime adapter must probe headers under those bounds **before** allocating
 pixels, then pass actual decoded observations to `parseDecodedFrame`. Its worker
 or process must be killable; a JavaScript timer alone does not stop a native
 decode. A timeout/unavailable decoder is distinct from a proven invalid file.
@@ -104,16 +104,26 @@ its output space. Unknown/HDR source metadata cannot become `not-present` HDR.
 Keeping native bytes does not prove that a conversion preserved fine defects,
 ICC interpretation, HDR detail or bit depth; those need real-file review.
 
-Current repository evidence: `preparation_evidence.py` only decodes JPEG/PNG/WebP;
-current upload wrappers likewise admit those three raster types. Browser HEIC
-import currently produces PNG. This checkout's Node resolution finds no callable
-Sharp or libheif-js package. No dependency was installed or declared here. Even
-Sharp's prebuilt HEIF support is not proof of HEIC/HEVC capability; its
-[official requirements](https://sharp.pixelplumbing.com/api-output/#heif) describe
-additional native dependencies. The [libheif project](https://github.com/strukturag/libheif)
-documents primary-image selection, multiple images, transforms and color handling.
-A pinned, bounded native decoder and actual iPhone JPEG/HEIC fixtures are the next
-integration step, not completed work in this package.
+Current repository evidence: `@atlas/photo-runtime` now supplies bounded Sharp
+JPEG/PNG/WebP decoding and a separately built pinned libheif/libde265 HEVC
+primary decoder. The CPU preparation engine accepts only opaque sRGB RGB8.
+These implementations are separate from this descriptor-only package; their
+native and real-file evidence does not establish production/fresh-card acceptance.
+
+The explicit qualified Apple HDR path retains `dynamicRange: HDR` in source
+metadata and records `hdrTreatment: sdr-base` for the existing SDR primary. A
+schema-1 source with this treatment must bind the exact qualified Apple P3
+profile, HEIC RGB8 and `atlas-heif-apple-sdr-base-v1`; it cannot claim HDR absent.
+
+Schema 2 `decoded-frame` is a narrow full-dimension working-image derivative.
+It keeps the original/decode-plan hashes and source transform, and adds
+`workingImage: { policyVersion, sourceRaster, sourceTreatment, outputIccSha256,
+geometryTreatment }`. Source PNG dimensions/content and richer treatment remain
+bound. The only current policy is `atlas-sdr-working-srgb8-v1`, with exact sRGB
+output ICC, RGB8, unchanged geometry and source HDR treatment. Schema 1 remains
+valid and unchanged. This supports preparation without falsely describing the
+native original as an SDR or sRGB file. Neither schema proves byte inspection or
+optical fidelity; the runtime and storage adapter supply those observations.
 
 ## Coordinates and source validity
 

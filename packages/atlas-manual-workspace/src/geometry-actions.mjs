@@ -279,7 +279,9 @@ export function replaceGeometryImage(state, action) {
   validateState(state); object(action, ['side', 'base', 'image']); image(action.image);
   matches(action.base, baseFor(state, action.side, 'IMAGE'));
   const side = state.sides[action.side];
-  requireThat(action.image.version === next(side.imageRevision), 'ATLAS_GEOMETRY_IMAGE_VERSION_INVALID');
+  // Intake may select several immutable uploads before a working frame is
+  // adopted. A newer selected version can therefore skip unused versions.
+  requireThat(action.image.version >= next(side.imageRevision), 'ATLAS_GEOMETRY_IMAGE_VERSION_INVALID');
   return change(state, action.side, { ...side, image: action.image, imageRevision: action.image.version,
     physical: null, prepared: null, printed: null, confirmation: null },
   ['physical', 'preparation', 'printed', 'centering', 'mapRegistration', 'findings', 'measurement', 'inspection', 'geometryReview']);

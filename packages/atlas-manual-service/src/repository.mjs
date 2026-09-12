@@ -29,7 +29,7 @@ function approvalSnapshot(row) {
 /** No provider/storage/reducer effect is accepted inside these transactions.
  * Brief row locks cover auth/ACL, CAS, action receipt and optional approval.
  */
-export function createManualRepository({ boundary }) {
+export function createManualRepository({ boundary, validateSource = null }) {
   const loadRow = async (tx, cardId, lock = false) => (await tx.$queryRawUnsafe(
     `SELECT * FROM atlas_manual.card WHERE id=$1::uuid${lock ? ' FOR UPDATE' : ''}`, cardId))[0];
   return Object.freeze({
@@ -37,6 +37,7 @@ export function createManualRepository({ boundary }) {
       uuid(cardId); const document = stateDocument(draft);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         requireThat(principal.role === 'REVIEWER', 403, 'MANUAL_CARD_ACCESS_DENIED');
+        if (validateSource) await validateSource({ tx, principal, cardId, draft: document.draft, initial: true });
         await tx.$executeRawUnsafe(`INSERT INTO atlas_manual.card(id,revision,content,content_hash,owner_id)
           VALUES($1::uuid,1,$2,$3,$4::uuid) ON CONFLICT(id) DO NOTHING`, cardId, document.text, document.hash, principal.id);
         const row = await loadRow(tx, cardId, true); access(row, principal, 'edit');
@@ -105,6 +106,7 @@ export function createManualRepository({ boundary }) {
         const found = (await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.action WHERE card_id=$1::uuid AND action_id=$2::uuid', cardId, command.actionId))[0];
         const previous = replay(found, principal, requestHash); if (previous) return previous;
         requireThat(row.revision === command.expectedRevision && row.content_hash === baseHash, 409, 'MANUAL_DRAFT_STALE');
+        if (validateSource) await validateSource({ tx, principal, cardId, draft: document.draft });
         const nextRevision = revision(row.revision + 1);
         const receipt = { actionId: command.actionId, actorId: principal.id, actorKind: 'HUMAN',
           expectedRevision: row.revision, revision: nextRevision, requestHash, recordedAt: now.toISOString(),

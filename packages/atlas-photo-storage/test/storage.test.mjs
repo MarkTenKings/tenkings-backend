@@ -323,3 +323,29 @@ test('raw signer diagnostics do not escape the storage error boundary', async ()
   await assert.rejects(store.createOriginalUpload({ uploadPlan: plan(), expiresIn: 60 }), error =>
     error.code === 'PHOTO_STORAGE_UNAVAILABLE' && error.message === 'PHOTO_STORAGE_UNAVAILABLE' && error.cause === undefined);
 });
+
+
+test('private read grants verify bytes and bind the observed object version before signing', async () => {
+  const {client,store,decoded}=await fixture();
+  const frame=await store.writeDecodedFrame(decoded,{id:'read-frame',key:'test/derived/read.png'});
+  const calls=[];
+  const reader=storage(client,{sign:async(_client,command,options)=>{calls.push({command,options});return 'https://synthetic.example.invalid/private';}});
+  const args={frame,original:decoded.original,decodePlan:decoded.decodePlan,expiresIn:300};
+  const grant=await reader.createDecodedFrameRead(args);
+  assert.equal(grant.sha256,frame.raster.content.sha256);assert.equal(grant.byteCount,decoded.png.length);assert.equal(grant.mime,'image/png');
+  assert.equal(calls[0].command.constructor.name,'GetObjectCommand');assert.equal(calls[0].command.input.VersionId,frame.raster.object.versionId);assert.equal(calls[0].options.expiresIn,300);
+  const before=client.calls.length;
+  await assert.rejects(reader.createDecodedFrameRead({...args,expiresIn:901}),code('PHOTO_STORAGE_INVALID'));assert.equal(client.calls.length,before);
+  client.omitChecksum=true;client.current(frame.raster.object.key).bytes[30]^=1;
+  await assert.rejects(reader.createDecodedFrameRead(args),code('PHOTO_STORAGE_CONFLICT'));assert.equal(calls.length,1);
+});
+
+test('private read signer is bounded, cancelled and hides raw diagnostics', async () => {
+  const {client,store,decoded}=await fixture();const frame=await store.writeDecodedFrame(decoded,{id:'bound-frame',key:'test/derived/bound.png'});
+  const args={frame,original:decoded.original,decodePlan:decoded.decodePlan};
+  const blocked=storage(client,{limits:{...storageLimits,timeoutMs:30},sign:()=>new Promise(()=>{})});
+  await assert.rejects(blocked.createDecodedFrameRead(args),code('PHOTO_STORAGE_TIMEOUT'));
+  const controller=new AbortController();controller.abort();await assert.rejects(blocked.createDecodedFrameRead({...args,signal:controller.signal}),code('PHOTO_STORAGE_CANCELLED'));
+  const bad=storage(client,{sign:async()=>{throw new Error('private diagnostic');}});
+  await assert.rejects(bad.createDecodedFrameRead(args),error=>error.code==='PHOTO_STORAGE_UNAVAILABLE'&&!error.message.includes('private diagnostic'));
+});

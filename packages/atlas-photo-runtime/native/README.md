@@ -42,7 +42,12 @@ committed in this package. Preserve libheif/libde265 license/source obligations
 when packaging their shared libraries.
 
 The supported subset and refusals are specified in the package README. Bounded primary Exif and three exact SDR RGB ICC profiles are now qualified;
-HDR/gain-map and unqualified metadata/color handling remain phone-intake work. The caller's
+An explicit `retain-hdr-use-sdr-base` policy now qualifies one associated Apple
+gain map while preserving the exact HDR original and decoding only its SDR P3
+RGB8 primary. The worker independently verifies the profile and original item
+associations. Other HDR/gain-map forms and unqualified metadata/color remain
+unsupported. See the package README for the separate working-image conversion.
+The caller's
 outer process/container memory and disk limits remain necessary: `maxPixels`,
 `maxRasterBytes`, per-library block limits and a reaped deadline do not measure
 or hard-limit every native temporary allocation.

@@ -197,6 +197,21 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
     }
   }
 
+  async function createRead(expected, expiresIn, signal) {
+    check(Number.isSafeInteger(expiresIn) && expiresIn > 0 && expiresIn <= 900);
+    const found = await readExpected(expected, signal);
+    try {
+      const url = await bounded(signal, timeoutMs, activeSignal => cancellable(sign(client,
+        new GetObjectCommand({ Bucket: bucket, Key: found.object.key,
+          ...(found.object.versionId !== null ? { VersionId: found.object.versionId } : {}) }), { expiresIn }), activeSignal));
+      check(typeof url === 'string' && new URL(url).protocol === 'https:');
+      return { url, sha256: found.sha256, byteCount: found.byteCount, mime: found.contentType };
+    } catch (error) {
+      if (error instanceof PhotoStorageError) throw error;
+      fail('PHOTO_STORAGE_UNAVAILABLE');
+    }
+  }
+
   return Object.freeze({
     async createOriginalUpload({ uploadPlan, expiresIn, signal } = {}) {
       const plan = parseUploadPlan(uploadPlan), expected = originalExpectation(plan);
@@ -251,6 +266,10 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
       frame = parseDecodedFrame(frame, original, decodePlan);
       return readExpected(derivedExpectation(frame), signal);
     },
+    async createDecodedFrameRead({frame,original,decodePlan,expiresIn=300,signal}={}) {
+      frame=parseDecodedFrame(frame,original,decodePlan);
+      return createRead(derivedExpectation(frame),expiresIn,signal);
+    },
     async writeDerivative({ descriptor, frame, original, decodePlan, bytes, signal } = {}) {
       original = parseOriginal(original); decodePlan = clone(decodePlan);
       frame = parseDecodedFrame(frame, original, decodePlan);
@@ -262,6 +281,10 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
     async readDerivative({ descriptor, frame, original, decodePlan, signal } = {}) {
       descriptor = parseDerivative(descriptor, frame, original, decodePlan);
       return readExpected(derivedExpectation(descriptor), signal);
+    },
+    async createDerivativeRead({descriptor,frame,original,decodePlan,expiresIn=300,signal}={}) {
+      descriptor=parseDerivative(descriptor,frame,original,decodePlan);
+      return createRead(derivedExpectation(descriptor),expiresIn,signal);
     },
   });
 }

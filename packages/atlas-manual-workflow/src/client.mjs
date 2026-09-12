@@ -2,33 +2,44 @@
  * A missing response retries/reconciles the SAME action ID and exact payload;
  * it never treats an unobserved save as success or invents a second action.
  */
-export function createManualClient({ cardId, staffId, csrf, storage, fetchImpl = fetch, onView = () => {}, onStatus = () => {} }) {
-  const path = `/api/staff/manual/cards/${cardId}`, key = `atlas-manual-pending:v1:${staffId}:${cardId}`;
+export function createManualClient({ cardId, staffId, csrf, storage, basePath = '', timeoutMs = 45000, fetchImpl = fetch, onView = () => {}, onStatus = () => {} }) {
+  if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>240000)throw new Error('Invalid request deadline');
+  if (!/^\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+$/.test(basePath) && basePath !== '') throw new Error('Invalid staff mount');
+  const path = `${basePath}/api/staff/manual/cards/${cardId}`, key = `atlas-manual-pending:v1:${basePath ? `${basePath}:` : ''}${staffId}:${cardId}`;
   let view = null, active = false;
   const pending = () => { const value = storage.getItem(key); return value ? JSON.parse(value) : null; };
+  // Another recovery client may finish this command and start a later one
+  // while an earlier reply/view is still in flight. Clear only the exact
+  // completed or definitely refused request, never just this card's slot.
+  function clearPending(command) {
+    if (storage.getItem(key) === JSON.stringify(command)) storage.removeItem(key);
+  }
   async function request(url, body) {
     const response = await fetchImpl(url, { credentials: 'same-origin', cache: 'no-store',
       ...(body ? { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-atlas-csrf': csrf }, body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(45000) });
+      signal: AbortSignal.timeout(timeoutMs) });
     const result = await response.json();
     if (!response.ok) throw Object.assign(new Error(result.error ?? 'Save unavailable'), { status: response.status, code: result.error });
     return result;
   }
   async function load() { view = await request(`${path}/view`); onView(view); return view; }
-  async function finish() { await load(); storage.removeItem(key); onStatus('Saved'); return view; }
+  async function finish(command) { await load(); clearPending(command); onStatus('Saved'); return view; }
   async function reconcile(command) {
     const found = await request(`${path}/actions/${command.actionId}`);
-    if (found.state === 'COMMITTED') return finish();
+    if (found.state === 'COMMITTED') return finish(command);
     if (found.state !== 'NOT_FOUND') throw new Error('Save outcome unknown');
     await request(`${path}/actions`, command);
-    return finish();
+    return finish(command);
   }
   async function send(command) {
+    // Keep reconciliation bound to the bytes journaled before dispatch even
+    // if the caller later mutates its action object.
+    command = JSON.parse(JSON.stringify(command));
     storage.setItem(key, JSON.stringify(command)); onStatus('Saving…');
-    try { await request(`${path}/actions`, command); return await finish(); }
+    try { await request(`${path}/actions`, command); return await finish(command); }
     catch (error) {
       if ([400, 401, 403, 404, 409, 413, 422].includes(error.status)) {
-        storage.removeItem(key); await load().catch(() => {}); onStatus('Change needs review'); throw error;
+        clearPending(command); await load().catch(() => {}); onStatus('Change needs review'); throw error;
       }
       try { return await reconcile(command); }
       catch { onStatus('Save not confirmed — retry the pending save'); throw error; }
@@ -46,7 +57,7 @@ export function createManualClient({ cardId, staffId, csrf, storage, fetchImpl =
       onStatus('Checking pending save…');
       try { return await reconcile(command); }
       catch (error) {
-        if ([400, 401, 403, 404, 409, 413, 422].includes(error.status)) { storage.removeItem(key); await load().catch(() => {}); }
+        if ([400, 401, 403, 404, 409, 413, 422].includes(error.status)) { clearPending(command); await load().catch(() => {}); }
         onStatus('Pending save needs review'); throw error;
       }
     }),

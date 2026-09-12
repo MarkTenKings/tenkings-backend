@@ -1,5 +1,9 @@
 # Ten Kings V2 — Final Master Product and Architecture Blueprint
 
+Owner approval — September 12, 2026: Mark approved retaining each untouched native iPhone HDR original and using a separately derived, full-resolution SDR working image for the connected manual grading workflow. Implement explicit qualified HDR-primary admission and checked P3/sRGB-to-sRGB RGB8 conversion with original-to-working provenance; retain original HDR metadata and bytes. This authorizes the working-view policy and connected staff intake, automatic shared-engine identification, durable manual review/report integration and intended-runtime verification. It does not certify optical detail/color, change grading or human report authority, or close the unresolved initiating-cause prerequisite for a replacement Astra grading operator. Fresh real sports/Pokémon photo acceptance remains a human check after the build.
+
+Current implementation checkpoint — September 12, 2026: the connected manual candidate now wires actual staff pages to native original uploads, qualified full-resolution SDR working images, unchanged shared eight-field identification, durable paired geometry/defect review and separate exact report approval. The dedicated Vercel staff app remains the approved web host; native work uses a signed private Linux service that reauthenticates ordinary staff access. This supersedes earlier local “not connected” and HDR-policy-pending statements as source implementation only. The three SQL proposals and feature activation remain inactive outside fixtures; serving I, fresh physical-card acceptance and the initiating-cause prerequisite are unchanged. See `docs/atlas/audits/2026-09-12/connected-manual-workflow.md` and its concrete release procedure.
+
 **Status:** Owner-approved final product and architecture planning authority  
 **Owner:** Mark Thomas / Ten Kings  
 **Prepared:** 2026-08-04  

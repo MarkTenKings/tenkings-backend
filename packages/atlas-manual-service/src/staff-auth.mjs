@@ -25,7 +25,7 @@ export function createDurableStaffBoundary({ auth, manualClient }) {
           OR EXISTS (SELECT 1 FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname <> 'information_schema'
             AND has_schema_privilege(current_user,oid,'CREATE'))
           OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-            WHERE n.nspname='atlas_manual' AND c.relowner=r.oid) AS unsafe
+            WHERE n.nspname IN ('atlas_manual','atlas_manual_intake','atlas_manual_connected') AND c.relowner=r.oid) AS unsafe
           FROM pg_roles r WHERE r.rolname=current_user`);
         requireThat(role && role.unsafe === false, 503, 'MANUAL_DATABASE_ROLE_INVALID');
         const refresh = async () => {

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { sanitizeSpeedsterUnitQuad } from '@atlas/grading-core/geometry';
 import { geometryBase, geometryStatus, printedQuadOnOriginal } from './geometry-actions.mjs';
 import { gradientMapFromImage, snapSpeedsterPoint } from './gradient-snap';
+import { useVerifiedImage } from './verified-image.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
 const CORNERS = ['Top left', 'Top right', 'Bottom right', 'Bottom left'];
@@ -14,8 +15,7 @@ const message = error => /STALE/.test(error?.code ?? error?.message ?? '')
   ? 'This side changed. Your adjustment is retained; discard it to review the latest outline.'
   : 'The change was not confirmed saved. Your adjustment is retained.';
 
-/** Caller-supplied URLs must resolve to these exact immutable frame hashes.
- * This check compares descriptors; it is not browser-side byte verification. */
+/** Frame lineage is checked here; the shared loader verifies actual bytes. */
 export function geometryImage(state, side, kind, images) {
   const source = state.sides[side];
   const prepared = kind === 'PRINTED';
@@ -26,14 +26,16 @@ export function geometryImage(state, side, kind, images) {
     ? { ...image, width: frame.width, height: frame.height } : null;
 }
 
-function imageBinding(state, side, kind, images) {
+export function geometryImageBinding(state, side, kind, images) {
   const image = geometryImage(state, side, kind, images);
-  return image ? key({ card: state.cardId, side, kind, image, revision: kind === 'PHYSICAL' ? state.sides[side].imageRevision : state.sides[side].preparationRevision }) : null;
+  return image ? key({ card: state.cardId, side, kind, image: { sha256: image.sha256, width: image.width, height: image.height },
+    revision: kind === 'PHYSICAL' ? state.sides[side].imageRevision : state.sides[side].preparationRevision }) : null;
 }
 
 function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, onReady, preparing, locked }) {
   const slot = state.sides[side], status = geometryStatus(state).sides[side];
   const image = geometryImage(state, side, kind, images);
+  const verified = useVerifiedImage(image);
   const current = (kind === 'PHYSICAL' ? slot.physical : slot.printed)?.quad ?? null;
   const base = geometryBase(state, side, kind);
   const [draft, setDraft] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -41,12 +43,13 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
   const [snapReady, setSnapReady] = useState(false), [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const area = useRef(null), drag = useRef(null), gradient = useRef(null);
-  const imageKey = imageBinding(state, side, kind, images);
-  const ready = imageKey !== null && readyKey === imageKey;
+  const imageKey = geometryImageBinding(state, side, kind, images);
+  const ready = Boolean(verified.url && imageKey !== null && readyKey === imageKey);
   const stale = Boolean(draft && key(draft.base) !== key(base));
   const quad = draft?.quad ?? current;
   const dirty = Boolean(draft);
   useEffect(() => { onActivity(side, dirty || busy); return () => onActivity(side, false); }, [side, dirty, busy, onActivity]);
+  useEffect(() => { onReady(side, ready ? imageKey : null); }, [side, ready, imageKey, onReady]);
   useLayoutEffect(() => { gradient.current = null; setSnapReady(false); setReadyKey(null); setPan({ x: 0, y: 0 }); setZoom(1); drag.current = null; }, [imageKey]);
   const setPoint = (index, point, useSnap = false) => {
     if (!ready || busy || locked || stale || !quad) return;
@@ -90,7 +93,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
     <div className="am-view-label">{kind === 'PHYSICAL' ? 'Original view' : 'Straightened view'}</div>
     <div className="am-viewport" onPointerMove={pointerMove} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
       {image ? <div className="am-image-plane" ref={area} style={{ transform: `translate(${pan.x}%,${pan.y}%) scale(${zoom})`, aspectRatio: `${image.width}/${image.height}` }}>
-        <img key={imageKey} src={image.url} alt={`${side === 'FRONT' ? 'Front' : 'Back'} card, ${kind === 'PHYSICAL' ? 'oriented original' : 'straightened'}`} draggable={false}
+        {verified.url && <img key={imageKey} src={verified.url} alt={`${side === 'FRONT' ? 'Front' : 'Back'} card, ${kind === 'PHYSICAL' ? 'oriented original' : 'straightened'}`} draggable={false}
           onLoad={event => {
             const img = event.currentTarget;
             if (img.naturalWidth !== image.width || img.naturalHeight !== image.height) { setReadyKey(null); gradient.current = null; setSnapReady(false); onReady(side, null); setError('The displayed image does not match this outline. Reload the verified photo.'); return; }
@@ -98,7 +101,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
             gradient.current = map && map.width > 1 && map.height > 1 ? map : null;
             setSnapReady(Boolean(gradient.current)); setReadyKey(imageKey); onReady(side, imageKey);
             setError(previous => /^(The displayed image|Photo unavailable)/.test(previous) ? '' : previous);
-          }} onError={() => { setReadyKey(null); gradient.current = null; setSnapReady(false); onReady(side, null); setError('Photo unavailable. Your saved work is retained.'); }} />
+          }} onError={() => { setReadyKey(null); gradient.current = null; setSnapReady(false); onReady(side, null); setError('Photo unavailable. Your saved work is retained.'); }} />}
         {ready && <svg className="am-outlines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
           {physical && <polygon className={`am-physical ${kind === 'PHYSICAL' ? 'am-active' : ''}`} points={physical.map(p => `${p.x * 100},${p.y * 100}`).join(' ')} />}
           {printed && <polygon className={`am-printed ${kind === 'PRINTED' ? 'am-active' : ''}`} points={printed.map(p => `${p.x * 100},${p.y * 100}`).join(' ')} />}
@@ -110,6 +113,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
           onKeyDown={event => { const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }; const move = moves[event.key]; if (!move) return; event.preventDefault(); const step = event.shiftKey ? 10 : 1; setPoint(index, { x: point.x + move[0] * step / image.width, y: point.y + move[1] * step / image.height }); }} />)}
       </div> : <div className="am-empty">{kind === 'PRINTED' && slot.physical ? 'This side needs a current straightened image.' : 'Waiting for a verified photo.'}</div>}
     </div>
+    {image && !verified.url && <p role={verified.error ? 'alert' : 'status'}>{verified.error ? 'Photo unavailable or its bytes did not match. Your saved work is retained.' : 'Loading the verified photo…'}</p>}
     <div className="am-local-tools">
       <label>Zoom <select aria-label={`${side} zoom`} value={zoom} onChange={event => { setZoom(Number(event.target.value)); setPan({ x: 0, y: 0 }); }}><option value="1">Fit</option><option value="2">2×</option><option value="4">4×</option></select></label>
       {zoom > 1 && <div className="am-pan" aria-label={`${side} pan`}><button type="button" aria-label={`${side} pan left`} onClick={() => setPan(p => ({ ...p, x: Math.min((zoom - 1) * 50, p.x + 20) }))}>←</button><button type="button" aria-label={`${side} pan up`} onClick={() => setPan(p => ({ ...p, y: Math.min((zoom - 1) * 50, p.y + 20) }))}>↑</button><button type="button" aria-label={`${side} pan down`} onClick={() => setPan(p => ({ ...p, y: Math.max(-(zoom - 1) * 50, p.y - 20) }))}>↓</button><button type="button" aria-label={`${side} pan right`} onClick={() => setPan(p => ({ ...p, x: Math.max(-(zoom - 1) * 50, p.x - 20) }))}>→</button></div>}
@@ -136,7 +140,7 @@ export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, 
   const [kind, setKind] = useState('PHYSICAL'), [activity, setActivity] = useState({ FRONT: false, BACK: false });
   const [loaded, setLoaded] = useState({ FRONT: null, BACK: null });
   const onReady = useCallback((side, binding) => setLoaded(previous => previous[side] === binding ? previous : { ...previous, [side]: binding }), []);
-  const bothVisible = SIDES.every(side => { const binding = imageBinding(workspace, side, kind, images); return binding !== null && loaded[side] === binding; });
+  const bothVisible = SIDES.every(side => { const binding = geometryImageBinding(workspace, side, kind, images); return binding !== null && loaded[side] === binding; });
   const [confirming, setConfirming] = useState(false), [error, setError] = useState('');
   const onActivity = useCallback((side, active) => setActivity(previous => previous[side] === active ? previous : { ...previous, [side]: active }), []);
   const editing = activity.FRONT || activity.BACK;

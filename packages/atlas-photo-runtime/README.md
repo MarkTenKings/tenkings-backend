@@ -6,7 +6,7 @@ oriented PNG in a disposable child process. It imports no old application,
 operator, database, storage client or model. No production route uses it yet.
 
 ```js
-import { verifyAndDecodePhoto, describeDecodedFrame } from '@atlas/photo-runtime';
+import { verifyAndDecodePhoto, deriveSdrWorkingPhoto, describeDecodedFrame } from '@atlas/photo-runtime';
 
 const decoded = await verifyAndDecodePhoto({
   uploadPlan,       // previously allocated photo-core upload plan
@@ -15,11 +15,16 @@ const decoded = await verifyAndDecodePhoto({
   limits,           // all five photo-core decode limits are required
   existingOriginal: null, // or the immutable previously accepted receipt
   signal,           // optional AbortSignal
+  heicHdrPolicy: 'retain-hdr-use-sdr-base', // explicit approved Apple working-view policy
 });
 
 // Persist decoded.png with a separate create-only key through your storage
 // adapter, verify that write's actual object identity/bytes, then bind it:
 const frame = describeDecodedFrame(decoded, { id: frameId, object: storedObject });
+
+// Retain decoded as the richer primary and create a separate preparation frame.
+const working = await deriveSdrWorkingPhoto(decoded, { limits, signal });
+// Store working.png create-only, then describeDecodedFrame(working, ...).
 ```
 
 The decoder does not fetch a URL, authenticate a provider observation, upload
@@ -105,7 +110,7 @@ empty successful frame. A valid final descriptor is not storage authentication.
 Build the pinned Node-API adapter as described in [native/README.md](native/README.md).
 It loads libheif 1.23.2 with built-in libde265 1.1.1 **inside the same disposable
 Node child**. There is no subprocess codec helper, browser conversion, service,
-new npm dependency or changed public API. Missing/incompatible native binaries
+new npm dependency. Missing/incompatible native binaries
 produce `PHOTO_DECODER_UNAVAILABLE`; JPEG/PNG/WebP continue to use Sharp.
 
 The native probe selects the actual primary item by ID, including a primary that
@@ -163,17 +168,70 @@ again. The original still contains every unchanged metadata byte. This follows
 [HEIF's presentation rule](https://pillow-heif.readthedocs.io/en/stable/reference/HeifImage.html),
 with native-decoder and independent pixel-permutation comparisons.
 
-Explicitly unsupported: unknown ICC/wider NCLX color; PQ/HLG, mastering/content-light
+Explicitly unsupported by default: unknown ICC/wider NCLX color; PQ/HLG, mastering/content-light
 HDR metadata and auxiliary images including gain maps, depth and HEIF alpha;
 associated tile Exif; movie sequences, overlays/identity-derived items, unusual
 primary properties, fractional/out-of-bounds/odd-origin/complex crops, separately
 transformed tiles, repeated rotation/mirror properties, and nonzero rotation or
 mirror on odd source or effective crop dimensions. Originals remain available on
-every refusal. Native iPhone intake is **not complete**: read-only inspection of
-the two retained real iPhone originals verified compatible Exif and Display P3
-profiles, but also an Apple HDR gain map on each. Those exact originals still
-refuse; no auxiliary image was removed or ignored to make them pass. Fresh phone,
-optical detail and the full HDR inspection path remain acceptance work.
+every refusal. The explicit SDR policy below admits only the qualified Apple
+gain-map case; this is not general HEIF/HDR or fresh-phone optical acceptance.
+
+## Explicit SDR working images
+
+The owner approved retained HDR originals with SDR working images for the first
+standard sports/Pokémon build. `heicHdrPolicy: 'retain-hdr-use-sdr-base'` qualifies
+only the unchanged Apple 536-byte Display P3 ICC, an 8-bit primary, and exactly one
+associated `urn:com:apple:photo:2020:aux:hdrgainmap`. Native auxiliary identity and
+the original `auxC`/`auxl` association must agree. An additional `tmap` rendition
+may remain in the original only when its `dimg` inputs are the selected primary
+and that same gain map. It is never selected. Depth/alpha/unknown auxiliaries,
+HDR PQ/HLG primaries, unknown profiles and all prior geometry/tile guards remain
+refused. The default policy remains refusal.
+
+The original/decode plan says `dynamicRange: HDR`. The separately decoded primary
+keeps exact P3 samples/profile and records `atlas-heif-apple-sdr-base-v1` with
+`hdrTreatment: sdr-base`; it never says HDR was absent or preserved in that PNG.
+The gain map and every original metadata byte remain in the unchanged native
+file. The primary is Apple's existing SDR base, not a newly tone-mapped HDR image.
+An existing original receipt with null metadata remains exactly null; the HDR
+observation goes into its decode plan.
+
+`deriveSdrWorkingPhoto(decoded, { limits, signal })` converts the qualified
+oriented primary to a separate full-dimension sRGB RGB8 PNG. It performs ICC
+conversion using pinned Sharp/libvips's perceptual intent and the exact compact
+sRGB profile (`c56e1685…`). There is no resize, crop, second orientation, sharpening,
+denoising or gain-map application. sRGB conversion can clip colors outside its
+gamut; HDR brightness/detail and full P3 color volume are not retained in the
+working PNG. Original and richer primary artifacts remain separately available.
+Qualified SDR P3/sRGB decoded frames can use the same converter; alpha, unmanaged
+color and other HDR treatments refuse. A 16-bit SDR source remains intact while
+the explicit working copy quantizes to RGB8. Repeat working-image derivation from
+an already-derived result is refused; use the retained primary.
+
+`describeDecodedFrame` returns schema 2 for a working result, preserving the
+original/decode-plan hashes and exact source-to-frame matrix. Its `workingImage`
+provenance binds source PNG content/dimensions, source treatment, output ICC hash,
+conversion policy and `identity-no-resampling`. `parseDecodedFrame` accepts both
+the original schema 1 and this narrow schema 2. Existing preparation's opaque
+sRGB RGB8 check can consume it. The storage adapter must create separate keys and
+retain the original/richer source; this runtime does not write remote storage.
+
+The converter snapshots inputs before awaits and uses the same kill/reap child,
+output stream bound and private-directory cleanup. Limits default to the decode
+plan's bounds; `maxInputBytes` must also fit the richer PNG, not merely the much
+smaller compressed HEIC. Resource excess never causes automatic downsampling.
+
+Both retained iPhone files now pass this explicit path at 3024×4032. Every primary
+RGB sample matches independent native-default decoding, ICC bytes match, and a
+spatially distributed independent ICC matrix/TRC comparison of 211,437 channels
+per side differs by at most one RGB8 code. Exact-pixel detail crops are retained
+for owner review. These observations qualify this technical conversion, not
+optical defect accuracy or the owner's fresh-card acceptance. Evidence is under
+`atlas-connected-manual-20260912/sdr/` in the local handoff root. Apple's
+[HDR effect description](https://developer.apple.com/documentation/appkit/applying-apple-hdr-effect-to-your-photos)
+and [gain-map presentation](https://developer.apple.com/videos/play/wwdc2024/10177/)
+explain the SDR base plus auxiliary HDR representation.
 
 Native per-image security limits complement the existing parent timer and
 full-source RGBA16 budget. They are not a hard bound on total process/codec memory;
@@ -193,11 +251,12 @@ synchronously blocked child. No paid inference or historical card replay occurs.
 
 The finite local suite runs on Node 25.6.1/macOS arm64 with Sharp 0.33.5/libvips
 8.15.3. It is not production Node/Linux or iPhone optical acceptance. Remaining
-work includes outer server resource policy, remaining native iPhone HDR and unqualified metadata/color
+work includes outer server resource policy, full HDR viewing and unqualified metadata/color
 coverage and fresh iPhone JPEG/HEIC color/detail comparison on the Mac. The separate
 `@atlas/photo-storage` create-only adapter and `@atlas/preparation-runtime` CPU
 adapter now exist, with synthetic browser integration checked by root. Actual
 provider/authenticated application integration and the real-phone workflow remain
-pending. Preparation currently admits only opaque sRGB RGB8 frames; Display P3, unmanaged or
-16-bit HEIC output is explicitly outside that preparation subset. Retaining native
+pending. Preparation currently admits only opaque sRGB RGB8 frames; the explicit
+working derivative provides that format without replacing the richer original.
+Display P3, unmanaged or 16-bit HEIC output itself remains outside that subset. Retaining native
 originals and samples does not establish an accepted original-quality grading path.

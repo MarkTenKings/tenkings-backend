@@ -126,13 +126,35 @@ async function encodePng(native, geometry, outputPath, maxOutputBytes) {
 }
 
 export async function decodeHeif(bytes, request) {
-  const container = inspectHeif(bytes);
+  const allowAppleSdrBase = request.heicHdrPolicy === 'retain-hdr-use-sdr-base';
+  const container = inspectHeif(bytes, { allowAppleSdrBase });
   let addon;
   try { addon = createRequire(import.meta.url)('../native/build/heif.node'); }
   catch { throw new PhotoRuntimeError('PHOTO_DECODER_UNAVAILABLE'); }
-  const probe = addon.probe(bytes, request.limits), geometry = heifGeometry(probe, container);
+  const nativeArgs = [bytes, request.limits, ...(allowAppleSdrBase ? [request.heicHdrPolicy] : [])];
+  const probe = addon.probe(...nativeArgs), geometry = heifGeometry(probe, container);
   inspectHeifExif(probe.exif);
   const iccColorSpace = qualifyHeifIcc(probe.icc);
+  const gainMap = probe.appleGainMap;
+  if (gainMap) {
+    // This explicit policy qualifies Apple's SDR P3 RGB8 primary only. Other
+    // gain-map standards, HDR primaries and auxiliary purposes remain refused.
+    need(allowAppleSdrBase && probe.bitDepth === 8
+      && sha(probe.icc) === '20789fdbea9835251a4f0796c8bf45cbd964896044886540da21ffc7457af0ab', 'PHOTO_HDR_UNSUPPORTED');
+    const aux = container.itemProperties.get(gainMap)?.filter(p => p.type === 'auxC');
+    need(aux?.length === 1 && aux[0].data.equals(Buffer.concat([Buffer.alloc(4),
+      Buffer.from('urn:com:apple:photo:2020:aux:hdrgainmap\0')])), 'PHOTO_HDR_UNSUPPORTED');
+    const auxLinks = container.references.filter(r => r.type === 'auxl' && r.from === gainMap);
+    need(auxLinks.length === 1 && auxLinks[0].to.length === 1 && auxLinks[0].to[0] === probe.primary,
+      'PHOTO_HDR_UNSUPPORTED');
+  }
+  // Newer iPhone containers can additionally retain an ISO-derived HDR rendition.
+  // It is never selected; require its two inputs to be this exact base/gain map.
+  for (const [id, type] of container.items) if (type === 'tmap') {
+    const links = container.references.filter(r => r.type === 'dimg' && r.from === id);
+    need(gainMap && links.length === 1 && links[0].to.length === 2
+      && links[0].to[0] === probe.primary && links[0].to[1] === gainMap, 'PHOTO_HDR_UNSUPPORTED');
+  }
   const crop=geometry.crop??{x:0,y:0,width:probe.width,height:probe.height};
   // Odd-origin YCbCr crops changed chroma phase in the independent native-default
   // comparison, including without rotation. Keep this unqualified case explicit.
@@ -163,7 +185,7 @@ export async function decodeHeif(bytes, request) {
     if (iccColorSpace && !primaryHasIcc) need(hasIccProperty(properties), 'PHOTO_COLOR_UNSUPPORTED');
     need(properties.every(p => ['ispe', 'pixi', 'hvcC', 'colr'].includes(p.type)), 'PHOTO_HEIC_UNSUPPORTED');
   }
-  need(request.existingOriginal?.metadata?.dynamicRange !== 'HDR', 'PHOTO_HDR_UNSUPPORTED');
+  need(gainMap || request.existingOriginal?.metadata?.dynamicRange !== 'HDR', 'PHOTO_HDR_UNSUPPORTED');
   const metadata = {
     encoded: { width: probe.width, height: probe.height }, ...geometry,
     orientationSource: probe.transforms.length ? 'heif-properties' : 'identity',
@@ -171,7 +193,7 @@ export async function decodeHeif(bytes, request) {
     iccSha256: probe.icc.length ? sha(probe.icc) : null,
     colorSpace: iccColorSpace ?? (probe.nclx ? `NCLX:${probe.nclx.primaries}/${probe.nclx.transfer}/${probe.nclx.matrix}/${probe.nclx.fullRange}` : null),
     // Absence of a profile is unknown, not evidence of SDR or sRGB.
-    dynamicRange: probe.nclx || iccColorSpace ? 'SDR' : request.existingOriginal?.metadata?.dynamicRange ?? null,
+    dynamicRange: gainMap ? 'HDR' : probe.nclx || iccColorSpace ? 'SDR' : request.existingOriginal?.metadata?.dynamicRange ?? null,
   };
   const { plan, observedObject, existingOriginal, limits, outputPath } = request;
   const original = completeUpload(plan, { schemaVersion: 1, kind: 'original', uploadId: plan.uploadId,
@@ -179,14 +201,14 @@ export async function decodeHeif(bytes, request) {
     content: { mime: 'image/heic', byteCount: bytes.length, sha256: plan.expected.sha256 },
     metadata: existingOriginal ? existingOriginal.metadata : metadata }, existingOriginal);
   const decodePlan = planDecode(original, metadata, limits);
-  const native = addon.decode(bytes, limits);
+  const native = addon.decode(...nativeArgs);
   const { pixels, ...again } = native;
   need(JSON.stringify(again) === JSON.stringify(probe), 'PHOTO_SOURCE_MISMATCH');
   need(pixels.length === probe.width * probe.height * 3 * (probe.bitDepth === 8 ? 1 : 2), 'PHOTO_SOURCE_MISMATCH');
   const output = await encodePng(native, decodePlan.geometry, outputPath, limits.maxOutputBytes);
   return { original, decodePlan, output,
     treatment: { decoder: 'libheif/libde265', version: probe.version,
-      policyVersion: 'atlas-heif-primary-lossless-v2', channels: 3, bitDepth: output.bitDepth,
+      policyVersion: gainMap ? 'atlas-heif-apple-sdr-base-v1' : 'atlas-heif-primary-lossless-v2', channels: 3, bitDepth: output.bitDepth,
       colorSpace: iccColorSpace ?? (probe.nclx ? 'sRGB' : null), colorTreatment: iccColorSpace ? 'preserved' : probe.nclx ? 'converted' : 'unmanaged',
-      hdrTreatment: metadata.dynamicRange === 'SDR' ? 'not-present' : 'unknown' } };
+      hdrTreatment: gainMap ? 'sdr-base' : metadata.dynamicRange === 'SDR' ? 'not-present' : 'unknown' } };
 }

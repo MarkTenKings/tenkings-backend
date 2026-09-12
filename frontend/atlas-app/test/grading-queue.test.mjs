@@ -34,6 +34,7 @@ function harness({ queue = 'WAITING', assigned = loaded([]), workspace = loaded(
         if (name === '../components/Shell') return { default: 'shell', Notice: 'notice', Unavailable: 'unavailable', __esModule: true };
         if (name === '../components/WorkspaceShared') return { PhotoPreview: 'photo', Readiness: 'readiness', RecoveryNotice: 'recovery', StateBadge: 'badge' };
         if (name === '../components/WorkspaceIcon') return 'icon';
+        if (name === '../components/ManualCards') return 'manual-cards';
         if (name === '../lib/useGradingQueue') return { useGradingQueue: () => ({ resource: f.workspace, assigned: { ...f.assigned, reload: () => { f.reloads++; } }, suspend() { f.liveEvents.push('suspend'); }, resume() { f.liveEvents.push('resume'); } }) };
         if (name === '../lib/useWorkspaceMutation') return { useWorkspaceMutation: () => ({ ready: true, busy: false, pending: null, async mutate(path, body) { assert.equal(f.claimingEnabled, true, 'Queue reads never mutate'); f.mutations.push({ path, body }); return { ...waitingCard, state: 'IN_PROGRESS' }; } }) };
         if (name === '../lib/workspace-client.mjs') return workspaceClient;

@@ -40,9 +40,18 @@ static napi_value decode(napi_env env, napi_callback_info info) {
     }
     need(descriptor && std::strcmp(heif_decoder_descriptor_get_name(descriptor),
         "libde265 HEVC decoder, version 1.1.1") == 0, "PHOTO_DECODER_UNAVAILABLE");
-    size_t argc = 2; napi_value argv[2]; void* shouldDecode;
+    size_t argc = 3; napi_value argv[3]; void* shouldDecode;
     napiCheck(napi_get_cb_info(env,info,&argc,argv,nullptr,&shouldDecode));
-    need(argc == 2); bool isBuffer; napiCheck(napi_is_buffer(env,argv[0],&isBuffer)); need(isBuffer);
+    need(argc == 2 || argc == 3);
+    bool allowAppleSdrBase = false;
+    if (argc == 3) {
+      char policy[64]; size_t length = 0;
+      napiCheck(napi_get_value_string_utf8(env,argv[2],policy,sizeof(policy),&length));
+      need(length == std::strlen("retain-hdr-use-sdr-base") && std::strcmp(policy,"retain-hdr-use-sdr-base") == 0,
+        "PHOTO_HDR_UNSUPPORTED");
+      allowAppleSdrBase = true;
+    }
+    bool isBuffer; napiCheck(napi_is_buffer(env,argv[0],&isBuffer)); need(isBuffer);
     void* bytes; size_t size; napiCheck(napi_get_buffer_info(env,argv[0],&bytes,&size));
     uint64_t inputLimit = limit(env,argv[1],"maxInputBytes"), pixelsLimit = limit(env,argv[1],"maxPixels");
     uint64_t rasterLimit = limit(env,argv[1],"maxRasterBytes");
@@ -64,9 +73,24 @@ static napi_value decode(napi_env env, napi_callback_info info) {
     need(handle && heif_image_handle_is_primary_image(handle.get()) && heif_image_handle_get_item_id(handle.get()) == primary);
     auto type = heif_item_get_item_type(context.get(),primary);
     need(type == heif_fourcc('h','v','c','1') || type == heif_fourcc('g','r','i','d'), "PHOTO_HEIC_UNSUPPORTED");
-    // Auxiliaries include gain maps, depth and alpha: no silent dropped image/color volume.
-    need(heif_image_handle_get_number_of_auxiliary_images(handle.get(),0) == 0
-      && !heif_image_handle_has_alpha_channel(handle.get()), "PHOTO_HEIC_UNSUPPORTED");
+    // Explicit SDR-base selection preserves the untouched container, including
+    // its HDR data. No gain-map pixels are decoded or applied to the base.
+    const int auxiliaryCount = heif_image_handle_get_number_of_auxiliary_images(handle.get(),0);
+    need(auxiliaryCount >= 0 && auxiliaryCount <= 1 && !heif_image_handle_has_alpha_channel(handle.get()),
+      "PHOTO_HEIC_UNSUPPORTED");
+    heif_item_id appleGainMap = 0;
+    if (auxiliaryCount) {
+      need(allowAppleSdrBase,"PHOTO_HEIC_UNSUPPORTED");
+      need(heif_image_handle_get_list_of_auxiliary_image_IDs(handle.get(),0,&appleGainMap,1) == 1 && appleGainMap > 0);
+      heif_image_handle* auxPtr = nullptr;
+      check(heif_image_handle_get_auxiliary_image_handle(handle.get(),appleGainMap,&auxPtr));
+      std::unique_ptr<heif_image_handle,decltype(&heif_image_handle_release)> aux(auxPtr,heif_image_handle_release);
+      need(bool(aux)); const char* auxType = nullptr;
+      check(heif_image_handle_get_auxiliary_type(aux.get(),&auxType));
+      const bool apple = auxType && std::strcmp(auxType,"urn:com:apple:photo:2020:aux:hdrgainmap") == 0;
+      heif_image_handle_release_auxiliary_type(aux.get(),&auxType);
+      need(apple,"PHOTO_HEIC_UNSUPPORTED");
+    }
     need(!heif_image_handle_has_content_light_level(handle.get())
       && !heif_image_handle_has_mastering_display_colour_volume(handle.get()), "PHOTO_HDR_UNSUPPORTED");
     const int width = heif_image_handle_get_ispe_width(handle.get()), height = heif_image_handle_get_ispe_height(handle.get());
@@ -81,6 +105,7 @@ static napi_value decode(napi_env env, napi_callback_info info) {
     num(env,result,"displayWidth",heif_image_handle_get_width(handle.get()));
     num(env,result,"displayHeight",heif_image_handle_get_height(handle.get()));
     num(env,result,"bitDepth",depth); num(env,result,"topLevelCount",heif_context_get_number_of_top_level_images(context.get()));
+    num(env,result,"appleGainMap",appleGainMap);
     str(env,result,"version","1.23.2/libde265-1.1.1");
     size_t iccSize = heif_image_handle_get_raw_color_profile_size(handle.get());
     need(iccSize <= std::min<uint64_t>(inputLimit,4096), "PHOTO_DECODE_LIMIT");

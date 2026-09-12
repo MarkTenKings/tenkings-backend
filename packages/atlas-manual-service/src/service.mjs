@@ -16,7 +16,7 @@ export function createManualService({ repository, reduce, buildReport = null }) 
     async previewReport(staff, cardId) {
       requireThat(typeof buildReport === 'function', 503, 'MANUAL_REPORT_UNAVAILABLE');
       const { card, principal } = await repository.load(staff, cardId);
-      const report = stateDocument(await buildReport({ card, principal }));
+      const report = stateDocument(await buildReport({ card, principal }, staff));
       return { report: report.draft, reportHash: report.hash, sourceRevision: card.revision, sourceHash: card.contentHash };
     },
     async execute(staff, cardId, input) {
@@ -29,11 +29,11 @@ export function createManualService({ repository, reduce, buildReport = null }) 
         object(command.action, ['type', 'reportHash', 'reviewed']);
         requireThat(command.action.reviewed === true && principal.canCertify, 403, 'MANUAL_CERTIFICATION_REQUIRED');
         requireThat(typeof buildReport === 'function', 503, 'MANUAL_REPORT_UNAVAILABLE');
-        const report = stateDocument(await buildReport({ card, principal }));
+        const report = stateDocument(await buildReport({ card, principal }, staff));
         requireThat(report.hash === command.action.reportHash, 409, 'MANUAL_REPORT_STALE');
         approval = report.draft; draft = card.draft;
       } else {
-        draft = await reduce(immutable({ card, action: command.action, principal }));
+        draft = await reduce(immutable({ card, action: command.action, principal }), staff);
       }
       // Snapshot again before awaiting persistence; caller-owned references do
       // not survive across the commit's authentication/lock awaits.

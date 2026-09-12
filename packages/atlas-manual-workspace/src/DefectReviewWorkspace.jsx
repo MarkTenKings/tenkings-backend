@@ -5,6 +5,7 @@ import { applyCompletedSpeedsterTraceStroke, buildSpeedsterTraceProvenanceRevisi
   createEmptySpeedsterTrace, initializeSpeedsterHighlighterStrokes, isNonEmptySpeedsterTrace,
   panelPointToCanonicalPixel, rasterizeSpeedsterCanonicalContour } from '@atlas/grading-core/trace-editor';
 import { defectBase, defectStatus } from './defect-actions.mjs';
+import { useVerifiedImage } from './verified-image.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
 const GRID = { width: 1270, height: 1778 };
@@ -17,7 +18,7 @@ const TYPES = {
 };
 const name = side => side === 'FRONT' ? 'Front' : 'Back';
 const key = value => JSON.stringify(value);
-const inspectionBinding = (workspace, side, image) => key({ card: workspace.cardId, frame: workspace.sides[side].frame, revision: workspace.sides[side].findingRevision, url: image?.inspection?.url, sha256: image?.inspection?.sha256 });
+export const inspectionImageBinding = (workspace, side, image) => key({ card: workspace.cardId, frame: workspace.sides[side].frame, revision: workspace.sides[side].findingRevision, sha256: image?.inspection?.sha256 });
 const maskOf = finding => finding.finalTrace ?? finding.detectorMask;
 const regionsOf = finding => finding.measurementRegions ?? [{ zone: finding.zone, measurement: finding.measurement }];
 const areaOf = finding => regionsOf(finding).reduce((sum, region) => sum + region.measurement.areaMm2, 0);
@@ -56,14 +57,15 @@ function FindingOverlay({ findings, selected, trace, visible }) {
 function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDiscardPending, onReady, onActivity, locked }) {
   const slot = workspace.sides[side], base = defectBase(workspace, side), currentBase = key(base);
   const descriptor = image?.inspection;
-  const binding = inspectionBinding(workspace, side, image);
+  const binding = inspectionImageBinding(workspace, side, image);
   const supplied = descriptor?.url && descriptor.sha256 === slot.frame.inspectionImageSha256;
+  const verified = useVerifiedImage(supplied ? descriptor : null);
   const [loaded, setLoaded] = useState(null), [selected, setSelected] = useState(null), [editor, setEditor] = useState(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 }), [showMasks, setShowMasks] = useState(true);
   const [tool, setTool] = useState('BRUSH'), [brush, setBrush] = useState(4), [newType, setNewType] = useState('LIGHT_SCRATCH_SCUFF');
   const [stroke, setStroke] = useState([]), strokeRef = useRef(null), plane = useRef(null);
-  const ready = Boolean(supplied && loaded === binding);
+  const ready = Boolean(supplied && verified.url && loaded === binding);
   const stale = Boolean(editor && editor.baseKey !== currentBase);
   const pending = Boolean(slot.pending), disabled = busy || locked || pending || !ready;
   const pendingAction = slot.pending?.action;
@@ -129,16 +131,16 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
         }} onPointerMove={event => {
           if (!strokeRef.current) return; strokeRef.current.points.push(point(event)); setStroke([...strokeRef.current.points]);
         }} onPointerUp={finishStroke} onPointerCancel={() => { strokeRef.current = null; setStroke([]); }}>
-        <img key={binding} src={descriptor.url} alt={`${name(side)} inspection image`} draggable="false"
+        {verified.url && <img key={binding} src={verified.url} alt={`${name(side)} inspection image`} draggable="false"
           onLoad={event => setLoaded(event.currentTarget.naturalWidth === 1350 && event.currentTarget.naturalHeight === 1858 ? binding : null)}
-          onError={() => setLoaded(null)} />
+          onError={() => setLoaded(null)} />}
         <FindingOverlay findings={slot.findings} selected={pendingTrace ? pendingAction.findingId ?? pendingAction.trace.id : selected} trace={editor?.trace ?? pendingTrace} visible={showMasks} />
         {stroke.length > 0 && <svg className="ad-stroke" viewBox="0 0 1269 1777" aria-hidden="true"><polyline
           points={stroke.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={strokeRef.current?.tool === 'ERASER' ? '#ffffff' : '#df3f24'}
           strokeWidth={strokeRef.current?.brush ?? brush} strokeLinecap="round" strokeLinejoin="round" /></svg>}
       </div> : <div className="am-empty">Inspection image unavailable.</div>}
     </div>
-    {!ready && supplied && <p role="status">Waiting for the current inspection image.</p>}
+    {!ready && supplied && <p role={verified.error ? 'alert' : 'status'}>{verified.error ? 'Inspection image unavailable or its bytes did not match. Your trace is retained.' : 'Waiting for the current verified inspection image.'}</p>}
     <div className="am-local-tools">
       <label>Zoom <select disabled={stroke.length > 0 || busy} aria-label={`${name(side)} defect zoom`} value={zoom} onChange={event => { setZoom(Number(event.target.value)); setPan({ x: 0, y: 0 }); }}>
         <option value="1">Fit</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
@@ -198,7 +200,7 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
   const editing = SIDES.some(side => activity[side]);
   useEffect(() => { onEditingChange?.(editing || confirming); return () => onEditingChange?.(false); }, [editing, confirming, onEditingChange]);
   const currentImagesReady = SIDES.every(side => images?.[side]?.inspection?.sha256 === workspace.sides[side].frame.inspectionImageSha256
-    && ready[side] === inspectionBinding(workspace, side, images?.[side]));
+    && ready[side] === inspectionImageBinding(workspace, side, images?.[side]));
   const confirm = async () => {
     if (!status.canConfirm || !currentImagesReady || editing || confirming || !onConfirm) return;
     setConfirming(true); setError('');
