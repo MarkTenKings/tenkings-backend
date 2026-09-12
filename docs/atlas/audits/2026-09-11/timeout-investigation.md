@@ -2,6 +2,8 @@
 
 **Follow-up:** September 11 Pacific / September 12 UTC, 2026. Mark requested a fresh `gpt-6-astra` subagent at `xhigh` reasoning, independent review, and an update to the rebuild plan. This investigation examined the currently deployed I implementation. It made no production application-data changes or model requests.
 
+**Subsequent authenticated evidence:** the [database console follow-up](database-console-followup.md) adds historical aggregate lock delays and an unlimited slow-query parameter-logging configuration omitted by the passing local fixture. Sign-in is now complete. The console's recent logs do not contain the incident; Mark will relay a prepared inquiry to DigitalOcean's AI assistant. The exact initiating cause remains open.
+
 ## Conclusion in plain language
 
 We confirmed unnecessary work and a shared waiting line in ATLAS's coordination code. We did **not** reproduce or establish the exact cause of the historical ten-second transaction failure. The fresh tests passed even with the retained image size and competing status readers. Calling the image payload or ordinary polling *the proven initiating cause* would overstate the evidence.
@@ -55,7 +57,7 @@ These are small diagnostic samples, not p95/p99 capacity measurements or an end-
 - Normal `reserve` happens **before** the external-call heartbeat wrapper begins. A reproduction that simply overlaps its own heartbeat with reserve would invent concurrency absent from that normal sequence. The actual runner sequence was therefore tested separately.
 - The database's default `statement_timeout` is **0**, not 15 seconds. Fifteen seconds was a bound set by individual diagnostic reads; application transaction/operation deadlines still apply.
 - Database settings are `log_min_duration_statement=1000`, `log_lock_waits=on`, `deadlock_timeout=1000`, `log_destination=syslog`, `logging_collector=off`. Server-side slow-statement/lock logging is enabled even though the application discards useful exception detail.
-- The available database account cannot execute `pg_ls_logdir` or `pg_read_file`. Existing extension inventory shows no `pg_stat_statements`, so it cannot supply historical query timing aggregates. No logging configuration or extension was changed.
+- The available database account cannot execute `pg_ls_logdir` or `pg_read_file`. Existing extension inventory shows no `pg_stat_statements` in accessible `defaultdb`; the authenticated follow-up nevertheless obtained provider-managed aggregate query timings in the console. No logging configuration or extension was changed.
 
 Relevant implementation: [ledger transaction](../../../../packages/atlas-operator/src/ledger.mjs:321), [reservation](../../../../packages/atlas-operator/src/ledger.mjs:448), [runner error projection](../../../../packages/atlas-operator/src/runner.mjs:34), [external-call renewal](../../../../packages/atlas-operator/src/runner.mjs:153), [staff transaction wrapper](../../../../frontend/atlas-app/lib/server/access/database.mjs:7), [activity access](../../../../frontend/atlas-app/lib/server/access/workspace-operator.mjs:268).
 
@@ -78,7 +80,7 @@ Increasing a timeout, increasing the pool alone, lowering photo quality or disab
 
 First retrieve the existing managed PostgreSQL logs around **September 11, 15:34–15:43 and 18:30–18:32 UTC**, if still retained. Look for statement duration, lock wait/acquisition, backend PID, application/role, transaction cancellation/disconnection and server/resource events. Correlate with the operation timeline. A slow statement without matching time/backend context is a lead, not proof.
 
-The DigitalOcean database console reached sign-in in both the in-app browser and Chrome. No configured `doctl` or task-scoped DigitalOcean API credential was found. The Chrome sign-in tab was retained for user handoff; no credentials were entered or new provider permissions granted. DigitalOcean documents database logs/queries and monitoring in its [PostgreSQL monitoring guide](https://docs.digitalocean.com/products/databases/postgresql/how-to/monitor-databases/). Enabling a new log sink would not reconstruct missing historical logs and was not attempted.
+At the initial investigation, the DigitalOcean console reached sign-in in both browsers and no configured `doctl` or task-scoped API credential was found. Mark subsequently signed in; see the [authenticated follow-up](database-console-followup.md) for statistics, current settings and the remaining historical-record limitation. DigitalOcean documents database logs/queries and monitoring in its [PostgreSQL monitoring guide](https://docs.digitalocean.com/products/databases/postgresql/how-to/monitor-databases/). Enabling a new log sink would not reconstruct missing historical logs and was not attempted.
 
 If logs do not isolate the cause, the next evidence step is a bounded instrumented reproduction on representative runtime/network conditions: record pool acquisition, backend PID, each query label and elapsed time, lock waits/blockers, full-row bytes, JavaScript CPU/event-loop delay, and transaction completion/rollback. Preserve useful redacted driver detail. Use a stub provider and disposable test records; do not regrade the historical cards. Introducing production diagnostic code or writes requires its own concrete scoped action, not an assertion that this document has done it.
 

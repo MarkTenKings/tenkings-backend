@@ -42,9 +42,9 @@ All live reads were bounded and read-only; production logs were projected to ope
 - Root ran a bounded read-only live catalog SELECT profile; the capture agent ran an offline codec comparison.
 - No application code, production rows, provider calls, grants, runtime processes, deployments or active card state were changed in this audit.
 
-## Fresh Astra extra-high investigation follow-up
+## Initial fresh Astra extra-high investigation snapshot (commit 7caf2021)
 
-September 11 Pacific / September 12 UTC, 2026. Root reviewed the new independent investigation and verified all 40 manifest entries. The [follow-up report](timeout-investigation.md) is the current interpretation: matched isolated tests pass; payload/global-lock overhead is measured; the historical initiating cause remains open. Native profiles were read-only; local fixture mutations targeted owned disposable databases. No production card state, serving application, provider call, grant or deployment changed.
+September 11 Pacific / September 12 UTC, 2026. Root reviewed the new independent investigation and verified all 40 manifest entries. At that initial snapshot, the [follow-up report](timeout-investigation.md) recorded: matched isolated tests pass; payload/global-lock overhead is measured; the historical initiating cause remains open. Native profiles were read-only; local fixture mutations targeted owned disposable databases. No production card state, serving application, provider call, grant or deployment changed.
 
 | Receipt | SHA256 |
 | --- | --- |
@@ -57,4 +57,23 @@ September 11 Pacific / September 12 UTC, 2026. Root reviewed the new independent
 | [live-validation-profile.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/live-validation-profile.json) | `cf34be1ff8cd224c246d18826586ef7075e285b519fd5211f35d7efbc2dc61b7` |
 | [parent-log-console-access.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/parent-log-console-access.json) | `510da917637741c41cf09269215de6366b4bd63814ddea8253348befc246473a` |
 
-The final matrix and runner fixtures use current guards and the exact retained continuation length. They are PostgreSQL 17.10 Mac tests, not production failure reconstructions. The native 17.11 measurements cover reads and a related validation expression, not a live reservation. Compact-projection timings concern a diagnostic SELECT; advisory-lock call durations are corroborated by independent backend wait samples. First timeout precedes the final continuation size. DigitalOcean requires sign-in in both tested browsers; historical server logs have not been read.
+The final matrix and runner fixtures use current guards and the exact retained continuation length. They are PostgreSQL 17.10 Mac tests, not production failure reconstructions. The native 17.11 measurements cover reads and a related validation expression, not a live reservation. Compact-projection timings concern a diagnostic SELECT; advisory-lock call durations are corroborated by independent backend wait samples. First timeout precedes the final continuation size. At that initial snapshot DigitalOcean required sign-in in both browsers. The authenticated follow-up below supersedes that access status. FINDINGS.md and the manifest were subsequently extended; the table above retains their initial hashes, while current hashes are below.
+
+
+## Authenticated console and logging follow-up
+
+September 12, 2026 UTC. Root verified all 56 entries of the investigator's updated manifest. The [console report](database-console-followup.md) records long untimestamped lock statements, current slow-query parameter settings, the omitted fixture logging behavior, approximate incident chart samples and zero retained deadlocks. These do not establish historical causality. Mark chose to relay a prepared message to DigitalOcean's AI assistant and return its answer; no outside message was sent by this task. No production mutation, provider inference, configuration change or deployment occurred.
+
+| Current receipt | SHA256 |
+| --- | --- |
+| [artifact-manifest.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/artifact-manifest.json) | `9874e6a695a11a2e6b3aa9bab98cbdaa3176fdf670e7861d89446353503b4c2f` |
+| [FINDINGS.md](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/FINDINGS.md) | `06b96ea4fb5727a69a061e63c5ae3046a80bdda33688bf7b269194580c1c5d2e` |
+| [console-evidence.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/console-evidence.json) | `e8e450db469bf8387e174a19a0fd0b550d790f528a21b6c26267b58d228e7ebf` |
+| [console-incident-metrics.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/console-incident-metrics.json) | `610739e40043878a2085dd474a00c074d1691d816d479777539d8fdc0052357f` |
+| [slow-query-parameter-logging.md](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/slow-query-parameter-logging.md) | `4221430791b786d0f36ec3dbdb1489b547e9341f0e6e99b9d42e4011c4def8fa` |
+| [logging-parameter-probe.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/logging-parameter-probe.json) | `ce72d4e982ac4af9ee6469a6079707ba8b37a915ec6068f151d229fe0e360dfa` |
+| [logging-role-overrides.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/logging-role-overrides.json) | `8f9da8c48028976faa7c6d2ab4e8cd5601e1a72599441f6b60521e637e34e483` |
+| [deadlock-counter-probe.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/deadlock-counter-probe.json) | `6e714592bf468ff5530a4a6e68b4bf871d4f19c1660bd01fe4138eb4a8ebb653` |
+| [provider-stat-discovery.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/provider-stat-discovery.json) | `acdbc07db13037b1601cd053b8b3b3ad74d1e681c75ddc92676f5c49b51e8ca8` |
+| [log-correlation-map.md](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/log-correlation-map.md) | `a6b5262ba9184182cf3bdac9726a4514ee5cc26d2588fdce6fa55171b915ee2b` |
+| [digitalocean-ai-assistant-message.md](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/digitalocean-ai-assistant-message.md) | `e557c190f2d1af8c378eb2c9a946ddc933de21455f1026fd9f552fdf74828c4a` |

@@ -4,6 +4,8 @@
 
 **Fresh Astra extra-high follow-up:** [matched timeout investigation](timeout-investigation.md) completed September 11 Pacific / September 12 UTC. Current-guard, exact-length isolated tests and the real stubbed operator loop passed; native read-only profiles confirm overhead without reproducing the incident. Server slow-statement/lock logging is enabled, but access to its historical logs remains unavailable. This narrows the diagnosis; it does not close the initiating-cause question or fix the serving application.
 
+**Authenticated console follow-up:** Mark signed in. The [new investigation](database-console-followup.md) found aggregate lock-statement maxima up to 62.96 seconds and unlimited slow-query parameter logging absent from the local fixture. These establish long delays and a previously untested amplifier, not the incident's exact cause. Only recent log lines were visible. Mark will relay a prepared inquiry to DigitalOcean's AI assistant; no outside message or production change was made by this task.
+
 ## Decision
 
 Keep the existing grading, geometry, preparation, map and review engines. Substantially simplify the execution and persistence layer around them, and rebuild the capture scheduling path where necessary. The current evidence does **not** justify discarding the entire platform or inventing new grading engines.
@@ -42,7 +44,7 @@ flowchart TD
     I --> J[Next card cannot start with human or Astra]
 ```
 
-The reservation failure and the two dead ends are confirmed. Conversation growth is observed along this sequence; its exact contribution to the failure is not yet isolated. The precise SQL statement or lock wait accounting for the complete 10,215 ms remains unproven: existing logs record operation/category/duration, not per-query timings. PostgreSQL `pg_stat_statements` is not installed. We should not substitute a plausible expensive query for that missing measurement.
+The reservation failure and the two dead ends are confirmed. Conversation growth is observed along this sequence; its exact contribution to the failure is not yet isolated. The precise SQL statement or lock wait accounting for the complete 10,215 ms remains unproven: existing app logs record operation/category/duration, not per-query timings. PostgreSQL `pg_stat_statements` is not installed in accessible `defaultdb`; subsequently obtained provider aggregates still lack incident timestamps. We should not substitute a plausible expensive query for that missing measurement.
 
 ## Why saving exists, and what is excessive
 

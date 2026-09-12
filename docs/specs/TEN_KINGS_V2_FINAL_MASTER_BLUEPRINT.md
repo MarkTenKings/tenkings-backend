@@ -158,6 +158,8 @@ Planning continuation, September 11: Mark asked the agent to continue the invest
 
 Investigation follow-up, September 11 Pacific / September 12 UTC: at Mark's request, a fresh `gpt-6-astra`/`xhigh` subagent performed the remaining timeout investigation and root reviewed its evidence. Exact retained-length/current-guard isolated tests and the actual stubbed operator loop passed; bounded native read-only profiles confirm payload/global-lock overhead but do not establish the historical initiating statement/wait. The [timeout follow-up](../atlas/audits/2026-09-11/timeout-investigation.md) and rebuild plan now specify the resulting remedies and required historical logs or instrumented reproduction. This is new evidence, not closure of the owner's cause prerequisite or authorization to implement the replacement operator. No product rule, production data or serving code changed.
 
+Authenticated investigation follow-up, September 12 UTC: after Mark signed in, the [console investigation](../atlas/audits/2026-09-11/database-console-followup.md) found provider aggregate lock-statement maxima exceeding application deadlines and current unlimited slow-query parameter logging absent from the prior local fixture. The plan adds bounded logging and representative runtime/logging measurements; no configuration change was made. Exact historical SQL/holder evidence remains unavailable in the recent-log viewer. Mark chose to relay a prepared message to the provider's AI assistant and bring back its answer. This evidence does not close the initiating-cause prerequisite or alter approved product scope.
+
 ---
 
 ## 1. Executive Decision
