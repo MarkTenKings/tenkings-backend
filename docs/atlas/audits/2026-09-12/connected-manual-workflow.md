@@ -7,7 +7,9 @@ milestone. Two fresh gpt-6-astra/xhigh specialists completed native photo/intake
 then bounded review and integration tasks. A third fresh spawn was refused by
 the session agent limit; the lead handled application/runtime composition.
 
-The connected source and core runtime are qualified as described below; the final all-source container rebuild is blocked by local disk exhaustion. This is not a production release. The three additive SQL
+The connected source, final container packaging and core runtime are qualified
+locally as described below. Disk exhaustion was resolved through authorized
+cleanup and Docker recovery. This is not a production release. The three additive SQL
 proposals remain inactive outside owned fixtures. The previously observed
 serving-I failure and unresolved initiating-cause prerequisite for a replacement
 Astra grading operator remain unchanged. No paid identification/model call,
@@ -79,6 +81,15 @@ Evidence root:
   native HEVC/SDR, CPU preparation/measurement, verified browser-image logic,
   signed HTTP transport and web/private configuration. It runs under local Docker
   emulation on the Mac; this is not a readback from the eventual production host.
+- The final refreshed candidate passes all 251 expanded Linux tests with no
+  failures or skips, including intake, connected composition, durable service,
+  workflow recovery and the corrected worker-cancellation handshake. Its image is
+  `atlas-connected-manual:final-verified-20260912`, digest
+  `sha256:b6eaf704a8241afd470d9da81b4402cbd8f16184ecd6c608c99b5396f6ae48f1`.
+  All 497 source files inside it match final manifest SHA256
+  `b4f41db57f95ad1177f46f036e6a259f4e700c7599e669f356d4d1164e02e8bf`.
+  Its staff artifact boundary passes with 26 browser chunks, 12 server traces,
+  2,058 checked trace entries and the generated Debian Prisma engine.
 - Both retained iPhone originals decode at3024×4032 in Linux. Every primary and
   SDR RGB sample equals the independently checked Mac reference pixels exactly.
   Original SHA-256/bytes remain unchanged. The Mac primary also matches native
@@ -119,9 +130,35 @@ stopped after a disk-full PANIC. Lead cleared only this task's regenerable Next
 cache and restored only that disposable cluster, then used a fresh owned fixture for the
 final full browser pass after the crashed fixture still failed its staff health. The
 successful third candidate build/runtime evidence has its original source
-manifest; it must not be described as the final UI/client race-fix image. Final
-all-source packaging, full exact-head release checks and actual target-host
-qualification remain pending adequate disk space and a functioning Docker daemon.
+manifest; it must not be described as the final UI/client race-fix image.
+
+The owner subsequently authorized easy cleanup. Removing installed-app installer
+copies and unused download caches freed 5.864 GB. Docker still required recovery;
+its normal restart timed out, and one stale backend remained after controlled
+shutdown. After verifying that the VM disk had no open handles, stopping that
+stale process and reopening Desktop restored the engine without removing images
+or volumes. The recovered inventory contained no containers or local volumes.
+
+The exact final serving/native/web image then built successfully from the checked
+497-file closure. Both retained photos again passed full-resolution primary and
+SDR pixel equality against the Mac reference. Expanded Linux verification exposed
+a cancellation-test PID-file race: transient empty content was interpreted as
+PID0. An instrumented fixture reproduced that exact false failure. Fresh Astra
+Extra High review confirmed the issue and reviewed the test-only correction:
+atomic PID publication, a separate cancellation file, explicit positive/live
+second-child readiness and guaranteed cancellation cleanup. Production worker
+code did not change. A one-file test overlay on the successful full image avoids
+recompiling unchanged dependencies on the nearly full Mac. Both manifests and
+the exact delta are retained. Full exact-head release checks and actual
+target-host/provider qualification remain pending release work.
+
+Final evidence is `linux-runtime/tests-final-corrected.log`,
+`linux-runtime/final-source-and-boundary.log`,
+`linux-runtime/retained-photos-final.json`, `linux-verified-image.json`, and
+`linux-final-test-overlay.json` under the evidence root. The retained-photo proof
+ran on the full-build parent; the only subsequent image/source change is the
+reviewed measurement-test correction. Original failed and diagnostic runs remain
+available alongside successful final evidence.
 
 ## Remaining release and product work
 

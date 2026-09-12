@@ -120,20 +120,31 @@ test('timeout and cancellation actually terminate/reap a blocked child before re
   const directory = await mkdtemp(join(tmpdir(), 'atlas-measurement-process-test-'));
   try {
     const worker = join(directory, 'blocked.py'), pidFile = join(directory, 'pid');
-    await writeFile(worker, 'import json,os,sys,time\nfrom pathlib import Path\nr=json.load(sys.stdin)\nPath(r["pidFile"]).write_text(str(os.getpid()))\ntime.sleep(30)\n');
+    await writeFile(worker, 'import json,os,sys,time\nfrom pathlib import Path\nr=json.load(sys.stdin)\np=Path(r["pidFile"])\nt=p.with_suffix(".tmp")\nt.write_text(str(os.getpid()))\nt.replace(p)\ntime.sleep(30)\n');
     await assert.rejects(runMeasurementWorker(python, worker, { pidFile }, { timeoutMs: 250 }), /MEASUREMENT_TIMEOUT/);
-    let pid = Number(await readFile(pidFile, 'utf8'));
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    assert.ok(Number.isSafeInteger(pid) && pid > 0);
     assert.throws(() => process.kill(pid, 0), error => error.code === 'ESRCH');
     const controller = new AbortController();
-    const waiting = runMeasurementWorker(python, worker, { pidFile }, { timeoutMs: 10000, signal: controller.signal });
+    const cancelledPidFile = join(directory, 'cancelled-pid');
+    const waiting = runMeasurementWorker(python, worker, { pidFile: cancelledPidFile }, { timeoutMs: 10000, signal: controller.signal });
     const caught = assert.rejects(waiting, /MEASUREMENT_CANCELLED/);
-    for (let i = 0; i < 100; i++) {
-      const current = Number(await readFile(pidFile, 'utf8'));
-      if (current !== pid) { pid = current; break; }
-      await new Promise(resolve => setTimeout(resolve, 10));
+    let cancelledPid = null;
+    try {
+      for (let i = 0; i < 100; i++) {
+        const current = Number(await readFile(cancelledPidFile, 'utf8').catch(error => {
+          if (error.code === 'ENOENT') return '';
+          throw error;
+        }));
+        if (Number.isSafeInteger(current) && current > 0 && current !== pid) { cancelledPid = current; break; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.ok(cancelledPid !== null, 'Cancellation worker must publish its own complete positive PID');
+      assert.doesNotThrow(() => process.kill(cancelledPid, 0), 'Cancellation worker must be alive before abort');
+    } finally {
+      controller.abort(); await caught;
     }
-    controller.abort(); await caught;
-    assert.throws(() => process.kill(pid, 0), error => error.code === 'ESRCH');
+    assert.throws(() => process.kill(cancelledPid, 0), error => error.code === 'ESRCH');
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

@@ -4,9 +4,12 @@ September 12, 2026. Build and local qualification instructions; **not a record o
 production activation**. Preserve the dedicated Vercel staff app and public
 `/admin` gateway. The new native CPU service is a separate private deployment.
 Do not replace the previous grading operator as a consequence of this release.
-The final all-source packaging pass is currently blocked by Mac disk exhaustion;
-retain the successful earlier Linux qualification and rerun the exact final source
-closure after freeing space/recovering Docker.
+Local final-source packaging now passes after authorized disk cleanup and Docker
+recovery. The full serving/native/web image was rebuilt, then refreshed with one
+test-only cancellation-fixture correction. Every file in the final 497-file
+source closure matches the candidate image; see the connected manual audit for
+the image identity and retained qualification evidence. Live release checks below
+remain required.
 
 ## Prepare and bind the candidate
 
