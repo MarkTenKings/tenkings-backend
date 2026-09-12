@@ -406,6 +406,38 @@ test('Astra refines poor searches, retains query provenance and separates visual
   assert.deepEqual(f.input.description, (await fixture()).input.description);
 });
 
+test('query history attributes thirteen initial results and an empty refinement before an anchor-preserving broader search', async () => {
+  const f = await adaptiveFixture(13), broadened = '2024 Fixture Chrome Fixture Runner #007';
+  f.setRows(round => round === 0 ? f.rows(0) : round === 1 ? [] : f.rows(2).slice(0, 2));
+  const histories: Array<Array<{ query: string; result_count: number | null; candidate_ids: string[] }>> = [];
+  f.setModel((value, round) => {
+    const body = f.modelBodies[round];
+    const historyText = body.input[0].content.find((part: any) => part.type === 'input_text' && part.text.startsWith('Research queries already attempted: ')).text;
+    const history = JSON.parse(historyText.slice('Research queries already attempted: '.length).split('. This is search ')[0]);
+    histories.push(history);
+    if (round === 1) {
+      assert.deepEqual(history.map((query: any) => query.result_count), [13, 0]);
+      assert.deepEqual(history[0].candidate_ids, f.rows(0).map(item => `ebay:${item.itemId}`));
+      assert.deepEqual(history[1].candidate_ids, []);
+      // The merged old candidates are still visible, but none is attributed to
+      // the empty query. The model can therefore choose a broader third search.
+      assert.equal(value.comparisons.length, 13);
+      assert.match(body.instructions, /Do not add further restrictions after a zero-result search/);
+      assert.match(body.instructions, /raw, ungraded, rookie and rc.*must not be automatic search filters/);
+      return { ...value, refinement: { query: broadened, reason: 'The blue refinement returned zero results; remove its optional finish term and retain the saved identity.' } };
+    }
+    return value;
+  });
+  const saved = JSON.stringify(f.input), result = await researchStaffInventoryCard(f.input, f.deps);
+  assert.deepEqual(f.sources, [buildStaffInventoryResearchQuery(f.input.description), f.queries[0], broadened]);
+  assert.deepEqual(histories[2].map(query => query.result_count), [13, 0, 2]);
+  assert.deepEqual(histories[2][2].candidate_ids, f.rows(2).slice(0, 2).map(item => `ebay:${item.itemId}`));
+  assert.equal(validateRefinedStaffInventoryResearchQuery(f.input.description, broadened), broadened);
+  assert.equal(JSON.stringify(f.input), saved);
+  assert.equal(result.estimate.status, 'unknown');
+  assert.equal(Object.hasOwn(result.research_queries![0], 'result_count'), false);
+});
+
 test('repeated or foreign-anchor model refinements are not searched and never erase useful first evidence', async () => {
   for (const query of ['#007 Runner Chrome Cards Fixture 2024', '2024 Fixture Chrome Different Player #007 blue']) {
     const f = await adaptiveFixture();
