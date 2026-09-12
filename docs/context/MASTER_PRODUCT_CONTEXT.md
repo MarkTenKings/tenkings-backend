@@ -10,6 +10,8 @@
 
 > Shared-engine source correction: consultation with `Complete Ten Kings financial app` identifies current collect application `bb10f235d5bddd2ca30ba19e5389e80d43cd2fec`, whose physical-inventory flow uses eight-field Google Vision + Astra identification and a separate Astra/SoldComps research engine. Earlier 17-field CardAsset OCR comparisons concern an older flow. Owner wants the current engines and relevant learned identity knowledge shared with ATLAS, with inventories separate. The [shared-engine plan](../atlas/plans/SHARED_CARD_ENGINES_DISCUSSION.md) records the verified source, remaining reference-library gaps and proposed detector evaluation. No integration or model replacement has begun.
 
+> Planning continuation: Mark requested a compiled end-to-end recommendation. Start with the [ATLAS Speedster rebuild plan](../atlas/plans/ATLAS_SPEEDSTER_REBUILD_PLAN.md), which separates confirmed owner choices, source observations, proposed changes and unresolved acceptance decisions. It includes the server-HEIC gap, selective recalculation, type-correction learning limitation and per-action result validity. This remains planning; no runtime, model or database change has occurred.
+
 ## Historical runtime checkpoints
 
 The dated H/G/F/E checkpoints below preserve their original observations. Their runtime identities, pending actions and old-card recovery instructions are historical where superseded by I and the owner's cancellation.

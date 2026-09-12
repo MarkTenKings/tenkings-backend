@@ -1,5 +1,7 @@
 # Shared card engines; separate company inventories
 
+The [consolidated Speedster rebuild plan](ATLAS_SPEEDSTER_REBUILD_PLAN.md) places this source-verified reuse recommendation into the complete manual/automatic grading journey. This file remains the detailed current Ten Kings consultation record.
+
 Owner discussion, September 11, 2026 local time. Planning and read-only inspection only. No provider/model change, implementation, sharing of inventory records or deployment is authorized by this document.
 
 ## Owner direction

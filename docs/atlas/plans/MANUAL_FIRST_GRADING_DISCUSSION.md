@@ -1,5 +1,7 @@
 # Manual grading first; Astra uses the same tools
 
+The [consolidated Speedster rebuild plan](ATLAS_SPEEDSTER_REBUILD_PLAN.md) now combines this discussion with engine reviews, the current Ten Kings consultation, stage dependencies, learning and acceptance. This file retains the earlier reasoning; unresolved choices remain proposals rather than approved implementation.
+
 Planning discussion, September 11, 2026. No application code, deployed controls or provider settings change in this discussion. Owner authority is recorded in the [canonical blueprint](../../specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md#owner-direction--quality-parallel-grading-and-step-by-step-design-september-11-2026).
 
 ## Owner instructions and current decisions
