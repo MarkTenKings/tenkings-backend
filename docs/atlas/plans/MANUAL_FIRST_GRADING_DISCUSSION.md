@@ -11,6 +11,7 @@ Planning discussion, September 11, 2026. No application code, deployed controls 
 - The boundary and printed-border engines find the lines first. Astra reviews their results and adjusts them when needed, using the same precise tools available to a human.
 - Discuss each grading stage and Astra's actions before building. Manual-first implementation is the current recommendation under discussion, not a completed build or a separately approved detailed implementation.
 - Prefer resume from saved progress, provided it remains lightweight. The owner would choose a simpler restart behavior over another bloated recovery framework. This is a design tradeoff, not an instruction to discard existing cards or results.
+- Subsequent owner direction: inspect/evaluate engines before optimizing them. Historical SAM Memory lessons and card maps may be omitted if that materially accelerates the clean build; this does not request deleting the current data or removing the ability to learn from new reviewed cards. The [engine inspection](../audits/2026-09-11/engine-review.md) distinguishes stored lessons, model weights, learning functionality and migration effort.
 
 ## Image quality and resolution
 

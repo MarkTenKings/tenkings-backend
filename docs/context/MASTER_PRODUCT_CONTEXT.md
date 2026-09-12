@@ -6,6 +6,8 @@
 
 > Latest confirmed choices: native iPhone Camera originals uploaded from the phone; Front left / Back right in one continuing workspace; future direct-camera intake through the same image path. Owner requests clean engine extraction rather than dismantling the old app, and root-cause evidence before a replacement Astra layer. Details remain in discussion; no rebuild or live change has begun.
 
+> Engine-review follow-up: owner permits omitting historical lessons/maps if that materially speeds the clean build, and requested inspection before optimization. Read-only metadata found 559 Memory examples from 48 cards (0.54 MB), plus 4 current maps; these are distinct from SAM model weights and the ability to learn new lessons. See the [engine inspection and proposed measurements](../atlas/audits/2026-09-11/engine-review.md). No reset or engine change has occurred.
+
 ## Historical runtime checkpoints
 
 The dated H/G/F/E checkpoints below preserve their original observations. Their runtime identities, pending actions and old-card recovery instructions are historical where superseded by I and the owner's cancellation.

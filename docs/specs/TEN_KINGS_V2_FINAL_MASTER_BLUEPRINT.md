@@ -150,6 +150,8 @@ Mark favors continuing from saved progress after interruptions, but would accept
 
 Further owner clarification, September 11: use the iPhone native Camera app now and upload its highest-quality selected originals from the phone. The intended grading workspace keeps Front on the left and Back on the right, with the successive tools brought to that workspace and one source upload per side. A future high-end camera connected to the MacBook must be able to feed the same intake; its hardware/SDK integration is not selected yet. Mark rejects dismantling the existing application around its engines as the extraction strategy and requests a clean build that imports only the needed engines and their genuine dependencies. Establish the cause of the operator failure before designing/building its replacement. These are planning constraints, not authorization to begin the discussed rebuild or to delete the current application/data.
 
+Engine-review clarification, September 11: Mark is willing to omit existing Memory lessons and card maps from the new build if that reduces effort and accelerates cleanup, and requests inspection/explanation of engine behavior and improvement opportunities before changes. This flexibility concerns historical imports; it does not remove the requested learning capability or authorize an immediate database reset. The [engine review](../atlas/audits/2026-09-11/engine-review.md) records read-only counts and separates observed implementation costs from unmeasured optimization proposals.
+
 ---
 
 ## 1. Executive Decision
