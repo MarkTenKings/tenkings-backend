@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 export const STAFF_INVENTORY_RESEARCH_MODEL = 'gpt-6-astra' as const;
-export const STAFF_INVENTORY_RESEARCH_ENGINE_VERSION = 'staff-inventory-research-v1' as const;
-export const STAFF_INVENTORY_RESEARCH_LIMITS = { candidates: 24, candidateImages: 12, references: 24, referenceImages: 4, minimumComps: 2 } as const;
+export const STAFF_INVENTORY_RESEARCH_ENGINE_VERSION = 'staff-inventory-research-v2' as const;
+export const STAFF_INVENTORY_RESEARCH_LIMITS = { searches: 3, candidates: 24, candidateImages: 12, references: 24, referenceImages: 4, minimumComps: 2, overallTimeoutMs: 150000 } as const;
 
 const unsafeText = /[\u0000-\u001f\u007f]|https?:\/\/|data:|\b(?:sk|sess|proj)-[A-Za-z0-9_-]{8,}|(?:^|\s)(?:\/[\w.-]+){2,}|<\/?[a-z][^>]*>/i;
 const text = (max: number) => z.string().min(1).max(max).refine(value => value === value.trim() && !unsafeText.test(value));
@@ -68,6 +68,7 @@ export const StaffInventoryResearchCandidateSchema = z.object({
   retrieved_at: timestamp, source_response_sha256: sha256, title: text(500),
   sold_price: text(80).nullable(), sold_price_cents: cents.nullable(), sold_currency: z.string().regex(/^[A-Z]{3}$/).nullable(),
   best_offer_accepted: z.boolean().nullable(), sold_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(), sold_date_raw: text(80).nullable(),
+  accepted_offer: z.object({ amount: z.string().regex(/^\d{1,8}(?:\.\d{1,2})?$/), currency: z.string().regex(/^[A-Z]{3}$/), source_field: z.enum(['soldPrice', 'boaAcceptedPrice']), hydrated: z.literal(true) }).strict().optional(),
   condition: text(200).nullable(), grader: z.enum(['PSA', 'BGS', 'SGC', 'CGC']).nullable(), numeric_grade: z.number().min(1).max(10).nullable(), raw: z.boolean(),
   image_url: imageUrl.nullable(), image: downloadedImage.nullable(), source_eligible: z.boolean(), exclusion_reason: text(400).nullable(),
 }).strict().superRefine((value, ctx) => {
@@ -77,9 +78,10 @@ export const StaffInventoryResearchCandidateSchema = z.object({
     const extension = value.image.content_type === 'image/jpeg' ? 'jpg' : value.image.content_type === 'image/png' ? 'png' : 'webp';
     if (value.image.storage_key !== `research-evidence/${value.image.sha256}.${extension}`) ctx.addIssue({ code: 'custom', message: 'Stored image hash mismatch.' });
   }
-  const match = value.sold_price?.match(/^(\d{1,8})(?:\.(\d{1,2}))?$/);
+  const match = (value.accepted_offer?.amount ?? value.sold_price)?.match(/^(\d{1,8})(?:\.(\d{1,2}))?$/);
   const parsedPrice = match ? Number(BigInt(match[1]) * 100n + BigInt((match[2] ?? '').padEnd(2, '0') || '0')) : null;
-  if (value.sold_price_cents !== null && (value.sold_price_cents !== parsedPrice || value.best_offer_accepted !== false || value.sold_currency !== 'USD')) ctx.addIssue({ code: 'custom', message: 'Price evidence mismatch.' });
+  if (value.accepted_offer && (value.best_offer_accepted !== true || parsedPrice === null || parsedPrice < 1 || parsedPrice > 2_147_483_647 || (value.accepted_offer.source_field === 'soldPrice' && (value.accepted_offer.amount !== value.sold_price || value.accepted_offer.currency !== value.sold_currency)))) ctx.addIssue({ code: 'custom', message: 'Accepted offer evidence mismatch.' });
+  if (value.sold_price_cents !== null && (value.sold_price_cents !== parsedPrice || (value.accepted_offer ? value.accepted_offer.currency !== 'USD' : value.best_offer_accepted !== false || value.sold_currency !== 'USD'))) ctx.addIssue({ code: 'custom', message: 'Price evidence mismatch.' });
   if (value.sold_date && (!Number.isFinite(Date.parse(value.sold_date)) || new Date(value.sold_date).toISOString().slice(0, 10) !== value.sold_date)) ctx.addIssue({ code: 'custom', message: 'Invalid sold date.' });
   if (value.source_eligible && (value.sold_price_cents === null || value.sold_date === null || value.sold_date > value.retrieved_at.slice(0, 10) || value.exclusion_reason !== null)) ctx.addIssue({ code: 'custom', message: 'Ineligible sale evidence.' });
   if (value.raw ? value.grader !== null || value.numeric_grade !== null : value.grader === null || value.numeric_grade === null) ctx.addIssue({ code: 'custom', message: 'Inconsistent sale grade evidence.' });
@@ -97,13 +99,29 @@ export const StaffInventoryResearchIdentitySchema = z.object({
 export const StaffInventoryResearchConditionSchema = z.object({
   status: z.enum(['raw', 'graded', 'unresolved']), grader: z.enum(['PSA', 'BGS', 'SGC', 'CGC']).nullable(), numeric_grade: z.number().min(1).max(10).nullable(), photo_evidence: text(240).nullable(),
 }).strict().refine(value => value.status === 'graded' ? value.grader !== null && value.numeric_grade !== null && value.photo_evidence !== null : value.grader === null && value.numeric_grade === null && (value.status === 'unresolved' || value.photo_evidence !== null));
-const timings = z.object({ photos: z.number().int().min(0).max(90000), sources: z.number().int().min(0).max(90000), images: z.number().int().min(0).max(90000), model: z.number().int().min(0).max(90000), total: z.number().int().min(0).max(95000) }).strict();
+const duration = z.number().int().min(0).max(STAFF_INVENTORY_RESEARCH_LIMITS.overallTimeoutMs);
+const timings = z.object({ photos: duration, sources: duration, images: duration, model: duration, total: duration }).strict();
+const candidateId = z.string().regex(/^ebay:\d{6,20}$/);
+export const StaffInventoryResearchComparisonSchema = z.object({
+  candidate_id: candidateId, classification: z.enum(['matched', 'possible', 'rejected']), reason: text(400),
+  identity_match: z.boolean(), variant_match: z.boolean(), visual_match: z.boolean(), condition_match: z.boolean(),
+}).strict();
+export type StaffInventoryResearchComparison = z.infer<typeof StaffInventoryResearchComparisonSchema>;
+const researchQuery = z.object({
+  sequence: z.number().int().min(1).max(STAFF_INVENTORY_RESEARCH_LIMITS.searches), query: text(400), reason: text(400),
+  status: z.enum(['completed', 'failed']), source_response_sha256: sha256.nullable(),
+  candidate_ids: z.array(candidateId).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates),
+  error_code: z.enum(['invalid_input', 'unavailable', 'unverified_photo', 'provider_error', 'malformed_response', 'timeout', 'cancelled']).nullable(),
+}).strict();
 
 /** This validates the private persistence boundary as well as the engine output. */
 export const StaffInventoryResearchResultSchema = z.object({
   schema_version: z.literal(1), unit_id: sourceId, description_event_id: sourceId, description_hash: sha256,
-  engine_version: z.literal(STAFF_INVENTORY_RESEARCH_ENGINE_VERSION), model: z.literal(STAFF_INVENTORY_RESEARCH_MODEL), researched_at: timestamp, timings_ms: timings,
+  engine_version: z.enum(['staff-inventory-research-v1', STAFF_INVENTORY_RESEARCH_ENGINE_VERSION]), model: z.literal(STAFF_INVENTORY_RESEARCH_MODEL), researched_at: timestamp, timings_ms: timings,
   photos: z.object({ front: photo.nullable(), back: photo.nullable() }).strict(), query: text(400).nullable(),
+  // Do not add defaults: parsing an existing immutable v1 result must preserve its hash.
+  research_queries: z.array(researchQuery).max(STAFF_INVENTORY_RESEARCH_LIMITS.searches).optional(),
+  comparison_assessments: z.array(StaffInventoryResearchComparisonSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates).optional(),
   identity: StaffInventoryResearchIdentitySchema, target_condition: StaffInventoryResearchConditionSchema,
   references: z.array(StaffInventoryResearchReferenceSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.references),
   candidates: z.array(StaffInventoryResearchCandidateSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates),
@@ -117,6 +135,24 @@ export const StaffInventoryResearchResultSchema = z.object({
   const references = new Map(value.references.map(reference => [reference.id, reference]));
   if (candidates.size !== value.candidates.length || references.size !== value.references.length || new Set(value.selected_candidate_ids).size !== value.selected_candidate_ids.length) fail('Duplicate evidence identity.');
   if (value.candidates.length && value.query === null) fail('Missing source query.');
+  if (value.research_queries) {
+    const queries = value.research_queries;
+    if (queries.length && queries[0].query !== value.query) fail('Initial source query mismatch.');
+    if (new Set(queries.map(query => query.query.toLocaleLowerCase().split(/\s+/).sort().join(' '))).size !== queries.length) fail('Duplicate research query.');
+    for (const [index, query] of queries.entries()) {
+      if (query.sequence !== index + 1 || new Set(query.candidate_ids).size !== query.candidate_ids.length) fail('Invalid research query history.');
+      if (query.status === 'completed' ? query.source_response_sha256 === null || query.error_code !== null : query.source_response_sha256 !== null || query.candidate_ids.length !== 0 || query.error_code === null) fail('Invalid research query outcome.');
+    }
+    if (value.candidates.some(candidate => !queries.some(query => query.status === 'completed' && query.source_response_sha256 === candidate.source_response_sha256 && query.candidate_ids.includes(candidate.id)))) fail('Unbound candidate search provenance.');
+  }
+  if (value.comparison_assessments) {
+    const assessments = new Map(value.comparison_assessments.map(assessment => [assessment.candidate_id, assessment]));
+    if (assessments.size !== value.comparison_assessments.length || assessments.size !== candidates.size || [...assessments.keys()].some(id => !candidates.has(id))) fail('Incomplete comparison assessments.');
+    for (const assessment of value.comparison_assessments) {
+      if (assessment.classification === 'matched' && (!assessment.identity_match || !assessment.variant_match || !assessment.visual_match || !assessment.condition_match || !candidates.get(assessment.candidate_id)?.image || !value.photos.front || !value.photos.back || value.photos.front.sha256 === value.photos.back.sha256 || value.target_condition.status === 'unresolved')) fail('Unsupported matched comparison.');
+    }
+    if (value.selected_candidate_ids.some(id => assessments.get(id)?.classification !== 'matched')) fail('Estimate selections require matched comparisons.');
+  }
   const rejected = new Set(value.rejections.map(rejection => rejection.candidate_id));
   if (rejected.size !== value.rejections.length || value.rejections.some(rejection => !candidates.has(rejection.candidate_id)) || value.selected_candidate_ids.some(selected => rejected.has(selected))) fail('Invalid rejected evidence.');
   if (rejected.size + value.selected_candidate_ids.length !== candidates.size) fail('Incomplete selection evidence.');

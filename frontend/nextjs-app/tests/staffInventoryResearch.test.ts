@@ -8,7 +8,7 @@ import {
 } from '../lib/staffInventoryResearch';
 import {
   researchStaffInventoryCard, StaffInventoryResearchError, parseStaffInventoryResearchOutput,
-  isExactStaffInventoryResearchReference, buildStaffInventoryResearchQuery, type StaffInventoryResearchDependencies,
+  isExactStaffInventoryResearchReference, buildStaffInventoryResearchQuery, validateRefinedStaffInventoryResearchQuery, type StaffInventoryResearchDependencies,
 } from '../lib/server/staffInventoryResearch';
 
 const NOW = '2026-09-11T10:00:00.000Z';
@@ -40,8 +40,9 @@ async function fixture() {
   let modelValue: any = {
     identity: { status: 'base', variant_name: 'Base', suggestion: null, reason: 'The published exact card checklist and visible circular base mark match.', reference_ids: [reference.id], photo_features: [{ side: 'back', photo_sha256: sha(bytes[1]), reference_id: reference.id, evidence_type: 'catalog_feature', reference_feature: reference.distinguishing_features[0], observation: 'Back: circular base mark beneath 007.' }] },
     target_condition: { status: 'raw', grader: null, numeric_grade: null, photo_evidence: 'Both photos show an ungraded card without a grading label.' },
+    refinement: null,
     selected_candidate_ids: items.map(item => `ebay:${item.itemId}`),
-    comparisons: items.map(item => ({ candidate_id: `ebay:${item.itemId}`, identity_match: true, variant_match: true, visual_match: true, condition_match: true, reason: 'The exact identity and printed mark match the uploaded raw card.' })),
+    comparisons: items.map(item => ({ candidate_id: `ebay:${item.itemId}`, classification: 'matched', identity_match: true, variant_match: true, visual_match: true, condition_match: true, reason: 'The exact identity and printed mark match the uploaded raw card.' })),
   };
   const calls: { url: string; init: RequestInit; body: any }[] = [];
   const deps: StaffInventoryResearchDependencies = {
@@ -299,7 +300,7 @@ test('provider rows, image reads and concurrency stay bounded even with a large 
   })));
   f.model.identity = { status: 'unresolved', variant_name: null, suggestion: null, reason: 'No exact published catalog evidence.', reference_ids: [], photo_features: [] };
   f.model.selected_candidate_ids = [];
-  f.model.comparisons = f.items.slice(0, 24).map(item => ({ candidate_id: `ebay:${item.itemId}`, identity_match: true, variant_match: false, visual_match: false, condition_match: true, reason: 'Catalog evidence is unavailable.' }));
+  f.model.comparisons = f.items.slice(0, 24).map(item => ({ candidate_id: `ebay:${item.itemId}`, classification: 'matched', identity_match: true, variant_match: false, visual_match: false, condition_match: true, reason: 'Catalog evidence is unavailable.' }));
   const original = f.deps.fetchImpl!; let active = 0, highest = 0, imageCount = 0;
   f.deps.fetchImpl = (async (url, init) => {
     if (!String(url).startsWith('https://i.ebayimg.com/')) return original(url, init);
@@ -308,7 +309,7 @@ test('provider rows, image reads and concurrency stay bounded even with a large 
     return new Response(new Uint8Array(f.bytes[2]), { headers: { 'content-type': 'image/jpeg' } });
   }) as typeof fetch;
   const result = await researchStaffInventoryCard(f.input, f.deps);
-  assert.equal(result.candidates.length, 24); assert.equal(imageCount, 12); assert.equal(highest, 4); assert.equal(result.estimate.status, 'unknown');
+  assert.equal(result.candidates.length, 24); assert.equal(imageCount, 6); assert.equal(highest, 4); assert.equal(result.estimate.status, 'unknown');
 });
 
 test('decoded compressed responses use decoded byte bounds without confusing the encoded length', async () => {
@@ -342,4 +343,192 @@ test('worker cancellation aborts one bounded source request without alternate pr
   f.deps.fetchImpl = (async (_url, init) => { calls++; observed = init?.signal as AbortSignal; started(); return new Promise<Response>(() => {}); }) as typeof fetch;
   const pending = researchStaffInventoryCard(f.input, f.deps, controller.signal); await ready; controller.abort();
   await assert.rejects(pending, code('cancelled')); assert.equal(calls, 1); assert.equal(observed?.aborted, true);
+});
+
+test('refined queries preserve exact player, product, number and validated season while allowing bounded visual wording', async () => {
+  const f = await fixture(), description = { ...f.input.description, year: '2024-25' };
+  const valid = '2025 Fixture Chrome Fixture Runner #007 blue';
+  assert.equal(validateRefinedStaffInventoryResearchQuery(description, valid), valid);
+  assert.equal(validateRefinedStaffInventoryResearchQuery(description, valid.replace('2025', '2024')), valid.replace('2025', '2024'));
+  for (const query of [
+    valid.replace('Runner', 'Stranger'), valid.replace('Chrome', 'Phoenix'), valid.replace('#007', '#7'), valid.replace('2025', '2023'),
+    valid + ' https://evil.example', valid + ' -PSA', valid + ' secret', valid + ' 101', valid.replace('#007', '#007/100'),
+  ]) assert.equal(validateRefinedStaffInventoryResearchQuery(description, query), null, query);
+  const denominator = { ...description, card_number: '007/100' };
+  assert.equal(validateRefinedStaffInventoryResearchQuery(denominator, valid), null);
+  assert.equal(validateRefinedStaffInventoryResearchQuery(denominator, valid.replace('#007', '#007/100')), valid.replace('#007', '#007/100'));
+  assert.equal(description.year, '2024-25');
+});
+
+async function adaptiveFixture(count = 2) {
+  const f = await fixture(); f.deps.loadReferences = async () => [];
+  f.model.identity = { status: 'unresolved', variant_name: null, suggestion: null, reason: 'The exact published catalog is unavailable.', reference_ids: [], photo_features: [] };
+  f.model.selected_candidate_ids = [];
+  const queries = ['2024 Fixture Chrome Fixture Runner #007 blue', '2024 Fixture Chrome Fixture Runner #007 silver'];
+  const sources: string[] = [], modelBodies: any[] = [];
+  const rows = (round: number) => Array.from({ length: count }, (_, index) => ({
+    ...f.items[index % 2], itemId: String(300000000000 + round * 100 + index), url: `https://www.ebay.com/itm/${300000000000 + round * 100 + index}`,
+    title: round === 0 ? '2024 Fixture Cards Fixture Chrome Unrelated Player #999 Raw' : '2024 Fixture Cards Fixture Chrome Fixture Runner #007 Blue Raw',
+    bestOfferAccepted: null, thumbnailUrl: `https://i.ebayimg.com/images/g/round${round}-${index}/s-l400.jpg`,
+  }));
+  let nextRows = rows, nextModel: ((value: any, round: number) => any) | null = null;
+  f.deps.fetchImpl = (async (url, init) => {
+    const uri = String(url);
+    if (uri.startsWith('https://api.sold-comps.com/')) {
+      const keyword = new URL(uri).searchParams.get('keyword')!;
+      const round = sources.length; sources.push(keyword);
+      const items = nextRows(round);
+      return Response.json({ keyword, page: 1, totalItems: items.length, hasNextPage: false, items });
+    }
+    if (uri.startsWith('https://i.ebayimg.com/')) return new Response(new Uint8Array(f.bytes[2 + sources.length % 2]), { headers: { 'content-type': 'image/jpeg' } });
+    assert.equal(uri, 'https://api.openai.com/v1/responses');
+    const body = JSON.parse(String(init?.body)); modelBodies.push(body);
+    const candidates = body.input[0].content.filter((part: any) => part.type === 'input_text' && part.text.startsWith('Candidate data: ')).map((part: any) => JSON.parse(part.text.slice(16)));
+    const value = { ...f.model, refinement: sources.length < 3 ? { query: queries[sources.length - 1], reason: 'Refine the visible finish wording after the first mismatched listing results.' } : null,
+      comparisons: candidates.map((candidate: any) => ({ candidate_id: candidate.id, classification: candidate.title.includes('Unrelated Player') ? 'rejected' : candidate.image_sha256 ? 'matched' : 'possible', identity_match: !candidate.title.includes('Unrelated Player'), variant_match: !candidate.title.includes('Unrelated Player'), visual_match: Boolean(candidate.image_sha256), condition_match: true, reason: candidate.title.includes('Unrelated Player') ? 'The card number and player differ from the uploaded card.' : 'The visible card artwork and blue finish match; catalog and sale-price evidence remain unresolved.' })) };
+    return Response.json(output(nextModel ? nextModel(value, sources.length - 1) : value));
+  }) as typeof fetch;
+  return { ...f, sources, modelBodies, rows, queries, setRows(value: typeof rows) { nextRows = value; }, setModel(value: NonNullable<typeof nextModel>) { nextModel = value; } };
+}
+
+test('Astra refines poor searches, retains query provenance and separates visual matches from unknown-price estimates', async () => {
+  const f = await adaptiveFixture();
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  assert.deepEqual(f.sources, [buildStaffInventoryResearchQuery(f.input.description), ...f.queries]);
+  assert.equal(result.research_queries?.length, 3); assert.equal(result.candidates.length, 6);
+  assert.equal(result.comparison_assessments?.filter(assessment => assessment.classification === 'rejected').length, 2);
+  assert.equal(result.comparison_assessments?.filter(assessment => assessment.classification === 'matched').length, 4);
+  assert.equal(result.selected_candidate_ids.length, 0); assert.equal(result.estimate.status, 'unknown');
+  assert.equal(result.candidates.every(candidate => candidate.sold_price === '10.01' || candidate.sold_price === '10.02'), true);
+  assert.equal(result.candidates.every(candidate => candidate.sold_price_cents === null), true);
+  assert.ok(result.research_queries?.every(query => query.status === 'completed' && query.source_response_sha256?.length === 64));
+  assert.equal(f.modelBodies.length, 3);
+  assert.deepEqual(f.input.description, (await fixture()).input.description);
+});
+
+test('repeated or foreign-anchor model refinements are not searched and never erase useful first evidence', async () => {
+  for (const query of ['#007 Runner Chrome Cards Fixture 2024', '2024 Fixture Chrome Different Player #007 blue']) {
+    const f = await adaptiveFixture();
+    f.setModel(value => ({ ...value, refinement: { query, reason: 'Try another wording.' } }));
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(f.sources.length, 1); assert.equal(result.candidates.length, 2);
+    assert.match(result.warnings.join(' '), /repeat-free query rules/);
+  }
+});
+
+test('three-query work deduplicates listings, bounds retained candidates and spends at most twelve image downloads', async () => {
+  const f = await adaptiveFixture(24);
+  f.setRows(round => round === 0 ? f.rows(0) : [f.rows(0)[0], ...f.rows(round).slice(1)]);
+  const original = f.deps.fetchImpl!; let imageReads = 0, active = 0, maximum = 0; const imageUrls: string[] = [];
+  f.deps.fetchImpl = (async (url, init) => {
+    if (!String(url).startsWith('https://i.ebayimg.com/')) return original(url, init);
+    imageReads++; imageUrls.push(String(url)); active++; maximum = Math.max(maximum, active);
+    await new Promise(resolve => setTimeout(resolve, 2));
+    try { return await original(url, init); } finally { active--; }
+  }) as typeof fetch;
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  assert.equal(f.sources.length, 3); assert.equal(result.candidates.length, 24);
+  assert.equal(new Set(result.candidates.map(candidate => candidate.id)).size, 24);
+  assert.equal(imageReads, 12); assert.ok(maximum <= 4);
+  assert.equal(imageUrls.filter(url => url.includes('/round0-')).length, 6);
+  assert.equal(imageUrls.filter(url => url.includes('/round1-')).length, 3);
+  assert.equal(imageUrls.filter(url => url.includes('/round2-')).length, 3);
+  assert.equal(result.candidates.filter(candidate => candidate.image).length, 12);
+  assert.ok(result.research_queries?.every(query => query.candidate_ids.length === 24));
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) < 524288);
+});
+
+test('conflicting prices across queries preserve original source provenance and remove sale eligibility', async () => {
+  const f = await adaptiveFixture();
+  f.setRows(round => round === 0 ? f.rows(1) : [{ ...f.rows(1)[0], soldPrice: '500.00' }, f.rows(2)[1]]);
+  f.setModel(value => ({ ...value, refinement: f.sources.length === 1 ? value.refinement : null }));
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  const prior = result.candidates.find(candidate => candidate.id === f.rows(1)[0].itemId.toString().replace(/^/, 'ebay:'))!;
+  assert.ok(prior); assert.equal(prior.source_eligible, false); assert.equal(prior.sold_price, '10.01');
+  assert.match(prior.exclusion_reason!, /conflicting evidence/);
+  assert.equal(prior.source_response_sha256, result.research_queries?.[0].source_response_sha256);
+  assert.ok(result.research_queries?.[1].candidate_ids.includes(prior.id));
+  assert.equal(new Set(result.candidates.map(candidate => candidate.id)).size, 3);
+  assert.equal(StaffInventoryResearchResultSchema.safeParse(result).success, true);
+});
+
+test('optional source, model and timeout failures preserve the last valid research and retained extra evidence', async () => {
+  for (const failure of ['source', 'model', 'timeout'] as const) {
+    const f = await adaptiveFixture(), original = f.deps.fetchImpl!;
+    if (failure === 'timeout') f.deps.timeoutMs = 300;
+    let sourceCalls = 0, modelCalls = 0;
+    f.deps.fetchImpl = (async (url, init) => {
+      if (String(url).startsWith('https://api.sold-comps.com/') && ++sourceCalls === 2 && failure === 'source') return new Response('private error', { status: 500 });
+      if (String(url) === 'https://api.openai.com/v1/responses' && ++modelCalls === 2) {
+        if (failure === 'model') return Response.json(output({ invented_value: 123 }));
+        if (failure === 'timeout') return new Promise<Response>(() => {});
+      }
+      return original(url, init);
+    }) as typeof fetch;
+    const started = Date.now(), result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.estimate.status, 'unknown'); assert.equal(result.identity.reason, 'The exact published catalog is unavailable.');
+    assert.equal(result.candidates.length, failure === 'source' ? 2 : 4);
+    assert.equal(result.research_queries?.length, 2);
+    assert.equal(result.research_queries?.[1].status, failure === 'source' ? 'failed' : 'completed');
+    assert.match(result.warnings.join(' '), /prior verified research was preserved/);
+    assert.equal(StaffInventoryResearchResultSchema.safeParse(result).success, true);
+    if (failure === 'timeout') assert.ok(Date.now() - started < 500);
+  }
+});
+
+test('unknown-price visual matches stay matched and deterministic wrong card or grade evidence cannot become a match', async () => {
+  const f = await fixture();
+  f.model.selected_candidate_ids = [];
+  for (const item of f.items) item.bestOfferAccepted = null;
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  assert.equal(result.comparison_assessments?.every(assessment => assessment.classification === 'matched'), true);
+  for (const suffix of ['#999', 'PSA 10']) {
+    const altered = await fixture(); altered.model.selected_candidate_ids = [];
+    altered.items[0].title = suffix === '#999' ? String(altered.items[0].title).replace('#007', '#999') : `${altered.items[0].title} ${suffix}`;
+    const checked = await researchStaffInventoryCard(altered.input, altered.deps);
+    assert.equal(checked.comparison_assessments?.find(assessment => assessment.candidate_id === 'ebay:111111111110')?.classification, 'rejected');
+  }
+});
+
+test('equivalent consecutive-season listing wording remains a possible visual match without rewriting saved identity', async () => {
+  for (const titleYear of ['2024-25', '2024-2025', '2024/25', '2024/2025']) {
+    const f = await fixture(); f.input.description.year = '2024-25'; f.deps.loadReferences = async () => [];
+    f.model.identity = { status: 'unresolved', variant_name: null, suggestion: null, reason: 'The exact published catalog is unavailable.', reference_ids: [], photo_features: [] };
+    f.model.selected_candidate_ids = [];
+    for (const item of f.items) item.title = String(item.title).replace('2024', titleYear);
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.comparison_assessments?.every(assessment => assessment.classification === 'matched'), true, titleYear);
+    assert.equal(f.input.description.year, '2024-25'); assert.equal(result.estimate.status, 'unknown');
+  }
+});
+
+test('legacy immutable results parse with identical JSON and hashes without inserting optional research or price fields', async () => {
+  const f = await fixture(), current = await researchStaffInventoryCard(f.input, f.deps);
+  const legacy = { ...current, engine_version: 'staff-inventory-research-v1' } as any;
+  delete legacy.research_queries; delete legacy.comparison_assessments;
+  const bytes = JSON.stringify(legacy), parsed = StaffInventoryResearchResultSchema.parse(JSON.parse(bytes));
+  assert.equal(JSON.stringify(parsed), bytes);
+  assert.equal(sha(Buffer.from(JSON.stringify(parsed))), sha(Buffer.from(bytes)));
+  assert.equal(Object.hasOwn(parsed, 'research_queries'), false); assert.equal(Object.hasOwn(parsed, 'comparison_assessments'), false);
+  assert.ok(parsed.candidates.every(candidate => !Object.hasOwn(candidate, 'accepted_offer')));
+  for (const mutate of [
+    (value: any) => { value.research_queries[0].source_response_sha256 = 'f'.repeat(64); },
+    (value: any) => { value.comparison_assessments[0].candidate_id = 'ebay:999999999999'; },
+    (value: any) => { value.comparison_assessments[0].visual_match = false; },
+  ]) { const bad = structuredClone(current); mutate(bad); assert.equal(StaffInventoryResearchResultSchema.safeParse(bad).success, false); }
+});
+
+test('only explicit hydrated accepted-offer evidence can supply an estimate, retaining original source amounts', async () => {
+  for (const crossCurrency of [false, true]) {
+    const f = await fixture();
+    for (const item of f.items) Object.assign(item, { bestOfferAccepted: true, boaHydrated: true, ...(crossCurrency ? { soldPrice: '30.00', soldCurrency: 'CAD', boaAcceptedPrice: '9.00', boaAcceptedCurrency: 'USD' } : {}) });
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.estimate.value_cents, crossCurrency ? 900 : 1002);
+    assert.equal(result.candidates[0].accepted_offer?.source_field, crossCurrency ? 'boaAcceptedPrice' : 'soldPrice');
+    assert.equal(result.candidates[0].sold_price, crossCurrency ? '30.00' : '10.01');
+    const sourceCall = f.calls.find(call => call.url.startsWith('https://api.sold-comps.com/'))!;
+    for (const flag of ['includeCompleteListing', 'exactMatch', 'hydrateBoa']) assert.equal(new URL(sourceCall.url).searchParams.get(flag), 'true');
+    const bad = structuredClone(result); bad.candidates[0].accepted_offer!.amount = '99.00';
+    assert.equal(StaffInventoryResearchResultSchema.safeParse(bad).success, false);
+  }
 });

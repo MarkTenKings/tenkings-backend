@@ -3,9 +3,9 @@ export {
   STAFF_INVENTORY_RESEARCH_ERROR_MESSAGES, StaffInventoryResearchInputSchema, StaffInventoryResearchResultSchema,
   StaffInventoryResearchDescriptionSchema, StaffInventoryResearchPhotoKeySchema, StaffInventoryResearchReferenceSchema,
   StaffInventoryResearchCandidateSchema, StaffInventoryResearchPhotoFeatureSchema, StaffInventoryResearchIdentitySchema,
-  StaffInventoryResearchConditionSchema, isStaffInventoryResearchSourceUrl, isStaffInventoryResearchImageUrl,
+  StaffInventoryResearchConditionSchema, StaffInventoryResearchComparisonSchema, isStaffInventoryResearchSourceUrl, isStaffInventoryResearchImageUrl,
 } from '@tenkings/shared';
 export type {
   StaffInventoryResearchInput, StaffInventoryResearchResult, StaffInventoryResearchDescription,
-  StaffInventoryResearchReference, StaffInventoryResearchCandidate, StaffInventoryResearchErrorCode,
+  StaffInventoryResearchReference, StaffInventoryResearchCandidate, StaffInventoryResearchErrorCode, StaffInventoryResearchComparison,
 } from '@tenkings/shared';
