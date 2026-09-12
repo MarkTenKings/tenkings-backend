@@ -2,6 +2,8 @@
 
 **Assessment date:** September 11, 2026. **Examined release:** `89c55d916130d914f6a989197538c8bbd31c9594` (I). **Outcome:** deployment succeeded; real grading acceptance failed. This audit makes no new application deployment or production data change.
 
+**Fresh Astra extra-high follow-up:** [matched timeout investigation](timeout-investigation.md) completed September 11 Pacific / September 12 UTC. Current-guard, exact-length isolated tests and the real stubbed operator loop passed; native read-only profiles confirm overhead without reproducing the incident. Server slow-statement/lock logging is enabled, but access to its historical logs remains unavailable. This narrows the diagnosis; it does not close the initiating-cause question or fix the serving application.
+
 ## Decision
 
 Keep the existing grading, geometry, preparation, map and review engines. Substantially simplify the execution and persistence layer around them, and rebuild the capture scheduling path where necessary. The current evidence does **not** justify discarding the entire platform or inventing new grading engines.

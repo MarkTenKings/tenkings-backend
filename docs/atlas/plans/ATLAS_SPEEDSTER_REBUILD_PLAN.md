@@ -258,11 +258,21 @@ The failed fresh run stopped in IDENTITY **before preparation, SAM, Memory or ma
 
 ATLAS is the application's name. Both the inspected ATLAS operator and current Ten Kings identifier/research use OpenAI's Responses API with `gpt-6-astra`; there is no distinct “ATLAS API” responsible for this failure. The observed failing reservation was in our application's coordination layer before the next provider dispatch.
 
-The available evidence does **not** establish a PostgreSQL server crash or isolate the exact statement/wait that consumed those 10.2 seconds. Large inline-image continuations and repeated transaction/global-lock work are observed costs, not a fully proven explanation of that particular timeout. The earlier isolated 10.2 MB fixture passed, so it cannot establish that production was fixed.
+**Fresh Astra extra-high investigation, September 11 Pacific / September 12 UTC:** the requested independent investigation is complete; its [measurements, source review and remaining evidence gap](../audits/2026-09-11/timeout-investigation.md) are now part of this plan. It matched the retained **12,207,165-byte** continuation, current guards, real one-connection operator pool and staff status readers while keeping the ten-second deadline. It also exercised the real operator loop with a stub response. No model calls or production data changes were made.
 
-Before finalizing the replacement operator, reproduce with representative retained payload size and concurrent staff/status activity in an isolated environment. Use a disabled/stub provider so investigation does not regrade old cards or call models. Measure connection acquisition, lock wait, each SQL operation, payload transfer, JSON/hash work, transaction commit and process CPU/memory. Record database blockers/wait events during the same interval.
+| Fresh evidence | Meaning for the rebuild |
+| --- | --- |
+| Isolated reservation: **23 ms** with a small continuation versus **634–731 ms** at retained size, including up to four status readers | Remove image bodies from coordination records. Preserve original photo quality. This demonstrates overhead, not a reproduced ten-second failure. |
+| Real operator loop: **3.728 s**, including **612 ms** reservation, with one activity reader | The matched local sequence passes. It does not establish production reliability. |
+| Actual I/managed-DB read: full row **650–1,094 ms**, compact diagnostic projection **about 6 ms**; related server image validation **1,088 ms** | Compact progress/lease reads avoid demonstrated work. The projection is not the production status endpoint; live read-only profiles exclude reservation writes/full trigger behavior. |
+| Reader advisory-lock calls took **709–740 ms**, with backend waits independently corroborated; operator lock call at most **17 ms** | Remove the shared staff/operator lock from independent status/cards. These ordinary tested readers did not reproduce the operator timeout. |
+| Earliest failure preceded the final continuation size | Do not assign the whole incident to the final 12.2 MB payload. |
 
-Compare one variable at a time: small versus representative continuation, idle versus concurrent reads, global versus card-local claim, and parsing inside versus outside the transaction. If the incident does not reproduce, report the mechanism still unconfirmed and instrument the next authorized runtime test. Injected timeouts test recovery; they do not prove the historical initiating cause. Extending a timeout alone is not the success criterion.
+These are diagnostic samples across a disposable Mac PostgreSQL 17.10 instance and bounded read-only measurements on production PostgreSQL 17.11, not an end-to-end capacity benchmark. The exact historical statement/wait and a PostgreSQL crash remain **unproven**. The operator has one pooled connection and a five-second pool wait, versus a ten-second transaction and fifteen-second outer operation deadline; these can amplify a slow operation but do not identify its initiating cause.
+
+**Resolution carried into the rebuild:** keep images/results separate from small action records; use card/action ownership rather than a global waiting line; keep status reads compact; move broad role-structure checks out of routine transactions while preserving command authorization; allow fenced manual continuation after failure; and let other cards proceed independently. Add bounded, redacted phase timings so an error identifies pool wait, lock/query, local processing, commit or provider work. This does not need a new audit platform or a database write for every progress refresh.
+
+**Still required before the replacement operator:** obtain the existing database slow-statement/lock logs for September 11, 15:34–15:43 and 18:30–18:32 UTC, or capture an instrumented representative failure and its correction. Server logging is enabled to syslog, but the available SQL account cannot read those files, `pg_stat_statements` is absent, and DigitalOcean reached sign-in in both available browsers. The app's original log omitted exception detail. If historical logs cannot settle the cause, use a bounded stub-provider reproduction with per-query/pool/lock/CPU/commit measurements. A known gap is not a passed prerequisite. Forced timeouts can validate recovery; merely extending a timeout or obtaining another passing local run cannot establish the historical cause.
 
 ## Build order and evidence that each part is ready
 
@@ -299,7 +309,7 @@ The next owner review should begin with the combined boundary/border screen and 
 
 ## Evidence and source map
 
-- [Incident, actual timings and acceptance failure](../audits/2026-09-11/README.md); [operator details](../audits/2026-09-11/operator-dissection.md); [capture evidence](../audits/2026-09-11/capture-comparison.md).
+- [Incident, actual timings and acceptance failure](../audits/2026-09-11/README.md); [operator details](../audits/2026-09-11/operator-dissection.md); [fresh Astra extra-high timeout investigation](../audits/2026-09-11/timeout-investigation.md); [capture evidence](../audits/2026-09-11/capture-comparison.md).
 - [Engine behavior and read-only Memory/map inventory](../audits/2026-09-11/engine-review.md).
 - [Manual-first discussion](MANUAL_FIRST_GRADING_DISCUSSION.md) and [current Ten Kings consultation/source correction](SHARED_CARD_ENGINES_DISCUSSION.md).
 - [Existing isolated grading package](../../../packages/atlas-grading-core/README.md); [extraction manifest](../../../packages/atlas-grading-core/extraction-manifest.json); [scoring](../../../packages/atlas-grading-core/src/scoring.ts); [remeasurement](../../../packages/atlas-grading-core/src/review.ts:382).
@@ -310,3 +320,5 @@ The next owner review should begin with the combined boundary/border screen and 
 - [Existing finishing sequence](../../../frontend/atlas-app/lib/server/access/finishing.mjs:217); [Mac NFC acceptance limits](../MAC_NFC.md).
 
 New in this consolidation: explicit server-HEIC work; side-specific invalidation; overlap of defect work with printed-border review; the relabeled-Memory limitation; version-aware cross-company knowledge publication; action-specific result applicability; complete manual/report/finishing scope; and a finite acceptance sequence. No model benchmarks, live writes, application implementation or deployment were performed for this planning continuation.
+
+Subsequent owner-requested timeout follow-up added matched isolated database/runner tests and bounded live read-only profiles. It confirms overhead and logging limitations, narrows unsupported causal claims, and leaves the initiating-cause prerequisite visibly unresolved. No application implementation or deployment followed from these measurements.

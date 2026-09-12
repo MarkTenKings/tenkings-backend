@@ -12,6 +12,8 @@
 
 > Planning continuation: Mark requested a compiled end-to-end recommendation. Start with the [ATLAS Speedster rebuild plan](../atlas/plans/ATLAS_SPEEDSTER_REBUILD_PLAN.md), which separates confirmed owner choices, source observations, proposed changes and unresolved acceptance decisions. It includes the server-HEIC gap, selective recalculation, type-correction learning limitation and per-action result validity. This remains planning; no runtime, model or database change has occurred.
 
+> Fresh Astra extra-high follow-up: owner requested a new independent subagent to resolve the remaining timeout investigation. Matched-size/current-guard isolated tests and the real stubbed operator loop passed; native read-only profiles measured full-payload overhead. The [follow-up report](../atlas/audits/2026-09-11/timeout-investigation.md) records confirmed rebuild remedies and the still-unproven historical initiating cause. Slow-statement/lock logging exists on managed PostgreSQL, but historical log access requires authentication unavailable to the investigation. The owner's prerequisite remains open. No application code, production data, provider calls or deployment changed.
+
 ## Historical runtime checkpoints
 
 The dated H/G/F/E checkpoints below preserve their original observations. Their runtime identities, pending actions and old-card recovery instructions are historical where superseded by I and the owner's cancellation.
