@@ -88,3 +88,16 @@ test('AbortSignal instance overrides cannot bypass termination or strand a spawn
     await dead(pidPath);
   });
 });
+
+test('an actively decoding native HEVC process is killed and reaped on cancellation', async () => {
+  await withPid(async pidPath => {
+    const controller=new AbortController();
+    const running=runDecoderProcess(fixture,{pidPath,action:'heic'},{timeoutMs:5000,signal:controller.signal});
+    const rejected=assert.rejects(running,code('PHOTO_DECODE_CANCELLED'));
+    for(let attempts=0;;attempts++){
+      try { await readFile(`${pidPath}.native`); break; }
+      catch { assert.ok(attempts<200); await new Promise(resolve=>setTimeout(resolve,5)); }
+    }
+    controller.abort(); await rejected; await dead(pidPath);
+  });
+});

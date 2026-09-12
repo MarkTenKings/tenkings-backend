@@ -100,45 +100,78 @@ unsupported multi-frame/HDR, allocation/output limit, decoder unavailable,
 timeout, cancellation and unexpected worker failure. They never produce an
 empty successful frame. A valid final descriptor is not storage authentication.
 
-## HEIC boundary
+## Native HEIC subset
 
-HEIC is **explicitly unsupported in this runtime version**; recognized HEVC
-container brands return `PHOTO_HEIC_UNSUPPORTED` without emitting a false
-`image/heic` receipt or a raster. The original object remains the caller's
-retained evidence. Sharp's prebuilt HEIF/AVIF support does not establish HEVC
-availability; its [HEIF requirements](https://sharp.pixelplumbing.com/api-output/#heif)
-describe the extra native decoder requirement.
+Build the pinned Node-API adapter as described in [native/README.md](native/README.md).
+It loads libheif 1.23.2 with built-in libde265 1.1.1 **inside the same disposable
+Node child**. There is no subprocess codec helper, browser conversion, service,
+new npm dependency or changed public API. Missing/incompatible native binaries
+produce `PHOTO_DECODER_UNAVAILABLE`; JPEG/PNG/WebP continue to use Sharp.
 
-The existing libheif-js 1.23.2 package was investigated separately, using real
-HEIC fixtures. It does expose `is_primary()`. A controlled two-image fixture
-with its second item selected as primary proves that `images[0]` is not a safe
-primary-image rule. The documented `display()` path requests RGBA8 and calls
-the decoder with default options; libheif already applies container crop,
-rotation and mirroring. Feeding those pixels through an independently guessed
-EXIF orientation would risk applying a transform twice.
+The native probe selects the actual primary item by ID, including a primary that
+is second in a still-image collection. Direct HEVC images and ordinary HEVC grids
+support 8/10/12-bit sources. A grid must have exact canvas/tile coverage, matching
+tile dimensions/depth/color, no separate tile transforms/Exif/auxiliaries, and
+only direct HEVC tiles. Thumbnails never become the selected primary. Actual
+container item types and item-local `ipma` property associations are checked;
+`ftyp` branding alone never produces an HEIC receipt.
 
-The shipped runtime has no tested adapter resolving primary item identity,
-encoded dimensions, effective crop/orientation, ICC/NCLX transfer handling and
-greater-than-8-bit output into the photo-core descriptor together. Low-level
-libheif capabilities exist; absence of that integration is not a claim that
-libheif cannot support it. No additional libheif runtime dependency is declared
-until this exact source/frame interpretation is implemented and verified.
-Relevant primary source: [libheif 1.23.2 Emscripten bindings](https://github.com/strukturag/libheif/blob/v1.23.2/libheif/api/libheif/heif_emscripten.h),
-[decoding defaults](https://github.com/strukturag/libheif/blob/v1.23.2/libheif/api/libheif/heif_decoding.h)
-and [JavaScript image wrapper](https://github.com/strukturag/libheif/blob/v1.23.2/post.js).
+Native decode ignores transformations and preserves sample depth. A separate
+lossless PNG encoder applies the verified integer crop and effective orientation
+once, retaining full resulting dimensions with no resampling. 10/12-bit code
+values expand injectively to 16 bits via `round(sample * 65535 / (2^depth - 1))`;
+this retains every distinct decoded value, not additional source precision.
+PNG output has no orientation metadata. Supported direct crop/orientation cases
+match independent integer permutations and native default decoding. Even-grid
+crop/rotation/mirror cases also match. Every accepted crop has even x/y origins.
+Any nonzero rotation or mirror requires even source and effective crop dimensions,
+for both direct images and grids. Repeated rotation/mirror properties are refused.
+These boundaries follow independent native comparisons that found different
+pixels for odd-origin crops and transformations on odd grid dimensions, including
+repeated operations whose net orientation is identity.
+
+Color has a deliberately narrow qualified scope. Matched NCLX BT.709 primaries,
+sRGB transfer and RGB/BT.709/BT.601 matrix coefficients decode to explicitly tagged
+sRGB PNG. Unprofiled sources remain `colorTreatment: unmanaged`, null color space
+and unknown dynamic range: no default sRGB or fidelity assertion is invented.
+Exact original bytes are always preserved by the caller, independently of PNG.
+
+Explicitly unsupported: ICC profiles and wider/unverified NCLX color; PQ/HLG,
+mastering/content-light HDR metadata and auxiliary images including gain maps,
+depth and HEIF alpha; **all associated Exif metadata**, including neutral IFD0;
+movie sequences, overlays/identity-derived items, unusual primary properties,
+fractional/out-of-bounds/odd-origin/complex crops, separately transformed tiles,
+repeated rotation/mirror properties, and nonzero rotation or mirror on odd source
+or effective crop dimensions. Exif priority and the complete IFD graph need their own
+qualification; the adapter does not silently ignore a possible second orientation.
+Originals remain available on every refusal. These limitations mean native iPhone
+intake is **not complete**: real iPhone originals commonly carry Exif, ICC/P3,
+grids and/or gain maps. This is tested native HEVC support, not universal HEIC or
+an accepted phone/optical grading workflow.
+
+Native per-image security limits complement the existing parent timer and
+full-source RGBA16 budget. They are not a hard bound on total process/codec memory;
+the outer server memory/disk policy remains required. Native defaults for other
+security limits stay enabled. Decoder threads are one. Tests prove cancellation
+kills and reaps a child while it is repeatedly performing actual HEVC decoding.
 
 ## Verification and remaining acceptance
 
 Run `node --test packages/atlas-photo-runtime/test/*.test.mjs` from the repository
-root after installing workspace dependencies. Tests use real encoded synthetic
+root after installing workspace dependencies and building the native adapter. Tests use real encoded synthetic
 rasters, independent pixel permutations for all orientations, 16-bit detail,
 ICC and alpha, source/receipt conflicts, malformed/multi-frame inputs, two
-unchanged upstream HEIC refusal fixtures and real kill/reap checks against a
+unchanged upstream HEVC stills, second-primary selection, 8/10/12-bit grids,
+explicit color/Exif/geometry refusals and real kill/reap checks against a
 synchronously blocked child. No paid inference or historical card replay occurs.
 
 The finite local suite runs on Node 25.6.1/macOS arm64 with Sharp 0.33.5/libvips
 8.15.3. It is not production Node/Linux or iPhone optical acceptance. Remaining
-work includes outer server resource policy, native iPhone HEIC interpretation,
-fresh iPhone JPEG/HEIC color/detail comparison on the Mac, exact provider storage
-verification, create-only original/frame writes, authenticated completion,
-derivative generation and actual manual-workspace integration.
+work includes outer server resource policy, remaining native iPhone HEIC/Exif/ICC/HDR
+coverage and fresh iPhone JPEG/HEIC color/detail comparison on the Mac. The separate
+`@atlas/photo-storage` create-only adapter and `@atlas/preparation-runtime` CPU
+adapter now exist, with synthetic browser integration checked by root. Actual
+provider/authenticated application integration and the real-phone workflow remain
+pending. Preparation currently admits only opaque sRGB RGB8 frames; unmanaged or
+16-bit HEIC output is explicitly outside that preparation subset. Retaining native
+originals and samples does not establish an accepted original-quality grading path.

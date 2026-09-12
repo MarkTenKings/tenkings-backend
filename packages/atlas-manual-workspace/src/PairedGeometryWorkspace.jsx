@@ -31,7 +31,7 @@ function imageBinding(state, side, kind, images) {
   return image ? key({ card: state.cardId, side, kind, image, revision: kind === 'PHYSICAL' ? state.sides[side].imageRevision : state.sides[side].preparationRevision }) : null;
 }
 
-function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, onReady, locked }) {
+function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, onReady, preparing, locked }) {
   const slot = state.sides[side], status = geometryStatus(state).sides[side];
   const image = geometryImage(state, side, kind, images);
   const current = (kind === 'PHYSICAL' ? slot.physical : slot.printed)?.quad ?? null;
@@ -72,7 +72,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
     finally { setBusy(false); }
   };
   const prepare = async () => {
-    if (!onPrepare || busy || dirty || locked) return;
+    if (!onPrepare || busy || dirty || locked || preparing) return;
     setBusy('PREPARING'); setError('');
     try { await onPrepare(side); } catch { setError('Preparation did not finish. The saved physical edge is retained.'); }
     finally { setBusy(false); }
@@ -86,7 +86,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
   };
   const inactive = busy || locked || stale || !ready;
   return <section className="am-side" aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} geometry`}>
-    <div className="am-side-heading"><h2>{side === 'FRONT' ? 'Front' : 'Back'}</h2><span>{busy ? busy === 'PREPARING' ? 'Preparing…' : 'Saving…' : dirty ? 'Unsaved adjustment' : STATUS[status.stage]}</span></div>
+    <div className="am-side-heading"><h2>{side === 'FRONT' ? 'Front' : 'Back'}</h2><span>{busy ? busy === 'PREPARING' ? 'Preparing…' : 'Saving…' : dirty ? 'Unsaved adjustment' : preparing ? 'Preparing…' : STATUS[status.stage]}</span></div>
     <div className="am-view-label">{kind === 'PHYSICAL' ? 'Original view' : 'Straightened view'}</div>
     <div className="am-viewport" onPointerMove={pointerMove} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
       {image ? <div className="am-image-plane" ref={area} style={{ transform: `translate(${pan.x}%,${pan.y}%) scale(${zoom})`, aspectRatio: `${image.width}/${image.height}` }}>
@@ -121,7 +121,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
     <div className="am-side-actions">
       {!quad && <button type="button" onClick={start} disabled={!ready || busy || locked}>Start manual outline</button>}
       {dirty && <><button type="button" className="am-primary" onClick={save} disabled={inactive || !onEdit}>Save outline</button><button type="button" disabled={busy || locked} onClick={() => { setDraft(null); setError(''); }}>Discard adjustment</button></>}
-      {!dirty && slot.physical && !slot.prepared && onPrepare && <button type="button" onClick={prepare} disabled={busy || locked}>Prepare this side</button>}
+      {!dirty && slot.physical && !slot.prepared && onPrepare && <button type="button" onClick={prepare} disabled={busy || locked || preparing}>Prepare this side</button>}
     </div>
     <div className="am-centering">{!draft && status.centering ? <><span>Left / right <strong>{status.centering.leftRightBalance.map(n => n.toFixed(1)).join(' / ')}</strong></span><span>Top / bottom <strong>{status.centering.topBottomBalance.map(n => n.toFixed(1)).join(' / ')}</strong></span></> : <span>Centering pending current saved borders</span>}</div>
   </section>;
@@ -131,7 +131,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
  * authoritative save/readback and update `workspace`; rejected saves retain the
  * local draft. The host owns source verification, current version CAS, session
  * auth, persistence, automatic preparation and stage progression. */
-export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, onPrepare, title = 'Edges & centering', saveStatus = '' }) {
+export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, onPrepare, preparingSides = {}, title = 'Edges & centering', saveStatus = '' }) {
   const status = geometryStatus(workspace);
   const [kind, setKind] = useState('PHYSICAL'), [activity, setActivity] = useState({ FRONT: false, BACK: false });
   const [loaded, setLoaded] = useState({ FRONT: null, BACK: null });
@@ -150,7 +150,7 @@ export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, 
   return <div className="atlas-manual">
     <header className="am-header"><span className="am-brand">ATLAS</span><h1>{title}</h1><span>{saveStatus}</span></header>
     <div className="am-toolbar"><div className="am-tool-choice" aria-label="Geometry tool"><button type="button" disabled={editing || confirming} aria-pressed={kind === 'PHYSICAL'} onClick={() => setKind('PHYSICAL')}>Physical edge</button><button type="button" disabled={editing || confirming} aria-pressed={kind === 'PRINTED'} onClick={() => setKind('PRINTED')}>Printed border</button></div><div className="am-legend"><span><i className="am-edge-key" />Physical edge</span><span><i className="am-border-key" />Printed border</span></div></div>
-    <div className="am-pair">{SIDES.map(side => <SideEditor key={side} state={workspace} side={side} kind={kind} images={images} onEdit={onEdit} onPrepare={onPrepare} onActivity={onActivity} onReady={onReady} locked={confirming} />)}</div>
+    <div className="am-pair">{SIDES.map(side => <SideEditor key={side} state={workspace} side={side} kind={kind} images={images} onEdit={onEdit} onPrepare={onPrepare} onActivity={onActivity} onReady={onReady} preparing={Boolean(preparingSides[side])} locked={confirming} />)}</div>
     <footer className="am-footer"><span aria-live="polite">{editing ? 'Save or discard your adjustments before continuing.' : status.confirmed ? 'Both sides confirmed. Ready for defect inspection.' : 'Review the physical edge and printed border on both sides.'}</span><button type="button" className="am-primary" onClick={confirm} disabled={!bothVisible || !status.canConfirmBoth || status.confirmed || editing || confirming || !onConfirm}>{confirming ? 'Confirming…' : 'Confirm both sides'}</button></footer>
     {error && <p className="am-error" role="alert">{error}</p>}
   </div>;

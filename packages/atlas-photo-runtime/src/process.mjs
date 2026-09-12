@@ -59,6 +59,7 @@ export function runDecoderProcess(worker, request, { timeoutMs, signal } = {}) {
         if (result?.ok !== true) {
           const known = ['PHOTO_DECODE_INVALID', 'PHOTO_DECODE_LIMIT', 'PHOTO_FORMAT_UNSUPPORTED',
             'PHOTO_HEIC_UNSUPPORTED', 'PHOTO_HDR_UNSUPPORTED', 'PHOTO_BIT_DEPTH_UNSUPPORTED',
+            'PHOTO_COLOR_UNSUPPORTED', 'PHOTO_GEOMETRY_UNSUPPORTED',
             'PHOTO_MULTIFRAME_UNSUPPORTED', 'PHOTO_SOURCE_MISMATCH', 'PHOTO_UPLOAD_CONFLICT', 'PHOTO_DECODER_UNAVAILABLE'];
           throw new PhotoRuntimeError(known.includes(result?.code) ? result.code : 'PHOTO_DECODER_PROTOCOL');
         }

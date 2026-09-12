@@ -1,13 +1,24 @@
-# HEIC refusal fixtures
+# Genuine HEVC fixtures
 
-The two tiny HEVC-encoded color fixtures are unchanged files from
-[libheif source 08075aebcc0d9bf7d35f900c36114b1b6e90ed7d](https://github.com/strukturag/libheif/tree/08075aebcc0d9bf7d35f900c36114b1b6e90ed7d/fuzzing/data/corpus).
-Upstream's COPYING is retained as `LIBHEIF-COPYING`. Their SHA-256 values are fixed
-in `heic-boundary.test.mjs`. One has a thumbnail; it is not a browser-converted
-JPEG/PNG stand-in. Local libheif-js 1.23.2 investigation decoded these actual
-fixtures, but the runtime deliberately refuses HEIC pending the full primary,
-transform, color and bit-depth adapter. These fixture tests prove the refusal
-boundary and original-byte retention only, not HEIC support or optical quality.
+`heic-manifest.json` pins every source URL, byte count and SHA-256. Files are
+unchanged upstream fixtures, with only local filenames changed. `LIBHEIF-COPYING`
+and `PILLOW-HEIF-LICENSE` preserve the respective upstream licenses.
 
-`process-fixture.mjs` is original test code that deliberately blocks its own
-event loop or produces invalid output so the parent termination path is real.
+The libheif color fixtures are actual HEVC-encoded images, including a thumbnail
+and an auxiliary alpha case. `two-images.heic` is libheif's original example;
+tests change only its `pitm` item ID to prove correct second-primary selection.
+Pillow-Heif's `rgb10.heic` and `rgb12.heic` have actual 10/12-bit HEVC samples.
+The two metadata fixtures test explicit refusal of associated Exif, including
+neutral and nonidentity orientation. These files are not browser-converted PNGs.
+
+`heif-fixture-helpers.mjs` constructs controlled property variants while preserving
+all original compressed image bytes. Its grid generator creates four distinct
+HEVC tile item IDs sharing unchanged fixture extents, a real `grid` primary, exact
+`dimg` references and precise property associations. Independent expected pixels
+are assembled from actual decoded source tiles. Uniform-depth/color grids and
+separate tile transform/color disagreements are tested. Synthetic source/geometry
+fixtures do not establish real iPhone color or optical grading acceptance.
+
+`process-fixture.mjs` is original test code. It deliberately blocks its own event
+loop, floods output or repeatedly performs actual native HEVC decode so its parent
+must enforce cancellation and reap that exact child. No model calls occur.

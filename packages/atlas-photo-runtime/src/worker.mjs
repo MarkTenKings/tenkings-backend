@@ -6,6 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { completeUpload, planDecode } from '@atlas/photo-core';
 import { inspectContainer } from './container.mjs';
 import { PhotoRuntimeError } from './process.mjs';
+import { decodeHeif } from './heif.mjs';
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const reject = code => { throw new PhotoRuntimeError(code); };
@@ -22,6 +23,19 @@ async function decode(request) {
   sharp.cache(false);
   sharp.concurrency(1);
   const options = { limitInputPixels: limits.maxPixels, failOn: 'warning', sequentialRead: true };
+  if (container.format === 'heif') {
+    const decoded = await decodeHeif(bytes, request);
+    const size = (await stat(outputPath)).size;
+    if (size < 1 || size > limits.maxOutputBytes || size !== decoded.output.byteCount) reject('PHOTO_DECODE_LIMIT');
+    const output = await readFile(outputPath), outputContainer = inspectContainer(output);
+    const meta = await sharp(output, options).metadata();
+    if (outputContainer.bitDepth !== decoded.treatment.bitDepth || meta.orientation !== undefined
+      || meta.width !== decoded.decodePlan.geometry.width || meta.height !== decoded.decodePlan.geometry.height
+      || meta.channels !== 3) reject('PHOTO_SOURCE_MISMATCH');
+    return { ok: true, original: decoded.original, decodePlan: decoded.decodePlan,
+      raster: { content: { mime: 'image/png', byteCount: size, sha256: sha256(output) },
+        dimensions: { width: meta.width, height: meta.height } }, treatment: decoded.treatment };
+  }
   let meta;
   // metadata() reads headers without decoding compressed pixels. Plan the full
   // RGBA16 allocation from these dimensions before invoking the pixel pipeline.

@@ -7,7 +7,8 @@
     ".": "./dist/PairedGeometryWorkspace.js",
     "./geometry-actions": "./src/geometry-actions.mjs",
     "./styles.css": "./src/workspace.css",
-    "./snapping": "./dist/gradient-snap.js"
+    "./snapping": "./dist/gradient-snap.js",
+    "./preparation-result": "./src/preparation-result.mjs"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -22,6 +23,8 @@
   },
   "devDependencies": {
     "esbuild": "0.27.7",
-    "playwright": "1.57.0"
+    "playwright": "1.57.0",
+    "@atlas/photo-runtime": "workspace:*",
+    "@atlas/preparation-runtime": "workspace:*"
   }
 }

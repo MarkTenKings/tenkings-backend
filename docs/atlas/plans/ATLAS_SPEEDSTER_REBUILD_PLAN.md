@@ -10,6 +10,8 @@ The [first foundation checkpoint](../audits/2026-09-12/foundation-implementation
 
 The [paired workspace and decoder checkpoint](../audits/2026-09-12/workspace-and-decoder-implementation.md) adds the approved controlled geometry screen, independent versioned actions, shared snapping and an isolated JPEG/PNG/WebP runtime. Root verified 72 new unit tests and seven synthetic browser scenarios; independent review corrected image-readiness and decoder edge cases. This is still isolated local code: HEIC, authenticated durable storage, automatic preparation/proposals and the remaining grading stages are not connected. Native iPhone/real-card acceptance and the initiating cause remain open.
 
+The next [preparation/storage/identification checkpoint](../audits/2026-09-12/preparation-storage-and-identification.md) connects actual CPU preparation and current printed proposals to the synthetic geometry harness, adds an immutable S3/Spaces adapter and extracts the unchanged shared eight-field identifier behind injected effects. Native HEVC decoding now covers a qualified direct/grid subset; Exif/ICC/HDR and general iPhone acceptance remain unfinished. The preparation engine currently accepts opaque sRGB RGB8. Eight synthetic browser scenarios pass. Provider qualification, authenticated durable application wiring, defects/report/finishing and real-card detail acceptance remain open; these local modules do not change serving I or close the cause prerequisite.
+
 The [fresh Astra lead review](../audits/2026-09-12/fresh-astra-review.md) records the September 12 source checks and representative-runtime follow-up. New extraction details below preserve the chosen workflow; they do not close the initiating-cause prerequisite or establish a deployed repair.
 
 ## The recommendation in one minute
@@ -89,7 +91,7 @@ This needs a truthful manual-inspection initialization path. The current report 
 | 7. Human approval | Review the displayed report and confirm the exact version. | Commit one approved snapshot. Later edits create a changed draft; they do not silently change the approved result. |
 | 8. Finishing | Print the label, use the selected Mac NFC station, assemble and confirm the physical work. | Derive label/report URL from the approved snapshot; execute and verify the deterministic NFC protocol. Physical completion requires actual device/human evidence. |
 
-The existing completion logic accepts remaining UNREVIEWED findings in bulk. Proposed presentation: make a visible **confirm the displayed findings** action support that behavior, without requiring a click on every defect. The exact wording and whether that is combined with report approval need Mark's review. We must not quietly change scoring semantics or mistake automatic draft creation for human approval.
+The existing completion logic accepts remaining UNREVIEWED findings in bulk. Proposed presentation: make a visible **confirm the displayed findings** action support that behavior, without requiring a click on every defect. Mark has now selected one **Confirm findings** action for the corrected displayed list after inspecting both sides, with final report approval separate. We must not quietly change scoring semantics or mistake automatic draft creation for human approval.
 
 ### One screen still has real calculation dependencies
 
@@ -122,7 +124,7 @@ Changing/removing a defect can change ownership of overlapping pixels. Re-run th
 
 The examples supplied by Mark are **3024 × 4032**: about **12.2 million pixels per side**. That describes those files, not every iPhone mode. Retain the actual selected original, its dimensions/orientation/color metadata and content hash. Do not upscale smaller captures and label them native quality.
 
-The clean intake needs an explicit **server HEIC decoder**. Current `decode_preparation_source` accepts only JPEG, PNG and WebP, and current browser intake converts HEIC to PNG. Direct HEIC is proposed work, not an already supported backend feature. Verify orientation, color handling, bit depth and fine-defect visibility on the actual uploaded files. Future camera RAW/DNG handling depends on the selected camera/SDK; a common intake interface alone does not implement that decoder.
+The clean intake needs an explicit **server HEIC decoder**. Serving `decode_preparation_source` accepts only JPEG, PNG and WebP, and serving browser intake converts HEIC to PNG. The new isolated native decoder now handles a qualified direct/grid HEVC subset, but its Exif/ICC/HDR refusals mean normal iPhone intake is still incomplete; it is not connected to the serving backend. Verify orientation, color handling, bit depth and fine-defect visibility on the actual uploaded files. Future camera RAW/DNG handling depends on the selected camera/SDK; a common intake interface alone does not implement that decoder.
 
 The gap also spans current upload, storage, bridge and evidence MIME contracts. Give the immutable native original its own descriptor, and bind oriented decoded pixels, previews and inspection views to it with their actual hashes, dimensions and transforms. Adding a decoder alone does not make existing raster-only upload/review contracts accept HEIC. This is required adapter work for the chosen original-quality intake, not another photo-format decision for Mark.
 
@@ -358,7 +360,7 @@ The recommendation is complete enough to review. These are genuine product/accur
 1. **Borderless/full-bleed cards:** how the grading system defines centering when there is no ordinary printed frame. Current math requires positive opposing border totals; absence cannot become an invented perfect score.
 2. **Inspection detail:** acceptance of current prepared views plus original zoom/crops versus changes to the measurement image pipeline. Original retention is already decided.
 3. **Astra confirmation:** which geometric/defect conditions allow automatic continuation, what it should inspect more closely and what requires a human. These rules must follow measured capability.
-4. **Review and learning:** the visible bulk-findings approval behavior and the exact deliberate event that publishes grading lessons. Identity corrections can be shared without making every model guess a lesson.
+4. **Learning publication:** the exact deliberate event that publishes grading lessons. Mark has selected one bulk **Confirm findings** action after inspecting/correcting the list, with final report approval separate; lesson publication is not implied by that selection. Identity corrections can be shared without making every model guess a lesson.
 5. **Detector choice:** retain the current finder or adopt an Astra-assisted alternative after the same-card comparison. Historical bank/map import is an optional implementation choice based on usefulness and effort.
 
 Resolved for the first build: standard-size sports and Pokémon, with current 63.5 × 88.9 mm geometry. Recognizing another card does not mean the initial build can grade it; category/size expansion is later scope.

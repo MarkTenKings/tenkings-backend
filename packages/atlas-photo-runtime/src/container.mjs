@@ -68,15 +68,15 @@ export function inspectContainer(bytes) {
     }
     invalid();
   }
-  // The marker identifies a container family, not a verified codec/primary item.
-  // Never emit an image/heic original receipt from this sniff alone.
+  // This marker only selects the native HEIF verifier. That verifier must prove
+  // the actual HEVC primary item and decode pixels before issuing a receipt.
   if (bytes.length >= 12 && bytes.toString('ascii', 4, 8) === 'ftyp') {
     const boxLength = bytes.readUInt32BE(0);
     if (boxLength < 16 || boxLength > bytes.length || boxLength % 4 !== 0) invalid();
     const hevcBrands = ['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs'];
     const brands = [bytes.toString('ascii', 8, 12)];
     for (let at = 16; at + 4 <= boxLength; at += 4) brands.push(bytes.toString('ascii', at, at + 4));
-    if (brands.some(brand => hevcBrands.includes(brand))) fail('PHOTO_HEIC_UNSUPPORTED');
+    if (brands.some(brand => hevcBrands.includes(brand))) return { mime: 'image/heic', format: 'heif' };
   }
   fail('PHOTO_FORMAT_UNSUPPORTED');
 }

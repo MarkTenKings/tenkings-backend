@@ -30,6 +30,7 @@ import '@atlas/manual-workspace/styles.css';
   onPrepare={prepareSavedSide}
   onConfirm={confirmCurrentGeometry}
   saveStatus={actualSaveStatus}
+  preparingSides={actualPreparationStatus}
 />
 ```
 
@@ -51,8 +52,11 @@ unsaved-draft store. An unfinished adjustment may need repeating after reload.
 `onPrepare` is optional. When missing, a saved physical edit truthfully shows
 **Needs preparation** and cannot confirm. A real host should run deterministic
 preparation automatically after a saved physical edit, keeping manual retry
-available. This package has no preparation endpoint, detector, upload control,
-defect stage, queue, learning publication or finishing authority.
+available. `preparingSides` reflects actual in-flight work independently for
+Front and Back. The reusable component has no production preparation endpoint,
+defect detector, upload control, defect stage, queue, learning publication or
+finishing authority. The separate synthetic harness below now exercises the
+CPU preparation adapter.
 
 ## Geometry actions
 
@@ -85,14 +89,26 @@ For the separate synthetic browser harness, set `ATLAS_FIXTURE_PYTHON` to an
 environment containing the service's NumPy/OpenCV dependencies and run
 `npm run dev --workspace @atlas/manual-workspace`. It binds only 127.0.0.1:4179,
 generates six PNGs using the existing CPU warp, and labels every card synthetic.
-Known fixture outlines are explicitly sample geometry, not detector proposals.
-The sample persists only in its own browser-local key. Physical edits correctly
-invalidate preparation; the harness intentionally has no live preparation
-service. **Reset sample** restores the known fixture. Stop with Ctrl-C.
+Initial known fixture outlines are explicitly sample geometry. The harness
+verifies and decodes the actual PNG originals once using `@atlas/photo-runtime`.
+After a physical save it runs `@atlas/preparation-runtime`, adopts a current
+engine printed-border proposal and loads its actual immutable WebP. The same
+Python environment must contain the pinned NumPy 1.26.4/OpenCV 4.10.0.84 versions
+used for parity. Preparation currently accepts opaque sRGB RGB8 decoded PNGs.
+
+The loopback `/prepare` endpoint accepts only the generated fixture sides,
+bounded same-origin JSON and at most two active synthetic CPU jobs. It cancels
+superseded requests and fences late results against the current saved geometry.
+Generated files stay in ignored `dist/preview`; state persists only in the
+sample's browser-local key. This is not authenticated durable application
+persistence. `?autoPrepare=0` is a test hook for manual-retry/error scenarios.
+**Reset sample** restores the known fixture. Stop with Ctrl-C; shutdown aborts
+and reaps active preparation children.
 
 With Chrome available, set `ATLAS_BROWSER_EVIDENCE` to a task-owned output
 directory and run `npm run test:browser --workspace @atlas/manual-workspace`.
 This checks load failures, save/reload and stale-edit recovery, equal-byte
-preparation revisions, zoom/pan dragging, both-side confirmation and mobile fit.
+preparation revisions, zoom/pan dragging, both-side confirmation, mobile fit and
+physical save → actual CPU preparation → verified derivative reload.
 The test hooks and sample app are excluded from the exported package build.
 Synthetic browser checks do not establish optical grading or real-card acceptance.
