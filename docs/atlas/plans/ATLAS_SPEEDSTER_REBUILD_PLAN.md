@@ -1,8 +1,10 @@
 # ATLAS Speedster — consolidated rebuild plan
 
-**September 11, 2026 Pacific · Discussion draft · No application changes or deployment**
+**September 11–12, 2026 · Discussion draft · No ATLAS application changes or deployment**
 
 This brings the engine inspection, incident evidence, Ten Kings consultation and Mark's decisions into one plan. The opening comparison is the short version. The later sections explain the workflow and engineering details. Recommendations below are proposals, not newly approved grading rules. Mark requested discussion of each stage before building; that remains the next product-design step.
+
+The [fresh Astra lead review](../audits/2026-09-12/fresh-astra-review.md) records the September 12 source checks and representative-runtime follow-up. New extraction details below preserve the chosen workflow; they do not close the initiating-cause prerequisite or establish a deployed repair.
 
 ## The recommendation in one minute
 
@@ -68,6 +70,8 @@ The current NFC validator identifies GoToTags 4.37.0.1 and Windows enrollment. A
 
 The new manual adapter should also keep exact trace editing and CPU measurement usable when AI assistance is unavailable. A detector failure must not become an automatic “no defects” or perfect grade; the human must still inspect and confirm the findings.
 
+This needs a truthful manual-inspection initialization path. The current report adapter requires a saved `detectorVersion`, and existing initialization requires detector/Memory work. A manually inspected card must record how its findings were obtained; an empty invented SAM result or a renamed detector version is not that evidence. Extract the trace-validation and source-region reconciliation around CPU measurement as well as `defect_math.py`; the current `measure_marks` entry point lives inside the detector module and can request SAM fingerprints. Keep that optional learning work outside the manual measurement dependency.
+
 | Stage | What the grader sees and does | What runs automatically |
 | --- | --- | --- |
 | 1. Add photos | Select native iPhone Front and Back originals. Start the next pair when ready. | Upload a selected side immediately. Preserve pair identity. Verify/decode the completed side and make previews. |
@@ -89,11 +93,17 @@ Show both side pipelines together. A printed frame can be projected back onto th
 
 Once physical geometry and inspection views are stable, defect inference can overlap printed-border review. Optional map filtering needs the matching identity/map alignment before its result is adopted. A map arriving later must not silently remove a human's marked defect.
 
+The existing map filter protects `SMART_MARK` origin, but a human type correction retains the finding's original `DETECTOR` or `MEMORY` origin. Therefore the clean action adapter must also preserve human-reviewed/edited findings when a later map result arrives. Apply a map to the unchanged machine proposals it actually evaluated, or present its changed result for deliberate review; origin alone is insufficient protection.
+
+“Same snapping tool” also means the same raster and options. Current browser snapping builds its gradient map from a preview capped at 1000 pixels on its longest side, then uses the map's width-minus-one/height-minus-one coordinates. Bind human and future Astra snapping to a named raster/algorithm version and the same radius/sampling inputs. Running the same helper over native-resolution pixels would change its behavior; preserve parity before evaluating finer snapping separately.
+
 | If this changes… | Recalculate / invalidate this… | Preserve this… |
 | --- | --- | --- |
 | Pan, zoom, screen size, Front/Back view selection | Display only | All grading results and originals |
 | Printed border on Front | Front centering and dependent grade/report | Both originals, prepared pixels, SAM masks, Back work |
 | Physical edge on Front | Front preparation, border/centering, map registration and dependent masks/report | Original bytes and valid Back work |
+| Capture mat color | Geometry proposals tied to that input and their review validity | Original bytes and unchanged accepted pixel transforms |
+| Material corner shape | Material clipping/zone allocation, affected masks/traces and measurements, physical snap options | Originals and unchanged warp pixels; review or rerun evidence if a larger material area needs pixels previously clipped away |
 | A defect type, removal or exact trace on Front | Affected-side mask overlap/area allocation, subgrades and report | Source/prepared photos and valid Back work |
 | One photo is replaced | That side's image-dependent results; pair-dependent identity/research | Unchanged original and genuinely independent results on the other side |
 | Card identity is corrected | Matching references/maps/research and report identity; category/rule-dependent calculations where applicable | Unrelated prepared pixels; do not rerun every image operation by default |
@@ -108,6 +118,8 @@ The examples supplied by Mark are **3024 × 4032**: about **12.2 million pixels 
 
 The clean intake needs an explicit **server HEIC decoder**. Current `decode_preparation_source` accepts only JPEG, PNG and WebP, and current browser intake converts HEIC to PNG. Direct HEIC is proposed work, not an already supported backend feature. Verify orientation, color handling, bit depth and fine-defect visibility on the actual uploaded files. Future camera RAW/DNG handling depends on the selected camera/SDK; a common intake interface alone does not implement that decoder.
 
+The gap also spans current upload, storage, bridge and evidence MIME contracts. Give the immutable native original its own descriptor, and bind oriented decoded pixels, previews and inspection views to it with their actual hashes, dimensions and transforms. Adding a decoder alone does not make existing raster-only upload/review contracts accept HEIC. This is required adapter work for the chosen original-quality intake, not another photo-format decision for Mark.
+
 Proposed path:
 
 1. Allocate a card pair and independent side upload identities. Begin Front when it is available; do not wait for Back to construct one combined HTTP request.
@@ -120,11 +132,13 @@ Originals and useful derived images are different assets. “Upload once” refe
 
 Current grading works on **1270 × 1778** rectified images and **1350 × 1858** inspection views, with WebP quality 92 derivatives. Preserve those dimensions/scoring conventions for extraction comparison; then separately evaluate native-resolution crops for fine defects. Highest-quality source storage does not prove every model or measurement currently uses full native detail. Crop masks need tested transforms/resampling back to the measurement grid; magnification cannot give that grid finer area precision. Changing its resolution is a separate engine/version decision.
 
+Inspection adds 40 pixels around each edge. Converting its mask back to the canonical card is the exact `[40:1818, 40:1310]` crop, not a resize of the whole inspection image. Preserve exact RLE masks, including holes and disconnected pixels; display contours cannot replace measured pixel authority. Fixture checks must compare per-zone pixel ownership, eligible material area and raw subgrades as well as the rounded final grade.
+
 Use lightweight previews in the browser and load high-detail regions when needed. Do not permanently decode every full-resolution pair merely to show queue thumbnails. Phone transfer, CPU image work, model requests and the next card's intake must be independently scheduled.
 
 ## Reuse the current Ten Kings identity and market engines
 
-Consultation with **Complete Ten Kings financial app** established the current successful source: collect physical inventory, application commit `bb10f235d5bddd2ca30ba19e5389e80d43cd2fec`. It supersedes the earlier comparison to the older 17-field CardAsset OCR route.
+The initial consultation with **Complete Ten Kings financial app** established the collect physical-inventory source at `bb10f235d5bddd2ca30ba19e5389e80d43cd2fec`, superseding the older 17-field CardAsset OCR comparison. The fresh September 12 review independently verified newer READY collect deployment `a319904273d4b4e4e81d721b699d3a2990975eda`: the eight-field identifier is unchanged, while variation/sold-comps research is now engine v2. Pin that reviewed code and its compatible schemas together for extraction; the [shared-engine record](SHARED_CARD_ENGINES_DISCUSSION.md) preserves source/serving evidence and later documentation-only checkout drift.
 
 ### Fast identification
 
@@ -134,13 +148,25 @@ Both photos → parallel Google Vision OCR → one Astra request → eight field
 
 Reuse the deployed `gpt-6-astra` low-reasoning identifier behavior and its handling of printed evidence. A fast printed variant suggestion is not the complete parallel research process. Preserve human-edited fields, card-number formatting and the distinction between manufacturer and licensor. Identification recognition includes Other trading cards; the current grading core supports a narrower category/size contract.
 
+Validate the full result before field mapping. The source permits 80-character card numbers while current ATLAS accepts 40; retain an overlong suggestion for review and leave that field unresolved rather than truncating it or dropping the other seven fields. Preserve intentional blanks and original confidence/evidence. Descriptive variant/card-type values must not silently become authoritative parallel, insert or layout fields.
+
 ### Background variation and sold comps
 
 Reuse the newer Astra research engine, with its current medium-reasoning behavior, catalog/photo references and SoldCompsAPI evidence. It returns research; the application decides how to display/adopt it. Preserve actual matched listing evidence and deterministic price arithmetic. Current estimation requires at least two independent suitable sold listings; unknown Best Offer amounts do not become invented sold prices.
 
+The verified v2 source supports up to three distinct identity-anchored searches within a 150-second engine deadline. Astra receives each search's own result counts and candidate IDs, so old merged results cannot masquerade as newly found evidence. Keep matched/possible/rejected visual comparison separate from estimate eligibility; a visual match with missing price can remain useful evidence. Verified hydrated accepted-offer amounts need their original source provenance. Retain the compatible old-result reader and optional additions without rewriting old canonical hashes.
+
+Use `comparison_assessments` for visual-match presentation: legacy `rejections` includes every unselected listing, including valid visual matches missing valuation evidence. Record the actual source/model subcalls through the ATLAS adapter, with their available usage/receipts and pinned inputs. An uncertain refinement must not replay the entire paid research sequence. These calls run outside database transactions.
+
 The consultation observed one research run at **35.7 seconds**, mostly Astra time. Its set was missing from the catalog, so variant/value remained unresolved. This proves neither instant research nor universal identification. Let the grader continue while this work runs.
 
 The new source already allows replaceable photo/reference loading functions. Its current reference adapter does not yet connect the older reference-image library, and automatic missing-checklist discovery/import and cross-company learning are not deployed. These connections are focused new work; do not advertise them as already working.
+
+Injected loaders alone are insufficient: current input validation still names inventory unit/description IDs and content-addressed JPEG photo keys. Extract a neutral subject/evidence contract behind the existing inventory wrapper. Also make reference lookup category-aware so Pokémon does not need an invented manufacturer, and add a bounded private-reference descriptor for deliberately published examples; the existing approved-reference image schema only accepts eBay origins. Preserve official catalog authority and separate it from model-suggested matches.
+
+The current image-reference path consumes a separate catalog-linked `kind: 'reference'` record; adding an image to a catalog row alone does not connect it. A confirmed reusable alias/example also remains distinct from an official checklist fact. Preserve those evidence meanings in shared publication and retrieval.
+
+The source task's subsequent retained results report five refreshed jobs in 54.2–82.4 seconds, with all five estimates still unknown. These reported examples and the older 35.7-second sample establish neither universal resolution nor ATLAS performance. Continue grading while research proceeds.
 
 Do not copy the inventory app's 1400-pixel grading-source policy, one-minute job pickup, worker caps or save requirements into ATLAS. Reuse the engine's inputs/outputs and proven behavior through an ATLAS adapter. Low/medium reasoning on these named engines does not silently replace the existing MAX grading-operator policy; new defect/geometry reasoning settings need evaluation.
 
@@ -176,12 +202,16 @@ Astra's image reasoning should not be the unchecked authority for exact pixel bo
 
 Test the same representative cards with the current finder and Astra-assisted finder. Include faint defects, long scratches, large damage, crowded findings, reflective surfaces and printed artwork. Measure missed defects, false positives, correct type, exact affected area, grade impact, elapsed time and human correction effort. Compare both cold and warm operation. Do not choose a faster model path that quietly loses relevant damage.
 
+Freeze image preparation, SAM checkpoint/runtime, Memory version, map policy and scoring for each paired comparison. Record where a real defect was lost: candidate selection, segmentation, or later Memory/map filtering. Use held-out physical cards for next-card learning; another photograph of the taught copy is not independent evidence. Compare no-Memory/no-map and compatible assisted cases separately. Existing Memory matches type/polarity/source-view fingerprints; it does not inherently enforce card-design scope.
+
 Optimizations supported by source inspection, to measure before adopting:
 
 - Reuse an image's SAM encoding across manual strokes and saved marks. Automatic scan already reuses an encoding per view; do not claim that as a new fix.
 - Avoid pairwise full-frame mask work only when appropriately expanded bounds cannot interact. Preserve the existing four-pixel cross-view fusion tolerance and exact pixel totals.
 - Run CPU geometry without waiting for a SAM/GPU process to initialize.
 - Measure view loading, GPU wait, encoding, prompts, transfers, Memory lookup and mask fusion separately. The current combined timer cannot identify which dominates.
+
+The fusion rule is precise: direct overlap fuses; same-view near misses do not. Across different views, a 9 × 9 ellipse dilation must cover at least half the smaller original mask. Preserve transitive groups and input-order ties, and never count the dilated pixels as damage. Bounding-box shortcuts must produce the same masks, ownership and measurements.
 
 ## Learning that reaches the next relevant card
 
@@ -223,6 +253,10 @@ Do not hold a database transaction or pooled connection while waiting for image 
 
 A whole-card revision alone is too coarse: research can still be valid after unrelated border work. Use an action-specific input fingerprint, plus atomic per-card updates. Research depends on photos/identity; preparation depends on that side's photo/physical geometry. Merge only still-applicable, unedited fields. Human takeover changes the writer generation, preventing a late machine response from overwriting human work.
 
+Track whether the intended output fields were edited, including edit-and-undo back to the original text. Equal current values alone do not authorize automatic adoption. Retained research from a superseded writer may still be shown as a suggestion; it cannot silently regain write authority.
+
+The same distinction must reach manual saves, report approval, label/finishing eligibility and database guards. Current wrappers count all pending operator/grading work, including UNKNOWN, and current SQL interlocks enforce that blockade. An explicitly superseded attempt keeps its uncertain accounting and receipt history, but it must no longer block the independently inspected current draft or occupy an execution slot. Prove that the human can finish and approve the current work after takeover; merely enabling the takeover button is insufficient. Ordinary current-draft, reviewer and exact approval checks still apply.
+
 Start with the existing managed storage/database infrastructure and a small long-running worker role; avoid a new broker or many microservices merely to move stage names. Keep ATLAS-owned records/access separate and profile aggregate database connections before selecting deployment counts. Multiple HTTP/model requests do not need to keep the same number of database connections open. Claims skip locked or not-yet-eligible jobs; retry delays release worker capacity. Keep intake responsive while ensuring deeper research is eventually served. A job's need for input does not become a terminal failure of the entire card.
 
 ### What happens when something goes wrong
@@ -231,6 +265,7 @@ Start with the existing managed storage/database infrastructure and a small long
 | --- | --- |
 | Front uploaded; phone closes before Back | Keep Front. Reopen the pair and add Back. Bytes never received still need uploading. |
 | Upload succeeded; completion reply was lost | Reconcile the same upload identity. Do not upload a second copy merely because the reply was lost. |
+| Engine result object saved; database link/reply lost | Find the result through its pre-recorded action/attempt identity and deterministic object key, verify its binding/hash, and attach/apply that same result. Object existence alone is not proof of a successful applicable result. |
 | Identity/research fails | Leave editable fields and grading tools usable; retry independently when known safe, or reconcile its original attempt if dispatch may have occurred. Do not invent identity/value. |
 | A geometry proposal is poor | Human or Astra adjusts with the same precise tool; rerun only dependent work. |
 | Worker stops during a local calculation | Lease expires; resume/recompute the unfinished action from retained inputs. Completed stages stay completed. |
@@ -242,6 +277,8 @@ Start with the existing managed storage/database infrastructure and a small long
 | Provider capacity is temporarily full | Queue/retry eligible work with pacing. Show waiting truthfully; this is not an app card-count allowance. |
 | Report changes after approval | New draft requires approval before new label/finishing use; old approved output stays identifiable. |
 
+Lease expiry permits another worker to inspect/reconcile the action; it does not authorize another paid dispatch when the original outcome is uncertain. A retry delay or fenced unknown outcome releases execution capacity so eligible cards can proceed. Retain one stable dispatch/receipt identity for the uncertain external attempt.
+
 Progress messages should say the actual stage or problem: “Uploading Back,” “Finding borders,” “Checking a previous response,” or “Retrying the saved result.” A generic “could not save progress” must not conceal whether the failure happened before a provider request or after it.
 
 ### Astra's actual tools, later
@@ -249,6 +286,8 @@ Progress messages should say the actual stage or problem: “Uploading Back,” 
 Proposed vocabulary: inspect a named image/crop; adjust or confirm a quad; propose/save an exact trace; change a defect type; remove/restore findings; preview the report. These tools accept coordinates and return updated geometry/overlays. Astra should not simulate mouse movements in the browser.
 
 Each geometric call identifies side, exact image/hash, coordinate space and relevant base version. Physical quads use oriented-original coordinates; printed frames use rectified-card coordinates; exact traces use the established integer-pixel grid and crop transform. Preserve current conversion conventions, including source-width/height versus trace-width-minus-one/height-minus-one mapping.
+
+Include real engine inputs such as `matColor` and material `cornerShape` in the relevant action fingerprint. Preserve proposer abstention, not-applicable and ambiguity evidence: a physical proposal can be marked ACCEPTED while also reporting ambiguity. That outcome alone is not authority for Astra to confirm the stage. Manual corrections remain possible when a proposal or snapping is unavailable.
 
 Run deterministic preparation automatically when its inputs are ready. Do not buy an Astra request merely to authorize that bookkeeping. Give each reasoning stage the necessary photos, overlays, candidate findings and compact relevant lessons, rather than the entire growing history. Batch related Front/Back review when useful; use separate calls/crops when detail or a changed dependency requires them. The fastest useful call count must be measured, not decreed as one call for every task.
 
@@ -270,8 +309,9 @@ ATLAS is the application's name. Both the inspected ATLAS operator and current T
 | Authenticated console: advisory-lock statement maxima **10.36 / 62.96 s**, private-controls lock function **23.01 s** | Long coordination delays have occurred. Aggregate rows have no occurrence time, role or lock key, so these are not yet the incident's identified waiter/holder. |
 | Production slow-log threshold **1 s**, unlimited non-error parameters; local fixture slow logging disabled | Image-bearing statements can add parameter formatting/syslog work while a transaction holds locks. This omitted mechanism requires measurement; historical causality is unproven. |
 | Subsequent controlled test at **1 s**: both parameter variants pass; **zero** naturally qualifying slow statements. Separate forced-logging SELECT emits **24.4 MB versus 478 bytes**, with about **40 ms** extra client time in one Mac/file-sink sample | Parameter logging demonstrably amplifies output, but this does not explain the historical ten-second failure. Do not call disabling it a proven timeout cure. |
+| Fresh native ARM Linux PG17.11/Node22 test with actual30s lease and two periodic renewals: both cases pass; reserve **498–547 ms**. Receipt/renew overlap adds **287 ms acquisition including BEGIN**; no1s slow statement or timeout | Real periodic overlap is now covered. No initiating failure/correction was reproduced; local resource sharing, architecture, network and syslog sink still differ from production. |
 
-These are diagnostic samples across a disposable Mac PostgreSQL 17.10 instance and bounded read-only measurements on production PostgreSQL 17.11, not an end-to-end capacity benchmark. The exact historical statement/wait and a PostgreSQL crash remain **unproven**. The operator has one pooled connection and a five-second pool wait, versus a ten-second transaction and fifteen-second outer operation deadline; these can amplify a slow operation but do not identify its initiating cause.
+These are diagnostic samples across disposable Mac PostgreSQL17.10, owned ARM Linux PostgreSQL17.11 and bounded read-only production PostgreSQL17.11 measurements, not an end-to-end capacity benchmark. The exact historical statement/wait and a PostgreSQL crash remain **unproven**. The operator has one pooled connection and a five-second pool wait, versus a ten-second transaction and fifteen-second outer operation deadline; these can amplify a slow operation but do not identify its initiating cause.
 
 **Resolution carried into the rebuild:** keep images/results separate from small action records; use card/action ownership rather than a global waiting line; keep status reads compact; move broad role-structure checks out of routine transactions while preserving command authorization; allow fenced manual continuation after failure; and let other cards proceed independently. Add bounded, redacted phase timings so an error identifies pool wait, lock/query, local processing, commit or provider work. Bound non-error SQL parameter logging: plan for `log_parameter_max_length=0` in the relevant supported runtime scope, or a deliberately small cap, while retaining useful normalized statement timings. This does not need a new audit platform or a database write for every progress refresh. No production configuration was changed.
 
@@ -281,7 +321,9 @@ These are diagnostic samples across a disposable Mac PostgreSQL 17.10 instance a
 
 **Logging deployment detail:** the read-only privilege check found that current app roles and `doadmin` cannot SET or ALTER SYSTEM the non-error parameter limit. Standard provider configuration support is not established by Advanced Edition documentation. Verify a supported provider scope before claiming that knob can be applied. Removing image bodies from SQL independently prevents image-sized parameter output and does not require buying a different database or logging service.
 
-**Still required before the replacement operator:** capture an instrumented representative failure and its correction; incorporate September 11 historical records if any are actually supplied later. The app's original log omitted exception detail. The focused Mac/file-sink logging comparison now passes but does not activate the natural threshold or reproduce managed syslog behavior. Do not repeat that same passing test as additional proof. The remaining representative Linux/runtime test must include the actual overlapping operation/heartbeat sequence and per-query/pool/lock-holder/CPU/commit and logging-volume measurements with a stub provider and isolated records. PostgreSQL calculates displayed statement duration before its own parameter-log formatting/emission, so capture client and lock-lifetime timing too. Preserve the real slow threshold and transaction deadlines. A known gap is not a passed prerequisite. Forced timeouts can validate recovery; merely extending a timeout or obtaining another passing local run cannot establish the historical cause. No hosted logging service is required merely to begin the controlled test.
+**Fresh Linux follow-up:** the [new review](../audits/2026-09-12/fresh-astra-review.md) records two passing stubbed cases with actual policy timing, two periodic renewals, current guards and pool one. The25s stub loop took27.948s; completing its reply on an actual renewal boundary took23.253s. These totals include the deliberate stub waiting time, not measured model performance. No qualifying image statement occurred; the owned syslog consumer received only3717 lifecycle/checkpoint bytes. The environment was removed. Do not repeat the same Mac or ARM fixture as additional causal proof.
+
+**Still required before the replacement operator:** capture an instrumented representative failure and its correction; incorporate September 11 historical records if any are actually supplied later. The [next native-x86 arrangement](/Users/markthomas/.codex/atlas-handoffs/atlas-speedster-astra-20260912/runtime/NEXT_NATIVE_X86.md) separates application/database resource limits and adds fixture TLS with the same overlap tracing. It is prepared, not executed. The existing shared host has sampled memory headroom but no reserved spare CPU; select a reviewed native target before running. This would still not reproduce managed storage/network/syslog or historical competing sessions. If it passes too, preserve that negative evidence and stop increasing artificial load. Retain query/acquisition/holder/CPU/commit/log timings and original deadlines. Forced timeouts can validate recovery, but neither an extended timeout nor an unrelated pass closes the cause prerequisite. No hosted logging service is a prerequisite.
 
 ## Build order and evidence that each part is ready
 

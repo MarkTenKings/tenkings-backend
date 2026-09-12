@@ -1,6 +1,6 @@
 # Canonical ATLAS grading core
 
-This is the existing Speedster/ATLAS grading implementation shared by both applications. Eight source modules moved byte-for-byte from Ten Kings at da2a34da; `extraction-manifest.json` records their hashes. Historical frontend import paths forward to those same sources. Existing rule/version, 70/30 Front/Back weighting, equal subgrades, thresholds, contour coordinates, trace handling and identity behavior are unchanged.
+This is the existing Speedster/ATLAS grading implementation shared by both applications. `extraction-manifest.json` records ten byte-preserved source modules and their hashes, anchored to Ten Kings source da2a34da. The build also includes the report and review-action contract entries. Historical frontend import paths forward to those same sources. Existing rule/version, 70/30 Front/Back weighting, equal subgrades, thresholds, contour coordinates, trace handling and identity behavior are unchanged.
 
 The package exposes only named grading, identity, geometry, finding, trace and report entries. It has no ambient HTTP, provider, database, credential, storage or human-approval dependency. Existing async scan/re-measure helpers can invoke explicitly supplied callbacks; the caller still owns authorization, admission, reservations, source validation and provider transport. The full existing review service is required for actual detection/corrections and calibrated Memory admission.
 

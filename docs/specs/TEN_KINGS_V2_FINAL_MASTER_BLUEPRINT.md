@@ -162,6 +162,8 @@ Authenticated investigation follow-up, September 12 UTC: after Mark signed in, t
 
 Provider-reply follow-up, September 12 UTC: Mark returned the AI answer; it provides no incident trace and reports older detailed logs unavailable without prior forwarding. The [reply review and controlled logging comparison](../atlas/audits/2026-09-11/provider-reply-review.md) distinguish verified documentation from that external advice. Both exact-size/current-guard cases pass at the unchanged slow threshold; the separate forced-logging volume/cost sample is not a historical timeout reproduction. No application, runtime configuration or product scope changed. Representative Linux/runtime failure evidence remains necessary; unavailable historical rows do not waive the owner's initiating-cause prerequisite.
 
+Fresh lead evidence, September 12 UTC: the [five-specialty review](../atlas/audits/2026-09-12/fresh-astra-review.md) adds precise extraction/recovery contracts and an isolated native ARM Linux PostgreSQL17.11/Node22 comparison using real periodic renewals and current incident policy. Both finite tests passed; no initiating failure/correction was reproduced, and the owned environment was removed. Independent read-only Vercel metadata now verifies the unchanged eight-field identifier plus refined research engine v2 at collect source `a319904273d4b4e4e81d721b699d3a2990975eda`. The canonical plan uses that reviewed shared-engine source rather than silently freezing the older consultation. This is implementation/source evidence only: ATLAS serving I remains unchanged, stage decisions remain under discussion, and no owner product rule or operator prerequisite is amended.
+
 ---
 
 ## 1. Executive Decision
