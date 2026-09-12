@@ -1,8 +1,12 @@
 # ATLAS Speedster — consolidated rebuild plan
 
-**September 11–12, 2026 · Discussion draft · No ATLAS application changes or deployment**
+**September 11–12, 2026 · Foundation implementation started; stage choices remain under review · No deployment**
 
 This brings the engine inspection, incident evidence, Ten Kings consultation and Mark's decisions into one plan. The opening comparison is the short version. The later sections explain the workflow and engineering details. Recommendations below are proposals, not newly approved grading rules. Mark requested discussion of each stage before building; that remains the next product-design step.
+
+Mark has now instructed the fresh lead to start working through the next-step list using fresh Astra Extra High specialists. The first implementation batch isolates CPU measurement and native-photo contracts while preparing the combined workspace review and next runtime diagnostic. **Initial supported grading scope is now confirmed: standard-size sports and Pokémon cards**, using the existing 63.5 × 88.9 mm geometry. Other categories/sizes remain later scope. The initiating-cause prerequisite and remaining stage decisions below stay open.
+
+The [first foundation checkpoint](../audits/2026-09-12/foundation-implementation.md) records implemented photo contracts, checked CPU measurement and truthful manual draft content with 59 passing local tests. These are isolated code boundaries; server decoding, persistence, the actual manual screen and real-card acceptance are not yet connected. The native-x86 harness is prepared and locally checked, but its integration run still needs an appropriate target.
 
 The [fresh Astra lead review](../audits/2026-09-12/fresh-astra-review.md) records the September 12 source checks and representative-runtime follow-up. New extraction details below preserve the chosen workflow; they do not close the initiating-cause prerequisite or establish a deployed repair.
 
@@ -350,11 +354,12 @@ Keep existing scoring constants, 70/30 Front/Back weighting, four-subgrade avera
 The recommendation is complete enough to review. These are genuine product/accuracy decisions, not questions that require Mark to choose databases or job libraries:
 
 1. **Borderless/full-bleed cards:** how the grading system defines centering when there is no ordinary printed frame. Current math requires positive opposing border totals; absence cannot become an invented perfect score.
-2. **Supported card sizes/categories:** the core currently assumes standard 63.5 × 88.9 mm SPORTS/POKEMON cards. Recognizing Other trading cards is broader than supporting their grading geometry.
-3. **Inspection detail:** acceptance of current prepared views plus original zoom/crops versus changes to the measurement image pipeline. Original retention is already decided.
-4. **Astra confirmation:** which geometric/defect conditions allow automatic continuation, what it should inspect more closely and what requires a human. These rules must follow measured capability.
-5. **Review and learning:** the visible bulk-findings approval behavior and the exact deliberate event that publishes grading lessons. Identity corrections can be shared without making every model guess a lesson.
-6. **Detector choice:** retain the current finder or adopt an Astra-assisted alternative after the same-card comparison. Historical bank/map import is an optional implementation choice based on usefulness and effort.
+2. **Inspection detail:** acceptance of current prepared views plus original zoom/crops versus changes to the measurement image pipeline. Original retention is already decided.
+3. **Astra confirmation:** which geometric/defect conditions allow automatic continuation, what it should inspect more closely and what requires a human. These rules must follow measured capability.
+4. **Review and learning:** the visible bulk-findings approval behavior and the exact deliberate event that publishes grading lessons. Identity corrections can be shared without making every model guess a lesson.
+5. **Detector choice:** retain the current finder or adopt an Astra-assisted alternative after the same-card comparison. Historical bank/map import is an optional implementation choice based on usefulness and effort.
+
+Resolved for the first build: standard-size sports and Pokémon, with current 63.5 × 88.9 mm geometry. Recognizing another card does not mean the initial build can grade it; category/size expansion is later scope.
 
 The next owner review should begin with the combined boundary/border screen and then proceed through defects and final review. A decoder choice, queue library or cache implementation should not become an unnecessary owner decision.
 
@@ -371,6 +376,6 @@ The next owner review should begin with the combined boundary/border screen and 
 - [Current Ten Kings identifier](/Users/markthomas/tenkings/codex-staff-inventory-release-20260910/frontend/nextjs-app/lib/server/staffInventoryIdentification.ts:251); [research engine](/Users/markthomas/tenkings/codex-staff-inventory-release-20260910/frontend/nextjs-app/lib/server/staffInventoryResearch.ts:39).
 - [Existing finishing sequence](../../../frontend/atlas-app/lib/server/access/finishing.mjs:217); [Mac NFC acceptance limits](../MAC_NFC.md).
 
-New in this consolidation: explicit server-HEIC work; side-specific invalidation; overlap of defect work with printed-border review; the relabeled-Memory limitation; version-aware cross-company knowledge publication; action-specific result applicability; complete manual/report/finishing scope; and a finite acceptance sequence. No model benchmarks, live writes, application implementation or deployment were performed for this planning continuation.
+The original planning consolidation added explicit server-HEIC work, selective recalculation, the relabeled-Memory limitation, version-aware knowledge publication, complete manual/report/finishing scope and a finite acceptance sequence. Local foundation implementation has now begun as recorded above. No model benchmark, live write or deployment was performed in either this consolidation or the first foundation batch.
 
 Subsequent owner-requested timeout follow-up added matched isolated database/runner tests and bounded live read-only profiles. It confirms overhead and logging limitations, narrows unsupported causal claims, and leaves the initiating-cause prerequisite visibly unresolved. No application implementation or deployment followed from these measurements.

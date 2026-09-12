@@ -164,6 +164,14 @@ Provider-reply follow-up, September 12 UTC: Mark returned the AI answer; it prov
 
 Fresh lead evidence, September 12 UTC: the [five-specialty review](../atlas/audits/2026-09-12/fresh-astra-review.md) adds precise extraction/recovery contracts and an isolated native ARM Linux PostgreSQL17.11/Node22 comparison using real periodic renewals and current incident policy. Both finite tests passed; no initiating failure/correction was reproduced, and the owned environment was removed. Independent read-only Vercel metadata now verifies the unchanged eight-field identifier plus refined research engine v2 at collect source `a319904273d4b4e4e81d721b699d3a2990975eda`. The canonical plan uses that reviewed shared-engine source rather than silently freezing the older consultation. This is implementation/source evidence only: ATLAS serving I remains unchanged, stage decisions remain under discussion, and no owner product rule or operator prerequisite is amended.
 
+#### Owner direction — start the rebuild work and initial card scope, September 11 Pacific / September 12 UTC
+
+After reviewing the full next-step list, Mark instructed the fresh lead to start working through it and use as many fresh Astra Extra High subagents as the runtime permits. Use fresh `gpt-6-astra` / `xhigh` specialists in batches; no global concurrency change or additional sidebar tasks are required. This authorizes progress on the agreed technical foundation and the staged manual build while the separate timeout investigation continues. It does not establish the still-missing initiating cause or settle the outstanding grading/approval choices by implication.
+
+Mark explicitly selected **standard-size sports and Pokémon first** for the first usable build. Preserve the existing 63.5 × 88.9 mm grading geometry and current deterministic scoring for this initial scope. Additional trading-card categories, oversized cards and unusual physical shapes remain later scope; do not silently stretch the current measurement assumptions to grade them. Native-original retention is unchanged. Borderless/full-bleed centering within the initial categories still needs its own rule discussion.
+
+Implementation evidence, September 12 UTC: the [first foundation checkpoint](../atlas/audits/2026-09-12/foundation-implementation.md) records isolated photo descriptors, checked CPU measurement and truthful manual draft content. All59 foundation tests pass and independent review found no remaining actionable issue after correcting unnecessary repeated inspection. These pure code boundaries do not provide server HEIC decoding, storage/persistence, a live manual workflow or final approval authority. Native diagnostic preparation is locally checked but unexecuted on x86. No scoring rule, serving application or initiating-cause prerequisite changed.
+
 ---
 
 ## 1. Executive Decision

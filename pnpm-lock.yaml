@@ -679,6 +679,8 @@ importers:
         specifier: 4.1.11
         version: 4.1.11
 
+  packages/atlas-photo-core: {}
+
   packages/atlas-report-view:
     dependencies:
       react:
