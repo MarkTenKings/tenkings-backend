@@ -8,6 +8,8 @@
 
 > Engine-review follow-up: owner permits omitting historical lessons/maps if that materially speeds the clean build, and requested inspection before optimization. Read-only metadata found 559 Memory examples from 48 cards (0.54 MB), plus 4 current maps; these are distinct from SAM model weights and the ability to learn new lessons. See the [engine inspection and proposed measurements](../atlas/audits/2026-09-11/engine-review.md). No reset or engine change has occurred.
 
+> Shared-engine source correction: consultation with `Complete Ten Kings financial app` identifies current collect application `bb10f235d5bddd2ca30ba19e5389e80d43cd2fec`, whose physical-inventory flow uses eight-field Google Vision + Astra identification and a separate Astra/SoldComps research engine. Earlier 17-field CardAsset OCR comparisons concern an older flow. Owner wants the current engines and relevant learned identity knowledge shared with ATLAS, with inventories separate. The [shared-engine plan](../atlas/plans/SHARED_CARD_ENGINES_DISCUSSION.md) records the verified source, remaining reference-library gaps and proposed detector evaluation. No integration or model replacement has begun.
+
 ## Historical runtime checkpoints
 
 The dated H/G/F/E checkpoints below preserve their original observations. Their runtime identities, pending actions and old-card recovery instructions are historical where superseded by I and the owner's cancellation.

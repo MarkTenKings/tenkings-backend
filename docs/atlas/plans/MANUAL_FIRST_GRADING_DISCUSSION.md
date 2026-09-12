@@ -78,6 +78,8 @@ Before connecting a UI, run the same fixtures through the existing engine and it
 
 ### OpenAI integration comparison: checked source
 
+Subsequent source correction: this subsection describes the older CardAsset OCR handler. The owner's current refined flow is the newer collect physical-inventory identifier and background research in release `bb10f235d5bddd2ca30ba19e5389e80d43cd2fec`. Use the [consulted shared-engine source and plan](SHARED_CARD_ENGINES_DISCUSSION.md), not the old handler, for extraction.
+
 Both the inventory identification handler and ATLAS operator call `https://api.openai.com/v1/responses`. ATLAS is the application name; its operator explicitly selects `gpt-6-astra`. The checked inventory flow performs Google Vision OCR, structured text extraction, optional image-URL extraction and a `CardAsset` suggestion update, including compatibility/fallback behavior. It does not import the ATLAS per-tool run/attempt/image-delivery ledger. Its deployment can override source model defaults; the effective deployed inventory model was not checked in this follow-up, so identical Astra/MAX settings are not established.
 
 The distinction is the surrounding workflow, not a different OpenAI endpoint. ATLAS retains a growing image-filled conversation and repeatedly checks it inside its own database transactions. The latest recorded reservation failure preceded the next provider dispatch. That establishes the failing subsystem and rules out the next OpenAI response as the cause of that particular failure; it does not isolate the exact initiating database wait or statement. Upload conversion overhead is a separate pre-operator issue.
