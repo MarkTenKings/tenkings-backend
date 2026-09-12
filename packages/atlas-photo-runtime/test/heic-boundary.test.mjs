@@ -150,13 +150,16 @@ function unfilteredPixels(png){
   return result;
 }
 
-test('all associated HEIF EXIF is explicit unsupported, including neutral and EXIF-only orientation',async()=>{
+test('associated EXIF is descriptive; the primary HEIF transform governs despite thumbnail differences',async()=>{
   const neutral=await fixture('profile-mismatch-thumbnail.heic');
-  await assert.rejects(verifyAndDecodePhoto(request(neutral)),code('PHOTO_GEOMETRY_UNSUPPORTED'));
+  const decoded=await verifyAndDecodePhoto(request(neutral));
   const oriented=Buffer.from(neutral),signature=Buffer.from('011200030000000100010000','hex'),at=oriented.indexOf(signature);
   assert.ok(at>=0);assert.equal(oriented.indexOf(signature,at+1),-1);oriented.writeUInt16BE(6,at+8);
-  await assert.rejects(verifyAndDecodePhoto(request(oriented)),code('PHOTO_GEOMETRY_UNSUPPORTED'));
-  await assert.rejects(verifyAndDecodePhoto(request(await fixture('transform-mismatch-thumbnail.heic'))),code('PHOTO_GEOMETRY_UNSUPPORTED'));
+  const changed=await verifyAndDecodePhoto(request(oriented));
+  assert.deepEqual(changed.png,decoded.png); assert.equal(changed.decodePlan.metadata.orientationSource,'identity');
+  const transformed=await verifyAndDecodePhoto(request(await fixture('transform-mismatch-thumbnail.heic')));
+  assert.equal(transformed.decodePlan.metadata.orientationSource,'heif-properties');
+  assert.equal((await sharp(transformed.png).metadata()).orientation,undefined);
 });
 
 test('odd-origin crops are refused for both direct HEVC and grids before accepting shifted chroma',async()=>{

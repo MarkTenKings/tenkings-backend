@@ -8,8 +8,8 @@ The libheif color fixtures are actual HEVC-encoded images, including a thumbnail
 and an auxiliary alpha case. `two-images.heic` is libheif's original example;
 tests change only its `pitm` item ID to prove correct second-primary selection.
 Pillow-Heif's `rgb10.heic` and `rgb12.heic` have actual 10/12-bit HEVC samples.
-The two metadata fixtures test explicit refusal of associated Exif, including
-neutral and nonidentity orientation. These files are not browser-converted PNGs.
+The two metadata fixtures test descriptive primary Exif and HEIF transform
+precedence despite distinct thumbnail properties. These files are not browser-converted PNGs.
 
 `heif-fixture-helpers.mjs` constructs controlled property variants while preserving
 all original compressed image bytes. Its grid generator creates four distinct
@@ -22,3 +22,12 @@ fixtures do not establish real iPhone color or optical grading acceptance.
 `process-fixture.mjs` is original test code. It deliberately blocks its own event
 loop, floods output or repeatedly performs actual native HEVC decode so its parent
 must enforce cancellation and reap that exact child. No model calls occur.
+
+`icc-manifest.json` pins two unchanged CC0 compact v4 profiles and their upstream
+license. `withExif` adds bounded synthetic TIFF graphs and correct `cdsc`/`iloc`
+metadata associations to genuine HEVC fixtures; no compressed image samples are
+rewritten. Tests compare preserved RGB/16-bit values and profile bytes, not names.
+Apple Display P3's exact observed hash is qualified separately using retained
+private task evidence; no Apple profile or user photograph is copied into this
+repository. Native-reference and independent matrix/TRC-versus-LittleCMS evidence
+is retained under `atlas-speedster-defects-20260912/iphone/` outside the repository.

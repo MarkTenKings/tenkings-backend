@@ -136,18 +136,44 @@ sRGB PNG. Unprofiled sources remain `colorTreatment: unmanaged`, null color spac
 and unknown dynamic range: no default sRGB or fidelity assertion is invented.
 Exact original bytes are always preserved by the caller, independently of PNG.
 
-Explicitly unsupported: ICC profiles and wider/unverified NCLX color; PQ/HLG,
-mastering/content-light HDR metadata and auxiliary images including gain maps,
-depth and HEIF alpha; **all associated Exif metadata**, including neutral IFD0;
-movie sequences, overlays/identity-derived items, unusual primary properties,
-fractional/out-of-bounds/odd-origin/complex crops, separately transformed tiles,
-repeated rotation/mirror properties, and nonzero rotation or mirror on odd source
-or effective crop dimensions. Exif priority and the complete IFD graph need their own
-qualification; the adapter does not silently ignore a possible second orientation.
-Originals remain available on every refusal. These limitations mean native iPhone
-intake is **not complete**: real iPhone originals commonly carry Exif, ICC/P3,
-grids and/or gain maps. This is tested native HEVC support, not universal HEIC or
-an accepted phone/optical grading workflow.
+The `atlas-heif-primary-lossless-v2` policy additionally preserves exact qualified
+SDR RGB ICC profiles: Apple's 536-byte Display P3 profile and the CC0 compact v4
+Display P3/sRGB profiles. Qualification uses their complete SHA-256 values in
+`src/heif-metadata.mjs`; a profile name or near-match never qualifies. These
+profiles have independently checked matrix/TRC semantics. ICC bytes are retained
+exactly in PNG `iCCP`, RGB samples are unchanged and `colorTreatment` is
+`preserved`, with `Display P3` or `sRGB` recorded explicitly. No P3-to-sRGB gamut
+conversion or clipping occurs. ICC governs RGB interpretation when both ICC and
+qualified NCLX are present; NCLX still supplies codec matrix/range information.
+Unknown, empty, duplicate or inconsistent tile profiles refuse. NCLX-only P3
+remains unqualified. A grid may use an explicit primary ICC with unprofiled tiles;
+without that primary property, every tile must carry the same nonempty ICC before
+libheif's first-tile inheritance qualifies. Source ICC is bounded to 4096 bytes
+before copying.
+
+Associated primary Exif is now accepted after bounded TIFF structural validation:
+IFD0, next/thumbnail IFDs, Exif/GPS/interoperability pointers and SubIFDs are walked;
+cycles, duplicates, malformed orientation, unsupported types and out-of-range
+values refuse. There is at most one Exif item, 1 MiB, 32 IFDs and 4096 entries.
+Private MakerNote content remains bounded opaque data; it is never interpreted.
+All Exif orientation values are descriptive under HEIF, including Exif-only or
+conflicting values. Only actual HEIF properties determine the frame transform.
+No Exif/XMP metadata is copied into PNG, so a consumer cannot apply its orientation
+again. The original still contains every unchanged metadata byte. This follows
+[HEIF's presentation rule](https://pillow-heif.readthedocs.io/en/stable/reference/HeifImage.html),
+with native-decoder and independent pixel-permutation comparisons.
+
+Explicitly unsupported: unknown ICC/wider NCLX color; PQ/HLG, mastering/content-light
+HDR metadata and auxiliary images including gain maps, depth and HEIF alpha;
+associated tile Exif; movie sequences, overlays/identity-derived items, unusual
+primary properties, fractional/out-of-bounds/odd-origin/complex crops, separately
+transformed tiles, repeated rotation/mirror properties, and nonzero rotation or
+mirror on odd source or effective crop dimensions. Originals remain available on
+every refusal. Native iPhone intake is **not complete**: read-only inspection of
+the two retained real iPhone originals verified compatible Exif and Display P3
+profiles, but also an Apple HDR gain map on each. Those exact originals still
+refuse; no auxiliary image was removed or ignored to make them pass. Fresh phone,
+optical detail and the full HDR inspection path remain acceptance work.
 
 Native per-image security limits complement the existing parent timer and
 full-source RGBA16 budget. They are not a hard bound on total process/codec memory;
@@ -162,16 +188,16 @@ root after installing workspace dependencies and building the native adapter. Te
 rasters, independent pixel permutations for all orientations, 16-bit detail,
 ICC and alpha, source/receipt conflicts, malformed/multi-frame inputs, two
 unchanged upstream HEVC stills, second-primary selection, 8/10/12-bit grids,
-explicit color/Exif/geometry refusals and real kill/reap checks against a
+validated primary Exif, preserved qualified ICC and explicit color/Exif/geometry refusals and real kill/reap checks against a
 synchronously blocked child. No paid inference or historical card replay occurs.
 
 The finite local suite runs on Node 25.6.1/macOS arm64 with Sharp 0.33.5/libvips
 8.15.3. It is not production Node/Linux or iPhone optical acceptance. Remaining
-work includes outer server resource policy, remaining native iPhone HEIC/Exif/ICC/HDR
+work includes outer server resource policy, remaining native iPhone HDR and unqualified metadata/color
 coverage and fresh iPhone JPEG/HEIC color/detail comparison on the Mac. The separate
 `@atlas/photo-storage` create-only adapter and `@atlas/preparation-runtime` CPU
 adapter now exist, with synthetic browser integration checked by root. Actual
 provider/authenticated application integration and the real-phone workflow remain
-pending. Preparation currently admits only opaque sRGB RGB8 frames; unmanaged or
+pending. Preparation currently admits only opaque sRGB RGB8 frames; Display P3, unmanaged or
 16-bit HEIC output is explicitly outside that preparation subset. Retaining native
 originals and samples does not establish an accepted original-quality grading path.

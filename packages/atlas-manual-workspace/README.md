@@ -1,8 +1,23 @@
-# ATLAS manual geometry workspace
+# ATLAS manual grading workspace
 
 An isolated controlled React component and pure geometry actions for the approved
 Front-left/Back-right layout. It uses the existing standard-size sports/Pokémon
 geometry and scoring. No production application imports this package yet.
+
+The package now also exports `DefectReviewWorkspace` from `./defects`, its
+`./defects.css` stylesheet, and pure actions from `./defect-actions`. The paired
+inspection view supports selection, type correction, removal/restore, manual
+brush/eraser traces, stroke undo, Fit/2×/4×/8× zoom and pan. Its card display crops
+the exact40-pixel inspection margin; it does not substitute rectified pixels.
+Saved traces preserve existing canonical masks/crop/source provenance and actual
+CPU measurements. Pending candidates stay visible and expose retry/discard.
+
+Both current image descriptors must load at the exact inspection dimensions.
+After per-side inspection, one **Confirm findings** action accepts the corrected
+list. Final report approval stays separate. Async callbacks must durably save
+and read back state; `onEditingChange` on either component lets a host protect
+unsaved work during navigation. The authenticated server/client composition and
+actual PostgreSQL/CPU browser fixture live in `@atlas/manual-workflow`.
 
 The component displays physical edges and projected printed borders together.
 Physical editing uses the already oriented source; printed editing uses the exact

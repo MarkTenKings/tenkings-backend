@@ -131,7 +131,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
  * authoritative save/readback and update `workspace`; rejected saves retain the
  * local draft. The host owns source verification, current version CAS, session
  * auth, persistence, automatic preparation and stage progression. */
-export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, onPrepare, preparingSides = {}, title = 'Edges & centering', saveStatus = '' }) {
+export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, onPrepare, onEditingChange, preparingSides = {}, title = 'Edges & centering', saveStatus = '' }) {
   const status = geometryStatus(workspace);
   const [kind, setKind] = useState('PHYSICAL'), [activity, setActivity] = useState({ FRONT: false, BACK: false });
   const [loaded, setLoaded] = useState({ FRONT: null, BACK: null });
@@ -140,6 +140,7 @@ export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, 
   const [confirming, setConfirming] = useState(false), [error, setError] = useState('');
   const onActivity = useCallback((side, active) => setActivity(previous => previous[side] === active ? previous : { ...previous, [side]: active }), []);
   const editing = activity.FRONT || activity.BACK;
+  useEffect(() => { onEditingChange?.(editing || confirming); return () => onEditingChange?.(false); }, [editing, confirming, onEditingChange]);
   const confirm = async () => {
     if (editing || confirming || !bothVisible || !status.canConfirmBoth || !onConfirm) return;
     setConfirming(true); setError('');

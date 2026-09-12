@@ -7,7 +7,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 await mkdir(resolve(root, 'dist'), { recursive: true });
 const result = await build({
   absWorkingDir: root,
-  entryPoints: ['src/PairedGeometryWorkspace.jsx', 'src/gradient-snap.ts'],
+  entryPoints: ['src/PairedGeometryWorkspace.jsx', 'src/DefectReviewWorkspace.jsx', 'src/gradient-snap.ts'],
   outdir: 'dist', bundle: true, splitting: true, format: 'esm', platform: 'browser',
   target: ['es2022'], jsx: 'automatic', external: ['react', 'react-dom', 'react/jsx-runtime'],
   metafile: true, logLevel: 'silent',

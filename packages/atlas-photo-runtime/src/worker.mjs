@@ -32,6 +32,8 @@ async function decode(request) {
     if (outputContainer.bitDepth !== decoded.treatment.bitDepth || meta.orientation !== undefined
       || meta.width !== decoded.decodePlan.geometry.width || meta.height !== decoded.decodePlan.geometry.height
       || meta.channels !== 3) reject('PHOTO_SOURCE_MISMATCH');
+    if (decoded.treatment.colorTreatment === 'preserved'
+      && (!meta.icc || sha256(meta.icc) !== decoded.decodePlan.metadata.iccSha256)) reject('PHOTO_SOURCE_MISMATCH');
     return { ok: true, original: decoded.original, decodePlan: decoded.decodePlan,
       raster: { content: { mime: 'image/png', byteCount: size, sha256: sha256(output) },
         dimensions: { width: meta.width, height: meta.height } }, treatment: decoded.treatment };

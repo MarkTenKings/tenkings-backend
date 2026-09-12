@@ -83,7 +83,7 @@ static napi_value decode(napi_env env, napi_callback_info info) {
     num(env,result,"bitDepth",depth); num(env,result,"topLevelCount",heif_context_get_number_of_top_level_images(context.get()));
     str(env,result,"version","1.23.2/libde265-1.1.1");
     size_t iccSize = heif_image_handle_get_raw_color_profile_size(handle.get());
-    need(iccSize <= inputLimit, "PHOTO_DECODE_LIMIT");
+    need(iccSize <= std::min<uint64_t>(inputLimit,4096), "PHOTO_DECODE_LIMIT");
     std::vector<uint8_t> icc(iccSize);
     if (iccSize) check(heif_image_handle_get_raw_color_profile(handle.get(),icc.data()));
     put(env,result,"icc",buffer(env,icc.data(),icc.size()));
@@ -97,15 +97,25 @@ static napi_value decode(napi_env env, napi_callback_info info) {
       num(env,color,"matrix",nclx->matrix_coefficients); num(env,color,"fullRange",nclx->full_range_flag);
       need(nclx->transfer_characteristics != 16 && nclx->transfer_characteristics != 18, "PHOTO_HDR_UNSUPPORTED");
       // Qualified SDR conversion subset; no unmeasured gamut or transfer conversion.
-      need(nclx->color_primaries == 1 && nclx->transfer_characteristics == 13
+      need((nclx->color_primaries == 1 || (iccSize && nclx->color_primaries == 12)) && nclx->transfer_characteristics == 13
         && (nclx->matrix_coefficients == 0 || nclx->matrix_coefficients == 1 || nclx->matrix_coefficients == 6), "PHOTO_COLOR_UNSUPPORTED");
     } else need(colorError.code == heif_error_Color_profile_does_not_exist);
-    // ICC is observed, but its interpretation is not qualified by this first adapter.
-    need(iccSize == 0, "PHOTO_COLOR_UNSUPPORTED");
+    // The worker admits only exact qualified SDR RGB ICC bytes before decode.
+    // Native RGB is passed through with that same profile; no gamut conversion.
     put(env,result,"nclx",color);
-    // HEIF properties are qualified here; the complete Exif IFD graph is not.
-    // Preserve the original for a future adapter instead of guessing priority.
-    need(heif_image_handle_get_number_of_metadata_blocks(handle.get(),"Exif") == 0,"PHOTO_GEOMETRY_UNSUPPORTED");
+    // Exif remains descriptive under HEIF. Expose bounded original bytes only
+    // inside the child for structural validation; never use them to rotate RGB.
+    const int exifCount = heif_image_handle_get_number_of_metadata_blocks(handle.get(),"Exif");
+    need(exifCount >= 0 && exifCount <= 1,"PHOTO_GEOMETRY_UNSUPPORTED");
+    std::vector<uint8_t> exif;
+    if (exifCount) {
+      heif_item_id exifId = 0;
+      need(heif_image_handle_get_list_of_metadata_block_IDs(handle.get(),"Exif",&exifId,1) == 1);
+      size_t exifSize = heif_image_handle_get_metadata_size(handle.get(),exifId);
+      need(exifSize > 0 && exifSize <= std::min<uint64_t>(inputLimit,1024*1024),"PHOTO_DECODE_LIMIT");
+      exif.resize(exifSize); check(heif_image_handle_get_metadata(handle.get(),exifId,exif.data()));
+    }
+    put(env,result,"exif",buffer(env,exif.data(),exif.size()));
     napi_value grid; napiCheck(napi_get_null(env,&grid));
     if (type == heif_fourcc('g','r','i','d')) {
       heif_image_tiling tiling{}; tiling.version=1;
@@ -135,7 +145,13 @@ static napi_value decode(napi_env env, napi_callback_info info) {
           && heif_image_handle_get_chroma_bits_per_pixel(tile.get()) == depth,"PHOTO_BIT_DEPTH_UNSUPPORTED");
         need(!heif_image_handle_has_alpha_channel(tile.get())
           && heif_image_handle_get_number_of_auxiliary_images(tile.get(),0) == 0,"PHOTO_HEIC_UNSUPPORTED");
-        need(heif_image_handle_get_raw_color_profile_size(tile.get()) == 0,"PHOTO_COLOR_UNSUPPORTED");
+        const size_t tileIccSize = heif_image_handle_get_raw_color_profile_size(tile.get());
+        if (tileIccSize) {
+          need(tileIccSize == iccSize,"PHOTO_COLOR_UNSUPPORTED");
+          std::vector<uint8_t> tileIcc(tileIccSize);
+          check(heif_image_handle_get_raw_color_profile(tile.get(),tileIcc.data()));
+          need(tileIcc == icc,"PHOTO_COLOR_UNSUPPORTED");
+        }
         heif_color_profile_nclx* tileNclxPtr=nullptr;
         auto tileColorError=heif_image_handle_get_nclx_color_profile(tile.get(),&tileNclxPtr);
         owned<heif_color_profile_nclx,heif_nclx_color_profile_free> tileNclx(tileNclxPtr,heif_nclx_color_profile_free);

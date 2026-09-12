@@ -8,7 +8,10 @@
     "./geometry-actions": "./src/geometry-actions.mjs",
     "./styles.css": "./src/workspace.css",
     "./snapping": "./dist/gradient-snap.js",
-    "./preparation-result": "./src/preparation-result.mjs"
+    "./preparation-result": "./src/preparation-result.mjs",
+    "./defect-actions": "./src/defect-actions.mjs",
+    "./defects": "./dist/DefectReviewWorkspace.js",
+    "./defects.css": "./src/defects.css"
   },
   "scripts": {
     "build": "node scripts/build.mjs",

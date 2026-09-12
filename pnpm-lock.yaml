@@ -679,6 +679,48 @@ importers:
         specifier: 4.1.11
         version: 4.1.11
 
+  packages/atlas-manual-service: {}
+
+  packages/atlas-manual-workflow:
+    dependencies:
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../atlas-grading-core
+      '@atlas/manual-service':
+        specifier: workspace:*
+        version: link:../atlas-manual-service
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../atlas-manual-workspace
+      '@atlas/measurement-runtime':
+        specifier: workspace:*
+        version: link:../atlas-measurement-runtime
+    devDependencies:
+      '@atlas/photo-runtime':
+        specifier: workspace:*
+        version: link:../atlas-photo-runtime
+      '@atlas/preparation-runtime':
+        specifier: workspace:*
+        version: link:../atlas-preparation-runtime
+      esbuild:
+        specifier: 0.27.7
+        version: 0.27.7
+      playwright:
+        specifier: 1.57.0
+        version: 1.57.0
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: 18.3.1
+        version: 18.3.1(react@18.3.1)
+
+  packages/atlas-measurement-runtime:
+    dependencies:
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../atlas-manual-workspace
+
   packages/atlas-manual-workspace:
     dependencies:
       '@atlas/grading-core':

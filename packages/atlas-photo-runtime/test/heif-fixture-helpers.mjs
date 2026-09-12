@@ -42,9 +42,48 @@ export function primaryVariant(bytes,id) {
   pitm.data.writeUInt16BE(id,4); return result;
 }
 
+// Test-only metadata addition for the v0 iloc fixtures above. No HEVC byte changes.
+export function withExif(bytes, tiff, { prefix = Buffer.alloc(0), associatedId = null } = {}) {
+  const roots = boxes(bytes), meta = roots.find(b => b.type === 'meta'), children = boxes(meta.data, 4);
+  const u16 = n => { const b = Buffer.alloc(2); b.writeUInt16BE(n); return b; };
+  const u32 = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+  const infos = children.find(b => b.type === 'iinf').data;
+  const ids = boxes(infos, 6).map(b => b.data.readUInt16BE(4)), id = Math.max(...ids) + 1;
+  const primary = associatedId ?? children.find(b => b.type === 'pitm').data.readUInt16BE(4);
+  const payload = Buffer.concat([u32(prefix.length), prefix, tiff]);
+  const cdsc = box('cdsc', Buffer.concat([u16(id), u16(1), u16(primary)]));
+  function build(delta) {
+    const rewritten = children.map(child => {
+      if (child.type === 'iloc') {
+        const data = Buffer.from(child.data); assert.equal(data.toString('hex', 0, 6), '000000004440');
+        const count = data.readUInt16BE(6); assert.equal(data.length, 8 + 18 * count);
+        for (let i = 0; i < count; i++) data.writeUInt32BE(data.readUInt32BE(12 + i * 18) + delta, 12 + i * 18);
+        data.writeUInt16BE(count + 1, 6);
+        return box('iloc', Buffer.concat([data, u16(id), u16(0), u32(bytes.length + delta + 8), u16(1), u32(0), u32(payload.length)]));
+      }
+      if (child.type === 'iinf') {
+        const data = Buffer.from(child.data); data.writeUInt16BE(ids.length + 1, 4);
+        return box('iinf', Buffer.concat([data, box('infe', Buffer.concat([Buffer.from([2, 0, 0, 0]), u16(id), u16(0), Buffer.from('Exif\0')]))]));
+      }
+      if (child.type === 'iref') return box('iref', Buffer.concat([child.data, cdsc]));
+      return box(child.type, child.data);
+    });
+    if (!children.some(b => b.type === 'iref')) rewritten.push(box('iref', Buffer.concat([u32(0), cdsc])));
+    return box('meta', Buffer.concat([u32(0), ...rewritten]));
+  }
+  const delta = build(0).length - (meta.end - meta.start);
+  return Buffer.concat([...roots.map(r => r === meta ? build(delta) : bytes.subarray(r.start, r.end)), box('mdat', payload)]);
+}
+
+export function orientationExif(orientation, littleEndian = false) {
+  const data = Buffer.from('4d4d002a00000008000101120003000000010001000000000000', 'hex');
+  if (!littleEndian) { data.writeUInt16BE(orientation, 18); return data; }
+  return Buffer.from([0x49,0x49,42,0,8,0,0,0,1,0,0x12,1,3,0,1,0,0,0,orientation,0,0,0,0,0,0,0]);
+}
+
 // A real 2×2 grid composed from four references to unchanged upstream HEVC tile
 // bytes. A nonmultiple canvas exercises native removal of padded right/bottom tiles.
-export function gridFixture(bytes, { primaryProperties=[], tileProperties=[], color=null, tileColor=color, padding=[3,5] }={}) {
+export function gridFixture(bytes, { primaryProperties=[], tileProperties=[], color=null, tileColor=color, tileColorIds=[1,2,3,4], padding=[3,5] }={}) {
   const roots=boxes(bytes), meta=boxes(roots.find(b=>b.type==='meta').data,4);
   const props=boxes(boxes(meta.find(b=>b.type==='iprp').data).find(b=>b.type==='ipco').data);
   const tile=roots.find(b=>b.type==='mdat').data;
@@ -55,12 +94,13 @@ export function gridFixture(bytes, { primaryProperties=[], tileProperties=[], co
   const tAssoc=[1,2],pAssoc=[3];
   for(const [values,associated] of [[tileProperties,tAssoc],[primaryProperties,pAssoc]]) for(const [kind,data]of values){all.push(box(kind,data));associated.push(all.length);}
   for(const [profile,associated]of[[tileColor,tAssoc],[color,pAssoc]]) if(profile){all.push(box('colr',profile));associated.push(all.length);}
+  const tileColorIndex=tileColor?tAssoc.at(-1):null;
   const u16=n=>{const d=Buffer.alloc(2);d.writeUInt16BE(n);return d;};
   const u32=n=>{const d=Buffer.alloc(4);d.writeUInt32BE(n);return d;};
   const infe=(id,type,hidden)=>box('infe',Buffer.concat([Buffer.from([2,0,0,hidden?1:0]),u16(id),u16(0),Buffer.from(type+'\0')]));
   const associations=(id,ids)=>Buffer.concat([u16(id),Buffer.from([ids.length,...ids.map(n=>0x80|n)])]);
   const iprp=box('iprp',Buffer.concat([box('ipco',Buffer.concat(all)),box('ipma',Buffer.concat([u32(0),u32(5),
-    ...[1,2,3,4].map(id=>associations(id,tAssoc)),associations(5,pAssoc)]))]));
+    ...[1,2,3,4].map(id=>associations(id,tAssoc.filter(index=>index!==tileColorIndex||tileColorIds.includes(id)))),associations(5,pAssoc)]))]));
   const gridData=Buffer.concat([Buffer.from([0,0,1,1]),u16(width),u16(height)]);
   const ilocEntry=(id,offset,length)=>Buffer.concat([u16(id),u16(0),u32(offset),u16(1),u32(0),u32(length)]);
   const buildMeta=offset=>box('meta',Buffer.concat([u32(0),box('hdlr',meta.find(b=>b.type==='hdlr').data),box('pitm',Buffer.concat([u32(0),u16(5)])),
