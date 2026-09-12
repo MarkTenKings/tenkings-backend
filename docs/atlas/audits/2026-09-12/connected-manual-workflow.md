@@ -1,5 +1,9 @@
 # Connected native-photo manual workflow
 
+Fresh-lead follow-up: [current release readiness](connected-manual-release-readiness.md)
+records actual target/DB/storage/auth observations and subsequent local release
+corrections. The counts and image below describe the sealed handoff baseline.
+
 September12,2026. Implemented on baseline
 `fd91bbb8a681e819af82f299576dc2f7cae5c99b`. Mark approved the SDR working-view
 recommendation and requested fresh Astra Extra High agents to build the connected
@@ -72,8 +76,12 @@ Evidence root:
   including the ordinary auth boundary and actual Next empty-body parser format.
 - 107 photo/core tests and47 workspace tests pass in specialist qualification.
   The24 storage tests include actual streamed-byte checks and bounded signed reads.
-- Native PostgreSQL fixtures replay95 public/35 staff migrations and the three
-  proposals, with second-deploy no-op and restricted role grants. Intake passes10
+- Native PostgreSQL fixtures replay95 public/35 staff migrations with second-deploy
+  no-op for that Prisma chain, then apply the three proposals once and check
+  restricted role grants. This original proof did not establish idempotent raw
+  proposal execution. The fresh lead publishes their identical bytes as three
+  tracked staff migrations and verifies the resulting95/38 chain and no-op.
+  Intake passes10
   grouped assertions, connected composition8, plus independent late-receipt,
   session-expiry, replay and source-race probes. All specialist-owned clusters
   are stopped with retained cleanup receipts.

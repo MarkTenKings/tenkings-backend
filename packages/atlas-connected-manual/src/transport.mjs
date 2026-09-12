@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { MANUAL_STREAM_HEADER, MANUAL_STREAM_PROTOCOL } from '@atlas/manual-service/response';
 
 export const MANUAL_TRANSPORT_LIMITS = Object.freeze({ requestBytes: 2 * 1024 * 1024,
   jsonResponseBytes: 2 * 1024 * 1024, imageResponseBytes: 4 * 1024 * 1024, timeoutMs: 210000 });
@@ -177,14 +178,34 @@ export function sendManualTransportError(res, error) {
  * never forwarded. A timeout is an uncertain result: callers retain their exact
  * action/upload request IDs and reconcile through the durable service. */
 export function createManualServiceProxy({ origin, key, fetchImpl = globalThis.fetch,
-  timeoutMs = MANUAL_TRANSPORT_LIMITS.timeoutMs }) {
+  timeoutMs = MANUAL_TRANSPORT_LIMITS.timeoutMs, heartbeatMs = 15000 }) {
   const privateOrigin = canonicalOrigin(origin, { privateOrigin: true }), signingKey = secret(key);
   requireTransport(typeof fetchImpl === 'function' && Number.isInteger(timeoutMs) && timeoutMs > 0
-    && timeoutMs <= MANUAL_TRANSPORT_LIMITS.timeoutMs, 500, 'MANUAL_TRANSPORT_CONFIG_INVALID');
+    && timeoutMs <= MANUAL_TRANSPORT_LIMITS.timeoutMs
+    && Number.isInteger(heartbeatMs) && heartbeatMs > 0 && heartbeatMs <= 15000, 500, 'MANUAL_TRANSPORT_CONFIG_INVALID');
   return async (req, res) => {
     if (!isManualServicePath(req.url)) return false;
-    const controller = new AbortController(); let timer;
-    const disconnected = () => controller.abort();
+    const controller = new AbortController(); let timer, heartbeat, streamed = false, closed = false, rejectDisconnected;
+    const stopHeartbeat = () => { clearInterval(heartbeat); heartbeat = undefined; };
+    const disconnected = () => {
+      closed = true; stopHeartbeat(); controller.abort();
+      rejectDisconnected?.(new ManualTransportError(503, 'MANUAL_SERVICE_UNAVAILABLE'));
+    };
+    const finish = (status, contentType, bytes) => {
+      stopHeartbeat();
+      if (closed || res.destroyed || res.writableEnded) return;
+      if (streamed) {
+        let body;
+        try { body = JSON.parse(bytes.toString('utf8')); }
+        catch { throw new ManualTransportError(502, 'MANUAL_SERVICE_RESPONSE_INVALID'); }
+        requireTransport(body && typeof body === 'object' && !Array.isArray(body), 502, 'MANUAL_SERVICE_RESPONSE_INVALID');
+        res.end(JSON.stringify({ protocol: MANUAL_STREAM_PROTOCOL, status, body }));
+      } else {
+        manualPrivateHeaders(res); res.setHeader('Content-Type', contentType);
+        if (contentType.startsWith('image/')) res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+        res.status(status).send(bytes);
+      }
+    };
     try {
       const bytes = requestBytes(req);
       assertRequestShape(req, bytes);
@@ -196,6 +217,28 @@ export function createManualServiceProxy({ origin, key, fetchImpl = globalThis.f
         const value = header(req, name, name === 'cookie' ? 16384 : 2048); if (value) headers[name] = value;
       }
       req.once?.('aborted', disconnected); res.once?.('close', disconnected);
+      const disconnectedResult = new Promise((_, reject) => { rejectDisconnected = reject; });
+      // The Vercel wrapper has already checked ingress, ordinary staff auth and
+      // CSRF. Delay the first heartbeat so fast responses retain their ordinary
+      // HTTP status. It never proves dispatch, completion or human approval.
+      if (req.method === 'POST') {
+        heartbeat = setInterval(() => {
+          if (closed || res.destroyed || res.writableEnded) { disconnected(); return; }
+          try {
+            if (!streamed) {
+              res.statusCode = 200;
+              manualPrivateHeaders(res);
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.setHeader(MANUAL_STREAM_HEADER, MANUAL_STREAM_PROTOCOL);
+              res.setHeader('Cache-Control', 'private, no-store, max-age=0, no-transform');
+              res.setHeader('X-Accel-Buffering', 'no');
+              streamed = true;
+            }
+            res.write('\n'); res.flush?.();
+          } catch { disconnected(); }
+        }, heartbeatMs);
+        heartbeat.unref?.();
+      }
       const timeout = new Promise((_, reject) => {
         timer = setTimeout(() => { reject(new ManualTransportError(504, 'MANUAL_SERVICE_TIMEOUT')); controller.abort(); }, timeoutMs);
       });
@@ -208,13 +251,16 @@ export function createManualServiceProxy({ origin, key, fetchImpl = globalThis.f
         const responseBody = await responseBytes(response, manualResponsePolicy(req.url, contentType), controller.signal);
         return { status: response.status, contentType, bytes: responseBody };
       };
-      const result = await Promise.race([work(), timeout]);
-      manualPrivateHeaders(res); res.setHeader('Content-Type', result.contentType);
-      if (result.contentType.startsWith('image/')) res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-      res.status(result.status).send(result.bytes);
-    } catch (error) { controller.abort(); sendManualTransportError(res, error); }
+      const result = await Promise.race([work(), timeout, disconnectedResult]);
+      finish(result.status, result.contentType, result.bytes);
+    } catch (error) {
+      controller.abort();
+      if (streamed) finish(error instanceof ManualTransportError ? error.status : 503,
+        'application/json', Buffer.from(JSON.stringify({ error: error instanceof ManualTransportError ? error.code : 'MANUAL_SERVICE_UNAVAILABLE' })));
+      else if (!closed) sendManualTransportError(res, error);
+    }
     finally {
-      clearTimeout(timer); req.removeListener?.('aborted', disconnected); res.removeListener?.('close', disconnected);
+      clearTimeout(timer); stopHeartbeat(); req.removeListener?.('aborted', disconnected); res.removeListener?.('close', disconnected);
     }
     return true;
   };

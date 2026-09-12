@@ -1,7 +1,7 @@
 // Local native PostgreSQL only. This file is never imported by a serving app.
 import { randomBytes } from 'node:crypto';
 import { fork } from 'node:child_process';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PrismaClient } from '../../../frontend/atlas-app/.generated/staff-database/index.js';
 import { disposablePostgres } from '../../../frontend/atlas-app/scripts/disposable-postgres.mjs';
@@ -23,7 +23,7 @@ export async function createOwnedManualFixture(args) {
     const config = localAccessConfig({ databaseUrl: database.staffUrl, sessionKey: randomBytes(32), phoneKey: randomBytes(32),
       phones: ['+12025550141', '+12025550142', '+12025550143'] });
     const identities = await seedLocalStaff(admin, config, { trained: true });
-    await cluster.sql(await readFile(new URL('../sql/proposal.sql', import.meta.url), 'utf8'), [], database.name);
+    // The ordinary staff migration chain now installs all three manual schemas.
     const role = 'atlas_fixture_manual', password = randomBytes(24).toString('hex');
     await cluster.sql(`CREATE ROLE ${role} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
     await cluster.sql(manualGrantSQL(role), [], database.name);

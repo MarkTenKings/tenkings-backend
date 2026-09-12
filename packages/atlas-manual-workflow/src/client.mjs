@@ -1,3 +1,5 @@
+import { readManualResponse } from '@atlas/manual-service/response';
+
 /** Browser coordinator. Pending compact commands are scoped to staff + card.
  * A missing response retries/reconciles the SAME action ID and exact payload;
  * it never treats an unobserved save as success or invents a second action.
@@ -18,9 +20,7 @@ export function createManualClient({ cardId, staffId, csrf, storage, basePath = 
     const response = await fetchImpl(url, { credentials: 'same-origin', cache: 'no-store',
       ...(body ? { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-atlas-csrf': csrf }, body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(timeoutMs) });
-    const result = await response.json();
-    if (!response.ok) throw Object.assign(new Error(result.error ?? 'Save unavailable'), { status: response.status, code: result.error });
-    return result;
+    return readManualResponse(response);
   }
   async function load() { view = await request(`${path}/view`); onView(view); return view; }
   async function finish(command) { await load(); clearPending(command); onStatus('Saved'); return view; }
@@ -35,6 +35,9 @@ export function createManualClient({ cardId, staffId, csrf, storage, basePath = 
     // Keep reconciliation bound to the bytes journaled before dispatch even
     // if the caller later mutates its action object.
     command = JSON.parse(JSON.stringify(command));
+    // Initial view loading and trace calculation both await before reaching
+    // this point. Another client may have journaled an uncertain action meanwhile.
+    if (pending()) throw new Error('Resolve the pending save first');
     storage.setItem(key, JSON.stringify(command)); onStatus('Saving…');
     try { await request(`${path}/actions`, command); return await finish(command); }
     catch (error) {

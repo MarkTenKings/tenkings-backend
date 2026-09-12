@@ -64,9 +64,18 @@ export default function ManualCards({staff,cardId=null}){
     const command={path,body};localStorage.setItem(commandKey,JSON.stringify(command));setCommandPending(command);
     return sendSaved(command);
   }
-  async function sendSaved(command){
-    try{const result=await request(command.path,{method:'POST',body:command.body});localStorage.removeItem(commandKey);setCommandPending(null);return result;}
-    catch(error){if([400,403,404,409,413,422].includes(error.status)){localStorage.removeItem(commandKey);setCommandPending(null);await refresh();}throw error;}
+  async function sendSaved(input){
+    const serialized=JSON.stringify(input),command=JSON.parse(serialized),started=generation.current;
+    const updatePending=()=>{if(started===generation.current)setCommandPending(JSON.parse(localStorage.getItem(commandKey)??'null'));};
+    if(localStorage.getItem(commandKey)!==serialized){updatePending();throw {code:'MANUAL_PENDING_REQUEST'};}
+    const clear=()=>{
+      // Another tab may already have finished this command and started a new
+      // uncertain save. An older reply must never erase its recovery identity.
+      if(localStorage.getItem(commandKey)===serialized)localStorage.removeItem(commandKey);
+      updatePending();
+    };
+    try{const result=await request(command.path,{method:'POST',body:command.body});clear();return result;}
+    catch(error){if([400,403,404,409,413,422].includes(error.status)){clear();await refresh();}throw error;}
   }
   async function saveDetails(){
     if(!dirty)return saved;

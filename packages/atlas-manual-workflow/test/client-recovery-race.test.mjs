@@ -93,3 +93,29 @@ test('uncertain retries retain the originally journaled payload after the caller
   assert.equal(sent.length, 2); assert.equal(sent[1], sent[0]); assert.equal(JSON.parse(sent[1]).action.side, 'FRONT');
   assert.equal(storage.getItem(key), null);
 });
+
+for (const waitAt of ['initial view', 'trace']) test(`a command journaled during the awaited ${waitAt} remains recoverable without another dispatch`, async () => {
+  const storage = memory(), started = gate(), release = gate(); let actionPosts = 0;
+  const c = client(storage, async (url, options) => {
+    if (url.endsWith('/view')) {
+      if (waitAt === 'initial view') { started.resolve(); await release.promise; }
+      return response(current(1));
+    }
+    if (url.endsWith('/trace')) {
+      started.resolve(); await release.promise;
+      return response({ type: 'DEFECT_EDIT', side: 'FRONT', base: {}, edit: { type: 'TRACE_SAVE' } });
+    }
+    if (options.method === 'POST') actionPosts++;
+    throw Error('Synthetic unknown reply');
+  });
+  if (waitAt === 'trace') await c.load();
+  const saving = waitAt === 'trace'
+    ? c.editDefect({ side: 'FRONT', base: {}, action: { type: 'TRACE_SAVE', findingId: 'finding', trace: [] } })
+    : c.execute({ type: 'INSPECT_SIDE', side: 'FRONT' });
+  const rejected = assert.rejects(saving, /pending/);
+  await started.promise;
+  const newer = JSON.stringify({ ...initial, actionId: 'other-uncertain-command' });
+  storage.setItem(key, newer); release.resolve(); await rejected;
+  assert.equal(actionPosts, 0);
+  assert.equal(storage.getItem(key), newer);
+});

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile, copyFile } from 'node:fs/promises';
+import { mkdir, writeFile, copyFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createOwnedManualFixture } from '../../atlas-manual-service/scripts/owned-fixture.mjs';
 import { intakeGrantSQL } from '@atlas/manual-intake/repository';
@@ -12,8 +12,6 @@ assert(pythonExecutable && resolve(pythonExecutable) === pythonExecutable, 'Abso
 await mkdir(output, { recursive: true, mode: 0o700 });
 const fixture = await createOwnedManualFixture(process.argv.slice(2));
 try {
-  await fixture.cluster.sql(await readFile(new URL('../../atlas-manual-intake/sql/proposal.sql', import.meta.url), 'utf8'), [], fixture.database.name);
-  await fixture.cluster.sql(await readFile(new URL('../sql/proposal.sql', import.meta.url), 'utf8'), [], fixture.database.name);
   await fixture.cluster.sql(intakeGrantSQL('atlas_fixture_manual'), [], fixture.database.name);
   await fixture.cluster.sql(connectedGrantSQL('atlas_fixture_manual'), [], fixture.database.name);
   await writeFile(join(output, 'startup.json'), JSON.stringify({ owned: true, directory: fixture.cluster.directory,

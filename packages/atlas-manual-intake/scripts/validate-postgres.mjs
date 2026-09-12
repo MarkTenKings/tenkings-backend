@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { createOwnedManualFixture } from '../../atlas-manual-service/scripts/owned-fixture.mjs';
 import { createIntakeRepository, intakeGrantSQL } from '../src/repository.mjs';
@@ -39,7 +39,6 @@ let { repository, service } = compose();
 const bytes = rgb16Png(12, 16), input = side => ({ requestId: randomUUID(), side, expectedVersion: 0, sha256: sha(bytes), byteCount: bytes.length });
 let stopped;
 try {
-  await fixture.cluster.sql(await readFile(new URL('../sql/proposal.sql', import.meta.url), 'utf8'), [], fixture.database.name);
   await fixture.cluster.sql(intakeGrantSQL('atlas_fixture_manual'), [], fixture.database.name);
   await writeFile(join(output, 'startup.json'), JSON.stringify({ owned: true, directory: fixture.cluster.directory,
     nativeOriginalBytes: bytes.length, fixture: 'synthetic images and synthetic SMS, actual staff auth and PostgreSQL' }, null, 2));

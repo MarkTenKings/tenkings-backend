@@ -155,7 +155,10 @@ test('gateway, cookie, public origin, same-origin fetch, JSON and actual session
     [{ method: 'DELETE' }, 'METHOD_NOT_ALLOWED', 405],
   ]) {
     const req = await f.request(change);
-    await assert.rejects(f.runtime.handler(req, response()), error => isBoundaryError(error) && error.code === code && error.status === status);
+    const res = response(); let streamed = false;
+    res.write = () => { streamed = true; };
+    await assert.rejects(f.runtime.handler(req, res), error => isBoundaryError(error) && error.code === code && error.status === status);
+    assert.equal(streamed, false); assert.equal(res.headers['x-atlas-manual-stream'], undefined);
   }
   f.session.revokedAt = new Date();
   await assert.rejects(f.runtime.handler(await f.request(), response()), { code: 'SIGN_IN_REQUIRED', status: 401 });

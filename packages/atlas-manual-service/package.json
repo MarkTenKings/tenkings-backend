@@ -9,7 +9,8 @@
     "./staff-auth": "./src/staff-auth.mjs",
     "./http": "./src/http.mjs",
     "./contract": "./src/contract.mjs",
-    "./artifacts": "./src/artifacts.mjs"
+    "./artifacts": "./src/artifacts.mjs",
+    "./response": "./src/response.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",

@@ -21,7 +21,6 @@ await mkdir(evidence,{recursive:true});
 const fixture=await createOwnedManualFixture(process.argv.slice(2));
 let server,uploadServer,app,connection,privateServer;
 try{
-  for(const path of ['packages/atlas-manual-intake/sql/proposal.sql','packages/atlas-connected-manual/sql/proposal.sql'])await fixture.cluster.sql(await readFile(join(root,path),'utf8'),[],fixture.database.name);
   await fixture.cluster.sql(intakeGrantSQL('atlas_fixture_manual')+'\n'+connectedGrantSQL('atlas_fixture_manual'),[],fixture.database.name);
   connection=fixture.connect();
   const objects=new Map(),grants=new Map(),objectDirectory=join(evidence,'objects');await mkdir(objectDirectory,{recursive:true});

@@ -1,8 +1,9 @@
 import { STAFF_BASE_PATH } from './routes.mjs';
+import { readManualResponse } from '@atlas/manual-service/response';
 export async function manualRequest(path,{method='GET',body,signal,csrf}={}){
   const response=await fetch(`${STAFF_BASE_PATH}${path}`,{method,credentials:'same-origin',cache:'no-store',signal:signal??AbortSignal.timeout(210000),
     ...(body!==undefined?{headers:{'Content-Type':'application/json','x-atlas-csrf':csrf},body:JSON.stringify(body)}:{})});
-  const result=await response.json();if(!response.ok)throw Object.assign(new Error(result.error??'Save unavailable'),{code:result.error,status:response.status,fields:result.fields});return result;
+  return readManualResponse(response);
 }
 export function manualMessage(error){
   if(error?.fields)return Object.values(error.fields).join(' ');

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -26,8 +26,12 @@ for (const trace of traces) {
     for (const file of JSON.parse(readFileSync(trace, 'utf8')).files) {
         const full = resolve(dirname(trace), file), rel = relative(repo, full);
         assert.ok(!rel.startsWith('..'), `External checkout dependency: ${file}`);
-        const manualPackage = /^packages\/atlas-(?:connected-manual\/(?:package\.json|src\/transport\.mjs)|manual-intake\/(?:package\.json|src\/client\.mjs)|manual-workflow\/(?:package\.json|src\/client\.mjs)|manual-workspace\/package\.json)$/.test(rel);
-        assert.ok(manualPackage || rel.startsWith('frontend/atlas-app/') || rel.startsWith('node_modules/') || rel === 'package.json' || rel === 'packages/atlas-grading-core/package.json' || rel.startsWith('packages/atlas-grading-core/dist/') || rel.startsWith('packages/atlas-report-view/') || rel.startsWith('packages/atlas-service-bridge/')
+        const manualResponseLink = (rel === 'packages/atlas-connected-manual/node_modules/@atlas/manual-service'
+            || rel === 'packages/atlas-manual-workflow/node_modules/@atlas/manual-service')
+            && lstatSync(full).isSymbolicLink()
+            && realpathSync(full) === realpathSync(resolve(repo, 'packages/atlas-manual-service'));
+        const manualPackage = /^packages\/atlas-(?:connected-manual\/(?:package\.json|src\/transport\.mjs)|manual-service\/(?:package\.json|src\/response\.mjs)|manual-intake\/(?:package\.json|src\/client\.mjs)|manual-workflow\/(?:package\.json|src\/client\.mjs)|manual-workspace\/package\.json)$/.test(rel);
+        assert.ok(manualResponseLink || manualPackage || rel.startsWith('frontend/atlas-app/') || rel.startsWith('node_modules/') || rel === 'package.json' || rel === 'packages/atlas-grading-core/package.json' || rel.startsWith('packages/atlas-grading-core/dist/') || rel.startsWith('packages/atlas-report-view/') || rel.startsWith('packages/atlas-service-bridge/')
             || rel.startsWith('packages/atlas-site-router/') || rel === 'packages/atlas-finishing/package.json' || rel === 'packages/atlas-finishing/src/nfc.mjs' || rel === 'packages/atlas-finishing/browser.mjs', `Non-app server dependency: ${rel}`);
         assert.ok(!/@tenkings[+/]|stripe|mux-player|(?:^|\/)aws-sdk@|ai-grader-capture-helper/i.test(rel)
             && (!/twilio/i.test(rel) || rel === 'frontend/atlas-app/lib/server/access/twilio.mjs'), `Forbidden effect dependency: ${rel}`);
