@@ -6,6 +6,8 @@
 
 **Authenticated console follow-up:** Mark signed in. The [new investigation](database-console-followup.md) found aggregate lock-statement maxima up to 62.96 seconds and unlimited slow-query parameter logging absent from the local fixture. These establish long delays and a previously untested amplifier, not the incident's exact cause. Only recent log lines were visible. Mark will relay a prepared inquiry to DigitalOcean's AI assistant; no outside message or production change was made by this task.
 
+**Provider reply and logging test:** Mark returned the AI reply reporting unavailable historical logs. The [review and controlled experiment](provider-reply-review.md) correct its setup advice and measure logging amplification separately. Both current-guard cases passed at the real threshold with no qualifying slow statements; a forced logging-cost sample does not reproduce the timeout. No production change occurred; the cause prerequisite remains open.
+
 ## Decision
 
 Keep the existing grading, geometry, preparation, map and review engines. Substantially simplify the execution and persistence layer around them, and rebuild the capture scheduling path where necessary. The current evidence does **not** justify discarding the entire platform or inventing new grading engines.

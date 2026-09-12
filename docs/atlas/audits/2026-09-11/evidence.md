@@ -77,3 +77,19 @@ September 12, 2026 UTC. Root verified all 56 entries of the investigator's updat
 | [provider-stat-discovery.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/provider-stat-discovery.json) | `acdbc07db13037b1601cd053b8b3b3ad74d1e681c75ddc92676f5c49b51e8ca8` |
 | [log-correlation-map.md](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/log-correlation-map.md) | `a6b5262ba9184182cf3bdac9726a4514ee5cc26d2588fdce6fa55171b915ee2b` |
 | [digitalocean-ai-assistant-message.md](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/digitalocean-ai-assistant-message.md) | `e557c190f2d1af8c378eb2c9a946ddc933de21455f1026fd9f552fdf74828c4a` |
+
+
+## Provider reply and bounded logging comparison
+
+Mark returned the provider AI response; it is external diagnostic advice, not an incident trace or authorization to change infrastructure. Root verified official documentation and a bounded production read-only parameter-privilege inquiry. The [review](provider-reply-review.md) records corrections and the new controlled local test. All 14 new experiment manifest entries and the unchanged 56 earlier entries were verified. Both natural-threshold cases pass with zero qualifying slow statements; the forced logging-cost sample demonstrates output amplification, not a historical timeout. No production settings or application data changed.
+
+| Receipt | SHA256 |
+| --- | --- |
+| [provider-reply-review/verification.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/provider-reply-review/verification.json) | `8764d843fcf16f0dba20d28eef44d10adbce0098445cfba116ca4bb7fa320353` |
+| [provider-reply-review/parameter-permission-probe.mjs](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/provider-reply-review/parameter-permission-probe.mjs) | `8f31bf6cf7a89f3a57ffa76df97bb51e78da8915dc6a4af0bbd724e2487064e1` |
+| [provider-reply-review/parameter-permission-probe.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/provider-reply-review/parameter-permission-probe.json) | `2e5611ae02c2bbd8f4076a677f7d6dbc638a427951ed8ec32d0b1b32b4608256` |
+| [logging-counterfactual/manifest.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/logging-counterfactual/manifest.json) | `b00c1b0382893853616d84e2ba41c12ac2d26c5086874ec240b4f5556f5b7828` |
+| [logging-counterfactual/REPORT.md](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/logging-counterfactual/REPORT.md) | `158f929893a13e4c3a7943e8ab88f0dcfa63f5de1861837fb123c9c075b44b9a` |
+| [logging-counterfactual/test.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/logging-counterfactual/test.json) | `5bea102826d3cbe4dc44b8fe54febb633eae725b2ae5e22e8a35ec7d4e44e443` |
+| [logging-counterfactual/summary.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/logging-counterfactual/summary.json) | `3d8fdfeec625c6aa69ea520245743a34cfcba6097ab119d33f589e002c0f4d68` |
+| [logging-counterfactual/cleanup.json](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/logging-counterfactual/cleanup.json) | `02a8aa070313546d40726de50d42b2b170591cc83624a3386185df1bf84b665c` |

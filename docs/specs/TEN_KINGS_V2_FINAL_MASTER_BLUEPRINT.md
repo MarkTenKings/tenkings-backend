@@ -160,6 +160,8 @@ Investigation follow-up, September 11 Pacific / September 12 UTC: at Mark's requ
 
 Authenticated investigation follow-up, September 12 UTC: after Mark signed in, the [console investigation](../atlas/audits/2026-09-11/database-console-followup.md) found provider aggregate lock-statement maxima exceeding application deadlines and current unlimited slow-query parameter logging absent from the prior local fixture. The plan adds bounded logging and representative runtime/logging measurements; no configuration change was made. Exact historical SQL/holder evidence remains unavailable in the recent-log viewer. Mark chose to relay a prepared message to the provider's AI assistant and bring back its answer. This evidence does not close the initiating-cause prerequisite or alter approved product scope.
 
+Provider-reply follow-up, September 12 UTC: Mark returned the AI answer; it provides no incident trace and reports older detailed logs unavailable without prior forwarding. The [reply review and controlled logging comparison](../atlas/audits/2026-09-11/provider-reply-review.md) distinguish verified documentation from that external advice. Both exact-size/current-guard cases pass at the unchanged slow threshold; the separate forced-logging volume/cost sample is not a historical timeout reproduction. No application, runtime configuration or product scope changed. Representative Linux/runtime failure evidence remains necessary; unavailable historical rows do not waive the owner's initiating-cause prerequisite.
+
 ---
 
 ## 1. Executive Decision

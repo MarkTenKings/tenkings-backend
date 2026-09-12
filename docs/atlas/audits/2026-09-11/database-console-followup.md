@@ -1,5 +1,7 @@
 # Authenticated database investigation — September 11 Pacific / September 12 UTC
 
+**Later evidence:** Mark returned the provider AI reply. The [reply review and controlled logging test](provider-reply-review.md) records its limitations, corrected setup advice, unavailable app-level parameter privileges and a passing real-threshold comparison. Logging-volume amplification is measured; the historical timeout is still not reproduced.
+
 **The sign-in worked. The console reveals real long lock delays and a production logging behavior omitted from the passing tests. Neither identifies the exact initiating statement in the failed card run.** The fresh Astra extra-high investigator reviewed the new configuration and PostgreSQL source; root reviewed its findings. The rebuild plan now includes the resulting correction and acceptance requirements. The serving application has not changed.
 
 ## What we found
@@ -44,7 +46,7 @@ Pinned PostgreSQL **17.11 source** shows that the reported statement duration is
 
 The exact initiating operation/wait remains **OPEN**. The requested historical windows are September 11 **15:34–15:43** and **18:30–18:32 UTC**. We need correlated backend/role/statement and holder/waiter entries, or an instrumented representative failure followed by the corresponding correction. Another passing local run or a longer timeout cannot close this question.
 
-A [DigitalOcean Support draft](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/digitalocean-support-request.md) was prepared. Mark chose instead to copy a [prepared message to DigitalOcean's AI assistant](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/digitalocean-ai-assistant-message.md) and return its response. **This task has sent no outside support message.** The inquiry requests existing historical records, omits image/credential values, and asks for no upgrade, new log sink, restart or access change. If the provider no longer retains the entries, that must be recorded explicitly and the representative reproduction remains necessary.
+A [DigitalOcean Support draft](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/digitalocean-support-request.md) was prepared. Mark instead relayed a [prepared message to DigitalOcean's AI assistant](/Users/markthomas/.codex/atlas-handoffs/atlas-timeout-root-cause-20260911/digitalocean-ai-assistant-message.md) and returned its answer: it reports that old detailed logs are unavailable without previous forwarding. It provided no incident evidence. The [follow-up](provider-reply-review.md) verifies the technical advice and advances controlled testing instead of waiting on this reply. **This task has sent no outside support message or changed production configuration.**
 
 The owner's initiating-cause prerequisite for the replacement operator is unchanged. This investigation does not claim the live ATLAS system is fixed or authorize implementation by treating missing evidence as success.
 
