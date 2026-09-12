@@ -174,3 +174,43 @@ operator's initiating-cause prerequisite remains open. The lead must append
 the actual hosted/native-target/provider and owner dispositions before claiming
 production release readiness. Both source and documentation findings from this
 independent review are resolved, and final local artifact qualification is complete.
+
+## Canary pre-execution follow-up
+
+The separately prepared live-canary executable passes independent pre-execution
+review; it is **NOT AUTHORIZED and NOT EXECUTED**. The sealed plan remains
+`008366069923b18feb75140c697ad192b9fd55bba5a8bd1f0b99f1b193efe35b`, with one
+fixed diagnostic key, exact 65-byte payloads, at most three PUTs/195 uploaded
+bytes, two DELETEs, 30 requests, 4 KiB per read, ten seconds per request and a
+five-minute total deadline. The CLI requires the exact execution flag/plan hash
+and creates a non-replayable intent before requests. No intent exists at review.
+
+The review required and checked conservative cleanup corrections: an initial
+preexisting/forbidden key never authorizes a PUT or DELETE; an unknown PUT or
+unproven returned status, including 5xx, remains unresolved after temporary 404.
+An uncertain collision cannot authorize deleting the old original before a late
+conditional write arrives. Cleanup requires the exact metadata and a hash of
+bytes actually attempted, with the unresolved attempt's own bytes required when
+applicable. Malformed versioning XML fails before PUT; malformed/multiple object
+versions require reconciliation. Safe exact-version cleanup additionally checks
+current-key absence. Each cleanup retry rechecks ownership, and 403 or exhausted
+bounds never becomes proof of absence. Logs retain normalized status/hash/key
+evidence without credentials or signed URLs.
+
+The frozen executor SHA-256 is
+`fd40101110716a8291fa87cdb9100e50689b219d2422ac51d5322d757c163bac`.
+The final checksum gate accepts only the sealed plan’s exact 400/BadDigest
+response; InvalidDigest can reflect syntax refusal and does not qualify. Both
+qualification and uncertain-PUT classification use that same strict condition.
+The added regression verifies failure, retained uncertainty and zero DELETEs.
+All 24 focused offline tests pass in the already-qualified Node20 Linux image
+with network disabled, read-only source/inputs and container cleanup verified.
+This reviewer checked the fourth-run receipt against both exact current file
+hashes and sizes and did not rerun the suite. The prior 23-test checkpoint is
+preserved and superseded. The first test's incorrect expectation about an SDK-added
+checksum query and the second run's Docker argument-order refusal remain
+preserved. The corrected assertion verifies that browser GetObject input omits
+IfMatch/ChecksumMode while retaining the pinned SDK's actual query default, as
+the candidate's existing read-grant path does. Independent evidence is
+`release-readiness/review/canary-preexecution.json`. Actual CORS changes, provider
+semantics, cleanup results and combined operational authorization remain separate.

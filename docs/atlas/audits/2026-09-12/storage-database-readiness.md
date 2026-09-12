@@ -68,6 +68,36 @@ that change. The API read is denied; the released DigitalOcean browser tab showe
 an expired-session modal, so this review could not inspect the full console rule.
 It did not reauthenticate, submit a form or change settings.
 
+### Restored console session — September 12 follow-up
+
+After Mark restored the DigitalOcean session, the lead read the existing bucket
+Settings page and opened its CORS editor without saving. There is exactly one
+visible rule: origin `https://atlasgrading.com`; methods GET, PUT and HEAD;
+allowed headers `Content-Type`, `If-None-Match`, `x-amz-acl` and
+`x-amz-checksum-sha256`; max age 5 seconds. The reviewed change appends only
+`x-amz-meta-atlas-kind` and `x-amz-meta-atlas-binding-sha256` to that rule.
+The origin, three methods, four existing headers and max age are preserved.
+
+Six fresh OPTIONS requests at 22:39:22 UTC reproduce the boundary: the existing
+four-header PUT passes, the candidate header set and each missing metadata
+header return 403, and GET/HEAD pass. No exposed response header is returned for
+the matched rule. The console cannot show `ExposeHeader`, as documented in the
+[official CORS procedure](https://docs.digitalocean.com/products/spaces/how-to/configure-cors/);
+the saved UI fields are not presented as a complete raw XML export. No exposed
+header or XML setting is proposed for modification.
+
+The same page shows versioning, CDN and access logs disabled, file listing
+restricted, and the existing bucket's named key labeled **Read/Write/Delete**.
+Its secret was not revealed. This establishes the visible permission tier;
+actual conditional writes, object privacy and exact cleanup still require the
+separately authorized canary. No key, setting or object was changed. The editor
+was canceled, and the bucket Settings tab is retained for the next step.
+
+Evidence: `console-resumed-20260912/visible-cors-change-plan.json` and
+`console-resumed-20260912/cors-preflight-before.json` under the storage evidence
+directory. The login blocker is resolved. The exact CORS update and harmless
+canary remain prepared, not executed.
+
 Configure GET, PUT and HEAD as allowed methods; OPTIONS is the preflight request
 handled by the service, not an additional allowed-method value in the CORS rule.
 DigitalOcean documents the valid methods in its [CORS configuration reference](https://docs.digitalocean.com/reference/terraform/reference/resources/spaces_bucket_cors_configuration/).
@@ -226,3 +256,92 @@ only the same key; they do not generate another key or a paid request. Failed or
 uncertain cleanup is reported with retained exact identity. No wildcard listing
 or deletion is permitted. Approve the exact artifact only after CORS and provider
 access are ready, as required by the [Deploy Runbook](../../../runbooks/DEPLOY_RUNBOOK.md#ai-grader-direct-upload-cors-gate).
+
+
+## Exact-plan executor prepared and tested offline
+
+`scripts/atlas/manual-release-storage-canary.mjs` now provides the bounded operator
+executor for the existing sealed plan. Its source SHA-256 is
+`fd40101110716a8291fa87cdb9100e50689b219d2422ac51d5322d757c163bac`.
+The adjacent focused test file SHA-256 is
+`d3f7f1512a4f5971d34697061939c8774d7daeee54dd15471e48546ebdc9dddf`.
+Neither file changes serving source, SDK dependencies, the sealed key, plan or
+payloads. The original plan remains SHA-256
+`008366069923b18feb75140c697ad192b9fd55bba5a8bd1f0b99f1b193efe35b`.
+
+Importing the executor is offline. Its CLI requires exactly the execution flag,
+that full approved plan hash and an absolute create-new evidence directory. It
+accepts credentials only through explicit `ATLAS_CANARY_ACCESS_KEY_ID` and
+`ATLAS_CANARY_SECRET_ACCESS_KEY` environment variables; it never prints a secret,
+signed URL, raw provider response or raw exception. The existing bucket key's
+console-verified Read/Write/Delete capability permits that same explicitly
+supplied credential to perform exact cleanup; no new credential is needed.
+The runner requires the qualified SDK versions (client-s3 3.914.0 and presigner
+3.982.0), resolved relative to the repository's photo-storage package. It does
+not search other worktrees or install dependencies.
+
+The intended CLI shape below is preparation only and has **not** been invoked:
+
+```text
+node scripts/atlas/manual-release-storage-canary.mjs --execute-live-canary --approved-plan-sha256=008366069923b18feb75140c697ad192b9fd55bba5a8bd1f0b99f1b193efe35b --evidence-dir=/absolute/create-new-evidence-directory
+```
+
+The fixed plan path is the original handoff `storage/canary/plan.json`; a
+qualified-image invocation must mount that exact path and the executor, provide
+the two explicit runtime environment variables, and give the new evidence
+directory writable storage. The runner creates `canary/execution.intent.json`
+with create-new semantics before any request, then retains normalized request
+intent/outcome events and a final result. An existing intent blocks another run.
+An interrupted run requires exact-key reconciliation with its journal; deleting
+the lock and rerunning is not an authorized recovery procedure.
+
+The executable reserves ten requests and 90 seconds for cleanup within the
+sealed 30-request/five-minute bounds. All fetches prohibit redirects and have
+abortable ten-second deadlines. The SDK is used only for presigning with the
+candidate's PUT header options, so it performs no hidden HTTP retry. Server GET
+uses the observed If-Match; browser GetObject input omits If-Match and ChecksumMode
+like candidate `createRead`. The pinned SDK adds its checksum-mode query default
+to that browser signed URL. GET bytes are streamed with a 4 KiB cap; anonymous
+bodies are canceled immediately. Only the fixed key and sealed payloads are
+available to the orchestration.
+
+Cleanup requires initial confirmed absence, a payload actually dispatched by
+this run, exact metadata and the bounded observed byte hash. A payload merely
+present in the sealed input set does not grant deletion authority. Transport
+errors, returned 5xx and any otherwise unproven PUT refusal remain uncertain.
+An uncertain PUT followed by 404 is unresolved because a late write could still
+arrive. An uncertain collision that still exposes the original payload is also
+unresolved, so cleanup does not delete the original and open a race for that
+collision. Observing the exact uncertain dispatched payload resolves that write
+for immediate cleanup. No uncertain PUT is sent again.
+
+Malformed version IDs and conflicting versions stop deletion and retain an
+operator reconciliation requirement. A single valid unexpected version stops
+qualification and permits only its exact-version cleanup, followed by both
+version-specific and current-key absence checks. Malformed/truncated versioning
+XML fails before any PUT. Two failed cleanup attempts, forbidden readback,
+exhausted bounds or an unproven outcome cannot produce a pass. Evidence-write
+failure before PUT intent prevents that PUT from being dispatched.
+
+At 22:56:54 UTC, the final focused run passed **24/24 tests** using qualified image
+`sha256:315bae6df16bf090faa0c1d23682eb88fb113b79dc793f61680da5a1b5e10bcc`
+(Node 20.20.2), with `--network none`, `--pull never`, a read-only filesystem,
+1 CPU, 512 MiB RAM, 128 PIDs and a 32 MiB temporary filesystem. Only the two new
+scripts and sealed inputs were mounted read-only. The successful fake-provider
+path used 23 HTTP operations, three PUT attempts totaling 195 bytes and one
+DELETE; all tests remained within the sealed limits. Adversarial cases covered
+approval gates, preexisting objects, CORS/versioning refusal, checksum refusal,
+unknown and returned-5xx writes, late collision uncertainty, ownership conflicts,
+InvalidDigest syntax refusal (which cannot satisfy the sealed BadDigest requirement),
+cleanup failures/lost replies, deadlines, oversized streams and version ambiguity.
+Real pinned SDK presigning was exercised against an injected fake fetch.
+
+Evidence is under handoff `storage/canary-executor/`: `offline-tests-4.tap` and
+`offline-tests-4-receipt.json` record the final pass and source hashes. The first
+run's failed checksum-default test assertion is retained; the test was corrected
+to match candidate/SDK behavior. The second launch's misplaced Docker platform
+argument is also retained: it failed before container creation, and Docker's
+attempted image lookup downloaded nothing. The final corrected invocation used
+`--pull never`. Container absence was verified after every launch. The live
+execution intent remains absent, and no live object or CORS operation was made
+by this executor. The separate owner approval gate remains in force.
