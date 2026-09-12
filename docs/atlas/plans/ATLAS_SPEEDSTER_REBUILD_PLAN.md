@@ -8,6 +8,8 @@ Mark has now instructed the fresh lead to start working through the next-step li
 
 The [first foundation checkpoint](../audits/2026-09-12/foundation-implementation.md) records implemented photo contracts, checked CPU measurement and truthful manual draft content with 59 passing local tests. These are isolated code boundaries; server decoding, persistence, the actual manual screen and real-card acceptance are not yet connected. The native-x86 harness is prepared and locally checked, but its integration run still needs an appropriate target.
 
+The [paired workspace and decoder checkpoint](../audits/2026-09-12/workspace-and-decoder-implementation.md) adds the approved controlled geometry screen, independent versioned actions, shared snapping and an isolated JPEG/PNG/WebP runtime. Root verified 72 new unit tests and seven synthetic browser scenarios; independent review corrected image-readiness and decoder edge cases. This is still isolated local code: HEIC, authenticated durable storage, automatic preparation/proposals and the remaining grading stages are not connected. Native iPhone/real-card acceptance and the initiating cause remain open.
+
 The [fresh Astra lead review](../audits/2026-09-12/fresh-astra-review.md) records the September 12 source checks and representative-runtime follow-up. New extraction details below preserve the chosen workflow; they do not close the initiating-cause prerequisite or establish a deployed repair.
 
 ## The recommendation in one minute
@@ -361,7 +363,7 @@ The recommendation is complete enough to review. These are genuine product/accur
 
 Resolved for the first build: standard-size sports and Pokémon, with current 63.5 × 88.9 mm geometry. Recognizing another card does not mean the initial build can grade it; category/size expansion is later scope.
 
-The next owner review should begin with the combined boundary/border screen and then proceed through defects and final review. A decoder choice, queue library or cache implementation should not become an unnecessary owner decision.
+Mark approved the combined boundary/border layout after trying the sample screen on September 12 UTC. His playful Front adjustment is not a real-card correction. The next owner stage review is defects and final review; actual image-detail acceptance remains separate. A decoder choice, queue library or cache implementation should not become an unnecessary owner decision.
 
 ## Evidence and source map
 

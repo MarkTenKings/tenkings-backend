@@ -1,0 +1,27 @@
+{
+  "name": "@atlas/manual-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/PairedGeometryWorkspace.js",
+    "./geometry-actions": "./src/geometry-actions.mjs",
+    "./styles.css": "./src/workspace.css",
+    "./snapping": "./dist/gradient-snap.js"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/build.mjs && node --test test/*.test.mjs",
+    "dev": "node scripts/preview.mjs",
+    "test:browser": "node scripts/browser-check.mjs"
+  },
+  "dependencies": {
+    "@atlas/grading-core": "workspace:*",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.7",
+    "playwright": "1.57.0"
+  }
+}
