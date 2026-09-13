@@ -345,3 +345,6 @@ attempted image lookup downloaded nothing. The final corrected invocation used
 `--pull never`. Container absence was verified after every launch. The live
 execution intent remains absent, and no live object or CORS operation was made
 by this executor. The separate owner approval gate remains in force.
+
+
+Latest storage follow-up, September 12 Pacific / September 13 UTC: Mark approved the exact two-header CORS update and bounded 65-byte canary. The CORS update is saved; actual PUT/GET/HEAD preflights returned 200 at 2026-09-13T02:19:17 UTC, preserving the origin, methods and 5-second max age. No canary intent or diagnostic object exists. Local ENOSPC errors and a 12-second Docker server timeout block the canary. No runtime restart or broader deployment occurred. Approval persists. Evidence: release-readiness/storage/console-resumed-20260912/cors-preflight-after.json and runtime-blocker.json. This supersedes the earlier pending-CORS statements.

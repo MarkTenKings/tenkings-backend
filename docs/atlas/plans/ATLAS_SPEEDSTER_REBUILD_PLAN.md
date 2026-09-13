@@ -2,6 +2,8 @@
 
 **September 11–12, 2026 · Foundation implementation started; stage choices remain under review · No deployment**
 
+Latest owner direction, September 12 Pacific: focus exclusively on ATLAS Grading. Test Astra defect finding with proprietary human-reviewed memory before integrating SAM 3. The revised sequence below starts manual testing early and brings the minimum defect-memory loop ahead of that experiment. Later shared market research is not a prerequisite. The old SAM baseline recommendations are superseded; existing SAM observations remain historical evidence. The manual candidate is locally qualified but not deployed; the separately authorized storage CORS correction is applied, with its object canary pending qualified-runtime recovery.
+
 This brings the engine inspection, incident evidence, Ten Kings consultation and Mark's decisions into one plan. The opening comparison is the short version. The later sections explain the workflow and engineering details. Recommendations below are proposals, not newly approved grading rules. Mark requested discussion of each stage before building; that remains the next product-design step.
 
 Mark has now instructed the fresh lead to start working through the next-step list using fresh Astra Extra High specialists. The first implementation batch isolates CPU measurement and native-photo contracts while preparing the combined workspace review and next runtime diagnostic. **Initial supported grading scope is now confirmed: standard-size sports and Pokémon cards**, using the existing 63.5 × 88.9 mm geometry. Other categories/sizes remain later scope. The initiating-cause prerequisite and remaining stage decisions below stay open.
@@ -24,7 +26,7 @@ The [fresh Astra lead review](../audits/2026-09-12/fresh-astra-review.md) record
 
 The photographs stay in the workspace: **Front left, Back right**. Upload each original once. Moving a line sends coordinates. Moving to another stage selects the next tools. Neither requires another original upload.
 
-Keep the existing grading calculations. Keep SAM 3 as the precise-mask baseline while testing whether Astra improves defect finding and classification. Share card identity/variation knowledge between the companies; keep their physical inventory and financial records separate.
+Keep the existing grading calculations. Test Astra finding, classifying and outlining defects with retrieved human-reviewed examples, using the existing human trace editor and CPU measurement. Do not integrate SAM 3 first. Share relevant identity/variation knowledge without coupling this grading experiment to inventory or market-research work.
 
 | Area | What is built today / problem | Recommended rebuild / expected benefit |
 | --- | --- | --- |
@@ -67,7 +69,7 @@ Ten Kings saves its inventory in Ten Kings. ATLAS saves its grading work in ATLA
 | --- | --- | --- |
 | `@atlas/grading-core`: geometry, scoring, traces, findings, report calculation | Card workspace, stage scheduling, result persistence and human approval | Old `@atlas/operator` ledger, pilot/cohort dispatch and `atlasWorkspace*` orchestration |
 | CPU functions in `card_geometry.py`, `color_geometry.py`, `defect_math.py`, required preparation functions | Decode/read originals, store derived results, run CPU work independently | GPU-loading application startup merely to call CPU geometry |
-| Existing SAM checkpoint/runtime and useful segmentation/Memory functions | Detector input/output adapter and measured image-state reuse | Old session/history reconstruction and calibrated-bank admission wrappers imported wholesale |
+| Existing SAM checkpoint/runtime only if a later experiment warrants it | Astra proposal adapter and reviewed visual-memory retrieval first; optional segmentation adapter later | Old session/history reconstruction and calibrated-bank admission wrappers imported wholesale |
 | `gradient-snap.ts`, useful geometry/trace controls | Combined Front/Back interface using the same action contracts | The old all-purpose CaptureWorkspace and capture administration UI |
 | Current Ten Kings identity/research contracts, prompts and SoldComps helpers | ATLAS photo references, supported field mapping and background research trigger | Inventory card writes, quantity/location/cost/accounting updates, inventory worker caps |
 | Report content, approved-report/label binding and relevant NFC protocol primitives | ATLAS approved snapshot, a versioned Mac protocol/profile and qualified hardware connection | Unrelated inventory, packs, sales, customer migration and commercial platform work |
@@ -193,16 +195,18 @@ Do not copy the inventory app's 1400-pixel grading-source policy, one-minute job
 
 Example: Ten Kings confirms a distinguishing feature of a parallel. The next matching ATLAS identification can use that example. ATLAS does not receive Ten Kings stock, and a scratch on the photographed copy does not become part of the card design. An individual serial number is not a universal variant number. Refresh market evidence by identity, condition/grade and retrieval time; a historical sold price is not a permanent current value.
 
-## Defect detection: evaluate Astra plus SAM, preserve the math
+## Defect detection: test Astra with reviewed memory first
 
-**Do not replace SAM wholesale before a comparison.** The best candidate architecture to test divides the jobs:
+Mark explicitly prefers an Astra-first experiment and does not require another SAM baseline build. The clean manual workflow already supports human-authored traces and CPU measurement without the SAM service. Use that interface to evaluate the requested capability:
 
 | Job | Recommended baseline / candidate |
 | --- | --- |
-| Find suspected defects and classify their type | Existing finder as baseline; Astra with relevant human-corrected examples as the candidate |
-| Trace exact affected pixels | SAM 3 and exact trace/editing tools |
+| Find suspected defects and classify their type | Astra with relevant human-reviewed visual examples, tested against independent human findings |
+| Propose defect outlines | Astra proposals in an exact declared image frame; human inspection/correction through the existing trace editor before accepting measured damage |
 | Measure defect area, centering and grade | Existing deterministic calculations |
 | Propose card-map design regions | Astra proposals refined/aligned with geometry tools |
+
+SAM 3 is deferred. If Astra finds damage well but its outlines are insufficient, evaluate a targeted tracing tool then; the evidence may justify SAM or another approach. Do not silently run SAM behind the first experiment or label approximate model coordinates as verified affected pixels. A human-corrected trace remains usable regardless of detector availability.
 
 Current OpenCV heuristics offer at most eight ordinary candidate regions per view and assign four initial defect types. SAM receives those candidate boxes and traces them. This can restrict what SAM ever sees; it is not proof of how many real defects have been missed. Evaluate candidate recall separately from mask accuracy.
 
@@ -210,13 +214,13 @@ Current OpenCV heuristics offer at most eight ordinary candidate regions per vie
 
 A newly verified limitation is more specific: relabeling a finding saves a positive lesson for the corrected type, but current Memory matching scores the type the detector already proposed. Only `SMART_MARK_POSITIVE` lessons create new boxes; `DETECTOR_RELABELED_POSITIVE` does not. Thus relabeling to a type outside the ordinary four does not itself make the finder start proposing that type. Astra classification with retrieved correction examples is a candidate improvement; it needs a targeted next-card test.
 
-Astra's image reasoning should not be the unchecked authority for exact pixel boundaries. Its output must name an image/coordinate frame, then use segmentation/measurement tools and inspect the result when needed. OpenAI documents limits in precise spatial localization. [Official image-analysis guidance](https://developers.openai.com/api/docs/guides/images-vision).
+Astra's image reasoning should not be the unchecked authority for exact pixel boundaries. Its output must name an image/coordinate frame; deterministic tools map/rasterize the proposed outline, and the human verifies it before its area affects the grade. Correct arithmetic on a proposed region does not prove that region matches physical damage. Use whole-card context plus original-detail crops, with known crop transforms. OpenAI documents precise spatial-localization limitations and supports original-detail image input for Astra. [Official image-analysis guidance](https://developers.openai.com/api/docs/guides/images-vision).
 
-Test the same representative cards with the current finder and Astra-assisted finder. Include faint defects, long scratches, large damage, crowded findings, reflective surfaces and printed artwork. Measure missed defects, false positives, correct type, exact affected area, grade impact, elapsed time and human correction effort. Compare both cold and warm operation. Do not choose a faster model path that quietly loses relevant damage.
+Test representative cards against human-reviewed findings. Include faint defects, long scratches, large damage, crowded findings, reflective surfaces and printed artwork. Measure missed defects, false positives, correct type, outline/affected-area accuracy, grade impact, elapsed time and human correction effort. The initial test does not require running SAM. A later SAM comparison is optional and must answer a concrete gap found in the Astra experiment.
 
-Freeze image preparation, SAM checkpoint/runtime, Memory version, map policy and scoring for each paired comparison. Record where a real defect was lost: candidate selection, segmentation, or later Memory/map filtering. Use held-out physical cards for next-card learning; another photograph of the taught copy is not independent evidence. Compare no-Memory/no-map and compatible assisted cases separately. Existing Memory matches type/polarity/source-view fingerprints; it does not inherently enforce card-design scope.
+Freeze image preparation, Astra model/settings, map policy and scoring for each comparison. Record the exact reviewed-memory revision and retrieved lessons. Compare Astra without lessons and with the relevant approved lessons on held-out physical cards; another photograph of the taught copy is not independent learning evidence. Keep evaluation annotations out of the detector's input. Record whether a miss occurred in retrieval, finding, classification or tracing. Existing SAM Memory matches type/polarity/source-view fingerprints; its old design-scoping limitations must not be inherited by assumption.
 
-Optimizations supported by source inspection, to measure before adopting:
+Historical SAM optimizations, relevant only if a later SAM experiment is chosen:
 
 - Reuse an image's SAM encoding across manual strokes and saved marks. Automatic scan already reuses an encoding per view; do not claim that as a new fix.
 - Avoid pairwise full-frame mask work only when appropriately expanded bounds cannot interact. Preserve the existing four-pixel cross-view fusion tolerance and exact pixel totals.
@@ -235,17 +239,17 @@ Three things must remain distinct:
 
 Using the same API credentials does not make later Astra calls remember earlier corrections. The application must supply relevant saved context to each new call. [Official conversation-state guidance](https://developers.openai.com/api/docs/guides/conversation-state#manually-manage-conversation-state).
 
-Proposed small loop: **deliberate correction → save the lesson and its source → publish a new knowledge version → retrieve relevant lessons for the next applicable action**. Existing deliberate human correction/learning decisions provide the confirmation event; do not add a second approval ceremony. Machine guesses must remain distinguishable from human-confirmed facts. The exact grading-lesson approval point remains part of stage review; sharing identity knowledge does not authorize sharing every type of data.
+Build the minimum loop before the Astra experiment: **human review → save each reviewed lesson and its source → publish a new knowledge version → retrieve relevant lessons for the next applicable action**. Retain the exact crop/trace, confirmed type, accepted/corrected/rejected disposition, missed defects added by the human, card/design/material context and reviewer provenance. Preserve revisions and permit deliberate supersession of a mistaken lesson. Do not teach from merely opening a finding, temporary edits or unreviewed model guesses. Mark requests learning after every deliberately reviewed defect; the recommended UI event is the existing bulk Confirm findings action, publishing its reviewed outcomes without a second confirmation. The exact event and authorized-reviewer mapping remain stage-design details; final report approval stays separate.
 
 Publish corrections directly from the action/result, rather than rediscovering them by scanning old completed sessions under the certificate/label lock. If company data and shared knowledge live in different databases, publication needs a small idempotent pending-publication record; it is not an atomic cross-database transaction by assumption. A card correction can save successfully while shared publication is pending. Show that distinction and retry publication automatically.
 
-The acceptance rule is specific: **after publication is acknowledged, the next relevant new lookup must use that version**. An already-running request may finish on its original version. A publication outage cannot honestly be described as instant learning; it also must not block unrelated grading. Preserve the human correction even when a SAM fingerprint cannot be produced; retry that specific unpublished lesson rather than silently discarding it. A schema label such as Memory V2 is not a freshness version: use a content revision/hash.
+The acceptance rule is specific: **after publication is acknowledged, the next relevant new lookup must resolve that version and receive the applicable reviewed examples**. Record retrieval evidence, then separately measure whether detection improved; receipt of a lesson does not guarantee a better answer. An already-running request may finish on its original version. Publication failure remains visible and cannot block unrelated grading. The Astra memory path must save/retrieve visual examples without any SAM fingerprint, GPU process or weight-training dependency. A schema label such as Memory V2 is not a freshness version: use a content revision/hash.
 
 Keep reusable image encodings separate from knowledge-dependent results. An unchanged image/model can reuse its encoding. Candidate ranking/filter/classification must use the selected knowledge version. Retries of the same action retain their exact inputs/version; a new card resolves current knowledge rather than blindly using the prior card's cached bank.
 
 Historical metadata found 559 Memory examples from 48 cards, about 0.54 MB, plus four current maps. Their size alone is not a reason to discard them. Import a compatible snapshot only if useful and simple; otherwise start an explicit baseline and add new lessons. Do not rebuild the old history system to save a small bank, and do not delete live data as a planning shortcut.
 
-New examples do not by themselves establish calibrated SAM similarity behavior. Reuse a compatible calibration policy or evaluate a new one before enabling their SAM-based matching. Until then, retain the examples and call SAM explicitly without Memory; confirmed visual examples can separately feed the Astra evaluation. Never mark an uncalibrated bank calibrated simply to pass admission.
+If SAM is evaluated later, new examples do not by themselves establish calibrated SAM similarity behavior. Reuse a compatible calibration policy or evaluate a new one before enabling SAM-based matching. Confirmed visual examples can feed the initial Astra experiment independently of that work. Never mark an uncalibrated bank calibrated simply to pass admission.
 
 ## A much smaller execution and saving model
 
@@ -341,15 +345,16 @@ These are diagnostic samples across disposable Mac PostgreSQL17.10, owned ARM Li
 
 | Order | Deliverable | Evidence required before calling it ready |
 | --- | --- | --- |
-| A. Finish stage decisions and failure trace | Reviewed workflow/engine contracts; initiating-failure evidence, with any remaining gap visibly unresolved | No silent changes to scoring, full-bleed treatment, photo quality or human approval. An unresolved failure cause does not pass the replacement-operator prerequisite. |
-| B. Clean engine entry points | Selected pure modules and narrow adapters in a new shell | Same fixtures produce the same deterministic geometry, traces, measurements, grades and report content; no old orchestration imports |
-| C. Manual grading path | Native originals → combined geometry → defects → approved report | Actual iPhone files and manual card completion; corrections, reload, second card and simultaneous independent graders work |
-| D. Shared Ten Kings engines and learning | Current identifier/research connected without inventory writes | Eight fields preserved; exact variant/sold evidence behavior; next relevant lookup sees an acknowledged correction from either company; neither inventory is exposed |
-| E. Detector comparison | Current finder versus Astra-assisted finder using the same tools | Quality, timing and human correction comparison; keep current baseline until another wins |
-| F. Astra stage integration | Astra calls the proven manual actions after the owner's initiating-cause prerequisite is met | Stage-by-stage acceptance, takeover, lost-reply and worker-restart behavior; card B completes while card A is uncertain or repeatedly fails |
-| G. Production and physical finishing | Serving build, real device flow and load behavior | Actual report/label/NFC/assembly evidence; measured normal and busy latency, errors and concurrency |
+| 1. Release the existing manual foundation | Qualified photo/intake/geometry/trace/CPU/report source, storage and ordinary staff access | Complete approved storage checks and coordinated release qualification; no invented optical or final-approval acceptance |
+| 2. Begin Mark's manual grading tests | Fresh sports/Pokémon originals through the existing manual tools | Actual detail/color, correction, reload, independent second card and truthful report; collect human defect examples now |
+| 3. Add the minimum reviewed-defect memory loop | Save, publish and retrieve reviewed visual lessons with their exact provenance and revision | The next relevant request receives acknowledged corrections; mistaken lessons can be superseded; no SAM dependency |
+| 4. Add the scoped Astra defect experiment | Whole-card/crop inspection, relevant lessons and structured defect/outline proposals in the same workspace | Human can accept/correct/reject/add; measurement and grading remain deterministic; no SAM integration required |
+| 5. Test detection and next-card learning together | Human review on card A, published lessons, then Astra analysis of a distinct held-out card B | Measure misses, false positives, classification, outline accuracy, human effort, time/cost and knowledge-version use; iterate on real failures |
+| Later: shared research | Existing variation/sold-comps engine and shared identity corrections | Exact source behavior and evidence, without inventory coupling; not a gate on the defect experiment |
+| Later: autonomous Astra workflow | Astra calls proven tools after the owner's initiating-cause prerequisite is met | Stage-by-stage acceptance, takeover, lost replies, restarts and independent-card progress |
+| Later: public release and physical finishing | Approved report/label integration, Mac NFC and physical assembly | Actual report/print/readback/lock/assembly evidence and measured operational performance |
 
-Identity connection can land during C; it should not delay the first proof that a person can operate the grading engines. Independent extraction/manual work can progress after the relevant stage discussion while the separate operator-cause investigation continues. That does not waive Mark's prerequisite for implementing the replacement operator. Defect experiments can run alongside manual UI work once extraction parity is established. A full production rollout is not implied by this planning document.
+The identifier is already connected in the manual candidate. Begin manual testing before completing all five steps; refine the memory and Astra adapter while that testing supplies reviewed examples. The old operator investigation is not a prerequisite to a bounded, human-requested defect-analysis experiment through the clean interface. It remains the owner's prerequisite to designing/building the replacement autonomous operator. SAM integration and market research must not delay the requested Astra experiment. This sequence is the lead's implementation recommendation reflecting Mark's latest direction, not blanket authorization for paid calls or production release.
 
 Benchmark on the same originals, phone/network and task settings. Separate human capture time from upload/verification, queue wait, OCR, model time, preparation, GPU wait, correction response and report generation. Record typical and slow-tail times. Compare one and ten simultaneous cards using supplied or designated test work; do not promise ten will take the same time as one without capacity evidence. Use a same-quality upload baseline rather than comparing ATLAS originals to Ten Kings convenience JPEGs as if they were equal workloads.
 
@@ -364,8 +369,8 @@ The recommendation is complete enough to review. These are genuine product/accur
 1. **Borderless/full-bleed cards:** how the grading system defines centering when there is no ordinary printed frame. Current math requires positive opposing border totals; absence cannot become an invented perfect score.
 2. **Inspection detail:** acceptance of current prepared views plus original zoom/crops versus changes to the measurement image pipeline. Original retention is already decided.
 3. **Astra confirmation:** which geometric/defect conditions allow automatic continuation, what it should inspect more closely and what requires a human. These rules must follow measured capability.
-4. **Learning publication:** the exact deliberate event that publishes grading lessons. Mark has selected one bulk **Confirm findings** action after inspecting/correcting the list, with final report approval separate; lesson publication is not implied by that selection. Identity corrections can be shared without making every model guess a lesson.
-5. **Detector choice:** retain the current finder or adopt an Astra-assisted alternative after the same-card comparison. Historical bank/map import is an optional implementation choice based on usefulness and effort.
+4. **Learning publication:** Mark now requests lessons after each deliberately reviewed defect. The recommendation is to use the existing bulk **Confirm findings** event for the reviewed outcomes, with appropriate reviewer authority and final report approval separate. This exact UI/authority mapping remains to be settled before wiring publication.
+5. **Detector acceptance:** the first experiment is now explicitly Astra with reviewed memory, with SAM integration deferred. Judge its finding and tracing quality against human evidence; decide whether a later segmentation helper is useful from measured gaps. Historical bank/map import remains optional.
 
 Resolved for the first build: standard-size sports and Pokémon, with current 63.5 × 88.9 mm geometry. Recognizing another card does not mean the initial build can grade it; category/size expansion is later scope.
 
