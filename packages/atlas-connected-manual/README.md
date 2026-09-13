@@ -37,9 +37,10 @@ staff origin for both direct PUT and GET.
 ## Persistence and recovery
 
 Use the existing ordinary staff role and a separate restricted manual DB role.
-Apply the three reviewed additive SQL proposals only through a recorded release:
+Apply the reviewed additive SQL proposals only through a recorded release:
 `atlas-manual-service/sql/proposal.sql`, `atlas-manual-intake/sql/proposal.sql`,
-and this package's `sql/proposal.sql`, followed by their narrow grant functions.
+this package's `sql/proposal.sql`, `atlas-defect-memory/sql/proposal.sql`, and
+`atlas-defect-analysis/sql/proposal.sql`, followed by their narrow grant functions.
 They have been applied to disposable fixtures; this code does not migrate a live
 DB at startup. Existing commercial inventory and old operator ledgers are not
 part of the new manual schemas.
@@ -66,7 +67,8 @@ The narrow append-receipt function can retain a matching already-dispatched
 response after staff expiry, without authorizing adoption or new provider work.
 Provider usage and unknown outcomes remain evidence; no guessed costs or invented
 successful responses are recorded. This is identification, not an Astra grading
-operator, detector, learning publisher, market research or finishing system.
+operator, market research or finishing system. The separate opt-in defect assistant
+and reviewed-memory path below do not change identification behavior.
 
 ## Qualification and release
 
@@ -76,3 +78,31 @@ building the pinned Linux image, rollout checks and owner acceptance. The owned
 DBs, synthetic SMS/model replies and private test storage. They are never serving
 entry points. `qualify-linux.mjs` compares the retained original-derived pixels
 against independently checked Mac reference pixels using read-only mounts.
+
+## Reviewed defects and Astra
+
+`ATLAS_MANUAL_DEFECT_MEMORY_ENABLED=true` enables publication from the existing
+committed Confirm findings action. The original confirmer must retain REVIEWER
+and card edit authority. Crops and exact masks are immutable private artifacts;
+failed publication leaves the manual review saved and exposes same-action retry.
+Later confirmations supersede earlier lessons, including a reviewed empty list.
+
+`ATLAS_MANUAL_DEFECT_ANALYSIS_ENABLED=true` additionally requires that memory flag,
+the new schema grants, and server-only `ATLAS_MANUAL_OPENAI_KEY`. It uses
+`gpt-6-astra` with `xhigh`, two exact inspection images and overlapping detail
+crops, up to12 relevant reviewed examples plus separately labeled trace overlays.
+There is no SAM dependency. Each new request retrieves acknowledged current
+knowledge; an empty reviewed bank is explicit, and pending publications prevent
+analysis from silently using stale lessons.
+
+The browser journals one exact action before requesting analysis. The server
+persists and claims the exact request once; unknown paid outcomes are checked
+without another provider call. Raw replies and actual usage are retained before
+interpretation. Suggestions stay unreviewed until the human accepts, corrects or
+rejects them. Acceptance/correction creates a normal exact trace pending the
+existing CPU measurement; model-authored areas or grades are never used.
+Later edits and source changes remain subject to ordinary manual CAS checks.
+
+The new migration pair and grants must be activated with the coordinated private
+service release. Synthetic tests demonstrate contract behavior, not real-card
+defect accuracy or learning improvement. Live card comparisons remain required.

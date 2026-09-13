@@ -9,6 +9,7 @@ import {DefectReviewWorkspace} from '@atlas/manual-workspace/defects';
 import {geometryStatus} from '@atlas/manual-workspace/geometry-actions';
 import {manualRequest,manualMessage} from '../lib/manual-client.mjs';
 import {STAFF_BASE_PATH} from '../lib/routes.mjs';
+import {createDefectAnalysisClient} from '../lib/manual-defect-analysis-client.mjs';
 
 const labels={name:'Name',category:'Printed category',manufacturer:'Manufacturer',card_number:'Card number',year:'Year',set_name:'Product / set',variant:'Printed variant',card_type:'Printed card type'};
 const prefix='/api/staff/manual-connected/cards';
@@ -105,7 +106,7 @@ export default function ManualCards({staff,cardId=null}){
         {staff.role==='REVIEWER'&&<button className="primary" disabled={!localReady||Boolean(busy)} onClick={()=>perform(async()=>{const result=await client.current.create();await router.push(`/manual/${result.card.cardId}`);},'Saving a new card…')}>+ Add card</button>}</header>
       <div className="mc-card-list">{cards.map(card=><Link href={`/manual/${card.cardId}`} key={card.cardId}><strong>{card.label||'Untitled card'}</strong><span>{card.sides.FRONT.upload?.source?'Front ready':'Front needed'} · {card.sides.BACK.upload?.source?'Back ready':'Back needed'}</span><small>{new Date(card.createdAt).toLocaleString()}</small></Link>)}{localReady&&!cards.length&&<p>No cards yet. Add a card to upload the original photos.</p>}</div>
       {nextCursor&&<div className="mc-actions"><button disabled={Boolean(busy)} onClick={()=>perform(async()=>{const result=await client.current.list({cursor:nextCursor});setCards(old=>[...old,...result.cards.filter(card=>!old.some(value=>value.cardId===card.cardId))]);setNextCursor(result.nextCursor);},'Loading older cards…')}>Load more cards</button></div>}
-    </>:!saved?<p role="status">Loading saved card…</p>:screen==='workspace'&&saved.manual?.current?<ManualWorkspace staff={staff} cardId={cardId} csrf={session.current.csrf} onPhotos={()=>{setScreen('intake');perform(()=>refresh(),'Loading saved photos…');}}/>:<>
+    </>:!saved?<p role="status">Loading saved card…</p>:screen==='workspace'&&saved.manual?.current?<ManualWorkspace key={`${staff.id}:${cardId}`} staff={staff} cardId={cardId} csrf={session.current.csrf} onPhotos={()=>{setScreen('intake');perform(()=>refresh(),'Loading saved photos…');}}/>:<>
       <header className="mc-heading"><div><Link href="/manual">← All cards</Link><h1>{saved.card.label||'New card'}</h1><p>Select the original files from your iPhone photo library. The originals stay untouched.</p></div>{saved.manual?.current&&<button className="primary" onClick={()=>setScreen('workspace')}>Return to review</button>}</header>
       <section className="mc-photo-pair">{['FRONT','BACK'].map(side=>{const slot=saved.card.sides[side];return <article key={side}><h2>{side==='FRONT'?'Front':'Back'}</h2>
         {slot.upload?.source?<img key={slot.version} alt={`${side==='FRONT'?'Front':'Back'} SDR working view`} src={saved.previews?.[side]?.url??`${STAFF_BASE_PATH}${prefix}/${cardId}/preview-image/${side}`} />:<div className="mc-photo-empty">{slot.upload?.verification?'Original saved. Resume image preparation.':'Original photo needed'}</div>}
@@ -129,38 +130,88 @@ export default function ManualCards({staff,cardId=null}){
   </div></Shell>;
 }
 
-function ManualWorkspace({staff,cardId,csrf,onPhotos}){
+export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
   const [view,setView]=useState(null),[screen,setScreen]=useState('geometry'),[error,setError]=useState(''),[status,setStatus]=useState(''),[report,setReport]=useState(null),[editing,setEditing]=useState(false),[preparing,setPreparing]=useState({}),[approving,setApproving]=useState(false),[identity,setIdentity]=useState(null),[refreshingImages,setRefreshingImages]=useState(false);
-  const client=useRef(null),imageRefresh=useRef(null),viewRef=useRef(null),interaction=useRef({}),router=useRouter();
+  const client=useRef(null),analysisClient=useRef(null),imageRefresh=useRef(null),viewRef=useRef(null),interaction=useRef({}),router=useRouter();
   interaction.current={...interaction.current,identity:Boolean(identity),approving,saving:status==='Saving…'};
   const changeEditing=useCallback(value=>{interaction.current.editing=value;setEditing(value);},[]);
   const attempt=async work=>{const owner=client.current;setError('');try{return await work();}catch(error){if(client.current===owner)setError(manualMessage(error));}};
   useEffect(()=>{
     let stopped=false;
     const ownedClient=createManualClient({cardId,staffId:staff.id,csrf,storage:localStorage,basePath:STAFF_BASE_PATH,timeoutMs:210000,
-      onView:value=>{if(!stopped){viewRef.current=value;setView(value);}},onStatus:value=>{if(!stopped)setStatus(value);}});
+      onView:value=>{if(!stopped){const updated=withLocalAnalysis(value);viewRef.current=updated;setView(updated);}},onStatus:value=>{if(!stopped)setStatus(value);}});
     client.current=ownedClient;
-    void ownedClient.recover().then(value=>{if(!stopped)setScreen(geometryStatus(value.geometry).confirmed?'defects':'geometry');}).catch(error=>{if(!stopped)setError(manualMessage(error));});
+    const ownedAnalysis=createDefectAnalysisClient({cardId,staffId:staff.id,storage:localStorage,
+      request:(path,options={})=>manualRequest(path,{...options,csrf}),onAnalysis:astra=>{
+        if(stopped||client.current!==ownedClient||!viewRef.current)return;
+        const updated={...viewRef.current,astra};viewRef.current=updated;setView(updated);
+      }});
+    analysisClient.current=ownedAnalysis;
+    void ownedClient.recover().then(async value=>{if(stopped)return;setScreen(geometryStatus(value.geometry).confirmed?'defects':'geometry');
+      if(value.astra?.enabled)await ownedAnalysis.refresh();
+    }).catch(error=>{if(!stopped)setError(manualMessage(error));});
     const timer=setInterval(()=>{if(!ownedClient.hasPending())void attempt(refreshImages);},240000);
-    return()=>{stopped=true;clearInterval(timer);if(client.current===ownedClient)client.current=null;};
+    return()=>{stopped=true;clearInterval(timer);ownedAnalysis.dispose();if(analysisClient.current===ownedAnalysis)analysisClient.current=null;if(client.current===ownedClient)client.current=null;};
   },[cardId,staff.id,csrf]);
+  function withLocalAnalysis(value){
+    const owned=analysisClient.current;
+    try{
+      const known=owned?.current();if(!known)return value;
+      // A grant/view read may have begun before the analysis acknowledgement.
+      // Keep that known run, while accepting fresh review decisions for it.
+      const lagging=value.astra?.analysisId!==known.analysisId
+        || (['READY','REFUSED','FAILED','STALE'].includes(known.status)&&['IDLE','RUNNING','UNKNOWN'].includes(value.astra?.status));
+      return owned.hasPending()||lagging?{...value,astra:known}:value;
+    }
+    catch{return value;}
+  }
   async function refreshImages(){
     if(imageRefresh.current)return imageRefresh.current;
     const owner=client.current;if(!owner||owner.hasPending())return;
     setRefreshingImages(true);
     const work=(async()=>{
+      const requested=viewRef.current;
       const fresh=await manualRequest(`/api/staff/manual/cards/${cardId}/view`,{csrf});
       if(client.current!==owner)return;
       const current=viewRef.current;
       if(!current||fresh.card.revision!==current.card.revision||fresh.card.contentHash!==current.card.contentHash)throw {code:'MANUAL_REVISION_CONFLICT'};
       // Renew access to these exact pixels without replacing an unsaved edit or the client's command base.
-      const renewed={...current,images:fresh.images};viewRef.current=renewed;setView(renewed);
+      const renewed=withLocalAnalysis({...current,images:fresh.images,astra:fresh.astra,
+        reviewedMemory:current.reviewedMemory!==requested?.reviewedMemory?current.reviewedMemory:fresh.reviewedMemory});viewRef.current=renewed;setView(renewed);
     })();imageRefresh.current=work;
     try{await work;}finally{if(imageRefresh.current===work)imageRefresh.current=null;if(client.current===owner)setRefreshingImages(false);}
   }
   async function switchStage(next){
     const owner=client.current;await refreshImages();const active=interaction.current;
     if(client.current===owner&&!active.editing&&!active.identity&&!active.approving&&!active.saving&&!owner.hasPending()){setReport(null);setScreen(next);}
+  }
+  async function refreshAssistance(owner){
+    const requested=viewRef.current;
+    const fresh=await manualRequest(`/api/staff/manual/cards/${cardId}/view`,{csrf});
+    if(client.current!==owner)return;
+    const current=viewRef.current;
+    if(!current||fresh.card.revision!==current.card.revision||fresh.card.contentHash!==current.card.contentHash)return;
+    // Analysis and memory are separate saved records. Only refresh their
+    // projections and image grants; a delayed read cannot replace human edits.
+    const updated=withLocalAnalysis({...current,astra:fresh.astra,
+      reviewedMemory:current.reviewedMemory!==requested?.reviewedMemory?current.reviewedMemory:fresh.reviewedMemory,images:fresh.images});viewRef.current=updated;setView(updated);
+  }
+  async function analyze(mode,input){
+    const owner=client.current,coordinator=analysisClient.current;
+    if(!owner||!coordinator)throw {code:'MANUAL_ANALYSIS_UNAVAILABLE'};
+    const result=await coordinator[mode](input);
+    if(client.current===owner)await refreshAssistance(owner).catch(error=>{if(client.current===owner)setError(manualMessage(error));});
+    return result;
+  }
+  async function retryMemory(){
+    const owner=client.current,current=viewRef.current;
+    const result=await manualRequest(`${prefix}/${cardId}/defect-memory`,{method:'POST',body:{},csrf});
+    if(client.current!==owner)return result;
+    const latest=viewRef.current;
+    if(latest&&current&&latest.card.revision===current.card.revision&&latest.card.contentHash===current.card.contentHash&&result.reviewedMemory){
+      const updated={...latest,reviewedMemory:result.reviewedMemory};viewRef.current=updated;setView(updated);
+    }
+    await refreshAssistance(owner).catch(error=>{if(client.current===owner)setError(manualMessage(error));});return result;
   }
   useEffect(()=>{if(!editing&&!identity)return;const warn=event=>{event.preventDefault();event.returnValue='';};const block=()=>{router.events.emit('routeChangeError');throw 'Save or discard the current edit before leaving';};window.addEventListener('beforeunload',warn);router.events.on('routeChangeStart',block);return()=>{window.removeEventListener('beforeunload',warn);router.events.off('routeChangeStart',block);};},[editing,identity,router]);
   const execute=action=>client.current.execute(action);
@@ -176,6 +227,9 @@ function ManualWorkspace({staff,cardId,csrf,onPhotos}){
       onEdit={async input=>{const {actor,proposal,...edit}=input;await execute({type:'GEOMETRY_EDIT',edit});if(input.kind==='PHYSICAL')void attempt(()=>prepare(input.side));}}
       onConfirm={async({base,reviewed})=>{await execute({type:'CONFIRM_GEOMETRY',base,reviewed});setScreen('defects');}}/>:
     screen==='defects'&&view.defects?<DefectReviewWorkspace workspace={view.defects} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'}
+      astra={view.astra} reviewedMemory={view.reviewedMemory} onAnalyzeDefects={input=>analyze('start',input)} onRefreshAnalysis={()=>analyze('refresh')}
+      onResumeAnalysis={()=>analyze('resume')} onRetryReviewedMemory={retryMemory}
+      onReviewProposal={async input=>{const owner=client.current;await owner.reviewProposal(input);if(client.current===owner&&input.action!=='REJECT')void attempt(()=>owner.execute({type:'MEASURE_SIDE',side:input.side}));}}
       onEdit={async input=>{await client.current.editDefect(input);void attempt(()=>execute({type:'MEASURE_SIDE',side:input.side}));}}
       onRetry={side=>execute({type:'MEASURE_SIDE',side})} onDiscardPending={({side,base})=>execute({type:'DISCARD_PENDING',side,base})}
       onInspect={({side,base,inspected})=>execute({type:'INSPECT_SIDE',side,base,inspected})} onConfirm={({base,reviewed})=>execute({type:'CONFIRM_FINDINGS',base,reviewed})}

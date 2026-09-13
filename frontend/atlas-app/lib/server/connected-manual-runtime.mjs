@@ -5,6 +5,7 @@ import { createDurableStaffBoundary } from '@atlas/manual-service/staff-auth';
 import { createConnectedManual } from '@atlas/connected-manual';
 import { createConnectedHandler } from '@atlas/connected-manual/http';
 import { identificationEffects } from '@atlas/connected-manual/identification';
+import { createAstraDefectProvider } from '@atlas/defect-analysis/provider';
 import { requireThat } from '@atlas/manual-service/contract';
 import { descriptorSha256 } from '@atlas/photo-core';
 
@@ -53,7 +54,10 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     requireThat(new URL(value.url).origin===settings.uploadOrigin,503,'MANUAL_UPLOAD_ORIGIN_MISMATCH');
     if(reads.size>=1000)reads.delete(reads.keys().next().value);reads.set(key,{value,expires:Date.now()+240000});return value;
   };
-  const connected=createConnectedManual({boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl});
+  const memoryEnabled=env.ATLAS_MANUAL_DEFECT_MEMORY_ENABLED==='true';
+  const defectProvider=env.ATLAS_MANUAL_DEFECT_ANALYSIS_ENABLED==='true'?createAstraDefectProvider({apiKey:env.ATLAS_MANUAL_OPENAI_KEY}):null;
+  requireThat(!defectProvider||memoryEnabled,503,'DEFECT_ANALYSIS_MEMORY_REQUIRED');
+  const connected=createConnectedManual({memoryEnabled,defectProvider,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   return {connected,boundary,handler,uploadOrigin:settings.uploadOrigin,async close(){await manualClient.$disconnect();client.destroy();}};
 }

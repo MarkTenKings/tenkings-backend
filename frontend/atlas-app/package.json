@@ -29,7 +29,8 @@
     "@atlas/manual-workspace": "workspace:*",
     "@atlas/photo-storage": "workspace:*",
     "@aws-sdk/client-s3": "3.914.0",
-    "@atlas/photo-core": "workspace:*"
+    "@atlas/photo-core": "workspace:*",
+    "@atlas/defect-analysis": "workspace:*"
   },
   "devDependencies": {
     "eslint": "8.57.0",

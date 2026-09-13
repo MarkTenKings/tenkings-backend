@@ -3,18 +3,34 @@ import { createIntakeHandler } from '@atlas/manual-intake/http';
 import { object, requireThat } from '@atlas/manual-service/contract';
 
 export function createConnectedHandler({connected,boundary,origin,assertRequest}) {
-  const workflow=createWorkflowHandler({workflow:connected.workflow,boundary,origin,assertRequest,imageDescriptors:connected.imageDescriptors});
+  const workflow=createWorkflowHandler({workflow:connected.workflow,boundary,origin,assertRequest,imageDescriptors:connected.imageDescriptors,workspaceExtras:connected.workspaceExtras});
   const intake=createIntakeHandler({service:connected.intake,boundary,origin,assertRequest});
   const id='[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
+  const assistanceRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/(defect-analysis|defect-memory)(?:/(${id}))?$`);
   const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|preview-image)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
   return async(req,res)=>{
     const url=new URL(req.url,origin);
     if(!/^\/api\/staff\/(manual|manual-intake|manual-connected)(?:\/|$)/.test(url.pathname))return false;
     try{
       await assertRequest(req);requireThat(url.origin===origin,400,'MANUAL_REQUEST_INVALID');
-      if(req.method==='POST')requireThat(Buffer.byteLength(JSON.stringify(req.body??{})) <= (url.pathname.endsWith('/trace')?1048576:url.pathname.startsWith('/api/staff/manual-intake/')?8192:65536),413,'REQUEST_TOO_LARGE');
+      if(req.method==='POST')requireThat(Buffer.byteLength(JSON.stringify(req.body??{})) <= (/\/(?:proposal-)?trace$/.test(url.pathname)?1048576:url.pathname.startsWith('/api/staff/manual-intake/')?8192:65536),413,'REQUEST_TOO_LARGE');
       if(await intake(req,res))return true;
       if(await workflow(req,res))return true;
+      const assistanceFound=assistanceRoute.exec(url.pathname);
+      if(assistanceFound){
+        const [,cardId,kind,analysisId]=assistanceFound;
+        requireThat(!url.search && (!analysisId || kind==='defect-analysis'),404,'NOT_FOUND');
+        const write=req.method==='POST';
+        requireThat((write&&!analysisId)||(req.method==='GET'&&kind==='defect-analysis'),405,'METHOD_NOT_ALLOWED');
+        if(write)requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
+          && typeof req.headers['x-atlas-csrf']==='string' && req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
+        const staff=await boundary.authenticate(req.headers.cookie??'',write?req.headers['x-atlas-csrf']:undefined);
+        requireThat(connected.assistance,503,'DEFECT_ASSISTANCE_DISABLED');
+        let result;
+        if(kind==='defect-memory'){object(req.body,[]);result=await connected.assistance.publish(staff,cardId);}
+        else result=write?await connected.assistance.analyze(staff,cardId,req.body):await connected.assistance.status(staff,cardId,analysisId??null);
+        res.setHeader('Cache-Control','no-store');res.status(200).json(result);return true;
+      }
       const found=route.exec(url.pathname);requireThat(found && !url.search,404,'NOT_FOUND');
       const [,cardId,action,previewSide,imageSide,kind,hash]=found;
       const write=['details','identify','initialize'].includes(action);

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import vm from 'node:vm';
+import * as defectAnalysisClient from '../lib/manual-defect-analysis-client.mjs';
 
 const require = createRequire(import.meta.url);
 const babel = require('next/dist/compiled/babel/core');
@@ -38,6 +39,7 @@ function harness(store, post) {
       if (name === '@atlas/manual-intake/client') return { createBrowserIntakeJournal: () => ({ close() {} }), createIntakeClient: () => ({ pending: async () => [] }) };
       if (name.startsWith('@atlas/')) return {};
       if (name === '../lib/routes.mjs') return { STAFF_BASE_PATH: '/admin' };
+      if (name === '../lib/manual-defect-analysis-client.mjs') return defectAnalysisClient;
       if (name === '../lib/manual-client.mjs') return { manualMessage: () => 'Retained', manualRequest: async (path, options = {}) => {
         if (options.method === 'POST') return post(path, options);
         return path.endsWith('/session') ? { staff: { id: 'reviewer' }, csrf: 'csrf' } : card;

@@ -350,6 +350,9 @@ importers:
 
   frontend/atlas-app:
     dependencies:
+      '@atlas/defect-analysis':
+        specifier: workspace:*
+        version: link:../../packages/atlas-defect-analysis
       '@atlas/connected-manual':
         specifier: workspace:*
         version: link:../../packages/atlas-connected-manual
@@ -679,6 +682,12 @@ importers:
 
   packages/atlas-connected-manual:
     dependencies:
+      '@atlas/defect-analysis':
+        specifier: workspace:*
+        version: link:../atlas-defect-analysis
+      '@atlas/defect-memory':
+        specifier: workspace:*
+        version: link:../atlas-defect-memory
       '@atlas/grading-core':
         specifier: workspace:*
         version: link:../atlas-grading-core
@@ -720,6 +729,21 @@ importers:
         version: 0.33.5
 
   packages/atlas-contracts: {}
+
+  packages/atlas-defect-analysis:
+    dependencies:
+      '@atlas/defect-memory':
+        specifier: workspace:*
+        version: link:../atlas-defect-memory
+
+  packages/atlas-defect-memory:
+    dependencies:
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../atlas-grading-core
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../atlas-manual-workspace
 
   packages/atlas-finishing: {}
 

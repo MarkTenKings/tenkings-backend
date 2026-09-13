@@ -8,6 +8,8 @@ import { proposePhysicalGeometry, prepareGeometry, describePreparationDerivative
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { createDetailsStore, gradingIdentity } from './details.mjs';
 import { createIdentification } from './identification.mjs';
+import { createDefectImageEffects } from './defect-images.mjs';
+import { createDefectAssistance } from './defect-assistance.mjs';
 import { measureDefectWorkspaceEdit } from '@atlas/measurement-runtime';
 
 export const DEFAULT_LIMITS = Object.freeze({
@@ -20,7 +22,7 @@ const SIDES=['FRONT','BACK'];
 export function createWorkLimiter(maximum=2){let active=0;return async work=>{
   requireThat(active<maximum,503,'MANUAL_PROCESSING_BUSY');active++;try{return await work();}finally{active--;}
 };}
-export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin'}) {
+export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null}) {
   const intakeRepository=createIntakeRepository({boundary,keyPrefix,maxOriginalBytes:64*1024*1024});
   const limited=createWorkLimiter(2),photoProcessor=createPhotoProcessor({storage,keyPrefix,decodeLimits:limits.decode});
   const intake=createManualIntake({repository:intakeRepository,storage,artifacts,processPhoto:input=>limited(()=>photoProcessor(input))});
@@ -77,7 +79,10 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     }
     return {...packet,changedSides};
   }
+  let assistance;
   const workflow=createManualWorkflow({repository,artifacts,pythonExecutable,measurementLimits:limits.measurement,
+    resolveProposal: input => assistance.resolveProposal(input),
+    afterConfirm: memoryEnabled ? (staff,cardId,actionId)=>assistance.publish(staff,cardId,actionId) : null,
     measure:input=>limited(()=>measureDefectWorkspaceEdit(input)),
     assertCurrent:({card,staff})=>current(staff,card),
     prepare:({geometry,side,source,staff})=>limited(async()=>{
@@ -108,7 +113,19 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     }
     return images;
   }
-  return Object.freeze({boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,
+  async function readPrepared(staff,card,side,kind){
+    await current(staff,card);
+    const saved=await manifest(card,side),descriptor=saved?.images?.[kind];
+    const state=await workflow.hydrate(card);
+    requireThat(descriptor && state.geometry.sides[side].prepared?.frame.id===saved.frameId,409,'MANUAL_IMAGE_BINDING_INVALID');
+    const {photo}=await intake.readSource(staff,card.cardId,card.draft.source.uploads[side]);
+    const found=await storage.readDerivative({descriptor,frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan});
+    await current(staff,card);return found;
+  }
+  const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
+  assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,provider:defectProvider,receiptClient});
+  return Object.freeze({boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,
+    workspaceExtras: assistance.workspaceExtras,
     async open(staff,cardId){
       const [{card},saved]=await Promise.all([intake.read(staff,cardId),details.read(staff,cardId)]);
       let manual=null;try{manual=await workflow.service.read(staff,cardId);}catch(error){if(error?.code!=='MANUAL_CARD_NOT_FOUND')throw error;}

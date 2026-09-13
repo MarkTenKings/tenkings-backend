@@ -150,3 +150,10 @@ milestones; the old operator's initiating-cause prerequisite is still open.
 
 
 Latest storage follow-up, September 12 Pacific / September 13 UTC: Mark approved the exact two-header CORS update and bounded 65-byte canary. The CORS update is saved; actual PUT/GET/HEAD preflights returned 200 at 2026-09-13T02:19:17 UTC, preserving the origin, methods and 5-second max age. No canary intent or diagnostic object exists. Local ENOSPC errors and a 12-second Docker server timeout block the canary. No runtime restart or broader deployment occurred. Approval persists. Evidence: release-readiness/storage/console-resumed-20260912/cors-preflight-after.json and runtime-blocker.json. This supersedes the earlier pending-CORS statements.
+
+
+### September 12 Pacific — Astra-first implementation and executed storage result
+
+The [new Astra/memory implementation record](astra-defect-memory-implementation.md) supersedes the earlier pending-build description: reviewed memory, bounded Astra proposals, explicit human review and durable recovery are locally implemented and qualified. Final focused suite163pass, final owned native16groups,13-table/2937-column role checks and8connectedCPU groups pass, with independent source review and cleanup evidence. The earlier Linux image does not include this new source.
+
+The authorized unchanged storage canary executed once on local Node20 with exactSDKpins after Docker remained unavailable. Incorrect checksum PUT returned200; resultFAILED_SAFE/CHECKSUM_REFUSAL_NOT_PROVEN. Its only65-byte object was deleted and HEAD/GET404 verified. No later collision/privacy qualification ran. CORS was already applied and allpreflights passed. The exclusiveexecution intent now exists and must not be removed or rerun; source/production rollout remains pending storage resolution and a new qualified image.

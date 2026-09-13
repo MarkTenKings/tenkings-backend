@@ -78,6 +78,16 @@ export function createManualClient({ cardId, staffId, csrf, storage, basePath = 
         : { type: 'DEFECT_EDIT', side: input.side, base: input.base, edit: input.action };
       return send({ actionId: crypto.randomUUID(), expectedRevision, action });
     }),
+    reviewProposal: input => exclusive(async () => {
+      if (pending()) throw new Error('Resolve the pending save first');
+      if (!view) await load();
+      const expectedRevision = view.card.revision;
+      const fields = { side: input.side, base: input.base, analysisId: input.analysisId, proposalId: input.proposalId };
+      const action = input.action === 'TRACE_SAVE'
+        ? await request(`${path}/proposal-trace`, { ...fields, trace: input.trace })
+        : { type: 'ASTRA_PROPOSAL_REVIEW', ...fields, action: input.action };
+      return send({ actionId: crypto.randomUUID(), expectedRevision, action });
+    }),
     previewReport: () => request(`${path}/report-preview`),
   });
 }
