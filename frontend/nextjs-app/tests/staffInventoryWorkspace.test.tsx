@@ -46,7 +46,7 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: Error) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 async function until(check: () => boolean) { for (let i = 0; i < 100 && !check(); i++) await act(async () => new Promise(resolve => setTimeout(resolve, 5))); assert.ok(check(), 'UI did not settle'); }
 
-async function mount(fetcher: typeof fetch = async () => json(initial), saved: typeof addDraft | null = addDraft) {
+async function mount(fetcher: typeof fetch = async () => json(initial), saved: typeof addDraft | null = addDraft, pending?: unknown) {
   prepare = async () => prepared;
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'https://fixture.invalid/admin/physical-inventory', pretendToBeVisual: true });
   // React is imported before the DOM in this fixture; its legacy focus shim is inert.
@@ -58,6 +58,7 @@ async function mount(fetcher: typeof fetch = async () => json(initial), saved: t
   const viewport = Object.assign(new dom.window.EventTarget(), { height: 844, offsetTop: 0 });
   Object.defineProperty(dom.window, 'visualViewport', { configurable: true, value: viewport });
   if (saved) sessionStorage.setItem(draftKey, JSON.stringify(saved));
+  if (pending) sessionStorage.setItem(pendingKey, JSON.stringify(pending));
   const container = dom.window.document.getElementById('root') as HTMLElement, root = createRoot(container);
   await act(async () => root.render(<Workspace token="fixture-human-token" adminId="fixture-admin" onAdvanced={() => {}} />));
   await until(() => !!container.textContent?.includes('Fixture card'));
@@ -69,7 +70,7 @@ async function mount(fetcher: typeof fetch = async () => json(initial), saved: t
     input(label: string) { const input = label === 'Sales channel' && container.querySelector('input[name="inventory-sales-channel"]') ? container.querySelector<HTMLInputElement>('input[name="inventory-sales-channel"]:checked') : container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`); assert.ok(input, `Missing input ${label}`); return input; },
     async choose(file: File, source: 'camera' | 'library' = 'library') { const input = this.input(source === 'camera' ? 'Take inventory photo' : 'Choose inventory photo'); Object.defineProperty(input, 'files', { configurable: true, value: [file] }); await act(async () => Simulate.change(input)); },
     async fill(label: string, value: string) { await act(async () => { const radio = label === 'Sales channel' ? [...container.querySelectorAll<HTMLInputElement>('input[name="inventory-sales-channel"]')].find(input => input.value === value) : null; if (radio) radio.click(); else Simulate.change(this.input(label), { target: { value } } as any); }); },
-    async pair(advance = true) { const files = [new dom.window.File(['front'], 'front.jpg', { type: 'image/jpeg' }), new dom.window.File(['back'], 'back.jpg', { type: 'image/jpeg' })] as unknown as [File, File]; await act(async () => { captureProps.onPair(...files); }); if (advance) for (let index = 0; index < 2 && container.querySelector('button[aria-label^="Next:"]'); index++) await this.click('Next'); return files; },
+    async pair(advance = true) { const files = [new dom.window.File(['front'], 'front.jpg', { type: 'image/jpeg' }), new dom.window.File(['back'], 'back.jpg', { type: 'image/jpeg' })] as unknown as [File, File]; await act(async () => { captureProps.onPair(...files); }); if (advance && container.querySelector('button[aria-label^="Next:"]')) await this.click('Next'); return files; },
     camera() { return captureProps; },
     async submit() { await act(async () => container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))); },
     submitButton() { return container.querySelector<HTMLButtonElement>('button[type="submit"]')!; },
@@ -97,6 +98,7 @@ test('new entries default to individual cards, with direct camera/library and no
   try {
     await ui.click('Add inventory');
     assert.equal(ui.input('Card name').value, '');
+    assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
     assert.equal(ui.container.querySelector('[aria-label="Current condition"]'), null);
     assert.equal([...ui.container.querySelectorAll('button')].some(b => b.textContent === 'Current stock' || b.textContent === 'New purchase'), false);
     await ui.click('Take photo'); assert.equal(ui.camera().open, true); assert.equal(ui.camera().initialSource, 'camera');
@@ -106,21 +108,22 @@ test('new entries default to individual cards, with direct camera/library and no
   } finally { await ui.close(); }
 });
 
-test('paired upload and Astra fill only untouched descriptive fields; staff edits and money always win', async () => {
+test('paired upload and Astra fill only untouched descriptive fields; staff edits, cost and channel always win', async () => {
   const decode = deferred<PreparedStaffInventoryPhoto>(), identity = deferred<Response>(); let identityBody = ''; let writes = 0;
   const ui = await mount(api({ identify: async body => { identityBody = body; return identity.promise; }, save: async body => { writes++; return json({ outcome: 'RECORDED', request_id: JSON.parse(body).request_id }); } }));
   try {
     await ui.click('Add inventory'); prepare = () => decode.promise; await ui.pair();
     assert.equal(ui.submitButton().disabled, true); await ui.submit(); assert.equal(writes, 0);
     await ui.fill('Card name', 'Staff corrected during upload');
-    await ui.fill('Card acquisition cost', '10.50'); await ui.fill('Expected sale price per card', '42.00');
+    await ui.fill('Card acquisition cost', '10.50');
+    assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
     await act(async () => decode.resolve(prepared)); await until(() => !!identityBody);
     await ui.fill('Manufacturer', 'Staff corrected during analysis'); await ui.fill('Sales channel', 'Whatnot');
     await act(async () => identity.resolve(json(identification(identityBody)))); await until(() => !ui.submitButton().disabled);
     assert.equal(ui.input('Card name').value, 'Staff corrected during upload'); assert.equal(ui.input('Manufacturer').value, 'Staff corrected during analysis');
     assert.equal(ui.input('Card number').value, '007'); assert.equal(ui.input('Year').value, '2024'); assert.equal(ui.input('Sales channel').value, 'Whatnot');
-    assert.equal(ui.input('Card acquisition cost').value, '10.50'); assert.equal(ui.input('Expected sale price per card').value, '42.00');
-    const saved = JSON.parse(sessionStorage.getItem(draftKey)!); assert.ok(saved.photo_key && saved.back_photo_key); assert.notEqual(saved.photo_key, saved.back_photo_key);
+    assert.equal(ui.input('Card acquisition cost').value, '10.50'); assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
+    const saved = JSON.parse(sessionStorage.getItem(draftKey)!); assert.ok(saved.photo_key && saved.back_photo_key); assert.notEqual(saved.photo_key, saved.back_photo_key); assert.equal(saved.price, '');
   } finally { await ui.close(); }
 });
 
@@ -131,15 +134,43 @@ test('uncertain saves retry exact bytes; only acknowledgement resets the card an
     await ui.fill('Sales channel', 'Amazon'); await ui.submit(); await until(() => !!sessionStorage.getItem(pendingKey));
     assert.equal(ui.camera().open, false); const first = JSON.parse(posts[0]);
     assert.equal(first.description.planned_sales_channel, 'Amazon'); assert.equal(first.description.card_details.card_number, '007'); assert.ok(first.description.back_photo_key);
+    assert.equal(first.expected_price_cents, null);
     await ui.click('Retry saved entry'); await until(() => !sessionStorage.getItem(pendingKey));
     assert.equal(posts[0], posts[1]); assert.equal(ui.camera().open, true); assert.equal(ui.camera().initialSource, 'camera');
-    assert.equal(ui.input('Card name').value, ''); assert.equal(ui.input('Card acquisition cost').value, ''); assert.equal(ui.input('Expected sale price per card').value, '');
+    assert.equal(ui.input('Card name').value, ''); assert.equal(ui.input('Card acquisition cost').value, ''); assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
     assert.equal(ui.input('Current location').value, location.id); assert.equal(ui.input('Location type').value, 'hq'); assert.equal(ui.input('Sales channel').value, '');
     assert.equal(ui.container.querySelectorAll('img[alt="Front of inventory card"]').length, 0);
-    await ui.pair(); await until(() => !ui.submitButton().disabled); await ui.fill('Card acquisition cost', '3.00'); await ui.fill('Expected sale price per card', '8.00');
+    await ui.pair(); await until(() => !ui.submitButton().disabled); await ui.fill('Card acquisition cost', '3.00');
     await ui.submit(); await until(() => posts.length === 3 && ui.camera().open);
     const second = JSON.parse(posts[2]); assert.notEqual(first.request_id, second.request_id); assert.notEqual(first.description.photo_key, second.description.photo_key);
-    assert.equal(second.description.planned_sales_channel, null); assert.equal(second.total_cost_cents, 300); assert.equal(second.expected_price_cents, 800);
+    assert.equal(second.description.planned_sales_channel, null); assert.equal(second.total_cost_cents, 300); assert.equal(second.expected_price_cents, null);
+  } finally { await ui.close(); }
+});
+
+test('a restored pre-release pending add replays its exact original bytes and non-null price', async () => {
+  const command = {
+    request_id: '22222222-2222-4222-8222-222222222222', effective_at: '2026-01-02T12:00:00.000Z', note: addDraft.note,
+    action: 'add', origin: 'purchase', quantity: 1,
+    description: { name: addDraft.name, category: addDraft.category, notes: addDraft.note, planned_sales_channel: 'eBay', photo_key: keyFor(81), back_photo_key: keyFor(82) },
+    total_cost_cents: 100, cost_method: 'documented_unit', expected_price_cents: 200,
+    destination: { location_id: location.id, kind: 'hq', machine_id: null, product_id: null, door_id: null }, stage: 'unprocessed',
+  };
+  const originalBytes = JSON.stringify(command), response = deferred<Response>(), posts: string[] = [];
+  const pending = { actor: 'fixture-admin', command, ui: { mode: 'add', draft: { ...addDraft, salesChannel: 'eBay' }, item: null, selected: [] } };
+  const ui = await mount(api({ save: async body => { posts.push(body); return response.promise; } }), addDraft, pending);
+  try {
+    assert.equal(posts.length, 0); assert.equal(ui.camera().open, false);
+    assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
+    assert.equal(JSON.stringify(JSON.parse(sessionStorage.getItem(pendingKey)!).command), originalBytes);
+    await ui.click('Retry saved entry');
+    assert.deepEqual(posts, [originalBytes]); assert.equal(JSON.parse(posts[0]).expected_price_cents, 200);
+    assert.equal(ui.camera().open, false); assert.ok(sessionStorage.getItem(pendingKey));
+    await act(async () => response.resolve(json({ outcome: 'REPLAY', request_id: command.request_id })));
+    await until(() => ui.camera().open && !sessionStorage.getItem(pendingKey));
+    assert.equal(ui.input('Card name').value, ''); assert.equal(ui.input('Card acquisition cost').value, '');
+    assert.equal(ui.input('Current location').value, location.id); assert.equal(ui.input('Location type').value, 'hq');
+    assert.equal(ui.input('Sales channel').value, ''); assert.equal(sessionStorage.getItem(draftKey), null);
+    assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
   } finally { await ui.close(); }
 });
 
@@ -148,7 +179,7 @@ test('unavailable identification leaves both photos ready for a manual card and 
   try {
     await ui.click('Add inventory'); await ui.pair(); await until(() => !!ui.container.textContent?.includes('Card details could not be read'));
     assert.equal(ui.submitButton().disabled, false); assert.equal(ui.input('Card name').value, addDraft.name);
-    await ui.submit(); await until(() => !!posted); assert.ok(posted.description.photo_key && posted.description.back_photo_key); assert.equal(posted.total_cost_cents, 100);
+    await ui.submit(); await until(() => !!posted); assert.ok(posted.description.photo_key && posted.description.back_photo_key); assert.equal(posted.total_cost_cents, 100); assert.equal(posted.expected_price_cents, null);
   } finally { await ui.close(); }
 });
 
@@ -276,11 +307,68 @@ test('sales channel offers approved choices and an old draft starts undecided; c
     const select = ui.input('Sales channel') as unknown as HTMLSelectElement;
     assert.equal(select.value, '');
     assert.deepEqual([...select.options].map(o => o.text), ['Not decided yet', 'Vending machines', 'Stores', 'Kiosks', 'Ten Kings online', 'eBay', 'Whatnot', 'Amazon']);
-    const section = select.closest('section')!; assert.ok(section.textContent?.includes('3. Cost & expected price'));
-    const before = section.textContent?.slice(section.textContent.indexOf('Expected gross profit'));
+    const section = select.closest('section')!; assert.ok(section.textContent?.includes('3. Cost & sales channel'));
+    assert.equal(section.textContent?.includes('Expected gross profit'), false);
+    assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
     await ui.fill('Sales channel', 'eBay');
-    assert.equal(section.textContent?.slice(section.textContent.indexOf('Expected gross profit')), before);
+    assert.equal(JSON.parse(sessionStorage.getItem(draftKey)!).price, '', 'An older unsent price must be cleared');
     await ui.click('Cancel'); await ui.click('Add inventory'); assert.equal(ui.input('Sales channel').value, 'eBay');
+  } finally { await ui.close(); }
+});
+
+for (const quantity of [1, 3]) test(`manual ${quantity === 1 ? 'individual' : 'batch'} add leaves price unknown when restoring an older unsent draft`, async () => {
+  const posts: any[] = [];
+  const ui = await mount(api({ save: async body => { const posted = JSON.parse(body); posts.push(posted); return json({ outcome: 'RECORDED', request_id: posted.request_id }); } }));
+  try {
+    assert.equal(addDraft.price, '2.00'); await ui.click('Add inventory');
+    if (quantity > 1) { await ui.click('Batch of cards'); await ui.fill('Number of cards', String(quantity)); }
+    assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
+    assert.equal(ui.container.querySelector('form')!.textContent?.includes('Expected gross profit'), false);
+    await ui.fill('Sales channel', 'Stores');
+    assert.equal(JSON.parse(sessionStorage.getItem(draftKey)!).price, '');
+    await act(async () => ui.submitButton().click()); await until(() => posts.length === 1);
+    assert.equal(posts[0].quantity, quantity); assert.equal(posts[0].expected_price_cents, null);
+    assert.equal(posts[0].total_cost_cents, 100); assert.equal(posts[0].cost_method, quantity === 1 ? 'documented_unit' : 'equal_card');
+    assert.equal(posts[0].description.planned_sales_channel, 'Stores'); assert.equal(posts[0].destination.location_id, location.id);
+  } finally { await ui.close(); }
+});
+
+for (const quantity of [1, 3]) for (const price of [null, 200]) test(`saved ${quantity === 1 ? 'card' : 'batch'} price can change from ${price === null ? 'unknown' : 'an existing amount'} without a cost or custody command`, async () => {
+  const posts: any[] = [], unitIds = Array.from({ length: quantity }, (_, index) => `fixture-unit-${index + 1}`);
+  const valuation = { ...values, cost_cents: quantity * 100, expected_sales_cents: price === null ? null : quantity * price, expected_profit_cents: price === null ? null : quantity * (price - 100), expected_margin_pct: price === null ? null : 50, costed_units: quantity, priced_units: price === null ? 0 : quantity, known_cost_subtotal_cents: quantity * 100 };
+  const savedItem = { ...item, ...valuation, quantity, receipt_quantity: quantity, purchase_total_cents: quantity * 100, expected_price_cents: price, planned_sales_channel: 'Card convention', unit_ids: unitIds, units: unitIds.map((id, index) => ({ ...item.units[0], id, number: index + 1, expected_price_cents: price })) };
+  const data = { ...initial, items: [savedItem], totals: { ...initial.totals, ...valuation, on_hand: quantity } };
+  const ui = await mount(async (_url, init) => {
+    if (init?.method === 'POST') { const body = JSON.parse(String(init.body)); posts.push(body); return json({ outcome: 'RECORDED', request_id: body.request_id }); }
+    return json(data);
+  });
+  try {
+    await ui.edit(); assert.equal(ui.input('Expected sale price per card').value, price === null ? '' : '2.00');
+    assert.equal(ui.container.querySelector('[aria-label="Card acquisition cost"]'), null); assert.equal(ui.container.querySelector('[aria-label="Total batch acquisition cost"]'), null);
+    assert.equal(ui.container.querySelector('[aria-label="Current location"]'), null);
+    await ui.fill('Expected sale price per card', '19.50'); await act(async () => ui.submitButton().click());
+    await until(() => posts.length === 1 && !ui.container.querySelector('form'));
+    const posted = posts[0]; assert.equal(posted.action, 'edit'); assert.equal(posted.expected_price_cents, 1950); assert.deepEqual(posted.unit_ids, unitIds);
+    assert.equal(posted.description.planned_sales_channel, 'Card convention'); assert.equal(posted.description.name, item.name); assert.equal(posted.description.photo_key, item.photo_key);
+    assert.deepEqual(Object.keys(posted).sort(), ['action', 'description', 'effective_at', 'expected_price_cents', 'note', 'request_id', 'unit_ids']);
+  } finally { await ui.close(); }
+});
+
+test('saved-price editing rejects malformed and unsafe amounts, accepts corrected cents and permits clearing to unknown', async () => {
+  const posts: any[] = [];
+  const ui = await mount(api({ save: async body => { const posted = JSON.parse(body); posts.push(posted); return json({ outcome: 'RECORDED', request_id: posted.request_id }); } }));
+  try {
+    await ui.edit();
+    for (const value of ['-1', '25,00', '1.234', 'NaN', '90071992547409.92']) {
+      await ui.fill('Expected sale price per card', value); await act(async () => ui.submitButton().click());
+      assert.equal(posts.length, 0); assert.equal(ui.input('Expected sale price per card').getAttribute('aria-invalid'), 'true');
+      assert.equal(document.activeElement, ui.input('Expected sale price per card')); assert.ok(ui.container.querySelector('form [role="alert"]'));
+    }
+    await ui.fill('Expected sale price per card', '25.00'); await act(async () => ui.submitButton().click());
+    await until(() => posts.length === 1 && !ui.container.querySelector('form')); assert.equal(posts[0].expected_price_cents, 2500);
+    await ui.edit(); await ui.fill('Expected sale price per card', ''); await act(async () => ui.submitButton().click());
+    await until(() => posts.length === 2); assert.equal(posts[1].expected_price_cents, null);
+    for (const post of posts) { assert.equal(post.action, 'edit'); assert.equal(post.total_cost_cents, undefined); assert.equal(post.destination, undefined); }
   } finally { await ui.close(); }
 });
 
@@ -317,7 +405,7 @@ test('saved channels are visible and searchable; channel filters and clear filte
   } finally { await ui.close(); }
 });
 
-test('back capture focuses Cost immediately; visible Next controls advance during uploads and AI never steals focus', async () => {
+test('back capture focuses Cost immediately; one Next reveals all channels during uploads and AI never steals focus', async () => {
   const frontUpload = deferred<Response>(), backUpload = deferred<Response>(), identity = deferred<Response>();
   let uploads = 0, identityBody = '', writes = 0;
   const ui = await mount(api({ upload: async () => ++uploads === 1 ? frontUpload.promise : backUpload.promise, identify: async body => { identityBody = body; return identity.promise; }, save: async body => { writes++; return json({ outcome: 'RECORDED', request_id: JSON.parse(body).request_id }); } }));
@@ -330,33 +418,35 @@ test('back capture focuses Cost immediately; visible Next controls advance durin
     await act(async () => { ui.camera().onPricingStart!(); assert.equal(document.activeElement, ui.input('Card acquisition cost')); });
     assert.equal(ui.container.querySelector('form')!.hidden, false);
     assert.equal(ui.input('Card acquisition cost').inputMode, 'decimal');
-    assert.ok(ui.input('Expected sale price per card').closest('[hidden]'));
+    assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
     assert.equal(ui.container.querySelector('button[type="submit"]'), null);
+    assert.deepEqual([...ui.container.querySelectorAll('[aria-label="Inventory entry progress"] li')].map(step => step.textContent), ['1. Cost', '2. Sales channel']);
     await ui.fill('Card acquisition cost', '3.25'); await ui.click('Next');
-    assert.equal(document.activeElement, ui.input('Expected sale price per card'));
-    await ui.fill('Expected sale price per card', '19.50'); await ui.click('Next');
     const choices = [...ui.container.querySelectorAll<HTMLInputElement>('input[name="inventory-sales-channel"]')];
     assert.deepEqual(choices.map(input => input.value), ['', 'Vending machines', 'Stores', 'Kiosks', 'Ten Kings online', 'eBay', 'Whatnot', 'Amazon']);
     assert.ok(choices.every(input => !input.closest('[hidden]'))); assert.equal(writes, 0);
+    assert.equal(document.activeElement, choices[0]); assert.equal(ui.container.querySelector('button[aria-label^="Next:"]'), null);
+    await ui.fill('Sales channel', 'Whatnot'); assert.equal(writes, 0);
     assert.equal(ui.submitButton().disabled, true);
     await act(async () => { ui.camera().onSideReady!('back', back); ui.camera().onPair(front, back); });
     await until(() => uploads === 2);
-    ui.input('Expected sale price per card').focus();
     await act(async () => { backUpload.resolve(json({ photo_key: keyFor(52), photo_url: `${photoUrl}-back` })); frontUpload.resolve(json({ photo_key: keyFor(51), photo_url: `${photoUrl}-front` })); });
     await until(() => !!identityBody);
+    assert.equal(JSON.parse(identityBody).front_photo_key, keyFor(51)); assert.equal(JSON.parse(identityBody).back_photo_key, keyFor(52));
     await ui.fill('Manufacturer', 'Staff manufacturer');
+    const focusedChannel = ui.input('Sales channel'); focusedChannel.focus();
     await act(async () => identity.resolve(json(identification(identityBody))));
     await until(() => !ui.submitButton().disabled);
-    assert.equal(document.activeElement, ui.input('Expected sale price per card'));
-    assert.equal(ui.input('Card acquisition cost').value, '3.25'); assert.equal(ui.input('Expected sale price per card').value, '19.50');
-    assert.equal(ui.input('Manufacturer').value, 'Staff manufacturer'); assert.equal(writes, 0);
-    await ui.fill('Sales channel', 'Whatnot'); assert.equal(writes, 0);
+    assert.equal(document.activeElement, focusedChannel);
+    assert.equal(ui.input('Card acquisition cost').value, '3.25'); assert.equal(ui.input('Sales channel').value, 'Whatnot');
+    assert.equal(ui.input('Manufacturer').value, 'Staff manufacturer'); assert.equal(ui.input('Card number').value, '007'); assert.equal(ui.input('Year').value, '2024'); assert.equal(writes, 0);
+    assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
     await act(async () => ui.submitButton().click()); await until(() => writes === 1 && ui.camera().open);
-    assert.equal(ui.input('Card acquisition cost').value, ''); assert.equal(ui.input('Expected sale price per card').value, ''); assert.equal(ui.input('Sales channel').value, '');
+    assert.equal(ui.input('Card acquisition cost').value, ''); assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null); assert.equal(ui.input('Sales channel').value, '');
   } finally { await ui.close(); }
 });
 
-test('pricing Next rejects malformed and unsafe amounts, preserves blank as unknown, and never saves on the second Next', async () => {
+test('Cost Next rejects malformed and unsafe amounts, preserves blank as unknown, and never implicitly saves', async () => {
   const posts: any[] = [];
   const ui = await mount(api({ save: async body => { const posted = JSON.parse(body); posts.push(posted); return json({ outcome: 'RECORDED', request_id: posted.request_id }); } }));
   try {
@@ -365,12 +455,12 @@ test('pricing Next rejects malformed and unsafe amounts, preserves blank as unkn
       await ui.fill('Card acquisition cost', value); await ui.click('Next');
       assert.equal(ui.input('Card acquisition cost').getAttribute('aria-invalid'), 'true');
       assert.equal(document.activeElement, ui.input('Card acquisition cost'));
-      assert.ok(ui.container.querySelector('button[aria-label="Next: expected sale price"]')); assert.equal(posts.length, 0);
+      assert.ok(ui.container.querySelector('button[aria-label="Next: sales channel"]')); assert.equal(posts.length, 0);
+      assert.equal(ui.container.querySelector('button[type="submit"]'), null);
     }
     await ui.fill('Card acquisition cost', ''); await ui.click('Next');
-    await ui.fill('Expected sale price per card', '-1'); await ui.submit();
-    assert.equal(ui.input('Expected sale price per card').getAttribute('aria-invalid'), 'true'); assert.equal(posts.length, 0);
-    await ui.fill('Expected sale price per card', ''); await ui.click('Next');
+    assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
+    assert.equal(ui.container.querySelector('button[aria-label^="Next:"]'), null);
     assert.equal(ui.submitButton().disabled, false); assert.equal(posts.length, 0, 'Next must not become a submit through synchronous button replacement');
     await act(async () => ui.submitButton().click()); await until(() => posts.length === 1);
     const posted = posts[0]; assert.ok(posted);

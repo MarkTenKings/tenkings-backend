@@ -26,7 +26,7 @@ const data = {
   totals: { on_hand: 0, machine_roster: 0, groups: 0, locations: 0, cost_cents: null, expected_sales_cents: null, expected_profit_cents: null, expected_margin_pct: null, costed_units: 0, priced_units: 0, known_cost_subtotal_cents: 0, value_overflow: false },
 };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
-type SavedCommand = { request_id: string; quantity?: number; total_cost_cents?: number; expected_price_cents?: number; description?: { name: string; category: string }; destination?: { location_id: string; kind: string } };
+type SavedCommand = { request_id: string; quantity?: number; total_cost_cents?: number | null; expected_price_cents?: number | null; description?: { name: string; category: string }; destination?: { location_id: string; kind: string } };
 type SaveReply = (command: SavedCommand, attempt: number) => Response | Promise<Response>;
 
 async function until(check: () => boolean) {
@@ -71,7 +71,7 @@ async function mount(reply: SaveReply = command => json({ request_id: command.re
     // a submit event directly would miss the original silent save regression.
     async submit() { const target = this.form().querySelector<HTMLButtonElement>('button[type="submit"]')!; assert.ok(target); assert.equal(target.disabled, false); await act(async () => target.click()); },
     footerAlert() { const alert = this.form().lastElementChild?.querySelector<HTMLElement>('[role="alert"]'); assert.ok(alert, 'The form must expose its error beside the save controls'); return alert; },
-    async valid() { await this.fill('Card name', 'Synthetic validation card'); await this.fill('Category', 'Sports cards'); await this.fill('Current location', locationId); await this.fill('Card acquisition cost', '10.00'); await this.fill('Expected sale price per card', '25.00'); },
+    async valid() { await this.fill('Card name', 'Synthetic validation card'); await this.fill('Category', 'Sports cards'); await this.fill('Current location', locationId); await this.fill('Card acquisition cost', '10.00'); assert.equal(container.querySelector('[aria-label="Expected sale price per card"]'), null); },
     async date(value: string) { const summary = [...this.form().querySelectorAll('summary')].find(e => e.textContent?.startsWith('More details'))!; await act(async () => summary.click()); await this.fill('Entry date and time', value); await act(async () => summary.click()); assert.equal(this.input('Entry date and time').closest('details')?.open, false); },
     async close() { await act(async () => root.unmount()); dom.window.close(); for (const [key, descriptor] of previous) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); },
   };
@@ -83,7 +83,6 @@ test('a real save click exposes every missing required field instead of being in
   try {
     await ui.date('');
     await ui.fill('Card acquisition cost', '10.00');
-    await ui.fill('Expected sale price per card', '25.00');
     await ui.submit();
     assert.equal(ui.submits(), 1, 'The app must receive a real submit even when required fields are empty');
     assert.equal(ui.posts.length, 0);
@@ -92,7 +91,7 @@ test('a real save click exposes every missing required field instead of being in
     assert.equal(ui.input('Entry date and time').closest('details')?.open, true, 'Every invalid disclosure must open, including later fields');
     await until(() => document.activeElement === ui.input('Card name'));
     assert.equal(ui.input('Card acquisition cost').value, '10.00');
-    assert.equal(ui.input('Expected sale price per card').value, '25.00');
+    assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
   } finally { await ui.close(); }
 });
 
@@ -108,7 +107,7 @@ test('missing GPS destination is explained and manual selection allows the same 
     await ui.fill('Current location', locationId); await ui.submit();
     await until(() => captureProps.open);
     assert.equal(ui.posts.length, 1); assert.equal(ui.posts[0].destination?.location_id, locationId); assert.equal(ui.posts[0].destination?.kind, 'hq');
-    assert.equal(ui.posts[0].total_cost_cents, 1000); assert.equal(ui.posts[0].expected_price_cents, 2500);
+    assert.equal(ui.posts[0].total_cost_cents, 1000); assert.equal(ui.posts[0].expected_price_cents, null);
     assert.equal(captureProps.autoStartCamera, false, 'Async receipt must not request a new camera permission');
   } finally { await ui.close(); }
 });
@@ -141,6 +140,7 @@ test('batch quantity remains bounded when browser validation no longer intercept
   const ui = await mount();
   try {
     await ui.valid(); await ui.click('Batch of cards');
+    assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
     const quantity = ui.form().querySelector<HTMLInputElement>('input[type="number"]')!;
     assert.ok(quantity);
     for (const value of ['', '2001']) {
@@ -149,20 +149,20 @@ test('batch quantity remains bounded when browser validation no longer intercept
     }
     await ui.fill(quantity.getAttribute('aria-label')!, '3'); await ui.submit();
     await until(() => !ui.container.querySelector('form'));
-    assert.equal(ui.posts.length, 1); assert.equal(ui.posts[0].quantity, 3); assert.equal(ui.posts[0].total_cost_cents, 1000);
+    assert.equal(ui.posts.length, 1); assert.equal(ui.posts[0].quantity, 3); assert.equal(ui.posts[0].total_cost_cents, 1000); assert.equal(ui.posts[0].expected_price_cents, null);
   } finally { await ui.close(); }
 });
 
-for (const [label, invalid, cents] of [['Card acquisition cost', '10.000', 1000], ['Expected sale price per card', '25,00', 2500]] as const) test(`invalid ${label.toLowerCase()} remains editable with a visible error and corrected values save`, async () => {
+for (const invalid of ['10.000', '10,00', '-1', '90071992547409.92']) test(`invalid acquisition cost ${invalid} remains editable with a visible error and corrected values save`, async () => {
   const ui = await mount();
   try {
-    await ui.valid(); await ui.fill(label, invalid); await ui.submit();
+    await ui.valid(); await ui.fill('Card acquisition cost', invalid); await ui.submit();
     assert.equal(ui.posts.length, 0); ui.footerAlert();
-    assert.equal(ui.input(label).getAttribute('aria-invalid'), 'true');
-    await until(() => document.activeElement === ui.input(label));
-    await ui.fill(label, (cents / 100).toFixed(2)); await ui.submit();
+    assert.equal(ui.input('Card acquisition cost').getAttribute('aria-invalid'), 'true');
+    await until(() => document.activeElement === ui.input('Card acquisition cost'));
+    await ui.fill('Card acquisition cost', '10.00'); await ui.submit();
     await until(() => captureProps.open); assert.equal(ui.posts.length, 1);
-    assert.equal(ui.posts[0].total_cost_cents, 1000); assert.equal(ui.posts[0].expected_price_cents, 2500);
+    assert.equal(ui.posts[0].total_cost_cents, 1000); assert.equal(ui.posts[0].expected_price_cents, null);
   } finally { await ui.close(); }
 });
 
@@ -218,11 +218,11 @@ test('camera entry shows GPS refinement and reuses the refined location across c
     for (const name of ['First synthetic card', 'Second synthetic card']) {
       await ui.click('Close camera fixture');
       await ui.fill('Card name', name); await ui.fill('Category', 'Sports cards');
-      await ui.fill('Card acquisition cost', '10.00'); await ui.fill('Expected sale price per card', '25.00');
+      await ui.fill('Card acquisition cost', '10.00'); assert.equal(ui.container.querySelector('[aria-label="Expected sale price per card"]'), null);
       await ui.submit(); await until(() => captureProps.open);
       assert.equal(ui.input('Current location').value, locationId);
       assert.equal(captureProps.autoStartCamera, false);
     }
-    assert.equal(ui.posts.length, 2); assert.equal(watches, 1); assert.deepEqual(cleared, [41]);
+    assert.equal(ui.posts.length, 2); assert.ok(ui.posts.every(post => post.expected_price_cents === null && post.total_cost_cents === 1000)); assert.equal(watches, 1); assert.deepEqual(cleared, [41]);
   } finally { await ui.close(); }
 });

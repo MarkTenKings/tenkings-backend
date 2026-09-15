@@ -388,7 +388,7 @@ export default function StaffInventoryCardCapture({ open, cycle, disabled = fals
             {!delivered && <button type="button" className={styles.textButton} disabled={busy || disabled} onClick={() => retake(photoSide)}>Retake {photoSide}</button>}
           </div>)}
         </div>}
-        <div aria-live="polite" role="status" className={styles.status}>{busy ? source === 'library' ? 'Preparing photo…' : 'Capturing photo…' : delivered ? 'Both sides are ready. Continue with the card details.' : side === 'back' ? 'Front captured. One more photo and your card details will fill in.' : 'Two quick photos. Then review the details and add your prices.'}</div>
+        <div aria-live="polite" role="status" className={styles.status}>{busy ? source === 'library' ? 'Preparing photo…' : 'Capturing photo…' : delivered ? 'Both sides are ready. Continue with the card details.' : side === 'back' ? 'Front captured. One more photo and your card details will fill in.' : 'Two quick photos. Then enter the cost and choose a sales channel.'}</div>
         {locationStatus && <p className={styles.locationStatus} role="status">{locationStatus}</p>}
         {error && <p role="alert" className={styles.error}>{error}</p>}
       </div>
