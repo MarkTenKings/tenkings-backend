@@ -4,6 +4,7 @@ import { flushSync } from 'react-dom';
 import Link from 'next/link';
 import type { StaffInventoryCommand, StaffInventoryWorkspace as Workspace } from '@tenkings/database';
 import { prepareStaffInventoryPhoto, STAFF_INVENTORY_PHOTO_ACCEPT } from '../../lib/inventoryPhotoUpload';
+import { saveStaffInventoryPhoto } from '../../lib/staffInventoryPhotoRequest';
 import StaffInventoryLocationBrowser from './StaffInventoryLocationBrowser';
 import { createStaffInventoryPointCache, parseStaffInventoryMapPointResponse, type StaffInventoryMapLocation } from '../../lib/staffInventoryLocationsMap';
 import StaffInventoryCardCapture from './StaffInventoryCardCapture';
@@ -20,7 +21,7 @@ type Pending = StaffInventoryCommand | { action: 'location'; request_id: string;
 type PhotoSide = 'front' | 'back';
 type UploadedPhoto = { photo_key: string; photo_url: string };
 type SideUploadResult = { ok: true; photo: UploadedPhoto } | { ok: false };
-type SideUpload = { file: File; controller: AbortController; promise: Promise<SideUploadResult>; result?: SideUploadResult };
+type SideUpload = { file: File; uploadId: string; controller: AbortController; promise: Promise<SideUploadResult>; result?: SideUploadResult };
 type PricingStep = 'cost' | 'channel' | null;
 const API = '/api/v2/admin/inventory/workspace';
 const money = (n: number | null | undefined) => n == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n / 100);
@@ -341,22 +342,17 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     if (previous?.file === file && (!retryFailed || previous.result?.ok !== false)) return previous.promise;
     previous?.controller.abort();
     const attempt = photoAttempt.current, controller = new AbortController();
-    const job: SideUpload = { file, controller, promise: Promise.resolve({ ok: false }) };
+    const job: SideUpload = { file, uploadId: previous?.file === file ? previous.uploadId : crypto.randomUUID(), controller, promise: Promise.resolve({ ok: false }) };
     sideUploads.current[side] = job;
     photoLock.current = true; setUploading(true);
     job.promise = (async (): Promise<SideUploadResult> => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
       const current = () => active.current && attempt === photoAttempt.current && sideUploads.current[side] === job && !controller.signal.aborted;
       try {
         const prepared = await prepareStaffInventoryPhoto(file, { signal: controller.signal });
         if (!current()) return { ok: false };
-        timer = setTimeout(() => controller.abort(), 35000);
-        const response = await fetch('/api/v2/admin/inventory/photo', { method: 'POST', headers, signal: controller.signal, body: JSON.stringify({ image: prepared.image }) });
-        const result = await response.json();
-        if (!current() || !response.ok || typeof result.photo_key !== 'string' || !result.photo_key || typeof result.photo_url !== 'string' || !result.photo_url) return { ok: false };
-        return { ok: true, photo: { photo_key: result.photo_key, photo_url: result.photo_url } };
+        const photo = await saveStaffInventoryPhoto({ image: prepared.image, uploadId: job.uploadId, headers, signal: controller.signal });
+        return current() ? { ok: true, photo } : { ok: false };
       } catch { return { ok: false }; }
-      finally { clearTimeout(timer); }
     })().then(result => { job.result = result; return result; });
     return job.promise;
   }

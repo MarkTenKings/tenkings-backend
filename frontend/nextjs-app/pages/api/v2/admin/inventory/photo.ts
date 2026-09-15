@@ -43,8 +43,13 @@ export function createStaffInventoryPhotoHandler(deps: {
       if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); return res.status(405).json({ message: 'Method not allowed' }); }
       // The existing local storage mode writes into public/. Staff photos require private S3.
       if (deps.storageMode() !== 's3') return res.status(503).json({ message: 'Private photo storage is unavailable. Your inventory entry is preserved.' });
+      const uploadId: unknown = req.body?.upload_id;
+      if (uploadId !== undefined && (typeof uploadId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uploadId))) throw new InvalidPhotoError();
       const { photo, checksum } = await prepareInventoryPhoto(req.body?.image);
-      const key = `inventory-photos/${randomUUID()}/${checksum}.jpg`;
+      const key = `inventory-photos/${uploadId ?? randomUUID()}/${checksum}.jpg`;
+      // A delayed/lost response must not require another storage object. The
+      // checksum still binds retries to the independently normalized exact JPEG.
+      if (uploadId && await deps.verifyPhoto(key)) return res.status(200).json({ photo_key: key, photo_url: await deps.sign(key) });
       await deps.upload(key, photo, 'image/jpeg', { checksumSha256: checksum, cacheControl: 'private, no-store' });
       if (!await deps.verifyPhoto(key)) throw new Error('Stored inventory photo could not be verified.');
       return res.status(200).json({ photo_key: key, photo_url: await deps.sign(key) });

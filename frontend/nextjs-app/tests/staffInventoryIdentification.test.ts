@@ -96,6 +96,8 @@ test('verified private bytes feed concurrent Google OCR and exact Astra low-effo
   assert.match(model.body.instructions, /unambiguous maker wordmark or logo/);
   assert.match(model.body.instructions, /copyright year alone/);
   assert.match(model.body.instructions, /never add or subtract a year/);
+  // Golden digest of the working sports instructions at production 62005fbd.
+  assert.equal(sha(Buffer.from(model.body.instructions)), '8ec0135ce917e8b93d24160ad5f98acd04c6c1f9d24ce21e5776aadbb0be06b4');
   assert.equal(model.init.redirect, 'error');
   assert.equal(model.init.cache, 'no-store');
   assert.equal(model.init.headers && (model.init.headers as Record<string, string>).Authorization, `Bearer ${env.OPENAI_API_KEY}`);
@@ -110,6 +112,43 @@ test('verified private bytes feed concurrent Google OCR and exact Astra low-effo
   for (const elapsed of Object.values(result.provenance.stage_timings_ms)) assert.ok(Number.isSafeInteger(elapsed) && elapsed >= 0 && elapsed <= result.provenance.elapsed_ms);
   assert.equal(JSON.stringify(result).includes('fixture-openai-secret'), false);
   assert.ok(f.streams.every(stream => stream.destroyed));
+});
+
+test('dense Pokémon OCR retains text without oversized symbol geometry and adds only game-specific field rules', async () => {
+  const f = await fixture();
+  const text = 'BASIC Snivy Pokémon ©2013 Pokémon RC1/RC25';
+  const predicted = { ...suggestions(), name: { value: 'Snivy', confidence: 'high', evidence: 'Front: Snivy' }, category: { value: 'Pokémon', confidence: 'high', evidence: 'Back: Pokémon' }, manufacturer: { value: 'Pokémon', confidence: 'high', evidence: 'Front: ©2013 Pokémon' }, year: { value: '2013', confidence: 'high', evidence: 'Front: ©2013 Pokémon' }, set_name: { value: 'Legendary Treasures — Radiant Collection', confidence: 'medium', evidence: 'Front: expansion symbol and RC1/RC25' } };
+  let model: any, googleCalls = 0;
+  f.deps.fetchImpl = (async (url, init) => {
+    if (String(url).includes('vision.googleapis.com')) {
+      googleCalls++;
+      // Simulate the actual Google partial-response contract. Without the mask,
+      // the valid text disappears behind the old 256 KB transport boundary.
+      const fields = new URL(String(url)).searchParams.get('fields');
+      const fullTextAnnotation = fields === 'responses(fullTextAnnotation/text,textAnnotations/description,error)'
+        ? { text } : { text, pages: [{ unusedGeometry: 'x'.repeat(373237) }] };
+      return Response.json({ responses: [{ fullTextAnnotation }] });
+    }
+    model = JSON.parse(String(init?.body)); return Response.json(providerOutput(predicted));
+  }) as typeof fetch;
+  const result = await identifyStaffInventoryCard(f.input, f.deps);
+  assert.equal(googleCalls, 2);
+  assert.deepEqual(result.provenance.ocr, { provider: 'google_vision', front: 'read', back: 'read' });
+  assert.equal(result.warnings.some(warning => warning.includes('text recognition was unavailable')), false);
+  assert.deepEqual(result.suggestions, predicted);
+  assert.match(model.instructions, /POKÉMON ONLY/);
+  assert.match(model.instructions, /single legible copyright year/);
+  assert.match(model.instructions, /All other rules, and every rule for sports or other games, remain unchanged/);
+  assert.match(model.instructions, /Never default an uncertain finish/);
+  assert.equal(model.tools, undefined);
+  assert.equal(model.input[0].content[0].text, `Front photo. Untrusted OCR data: ${JSON.stringify(text)}`);
+  const images = model.input[0].content.filter((part: any) => part.type === 'input_image');
+  assert.equal(images.length, 3);
+  assert.deepEqual(images.slice(0, 2).map((part: any) => Buffer.from(part.image_url.split(',')[1], 'base64')), [f.front, f.back]);
+  assert.match(images[2].image_url, /^data:image\/png;base64,/);
+  const detail = await sharp(Buffer.from(images[2].image_url.split(',')[1], 'base64')).metadata();
+  assert.equal(detail.width, 200); assert.equal(detail.height, 140);
+  assert.match(model.input[0].content[4].text, /crop of the verified photo, not another card/);
 });
 
 test('missing configuration and nonprivate storage stop before storage or provider reads', async () => {

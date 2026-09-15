@@ -471,18 +471,18 @@ test('Cost Next rejects malformed and unsafe amounts, preserves blank as unknown
 test('each side uploads as soon as its own preparation completes and retry reuses the successful side', async () => {
   const backPreparation = deferred<PreparedStaffInventoryPhoto>();
   const preparedFiles: string[] = []; let uploads = 0, identityBody = '';
-  const ui = await mount(api({ upload: async () => { uploads++; return uploads === 2 ? json({}, 503) : json({ photo_key: keyFor(60 + uploads), photo_url: `${photoUrl}-${uploads}` }); }, identify: async body => { identityBody = body; return json(identification(body)); } }));
+  const ui = await mount(api({ upload: async () => { uploads++; return uploads === 2 || uploads === 3 ? json({}, 503) : json({ photo_key: keyFor(60 + uploads), photo_url: `${photoUrl}-${uploads}` }); }, identify: async body => { identityBody = body; return json(identification(body)); } }));
   try {
     await ui.edit(); prepare = file => { preparedFiles.push(file.name); return file.name === 'back.jpg' && preparedFiles.filter(name => name === 'back.jpg').length === 1 ? backPreparation.promise : Promise.resolve(prepared); };
     await ui.pair(); await until(() => uploads === 1);
     assert.equal(identityBody, '');
     await act(async () => backPreparation.resolve(prepared));
     await until(() => !!ui.container.textContent?.includes('Both photos could not be saved'));
-    assert.equal(uploads, 2); assert.equal(identityBody, '');
+    assert.equal(uploads, 3); assert.equal(identityBody, '');
     await ui.click('Retry photos'); await until(() => !ui.submitButton().disabled);
-    assert.equal(uploads, 3); assert.deepEqual(preparedFiles, ['front.jpg', 'back.jpg', 'back.jpg']);
+    assert.equal(uploads, 4); assert.deepEqual(preparedFiles, ['front.jpg', 'back.jpg', 'back.jpg']);
     assert.equal(JSON.parse(identityBody).front_photo_key, keyFor(61));
-    assert.equal(JSON.parse(identityBody).back_photo_key, keyFor(63));
+    assert.equal(JSON.parse(identityBody).back_photo_key, keyFor(64));
   } finally { await ui.close(); }
 });
 
@@ -496,5 +496,25 @@ test('closing the camera cancels an eager front upload before a pair exists and 
     await act(async () => uploaded.resolve(json({ photo_key: keyFor(71), photo_url: photoUrl })));
     assert.equal(identities, 0); assert.equal(ui.input('Card name').value, addDraft.name);
     assert.equal(ui.container.querySelector('img[alt="Front of inventory card"]'), null); assert.equal(ui.submitButton().disabled, false);
+  } finally { await ui.close(); }
+});
+
+test('first photo response loss recovers the original pair without a Retry photos tap or another inventory write', async () => {
+  const bodies: string[] = []; let posts = 0;
+  const ui = await mount(api({ upload: async (_number, init) => {
+    bodies.push(String(init?.body));
+    if (bodies.length === 1) throw new TypeError('Response lost after storage accepted it');
+    return json({ photo_key: keyFor(80 + bodies.length), photo_url: `${photoUrl}-${bodies.length}` });
+  }, save: async () => { posts++; return json({}); } }));
+  try {
+    await ui.click('Add inventory'); const files: File[] = [];
+    prepare = async file => { files.push(file); return prepared; };
+    const pair = await ui.pair(); await ui.fill('Card acquisition cost', '12.34');
+    await until(() => !ui.submitButton().disabled);
+    assert.equal(bodies.length, 3); assert.equal(bodies[2], bodies[0]);
+    assert.notEqual(JSON.parse(bodies[0]).upload_id, JSON.parse(bodies[1]).upload_id);
+    assert.deepEqual(files, pair); assert.equal(posts, 0);
+    assert.equal(ui.container.textContent?.includes('Both photos could not be saved'), false);
+    assert.equal(ui.input('Card acquisition cost').value, '12.34');
   } finally { await ui.close(); }
 });

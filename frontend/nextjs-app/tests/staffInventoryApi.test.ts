@@ -256,6 +256,28 @@ test('photo upload forces private/no-store storage and verifies the stored objec
   assert.equal(denied.result.code, 403);
 });
 
+test('photo retry verifies and reuses the same exact stored JPEG without another upload', async () => {
+  const bytes = await sharp({ create: { width: 10, height: 14, channels: 3, background: 'white' } }).png().toBuffer();
+  const body = { image: `data:image/png;base64,${bytes.toString('base64')}`, upload_id: UUID };
+  const stored = new Set<string>(); let uploads = 0, signs = 0;
+  const handler = createStaffInventoryPhotoHandler({
+    requireAdmin: async () => ADMIN, storageMode: () => 's3',
+    upload: async key => { uploads++; stored.add(key); return { storageKey: key }; },
+    verifyPhoto: async key => stored.has(key), sign: async () => { signs++; return 'https://fixture.invalid/private'; },
+  });
+  const first = response(), retry = response();
+  await handler(request('POST', body), first.res); await handler(request('POST', body), retry.res);
+  assert.equal(first.result.code, 200); assert.deepEqual(retry.result.body, first.result.body);
+  assert.equal(uploads, 1); assert.equal(signs, 2); assert.match(first.result.body.photo_key, new RegExp(`^inventory-photos/${UUID}/[a-f0-9]{64}\\.jpg$`));
+  const different = await sharp({ create: { width: 10, height: 14, channels: 3, background: 'blue' } }).png().toBuffer();
+  const changed = response(); await handler(request('POST', { ...body, image: `data:image/png;base64,${different.toString('base64')}` }), changed.res);
+  assert.equal(changed.result.code, 200); assert.notEqual(changed.result.body.photo_key, first.result.body.photo_key); assert.equal(uploads, 2);
+  for (const upload_id of [null, '', '../outside', `${UUID}/other`, {}, '00000000-0000-0000-0000-000000000000']) {
+    const invalid = response(); await handler(request('POST', { ...body, upload_id }), invalid.res); assert.equal(invalid.result.code, 400);
+  }
+  assert.equal(uploads, 2);
+});
+
 test('private evidence uploads pass cancellation to storage and reject a late success', async () => {
   const bytes = Buffer.from('private evidence'), controller = new AbortController();
   const checksumSha256 = createHash('sha256').update(bytes).digest('hex');
