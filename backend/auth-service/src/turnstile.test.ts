@@ -129,3 +129,28 @@ test("rejects missing or oversized tokens without calling Siteverify", async () 
   assert.equal(missing.success, false);
   assert.equal(oversized.success, false);
 });
+
+test('explicit additional hosts preserve the existing collect/legacy hostname', async () => {
+  const { resolveTurnstileHostnames } = await import('./turnstile.js');
+  assert.deepEqual(resolveTurnstileHostnames(), ['collect.tenkings.co']);
+  assert.deepEqual(resolveTurnstileHostnames(undefined, 'tenkings.co,preview.tenkings.co'), ['collect.tenkings.co', 'tenkings.co', 'preview.tenkings.co']);
+  assert.deepEqual(resolveTurnstileHostnames('other.example', 'TENKINGS.CO,tenkings.co'), ['other.example', 'tenkings.co']);
+  for (const value of ['', '*.tenkings.co', 'https://tenkings.co', 'tenkings.co/path', 'tenkings.co:443', 'tenkings.co,', '-bad.tenkings.co', 'tenkings..co']) assert.deepEqual(resolveTurnstileHostnames(undefined, value), []);
+});
+
+test('multi-origin login checks exact provider host and action, without trusting subdomains', async () => {
+  const allowedHostnames = ['collect.tenkings.co', 'tenkings.co', 'preview.tenkings.co'];
+  for (const hostname of [...allowedHostnames, 'TENKINGS.CO']) {
+    assert.equal((await verifyTurnstileToken({ secretKey: 'secret', token: 'token', allowedHostnames, fetchImpl: responseWith({ success: true, hostname, action: TURNSTILE_SEND_CODE_ACTION }) })).success, true);
+  }
+  for (const hostname of ['www.tenkings.co', 'tenkings.co.evil.example', 'evil.tenkings.co', '', undefined, 'tenkings.co.']) {
+    assert.equal((await verifyTurnstileToken({ secretKey: 'secret', token: 'token', allowedHostnames, fetchImpl: responseWith({ success: true, hostname, action: TURNSTILE_SEND_CODE_ACTION }) })).success, false);
+  }
+  assert.deepEqual(await verifyTurnstileToken({ secretKey: 'secret', token: 'token', allowedHostnames, fetchImpl: responseWith({ success: true, hostname: 'tenkings.co', action: 'other' }) }), { success: false, reason: 'action-mismatch', errorCodes: [] });
+});
+
+test('missing or malformed allowed-host configuration fails before provider work', async () => {
+  for (const allowedHostnames of [[], ['*.tenkings.co'], ['tenkings.co', ''], ['https://tenkings.co']]) {
+    assert.deepEqual(await verifyTurnstileToken({ secretKey: 'secret', token: 'token', allowedHostnames, fetchImpl: async () => { assert.fail('invalid host config must not reach provider'); } }), { success: false, reason: 'hostname-mismatch', errorCodes: [] });
+  }
+});

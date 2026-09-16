@@ -5,7 +5,7 @@ import { z } from "zod";
 import crypto from "node:crypto";
 import { prisma, Prisma } from "@tenkings/database";
 import { buildAuthSessionResponse } from "./authSessionResponse.js";
-import { TURNSTILE_SEND_CODE_ACTION, verifyTurnstileToken } from "./turnstile.js";
+import { TURNSTILE_SEND_CODE_ACTION, resolveTurnstileHostnames, verifyTurnstileToken } from "./turnstile.js";
 
 const app = express();
 const port = process.env.PORT ? Number(process.env.PORT) : 8080;
@@ -15,7 +15,7 @@ const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
 const turnstileSecretKey = process.env.TURNSTILE_SECRET_KEY?.trim();
-const turnstileExpectedHostname = (process.env.TURNSTILE_EXPECTED_HOSTNAME?.trim() || "collect.tenkings.co").toLowerCase();
+const turnstileAllowedHostnames = resolveTurnstileHostnames(process.env.TURNSTILE_EXPECTED_HOSTNAME, process.env.TURNSTILE_ALLOWED_HOSTNAMES);
 const parsedTtl = process.env.SESSION_TTL_HOURS ? Number(process.env.SESSION_TTL_HOURS) : 720;
 const sessionTtlHours = Number.isFinite(parsedTtl) && parsedTtl > 0 ? parsedTtl : 720;
 
@@ -88,7 +88,7 @@ app.post(["/auth/send-code", "/send-code"], async (req, res) => {
     const turnstile = await verifyTurnstileToken({
       secretKey: turnstileSecretKey,
       token: turnstileToken,
-      expectedHostname: turnstileExpectedHostname,
+      allowedHostnames: turnstileAllowedHostnames,
       expectedAction: TURNSTILE_SEND_CODE_ACTION,
     });
 
