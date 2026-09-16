@@ -15,11 +15,11 @@ const compiled = babel.transformSync(readFileSync(new URL('../components/ManualC
 }).code;
 const key = 'atlas-connected-command:reviewer:card';
 const command = { path: '/api/staff/manual-connected/cards/card/details', body: { actionId: 'first', expectedRevision: 1, changes: { name: 'First' } } };
-const storage = () => { const values = new Map([[key, JSON.stringify(command)]]); return {
+const storage = (initial = command) => { const values = new Map(initial ? [[key, JSON.stringify(initial)]] : []); return {
   getItem: k => values.get(k) ?? null, setItem: (k, v) => values.set(k, v), removeItem: k => values.delete(k),
 }; };
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-function harness(store, post) {
+function harness(store, post, { readCard } = {}) {
   const slots = [], effects = []; let cursor = 0, tree;
   const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment',
     useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = initial; return [slots[i], next => { slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; },
@@ -42,18 +42,22 @@ function harness(store, post) {
       if (name === '../lib/manual-defect-analysis-client.mjs') return defectAnalysisClient;
       if (name === '../lib/manual-client.mjs') return { manualMessage: () => 'Retained', manualRequest: async (path, options = {}) => {
         if (options.method === 'POST') return post(path, options);
-        return path.endsWith('/session') ? { staff: { id: 'reviewer' }, csrf: 'csrf' } : card;
+        return path.endsWith('/session') ? { staff: { id: 'reviewer' }, csrf: 'csrf' } : readCard ? readCard() : card;
       } };
       return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
     },
   });
   const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
-  function find(node, label) {
-    if (Array.isArray(node)) { for (const child of node) { const hit = find(child, label); if (hit) return hit; } }
-    else if (node && typeof node === 'object') { if (node.type === 'button' && text(node) === label) return node; return find(node.props?.children, label); }
+  function find(node, matches) {
+    if (Array.isArray(node)) { for (const child of node) { const hit = find(child, matches); if (hit) return hit; } }
+    else if (node && typeof node === 'object') { if (matches(node)) return node; return find(node.props?.children, matches); }
   }
+  const button = label => find(tree, node => node.type === 'button' && text(node) === label);
+  const field = label => find(tree, node => node.props?.['aria-label'] === label);
   const render = () => { cursor = 0; tree = exports.default({ staff: { id: 'reviewer', role: 'REVIEWER' }, cardId: 'card' }); for (const effect of effects.splice(0)) effect(); };
-  return { render, click(label) { const button = find(tree, label); assert.ok(button, label); button.props.onClick(); }, has(label) { return Boolean(find(tree, label)); } };
+  return { render, click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
+    has(label) { return Boolean(button(label)); }, field,
+    change(label, value) { const target = field(label); assert.ok(target, label); target.props.onChange({ target: { value } }); } };
 }
 
 for (const status of [200, 409]) test(`actual photo/details recovery preserves a newer uncertain save after an older ${status} reply`, async () => {
@@ -88,4 +92,60 @@ test('an unavailable photo/details reply retains the exact original request for 
   f.render(); await flush(); f.render(); f.click('Resume saved request'); await flush(); f.render();
   assert.equal(store.getItem(key), original);
   assert.equal(f.has('Resume saved request'), true);
+});
+
+const pokemonCard = () => ({ revision: 7,
+  card: { ready: true, sourceHash: 'pokemon-source', sides: { FRONT: { version: 1 }, BACK: { version: 1 } } },
+  identification: { state: 'COMPLETE' },
+  details: { profile: 'POKEMON', layoutType: 'TRAINER', fields: { name: 'Saved name', set_name: 'Saved set' } },
+});
+
+for (const { label, field } of [
+  { label: 'Card family', field: 'profile' },
+  { label: 'Pokémon layout', field: 'layoutType' },
+]) test(`actual card details keep a cleared saved ${field} blank and save explicit null`, async () => {
+  const store = storage(null), posts = []; let card = pokemonCard();
+  const f = harness(store, async (path, options) => {
+    posts.push({ path, body: JSON.parse(JSON.stringify(options.body)) });
+    card = { ...card, revision: 8, details: { ...card.details, [field]: null } };
+    return {};
+  }, { readCard: () => card });
+  f.render(); await flush(); f.render();
+  assert.equal(f.field('Card family').props.value, 'POKEMON');
+  assert.equal(f.field('Pokémon layout').props.value, 'TRAINER');
+  f.change(label, ''); f.render();
+  assert.equal(f.field(label).props.value, '', 'the explicit clear must not fall back to the saved value');
+  assert.equal(Boolean(f.field('Pokémon layout')), field !== 'profile', 'layout visibility follows the edited family');
+  f.click('Save details'); await flush(); f.render();
+  assert.equal(posts.length, 1);
+  assert.match(posts[0].body.actionId, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(posts[0], { path: '/api/staff/manual-connected/cards/card/details',
+    body: { actionId: posts[0].body.actionId, expectedRevision: 7, changes: { [field]: null } } });
+  assert.equal(f.field(label).props.value, '');
+  assert.equal(store.getItem(key), null, 'the acknowledged clear completes its exact command');
+});
+
+test('actual pending null selections and empty text survive a later recognition refresh', async () => {
+  const store = storage(null), posts = []; let finishIdentification;
+  let card = { ...pokemonCard(), identification: { state: 'NOT_STARTED' } };
+  const f = harness(store, async (path, options) => {
+    if (path.endsWith('/identify')) return new Promise(resolve => { finishIdentification = resolve; });
+    posts.push({ path, body: JSON.parse(JSON.stringify(options.body)) });
+    return {};
+  }, { readCard: () => card });
+  f.render(); await flush(); f.render();
+  assert.equal(typeof finishIdentification, 'function', 'recognition is in flight while details are editable');
+  f.change('Pokémon layout', ''); f.change('Card family', ''); f.change('Name', ''); f.render();
+  card = { ...pokemonCard(), revision: 9, details: { ...pokemonCard().details,
+    fields: { name: 'Recognized name', set_name: 'Recognized set' } } };
+  finishIdentification({}); await flush(); f.render();
+  assert.equal(f.field('Card family').props.value, '');
+  assert.equal(f.field('Pokémon layout'), undefined);
+  assert.equal(f.field('Name').props.value, '');
+  assert.equal(f.field('Product / set').props.value, 'Recognized set', 'untouched fields receive the new recognition');
+  f.click('Save details'); await flush(); f.render();
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0], { path: '/api/staff/manual-connected/cards/card/details',
+    body: { actionId: posts[0].body.actionId, expectedRevision: 9,
+      changes: { layoutType: null, profile: null, name: '' } } });
 });

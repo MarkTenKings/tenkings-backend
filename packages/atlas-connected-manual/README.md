@@ -61,7 +61,16 @@ approval separately records the exact computed report hash and immutable artifac
 Earlier approvals remain history after later changes.
 
 Identification uses a unique card/pair claim and exact immutable request/reply
-artifacts. It issues two OCR calls and the unchanged shared identifier request.
+artifacts. New attempts persist `card-identification-v2` in the immutable input
+envelope before dispatch; historical bare inputs and saved results retain V1
+validation. Unknown or mismatched versions fail without provider fallback.
+The shared V2 identifier issues two OCR calls with Google's text-only response
+selection and one Astra request. Sports requests retain their original bytes;
+Pokémon OCR hints add the reviewed instructions and an internally derived lower
+Front PNG with exact interpretation-image provenance. Grading originals remain
+unchanged. The request artifact retains the exact serialized envelope/model
+request and its hash, including the crop bytes; provider transport sends the
+OCR envelope's body and response-fields query separately.
 Missing provider results become UNKNOWN and do not automatically redispatch.
 The narrow append-receipt function can retain a matching already-dispatched
 response after staff expiry, without authorizing adoption or new provider work.

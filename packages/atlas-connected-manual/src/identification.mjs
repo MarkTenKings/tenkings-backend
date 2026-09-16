@@ -1,7 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
-import { identifyCard, parseCardIdentificationInput, parseCardIdentificationResult } from '@tenkings/card-identification-core';
-import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
+import { CARD_IDENTIFICATION_VERSION, parseCardIdentificationInput, parseCardIdentificationResult } from '@tenkings/card-identification-core';
+import { CARD_IDENTIFICATION_VERSION_V2, CARD_IDENTIFICATION_GOOGLE_TEXT_FIELDS_V2,
+  identifyCardV2, parseCardIdentificationResultV2 } from '@tenkings/card-identification-core/v2';
+import { canonical, digest, object, requireThat } from '@atlas/manual-service/contract';
+
+// Input is immutable in PostgreSQL. Historical bare inputs keep V1 semantics;
+// new attempts bind V2 before any dispatch. Never infer a version from a reply.
+function storedInput(row) {
+  const saved = JSON.parse(row.input);
+  if (saved && Object.hasOwn(saved, 'engineVersion')) {
+    object(saved, ['engineVersion', 'input']);
+    requireThat(saved.engineVersion === CARD_IDENTIFICATION_VERSION_V2, 503, 'IDENTIFICATION_VERSION_UNSUPPORTED');
+    return { engineVersion: saved.engineVersion, input: parseCardIdentificationInput(saved.input), parseResult: parseCardIdentificationResultV2 };
+  }
+  return { engineVersion: CARD_IDENTIFICATION_VERSION, input: parseCardIdentificationInput(saved), parseResult: parseCardIdentificationResult };
+}
 
 // Only HTTP and credentials live here. The shared engine owns every prompt,
 // schema, model setting and OCR/model deadline. SDK retries are not used.
@@ -17,7 +31,18 @@ export function identificationEffects({ openaiKey, googleKey, fetchImpl=fetch })
       return {bytes,status:response.status};
     } finally {await reader.cancel().catch(()=>{});}
   }
-  return { ocr:(request,context)=>send('https://vision.googleapis.com/v1/images:annotate',request,{'X-Goog-Api-Key':googleKey},context.signal),
+  return { ocr:(request,context)=>{
+      const version=context.engineVersion ?? CARD_IDENTIFICATION_VERSION;
+      requireThat([CARD_IDENTIFICATION_VERSION,CARD_IDENTIFICATION_VERSION_V2].includes(version),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
+      const url=new URL('https://vision.googleapis.com/v1/images:annotate');
+      let body=request;
+      if(version===CARD_IDENTIFICATION_VERSION_V2){
+        object(request,['body','responseFields']);
+        requireThat(request.responseFields===CARD_IDENTIFICATION_GOOGLE_TEXT_FIELDS_V2,503,'IDENTIFICATION_OCR_FIELDS_INVALID');
+        url.searchParams.set('fields',request.responseFields);body=request.body;
+      }
+      return send(url.href,body,{'X-Goog-Api-Key':googleKey},context.signal);
+    },
     model:(request,context)=>send('https://api.openai.com/v1/responses',request,{Authorization:`Bearer ${openaiKey}`},context.signal) };
 }
 
@@ -41,14 +66,15 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
   }
   async function project(staff,row) {
     if(!row)return {state:effects?'NOT_STARTED':'UNAVAILABLE'};
+    const saved=storedInput(row);
     const state=row.state==='RUNNING' && Date.now()-new Date(row.created_at).getTime()>120000?'UNKNOWN':row.state;
     const value={attemptId:row.id,state,startedAt:new Date(row.created_at).toISOString()};
     if(row.result){const stored=JSON.parse(row.result); const result=await artifacts.read(stored.ref,{cardId:row.card_id,kind:'IDENTIFICATION_RESULT',sourceHash:row.source_hash});
-      value.result=parseCardIdentificationResult(result,JSON.parse(row.input));}
+      value.result=saved.parseResult(result,saved.input);}
     return value;
   }
   async function asset(cardId,kind,value,sourceHash){return {ref:await artifacts.write(value,{cardId,kind,sourceHash})};}
-  async function event(staff,row,stage,eventName,requestHash,evidence,requireCurrent=false) {
+  async function event(staff,row,stage,eventName,requestHash,evidence,requireCurrent=false,signal=null) {
     if(eventName!=='DISPATCH'){
       const receipt=canonical(evidence);
       // Retry only the same already-received receipt, never provider dispatch.
@@ -58,6 +84,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       }
     }
     return transaction(staff,row.card_id,async ({tx})=>{
+      requireThat(!signal?.aborted,503,'IDENTIFICATION_CANCELLED');
       const text=canonical(evidence);
       const changed=await tx.$executeRawUnsafe('INSERT INTO atlas_manual_connected.effect(attempt_id,stage,event,request_hash,evidence) VALUES($1::uuid,$2,$3,$4,$5) ON CONFLICT DO NOTHING',row.id,stage,eventName,requestHash,text);
       requireThat(changed===1,409,'IDENTIFICATION_EFFECT_ALREADY_DISPATCHED');
@@ -91,24 +118,34 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         photos[side.toLowerCase()]={ref:saved.ref.key,sha256,byteCount:bytes.length};loaded.set(saved.ref.key,bytes);
       }
       const input=parseCardIdentificationInput({subject:{id:cardId,revision:pair.sourceHash},photos});
+      const savedInput={engineVersion:CARD_IDENTIFICATION_VERSION_V2,input};
       const row=await transaction(staff,cardId,async ({tx,principal})=>{
-        const id=randomUUID(); const count=await tx.$executeRawUnsafe("INSERT INTO atlas_manual_connected.identification(id,card_id,source_hash,actor_id,state,input) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'RUNNING',$5) ON CONFLICT(card_id,source_hash) DO NOTHING",id,cardId,pair.sourceHash,principal.id,canonical(input));
+        const id=randomUUID(); const count=await tx.$executeRawUnsafe("INSERT INTO atlas_manual_connected.identification(id,card_id,source_hash,actor_id,state,input) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'RUNNING',$5) ON CONFLICT(card_id,source_hash) DO NOTHING",id,cardId,pair.sourceHash,principal.id,canonical(savedInput));
         const [row]=await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.identification WHERE card_id=$1::uuid AND source_hash=$2',cardId,pair.sourceHash);
         return {...row,won:count===1};
       },{edit:true,sourceHash:pair.sourceHash});
       if(!row.won)return checkedResult(staff,cardId,pair.sourceHash,await project(staff,row));
+      const saved=storedInput(row);
+      requireThat(saved.engineVersion===CARD_IDENTIFICATION_VERSION_V2,503,'IDENTIFICATION_VERSION_UNSUPPORTED');
       let dispatched=false;
       const effect=kind=>async(request,context)=>{
+        requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
         const stage=kind==='model'?'MODEL':`OCR_${context.side.toUpperCase()}`;
-        const requestEvidence=await asset(cardId,'IDENTIFICATION_REQUEST',{request,requestHash:context.requestHash,stage,attemptId:row.id},pair.sourceHash);
-        await event(staff,row,stage,'DISPATCH',context.requestHash,requestEvidence,true);
-        requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');dispatched=true;
+        const requestJson=JSON.stringify(request);
+        requireThat(digest(requestJson)===context.requestHash,503,'IDENTIFICATION_REQUEST_HASH_INVALID');
+        const requestEvidence=await asset(cardId,'IDENTIFICATION_REQUEST',{engineVersion:saved.engineVersion,requestJson,requestHash:context.requestHash,stage,attemptId:row.id},pair.sourceHash);
+        requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
+        await event(staff,row,stage,'DISPATCH',context.requestHash,requestEvidence,true,context.signal);
+        // Once the durable claim exists, any uncertainty retains the attempt.
+        // No recovery path starts another provider request for this source pair.
+        dispatched=true;
+        requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
         try {
-          const response=await effects[kind](request,context);
+          const response=await effects[kind](request,{...context,engineVersion:saved.engineVersion});
           requireThat(response?.bytes instanceof Uint8Array && response.bytes.length<=262144,503,'IDENTIFICATION_PROVIDER_UNAVAILABLE');
           const bytes=Buffer.from(response.bytes);let usage=null;
           try {const body=JSON.parse(bytes);usage=body?.usage??null;}catch{}
-          const responseEvidence=await asset(cardId,'IDENTIFICATION_RESPONSE',{attemptId:row.id,stage,status:response.status,base64:bytes.toString('base64'),sha256:digest(bytes),usage},pair.sourceHash);
+          const responseEvidence=await asset(cardId,'IDENTIFICATION_RESPONSE',{engineVersion:saved.engineVersion,attemptId:row.id,stage,status:response.status,base64:bytes.toString('base64'),sha256:digest(bytes),usage},pair.sourceHash);
           await event(staff,row,stage,'RESPONSE',context.requestHash,responseEvidence);
           requireThat(response.status>=200&&response.status<300,503,'IDENTIFICATION_PROVIDER_UNAVAILABLE');return bytes;
         } catch(error){
@@ -117,7 +154,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         }
       };
       try {
-        const result=await identifyCard(input,{readPhoto:async descriptor=>loaded.get(descriptor.ref),ocr:effect('ocr'),model:effect('model')});
+        const result=await identifyCardV2(saved.input,{readPhoto:async descriptor=>loaded.get(descriptor.ref),ocr:effect('ocr'),model:effect('model')});
         const stored=await asset(cardId,'IDENTIFICATION_RESULT',result,pair.sourceHash);
         try {await details.adopt(staff,cardId,pair.sourceHash,result);}
         catch(error){if(error?.status===409){await settle(staff,row,'STALE',stored);return {attemptId:row.id,state:'STALE'};}throw error;}

@@ -35,6 +35,13 @@ checks later in the plan were not reached. Resolve provider upload-integrity and
 immutable-write behavior before live intake; do not relabel this result a pass.
 Docker Desktop remains unresponsive; the new Linux/staff build is outstanding.
 
+September 16 recognition adoption adds the reviewed shared identifier V2 for new
+attempts while preserving saved V1 inputs/results. The immutable input envelope
+uses the existing connected schema; it adds no migration or dependency upgrade.
+Include the new V2 runtime files and updated manual page in the next artifacts.
+See [recognition adoption and its acceptance limits](../audits/2026-09-16/recognition-v2-adoption.md).
+This local update does not qualify or activate a hosted release.
+
 ## Prepare and bind the candidate
 
 1. Pin the reviewed Git revision and use a clean dependency closure. Reuse the
