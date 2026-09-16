@@ -4,6 +4,8 @@ Date: September 16, 2026 (America/Los_Angeles).
 
 Status: investigation and proposed direction only. No domain, navigation, application, database or production configuration changed. Mark requested two Astra Extra High reviewers; both `gpt-6-astra` / `xhigh` reviewers inspected the approved blueprint and separate admin/dependency and hosting/domain scopes. Source presence establishes implemented dependencies, not current operator usage. No authenticated staff usage-log audit or new end-to-end business transaction was performed.
 
+Owner follow-up later September 16: Mark endorsed the direction and explicitly authorized discarding all existing Wix marketing content. The content-inventory/keep decisions below were prerequisites at investigation time and are now superseded: no Wix content import or recreation is required. Main-domain preparation proceeds as its own work lane while the updated research/catalog work retains priority. Hosting remains a recommendation to resolve; no web/DNS cutover has occurred.
+
 ## Access Add Inventory today
 
 Open **https://collect.tenkings.co/admin/physical-inventory**, sign in with an authorized staff/admin account, and select **Add inventory**. From the collect home menu, choose **Inventory**; the admin home also has an **Inventory** tile.
