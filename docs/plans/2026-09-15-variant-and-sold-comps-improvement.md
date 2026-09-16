@@ -1,0 +1,230 @@
+# Variant identification and sold-comparison improvement plan
+
+Date: September 15, 2026 (America/Los_Angeles). Revised September 16 following the requested Astra Ultra review. Status: reviewed proposal; implementation and rollout have not started.
+
+## Recommendation
+
+Make the research engine better supplied with authoritative card identities, distinguishing variant evidence and verifiable sale data. Start with the demonstrated rejection defects and a bounded high-resolution/provider-contract experiment while preparing a small sports/Pokémon catalog pilot. Broader catalog coverage follows measured demand; it is not a prerequisite for recovering useful private research matches. More searches or a higher reasoning setting alone will not solve the measured gaps.
+
+Mark requested investigation and planning toward correct variants and correct eBay sold comps on over 90% of cards, with 3–5 Astra Max subagents. Three `gpt-6-astra` / `max` agents investigated identity/reference coverage, retrieval/provider capabilities, and rejection/evaluation while the coordinator acquired and checked live read-only evidence. This proposal does not change the approved V2 blueprint. The existing September 11 private research extension and September 15 fast-intake/Pokémon amendments remain authoritative.
+
+## What the live evidence establishes
+
+Snapshot: `2026-09-16T00:50:04.745Z` / September 15, 5:50 p.m. Pacific. PostgreSQL reported `transaction_read_only=on`; queries ran in a repeatable-read transaction. There are 81 research job revisions: 79 completed, one failed and one superseded. The active population is 80 cards; completed results below exclude the superseded revision. These are the current saved results, including results produced before today's initial-identification fixes, not 79 freshly replayed tests.
+
+| Measure | Observed |
+| --- | ---: |
+| Completed research with retained listings | 74 / 79 (93.7%) |
+| Completed research with any usable catalog reference | **0 / 79** |
+| Completed research with resolved catalog/variant identity | **0 / 79** |
+| Cards with at least one model-classified research match | 24 / 79 (30.4%) |
+| Cards with at least two model-classified research matches | 17 / 79 |
+| Cards with at least two matched candidates also eligible on price/source fields | 6 / 79 |
+| Verified automatic market estimates / selected estimate comps | **0 / 79** |
+| Retained candidate occurrences / distinct eBay listing IDs | 1,213 / 1,192 |
+| Retained candidate occurrences with downloaded images | 524 / 1,213 (43.2%) |
+| Candidate classification: matched / possible / rejected | 61 / 499 / 653 |
+| Candidate occurrences with eligible price/source fields | 226 / 1,213 (18.6%) |
+| Candidate exclusions: unknown offer status / undisclosed accepted offer / conflicting source | 907 / 79 / 1 |
+| Research duration: median / 95th percentile | 75.0 / 101.4 seconds |
+
+These are operational counts. The model's own matches are not independently established accuracy, and the user's roughly 50% experience is not contradicted by measuring a different outcome. Finding a listing, finding the right variant, attaching a correct comparison and computing a verified value need separate scorecards. Price eligibility also does not establish that a listing matches the card.
+
+### 1. Catalog coverage is the first structural blocker
+
+All 79 completed jobs received an empty reference array. Seventeen lack at least one of the adapter's required saved fields (year, maker, product or card number); the other 62 have no exact generated set-key match in the available `SetCard` catalog. The catalog is substantial—72,017 reviewed eligible card rows across 122 sets—but its card sets are Topps/Bowman. It does not cover the Panini, Pokémon, Upper Deck, Leaf or Donruss card sets represented here. Panini alone accounts for 53 of the 79 completed cards; Pokémon accounts for five.
+
+This is both a coverage and a lookup problem. An additional exact-name/card-number query across the 13 Topps targets found only three catalog rows for two cards. Drake Maye TBK-2 has a candidate in 2023 Bowman University Chrome Football. Cooper Flagg HM-CF occurs in two different products/programs, so name plus number cannot determine the identity by itself. These are lookup candidates requiring photo/product verification, not confirmed corrections.
+
+The production adapter uses reviewed SetOps card/parallel/scope rows but always returns `image: null`. It does not load the existing reference-image library. Existing reference rows marked `keep` are not automatically verified research references or grading authority. Additionally, full product strings, insert names, Pokémon number denominators, accents and year conventions can prevent legitimate lookup. Any aliases must be explicit and source-backed; approximate set-name matching must never certify a different product.
+
+Relevant code: `frontend/nextjs-app/lib/server/staffInventoryResearchReferences.ts:21`, `:39`, `:71`; `staffInventoryResearchWorker.ts:18`; `staffInventoryResearch.ts:128`.
+
+### 2. There are demonstrated false rejection mechanisms
+
+- **Release year versus design year:** Bo Bichette's saved 2020 Topps #85A-BB finds a title containing both “2020” and “1985 35th Anniversary.” The deterministic rule treats any other year as a contradictory release year. Listing `377468246486` was rejected for that reason despite the model reporting matching variant, visual appearance and condition. This proves the year rule is too broad; it does not by itself prove the sale is a fully verified comp.
+- **Grading-label syntax:** a Ken Griffey Jr. #33 listing says “PSA NM-MT 8,” but the shared grade parser fails to recognize the hyphenated descriptor and marks it raw. That can trigger a false grade mismatch. Any fix needs isolated staff-research handling or proven shared-consumer compatibility, since the successful intake and public grader paths are protected.
+- **Literal title requirements:** a Jayson Tatum comparison with all four match indicators true was downgraded because its title omitted “Basketball” from the saved product name. Product identity should come from corroborated fields/photos, rather than requiring every descriptive word in a seller's title.
+- **Unexamined images and stale reasons:** 399 possible candidates lack a downloaded image even though they have an image URL. Another 29 retain an image-unavailable reason despite now having downloaded image evidence, so image acquisition and completed visual assessment need separate statuses. These gaps do not prove wrong variants. Most actual rejections concern raw/graded or exact-grade mismatches; many of those exclusions will be correct and must stay.
+
+Relevant code: `staffInventoryResearch.ts:373–407`, especially year/number/grade gates and title anchoring; `packages/ebay-sold-comps-v2/src/index.ts:129`, `:305`.
+
+### 3. Search and image budgets discard useful opportunities
+
+Search already requests completed-listing detection, exact matching and accepted-offer hydration. It runs up to three searches, keeps at most 24 candidates, and allocates candidate images 6/3/3 across rounds. Of 1,213 retained image URLs, 1,212 use the provider's 225-pixel thumbnail size. It asks for page 1 and discards pagination opportunities. A later query retains the complete saved name/product/number requirements even when those fields include descriptive or uncertain text. A hard 150-second engine budget and 84-second reservation for another round lead to bounded early stopping.
+
+The snapshot contains 16 deadline-skipped refinements, 13 optional comparison failures, nine invalid/repeated refinements and one optional search failure; these categories can overlap. Fifty of 108 completed refinement queries add no new listing IDs. The runtime research model is Astra **medium**, distinct from initial identification at **low**. Raising model effort globally would add cost/latency without supplying missing catalog or transaction facts.
+
+The current [SoldCompsAPI documentation](https://sold-comps.com/docs) describes pagination, full-resolution thumbnails and a separate listing-detail endpoint with additional images and item specifics. It also documents a lower unauthenticated sold-page maximum than the code's requested count of 240. Returned row counts and pagination must be observed rather than assumed. Provider capabilities are proposals for bounded experiments, not integrations already implemented or tested here.
+
+### 4. Final sale-price evidence is a separate blocker
+
+Every retained listing occurrence has a source-reported price, date and image URL. Only 226 have eligible final-price evidence; all 226 are hydrated accepted offers. Stored offer states are 908 unknown, 305 true and **zero false**. The current parser records a boolean only when the raw `bestOfferAccepted` field is boolean. This distribution is a provider-contract question, not proof that absent means false.
+
+[SoldCompsAPI's docs](https://sold-comps.com/docs) mark the field optional; they do not guarantee that omission establishes an ordinary sale. Listing-detail data also needs explicit sold evidence—an active listing can have `bestOfferAccepted=false`. A displayed asking price cannot become an accepted-offer amount. The engine must keep matching quality separate from sale-price verification.
+
+## Proposed implementation order
+
+### Phase 1 — Freeze the baseline and test the limiting assumptions
+
+Use the current 80 active cards as the initial diagnostic corpus. Manually verify identities and candidate examples from source photos and authoritative references; record unresolved cases honestly. Create reason codes for: missing catalog, ambiguous physical finish, missing listing photo, actual identity mismatch, grade/condition mismatch, unverified sale amount, no market evidence, provider failure and budget exhaustion. Measure each stage and its transitions, including pre-filter counts, rank, image-fetch outcome and provider-field presence. Retain model decision separately from deterministic overrides.
+
+Alongside labeling, run a small preselected provider contract experiment covering ordinary auction/fixed-price sales, hydrated and unresolved offers, and active/ended-unsold controls. Confirm actual higher-resolution delivery, other listing photographs, positive sold evidence and final-price semantics. This is a future bounded experiment, not one already performed. Retain only necessary sanitized source fields and exact hashes. Do not change provider accounts or infer that omitted offer status means false. If a capability fails, make that limitation explicit before investing in dependent functionality.
+
+Deliverable: a reproducible scorecard, a labeled development subset, a supplier capability result and a loaded-versus-idle intake baseline. Exact evidence hashes remain bound to their input; saved descriptions/prices do not change. Existing results do not contain all raw provider fields or discarded listings, so some root-cause questions cannot be answered by replaying the stored envelope alone.
+
+### Phase 2 — Recover preventable matching failures
+
+Fix release-year/design-year parsing, supported grade-label syntax, descriptive-title omissions and stale image-status reasons with genuine positives and nearby negatives. Missing title or parser evidence is different from contradictory evidence. Keep raw/graded, actual grader/grade, numbered parallel, reprint/lot/language and other substantive mismatches protected. A choose-your-card listing or price range cannot establish the sold item/amount merely because one displayed picture matches.
+
+Use the existing bounded image budget to inspect the most relevant condition/identity candidates even when another search is unnecessary. Start by comparing provider-delivered larger primary images on a fixed candidate set after the capability probe passes. Record actual dimensions, bytes, failures and useful distinguishing detail within the current 2 MiB / 16-million-decoded-pixel / four-concurrent-fetch safeguards; do not raise every limit to accommodate larger URLs. Today's result supports one candidate image. Extra views require an explicit compatible versioned extension binding each image to its listing, front/back/detail role, source observation and parent hash before selective multi-image comparison. Track image acquired, image usable and comparison completed as distinct facts. Preserve prior useful assessments and update reasons when new evidence arrives.
+
+Keep independent outcomes for **research match**, **supported sold event**, **verified price** and **estimate eligibility**. A catalog gap does not prove a visible comparison is wrong, and an undisclosed amount does not prove the card is wrong. Only the stronger supported identity/sale/price path may produce a verified estimate. A useful single comparison can stay attached as labeled research while fewer than two independent verified prices prevent an estimate.
+
+Acceptance: recover the demonstrated false-gate cases, preserve true wrong-card/variant/grade/sale controls, retain all legacy result hashes/readability, and pass intake-under-load checks. This bounded release may improve research usefulness before broad catalog expansion; it must not be advertised as achieving 90% or creating verified estimates without the required evidence.
+
+### Phase 3 — Prove shared catalog coverage on one sports product and one Pokémon set
+
+Choose the pilot from actual demand and accessible authoritative sources. Use existing reviewed SetOps publication for this integration. Add a shared read contract over those identities and a versioned reviewed evidence manifest; do not create a second canonical catalog or migrate to the blueprint's unimplemented `CardIdentityCatalogV2` as a prerequisite. Both apps contribute proposals to this publication boundary. This is a boundary for new integration, not a claim that all historical SetOps scripts already use one writer.
+
+Import available text checklists/variant vocabulary through the reviewed clean-data path. Bind aliases, source identity, exact card/program applicability, distinguishing features and approved images to the complete manifest hash and approval provenance. Existing draft hashing excludes `row.raw` (`setOpsDrafts.ts:695`); putting new facts in raw/metadata does not make the old approval hash bind them. The new manifest must be independently validated, fully hashed and approved, while legacy payloads/hashes retain their original interpretation.
+
+Represent variant applicability explicitly as supported, excluded or unknown for the relevant card/program, format/channel and language/edition. `SetParallelScope` has no exact-card inclusion/exclusion field, and today's research loader drops format/channel. Do not infer card-level applicability from a flat set-wide variant list. If current fields cannot express a source's exception, keep that relationship unknown until the reviewed manifest can express it. Preserve partial coverage and truncation; never silently treat a 24-reference subset as the complete set of alternatives.
+
+The private identity resolver separates set, insert/program, number, variation/parallel, language and condition. It can propose catalog candidates when saved fields are incomplete; staff descriptions remain authoritative and conflicting proposals remain reviewable. Canonicalize accents and documented aliases while preserving significant number prefixes/denominators/leading zeroes. Source facts must come from source evidence, not be copied from a saved guess and presented as catalog corroboration.
+
+Approve a small set of useful finish examples and their nearest look-alikes, with actual depicted identity distinct from representative applicability. Generic color/gloss is not a unique discriminant. Complete alternative coverage is required for elimination or absence-based reasoning; positive, source-supported diagnostic evidence can identify a printing without first completing every unrelated card/image in the set. An optional after-save detail photo may resolve optical ambiguity without adding a mandatory intake step.
+
+Acceptance: the Inventory pilot and shared-contract fixtures resolve the same reviewed printing/revision, unsupported card/parallel combinations remain unresolved, and originals/grades/private access remain protected. Fixtures establish the contract, not live Atlas integration. Use reviewed imports first; autonomous crawling/publication and comprehensive image harvesting are deferred.
+
+### Phase 3b — Prove the current Atlas adapter in both directions
+
+Reinspect the current Atlas release and implement its authorized lookup/contribution adapter against the shared contract without merging release lineages. Demonstrate that an authorized, reviewed Inventory example improves identification of a different physical card in Atlas, and that a reviewed Atlas example improves a different Inventory card. Both must consume the same published revision while retaining individual grades, source images, access and paid-work accounting. A proposed contribution packet or a fixture alone does not satisfy this delivery. The two-set Inventory pilot can release independently; describe two-way integration as complete only after this actual acceptance.
+
+### Phase 4 — Expand only what produces measured gains
+
+Grow exact year/product/program coverage from intake demand, starting with the remaining Panini families (Prizm, Donruss Optic, Mosaic, Select, Donruss, Phoenix and Contenders), Pokémon examples and missing Topps products. Measure source availability, human review time, publication backlog and cards helped per reviewed set/example. Every new card can add an observation; it does not need to create a fresh mandatory approval for a printing already verified.
+
+Build retrieval alternatives from supported canonical candidates: exact query first, then documented number/season/product aliases and shorter high-information forms. Allocate additional pages or listing-detail calls where novelty and unresolved evidence justify them. Preserve per-observation provenance and deduplicate listing IDs/images; consistent enrichment must be distinguishable from contradictory evidence. Evaluate each expansion strategy's incremental correct matches per request and second before widening the budget. No global increase to the application's model effort is part of this review.
+
+If the provider cannot positively establish ordinary final prices, keep that capability gap explicit and prepare a concrete provider question or separately scoped source option. Unknown offer flags stay unknown, accepted-offer asking prices stay excluded and active/ended-unsold controls cannot qualify. Neither a provider switch nor an account/session-cookie change is assumed.
+
+### Phase 5 — Held-out evaluation and gradual release
+
+Apply focused tests and a small labeled pilot to each preceding delivery; do not wait for a universal catalog before releasing a safe proven correction. Before claiming the broad >90% result, run the larger independent evaluation below. Shadow runs retain separate private results tied to each exact input and do not double background admission without a budget. Compare baseline and candidate on the same cards; pause promotion on wrong-variant/grade or intake-speed regressions. Pin each attempt to an exact published reference revision. Initially retry affected unresolved cards deliberately through the authorized writer within existing budgets, retaining every earlier attempt. Current retry eligibility excludes already-estimated results and does not automatically react to reference revisions. Later automatic refresh needs an explicit policy for estimated results, exhausted budgets and revoked references; do not edit descriptions or reset counters to force a retry. Preserve historical evidence and mark affected current conclusions stale where appropriate. A catalog update must not automatically replay the whole inventory or silently alter saved decisions.
+
+## How to measure the 90% target
+
+The intended primary outcome is a correct same-variant, compatible-condition **sold comparison attached to the card**. A numeric estimate is a separate outcome and retains its stronger requirement of at least two independent, eligible final sale prices.
+
+Proposed gates, subject to the completed baseline:
+
+1. **Correct automatic attachment coverage across all sampled cards** is the headline measure and Mark's original >90% objective. Freeze the attachment definition and maximum number of confidently attached comparisons per card before evaluation. A covered card must have at least one correct same-variant sold attachment and no incorrect confidently attached comparison; tentative candidates do not count. Report a separate diagnostic rate for cards where independent review establishes an accessible exact sold comparison within the stated market/date window. Availability cannot depend on whether our lookup, image inspection or price verifier succeeded. Keep ambiguous, rare, no-sale, failed, slow and unknown-availability cases in the all-card denominator. A >90% result only on the market-available subset is a scoped result, not achievement of the original all-card goal.
+2. **Attached-comparison precision ≥98% observed**, with wrong player, set, variant, language or grade counted as errors even when the price looks plausible. Report the sample size and interval; a point estimate is not a confidence guarantee.
+3. **Variant identification correctness and coverage reported separately**, including unresolved outcomes. Abstaining avoids false precision but does not count as a correct automatic attachment.
+4. **Verified-value coverage reported separately**, with no increase obtained by admitting unverified amounts, unrelated grades or duplicates. Estimate accuracy itself requires separate review of condition, recency and sale comparability.
+5. **No additional blocking intake step.** Measure current and candidate capture-to-save behavior; all new research stays after save with intake priority. Record background completion p50/p95, error/retry rate, provider/model requests and cost per correct attachment. Retain bounded work and persistence/lease margins; change worker design only if measurements justify it.
+
+Use at least 200 independently reviewed held-out cards sampled from the intended intake population for a broad all-card claim; any supplementary market-available or adversarial controls remain separately identified. Freeze the source/reference bank before evaluation and exclude the same physical card, listing or image from both reference preparation and held-out evidence. Report two cohorts: new captures within supported catalog families, and previously unsupported sets that exercise source acquisition/review. A disjoint-family test measures expansion; it must not be confused with reuse of known references. Use card/family-aware uncertainty estimates where observations are correlated. Include sports/Pokémon, raw/graded, ordinary/rare/numbered parallels and look-alikes, with category counts visible; five Pokémon examples cannot support a broad Pokémon accuracy claim. For illustration, 190/200 independent correct attachments is 95% observed with an approximately 91% lower two-sided 95% Wilson bound. A 91/100 result alone does not confidently establish performance above 90%. These broad claims are separate from acceptance of the smaller functional pilot.
+
+Define compatible raw condition in the labeling guide; two ungraded cards are not automatically comparable in condition. Retain exact grader/grade requirements for graded comparisons. Distinct listing IDs and image hashes are minimum deduplication checks, not proof of independent sales when the same certification number, physical card or relisted photograph is involved.
+
+No system can retrieve an exact sold comp that does not exist in accessible market history. Lack of sales, insufficient photos and missing final-price evidence must remain explicit results, not fabricated successes. Broader market-history access, if needed, is a separate capability decision.
+
+## Add Inventory performance is a release requirement
+
+Preserve Photos → Cost → Sales channel → Add inventory → Next card, including concurrent recognition and photo-upload recovery. New catalog/research work cannot add an awaited network/model/source lookup, mandatory photo, user decision or button to the upload/recognition/save path. Keep the existing atomic durable research enqueue; do not replace it with an unawaited promise that can lose work after the request ends. Catalog source preparation, approval, larger listing-image work and any reevaluation run after the save transaction.
+
+After-save execution alone is insufficient protection. Today's research claim allows two concurrent attempts and only stops admitting new work at three active intake leases (`staffInventoryResearchV2.ts:13`). Identification awaits a bounded optional lease transaction; intake, save synchronization and research completion use shared database capacity/advisory locking. There is no proof here of zero resource contention or reserved provider quota.
+
+Before enabling additional load:
+
+- Put catalog acquisition/backfills below ordinary card research and active intake in admission priority. Bound concurrency and provider/image/token work; reserve headroom for immediate identification. Stop admitting optional enrichment when capacity is tight. Preserve already-dispatched request accounting rather than blindly cancelling and retrying billable work.
+- Keep database claims/completions and catalog publication transactions short; no provider or image work while holding locks. Read published reference snapshots outside the inventory save transaction. No new catalog lock on intake. Use the current worker/lease machinery where sufficient; a new service/queue is not assumed.
+- Compare baseline and candidate with background work idle and saturated: one continuously operating phone, realistic peak simultaneous staff, catalog publication/backfill, provider throttling/timeouts and slow image delivery. Measure photo-ready, identification completion, save acknowledgement, next-card camera readiness, retry/error rates and database lock wait separately. Record p50/p95 and workload counts; background throughput cannot hide slower intake.
+- Freeze explicit latency/error non-regression margins against the measured baseline before seeing candidate results, accounting for test noise and external network variance. Zero additional intake provider calls/mandatory steps is a hard structural check. If loaded intake performance falls outside those preset margins, throttle or defer background work and rerun the failing scenario before release. Do not describe the no-slowdown requirement as already proven by this planning review.
+- Shadow evaluation shares the same capped background budget; it does not create a second uncontrolled workload. Scope reference-triggered reevaluation to affected unresolved inputs and retain exact retry/idempotency/history rules.
+
+The requirement is protected intake responsiveness, with background work yielding when needed. Research speed/cost is measured separately.
+
+## Scope, evidence and next decision
+
+The recommended first implementation slice is **diagnostic reasons + the demonstrated false rejection rules + a bounded high-resolution/provider-contract experiment**, with one sports/one Pokémon catalog pilot prepared alongside it. The initial shared contract publishes reviewed SetOps evidence rather than introducing a parallel catalog authority. Do not claim that fixing catalog coverage alone achieves 90%, since price, retrieval and image evidence remain independently limiting. Expand only after the scoped integration produces verified gains.
+
+No application source, provider settings, database records, research jobs, inventory, prices, financial data or production deployment changed during this investigation or the September 16 Ultra review. No provider searches or new research attempts were invoked. The September 15 production inspection confirmed `dpl_Bo43ux8vAyyDe6WEKy4Q1A6iT6sj` READY on the alias with the fast sports intake and photo-retry changes; the review did not recheck or alter production. Root source for analysis: `codex/staff-inventory-release-20260910`, commit `60572cec895ad63d4ab826cd366f6475b04e725a`; the attached older checkout was not edited.
+
+Private evidence is retained under the protected TenKingsInventory investigation directory, including the snapshot, read-only extraction scripts, manifest, scoped catalog queries, three independent reports and derived scorecards. Snapshot SHA-256: `d93cb6e79c476b2ce514b2b4842118e538137d53a2245a388e943cdd790fa5ed`. Temporary exported credentials are removed after the read-only work. Private photographs, signed URLs and raw business datasets do not belong in the repository.
+
+This is a reviewable implementation proposal. Scheduling, total catalog acquisition effort and the final success claim depend on the labeled baseline and provider contract results; no unmeasured delivery time or 90% guarantee is implied.
+
+## Follow-up: incremental catalog shared with Atlas grading
+
+Mark's follow-up asks for a structure that fills in as real cards arrive, manufacturer sources, high-resolution variant/parallel examples, sports and Pokémon coverage, and two-way reuse with Atlas grading. He also clarifies that robust year/manufacturer/set identification matters more than treating the few demonstrated title bugs as the entire problem. The architecture below is a proposal addressing that direction; no shared-catalog or Atlas implementation has been activated.
+
+### One shared identity and evidence library
+
+Extend the existing catalog foundation with a shared, versioned identity lookup and controlled evidence contribution path. Inventory and Atlas should refer to the same catalog identities and matching rules. Each app retains its own physical-card records, access controls, originals, workflow and final decision authority. The catalog represents a printing; ten physical copies link to that printing while their condition, grades, ownership, acquisition costs and sale histories remain individual.
+
+The approved blueprint already describes a compact catalog, manufacturer vocabulary and initially one representative image per set-level variant. The current inventory release has SetOps tables and a narrow reference reader; the blueprint's `CardIdentityCatalogV2` name has no implementation in this release source. For the first release, use SetOps as the publication authority for this integration, with a shared read contract and fully hashed, reviewed evidence manifest tied to existing source/draft/approval and identity IDs. Inventory and Atlas submit proposals to that boundary. Do not add a second canonical table or a broad migration merely to share data, and do not claim historical SetOps writers have already been unified. New evidence records producer, source, exact identity/applicability, image hash, review status and evidence revision. Representative-image applicability distinguishes the actual pictured card from the finish it illustrates.
+
+Conceptual structure:
+
+| Level | Stored facts |
+| --- | --- |
+| Set and program/subset | Category, year/season, manufacturer or publisher, product, sport/language/region where relevant, official identifiers, aliases and source evidence |
+| Card identity | Player/character or card name, number with its numbering scheme, insert/subset membership, applicable variants |
+| Printing or treatment | Parallel/variation/finish, edition, serial denominator where applicable, documented discriminants and applicability |
+| Visual evidence | Verified front/back/detail examples, depicted identity, representative scope, resolution, source/hash and review provenance |
+| Physical card observation | Link to the originating Inventory/Atlas card and evidence revision; its observed identity, uncertainty and correction history |
+
+Support sports and Pokémon with shared concepts plus category-specific validation. A sports season, a Pokémon copyright year and an anniversary design year are separate observations until resolved against their exact product. Program/insert names, collector-number denominators, edition/language and variant applicability remain meaningful. The existing apps' field shapes require explicit mapping; a generic manufacturer or variant field cannot simply be copied into every Atlas identity type.
+
+### Acquire text broadly within a needed set; acquire images progressively
+
+1. A saved Inventory or Atlas card first queries the shared catalog using visible name/number, category and known set/year/brand features.
+2. If its set is missing, add it to a deduplicated background coverage-demand list initially derived from existing research results; a new queue platform is unnecessary. Locate the exact manufacturer checklist and relevant product/odds information. If the set itself is uncertain, retain candidate sets rather than publishing the first search hit.
+3. Where available, prepare/import the full text checklist and applicable variant vocabulary for that encountered set through the reviewed catalog import path. One useful source acquisition can support many later cards. Preserve source versions and explicitly mark partial coverage; a missing row never proves a variant does not exist.
+4. Initially attach a few approved high-quality examples for the treatments actually needed, including their closest look-alikes. A representative finish example can be a different player only when its exact set/program applicability is established and its actual pictured identity remains explicit.
+5. As Inventory and Atlas encounter verified examples, retain additional exact-card front/back/detail evidence. Subsequent cards reuse it; duplicates do not create duplicate catalog identities. Uncertain machine identifications remain observations. An authorized reviewer must approve the exact source-supported identity/applicability and visible photo discriminants, bound to the complete payload and image hashes. A completed grade or selected comp alone is not that approval. A listing used to guess a target identity cannot be promoted through that guess and then cited as independent confirmation of the same target. Record evidence lineage: repeated crops, syndicated images or agreement between two apps repeating the same model/source are not independent support.
+6. A correction produces a new reviewed catalog/evidence revision and identifies dependent research for reevaluation. It does not silently rewrite saved descriptions, grades or published historical reports.
+
+Use [Topps checklists](https://www.topps.com/pages/checklists), [Panini's checklist index](https://www.paniniamerica.net/checklist.html), and official Pokémon card lists/product materials first. For example, the [official Legendary Treasures checklist](https://assets.pokemon.com/assets/cms/pdf/tcg/checklists/BW11_CardList_EN.pdf) supplies text identity data for the current Snivy case. Where manufacturer coverage is absent, preserve separately attributed, reviewed secondary evidence. PSA may assist corroboration where accessible; complete every-set coverage or an automated reusable PSA image feed has not been established. PSA's population page required sign-in during this check. Do not make the initial architecture depend on it.
+
+Manufacturer checklist acquisition and public-site differences should initially produce reviewed clean imports through the existing tooling. A general autonomous source parser is a distinct extension to the blueprint's clean-CSV-first approach and remains proposed. Neither this discussion nor a card's arrival silently publishes unreviewed source data.
+
+### Shared with Atlas in both directions
+
+- Atlas requires the full Add Card recognition capability, not only catalog contribution: capture Front/Back, identify sports/Pokémon, populate applicable details while preserving staff edits, and run the improved variant/sold-comparison research after intake. Use common identification/research logic with Atlas-owned authentication, original-photo handling, accounting and grading integration. Shared catalog data alone does not establish functional parity.
+- Inventory consumes catalog identities, aliases, discriminants and reviewed representative imagery, and contributes exact-card observations and eligible reviewed photographs.
+- Atlas consumes that same identity knowledge and contributes verified identity corrections and eligible high-resolution examples bound to its original captures.
+- Both applications use common identity rules and compatible evidence responses, with app-specific authorization and orchestration. Shared access does not expose private customer images automatically or substitute inventory-sized JPEGs for Atlas grading originals.
+- Grading acceptance and catalog-reference acceptance are separate facts: a completed grade alone does not certify a new parallel example. Atlas's existing grade/report authority, original/derived-image provenance, paid-work accounting and operator configuration stay with Atlas.
+- The initial image library supports identity/finish comparison. Precision centering templates, defect-free grading references and automatic public grading-comp decisions retain their separate authority requirements.
+
+#### September 16 source verification and ownership clarification
+
+The prior September 10 reuse notes are historical. Read-only inspection now includes the latest Atlas lead's source at `/Users/markthomas/.codex/worktrees/2c75/ten-kings-mystery-packs-clean`, commit `f16bbb7e49ebf46c09e32d30a9a441a947e75df3`, its release records and latest task closeout. These establish:
+
+- The earlier deployed I source `89c55d916130d914f6a989197538c8bbd31c9594` includes Staff → Add cards at `/admin/add-cards`, `PhotoIntake.jsx`, Google Vision/Astra identification, category-aware field adoption and automatic queueing. Complete fresh-card grading acceptance failed in the September 11 recorded test; existing code/deployment is not proof of reliable end-to-end operation.
+- The newer connected manual candidate routes the same Add cards page to `ManualCards.jsx` when enabled. It implements automatic identification of a verified pair through `packages/atlas-connected-manual/src/identification.mjs` and `@tenkings/card-identification-core`. The latest Atlas closeout and connected-release runbook record this candidate as built but unreleased, with storage integrity qualification and release work outstanding. No fresh production or real-card acceptance was performed in this inspection.
+- That shared core was extracted from Inventory commit `a319904273d4b4e4e81d721b699d3a2990975eda`, before the September 15 Pokémon/OCR changes. Its contract explicitly refuses additional catalog knowledge and leaves variant research/SoldComps separate. Therefore neither current shared code nor matching model names establish parity with the latest Inventory recognition or the reviewed expansion plan.
+
+Before the Atlas delivery, reconcile the latest proven recognition fixes into the common implementation and test each application's adapters, sports/Pokémon suggestions, human-edit protection and original/derived photo lineage. Version and release both consumers deliberately; publishing catalog evidence makes that data reusable, but does not automatically deploy new application code. Keep grading defect-memory lessons separate from card identity/parallel reference approval. Reverify the actual Atlas serving release at implementation; do not merge independent release lineages merely to share code.
+
+The intended architecture is **two app experiences, common identification/research logic and one authoritative shared catalog**. Reuse the existing database/catalog foundation behind a controlled server interface; a separately hosted database or new microservice is not required for the first slice. The interface may be an in-process shared module where deployment permits, or an authenticated internal API for separately deployed consumers. Its lookup and reviewed-contribution contract is common in either case. Each application retains its physical-card records and workflow; caches are disposable copies of published catalog revisions, not independent editable catalogs that synchronize with each other. New source-backed knowledge from either app enters the same reviewed publication path and becomes available to both. Sale observations retain transaction/image provenance and condition distinctions rather than becoming timeless attributes or interchangeable values for every physical copy.
+
+### Narrow blueprint record for this extension
+
+Mark has agreed to incremental shared identity knowledge for sports and Pokémon and preserving Add Inventory speed. Before implementation, record that agreed scope and the concrete integration contract in the canonical blueprint. This planning document is not a silent replacement of the blueprint's clean-import/human-review rules. Suggested amendment content:
+
+> Inventory and Atlas may consume one versioned, reviewed catalog evidence contract and submit private identity/image observations for review. Existing SetOps publication is the initial authority for this integration; no duplicate canonical catalog or broad migration is required. Background preparation may assemble manufacturer/approved-secondary text imports and candidate representative images for needed sets. Publication requires explicit authorized review bound to the complete identity, applicability, source and image-evidence payload. Machine suggestions, repeated model agreement and a completed grade do not themselves approve reusable references. Each app preserves its original captures, private access, sole writers and final grade/description authority. New research/acquisition work remains outside intake and save transactions and must pass intake-under-load acceptance. Autonomous general source crawling, automatic catalog publication, precision grading-reference promotion and public grading-comp confirmation are outside this extension.
+
+This records the requested shared direction without granting unrelated capabilities. Existing authorized private research and manual reviewed imports do not need a new approval merely because a later shared-catalog extension is being designed. Storage placement and the exact manifest approval transaction must be specified before implementing that extension; simply adding unbound metadata to old approved drafts is insufficient.
+
+### Higher-resolution SoldComps evidence is available in the documented contract
+
+Checked September 15: [SoldCompsAPI documentation](https://sold-comps.com/docs) exposes `fullResThumbnailUrl` at approximately 1,600 pixels and `/v1/item/{itemId}` with all listing image URLs at full resolution. Detail lookup costs one provider request. This confirms a documented capability; this follow-up made no paid provider request and did not verify actual delivery/quality for each existing listing.
+
+First test the larger primary image for promising comparisons within existing image safeguards. Add other listing photos only with the compatible per-image listing/side/source/parent-hash binding described in Phase 2, when a back, serial, foil area or slab label could resolve the decision. Retain exact original source evidence and hash-bound detail crops. Larger URLs cannot restore detail absent from the seller's photograph. Use quality checks and record missing detail honestly. Store approved reusable visual examples with provenance; images seen during a comps search remain candidate evidence until verified. Keep all enrichment after save, with bounded cost/time and the current fast intake protected.
+
+Recommended deliveries: (A) demonstrated rejection repairs, reason codes and bounded larger-primary/provider tests; (B) one sports product and one Pokémon set demonstrating reviewed source import, applicability, shared lookup and useful finish evidence; (C) the actual current Atlas adapter passing both directions of reviewed contribution and reuse on different physical cards; (D) demand-led expansion and the independent broad coverage benchmark. Contract fixtures in B do not establish C. The shared-library success test is that verified evidence from either app improves later identification in both, with no duplicated catalog identities or inherited false confirmations.

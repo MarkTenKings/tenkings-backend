@@ -1,0 +1,54 @@
+{
+  "status": "local_uncommitted_contract_candidate",
+  "baseCommit": "60572cec895ad63d4ab826cd366f6475b04e725a",
+  "resultCommit": null,
+  "package": "@tenkings/card-catalog-evidence",
+  "packageVersion": "0.1.0",
+  "schemaVersions": [
+    "setops-catalog-evidence/v1",
+    "catalog-observation-proposal/v1",
+    "catalog-evidence-lookup/v1"
+  ],
+  "verification": {
+    "node": "22.23.2",
+    "runtimeTestsPassed": 25,
+    "runtimeTestsFailed": 0,
+    "typescript": "5.5.4",
+    "typecheck": "strict NodeNext consumer fixture PASS",
+    "whitespace": "PASS"
+  },
+  "files": [
+    {
+      "path": "docs/plans/2026-09-16-shared-catalog-contract.md",
+      "sha256": "e8d91cde6eaf57938c98a3d15de55f95932093c41ac2e929d2da49cbd721fae0"
+    },
+    {
+      "path": "packages/card-catalog-evidence/README.md",
+      "sha256": "1059886814bec8c27538e530d8654aad4208fab731a5a66da33126914651fb78"
+    },
+    {
+      "path": "packages/card-catalog-evidence/package.json",
+      "sha256": "e08e19de2afdb6a20ad13b56d44b604509233f8a28854ee0f26f7806232afa7b"
+    },
+    {
+      "path": "packages/card-catalog-evidence/src/index.d.ts",
+      "sha256": "c94a5780dbb484649d071eb5f50a40b795ed57cb9d420494d520d91df00d9305"
+    },
+    {
+      "path": "packages/card-catalog-evidence/src/index.mjs",
+      "sha256": "626fa80afd81138af2258a5fb52673ad1de65a061ed94904de705bfcb5d2b4eb"
+    },
+    {
+      "path": "packages/card-catalog-evidence/tests/consumer-types.mts",
+      "sha256": "18f5f11ff96b8f089497b68e8342f9d3c71b49d91e0fcb6ec9ec64b04cd89c6e"
+    },
+    {
+      "path": "packages/card-catalog-evidence/tests/contract.test.mjs",
+      "sha256": "92f3bd8edfb18bfd664d96cc6072034a1cd7fa07cca3576eca32c537b2fc813d"
+    },
+    {
+      "path": "packages/card-catalog-evidence/tests/fixtures.mjs",
+      "sha256": "940491038ed8fb1b59a4a4c8322afed31dcb5f89e5c9edabbaef6dbbe8b6dd16"
+    }
+  ]
+}
