@@ -34,7 +34,7 @@ async function fixture() {
   };
   const items: Record<string, unknown>[] = [0, 1].map(index => ({
     itemId: `11111111111${index}`, url: `https://www.ebay.com/itm/11111111111${index}`, title: '2024 Fixture Cards Fixture Chrome Fixture Runner #007 Base Raw',
-    soldPrice: index ? '10.02' : '10.01', soldCurrency: 'USD', bestOfferAccepted: false, endedAt: '2026-09-09', condition: 'Ungraded',
+    soldPrice: index ? '10.02' : '10.01', soldCurrency: 'USD', bestOfferAccepted: false, listingType: 'sold', endedAt: '2026-09-09', condition: 'Ungraded',
     thumbnailUrl: `https://i.ebayimg.com/images/g/fixture${index}/s-l400.jpg`,
   }));
   let modelValue: any = {
@@ -537,7 +537,8 @@ test('equivalent consecutive-season listing wording remains a possible visual ma
 test('legacy immutable results parse with identical JSON and hashes without inserting optional research or price fields', async () => {
   const f = await fixture(), current = await researchStaffInventoryCard(f.input, f.deps);
   const legacy = { ...current, engine_version: 'staff-inventory-research-v1' } as any;
-  delete legacy.research_queries; delete legacy.comparison_assessments;
+  delete legacy.research_queries; delete legacy.comparison_assessments; delete legacy.diagnostics;
+  for (const candidate of legacy.candidates) { delete candidate.sale_evidence; delete candidate.image_options; delete candidate.multiple_price_options; }
   const bytes = JSON.stringify(legacy), parsed = StaffInventoryResearchResultSchema.parse(JSON.parse(bytes));
   assert.equal(JSON.stringify(parsed), bytes);
   assert.equal(sha(Buffer.from(JSON.stringify(parsed))), sha(Buffer.from(bytes)));
@@ -563,4 +564,154 @@ test('only explicit hydrated accepted-offer evidence can supply an estimate, ret
     const bad = structuredClone(result); bad.candidates[0].accepted_offer!.amount = '99.00';
     assert.equal(StaffInventoryResearchResultSchema.safeParse(bad).success, false);
   }
+});
+
+
+test('provider sale status is independent from visual matching and never inferred from an ended date', async () => {
+  for (const listingType of ['active', undefined]) {
+    const f = await fixture(); f.model.selected_candidate_ids = [];
+    for (const item of f.items) item.listingType = listingType;
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.ok(result.comparison_assessments!.every(row => row.classification === 'matched'));
+    assert.ok(result.candidates.every(row => !row.source_eligible && row.sold_price_cents === null));
+    assert.ok(result.diagnostics!.candidates.every(row => row.decision_codes.includes(listingType ? 'ACTIVE_LISTING' : 'SOLD_EVENT_UNVERIFIED')));
+    assert.equal(result.estimate.status, 'unknown');
+    const bad = structuredClone(result); bad.candidates[0].source_eligible = true;
+    assert.equal(StaffInventoryResearchResultSchema.safeParse(bad).success, false);
+  }
+});
+
+test('v3 primary images use only supplied URLs, retain dimensions and fall back within the same bounded attempt', async () => {
+  for (const highResolution of [false, true]) for (const failPrimary of [false, true]) {
+    const f = await fixture(), original = f.deps.fetchImpl!;
+    f.deps.env = { ...f.deps.env, STAFF_INVENTORY_RESEARCH_FULL_RES_IMAGES: String(highResolution) };
+    const imageCalls: string[] = [];
+    for (const [index, item] of f.items.entries()) item.fullResThumbnailUrl = `https://i.ebayimg.com/images/g/primary${index}/s-l1600.jpg`;
+    f.deps.fetchImpl = (async (url, init) => {
+      const uri = String(url);
+      if (!uri.startsWith('https://i.ebayimg.com/')) return original(url, init);
+      imageCalls.push(uri);
+      const index = f.items.findIndex(item => item.fullResThumbnailUrl === uri);
+      if (index < 0) return original(url, init);
+      if (failPrimary) return new Response('unavailable', { status: 404 });
+      return new Response(new Uint8Array(f.bytes[2 + index]), { headers: { 'content-type': 'image/jpeg' } });
+    }) as typeof fetch;
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.estimate.status, 'estimated');
+    assert.equal(imageCalls.length, highResolution && failPrimary ? 4 : 2);
+    for (const [index, candidate] of result.candidates.entries()) {
+      const expected = highResolution && !failPrimary ? f.items[index].fullResThumbnailUrl : f.items[index].thumbnailUrl;
+      assert.equal(candidate.image?.source_url, expected);
+      const diagnostic = result.diagnostics!.candidates[index];
+      assert.equal(diagnostic.image_width, 100); assert.equal(diagnostic.image_height, 140);
+      assert.equal(diagnostic.comparison_status, 'assessed');
+      assert.deepEqual(diagnostic.image_attempts.map(row => row.status), highResolution && failPrimary ? ['failed', 'acquired'] : ['acquired']);
+    }
+    const source = f.calls.find(call => call.url.startsWith('https://api.sold-comps.com/'))!;
+    assert.equal(new URL(source.url).searchParams.get('sold'), 'true');
+    assert.deepEqual(result.diagnostics!.sources, [{ sequence: 1, returned_count: 2, parsed_count: 2, retained_count: 2, has_next_page: false }]);
+  }
+});
+
+test('full-resolution fallback shares the twelve-download budget and four-way concurrency across all three queries', async () => {
+  const f = await adaptiveFixture(24), original = f.deps.fetchImpl!;
+  f.deps.env = { ...f.deps.env, STAFF_INVENTORY_RESEARCH_FULL_RES_IMAGES: 'true' };
+  f.setRows(round => f.rows(round).map(item => ({ ...item, fullResThumbnailUrl: String(item.thumbnailUrl).replace('s-l400', 's-l1600') })));
+  let reads = 0, active = 0, maximum = 0;
+  f.deps.fetchImpl = (async (url, init) => {
+    if (!String(url).startsWith('https://i.ebayimg.com/')) return original(url, init);
+    reads++; active++; maximum = Math.max(maximum, active);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 2));
+      return String(url).includes('s-l1600') ? new Response('not found', { status: 404 }) : await original(url, init);
+    } finally { active--; }
+  }) as typeof fetch;
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  assert.equal(reads, 12); assert.ok(maximum <= 4); assert.equal(f.sources.length, 3);
+  assert.ok(result.candidates.filter(candidate => candidate.image).length <= 6);
+  assert.ok(result.candidates.filter(candidate => !candidate.image).every(candidate => result.comparison_assessments!.find(row => row.candidate_id === candidate.id)?.classification !== 'matched'));
+});
+
+test('a successful image download followed by optional model failure is recorded as unassessed, preserving original model evidence', async () => {
+  const f = await adaptiveFixture(), original = f.deps.fetchImpl!;
+  let calls = 0;
+  f.deps.fetchImpl = (async (url, init) => String(url) === 'https://api.openai.com/v1/responses' && ++calls === 2
+    ? new Response('failed', { status: 500 }) : original(url, init)) as typeof fetch;
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  const later = result.candidates.filter(candidate => candidate.id.startsWith('ebay:3000000001'));
+  assert.equal(later.length, 2);
+  for (const candidate of later) {
+    assert.ok(candidate.image);
+    const diagnostic = result.diagnostics!.candidates.find(row => row.candidate_id === candidate.id)!;
+    assert.equal(diagnostic.comparison_status, 'failed'); assert.equal(diagnostic.model_assessment, null);
+    assert.ok(diagnostic.decision_codes.includes('OPTIONAL_COMPARISON_FAILED'));
+    const assessment = result.comparison_assessments!.find(row => row.candidate_id === candidate.id)!;
+    assert.equal(assessment.classification, 'possible'); assert.doesNotMatch(assessment.reason, /image.*unavailable|image.*missing/i);
+  }
+  assert.ok(result.diagnostics!.candidates.filter(row => !later.some(candidate => candidate.id === row.candidate_id)).every(row => row.model_assessment !== null));
+});
+
+
+test('a duplicate listing with a newly exposed price range cannot retain safe-sale eligibility', async () => {
+  const f = await fixture(); f.model.selected_candidate_ids = [];
+  f.items.push({ ...f.items[0], soldPriceMax: '500.00' });
+  const sameResponse = await researchStaffInventoryCard(f.input, f.deps);
+  assert.equal(sameResponse.candidates.find(row => row.id === 'ebay:111111111110')!.source_eligible, false);
+  const a = await adaptiveFixture();
+  a.setRows(round => round === 0 ? a.rows(1) : [{ ...a.rows(1)[0], bestOfferAccepted: null, currentPriceMax: '500.00' }, a.rows(2)[1]]);
+  const acrossQueries = await researchStaffInventoryCard(a.input, a.deps);
+  assert.match(acrossQueries.candidates.find(row => row.id === `ebay:${a.rows(1)[0].itemId}`)!.exclusion_reason!, /conflicting evidence/);
+});
+
+test('documented anniversary, NM-MT and sport-suffix failure mechanisms pass the final estimate gate without relaxing wrong-print controls', async () => {
+  const cases = [
+    { name: 'Bo Bichette', year: '2020', manufacturer: 'Topps', set_name: 'Topps', card_number: '85A-BB', card_type: 'Baseball', grade: 9, title: '2020 Topps Bo Bichette #85A-BB 1985 35th Anniversary PSA 9', wrong: '2019 Topps Bo Bichette #85A-BB 1985 35th Anniversary PSA 9' },
+    { name: 'Ken Griffey Jr', year: '1989', manufacturer: 'Donruss', set_name: 'Donruss Baseball', card_number: '33', card_type: 'Baseball', grade: 8, title: '1989 Donruss Ken Griffey Jr #33 PSA NM-MT 8', wrong: '1989 Donruss Ken Griffey Jr #33 PSA NM-MT 9' },
+    { name: 'Jayson Tatum', year: '2023', manufacturer: 'Panini', set_name: 'Contenders Basketball', card_number: '77', card_type: 'Basketball', grade: null, title: '2023 Panini Contenders Jayson Tatum #77 Raw', wrong: '2023 Panini Contenders Jayson Tatum Optic #77 Raw' },
+  ];
+  for (const example of cases) {
+    const f = await fixture();
+    const { title, wrong, grade, ...details } = example;
+    Object.assign(f.input.description, details);
+    f.reference.identity = { name: example.name, category: 'Sports cards', year: example.year, manufacturer: example.manufacturer, set_name: example.set_name, card_number: example.card_number };
+    if (grade) f.model.target_condition = { status: 'graded', grader: 'PSA', numeric_grade: grade, photo_evidence: `Front: PSA ${grade}.` };
+    for (const item of f.items) { item.title = title; item.condition = grade ? 'Graded' : 'Ungraded'; }
+    const saved = JSON.stringify(f.input), result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.estimate.status, 'estimated', title);
+    assert.equal(JSON.stringify(f.input), saved);
+    assert.ok(result.diagnostics!.candidates.every(row => row.model_assessment?.classification === 'matched'));
+    f.items[0].title = wrong;
+    await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('malformed_response'), wrong);
+  }
+});
+
+test('v3 diagnostics reject removed or mismatched model-image, source and price-option attribution', async () => {
+  const f = await fixture(), result = await researchStaffInventoryCard(f.input, f.deps);
+  for (const mutate of [
+    (value: any) => { delete value.diagnostics; },
+    (value: any) => { delete value.candidates[0].multiple_price_options; },
+    (value: any) => { value.diagnostics.candidates[0].model_image_sha256 = 'f'.repeat(64); },
+    (value: any) => { value.diagnostics.sources[0].retained_count = 1; },
+    (value: any) => { value.diagnostics.candidates[0].image_width = 8000; value.diagnostics.candidates[0].image_height = 8000; },
+  ]) {
+    const altered = structuredClone(result); mutate(altered);
+    assert.equal(StaffInventoryResearchResultSchema.safeParse(altered).success, false);
+  }
+  const legacy = structuredClone(result) as any;
+  legacy.engine_version = 'staff-inventory-research-v2'; delete legacy.diagnostics;
+  for (const candidate of legacy.candidates) { delete candidate.sale_evidence; delete candidate.image_options; delete candidate.multiple_price_options; }
+  const bytes = JSON.stringify(legacy);
+  assert.equal(JSON.stringify(StaffInventoryResearchResultSchema.parse(legacy)), bytes);
+});
+
+
+test('optional archival timeout retains an already verified image and consistent acquired diagnostics', async t => {
+  const f = await fixture(), originalTimer = globalThis.setTimeout;
+  t.mock.method(globalThis, 'setTimeout', ((callback: (...args: any[]) => void, delay?: number, ...args: any[]) => originalTimer(callback, delay === 18000 ? 30 : delay, ...args)) as typeof setTimeout);
+  f.deps.archiveCandidateImage = async () => new Promise(() => {});
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  assert.equal(result.estimate.status, 'estimated');
+  assert.ok(result.candidates.every(row => row.image && row.image.storage_key === null));
+  assert.ok(result.diagnostics!.candidates.every(row => row.image_attempts.some(attempt => attempt.status === 'acquired')));
+  assert.ok(result.warnings.some(warning => /image time limit/.test(warning)));
 });

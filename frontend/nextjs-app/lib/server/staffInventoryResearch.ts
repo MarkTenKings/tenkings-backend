@@ -14,7 +14,8 @@ import {
   type StaffInventoryResearchErrorCode, type StaffInventoryResearchComparison,
 } from '../staffInventoryResearch';
 import { readStaffInventoryPhoto, type StaffInventoryVerifiedPhoto } from './staffInventoryIdentification';
-import { readResearchPriceEvidence } from './staffInventoryResearchPrice';
+import { researchImageOptions, researchSaleEvidence } from './staffInventoryResearchEvidence';
+import { assessStaffInventoryResearchComparison, compareStaffInventoryResearchCondition, inspectStaffInventoryResearchSale, inspectStaffInventoryResearchTitle, readStaffInventoryResearchGradeEvidence, staffInventoryResearchYearForms } from './staffInventoryResearchDecisions';
 import { getStorageMode } from './storage';
 
 const SOLDCOMPS_ENDPOINT = 'https://api.sold-comps.com/v1/scrape';
@@ -30,7 +31,7 @@ const unsafeText = /[\u0000-\u001f\u007f]|https?:\/\/|data:|\b(?:sk|sess|proj)-[
 const unsupportedSale = /\b(?:lot|bundle|reprint|replica|proxy|custom|facsimile|digital)\b|\b(?:sealed|unopened|booster|blaster)\s+(?:box|pack)s?\b|\b(?:complete|full)\s+set\b|\b(?:[2-9]|[1-9]\d+)\s+(?:cards|packs)\b/i;
 const safeText = (value: unknown, max: number): string | null => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max && !unsafeText.test(value.trim()) ? value.trim() : null;
 type Side = 'front' | 'back';
-type ImageBytes = { bytes: Buffer; sha256: string; content_type: 'image/jpeg' | 'image/png' | 'image/webp'; source_url: string; retrieved_at: string };
+type ImageBytes = { bytes: Buffer; sha256: string; content_type: 'image/jpeg' | 'image/png' | 'image/webp'; source_url: string; retrieved_at: string; width?: number; height?: number };
 
 export class StaffInventoryResearchError extends Error {
   constructor(readonly code: StaffInventoryResearchErrorCode) {
@@ -163,15 +164,8 @@ export function buildStaffInventoryResearchQuery(description: StaffInventoryRese
   return query.length >= 3 && query.length <= 400 ? query : null;
 }
 const querySignature = (query: string) => [...new Set(normalized(query).split(' '))].sort().join(' ');
-function yearQueryForms(year: string | null) {
-  if (!year) return [];
-  const forms = [year], season = year.match(/^(\d{4})[-/](\d{2}|\d{4})$/);
-  if (season) {
-    const start = Number(season[1]), end = season[2].length === 2 ? Math.floor(start / 100) * 100 + Number(season[2]) : Number(season[2]);
-    if (end === start + 1) forms.push(String(start), String(end), `${start}-${end}`, `${start}-${String(end).slice(-2)}`, `${start}/${end}`, `${start}/${String(end).slice(-2)}`);
-  }
-  return [...new Set(forms)];
-}
+function yearQueryForms(year: string | null) { return staffInventoryResearchYearForms(year); }
+
 const visualQueryWords = 'base silver blue red green gold black white pink purple orange yellow bronze copper holo holographic reverse refractor prizm cracked ice mojo wave shimmer sparkle hyper disco scope pulsar laser reactive parallel prism tri color tie dye elephant tiger zebra snake skin court side premier mezzanine level concourse rookie rc'.split(' ');
 /** Query wording is retrieval data only. It cannot replace the immutable saved identity. */
 export function validateRefinedStaffInventoryResearchQuery(description: StaffInventoryResearchDescription, query: string, references: StaffInventoryResearchReference[] = [], condition?: StaffInventoryResearchResult['target_condition']): string | null {
@@ -198,18 +192,16 @@ function parserInput(description: StaffInventoryResearchDescription, query: stri
     cardNumber: description.card_number, queryOverride: query, targetGrade: null };
 }
 function titleMatches(description: StaffInventoryResearchDescription, candidate: StaffInventoryResearchCandidate, reference?: StaffInventoryResearchReference) {
-  const title = normalized(candidate.title);
-  const identity = reference?.identity ?? description;
-  return [identity.year, identity.manufacturer, productIdentity(description.set_name, description.year, description.manufacturer), identity.name, identity.card_number]
-    .filter((value): value is string => value !== null).every(value => wholeSpan(title, normalized(value)));
+  return inspectStaffInventoryResearchTitle(description, candidate, reference).estimate_anchored;
 }
+
 function titleAnchorCoverage(description: StaffInventoryResearchDescription, candidate: StaffInventoryResearchCandidate) {
   const title = normalized(candidate.title), present = new Set(title.split(' '));
   const anchors = [...new Set([description.year, description.manufacturer, description.set_name, description.name].flatMap(value => normalized(value).split(' ')).filter(Boolean))];
   return anchors.filter(token => present.has(token)).length / Math.max(1, anchors.length) + (description.card_number && wholeSpan(title, normalized(description.card_number)) ? 1 : 0);
 }
 async function fetchCandidates(description: StaffInventoryResearchDescription, query: string, apiKey: string, deps: StaffInventoryResearchDependencies, signal: AbortSignal) {
-  const params = new URLSearchParams({ keyword: query, ebaySite: 'ebay.com', count: String(EBAY_SOLD_COMPS_V2_REQUEST_COUNT), page: '1', includeCompleteListing: 'true', exactMatch: 'true', hydrateBoa: 'true' });
+  const params = new URLSearchParams({ keyword: query, ebaySite: 'ebay.com', count: String(EBAY_SOLD_COMPS_V2_REQUEST_COUNT), page: '1', sold: 'true', includeCompleteListing: 'true', exactMatch: 'true', hydrateBoa: 'true' });
   const response = await jsonRequest(`${SOLDCOMPS_ENDPOINT}?${params}`, { method: 'GET', headers: { Authorization: `Bearer ${apiKey}` } }, MAX_SOURCE_BYTES, deps, signal);
   const payload = object(response.value);
   if (!payload || typeof payload.keyword !== 'string' || payload.keyword.replace(/\s+/g, ' ').trim() !== query || payload.page !== 1 || !Number.isSafeInteger(payload.totalItems) || Number(payload.totalItems) < 0 || typeof payload.hasNextPage !== 'boolean' || !Array.isArray(payload.items)) throw new StaffInventoryResearchError('malformed_response');
@@ -219,15 +211,20 @@ async function fetchCandidates(description: StaffInventoryResearchDescription, q
     if (!raw || !parsed || !safeText(parsed.title, 500)) continue;
     const bestOffer = typeof raw.bestOfferAccepted === 'boolean' ? raw.bestOfferAccepted : null;
     const soldCurrency = typeof raw.soldCurrency === 'string' && /^[A-Z]{3}$/.test(raw.soldCurrency.trim()) ? raw.soldCurrency.trim() : null;
-    const price = readResearchPriceEvidence(raw);
-    let reason: string | null = bestOffer === true && !price.accepted_offer ? 'The accepted Best Offer amount is not disclosed.' : bestOffer === null ? 'Best Offer status is unavailable.' : (price.accepted_offer?.currency ?? soldCurrency) !== 'USD' ? 'A verified USD sale price is unavailable.' : price.sold_price_cents === null ? 'The sold price is missing or unsafe.' : parsed.soldDate === null ? 'The sold date is missing or invalid.' : parsed.soldDate > now.slice(0, 10) ? 'The sold date is later than retrieval.' : unsupportedSale.test(`${parsed.title} ${parsed.condition ?? ''}`) ? 'The listing describes a lot or unsupported card product.' : null;
+    const { price, sale_evidence, reason: saleReason } = researchSaleEvidence(raw);
+    const grade = readStaffInventoryResearchGradeEvidence(parsed.title, parsed.condition);
+    const product = inspectStaffInventoryResearchSale({ title: parsed.title, condition: parsed.condition, sold_price: safeText(raw.soldPrice, 80) });
+    let reason: string | null = saleReason ?? (bestOffer === true && !price.accepted_offer ? 'The accepted Best Offer amount is not disclosed.' : bestOffer === null ? 'Best Offer status is unavailable.' : (price.accepted_offer?.currency ?? soldCurrency) !== 'USD' ? 'A verified USD sale price is unavailable.' : price.sold_price_cents === null ? 'The sold price is missing or unsafe.' : parsed.soldDate === null ? 'The sold date is missing or invalid.' : parsed.soldDate > now.slice(0, 10) ? 'The sold date is later than retrieval.' : unsupportedSale.test(`${parsed.title} ${parsed.condition ?? ''}`) ? 'The listing describes a lot or unsupported card product.' : raw.soldPriceMax != null || raw.currentPriceMax != null ? 'A multi-option price range does not establish the sold card and amount.' : null);
     const candidate: StaffInventoryResearchCandidate = {
       id: parsed.id, source: 'SoldCompsAPI', listing_url: parsed.listingUrl, retrieved_at: now, source_response_sha256: response.sha256, title: parsed.title,
       sold_price: safeText(raw.soldPrice, 80), ...price, sold_currency: soldCurrency, best_offer_accepted: bestOffer,
       sold_date: parsed.soldDate, sold_date_raw: safeText(raw.endedAt, 80), condition: safeText(parsed.condition, 200), grader: parsed.grader,
-      numeric_grade: parsed.numericGrade, raw: parsed.raw, image_url: isStaffInventoryResearchImageUrl(parsed.imageUrl) ? parsed.imageUrl : null,
+      numeric_grade: parsed.numericGrade, raw: parsed.raw, sale_evidence, multiple_price_options: raw.soldPriceMax != null || raw.currentPriceMax != null,
+      ...researchImageOptions({ ...raw, thumbnailUrl: raw.thumbnailUrl ?? parsed.imageUrl }, (deps.env ?? process.env).STAFF_INVENTORY_RESEARCH_FULL_RES_IMAGES === 'true'),
       image: null, source_eligible: reason === null, exclusion_reason: reason,
     };
+    if (grade.status === 'graded') { candidate.grader = grade.grader; candidate.numeric_grade = grade.numeric_grade; candidate.raw = false; }
+    if (!product.supported) { candidate.source_eligible = false; candidate.exclusion_reason = 'The listing does not establish one supported exact card sale.'; }
     const prior = candidates.get(candidate.id);
     if (prior) {
       const { source_eligible: _eligible, exclusion_reason: _reason, ...priorEvidence } = prior;
@@ -240,7 +237,9 @@ async function fetchCandidates(description: StaffInventoryResearchDescription, q
     }
     candidates.set(candidate.id, candidate);
   }
-  return { candidates: [...candidates.values()].sort((left, right) => titleAnchorCoverage(description, right) - titleAnchorCoverage(description, left) || Number(right.source_eligible) - Number(left.source_eligible) || (right.sold_date ?? '').localeCompare(left.sold_date ?? '') || left.id.localeCompare(right.id)).slice(0, STAFF_INVENTORY_RESEARCH_LIMITS.candidates), source_response_sha256: response.sha256 };
+  const retained = [...candidates.values()].sort((left, right) => titleAnchorCoverage(description, right) - titleAnchorCoverage(description, left) || Number(right.source_eligible) - Number(left.source_eligible) || (right.sold_date ?? '').localeCompare(left.sold_date ?? '') || left.id.localeCompare(right.id)).slice(0, STAFF_INVENTORY_RESEARCH_LIMITS.candidates);
+  return { candidates: retained, source_response_sha256: response.sha256,
+    diagnostic: { returned_count: Math.min(10000, payload.items.length), parsed_count: candidates.size, retained_count: retained.length, has_next_page: payload.hasNextPage } };
 }
 
 async function verifyImage(bytes: Buffer, contentType: string, expectedHash?: string): Promise<'image/jpeg' | 'image/png' | 'image/webp'> {
@@ -249,7 +248,7 @@ async function verifyImage(bytes: Buffer, contentType: string, expectedHash?: st
   try { metadata = await sharp(bytes, { limitInputPixels: 16_000_000, failOn: 'warning' }).metadata(); }
   catch { throw new StaffInventoryResearchError('malformed_response'); }
   const actual = metadata.format === 'jpeg' ? 'image/jpeg' : metadata.format === 'png' ? 'image/png' : metadata.format === 'webp' ? 'image/webp' : null;
-  if (!actual || actual !== contentType || !metadata.width || !metadata.height || metadata.width > 8000 || metadata.height > 8000 || (metadata.pages ?? 1) !== 1) throw new StaffInventoryResearchError('malformed_response');
+  if (!actual || actual !== contentType || !metadata.width || !metadata.height || metadata.width > 8000 || metadata.height > 8000 || metadata.width * metadata.height > 16_000_000 || (metadata.pages ?? 1) !== 1) throw new StaffInventoryResearchError('malformed_response');
   return actual;
 }
 async function fetchImage(url: string, deps: StaffInventoryResearchDependencies, signal: AbortSignal, expectedHash?: string): Promise<ImageBytes> {
@@ -257,7 +256,9 @@ async function fetchImage(url: string, deps: StaffInventoryResearchDependencies,
   const response = await request(url, { method: 'GET', headers: { Accept: 'image/jpeg,image/png,image/webp' } }, deps, signal);
   const bytes = await readResponseBytes(response, MAX_IMAGE_BYTES, signal);
   const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
-  return { bytes, sha256: sha256(bytes), content_type: await verifyImage(bytes, contentType, expectedHash), source_url: url, retrieved_at: (deps.now ?? (() => new Date()))().toISOString() };
+  const verifiedType = await verifyImage(bytes, contentType, expectedHash);
+  const metadata = await sharp(bytes, { limitInputPixels: 16_000_000, failOn: 'warning' }).metadata();
+  return { bytes, sha256: sha256(bytes), content_type: verifiedType, source_url: url, retrieved_at: (deps.now ?? (() => new Date()))().toISOString(), width: metadata.width, height: metadata.height };
 }
 async function mapFour<T>(values: T[], run: (value: T) => Promise<void>) {
   let next = 0;
@@ -366,7 +367,7 @@ function validateAnalysis(analysis: Analysis, input: StaffInventoryResearchInput
   for (const candidate of selected) {
     const comparison = comparisons.get(candidate.id)!;
     if (!candidate.source_eligible || !candidate.image || comparison.classification !== 'matched' || !comparison.identity_match || !comparison.variant_match || !comparison.visual_match || !comparison.condition_match || !titleMatches(input.description, candidate, catalogIdentity) || identity.status === 'unresolved' || analysis.target_condition.status === 'unresolved') throw new StaffInventoryResearchError('malformed_response');
-    if (analysis.target_condition.status === 'raw' ? !candidate.raw || /\b(?:PSA|BGS|SGC|CGC|HGA|GMA|AGS|TAG|graded|slab(?:bed)?)\b/i.test(`${candidate.title} ${candidate.condition ?? ''}`) : candidate.raw || candidate.grader !== analysis.target_condition.grader || candidate.numeric_grade !== analysis.target_condition.numeric_grade) throw new StaffInventoryResearchError('malformed_response');
+    if (!conditionMatches(analysis.target_condition, candidate)) throw new StaffInventoryResearchError('malformed_response');
   }
   // Valid but insufficient evidence is an unknown value, not a provider error.
   // Identical seller imagery cannot supply independent visual comparisons.
@@ -375,32 +376,12 @@ function validateAnalysis(analysis: Analysis, input: StaffInventoryResearchInput
 }
 
 function conditionMatches(condition: StaffInventoryResearchResult['target_condition'], candidate: StaffInventoryResearchCandidate) {
-  return condition.status === 'raw'
-    ? candidate.raw && !/\b(?:PSA|BGS|SGC|CGC|HGA|GMA|AGS|TAG|graded|slab(?:bed)?)\b/i.test(`${candidate.title} ${candidate.condition ?? ''}`)
-    : condition.status === 'graded' && !candidate.raw && candidate.grader === condition.grader && candidate.numeric_grade === condition.numeric_grade;
+  return compareStaffInventoryResearchCondition(condition, readStaffInventoryResearchGradeEvidence(candidate.title, candidate.condition)) === 'matched';
 }
-function comparisonAssessment(candidate: StaffInventoryResearchCandidate, description: StaffInventoryResearchDescription, condition: StaffInventoryResearchResult['target_condition'], comparison?: StaffInventoryResearchComparison): StaffInventoryResearchComparison {
-  const assessment: StaffInventoryResearchComparison = comparison ? { ...comparison } : {
-    candidate_id: candidate.id, classification: 'possible', identity_match: false, variant_match: false, visual_match: false, condition_match: false,
-    reason: 'This source result has not received a complete visual comparison.',
-  };
-  const title = normalized(candidate.title), years = yearQueryForms(description.year).map(normalized);
-  const explicitYears = candidate.title.match(/\b(?:19|20)\d{2}(?:[-/]\d{2,4})?\b/g) ?? [];
-  const explicitNumber = candidate.title.match(/(?:^|\s)#([A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)?)(?=$|\s|[,.])/i)?.[1];
-  if (unsupportedSale.test(`${candidate.title} ${candidate.condition ?? ''}`)) return { ...assessment, classification: 'rejected', identity_match: false, reason: 'The listing describes a lot or unsupported card product.' };
-  if (years.length && explicitYears.some(year => !years.includes(normalized(year)))) return { ...assessment, classification: 'rejected', identity_match: false, reason: 'The listing identifies a release year outside the saved card year or season.' };
-  if (description.card_number && explicitNumber && explicitNumber.toLocaleLowerCase() !== description.card_number.replace(/^#/, '').toLocaleLowerCase()) return { ...assessment, classification: 'rejected', identity_match: false, reason: 'The listing identifies a different card number.' };
-  if (condition.status !== 'unresolved' && !conditionMatches(condition, candidate)) return { ...assessment, classification: 'rejected', condition_match: false, reason: 'The listing raw/graded condition or exact grader and grade differs from the uploaded card.' };
-  if (!candidate.image) return { ...assessment, classification: 'possible', visual_match: false, reason: 'The listing image is unavailable for a verified visual comparison.' };
-  if (assessment.classification === 'matched') {
-    const titleTokens = new Set(title.split(' '));
-    const anchored = [description.name, productIdentity(description.set_name, description.year, description.manufacturer)].every(value => normalized(value).split(' ').filter(Boolean).every(token => titleTokens.has(token)));
-    if (!anchored || condition.status === 'unresolved' || !assessment.identity_match || !assessment.variant_match || !assessment.visual_match || !assessment.condition_match) return { ...assessment, classification: 'possible', reason: !anchored ? 'The listing title does not establish the complete saved name and product identity; visual evidence remains tentative.' : assessment.reason };
-  }
-  // A catalog or price gap cannot turn an otherwise matching card into a rejection.
-  if (assessment.classification === 'rejected' && assessment.identity_match && assessment.variant_match && assessment.visual_match && assessment.condition_match) assessment.classification = 'possible';
-  return assessment;
+function comparisonAssessment(candidate: StaffInventoryResearchCandidate, description: StaffInventoryResearchDescription, condition: StaffInventoryResearchResult['target_condition'], comparison?: StaffInventoryResearchComparison) {
+  return assessStaffInventoryResearchComparison(candidate, description, condition, comparison).assessment;
 }
+
 function updateEstimate(result: StaffInventoryResearchResult) {
   const selected = new Set(result.selected_candidate_ids);
   const prices = result.candidates.filter(candidate => selected.has(candidate.id)).map(candidate => candidate.sold_price_cents!);
@@ -420,12 +401,14 @@ function applyAnalysis(result: StaffInventoryResearchResult, analysis: Analysis,
   result.comparison_assessments = assessments;
   updateEstimate(result);
   for (const rejection of result.rejections) if (insufficient.includes(rejection.candidate_id)) rejection.reason = 'Fewer than two independent verified matching sales support an estimate.';
+  return insufficient;
 }
 function mergeCandidates(result: StaffInventoryResearchResult, incoming: StaffInventoryResearchCandidate[], description: StaffInventoryResearchDescription) {
   const priorAssessments = new Map(result.comparison_assessments?.map(assessment => [assessment.candidate_id, assessment]));
   const merged = new Map(result.candidates.map(candidate => [candidate.id, candidate]));
   const sourceEvidence = (candidate: StaffInventoryResearchCandidate) => {
-    const { retrieved_at: _retrievedAt, source_response_sha256: _responseHash, image: _image, source_eligible: _eligible, exclusion_reason: _reason, ...evidence } = candidate;
+    const { retrieved_at: _retrievedAt, source_response_sha256: _responseHash, image: _image, image_url: _selectedImage,
+      source_eligible: _eligible, exclusion_reason: _reason, ...evidence } = candidate;
     return evidence;
   };
   for (const candidate of incoming) {
@@ -458,6 +441,7 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
       schema_version: 1, unit_id: data.unit_id, description_event_id: data.description_event_id, description_hash: data.description_hash,
       engine_version: STAFF_INVENTORY_RESEARCH_ENGINE_VERSION, model: STAFF_INVENTORY_RESEARCH_MODEL, researched_at: now(), timings_ms: timings,
       photos: { front: null, back: null }, query, research_queries: [], comparison_assessments: [],
+      diagnostics: { schema_version: 1, reason_codes: [], sources: [], candidates: [] },
       identity: { status: 'unresolved', variant_name: null, suggestion: safeText(data.description.variant, 160), reason: 'Exact card identity and distinguishing reference evidence are unresolved.', reference_ids: [], photo_features: [] },
       target_condition: { status: 'unresolved', grader: null, numeric_grade: null, photo_evidence: null },
       references: [], candidates: [], selected_candidate_ids: [], rejections: [],
@@ -465,6 +449,7 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
     };
     if (query === null) {
       result.estimate.reason = 'The saved description does not provide a usable card search identity.';
+      result.diagnostics!.reason_codes.push('UNUSABLE_SAVED_IDENTITY');
       timings.total = Date.now() - started;
       return StaffInventoryResearchResultSchema.parse(result);
     }
@@ -494,6 +479,7 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
         const start = Date.now();
         const source = await bounded(sourceSignal => fetchCandidates(data.description, query, soldKey, deps, sourceSignal), deadline(deps, 'sources'), innerSignal);
         result.candidates = source.candidates;
+        result.diagnostics!.sources.push({ sequence: 1, ...source.diagnostic });
         result.research_queries!.push({ sequence: 1, query, reason: 'Initial search from the saved card description.', status: 'completed', source_response_sha256: source.source_response_sha256, candidate_ids: source.candidates.map(candidate => candidate.id), error_code: null });
         timings.sources = Date.now() - start;
       })(),
@@ -514,6 +500,16 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
     const candidateImages = new Map<string, ImageBytes>(), referenceImages = new Map<string, ImageBytes>();
     const imageReads = new Map<string, Promise<ImageBytes>>();
     const imageAttempts = new Set<string>();
+    type Diagnostic = NonNullable<StaffInventoryResearchResult['diagnostics']>['candidates'][number];
+    const imageOutcomes = new Map<string, Diagnostic['image_attempts']>();
+    const modelAssessments = new Map<string, { comparison: StaffInventoryResearchComparison; imageHash: string | null }>();
+    const comparisonFailures = new Set<string>();
+    let insufficientSelection: string[] = [];
+    const rememberAnalysis = (analysis: Analysis) => {
+      for (const comparison of analysis.comparisons) modelAssessments.set(comparison.candidate_id, {
+        comparison: { ...comparison }, imageHash: result.candidates.find(candidate => candidate.id === comparison.candidate_id)?.image?.sha256 ?? null,
+      });
+    };
     const warn = (warning: string) => { if (!warnings.includes(warning) && warnings.length < 12) warnings.push(warning); };
     if (hasPhotos) {
       const downloadEvidence = async (pass: number, parent: AbortSignal) => {
@@ -525,12 +521,28 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
             const tasks: Array<() => Promise<void>> = candidates.map(candidate => async () => {
               imageAttempts.add(candidate.id);
               try {
-                let pending = imageReads.get(candidate.image_url!);
-                if (!pending) {
-                  pending = bounded(imageSignal => fetchImage(candidate.image_url!, deps, imageSignal), deadline(deps, 'images'), imageRoundSignal);
-                  imageReads.set(candidate.image_url!, pending);
+                const urls = [...new Set([candidate.image_url, candidate.image_options?.thumbnail_url].filter((url): url is string => !!url))];
+                let image: ImageBytes | undefined;
+                for (const url of urls) {
+                  if (imageRoundSignal.aborted) break;
+                  let pending = imageReads.get(url);
+                  if (!pending && imageReads.size >= STAFF_INVENTORY_RESEARCH_LIMITS.candidateImages) break;
+                  const outcomes = imageOutcomes.get(candidate.id) ?? [];
+                  imageOutcomes.set(candidate.id, outcomes);
+                  try {
+                    if (!pending) { pending = bounded(imageSignal => fetchImage(url, deps, imageSignal), deadline(deps, 'images'), imageRoundSignal); imageReads.set(url, pending); }
+                    image = await pending;
+                    if (imageRoundSignal.aborted) throw new StaffInventoryResearchError('cancelled');
+                    candidate.image_url = url;
+                    candidateImages.set(candidate.id, image);
+                    candidate.image = { source_url: image.source_url, sha256: image.sha256, retrieved_at: image.retrieved_at, content_type: image.content_type, byte_size: image.bytes.length, storage_key: null };
+                    outcomes.push({ source_url: url, status: 'acquired', error_code: null });
+                    break;
+                  } catch (error) {
+                    outcomes.push({ source_url: url, status: 'failed', error_code: error instanceof StaffInventoryResearchError ? error.code.toUpperCase() : 'IMAGE_FETCH_FAILED' });
+                  }
                 }
-                const image = await pending;
+                if (!image) return;
                 let storageKey: string | null = null;
                 if (deps.archiveCandidateImage) {
                   try {
@@ -541,8 +553,7 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
                   } catch { if (imageRoundSignal.aborted) throw new StaffInventoryResearchError('cancelled'); warn('Some comparable images could not be retained in private storage.'); }
                 }
                 if (imageRoundSignal.aborted) throw new StaffInventoryResearchError('cancelled');
-                candidateImages.set(candidate.id, image);
-                candidate.image = { source_url: image.source_url, sha256: image.sha256, retrieved_at: image.retrieved_at, content_type: image.content_type, byte_size: image.bytes.length, storage_key: storageKey };
+                if (candidate.image) candidate.image.storage_key = storageKey;
               } catch { if (imageRoundSignal.aborted) throw new StaffInventoryResearchError('cancelled'); }
             });
             if (pass === 0) for (const reference of result.references.filter(reference => reference.kind === 'reference' && reference.image).slice(0, STAFF_INVENTORY_RESEARCH_LIMITS.referenceImages)) tasks.push(async () => {
@@ -572,7 +583,8 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
       };
       await downloadEvidence(0, innerSignal);
       let analysis = await assess(innerSignal);
-      applyAnalysis(result, analysis, data, photos as Record<Side, StaffInventoryVerifiedPhoto>, referenceImages);
+      insufficientSelection = applyAnalysis(result, analysis, data, photos as Record<Side, StaffInventoryVerifiedPhoto>, referenceImages);
+      rememberAnalysis(analysis);
       for (let pass = 1; pass < STAFF_INVENTORY_RESEARCH_LIMITS.searches && analysis.refinement && result.estimate.status !== 'estimated'; pass++) {
         const refinement = analysis.refinement;
         const nextQuery = validateRefinedStaffInventoryResearchQuery(data.description, refinement.query, result.references, analysis.target_condition);
@@ -594,17 +606,22 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
               const source = await bounded(sourceSignal => fetchCandidates(data.description, nextQuery, soldKey, deps, sourceSignal), deadline(deps, 'sources'), refinementSignal);
               if (refinementSignal.aborted) throw new StaffInventoryResearchError('cancelled');
               sourceCompleted = true;
+              result.diagnostics!.sources.push({ sequence: pass + 1, ...source.diagnostic });
               result.research_queries!.push({ sequence: pass + 1, query: nextQuery, reason: refinement.reason, status: 'completed', source_response_sha256: source.source_response_sha256, candidate_ids: source.candidates.map(candidate => candidate.id), error_code: null });
               mergeCandidates(result, source.candidates, data.description);
             } finally { timings.sources += Date.now() - sourceStart; }
             await downloadEvidence(pass, refinementSignal);
             const nextAnalysis = await assess(refinementSignal);
             if (refinementSignal.aborted) throw new StaffInventoryResearchError('cancelled');
-            applyAnalysis(result, nextAnalysis, data, photos as Record<Side, StaffInventoryVerifiedPhoto>, referenceImages);
+            insufficientSelection = applyAnalysis(result, nextAnalysis, data, photos as Record<Side, StaffInventoryVerifiedPhoto>, referenceImages);
+            rememberAnalysis(nextAnalysis);
             analysis = nextAnalysis;
           }, Math.min(deadline(deps, 'refinement'), remaining - returnMargin), innerSignal);
         } catch (error) {
           if (innerSignal.aborted) throw new StaffInventoryResearchError('cancelled');
+          if (sourceCompleted) for (const candidate of result.candidates) {
+            if (candidate.image && modelAssessments.get(candidate.id)?.imageHash !== candidate.image.sha256) comparisonFailures.add(candidate.id);
+          }
           if (!sourceCompleted) result.research_queries!.push({ sequence: pass + 1, query: nextQuery, reason: refinement.reason, status: 'failed', source_response_sha256: null, candidate_ids: [], error_code: error instanceof StaffInventoryResearchError ? error.code : 'provider_error' });
           // A successful fetch is useful even if its optional model assessment
           // failed. Keep the last valid conclusions; new rows remain unassessed.
@@ -616,6 +633,39 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
       result.estimate.reason = 'Two different verified card photos are needed to assess the fetched sold comparisons.';
       result.comparison_assessments = result.candidates.map(candidate => comparisonAssessment(candidate, data.description, result.target_condition));
       result.rejections = result.comparison_assessments.map(assessment => ({ candidate_id: assessment.candidate_id, reason: assessment.reason }));
+    }
+    // Recompute decisions against the exact image actually inspected. A newly
+    // downloaded image after an optional model failure is acquired/unassessed,
+    // never falsely labeled unavailable or promoted from a previous guess.
+    result.comparison_assessments = result.candidates.map(candidate => {
+      const prior = modelAssessments.get(candidate.id), image = candidateImages.get(candidate.id);
+      const compared = !!candidate.image && !!prior && prior.imageHash === candidate.image.sha256;
+      const decision = assessStaffInventoryResearchComparison(candidate, data.description, result.target_condition, prior?.comparison, { comparisonCompleted: compared });
+      const codes = decision.reason_codes.map(code => code.toUpperCase());
+      if (candidate.sale_evidence?.status !== 'sold') codes.push(candidate.sale_evidence?.status === 'active' ? 'ACTIVE_LISTING' : 'SOLD_EVENT_UNVERIFIED');
+      if (!candidate.source_eligible) codes.push('SALE_PRICE_INELIGIBLE');
+      if (comparisonFailures.has(candidate.id)) codes.push('OPTIONAL_COMPARISON_FAILED');
+      result.diagnostics!.candidates.push({
+        candidate_id: candidate.id, model_assessment: prior?.comparison ?? null, model_image_sha256: prior?.imageHash ?? null, decision_codes: [...new Set(codes)].slice(0, 24),
+        comparison_status: compared ? 'assessed' : comparisonFailures.has(candidate.id) ? 'failed' : 'not_assessed',
+        image_attempts: imageOutcomes.get(candidate.id) ?? [], image_width: image?.width ?? null, image_height: image?.height ?? null,
+      });
+      return decision.assessment;
+    });
+    if (!result.references.length) result.diagnostics!.reason_codes.push('CATALOG_COVERAGE_MISSING');
+    if (!hasPhotos) result.diagnostics!.reason_codes.push('PHOTO_PAIR_UNVERIFIED');
+    if (result.identity.status === 'unresolved') result.diagnostics!.reason_codes.push('IDENTITY_UNRESOLVED');
+    if (result.candidates.length === 0) result.diagnostics!.reason_codes.push('NO_SOURCE_CANDIDATES');
+    if (comparisonFailures.size) result.diagnostics!.reason_codes.push('OPTIONAL_COMPARISON_FAILED');
+    updateEstimate(result);
+    if (!hasPhotos) result.estimate.reason = 'Two different verified card photos are needed to assess the fetched sold comparisons.';
+    if (insufficientSelection.length && !result.selected_candidate_ids.length) {
+      result.diagnostics!.reason_codes.push('INSUFFICIENT_INDEPENDENT_SALES');
+      for (const rejection of result.rejections) if (insufficientSelection.includes(rejection.candidate_id)
+        && result.candidates.find(candidate => candidate.id === rejection.candidate_id)?.source_eligible
+        && result.comparison_assessments!.find(assessment => assessment.candidate_id === rejection.candidate_id)?.classification === 'matched') {
+        rejection.reason = 'Fewer than two independent verified matching sales support an estimate.';
+      }
     }
     timings.total = Date.now() - started; result.researched_at = now();
     const verified = StaffInventoryResearchResultSchema.safeParse(result);

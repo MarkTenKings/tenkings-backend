@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const STAFF_INVENTORY_RESEARCH_MODEL = 'gpt-6-astra' as const;
-export const STAFF_INVENTORY_RESEARCH_ENGINE_VERSION = 'staff-inventory-research-v2' as const;
+export const STAFF_INVENTORY_RESEARCH_ENGINE_VERSION = 'staff-inventory-research-v3' as const;
 export const STAFF_INVENTORY_RESEARCH_LIMITS = { searches: 3, candidates: 24, candidateImages: 12, references: 24, referenceImages: 4, minimumComps: 2, overallTimeoutMs: 150000 } as const;
 
 const unsafeText = /[\u0000-\u001f\u007f]|https?:\/\/|data:|\b(?:sk|sess|proj)-[A-Za-z0-9_-]{8,}|(?:^|\s)(?:\/[\w.-]+){2,}|<\/?[a-z][^>]*>/i;
@@ -71,6 +71,11 @@ export const StaffInventoryResearchCandidateSchema = z.object({
   accepted_offer: z.object({ amount: z.string().regex(/^\d{1,8}(?:\.\d{1,2})?$/), currency: z.string().regex(/^[A-Z]{3}$/), source_field: z.enum(['soldPrice', 'boaAcceptedPrice']), hydrated: z.literal(true) }).strict().optional(),
   condition: text(200).nullable(), grader: z.enum(['PSA', 'BGS', 'SGC', 'CGC']).nullable(), numeric_grade: z.number().min(1).max(10).nullable(), raw: z.boolean(),
   image_url: imageUrl.nullable(), image: downloadedImage.nullable(), source_eligible: z.boolean(), exclusion_reason: text(400).nullable(),
+  // Optional for immutable v1/v2 readers. New engine output binds affirmative
+  // sold-event evidence separately from price and image matching.
+  sale_evidence: z.object({ status: z.enum(['sold', 'active', 'unknown']), basis: z.enum(['listing_type', 'hydrated_offer', 'not_supplied']) }).strict().optional(),
+  image_options: z.object({ thumbnail_url: imageUrl.nullable(), full_resolution_url: imageUrl.nullable() }).strict().optional(),
+  multiple_price_options: z.boolean().optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.listing_url !== `https://www.ebay.com/itm/${value.id.slice(5)}`) ctx.addIssue({ code: 'custom', message: 'Listing identity mismatch.' });
   if (value.image && value.image.source_url !== value.image_url) ctx.addIssue({ code: 'custom', message: 'Image source mismatch.' });
@@ -84,6 +89,13 @@ export const StaffInventoryResearchCandidateSchema = z.object({
   if (value.sold_price_cents !== null && (value.sold_price_cents !== parsedPrice || (value.accepted_offer ? value.accepted_offer.currency !== 'USD' : value.best_offer_accepted !== false || value.sold_currency !== 'USD'))) ctx.addIssue({ code: 'custom', message: 'Price evidence mismatch.' });
   if (value.sold_date && (!Number.isFinite(Date.parse(value.sold_date)) || new Date(value.sold_date).toISOString().slice(0, 10) !== value.sold_date)) ctx.addIssue({ code: 'custom', message: 'Invalid sold date.' });
   if (value.source_eligible && (value.sold_price_cents === null || value.sold_date === null || value.sold_date > value.retrieved_at.slice(0, 10) || value.exclusion_reason !== null)) ctx.addIssue({ code: 'custom', message: 'Ineligible sale evidence.' });
+  if (value.multiple_price_options && value.source_eligible) ctx.addIssue({ code: 'custom', message: 'Ambiguous price options.' });
+  if (value.sale_evidence) {
+    if (value.sale_evidence.status === 'unknown' ? value.sale_evidence.basis !== 'not_supplied' : value.sale_evidence.basis === 'not_supplied') ctx.addIssue({ code: 'custom', message: 'Unbound sold-event evidence.' });
+    if (value.sale_evidence.basis === 'hydrated_offer' && (value.sale_evidence.status !== 'sold' || !value.accepted_offer)) ctx.addIssue({ code: 'custom', message: 'Unbound hydrated sale.' });
+    if (value.sale_evidence.status !== 'sold' && (value.source_eligible || value.sold_price_cents !== null)) ctx.addIssue({ code: 'custom', message: 'Unsupported sold event.' });
+  }
+  if (value.image_options && value.image_url !== null && ![value.image_options.thumbnail_url, value.image_options.full_resolution_url].includes(value.image_url)) ctx.addIssue({ code: 'custom', message: 'Unbound primary image.' });
   if (value.raw ? value.grader !== null || value.numeric_grade !== null : value.grader === null || value.numeric_grade === null) ctx.addIssue({ code: 'custom', message: 'Inconsistent sale grade evidence.' });
 });
 export type StaffInventoryResearchCandidate = z.infer<typeof StaffInventoryResearchCandidateSchema>;
@@ -107,6 +119,28 @@ export const StaffInventoryResearchComparisonSchema = z.object({
   identity_match: z.boolean(), variant_match: z.boolean(), visual_match: z.boolean(), condition_match: z.boolean(),
 }).strict();
 export type StaffInventoryResearchComparison = z.infer<typeof StaffInventoryResearchComparisonSchema>;
+const decisionCode = z.string().regex(/^[A-Z][A-Z0-9_]{0,79}$/);
+const imageAttempt = z.object({ source_url: imageUrl, status: z.enum(['acquired', 'failed']), error_code: decisionCode.nullable() }).strict()
+  .refine(value => value.status === 'acquired' ? value.error_code === null : value.error_code !== null);
+const diagnostic = z.object({
+  candidate_id: candidateId,
+  model_assessment: StaffInventoryResearchComparisonSchema.nullable(),
+  model_image_sha256: sha256.nullable(),
+  decision_codes: z.array(decisionCode).max(24),
+  comparison_status: z.enum(['not_assessed', 'assessed', 'failed']),
+  image_attempts: z.array(imageAttempt).max(2),
+  image_width: z.number().int().min(1).max(8000).nullable(),
+  image_height: z.number().int().min(1).max(8000).nullable(),
+}).strict();
+const diagnostics = z.object({
+  schema_version: z.literal(1),
+  reason_codes: z.array(decisionCode).max(24),
+  sources: z.array(z.object({ sequence: z.number().int().min(1).max(3),
+    returned_count: z.number().int().min(0).max(10000), parsed_count: z.number().int().min(0).max(240),
+    retained_count: z.number().int().min(0).max(24), has_next_page: z.boolean(),
+  }).strict()).max(3),
+  candidates: z.array(diagnostic).max(24),
+}).strict();
 const researchQuery = z.object({
   sequence: z.number().int().min(1).max(STAFF_INVENTORY_RESEARCH_LIMITS.searches), query: text(400), reason: text(400),
   status: z.enum(['completed', 'failed']), source_response_sha256: sha256.nullable(),
@@ -117,11 +151,12 @@ const researchQuery = z.object({
 /** This validates the private persistence boundary as well as the engine output. */
 export const StaffInventoryResearchResultSchema = z.object({
   schema_version: z.literal(1), unit_id: sourceId, description_event_id: sourceId, description_hash: sha256,
-  engine_version: z.enum(['staff-inventory-research-v1', STAFF_INVENTORY_RESEARCH_ENGINE_VERSION]), model: z.literal(STAFF_INVENTORY_RESEARCH_MODEL), researched_at: timestamp, timings_ms: timings,
+  engine_version: z.enum(['staff-inventory-research-v1', 'staff-inventory-research-v2', STAFF_INVENTORY_RESEARCH_ENGINE_VERSION]), model: z.literal(STAFF_INVENTORY_RESEARCH_MODEL), researched_at: timestamp, timings_ms: timings,
   photos: z.object({ front: photo.nullable(), back: photo.nullable() }).strict(), query: text(400).nullable(),
   // Do not add defaults: parsing an existing immutable v1 result must preserve its hash.
   research_queries: z.array(researchQuery).max(STAFF_INVENTORY_RESEARCH_LIMITS.searches).optional(),
   comparison_assessments: z.array(StaffInventoryResearchComparisonSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates).optional(),
+  diagnostics: diagnostics.optional(),
   identity: StaffInventoryResearchIdentitySchema, target_condition: StaffInventoryResearchConditionSchema,
   references: z.array(StaffInventoryResearchReferenceSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.references),
   candidates: z.array(StaffInventoryResearchCandidateSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates),
@@ -133,6 +168,26 @@ export const StaffInventoryResearchResultSchema = z.object({
   const fail = (message: string) => ctx.addIssue({ code: 'custom', message });
   const candidates = new Map(value.candidates.map(candidate => [candidate.id, candidate]));
   const references = new Map(value.references.map(reference => [reference.id, reference]));
+  if (value.engine_version === 'staff-inventory-research-v3') {
+    if (!value.diagnostics || !value.research_queries || !value.comparison_assessments) fail('Missing v3 decision evidence.');
+    if (value.candidates.some(candidate => !candidate.sale_evidence || !candidate.image_options || candidate.multiple_price_options === undefined)) fail('Missing source decision evidence.');
+  }
+  if (value.diagnostics) {
+    const entries = value.diagnostics.candidates;
+    const completed = value.research_queries?.filter(query => query.status === 'completed') ?? [];
+    if (completed.length !== value.diagnostics.sources.length || value.diagnostics.sources.some((source, index) => source.sequence !== completed[index]?.sequence || source.retained_count !== completed[index]?.candidate_ids.length || source.retained_count > source.parsed_count || source.parsed_count > source.returned_count)) fail('Unbound source diagnostics.');
+    if (new Set(entries.map(entry => entry.candidate_id)).size !== entries.length || entries.length !== candidates.size) fail('Incomplete diagnostic attribution.');
+    for (const entry of entries) {
+      const candidate = candidates.get(entry.candidate_id);
+      if (!candidate || entry.model_assessment && entry.model_assessment.candidate_id !== entry.candidate_id) fail('Unbound diagnostic candidate.');
+      if (entry.image_width !== null && (!candidate?.image || entry.image_height === null) || entry.image_height !== null && entry.image_width === null) fail('Unbound image dimensions.');
+      if (entry.image_width && entry.image_height && entry.image_width * entry.image_height > 16_000_000) fail('Oversize image dimensions.');
+      if (entry.model_image_sha256 && !entry.model_assessment) fail('Missing image assessment.');
+      if (entry.comparison_status === 'assessed' && (!entry.model_assessment || !candidate?.image || entry.model_image_sha256 !== candidate.image.sha256)) fail('Unbound model assessment.');
+      if (entry.image_attempts.filter(attempt => attempt.status === 'acquired').some(attempt => attempt.source_url !== candidate?.image?.source_url)) fail('Unbound acquired image.');
+      if (entry.image_attempts.some(attempt => ![candidate?.image_options?.thumbnail_url, candidate?.image_options?.full_resolution_url, candidate?.image_url].includes(attempt.source_url))) fail('Unbound diagnostic image attempt.');
+    }
+  }
   if (candidates.size !== value.candidates.length || references.size !== value.references.length || new Set(value.selected_candidate_ids).size !== value.selected_candidate_ids.length) fail('Duplicate evidence identity.');
   if (value.candidates.length && value.query === null) fail('Missing source query.');
   if (value.research_queries) {
