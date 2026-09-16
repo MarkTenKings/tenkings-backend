@@ -1,12 +1,27 @@
 # Variant identification and sold-comparison improvement plan
 
-Date: September 15, 2026 (America/Los_Angeles). Revised September 16 following the requested Astra Ultra review. Status: reviewed proposal; implementation and rollout have not started.
+Date: September 15, 2026 (America/Los_Angeles). Revised September 16 following the requested Astra Ultra review and subsequent owner authorization. Status: **implementation started; first reviewed code candidate committed locally; rollout pending**.
+
+## Current implementation status — September 16
+
+After the review, Mark authorized implementation following coordination with ATLAS ASTRA SEPT 16. The agreed narrow extension was recorded in the canonical blueprint before building. Shared recognition/catalog foundations are committed at `b89cb020`; private research fixes and diagnostics are committed at `31b86535`. Neither commit has been deployed. The serving Inventory application remains the earlier Pokémon/photo-recovery release `38c95335`.
+
+| Reviewed delivery | Current state |
+| --- | --- |
+| False-rejection repairs and richer comp-image evidence | Repairs, diagnostics and bounded larger-primary-image support built/tested locally. Real provider qualification and deployment pending; larger-image flag remains off. |
+| One sports product and one Pokémon set | Shared catalog contract built. Durable reviewed publication storage and real source-backed pilot not yet implemented/published. |
+| Carefully verified reusable references | Contract validation, applicability and lineage rules built; operational review/publication integration remains pending. |
+| Two-way Inventory/Atlas reuse | Recognition package delivered and independently verified by Atlas. Atlas adapter/release and different-card reuse in both directions remain pending. |
+| Preserve intake responsiveness | Protected intake/save paths unchanged and functional checks passed. Measured idle-versus-saturated performance and real-phone acceptance remain pending. |
+| More than 90% correct comps across all cards | Evaluation plan exists; independent holdout and measured coverage result remain pending. No accuracy claim has been established. |
+
+See [first implementation and qualification record](2026-09-16-inventory-research-implementation.md) for completed tests and remaining work. The investigation/review descriptions below are dated historical evidence, including statements that no code changed during that review; they do not mean the later authorized implementation never started. The frozen Ultra-review archive remains unchanged.
 
 ## Recommendation
 
 Make the research engine better supplied with authoritative card identities, distinguishing variant evidence and verifiable sale data. Start with the demonstrated rejection defects and a bounded high-resolution/provider-contract experiment while preparing a small sports/Pokémon catalog pilot. Broader catalog coverage follows measured demand; it is not a prerequisite for recovering useful private research matches. More searches or a higher reasoning setting alone will not solve the measured gaps.
 
-Mark requested investigation and planning toward correct variants and correct eBay sold comps on over 90% of cards, with 3–5 Astra Max subagents. Three `gpt-6-astra` / `max` agents investigated identity/reference coverage, retrieval/provider capabilities, and rejection/evaluation while the coordinator acquired and checked live read-only evidence. This proposal does not change the approved V2 blueprint. The existing September 11 private research extension and September 15 fast-intake/Pokémon amendments remain authoritative.
+Mark requested investigation and planning toward correct variants and correct eBay sold comps on over 90% of cards, with 3–5 Astra Max subagents. Three `gpt-6-astra` / `max` agents investigated identity/reference coverage, retrieval/provider capabilities, and rejection/evaluation while the coordinator acquired and checked live read-only evidence. The proposal itself did not change the approved V2 blueprint; the subsequent September 16 owner-approved amendment records the shared recognition/catalog/private-comps extension. The existing September 11 private research extension and September 15 fast-intake/Pokémon amendments remain authoritative.
 
 ## What the live evidence establishes
 
@@ -155,7 +170,7 @@ No application source, provider settings, database records, research jobs, inven
 
 Private evidence is retained under the protected TenKingsInventory investigation directory, including the snapshot, read-only extraction scripts, manifest, scoped catalog queries, three independent reports and derived scorecards. Snapshot SHA-256: `d93cb6e79c476b2ce514b2b4842118e538137d53a2245a388e943cdd790fa5ed`. Temporary exported credentials are removed after the read-only work. Private photographs, signed URLs and raw business datasets do not belong in the repository.
 
-This is a reviewable implementation proposal. Scheduling, total catalog acquisition effort and the final success claim depend on the labeled baseline and provider contract results; no unmeasured delivery time or 90% guarantee is implied.
+This was the reviewable proposal at the close of the Ultra review; the current implementation status above supersedes its original pre-build status. Scheduling, total catalog acquisition effort and the final success claim depend on the labeled baseline and provider contract results; no unmeasured delivery time or 90% guarantee is implied.
 
 ## Follow-up: incremental catalog shared with Atlas grading
 
@@ -215,7 +230,7 @@ The intended architecture is **two app experiences, common identification/resear
 
 ### Narrow blueprint record for this extension
 
-Mark has agreed to incremental shared identity knowledge for sports and Pokémon and preserving Add Inventory speed. Before implementation, record that agreed scope and the concrete integration contract in the canonical blueprint. This planning document is not a silent replacement of the blueprint's clean-import/human-review rules. Suggested amendment content:
+Mark has agreed to incremental shared identity knowledge for sports and Pokémon and preserving Add Inventory speed. The agreed narrow scope was recorded in the canonical blueprint on September 16 before implementation. This planning document is not a replacement of the blueprint's clean-import/human-review rules. The review's amendment text is retained here as historical design context:
 
 > Inventory and Atlas may consume one versioned, reviewed catalog evidence contract and submit private identity/image observations for review. Existing SetOps publication is the initial authority for this integration; no duplicate canonical catalog or broad migration is required. Background preparation may assemble manufacturer/approved-secondary text imports and candidate representative images for needed sets. Publication requires explicit authorized review bound to the complete identity, applicability, source and image-evidence payload. Machine suggestions, repeated model agreement and a completed grade do not themselves approve reusable references. Each app preserves its original captures, private access, sole writers and final grade/description authority. New research/acquisition work remains outside intake and save transactions and must pass intake-under-load acceptance. Autonomous general source crawling, automatic catalog publication, precision grading-reference promotion and public grading-comp confirmation are outside this extension.
 
