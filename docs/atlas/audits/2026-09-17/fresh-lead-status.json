@@ -1,0 +1,38 @@
+{
+  "observedAt": "2026-09-17T09:59:47.982809+00:00",
+  "mode": "read-only status; website/manual probes unauthenticated",
+  "applicationCommit": "a2a116476592a629214d30d0240152f81c606829",
+  "website": {
+    "url": "https://atlasgrading.com",
+    "status": 200
+  },
+  "manualRoute": {
+    "url": "https://atlasgrading.com/admin/manual",
+    "status": 404
+  },
+  "privateHealth": {
+    "url": "https://private.atlasgrading.com/health",
+    "status": 200,
+    "json": {
+      "service": "atlas-private",
+      "releaseSha": "89c55d916130d914f6a989197538c8bbd31c9594",
+      "deploymentId": "atlas-workspace-private-20260910",
+      "configHash": "4402644adb62393dc03249f1f04c94c3007bfe5a3a74799212620d5ff0e94548",
+      "gradingConfigHash": "52a0a449c9fb7b18492d614d917d6cfb6d59a57a87785e27a76f8539cd310bae",
+      "imageConfigHash": "4d7c026de8d87642e2b1fc75155f1680ee2b6afbb88d6e72e78dbc766c7c04aa",
+      "gradingPolicyHash": "8aaeef94a527e0a2aabf10805e74f61d62abaed3065d06129a887bda37bf7d06",
+      "capabilities": [
+        "WORKSPACE_SOURCE",
+        "ORIGINAL_GRADING",
+        "OPERATOR_EVIDENCE",
+        "WORKSPACE_DISPATCH"
+      ]
+    }
+  },
+  "freeDiskGiB": 2.29,
+  "docker": {
+    "exitCode": 1,
+    "server": "null",
+    "error": "failed to connect to the docker API at unix:///Users/markthomas/.docker/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /Users/markthomas/.docker/run/docker.sock: connect: no such file or directory"
+  }
+}

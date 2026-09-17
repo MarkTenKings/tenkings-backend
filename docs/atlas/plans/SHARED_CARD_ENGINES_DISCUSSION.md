@@ -1,5 +1,11 @@
 # Shared card engines; separate company inventories
 
+**September17 status:** this remains a historical consultation record. Use the
+[current fresh-lead handoff](FRESH_ASTRA_ULTRA_LEAD_HANDOFF_20260917.md) for exact
+recognition V2 adoption, frozen catalog interfaces and live-release status.
+Mark's later Astra-first direction defers SAM3; the SAM-baseline recommendation
+below is superseded. The rebuilt ATLAS workflow is committed but not deployed.
+
 The [consolidated Speedster rebuild plan](ATLAS_SPEEDSTER_REBUILD_PLAN.md) places this source-verified reuse recommendation into the complete manual/automatic grading journey. This file remains the detailed current Ten Kings consultation record.
 
 **Subsequent local implementation, September 12:** Mark authorized the next build batch. The [preparation/storage/identification checkpoint](../audits/2026-09-12/preparation-storage-and-identification.md) now records the neutral `@tenkings/card-identification-core` extraction from a319 below, with13 deterministic tests, strict TypeScript and independent source/request/parser parity checks passing. No default provider, inventory, storage or knowledge effects are included. The shared eight-field contract and exact requests remain unchanged; native originals remain separate from interpretation JPEGs. Authenticated application/provider adapters, shared knowledge and the research/SoldComps extraction remain future work. This supersedes the earlier planning-only implementation status without changing a serving engine or making a live model call.

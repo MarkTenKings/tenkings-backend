@@ -1,5 +1,11 @@
 # ATLAS Speedster — fresh Astra Extra High lead handoff
 
+**Historical handoff, superseded for current work:** use
+[the September 17 Astra Ultra lead handoff](FRESH_ASTRA_ULTRA_LEAD_HANDOFF_20260917.md).
+The rebuild is now implemented locally; Mark selected Astra-first defect memory
+and deferred SAM3. The planning-only and SAM-baseline statements below describe
+September11, not the current work order.
+
 **Owner request:** Mark explicitly requested a new sidebar-visible lead task using `gpt-6-astra` with `xhigh` reasoning and five fresh subagents using the same model/effort. This is a fresh lead, not a fork of the old conversation and not another child of the old lead. Continue the established investigation and rebuild planning without asking Mark to restate it.
 
 ## Start here
