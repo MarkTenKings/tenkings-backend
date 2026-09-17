@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "preregistered; execution pending coordinating-agent protocol/hash review and disk readiness under Mark's existing execute authorization; no run performed by preparation task",
+  "status": "preregistered; 48-save runtime preflight audited; seed-only IPC deadline corrected before measurement; execution pending coordinating-agent hash review and quiet window under Mark's existing execute authorization",
   "purpose": "One split-process source/DB diagnostic, not production/device/release qualification",
   "refs": {
     "A": "60572cec895ad63d4ab826cd366f6475b04e725a",
@@ -116,7 +116,7 @@
   "stop_conditions": [
     "any hard invariant fails",
     "30-minute cap",
-    "owned child exits or RPC exceeds60s",
+    "owned child exits, ordinary RPC exceeds60s, or untimed seed RPC exceeds180s",
     "monotonic clock check fails",
     "disk floor before setup/each block fails"
   ],
@@ -133,7 +133,7 @@
   "analysis": "Retain all samples. Nearest-rank p95. Report per-arm/block >50ms lease counts, >20ms late-loop overlaps by process, independent sampled advisory waits and queue owners, ClientRead intervals as discrete observations, combined photo wall and legacy sum. No continuous wait attribution from sampled DB rows; no exact CPU cause without a profile.",
   "release_pass_always_false": true,
   "missing_proof": [
-    "runtime preflight of new harness",
+    "full-size seed completion with corrected setup deadline; 48-save preflight otherwise passed",
     "actual Vercel request-instance/concurrency/cold-start behavior",
     "identify function isolation",
     "physical camera/upload/recognition",
@@ -142,5 +142,10 @@
     "new catalog/V4 and larger images",
     "independent >=200-card labels/scorecard"
   ],
-  "launch_review": "Coordinating agent reviews exact code/protocol hashes and topology approximations under Mark's existing execute authorization, verifies disk readiness, and releases preflight first. No new permission request to Mark is required. No measured run from this preparation."
+  "launch_review": "Coordinating agent reviews the seed-only deadline correction and exact code/protocol hashes under Mark's existing execute authorization, verifies disk readiness and releases one measured quiet window. The 48-save runtime preflight passed; no new permission request to Mark is required. No measured run from this correction task.",
+  "ipc_deadlines_ms": {
+    "seed": 180000,
+    "ordinary_including_seed_terminal": 60000
+  },
+  "setup_deadline_reason": "Prior full-size seeds took approximately 96\u2013100 seconds; the 40-unit preflight did not expose the 60-second seed RPC limit. Only the untimed seed method changes to 180 seconds, within the unchanged 30-minute global cap."
 }

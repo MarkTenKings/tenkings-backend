@@ -19,7 +19,8 @@ export function peer(send: (message: any) => void, listen: (handler: (message: a
     else if (message.rpc === 'request') { try { send({ rpc: 'reply', id: message.id, result: await handle(message.method, message.args) }); } catch (error) { send({ rpc: 'reply', id: message.id, error: safeError(error) }); } }
   });
   return {
-    call(method: string, args: any = {}) { return new Promise<any>((resolve, reject) => { const id = ++sequence; const timer = setTimeout(() => { pending.delete(id); reject(Error(`IPC ${method} exceeded 60 seconds`)); }, 60000); pending.set(id, { resolve, reject, timer }); try { send({ rpc: 'request', id, method, args }); } catch (error) { pending.delete(id); clearTimeout(timer); reject(error); } }); },
+    // Only the untimed full-size intake seed gets 180 s; seed-terminal and every ordinary RPC retain 60 s.
+    call(method: string, args: any = {}) { const timeoutMs = method === 'seed' ? 180000 : 60000; return new Promise<any>((resolve, reject) => { const id = ++sequence; const timer = setTimeout(() => { pending.delete(id); reject(Error(`IPC ${method} exceeded ${timeoutMs / 1000} seconds`)); }, timeoutMs); pending.set(id, { resolve, reject, timer }); try { send({ rpc: 'request', id, method, args }); } catch (error) { pending.delete(id); clearTimeout(timer); reject(error); } }); },
     fail(error: Error) { for (const waiter of pending.values()) { clearTimeout(waiter.timer); waiter.reject(error); } pending.clear(); },
   };
 }

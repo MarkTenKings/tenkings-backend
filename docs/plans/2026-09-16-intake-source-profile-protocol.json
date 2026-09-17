@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "status": "prepared only; coordinating agent must verify disk and release execution under existing authorization",
+  "purpose": "Bounded CPU/GC and source-span investigation of repeated verified-history work; no performance gate, optimization or release verdict",
+  "refs": {
+    "A": "60572cec895ad63d4ab826cd366f6475b04e725a",
+    "B": "31b8653559d8553208de8591f2d30c419642953a"
+  },
+  "arms": [
+    "A",
+    "B"
+  ],
+  "sessions": 3,
+  "saves_per_session": 2,
+  "profile_saves_per_arm": 6,
+  "maximum_profile_saves_total": 12,
+  "warmups": 0,
+  "seed_units": 2000,
+  "seed_pending": 256,
+  "seed_completed": 16,
+  "setup_writer_calls": 273,
+  "seed_disclosure": "Fixture creation uses 273 original untimed sole-writer calls (one 1728-unit bulk receipt plus 272 individuals), plus 16 original claim/fail pairs for terminal history; <=12 applies to additional profiled saves, not construction of the frozen fixture.",
+  "fixture_reuse": "Seed once using the original frozen harness and clone equal histories for A/B. No admission or retry-proof writes are added. Existing previous studies retain their invariant evidence.",
+  "profile_scope": "Actual recordStaffInventoryV2 transactions; no HTTP handler, synthetic identify lease, metadata verification, worker/provider load, UI or browser. Three concurrent callers live in the profiled intake process; this is source-cost attribution, not topology or latency qualification.",
+  "pool_connections": 4,
+  "administrative_connection_during_profile": false,
+  "encoding": "UTF8",
+  "node_major": 22,
+  "prisma_version": "5.22.0",
+  "sharp_version": "0.33.5",
+  "frozen_client_ledger_sha256": "e1a91c8dee8d08a561083f4976312f6d3b0faedaf3842489cda739b769db6345",
+  "original_seed_child_sha256": "76a55776ac436a5460d93353fac4efed70a6bfd8d3fad3116063fc06f701050c",
+  "original_source_sha256": {
+    "packages/database/src/cardPlatformV2.ts": "d43a4e12fa347955fb6cce74c36e4c9a435a1e8e53c0b8ec770df9430f8437b0",
+    "packages/database/src/inventoryWorkflowV2Read.ts": "532a1b4e14cf8bcc3e433dc4149283c4b1fc7990f42554e910f3ebd60a3f8b1f",
+    "packages/database/src/inventoryWorkflowV2State.ts": "16965f2c640c7d24d4804fa21119bd3f53ae25f2298163b8e4f78b3933fc04f8"
+  },
+  "source_overlays": "AST-positioned timing wrappers/counter only in owned snapshots; no original statement removed/reordered and no canonical source write. Seal exact original and instrumented bytes and hashes before DB startup.",
+  "boundaries": [
+    {
+      "name": "recordStaffInventoryV2",
+      "kind": "async inclusive",
+      "metadata": [
+        "save_id"
+      ]
+    },
+    {
+      "name": "recordInventoryWorkflowEventV2",
+      "kind": "async inclusive",
+      "metadata": [
+        "save_id",
+        "event_kind"
+      ]
+    },
+    {
+      "name": "readWorkflowHistoryV2",
+      "kind": "async inclusive including SQL",
+      "metadata": [
+        "save_id"
+      ]
+    },
+    {
+      "name": "verify_and_parse_history_page",
+      "kind": "synchronous from before rows.map through complete WorkflowPageInputV2.parse return",
+      "metadata": [
+        "save_id",
+        "row_count",
+        "after_sequence"
+      ]
+    },
+    {
+      "name": "verifyWorkflowRowV2",
+      "kind": "counter only; no per-row span/timer",
+      "metadata": [
+        "total_call_count"
+      ]
+    },
+    {
+      "name": "replayWorkflowEventsV2",
+      "kind": "synchronous inclusive",
+      "metadata": [
+        "save_id",
+        "event_count"
+      ]
+    },
+    {
+      "name": "sql",
+      "kind": "actual SQL await through callback",
+      "metadata": [
+        "save_id",
+        "operation",
+        "query_class_only"
+      ]
+    }
+  ],
+  "cpu_sampling_interval_us": 1000,
+  "gc_observer": true,
+  "event_loop_tick_ms": 10,
+  "profile_output": [
+    "V8 cpuprofile per arm",
+    "GC entries with perf-time start/duration/kind",
+    "source and SQL spans with save correlation/monotonic+perf-time anchors",
+    "verification call count",
+    "source/overlay/tool/client ledgers",
+    "sample outcomes and history/job checks",
+    "normal/timeout cleanup receipt"
+  ],
+  "analysis": "CPU sample attribution and inclusive versus exclusive/overlapping spans must be distinguished. Report schema/canonical/hash/verification/replay/Prisma/GC/probe costs; do not sum nested inclusive timings. Count repeated reads/pages/replays and correlate GC/loop stalls. No A/B performance superiority or gate verdict from 6 saves per arm.",
+  "probe_overhead": "CPU sampler, AsyncLocalStorage, counters, spans, proxy awaits and GC observer perturb execution; overhead unquantified. No forced GC; all fixture setup and verification of final state are outside profile capture.",
+  "cap_ms": 600000,
+  "seed_cap_ms": 180000,
+  "minimum_free_disk_bytes": 2147483648,
+  "stop_conditions": [
+    "10-minute overall cap, with work stopped at 9.5 minutes and final 30 seconds reserved for owned cleanup",
+    "seed exceeds 180 seconds",
+    "free space below 2 GiB during setup/profile (separate runner polls every second); launch requires an additional 256 MiB reserve",
+    "unexpected provider fetch",
+    "source/seed/client hash mismatch",
+    "save failure, duplicated/missing job or changed prior history",
+    "source span stack/count invariants fail"
+  ],
+  "preserved_studies": [
+    "20260916-intake-source-benchmark",
+    "20260916-intake-scheduling-diagnostic",
+    "20260916-intake-split-diagnostic"
+  ],
+  "prior_gates_unchanged": true,
+  "release_pass_always_false": true,
+  "next_decision": "Review profile with coordinating agent and Atlas before any source-writer optimization. Preserve locks, atomic component events, journal verification, backdated replay, exact retries and one-job semantics.",
+  "work_cap_ms": 570000,
+  "cleanup_reserve_ms": 30000,
+  "launch_reserve_bytes": 268435456,
+  "minimum_launch_free_bytes": 2415919104,
+  "disk_poll_ms": 1000,
+  "supervision": "Runner directly supervises installed embedded-postgres initdb/postgres binaries in owned process groups, using an owned mode-0600 password file removed after initdb. No library-start timeout race, new dependency or credential export. Only the created loopback cluster and child groups may be signalled. Preserve owned data on an unconfirmed stop; emit cleanup receipt.",
+  "disk_estimate": "Source trees total 10,292,330 logical bytes; remove each ~5.5 MB owned tar after sealing its ledger. Estimated peak 120-140 MiB including the prior ~109 MB setup footprint and small profiles, not a guaranteed upper bound. One cloned DB at a time; no dependency/client copies. Require 256 MiB launch reserve above the unchanged 2 GiB floor.",
+  "interruption": "SIGINT and SIGTERM are handled by the runner: record the signal, abort only owned detached groups, escalate unresponsive command groups after 5 seconds, and enter the same finally cleanup before exit. Signals never call process.exit directly. SIGKILL or OS failure cannot be trapped.",
+  "save_failure_stop": "A shared stop flag is set immediately when a save rejects or its outcome assertion fails; every session checks it before starting another transaction. Already-started transactions settle through Promise.allSettled. Preserve partial output and reject the arm; do not fill skipped samples or continue to B."
+}

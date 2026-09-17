@@ -1,13 +1,13 @@
-# Split-process intake diagnostic — prepared, not run
+# Split-process intake diagnostic — completed; failed headroom gate retained
 
-Prepared 2026-09-16. **No database, runtime preflight or measured benchmark was launched.** The two previous failed studies, their thresholds, application refs and reports are unchanged. This preparation adds test/protocol files only.
+Updated 2026-09-16. The 48-save runtime preflight passed, and the one sealed **1,200-save measured diagnostic plus 120 warmups completed**. It **failed** the candidate loaded-minus-idle lease headroom gate: 79.320333 ms versus the frozen 50 ms margin. All A/B pooled and repetition comparisons pass, but do not override this failure. See [complete findings and limits](2026-09-16-intake-split-process-results.md). The original preparation and launch record below is retained as historical context. Both earlier failures, thresholds and application refs remain unchanged.
 
 ## Implementation and frozen workload
 
 - `packages/database/scripts/benchmarkStaffIntakeSplitDisposable.mjs`: new disposable runner; preparation-only sealing; immutable source export only on later execution; original frozen Prisma client required; UTF8 PostgreSQL; unchanged second-migration ledger check; 30-minute cap and owned-process cleanup. Requires **2 GiB free** before setup and every block. Administrative DB connection is closed during seed/blocks. `HOME` is passed through unchanged only when present; task temporary paths use `TMPDIR` and explicit owned directories.
 - `frontend/nextjs-app/scripts/benchmark-staff-intake-split-driver.ts`: external three-session driver, with no Prisma, Sharp or application imports. Spawns separate intake, worker and observer processes and records IPC round trips separately from existing server metrics.
 - `frontend/nextjs-app/scripts/benchmark-staff-intake-split-role.ts`: actual source workspace POST/sole writer, actual research engine/claims/terminal writers, original synthetic response tapes, exact retry/rollback/history checks and third-lease admission proof. Pools remain **4 intake + 3 worker + 1 observer**, two workers. Failure cleanup retains partial role traces when possible; forced process termination can still lose buffered traces, which must make a run incomplete.
-- `frontend/nextjs-app/scripts/benchmark-staff-intake-split-ipc.ts`: bounded IPC, per-process monotonic spans and event-loop tracing.
+- `frontend/nextjs-app/scripts/benchmark-staff-intake-split-ipc.ts`: bounded IPC, per-process monotonic spans and event-loop tracing. Only the untimed `seed` method permits 180 seconds; every other RPC, including `seed-terminal`, retains 60 seconds. The runner’s 30-minute cap is unchanged.
 - `docs/plans/2026-09-16-intake-split-process-protocol.json`: preregistered workload, metrics, comparison rules, stop conditions and missing proof.
 - `docs/plans/2026-09-16-intake-split-process-function-receipt.json`: allowlisted read-only deployment metadata.
 
@@ -30,25 +30,42 @@ Four paths map to **three function identities**, not four established process bo
 
 The harness keeps all three intake requests in one intake process. Its synthetic recognition-capacity lease remains in that process to preserve the original workload and 4-connection intake budget; **the separate identify function is not modeled**. Actual photo upload, authentication, networking, Next/Vercel invocation routing, cold starts, production resource limits and phone UI are also absent. Shared host scheduling still exists across the separate local processes. These are explicit review issues, not silently claimed production equivalence.
 
-## Verification and launch review
+## Completed runtime preflight audit
 
-Observed preparation checks: new runner Node syntax check passed; all three TypeScript files passed scoped ESLint; TypeScript checked those files and their imported dependency graph with no emit. Preparation-only sealing succeeded with **zero saves, no DB start and no source-tree export**. Exact role IPC, forced-cleanup behavior, frozen A/B import resolution and real DB assertions remain **runtime-unverified** until the coordinating agent reviews the sealed protocol/hashes and releases the small preflight under Mark's existing execute authorization.
+Read-only review of `/private/tmp/tenkings-intake-split-preflight-20260916-01` and its `.log` found:
 
-Prepared receipt directory: `/private/tmp/tenkings-intake-split-preparation-20260916-02`. This new receipt supersedes the preparation seal only; the original `...-01` receipt is unchanged. It contains only small code/protocol/hash receipts; no dependency/client/tree copies were made. At preparation, only approximately 788 MiB was free; no DB execution is permitted at that capacity.
+- Eight ABBA blocks completed in **28.27 seconds**, with exactly **48 measured + 24 warmup saves**. Raw NDJSON equals each block report; every session/index occurs once.
+- Every block has four distinct matching driver/intake/worker/observer PIDs and **18 bracketed monotonic clock probes**, 144 total. Per-role loop ticks and driver IPC round trips are present. Configured DB pools are **4/3/1**; sampled active connections did not exceed them. The observer records non-idle connections, so it is not a complete census of all idle pool connections.
+- All 72 saves have lease/release/save transaction traces and Front/Back photo spans. Combined photo-wall arithmetic exactly matches the individual spans; original summed verification and all six gate metrics are present and finite.
+- All eight retry/rollback/one-job/history/photo/admission invariant sets pass. Admission evidence is the executed source/RPC assertions and recorded results; timed `denied_at_three_leases` remains zero and is not represented as independently observed timed denial.
+- Every loaded block independently observes an intake queue advisory waiter while a worker owns that lock: **1/2/2/1 observer samples** across A/B/B/A. Each has an observed controlled barrier, at most two running workers, four accepted claims, two completed jobs and two shutdown cancellations; no unexpected provider call occurred.
+- All eight cancellations completed **0.58–0.67 ms after measurement end**; their terminal fail writes began **0.62–0.72 ms afterward**. They are the intended abort of the two remaining research attempts on teardown, not intake failures or failures during the measured interval.
+- The log reports owned cluster/source-tree removal; root independently confirmed none of the recorded process PIDs remained alive. This proves the successful normal teardown path; forced termination/timeout cleanup was not exercised.
+- Executed runner, role/driver/helper and protocol hashes match the preflight seal and then-current source. UTF8 PostgreSQL 17.9 was recorded. All smoke comparisons are descriptive only: `smoke:true`, release `pass:false`, `diagnostic_timing_pass:null` correctly prevent qualification.
 
-Review before any execution:
+### Seed deadline blocker and bounded correction
 
-1. Review these exact hashes and the identify/instance-placement approximation. Decide whether this bounded separation experiment answers the intended mechanism question; it cannot qualify deployed topology by itself.
-2. Free at least 2 GiB, then have the coordinating agent release **preflight only** after protocol/hash review under Mark's existing execute authorization. The preflight is 48 tiny-fixture saves and always nonqualifying; verify four distinct process IDs, clock brackets, role pools, actual worker/admission/barrier paths, complete samples and cleanup before coordinating a measured quiet window.
-3. If preflight passes, seal any necessary harness correction under new hashes before the coordinating agent releases the single 1,200-save diagnostic into a quiet window. Preserve both previous failures. No repeated run-until-pass, new runtime throttle, or release claim follows automatically.
+The audit caught one full-size launch blocker that the tiny preflight could not expose: the IPC helper used 60 seconds even for `seed`. Prior full-size seed receipts followed migration completion by **96.32 and 100.14 seconds**, versus **2.06 seconds** in the 40-unit preflight. Those intervals include seed-process/setup overhead rather than a direct seed-body span, but establish a concrete risk of the existing 60-second deadline aborting the 2,000-unit setup.
 
-The preparation command used was:
+Only `method === 'seed'` now uses **180,000 ms**. `seed-terminal` and every ordinary RPC remain **60,000 ms**; the **1,800,000 ms global cap**, source refs, sample counts, database budgets, provider work, metrics and comparison thresholds are unchanged. No timed work occurs inside the seed method. The correction requires no source/runtime throttle change.
+
+Observed verification: changed IPC file passed ESLint; the harness and imported dependency graph passed TypeScript with **zero diagnostics** and no emit. The earlier runner syntax check remains applicable because runner bytes are unchanged. New preparation-only sealing succeeded with **zero saves, no DB start and no source-tree export**. No runtime preflight or measured run was launched as part of this correction.
+
+New preparation receipt: `/private/tmp/tenkings-intake-split-preparation-20260916-03`. Prior `...-01` and `...-02` receipts are preserved unchanged. Role/driver/runner hashes also remain unchanged; only the helper and preregistration hashes change. Root reported **2,553,737,216 bytes free** after its cleanup; the runner independently enforces the 2 GiB floor before setup and each block.
+
+### Coordinated measured launch review
+
+1. The coordinating agent reviews the seed-only deadline change and exact hashes below under **Mark’s existing execute authorization**. No additional permission request to Mark is required.
+2. Verify disk remains above 2 GiB and reserve the quiet window. The 48-save runtime preflight already passed; no repeated smoke or measured run is needed merely to seek a better result. Full-size seed completion and forced-cleanup behavior remain unproven at this point.
+3. Release exactly one sealed 1,200-save diagnostic. Preserve both prior failures; collect unchanged original gates plus the additional wall metric, all samples and process/DB traces. The topology limitations above remain; a diagnostic result cannot establish production or handset qualification.
+
+The correction’s preparation-only command was:
 
 ```sh
-INVENTORY_TEST_TOOLS_DIR=/private/tmp/tenkings-catalog-test-tools-20260916 /Users/markthomas/Library/Caches/tk-node22-20260909/node-v22.23.2-darwin-arm64/bin/node packages/database/scripts/benchmarkStaffIntakeSplitDisposable.mjs --prepare-only --prisma-client-root /private/tmp/tenkings-benchmark-prisma-frozen-20260916 --out /private/tmp/tenkings-intake-split-preparation-20260916-02
+INVENTORY_TEST_TOOLS_DIR=/private/tmp/tenkings-catalog-test-tools-20260916 /Users/markthomas/Library/Caches/tk-node22-20260909/node-v22.23.2-darwin-arm64/bin/node packages/database/scripts/benchmarkStaffIntakeSplitDisposable.mjs --prepare-only --prisma-client-root /private/tmp/tenkings-benchmark-prisma-frozen-20260916 --out /private/tmp/tenkings-intake-split-preparation-20260916-03
 ```
 
-Later modes, **not launched**: replace `--prepare-only` with `--preflight --ack-disposable-local-postgres` for the coordinator-reviewed smoke; use `--run-approved-split-diagnostic --ack-disposable-local-postgres` only after coordinating-agent protocol/hash review and quiet-window release under Mark's existing execute authorization. No additional permission request to Mark is required. Always supply a new output directory. Application/workload override flags are rejected.
+For the coordinator-released measured run, replace `--prepare-only` with `--run-approved-split-diagnostic --ack-disposable-local-postgres` and supply a **new** output directory. Application/workload override flags remain rejected.
 
 ### SHA256 seals
 
@@ -57,7 +74,7 @@ Later modes, **not launched**: replace `--prepare-only` with `--preflight --ack-
 | New runner | `7a00716b28afd14f206fb0bca971ae59940179f722033c9560bbad59053976f3` |
 | Split driver | `064a9018d15ffd3c97bced10001a9c0541ee6d44a2313a83f3fac2f0108e5fb5` |
 | Split role | `a708f12e817845806d62bceca4875b85178955c5a072e9bfc7447b8baaffc749` |
-| IPC/tracing helper | `08703701e51fd70f2a3e25ade607d975665057405739a7b0b30a4320335ea4a7` |
-| Preregistered JSON | `b7038e9ad6ee22fae74f658ff3ea3de8a3bd691d22c3ecc92f6329a4b844019b` |
+| IPC/tracing helper | `a44b60247437c6b333ba36469e3248452ebfb0b60249650cee819fbb628a1a7f` |
+| Preregistered JSON | `7660959c8f40a9e81af38743946aa4b3c2f7fc31463f1ab075ca634588119538` |
 | Function receipt | `b7bf941148f0d80e55fa6362934ae8e4ed76dd798752a2465f0f6abf074f3dff` |
-| Prepared effective protocol | `48e09b114da5e957f3e741ffdbea9e62a401d98061b4f71f8723712cb9972196` |
+| Prepared effective protocol | `b6ae398fd4f72490185990d03d64579503d6057912b98d1d493445fcc2a10263` |
