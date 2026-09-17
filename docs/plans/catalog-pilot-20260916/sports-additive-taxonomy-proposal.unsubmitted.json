@@ -1,0 +1,521 @@
+{
+  "schemaVersion": "tenkings-sports-additive-taxonomy-preparation/v1",
+  "authority": "offline_preparation_not_import_or_approval",
+  "status": "PREPARED_UNSUBMITTED_LIFECYCLE_BINDINGS_REQUIRED",
+  "executable": false,
+  "request": null,
+  "writer": null,
+  "setId": "2023_Bowman_University_Chrome_Football",
+  "conflicts": [],
+  "operations": [
+    {
+      "ref": "source:sports-checklist",
+      "model": "SetTaxonomySource",
+      "action": "create",
+      "databaseRowId": null,
+      "data": {
+        "setId": "2023_Bowman_University_Chrome_Football",
+        "artifactType": "CHECKLIST",
+        "sourceKind": "OFFICIAL_CHECKLIST",
+        "sourceLabel": "pinned-pilot-additive:sports-checklist",
+        "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFBChecklistNEW.pdf",
+        "parserVersion": "catalog-pilot-additive-preparation-v1",
+        "sourceTimestamp": null,
+        "parserConfidence": null,
+        "metadataJson": {
+          "authority": "unreviewed_source_transcription",
+          "sourcePinMatched": true,
+          "sourceProvider": "Topps",
+          "sourceId": "sports-checklist",
+          "sourceSha256": "bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+          "sourceByteSize": 529104,
+          "sourceRef": "catalog:sha256:bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+          "sourcePage": 10,
+          "localBytesVerifiedInPreparation": true,
+          "sourceBytesVerifiedAtServer": false,
+          "rightsVerified": false,
+          "humanReviewed": false,
+          "sourceRows": [
+            {
+              "sourceId": "sports-checklist",
+              "sourcePage": 10,
+              "sourceRowOrdinal": 506,
+              "sourceLineOrdinal": 29,
+              "literalSourceRow": "TBK-1\tCaleb Williams\tUSC\t",
+              "bboxPoints": [
+                53.04,
+                449.372,
+                290.564,
+                459.332
+              ]
+            },
+            {
+              "sourceId": "sports-checklist",
+              "sourcePage": 10,
+              "sourceRowOrdinal": 507,
+              "sourceLineOrdinal": 30,
+              "literalSourceRow": "TBK-2\tDrake Maye\tUNC®\t",
+              "bboxPoints": [
+                53.04,
+                462.452,
+                301.103,
+                472.412
+              ]
+            },
+            {
+              "sourceId": "sports-checklist",
+              "sourcePage": 10,
+              "sourceRowOrdinal": 508,
+              "sourceLineOrdinal": 31,
+              "literalSourceRow": "TBK-3\tJJ McCarthy\tMichigan®\t",
+              "bboxPoints": [
+                53.04,
+                475.532,
+                323.662,
+                485.492
+              ]
+            }
+          ]
+        }
+      },
+      "requiredBindings": {
+        "ingestionJobId": "pending-ingestion:sports-checklist"
+      }
+    },
+    {
+      "ref": "source:sports-odds-round2",
+      "model": "SetTaxonomySource",
+      "action": "create",
+      "databaseRowId": null,
+      "data": {
+        "setId": "2023_Bowman_University_Chrome_Football",
+        "artifactType": "ODDS",
+        "sourceKind": "OFFICIAL_ODDS",
+        "sourceLabel": "pinned-pilot-additive:sports-odds-round2",
+        "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFootballRound2Odds.pdf",
+        "parserVersion": "catalog-pilot-additive-preparation-v1",
+        "sourceTimestamp": null,
+        "parserConfidence": null,
+        "metadataJson": {
+          "authority": "unreviewed_source_transcription",
+          "sourcePinMatched": true,
+          "sourceProvider": "Topps",
+          "sourceId": "sports-odds-round2",
+          "sourceSha256": "72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+          "sourceByteSize": 265208,
+          "sourceRef": "catalog:sha256:72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+          "sourcePage": 2,
+          "localBytesVerifiedInPreparation": true,
+          "sourceBytesVerifiedAtServer": false,
+          "rightsVerified": false,
+          "humanReviewed": false,
+          "sourceRows": [
+            {
+              "sourcePage": 2,
+              "literalSourceRow": "THE BIG KAHUNA 1:288 1:12 - - 1:12 1:12",
+              "serialDenominator": null
+            },
+            {
+              "sourcePage": 2,
+              "literalSourceRow": "THE BIG KAHUNA ORANGE REFRACTOR 25 1:3,534 1:148 - - 1:670 1:670",
+              "serialDenominator": 25
+            },
+            {
+              "sourcePage": 2,
+              "literalSourceRow": "THE BIG KAHUNA SUPERFRACTOR 1 1:97,586 1:4,067 - - 1:4,015 1:4,015",
+              "serialDenominator": 1
+            }
+          ]
+        }
+      },
+      "requiredBindings": {
+        "ingestionJobId": "pending-ingestion:sports-odds-round2"
+      }
+    },
+    {
+      "ref": "parallel:ordinary",
+      "model": "SetParallel",
+      "action": "create",
+      "databaseRowId": null,
+      "data": {
+        "setId": "2023_Bowman_University_Chrome_Football",
+        "parallelId": "the-big-kahuna",
+        "label": "THE BIG KAHUNA",
+        "serialDenominator": null,
+        "serialText": null,
+        "finishFamily": null,
+        "visualCuesJson": null
+      },
+      "requiredBindings": {
+        "sourceId": "source:sports-odds-round2"
+      }
+    },
+    {
+      "ref": "scope:ordinary",
+      "model": "SetParallelScope",
+      "action": "create",
+      "databaseRowId": null,
+      "data": {
+        "setId": "2023_Bowman_University_Chrome_Football",
+        "scopeKey": "the-big-kahuna::the-big-kahuna::none::any::any",
+        "programId": "the-big-kahuna",
+        "parallelId": "the-big-kahuna",
+        "variationId": null,
+        "formatKey": null,
+        "channelKey": null
+      },
+      "requiredBindings": {
+        "sourceId": "source:sports-odds-round2"
+      }
+    },
+    {
+      "ref": "parallel:orange",
+      "model": "SetParallel",
+      "action": "create",
+      "databaseRowId": null,
+      "data": {
+        "setId": "2023_Bowman_University_Chrome_Football",
+        "parallelId": "orange-refractor",
+        "label": "Orange Refractor",
+        "serialDenominator": 25,
+        "serialText": null,
+        "finishFamily": null,
+        "visualCuesJson": null
+      },
+      "requiredBindings": {
+        "sourceId": "source:sports-odds-round2"
+      }
+    },
+    {
+      "ref": "scope:orange",
+      "model": "SetParallelScope",
+      "action": "create",
+      "databaseRowId": null,
+      "data": {
+        "setId": "2023_Bowman_University_Chrome_Football",
+        "scopeKey": "the-big-kahuna::orange-refractor::none::any::any",
+        "programId": "the-big-kahuna",
+        "parallelId": "orange-refractor",
+        "variationId": null,
+        "formatKey": null,
+        "channelKey": null
+      },
+      "requiredBindings": {
+        "sourceId": "source:sports-odds-round2"
+      }
+    },
+    {
+      "ref": "parallel:superfractor",
+      "model": "SetParallel",
+      "action": "create",
+      "databaseRowId": null,
+      "data": {
+        "setId": "2023_Bowman_University_Chrome_Football",
+        "parallelId": "superfractor",
+        "label": "Superfractor",
+        "serialDenominator": 1,
+        "serialText": null,
+        "finishFamily": null,
+        "visualCuesJson": null
+      },
+      "requiredBindings": {
+        "sourceId": "source:sports-odds-round2"
+      }
+    },
+    {
+      "ref": "scope:superfractor",
+      "model": "SetParallelScope",
+      "action": "create",
+      "databaseRowId": null,
+      "data": {
+        "setId": "2023_Bowman_University_Chrome_Football",
+        "scopeKey": "the-big-kahuna::superfractor::none::any::any",
+        "programId": "the-big-kahuna",
+        "parallelId": "superfractor",
+        "variationId": null,
+        "formatKey": null,
+        "channelKey": null
+      },
+      "requiredBindings": {
+        "sourceId": "source:sports-odds-round2"
+      }
+    }
+  ],
+  "requiredBindings": [
+    {
+      "ref": "pending-ingestion:sports-checklist",
+      "field": "ingestionJobId",
+      "value": null,
+      "required": true,
+      "constraint": "A distinct real pending ingestion job (QUEUED/PARSED/REVIEW_REQUIRED) for this exact set/source and pinned bytes, verified in the future transaction.",
+      "reason": "ingestionJobId=null is immediately visible to published taxonomy readers. No existing secondary/approved job may be borrowed.",
+      "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFBChecklistNEW.pdf",
+      "sourceSha256": "bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca"
+    },
+    {
+      "ref": "pending-ingestion:sports-odds-round2",
+      "field": "ingestionJobId",
+      "value": null,
+      "required": true,
+      "constraint": "A distinct real pending ingestion job (QUEUED/PARSED/REVIEW_REQUIRED) for this exact set/source and pinned bytes, verified in the future transaction.",
+      "reason": "ingestionJobId=null is immediately visible to published taxonomy readers. No existing secondary/approved job may be borrowed.",
+      "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFootballRound2Odds.pdf",
+      "sourceSha256": "72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5"
+    }
+  ],
+  "applicability": [
+    {
+      "cardId": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+      "cardNumber": "TBK-1",
+      "printingKey": "ordinary",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+      "cardNumber": "TBK-1",
+      "printingKey": "orange",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+      "cardNumber": "TBK-1",
+      "printingKey": "superfractor",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+      "cardNumber": "TBK-2",
+      "printingKey": "ordinary",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+      "cardNumber": "TBK-2",
+      "printingKey": "orange",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+      "cardNumber": "TBK-2",
+      "printingKey": "superfractor",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "d6dde801-2673-46e1-8830-5d810b0c9ade",
+      "cardNumber": "TBK-3",
+      "printingKey": "ordinary",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "d6dde801-2673-46e1-8830-5d810b0c9ade",
+      "cardNumber": "TBK-3",
+      "printingKey": "orange",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "d6dde801-2673-46e1-8830-5d810b0c9ade",
+      "cardNumber": "TBK-3",
+      "printingKey": "superfractor",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    }
+  ],
+  "grants": null,
+  "reviewer": null,
+  "images": [],
+  "rightsVerified": false,
+  "humanApproved": false,
+  "databaseMutations": 0,
+  "provenance": {
+    "packetSha256": "3b27da05143c281ca3bf1905b22d19bb4c57e306caeefdea7582fb6be07c6664",
+    "snapshotObservedAt": "2026-09-17T10:21:53.256Z",
+    "snapshotCanonicalSha256": "fe5a150a31be9b63d5012d858fb2b578e99001e50743cf3f5361c7352147ef23",
+    "rawSnapshotSha256": "c042a3fd5b1c5fb25c8bc218f7125663fca49ab29382d8a97d4fdce9b0523bdc",
+    "localSourceBytesVerified": true,
+    "serverStagingVerified": false
+  },
+  "preservation": {
+    "draft": {
+      "table": "SetDraft",
+      "observedRows": 1,
+      "metadataSha256": "cec7f90433128c21d28d8991d26c658c90da7ceac16605c2e61d8cc1bdbae62a",
+      "actionOnExistingRows": "none"
+    },
+    "versions": {
+      "table": "SetDraftVersion",
+      "observedRows": 6,
+      "metadataSha256": "9865cb96c1fe95669ab202f0ef9de684ef1c10626f01bba31a769b5f6fb5dec8",
+      "actionOnExistingRows": "none"
+    },
+    "sources": {
+      "table": "SetTaxonomySource",
+      "observedRows": 6,
+      "metadataSha256": "a7eba874df3d4fd305b96ceba341d6345738c20ff6a1b0866068ab2159e5f1f4",
+      "actionOnExistingRows": "none"
+    },
+    "programs": {
+      "table": "SetProgram",
+      "observedRows": 10,
+      "metadataSha256": "fb8651ea2d8f15eb23afc4f3231757b613fab52c7d0cc01af05329fc88f45b54",
+      "actionOnExistingRows": "none"
+    },
+    "cards": {
+      "table": "SetCard",
+      "observedRows": 379,
+      "metadataSha256": "7e8ecd0bf5fd41494fe2651a352cd5fdf1f5cabac7ec44eeb91835c8355f7d22",
+      "actionOnExistingRows": "none"
+    },
+    "parallels": {
+      "table": "SetParallel",
+      "observedRows": 0,
+      "metadataSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "actionOnExistingRows": "none"
+    },
+    "variations": {
+      "table": "SetVariation",
+      "observedRows": 0,
+      "metadataSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "actionOnExistingRows": "none"
+    },
+    "scopes": {
+      "table": "SetParallelScope",
+      "observedRows": 0,
+      "metadataSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "actionOnExistingRows": "none"
+    },
+    "ingestions": {
+      "table": "SetIngestionJob",
+      "observedRows": 8,
+      "metadataSha256": "4f56f5c628559d65ea3cd829d4e4fc1d85874f52d57e94b97e0d772a9214b813",
+      "actionOnExistingRows": "none"
+    },
+    "publications": {
+      "table": "SetCatalogEvidencePublication",
+      "observedRows": 0,
+      "metadataSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "actionOnExistingRows": "none"
+    },
+    "activeSeedJobs": {
+      "table": "SetSeedJob",
+      "observedRows": 0,
+      "metadataSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "actionOnExistingRows": "none"
+    },
+    "activeReplaceJobs": {
+      "table": "SetReplaceJob",
+      "observedRows": 0,
+      "metadataSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "actionOnExistingRows": "none"
+    }
+  },
+  "existingBinding": {
+    "setId": "2023_Bowman_University_Chrome_Football",
+    "draftId": "2e8b2265-edcb-4910-922f-40a6e926ac38",
+    "draftVersionId": "52de475c-ee6a-4abf-b148-fffde0ec93af",
+    "versionHash": "48314036838b6a481e87633c1b659541ca0a158ae91d7145e675fc5fb8292a1b",
+    "programRowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+    "programId": "the-big-kahuna",
+    "cards": [
+      {
+        "cardId": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+        "number": "TBK-1",
+        "name": "Caleb Williams"
+      },
+      {
+        "cardId": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+        "number": "TBK-2",
+        "name": "Drake Maye"
+      },
+      {
+        "cardId": "d6dde801-2673-46e1-8830-5d810b0c9ade",
+        "number": "TBK-3",
+        "name": "JJ McCarthy"
+      }
+    ]
+  },
+  "printingMapping": [
+    {
+      "key": "ordinary",
+      "proposedParallelId": "the-big-kahuna",
+      "proposedScopeKey": "the-big-kahuna::the-big-kahuna::none::any::any",
+      "parallelRowId": null,
+      "scopeRowId": null,
+      "printingId": null,
+      "language": null,
+      "edition": null,
+      "format": null,
+      "channel": null,
+      "variationId": null,
+      "programRowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+      "scopeMeaning": "Program-level source vocabulary only. none/any are legacy storage sentinels, not evidence of all-card/all-format applicability."
+    },
+    {
+      "key": "orange",
+      "proposedParallelId": "orange-refractor",
+      "proposedScopeKey": "the-big-kahuna::orange-refractor::none::any::any",
+      "parallelRowId": null,
+      "scopeRowId": null,
+      "printingId": null,
+      "language": null,
+      "edition": null,
+      "format": null,
+      "channel": null,
+      "variationId": null,
+      "programRowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+      "scopeMeaning": "Program-level source vocabulary only. none/any are legacy storage sentinels, not evidence of all-card/all-format applicability."
+    },
+    {
+      "key": "superfractor",
+      "proposedParallelId": "superfractor",
+      "proposedScopeKey": "the-big-kahuna::superfractor::none::any::any",
+      "parallelRowId": null,
+      "scopeRowId": null,
+      "printingId": null,
+      "language": null,
+      "edition": null,
+      "format": null,
+      "channel": null,
+      "variationId": null,
+      "programRowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+      "scopeMeaning": "Program-level source vocabulary only. none/any are legacy storage sentinels, not evidence of all-card/all-format applicability."
+    }
+  ],
+  "excluded": {
+    "otherNumberedCards": 376,
+    "unresolvedUnnumberedRows": 171,
+    "fullCatalogCompletionRequired": false,
+    "inferredNumberAssignments": 0,
+    "oddsRows": 0,
+    "cardOrProgramWrites": 0,
+    "draftVersionWrites": 0,
+    "legacyBridges": 0,
+    "sourceReclassifications": 0,
+    "publications": 0
+  }
+}
