@@ -23,6 +23,12 @@ The [mapping decision](pokemon-mapping-decision.unreviewed.md) records the later
 
 Current focused qualification:11 adapter and11 compiler checks pass, with scoped lint clean. Actual import, exact taxonomy export, printing/scope completion and authorized review/publication remain pending. The earlier managed observations and9-test record below are historical evidence.
 
+## Subsequent complete sports transcription
+
+The [complete sports source transcript](sports-complete-checklist.unreviewed.json) accounts for all 550 literal roster entries across 15 printed heading groups and all 18 PDF pages. It preserves 379 printed card numbers and 171 blank number cells. Source spellings, short-print/base number differences and the clipped heading are retained. Independent coordinate/visual checks passed; [review and next steps](sports-complete-transcription-review.unreviewed.md) explain the evidence and limits.
+
+This is source preparation only. It creates no canonical IDs or import request, does not change the existing sports catalog, and cannot be submitted unchanged to the current adapter because 171 rows have no printed card number. Full existing-draft reconciliation, additional identity evidence and authorized source/reuse review remain required. The original three-card recipe is still a narrow publication pilot, not a replacement for the complete catalog.
+
 ## Prepare now without database access
 
 From the repository root, use an unused output directory outside Git:
