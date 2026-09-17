@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { resolveStaffInventoryResearchSaleDetails, STAFF_INVENTORY_RESEARCH_SALE_DETAILS_ENGINE_VERSION } from './staffInventoryResearchSaleDetails';
 
 export const STAFF_INVENTORY_RESEARCH_MODEL = 'gpt-6-astra' as const;
 export const STAFF_INVENTORY_RESEARCH_ENGINE_VERSION = 'staff-inventory-research-v3' as const;
@@ -102,6 +103,28 @@ const downloadedImage = z.object({
   source_url: imageUrl, sha256, retrieved_at: timestamp, content_type: z.enum(['image/jpeg', 'image/png', 'image/webp']), byte_size: z.number().int().min(1).max(2 * 1024 * 1024),
   storage_key: z.string().regex(/^research-evidence\/[a-f0-9]{64}\.(?:jpg|png|webp)$/).nullable(),
 }).strict();
+const ordinarySaleDetail = z.object({
+  schema_version: z.literal(1), basis: z.literal('same_item_ordinary_sale_detail'),
+  candidate_id: z.string().regex(/^ebay:\d{10,15}$/), item_id: z.string().regex(/^\d{10,15}$/),
+  search: z.object({ response_sha256: sha256, retrieved_at: timestamp, title: text(500),
+    listing_type: z.literal('sold'), sold_price: text(80), sold_currency: z.literal('USD'), sold_date: text(10),
+    offer_field: z.enum(['absent', 'null']) }).strict(),
+  detail: z.object({ response_sha256: sha256, retrieved_at: timestamp, title: text(500),
+    price: text(80), currency: z.literal('USD'), best_offer_accepted: z.literal(false), ended: z.literal(true),
+    ended_date_raw: text(80), sold_date: text(10), sold_banner: text(240) }).strict(),
+}).strict();
+function resolveOrdinaryDetail(evidence: z.infer<typeof ordinarySaleDetail>) {
+  return resolveStaffInventoryResearchSaleDetails({ candidate_id: evidence.candidate_id, requested_item_id: evidence.item_id,
+    search: { response_sha256: evidence.search.response_sha256, retrieved_at: evidence.search.retrieved_at,
+      item: { itemId: evidence.item_id, title: evidence.search.title, listingType: evidence.search.listing_type,
+        soldPrice: evidence.search.sold_price, soldCurrency: evidence.search.sold_currency, endedAt: evidence.search.sold_date,
+        ...(evidence.search.offer_field === 'null' ? { bestOfferAccepted: null } : {}) } },
+    detail: { response_sha256: evidence.detail.response_sha256, retrieved_at: evidence.detail.retrieved_at,
+      item: { itemId: evidence.item_id, title: evidence.detail.title, price: evidence.detail.price, currency: evidence.detail.currency,
+        bestOfferAccepted: evidence.detail.best_offer_accepted, ended: evidence.detail.ended,
+        endedDate: evidence.detail.ended_date_raw, soldBanner: evidence.detail.sold_banner } },
+  });
+}
 export const StaffInventoryResearchCandidateSchema = z.object({
   id: z.string().regex(/^ebay:\d{6,20}$/), source: z.literal('SoldCompsAPI'), listing_url: listingUrl,
   retrieved_at: timestamp, source_response_sha256: sha256, title: text(500),
@@ -115,6 +138,7 @@ export const StaffInventoryResearchCandidateSchema = z.object({
   sale_evidence: z.object({ status: z.enum(['sold', 'active', 'unknown']), basis: z.enum(['listing_type', 'hydrated_offer', 'not_supplied']) }).strict().optional(),
   image_options: z.object({ thumbnail_url: imageUrl.nullable(), full_resolution_url: imageUrl.nullable() }).strict().optional(),
   multiple_price_options: z.boolean().optional(),
+  ordinary_sale_detail: ordinarySaleDetail.optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.listing_url !== `https://www.ebay.com/itm/${value.id.slice(5)}`) ctx.addIssue({ code: 'custom', message: 'Listing identity mismatch.' });
   if (value.image && value.image.source_url !== value.image_url) ctx.addIssue({ code: 'custom', message: 'Image source mismatch.' });
@@ -124,8 +148,21 @@ export const StaffInventoryResearchCandidateSchema = z.object({
   }
   const match = (value.accepted_offer?.amount ?? value.sold_price)?.match(/^(\d{1,8})(?:\.(\d{1,2}))?$/);
   const parsedPrice = match ? Number(BigInt(match[1]) * 100n + BigInt((match[2] ?? '').padEnd(2, '0') || '0')) : null;
+  let detailConfirmed = false;
+  if (value.ordinary_sale_detail) {
+    const evidence = value.ordinary_sale_detail, decision = resolveOrdinaryDetail(evidence);
+    detailConfirmed = decision.status === 'confirmed' && decision.sold_price_cents === value.sold_price_cents
+      && decision.evidence.detail.sold_date === evidence.detail.sold_date
+      && evidence.candidate_id === value.id && evidence.item_id === value.id.slice(5)
+      && evidence.search.response_sha256 === value.source_response_sha256 && evidence.search.retrieved_at === value.retrieved_at
+      && evidence.search.title === value.title && evidence.search.sold_price === value.sold_price
+      && evidence.search.sold_currency === value.sold_currency && evidence.search.sold_date === value.sold_date
+      && evidence.search.sold_date === value.sold_date_raw && value.best_offer_accepted === null && !value.accepted_offer
+      && value.sale_evidence?.status === 'sold' && value.sale_evidence.basis === 'listing_type' && value.multiple_price_options === false;
+    if (!detailConfirmed) ctx.addIssue({ code: 'custom', message: 'Unbound ordinary-sale detail evidence.' });
+  }
   if (value.accepted_offer && (value.best_offer_accepted !== true || parsedPrice === null || parsedPrice < 1 || parsedPrice > 2_147_483_647 || (value.accepted_offer.source_field === 'soldPrice' && (value.accepted_offer.amount !== value.sold_price || value.accepted_offer.currency !== value.sold_currency)))) ctx.addIssue({ code: 'custom', message: 'Accepted offer evidence mismatch.' });
-  if (value.sold_price_cents !== null && (value.sold_price_cents !== parsedPrice || (value.accepted_offer ? value.accepted_offer.currency !== 'USD' : value.best_offer_accepted !== false || value.sold_currency !== 'USD'))) ctx.addIssue({ code: 'custom', message: 'Price evidence mismatch.' });
+  if (value.sold_price_cents !== null && (value.sold_price_cents !== parsedPrice || (value.accepted_offer ? value.accepted_offer.currency !== 'USD' : !detailConfirmed && (value.best_offer_accepted !== false || value.sold_currency !== 'USD')))) ctx.addIssue({ code: 'custom', message: 'Price evidence mismatch.' });
   if (value.sold_date && (!Number.isFinite(Date.parse(value.sold_date)) || new Date(value.sold_date).toISOString().slice(0, 10) !== value.sold_date)) ctx.addIssue({ code: 'custom', message: 'Invalid sold date.' });
   if (value.source_eligible && (value.sold_price_cents === null || value.sold_date === null || value.sold_date > value.retrieved_at.slice(0, 10) || value.exclusion_reason !== null)) ctx.addIssue({ code: 'custom', message: 'Ineligible sale evidence.' });
   if (value.multiple_price_options && value.source_eligible) ctx.addIssue({ code: 'custom', message: 'Ambiguous price options.' });
@@ -186,17 +223,29 @@ const researchQuery = z.object({
   candidate_ids: z.array(candidateId).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates),
   error_code: z.enum(['invalid_input', 'unavailable', 'unverified_photo', 'provider_error', 'malformed_response', 'timeout', 'cancelled']).nullable(),
 }).strict();
+const saleDetails = z.object({
+  schema_version: z.literal(1),
+  base_engine_version: z.enum([STAFF_INVENTORY_RESEARCH_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION]),
+  requests: z.array(z.object({ item_id: z.string().regex(/^\d{10,15}$/), requested_at: timestamp, completed_at: timestamp,
+    status: z.enum(['observed', 'failed']), response_sha256: sha256.nullable(),
+    error_code: z.enum(['unavailable', 'provider_error', 'malformed_response', 'timeout', 'cancelled']).nullable(),
+  }).strict().superRefine((value, ctx) => {
+    if (value.completed_at < value.requested_at || (value.status === 'observed'
+      ? value.response_sha256 === null || value.error_code !== null : value.response_sha256 !== null || value.error_code === null)) ctx.addIssue({ code: 'custom', message: 'Invalid detail request receipt.' });
+  })).max(2),
+}).strict();
 
 /** This validates the private persistence boundary as well as the engine output. */
 export const StaffInventoryResearchResultSchema = z.object({
   schema_version: z.literal(1), unit_id: sourceId, description_event_id: sourceId, description_hash: sha256,
-  engine_version: z.enum(['staff-inventory-research-v1', 'staff-inventory-research-v2', STAFF_INVENTORY_RESEARCH_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION]), model: z.literal(STAFF_INVENTORY_RESEARCH_MODEL), researched_at: timestamp, timings_ms: timings,
+  engine_version: z.enum(['staff-inventory-research-v1', 'staff-inventory-research-v2', STAFF_INVENTORY_RESEARCH_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_SALE_DETAILS_ENGINE_VERSION]), model: z.literal(STAFF_INVENTORY_RESEARCH_MODEL), researched_at: timestamp, timings_ms: timings,
   photos: z.object({ front: photo.nullable(), back: photo.nullable() }).strict(), query: text(400).nullable(),
   // Do not add defaults: parsing an existing immutable v1 result must preserve its hash.
   research_queries: z.array(researchQuery).max(STAFF_INVENTORY_RESEARCH_LIMITS.searches).optional(),
   comparison_assessments: z.array(StaffInventoryResearchComparisonSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates).optional(),
   diagnostics: diagnostics.optional(),
   catalog_context: StaffInventoryResearchCatalogContextSchema.optional(),
+  sale_details: saleDetails.optional(),
   identity: StaffInventoryResearchIdentitySchema, target_condition: StaffInventoryResearchConditionSchema,
   references: z.array(StaffInventoryResearchReferenceSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.references),
   candidates: z.array(StaffInventoryResearchCandidateSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates),
@@ -208,11 +257,26 @@ export const StaffInventoryResearchResultSchema = z.object({
   const fail = (message: string) => ctx.addIssue({ code: 'custom', message });
   const candidates = new Map(value.candidates.map(candidate => [candidate.id, candidate]));
   const references = new Map(value.references.map(reference => [reference.id, reference]));
-  if (value.engine_version === 'staff-inventory-research-v3' || value.engine_version === STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION) {
+  const detailEngine = value.engine_version === STAFF_INVENTORY_RESEARCH_SALE_DETAILS_ENGINE_VERSION;
+  if (detailEngine) {
+    if (!value.sale_details) fail('Missing v5 sale-detail evidence.');
+    if (value.sale_details) {
+      const requests = value.sale_details.requests;
+      if (new Set(requests.map(request => request.item_id)).size !== requests.length) fail('Duplicate detail request.');
+      for (const candidate of value.candidates) if (candidate.ordinary_sale_detail) {
+        const detail = candidate.ordinary_sale_detail.detail;
+        if (!requests.some(request => request.item_id === candidate.id.slice(5) && request.status === 'observed'
+          && request.response_sha256 === detail.response_sha256 && request.completed_at === detail.retrieved_at)) fail('Missing ordinary-sale detail request receipt.');
+      }
+    }
+  } else if (value.sale_details || value.candidates.some(candidate => candidate.ordinary_sale_detail)) fail('Sale-detail evidence requires an explicit v5 result.');
+  const catalogEngine = value.engine_version === STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION
+    || detailEngine && value.sale_details?.base_engine_version === STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION;
+  if (value.engine_version === 'staff-inventory-research-v3' || catalogEngine || detailEngine) {
     if (!value.diagnostics || !value.research_queries || !value.comparison_assessments) fail('Missing v3 decision evidence.');
     if (value.candidates.some(candidate => !candidate.sale_evidence || !candidate.image_options || candidate.multiple_price_options === undefined)) fail('Missing source decision evidence.');
   }
-  if (value.engine_version === STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION) {
+  if (catalogEngine) {
     const context = value.catalog_context;
     if (!context) fail('Missing v4 catalog evidence.');
     if (context) {

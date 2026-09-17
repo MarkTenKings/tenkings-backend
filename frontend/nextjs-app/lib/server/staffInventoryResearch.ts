@@ -16,6 +16,8 @@ import {
 } from '../staffInventoryResearch';
 import { readStaffInventoryPhoto, type StaffInventoryVerifiedPhoto } from './staffInventoryIdentification';
 import { researchImageOptions, researchSaleEvidence } from './staffInventoryResearchEvidence';
+import { readResearchPriceEvidence } from './staffInventoryResearchPrice';
+import { resolveStaffInventoryResearchSaleDetails, STAFF_INVENTORY_RESEARCH_SALE_DETAILS_ENGINE_VERSION } from './staffInventoryResearchSaleDetails';
 import { assessStaffInventoryResearchComparison, compareStaffInventoryResearchCondition, inspectStaffInventoryResearchSale, inspectStaffInventoryResearchTitle, readStaffInventoryResearchGradeEvidence, staffInventoryResearchYearForms } from './staffInventoryResearchDecisions';
 import { getStorageMode } from './storage';
 import { runCardCatalogScopeEffect, type CardCatalogScopeEffectInput, type CardCatalogScopeEffectDependencies } from './cardCatalogScopeEffect';
@@ -207,7 +209,113 @@ function titleAnchorCoverage(description: StaffInventoryResearchDescription, can
   const anchors = [...new Set([description.year, description.manufacturer, description.set_name, description.name].flatMap(value => normalized(value).split(' ')).filter(Boolean))];
   return anchors.filter(token => present.has(token)).length / Math.max(1, anchors.length) + (description.card_number && wholeSpan(title, normalized(description.card_number)) ? 1 : 0);
 }
-async function fetchCandidates(description: StaffInventoryResearchDescription, query: string, apiKey: string, deps: StaffInventoryResearchDependencies, signal: AbortSignal) {
+function candidateSearchEvidence(candidate: StaffInventoryResearchCandidate) {
+  const { retrieved_at: _retrievedAt, source_response_sha256: _responseHash, image: _image, image_url: _selectedImage,
+    source_eligible: _eligible, exclusion_reason: _reason, ordinary_sale_detail: _detail,
+    sold_price: _priceSpelling, sold_price_cents: _derivedPrice, best_offer_accepted: _offerProjection, ...evidence } = candidate;
+  return evidence;
+}
+type SaleDetailReceipt = { item: Record<string, unknown>; response_sha256: string; retrieved_at: string };
+type SaleDetailState = {
+  requests: NonNullable<StaffInventoryResearchResult['sale_details']>['requests'];
+  cache: Map<string, Promise<SaleDetailReceipt | null>>;
+  completed: Map<string, SaleDetailReceipt | null>;
+  facts: Map<string, string>;
+  originals: WeakMap<StaffInventoryResearchCandidate, { raw: Record<string, unknown>; facts: string }>;
+  conflicts: Set<string>;
+};
+/** Eligibility preview only: the false below checks the original amount format;
+ * it is never written to the search observation or used as price authority. */
+function mayConfirmOrdinarySale(candidate: StaffInventoryResearchCandidate, raw: Record<string, unknown>, description: StaffInventoryResearchDescription, state: SaleDetailState) {
+  return !state.conflicts.has(candidate.id) && !candidate.exclusion_reason?.includes('conflicting')
+    && /^\d{10,15}$/.test(candidate.id.slice(5)) && raw.itemId === candidate.id.slice(5)
+    && raw.listingType === 'sold' && candidate.sale_evidence?.status === 'sold' && candidate.sale_evidence.basis === 'listing_type'
+    && (!Object.hasOwn(raw, 'bestOfferAccepted') || raw.bestOfferAccepted === null) && candidate.best_offer_accepted === null
+    && !candidate.accepted_offer && (raw.boaHydrated == null || raw.boaHydrated === false)
+    && raw.boaAcceptedPrice == null && raw.boaAcceptedCurrency == null
+    && raw.soldPriceMax == null && raw.currentPriceMax == null && raw.priceMax == null && candidate.multiple_price_options === false
+    && (!Object.hasOwn(raw, 'invalid_fields') || Array.isArray(raw.invalid_fields) && raw.invalid_fields.length === 0)
+    && raw.title === candidate.title && raw.soldPrice === candidate.sold_price && raw.soldCurrency === 'USD' && candidate.sold_currency === 'USD'
+    && readResearchPriceEvidence({ soldPrice: raw.soldPrice, soldCurrency: raw.soldCurrency, bestOfferAccepted: false }).sold_price_cents !== null
+    && candidate.sold_date !== null && raw.endedAt === candidate.sold_date && candidate.sold_date_raw === candidate.sold_date
+    && candidate.sold_date <= candidate.retrieved_at.slice(0, 10)
+    && inspectStaffInventoryResearchSale(candidate).supported && inspectStaffInventoryResearchTitle(description, candidate).research_anchored;
+}
+function rememberSearchObservation(state: SaleDetailState, candidate: StaffInventoryResearchCandidate, raw: Record<string, unknown>) {
+  // Compatibility is not price authority. Keep the exact raw observations for
+  // the resolver while allowing equivalent decimal spellings and an unknown
+  // offer flag to acquire an agreeing explicit false. True/active/malformed
+  // flags, amount changes and all other source facts still conflict.
+  const amount = readResearchPriceEvidence({ soldPrice: raw.soldPrice, soldCurrency: 'USD', bestOfferAccepted: false }).sold_price_cents;
+  const fields = ['listingType', 'boaAcceptedPrice', 'boaAcceptedCurrency', 'soldPriceMax', 'currentPriceMax', 'priceMax'];
+  const facts = JSON.stringify({ candidate: candidateSearchEvidence(candidate),
+    amount: amount === null ? ['unparsed', raw.soldPrice] : ['integer_cents', amount],
+    offer: raw.bestOfferAccepted == null || raw.bestOfferAccepted === false ? 'unknown_or_false' : raw.bestOfferAccepted,
+    hydration: raw.boaHydrated == null || raw.boaHydrated === false ? 'not_hydrated' : raw.boaHydrated,
+    invalid_fields: !Object.hasOwn(raw, 'invalid_fields') || Array.isArray(raw.invalid_fields) && raw.invalid_fields.length === 0 ? [] : raw.invalid_fields,
+    fields: fields.map(field => [field, raw[field] ?? null]) });
+  state.originals.set(candidate, { raw, facts });
+  const previous = state.facts.get(candidate.id);
+  if (previous !== undefined && previous !== facts) state.conflicts.add(candidate.id);
+  else state.facts.set(candidate.id, facts);
+}
+function applyOrdinarySaleDetail(state: SaleDetailState, candidate: StaffInventoryResearchCandidate, description: StaffInventoryResearchDescription) {
+  const original = state.originals.get(candidate), detail = state.completed.get(candidate.id.slice(5));
+  if (!original || !detail || !mayConfirmOrdinarySale(candidate, original.raw, description, state)) return;
+  const decision = resolveStaffInventoryResearchSaleDetails({ candidate_id: candidate.id, requested_item_id: candidate.id.slice(5),
+    search: { response_sha256: candidate.source_response_sha256, retrieved_at: candidate.retrieved_at, item: original.raw }, detail });
+  if (decision.status !== 'confirmed') return;
+  // Recheck every eligibility gate against original facts; a first exclusion
+  // string is not evidence that the remaining date/product/price checks passed.
+  if (!mayConfirmOrdinarySale(candidate, original.raw, description, state)) return;
+  candidate.ordinary_sale_detail = decision.evidence;
+  candidate.sold_price_cents = decision.sold_price_cents;
+  candidate.source_eligible = true; candidate.exclusion_reason = null;
+}
+async function enrichOrdinarySales(state: SaleDetailState, candidates: StaffInventoryResearchCandidate[], description: StaffInventoryResearchDescription,
+  apiKey: string, deps: StaffInventoryResearchDependencies, signal: AbortSignal, sourceEndsAt: number) {
+  const now = () => (deps.now ?? (() => new Date()))().toISOString();
+  const reserve = Math.min(1000, Math.max(5, deadline(deps, 'sources') / 10));
+  // Use the existing ranked shortlist, requiring name/product anchors and no
+  // deterministic title contradiction. Price confirmation supplies no model,
+  // condition, image, catalog or final card-match authority.
+  await Promise.all(candidates.map(async candidate => {
+    const original = state.originals.get(candidate), id = candidate.id.slice(5);
+    if (!original || !mayConfirmOrdinarySale(candidate, original.raw, description, state)) return;
+    let pending = state.cache.get(id);
+    if (!pending) {
+      const remaining = Math.floor(sourceEndsAt - Date.now() - reserve);
+      if (signal.aborted || remaining <= 0 || state.cache.size >= 2) return;
+      const entry: SaleDetailState['requests'][number] = { item_id: id, requested_at: now(), completed_at: now(),
+        status: 'failed', response_sha256: null, error_code: 'cancelled' };
+      state.requests.push(entry);
+      // There are at most two distinct cache entries across all three searches.
+      // Failed and timed-out entries stay cached; no detail retry is dispatched.
+      pending = bounded(async detailSignal => {
+        const response = await jsonRequest(`https://api.sold-comps.com/v1/item/${id}?ebaySite=ebay.com`,
+          { method: 'GET', headers: { Authorization: `Bearer ${apiKey}` } }, MAX_SOURCE_BYTES, deps, detailSignal);
+        if (detailSignal.aborted) throw new StaffInventoryResearchError('cancelled');
+        const item = object(response.value), env = deps.env ?? process.env;
+        if (!item || [env.OPENAI_API_KEY, env.SOLDCOMPS_API_KEY].some(secret => secret && JSON.stringify(item).includes(secret))) throw new StaffInventoryResearchError('malformed_response');
+        return { item, response_sha256: response.sha256, retrieved_at: now() };
+      }, Math.min(6000, remaining), signal).then(receipt => {
+        entry.status = 'observed'; entry.response_sha256 = receipt.response_sha256; entry.error_code = null; entry.completed_at = receipt.retrieved_at;
+        state.completed.set(id, receipt); return receipt;
+      }).catch(error => {
+        entry.completed_at = now(); entry.error_code = error instanceof StaffInventoryResearchError
+          && ['unavailable', 'provider_error', 'malformed_response', 'timeout', 'cancelled'].includes(error.code)
+          ? error.code as NonNullable<typeof entry.error_code> : 'malformed_response';
+        state.completed.set(id, null); return null;
+      });
+      state.cache.set(id, pending);
+    }
+    await pending;
+    // No late provider result may change candidate evidence after cancellation.
+    if (!signal.aborted) applyOrdinarySaleDetail(state, candidate, description);
+  }));
+}
+async function fetchCandidates(description: StaffInventoryResearchDescription, query: string, apiKey: string, deps: StaffInventoryResearchDependencies, signal: AbortSignal, details?: SaleDetailState) {
+  const sourceEndsAt = details ? Date.now() + deadline(deps, 'sources') : 0;
   const params = new URLSearchParams({ keyword: query, ebaySite: 'ebay.com', count: String(EBAY_SOLD_COMPS_V2_REQUEST_COUNT), page: '1', sold: 'true', includeCompleteListing: 'true', exactMatch: 'true', hydrateBoa: 'true' });
   const response = await jsonRequest(`${SOLDCOMPS_ENDPOINT}?${params}`, { method: 'GET', headers: { Authorization: `Bearer ${apiKey}` } }, MAX_SOURCE_BYTES, deps, signal);
   const payload = object(response.value);
@@ -232,19 +340,27 @@ async function fetchCandidates(description: StaffInventoryResearchDescription, q
     };
     if (grade.status === 'graded') { candidate.grader = grade.grader; candidate.numeric_grade = grade.numeric_grade; candidate.raw = false; }
     if (!product.supported) { candidate.source_eligible = false; candidate.exclusion_reason = 'The listing does not establish one supported exact card sale.'; }
+    if (details) rememberSearchObservation(details, candidate, raw);
     const prior = candidates.get(candidate.id);
     if (prior) {
       const { source_eligible: _eligible, exclusion_reason: _reason, ...priorEvidence } = prior;
       const { source_eligible: _newEligible, exclusion_reason: _newReason, ...newEvidence } = candidate;
-      if (JSON.stringify(priorEvidence) !== JSON.stringify(newEvidence)) {
+      if (details ? details.conflicts.has(candidate.id) || details.originals.get(prior)?.facts !== details.originals.get(candidate)?.facts
+        : JSON.stringify(priorEvidence) !== JSON.stringify(newEvidence)) {
         reason = 'The provider returned conflicting evidence for the same listing.';
         prior.source_eligible = false; prior.exclusion_reason = reason;
-      }
+      } else if (details && !prior.source_eligible && candidate.source_eligible) candidates.set(candidate.id, candidate);
       continue;
     }
     candidates.set(candidate.id, candidate);
   }
   const retained = [...candidates.values()].sort((left, right) => titleAnchorCoverage(description, right) - titleAnchorCoverage(description, left) || Number(right.source_eligible) - Number(left.source_eligible) || (right.sold_date ?? '').localeCompare(left.sold_date ?? '') || left.id.localeCompare(right.id)).slice(0, STAFF_INVENTORY_RESEARCH_LIMITS.candidates);
+  if (details) {
+    for (const candidate of retained) if (details.conflicts.has(candidate.id)) {
+      candidate.source_eligible = false; candidate.exclusion_reason = 'The provider returned conflicting evidence for the same listing.';
+    }
+    await enrichOrdinarySales(details, retained, description, apiKey, deps, signal, sourceEndsAt);
+  }
   return { candidates: retained, source_response_sha256: response.sha256,
     diagnostic: { returned_count: Math.min(10000, payload.items.length), parsed_count: candidates.size, retained_count: retained.length, has_next_page: payload.hasNextPage } };
 }
@@ -450,10 +566,11 @@ function applyAnalysis(result: StaffInventoryResearchResult, analysis: Analysis,
   for (const rejection of result.rejections) if (insufficient.includes(rejection.candidate_id)) rejection.reason = 'Fewer than two independent verified matching sales support an estimate.';
   return insufficient;
 }
-function mergeCandidates(result: StaffInventoryResearchResult, incoming: StaffInventoryResearchCandidate[], description: StaffInventoryResearchDescription) {
+function mergeCandidates(result: StaffInventoryResearchResult, incoming: StaffInventoryResearchCandidate[], description: StaffInventoryResearchDescription, details?: SaleDetailState) {
   const priorAssessments = new Map(result.comparison_assessments?.map(assessment => [assessment.candidate_id, assessment]));
   const merged = new Map(result.candidates.map(candidate => [candidate.id, candidate]));
   const sourceEvidence = (candidate: StaffInventoryResearchCandidate) => {
+    if (details) return details.originals.get(candidate)?.facts;
     const { retrieved_at: _retrievedAt, source_response_sha256: _responseHash, image: _image, image_url: _selectedImage,
       source_eligible: _eligible, exclusion_reason: _reason, ...evidence } = candidate;
     return evidence;
@@ -461,8 +578,19 @@ function mergeCandidates(result: StaffInventoryResearchResult, incoming: StaffIn
   for (const candidate of incoming) {
     const prior = merged.get(candidate.id);
     if (prior) {
-      if (JSON.stringify(sourceEvidence(prior)) !== JSON.stringify(sourceEvidence(candidate)) || !candidate.source_eligible && candidate.exclusion_reason?.includes('conflicting')) {
+      if (details?.conflicts.has(candidate.id) || JSON.stringify(sourceEvidence(prior)) !== JSON.stringify(sourceEvidence(candidate)) || !candidate.source_eligible && candidate.exclusion_reason?.includes('conflicting')) {
         prior.source_eligible = false; prior.exclusion_reason = 'The provider returned conflicting evidence for the same listing.';
+      } else if (details) {
+        applyOrdinarySaleDetail(details, prior, description);
+        if (!prior.source_eligible && candidate.source_eligible) {
+          // A later explicit-false search can establish its own ordinary price.
+          // Retain that observation and receipt, never overwrite the earlier
+          // unknown flag or treat it as a successful detail confirmation.
+          if (prior.image && [candidate.image_options?.thumbnail_url, candidate.image_options?.full_resolution_url].includes(prior.image.source_url)) {
+            candidate.image = prior.image; candidate.image_url = prior.image.source_url;
+          }
+          merged.set(candidate.id, candidate);
+        }
       }
     } else merged.set(candidate.id, candidate);
   }
@@ -480,13 +608,17 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
   const parsed = StaffInventoryResearchInputSchema.safeParse(input);
   if (!parsed.success) throw new StaffInventoryResearchError('invalid_input');
   const data = parsed.data, env = deps.env ?? process.env, started = Date.now();
+  const details: SaleDetailState | undefined = env.STAFF_INVENTORY_RESEARCH_SALE_DETAILS === 'true'
+    ? { requests: [], cache: new Map(), completed: new Map(), facts: new Map(), originals: new WeakMap(), conflicts: new Set() } : undefined;
+  const baseEngineVersion = deps.loadCatalog ? STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION : STAFF_INVENTORY_RESEARCH_ENGINE_VERSION;
   const now = () => (deps.now ?? (() => new Date()))().toISOString();
   return bounded(async innerSignal => {
     const timings = { photos: 0, sources: 0, images: 0, model: 0, total: 0 }, warnings: string[] = [];
     const query = buildStaffInventoryResearchQuery(data.description);
     const result: StaffInventoryResearchResult = {
       schema_version: 1, unit_id: data.unit_id, description_event_id: data.description_event_id, description_hash: data.description_hash,
-      engine_version: deps.loadCatalog ? STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION : STAFF_INVENTORY_RESEARCH_ENGINE_VERSION, model: STAFF_INVENTORY_RESEARCH_MODEL, researched_at: now(), timings_ms: timings,
+      engine_version: details ? STAFF_INVENTORY_RESEARCH_SALE_DETAILS_ENGINE_VERSION : baseEngineVersion, model: STAFF_INVENTORY_RESEARCH_MODEL, researched_at: now(), timings_ms: timings,
+      ...(details ? { sale_details: { schema_version: 1 as const, base_engine_version: baseEngineVersion, requests: details.requests } } : {}),
       ...(deps.loadCatalog ? { catalog_context: { schema_version: 1 as const, status: 'not_consulted' as const, publications: [], scope_evidence: [], scope_receipt: null } } : {}),
       photos: { front: null, back: null }, query, research_queries: [], comparison_assessments: [],
       diagnostics: { schema_version: 1, reason_codes: [], sources: [], candidates: [] },
@@ -525,7 +657,7 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
       })(),
       (async () => {
         const start = Date.now();
-        const source = await bounded(sourceSignal => fetchCandidates(data.description, query, soldKey, deps, sourceSignal), deadline(deps, 'sources'), innerSignal);
+        const source = await bounded(sourceSignal => fetchCandidates(data.description, query, soldKey, deps, sourceSignal, details), deadline(deps, 'sources'), innerSignal);
         result.candidates = source.candidates;
         result.diagnostics!.sources.push({ sequence: 1, ...source.diagnostic });
         result.research_queries!.push({ sequence: 1, query, reason: 'Initial search from the saved card description.', status: 'completed', source_response_sha256: source.source_response_sha256, candidate_ids: source.candidates.map(candidate => candidate.id), error_code: null });
@@ -670,12 +802,12 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
           await bounded(async refinementSignal => {
             const sourceStart = Date.now();
             try {
-              const source = await bounded(sourceSignal => fetchCandidates(data.description, nextQuery, soldKey, deps, sourceSignal), deadline(deps, 'sources'), refinementSignal);
+              const source = await bounded(sourceSignal => fetchCandidates(data.description, nextQuery, soldKey, deps, sourceSignal, details), deadline(deps, 'sources'), refinementSignal);
               if (refinementSignal.aborted) throw new StaffInventoryResearchError('cancelled');
               sourceCompleted = true;
               result.diagnostics!.sources.push({ sequence: pass + 1, ...source.diagnostic });
               result.research_queries!.push({ sequence: pass + 1, query: nextQuery, reason: refinement.reason, status: 'completed', source_response_sha256: source.source_response_sha256, candidate_ids: source.candidates.map(candidate => candidate.id), error_code: null });
-              mergeCandidates(result, source.candidates, data.description);
+              mergeCandidates(result, source.candidates, data.description, details);
             } finally { timings.sources += Date.now() - sourceStart; }
             await downloadEvidence(pass, refinementSignal);
             const nextAnalysis = await assess(refinementSignal);
@@ -700,6 +832,15 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
       result.estimate.reason = 'Two different verified card photos are needed to assess the fetched sold comparisons.';
       result.comparison_assessments = result.candidates.map(candidate => comparisonAssessment(candidate, data.description, result.target_condition));
       result.rejections = result.comparison_assessments.map(assessment => ({ candidate_id: assessment.candidate_id, reason: assessment.reason }));
+    }
+    if (details) {
+      // A later conflicting source observation cannot regain authority after a
+      // failed optional round or after the listing temporarily left the shortlist.
+      for (const candidate of result.candidates) if (details.conflicts.has(candidate.id)) {
+        candidate.source_eligible = false; candidate.exclusion_reason = 'The provider returned conflicting evidence for the same listing.';
+      }
+      result.selected_candidate_ids = result.selected_candidate_ids.filter(id => !details.conflicts.has(id));
+      if (result.selected_candidate_ids.length < STAFF_INVENTORY_RESEARCH_LIMITS.minimumComps) result.selected_candidate_ids = [];
     }
     // Recompute decisions against the exact image actually inspected. A newly
     // downloaded image after an optional model failure is acquired/unassessed,
