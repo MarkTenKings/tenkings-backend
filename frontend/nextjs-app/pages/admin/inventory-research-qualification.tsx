@@ -65,18 +65,18 @@ export function ProviderQualificationPanel({ token }: { token: string }) {
   </section>;
 }
 
-export default function InventoryResearchQualificationPage() {
+export default function InventoryResearchQualificationPage({ inventoryPath = '/admin/physical-inventory' }: { inventoryPath?: string }) {
   const { session, loading, ensureSession } = useSession();
   const admin = hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone);
   return <main className="min-h-screen bg-black px-4 py-8 text-white"><Head><title>Research qualification | Ten Kings</title><meta name="robots" content="noindex,nofollow" /></Head><div className="mx-auto max-w-3xl space-y-6">
-    <Link href="/admin/physical-inventory" className="underline">Back to inventory</Link><h1 className="text-3xl font-semibold">Research provider qualification</h1>
+    <Link href={inventoryPath} className="underline">Back to inventory</Link><h1 className="text-3xl font-semibold">Research provider qualification</h1>
     {loading ? <p>Loading admin session…</p> : !session ? <button className={button} onClick={() => void ensureSession()}>Sign in</button> : !admin ? <p>Human inventory admin access is required.</p> : <ProviderQualificationPanel key={session.user.id} token={session.token} />}
   </div></main>;
 }
 
 export const getServerSideProps: GetServerSideProps = async ({ req, res }) => {
-  const { providerQualificationHost } = await import('../../lib/server/staffResearchProviderQualification');
-  if (!providerQualificationHost(req.headers.host, process.env.NODE_ENV === 'production')) return { notFound: true };
+  const { providerQualificationHost, providerQualificationPreviewHost } = await import('../../lib/staffResearchQualificationHost');
+  if (!providerQualificationHost(req.headers.host, process.env.NODE_ENV === 'production', process.env)) return { notFound: true };
   res.setHeader('Cache-Control', 'private, no-store'); res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-  return { props: {} };
+  return { props: { inventoryPath: req.headers.host === providerQualificationPreviewHost(process.env) ? '/staff/inventory' : '/admin/physical-inventory' } };
 };

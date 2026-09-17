@@ -21,9 +21,7 @@ export const PROVIDER_QUALIFICATION_PLAN = Object.freeze({
 });
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 export const PROVIDER_QUALIFICATION_PLAN_HASH = hash(JSON.stringify(PROVIDER_QUALIFICATION_PLAN));
-export function providerQualificationHost(host: string | undefined, production: boolean) {
-  return host === 'collect.tenkings.co' || !production && /^(?:localhost|127\.0\.0\.1)(?::\d{1,5})?$/.test(host ?? '');
-}
+export { providerQualificationHost } from '../staffResearchQualificationHost';
 export class ProviderQualificationError extends Error {
   constructor(readonly code: 'unavailable' | 'timeout' | 'http_failure' | 'unsafe_response' | 'invalid_response' | 'invalid_image' | 'response_too_large') {
     super(code); this.name = 'ProviderQualificationError';

@@ -33378,3 +33378,9 @@ By enabling Rip It Live, I confirm:
 
 - Added a pure resolver and sanitized tests from all four observed provider cohorts. An absent/null search offer flag is preserved; confirmation requires exact listing IDs and titles, equal integer USD cents, complete matching sale dates and positive sold banner with explicit detail BestOffer=false. Active listings, accepted offers, malformed/range/hydration contradictions remain unconfirmed.
 -13 focused tests, isolated no-emit TypeScript and two-file lint pass. No engine, transport, schema, worker or flag integration in this commit; no live calls or DB mutation. Root reviewed exact implementation/test bytes. Bounded default-off engine integration is the next separately reviewed change.
+
+
+### September 17 — Port qualified Preview diagnostic and provider findings
+
+- Ported the exact eight diagnostic host/router/API/page/test files qualified in main-site source5aeff411; independent Inventory focused run passes25 tests. No intake/research worker/credential changes. Host allowance requires preview environment and exact branch-host equality; normal admin, same-origin, deliberate acknowledgment and execution flag remain required.
+- Added the actual four-cohort provider observations and verified disabled closeout. Across25 sold results,24 omit search BestOffer status; two observed exact details support ordinary-sale confirmation, while an accepted-offer detail remains unresolved and active control disproves ended=true as sufficient sale evidence. No percentage-accuracy or variant-match claim follows from this sample.
