@@ -3,10 +3,114 @@ const assert = require('node:assert/strict');
 const { writeFile } = require('node:fs/promises');
 const { PrismaClient } = require('@prisma/client');
 const { recordInventoryWorkflowEventV2, recordCardInventoryEventV2, createCardFromSpeedster, voidCard } = require('../dist/database/src/cardPlatformV2');
-const { readWorkflowWorkspaceV2, exportInventoryWorkflowPageV2 } = require('../dist/database/src/inventoryWorkflowV2Read');
+const { readWorkflowHistoryV2, readWorkflowWorkspaceV2, exportInventoryWorkflowPageV2 } = require('../dist/database/src/inventoryWorkflowV2Read');
+const { canonical, inventoryHash, parseWorkflowCommandV2, WorkflowEventInputV2, workflowEventIdV2, WORKFLOW_MAX_PAGE_BYTES_V2, WORKFLOW_MAX_EVENT_BYTES_V2 } = require('../dist/database/src/inventoryWorkflowV2');
 const { createFinancialWorkflowReadHandlerV2 } = require('../dist/database/src/inventoryWorkflowV2Http');
 const { createHash } = require('node:crypto');
 const enabled = process.env.TEN_KINGS_INVENTORY_DISPOSABLE_VALIDATION === '1';
+
+test('internal workflow pagination preserves verified history and the original snapshot', { skip: !enabled }, async t => {
+  const url = new URL(process.env.DATABASE_URL); assert.equal(url.hostname, '127.0.0.1'); assert.equal(url.pathname, '/tenkings_inventory_v2_disposable');
+  const db = new PrismaClient({ datasources: { db: { url: url.href } } });
+  const actor = 'fixture-pagination-admin', recordedAt = '2026-02-01T00:00:00.000Z';
+  const fixture = (sequence, unit_ids = ['fixture-pagination-unit']) => {
+    const command = parseWorkflowCommandV2({ request_id: `fixture-pagination-${sequence}`, event_kind: 'price_set', effective_at: '2026-01-01T00:00:00.000Z', evidence_ref: 'fixture:pagination', data: { unit_ids, intended_sale_price_cents: sequence } });
+    const { request_id, ...shape } = command;
+    const event = WorkflowEventInputV2.parse({ ...shape, schema_version: 2, source_event_id: workflowEventIdV2(request_id), source_sequence: sequence, recorded_at: recordedAt, recorded_by: actor, currency: 'USD' });
+    const content = canonical({ command, event });
+    assert.ok(Buffer.byteLength(content) <= WORKFLOW_MAX_EVENT_BYTES_V2);
+    return { event, row: { sequence, id: event.source_event_id, recordedAt, content, contentHash: inventoryHash({ command, event }), requestHash: inventoryHash({ command, actor }) } };
+  };
+  const insert = (tx, fixtures) => tx.$executeRawUnsafe(`INSERT INTO pg_temp."InventoryWorkflowEventV2" ("sequence", "id", "recordedAt", "content", "contentHash", "requestHash")
+    SELECT "sequence", "id", "recordedAt", "content", "contentHash", "requestHash" FROM json_to_recordset($1::json)
+    AS r("sequence" bigint, "id" text, "recordedAt" timestamptz, "content" text, "contentHash" text, "requestHash" text)`, JSON.stringify(fixtures.map(f => f.row)));
+  const isolated = (fixtures, work) => db.$transaction(async tx => {
+    // Reader fixtures only: a transaction-local table shadows the journal. Real
+    // exporter SQL/byte budgets run without mutating or disabling public guards.
+    await tx.$executeRawUnsafe(`CREATE TEMP TABLE "InventoryWorkflowEventV2" ("sequence" bigint PRIMARY KEY, "id" text NOT NULL, "recordedAt" timestamptz NOT NULL, "content" text NOT NULL, "contentHash" text NOT NULL, "requestHash" text NOT NULL) ON COMMIT DROP`);
+    await insert(tx, fixtures);
+    return work(tx);
+  }, { isolationLevel: 'ReadCommitted', timeout: 30000 });
+  const observed = (tx, afterPage = async () => {}) => {
+    const pages = [];
+    return { pages, client: { $queryRaw: async query => {
+      const rows = await tx.$queryRaw(query);
+      if (query.sql.includes('WITH candidates')) {
+        pages.push({ limit: query.values[2], sequences: rows.map(r => Number(r.sequence)), bytes: rows.reduce((n, r) => n + Buffer.byteLength(r.content) + 1, 0) });
+        await afterPage(pages.length, rows);
+      }
+      return rows;
+    } } };
+  };
+  const publicTraversal = async (tx, snapshot) => {
+    const events = [], pageSizes = []; let after = 0;
+    do {
+      const result = await exportInventoryWorkflowPageV2(tx, { after_sequence: after, limit: 1000, snapshot_through_sequence: snapshot });
+      events.push(...result.page.events); pageSizes.push(result.page.events.length); after = result.page.through_sequence;
+    } while (after < snapshot);
+    return { events, pageSizes };
+  };
+  try {
+    await t.test('250-boundary and multi-page reads equal complete ordered canonical public exports', async () => {
+      for (const count of [250, 251, 1105]) {
+        const fixtures = Array.from({ length: count }, (_, i) => fixture(i + 1));
+        await isolated(fixtures, async tx => {
+          const trace = observed(tx), history = await readWorkflowHistoryV2(trace.client), exported = await publicTraversal(tx, count);
+          assert.equal(canonical(history), canonical(fixtures.map(f => f.event)));
+          assert.equal(canonical(history), canonical(exported.events));
+          assert.deepEqual(history.map(e => e.source_sequence), fixtures.map(f => f.row.sequence));
+          assert.ok(trace.pages.every(p => p.limit === 250 && p.sequences.length <= 250));
+          assert.equal(trace.pages.length, Math.ceil(count / 250));
+          if (count === 1105) assert.deepEqual(exported.pageSizes, [1000, 105]);
+        });
+      }
+    });
+    await t.test('a corrupt row on a later page fails integrity after a valid first page', async () => {
+      const fixtures = Array.from({ length: 502 }, (_, i) => fixture(i + 1));
+      await isolated(fixtures, async tx => {
+        await tx.$executeRawUnsafe('UPDATE pg_temp."InventoryWorkflowEventV2" SET "contentHash" = repeat(\'0\', 64) WHERE "sequence" = 251');
+        const trace = observed(tx);
+        await assert.rejects(readWorkflowHistoryV2(trace.client), error => error.code === 'INTEGRITY');
+        assert.equal(trace.pages.length, 2); assert.equal(trace.pages[0].sequences.at(-1), 250); assert.equal(trace.pages[1].sequences[0], 251);
+      });
+    });
+    await t.test('a later-page gap introduced between reads fails pinned coverage', async () => {
+      const fixtures = Array.from({ length: 502 }, (_, i) => fixture(i + 1));
+      await isolated(fixtures, async tx => {
+        const trace = observed(tx, async page => { if (page === 1) await tx.$executeRawUnsafe('DELETE FROM pg_temp."InventoryWorkflowEventV2" WHERE "sequence" = 251'); });
+        await assert.rejects(readWorkflowHistoryV2(trace.client), error => error.code === 'INTEGRITY');
+        assert.equal(trace.pages.length, 1); assert.equal(trace.pages[0].sequences.at(-1), 250);
+      });
+    });
+    await t.test('byte-limited short pages continue to the original end without omissions', async () => {
+      const ids = Array.from({ length: 2000 }, (_, i) => `fixture-pagination-${String(i).padStart(4, '0')}-` + 'x'.repeat(160));
+      const fixtures = []; let bytes = 0;
+      while (bytes <= WORKFLOW_MAX_PAGE_BYTES_V2) {
+        assert.ok(fixtures.length < 32, 'Keep the byte-budget fixture bounded');
+        const next = fixture(fixtures.length + 1, ids); fixtures.push(next); bytes += Buffer.byteLength(next.row.content) + 1;
+      }
+      await isolated(fixtures, async tx => {
+        const trace = observed(tx), history = await readWorkflowHistoryV2(trace.client), exported = await publicTraversal(tx, fixtures.length);
+        assert.equal(trace.pages.length, 2);
+        assert.ok(trace.pages.every(p => p.limit === 250 && p.sequences.length > 0 && p.sequences.length < 250 && p.bytes < WORKFLOW_MAX_PAGE_BYTES_V2));
+        assert.equal(canonical(history), canonical(fixtures.map(f => f.event)));
+        assert.equal(canonical(history), canonical(exported.events));
+      });
+    });
+    await t.test('an append between page reads is excluded until a fresh history invocation', async () => {
+      const fixtures = Array.from({ length: 502 }, (_, i) => fixture(i + 1)), appended = fixture(503);
+      await isolated(fixtures, async tx => {
+        const trace = observed(tx, async page => { if (page === 1) await insert(tx, [appended]); });
+        const pinned = await readWorkflowHistoryV2(trace.client);
+        assert.equal(canonical(pinned), canonical(fixtures.map(f => f.event)));
+        assert.equal(trace.pages.at(-1).sequences.at(-1), 502);
+        const fresh = await readWorkflowHistoryV2(tx);
+        assert.equal(canonical(fresh), canonical([...fixtures, appended].map(f => f.event)));
+      });
+    });
+  } finally { await db.$disconnect(); }
+});
+
 test('purchased-lot PostgreSQL workflow and authenticated export', { skip: !enabled }, async t => {
   const url = new URL(process.env.DATABASE_URL); assert.equal(url.hostname, '127.0.0.1'); assert.equal(url.pathname, '/tenkings_inventory_v2_disposable');
   const db = new PrismaClient({ datasources: { db: { url: url.href } } });

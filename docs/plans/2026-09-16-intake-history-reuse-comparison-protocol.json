@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "status": "Prepared only; coordinating-agent hash, disk and quiet-window review required before one changed-source comparison under existing authorization",
+  "purpose": "One changed-writer source/DB background-load qualification on the same integrated candidate; not production/device/release qualification",
+  "refs": {
+    "A": "882e40a20bac3f3a276e03c1cbe9f823785d42a1",
+    "B": "12e13992cd341eeea96dbe0955cc4dbfba67bc1d"
+  },
+  "preserve_failed_runs": [
+    "20260916-intake-source-benchmark",
+    "20260916-intake-scheduling-diagnostic",
+    "20260916-intake-split-diagnostic"
+  ],
+  "topology": "driver/intake/worker/observer-separate-processes",
+  "process_roles": {
+    "driver": "3 independent sequential synthetic sessions; no DB or application imports",
+    "intake": "one source workspace/sole-writer process; 4 DB connections; three concurrent requests; synthetic identify lease acquisition retained here as an explicit approximation",
+    "worker": "two actual source worker loops in one separate process; 3 DB connections",
+    "observer": "independent process; 1 serialized DB connection; 10 ms sleep plus query duration"
+  },
+  "deployment_receipt": "docs/plans/2026-09-16-intake-split-process-function-receipt.json",
+  "deployment_inference": "photo/workspace share one functionName; cron and identify each differ. Supports separate worker/intake model; does not prove instance placement, enablement of Fluid, CPU isolation or actual concurrency. Identify process separation is not modeled.",
+  "scenarios": [
+    "idle",
+    "thumbnail"
+  ],
+  "sessions": [
+    3
+  ],
+  "order": [
+    "A",
+    "B",
+    "B",
+    "A"
+  ],
+  "warmups": 5,
+  "measured": 50,
+  "required_measured_saves": 1200,
+  "required_warmups": 120,
+  "seed_units": 2000,
+  "seed_pending": 256,
+  "seed_completed": 16,
+  "untimed_admission_probe": true,
+  "pool_connections": 8,
+  "administrative_connection_during_timing": false,
+  "provider_delay_ms": 250,
+  "intake_photo_pixels": [
+    1200,
+    1680
+  ],
+  "listing_photo_pixels": [
+    1000,
+    1400
+  ],
+  "listing_photo_count": 6,
+  "larger_images": false,
+  "catalog": false,
+  "encoding": "UTF8",
+  "node_major": 22,
+  "prisma_version": "5.22.0",
+  "sharp_version": "0.33.5",
+  "frozen_client_ledger_sha256": "e1a91c8dee8d08a561083f4976312f6d3b0faedaf3842489cda739b769db6345",
+  "legacy_gate_metrics": [
+    "lease_ms",
+    "photo_verify_ms",
+    "save_ack_ms",
+    "save_tx_ms",
+    "queue_lock_ms"
+  ],
+  "additional_gate_metrics": [
+    "photo_wall_ms"
+  ],
+  "metric_boundaries": {
+    "lease_ms": "intake-role call to acquire transaction through completion; excludes IPC",
+    "photo_verify_ms": "unchanged sum of two parallel in-memory metadata elapsed operations",
+    "photo_wall_ms": "earliest verifyPhoto entry through latest verifyPhoto completion, monotonic span; excludes upload",
+    "save_ack_ms": "workspace source handler invocation through response in intake role; excludes driver IPC",
+    "save_tx_ms": "actual sole-writer transaction after controlled barrier",
+    "queue_lock_ms": "actual save queue-lock query elapsed; lease queue spans separately retained",
+    "driver_save_roundtrip_ms": "IPC request/response wall diagnostic only, not substituted for save_ack_ms"
+  },
+  "p95_margin": {
+    "absolute_ms": 50,
+    "fraction": 0.1
+  },
+  "gate_rule": "Every metric pooled cell AND each ABBA repetition B-A <= max(50ms,10% A p95); candidate thumbnail-idle uses same margin. All original metrics retained; additional photo wall must also pass. No pooling across studies or excluding tail cases.",
+  "hard_gates": [
+    "rollback adds no event/job",
+    "concurrent exact retry adds exactly one job",
+    "every accepted individual save has one job",
+    "prior journal hashes preserved",
+    "original fixture hashes preserved",
+    "max two running workers",
+    "actual observed worker/save queue-lock overlap in every loaded block",
+    "untimed third-lease claim denial with a free worker slot, terminal completion during pause, resume after release",
+    "all samples and per-process clocks complete"
+  ],
+  "controlled_overlap": "first measured save record callback releases first worker terminals and waits for queue acquisition; worker holds only until independent observer sees real intake advisory wait or 2500ms bound; same original scheduling intent",
+  "instrumentation": [
+    "unique OS PID per role",
+    "before/after parent-bracketed monotonic clock probes",
+    "absolute transaction and SQL spans with one backend PID query per transaction",
+    "per-process 10ms event-loop ticks",
+    "independent PostgreSQL wait/lock samples",
+    "per-photo and combined wall spans alongside original summed metric",
+    "driver IPC timing and buffered role traces; per-save raw driver log"
+  ],
+  "new_overheads": [
+    "IPC dispatch and serialization",
+    "separate process memory/CPU scheduling and repeated cold module/fixture initialization outside timing",
+    "observer RPC forwarding via external driver",
+    "photo span timestamps",
+    "admin connection disconnected during blocks"
+  ],
+  "cap_ms": 1800000,
+  "minimum_free_disk_bytes": 2147483648,
+  "stop_conditions": [
+    "any hard invariant fails",
+    "30-minute overall cap; work stops at 29m30s for bounded owned cleanup",
+    "owned child exits, ordinary RPC exceeds60s, or untimed seed RPC exceeds180s",
+    "monotonic clock check fails",
+    "disk floor before setup/each block fails",
+    "SIGINT/SIGTERM or administrative/startup failure abort owned work and preserve partial evidence"
+  ],
+  "smoke": false,
+  "preflight_override": {
+    "smoke": true,
+    "warmups": 1,
+    "measured": 2,
+    "seed_units": 40,
+    "seed_pending": 16,
+    "seed_completed": 2,
+    "qualification": false
+  },
+  "analysis": "Retain all samples. Nearest-rank p95. Report per-arm/block >50ms lease counts, >20ms late-loop overlaps by process, independent sampled advisory waits and queue owners, ClientRead intervals as discrete observations, combined photo wall and legacy sum. No continuous wait attribution from sampled DB rows; no exact CPU cause without a profile.",
+  "release_pass_always_false": true,
+  "missing_proof": [
+    "actual Vercel request-instance/concurrency/cold-start behavior",
+    "identify function isolation",
+    "physical camera/upload/recognition",
+    "timeout/429 and one-session full matrix",
+    "real provider variance",
+    "new catalog/V4 and larger images",
+    "independent >=200-card labels/scorecard"
+  ],
+  "launch_review": "Coordinating agent reviews this new immutable comparison protocol, package-resolution/schema audit and exact hashes, verifies disk >=2 GiB plus working/output headroom, and releases exactly one 1,200-save quiet window. This compares a changed writer, never reruns unchanged code until pass. No additional permission request to Mark; no preflight or measured run from preparation.",
+  "ipc_deadlines_ms": {
+    "seed": 180000,
+    "ordinary_including_seed_terminal": 60000
+  },
+  "setup_deadline_reason": "Prior full-size seeds took approximately 96–100 seconds; the 40-unit preflight did not expose the 60-second seed RPC limit. Only the untimed seed method changes to 180 seconds, within the unchanged 30-minute global cap.",
+  "source_paths": [
+    "packages/database/src",
+    "packages/database/prisma",
+    "packages/database/package.json",
+    "packages/shared/src",
+    "packages/shared/package.json",
+    "packages/ebay-sold-comps-v2/src",
+    "packages/ebay-sold-comps-v2/package.json",
+    "packages/card-catalog-evidence/src",
+    "packages/card-catalog-evidence/package.json",
+    "frontend/nextjs-app/lib",
+    "frontend/nextjs-app/constants",
+    "frontend/nextjs-app/pages/api/v2/admin/inventory/workspace.ts",
+    "frontend/nextjs-app/tsconfig.json",
+    "frontend/nextjs-app/package.json",
+    "package.json",
+    "tsconfig.base.json"
+  ],
+  "runtime_changed_paths": [
+    "packages/database/src/cardPlatformV2.ts"
+  ],
+  "writer_sha256": {
+    "A": "d43a4e12fa347955fb6cce74c36e4c9a435a1e8e53c0b8ec770df9430f8437b0",
+    "B": "20305bc3152618c3817ef6b06b8a7a32c69c4f12a9497bd0f809640744da05fb"
+  },
+  "schema_sha256": "0233ffa118ff9927621043bfe5e077aa15ee320db8087be9fc6a270884b9dd09",
+  "migration_count": 96,
+  "frozen_script_sha256": {
+    "benchmark-staff-intake-split-driver.ts": "064a9018d15ffd3c97bced10001a9c0541ee6d44a2313a83f3fac2f0108e5fb5",
+    "benchmark-staff-intake-split-role.ts": "a708f12e817845806d62bceca4875b85178955c5a072e9bfc7447b8baaffc749",
+    "benchmark-staff-intake-split-ipc.ts": "a44b60247437c6b333ba36469e3248452ebfb0b60249650cee819fbb628a1a7f"
+  },
+  "workspace_aliases": {
+    "@tenkings/database": "packages/database/src/index.ts",
+    "@tenkings/shared": "packages/shared/src/index.ts",
+    "@tenkings/ebay-sold-comps-v2": "packages/ebay-sold-comps-v2/src/index.ts",
+    "@tenkings/card-catalog-evidence": "packages/card-catalog-evidence/src/index.mjs"
+  },
+  "snapshot_resolution": "Retain existing snapshot-local database/shared/ebay aliases; additionally export shared catalog src/package.json and bind its exact package alias directly to the owned index.mjs. No application package may resolve through mutable canonical workspace symlinks. Shared installed external dependencies and original frozen Prisma remain sealed inputs; no generation/build/install.",
+  "new_features_off": [
+    "SET_CATALOG_EVIDENCE_ENABLED",
+    "STAFF_INVENTORY_RESEARCH_CATALOG_EVIDENCE",
+    "STAFF_INVENTORY_CATALOG_CONTRIBUTIONS_ENABLED"
+  ],
+  "feature_off_evidence": "Runner and driver environment allowlists omit all new flags. The unchanged injected worker dependencies provide no loadCatalog or reconcileCatalog; research therefore uses the V3 engine. Full-resolution images remain explicitly false. No production provider credential is forwarded; fixed synthetic transport remains mandatory.",
+  "client_compatibility_models": [
+    "Location",
+    "InventoryWorkflowEventV2",
+    "StaffInventoryResearchJobV2",
+    "StaffInventoryIntakeLeaseV2"
+  ],
+  "preparation_adjustments": "New refs/protocol/runner; sealed source-diff and conservative import-closure/schema audits; export/alias newly imported catalog package identically in both arms; reject extra preflight. Revision02 adds only owned supervision/global-deadline/cleanup handling. Driver, roles, IPC, workload, photos, tapes, barriers, metrics, margins, pools and comparison logic remain byte-identical to the preceding split diagnostic.",
+  "cleanup_reserve_ms": 30000,
+  "work_cap_ms": 1770000,
+  "supervision": "Owned detached command/postgres process groups only; direct installed initdb/postgres supervision. SIGINT/SIGTERM and deadline trigger shared abort and enter finally; pending readiness/admin waits reject on abort. Work stops at 29m30s; bounded cleanup is reserved within the unchanged 30m cap. TERM/INT then bounded KILL escalation, process-group absence and PostgreSQL close confirmation before data removal. Unconfirmed stop retains data and fails cleanup; normal and failure receipts record owned PIDs. SIGKILL/OS failure cannot be trapped."
+}

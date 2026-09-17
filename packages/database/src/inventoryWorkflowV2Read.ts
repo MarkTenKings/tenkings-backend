@@ -22,7 +22,7 @@ export async function readWorkflowHistoryV2(db: WorkflowReadClientV2): Promise<W
   if (size.count !== size.maximum || size.maximum > BigInt(Number.MAX_SAFE_INTEGER)) return integrity();
   const events: WorkflowEventV2[] = []; let after = 0;
   while (BigInt(after) < size.maximum) {
-    const page = await exportInventoryWorkflowPageV2(db, { after_sequence: after, limit: 1000, snapshot_through_sequence: Number(size.maximum) });
+    const page = await exportInventoryWorkflowPageV2(db, { after_sequence: after, limit: 250, snapshot_through_sequence: Number(size.maximum) });
     events.push(...page.page.events); after = page.page.through_sequence;
   }
   return events;
