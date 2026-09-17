@@ -16,6 +16,7 @@ import {
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
+import { serializeWorksheetDraftRow } from "../../lib/setOpsDraftEditor";
 
 type DatasetType = "PARALLEL_DB" | "PLAYER_WORKSHEET";
 type CombinedDatasetMode = DatasetType | "COMBINED";
@@ -1284,22 +1285,9 @@ export default function SetOpsReviewPage() {
           datasetType,
           rows: editableRows.map((row) => {
             if (datasetType === "PLAYER_WORKSHEET") {
-              const team = rowTeamName(row);
-              const subset = rowSubsetLabel(row);
-              const rookie = rowIsRookie(row);
-              return {
-                setId: row.setId,
-                cardNumber: row.cardNumber,
-                playerSeed: row.playerSeed,
-                playerName: row.playerSeed,
-                team,
-                teamName: team,
-                cardType: subset || null,
-                subset: subset || null,
-                isRookie: rookie,
-                rookie: rookie ? "Rookie" : "",
-                sourceUrl: row.sourceUrl,
-              };
+              return serializeWorksheetDraftRow(row, {
+                team: rowTeamName(row), subset: rowSubsetLabel(row), rookie: rowIsRookie(row),
+              });
             }
             return {
               setId: row.setId,
