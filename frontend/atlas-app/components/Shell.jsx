@@ -12,7 +12,7 @@ export function Unavailable() {
 export function Notice({ children, error = false }) {
     return <div className={`notice ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'}>{children}</div>;
 }
-export default function Shell({ children, staff, title = 'Grading workspace', workspace = false }) {
+export default function Shell({ children, staff, title = 'Grading workspace', workspace = false, manual = false }) {
     const router = useRouter(), operations = router.pathname === '/operations', intake = router.pathname === '/add-cards';
     const activeQueue = Object.hasOwn(stateNames, router.query.queue) ? router.query.queue : 'WAITING';
     const [error, setError] = useState('');
@@ -30,6 +30,7 @@ export default function Shell({ children, staff, title = 'Grading workspace', wo
             setBusy(false);
         }
     }
+    if(manual)return <div className="mc-shell"><Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head><header className="mc-shell-header"><Link href="/manual" className="brand">ATLAS<span>STAFF WORKSPACE</span></Link><nav><Link href="/manual">Cards</Link><span>{staff?.name}</span><button disabled={busy} onClick={logout}>Sign out</button></nav></header>{staff?.mode!=='PRODUCTION'&&<div className="fixture-strip">Local verification environment · ordinary staff authentication · private test storage</div>}{error&&<Notice error>{error}</Notice>}{children}</div>;
     return <div className="app-shell">
     <Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head>
     <aside className="rail">

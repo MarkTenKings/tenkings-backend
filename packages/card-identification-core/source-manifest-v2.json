@@ -1,0 +1,21 @@
+{
+  "source_commit": "60572cec895ad63d4ab826cd366f6475b04e725a",
+  "files": [
+    {
+      "path": "frontend/nextjs-app/lib/staffInventoryIdentification.ts",
+      "sha256": "081f5e67e7b26b0df927f5d17cd2345fa1cd343fe855bd53cd1e659f993e3b8b",
+      "git_blob": "88297bf7922e7ba40c7f6bd4eb8bb57f8806a65a"
+    },
+    {
+      "path": "frontend/nextjs-app/lib/server/staffInventoryIdentification.ts",
+      "sha256": "e9015c3fccaaf682b46eccd6a10b66a6786593f7574f6bff908ed5fa049727ba",
+      "git_blob": "3a2b5cf2232bb0ba6ee079e6c039533bbfce4133"
+    },
+    {
+      "path": "frontend/nextjs-app/lib/server/inventoryPhoto.ts",
+      "sha256": "a7d169fbafb3802030d677a2044f0117ed5e99d219a59d477e19d7c3faece4a5",
+      "git_blob": "9f816e8af4a79d0b0fc51a3a0538bc3d598042b4"
+    }
+  ],
+  "scope": "Opt-in Google partial-response fields and Pokemon-only prompt/lower-front PNG crop. No application integration, new knowledge, catalog or research."
+}

@@ -1,0 +1,21 @@
+{
+  "source_commit": "a319904273d4b4e4e81d721b699d3a2990975eda",
+  "files": [
+    {
+      "path": "frontend/nextjs-app/lib/staffInventoryIdentification.ts",
+      "sha256": "081f5e67e7b26b0df927f5d17cd2345fa1cd343fe855bd53cd1e659f993e3b8b",
+      "git_blob": "88297bf7922e7ba40c7f6bd4eb8bb57f8806a65a"
+    },
+    {
+      "path": "frontend/nextjs-app/lib/server/staffInventoryIdentification.ts",
+      "sha256": "367098be5c9c7dc96cf3e6c38cade2f4e2a694bfc095f41d763ebbf72174697a",
+      "git_blob": "78929c43fe05a1160468b6349e0dffcf91daaa30"
+    },
+    {
+      "path": "frontend/nextjs-app/lib/server/inventoryPhoto.ts",
+      "sha256": "a7d169fbafb3802030d677a2044f0117ed5e99d219a59d477e19d7c3faece4a5",
+      "git_blob": "9f816e8af4a79d0b0fc51a3a0538bc3d598042b4"
+    }
+  ],
+  "scope": "Eight-field fast identification only; no inventory effects or research extraction."
+}

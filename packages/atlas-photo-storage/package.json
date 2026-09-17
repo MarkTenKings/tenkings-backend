@@ -1,0 +1,14 @@
+{
+  "name": "@atlas/photo-storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.mjs",
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": {
+    "@atlas/photo-core": "workspace:*",
+    "@atlas/photo-runtime": "workspace:*",
+    "@aws-sdk/client-s3": "3.914.0",
+    "@aws-sdk/s3-request-presigner": "3.982.0"
+  }
+}

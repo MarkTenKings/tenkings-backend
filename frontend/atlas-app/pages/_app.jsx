@@ -4,6 +4,9 @@ import { installPendingNavigationController } from '../lib/pending-navigation.mj
 import '../styles/global.css';
 import '../styles/grading.css';
 import '@atlas/report-view/styles.css';
+import '@atlas/manual-workspace/styles.css';
+import '@atlas/manual-workspace/defects.css';
+import '../styles/manual.css';
 const useBrowserLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 export default function App({ Component, pageProps }) {
     const [navigationNotice,setNavigationNotice]=useState('');

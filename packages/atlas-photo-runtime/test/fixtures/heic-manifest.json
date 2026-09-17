@@ -1,0 +1,50 @@
+[
+  {
+    "file": "colors-no-alpha.heic",
+    "source": "https://raw.githubusercontent.com/strukturag/libheif/08075aebcc0d9bf7d35f900c36114b1b6e90ed7d/fuzzing/data/corpus/colors-no-alpha.heic",
+    "byteCount": 499,
+    "sha256": "76f82ffc717a647b1c9c2551e5ea0545832a2d3216c7540f7e5b092282a04b63"
+  },
+  {
+    "file": "colors-no-alpha-thumbnail.heic",
+    "source": "https://raw.githubusercontent.com/strukturag/libheif/08075aebcc0d9bf7d35f900c36114b1b6e90ed7d/fuzzing/data/corpus/colors-no-alpha-thumbnail.heic",
+    "byteCount": 1087,
+    "sha256": "b610c6224a5cbd1f57122ee0adae4ba38b952a22fe72e9cfaf5dfad93513dc2f"
+  },
+  {
+    "file": "two-images.heic",
+    "source": "https://raw.githubusercontent.com/strukturag/libheif/08075aebcc0d9bf7d35f900c36114b1b6e90ed7d/examples/example.heic",
+    "byteCount": 718114,
+    "sha256": "7f8b363e4936c0666a25f64f3a92fda10bd8e5453be4592530b65a55dd98f3f2"
+  },
+  {
+    "file": "colors-with-alpha.heic",
+    "source": "https://raw.githubusercontent.com/strukturag/libheif/v1.23.2/fuzzing/data/corpus/colors-with-alpha.heic",
+    "byteCount": 817,
+    "sha256": "cbe33c0e3efe098570787a9dcded1061436f9d06b09cd5b2afd0d02eacce527b"
+  },
+  {
+    "file": "rgb10.heic",
+    "source": "https://raw.githubusercontent.com/bigcat88/pillow_heif/efdbf036572e32c3202639b5516f842183242ec3/tests/images/heif/RGB_10__128x128.heif",
+    "byteCount": 11637,
+    "sha256": "7fbf1573c1e5c1693953b31bb287327c53eaefa74a6f1324e7391a08b3ed1e73"
+  },
+  {
+    "file": "rgb12.heic",
+    "source": "https://raw.githubusercontent.com/bigcat88/pillow_heif/efdbf036572e32c3202639b5516f842183242ec3/tests/images/heif/RGB_12__128x128.heif",
+    "byteCount": 18468,
+    "sha256": "92c048d4bead7eebd3e0da5cb13a2e286cccbde3acb23580ee9c5f6b4cfde812"
+  },
+  {
+    "file": "profile-mismatch-thumbnail.heic",
+    "source": "https://raw.githubusercontent.com/bigcat88/pillow_heif/efdbf036572e32c3202639b5516f842183242ec3/tests/images/heif_special/profile_mismatch_thumbnail.heic",
+    "byteCount": 1853,
+    "sha256": "8dacc230c22cd9744a2b6d2d07895cd2c9bac6ba344d960edeb0974d81cd0b5a"
+  },
+  {
+    "file": "transform-mismatch-thumbnail.heic",
+    "source": "https://raw.githubusercontent.com/bigcat88/pillow_heif/efdbf036572e32c3202639b5516f842183242ec3/tests/images/heif_special/transform_mismatch_thumbnail.heic",
+    "byteCount": 1854,
+    "sha256": "be5d9db709d20b1aef57c2ea149924efb8ba907cae65265d48b49094b91b17c8"
+  }
+]
