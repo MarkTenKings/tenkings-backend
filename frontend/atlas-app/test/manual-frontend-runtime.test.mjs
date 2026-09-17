@@ -5,9 +5,13 @@ import { EventEmitter } from 'node:events';
 import { IncomingMessage } from 'node:http';
 import { Socket } from 'node:net';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import vm from 'node:vm';
 import { parseBody } from 'next/dist/server/api-utils/node/parse-body.js';
 import { signRoute } from '@atlas/site-router/proof';
 import { assertPrivateManualRequest, createPrivateManualNonceStore } from '@atlas/connected-manual/transport';
+import { createConnectedHandler } from '@atlas/connected-manual/http';
 import { createFrontendManualRuntime } from '../lib/server/manual-frontend-runtime.mjs';
 import { productionAccessConfig, assertProductionStaffRequest } from '../lib/server/access/config.mjs';
 import { DurableStaffAuth } from '../lib/server/access/auth.mjs';
@@ -27,12 +31,37 @@ const staffConfig = productionAccessConfig({ NODE_ENV: 'production', ATLAS_STAFF
 const id = 'cd960992-513b-4904-ae56-c10e70783ef1';
 const intakePath = '/api/staff/manual-intake/cards';
 const digest = value => createHash('sha256').update(value).digest('hex');
+// Load the actual catchall export with its real handler and a fixture runtime;
+// importing the production runtime would construct unrelated database clients.
+const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core');
+const compiledApi = babel.transformSync(readFileSync(new URL('../pages/api/staff/[...path].js', import.meta.url), 'utf8'), {
+  filename: '[...path].js', presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]],
+  babelrc: false, configFile: false,
+}).code;
+function staffApi(state) {
+  const exports = {};
+  vm.runInNewContext(compiledApi, { exports, require(name) {
+    if (name === '../../../lib/server/http.mjs') return { createHandler };
+    if (name === '../../../lib/server/runtime.mjs') return { runtime: () => state };
+    throw new Error(`Unexpected API import: ${name}`);
+  } });
+  return exports;
+}
+async function parseNextBody(req, text, config) {
+  const socket = new Socket(), raw = new IncomingMessage(socket);
+  try {
+    raw.method = req.method;
+    raw.headers = { ...req.headers, 'content-length': String(Buffer.byteLength(text)) };
+    raw.push(Buffer.from(text)); raw.push(null);
+    return await parseBody(raw, config.api.bodyParser.sizeLimit);
+  } finally { raw.destroy(); socket.destroy(); }
+}
 function response() {
   return { headers: {}, statusCode: null, setHeader(name, value) { this.headers[name.toLowerCase()] = value; },
     status(value) { this.statusCode = value; return this; }, json(value) { this.value = value; },
     send(bytes) { this.bytes = bytes; this.value = JSON.parse(bytes); } };
 }
-function fixture() {
+function fixture({ privateHandler } = {}) {
   const events = [], requests = [], now = new Date(); let providerCalls = 0;
   const sessionToken = Buffer.alloc(32, 11).toString('base64url'), browserToken = Buffer.alloc(32, 12).toString('base64url');
   const identity = { id, name: 'Ordinary staff fixture', role: 'REVIEWER', accessVersion: 1,
@@ -53,6 +82,12 @@ function fixture() {
     assert.equal(new URL(url).origin, env.ATLAS_MANUAL_SERVICE_ORIGIN);
     await assertPrivateManualRequest({ url: new URL(url).pathname + new URL(url).search, method: init.method,
       headers: init.headers, rawBody: Buffer.from(init.body ?? '') }, { key: serviceKey, origin: staffConfig.origin, nonceStore: nonces });
+    if (privateHandler) {
+      const res = response();
+      await privateHandler({ url: new URL(url).pathname + new URL(url).search, method: init.method,
+        headers: init.headers, body: init.body ? JSON.parse(init.body.toString()) : undefined }, res);
+      return Response.json(res.value, { status: res.statusCode });
+    }
     return Response.json({ ok: true });
   };
   const runtime = createFrontendManualRuntime({ env, auth, staffConfig, assertRequest, fetchImpl });
@@ -207,11 +242,80 @@ test('actual Next parseBody default for a bodyless IncomingMessage produces an e
   const socket = new Socket(), raw = new IncomingMessage(socket);
   try {
     raw.method = 'GET'; raw.headers = {}; raw.push(null);
-    const body = await parseBody(raw, '1mb'); assert.equal(body, '');
+    const body = await parseBody(raw, staffApi({}).config.api.bodyParser.sizeLimit); assert.equal(body, '');
     const f = fixture(), req = await f.request({ method: 'GET', url: `/admin${intakePath}`, body });
     const res = response(); await f.runtime.handler(req, res);
     assert.equal(res.statusCode, 200); assert.equal(f.requests[0].init.body, undefined); assert.equal(req.body, '');
   } finally { raw.destroy(); socket.destroy(); }
+});
+
+test('actual catchall parser accepts valid manual intake JSON above 1 MiB through 2 MiB on the wire and the signed proxy/private handler', async () => {
+  const received = [], input = { requestId: id, label: 'Fixture' };
+  const privateHandler = createConnectedHandler({ origin: staffConfig.origin, assertRequest() {},
+    boundary: { authenticate: async () => ({ id }) },
+    connected: { workflow: { service: {} }, intake: { async create(_staff, body) {
+      assert.deepEqual(body, input); received.push(body); return { ok: true };
+    } } },
+  });
+  const f = fixture({ privateHandler }), api = staffApi({ connectedManual: f.runtime, auth: f.auth, review: {},
+    origin: staffConfig.origin, assertRequest: f.assertRequest });
+  assert.equal(api.config.api.bodyParser.sizeLimit, '2mb');
+  const json = JSON.stringify(input);
+  for (const bytes of [1024 * 1024 + 1, 2 * 1024 * 1024]) {
+    // Whitespace is valid JSON, not extra business data or a larger route schema.
+    const text = json + ' '.repeat(bytes - Buffer.byteLength(json));
+    const req = await f.request(); req.body = await parseNextBody(req, text, api.config);
+    const res = response(); await api.default(req, res);
+    assert.equal(res.statusCode, 200); assert.deepEqual(res.value, { ok: true });
+    assert.equal(f.requests.at(-1).init.body.toString(), json);
+  }
+  assert.equal(received.length, 2); assert.equal(f.providerCalls(), 0);
+});
+
+test('actual configured Next parser rejects more than 2 MiB before runtime, auth, proxy or mutation', async () => {
+  const f = fixture(), api = staffApi({ connectedManual: f.runtime, auth: f.auth, review: {},
+    origin: staffConfig.origin, assertRequest: f.assertRequest });
+  const req = await f.request(), json = JSON.stringify(req.body);
+  const text = json + ' '.repeat(2 * 1024 * 1024 + 1 - Buffer.byteLength(json));
+  await assert.rejects(async () => {
+    req.body = await parseNextBody(req, text, api.config);
+    await api.default(req, response());
+  }, error => error.statusCode === 413);
+  assert.deepEqual(f.events, []); assert.equal(f.requests.length, 0); assert.equal(f.providerCalls(), 0);
+});
+
+test('larger catchall parser preserves ordinary 16 KiB, learning 32 KiB and legacy grading handler caps before side effects', async () => {
+  const f = fixture(), effects = [];
+  const api = staffApi({ connectedManual: f.runtime, auth: f.auth, review: { save() { effects.push('draft'); } },
+    learning: { decide() { effects.push('learning'); } }, grading: { run() { effects.push('grade'); } },
+    origin: staffConfig.origin, clientAddress: () => '127.0.0.1', assertRequest: f.assertRequest });
+  for (const [path, limit] of [[`/api/staff/cards/${id}/draft`, 16384],
+    [`/api/staff/cards/${id}/learning/decisions`, 32768], [`/api/staff/cards/${id}/grade`, 1_040_000]]) {
+    const req = await f.request({ url: path }), body = { padding: 'x'.repeat(limit + 1 - Buffer.byteLength(JSON.stringify({ padding: '' }))) };
+    req.body = await parseNextBody(req, JSON.stringify(body), api.config);
+    const res = response(); await api.default(req, res);
+    assert.equal(res.statusCode, 413); assert.deepEqual(res.value, { error: 'REQUEST_TOO_LARGE' });
+  }
+  assert.deepEqual(effects, []); assert(!f.events.includes('staff-auth'));
+  assert.equal(f.requests.length, 0); assert.equal(f.providerCalls(), 0);
+});
+
+test('private manual handlers retain their compact intake, action and trace caps behind the larger wire parser', async () => {
+  let privateAuth = 0;
+  const privateHandler = createConnectedHandler({ origin: staffConfig.origin, assertRequest() {},
+    boundary: { authenticate() { privateAuth++; throw Error('Oversized routes must not authenticate'); } },
+    connected: { workflow: { service: {} }, intake: {} },
+  });
+  const f = fixture({ privateHandler }), api = staffApi({ connectedManual: f.runtime, auth: f.auth, review: {},
+    origin: staffConfig.origin, assertRequest: f.assertRequest });
+  for (const [path, limit] of [[intakePath, 8192], [`/api/staff/manual/cards/${id}/actions`, 65536],
+    [`/api/staff/manual/cards/${id}/trace`, 1048576], [`/api/staff/manual/cards/${id}/proposal-trace`, 1048576]]) {
+    const req = await f.request({ url: path }), body = { padding: 'x'.repeat(limit + 1 - Buffer.byteLength(JSON.stringify({ padding: '' }))) };
+    req.body = await parseNextBody(req, JSON.stringify(body), api.config);
+    const res = response(); await api.default(req, res);
+    assert.equal(res.statusCode, 413); assert.deepEqual(res.value, { error: 'REQUEST_TOO_LARGE' });
+  }
+  assert.equal(privateAuth, 0); assert.equal(f.requests.length, 4); assert.equal(f.providerCalls(), 0);
 });
 
 test('cold Vercel construction imports no native/provider/persistence modules and makes no network or auth calls', () => {
