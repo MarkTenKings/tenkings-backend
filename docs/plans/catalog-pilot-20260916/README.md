@@ -17,6 +17,12 @@ On September 16, a bounded transaction with `transaction_read_only=on` inspected
 
 These are specific prerequisites for normal clean import/reconciliation. Do not relabel an old secondary source as official, create source IDs in JSON, or substitute Sapphire's draft merely to make a manifest validate. The original source artifact, URL/classification, card/program/parallel/scope rows, clean draft/version and human review must genuinely agree.
 
+## Subsequent complete Pokémon preparation
+
+The [mapping decision](pokemon-mapping-decision.unreviewed.md) records the later count-accounted managed audit and a new normalized key, `Black & White-Legendary Treasures`. The display label retains its em dash. The [complete unsubmitted request](pokemon-complete-import.unreviewed.json) derives all138 printed rows from the unchanged source transcription; it creates no database IDs, separate RC program, printing facts, grant or approval. The pinned adapter and publication recipe now use the same set/program spelling.
+
+Current focused qualification:11 adapter and11 compiler checks pass, with scoped lint clean. Actual import, exact taxonomy export, printing/scope completion and authorized review/publication remain pending. The earlier managed observations and9-test record below are historical evidence.
+
 ## Prepare now without database access
 
 From the repository root, use an unused output directory outside Git:

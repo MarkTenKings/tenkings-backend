@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { canonicalJson, lookupManifestCandidates, hashManifest } from '../../../packages/card-catalog-evidence/src/index.mjs';
-import { compilePilot, PILOTS, validateTaxonomyExport, verifyPilotSources } from './prepare-pilot.mjs';
+import { compilePilot, PILOTS, validateTaxonomyExport, verifyPilotSources, prepareCompletePokemonChecklist, POKEMON_TRANSCRIPTION_SHA256 } from './prepare-pilot.mjs';
 
 const hash = value => createHash('sha256').update(canonicalJson(value)).digest('hex');
 const sourceManifest = JSON.parse(await readFile(new URL('./source-manifest.draft.json', import.meta.url), 'utf8'));
@@ -12,7 +12,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
 // Synthetic taxonomy IDs only. Real manufacturer facts are retained; no actual
 // reviewer, rights grant, database state or publication is asserted by this test.
 function fixture(pilot) {
-  const p = PILOTS[pilot], setId = p.label, programId = `synthetic-test:${pilot}:program`;
+  const p = PILOTS[pilot], setId = p.setIds[0], programId = `synthetic-test:${pilot}:program`;
   const programs = [{ id: `${programId}:row`, setId, programId, label: p.programLabel, sourceId: null }];
   const cards = p.cards.map(([cardNumber, playerName]) => ({ id: `synthetic-test:${pilot}:card:${cardNumber}`, setId, programId, cardNumber, playerName, sourceId: null }));
   const parallels = p.printings.map(v => ({ id: `synthetic-test:${pilot}:parallel:${v.key}`, setId, parallelId: v.key, label: v.parallelLabels[0], serialDenominator: v.serialDenominator, sourceId: null }));
@@ -59,6 +59,51 @@ test('Pokemon preserves exact numbers and literal markers without physical-finis
   const rc = snivy.candidates.filter(c => c.card.number === 'RC1');
   assert.deepEqual(rc.map(c => c.recordedApplicability).sort(), ['supported', 'unknown']);
   assert.equal(lookupManifestCandidates(m, { category: 'POKEMON', setId: m.set.setId, cardNumber: '6/113' }).totalCandidateCount, 0);
+});
+test('Pokemon compiler binds the normalized new key while retaining the source display label', () => {
+  const f = fixture('pokemon'), result = compilePilot(f);
+  assert.equal(result.manifest.set.setId, 'Black & White-Legendary Treasures');
+  assert.equal(result.manifest.set.label, 'Black & White—Legendary Treasures');
+  assert.equal(result.manifest.programs[0].label, 'Black & White-Legendary Treasures');
+  assert.equal(result.reviewPacket, null);
+  for (const setId of ['Black & White—Legendary Treasures', '2013_Pokemon_Legendary_Treasures', 'Radiant Collection']) {
+    const other = fixture('pokemon'), t = other.taxonomy.snapshot; t.setId = setId; t.draft.setId = setId;
+    for (const key of ['sources', 'programs', 'cards', 'parallels', 'variations', 'scopes']) for (const row of t[key]) row.setId = setId;
+    resign(other.taxonomy); assert.throws(() => compilePilot(other), /another year\/product/);
+  }
+  f.taxonomy.snapshot.programs[0].label = 'Radiant Collection'; resign(f.taxonomy);
+  assert.throws(() => compilePilot(f), /program label/);
+});
+test('complete Pokemon preparation preserves every immutable row and never fabricates DB or review authority', async () => {
+  const bytes = await readFile(new URL('./pokemon-complete-checklist.unreviewed.json', import.meta.url));
+  const originalHash = createHash('sha256').update(bytes).digest('hex'), original = JSON.parse(bytes);
+  const prepared = prepareCompletePokemonChecklist(bytes), request = prepared.requestDraft;
+  assert.equal(originalHash, POKEMON_TRANSCRIPTION_SHA256);
+  assert.equal(request.setId, PILOTS.pokemon.setIds[0]); assert.equal(request.sourceFetchMeta.setId, request.setId);
+  assert.equal(request.rawPayload.setId, request.setId); assert.equal(request.rawPayload.programs.length, 1);
+  const cards = request.rawPayload.programs[0].cards;
+  assert.equal(cards.length, 138);
+  assert.deepEqual(cards.map(card => [card.cardNumber, card.playerName]), original.rows.map(row => [row.number, row.name]));
+  for (const [i, card] of cards.entries()) {
+    assert.deepEqual(card.metadata.literalChecklistMarkers, original.rows[i].literalChecklistMarkers);
+    assert.deepEqual(card.metadata.literalRarityMarker, original.rows[i].literalRarityMarker);
+    assert.deepEqual([card.metadata.physicalFinish, card.metadata.collectorNumberDenominator, card.metadata.edition,
+      card.metadata.format, card.metadata.channel], [null, null, null, null, null]);
+  }
+  assert.equal(cards.find(card => card.cardNumber === 'RC11').metadata.literalRarityMarker.label, 'rare');
+  assert.equal(prepared.binding.draftId, null); assert.equal(prepared.binding.programRowId, null);
+  assert.equal(prepared.binding.databaseRecordCreated, false); assert.equal(prepared.reviewer, null);
+  assert.equal(prepared.grant, null); assert.equal(prepared.publication, null); assert.deepEqual(prepared.images, []);
+  assert.equal(request.sourceFetchMeta.sourceBytesVerifiedByPreparation, false);
+  assert.equal(request.sourceFetchMeta.humanReviewed, false); assert.equal(PILOTS.pokemon.cards.length, 4);
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), originalHash);
+  const artifact = JSON.parse(await readFile(new URL('./pokemon-complete-import.unreviewed.json', import.meta.url), 'utf8'));
+  assert.deepEqual(artifact, prepared);
+  for (const mutate of [draft => { draft.rows.pop(); }, draft => { draft.source.sha256 = 'f'.repeat(64); },
+    draft => { draft.rows[113].number = 'RC1/RC25'; }]) {
+    const changed = clone(original); mutate(changed);
+    assert.throws(() => prepareCompletePokemonChecklist(JSON.stringify(changed)), /transcription bytes differ/);
+  }
 });
 test('tampered export and cross-set rows are refused, even if a caller rehashes cross-set content', () => {
   const { taxonomy } = fixture('sports'); taxonomy.snapshot.cards[0].cardNumber = 'changed';

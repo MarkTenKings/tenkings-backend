@@ -16,7 +16,8 @@ type ChecklistPin = {
 };
 
 // Source pins classify provenance, not transcription correctness or reuse rights.
-// Pokémon remains disabled until an authorized host reconciles its actual set ID.
+// Pokémon uses a new source-only key after the recorded managed metadata audit.
+// Configuring a key does not create its draft/program or confer review authority.
 const CHECKLIST_PINS: readonly ChecklistPin[] = [
   {
     sourceId: "sports-checklist",
@@ -33,7 +34,7 @@ const CHECKLIST_PINS: readonly ChecklistPin[] = [
     sha256: "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
     byteSize: 2227474,
     provider: "Pokémon",
-    canonicalSetId: null,
+    canonicalSetId: "Black & White-Legendary Treasures",
     pages: 1,
   },
 ];

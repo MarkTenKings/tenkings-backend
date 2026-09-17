@@ -7,6 +7,9 @@ import { buildTaxonomyIngestRows, createDraftVersionPayload, normalizeDraftRows 
 import type { TaxonomyAdapterParams } from "../lib/server/taxonomyV2AdapterTypes";
 import { buildPilotChecklistTaxonomyAdapterOutput, canRunPilotChecklistAdapter, validatePilotChecklistOriginalInput } from "../lib/server/taxonomyV2PilotChecklistAdapter";
 import { canRunToppsAdapter } from "../lib/server/taxonomyV2ToppsAdapter";
+import { normalizeSetLabel } from "@tenkings/shared";
+import { normalizeProgramId } from "../lib/server/taxonomyV2Utils";
+import { evaluateDraftQuality } from "../lib/server/setOpsCsvContract";
 
 type RecordValue = Record<string, unknown>;
 type RequestDraft = {
@@ -21,9 +24,13 @@ type RequestDraft = {
 const packet = JSON.parse(readFileSync(new URL("../../../docs/plans/catalog-pilot-20260916/import-preparation.unreviewed.json", import.meta.url), "utf8")) as {
   requests: Array<{ id: string; requestDraft: RequestDraft }>;
 };
+const completePokemon = JSON.parse(readFileSync(new URL("../../../docs/plans/catalog-pilot-20260916/pokemon-complete-import.unreviewed.json", import.meta.url), "utf8")) as {
+  binding: { setId: string; displayLabel: string; programLabel: string; proposedProgramId: string };
+  requestDraft: RequestDraft;
+};
 
 function input(id = "sports-checklist") {
-  const request = structuredClone(packet.requests.find((entry) => entry.id === id)!.requestDraft);
+  const request = structuredClone(id === "pokemon-complete-checklist" ? completePokemon.requestDraft : packet.requests.find((entry) => entry.id === id)!.requestDraft);
   const normalized = normalizeDraftRows({ datasetType: request.datasetType, fallbackSetId: request.setId, rawPayload: request.rawPayload });
   const params: TaxonomyAdapterParams = {
     setId: request.setId,
@@ -98,12 +105,56 @@ test("source URL, hash, bytes, provider, source ID, set binding and worksheet ty
   }
 });
 
-test("the genuinely pinned Pokémon source stays disabled until its canonical set is reconciled", () => {
+test("historical display labels and guessed Pokémon set IDs cannot replace the new exact binding", () => {
   const { params } = input("pokemon-checklist");
-  for (const guessedSetId of [params.setId, "Black & White-Legendary Treasures", "2013_Pokemon_Legendary_Treasures"]) {
+  for (const guessedSetId of [params.setId, "Legendary Treasures", "2013_Pokemon_Legendary_Treasures"]) {
     params.setId = guessedSetId;
     assert.equal(canRunPilotChecklistAdapter(params), false);
     assert.throws(() => buildPilotChecklistTaxonomyAdapterOutput(params), /configured canonical set binding/);
+  }
+});
+
+test("complete Pokémon worksheet preserves all 138 source identities through normal quality and exact adapter binding", () => {
+  const { request, normalized, params } = input("pokemon-complete-checklist");
+  const cards = originalCards(request);
+  assert.equal(normalized.summary.rowCount, 138);
+  assert.equal(normalized.summary.blockingErrorCount, 0);
+  const quality = evaluateDraftQuality({ datasetType: request.datasetType, rows: normalized.rows, summary: normalized.summary });
+  assert.notEqual(quality.decision, "REJECT");
+  assert.equal(normalizeSetLabel(completePokemon.binding.displayLabel), request.setId);
+  assert.equal(request.setId, completePokemon.binding.setId);
+  assert.equal(request.sourceFetchMeta.setId, request.setId);
+  assert.ok(normalized.rows.every(row => row.setId === request.setId));
+  assert.equal(validatePilotChecklistOriginalInput({ ...params, rawPayload: request.rawPayload }), true);
+  assert.equal(canRunPilotChecklistAdapter(params), true);
+  const output = buildPilotChecklistTaxonomyAdapterOutput(params);
+  assert.equal(output.programs.length, 1);
+  assert.equal(output.programs[0].label, completePokemon.binding.programLabel);
+  assert.equal(normalizeProgramId(output.programs[0].label), completePokemon.binding.proposedProgramId);
+  assert.deepEqual(output.cards.map(card => [card.cardNumber, card.playerName]), cards.map(card => [card.cardNumber, card.playerName]));
+  assert.equal(output.cards.length, 138);
+  assert.deepEqual(output.cards.map(card => card.metadata), cards.map(card => card.metadata));
+  assert.deepEqual([output.variations, output.parallels, output.scopes, output.oddsRows], [[], [], [], []]);
+  assert.equal((output.metadata as RecordValue).humanReviewed, false);
+  assert.equal((output.metadata as RecordValue).sourceBytesVerifiedByAdapter, false);
+  assert.equal((output.metadata as RecordValue).rightsVerified, false);
+});
+
+test("Pokémon complete input rejects wrong set and provenance before taxonomy output", () => {
+  const mutations: Array<(request: RequestDraft) => void> = [
+    request => { request.setId = "Black & White—Legendary Treasures"; },
+    request => { (request.rawPayload as RecordValue).setId = "another-set"; },
+    request => { request.sourceFetchMeta.setId = "another-set"; },
+    request => { request.sourceFetchMeta.sha256 = "f".repeat(64); },
+    request => { request.sourceFetchMeta.byteSize = 2227473; },
+    request => { request.sourceProvider = "TRUSTED_SECONDARY"; },
+    request => { (originalCards(request)[137].metadata as RecordValue).sourceSha256 = "f".repeat(64); },
+    request => { (originalCards(request)[137].metadata as RecordValue).sourcePage = 2; },
+  ];
+  for (const mutate of mutations) {
+    const { request, params } = input("pokemon-complete-checklist"); mutate(request);
+    assert.throws(() => validatePilotChecklistOriginalInput({ ...params, setId: request.setId,
+      parseSummary: { sourceProvider: request.sourceProvider, sourceFetchMeta: request.sourceFetchMeta }, rawPayload: request.rawPayload }), /[Cc]hecklist|binding/);
   }
 });
 

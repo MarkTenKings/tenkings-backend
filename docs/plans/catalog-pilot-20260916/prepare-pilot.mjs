@@ -39,8 +39,8 @@ export const PILOTS = {
   },
   pokemon: {
     category: 'POKEMON', label: 'Black & White—Legendary Treasures', year: '2013', manufacturer: null, publisher: 'Pokémon',
-    setIds: ['Black & White—Legendary Treasures'],
-    sourceIds: ['pokemon-checklist'], programLabel: 'Black & White—Legendary Treasures',
+    setIds: ['Black & White-Legendary Treasures'],
+    sourceIds: ['pokemon-checklist'], programLabel: 'Black & White-Legendary Treasures',
     cards: [['6', 'Snivy'], ['7', 'Servine'], ['RC1', 'Snivy'], ['RC2', 'Servine']],
     numberingScheme: 'manufacturer_checklist_number_no_denominator_in_source', language: 'en',
     printings: [
@@ -54,6 +54,56 @@ export const PILOTS = {
     ],
   },
 };
+
+export const POKEMON_TRANSCRIPTION_SHA256 = 'e318dad8f283abb15c8d0a65736c81f1744a9d681c9bc3375836481c4d6345c1';
+export const POKEMON_MAPPING_RECEIPT_SHA256 = '9c1a77a7993b8fd49f360e7d4ea82285845a83d80cd03ae5f102c22d70c55495';
+
+/** Deterministic, unsubmitted worksheet from the unchanged transcription bytes.
+ * This supplies a new key, not a database row, import, source-byte verification,
+ * inferred subset/printing, manufacturer reuse grant or human approval. */
+export function prepareCompletePokemonChecklist(transcriptionBytes) {
+  need(Buffer.isBuffer(transcriptionBytes) || typeof transcriptionBytes === 'string', 'Exact transcription bytes are required.');
+  const bytes = Buffer.from(transcriptionBytes);
+  need(sha(bytes) === POKEMON_TRANSCRIPTION_SHA256, 'Pinned complete Pokémon transcription bytes differ.');
+  const draft = JSON.parse(bytes.toString('utf8')), p = PILOTS.pokemon, pin = PINNED['pokemon-checklist'];
+  const numbers = [...Array.from({ length: 113 }, (_, i) => String(i + 1)), ...Array.from({ length: 25 }, (_, i) => `RC${i + 1}`)];
+  need(draft.canonicalSetId === null && draft.programId === null && draft.draftId === null
+    && draft.source.sha256 === pin.sha256 && draft.source.url === pin.url && draft.source.byteSize === pin.bytes
+    && draft.rows.length === numbers.length && draft.rows.every((row, i) => row.number === numbers[i]), 'Complete source roster or provenance differs.');
+  const setId = p.setIds[0];
+  return {
+    schemaVersion: 'tenkings-complete-checklist-import-draft/v1',
+    status: 'UNSUBMITTED_NEW_SET_BINDING_NO_DATABASE_RECORD', authority: 'unreviewed_source_transcription',
+    transcriptionSha256: POKEMON_TRANSCRIPTION_SHA256, mappingReceiptSha256: POKEMON_MAPPING_RECEIPT_SHA256,
+    binding: { setId, displayLabel: p.label, programLabel: p.programLabel, proposedProgramId: 'black-white-legendary-treasures',
+      draftId: null, programRowId: null, separateRcProgram: null, databaseRecordCreated: false },
+    requestDraft: {
+      setId, datasetType: 'PLAYER_WORKSHEET', sourceUrl: pin.url, sourceProvider: 'Pokémon',
+      parserVersion: 'catalog-pilot-complete-pokemon-transcription-v1',
+      sourceQuery: { pilot: 'pokemon', product: p.label, program: p.programLabel, scope: 'complete 138 printed rows on the pinned English page' },
+      sourceFetchMeta: { setId, sourceId: 'pokemon-checklist', url: pin.url, sha256: pin.sha256, byteSize: pin.bytes,
+        sourceKind: 'OFFICIAL_CHECKLIST', sourcePage: 1, sourceManifestSha256: draft.source.sourceManifestSha256,
+        transcriptionSha256: POKEMON_TRANSCRIPTION_SHA256, mappingReceiptSha256: POKEMON_MAPPING_RECEIPT_SHA256,
+        displaySourceLabel: p.label, printedRowCount: 138, fullCardPrintingUniverse: 'unknown',
+        sourceBytesVerifiedByPreparation: false, humanReviewed: false, rightsVerified: false, grant: null, images: [] },
+      rawPayload: { setId, sourceUrl: pin.url, programs: [{ label: p.programLabel, cards: draft.rows.map(row => ({
+        cardNumber: row.number, playerName: row.name, team: null, isRookie: null,
+        metadata: { authority: 'unreviewed_source_transcription', sourceId: 'pokemon-checklist', sourceUrl: pin.url,
+          sourceSha256: pin.sha256, sourceKind: 'OFFICIAL_CHECKLIST', sourcePage: row.sourcePage,
+          sourceColumn: row.sourceColumn, sourceRowOrdinal: row.rowOrdinal, transcriptionSha256: POKEMON_TRANSCRIPTION_SHA256,
+          printedNumber: row.number, printedName: row.name, literalChecklistMarkers: structuredClone(row.literalChecklistMarkers),
+          literalRarityMarker: structuredClone(row.literalRarityMarker), language: 'en',
+          numberingScheme: p.numberingScheme, collectorNumberDenominator: null, physicalFinish: null,
+          edition: null, format: null, channel: null, humanReviewed: false },
+      })) }] },
+    },
+    limits: ['Complete printed roster only; no all-printings completeness claim.',
+      'No separately named RC program is established by this page.',
+      'Literal symbols do not establish physical finish, denominator, edition, format, channel or odds.',
+      'The shared publication recipe still selects only 6, 7, RC1 and RC2; this does not enlarge that selection.'],
+    grant: null, images: [], reviewer: null, publication: null,
+  };
+}
 
 export async function verifyPilotSources(sourceManifest, read = readFile) {
   need(sourceManifest?.schema === 'tenkings-source-discovery-draft-v1', 'Unrecognized source discovery manifest.');
