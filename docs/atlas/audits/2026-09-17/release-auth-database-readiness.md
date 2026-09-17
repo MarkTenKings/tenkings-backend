@@ -238,6 +238,16 @@ session/grant or direct SQL certificate just to pass acceptance. These missing
 inputs must be settled before claiming final-report approval works; they need
 not delay a clearly scoped manual draft/learning test.
 
+Subsequent source review qualifies this roster procedure: its actor cannot
+certify itself, because changing its own accessVersion invalidates its authority
+before the final transaction check. With only one active reviewer, a new grant
+for that same person is insufficient. The source also preserves separate offline
+owner provisioning authority. The [prepared execution plan](release-execution-plan.md#legitimate-certification-paths-and-minimum-owner-decision)
+records both legitimate routes and the required genuine owner decision,
+expiry/provenance and independent review. Neither route permits fixture
+certification or manufactured training. No certification action has been prepared
+for execution or performed.
+
 ## Release and rollback checkpoints
 
 Release order is: current-source/native/staff qualification and resolved storage
