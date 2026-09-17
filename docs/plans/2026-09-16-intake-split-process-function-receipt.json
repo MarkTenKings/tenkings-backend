@@ -1,0 +1,60 @@
+{
+  "read_at_utc": "2026-09-17T00:55:57.915515+00:00",
+  "deployment": "dpl_Bo43ux8vAyyDe6WEKy4Q1A6iT6sj",
+  "read_only_endpoint": "GET /v11/deployments/dpl_Bo43ux8vAyyDe6WEKy4Q1A6iT6sj/builds",
+  "functions": [
+    {
+      "path": "api/v2/admin/inventory/photo",
+      "type": "lambda",
+      "lambda": {
+        "functionName": "team_YaEhDoZXD2WsvqpoUp0KqBDh-d0faca2fb882f88b27851550947401d5cf",
+        "runtime": "nodejs22.x",
+        "memorySize": 2048,
+        "timeout": 300,
+        "deployedTo": [
+          "iad1"
+        ]
+      }
+    },
+    {
+      "path": "api/v2/admin/inventory/workspace",
+      "type": "lambda",
+      "lambda": {
+        "functionName": "team_YaEhDoZXD2WsvqpoUp0KqBDh-d0faca2fb882f88b27851550947401d5cf",
+        "runtime": "nodejs22.x",
+        "memorySize": 2048,
+        "timeout": 300,
+        "deployedTo": [
+          "iad1"
+        ]
+      }
+    },
+    {
+      "path": "api/cron/inventory-research",
+      "type": "lambda",
+      "lambda": {
+        "functionName": "team_YaEhDoZXD2WsvqpoUp0KqBDh-4bb33f1ee98e7377d2c4fb491c0c11d0b9",
+        "runtime": "nodejs22.x",
+        "memorySize": 2048,
+        "timeout": 300,
+        "deployedTo": [
+          "iad1"
+        ]
+      }
+    },
+    {
+      "path": "api/v2/admin/inventory/identify",
+      "type": "lambda",
+      "lambda": {
+        "functionName": "team_YaEhDoZXD2WsvqpoUp0KqBDh-072638cb2437710232354a3396d2749932",
+        "runtime": "nodejs22.x",
+        "memorySize": 2048,
+        "timeout": 45,
+        "deployedTo": [
+          "iad1"
+        ]
+      }
+    }
+  ],
+  "scope": "Allowlisted build descriptors only. This is not an invocation trace, an instance ID, or a process-isolation guarantee."
+}

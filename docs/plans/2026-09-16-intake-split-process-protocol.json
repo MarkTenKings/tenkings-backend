@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "status": "preregistered; execution pending coordinating-agent protocol/hash review and disk readiness under Mark's existing execute authorization; no run performed by preparation task",
+  "purpose": "One split-process source/DB diagnostic, not production/device/release qualification",
+  "refs": {
+    "A": "60572cec895ad63d4ab826cd366f6475b04e725a",
+    "B": "31b8653559d8553208de8591f2d30c419642953a"
+  },
+  "preserve_failed_runs": [
+    "20260916-intake-source-benchmark",
+    "20260916-intake-scheduling-diagnostic"
+  ],
+  "topology": "driver/intake/worker/observer-separate-processes",
+  "process_roles": {
+    "driver": "3 independent sequential synthetic sessions; no DB or application imports",
+    "intake": "one source workspace/sole-writer process; 4 DB connections; three concurrent requests; synthetic identify lease acquisition retained here as an explicit approximation",
+    "worker": "two actual source worker loops in one separate process; 3 DB connections",
+    "observer": "independent process; 1 serialized DB connection; 10 ms sleep plus query duration"
+  },
+  "deployment_receipt": "docs/plans/2026-09-16-intake-split-process-function-receipt.json",
+  "deployment_inference": "photo/workspace share one functionName; cron and identify each differ. Supports separate worker/intake model; does not prove instance placement, enablement of Fluid, CPU isolation or actual concurrency. Identify process separation is not modeled.",
+  "scenarios": [
+    "idle",
+    "thumbnail"
+  ],
+  "sessions": [
+    3
+  ],
+  "order": [
+    "A",
+    "B",
+    "B",
+    "A"
+  ],
+  "warmups": 5,
+  "measured": 50,
+  "required_measured_saves": 1200,
+  "required_warmups": 120,
+  "seed_units": 2000,
+  "seed_pending": 256,
+  "seed_completed": 16,
+  "untimed_admission_probe": true,
+  "pool_connections": 8,
+  "administrative_connection_during_timing": false,
+  "provider_delay_ms": 250,
+  "intake_photo_pixels": [
+    1200,
+    1680
+  ],
+  "listing_photo_pixels": [
+    1000,
+    1400
+  ],
+  "listing_photo_count": 6,
+  "larger_images": false,
+  "catalog": false,
+  "encoding": "UTF8",
+  "node_major": 22,
+  "prisma_version": "5.22.0",
+  "sharp_version": "0.33.5",
+  "frozen_client_ledger_sha256": "e1a91c8dee8d08a561083f4976312f6d3b0faedaf3842489cda739b769db6345",
+  "legacy_gate_metrics": [
+    "lease_ms",
+    "photo_verify_ms",
+    "save_ack_ms",
+    "save_tx_ms",
+    "queue_lock_ms"
+  ],
+  "additional_gate_metrics": [
+    "photo_wall_ms"
+  ],
+  "metric_boundaries": {
+    "lease_ms": "intake-role call to acquire transaction through completion; excludes IPC",
+    "photo_verify_ms": "unchanged sum of two parallel in-memory metadata elapsed operations",
+    "photo_wall_ms": "earliest verifyPhoto entry through latest verifyPhoto completion, monotonic span; excludes upload",
+    "save_ack_ms": "workspace source handler invocation through response in intake role; excludes driver IPC",
+    "save_tx_ms": "actual sole-writer transaction after controlled barrier",
+    "queue_lock_ms": "actual save queue-lock query elapsed; lease queue spans separately retained",
+    "driver_save_roundtrip_ms": "IPC request/response wall diagnostic only, not substituted for save_ack_ms"
+  },
+  "p95_margin": {
+    "absolute_ms": 50,
+    "fraction": 0.1
+  },
+  "gate_rule": "Every metric pooled cell AND each ABBA repetition B-A <= max(50ms,10% A p95); candidate thumbnail-idle uses same margin. All original metrics retained; additional photo wall must also pass. No pooling across studies or excluding tail cases.",
+  "hard_gates": [
+    "rollback adds no event/job",
+    "concurrent exact retry adds exactly one job",
+    "every accepted individual save has one job",
+    "prior journal hashes preserved",
+    "original fixture hashes preserved",
+    "max two running workers",
+    "actual observed worker/save queue-lock overlap in every loaded block",
+    "untimed third-lease claim denial with a free worker slot, terminal completion during pause, resume after release",
+    "all samples and per-process clocks complete"
+  ],
+  "controlled_overlap": "first measured save record callback releases first worker terminals and waits for queue acquisition; worker holds only until independent observer sees real intake advisory wait or 2500ms bound; same original scheduling intent",
+  "instrumentation": [
+    "unique OS PID per role",
+    "before/after parent-bracketed monotonic clock probes",
+    "absolute transaction and SQL spans with one backend PID query per transaction",
+    "per-process 10ms event-loop ticks",
+    "independent PostgreSQL wait/lock samples",
+    "per-photo and combined wall spans alongside original summed metric",
+    "driver IPC timing and buffered role traces; per-save raw driver log"
+  ],
+  "new_overheads": [
+    "IPC dispatch and serialization",
+    "separate process memory/CPU scheduling and repeated cold module/fixture initialization outside timing",
+    "observer RPC forwarding via external driver",
+    "photo span timestamps",
+    "admin connection disconnected during blocks"
+  ],
+  "cap_ms": 1800000,
+  "minimum_free_disk_bytes": 2147483648,
+  "stop_conditions": [
+    "any hard invariant fails",
+    "30-minute cap",
+    "owned child exits or RPC exceeds60s",
+    "monotonic clock check fails",
+    "disk floor before setup/each block fails"
+  ],
+  "smoke": false,
+  "preflight_override": {
+    "smoke": true,
+    "warmups": 1,
+    "measured": 2,
+    "seed_units": 40,
+    "seed_pending": 16,
+    "seed_completed": 2,
+    "qualification": false
+  },
+  "analysis": "Retain all samples. Nearest-rank p95. Report per-arm/block >50ms lease counts, >20ms late-loop overlaps by process, independent sampled advisory waits and queue owners, ClientRead intervals as discrete observations, combined photo wall and legacy sum. No continuous wait attribution from sampled DB rows; no exact CPU cause without a profile.",
+  "release_pass_always_false": true,
+  "missing_proof": [
+    "runtime preflight of new harness",
+    "actual Vercel request-instance/concurrency/cold-start behavior",
+    "identify function isolation",
+    "physical camera/upload/recognition",
+    "timeout/429 and one-session full matrix",
+    "real provider variance",
+    "new catalog/V4 and larger images",
+    "independent >=200-card labels/scorecard"
+  ],
+  "launch_review": "Coordinating agent reviews exact code/protocol hashes and topology approximations under Mark's existing execute authorization, verifies disk readiness, and releases preflight first. No new permission request to Mark is required. No measured run from this preparation."
+}
