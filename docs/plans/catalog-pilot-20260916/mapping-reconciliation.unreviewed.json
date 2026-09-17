@@ -1,0 +1,149 @@
+{
+  "schemaVersion": "tenkings-pilot-mapping-reconciliation/v1",
+  "authority": "historical_observation_not_taxonomy_export",
+  "observationPath": "/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260916-catalog-pilot-sources/managed-db-observation.json",
+  "observationSha256": "2c26194038b1088a2f5be6e05a3774de58576e3eedbcc57788057a17f7cf0678",
+  "observedAt": "2026-09-16T23:37:44.834Z",
+  "observationAuthority": "managed-db-read-only-observation-not-frontend-parity",
+  "queryScope": "SetDraft family-name search LIMIT 20; exact sports set version LIMIT 1, Big Kahuna programs LIMIT 10, TBK-1/2/3 cards LIMIT 20, sources LIMIT 30, parallels LIMIT 100; Legendary Treasures SetCard family-name search LIMIT 10. No credentials retained.",
+  "sports": {
+    "observed": {
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "draftId": "2e8b2265-edcb-4910-922f-40a6e926ac38",
+      "draftStatus": "APPROVED",
+      "archivedAt": null,
+      "latestVersion": {
+        "id": "52de475c-ee6a-4abf-b148-fffde0ec93af",
+        "version": 6,
+        "versionHash": "48314036838b6a481e87633c1b659541ca0a158ae91d7145e675fc5fb8292a1b",
+        "blockingErrorCount": 0
+      },
+      "program": {
+        "rowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+        "programId": "the-big-kahuna",
+        "label": "THE BIG KAHUNA"
+      },
+      "cards": [
+        {
+          "cardId": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+          "number": "TBK-1",
+          "name": "Caleb Williams"
+        },
+        {
+          "cardId": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+          "number": "TBK-2",
+          "name": "Drake Maye"
+        },
+        {
+          "cardId": "d6dde801-2673-46e1-8830-5d810b0c9ade",
+          "number": "TBK-3",
+          "name": "JJ McCarthy"
+        }
+      ],
+      "taxonomySources": [
+        {
+          "id": "10c101e0-b42c-4f84-b0e4-cf65dade9162",
+          "sourceKind": "TRUSTED_SECONDARY",
+          "sourceUrl": null
+        },
+        {
+          "id": "282cdd0c-9860-4c52-801e-471f9c4a6236",
+          "sourceKind": "TRUSTED_SECONDARY",
+          "sourceUrl": null
+        },
+        {
+          "id": "5f3d16b3-ad92-4f2f-90ee-239d7732c46f",
+          "sourceKind": "TRUSTED_SECONDARY",
+          "sourceUrl": null
+        },
+        {
+          "id": "62c8cbd0-394e-40ae-80a8-5a0dd944418b",
+          "sourceKind": "TRUSTED_SECONDARY",
+          "sourceUrl": null
+        },
+        {
+          "id": "9e347dd0-d75a-4662-a39b-ca3567cdc150",
+          "sourceKind": "TRUSTED_SECONDARY",
+          "sourceUrl": null
+        },
+        {
+          "id": "ccf7ed69-5fc2-42e7-b975-fa0cf7829d71",
+          "sourceKind": "TRUSTED_SECONDARY",
+          "sourceUrl": null
+        }
+      ],
+      "parallels": []
+    },
+    "selectionDraft": {
+      "programRowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+      "cards": {
+        "TBK-1": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+        "TBK-2": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+        "TBK-3": "d6dde801-2673-46e1-8830-5d810b0c9ade"
+      },
+      "printings": {
+        "ordinary": {
+          "parallelRowId": null,
+          "scopeRowId": null
+        },
+        "orange": {
+          "parallelRowId": null,
+          "scopeRowId": null
+        },
+        "superfractor": {
+          "parallelRowId": null,
+          "scopeRowId": null
+        }
+      },
+      "sources": {
+        "sports-checklist": null,
+        "sports-odds-round2": null
+      }
+    },
+    "blockers": [
+      "Refresh the exact complete authenticated taxonomy export; historical IDs are leads only.",
+      "No SetParallel rows were observed for this set. Required real printing/scope row IDs are absent.",
+      "All six observed source rows are TRUSTED_SECONDARY and have null URLs; do not relabel them. Exact new official source rows are required.",
+      "Existing full approved draft version must be preserved/reconciled; a three-card import cannot stand in for full-set approval."
+    ]
+  },
+  "pokemon": {
+    "observed": {
+      "setDraftRowsMatchingLegendaryTreasures": 0,
+      "setCardRowsMatchingLegendaryTreasures": 0,
+      "limitation": "Family-name predicate result, not proof of absence under every possible alias."
+    },
+    "proposedSetLabel": "Black & White—Legendary Treasures",
+    "selectionDraft": {
+      "programRowId": null,
+      "cards": {
+        "6": null,
+        "7": null,
+        "RC1": null,
+        "RC2": null
+      },
+      "printings": {
+        "standard": {
+          "parallelRowId": null,
+          "scopeRowId": null
+        },
+        "parallel": {
+          "parallelRowId": null,
+          "scopeRowId": null
+        }
+      },
+      "sources": {
+        "pokemon-checklist": null
+      }
+    },
+    "blockers": [
+      "Resolve exact canonical set identity and existing aliases through authorized host metadata; the family search is not an exhaustive absence proof.",
+      "No eligible genuine Pokémon taxonomy adapter is currently registered.",
+      "No draft/program/card/printing/scope/source IDs are invented."
+    ]
+  },
+  "rights": "No manufacturer PDF reuse grants supplied or inferred.",
+  "images": [],
+  "reviewer": null,
+  "published": false
+}

@@ -16,6 +16,7 @@ import {
 import { evaluateDraftQuality } from "../../../../../lib/server/setOpsCsvContract";
 import { readTaxonomyV2Flags } from "../../../../../lib/server/taxonomyV2Flags";
 import { ingestTaxonomyV2FromIngestionJob, type TaxonomyIngestResult } from "../../../../../lib/server/taxonomyV2Core";
+import { validatePilotChecklistOriginalInput } from "../../../../../lib/server/taxonomyV2PilotChecklistAdapter";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -92,6 +93,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const setId = normalizeSetLabel(job.setId);
+
+    try {
+      validatePilotChecklistOriginalInput({
+        setId,
+        datasetType: job.datasetType,
+        rawPayload: job.rawPayload,
+        sourceUrl: job.sourceUrl,
+        parserVersion: job.parserVersion,
+        parseSummary: asRecord(job.parseSummaryJson),
+      });
+    } catch (error) {
+      return res.status(422).json({ message: error instanceof Error ? error.message : "Invalid pinned checklist input" });
+    }
 
     const draft = job.draftId
       ? await prisma.setDraft.findUnique({ where: { id: job.draftId }, select: { id: true } })
@@ -173,6 +187,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           ingestionJobId: job.id,
           datasetType: job.datasetType,
           rawPayload: taxonomyRows,
+          originalRawPayload: job.rawPayload,
           sourceUrl: job.sourceUrl,
           parserVersion: job.parserVersion,
           parseSummary: asRecord(job.parseSummaryJson),

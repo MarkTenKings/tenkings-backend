@@ -1,0 +1,2147 @@
+{
+  "schemaVersion": "tenkings-complete-checklist-transcription-draft/v1",
+  "authority": "unreviewed_source_transcription",
+  "status": "UNSUBMITTED_NO_CANONICAL_SET_BINDING",
+  "proposedSourceLabel": "Black & White—Legendary Treasures",
+  "canonicalSetId": null,
+  "programId": null,
+  "draftId": null,
+  "source": {
+    "sourceId": "pokemon-checklist",
+    "url": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+    "sha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+    "byteSize": 2227474,
+    "pageCount": 1,
+    "localEvidencePath": "/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260916-catalog-pilot-sources/pokemon-checklist.pdf",
+    "sourceManifestSha256": "32d69d353d106ce7fb909ec13ebce68c7448bcf7c29fa5fdd81c5689f567780a",
+    "printedTitle": "Complete Pokémon TCG: Black & White—Legendary Treasures Expansion",
+    "printedCopyright": "© 2013 Pokémon. © 1995–2013 Nintendo/Creatures Inc./GAME FREAK inc. TM, ®, and character names are trademarks of Nintendo."
+  },
+  "coverage": {
+    "transcribedPrintedRows": "complete for this one pinned PDF page: 1–113 and RC1–RC25",
+    "transcribedPrintedLegend": "all three checklist marker meanings and all six rarity marker meanings",
+    "language": "en",
+    "fullCardPrintingUniverse": "unknown",
+    "applicability": "partial source-row marker evidence only",
+    "physicalFinish": "unresolved",
+    "edition": null,
+    "format": null,
+    "channel": null,
+    "collectorNumberDenominators": null,
+    "images": "none"
+  },
+  "legend": {
+    "checklist": [
+      {
+        "label": "standard set",
+        "symbol": "black outlined square"
+      },
+      {
+        "label": "standard set foil",
+        "symbol": "gold outlined square"
+      },
+      {
+        "label": "parallel set",
+        "symbol": "black outlined hexagon"
+      }
+    ],
+    "rarity": [
+      {
+        "label": "common",
+        "symbol": "●"
+      },
+      {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      {
+        "label": "rare",
+        "symbol": "★"
+      },
+      {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      {
+        "label": "rare Ultra",
+        "symbol": "★U"
+      },
+      {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      }
+    ]
+  },
+  "rows": [
+    {
+      "rowOrdinal": 1,
+      "number": "1",
+      "name": "Tangela",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 2,
+      "number": "2",
+      "name": "Tangrowth",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 3,
+      "number": "3",
+      "name": "Shuckle",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 4,
+      "number": "4",
+      "name": "Cherubi",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 5,
+      "number": "5",
+      "name": "Carnivine",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 6,
+      "number": "6",
+      "name": "Snivy",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 7,
+      "number": "7",
+      "name": "Servine",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 8,
+      "number": "8",
+      "name": "Serperior",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 9,
+      "number": "9",
+      "name": "Sewaddle",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 10,
+      "number": "10",
+      "name": "Sewaddle",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 11,
+      "number": "11",
+      "name": "Swadloon",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 12,
+      "number": "12",
+      "name": "Leavanny",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 13,
+      "number": "13",
+      "name": "Dwebble",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 14,
+      "number": "14",
+      "name": "Crustle",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 15,
+      "number": "15",
+      "name": "Virizion",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 16,
+      "number": "16",
+      "name": "Genesect",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 17,
+      "number": "17",
+      "name": "Charmander",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 18,
+      "number": "18",
+      "name": "Charmeleon",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 19,
+      "number": "19",
+      "name": "Charizard",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 20,
+      "number": "20",
+      "name": "Vulpix",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 21,
+      "number": "21",
+      "name": "Ninetales",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 22,
+      "number": "22",
+      "name": "Moltres",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 23,
+      "number": "23",
+      "name": "Victini",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 24,
+      "number": "24",
+      "name": "Victini-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 25,
+      "number": "25",
+      "name": "Tepig",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 26,
+      "number": "26",
+      "name": "Pignite",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 27,
+      "number": "27",
+      "name": "Emboar",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 28,
+      "number": "28",
+      "name": "Reshiram",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 29,
+      "number": "29",
+      "name": "Reshiram-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 30,
+      "number": "30",
+      "name": "Magikarp",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 31,
+      "number": "31",
+      "name": "Gyarados",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 32,
+      "number": "32",
+      "name": "Articuno",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 33,
+      "number": "33",
+      "name": "Piplup",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 34,
+      "number": "34",
+      "name": "Prinplup",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 35,
+      "number": "35",
+      "name": "Empoleon",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 1
+    },
+    {
+      "rowOrdinal": 36,
+      "number": "36",
+      "name": "Phione",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 37,
+      "number": "37",
+      "name": "Oshawott",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 38,
+      "number": "38",
+      "name": "Dewott",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 39,
+      "number": "39",
+      "name": "Samurott",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 40,
+      "number": "40",
+      "name": "Tympole",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 41,
+      "number": "41",
+      "name": "Palpitoad",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 42,
+      "number": "42",
+      "name": "Seismitoad",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 43,
+      "number": "43",
+      "name": "Kyurem",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 44,
+      "number": "44",
+      "name": "Kyurem-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 45,
+      "number": "45",
+      "name": "Keldeo-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 46,
+      "number": "46",
+      "name": "Zapdos",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 47,
+      "number": "47",
+      "name": "Plusle",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 48,
+      "number": "48",
+      "name": "Minun",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 49,
+      "number": "49",
+      "name": "Emolga",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 50,
+      "number": "50",
+      "name": "Thundurus",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 51,
+      "number": "51",
+      "name": "Zekrom",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 52,
+      "number": "52",
+      "name": "Zekrom-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 53,
+      "number": "53",
+      "name": "Mewtwo",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 54,
+      "number": "54",
+      "name": "Mewtwo-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 55,
+      "number": "55",
+      "name": "Natu",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 56,
+      "number": "56",
+      "name": "Xatu",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 57,
+      "number": "57",
+      "name": "Misdreavus",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 58,
+      "number": "58",
+      "name": "Mismagius",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 59,
+      "number": "59",
+      "name": "Ralts",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 60,
+      "number": "60",
+      "name": "Kirlia",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 61,
+      "number": "61",
+      "name": "Sableye",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 62,
+      "number": "62",
+      "name": "Croagunk",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 63,
+      "number": "63",
+      "name": "Toxicroak",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 64,
+      "number": "64",
+      "name": "Woobat",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 65,
+      "number": "65",
+      "name": "Swoobat",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 66,
+      "number": "66",
+      "name": "Sigilyph",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 67,
+      "number": "67",
+      "name": "Trubbish",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 68,
+      "number": "68",
+      "name": "Garbodor",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 69,
+      "number": "69",
+      "name": "Gothita",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 70,
+      "number": "70",
+      "name": "Gothita",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 2
+    },
+    {
+      "rowOrdinal": 71,
+      "number": "71",
+      "name": "Gothorita",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 72,
+      "number": "72",
+      "name": "Gothitelle",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 73,
+      "number": "73",
+      "name": "Solosis",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 74,
+      "number": "74",
+      "name": "Solosis",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 75,
+      "number": "75",
+      "name": "Duosion",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 76,
+      "number": "76",
+      "name": "Reuniclus",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 77,
+      "number": "77",
+      "name": "Chandelure-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 78,
+      "number": "78",
+      "name": "Meloetta",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 79,
+      "number": "79",
+      "name": "Riolu",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 80,
+      "number": "80",
+      "name": "Lucario",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 81,
+      "number": "81",
+      "name": "Gallade",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 82,
+      "number": "82",
+      "name": "Excadrill-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 83,
+      "number": "83",
+      "name": "Stunfisk",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 84,
+      "number": "84",
+      "name": "Terrakion",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 85,
+      "number": "85",
+      "name": "Landorus",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 86,
+      "number": "86",
+      "name": "Meloetta",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 87,
+      "number": "87",
+      "name": "Spiritomb",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 88,
+      "number": "88",
+      "name": "Darkrai-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 89,
+      "number": "89",
+      "name": "Zorua",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 90,
+      "number": "90",
+      "name": "Zoroark",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 91,
+      "number": "91",
+      "name": "Cobalion",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 92,
+      "number": "92",
+      "name": "Altaria",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 93,
+      "number": "93",
+      "name": "Rayquaza",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 94,
+      "number": "94",
+      "name": "Gible",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 95,
+      "number": "95",
+      "name": "Gabite",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 96,
+      "number": "96",
+      "name": "Garchomp",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 97,
+      "number": "97",
+      "name": "Deino",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 98,
+      "number": "98",
+      "name": "Zweilous",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 99,
+      "number": "99",
+      "name": "Hydreigon",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 100,
+      "number": "100",
+      "name": "Black Kyurem-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 101,
+      "number": "101",
+      "name": "White Kyurem-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 102,
+      "number": "102",
+      "name": "Lugia-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo EX",
+        "symbol": "outlined star"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 103,
+      "number": "103",
+      "name": "Swablu",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 104,
+      "number": "104",
+      "name": "Minccino",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 105,
+      "number": "105",
+      "name": "Cinccino",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 3
+    },
+    {
+      "rowOrdinal": 106,
+      "number": "106",
+      "name": "Druddigon",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 107,
+      "number": "107",
+      "name": "Bouffalant",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 108,
+      "number": "108",
+      "name": "Tornadus",
+      "literalChecklistMarkers": [
+        "standard set foil",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Holo",
+        "symbol": "★H"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 109,
+      "number": "109",
+      "name": "Bianca",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 110,
+      "number": "110",
+      "name": "Cedric Juniper",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 111,
+      "number": "111",
+      "name": "Crushing Hammer",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 112,
+      "number": "112",
+      "name": "Energy Switch",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 113,
+      "number": "113",
+      "name": "Double Colorless Energy",
+      "literalChecklistMarkers": [
+        "standard set",
+        "parallel set"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 114,
+      "number": "RC1",
+      "name": "Snivy",
+      "literalChecklistMarkers": [
+        "standard set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 115,
+      "number": "RC2",
+      "name": "Servine",
+      "literalChecklistMarkers": [
+        "standard set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 116,
+      "number": "RC3",
+      "name": "Serperior",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 117,
+      "number": "RC4",
+      "name": "Growlithe",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 118,
+      "number": "RC5",
+      "name": "Torchic",
+      "literalChecklistMarkers": [
+        "standard set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 119,
+      "number": "RC6",
+      "name": "Piplup",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 120,
+      "number": "RC7",
+      "name": "Pikachu",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 121,
+      "number": "RC8",
+      "name": "Ralts",
+      "literalChecklistMarkers": [
+        "standard set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 122,
+      "number": "RC9",
+      "name": "Kirlia",
+      "literalChecklistMarkers": [
+        "standard set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 123,
+      "number": "RC10",
+      "name": "Gardevoir",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 124,
+      "number": "RC11",
+      "name": "Meloetta-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare",
+        "symbol": "★"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 125,
+      "number": "RC12",
+      "name": "Stunfisk",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 126,
+      "number": "RC13",
+      "name": "Purrloin",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 127,
+      "number": "RC14",
+      "name": "Eevee",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 128,
+      "number": "RC15",
+      "name": "Teddiursa",
+      "literalChecklistMarkers": [
+        "standard set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 129,
+      "number": "RC16",
+      "name": "Ursaring",
+      "literalChecklistMarkers": [
+        "standard set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 130,
+      "number": "RC17",
+      "name": "Audino",
+      "literalChecklistMarkers": [
+        "standard set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 131,
+      "number": "RC18",
+      "name": "Minccino",
+      "literalChecklistMarkers": [
+        "standard set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 132,
+      "number": "RC19",
+      "name": "Cinccino",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "uncommon",
+        "symbol": "◆"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 133,
+      "number": "RC20",
+      "name": "Elesa",
+      "literalChecklistMarkers": [
+        "standard set"
+      ],
+      "literalRarityMarker": {
+        "label": "common",
+        "symbol": "●"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 134,
+      "number": "RC21",
+      "name": "Shaymin-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Ultra",
+        "symbol": "★U"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 135,
+      "number": "RC22",
+      "name": "Reshiram",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Ultra",
+        "symbol": "★U"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 136,
+      "number": "RC23",
+      "name": "Emolga",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Ultra",
+        "symbol": "★U"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 137,
+      "number": "RC24",
+      "name": "Mew-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Ultra",
+        "symbol": "★U"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    },
+    {
+      "rowOrdinal": 138,
+      "number": "RC25",
+      "name": "Meloetta-EX",
+      "literalChecklistMarkers": [
+        "standard set foil"
+      ],
+      "literalRarityMarker": {
+        "label": "rare Ultra",
+        "symbol": "★U"
+      },
+      "sourcePage": 1,
+      "sourceColumn": 4
+    }
+  ],
+  "counts": {
+    "rows": 138,
+    "unprefixedPrintedNumbers": 113,
+    "rcPrefixedPrintedNumbers": 25,
+    "checklistMarkers": {
+      "standard set": 81,
+      "standard set foil": 57,
+      "parallel set": 101
+    },
+    "rarityMarkers": {
+      "common": 37,
+      "uncommon": 41,
+      "rare": 13,
+      "rare Holo": 30,
+      "rare Ultra": 5,
+      "rare Holo EX": 12
+    }
+  },
+  "preparationChecks": {
+    "sourceBytesRehashed": true,
+    "visualMethod": "Entire freshly rendered 150 dpi page inspected by assistant; all four columns and printed legend cross-checked. PDF text extraction cross-checked names/numbers and text rarity labels; vector/color checklist markers read visually.",
+    "ordinaryHumanReviewerApproval": false,
+    "transcriptionCorrectnessNotCryptographicallyProven": true
+  },
+  "limits": [
+    "Printed markers are positive source-row observations; a missing marker is not an exhaustive exclusion.",
+    "No actual photographed card is identified; no physical finish is inferred beyond the literal printed legend wording.",
+    "Do not infer denominators 113 or RC25 as card-number aliases from the printed roster endpoints.",
+    "The RC block has no separate printed program title on this page; no canonical Radiant Collection program or set alias is invented.",
+    "The footer year and English document do not establish every region, edition, language or later printing.",
+    "Rarity symbols are transcribed literally. RC11 Meloetta-EX has a filled star meaning rare, not the main-block outlined-star rare Holo EX symbol.",
+    "This source draft is not a SetOps job, taxonomy export, reviewed manifest, permission statement or publication."
+  ],
+  "grant": null,
+  "images": [],
+  "reviewer": null,
+  "publication": null
+}

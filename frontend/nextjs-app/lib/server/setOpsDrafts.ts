@@ -48,6 +48,7 @@ export type SetOpsTaxonomyIngestRow = {
   program: string | null;
   programLabel: string | null;
   parallel: string;
+  parallelCatalog: boolean;
   playerName: string;
   playerSeed: string;
   team?: string | null;
@@ -619,6 +620,7 @@ export function buildTaxonomyIngestRows(rows: SetOpsDraftRow[]): SetOpsTaxonomyI
       program: row.cardType,
       programLabel: row.cardType,
       parallel: row.parallel,
+      parallelCatalog: hasParallelCatalogSignal(row.raw),
       playerName: row.playerSeed,
       playerSeed: row.playerSeed,
       team: firstString(row.raw, ["team", "teamName", "team_name"]) || null,
