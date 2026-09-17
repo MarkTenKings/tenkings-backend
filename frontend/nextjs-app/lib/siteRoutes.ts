@@ -1,9 +1,11 @@
+import { providerQualificationPreviewHost } from './staffResearchQualificationHost';
+
 /** Host routing is presentation policy. Every private API still checks its own session. */
 export const MAIN_SITE_ORIGIN = 'https://tenkings.co';
 export const COLLECT_SITE_ORIGIN = 'https://collect.tenkings.co';
 export const MAIN_HOME_PATH = '/main-site';
 
-export type SiteRouteConfig = { enabled: boolean; legacyHosts: readonly string[]; previewHosts: readonly string[] };
+export type SiteRouteConfig = { enabled: boolean; legacyHosts: readonly string[]; previewHosts: readonly string[]; qualificationPreviewHost?: string | null };
 export type SiteRouteDecision =
   | { kind: 'next'; surface: 'legacy' | 'main'; noIndex: boolean }
   | { kind: 'rewrite'; pathname: string; noIndex: boolean }
@@ -33,7 +35,7 @@ export function siteRouteConfig(env: Record<string, string | undefined>): SiteRo
     ...configuredHosts(env.VERCEL_PROJECT_PRODUCTION_URL), ...configuredHosts(env.SITE_ROUTE_LEGACY_HOSTS),
   ]);
   if (env.NODE_ENV !== 'production') ['localhost', '127.0.0.1', '[::1]'].forEach(host => legacyHosts.add(host));
-  return { enabled: env.MAIN_SITE_ENABLED === 'true', legacyHosts: [...legacyHosts], previewHosts: configuredHosts(env.MAIN_SITE_PREVIEW_HOSTS) };
+  return { enabled: env.MAIN_SITE_ENABLED === 'true', legacyHosts: [...legacyHosts], previewHosts: configuredHosts(env.MAIN_SITE_PREVIEW_HOSTS), qualificationPreviewHost: providerQualificationPreviewHost(env) };
 }
 
 export function isMainSiteHost(hostHeader: string | null | undefined, config: SiteRouteConfig): boolean {
@@ -92,6 +94,12 @@ export function resolveSiteRoute(input: { host: string | null | undefined; pathn
     return { kind: 'redirect', location: `${MAIN_SITE_ORIGIN}${path}` };
   }
   const noIndex = host !== 'tenkings.co' || path === '/staff' || path.startsWith('/staff/') || path.startsWith('/api/');
+  // Only this explicitly configured branch Preview can host the private probe.
+  // The handler independently requires a current human admin and same-origin POST.
+  if (host === config.qualificationPreviewHost) {
+    if (path === '/admin/inventory-research-qualification' && safe) return { kind: 'next', surface: 'main', noIndex: true };
+    if (path === '/api/v2/admin/inventory/provider-qualification' && ['GET', 'POST'].includes(input.method)) return { kind: 'next', surface: 'main', noIndex: true };
+  }
   if (path.startsWith('/api/')) return apiMethods[path]?.includes(input.method) ? { kind: 'next', surface: 'main', noIndex: true } : { kind: 'not-found' };
   if (!safe) return { kind: 'not-found' };
   if (path.startsWith('/_next/static/')) return { kind: 'next', surface: 'main', noIndex };

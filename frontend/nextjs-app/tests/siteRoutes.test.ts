@@ -91,3 +91,20 @@ test('middleware ignores spoofed forwarded/surface headers and serves private st
     for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   }
 });
+
+test('only the explicitly configured self branch Preview admits the private provider probe', () => {
+  const host = 'qualified-branch.vercel.app';
+  const env = { NODE_ENV: 'production', VERCEL_ENV: 'preview', MAIN_SITE_ENABLED: 'true', MAIN_SITE_PREVIEW_HOSTS: host,
+    VERCEL_BRANCH_URL: host, STAFF_RESEARCH_PROVIDER_QUALIFICATION_PREVIEW_HOST: host };
+  const page = '/admin/inventory-research-qualification', api = '/api/v2/admin/inventory/provider-qualification';
+  const probe = (hostname: string, pathname: string, method = 'GET', patch = {}) => resolveSiteRoute({ host: hostname, pathname, method }, siteRouteConfig({ ...env, ...patch }));
+  for (const pathname of [page, `/_next/data/build${page}.json`, api]) assert.deepEqual(probe(host, pathname), { kind: 'next', surface: 'main', noIndex: true });
+  assert.equal(probe(host, api, 'POST').kind, 'next');
+  for (const [pathname, method] of [[page, 'POST'], [api, 'DELETE'], ['/admin/set-ops', 'GET'], ['/api/admin/set-ops/ingestion', 'POST']]) assert.equal(probe(host, pathname, method).kind, 'not-found');
+  for (const other of ['tenkings.co', 'www.tenkings.co', 'other.vercel.app', `${host}.evil.example`]) {
+    assert.notEqual(probe(other, page).kind, 'next'); assert.equal(probe(other, api).kind, 'not-found');
+  }
+  for (const patch of [{ VERCEL_ENV: 'production' }, { VERCEL_ENV: undefined }, { VERCEL_BRANCH_URL: 'other.vercel.app' }, { STAFF_RESEARCH_PROVIDER_QUALIFICATION_PREVIEW_HOST: undefined }]) {
+    assert.equal(probe(host, page, 'GET', patch).kind, 'not-found'); assert.equal(probe(host, api, 'POST', patch).kind, 'not-found');
+  }
+});

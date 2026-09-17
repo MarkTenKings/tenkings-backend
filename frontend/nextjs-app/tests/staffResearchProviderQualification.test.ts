@@ -162,3 +162,23 @@ test('explicit authorized execution is one run; overlap and cooldown do not repe
   release(); await promise; assert.equal(first.result.code, 200);
   const repeat = response(); await route(request(), repeat.res); assert.equal(repeat.result.code, 429); assert.equal(calls, 1);
 });
+
+test('Preview qualification requires exact server configuration plus unchanged human/origin/plan guards', async () => {
+  const host = 'qualified-branch.vercel.app';
+  const preview = { ...env, VERCEL_ENV: 'preview', VERCEL_BRANCH_URL: host, STAFF_RESEARCH_PROVIDER_QUALIFICATION_PREVIEW_HOST: host };
+  const req = (origin = `https://${host}`) => request({ headers: { ...request().headers, host, origin } });
+  for (const config of [{}, { ...preview, VERCEL_ENV: 'production' }, { ...preview, VERCEL_BRANCH_URL: 'foreign.vercel.app' }, { ...preview, STAFF_RESEARCH_PROVIDER_QUALIFICATION_PREVIEW_HOST: `https://${host}` }, { ...preview, STAFF_RESEARCH_PROVIDER_QUALIFICATION_PREVIEW_HOST: `${host}:443` }]) {
+    assert.equal(providerQualificationHost(host, true, config), false);
+  }
+  assert.equal(providerQualificationHost(host, true, preview), true);
+  assert.equal(providerQualificationHost('foreign.vercel.app', true, preview), false);
+  assert.equal(providerQualificationHost(`${host}.evil.example`, true, preview), false);
+  let calls = 0;
+  const handler = createProviderQualificationHandler({ requireAdmin: async () => actor, env: () => preview, run: async () => { calls++; return { schema_version: 2 } as any; } });
+  const crossOrigin = response(); await handler(req('https://collect.tenkings.co'), crossOrigin.res); assert.equal(crossOrigin.result.code, 403); assert.equal(calls, 0);
+  const accepted = response(); await handler(req(), accepted.res); assert.equal(accepted.result.code, 200); assert.equal(calls, 1);
+  const anonymous = createProviderQualificationHandler({ requireAdmin: async () => { throw new HttpError(401, 'missing'); }, env: () => preview, run: async () => assert.fail('unsigned Preview work') });
+  const rejected = response(); await anonymous(req(), rejected.res); assert.equal(rejected.result.code, 401);
+  const disabled = createProviderQualificationHandler({ requireAdmin: async () => actor, env: () => ({ ...preview, STAFF_RESEARCH_PROVIDER_QUALIFICATION_ENABLED: 'false' }), run: async () => assert.fail('disabled Preview work') });
+  const stopped = response(); await disabled(req(), stopped.res); assert.equal(stopped.result.code, 503);
+});

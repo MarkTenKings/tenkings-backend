@@ -24,7 +24,7 @@ export function createProviderQualificationHandler(deps: {
     try {
       const actor = await deps.requireAdmin(req), env = deps.env(), now = deps.now ?? Date.now;
       if (!['auth-service', 'local-database'].includes(actor.authority ?? '') || !actor.user.id || !actor.expiresAt || !Number.isFinite(actor.expiresAt.getTime()) || actor.expiresAt.getTime() <= now()) throw new HttpError(401, 'A current human admin session is required.');
-      if (!providerQualificationHost(req.headers.host, env.NODE_ENV === 'production')) return res.status(404).json({ message: 'Not found' });
+      if (!providerQualificationHost(req.headers.host, env.NODE_ENV === 'production', env)) return res.status(404).json({ message: 'Not found' });
       if (Object.keys(req.query).length) return res.status(400).json({ message: 'Query parameters are not accepted.' });
       const enabled = env.STAFF_RESEARCH_PROVIDER_QUALIFICATION_ENABLED === 'true';
       if (req.method === 'GET') return res.status(200).json({ plan: PROVIDER_QUALIFICATION_PLAN, plan_sha256: PROVIDER_QUALIFICATION_PLAN_HASH, acknowledge: PROVIDER_QUALIFICATION_ACK, enabled });

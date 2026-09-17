@@ -3,7 +3,7 @@ import test from 'node:test';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Simulate } from 'react-dom/test-utils';
-import { ProviderQualificationPanel } from '../pages/admin/inventory-research-qualification';
+import { ProviderQualificationPanel, getServerSideProps } from '../pages/admin/inventory-research-qualification';
 import { PROVIDER_QUALIFICATION_PLAN, PROVIDER_QUALIFICATION_PLAN_HASH, PROVIDER_QUALIFICATION_ACK } from '../lib/server/staffResearchProviderQualification';
 const { JSDOM } = require('jsdom');
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
@@ -51,4 +51,24 @@ test('explicit acknowledged click sends exact plan and cohort once; failed respo
     assert.equal((ui.host.querySelector('button') as HTMLButtonElement).disabled, true);
     assert.equal(calls.length, 2);
   } finally { await ui.close(); }
+});
+
+test('Preview page returns only its inventory navigation and private cache headers; other hosts are blocked', async () => {
+  const host = 'qualified-branch.vercel.app';
+  const values = { NODE_ENV: 'production', VERCEL_ENV: 'preview', VERCEL_BRANCH_URL: host, STAFF_RESEARCH_PROVIDER_QUALIFICATION_PREVIEW_HOST: host };
+  const previous = Object.fromEntries(Object.keys(values).map(key => [key, process.env[key]]));
+  Object.assign(process.env, values);
+  const headers: Record<string, string> = {};
+  const context = (hostname: string) => ({ req: { headers: { host: hostname } }, res: { setHeader(key: string, value: string) { headers[key] = value; } } } as any);
+  try {
+    assert.deepEqual(await getServerSideProps(context(host)), { props: { inventoryPath: '/staff/inventory' } });
+    assert.equal(headers['Cache-Control'], 'private, no-store');
+    assert.equal(headers['X-Robots-Tag'], 'noindex, nofollow');
+    assert.deepEqual(await getServerSideProps(context('collect.tenkings.co')), { props: { inventoryPath: '/admin/physical-inventory' } });
+    assert.deepEqual(await getServerSideProps(context('foreign.vercel.app')), { notFound: true });
+    process.env.VERCEL_ENV = 'production';
+    assert.deepEqual(await getServerSideProps(context(host)), { notFound: true });
+  } finally {
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
 });
