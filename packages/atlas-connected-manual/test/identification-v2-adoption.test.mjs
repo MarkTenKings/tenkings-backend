@@ -359,14 +359,24 @@ test('retake while V2 model is in flight saves stale evidence, fences adoption, 
   await f.restart().run(f.staff, f.cardId); assert.equal(f.calls.http.length, 6);
 });
 
-test('concurrent V2 starts and in-flight replay share one claimed attempt without duplicate provider work', async () => {
+test('concurrent V2 starts and in-flight replay share one claimed attempt without duplicate provider work', { timeout: 10000 }, async () => {
   const f = await fixture({ pauseModel: true });
   const first = f.identification.run(f.staff, f.cardId), second = f.restart().run(f.staff, f.cardId);
   await f.modelEntered.promise;
+  // Keep the winning model request paused until the other start reaches its
+  // claim/read. Otherwise a slower photo conversion may legitimately observe
+  // COMPLETE after release without dispatching another provider request.
+  const inFlight = await Promise.race([first, second]);
+  assert.equal(inFlight.state, 'RUNNING');
   const replay = await f.restart().run(f.staff, f.cardId); assert.equal(replay.state, 'RUNNING');
+  assert.equal(inFlight.attemptId, replay.attemptId);
   f.modelRelease.resolve(); const results = await Promise.all([first, second]);
   assert.equal(results.filter(value => value.state === 'COMPLETE').length, 1);
   assert.ok(results.every(value => value.attemptId === replay.attemptId));
+  const completedReplay = await f.restart().run(f.staff, f.cardId);
+  assert.equal(completedReplay.state, 'COMPLETE');
+  assert.equal(completedReplay.attemptId, replay.attemptId);
+  assert.deepEqual(completedReplay.result, results.find(value => value.state === 'COMPLETE').result);
   assert.equal(f.db.attempts.size, 1); assert.equal(f.calls.http.length, 3);
   assert.equal([...f.db.events.values()].filter(value => value.event === 'DISPATCH').length, 3);
 });
