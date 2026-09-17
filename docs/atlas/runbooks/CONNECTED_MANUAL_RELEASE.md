@@ -1,9 +1,22 @@
 # Connected manual candidate release
 
-September 12, 2026. Build and local qualification instructions; **not a record of
+Updated September 17, 2026. Build and local qualification instructions; **not a record of
 production activation**. Preserve the dedicated Vercel staff app and public
 `/admin` gateway. The new native CPU service is a separate private deployment.
 Do not replace the previous grading operator as a consequence of this release.
+
+Current application source `30dbea77c484e61de56da522d67a841cb9df25ee` produced
+image `sha256:50ffd1e6ab8a0967a7dbbb214788a9b134ae20625aac9ba9a85cf5967635b2f4`,
+555-file manifest `decf72799a6b479ac29dbd8f0a6cba2a635da3f1728bc3d98dbb6fab905b59b3`.
+Native/source/boundary checks,379 package tests,42 actual Next15.5.25 staff/manual
+tests, four disposable PostgreSQL validators and all14 required CI jobs pass.
+See the [current qualification](../audits/2026-09-17/native-release-qualification.md)
+and [concrete execution plan](../audits/2026-09-17/release-execution-plan.md).
+Live storage qualification, hosted bindings/activation and owner acceptance are
+still outstanding. The older images/counts below are historical.
+
+## Earlier September 12 manual-only checkpoint
+
 Fresh-lead release preparation is recorded in the
 [current readiness review](../audits/2026-09-12/connected-manual-release-readiness.md).
 It adds photo/details and workflow recovery corrections, long-response transport
@@ -15,16 +28,16 @@ All 505 source files match manifest
 the rebuilt staff artifact boundary and all 265 Linux tests pass. The earlier
 497-file image, 486 local tests and eleven browser groups remain baseline
 evidence; they are not fresh hosted or owner acceptance of this delta.
-Fresh live metadata is 96 successful public/35 staff migrations, no manual
+The September12 live metadata was96 successful public/35 staff migrations, no manual
 schemas/role, and zero currently certified reviewers. Never infer activation
 from local fixture counts.
 
 ## Current Astra-first build status
 
-The image/hash/counts above describe the earlier manual-only candidate. They do
-not include the reviewed-memory/Astra changes built in this session. Rebuild and
-seal a new source closure before deployment. The new packages are included by
-the existing workspace dependency traversal; no new native dependency is needed.
+The earlier image/hash/counts above describe the manual-only candidate. The
+September17 image at the top includes reviewed memory, Astra and recognitionV2.
+Its new source closure is sealed and qualified offline. The packages use the
+existing workspace dependency traversal; no new native dependency was needed.
 
 The previously approved one-key storage canary ran once: Spaces accepted an
 incorrect checksum with HTTP200. It stopped with FAILED_SAFE /
@@ -33,12 +46,14 @@ GET404. Evidence is in the ATLAS handoff `release-readiness/storage/canary-nativ
 The sealed execution intent exists; never rerun it. Conditional collision/privacy
 checks later in the plan were not reached. Resolve provider upload-integrity and
 immutable-write behavior before live intake; do not relabel this result a pass.
-Docker Desktop remains unresponsive; the new Linux/staff build is outstanding.
+The build now uses a qualified isolated native Linux path; local Docker Desktop
+recovery is no longer a prerequisite. A distinct bounded live-storage plan is
+[prepared for owner approval](../audits/2026-09-17/storage-qualification-approval.md).
 
 September 16 recognition adoption adds the reviewed shared identifier V2 for new
 attempts while preserving saved V1 inputs/results. The immutable input envelope
 uses the existing connected schema; it adds no migration or dependency upgrade.
-Include the new V2 runtime files and updated manual page in the next artifacts.
+The September17 artifacts include the new V2 runtime files and updated manual page.
 See [recognition adoption and its acceptance limits](../audits/2026-09-16/recognition-v2-adoption.md).
 This local update does not qualify or activate a hosted release.
 
@@ -62,11 +77,11 @@ This local update does not qualify or activate a hosted release.
    `/admin`, generated staff Prisma runtime and ordinary auth, with no browser
    secrets or native CPU/old orchestration imports in the new web path. Run all
    repository-required checks on the exact PR head before any merge/release.
-4. Inventory actual DB migrations and role privileges read-only. The new tracked
-   disposable proof uses 95 public/38 staff migrations with exact no-op replays;
-   fresh live inventory has 96 public/35 staff. The extra live public research
-   migration is outside this branch; preserve it and do not run public migrations
-   as part of this staff-only schema addition.
+4. Inventory actual DB migrations and role privileges read-only. The September17
+   disposable proof uses95 public/40 staff migrations with exact no-op replays;
+   read-only live inventory has97 successful public/35 staff. Two installed public
+   Inventory/catalog migrations are outside this branch; preserve them and do not
+   run public migrations as part of this five-file staff-only schema addition.
 
 ## Database and service configuration
 
@@ -173,11 +188,12 @@ x-amz-meta-atlas-kind and x-amz-meta-atlas-binding-sha256. Confirm full-size GET
 returns the actual content type and correct bytes; public unauthenticated reads
 must fail. The retained local SDK fixture does not establish Spaces semantics.
 
-Current read-only tests identify two missing allowed PUT headers:
-`x-amz-meta-atlas-kind` and `x-amz-meta-atlas-binding-sha256`. Preserve every
-existing CORS rule when preparing the additive change, and retain exact before/
-after configuration. Do not infer bucket policy or ACL from a scoped credential's
-403 configuration-read response.
+The separately approved September12 additive CORS change installed the two
+previously missing PUT headers, `x-amz-meta-atlas-kind` and
+`x-amz-meta-atlas-binding-sha256`; preflights passed. Preserve that change and
+its before/after evidence. The new qualification checks actual browser CORS
+without changing configuration. Do not infer bucket policy or ACL from a scoped
+credential's403 configuration-read response.
 
 A live storage canary requires the separate authorization specified in
 `docs/runbooks/DEPLOY_RUNBOOK.md`; prepare its exact unique harmless object and
