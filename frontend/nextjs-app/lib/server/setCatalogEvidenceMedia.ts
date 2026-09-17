@@ -15,15 +15,35 @@ export const CATALOG_BROWSER_UPLOAD_MAX_BYTES = 3 * 1024 * 1024;
 const shaSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const grantSchema = z.object({ basis: z.enum(['owned_original', 'licensed', 'permission']), detail: z.string().trim().min(1).max(1000),
   consumers: z.array(z.enum(['inventory', 'atlas'])).min(1).max(2).refine(a => new Set(a).size === a.length) }).strict();
-export const catalogReviewEvidenceSchema = z.object({
+// Keep v1's exact shape and parsing semantics: stored source grants are never
+// relabeled as fact use, and loading old records must not change their hashes.
+const legacyReviewEvidenceSchema = z.object({
   sources: z.array(z.object({ sourceId: z.string().min(1).max(256), taxonomySourceId: z.string().min(1).max(256).nullable(),
     classificationNote: z.string().trim().min(1).max(1000), grant: grantSchema }).strict()).max(5000),
   images: z.array(z.object({ imageId: z.string().min(1).max(256), grant: grantSchema }).strict()).max(5000),
   observations: catalogObservationReviewSchema.optional(),
 }).strict();
+const sourceFactUseSchema = z.object({ purpose: z.literal('catalog_facts'), sourceSha256: shaSchema,
+  detail: z.string().trim().min(1).max(1000),
+  consumers: z.array(z.enum(['inventory', 'atlas'])).min(1).max(2).refine(a => new Set(a).size === a.length) }).strict();
+const factsReviewEvidenceSchema = z.object({
+  schemaVersion: z.literal('setops-catalog-review-evidence/v2'),
+  sources: z.array(z.object({ sourceId: z.string().min(1).max(256), taxonomySourceId: z.string().min(1).max(256).nullable(),
+    classificationNote: z.string().trim().min(1).max(1000), factUse: sourceFactUseSchema }).strict()).max(5000),
+  images: legacyReviewEvidenceSchema.shape.images,
+  observations: catalogObservationReviewSchema.optional(),
+}).strict();
+// Fact use is a proposed internal scope, not a legal attestation or a grant to
+// download source PDFs, use image bytes, or publish without the human boundary.
+export const catalogReviewEvidenceSchema = z.union([legacyReviewEvidenceSchema, factsReviewEvidenceSchema]);
 export type CatalogReviewEvidence = z.infer<typeof catalogReviewEvidenceSchema>;
-export type CatalogVerification = CatalogReviewEvidence & { schemaVersion: 'setops-catalog-verification/v1';
-  artifacts: { ref: string; sha256: string; byteSize: number }[] };
+const artifactsSchema = z.array(z.object({ ref: z.string(), sha256: shaSchema,
+  byteSize: z.number().int().min(1).max(CATALOG_ARTIFACT_MAX_BYTES) }).strict()).max(10000);
+const verificationSchema = z.discriminatedUnion('schemaVersion', [
+  legacyReviewEvidenceSchema.extend({ schemaVersion: z.literal('setops-catalog-verification/v1'), artifacts: artifactsSchema }),
+  factsReviewEvidenceSchema.extend({ schemaVersion: z.literal('setops-catalog-verification/v2'), artifacts: artifactsSchema }),
+]);
+export type CatalogVerification = z.infer<typeof verificationSchema>;
 export const hashCatalogVerification = (value: unknown) => createHash('sha256').update(canonicalJson(value)).digest('hex');
 export function catalogArtifactKey(ref: string) {
   const match = /^catalog:sha256:([a-f0-9]{64})$/.exec(ref);
@@ -78,10 +98,7 @@ export async function stageSetCatalogArtifact(input: unknown, actor: AdminSessio
 }
 
 export function parseCatalogVerification(value: unknown): CatalogVerification {
-  const parsed = z.object({ schemaVersion: z.literal('setops-catalog-verification/v1'), sources: catalogReviewEvidenceSchema.shape.sources,
-    images: catalogReviewEvidenceSchema.shape.images, observations: catalogReviewEvidenceSchema.shape.observations,
-    artifacts: z.array(z.object({ ref: z.string(), sha256: shaSchema,
-      byteSize: z.number().int().min(1).max(CATALOG_ARTIFACT_MAX_BYTES) }).strict()).max(10000) }).strict().parse(value);
+  const parsed = verificationSchema.parse(value);
   if (Buffer.byteLength(canonicalJson(parsed)) > 800_000) throw new HttpError(400, 'Catalog verification is too large.');
   for (const item of parsed.artifacts) if (catalogArtifactKey(item.ref) !== `set-catalog-evidence/${item.sha256}.bin`) throw new HttpError(400, 'Artifact verification mismatch.');
   if (new Set(parsed.artifacts.map(a => a.ref)).size !== parsed.artifacts.length) throw new HttpError(400, 'Duplicate artifact verification.');
@@ -90,11 +107,20 @@ export function parseCatalogVerification(value: unknown): CatalogVerification {
 
 export function assertCatalogGrants(manifest: DeepReadonly<CatalogManifest>, verification: CatalogVerification, consumer?: CatalogConsumer) {
   const assertRoster = (expected: readonly string[], actual: string[]) => {
-    if (expected.length !== actual.length || new Set(actual).size !== actual.length || expected.some(id => !actual.includes(id))) throw new HttpError(400, 'The full source and image grant rosters are required.');
+    if (expected.length !== actual.length || new Set(actual).size !== actual.length || expected.some(id => !actual.includes(id))) throw new HttpError(400, 'The full source-use and image-grant rosters are required.');
   };
   assertRoster(manifest.sources.map(s => s.sourceId), verification.sources.map(s => s.sourceId));
   assertRoster(manifest.images.map(i => i.imageId), verification.images.map(i => i.imageId));
-  for (const item of [...verification.sources, ...verification.images]) if (consumer && !item.grant.consumers.includes(consumer)) throw new HttpError(403, 'Catalog usage is not granted to this app.');
+  if (verification.schemaVersion === 'setops-catalog-verification/v1') {
+    for (const source of verification.sources) if (consumer && !source.grant.consumers.includes(consumer)) throw new HttpError(403, 'Catalog usage is not granted to this app.');
+  } else {
+    for (const source of verification.sources) {
+      if (source.factUse.sourceSha256 !== manifest.sources.find(s => s.sourceId === source.sourceId)?.sha256) throw new HttpError(409, 'Source fact use is not bound to the exact source bytes.');
+      if (consumer && !source.factUse.consumers.includes(consumer)) throw new HttpError(403, 'Catalog facts are not authorized for this app.');
+    }
+  }
+  // Source fact use can never substitute for a grant on a reference image.
+  for (const image of verification.images) if (consumer && !image.grant.consumers.includes(consumer)) throw new HttpError(403, 'Catalog usage is not granted to this app.');
   const refs = [...manifest.sources.map(s => [s.sourceRef, s.sha256]), ...manifest.images.map(i => [i.mediaRef, i.sha256])];
   assertRoster([...new Set(refs.map(r => r[0]))], verification.artifacts.map(a => a.ref));
   for (const [ref, sha256] of refs) if (verification.artifacts.find(a => a.ref === ref)?.sha256 !== sha256) throw new HttpError(409, 'Artifact verification is not bound to the manifest.');
@@ -153,7 +179,8 @@ export async function prepareCatalogVerification(manifest: DeepReadonly<CatalogM
       excerpts.push({ sourceId: source.sourceId, text: text.includes('\ufffd') || text.includes('\u0000') ? null : text });
     }
   }
-  const verification = parseCatalogVerification({ schemaVersion: 'setops-catalog-verification/v1', ...review, artifacts });
+  const verification = parseCatalogVerification({ ...review,
+    schemaVersion: 'schemaVersion' in review ? 'setops-catalog-verification/v2' : 'setops-catalog-verification/v1', artifacts });
   assertCatalogGrants(manifest, verification);
   return { verification, verificationSha256: hashCatalogVerification(verification), excerpts };
 }

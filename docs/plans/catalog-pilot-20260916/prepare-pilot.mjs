@@ -143,9 +143,27 @@ function validateGrant(grant, sourceId) {
   return grant;
 }
 
+function validateSourceFactUse(proposal, sourceIds) {
+  need(proposal?.schemaVersion === 'setops-catalog-source-fact-use-proposal/v1'
+    && proposal.authority === 'unreviewed_proposal_not_legal_attestation'
+    && Object.keys(proposal).sort().join(',') === 'authority,schemaVersion,uses', 'Explicit unreviewed source-fact-use proposal version required.');
+  need(proposal.uses && !Array.isArray(proposal.uses)
+    && Object.keys(proposal.uses).sort().join(',') === [...sourceIds].sort().join(','), 'Provide exactly the required source-fact-use roster.');
+  return Object.fromEntries(sourceIds.map(sourceId => {
+    const use = proposal.uses[sourceId];
+    need(use?.purpose === 'catalog_facts' && use.sourceSha256 === PINNED[sourceId].sha256
+      && Object.keys(use).sort().join(',') === 'consumers,detail,purpose,sourceSha256', `${sourceId}: fact use must bind the exact source bytes without ownership or image-grant fields.`);
+    need(typeof use.detail === 'string' && use.detail.trim().length > 0 && use.detail.length <= 1000, `${sourceId}: describe the proposed factual scope.`);
+    need(Array.isArray(use.consumers) && use.consumers.length > 0 && use.consumers.length <= 2
+      && use.consumers.every(c => ['inventory', 'atlas'].includes(c)) && new Set(use.consumers).size === use.consumers.length, `${sourceId}: explicit unique intended app-consumer roster required.`);
+    return [sourceId, { ...use, detail: use.detail.trim(), consumers: [...use.consumers] }];
+  }));
+}
+
 /** Compiler output remains unreviewed. The real host rechecks all taxonomy and
  * grants; export hashes and caller-supplied rights text are not authentication. */
-export function compilePilot({ pilot, sources, taxonomy = null, selection = null, grants = null }) {
+export function compilePilot({ pilot, sources, taxonomy = null, selection = null, grants = null, sourceFactUse = null }) {
+  need(!(grants && sourceFactUse), 'Choose an explicit source-fact-use proposal or legacy source grants; do not mix or silently convert them.');
   const p = PILOTS[pilot]; need(p, 'Choose sports or pokemon.');
   const sourceRows = p.sourceIds.map(id => {
     const original = sources[id], pin = PINNED[id];
@@ -230,11 +248,18 @@ export function compilePilot({ pilot, sources, taxonomy = null, selection = null
     })), aliases: [], images: [] };
   report.manifest = validateManifest(manifest); report.manifestSha256 = hashManifest(manifest);
   report.sourceMappings = sourceMappings;
-  if (!grants) { report.blockers.push('Document specific manufacturer-source reuse permission/license for each source and intended consumer before creating a loadable review packet.'); return report; }
-  need(Object.keys(grants).sort().join(',') === [...p.sourceIds].sort().join(','), 'Provide exactly the required source-grant roster.');
-  const reviewEvidence = { sources: sourceMappings.map(mapping => ({ ...mapping, grant: validateGrant(grants[mapping.sourceId], mapping.sourceId) })), images: [] };
+  if (!grants && !sourceFactUse) { report.blockers.push('Provide an unreviewed source-fact-use proposal naming the exact source hashes, factual scope and intended apps, or explicit legacy source grants. No manufacturer license claim is required for the factual-use path.'); return report; }
+  let reviewEvidence;
+  if (sourceFactUse) {
+    const uses = validateSourceFactUse(sourceFactUse, p.sourceIds);
+    reviewEvidence = { schemaVersion: 'setops-catalog-review-evidence/v2',
+      sources: sourceMappings.map(mapping => ({ ...mapping, factUse: uses[mapping.sourceId] })), images: [] };
+  } else {
+    need(Object.keys(grants).sort().join(',') === [...p.sourceIds].sort().join(','), 'Provide exactly the required source-grant roster.');
+    reviewEvidence = { sources: sourceMappings.map(mapping => ({ ...mapping, grant: validateGrant(grants[mapping.sourceId], mapping.sourceId) })), images: [] };
+  }
   report.reviewPacket = { manifest: report.manifest, reviewEvidence };
-  report.blockers.push('Pending authenticated human evidence/grant review. Offline validation is not publication.');
+  report.blockers.push('Pending authenticated human review of the exact evidence, factual-use scope or legacy source grants, and any image grants. Offline preparation is neither publication nor a legal attestation.');
   return report;
 }
 
@@ -242,7 +267,7 @@ async function readJson(path) { need((await stat(path)).size <= 3 * 1024 * 1024,
 async function main() {
   const args = process.argv.slice(2), options = {};
   for (let i = 0; i < args.length; i += 2) {
-    need(['--pilot', '--source-manifest', '--taxonomy', '--selection', '--grants', '--out'].includes(args[i]) && args[i + 1] && !Object.hasOwn(options, args[i]), 'Use --pilot sports|pokemon --out DIRECTORY [--source-manifest FILE] [--taxonomy FILE --selection FILE --grants FILE].');
+    need(['--pilot', '--source-manifest', '--taxonomy', '--selection', '--grants', '--source-fact-use', '--out'].includes(args[i]) && args[i + 1] && !Object.hasOwn(options, args[i]), 'Use --pilot sports|pokemon --out DIRECTORY [--source-manifest FILE] [--taxonomy FILE --selection FILE] [--source-fact-use FILE | --grants FILE].');
     options[args[i]] = args[i + 1];
   }
   need(options['--pilot'] && options['--out'], '--pilot and --out are required.');
@@ -251,7 +276,8 @@ async function main() {
   const report = compilePilot({ pilot: options['--pilot'], sources,
     taxonomy: options['--taxonomy'] ? await readJson(options['--taxonomy']) : null,
     selection: options['--selection'] ? await readJson(options['--selection']) : null,
-    grants: options['--grants'] ? await readJson(options['--grants']) : null });
+    grants: options['--grants'] ? await readJson(options['--grants']) : null,
+    sourceFactUse: options['--source-fact-use'] ? await readJson(options['--source-fact-use']) : null });
   const out = resolve(options['--out']); await mkdir(out, { recursive: true, mode: 0o700 });
   const write = (name, value) => writeFile(join(out, name), JSON.stringify(value, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
   await write('preparation.json', report);

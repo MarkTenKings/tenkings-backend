@@ -13,15 +13,16 @@ require.cache[imagePath] = { id: imagePath, filename: imagePath, loaded: true, e
 const Review = require('../components/admin/SetCatalogEvidenceReview').default as typeof import('../components/admin/SetCatalogEvidenceReview').default;
 if (cachedImage) require.cache[imagePath] = cachedImage; else delete require.cache[imagePath];
 
-async function mount() {
+async function mount(factsOnly = false) {
   const { fixture } = await import(pathToFileURL(resolve(dirname(require.resolve('@tenkings/card-catalog-evidence')), '../tests/fixtures.mjs')).href);
-  const manifest = fixture('SPORTS'), packet = { manifest, reviewEvidence: { sources: [], images: [] } };
-  let previews = 0, writes = 0, objectUrls = 0;
+  const manifest = fixture('SPORTS'); if (factsOnly) manifest.images = [];
+  const packet = { manifest, reviewEvidence: { ...(factsOnly ? { schemaVersion: 'setops-catalog-review-evidence/v2' } : {}), sources: [], images: [] } };
+  let previews = 0, writes = 0, objectUrls = 0, imageDownloads = 0;
   const dom = new JSDOM('<div id="root"></div>', { url: 'https://collect.tenkings.co/admin/set-ops-review', pretendToBeVisual: true });
   const previous = new Map<string, PropertyDescriptor | undefined>();
   const fetcher: typeof fetch = async (url, init) => {
     if (String(url).endsWith('/preview')) return Response.json({ manifest, manifestSha256: String(++previews).repeat(64), verificationSha256: 'b'.repeat(64), verification: {}, expectedCurrent: null, expectedHistory: null, previousManifest: null, excerpts: [] });
-    if (String(url).includes('/media?ref=')) return new Response('synthetic test bytes');
+    if (String(url).includes('/media?ref=')) { imageDownloads++; return new Response('synthetic test bytes'); }
     if (String(url).endsWith('/publication') && init?.method === 'POST') { writes++; return Response.json({ current: false, outcome: 'replay' }); }
     throw new Error(`Unexpected request ${url}`);
   };
@@ -44,7 +45,7 @@ async function mount() {
     Object.defineProperty(image, 'naturalHeight', { configurable: true, value: valid ? 40 : 0 });
     await act(async () => Simulate.load(image));
   };
-  return { host, click, button, checkbox, rendered, writes: () => writes,
+  return { host, click, button, checkbox, rendered, writes: () => writes, imageDownloads: () => imageDownloads,
     check: async () => { await act(async () => Simulate.change(checkbox(), { target: { checked: true } } as never)); },
     error: async () => { await act(async () => Simulate.error(host.querySelector('img')!)); },
     close: async () => { await act(async () => root.unmount()); dom.window.close(); URL.createObjectURL = oldCreate; URL.revokeObjectURL = oldRevoke;
@@ -52,6 +53,17 @@ async function mount() {
     },
   };
 }
+
+test('facts-only review requests no image bytes and still requires deliberate human acknowledgement', async () => {
+  const ui = await mount(true);
+  try {
+    assert.match(ui.host.textContent!, /Source classification, fact use and image reuse grants/);
+    assert.match(ui.host.textContent!, /does not claim image ownership or authorize source-file distribution/);
+    assert.equal(ui.imageDownloads(), 0); assert.equal(ui.writes(), 0);
+    assert.equal(ui.checkbox().checked, false); assert.equal(ui.button('Publish reviewed catalog evidence').disabled, true);
+    await ui.check(); await ui.click('Publish reviewed catalog evidence'); assert.equal(ui.writes(), 1);
+  } finally { await ui.close(); }
+});
 
 test('downloading a blob cannot unlock review; failed image decoding keeps publication blocked', async () => {
   const ui = await mount();

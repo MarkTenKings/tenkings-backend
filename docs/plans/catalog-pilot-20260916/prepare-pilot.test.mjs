@@ -136,9 +136,39 @@ test('public manufacturer bytes do not grant owned-original reuse or authorize m
   for (const grant of Object.values(positive)) { grant.basis = 'permission'; grant.detail = 'SYNTHETIC TEST ONLY: simulated permission statement for contract shape, not actual manufacturer reuse authority.'; }
   const result = compilePilot({ ...f, grants: positive });
   assert.deepEqual(Object.keys(result.reviewPacket).sort(), ['manifest', 'reviewEvidence']);
-  assert.ok(result.blockers.some(s => /human evidence/.test(s)));
+  assert.ok(result.blockers.some(s => /authenticated human review/.test(s)));
   positive['sports-checklist'].consumers = [];
   assert.throws(() => compilePilot({ ...f, grants: positive }), /consumer roster/);
+});
+test('explicit source-fact-use proposals prepare review packets without manufacturer license claims', async () => {
+  for (const pilot of ['sports', 'pokemon']) {
+    const sourceFactUse = JSON.parse(await readFile(new URL(`./${pilot}-source-fact-use.proposed.json`, import.meta.url), 'utf8'));
+    const result = compilePilot({ ...fixture(pilot), sourceFactUse });
+    assert.equal(result.status, 'DRAFT_REQUIRES_HUMAN_REVIEW');
+    assert.equal(result.reviewPacket.reviewEvidence.schemaVersion, 'setops-catalog-review-evidence/v2');
+    for (const source of result.reviewPacket.reviewEvidence.sources) {
+      assert.equal(source.factUse.purpose, 'catalog_facts'); assert.equal(source.factUse.sourceSha256, sources[source.sourceId].sha256);
+      assert.equal('grant' in source, false); assert.equal('basis' in source.factUse, false);
+    }
+    assert.deepEqual(result.reviewPacket.reviewEvidence.images, []);
+    assert.ok(result.blockers.some(s => /neither publication nor a legal attestation/.test(s)));
+  }
+});
+test('fact-use proposals reject version, roster, checksum, ownership, consumer and mixed-mode changes', async () => {
+  const original = JSON.parse(await readFile(new URL('./sports-source-fact-use.proposed.json', import.meta.url), 'utf8'));
+  for (const change of [
+    p => { delete p.schemaVersion; }, p => { p.schemaVersion = 'setops-catalog-source-fact-use-proposal/v2'; },
+    p => { p.authority = 'approved'; }, p => { delete p.uses['sports-checklist']; },
+    p => { p.uses.extra = clone(p.uses['sports-checklist']); },
+    p => { p.uses['sports-checklist'].sourceSha256 = '0'.repeat(64); },
+    p => { p.uses['sports-checklist'].basis = 'owned_original'; },
+    p => { p.uses['sports-checklist'].purpose = 'image_reuse'; },
+    p => { p.uses['sports-checklist'].consumers = ['inventory', 'inventory']; },
+    p => { p.uses['sports-checklist'].consumers = ['public']; },
+  ]) { const sourceFactUse = clone(original); change(sourceFactUse); assert.throws(() => compilePilot({ ...fixture('sports'), sourceFactUse })); }
+  assert.throws(() => compilePilot({ ...fixture('sports'), sourceFactUse: original, grants: {} }), /do not mix/);
+  const missingMapping = fixture('sports'); missingMapping.taxonomy.snapshot.parallels = []; resign(missingMapping.taxonomy);
+  assert.throws(() => compilePilot({ ...missingMapping, sourceFactUse: original }));
 });
 test('source byte damage and pinned metadata substitution fail before any packet', async () => {
   await assert.rejects(verifyPilotSources(sourceManifest, async () => Buffer.from('wrong source')), /Source bytes differ/);

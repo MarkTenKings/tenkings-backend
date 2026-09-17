@@ -129,9 +129,11 @@ export default function SetCatalogEvidenceReview({ token, setId, canReview, canA
         </div> : <p>Loading exact reviewed bytes…</p>}
         <div><p className="text-sm font-semibold">The depicted card can differ from a card using this representative finish.</p><pre className="overflow-auto whitespace-pre-wrap text-xs">{pretty(image)}</pre></div>
       </div>)}</section>
-      <details open className={panel}><summary>Source classification and internal reuse grants — verify every grant</summary><pre className="max-h-80 overflow-auto whitespace-pre-wrap text-xs">{pretty(preview.verification)}</pre></details>
+      <details open className={panel}><summary>Source classification, fact use and image reuse grants</summary>
+        <p className="my-2 text-sm">Source fact use identifies the catalog facts and apps being reviewed. It does not claim image ownership or authorize source-file distribution. Review image grants separately; existing source grants retain their recorded scope.</p>
+        <pre className="max-h-80 overflow-auto whitespace-pre-wrap text-xs">{pretty(preview.verification)}</pre></details>
       <details className={panel}><summary>Previous immutable manifest for comparison</summary><pre className="max-h-80 overflow-auto whitespace-pre-wrap text-xs">{pretty(preview.previousManifest)}</pre></details>
-      <label className="flex gap-2 text-sm"><input type="checkbox" checked={reviewed} disabled={busy || !canApprove || !allImagesLoaded} onChange={event => setReviewed(event.target.checked)} />I reviewed the complete identities, aliases, applicability and unknowns, original sources, image identities and visible diagnostics, and each internal reuse grant.</label>
+      <label className="flex gap-2 text-sm"><input type="checkbox" checked={reviewed} disabled={busy || !canApprove || !allImagesLoaded} onChange={event => setReviewed(event.target.checked)} />I reviewed the complete identities, aliases, applicability and unknowns, original sources, intended fact use or recorded source grants, and image identities, diagnostics and reuse grants.</label>
       <button className={button} disabled={busy || !canApprove || !reviewed || !allImagesLoaded} onClick={() => void run(async active => {
         const result = await api('publication', { action: 'publish', manifest: preview.manifest, reviewEvidence: packet?.reviewEvidence,
           manifestSha256: preview.manifestSha256, verificationSha256: preview.verificationSha256, expectedCurrent: preview.expectedCurrent,

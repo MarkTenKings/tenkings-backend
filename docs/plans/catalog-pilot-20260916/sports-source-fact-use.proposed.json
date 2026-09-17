@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "setops-catalog-source-fact-use-proposal/v1",
+  "authority": "unreviewed_proposal_not_legal_attestation",
+  "uses": {
+    "sports-checklist": {
+      "purpose": "catalog_facts",
+      "sourceSha256": "bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+      "detail": "Proposed Inventory/Atlas catalog use of pinned checklist card names, printed numbers and program membership. No image ownership, image reuse or source-PDF distribution is asserted. Requires actual human evidence review.",
+      "consumers": [
+        "inventory",
+        "atlas"
+      ]
+    },
+    "sports-odds-round2": {
+      "purpose": "catalog_facts",
+      "sourceSha256": "72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+      "detail": "Proposed Inventory/Atlas catalog use of the pinned Big Kahuna program labels and stated serial denominators. No per-card applicability, format odds, image reuse or source-PDF distribution is asserted. Requires actual human evidence review.",
+      "consumers": [
+        "inventory",
+        "atlas"
+      ]
+    }
+  }
+}
