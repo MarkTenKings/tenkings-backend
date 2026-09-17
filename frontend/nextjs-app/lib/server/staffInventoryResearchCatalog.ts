@@ -23,7 +23,7 @@ export function researchCatalogQuery(description: StaffInventoryResearchDescript
 /** Converts host-authorized positive card/printing applicability, including
  * supported evidence in a partial catalog. Truncation or unknown scope cannot
  * supply reference authority. */
-export function catalogResearchReferences(lookups: readonly DeepReadonly<LookupResult>[]): StaffInventoryResearchReference[] {
+export function catalogResearchReferences(lookups: readonly DeepReadonly<LookupResult>[], target?: { sha256s: readonly string[]; originKeys: readonly string[] }): StaffInventoryResearchReference[] {
   const references: StaffInventoryResearchReference[] = [];
   for (const lookup of lookups) {
     if (lookup.authority !== 'host_authorized_setops_publication' || !lookup.publication || lookup.truncated
@@ -31,6 +31,29 @@ export function catalogResearchReferences(lookups: readonly DeepReadonly<LookupR
       || !Number.isSafeInteger(lookup.returnedCount) || lookup.returnedCount <= 0 || lookup.returnedCount !== lookup.candidates.length
       || !Number.isSafeInteger(lookup.totalCandidateCount) || lookup.totalCandidateCount !== lookup.returnedCount) continue;
     const { setApprovalId: _approval, reviewedAt, ...publication } = lookup.publication;
+    const sources = new Map(lookup.sources.map(source => [source.sourceId, source]));
+    const images = new Map(lookup.candidates.flatMap(candidate => candidate.images).map(image => [image.imageId, image]));
+    const independentImage = (imageId: string): boolean => {
+      if (!target) return true;
+      const seenSources = new Set<string>(), seenImages = new Set<string>();
+      const sourceAllowed = (sourceId: string): boolean => {
+        if (seenSources.has(sourceId)) return true;
+        seenSources.add(sourceId);
+        const source = sources.get(sourceId);
+        return Boolean(source && !target.sha256s.includes(source.sha256) && !source.originKeys.some(root => target.originKeys.includes(root))
+          && source.parentSourceIds.every(sourceAllowed));
+      };
+      const imageAllowed = (id: string): boolean => {
+        if (seenImages.has(id)) return true;
+        seenImages.add(id);
+        const image = images.get(id);
+        // A parent absent from this bounded lookup cannot establish independent
+        // image lineage. Keep the authoritative text, omit that visual example.
+        return Boolean(image && !target.sha256s.includes(image.sha256) && image.sourceIds.every(sourceAllowed)
+          && image.parentImageIds.every(imageAllowed));
+      };
+      return imageAllowed(imageId);
+    };
     for (const candidate of lookup.candidates) {
       if (candidate.applicability !== 'supported' || candidate.unresolvedScopeFields.length || fields.some(field => candidate.printing[field] === null)) continue;
       const catalogId = `catalog:${sha([publication, candidate.card.cardId, candidate.printing.printingId])}`;
@@ -52,6 +75,7 @@ export function catalogResearchReferences(lookups: readonly DeepReadonly<LookupR
       // Only reviewed diagnostics visible in this representative image are
       // exposed as image evidence. The depicted card can be a different card.
       for (const image of candidate.images.slice(0, 4)) {
+        if (!independentImage(image.imageId)) continue;
         const visibleFeatures = candidate.printing.diagnostics.filter(d => image.visibleDiagnosticIds.includes(d.id)).map(d => d.description).slice(0, 16);
         if (!visibleFeatures.length) continue;
         const entry = StaffInventoryResearchReferenceSchema.safeParse({ ...common, id: `reference:${sha([catalogId, image.imageId])}`, kind: 'reference', trust: 'approved_reference',
@@ -68,7 +92,7 @@ export function catalogResearchReferences(lookups: readonly DeepReadonly<LookupR
   return references.length > 24 ? [] : references;
 }
 
-export function createResearchCatalogAdapter(dependencies: { host?: CatalogHost; resolveScope?: CatalogScopeResolver } = {}) {
+export function createResearchCatalogAdapter(dependencies: { host?: CatalogHost; resolveScope?: CatalogScopeResolver; targetOriginKeys?: readonly string[] } = {}) {
   const host = async () => dependencies.host ?? await import('./setCatalogEvidence');
   async function load(description: StaffInventoryResearchDescription, photos: CatalogPhotos, signal: AbortSignal): Promise<ResearchCatalogSnapshot> {
     const context: StaffInventoryResearchCatalogContext = { schema_version: 1, status: 'no_publication', publications: [], scope_evidence: [], scope_receipt: null };
@@ -95,7 +119,10 @@ export function createResearchCatalogAdapter(dependencies: { host?: CatalogHost;
     }
     if (signal.aborted) throw new Error('Catalog lookup cancelled.');
     context.status = 'current';
-    return { context, references: catalogResearchReferences(lookups) };
+    return { context, references: catalogResearchReferences(lookups, {
+      sha256s: Object.values(photos).flatMap(photo => photo ? [photo.sha256, ...(photo.sourceSha256 ? [photo.sourceSha256] : [])] : []),
+      originKeys: dependencies.targetOriginKeys ?? [],
+    }) };
   }
   async function current(snapshot: ResearchCatalogSnapshot, signal: AbortSignal) {
     if (signal.aborted) return false;

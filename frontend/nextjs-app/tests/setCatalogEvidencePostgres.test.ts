@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PrismaClient } from '@prisma/client';
 import sharp from 'sharp';
-import { hashManifest, type PublicationPin } from '@tenkings/card-catalog-evidence';
+import { canonicalJson, hashManifest, prepareObservationProposal, type PublicationPin } from '@tenkings/card-catalog-evidence';
 import { createSetCatalogEvidenceService, type CatalogProposalAuthority } from '../lib/server/setCatalogEvidence';
 import { assertNoRetainedCatalogHistory } from '../lib/server/setOps';
 import type { AdminSession } from '../lib/server/admin';
 import publicationApi from '../pages/api/admin/set-ops/catalog/publication';
+import { recordStaffInventoryV2, claimStaffInventoryResearchV2, completeStaffInventoryResearchV2,
+  acquireStaffInventoryIntakeLeaseV2, releaseStaffInventoryIntakeLeaseV2, inventoryHash } from '@tenkings/database';
+import { createStaffInventoryCatalogReconciler, createCatalogProposalInbox } from '../lib/server/staffInventoryCatalogObservations';
+import { source as completedSourceFixture } from './catalogObservationFixtures';
 
 const hashBytes = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -142,11 +146,15 @@ test('real catalog writer, private lookup, exact retries, revoke races and retai
     await t.test('authenticated service proposals need no fake User; concurrent replay never changes catalog', async () => {
       const proposal = observationFixture('atlas');
       const authority: CatalogProposalAuthority = { producer: 'atlas', actorKind: 'service', actorRef: 'fixture:atlas:service', userId: null,
-        binding: { physicalCardRef: proposal.physicalCardRef, observationId: proposal.observationId, inputRevision: proposal.inputRevision, evidenceSha256: hashBytes('verified fixture host input') } };
+        binding: { physicalCardRef: proposal.physicalCardRef, observationId: proposal.observationId, inputRevision: proposal.inputRevision, evidenceSha256: prepareObservationProposal(proposal).proposalSha256 } };
       const count = await db.setCatalogEvidencePublication.count();
+      await assert.rejects(service.submitSetCatalogObservationProposal({ proposal, authority: { ...authority,
+        binding: { ...authority.binding, evidenceSha256: hashBytes('incorrect fixture evidence') } } }), /authenticated/);
       const outcomes = await Promise.all([service.submitSetCatalogObservationProposal({ proposal, authority }), service.submitSetCatalogObservationProposal({ proposal, authority })]);
       assert.deepEqual(outcomes.map(x => x.outcome).sort(), ['recorded', 'replay']); assert.equal(outcomes[0].proposalId, outcomes[1].proposalId);
-      await assert.rejects(service.submitSetCatalogObservationProposal({ proposal: { ...proposal, note: 'Different bytes' }, authority }), /conflicts/);
+      const changed = { ...proposal, note: 'Different bytes' };
+      await assert.rejects(service.submitSetCatalogObservationProposal({ proposal: changed,
+        authority: { ...authority, binding: { ...authority.binding, evidenceSha256: prepareObservationProposal(changed).proposalSha256 } } }), /conflicts/);
       await assert.rejects(service.submitSetCatalogObservationProposal({ proposal, authority: { ...authority, actorRef: 'another-service' } }), /conflicts/);
       await assert.rejects(service.submitSetCatalogObservationProposal({ proposal: { ...proposal, physicalCardRef: 'forged' }, authority }), /authenticated/);
       const row = await db.setCatalogObservationProposal.findUniqueOrThrow({ where: { id: outcomes[0].proposalId } }); assert.equal(row.submittedById, null);
@@ -189,6 +197,84 @@ test('real catalog writer, private lookup, exact retries, revoke races and retai
       const renewed = await service.publishSetCatalogEvidence(await request(successor(fresh, reviewed.publication)), actor);
       assert.deepEqual(await service.loadCurrentSetCatalogPublication({ setId }), renewed.publication);
       assert.equal(await db.setCatalogEvidencePublication.count({ where: { draftId } }), 3, 'prior immutable publications remain retained');
+    });
+    await t.test('a reviewed successor retains exact observation lineage while an altered proposal pin is refused', async () => {
+      const setId = pokemon.manifest.set.setId;
+      const oldPin = (await service.loadCurrentSetCatalogPublication({ setId }))!;
+      const oldRow = await db.setCatalogEvidencePublication.findUniqueOrThrow({ where: { id: oldPin.publicationId } });
+      const observation = observationFixture('inventory');
+      observation.observationId = 'fixture:linked:observation'; observation.images = [];
+      const prepared = prepareObservationProposal(observation);
+      const receipt = await service.submitSetCatalogObservationProposal({ proposal: observation,
+        authority: { producer: 'inventory', actorKind: 'service', actorRef: 'inventory:catalog-observations:v1', userId: null,
+          binding: { physicalCardRef: observation.physicalCardRef, observationId: observation.observationId, inputRevision: observation.inputRevision,
+            evidenceSha256: prepared.proposalSha256 } } });
+      const sourceId = 'fixture:linked:observation:source';
+      const manifest = JSON.parse(canonicalJson(oldRow.manifestJson));
+      manifest.revision++; manifest.supersedes = oldPin;
+      const ref = `catalog:sha256:${prepared.proposalSha256}`;
+      artifacts.set(ref, Buffer.from(canonicalJson(prepared.proposal)));
+      manifest.sources.push({ sourceId, kind: 'PHYSICAL_OBSERVATION', sourceRef: ref, sourceUrl: null, sha256: prepared.proposalSha256,
+        parentSourceIds: [], originKeys: prepared.proposal.sources.flatMap(source => source.originKeys) });
+      const link = { proposalId: receipt.proposalId, proposalSha256: receipt.proposalSha256, sourceIds: [sourceId], reviewNote: 'Synthetic observation reviewed with separate official checklist evidence.' };
+      const packet = { manifest, reviewEvidence: { ...pokemon.reviewEvidence,
+        sources: [...pokemon.reviewEvidence.sources, { sourceId, taxonomySourceId: null, classificationNote: 'Unreviewed observation, now explicitly reviewed as supporting context only.', grant }],
+        observations: [link] } };
+      await assert.rejects(service.previewSetCatalogEvidence({ ...packet, reviewEvidence: { ...packet.reviewEvidence,
+        observations: [{ ...link, proposalSha256: '0'.repeat(64) }] } }, actor), /immutable proposal/);
+      const published = await service.publishSetCatalogEvidence(await request(packet), actor);
+      assert.deepEqual(await service.loadCurrentSetCatalogPublication({ setId }), published.publication);
+      const stored = await db.setCatalogEvidencePublication.findUniqueOrThrow({ where: { id: published.publication.publicationId } });
+      assert.deepEqual((stored.verificationJson as { observations: unknown }).observations, [link]);
+      const audit = await db.setAuditEvent.findFirstOrThrow({ where: { action: 'set_ops.catalog.publish', metadataJson: { path: ['publicationId'], equals: stored.id } } });
+      assert.deepEqual((audit.metadataJson as { observations: unknown }).observations, [link]);
+    });
+    await t.test('actual Inventory saves contribute metadata after completion and pause for intake without changing saved cards', async () => {
+      const location = await db.location.create({ data: { name: 'DISPOSABLE CATALOG INTAKE', slug: 'catalog-intake-fixture',
+        address: 'Synthetic fixture', recentRips: [], locationType: 'hq' } });
+      for (const category of ['Sports cards', 'Pokémon']) {
+        const original = completedSourceFixture(category === 'Pokémon' ? 42 : 41, category);
+        const fixtureInput = JSON.parse(original.input), flattened = fixtureInput.description;
+        const description = { name: flattened.name, category, notes: 'PRIVATE FIXTURE NOTE', photo_key: fixtureInput.front_photo_key,
+          back_photo_key: fixtureInput.back_photo_key, planned_sales_channel: 'eBay',
+          card_details: { manufacturer: flattened.manufacturer, card_number: flattened.card_number, year: flattened.year,
+            set_name: flattened.set_name, variant: null, card_type: null } };
+        await db.$transaction(tx => recordStaffInventoryV2(tx, { action: 'add', request_id: randomUUID(), effective_at: new Date().toISOString(),
+          note: 'Disposable catalog bridge check', origin: 'purchase', quantity: 1, total_cost_cents: 123, cost_method: 'documented_unit',
+          expected_price_cents: null, destination: { location_id: location.id, kind: 'hq', machine_id: null, product_id: null, door_id: null },
+          stage: 'unprocessed', description }, user.id));
+        const claim = await db.$transaction(tx => claimStaffInventoryResearchV2(tx)); assert.ok(claim);
+        assert.equal(claim.input.description_hash, inventoryHash(description));
+        assert.notEqual(claim.input.description_hash, inventoryHash(claim.input.description));
+        const result = { ...JSON.parse(original.result), unit_id: claim.input.unit_id, description_event_id: claim.input.description_event_id,
+          description_hash: claim.input.description_hash, researched_at: new Date().toISOString() };
+        assert.equal(await db.$transaction(tx => completeStaffInventoryResearchV2(tx, { jobId: claim.jobId, leaseToken: claim.leaseToken, result })), true);
+      }
+      const beforeEvents = await db.inventoryWorkflowEventV2.findMany({ orderBy: { sequence: 'asc' } });
+      const beforeJobs = await db.staffInventoryResearchJobV2.findMany({ orderBy: { id: 'asc' } });
+      const beforeProposals = await db.setCatalogObservationProposal.count();
+      const scan = createStaffInventoryCatalogReconciler({ db,
+        env: { SET_CATALOG_EVIDENCE_ENABLED: 'true', STAFF_INVENTORY_CATALOG_CONTRIBUTIONS_ENABLED: 'true' } });
+      const lease = await db.$transaction(tx => acquireStaffInventoryIntakeLeaseV2(tx));
+      assert.equal((await scan({ remainingBudgetMs: 30000 })).status, 'intake');
+      assert.equal(await db.setCatalogObservationProposal.count(), beforeProposals);
+      await db.$transaction(tx => releaseStaffInventoryIntakeLeaseV2(tx, lease.leaseId));
+      const captured = await scan({ remainingBudgetMs: 30000 });
+      assert.equal(captured.recorded, 2); assert.equal(captured.invalid, 0); assert.equal(captured.failed, 0);
+      assert.equal((await scan({ remainingBudgetMs: 30000 })).status, 'wrapped');
+      assert.equal((await scan({ remainingBudgetMs: 30000 })).status, 'idle');
+      assert.equal(await db.setCatalogObservationProposal.count(), beforeProposals + 2);
+      assert.deepEqual(await db.inventoryWorkflowEventV2.findMany({ orderBy: { sequence: 'asc' } }), beforeEvents);
+      assert.deepEqual(await db.staffInventoryResearchJobV2.findMany({ orderBy: { id: 'asc' } }), beforeJobs);
+      const inbox = createCatalogProposalInbox(db), page = await inbox.list({ producer: 'inventory' }, actor);
+      const contributions = page.items.filter(item => item.physicalCardRef.startsWith('inventory-card:'));
+      assert.equal(contributions.length, 2);
+      for (const item of contributions) {
+        const detail = await inbox.detail({ proposalId: item.proposalId, proposalSha256: item.proposalSha256 }, actor);
+        assert.equal(hashBytes(detail.canonicalProposalJson), item.proposalSha256);
+        assert.deepEqual(JSON.parse(detail.canonicalProposalJson).images, []);
+        assert.equal(detail.canonicalProposalJson.includes('PRIVATE FIXTURE NOTE'), false);
+      }
     });
   } finally { await db.$disconnect(); }
 });

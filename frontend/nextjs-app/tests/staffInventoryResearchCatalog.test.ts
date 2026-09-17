@@ -37,6 +37,29 @@ test('sports and Pokémon use exact category/product/number queries and do not i
   }
 });
 
+test('a target card photo, crop ancestor, or physical-card origin cannot become its own visual reference', async () => {
+  for (const family of ['SPORTS', 'POKEMON'] as const) {
+    const f = harness(family);
+    const lookup = await f.host!.lookupPublishedSetCatalogEvidence({ publication: f.stored.pin,
+      query: { category: family, setId: f.manifest.set.setId, cardId: f.manifest.cards[0].cardId,
+        language: f.manifest.printings[0].language, edition: f.manifest.printings[0].edition }, consumer: 'inventory' });
+    const image = lookup.candidates.flatMap(c => c.images)[0]!;
+    assert.ok(catalogResearchReferences([lookup]).some(r => r.image));
+    for (const target of [
+      { sha256s: [image.sha256], originKeys: [] },
+      { sha256s: [], originKeys: lookup.sources.find(s => image.sourceIds.includes(s.sourceId))!.originKeys },
+    ]) {
+      const filtered = catalogResearchReferences([lookup], target);
+      assert.ok(filtered.some(r => !r.image));
+      assert.equal(filtered.some(r => r.image), false);
+    }
+    const crop = JSON.parse(JSON.stringify(lookup)) as LookupResult;
+    crop.candidates.flatMap(c => c.images).forEach(i => { i.parentImageIds = ['parent-outside-bounded-result']; });
+    assert.equal(catalogResearchReferences([crop], { sha256s: [], originKeys: [] }).some(r => r.image), false);
+    assert.ok(catalogResearchReferences([lookup], { sha256s: ['f'.repeat(64)], originKeys: ['different:physical:card'] }).some(r => r.image));
+  }
+});
+
 test('actual pure reader yields no authority without explicit scope, even when applicability was recorded supported', async () => {
   const f = harness(), adapter = createResearchCatalogAdapter({ host: f.host });
   const snapshot = await adapter.load(f.description, f.photos, f.signal);

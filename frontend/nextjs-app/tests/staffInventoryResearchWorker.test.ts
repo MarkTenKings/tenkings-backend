@@ -51,6 +51,27 @@ test('busy intake or full global capacity ends a worker without model calls', as
   const { deps, calls } = workerFixture(); deps.claim = async () => null;
   assert.equal((await runStaffInventoryResearchWorker(deps)).claimed, 0); assert.deepEqual(calls, []);
 });
+test('optional catalog scan is awaited after durable completion and cannot retry paid research', async t => {
+  const warnings: unknown[][] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => { warnings.push(args); });
+  const { deps, calls } = workerFixture(0); let time = 0; deps.now = () => time;
+  deps.complete = async () => { calls.push('complete'); time = 200000; return true; };
+  deps.reconcileCatalog = async input => {
+    assert.deepEqual(calls, ['claim', 'research', 'complete']);
+    assert.equal(input.remainingBudgetMs, 40000); assert.equal(input.signal.aborted, false);
+    await Promise.resolve(); calls.push('catalog'); throw new Error('private catalog payload');
+  };
+  assert.deepEqual(await runStaffInventoryResearchWorker(deps), { claimed: 1, completed: 1, failed: 0, superseded: 0 });
+  assert.deepEqual(calls, ['claim', 'research', 'complete', 'catalog']);
+  assert.deepEqual(warnings, [['[inventory-research] Optional catalog contribution deferred.']]);
+});
+test('idle invocations can catch up catalog proposals; cancelled invocations skip that work', async () => {
+  const { deps } = workerFixture(); let scans = 0; deps.claim = async () => null;
+  deps.reconcileCatalog = async input => { scans++; assert.equal(input.remainingBudgetMs, 240000); };
+  assert.equal((await runStaffInventoryResearchWorker(deps)).claimed, 0); assert.equal(scans, 1);
+  const parent = new AbortController(); parent.abort();
+  assert.equal((await runStaffInventoryResearchWorker(deps, parent.signal)).claimed, 0); assert.equal(scans, 1);
+});
 test('failed attempts are recorded safely; stale worker completion cannot be counted as saved', async () => {
   const { deps } = workerFixture(); let n = 0;
   deps.research = async () => { if (n++ === 0) throw new Error('unsafe provider response'); return {} as any; };

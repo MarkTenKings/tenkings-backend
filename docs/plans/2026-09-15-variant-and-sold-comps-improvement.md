@@ -1,19 +1,19 @@
 # Variant identification and sold-comparison improvement plan
 
-Date: September 15, 2026 (America/Los_Angeles). Revised September 16 following the requested Astra Ultra review and subsequent owner authorization. Status: **implementation started; first reviewed code candidate committed locally; rollout pending**.
+Date: September 15, 2026 (America/Los_Angeles). Revised September 16 following the requested Astra Ultra review and subsequent owner authorization. Status: **implementation frozen at945812ca with a qualified hosted preview; additive catalog schema and auth hostname patch are live; production web/research rollout remains pending**.
 
 ## Current implementation status — September 16
 
-After the review, Mark authorized implementation following coordination with ATLAS ASTRA SEPT 16. The agreed narrow extension was recorded in the canonical blueprint before building. Shared recognition/catalog foundations are committed at `b89cb020`; private research fixes and diagnostics are committed at `31b86535`. Neither commit has been deployed. The serving Inventory application remains the earlier Pokémon/photo-recovery release `38c95335`.
+After the review, Mark authorized implementation following coordination with ATLAS ASTRA SEPT 16. The agreed narrow extension was recorded in the canonical blueprint before building. Shared recognition/catalog foundations are committed at `b89cb020`; private research fixes and diagnostics at `31b86535`; reviewed catalog persistence, optional V4 integration and the clean main/staff site at `945812ca`. The additive catalog schema has been applied and independently checked; the auth-only hostname patch `6c953662` is live. The new web/research code is serving a qualified Vercel Preview and has not been promoted to production. The serving Inventory application remains the earlier Pokémon/photo-recovery release `38c95335`.
 
 | Reviewed delivery | Current state |
 | --- | --- |
 | False-rejection repairs and richer comp-image evidence | Repairs, diagnostics and bounded larger-primary-image support built/tested locally. Real provider qualification and deployment pending; larger-image flag remains off. |
-| One sports product and one Pokémon set | Shared catalog contract built. Durable reviewed publication storage and real source-backed pilot not yet implemented/published. |
-| Carefully verified reusable references | Contract validation, applicability and lineage rules built; operational review/publication integration remains pending. |
-| Two-way Inventory/Atlas reuse | Recognition package delivered and independently verified by Atlas. Atlas adapter/release and different-card reuse in both directions remain pending. |
-| Preserve intake responsiveness | Protected intake/save paths unchanged and functional checks passed. Measured idle-versus-saturated performance and real-phone acceptance remain pending. |
-| More than 90% correct comps across all cards | Evaluation plan exists; independent holdout and measured coverage result remain pending. No accuracy claim has been established. |
+| One sports product and one Pokémon set | Shared contract and durable review/publication storage built; additive schema live. Real manufacturer source packets prepared; exact taxonomy completion, reuse review and pilot publication pending. |
+| Carefully verified reusable references | Full review/media/current-authority integration, Inventory metadata contribution and human proposal inbox built and tested, including actual sole-writer → research → proposal composition. Real evidence approval, visual transfers and workload qualification remain pending. |
+| Two-way Inventory/Atlas reuse | Atlas adopted recognition V2 locally and independently reviewed the frozen optional catalog/service handoff. Its production adapter/release and different-card reuse in both directions remain pending. |
+| Preserve intake responsiveness | Functional checks passed. The3,200-save matrix and1,200-save diagnostic preserved all save invariants but failed individual timing margins. Additional-load activation and real-phone acceptance remain pending; no speed claim. |
+| More than 90% correct comps across all cards | Bounded offline holdout/scoring tooling is implemented. Real independent labels and measured all-card coverage remain pending; no90% accuracy claim. |
 
 See [first implementation and qualification record](2026-09-16-inventory-research-implementation.md) for completed tests and remaining work. The investigation/review descriptions below are dated historical evidence, including statements that no code changed during that review; they do not mean the later authorized implementation never started. The frozen Ultra-review archive remains unchanged.
 

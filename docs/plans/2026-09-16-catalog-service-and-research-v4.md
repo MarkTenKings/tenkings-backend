@@ -1,6 +1,6 @@
 # Catalog service and after-save research V4
 
-Status: implemented locally, **not deployed or enabled**. Runtime/source evidence takes precedence. This extends the approved shared-catalog plan without adding a second catalog or an intake dependency.
+Status: foundation frozen at `945812ca`; additive schema migration is applied and verified, and that application code has a qualified Vercel Preview. The subsequent Inventory contribution/inbox completion below is locally qualified. **Production catalog/service/V4 APIs are not released or enabled.** Runtime/source evidence takes precedence. This extends the approved shared-catalog plan without adding a second catalog or an intake dependency.
 
 ## Atlas transport
 
@@ -25,6 +25,18 @@ All responses are private/no-store. Errors are sanitized: 400 invalid request, 4
 
 The initial pilot uses explicit human staging. An authorized operator exports an eligible Atlas original/derived source packet with exact original roots, hashes, dimensions, depicted identity and permission basis; the SetOps review panel stages the chosen bytes into its private `catalog:sha256:<digest>` namespace, verifies them and presents the complete manifest and consumer grants for human review. Proposal acknowledgement alone transfers no image bytes and creates no reuse permission. A future automated transfer must preserve this same provenance/rights boundary; the current facade deliberately has no arbitrary object-copy operation.
 
+### Inventory contributions and human inbox
+
+`STAFF_INVENTORY_CATALOG_CONTRIBUTIONS_ENABLED=true` and `SET_CATALOG_EVIDENCE_ENABLED=true` enable a separate bounded scan after the scheduled research loop. Neither flag is enabled in production. The scan verifies current completed job input/result hashes against the retained completed attempt, then submits an unreviewed metadata-only proposal through the same immutable writer. Full saved-description hashes remain distinct from the flattened research identity. Private notes, grades, acquisition costs, storage keys and photo bytes do not enter proposals; no untouched-original lineage or image dimensions are invented.
+
+Each contribution binds the fixed Inventory service principal, a hashed physical-card reference, and the exact input/result revision. Source roots retain the Inventory unit and transmitted JPEG hashes. At most8 jobs are admitted per scan. Any active intake lease pauses admission; less than20seconds remaining invocation budget skips it. The nominal8-second window reserves3seconds, with transaction maxWait1second/timeout3seconds. A dedicated SetAuditEvent keyset checkpoint provides bounded wrap/recovery; deterministic invalid revisions are privately skip-audited, while transient writes remain pending. Only current completed revisions are reconciled; this does not backfill every historical superseded attempt. Contribution errors never retry paid research or undo a saved card.
+
+Human Set Ops reviewers use the separate **Observation inbox** inside **Reviewed shared catalog evidence**. Collect-only `GET /api/admin/set-ops/catalog/proposals` returns bounded pages or an exact proposal/hash detail. Selection/export creates an incomplete review-link template, with no source classification, image grant, staging or publication. Reviewers deliberately map source IDs and notes into optional `reviewEvidence.observations` for a fresh complete publication. The full verification hash, approval and audit retain those exact links; older verification documents retain absent fields and unchanged canonical bytes.
+
+Actual proposal source streams retain their transitive parent hashes, kinds, URLs and origin roots. Staged canonical proposal JSON is supporting review context and cannot occur in an image's source ancestry. Inventory reference selection excludes its target's own photo/source hashes, physical roots and derived ancestry; unknown missing image parents cannot establish an independent visual reference. Independent text remains usable. These restrictions prevent one physical card from becoming its own independent visual corroboration.
+
+Qualification:344 integrated focused frontend checks,13 actual publication/reader/Inventory-bridge PostgreSQL checks and the SQL guard check pass. The disposable database applied all96 local migrations; second application was an identical-ledger no-op. Actual sole-writer saves for both sports and Pokémon reach contribution capture and the pinned reviewer inbox, pause for an intake lease, and leave saved events/research results unchanged. Full frontend typecheck retains12 existing unrelated grader-test diagnostics; no new diagnostic. These are functional synthetic proofs, not production storage, real-card reuse or load/accuracy acceptance. Enabling contribution capture still requires the background-workload qualification.
+
 ## Inventory research V4
 
 `staff-inventory-research-v4` is explicit and optional. `STAFF_INVENTORY_RESEARCH_CATALOG_EVIDENCE=true` plus the catalog feature flag selects it in the existing background worker. The default remains V3; immutable V1–V3 results gain no default fields and retain their hashes. The save command, photo/identify intake, enqueue contract, concurrency limit and worker lease budgets are unchanged.
@@ -35,7 +47,7 @@ Only positive, fully scoped card/printing applicability becomes a research refer
 
 The result stores explicit `catalog_context`: exact publication pins, complete lookup hashes, separate coverage states/counts and photo-bound scope observations. V4 reference bindings cannot be inserted into an older result version. Immediately before accepting the new result, the engine rechecks every pinned publication. Revocation, replacement or unavailable validation removes new catalog authority, confirmed matches and selections; the catalog attempt stays recorded as unavailable.
 
-Remaining qualification before enabling: independent review of this V4 delta, current/legacy result compatibility, real reviewed sports/Pokémon pilot, media storage qualification, integrated build, and a paired benchmark of this additional catalog/scope workload. The existing V3 ABBA experiment alone does not qualify V4. Real-card accuracy and reciprocal Atlas reuse require real distinct cards and independent labels; synthetic tests cannot supply them.
+Independent review, current/legacy result compatibility, integrated build and disposable publication/private-media checks now pass. Remaining qualification before enabling: real reviewed sports/Pokémon pilot, production media storage qualification, and a paired benchmark of this additional catalog/scope workload. The existing V3 ABBA experiment alone does not qualify V4. Real-card accuracy and reciprocal Atlas reuse require real distinct cards and independent labels; synthetic tests cannot supply them.
 
 ## Review corrections and scope-effect adoption contract
 

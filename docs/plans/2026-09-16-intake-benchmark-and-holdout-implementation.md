@@ -86,3 +86,44 @@ Output contains overall and stratum counts, assertion/sold precision, raw/graded
 ```
 
 Observed focused scorer tests: 12/12 passing, including matched-without-estimate coverage, wrong confident comparison, active match, unknown accepted amount, failed-card denominator, version rejection, relisted-sale value exclusion, independently checked estimate arithmetic, all 200 synthetic failures remaining in the denominator, leakage/independence rejection, the frozen market window and paired-input identity. No real corpus is included; all-card accuracy remains unmeasured.
+
+## Completed scheduling diagnostic — retained FAIL
+
+This dated addendum supersedes the earlier statement that the diagnostic had not launched; it leaves the original failed matrix and its sealed evidence intact. Root approved one discriminating run and reserved a local build/DB/headless-browser quiet window. Collection finished in **17.28 minutes**, with the frozen **1,200 measured saves plus 120 warmups**, unchanged A/B application commits and unchanged margins. **Diagnostic timing verdict: FAIL.** The subset also cannot supply full-matrix qualification.
+
+All eight blocks passed the save/job/retry/rollback/history/photo/concurrency invariants and deterministic admission preflight; all four loaded blocks observed the required controlled DB overlap. All five loaded-versus-idle headroom comparisons passed. Lease, save acknowledgment, save transaction and save queue-lock comparisons passed, but two photo-verification comparisons failed:
+
+| Scenario | Pooled A/B photo sum p95 (ms) | Failed repetition | Repetition A/B p95 (ms) | Increase / margin (ms) |
+| --- | ---: | --- | ---: | ---: |
+| Three-session idle | 1.50 / 58.37 | 1 | 0.79 / 58.90 | 58.11 / 50 |
+| Three-session thumbnail | 2.34 / 58.63 | 2 | 1.43 / 60.70 | 59.27 / 50 |
+
+### What the independent traces establish
+
+The observer ran in a separate Node process using the existing observer connection; the total connection budget stayed **4 intake + 3 worker + 1 observer**. Its observed polling intervals had p95 **11.5–12.5 ms**. Absolute transaction/SQL spans and main-process event-loop ticks distinguish observable PostgreSQL waiting from elapsed application callbacks; database samples remain discrete observations, not continuous wait-duration measurements.
+
+The four thumbnail blocks A/B/B/A contained **6/3/9/15** leases over 50 ms: **33 total**, A 21 and B 12; idle had none. All 33 overlap more than 20 ms of late main-loop time. Of these, **24** have queue-query elapsed spans over 50 ms. Within each of those actual query spans, independent PostgreSQL samples observe a worker completion transaction holding the queue lock while waiting on **ClientRead**, meaning PostgreSQL is waiting for its client. The remaining nine slow leases have more than 50 ms after the queue query, through transaction completion. Overall, 27 slow leases have at least one independently observed advisory wait. Both arms exhibit the pattern; the previously audited lease/queue/worker source files remain byte-identical.
+
+A representative B case is block 06, session 0, sample 11, lease trace 210: **79.19 ms total**, **78.05 ms queue query**, and **69.83 ms late-loop overlap**. During that interval the observer repeatedly sees the lease waiting on the advisory lock, worker completion trace 209 holding it in `idle in transaction / ClientRead`, another intake transaction at its journal read, and a further intake awaiting an advisory lock. The controlled first-save barrier cannot explain sample 11. Exact spans and sampled rows are preserved in `supplemental-validation.json`.
+
+These observations establish **real harness DB lock waits together with delayed shared-process callbacks**. They support shared-process scheduling as a contributor to lock duration; they do not identify a specific synchronous function or assign all elapsed time to CPU versus PostgreSQL. No CPU stack profile was collected. Journal replay/validation work is a possible contributor, not a demonstrated cause. The approximately 80 ms event-loop tail exists in idle and loaded blocks. Small changes in how many leases enter that tail can move nearest-rank p95 sharply: eight of 150 samples suffice. A deterministic periodic schedule has not been established.
+
+### Why photo verification has an idle tail too
+
+The frozen handler verifies Front and Back with `Promise.all`; the harness metric **adds the two parallel elapsed metadata operations**. Shared callback delay therefore contributes to both terms. Among 68 samples whose photo sum exceeds 50 ms, typical sums of **58–62 ms** fit within **29–31 ms** from recognition-lease release to save-transaction request, alongside late main-loop ticks. That enclosing interval includes request setup/validation, so it is a conservative wall-time bound rather than a direct photo-stage measurement. None of these slow photo samples is the controlled first-save barrier sample. The tail also occurs with research workers idle, so background worker queue contention does not explain it by itself.
+
+The summed metric was frozen before collection and its failed gate stands. It cannot now be replaced with a wall metric to declare a pass. Direct photo start/end spans were not collected; `photo-tail-bounds.json` preserves the supplemental bounds without changing analysis thresholds.
+
+### Limits, archive and smallest next proof
+
+The harness **co-locates simulated clients, intake writer, metadata verification and research-worker callback work in one Node process**. Actual deployed Vercel route/function isolation and per-instance concurrency have not been qualified here. These traces establish local harness behavior in both A/B arms, **not a production regression or a passing release gate**. No runtime throttle or source change is justified solely by this evidence.
+
+Compared with the original matrix, this run adds explicit UTF8, three untimed admission jobs, one backend-PID query per observed transaction, an independent observer replacing the original observer, 10 ms event-loop ticks and buffered absolute spans. These changes and analysis rules were sealed before sampling; their overhead was not separately quantified. Neither run qualifies physical-camera/upload/recognition latency, real-provider variance, larger images, later catalog/V4 integration or real-card accuracy.
+
+New durable private archive: `/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260916-intake-scheduling-diagnostic`. **78 members / 91,017,723 bytes**, all hashes verified by readback, owner-only access. It contains the complete diagnostic and preflight, exact executed code, preregistration and frozen analyzer, raw samples/observer records, all reports and supplemental trace validation. Every raw sample matches its block report; all 1,200 measured leases have matching traces. Both runs cleaned up their owned clusters and temporary source trees. The original archive is unchanged.
+
+- New archive `manifest.json` SHA256: `b45ea375293ac326463215155ad845942e1987e24a0c454b72a7b959a9597109`.
+- Diagnostic `summary.json` SHA256: `11ce23665b3703abb7bff95a353d863912b39203672accc8faf294e263f5fbb1`.
+- Frozen runner / child SHA256: `776f92ba23a714378cb7304435920b861046f529f3d2743038279690c6cbfeac` / `76a55776ac436a5460d93353fac4efed70a6bfd8d3fad3116063fc06f701050c`.
+
+**Recommended next proof, not launched:** first establish the deployed route/function boundaries and instance concurrency. Then preregister one three-session idle/thumbnail ABBA diagnostic with an external load-driver process, an intake-route process and a separate research-worker process, modeling the verified intake-instance arrangement. Keep source refs, work, 4+3+1 connections, margins and original metrics fixed; add direct Front/Back and combined photo wall spans plus event-loop spans for each process. Separating intake and worker execution is necessary to test whether the shared-process coupling explains these tails; it is not sufficient to reproduce Vercel automatically. Preserve both failures, compare mechanisms, and require the full matrix plus device/provider proof before any release claim. No additional benchmark was launched or runtime source altered after this diagnostic.

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { CatalogContractError, canonicalJson, createPublishedCatalogReader, hashManifest, prepareObservationProposal, validateManifest,
   type CatalogManifest, type CatalogQuery, type DeepReadonly, type PublicationPin } from '@tenkings/card-catalog-evidence';
 import type { AdminSession } from './admin';
+import { assertCatalogObservationReviews } from './setCatalogObservationReview';
 import { HttpError } from './adminSessionAuthority';
 import { assertCatalogHuman, catalogEvidenceEnabled, requireCatalogEnabled } from './setCatalogEvidenceAuth';
 import { assertCatalogGrants, hashCatalogVerification, parseCatalogVerification, prepareCatalogVerification,
@@ -26,6 +27,7 @@ function conflict(message: string): never { throw new HttpError(409, message); }
 const normalize = (s: string) => s.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
 
 async function assertTaxonomy(tx: Tx, manifest: DeepReadonly<CatalogManifest>, verification: CatalogVerification) {
+  await assertCatalogObservationReviews(tx, manifest, verification.observations);
   const setId = manifest.set.setId;
   const [programs, cards, parallels, variations, scopes, sources] = await Promise.all([
     tx.setProgram.findMany({ where: { id: { in: manifest.programs.map(p => p.rowId) }, setId } }),
@@ -217,7 +219,8 @@ export function createSetCatalogEvidenceService(dependencies: { db?: PrismaClien
       const reviewedAt = new Date(), publicationId = randomUUID();
       const approval = await tx.setApproval.create({ data: { draftId: s.draft.id, draftVersionId: version.id, decision: 'APPROVED', versionHash: version.versionHash,
         approvedById: actor.user.id, reason: 'Explicit complete catalog evidence review', createdAt: reviewedAt,
-        diffSummaryJson: { catalogPublicationId: publicationId, manifestSha256: request.manifestSha256, verificationSha256: request.verificationSha256 } } });
+        diffSummaryJson: { catalogPublicationId: publicationId, manifestSha256: request.manifestSha256, verificationSha256: request.verificationSha256,
+          ...(prepared.verification.observations ? { observations: prepared.verification.observations } : {}) } } });
       const row = await tx.setCatalogEvidencePublication.create({ data: { id: publicationId, draftId: s.draft.id, draftVersionId: version.id, setApprovalId: approval.id,
         schemaVersion: manifest.schemaVersion, revision: manifest.revision, manifestJson: JSON.parse(canonicalJson(manifest)), manifestSha256: request.manifestSha256,
         verificationJson: JSON.parse(canonicalJson(prepared.verification)), verificationSha256: request.verificationSha256,
@@ -225,7 +228,8 @@ export function createSetCatalogEvidenceService(dependencies: { db?: PrismaClien
       const persisted = await tx.setCatalogEvidencePublication.findUniqueOrThrow({ where: { id: row.id } });
       if (hashManifest(persisted.manifestJson) !== request.manifestSha256 || hashCatalogVerification(persisted.verificationJson) !== request.verificationSha256) conflict('Persisted catalog hash mismatch.');
       await tx.setAuditEvent.create({ data: { draftId: s.draft.id, setId: s.draft.setId, draftVersionId: version.id, approvalId: approval.id, actorId: actor.user.id,
-        action: 'set_ops.catalog.publish', status: 'SUCCESS', metadataJson: { publicationId: row.id, manifestSha256: row.manifestSha256, verificationSha256: row.verificationSha256, supersedesPublicationId: row.supersedesPublicationId } } });
+        action: 'set_ops.catalog.publish', status: 'SUCCESS', metadataJson: { publicationId: row.id, manifestSha256: row.manifestSha256, verificationSha256: row.verificationSha256, supersedesPublicationId: row.supersedesPublicationId,
+          ...(prepared.verification.observations ? { observations: prepared.verification.observations } : {}) } } });
       await tx.setDraft.update({ where: { id: s.draft.id }, data: { currentCatalogPublicationId: row.id } });
       return { publication: pinFor(row, s.draft.setId), outcome: 'recorded' as const, current: true };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15_000 });
@@ -262,7 +266,8 @@ export function createSetCatalogEvidenceService(dependencies: { db?: PrismaClien
     requireCatalogEnabled();
     const authority = proposalAuthoritySchema.parse(input.authority), prepared = prepareObservationProposal(input.proposal);
     const p = prepared.proposal;
-    if (p.producer !== authority.producer || p.physicalCardRef !== authority.binding.physicalCardRef || p.observationId !== authority.binding.observationId || p.inputRevision !== authority.binding.inputRevision) throw new HttpError(403, 'Proposal does not match its authenticated physical-record binding.');
+    if (p.producer !== authority.producer || p.physicalCardRef !== authority.binding.physicalCardRef || p.observationId !== authority.binding.observationId
+      || p.inputRevision !== authority.binding.inputRevision || prepared.proposalSha256 !== authority.binding.evidenceSha256) throw new HttpError(403, 'Proposal does not match its authenticated physical-record binding.');
     const bindingSha256 = hash(authority), proposalId = randomUUID();
     // INSERT ON CONFLICT keeps the transaction usable under concurrent retries.
     return db.$transaction(async tx => {

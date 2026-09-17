@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import type { CatalogManifest, PublicationPin } from '@tenkings/card-catalog-evidence';
+import SetCatalogProposalInbox from './SetCatalogProposalInbox';
 
 type ReviewPacket = { manifest: CatalogManifest; reviewEvidence: unknown };
 type Preview = { manifest: CatalogManifest; manifestSha256: string; verificationSha256: string; verification: unknown;
@@ -66,6 +67,7 @@ export default function SetCatalogEvidenceReview({ token, setId, canReview, canA
   return <details className={panel}>
     <summary className="cursor-pointer font-semibold text-white">Reviewed shared catalog evidence</summary>
     <p className="my-3 text-sm text-slate-300">Prepare a clean, approved SetOps draft first. This separate review publishes the complete identity, applicability, source and image evidence. Private review artifacts stay internal. Missing image coverage stays unknown.</p>
+    <SetCatalogProposalInbox token={token} canReview={canReview} />
     <div className="flex flex-wrap gap-3">
       <button className={button} disabled={busy || !setId || !canReview || !token} onClick={() => void run(async active => {
         const result = await api(`taxonomy?setId=${encodeURIComponent(setId)}`);

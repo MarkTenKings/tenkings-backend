@@ -11,6 +11,7 @@ export type StaffInventoryResearchWorkerDependencies = {
   research: (input: StaffInventoryResearchClaimV2['input'], signal: AbortSignal, claim?: StaffInventoryResearchClaimV2) => ReturnType<typeof researchStaffInventoryCard>;
   complete: (claim: StaffInventoryResearchClaimV2, result: Awaited<ReturnType<typeof researchStaffInventoryCard>>) => Promise<boolean>;
   fail: (claim: StaffInventoryResearchClaimV2, error: StaffInventoryResearchError) => Promise<boolean>;
+  reconcileCatalog?: (input: { remainingBudgetMs: number; signal: AbortSignal }) => Promise<unknown>;
   now?: () => number;
 };
 
@@ -19,7 +20,7 @@ export const staffInventoryResearchWorkerDependencies: StaffInventoryResearchWor
   claim: () => prisma.$transaction(tx => claimStaffInventoryResearchV2(tx, { leaseMs: 180000, maxConcurrent: 2 }), transactionOptions),
   research: (input, signal, claim) => {
     if (process.env.STAFF_INVENTORY_RESEARCH_CATALOG_EVIDENCE !== 'true' || process.env.SET_CATALOG_EVIDENCE_ENABLED !== 'true') return researchStaffInventoryCard(input, { loadReferences: loadStaffInventoryResearchReferences, archiveCandidateImage: archiveStaffInventoryResearchImage }, signal);
-    const catalog = createResearchCatalogAdapter({ resolveScope: researchCatalogScopeResolver({ catalogScopeInvocation: { attemptId: claim ? `inventory:${claim.jobId}:${claim.attempt}` : `inventory:${randomUUID()}`, invocationId: `scope:${randomUUID()}` } }) });
+    const catalog = createResearchCatalogAdapter({ targetOriginKeys: [`inventory-unit:${input.unit_id}`], resolveScope: researchCatalogScopeResolver({ catalogScopeInvocation: { attemptId: claim ? `inventory:${claim.jobId}:${claim.attempt}` : `inventory:${randomUUID()}`, invocationId: `scope:${randomUUID()}` } }) });
     return researchStaffInventoryCard(input, { loadCatalog: catalog.load, isCatalogCurrent: catalog.current, loadReferenceImage: catalog.image, archiveCandidateImage: archiveStaffInventoryResearchImage }, signal);
   },
   complete: (claim, result) => prisma.$transaction(tx => completeStaffInventoryResearchV2(tx, { jobId: claim.jobId, leaseToken: claim.leaseToken, result }), transactionOptions),
@@ -27,6 +28,11 @@ export const staffInventoryResearchWorkerDependencies: StaffInventoryResearchWor
     jobId: claim.jobId, leaseToken: claim.leaseToken, errorCode: error.code.toUpperCase(), errorMessage: error.message,
     retryable: ['provider_error', 'timeout', 'cancelled'].includes(error.code),
   }), transactionOptions),
+  reconcileCatalog: async input => {
+    if (process.env.SET_CATALOG_EVIDENCE_ENABLED !== 'true' || process.env.STAFF_INVENTORY_CATALOG_CONTRIBUTIONS_ENABLED !== 'true') return;
+    const { reconcileStaffInventoryCatalogObservations } = await import('./staffInventoryCatalogObservations');
+    return reconcileStaffInventoryCatalogObservations(input);
+  },
 };
 
 /** Await real durable work in a scheduled invocation. No phone, polling request,
@@ -76,6 +82,12 @@ export async function runStaffInventoryResearchWorker(deps = staffInventoryResea
         controller.signal.removeEventListener('abort', abortAttempt);
         attemptController.abort();
       }
+    }
+    // Completed results are already durable. This optional, bounded scan has
+    // its own cursor and must never retry paid research when contribution fails.
+    if (!controller.signal.aborted && deps.reconcileCatalog) {
+      try { await deps.reconcileCatalog({ remainingBudgetMs: Math.max(0, runBudgetMs - (now() - started)), signal: controller.signal }); }
+      catch { console.warn('[inventory-research] Optional catalog contribution deferred.'); }
     }
     return counts;
   } finally { clearTimeout(timer); parent?.removeEventListener('abort', abort); controller.abort(); }

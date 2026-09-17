@@ -6,6 +6,7 @@ import { getStorageMode, openStorageObjectRead, uploadPrivateChecksumBuffer } fr
 import { HttpError } from './adminSessionAuthority';
 import { assertCatalogHuman, requireCatalogEnabled } from './setCatalogEvidenceAuth';
 import type { AdminSession } from './admin';
+import { catalogObservationReviewSchema } from './setCatalogObservationReview';
 
 export type CatalogConsumer = 'inventory' | 'atlas';
 export const CATALOG_ARTIFACT_MAX_BYTES = 4 * 1024 * 1024;
@@ -18,6 +19,7 @@ export const catalogReviewEvidenceSchema = z.object({
   sources: z.array(z.object({ sourceId: z.string().min(1).max(256), taxonomySourceId: z.string().min(1).max(256).nullable(),
     classificationNote: z.string().trim().min(1).max(1000), grant: grantSchema }).strict()).max(5000),
   images: z.array(z.object({ imageId: z.string().min(1).max(256), grant: grantSchema }).strict()).max(5000),
+  observations: catalogObservationReviewSchema.optional(),
 }).strict();
 export type CatalogReviewEvidence = z.infer<typeof catalogReviewEvidenceSchema>;
 export type CatalogVerification = CatalogReviewEvidence & { schemaVersion: 'setops-catalog-verification/v1';
@@ -77,7 +79,8 @@ export async function stageSetCatalogArtifact(input: unknown, actor: AdminSessio
 
 export function parseCatalogVerification(value: unknown): CatalogVerification {
   const parsed = z.object({ schemaVersion: z.literal('setops-catalog-verification/v1'), sources: catalogReviewEvidenceSchema.shape.sources,
-    images: catalogReviewEvidenceSchema.shape.images, artifacts: z.array(z.object({ ref: z.string(), sha256: shaSchema,
+    images: catalogReviewEvidenceSchema.shape.images, observations: catalogReviewEvidenceSchema.shape.observations,
+    artifacts: z.array(z.object({ ref: z.string(), sha256: shaSchema,
       byteSize: z.number().int().min(1).max(CATALOG_ARTIFACT_MAX_BYTES) }).strict()).max(10000) }).strict().parse(value);
   if (Buffer.byteLength(canonicalJson(parsed)) > 800_000) throw new HttpError(400, 'Catalog verification is too large.');
   for (const item of parsed.artifacts) if (catalogArtifactKey(item.ref) !== `set-catalog-evidence/${item.sha256}.bin`) throw new HttpError(400, 'Artifact verification mismatch.');
