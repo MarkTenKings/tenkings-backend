@@ -39,6 +39,7 @@ class ByteTransport {
     if (this.intercept) { const special = await this.intercept(name, input, abortSignal); if (special) return special.value; }
     if (name === 'PutObjectCommand') {
       assert.equal(input.IfNoneMatch, '*');
+      assert.equal(input.ChecksumAlgorithm, 'SHA256');
       assert.equal(input.ChecksumSHA256, Buffer.from(sha256(input.Body), 'hex').toString('base64'));
       assert.equal(input.ContentLength, input.Body.length);
       if (this.current(input.Key)) throw error('PreconditionFailed', 412);
@@ -304,8 +305,24 @@ test('direct PUT is locally signed with immutable checksum, length, conditional 
   for (const name of ['content-length', 'content-type', 'if-none-match', 'x-amz-checksum-sha256', 'x-amz-meta-atlas-kind', 'x-amz-meta-atlas-binding-sha256']) assert.ok(signedHeaders.includes(name), name);
   assert.equal(upload.headers['If-None-Match'], '*'); assert.equal(upload.headers['Content-Type'], 'application/octet-stream');
   assert.equal(upload.headers['x-amz-checksum-sha256'], Buffer.from(sha256(bytes), 'hex').toString('base64'));
+  assert.equal(signed.searchParams.get('x-amz-sdk-checksum-algorithm'), 'SHA256');
+  // The SDK signs the algorithm in the query; browsers need no extra CORS header.
+  assert.equal(upload.headers['x-amz-sdk-checksum-algorithm'], undefined);
   assert.equal(signed.pathname, '/synthetic-bucket/test/originals/upload-front');
   client.destroy();
+});
+
+test('provider success without checksum enforcement cannot admit corrupted original bytes', async () => {
+  const client = new ByteTransport(), store = storage(client), uploadPlan = plan();
+  client.omitChecksum = true;
+  client.afterPut = value => { value.bytes[25] ^= 1; };
+  await assert.rejects(store.writeOriginal({ uploadPlan, bytes }), code('PHOTO_STORAGE_CONFLICT'));
+  assert.equal(putCount(client), 1);
+  await assert.rejects(store.decodeOriginal({ uploadPlan, decodeLimits }), code('PHOTO_STORAGE_CONFLICT'));
+  // Failed integrity preserves the original object for reconciliation; no retry,
+  // delete, derivative, or decoder can turn the provider's 200 into acceptance.
+  assert.equal(client.objects.size, 1);
+  assert.equal(client.calls.some(call => /Delete|Copy|List/.test(call.name)), false);
 });
 
 test('finite resource bounds and malformed cancellation fail before transport work', async () => {

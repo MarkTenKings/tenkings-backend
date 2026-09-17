@@ -73,23 +73,36 @@ export function createManualArtifactStore({ transport, prefix = 'atlas-manual-ar
 export function createS3ManualArtifactTransport({ client, bucket, PutObjectCommand, GetObjectCommand }) {
   requireThat(client && typeof client.send === 'function' && typeof bucket === 'string' && bucket.length > 0);
   return Object.freeze({
-    putIfAbsent: ({ key, bytes, sha256, lineageSha256, signal }) => client.send(new PutObjectCommand({
-      Bucket: bucket, Key: key, Body: bytes, ContentLength: bytes.length, ContentType: 'application/json',
-      IfNoneMatch: '*', ChecksumSHA256: Buffer.from(sha256, 'hex').toString('base64'),
-      Metadata: { 'atlas-manual-lineage-sha256': lineageSha256 },
-    }), { abortSignal: signal }),
+    putIfAbsent({ key, bytes, sha256, lineageSha256, signal }) {
+      requireThat(Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= LIMIT
+        && /^[a-f0-9]{64}$/.test(sha256) && /^[a-f0-9]{64}$/.test(lineageSha256), 503, 'MANUAL_ARTIFACT_UNVERIFIED');
+      // Own and verify the exact payload before the asynchronous SDK boundary.
+      // A checksum header is not proof that an S3-compatible provider enforces it.
+      const owned = Buffer.from(bytes);
+      requireThat(digest(owned) === sha256, 503, 'MANUAL_ARTIFACT_UNVERIFIED');
+      return client.send(new PutObjectCommand({
+        Bucket: bucket, Key: key, Body: owned, ContentLength: owned.length, ContentType: 'application/json',
+        IfNoneMatch: '*', ChecksumAlgorithm: 'SHA256', ChecksumSHA256: Buffer.from(sha256, 'hex').toString('base64'),
+        Metadata: { 'atlas-manual-lineage-sha256': lineageSha256 },
+      }), { abortSignal: signal });
+    },
     async read({ key, maxBytes, signal }) {
-      const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }), { abortSignal: signal });
+      requireThat(Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes <= LIMIT, 503, 'MANUAL_ARTIFACT_UNVERIFIED');
+      const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key, ChecksumMode: 'ENABLED' }), { abortSignal: signal });
       const body = result.Body; let length = 0; const chunks = [];
       try {
         requireThat(result.ContentLength === maxBytes && result.ContentType === 'application/json'
-          && !result.ContentEncoding && !result.ContentRange && body?.[Symbol.asyncIterator], 503, 'MANUAL_ARTIFACT_UNVERIFIED');
+          && result.DeleteMarker !== true && result.ContentEncoding === undefined && result.ContentRange === undefined
+          && body?.[Symbol.asyncIterator], 503, 'MANUAL_ARTIFACT_UNVERIFIED');
         for await (const chunk of body) {
           requireThat(!signal?.aborted, 503, 'MANUAL_ARTIFACT_READ_ABORTED');
           const bytes = Buffer.from(chunk); length += bytes.length;
           requireThat(length <= maxBytes, 503, 'MANUAL_ARTIFACT_UNVERIFIED'); chunks.push(bytes);
         }
-        return { bytes: Buffer.concat(chunks), contentType: result.ContentType,
+        const bytes = Buffer.concat(chunks, length);
+        requireThat(length === maxBytes && (result.ChecksumSHA256 === undefined
+          || result.ChecksumSHA256 === Buffer.from(digest(bytes), 'hex').toString('base64')), 503, 'MANUAL_ARTIFACT_UNVERIFIED');
+        return { bytes, contentType: result.ContentType,
           lineageSha256: result.Metadata?.['atlas-manual-lineage-sha256'] };
       } finally { body?.destroy?.(); }
     },

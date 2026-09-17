@@ -102,7 +102,7 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
   function putInput(expected, bytes) {
     return { Bucket: bucket, Key: expected.object.key, ...(bytes ? { Body: bytes } : {}),
       ContentLength: expected.content.byteCount, ContentType: expected.content.mime,
-      ChecksumSHA256: digestBase64(expected.content.sha256), IfNoneMatch: '*',
+      ChecksumAlgorithm: 'SHA256', ChecksumSHA256: digestBase64(expected.content.sha256), IfNoneMatch: '*',
       Metadata: { 'atlas-kind': expected.kind, 'atlas-binding-sha256': expected.bindingSha256 } };
   }
   function headers(response, expected, requiredVersion = expected.object.versionId) {
