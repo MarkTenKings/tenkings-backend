@@ -26,17 +26,18 @@ const packet = JSON.parse(readFileSync(new URL(
   };
 };
 
-async function invoke(handler: Handler, method: "GET" | "POST", body: unknown, query: Record<string, string> = {}) {
+async function invoke(handler: Handler, method: "GET" | "POST", body: unknown, query: Record<string, string> = {}, headers = { authorization: "Bearer offline-pokemon-review" } as Record<string, string>) {
   let status = 0;
   let response: unknown;
+  const responseHeaders: Record<string, string> = {};
   const res = {
     status(value: number) { status = value; return this; },
     json(value: unknown) { response = value; return this; },
-    setHeader() {},
+    setHeader(name: string, value: string) { responseHeaders[name.toLowerCase()] = value; },
   };
-  await handler({ method, body, query, headers: { authorization: "Bearer offline-pokemon-review" },
+  await handler({ method, body, query, headers,
     socket: { remoteAddress: "127.0.0.1" } } as NextApiRequest, res as unknown as NextApiResponse);
-  return { status, body: response };
+  return { status, body: response, headers: responseHeaders };
 }
 
 test("all 138 real source rows survive ingestion, review and one visible edit without publication", async (context) => {
@@ -139,7 +140,11 @@ test("all 138 real source rows survive ingestion, review and one visible edit wi
       import("../lib/server/taxonomyV2Core"),
     ]);
 
+    const unsigned = await invoke(ingest, "GET", null, {}, {});
+    assert.equal(unsigned.status, 401);
+    assert.equal(unsigned.headers["cache-control"], "private, no-store");
     const queued = await invoke(ingest, "POST", request);
+    assert.equal(queued.headers["cache-control"], "private, no-store");
     assert.equal(queued.status, 200, JSON.stringify(queued.body));
     assert.equal(jobs.length, 1);
     assert.equal(jobs[0].status, "QUEUED");

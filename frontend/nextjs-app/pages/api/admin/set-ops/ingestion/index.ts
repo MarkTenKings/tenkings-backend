@@ -101,6 +101,7 @@ function toJobRow(job: {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
+  res.setHeader("Cache-Control", "private, no-store");
   let admin: AdminSession | null = null;
   const attemptedSetId = normalizeSetLabel(String(req.body?.setId ?? req.query.setId ?? ""));
 

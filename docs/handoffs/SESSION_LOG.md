@@ -33403,3 +33403,10 @@ By enabling Rip It Live, I confirm:
 
 - Push the committed Inventory candidate through e66b0e2f plus this documentation handoff to its existing release branch for a migration-disabled Git-connected Vercel Preview build. This includes0797 editor metadata preservation, the pure unintegrated ordinary-sale resolver, exact Preview diagnostic port, prepared-checklist UI and sports evidence packet. Ongoing default-off engine integration is uncommitted and excluded from this push.
 - Verify exact source/READY/native Sharp and unchanged default-off feature configuration. Do not promote production, run migrations, import a live draft or alter the serving collect aliases. Phone acceptance remains pending; no synthetic inventory writes.
+
+
+### September17 — Checklist Preview qualified; private ingestion cache fix
+
+- Exact1833d7fdb723ba22c16846c7a6f1df4de483cd19 is READY as dpl_2uy6ST1vfnFWfDeefCHkoc5xv6b7. Hosted Linux/nativeSharp0.34.5 and shared/calibration trace verification passes. Fresh normal-CLI environment pull retains only boolean classifications: migrations/catalog/diagnostic false; contribution/full-res/sale-detail flags absent/defaultoff. No migration or feature activation.
+- Hosted pages /admin/set-ops-review and /admin/physical-inventory return200 with empty unauthenticated pageProps; inventory and diagnostic APIs return401/private-no-store. The additional ingestion API check returned401 but inherited public,max-age=0,must-revalidate instead of private,no-store. Original4/5 receipt retained; this was an actual missing response header, not a changed test expectation.
+- Added private,no-store at the existing ingestion handler entry. Actual-handler fixture verifies both unsigned401 and authenticated queue response headers while preserving all138 rows;2 workflow checks and two-file lint pass. No auth, permission, ingestion/write behavior changed. Logs:/private/tmp/tenkings-ingestion-private-cache-{test,lint}-20260917.log. Next hosted build must verify corrected header.
