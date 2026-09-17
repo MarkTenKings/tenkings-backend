@@ -30,4 +30,9 @@ Any integration needs explicit versioned source evidence, duplicate-search recon
 - Sports report SHA `2b9baf470203f20e3db411b16c4fd1dcc08d51fe7fbbea20335606c5907362eb`; Pokémon `ba127ada9c68e6333333ce093decd37db94dc22bb7dd2fee1c0bd3ba32350483`; parallel `2226f62a3c405d14066a1486c1345329ac898dd6e2a6c7233b3df31b9d13cc15`; active `0ea29b2fe1620038ba82a1841e60b2c30a437a0344764e5cadb1c7a052e77ac7`.
 - The sports-parallel image sample and detail sample are different listing IDs, each independently identified in its report; no cross-item evidence is combined.
 
-Execution is being disabled again after these four observations; record the replacement deployment and disabled human-session check before marking that closeout complete. Production web/DNS and larger-image research remain unchanged.
+Execution was disabled again after these four observations; the replacement deployment and signed-in disabled check are recorded below. Production web/DNS and larger-image research remain unchanged.
+
+
+## Experiment closeout — observed September 17
+
+Execution is now disabled in exact branch configuration. Source `cc1ccc10b3ad6cccf7743f914ca60c793a3676ed` deployed READY as `dpl_FSXWqJbRmhG4AuqoPQNt6jJsmPrk` on the stable main Preview alias. After reloading the normal signed-in diagnostic page, its status reads “Execution is disabled. The plan can be reviewed without provider requests.” and the run button is disabled. No fifth provider check ran. A fresh deployment receipt confirms collect and both existing production aliases remain on `dpl_Bo43ux8vAyyDe6WEKy4Q1A6iT6sj`. Phone acceptance and main-domain cutover remain pending.

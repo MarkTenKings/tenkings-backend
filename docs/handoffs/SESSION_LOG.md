@@ -33115,3 +33115,14 @@ By enabling Rip It Live, I confirm:
 - Exact main Preview5aeff411 is READY as dpl_CY2FmT9BLbGPTtsteA8rEc4uDfim; Linux/native Sharp and four unsigned route/cache checks pass. Current human session successfully reviewed the fixed plan and executed four distinct cohorts once each: four searches/four details/eight supplied-image full decodes, all observed; no model/DB/inventory/research write or production change. Of25 sold results,24 lack the search Best Offer flag; two ordinary exact-item details independently supplyfalse with agreeingUSD amounts/date/positive sale banner. The accepted-offer example remains unrealized. Active-control search saysactive while its detail saysended=true with relative3d20h/no sale banner, preserving the need for affirmative sold authority. Sold image examples225→500px; active500→1600px. Full observation and limitations: docs/plans/2026-09-17-sold-comps-provider-observations.md.
 - Private eight-file provider archive manifest21b289fe4ba11aa52bf3658895593a37d78c5db4a3d8e19e5cb76b88ffa256f2; no credential values retained. Next repair must preserve exact search/detail evidence and recompute eligibility, not silently overwrite missing flags. Additional workload and all-card accuracy remain unqualified.
 - Planned closeout: set only the existing branch-scoped diagnostic execution flag tofalse, push documentation-only main handoff to build the same application with execution disabled, then verify the normal human plan has a disabled action and production alias is unchanged. Keep exact Preview host configuration for plan review; no additional provider check or flag activation elsewhere.
+
+
+### September 17 — Provider experiment closeout verified
+
+- Exact branch execution flag is false; documentation source cc1ccc10 deployed READY as dpl_FSXWqJbRmhG4AuqoPQNt6jJsmPrk. Normal signed-in diagnostic reload shows execution disabled and its run button disabled. No further provider request was made.
+- Fresh deployment inspection preserves collect and both existing production aliases on dpl_Bo43ux8vAyyDe6WEKy4Q1A6iT6sj. Original four-cohort evidence remains archived privately; see the September 17 provider observations record.
+
+
+### September17 — Planned documentation-only main Preview handoff
+
+- Commit/push the observed provider closeout and corrected release record. Runtime remains byte-identical to qualified5aeff411; branch execution staysfalse, migrations stayfalse. Git-connected deployment is Preview only. No domain/production promotion, runtime edit, inventory/provider write or fifth experiment call is planned.
