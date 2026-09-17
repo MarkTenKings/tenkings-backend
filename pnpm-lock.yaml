@@ -358,6 +358,9 @@ importers:
       '@tenkings/browser-rip-client':
         specifier: workspace:*
         version: link:../../packages/browser-rip-client
+      '@tenkings/card-catalog-evidence':
+        specifier: workspace:*
+        version: link:../../packages/card-catalog-evidence
       '@tenkings/database':
         specifier: workspace:*
         version: link:../../packages/database

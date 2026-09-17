@@ -2,7 +2,9 @@
 
 Date: September 16, 2026 (America/Los_Angeles).
 
-Status: build-ready proposal; documentation only. Mark authorizes discarding the Wix marketing content as having no utility and requests a clean consumer/staff main website; no new content-retention approval is required. The lead has recorded that direction in the canonical blueprint and handoff entry. This packet does not execute content removal, deployment, DNS/provider configuration, old-service retirement or live business writes; domain/provider accounts and email are separate from the disposable website content.
+Current status: implementation complete and locally qualified; web/domain activation pending. The original preparation packet below is retained as the release checklist. The owner subsequently approved full execution. Exact-host routing, the main/staff shell, server-checked access, and auth hostname support now exist; the auth-only change is live. All 328 integrated focused tests, the migration-disabled production build, and Chrome/WebKit layout/route checks pass. Cloudflare widget/staff sign-in, phone acceptance, the qualified application release, and apex/www DNS cutover remain pending. See `docs/handoffs/SESSION_LOG.md` for current evidence.
+
+Original preparation scope: Mark authorizes discarding the Wix marketing content as having no utility and requests a clean consumer/staff main website; no new content-retention approval is required. The lead has recorded that direction in the canonical blueprint and handoff entry. This packet does not execute content removal, deployment, DNS/provider configuration, old-service retirement or live business writes; domain/provider accounts and email are separate from the disposable website content.
 
 ## Decision
 

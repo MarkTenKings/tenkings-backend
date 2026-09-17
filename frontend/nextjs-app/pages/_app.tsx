@@ -6,23 +6,25 @@ import Head from "next/head";
 import { useRouter } from "next/router";
 import { SessionProvider } from "../hooks/useSession";
 import { Elements } from "@stripe/react-stripe-js";
-import { loadStripe } from "@stripe/stripe-js";
+import { loadStripe } from "@stripe/stripe-js/pure";
 import { bodyFont, displayFont, lightningFont } from "../components/fonts";
 
 const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
-const stripePromise = publishableKey ? loadStripe(publishableKey) : null;
+let stripePromise: ReturnType<typeof loadStripe> | null = null;
 const QueenWidget = dynamic(() => import("../components/QueenWidget"), { ssr: false });
 
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
+  const mainSite = Boolean((Component as typeof Component & { mainSite?: boolean }).mainSite);
   const componentRequiresStripe = Boolean((Component as typeof Component & { requiresStripe?: boolean }).requiresStripe);
   const routeRequiresStripe = router.pathname.startsWith("/packs");
-  const shouldLoadStripe = componentRequiresStripe || routeRequiresStripe;
+  const shouldLoadStripe = !mainSite && (componentRequiresStripe || routeRequiresStripe);
+  if (shouldLoadStripe && publishableKey && !stripePromise) stripePromise = loadStripe(publishableKey);
 
   const content = (
     <SessionProvider>
       <Component {...pageProps} />
-      {router.pathname !== "/admin/physical-inventory" && <QueenWidget />}
+      {!mainSite && router.pathname !== "/admin/physical-inventory" && router.pathname !== "/admin/inventory-research-qualification" && <QueenWidget />}
     </SessionProvider>
   );
 

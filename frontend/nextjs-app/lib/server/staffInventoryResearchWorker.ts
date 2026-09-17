@@ -1,12 +1,14 @@
+import { randomUUID } from 'node:crypto';
 import { prisma, claimStaffInventoryResearchV2, completeStaffInventoryResearchV2, failStaffInventoryResearchV2, type StaffInventoryResearchClaimV2 } from '@tenkings/database';
-import { researchStaffInventoryCard, StaffInventoryResearchError } from './staffInventoryResearch';
+import { researchStaffInventoryCard, researchCatalogScopeResolver, StaffInventoryResearchError } from './staffInventoryResearch';
 import { STAFF_INVENTORY_RESEARCH_LIMITS } from '../staffInventoryResearch';
 import { loadStaffInventoryResearchReferences } from './staffInventoryResearchReferences';
 import { archiveStaffInventoryResearchImage } from './staffInventoryResearchStorage';
+import { createResearchCatalogAdapter } from './staffInventoryResearchCatalog';
 
 export type StaffInventoryResearchWorkerDependencies = {
   claim: () => Promise<StaffInventoryResearchClaimV2 | null>;
-  research: (input: StaffInventoryResearchClaimV2['input'], signal: AbortSignal) => ReturnType<typeof researchStaffInventoryCard>;
+  research: (input: StaffInventoryResearchClaimV2['input'], signal: AbortSignal, claim?: StaffInventoryResearchClaimV2) => ReturnType<typeof researchStaffInventoryCard>;
   complete: (claim: StaffInventoryResearchClaimV2, result: Awaited<ReturnType<typeof researchStaffInventoryCard>>) => Promise<boolean>;
   fail: (claim: StaffInventoryResearchClaimV2, error: StaffInventoryResearchError) => Promise<boolean>;
   now?: () => number;
@@ -15,7 +17,11 @@ export type StaffInventoryResearchWorkerDependencies = {
 const transactionOptions = { isolationLevel: 'ReadCommitted' as const, maxWait: 5000, timeout: 15000 };
 export const staffInventoryResearchWorkerDependencies: StaffInventoryResearchWorkerDependencies = {
   claim: () => prisma.$transaction(tx => claimStaffInventoryResearchV2(tx, { leaseMs: 180000, maxConcurrent: 2 }), transactionOptions),
-  research: (input, signal) => researchStaffInventoryCard(input, { loadReferences: loadStaffInventoryResearchReferences, archiveCandidateImage: archiveStaffInventoryResearchImage }, signal),
+  research: (input, signal, claim) => {
+    if (process.env.STAFF_INVENTORY_RESEARCH_CATALOG_EVIDENCE !== 'true' || process.env.SET_CATALOG_EVIDENCE_ENABLED !== 'true') return researchStaffInventoryCard(input, { loadReferences: loadStaffInventoryResearchReferences, archiveCandidateImage: archiveStaffInventoryResearchImage }, signal);
+    const catalog = createResearchCatalogAdapter({ resolveScope: researchCatalogScopeResolver({ catalogScopeInvocation: { attemptId: claim ? `inventory:${claim.jobId}:${claim.attempt}` : `inventory:${randomUUID()}`, invocationId: `scope:${randomUUID()}` } }) });
+    return researchStaffInventoryCard(input, { loadCatalog: catalog.load, isCatalogCurrent: catalog.current, loadReferenceImage: catalog.image, archiveCandidateImage: archiveStaffInventoryResearchImage }, signal);
+  },
   complete: (claim, result) => prisma.$transaction(tx => completeStaffInventoryResearchV2(tx, { jobId: claim.jobId, leaseToken: claim.leaseToken, result }), transactionOptions),
   fail: (claim, error) => prisma.$transaction(tx => failStaffInventoryResearchV2(tx, {
     jobId: claim.jobId, leaseToken: claim.leaseToken, errorCode: error.code.toUpperCase(), errorMessage: error.message,
@@ -54,7 +60,7 @@ export async function runStaffInventoryResearchWorker(deps = staffInventoryResea
         if (controller.signal.aborted) throw new StaffInventoryResearchError('cancelled');
         if (!Number.isFinite(researchBudgetMs) || researchBudgetMs <= 0) throw new StaffInventoryResearchError('timeout');
         attemptTimer = setTimeout(abortAttempt, researchBudgetMs);
-        const result = await deps.research(claim.input, attemptController.signal);
+        const result = await deps.research(claim.input, attemptController.signal, claim);
         if (attemptController.signal.aborted) throw new StaffInventoryResearchError(controller.signal.aborted ? 'cancelled' : 'timeout');
         clearTimeout(attemptTimer);
         if (await deps.complete(claim, result)) counts.completed++;

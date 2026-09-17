@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
+import SetCatalogEvidenceReview from "../../components/admin/SetCatalogEvidenceReview";
 import {
   ADMIN_PAGE_FRAME_CLASS,
   AdminPageHeader,
@@ -2028,6 +2029,8 @@ export default function SetOpsReviewPage() {
 
         {status && <p className="text-xs text-emerald-300">{status}</p>}
         {error && <p className="text-xs text-rose-300">{error}</p>}
+
+        <SetCatalogEvidenceReview token={session?.token} setId={selectedSetId} canReview={canReview} canApprove={canApprove} />
 
         <section className={adminPanelClass("p-5")}>
           <div className="mb-4">

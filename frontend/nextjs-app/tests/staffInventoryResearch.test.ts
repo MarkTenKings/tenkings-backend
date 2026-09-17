@@ -7,7 +7,7 @@ import {
   type StaffInventoryResearchInput, type StaffInventoryResearchReference,
 } from '../lib/staffInventoryResearch';
 import {
-  researchStaffInventoryCard, StaffInventoryResearchError, parseStaffInventoryResearchOutput,
+  researchStaffInventoryCard, researchCatalogScopeResolver, StaffInventoryResearchError, parseStaffInventoryResearchOutput,
   isExactStaffInventoryResearchReference, buildStaffInventoryResearchQuery, validateRefinedStaffInventoryResearchQuery, type StaffInventoryResearchDependencies,
 } from '../lib/server/staffInventoryResearch';
 
@@ -714,4 +714,58 @@ test('optional archival timeout retains an already verified image and consistent
   assert.ok(result.candidates.every(row => row.image && row.image.storage_key === null));
   assert.ok(result.diagnostics!.candidates.every(row => row.image_attempts.some(attempt => attempt.status === 'acquired')));
   assert.ok(result.warnings.some(warning => /image time limit/.test(warning)));
+});
+
+test('v4 catalog authority is explicit, photo-scoped and revalidated; revoked evidence cannot retain matching comps or value', async () => {
+  for (const current of [true, false]) {
+    const f = await fixture();
+    const publication = { publicationId: 'fixture:publication', setId: 'fixture:set', revision: 1, manifestSha256: f.reference.source_sha256 };
+    f.reference.catalog_binding = { publication, card_id: 'fixture:card', printing_id: 'fixture:printing', applicability: 'supported',
+      scope: { language: 'en', edition: 'not_applicable', format: 'not_applicable', channel: 'not_applicable' }, image_id: null, image_relationship: null, image_depicted: null, image_represents_printing_ids: [], image_visible_diagnostic_ids: [] };
+    f.deps.loadReferences = async () => assert.fail('No legacy fallback when v4 is selected');
+    f.deps.loadCatalog = async (_description, photos) => ({ references: [f.reference], context: { schema_version: 1, status: 'current',
+      publications: [{ publication, lookup_sha256: 'd'.repeat(64), coverage: { text: 'partial', applicability: 'partial', images: 'unknown' }, candidate_count: 1, returned_count: 1, truncated: false }],
+      scope_receipt: { attempt_id: 'fixture:attempt', invocation_id: 'fixture:scope', receipt_ref: 'fixture:receipt', request_sha256: 'd'.repeat(64), response_sha256: 'e'.repeat(64), http_status: 200, acknowledgement: 'adapter',
+        images: (['front', 'back'] as const).map(side => ({ side, mime_type: 'image/jpeg' as const, transmitted_sha256: photos[side]!.sha256, source_sha256: null })) },
+      scope_evidence: [{ field: 'language', value: 'en', side: 'front', photo_sha256: photos.front!.sha256, observation: 'Synthetic English card text.' }] } });
+    let checked = false; f.deps.isCatalogCurrent = async () => { checked = true; return current; };
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.engine_version, 'staff-inventory-research-v4'); assert.equal(checked, true);
+    assert.equal(result.identity.status, current ? 'base' : 'unresolved'); assert.equal(result.estimate.status, current ? 'estimated' : 'unknown');
+    assert.equal(result.catalog_context?.status, current ? 'current' : 'unavailable');
+    if (!current) { assert.equal(result.references.length, 0); assert.equal(result.selected_candidate_ids.length, 0); assert.ok(result.comparison_assessments?.every(a => a.classification !== 'matched')); }
+    assert.equal(StaffInventoryResearchResultSchema.safeParse({ ...result, engine_version: 'staff-inventory-research-v3' }).success, false);
+    if (current) {
+      assert.equal(StaffInventoryResearchResultSchema.safeParse({ ...result, catalog_context: { ...result.catalog_context, scope_evidence: [] } }).success, false);
+      assert.equal(StaffInventoryResearchResultSchema.safeParse({ ...result, catalog_context: { ...result.catalog_context, scope_receipt: null } }).success, false);
+      const receipt = result.catalog_context!.scope_receipt!;
+      assert.equal(StaffInventoryResearchResultSchema.safeParse({ ...result, catalog_context: { ...result.catalog_context, scope_receipt: { ...receipt, images: receipt.images.map(image => ({ ...image, transmitted_sha256: 'e'.repeat(64) })) } } }).success, false);
+      const entry = result.catalog_context!.publications[0];
+      for (const publicationEntry of [
+        { ...entry, candidate_count: 0, returned_count: 0 },
+        { ...entry, candidate_count: 2, returned_count: 1, truncated: true },
+        { ...entry, coverage: { ...entry.coverage, applicability: 'truncated' } },
+      ]) assert.equal(StaffInventoryResearchResultSchema.safeParse({ ...result, catalog_context: { ...result.catalog_context, publications: [publicationEntry] } }).success, false);
+      for (const pinChange of [{ revision: 2 }, { manifestSha256: 'e'.repeat(64) }, { publicationId: 'fixture:other' }]) {
+        const conflict = { ...entry, publication: { ...entry.publication, ...pinChange } };
+        assert.equal(StaffInventoryResearchResultSchema.safeParse({ ...result, catalog_context: { ...result.catalog_context, publications: [entry, conflict] } }).success, false);
+      }
+    }
+  }
+});
+
+test('catalog printing-scope model cannot assert absent-stamp defaults, wrong photos or unavailable enum choices', async () => {
+  const f = await fixture();
+  const photos = { front: await f.deps.loadPhoto!(f.input.front_photo_key!, new AbortController().signal), back: await f.deps.loadPhoto!(f.input.back_photo_key!, new AbortController().signal) };
+  const input = { choices: { language: ['en'], edition: ['first'], format: [], channel: [] }, photos };
+  const evidence = { field: 'language', value: 'en', side: 'front', photo_sha256: photos.front.sha256, observation: 'Synthetic visible English card text.' };
+  f.model = { evidence: [evidence] };
+  const scoped = await researchCatalogScopeResolver(f.deps)(input, new AbortController().signal);
+  assert.deepEqual(scoped.evidence, [evidence]); assert.equal(scoped.receipt?.acknowledgement, 'process');
+  assert.equal(scoped.receipt?.images[0].transmitted_sha256, photos.front.sha256); assert.equal(scoped.receipt?.images[0].source_sha256, null);
+  for (const mutation of [{ value: 'not_applicable' }, { photo_sha256: 'a'.repeat(64) }, { field: 'edition', value: 'standard' }]) {
+    f.model = { evidence: [{ ...evidence, ...mutation }] };
+    await assert.rejects(researchCatalogScopeResolver(f.deps)(input, new AbortController().signal));
+  }
+  assert.match(f.calls.find(c => c.body?.text?.format?.name === 'card_printing_scope')!.body.instructions, /absence of a stamp does not establish/);
 });

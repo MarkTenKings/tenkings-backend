@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const STAFF_INVENTORY_RESEARCH_MODEL = 'gpt-6-astra' as const;
 export const STAFF_INVENTORY_RESEARCH_ENGINE_VERSION = 'staff-inventory-research-v3' as const;
+export const STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION = 'staff-inventory-research-v4' as const;
 export const STAFF_INVENTORY_RESEARCH_LIMITS = { searches: 3, candidates: 24, candidateImages: 12, references: 24, referenceImages: 4, minimumComps: 2, overallTimeoutMs: 150000 } as const;
 
 const unsafeText = /[\u0000-\u001f\u007f]|https?:\/\/|data:|\b(?:sk|sess|proj)-[A-Za-z0-9_-]{8,}|(?:^|\s)(?:\/[\w.-]+){2,}|<\/?[a-z][^>]*>/i;
@@ -48,13 +49,51 @@ export type StaffInventoryResearchInput = z.infer<typeof StaffInventoryResearchI
 export type StaffInventoryResearchDescription = z.infer<typeof StaffInventoryResearchDescriptionSchema>;
 
 const referenceIdentity = z.object({ name: text(160).nullable(), category: category.nullable(), year: text(20).nullable(), manufacturer: text(160).nullable(), set_name: text(160).nullable(), card_number: text(80).nullable() }).strict();
+const catalogPin = z.object({ publicationId: sourceId, setId: sourceId, revision: z.number().int().positive(), manifestSha256: sha256 }).strict();
+const catalogScope = z.object({ language: text(160), edition: text(160), format: text(160), channel: text(160) }).strict();
+const catalogBinding = z.object({ publication: catalogPin, card_id: sourceId, printing_id: sourceId,
+  applicability: z.literal('supported'), scope: catalogScope, image_id: sourceId.nullable(),
+  image_relationship: z.enum(['depicts_candidate_identity', 'representative_finish']).nullable(),
+  image_depicted: z.object({ card_id: sourceId, printing_id: sourceId }).strict().nullable(),
+  image_represents_printing_ids: z.array(sourceId).max(100), image_visible_diagnostic_ids: z.array(sourceId).max(30),
+}).strict();
+export const StaffInventoryResearchScopeReceiptSchema = z.object({
+  attempt_id: id, invocation_id: id, receipt_ref: id, request_sha256: sha256, response_sha256: sha256,
+  http_status: z.number().int().min(200).max(299), acknowledgement: z.enum(['adapter', 'process']),
+  images: z.array(z.object({ side: z.enum(['front', 'back']), mime_type: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+    transmitted_sha256: sha256, source_sha256: sha256.nullable() }).strict()).length(2),
+}).strict().refine(receipt => new Set(receipt.images.map(image => image.side)).size === 2, 'Scope receipt requires both image sides.');
+export const StaffInventoryResearchCatalogContextSchema = z.object({
+  schema_version: z.literal(1), status: z.enum(['not_consulted', 'no_publication', 'current', 'unavailable']),
+  scope_receipt: StaffInventoryResearchScopeReceiptSchema.nullable(),
+  publications: z.array(z.object({ publication: catalogPin, lookup_sha256: sha256,
+    coverage: z.object({ text: z.enum(['complete', 'partial', 'truncated', 'unknown']), applicability: z.enum(['complete', 'partial', 'truncated', 'unknown']), images: z.enum(['complete', 'partial', 'truncated', 'unknown']) }).strict(),
+    candidate_count: z.number().int().min(0), returned_count: z.number().int().min(0).max(24), truncated: z.boolean(),
+  }).strict()).max(8),
+  scope_evidence: z.array(z.object({ field: z.enum(['language', 'edition', 'format', 'channel']), value: text(160), side: z.enum(['front', 'back']), photo_sha256: sha256, observation: text(400) }).strict()).max(4),
+}).strict();
+export type StaffInventoryResearchCatalogContext = z.infer<typeof StaffInventoryResearchCatalogContextSchema>;
 export const StaffInventoryResearchReferenceSchema = z.object({
   id, kind: z.enum(['catalog', 'reference']), trust: z.enum(['published_catalog', 'approved_reference']),
   identity: referenceIdentity, catalog_id: id, variant_name: text(160), variant_kind: z.enum(['BASE', 'PARALLEL', 'VARIANT']),
   source_url: sourceUrl.nullable(), source_sha256: sha256, captured_at: timestamp,
   distinguishing_features: z.array(text(240)).max(16),
-  image: z.object({ source_url: imageUrl, sha256, storage_key: z.string().min(1).max(512).nullable(), content_type: z.enum(['image/jpeg', 'image/png', 'image/webp']) }).strict().nullable(),
-}).strict().refine(value => value.kind === 'catalog' ? value.trust === 'published_catalog' : value.trust === 'approved_reference');
+  image: z.object({ source_url: imageUrl.nullable(), sha256, storage_key: z.string().min(1).max(512).nullable(), content_type: z.enum(['image/jpeg', 'image/png', 'image/webp']) }).strict().nullable(),
+  catalog_binding: catalogBinding.optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.kind === 'catalog' ? value.trust !== 'published_catalog' : value.trust !== 'approved_reference') ctx.addIssue({ code: 'custom', message: 'Invalid reference authority.' });
+  if (value.catalog_binding) {
+    if (value.source_sha256 !== value.catalog_binding.publication.manifestSha256 || Boolean(value.image) !== Boolean(value.catalog_binding.image_id)
+      || Boolean(value.image) !== Boolean(value.catalog_binding.image_relationship) || value.image && (value.image.source_url !== null || value.image.storage_key !== null)) ctx.addIssue({ code: 'custom', message: 'Unbound private catalog image.' });
+    const binding = value.catalog_binding;
+    const represented = binding.image_represents_printing_ids, visible = binding.image_visible_diagnostic_ids;
+    if (new Set(represented).size !== represented.length || new Set(visible).size !== visible.length) ctx.addIssue({ code: 'custom', message: 'Duplicate reviewed image association.' });
+    if (value.image) {
+      const depictsTarget = binding.image_depicted?.card_id === binding.card_id && binding.image_depicted?.printing_id === binding.printing_id;
+      if (!binding.image_depicted || !represented.includes(binding.printing_id) || !visible.length || !value.distinguishing_features.length || binding.image_relationship !== (depictsTarget ? 'depicts_candidate_identity' : 'representative_finish')) ctx.addIssue({ code: 'custom', message: 'Missing reviewed target-to-depicted association.' });
+    } else if (binding.image_depicted || represented.length || visible.length) ctx.addIssue({ code: 'custom', message: 'Image association without image evidence.' });
+  } else if (value.image?.source_url === null) ctx.addIssue({ code: 'custom', message: 'Missing legacy image URL.' });
+});
 export type StaffInventoryResearchReference = z.infer<typeof StaffInventoryResearchReferenceSchema>;
 
 const photo = z.object({ key: StaffInventoryResearchPhotoKeySchema, sha256 }).strict()
@@ -151,12 +190,13 @@ const researchQuery = z.object({
 /** This validates the private persistence boundary as well as the engine output. */
 export const StaffInventoryResearchResultSchema = z.object({
   schema_version: z.literal(1), unit_id: sourceId, description_event_id: sourceId, description_hash: sha256,
-  engine_version: z.enum(['staff-inventory-research-v1', 'staff-inventory-research-v2', STAFF_INVENTORY_RESEARCH_ENGINE_VERSION]), model: z.literal(STAFF_INVENTORY_RESEARCH_MODEL), researched_at: timestamp, timings_ms: timings,
+  engine_version: z.enum(['staff-inventory-research-v1', 'staff-inventory-research-v2', STAFF_INVENTORY_RESEARCH_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION]), model: z.literal(STAFF_INVENTORY_RESEARCH_MODEL), researched_at: timestamp, timings_ms: timings,
   photos: z.object({ front: photo.nullable(), back: photo.nullable() }).strict(), query: text(400).nullable(),
   // Do not add defaults: parsing an existing immutable v1 result must preserve its hash.
   research_queries: z.array(researchQuery).max(STAFF_INVENTORY_RESEARCH_LIMITS.searches).optional(),
   comparison_assessments: z.array(StaffInventoryResearchComparisonSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates).optional(),
   diagnostics: diagnostics.optional(),
+  catalog_context: StaffInventoryResearchCatalogContextSchema.optional(),
   identity: StaffInventoryResearchIdentitySchema, target_condition: StaffInventoryResearchConditionSchema,
   references: z.array(StaffInventoryResearchReferenceSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.references),
   candidates: z.array(StaffInventoryResearchCandidateSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates),
@@ -168,10 +208,27 @@ export const StaffInventoryResearchResultSchema = z.object({
   const fail = (message: string) => ctx.addIssue({ code: 'custom', message });
   const candidates = new Map(value.candidates.map(candidate => [candidate.id, candidate]));
   const references = new Map(value.references.map(reference => [reference.id, reference]));
-  if (value.engine_version === 'staff-inventory-research-v3') {
+  if (value.engine_version === 'staff-inventory-research-v3' || value.engine_version === STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION) {
     if (!value.diagnostics || !value.research_queries || !value.comparison_assessments) fail('Missing v3 decision evidence.');
     if (value.candidates.some(candidate => !candidate.sale_evidence || !candidate.image_options || candidate.multiple_price_options === undefined)) fail('Missing source decision evidence.');
   }
+  if (value.engine_version === STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION) {
+    const context = value.catalog_context;
+    if (!context) fail('Missing v4 catalog evidence.');
+    if (context) {
+      const pins = context.publications.map(entry => JSON.stringify(entry.publication));
+      if (new Set(pins).size !== pins.length || new Set(context.publications.map(p => p.publication.publicationId)).size !== pins.length || new Set(context.publications.map(p => p.publication.setId)).size !== pins.length || context.publications.some(p => p.returned_count > p.candidate_count || p.truncated !== (p.candidate_count > p.returned_count))) fail('Invalid catalog coverage.');
+      if (context.scope_evidence.length && !context.scope_receipt || context.scope_receipt?.images.some(image => value.photos[image.side]?.sha256 !== image.transmitted_sha256)) fail('Scope observations require a bound invocation receipt.');
+      if (new Set(context.scope_evidence.map(e => e.field)).size !== context.scope_evidence.length || context.scope_evidence.some(e => value.photos[e.side]?.sha256 !== e.photo_sha256 || e.value === 'not_applicable')) fail('Unbound catalog scope observation.');
+      if (value.references.some(ref => !ref.catalog_binding || !pins.includes(JSON.stringify(ref.catalog_binding.publication)))) fail('Unpinned v4 reference.');
+      for (const ref of value.references) if (ref.catalog_binding) {
+        const lookup = context.publications.find(p => JSON.stringify(p.publication) === JSON.stringify(ref.catalog_binding!.publication));
+        if (!lookup || lookup.returned_count === 0 || lookup.truncated || lookup.coverage.text === 'truncated' || lookup.coverage.applicability === 'truncated') fail('Reference requires usable catalog coverage.');
+        for (const field of ['language', 'edition', 'format', 'channel'] as const) if (ref.catalog_binding.scope[field] !== 'not_applicable' && !context.scope_evidence.some(e => e.field === field && e.value === ref.catalog_binding!.scope[field])) fail('Unobserved catalog printing scope.');
+      }
+      if (context.status !== 'current' && (value.references.length || value.identity.status !== 'unresolved' || value.selected_candidate_ids.length)) fail('Unavailable catalog cannot establish identity.');
+    }
+  } else if (value.catalog_context || value.references.some(ref => ref.catalog_binding)) fail('Catalog evidence requires an explicit v4 result.');
   if (value.diagnostics) {
     const entries = value.diagnostics.candidates;
     const completed = value.research_queries?.filter(query => query.status === 'completed') ?? [];

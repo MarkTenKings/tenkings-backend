@@ -12,7 +12,7 @@ import {
 } from "@tenkings/database";
 import { normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
 import type { AdminSession } from "./admin";
-import { computeSetDeleteImpact, writeSetOpsAuditEvent } from "./setOps";
+import { assertNoRetainedCatalogHistory, computeSetDeleteImpact, writeSetOpsAuditEvent } from "./setOps";
 import { createDraftVersionPayload, extractDraftRows, normalizeDraftRows, summarizeDraftDiff } from "./setOpsDrafts";
 import { runSeedJob } from "./setOpsSeed";
 import {
@@ -1016,6 +1016,8 @@ export async function createSetReplaceJob(params: {
   }
 
   await ensureNoActiveSetReplaceJob(normalizedSetId);
+
+  await assertNoRetainedCatalogHistory(prisma, setIdCandidates);
 
   const activeSeedJobCount = await prisma.setSeedJob.count({
     where: {

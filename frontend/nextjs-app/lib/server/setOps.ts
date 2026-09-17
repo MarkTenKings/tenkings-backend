@@ -62,6 +62,8 @@ export type SetDeleteImpact = {
 type SetOpsDbClient = Pick<
   Prisma.TransactionClient,
   | "setDraft"
+  | "setCatalogEvidencePublication"
+  | "$queryRaw"
   | "setDraftVersion"
   | "setApproval"
   | "setIngestionJob"
@@ -362,9 +364,20 @@ export async function computeSetDeleteImpact(db: SetOpsDbClient, setId: string):
   };
 }
 
+export async function assertNoRetainedCatalogHistory(db: Pick<SetOpsDbClient, "$queryRaw" | "setCatalogEvidencePublication">, setIds: string[]) {
+  // Compatibility before the separately activated additive migration. Once the
+  // table exists, history protection applies even with catalog lookup disabled.
+  const ready = await db.$queryRaw<{ ready: boolean }[]>`SELECT to_regclass('"SetCatalogEvidencePublication"') IS NOT NULL AS ready`;
+  if (ready[0]?.ready && await db.setCatalogEvidencePublication.count({ where: { draft: { setId: { in: setIds } } } })) {
+    throw new Error("This set has immutable catalog publication history. Archive it or publish a reviewed successor; destructive deletion/replacement is unavailable.");
+  }
+}
+
 export async function performSetDelete(db: SetOpsDbClient, setId: string): Promise<SetDeleteImpact> {
   const impact = await computeSetDeleteImpact(db, setId);
   const { setIdCandidates, setIdKeyCandidates } = buildSetDeleteTargets(setId);
+
+  await assertNoRetainedCatalogHistory(db, setIdCandidates);
 
   if (setIdCandidates.length < 1) {
     return impact;

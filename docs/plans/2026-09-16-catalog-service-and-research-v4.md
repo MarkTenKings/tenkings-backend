@@ -1,0 +1,50 @@
+# Catalog service and after-save research V4
+
+Status: implemented locally, **not deployed or enabled**. Runtime/source evidence takes precedence. This extends the approved shared-catalog plan without adding a second catalog or an intake dependency.
+
+## Atlas transport
+
+Collect-only endpoints: `POST /api/internal/card-catalog/v1/discover`, `lookup`, `media`, `proposals`. All require JSON and a dedicated Atlas service bearer; staff cookies and operator keys do not substitute. Server configuration contains only `CATALOG_ATLAS_SERVICE_TOKEN_SHA256` and comma-separated operation grants in `CATALOG_ATLAS_SERVICE_SCOPES`. Both `SET_CATALOG_EVIDENCE_ENABLED=true` and `CATALOG_ATLAS_SERVICE_ENABLED=true` are required. Defaults grant no access. No service credential has been provisioned.
+
+JSON envelopes use `schemaVersion: card-catalog-service/v1`. The service principal is fixed to `producer=atlas`, `actorKind=service`, `actorRef=atlas:card-catalog:v1`, `userId=null`. There are no publish, approval, revoke or arbitrary storage operations.
+
+| Operation | Request | Success |
+| --- | --- | --- |
+| discover | `{query}` with exact set ID or explicit set label/year | `{schemaVersion,publications}`; at most eight current exact pins |
+| lookup | `{publication,query}` | `{schemaVersion,result}` using catalog-evidence-lookup/v1; at most 24 candidates |
+| media | `{publication,imageId}` | Exact verified image bytes, MIME, length, `X-Catalog-Image-Sha256`, width and height headers |
+| proposals | `{proposal,observation:{physicalCardRef,observationId,inputRevision,evidenceSha256}}` | `{schemaVersion,disposition:requires_authorized_review,receipt}`; 201 new or 200 exact replay |
+
+`evidenceSha256` is `prepareObservationProposal(proposal).proposalSha256`, the complete canonical proposal hash. Atlas must derive the observation identity and source/image roots from its own authorized immutable physical-card record. Authentication and hash agreement do not independently prove the identity of a physical card or approve an image for reuse. The host derives the principal; body-authored principal/reviewer fields are rejected. Changed content or binding under the same producer/observation/revision conflicts.
+
+Discovery/lookup/media request bodies are limited to 32 KiB; proposals to 512 KiB. JSON responses are limited to 1 MiB, including repeated sources/images. A response exceeding the bound fails unavailable; it is never silently truncated. Media is limited to 4 MiB and the host verifies at most 40 million pixels. Each service operation waits at most 25 seconds; host transactions/storage have their own shorter bounds. A timeout does not prove a proposal failed to commit; retry only the exact payload/binding to retrieve its immutable receipt.
+
+All responses are private/no-store. Errors are sanitized: 400 invalid request, 401 unauthenticated, 403 forbidden, 404 unavailable publication, 409 conflict, 503 unavailable/integrity/deadline/bound failure. Framework-level malformed/oversize JSON can return non-JSON 400/413 before the handler. Clients must bound response reads, check status/MIME, and tolerate that framework behavior. Revoked or superseded pins never silently select another revision. Media returns no signed URL or bucket identifier.
+
+### Visual evidence transfer
+
+The initial pilot uses explicit human staging. An authorized operator exports an eligible Atlas original/derived source packet with exact original roots, hashes, dimensions, depicted identity and permission basis; the SetOps review panel stages the chosen bytes into its private `catalog:sha256:<digest>` namespace, verifies them and presents the complete manifest and consumer grants for human review. Proposal acknowledgement alone transfers no image bytes and creates no reuse permission. A future automated transfer must preserve this same provenance/rights boundary; the current facade deliberately has no arbitrary object-copy operation.
+
+## Inventory research V4
+
+`staff-inventory-research-v4` is explicit and optional. `STAFF_INVENTORY_RESEARCH_CATALOG_EVIDENCE=true` plus the catalog feature flag selects it in the existing background worker. The default remains V3; immutable V1–V3 results gain no default fields and retain their hashes. The save command, photo/identify intake, enqueue contract, concurrency limit and worker lease budgets are unchanged.
+
+The adapter discovers exact sports/Pokémon set publications and reads pinned candidates. Missing language/edition/format/channel remains unknown. If needed, one bounded Astra call reads visible printing scope from the two already verified transmitted card images, choosing only supplied catalog scope values with side/hash/visible observation. A lone choice, absent edition stamp or unseen distribution channel cannot supply a default. Source-backed `not_applicable` comes only from the reviewed printing, never from the model. Unresolved dimensions grant no reference authority. This extra work happens after save inside the existing overall research deadline.
+
+Only positive, fully scoped card/printing applicability becomes a research reference. Excluded, unknown, unreviewed and truncated candidates cannot. References retain exact publication/card/printing IDs and full manifest hash. Reviewed images keep their actual depicted identity/representative relationship, visible diagnostics and private media binding; no eBay URL is fabricated for a catalog image.
+
+The result stores explicit `catalog_context`: exact publication pins, complete lookup hashes, separate coverage states/counts and photo-bound scope observations. V4 reference bindings cannot be inserted into an older result version. Immediately before accepting the new result, the engine rechecks every pinned publication. Revocation, replacement or unavailable validation removes new catalog authority, confirmed matches and selections; the catalog attempt stays recorded as unavailable.
+
+Remaining qualification before enabling: independent review of this V4 delta, current/legacy result compatibility, real reviewed sports/Pokémon pilot, media storage qualification, integrated build, and a paired benchmark of this additional catalog/scope workload. The existing V3 ABBA experiment alone does not qualify V4. Real-card accuracy and reciprocal Atlas reuse require real distinct cards and independent labels; synthetic tests cannot supply them.
+
+## Review corrections and scope-effect adoption contract
+
+Independent Atlas review identified two result-boundary defects now corrected: references cannot use zero-result/truncated lookup authority or conflicting publication identities, and representative images retain the actual depicted card/printing separately from the target. `catalog_binding.image_depicted`, `image_represents_printing_ids` and `image_visible_diagnostic_ids` preserve the reviewed association. Only visible diagnostics belonging to the target printing appear as distinguishing text; a different card's artwork/name never establishes target identity. The additional instruction is conditional on V4 bindings, preserving the V3 prompt.
+
+`cardCatalogScopeEffect.ts` exposes a neutral optional paid-stage effect. Input binds attempt/invocation/schema/engine/stage, exact serialized request bytes/hash, model/settings and the actual front/back transmitted hashes/MIME plus caller-supplied parent source hashes. It requires no Inventory storage-key convention. Unknown original lineage remains null; an interpretation JPEG is not labeled an untouched original.
+
+An injected adapter must durably admit a single dispatch before network execution and provide `acknowledge`. Exact bounded status/MIME/raw response bytes, including non2xx or malformed JSON, reach that acknowledgement before interpretation. Successful scope assertions carry `scope_receipt` with immutable request/reply hashes, invocation/opaque receipt reference and transmitted/source lineage. Cancellation or acknowledgement failure cannot authorize adoption or an automatic retry; late custom replies may still be retained by the owning adapter for accounting. The shared helper performs no retry. Atlas owns its durable ledger and must preserve absent usage as unknown from the raw response.
+
+Default Inventory transport emits an explicitly **process-only** receipt; it does not claim durable raw paid-stage storage or cross-process deduplication. V4 remains disabled and requires its own workload/real-source qualification. Atlas activation additionally requires its adapter's durable request/response/accounting policy and exact package release review. Neither the service token nor raw private image bytes enter the shared result.
+
+Independent host review also corrected full image decode (metadata alone was insufficient), browser successful-image-load gating, and current-authority eligibility. A newer draft, active seed/replace operation or subsequent ordinary approval/rejection cannot silently restore an older full-catalog review. A fresh complete publication restores authority while retaining immutable history.

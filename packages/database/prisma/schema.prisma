@@ -640,6 +640,8 @@ model User {
   setApprovals            SetApproval[]         @relation("SetApprovalApprovedBy")
   setSeedJobsRequested    SetSeedJob[]          @relation("SetSeedJobRequestedBy")
   setAuditEvents          SetAuditEvent[]       @relation("SetAuditEventActor")
+  catalogPublications     SetCatalogEvidencePublication[] @relation("SetCatalogReviewer")
+  catalogProposals        SetCatalogObservationProposal[] @relation("SetCatalogSubmitter")
   ocrRegionTemplates      OcrRegionTemplate[]   @relation("OcrRegionTemplateCreatedBy")
   ocrRegionTeachEvents    OcrRegionTeachEvent[] @relation("OcrRegionTeachEventCreatedBy")
   supportCustomers        SupportCustomer[]
@@ -1225,6 +1227,7 @@ model SetDraft {
   archivedAt      DateTime?
   createdById     String?
   archivedById    String?
+  currentCatalogPublicationId String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
@@ -1235,6 +1238,8 @@ model SetDraft {
   approvals     SetApproval[]
   seedJobs      SetSeedJob[]
   auditEvents   SetAuditEvent[]
+  catalogPublications SetCatalogEvidencePublication[] @relation("SetCatalogHistory")
+  currentCatalogPublication SetCatalogEvidencePublication? @relation("SetCatalogCurrent", fields: [currentCatalogPublicationId, id], references: [id, draftId], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([status])
   @@index([archivedAt])
@@ -1286,7 +1291,9 @@ model SetDraftVersion {
   approvals   SetApproval[]
   seedJobs    SetSeedJob[]
   auditEvents SetAuditEvent[]
+  catalogPublications SetCatalogEvidencePublication[]
 
+  @@unique([id, draftId])
   @@unique([draftId, version])
   @@index([draftId, createdAt])
   @@index([versionHash])
@@ -1307,7 +1314,9 @@ model SetApproval {
   draftVersion SetDraftVersion @relation(fields: [draftVersionId], references: [id], onDelete: Cascade)
   approvedBy   User?           @relation("SetApprovalApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
   auditEvents  SetAuditEvent[]
+  catalogPublications SetCatalogEvidencePublication[]
 
+  @@unique([id, draftId, draftVersionId])
   @@index([draftId, createdAt])
   @@index([draftVersionId])
   @@index([decision, createdAt])
@@ -1373,6 +1382,54 @@ model SetAuditEvent {
   @@index([draftId, createdAt])
   @@index([action, createdAt])
   @@index([status, createdAt])
+}
+
+// Immutable full-manifest review authority. SQL also enforces history, audit,
+// same-draft pointers, and atomic publication/revocation. Legacy hashes remain unchanged.
+model SetCatalogEvidencePublication {
+  id String @id @default(uuid())
+  draftId String
+  draftVersionId String
+  setApprovalId String @unique
+  schemaVersion String
+  revision Int
+  manifestJson Json
+  manifestSha256 String
+  verificationJson Json
+  verificationSha256 String
+  supersedesPublicationId String? @unique
+  reviewedById String
+  reviewedAt DateTime @default(now())
+
+  draft SetDraft @relation("SetCatalogHistory", fields: [draftId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  draftVersion SetDraftVersion @relation(fields: [draftVersionId, draftId], references: [id, draftId], onDelete: Restrict, onUpdate: Restrict)
+  approval SetApproval @relation(fields: [setApprovalId, draftId, draftVersionId], references: [id, draftId, draftVersionId], onDelete: Restrict, onUpdate: Restrict)
+  reviewer User @relation("SetCatalogReviewer", fields: [reviewedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supersedes SetCatalogEvidencePublication? @relation("SetCatalogSuccessor", fields: [supersedesPublicationId, draftId], references: [id, draftId], onDelete: Restrict, onUpdate: Restrict)
+  successors SetCatalogEvidencePublication[] @relation("SetCatalogSuccessor")
+  currentFor SetDraft[] @relation("SetCatalogCurrent")
+
+  @@unique([id, draftId])
+  @@unique([draftId, revision])
+}
+
+model SetCatalogObservationProposal {
+  id String @id @default(uuid())
+  producer String
+  observationId String
+  inputRevision String
+  physicalCardRef String
+  proposalJson Json
+  proposalSha256 String
+  actorKind String
+  actorRef String
+  bindingJson Json
+  bindingSha256 String
+  submittedById String?
+  submittedAt DateTime @default(now())
+  submitter User? @relation("SetCatalogSubmitter", fields: [submittedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([producer, observationId, inputRevision])
 }
 
 model SetTaxonomySource {

@@ -1,8 +1,8 @@
 # Next delivery: four research/catalog lanes and one main-domain lane
 
-Date: September 16, 2026. Status: next implementation assignments being prepared; no new application release or DNS change.
+Date: September 16, 2026. Status: **owner approved execution; implementation in progress** from `b2648824`. No new application release or DNS change is implied by this status.
 
-Mark endorsed the admin/domain investigation, asked for the recommended next work by the lead and five Astra Extra High subagents, and suggested most effort continue the Updated Plan while one agent prepares tenkings.co. He explicitly permits discarding the old Wix marketing content. The canonical blueprint now records that preparation direction and content decision without claiming a hosting selection or domain cutover.
+Mark endorsed the admin/domain investigation, asked for the recommended next work by the lead and five Astra Extra High subagents, and suggested most effort continue the Updated Plan while one agent prepares tenkings.co. He explicitly permits discarding the old Wix marketing content. Mark subsequently approved execution of all five lanes and the existing GitHub/Vercel recommendation. The canonical blueprint records that decision; a domain cutover still requires qualified routing and sign-in.
 
 ## Recommended priority
 
@@ -23,7 +23,7 @@ Mark endorsed the admin/domain investigation, asked for the recommended next wor
 
 The lead owns integration, branch/commit boundaries, Atlas communication, evidence reconciliation and release sequencing. Agents own disjoint paths and do not edit Atlas or independently deploy shared services. There are three concurrent subagent slots in this session, so the five requested `gpt-6-astra` / `xhigh` assignments run in two waves.
 
-This preparation pass produces build-ready work packets, not a claim that the new implementations or real provider/phone qualification have already run. The existing [implementation record](2026-09-16-inventory-research-implementation.md) remains the delivered/pending authority.
+The initial preparation pass produced build-ready packets; the approved implementation pass has now built local candidates and is qualifying them. Real provider/phone/catalog review gates are tracked separately from code completion. The existing [implementation record](2026-09-16-inventory-research-implementation.md) remains the delivered/pending authority.
 
 ## Prepared work packets and concrete findings
 
@@ -33,7 +33,7 @@ This preparation pass produces build-ready work packets, not a claim that the ne
 - [Comp release qualification](2026-09-16-comp-release-qualification.md): distinguish recoverable visual matches from affirmative sold/verified-price evidence. The higher-resolution flag remains off; strict sold-status changes are a separate always-active part of the local candidate and must be measured against the same baseline payloads.
 - [Intake and Atlas acceptance](2026-09-16-intake-atlas-acceptance-next-slice.md): measurable load acceptance, bounded adapter ownership and real different-card cross-app proof. No phone, production performance or all-card accuracy result is implied by a unit-test pass.
 
-The lead sent the Atlas task an informational coordination notice. Its existing source/release ownership and integration timing remain unchanged; no new Atlas implementation or priority change was requested.
+The lead coordinated the approved execution with ATLAS ASTRA SEPT16. Atlas completed its own local recognition V2 adoption and reviewed the new service/V4 boundaries. Its storage/build/grading acceptance and deployment remain owned by that task; no Atlas checkout is edited here.
 
 ## Repository and hosting recommendation
 

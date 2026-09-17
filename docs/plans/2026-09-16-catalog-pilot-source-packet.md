@@ -1,6 +1,6 @@
 # Two-set catalog pilot: real manufacturer source packet
 
-Date: September 16, 2026. Preparation base: Inventory `ece8223b`. **Draft source discovery only; no approval, publication, import, or physical-card identity confirmation.**
+Date: September 16, 2026. Initial preparation base: Inventory `ece8223b`; implementation continuation on `b2648824`. **Draft source preparation only; no approval, publication, import, or physical-card identity confirmation.** The [executable preparation workflow](catalog-pilot-20260916/README.md) now adds a source-pinned offline compiler, tests and a reviewer-only taxonomy export, with the concrete managed-database mapping gaps recorded separately from this original discovery pass.
 
 ## Recommended bounded pilot
 
@@ -72,4 +72,4 @@ Use the [shared SetOps contract](2026-09-16-shared-catalog-contract.md), includi
 
 The minimum functional acceptance is: exact set/program/name/number lookup returns the intended **reviewed** rows; Snivy ambiguity and unsupported sports combinations remain unresolved; the full source/applicability/image payload and revision are bound to real review; a later different physical card consumes that exact publication with its own originals and decisions intact. Actual Atlas adoption is owned by Atlas and is not proven by these examples. No all-card accuracy, market-value, no-slowdown, or two-way live reuse result is claimed.
 
-Preparation checks: complete source-byte hashes verified; relevant sports checklist page, sports odds page and Pokémon checklist visually inspected using the PDF workflow; source manifest and example JSON parsed; no repository PDF/private imagery retained. No application code, credential, provider paid request, DB operation, approval, publication, deployment, commit, or Atlas checkout change occurred. The coordinator owns any common handoff/session-log update.
+Initial discovery checks (earlier September 16): complete source-byte hashes verified; relevant sports checklist page, sports odds page and Pokémon checklist visually inspected using the PDF workflow; source manifest and example JSON parsed; no repository PDF/private imagery retained. That initial discovery made no application code, credential, provider paid request, DB operation, approval, publication, deployment, commit, or Atlas checkout change. The later [implementation continuation](catalog-pilot-20260916/README.md) adds preparation code and an authorized bounded read-only managed-DB mapping observation; it still performs no production mutation or publication. The coordinator owns common handoff/session-log updates.
