@@ -1,10 +1,10 @@
 # Variant identification and sold-comparison improvement plan
 
-Date: September 15, 2026 (America/Los_Angeles). Revised September 16 following the requested Astra Ultra review and subsequent owner authorization. Status: **implementation frozen at945812ca with a qualified hosted preview; additive catalog schema and auth hostname patch are live; production web/research rollout remains pending**.
+Date: September 15, 2026 (America/Los_Angeles). Revised September 16 following the requested Astra Ultra review and subsequent owner authorization. Status: **foundation945812ca and contribution follow-upa31c6863 are in qualified hosted preview62c0479b; additive catalog schema and auth hostname patch are live; production web/research rollout remains pending**.
 
 ## Current implementation status — September 16
 
-After the review, Mark authorized implementation following coordination with ATLAS ASTRA SEPT 16. The agreed narrow extension was recorded in the canonical blueprint before building. Shared recognition/catalog foundations are committed at `b89cb020`; private research fixes and diagnostics at `31b86535`; reviewed catalog persistence, optional V4 integration and the clean main/staff site at `945812ca`. The additive catalog schema has been applied and independently checked; the auth-only hostname patch `6c953662` is live. The new web/research code is serving a qualified Vercel Preview and has not been promoted to production. The serving Inventory application remains the earlier Pokémon/photo-recovery release `38c95335`.
+After the review, Mark authorized implementation following coordination with ATLAS ASTRA SEPT 16. The agreed narrow extension was recorded in the canonical blueprint before building. Shared recognition/catalog foundations are committed at `b89cb020`; private research fixes and diagnostics at `31b86535`; reviewed catalog persistence, optional V4 integration and the clean main/staff site at `945812ca`; Inventory contributions, human inbox and lineage hardening at `a31c6863`. The additive catalog schema has been applied and independently checked; the auth-only hostname patch `6c953662` is live. The new web/research code is serving qualified Vercel Preview `62c0479b` and has not been promoted to production. The serving Inventory application remains the earlier Pokémon/photo-recovery release `38c95335`.
 
 | Reviewed delivery | Current state |
 | --- | --- |

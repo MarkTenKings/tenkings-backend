@@ -1,6 +1,6 @@
 # Catalog service and after-save research V4
 
-Status: foundation frozen at `945812ca`; additive schema migration is applied and verified, and that application code has a qualified Vercel Preview. The subsequent Inventory contribution/inbox completion below is locally qualified. **Production catalog/service/V4 APIs are not released or enabled.** Runtime/source evidence takes precedence. This extends the approved shared-catalog plan without adding a second catalog or an intake dependency.
+Status: foundation frozen at `945812ca`, Inventory contribution/inbox completion at `a31c6863`; both are included in the qualified Vercel Preview at `62c0479b`. The additive schema migration is applied and verified. **Production catalog/service/V4 APIs are not released or enabled.** Runtime/source evidence takes precedence. This extends the approved shared-catalog plan without adding a second catalog or an intake dependency.
 
 ## Atlas transport
 
