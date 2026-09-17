@@ -24,7 +24,7 @@ export default function App({ Component, pageProps }: AppProps) {
   const content = (
     <SessionProvider>
       <Component {...pageProps} />
-      {!mainSite && router.pathname !== "/admin/physical-inventory" && <QueenWidget />}
+      {!mainSite && router.pathname !== "/admin/physical-inventory" && router.pathname !== "/admin/inventory-research-qualification" && <QueenWidget />}
     </SessionProvider>
   );
 
