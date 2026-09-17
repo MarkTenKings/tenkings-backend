@@ -17,6 +17,7 @@ import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import { serializeWorksheetDraftRow } from "../../lib/setOpsDraftEditor";
+import { assertGenericImportPayload, parsePreparedChecklistImport, PREPARED_CHECKLIST_MAX_BYTES, type PreparedChecklistImport } from "../../lib/preparedChecklistImport";
 
 type DatasetType = "PARALLEL_DB" | "PLAYER_WORKSHEET";
 type CombinedDatasetMode = DatasetType | "COMBINED";
@@ -335,15 +336,17 @@ function parseRowsFromFileContent(fileName: string, content: string): Array<Reco
   const likelyJson = lowerName.endsWith(".json") || trimmed.startsWith("[") || trimmed.startsWith("{");
 
   if (likelyJson) {
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(trimmed);
-      const rows = normalizeObjectRows(parsed);
-      if (rows.length > 0) return rows;
+      parsed = JSON.parse(trimmed);
     } catch {
       if (lowerName.endsWith(".json")) {
         throw new Error("JSON file could not be parsed.");
       }
     }
+    assertGenericImportPayload(parsed);
+    const rows = normalizeObjectRows(parsed);
+    if (rows.length > 0) return rows;
   }
 
   const csvRows = parseCsvRows(content);
@@ -519,6 +522,12 @@ export default function SetOpsReviewPage() {
   const [payloadFileName, setPayloadFileName] = useState<string | null>(null);
   const [payloadRowCount, setPayloadRowCount] = useState<number>(0);
   const [payloadLoading, setPayloadLoading] = useState(false);
+  const [preparedChecklist, setPreparedChecklist] = useState<PreparedChecklistImport | null>(null);
+  const [preparedFileName, setPreparedFileName] = useState<string | null>(null);
+  const [preparedLoading, setPreparedLoading] = useState(false);
+  const [preparedAttempted, setPreparedAttempted] = useState(false);
+  const preparedReadGeneration = useRef(0);
+  const preparedAttempts = useRef(new Set<string>());
   const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
   const [bulkZipFile, setBulkZipFile] = useState<File | null>(null);
 
@@ -965,6 +974,7 @@ export default function SetOpsReviewPage() {
           throw new Error("Set ID is required.");
         }
         const parsedPayload = JSON.parse(rawPayloadInput || "[]");
+        assertGenericImportPayload(parsedPayload);
         const rowCount = estimateRowCount(parsedPayload);
         if (rowCount < 1) {
           throw new Error("No ingestion rows found. Upload a CSV/JSON file first.");
@@ -1060,6 +1070,73 @@ export default function SetOpsReviewPage() {
     ]
   );
 
+  const handlePreparedChecklistFile = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.target;
+    const file = input.files?.[0];
+    if (!file || !canReview || busy) return;
+    const generation = ++preparedReadGeneration.current;
+    setPreparedChecklist(null);
+    setPreparedFileName(null);
+    setPreparedLoading(true);
+    setPreparedAttempted(false);
+    setError(null);
+    setStatus(null);
+    try {
+      if (file.size > PREPARED_CHECKLIST_MAX_BYTES) throw new Error("Prepared checklist file exceeds 768 KiB.");
+      const parsed = parsePreparedChecklistImport(await file.text());
+      if (generation !== preparedReadGeneration.current) return;
+      setPreparedChecklist(parsed);
+      setPreparedFileName(file.name);
+      setPreparedAttempted(preparedAttempts.current.has(parsed.requestBody));
+    } catch (readError) {
+      if (generation === preparedReadGeneration.current) {
+        setError(readError instanceof Error ? readError.message : "Unable to read prepared checklist.");
+      }
+    } finally {
+      if (generation === preparedReadGeneration.current) {
+        setPreparedLoading(false);
+        input.value = "";
+      }
+    }
+  }, [busy, canReview]);
+
+  const queuePreparedChecklist = useCallback(async () => {
+    if (!session?.token || !isAdmin || !canReview || busy || preparedLoading || !preparedChecklist) return;
+    const { requestBody, requestDraft } = preparedChecklist;
+    // Latch synchronously before fetch: React state alone does not prevent two
+    // clicks in one turn. An ambiguous response must never trigger a retry.
+    if (preparedAttempts.current.has(requestBody)) return;
+    preparedAttempts.current.add(requestBody);
+    setPreparedAttempted(true);
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const response = await fetch("/api/admin/set-ops/ingestion", {
+        method: "POST", headers: { ...adminHeaders, "Content-Type": "application/json" }, body: requestBody,
+      });
+      const payload = (await response.json().catch(() => ({}))) as { message?: string; job?: IngestionJob };
+      if (!response.ok || !payload.job?.id) throw new Error(payload.message ?? "No ingestion receipt received.");
+      const job = payload.job;
+      setSelectedJobId(job.id);
+      setSelectedSetId(requestDraft.setId);
+      setSetIdInput(requestDraft.setId);
+      setSourceUrlInput(requestDraft.sourceUrl);
+      setDatasetType("PLAYER_WORKSHEET");
+      setQueueDatasetMode("PLAYER_WORKSHEET");
+      setShowAllPendingJobs(false);
+      setLatestVersion(null);
+      setLatestApprovedVersionId(null);
+      setVersions([]);
+      setEditableRows([]);
+      setStatus(`Queued prepared checklist as job ${job.id}. Select Build Draft From Selected Job to run source checks and create the review draft.`);
+      try { await fetchIngestionJobs({ setIdOverride: requestDraft.setId }); }
+      catch { setError("The job was queued, but refreshing the queue failed. Refresh the workspace; do not submit this file again."); }
+    } catch (submitError) {
+      setError(`${submitError instanceof Error ? submitError.message : "Checklist submission failed."} Check the ingestion queue before attempting another submission; no automatic retry was made.`);
+    } finally { setBusy(false); }
+  }, [adminHeaders, busy, canReview, fetchIngestionJobs, isAdmin, preparedChecklist, preparedLoading, session?.token]);
+
   const handlePayloadFileChange = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
@@ -1126,6 +1203,7 @@ export default function SetOpsReviewPage() {
           setStatus(`Loaded ${rows.length} rows from ${file.name}.`);
         }
       } catch (parseError) {
+        setRawPayloadInput("[]");
         setPayloadFileName(null);
         setPayloadRowCount(0);
         setError(parseError instanceof Error ? parseError.message : "Failed to parse uploaded file");
@@ -2099,6 +2177,38 @@ export default function SetOpsReviewPage() {
           </div>
           {activeStep === "ingestion-queue" ? (
             <>
+          <div className={adminSubpanelClass("mt-4 p-4")}>
+            <h3 className="text-sm font-semibold text-white">Prepared checklist import</h3>
+            <p className="mt-1 text-xs text-slate-400">
+              Load a prepared Pokémon checklist JSON to preserve its source details. Review the summary, then queue it for draft review.
+            </p>
+            <input
+              aria-label="Prepared checklist JSON"
+              type="file"
+              accept=".json,application/json"
+              disabled={!canReview || busy || preparedLoading}
+              onChange={(event) => void handlePreparedChecklistFile(event)}
+              className="mt-3 block text-xs text-slate-200 file:mr-3 file:rounded-lg file:border file:border-gold-500/40 file:bg-gold-500/10 file:px-3 file:py-2 file:text-gold-100"
+            />
+            {preparedLoading && <p className="mt-2 text-xs text-slate-400">Reading prepared checklist…</p>}
+            {preparedChecklist && (
+              <div className="mt-3 space-y-2 text-xs text-slate-300" aria-label="Prepared checklist preview">
+                <p>File: {preparedFileName}</p>
+                <p>Set: {preparedChecklist.displayLabel}</p>
+                <p>Set key: {preparedChecklist.requestDraft.setId}</p>
+                <p>Rows: {preparedChecklist.rowCount.toLocaleString()} · Set list · Unreviewed</p>
+                <p>Source: {preparedChecklist.requestDraft.sourceProvider} · <a className="break-all text-sky-300 underline" href={preparedChecklist.requestDraft.sourceUrl} target="_blank" rel="noreferrer">Open checklist</a></p>
+                <p className="break-all">{preparedChecklist.requestDraft.sourceUrl}</p>
+                <p>Loading this file does not verify the original PDF or approve its contents. Source checks run when you build the draft.</p>
+                <button type="button" disabled={!canReview || busy || preparedAttempted || preparedLoading}
+                  onClick={() => void queuePreparedChecklist()}
+                  className="h-10 rounded-xl border border-gold-500/60 bg-gold-500 px-4 text-xs font-semibold text-night-900 disabled:opacity-60">
+                  {preparedAttempted ? "Submission attempted — check queue" : "Queue prepared checklist for review"}
+                </button>
+                {preparedAttempted && <p>A submission was attempted for this file from this workspace. Check its queue result before submitting again.</p>}
+              </div>
+            )}
+          </div>
           <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={createIngestionJob}>
             <div className="relative">
               <input

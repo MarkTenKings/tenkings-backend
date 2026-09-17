@@ -33384,3 +33384,9 @@ By enabling Rip It Live, I confirm:
 
 - Ported the exact eight diagnostic host/router/API/page/test files qualified in main-site source5aeff411; independent Inventory focused run passes25 tests. No intake/research worker/credential changes. Host allowance requires preview environment and exact branch-host equality; normal admin, same-origin, deliberate acknowledgment and execution flag remain required.
 - Added the actual four-cohort provider observations and verified disabled closeout. Across25 sold results,24 omit search BestOffer status; two observed exact details support ordinary-sale confirmation, while an accepted-offer detail remains unresolved and active control disproves ended=true as sufficient sale evidence. No percentage-accuracy or variant-match claim follows from this sample.
+
+
+### September 17 — Prepared Pokémon checklist import screen
+
+- Added a separate prepared-checklist file input to normal SetOps review, previewing set/source/138-row count and preserving the exact request envelope. Explicit authenticated queue action has a synchronous within-workspace duplicate-attempt latch and no automatic retry after an ambiguous response. Existing Build Draft remains the authoritative pinned-source validation step; browser preview does not verify PDF bytes, approve or publish anything.
+- Generic imports remain supported; prepared wrappers receive a routing error and rejected input clears stale prior rows.21 combined parser/mounted-React/editor/actual-handler tests pass, scoped lint passes and four changed/new files have zero no-emit semantic diagnostics. Root reviewed source and tests. Logs:/private/tmp/tenkings-prepared-checklist-ui-20260917-01/. No live draft submission or database mutation.
