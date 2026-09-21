@@ -29,7 +29,7 @@ function approvalSnapshot(row) {
 /** No provider/storage/reducer effect is accepted inside these transactions.
  * Brief row locks cover auth/ACL, CAS, action receipt and optional approval.
  */
-export function createManualRepository({ boundary, validateSource = null }) {
+export function createManualRepository({ boundary, validateSource = null, validateCommit = null }) {
   const loadRow = async (tx, cardId, lock = false) => (await tx.$queryRawUnsafe(
     `SELECT * FROM atlas_manual.card WHERE id=$1::uuid${lock ? ' FOR UPDATE' : ''}`, cardId))[0];
   return Object.freeze({
@@ -94,7 +94,7 @@ export function createManualRepository({ boundary, validateSource = null }) {
         return approvalSnapshot(found);
       });
     },
-    async commit(staff, { cardId, input, baseHash, draft, approval = null }) {
+    async commit(staff, { cardId, input, baseHash, draft, approval = null, commitGuard = null }) {
       uuid(cardId); const { input: command, requestHash } = inputCommand(input);
       const document = stateDocument(draft), request = canonical(command, { maxBytes: 65536, publicAction: true });
       const report = approval === null ? null : stateDocument(approval);
@@ -107,6 +107,7 @@ export function createManualRepository({ boundary, validateSource = null }) {
         const previous = replay(found, principal, requestHash); if (previous) return previous;
         requireThat(row.revision === command.expectedRevision && row.content_hash === baseHash, 409, 'MANUAL_DRAFT_STALE');
         if (validateSource) await validateSource({ tx, principal, cardId, draft: document.draft });
+        if (validateCommit) await validateCommit({ tx, principal, cardId, input: command, commitGuard });
         const nextRevision = revision(row.revision + 1);
         const receipt = { actionId: command.actionId, actorId: principal.id, actorKind: 'HUMAN',
           expectedRevision: row.revision, revision: nextRevision, requestHash, recordedAt: now.toISOString(),

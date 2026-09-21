@@ -73,6 +73,36 @@ export async function readAnalysisRequest(ref, source, artifacts) {
   return { bytes, manifest };
 }
 
+/** Verification of saved results requires no provider capability. A disabled
+ * inference integration can still enforce deliberate review of retained READY
+ * proposals without constructing a provider or allowing a new dispatch. */
+export function createAnalysisResultReader({ repository, artifacts }) {
+  check(repository && typeof artifacts?.read === 'function');
+  return Object.freeze({
+    async readResult(staff, { cardId, analysisId }) {
+      const run = await repository.status(staff, { cardId, analysisId });
+      if (!run || run.state !== 'READY') return { run, result: null };
+      const receipt = run.receipts.find(x => x.kind === 'RESPONSE')?.evidence;
+      check(receipt?.state === 'READY' && receipt.responseRef && receipt.resultRef, 'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
+      const source = { cardId, sourceHash: run.requestEvidence.sourceBindingSha256 };
+      const raw = await artifacts.read(receipt.responseRef, { ...source, kind: 'DEFECT_RESPONSE' });
+      check(raw?.version === 1 && raw.analysisId === analysisId && raw.requestHash === run.requestHash
+        && typeof raw.base64 === 'string' && raw.base64.length <= Math.ceil(LIMITS.responseBytes / 3) * 4,
+      'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
+      const bytes = Buffer.from(raw.base64, 'base64');
+      check(bytes.toString('base64') === raw.base64 && digest(bytes) === raw.sha256 && raw.sha256 === receipt.responseHash,
+        'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
+      const parsed = parseAstraResponse(bytes, run.requestEvidence);
+      const result = await artifacts.read(receipt.resultRef, { ...source, kind: 'DEFECT_RESULT' });
+      check(parsed.state === 'READY' && canonical(result, LIMITS.outputBytes) === canonical(parsed.result, LIMITS.outputBytes),
+        'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
+      // Fresh read access is rechecked after potentially slow object reads.
+      await repository.find(staff, { cardId, analysisId });
+      return { run, result };
+    },
+  });
+}
+
 /** Narrow human-requested one-shot execution; no card mutation or proposal
  * adoption. A saved PREPARED request may claim once; DISPATCHED/UNKNOWN never
  * dispatches again. Root resolves exact existing actions before rebuilding.
@@ -241,27 +271,7 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
         return { analysisId, state: 'PENDING' };
       }
     },
-    async readResult(staff, { cardId, analysisId }) {
-      const run = await repository.status(staff, { cardId, analysisId });
-      if (!run || run.state !== 'READY') return { run, result: null };
-      const receipt = run.receipts.find(x => x.kind === 'RESPONSE')?.evidence;
-      check(receipt?.state === 'READY' && receipt.responseRef && receipt.resultRef, 'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
-      const source = { cardId, sourceHash: run.requestEvidence.sourceBindingSha256 };
-      const raw = await artifacts.read(receipt.responseRef, { ...source, kind: 'DEFECT_RESPONSE' });
-      check(raw?.version === 1 && raw.analysisId === analysisId && raw.requestHash === run.requestHash
-        && typeof raw.base64 === 'string' && raw.base64.length <= Math.ceil(LIMITS.responseBytes / 3) * 4,
-      'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
-      const bytes = Buffer.from(raw.base64, 'base64');
-      check(bytes.toString('base64') === raw.base64 && digest(bytes) === raw.sha256 && raw.sha256 === receipt.responseHash,
-        'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
-      const parsed = parseAstraResponse(bytes, run.requestEvidence);
-      const result = await artifacts.read(receipt.resultRef, { ...source, kind: 'DEFECT_RESULT' });
-      check(parsed.state === 'READY' && canonical(result, LIMITS.outputBytes) === canonical(parsed.result, LIMITS.outputBytes),
-        'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID', 503);
-      // Fresh read access is rechecked after potentially slow object reads.
-      await repository.find(staff, { cardId, analysisId });
-      return { run, result };
-    },
+    ...createAnalysisResultReader({ repository, artifacts }),
   };
   return Object.freeze(executor);
 }

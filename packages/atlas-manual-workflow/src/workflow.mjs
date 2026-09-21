@@ -7,6 +7,8 @@ import { measureDefectWorkspaceEdit, MeasurementError } from '@atlas/measurement
 import { canonicalizeNewSpeedsterSessionIdentity, SpeedsterIdentityValidationError } from '@atlas/grading-core/identity';
 
 import { proposalEdit, checkProposalReview, invalidateDefectConfirmation } from './proposal-review.mjs';
+import { collectivelyConfirmDefects, confirmationBudget } from './collective-confirmation.mjs';
+import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 
 const SIDES = ['FRONT', 'BACK'];
 const equal = (a, b) => canonical(a) === canonical(b);
@@ -23,7 +25,9 @@ export function frameFromGeometry(geometry, side) {
  * Full geometry, measured findings, edit bitmaps and reports live in verified
  * immutable artifacts. No photo, mask or model call occurs in a DB transaction.
  */
-export function createManualWorkflow({ repository, artifacts, pythonExecutable, measurementLimits, prepare = null, replaceSources = null, assertCurrent = null, measure = measureDefectWorkspaceEdit, resolveProposal = null, afterConfirm = null }) {
+export function createManualWorkflow({ repository, artifacts, pythonExecutable, measurementLimits, prepare = null, replaceSources = null, assertCurrent = null, measure = measureDefectWorkspaceEdit, resolveProposal = null, afterConfirm = null,
+  resolveConfirmation = null, assertReviewComplete = null, confirmationTimeoutMs = 180000 }) {
+  requireThat(Number.isSafeInteger(confirmationTimeoutMs) && confirmationTimeoutMs > 0 && confirmationTimeoutMs <= 180000);
   const domain = work => async (...args) => {
     try { return await work(...args); }
     catch (error) {
@@ -72,7 +76,7 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       defects: defects ? await store(defects, cardId, 'DEFECTS') : null, identity: canonicalizeNewSpeedsterSessionIdentity(geometry.profile, identity), identityRevision: 1 };
     return repository.provision(staff, { cardId, draft });
   }
-  async function reduce({ card, action, principal }, staff) {
+  async function reduce({ card, action, principal, startedAt }, staff) {
     let { geometry, defects, assistance } = await hydrate(card);
     let draft = card.draft;
     if (action.type === 'REPLACE_SOURCES') {
@@ -160,29 +164,63 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
         object(action, ['type', 'side', 'base', 'inspected']);
         defects = markDefectSideInspected(defects, { side: action.side, base: action.base, inspected: action.inspected, actor: 'HUMAN' }).state;
       } else if (action.type === 'CONFIRM_FINDINGS') {
-        object(action, ['type', 'base', 'reviewed']);
-        defects = confirmDefectFindings(defects, { base: action.base, reviewed: action.reviewed, actor: 'HUMAN' }).state;
+        object(action, ['type', 'base', 'reviewed', ...(Object.hasOwn(action, 'proposalReview') ? ['proposalReview'] : [])]);
+        const budget = confirmationBudget(startedAt, confirmationTimeoutMs);
+        budget.check();
+        requireThat(!action.proposalReview || typeof resolveConfirmation === 'function', 503, 'MANUAL_PROPOSAL_UNAVAILABLE');
+        const resolved = resolveConfirmation ? await resolveConfirmation({ staff, card, selection: action.proposalReview ?? null }) : null;
+        budget.check();
+        if (action.proposalReview) {
+          ({ defects, assistance } = await collectivelyConfirmDefects({ defects, assistance, request: action,
+            entries: resolved.entries, principal, measure, pythonExecutable, measurementLimits, budget }));
+          draft = { ...draft, assistance: await store(assistance, card.cardId, 'ASSISTANCE') };
+        } else defects = confirmDefectFindings(defects, { base: action.base, reviewed: action.reviewed, actor: 'HUMAN' }).state;
+        budget.check();
       } else requireThat(false, 400, 'MANUAL_ACTION_UNSUPPORTED');
     }
     return { ...draft, geometry: await store(geometry, card.cardId, 'GEOMETRY'), defects: defects ? await store(defects, card.cardId, 'DEFECTS') : null };
   }
   async function buildReport({ card, principal }, staff) {
     if (assertCurrent) await assertCurrent({ card, principal, staff });
+    if (assertReviewComplete) await assertReviewComplete({ staff, card });
     const { geometry, defects, identity } = await hydrate(card);
     requireThat(defects && geometryStatus(geometry).confirmed, 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
     const full = previewDefectReport(defects, { identity, centeringQuads: Object.fromEntries(SIDES.map(side => [side, geometry.sides[side].printed.quad])),
       draftRevision: geometry.reportRevision + defects.draftRevision + card.draft.identityRevision });
     const report = await store(full, card.cardId, 'REPORT');
-    return { version: 'atlas-manual-report-snapshot-v1', report, identity: full.identity, grade: full.grade,
+    return { version: 'atlas-manual-report-snapshot-v2', report, identity: full.identity, grade: full.grade,
+      finalGrade: full.finalGrade, finalGradePolicy: full.finalGradePolicy,
       findingCounts: full.findingCounts, ruleVersion: full.ruleVersion };
   }
-  const ordinaryService = createManualService({ repository, reduce: domain(reduce), buildReport: domain(buildReport) });
-  const service = Object.freeze({ ...ordinaryService, async execute(staff, cardId, input) {
+  const ordinaryService = createManualService({ repository, reduce: domain((context, staff) => context.action.type === 'CONFIRM_FINDINGS'
+    ? confirmationBudget(context.startedAt, confirmationTimeoutMs).run(() => reduce(context, staff)) : reduce(context, staff)), buildReport: domain(buildReport),
+    beforeCommit: async ({ card, draft, action, startedAt }, staff) => {
+      if (!assertReviewComplete || !['CONFIRM_FINDINGS', 'APPROVE_REPORT'].includes(action.type)) return null;
+      const budget = confirmationBudget(startedAt, confirmationTimeoutMs); budget.check();
+      const analysis = await budget.run(() => assertReviewComplete({ staff, card: { ...card, draft }, selection: action.proposalReview ?? null }));
+      budget.check();
+      return { version: 'atlas-manual-confirmation-fence-v1', analysis, deadlineAt: budget.deadlineAt };
+    } });
+  const service = Object.freeze({ ...ordinaryService,
+    async previewReport(staff, cardId) {
+      const preview = await ordinaryService.previewReport(staff, cardId);
+      const full = await read(cardId, 'REPORT', preview.report.report.ref, preview.report.report.sourceHash);
+      return { ...preview, review: { report: full, explanation: explainAtlasManualReport(full) } };
+    }, async execute(staff, cardId, input) {
+    const startedAt = Date.now();
     const result = await ordinaryService.execute(staff, cardId, input);
     // Confirmation is already durable. Publication failure must not turn a
     // committed review into an uncertain or lost manual save.
     if (input.action.type === 'CONFIRM_FINDINGS' && afterConfirm) {
-      await afterConfirm(staff, cardId, input.actionId).catch(() => {});
+      // Publication remains a recoverable post-commit operation. Bound response
+      // waiting below the existing transport deadline; a delayed publication
+      // never turns the already saved human review into a failed save.
+      const remaining = Math.max(0, 195000 - (Date.now() - startedAt));
+      if (remaining > 0) {
+        let timer;
+        await Promise.race([afterConfirm(staff, cardId, input.actionId).catch(() => {}),
+          new Promise(resolve => { timer = setTimeout(resolve, remaining); })]).finally(() => clearTimeout(timer));
+      }
     }
     return result;
   } });

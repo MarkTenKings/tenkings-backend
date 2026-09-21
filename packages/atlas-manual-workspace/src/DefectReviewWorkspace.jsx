@@ -6,7 +6,7 @@ import { applyCompletedSpeedsterTraceStroke, buildSpeedsterTraceProvenanceRevisi
   rasterizeSpeedsterCanonicalContour } from '@atlas/grading-core/trace-editor';
 import { defectBase, defectStatus } from './defect-actions.mjs';
 import { useVerifiedImage } from './verified-image.mjs';
-import { astraReviewState, proposalFrameMatches, reviewedMemoryState, validProposalContour } from './astra-review-ui.mjs';
+import { astraReviewState, collectiveProposalReview, proposalFrameMatches, reviewedMemoryState, validProposalContour } from './astra-review-ui.mjs';
 import { INSPECTION_SIZE, MAX_INSPECTION_ZOOM, fitInspectionScale, clampInspectionPan, zoomInspectionAt,
   resizeInspectionView, focusInspectionBounds, canonicalInspectionPoint } from './inspection-viewport.mjs';
 
@@ -388,6 +388,8 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
   const [unknownAnalysis, setUnknownAnalysis] = useState(null);
   const analysisKey = key({ analysisId: astra?.analysisId, status: astra?.status });
   const analysis = astraReviewState(workspace, unknownAnalysis === analysisKey ? { ...astra, status: 'UNKNOWN' } : astra), memory = reviewedMemoryState(reviewedMemory);
+  const collective = collectiveProposalReview(workspace, astra);
+  const reportReady = status.confirmed && collective.unresolvedCount === 0;
   const [requesting, setRequesting] = useState(false), [recoveringMemory, setRecoveringMemory] = useState(false);
   const requestRef = useRef(false), memoryRef = useRef(false), confirmRef = useRef(false);
   const onActivity = useCallback((side, value) => setActivity(previous => previous[side] === value ? previous : { ...previous, [side]: value }), []);
@@ -397,15 +399,16 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
   const currentImagesReady = SIDES.every(side => images?.[side]?.inspection?.sha256 === workspace.sides[side].frame.inspectionImageSha256
     && ready[side] === inspectionImageBinding(workspace, side, images?.[side]));
   const confirm = async () => {
-    if (!status.canConfirm || !currentImagesReady || editing || confirmRef.current || !onConfirm) return;
+    if (!status.canConfirm || !currentImagesReady || !collective.ready || editing || confirmRef.current || !onConfirm) return;
     confirmRef.current = true;
     setConfirming(true); setError('');
-    try { await onConfirm({ base: { FRONT: defectBase(workspace, 'FRONT'), BACK: defectBase(workspace, 'BACK') }, actor: 'HUMAN', reviewed: true }); }
+    try { await onConfirm({ base: { FRONT: defectBase(workspace, 'FRONT'), BACK: defectBase(workspace, 'BACK') }, actor: 'HUMAN', reviewed: true,
+      ...(collective.proposalReview ? { proposalReview: collective.proposalReview } : {}) }); }
     catch { setError('Findings were not confirmed saved. Review the current state and try again.'); }
     finally { confirmRef.current = false; setConfirming(false); }
   };
   const requestAnalysis = async (mode = 'START') => {
-    if (requestRef.current || confirming || (mode === 'START' && (!analysis.mayRequest || astra?.followLatest || !currentImagesReady || editing || !onAnalyzeDefects))
+    if (requestRef.current || confirming || (['START', 'REPLACE'].includes(mode) && astra?.requestAvailable === false) || (mode === 'START' && (!analysis.mayRequest || astra?.followLatest || !currentImagesReady || editing || !onAnalyzeDefects))
       || (mode === 'REFRESH' && !onRefreshAnalysis) || (mode === 'RESUME' && (!astra?.resumeAvailable || !onResumeAnalysis))
       || (mode === 'REPLACE' && (analysis.status !== 'UNKNOWN' || !astra?.replacement || astra.backgroundAccepted
         || !currentImagesReady || editing || !onReplaceAnalysis))) return;
@@ -431,6 +434,7 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
     <div className="am-toolbar"><span>{analysis.enabled ? 'Run Astra’s initial inspection, then review and correct its findings on both sides.' : 'Inspect both sides. Correct, remove or trace findings before confirming.'}</span>{grade && <strong>Draft grade {grade}</strong>}</div>
     {analysis.enabled && <section className="ad-astra" aria-label="Astra defect assistance">
       <div><h2>Astra defect assistance</h2><p role="status">{requesting ? requesting === 'REFRESH' ? 'Checking the saved Astra analysis…' : 'Sending the card to Astra for its initial inspection…' : analysis.message}</p>
+        {analysis.status === 'READY' && <p>{collective.unresolvedCount} suggestions remaining for confirmation · {collective.rejectedCount} rejected suggestions</p>}
         {Array.isArray(astra?.limitations) && astra.limitations.some(value => typeof value === 'string' && value) && <ul className="ad-analysis-limitations" aria-label="Astra image limitations">
           {astra.limitations.filter(value => typeof value === 'string' && value).slice(0,8).map((value,index) => <li key={index}>{value}</li>)}
         </ul>}
@@ -440,7 +444,7 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
         {(['RUNNING', 'UNKNOWN'].includes(analysis.status) || astra?.followLatest) && onRefreshAnalysis && <button disabled={requesting || confirming} onClick={() => requestAnalysis('REFRESH')}>Check analysis status</button>}
         {astra?.resumeAvailable && onResumeAnalysis && <button disabled={requesting || confirming} onClick={() => requestAnalysis('RESUME')}>Retry saved analysis</button>}
         {analysis.status === 'UNKNOWN' && astra?.replacement && !astra.backgroundAccepted && onReplaceAnalysis && <button
-          disabled={requesting || confirming || editing || !currentImagesReady} onClick={() => requestAnalysis('REPLACE')}>Start a new Astra analysis</button>}
+          disabled={requesting || confirming || editing || !currentImagesReady || astra?.requestAvailable === false} onClick={() => requestAnalysis('REPLACE')}>Start a new Astra analysis</button>}
       </div>
     </section>}
     {expandedSide && <div className="ad-expanded-switch" aria-label="Expanded inspection side">{SIDES.map(side => <button key={side}
@@ -453,9 +457,12 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
       {memory.mayRecover && onRetryReviewedMemory && <button disabled={recoveringMemory || confirming} onClick={recoverMemory}>
         {memory.status === 'FAILED' ? 'Retry saving examples' : 'Check example save'}</button>}
     </div>}
-    <footer className="am-footer"><span>{editing ? 'Save or discard your trace before continuing.' : status.confirmed ? 'Findings confirmed. Final report approval is a separate step.' : 'Confirm the corrected list after inspecting both sides.'}</span>
-      {status.confirmed && onContinue ? <button className="am-primary" onClick={onContinue} disabled={editing || confirming || !currentImagesReady}>Review draft report</button>
-        : <button className="am-primary" onClick={confirm} disabled={!status.canConfirm || !currentImagesReady || editing || confirming || !onConfirm}>{confirming ? 'Confirming…' : 'Confirm findings'}</button>}
+    <footer className="am-footer"><span>{editing ? 'Save or discard your trace before continuing.' : collective.unresolvedCount > 0
+      ? collective.ready ? `After reviewing Front and Back, Confirm accepts all ${collective.unresolvedCount} remaining displayed suggestions and preserves your corrections and rejections. Final report approval stays separate.`
+        : 'Reload images to refresh the saved suggestion list before confirming. Your corrections are retained.'
+      : reportReady ? 'Findings confirmed. Final report approval is a separate step.' : 'Confirm the corrected list after inspecting both sides.'}</span>
+      {reportReady && onContinue ? <button className="am-primary" onClick={onContinue} disabled={editing || confirming || !currentImagesReady}>Review draft report</button>
+        : <button className="am-primary" onClick={confirm} disabled={!status.canConfirm || !currentImagesReady || !collective.ready || editing || confirming || !onConfirm}>{confirming ? 'Confirming…' : collective.unresolvedCount ? `Confirm findings & accept ${collective.unresolvedCount} suggestions` : 'Confirm findings'}</button>}
     </footer>{error && <p className="am-error" role="alert">{error}</p>}
   </div>;
 }

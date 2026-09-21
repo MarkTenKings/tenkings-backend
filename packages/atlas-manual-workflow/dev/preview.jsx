@@ -83,7 +83,8 @@ function App() {
           : report && <main className="aw-report"><span className="am-brand">ATLAS</span><h1>Review draft report</h1>
             <p>{Object.values(report.report.identity).filter(value => typeof value === 'string' && value).join(' · ')}</p>
             <dl>{Object.entries(report.report.grade.subgrades ?? {}).map(([name, value]) => <React.Fragment key={name}><dt>{name}</dt><dd>{value}</dd></React.Fragment>)}</dl>
-            <p className="aw-grade">Grade <strong>{report.report.grade.overall.displayGrade}</strong></p>
+            <p className="aw-grade">Grade <strong>{report.report.finalGrade ?? report.report.grade.overall.displayGrade}</strong></p>
+            <p>Raw overall {report.report.grade.overall.rawGrade} · Tenth-point detail {report.report.grade.overall.displayGrade}</p>
             <table><thead><tr><th>Condition</th><th>Front</th><th>Back</th></tr></thead><tbody>
               {['centering', 'corners', 'edges', 'surface'].map(name => <tr key={name}><th>{name}</th><td>{report.report.grade.front[name].score}</td><td>{report.report.grade.back[name].score}</td></tr>)}
             </tbody></table><p>Front contributes 70%; Back contributes 30%.</p>

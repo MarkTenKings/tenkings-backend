@@ -20,6 +20,11 @@ export function manualMessage(error){
     DEFECT_ANALYSIS_PENDING:'An analysis is already pending for this card. Check its saved status before starting another.',
     DEFECT_ANALYSIS_REPLACEMENT_INVALID:'The previous analysis changed. Check its saved status before starting a new analysis.',
     MANUAL_ANALYSIS_RECONCILE_REQUIRED:'Check the saved analysis status before starting another request.',
+    MANUAL_ASTRA_REVIEW_REQUIRED:'Return to Findings, review both sides and confirm the corrected list. Remaining displayed Astra suggestions need that confirmation before report review.',
+    MANUAL_ASTRA_REVIEW_STALE:'The saved suggestion list changed. Reload images and review the current list before confirming.',
+    MANUAL_ASTRA_ANALYSIS_PENDING:'Astra analysis is still pending. Check its saved status before confirming findings.',
+    MANUAL_CONFIRM_DEADLINE:'Confirmation did not complete within its deadline. Your saved work is retained; check the pending save before continuing.',
+    MANUAL_REPORT_STALE:'The saved card changed. Return to Findings and open its current draft report.',
     MANUAL_PROCESSING_BUSY:'Image processing is busy. Your saved work is retained; try again shortly.',
     INTAKE_PAIR_NOT_READY:'Save a Front and Back photo first.',MANUAL_IDENTITY_REQUIRED:'Complete the required card details.',
   })[error?.code]??'This step did not finish. Your saved work is retained. Retry the saved request to continue.';

@@ -28,10 +28,12 @@ function harness({ journal } = {}) {
   const f = { calls: [], actions: [], pending: false, current: { card: { revision: 1, contentHash: 'one' }, geometry: { confirmed: true },
     defects: { marker: 'saved-original-defects' }, images: { marker: 'original-grants' }, identity: {}, astra: { enabled: true, status: 'IDLE', proposals: [] }, reviewedMemory: { enabled: true, status: 'UNSAVED' } } };
   f.respond = async (path, options) => path.endsWith('/view') ? f.current : { astra: f.current.astra };
+  f.preview = async () => ({ reportHash: 'exact-report-hash', sourceRevision: f.current.card.revision,
+    sourceHash: f.current.card.contentHash, report: {}, review: {} });
   const client = { recover: async () => { viewCallback(f.current); return f.current; }, hasPending: () => f.pending,
     execute: async action => { f.actions.push(action); return f.current; },
     reviewProposal: async input => { f.actions.push({ type: 'REVIEW_PROPOSAL', input }); return f.current; },
-    editDefect: async input => { f.actions.push({ type: 'EDIT_DEFECT', input }); return f.current; }, previewReport: async () => ({}) };
+    editDefect: async input => { f.actions.push({ type: 'EDIT_DEFECT', input }); return f.current; }, previewReport: async () => f.preview() };
   const exports = {};
   vm.runInNewContext(compiled, { exports, crypto: { randomUUID }, localStorage: storage,
     setInterval: (callback, ms) => { timers.set(ms, callback); return ms; }, clearInterval: id => timers.delete(id),
@@ -41,6 +43,7 @@ function harness({ journal } = {}) {
       if (name === 'next/link' || name === './Shell') return { default: name };
       if (name === '@atlas/manual-workflow/client') return { createManualClient: options => { viewCallback = options.onView; return client; } };
       if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace' };
+      if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview' };
       if (name === '@atlas/manual-workspace/geometry-actions') return { geometryStatus: value => value };
       if (name.startsWith('@atlas/')) return {};
       if (name === '../lib/manual-defect-analysis-client.mjs') return analysisClient;
@@ -54,6 +57,8 @@ function harness({ journal } = {}) {
   f.dispose = () => cleanups.splice(0).forEach(cleanup => cleanup());
   f.defects = () => { const node = all(tree, node => node.type === 'DefectReviewWorkspace')[0]; assert.ok(node, 'defect workspace rendered'); return node.props; };
   f.button = label => all(tree, node => node.type === 'button' && text(node) === label)[0];
+  f.report = () => all(tree, node => node.type === 'FinalReportReview')[0]?.props;
+  f.text = () => text(tree);
   f.publish = next => { f.current = next; viewCallback(next); f.render(); };
   f.render(); return f;
 }
@@ -179,4 +184,51 @@ test('exhausted background collection stops automatic browser polling without st
   assert.equal(f.calls.length, count); assert.equal(f.defects().astra.collectionStopped, true);
   assert.equal(f.calls.every(call => call.options.method === undefined), true);
   f.dispose();
+});
+
+test('staff parent sends one explicit collective confirmation with the offered roster and no browser adoption loop', async () => {
+  const f = harness(); await flush(); f.render();
+  const proposalReview = { analysisId: randomUUID(), resultHash: 'a'.repeat(64), proposalIds: ['proposal-one', 'proposal-two'] };
+  await f.defects().onConfirm({ base, reviewed: true, actor: 'HUMAN', proposalReview });
+  assert.deepEqual(JSON.parse(JSON.stringify(f.actions)), [{ type: 'CONFIRM_FINDINGS', base, reviewed: true, proposalReview }]);
+  f.dispose();
+});
+
+test('opening the full draft is read-only and approval requires verified images and the exact displayed revision', async () => {
+  const f = harness(); await flush(); f.render();
+  await f.defects().onContinue(); f.render();
+  assert.equal(f.report().preview.reportHash, 'exact-report-hash'); assert.equal(f.report().current, true);
+  assert.equal(f.actions.length, 0); assert.equal(f.button('Approve final report').props.disabled, true);
+  await f.button('Approve final report').props.onClick(); assert.equal(f.actions.length, 0);
+  f.report().onReadyChange(true); f.render(); assert.equal(f.button('Approve final report').props.disabled, false);
+  await f.button('Approve final report').props.onClick(); f.render();
+  assert.deepEqual(JSON.parse(JSON.stringify(f.actions)), [{ type: 'APPROVE_REPORT', reportHash: 'exact-report-hash', reviewed: true }]);
+  f.publish({ ...f.current, card: { revision: 2, contentHash: 'changed-after-preview' } });
+  assert.equal(f.report().current, false);
+  await f.button('Approve final report').props.onClick(); assert.equal(f.actions.length, 1, 'a stale enabled callback cannot approve changed content');
+  f.dispose();
+});
+
+test('a report response that arrives after a newer saved edit is refused before display', async () => {
+  const f = harness(); await flush(); f.render(); let finish;
+  f.preview = () => new Promise(resolve => { finish = resolve; });
+  const opening = f.defects().onContinue();
+  f.publish({ ...f.current, card: { revision: 2, contentHash: 'two' } });
+  finish({ reportHash: 'old-report', sourceRevision: 1, sourceHash: 'one', report: {}, review: {} });
+  await opening; f.render();
+  assert.equal(f.report(), undefined); assert.ok(f.defects()); assert.match(f.text(), /MANUAL_REPORT_STALE/);
+  assert.equal(f.actions.length, 0); f.dispose();
+});
+
+test('returning to Findings discards the displayed report and opens a fresh corrected draft without implicit approval', async () => {
+  const f = harness(); await flush(); f.render(); let previews = 0;
+  f.preview = async () => ({ reportHash: `report-${++previews}`, sourceRevision: f.current.card.revision,
+    sourceHash: f.current.card.contentHash, report: {}, review: {} });
+  await f.defects().onContinue(); f.render(); f.report().onReadyChange(true); f.render();
+  await f.button('Findings').props.onClick(); f.render(); assert.equal(f.report(), undefined); assert.ok(f.defects());
+  f.publish({ ...f.current, card: { revision: 2, contentHash: 'corrected' } });
+  await f.defects().onContinue(); f.render();
+  assert.equal(f.report().preview.reportHash, 'report-2'); assert.equal(f.report().preview.sourceHash, 'corrected');
+  assert.equal(f.button('Approve final report').props.disabled, true, 'new report must verify its images again');
+  assert.equal(f.actions.length, 0); f.dispose();
 });

@@ -28,6 +28,7 @@ function all(node, predicate, found = []) {
 }
 function astraFor(state, status = 'READY') {
   return { enabled: true, status, analysisId: 'analysis-1', base: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, actions.defectBase(state, side)])),
+    proposalReview: { analysisId: 'analysis-1', resultHash: 'f'.repeat(64), proposalIds: ['proposal-1'] },
     proposals: [{ id: 'proposal-1', side: 'FRONT', defectType: 'LIGHT_SCRATCH_SCUFF', reviewStatus: 'UNREVIEWED',
       canonicalContour: [{ x: .2, y: .2 }, { x: .22, y: .2 }, { x: .22, y: .22 }, { x: .2, y: .22 }],
       observation: 'Possible short scratch.', uncertainty: 'May be a printed line.' }] };
@@ -241,6 +242,45 @@ test('Astra image limitations remain visible with an empty proposal list without
   assert.equal(f.button('Confirm findings').props.disabled, true);
 });
 
+test('one deliberate collective confirmation carries only the exact offered scope and cannot silently open an incomplete report', async () => {
+  let state = workspace(false);
+  for (const side of ['FRONT', 'BACK']) state = actions.markDefectSideInspected(state, { side, base: actions.defectBase(state, side), actor: 'HUMAN', inspected: true }).state;
+  state = actions.confirmDefectFindings(state, { base: { FRONT: actions.defectBase(state, 'FRONT'), BACK: actions.defectBase(state, 'BACK') }, actor: 'HUMAN', reviewed: true }).state;
+  const before = structuredClone(state), astra = astraFor(state); let complete, confirmations = [];
+  astra.proposals.push({ ...astra.proposals[0], id: 'rejected-1', reviewStatus: 'REJECTED' });
+  const f = harness({ workspace: state, astra, onContinue: () => assert.fail('unresolved suggestions cannot open report'),
+    onConfirm: input => { confirmations.push(input); return new Promise(resolve => { complete = resolve; }); } }); f.ready();
+  assert.equal(f.nodes(node => node.type === 'button' && text(node) === 'Review draft report').length, 0);
+  assert.equal(f.has('1 suggestions remaining for confirmation · 1 rejected suggestions'), true);
+  const click = f.button('Confirm findings & accept 1 suggestions').props.onClick, first = click(); await click();
+  assert.equal(confirmations.length, 1); assert.deepEqual(structuredClone(confirmations[0].proposalReview), astra.proposalReview);
+  assert.equal(f.calls.length, 0, 'no per-proposal browser mutation loop or analysis');
+  assert.deepEqual(state, before, 'the UI does not adopt or measure proposals itself'); complete(); await first; f.render();
+  assert.equal(f.nodes(node => node.type === 'button' && text(node) === 'Review draft report').length, 0, 'acknowledgement alone does not invent changed review state');
+});
+
+test('collective confirmation requires the current server roster and both inspected images', async () => {
+  let state = workspace(false);
+  for (const side of ['FRONT', 'BACK']) state = actions.markDefectSideInspected(state, { side, base: actions.defectBase(state, side), actor: 'HUMAN', inspected: true }).state;
+  for (const proposalReview of [undefined, { analysisId: 'old', resultHash: 'f'.repeat(64), proposalIds: ['proposal-1'] }, { analysisId: 'analysis-1', resultHash: 'f'.repeat(64), proposalIds: [] }]) {
+    const f = harness({ workspace: state, astra: { ...astraFor(state), proposalReview }, onConfirm: () => assert.fail('invalid roster') }); f.ready();
+    assert.equal(f.button('Confirm findings & accept 1 suggestions').props.disabled, true);
+    await f.button('Confirm findings & accept 1 suggestions').props.onClick();
+  }
+  const f = harness({ workspace: state, astra: astraFor(state) });
+  assert.equal(f.button('Confirm findings & accept 1 suggestions').props.disabled, true); f.ready();
+  assert.equal(f.button('Confirm findings & accept 1 suggestions').props.disabled, false);
+});
+
+test('saved suggestions stay reviewable when a new provider request is unavailable', async () => {
+  const state = workspace(false), f = harness({ workspace: state, astra: { ...astraFor(state), requestAvailable: false } }); f.ready();
+  assert.equal(f.button('Find defects with Astra').props.disabled, true);
+  assert.equal(f.button('Accept suggestion').props.disabled, false);
+  await f.click('Reject suggestion'); assert.equal(f.calls.length, 1); assert.equal(f.calls[0].kind, 'proposal');
+  assert.equal(f.calls[0].request.action, 'REJECT');
+  assert.equal(presentation.collectiveProposalReview(state, f.props.astra).ready, true);
+});
+
 
 test('background acceptance explains Astra’s first inspection without asking the human to inspect first', () => {
   const state = workspace(false), f = harness({ workspace: state, astra: { ...astraFor(state, 'RUNNING'), backgroundAccepted: true, proposals: [] } });
@@ -299,7 +339,7 @@ test('Inspect suggestion and finding focus the view without accepting, measuring
   await f.clickControl('Inspect Front finding 1');
   assert.equal(f.has('Inspecting Front finding 1'), true);
   assert.equal(f.calls.length, 0); assert.deepEqual(f.props.workspace, before);
-  assert.equal(f.button('Confirm findings').props.disabled, true);
+  assert.equal(f.button('Confirm findings & accept 1 suggestions').props.disabled, true);
 });
 
 test('padding clicks never draw and a scaled padded image saves the independently expected canonical pixels', async () => {

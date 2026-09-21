@@ -11,7 +11,9 @@
     "./preparation-result": "./src/preparation-result.mjs",
     "./defect-actions": "./src/defect-actions.mjs",
     "./defects": "./dist/DefectReviewWorkspace.js",
-    "./defects.css": "./src/defects.css"
+    "./defects.css": "./src/defects.css",
+    "./report-review": "./dist/FinalReportReview.js",
+    "./report-review.css": "./src/report-review.css"
   },
   "scripts": {
     "build": "node scripts/build.mjs",

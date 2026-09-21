@@ -5,7 +5,7 @@ import { canonical, immutable, inputCommand, object, requireThat, stateDocument 
  * Only compact refs and deterministic content reach CAS; conflicting results
  * remain immutable unreferenced artifacts, never overwrites of newer work.
  */
-export function createManualService({ repository, reduce, buildReport = null }) {
+export function createManualService({ repository, reduce, buildReport = null, beforeCommit = null }) {
   requireThat(repository && typeof reduce === 'function', 500, 'MANUAL_SERVICE_INVALID');
   return Object.freeze({
     authorizeEdit: (staff, cardId) => repository.authorizeEdit(staff, cardId),
@@ -20,6 +20,7 @@ export function createManualService({ repository, reduce, buildReport = null }) 
       return { report: report.draft, reportHash: report.hash, sourceRevision: card.revision, sourceHash: card.contentHash };
     },
     async execute(staff, cardId, input) {
+      const startedAt = Date.now();
       const { input: command } = inputCommand(input);
       const previous = await repository.findAction(staff, cardId, command); if (previous) return previous;
       const { card, principal } = await repository.load(staff, cardId);
@@ -33,12 +34,14 @@ export function createManualService({ repository, reduce, buildReport = null }) 
         requireThat(report.hash === command.action.reportHash, 409, 'MANUAL_REPORT_STALE');
         approval = report.draft; draft = card.draft;
       } else {
-        draft = await reduce(immutable({ card, action: command.action, principal }), staff);
+        draft = await reduce(immutable({ card, action: command.action, principal, startedAt }), staff);
       }
       // Snapshot again before awaiting persistence; caller-owned references do
       // not survive across the commit's authentication/lock awaits.
       draft = JSON.parse(canonical(draft));
-      return repository.commit(staff, { cardId, input: command, baseHash: card.contentHash, draft, approval });
+      const commitGuard = beforeCommit ? await beforeCommit(immutable({ card, draft, action: command.action, principal, startedAt }), staff) : null;
+      return repository.commit(staff, { cardId, input: command, baseHash: card.contentHash, draft, approval,
+        ...(commitGuard ? { commitGuard: immutable(JSON.parse(canonical(commitGuard))) } : {}) });
     },
   });
 }

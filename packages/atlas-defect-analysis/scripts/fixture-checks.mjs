@@ -4,6 +4,7 @@ import { createAnalysisRepository, analysisGrantSQL, analysisReceiptGrantSQL } f
 import { check, digest, canonical } from '../src/contract.mjs';
 import { inputFixture, artifactRef, hash } from '../test/fixtures.mjs';
 import { runBackgroundFixtureChecks } from './background-fixture-checks.mjs';
+import { runConfirmationFencePostgres } from '../../atlas-connected-manual/scripts/confirmation-fence-postgres.mjs';
 
 /** Invoked only by the existing owned loopback PostgreSQL fixture. Does not
  * start a database, accept a live URL, access storage or call a provider. */
@@ -120,5 +121,6 @@ export async function runAnalysisFixtureChecks({ fixture, connection, reviewer, 
   checks.push('prepare/retire and claim/retire races use one card-first order; no canceled command can later gain dispatch');
   if (claimed.claimed) await repository.recordReply({ analysisId: competingAction, requestHash, kind: 'RESPONSE', evidence: response });
   checks.push(...await runBackgroundFixtureChecks({ fixture, connection, reviewer, cardId, repository, input, receiptClient }));
+  checks.push(...await runConfirmationFencePostgres({ fixture, connection, reviewer, cardId, repository, input, response }));
   return checks;
 }

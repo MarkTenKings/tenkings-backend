@@ -6,6 +6,7 @@ import '../styles/grading.css';
 import '@atlas/report-view/styles.css';
 import '@atlas/manual-workspace/styles.css';
 import '@atlas/manual-workspace/defects.css';
+import '@atlas/manual-workspace/report-review.css';
 import '../styles/manual.css';
 const useBrowserLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 export default function App({ Component, pageProps }) {

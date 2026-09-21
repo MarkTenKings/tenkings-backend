@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { validateConfirmationCommit } from '../src/confirmation-fence.mjs';
 import { createManualWorkflow } from '../../atlas-manual-workflow/src/workflow.mjs';
 import { createManualArtifactStore } from '../../atlas-manual-service/src/artifacts.mjs';
 import { canonical, digest, inputCommand, requireThat, stateDocument } from '../../atlas-manual-service/src/contract.mjs';
@@ -30,7 +31,7 @@ function geometry(cardId) {
   }
   return confirmBothGeometry(state, { actor: 'HUMAN', reviewed: true, base: Object.fromEntries(SIDES.map(side => [side, geometryBase(state, side, 'REVIEW')])) }).state;
 }
-async function fixture() {
+async function fixture({ confirmation = false, confirmationTimeoutMs } = {}) {
   const cardId = randomUUID(), staff = { id: randomUUID() }, principal = { id: staff.id, canCertify: true };
   let card;
   const commands = new Map(), objects = new Map(), proposals = new Map(), f = { commits: [], measured: [], publications: [], publisher: async () => {}, resolve: null };
@@ -43,6 +44,8 @@ async function fixture() {
     async findAction(actor, id, command) { authorize(actor, id); const prior = commands.get(command.actionId); if (!prior) return null;
       requireThat(prior.requestHash === inputCommand(command).requestHash, 409, 'MANUAL_ACTION_CONFLICT'); return clone(prior.result); },
     async commit(actor, input) { authorize(actor, input.cardId);
+      if (f.beforeCommit) await f.beforeCommit();
+      if (confirmation && f.tx) await validateConfirmationCommit({ tx: f.tx, cardId, input: input.input, commitGuard: input.commitGuard });
       requireThat(input.input.expectedRevision === card.revision && input.baseHash === card.contentHash, 409, 'MANUAL_DRAFT_STALE');
       const document = stateDocument(input.draft); card = { ...card, revision: card.revision + 1, draft: document.draft, contentHash: document.hash };
       const result = { card: clone(card), actionId: input.input.actionId };
@@ -53,12 +56,16 @@ async function fixture() {
     async putIfAbsent({ key, bytes, contentType, lineageSha256 }) { if (objects.has(key)) throw Error('immutable existing object'); objects.set(key, { bytes: Buffer.from(bytes), contentType, lineageSha256 }); },
     async read({ key }) { return objects.get(key); },
   } });
-  const workflow = createManualWorkflow({ repository, artifacts,
-    resolveProposal: async ({ staff: actor, card: current, analysisId, proposalId }) => { authorize(actor, current.cardId); const found = proposals.get(`${analysisId}:${proposalId}`);
+  const workflow = createManualWorkflow({ repository, artifacts, ...(confirmationTimeoutMs ? { confirmationTimeoutMs } : {}),
+    ...(confirmation ? { resolveConfirmation: input => f.assistance.resolveConfirmation(input),
+      assertReviewComplete: input => f.assistance.assertReviewComplete(input) } : {}),
+    resolveProposal: async ({ staff: actor, card: current, analysisId, proposalId }) => { authorize(actor, current.cardId); if (confirmation) return f.assistance.resolveProposal({ staff: actor, card: current, analysisId, proposalId });
+      const found = proposals.get(`${analysisId}:${proposalId}`);
       requireThat(found, 404, 'MANUAL_PROPOSAL_NOT_FOUND'); return f.resolve ? f.resolve(clone(found)) : clone(found); },
     // A synthetic measured-result adapter isolates action/persistence behavior.
     // Actual CPU geometry and optical accuracy are tested by runtime suites.
-    measure: async ({ workspace, side }) => runDefectMeasurement(workspace, side, async input => {
+    measure: async ({ workspace, side, signal, limits }) => runDefectMeasurement(workspace, side, async input => {
+      if (f.beforeMeasure) await f.beforeMeasure({ workspace, side, signal, limits });
       f.measured.push(clone(input)); const ids = new Set(input.marks.map(mark => mark.id));
       return { receipt: { fixture: 'synthetic-measurement-only' }, defects: [...input.findings.filter(finding => !ids.has(finding.id)), ...input.marks.map(mark => {
         const count = decodeSpeedsterTraceRleV1(mark.finalTrace).reduce((sum, pixel) => sum + pixel, 0);
@@ -83,8 +90,8 @@ async function fixture() {
     async review(action = 'ACCEPT', index = 1, extra = {}) { const state = await f.state(); return f.execute({ type: 'ASTRA_PROPOSAL_REVIEW', side: 'FRONT',
       base: defectBase(state.defects, 'FRONT'), analysisId, proposalId: `${analysisId}:${index}`, action, ...extra }); },
     async inspect() { for (const side of SIDES) { const state = await f.state(); await f.execute({ type: 'INSPECT_SIDE', side, base: defectBase(state.defects, side), inspected: true }); } },
-    async confirm(actionId = randomUUID()) { const state = await f.state(); const command = { actionId, expectedRevision: card.revision,
-      action: { type: 'CONFIRM_FINDINGS', reviewed: true, base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) } };
+    async confirm(actionId = randomUUID(), proposalReview) { const state = await f.state(); const command = { actionId, expectedRevision: card.revision,
+      action: { type: 'CONFIRM_FINDINGS', reviewed: true, ...(proposalReview ? { proposalReview } : {}), base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) } };
       return { result: await workflow.service.execute(staff, cardId, command), command }; },
   });
   return f;
@@ -138,12 +145,17 @@ import { buildAstraDefectRequest, buildAstraBackgroundDefectRequest, buildAstraC
 import { readAnalysisRequest } from '../../atlas-defect-analysis/src/executor.mjs';
 import { inputFixture, contextInputFixture, outputFixture, responseFixture } from '../../atlas-defect-analysis/test/fixtures.mjs';
 
-async function savedAnalysisFixture({ background=false, contextLayout=false, receiptKind='RESPONSE', accepted=false, collectionExpired=false }={}) {
-  const f = await fixture(), initial = f.card(), state = await f.state(), input = contextLayout ? contextInputFixture() : inputFixture();
+async function savedAnalysisFixture({ background=false, contextLayout=false, receiptKind='RESPONSE', accepted=false, collectionExpired=false, confirmation=false, findingsCount=1, confirmationTimeoutMs, providerEnabled=true }={}) {
+  const f = await fixture({ confirmation, confirmationTimeoutMs }), initial = f.card(), state = await f.state(), input = contextLayout ? contextInputFixture() : inputFixture();
   input.analysisId = f.analysisId; input.cardId = f.cardId; input.binding = defectAnalysisBinding(initial, state);
   for (const slot of input.images) slot.whole.sourceSha256 = input.binding.sides[slot.side].frame.inspectionImageSha256;
   const prepared = (contextLayout ? buildAstraContextBackgroundDefectRequest : background ? buildAstraBackgroundDefectRequest : buildAstraDefectRequest)(input);
   const output = outputFixture(prepared.evidence);
+  if (findingsCount > 1) output.findings = Array.from({ length: findingsCount }, (_, index) => {
+    const side = index < 3 ? 'FRONT' : 'BACK', x = 100 + index * 20, y = 150;
+    return { ...output.findings[0], side, imageId: `${side}:crop:1`,
+      localContour: [{ x, y }, { x: x + 10, y }, { x: x + 10, y: y + 12 }, { x, y: y + 12 }] };
+  });
   if (contextLayout) output.findings[0].localContour = [{ x: 40, y: 40 }, { x: 50, y: 40 }, { x: 50, y: 52 }, { x: 40, y: 52 }];
   const raw = Buffer.from(JSON.stringify(responseFixture(prepared.evidence, output)));
   const parsed = parseAstraResponse(raw, prepared.evidence), source = { cardId: f.cardId, sourceHash: prepared.evidence.sourceBindingSha256 };
@@ -164,6 +176,10 @@ async function savedAnalysisFixture({ background=false, contextLayout=false, rec
   const acceptedRow=acceptance?{analysis_id:f.analysisId,kind:'ACCEPTED',request_hash:row.request_hash,provider_binding_hash:provider.bindingHash,response_id:acceptance.responseId,evidence:canonical(acceptance),evidence_hash:digest(canonical(acceptance)),recorded_at:new Date()}:null;
   const principal = { id: f.staff.id, role: 'REVIEWER' };
   const tx = { async $queryRawUnsafe(sql,...args) {
+    if (sql.includes('UNION ALL SELECT analysis_id') && f.latestRefusal) return [{ id: f.latestRefusal, code: refusals.get(f.latestRefusal).code }];
+    if (sql.includes('FOR UPDATE OF r')) return f.noAnalysis ? [] : [{ id: row.id }];
+    if (sql.startsWith('SELECT r.id,r.request_hash,q.evidence')) return f.noAnalysis ? [] : [{ id: row.id, request_hash: row.request_hash, acceptance_hash: f.fenceAcceptanceHash ?? acceptedRow?.evidence_hash ?? null,
+      response_evidence: receiptKind === 'RESPONSE' && row.state !== 'PREPARED' ? canonical(receipt) : null }];
     if (sql.includes('FROM atlas_defect_analysis.request_refusal') && !sql.includes('FROM atlas_defect_analysis.run r')) return [...refusals.values()].filter(value=>value.card_id===args[0] && (sql.includes('action_id=$2')?value.action_id:value.analysis_id)===args[1]);
     if(sql.includes('FROM atlas_defect_analysis.provider_event'))return acceptedRow?[acceptedRow]:[];
     if (sql.includes('FROM atlas_manual.card')) { const current = f.card(); return [{ id: f.cardId, owner_id: f.staff.id, editors: [], readers: [], approvers: [],
@@ -183,10 +199,11 @@ async function savedAnalysisFixture({ background=false, contextLayout=false, rec
     throw Error(`Unrecognized offline write: ${sql}`);
   } };
   const boundary = { transaction: async (_staff, work) => work({ tx, principal, now: new Date(), refresh: async () => ({ principal, now: new Date() }) }) };
-  const assistance = createDefectAssistance({ boundary, intakeRepository: { assertCurrentPair: async () => {} }, workflow: f.workflow,
+  const assistance = createDefectAssistance({ boundary, intakeRepository: { assertCurrentPair: async () => {} }, workflow: { ...f.workflow, hydrate: card => f.hydrateOverride ?? f.workflow.hydrate(card) },
     artifacts: f.artifacts, imageEffects: { createExemplar: async () => { throw Error('No exemplar effect permitted'); },currentImages:async()=>{calls.images++;throw Error('No image effects expected');} },
-    memoryEnabled: true, provider, receiptClient: tx });
-  return { ...f, assistance, prepared, parsed, row, receipt, acceptance, calls, refusals };
+    memoryEnabled: true, provider: providerEnabled ? provider : null, receiptClient: tx });
+  Object.assign(f, { assistance, prepared, parsed, row, receipt, acceptance, calls, refusals, tx });
+  return f;
 }
 
 test('legacy V1/V2 and context V2 saved suggestions remain reviewable without new images, memory or provider dispatch', async () => {
@@ -347,4 +364,195 @@ test('known provider acceptance never exposes or accepts a no-ID replacement eve
     replacement:{analysisId:f.analysisId,outcomeHash:digest(canonical(f.receipt))}};
   assert.equal((await f.assistance.analyze(f.staff,f.cardId,input)).state,'REFUSED');
   assert.deepEqual(f.calls,{provider:0,images:0});
+});
+
+async function offeredSelection(f) {
+  return (await f.assistance.status(f.staff, f.cardId, f.analysisId)).astra.proposalReview;
+}
+async function addManualBack(f) {
+  const state = await f.state(), trace = traceAction('BACK', null, [700, 710, 7, 6], 'manual-back-miss').trace;
+  const action = await f.workflow.stageTrace(f.staff, f.cardId, { side: 'BACK', base: defectBase(state.defects, 'BACK'), findingId: null, trace });
+  await f.execute(action); await f.execute({ type: 'MEASURE_SIDE', side: 'BACK' });
+  return (await f.state()).defects.sides.BACK.findings[0];
+}
+async function decideSavedProposal(f, index, action) {
+  const state = await f.state(), proposal = f.parsed.result.proposals[index];
+  const command = { type: 'ASTRA_PROPOSAL_REVIEW', side: proposal.side, base: defectBase(state.defects, proposal.side),
+    analysisId: f.analysisId, proposalId: proposal.id, action };
+  if (action === 'TRACE_SAVE') {
+    const trace = traceAction(proposal.side, null, [300, 400, 12, 11], 'fixture-corrected').trace;
+    const staged = await f.workflow.stageProposalTrace(f.staff, f.cardId, { side: proposal.side, base: command.base,
+      analysisId: f.analysisId, proposalId: proposal.id, trace });
+    await f.execute(staged);
+  } else await f.execute(command);
+  if (action !== 'REJECT') await f.execute({ type: 'MEASURE_SIDE', side: proposal.side });
+}
+
+test('one explicit collective confirmation commits seven saved suggestions and a manual Back mark once; replay and reload preserve all eight', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true, findingsCount: 7 }), manual = await addManualBack(f);
+  await f.inspect(); const before = f.card(), scope = await offeredSelection(f), count = f.commits.length;
+  assert.equal(scope.proposalIds.length, 7);
+  const { command, result } = await f.confirm(randomUUID(), scope);
+  assert.equal(f.card().revision, before.revision + 1); assert.equal(f.commits.length, count + 1);
+  const state = await f.state();
+  assert.equal(state.assistance.reviews.length, 7); assert(state.assistance.reviews.every(review => review.action === 'ACCEPT'));
+  assert.equal(state.defects.sides.FRONT.findings.length, 3); assert.equal(state.defects.sides.BACK.findings.length, 5);
+  assert.deepEqual(state.defects.sides.BACK.findings.find(finding => finding.id === manual.id), manual);
+  const preview = await f.workflow.service.previewReport(f.staff, f.cardId);
+  assert.equal(preview.report.findingCounts.included, 8); assert.equal(preview.report.findingCounts.removed, 0);
+  assert.equal(preview.review.report.findings.filter(finding => finding.reviewResult !== 'REMOVED').length, 8);
+  assert.equal(preview.reportHash, digest(canonical(preview.report)), 'Additive review explanation never enters the approval hash');
+  assert.deepEqual(preview.review.report, await f.artifacts.read(preview.report.report.ref,
+    { cardId: f.cardId, kind: 'REPORT', sourceHash: preview.report.report.sourceHash }));
+  const measurements = f.measured.length;
+  assert.deepEqual(await f.workflow.service.execute(f.staff, f.cardId, command), result);
+  assert.equal(f.measured.length, measurements); assert.equal(f.commits.length, count + 1);
+  assert.deepEqual((await f.workflow.service.previewReport(f.staff, f.cardId)).report, preview.report);
+  assert.deepEqual((await offeredSelection(f)).proposalIds, []); assert.deepEqual(f.calls, { provider: 0, images: 0 });
+});
+
+test('collective confirmation preserves individually corrected and rejected suggestions and accepts only the remaining five', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true, findingsCount: 7 }); await addManualBack(f);
+  await decideSavedProposal(f, 0, 'TRACE_SAVE'); await decideSavedProposal(f, 1, 'REJECT');
+  const prior = await f.state(); await f.inspect(); const scope = await offeredSelection(f); assert.equal(scope.proposalIds.length, 5);
+  await f.confirm(randomUUID(), scope); const state = await f.state();
+  assert.deepEqual(state.assistance.reviews.slice(0, 2), prior.assistance.reviews);
+  assert.deepEqual(state.defects.sides.FRONT.findings.find(finding => finding.id === prior.assistance.reviews[0].findingId), prior.defects.sides.FRONT.findings[0]);
+  assert.equal(state.assistance.reviews.filter(review => review.action === 'ACCEPT').length, 5);
+  const preview = await f.workflow.service.previewReport(f.staff, f.cardId);
+  assert.equal(preview.report.findingCounts.included, 7); assert.equal(preview.report.findingCounts.removed, 0);
+  assert.equal((await f.assistance.status(f.staff, f.cardId, f.analysisId)).astra.proposals.filter(p => p.reviewStatus === 'REJECTED').length, 1);
+});
+
+test('a partial collective CPU failure commits nothing and the exact same command can safely retry', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true, findingsCount: 7 }); await addManualBack(f); await f.inspect();
+  const before = f.card(), original = await f.state(), scope = await offeredSelection(f), commitCount = f.commits.length;
+  const state = await f.state(), command = { actionId: randomUUID(), expectedRevision: before.revision,
+    action: { type: 'CONFIRM_FINDINGS', reviewed: true, proposalReview: scope, base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) } };
+  let calls = 0; const failure = new Error('Synthetic second measurement failure');
+  f.beforeMeasure = async () => { if (++calls === 2) throw failure; };
+  await assert.rejects(f.workflow.service.execute(f.staff, f.cardId, command), error => error === failure);
+  assert.deepEqual(f.card(), before); assert.deepEqual(await f.state(), original); assert.equal(f.commits.length, commitCount); assert.equal(f.publications.length, 0);
+  f.beforeMeasure = null; await f.workflow.service.execute(f.staff, f.cardId, command);
+  assert.equal((await f.state()).assistance.reviews.length, 7); assert.equal(f.commits.length, commitCount + 1);
+});
+
+test('collective measurement has one total deadline, aborts slow CPU and never commits a late candidate', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true, findingsCount: 1, confirmationTimeoutMs: 3000 }); await f.inspect();
+  const before = f.card(); let cpuSignal, observedLimit;
+  f.beforeMeasure = async ({ signal, limits }) => { cpuSignal = signal; observedLimit = limits.timeoutMs; await new Promise(resolve => setTimeout(resolve, 3500)); };
+  await assert.rejects(f.confirm(randomUUID(), await offeredSelection(f)), { code: 'MANUAL_CONFIRM_DEADLINE' });
+  await new Promise(resolve => setTimeout(resolve, 3600));
+  assert(cpuSignal?.aborted); assert(observedLimit <= 3000); assert.deepEqual(f.card(), before); assert.equal(f.publications.length, 0);
+});
+
+test('ordinary confirmation, old confirmed report previews and approvals cannot omit unresolved saved suggestions', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true, findingsCount: 7 }); await addManualBack(f); await f.inspect();
+  const before = f.card(); await assert.rejects(f.confirm(), { code: 'MANUAL_ASTRA_REVIEW_REQUIRED' }); assert.deepEqual(f.card(), before);
+  // Model a legacy confirmed draft without changing its persisted findings.
+  f.noAnalysis = true; await f.confirm(); const oldPreview = await f.workflow.service.previewReport(f.staff, f.cardId), confirmed = f.card();
+  f.noAnalysis = false;
+  await assert.rejects(f.workflow.service.previewReport(f.staff, f.cardId), { code: 'MANUAL_ASTRA_REVIEW_REQUIRED' });
+  await assert.rejects(f.execute({ type: 'APPROVE_REPORT', reportHash: oldPreview.reportHash, reviewed: true }), { code: 'MANUAL_ASTRA_REVIEW_REQUIRED' });
+  assert.deepEqual(f.card(), confirmed);
+  await f.confirm(randomUUID(), await offeredSelection(f));
+  assert.equal((await f.workflow.service.previewReport(f.staff, f.cardId)).report.findingCounts.included, 8);
+});
+
+test('collective scope rejects partial, duplicate, forged, stale-analysis and stale-frame selections before measurement', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true, findingsCount: 7 }); await f.inspect();
+  const scope = await offeredSelection(f), before = f.card();
+  for (const selection of [{ ...scope, proposalIds: scope.proposalIds.slice(1) }, { ...scope, proposalIds: [...scope.proposalIds, scope.proposalIds[0]] },
+    { ...scope, resultHash: hash('9') }, { ...scope, analysisId: randomUUID() }, { ...scope, reviewed: true }]) {
+    await assert.rejects(f.confirm(randomUUID(), selection)); assert.deepEqual(f.card(), before);
+  }
+  assert.equal(f.measured.length, 0);
+  const context = await f.assistance.resolveConfirmation({ staff: f.staff, card: f.card(), selection: scope });
+  const state = clone(await f.state()); state.defects.sides.FRONT.frame.frameId = 'later-prepared-frame';
+  f.hydrateOverride = state;
+  await assert.rejects(f.assistance.resolveConfirmation({ staff: f.staff, card: f.card(), selection: scope }), { code: 'MANUAL_ASTRA_REVIEW_STALE' });
+  assert.equal(context.entries.length, 7);
+});
+
+test('new pending analysis blocks confirmation, while no analysis ever started still permits manual confirmation', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true, receiptKind: null }); await f.inspect(); const before = f.card();
+  await assert.rejects(f.confirm(), { code: 'MANUAL_ASTRA_ANALYSIS_PENDING' }); assert.deepEqual(f.card(), before);
+  f.noAnalysis = true; await f.confirm(); assert.equal(f.card().revision, before.revision + 1);
+});
+
+test('a newer analysis at the final locked commit fence refuses the whole candidate without losing the original review', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true, findingsCount: 7 }); await f.inspect(); const before = f.card();
+  f.beforeCommit = async () => { f.row.id = randomUUID(); };
+  await assert.rejects(f.confirm(randomUUID(), await offeredSelection(f)), { code: 'MANUAL_ASTRA_REVIEW_STALE' });
+  assert.deepEqual(f.card(), before); assert.equal(f.publications.length, 0);
+});
+
+test('collective confirmation still requires both current human inspection attestations before any CPU adoption', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true, findingsCount: 7 }), scope = await offeredSelection(f);
+  const before = f.card();
+  await assert.rejects(f.confirm(randomUUID(), scope), { code: 'ATLAS_DEFECT_INSPECTION_REQUIRED' });
+  assert.deepEqual(f.card(), before); assert.equal(f.measured.length, 0);
+  const state = await f.state(); await f.execute({ type: 'INSPECT_SIDE', side: 'FRONT', inspected: true, base: defectBase(state.defects, 'FRONT') });
+  await assert.rejects(f.confirm(randomUUID(), scope), { code: 'ATLAS_DEFECT_INSPECTION_REQUIRED' });
+  assert.equal(f.measured.length, 0);
+});
+
+test('a saved-proposal read failure cannot turn READY suggestions into an ordinary confirmation', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true }); await f.inspect(); const before = f.card();
+  f.row.evidence_hash = hash('9');
+  await assert.rejects(f.confirm(), { code: 'DEFECT_ANALYSIS_STORED_EVIDENCE_INVALID' });
+  assert.deepEqual(f.card(), before); assert.equal(f.measured.length, 0);
+});
+
+test('new report approval binds the half-point final grade and refuses a previous-policy preview hash', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true }); await decideSavedProposal(f, 0, 'REJECT'); await f.inspect(); await f.confirm();
+  const preview = await f.workflow.service.previewReport(f.staff, f.cardId);
+  assert.equal(preview.report.version, 'atlas-manual-report-snapshot-v2');
+  assert.equal(preview.review.report.version, 'atlas-manual-draft-report-v2');
+  assert.equal(preview.report.finalGradePolicy, 'atlas-final-half-point-v1');
+  assert.equal(preview.report.finalGrade, Math.round((preview.report.grade.overall.rawGrade + Number.EPSILON) * 2) / 2);
+  assert.equal(preview.report.finalGrade, preview.review.report.finalGrade);
+  const old = structuredClone(preview.report); old.version = 'atlas-manual-report-snapshot-v1'; delete old.finalGrade; delete old.finalGradePolicy;
+  const before = f.card();
+  await assert.rejects(f.execute({ type: 'APPROVE_REPORT', reviewed: true, reportHash: digest(canonical(old)) }), { code: 'MANUAL_REPORT_STALE' });
+  assert.deepEqual(f.card(), before);
+  await f.execute({ type: 'APPROVE_REPORT', reviewed: true, reportHash: preview.reportHash });
+  assert.deepEqual(f.commits.at(-1).approval, preview.report);
+  assert.equal(digest(canonical(f.commits.at(-1).approval)), preview.reportHash);
+});
+
+
+test('a retired undispatched attempt keeps exact refusal status but cannot hide the active READY collective scope from workspace', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true });
+  const actionId = randomUUID();
+  await f.assistance.repository.retireUndispatched(f.staff, { cardId: f.cardId, actionId,
+    baseHash: digest('retired-new-attempt'), code: 'DEFECT_ANALYSIS_REQUEST_EXPIRED' });
+  f.latestRefusal = actionId;
+  const exact = await f.assistance.status(f.staff, f.cardId, actionId);
+  assert.equal(exact.astra.status, 'REFUSED'); assert.equal(exact.astra.analysisId, actionId);
+  const extras = await f.assistance.workspaceExtras({ staff: f.staff, card: f.card(), state: await f.state() });
+  assert.equal(extras.astra.status, 'READY'); assert.equal(extras.astra.analysisId, f.analysisId);
+  assert.equal(extras.astra.proposalReview.proposalIds.length, 1);
+});
+
+
+test('disabling new inference keeps saved READY proposal verification and collective confirmation required', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true, findingsCount: 7, providerEnabled: false });
+  const status = await f.assistance.status(f.staff, f.cardId, f.analysisId);
+  assert.equal(status.astra.status, 'READY'); assert.equal(status.astra.enabled, true); assert.equal(status.astra.requestAvailable, false);
+  await f.inspect(); await assert.rejects(f.confirm(), { code: 'MANUAL_ASTRA_REVIEW_REQUIRED' });
+  await assert.rejects(f.assistance.analyze(f.staff, f.cardId, { actionId: randomUUID(), base: {} }), { code: 'DEFECT_ANALYSIS_DISABLED' });
+  await decideSavedProposal(f, 0, 'REJECT');
+  await f.confirm(randomUUID(), await offeredSelection(f));
+  assert.equal((await f.state()).assistance.reviews.length, 7);
+  assert.equal((await f.workflow.service.previewReport(f.staff, f.cardId)).report.findingCounts.included, 6);
+  assert.deepEqual(f.calls, { provider: 0, images: 0 });
+});
+
+
+test('late provider acceptance turns UNKNOWN into pending and invalidates the locked confirmation fence', async () => {
+  const f = await savedAnalysisFixture({ confirmation: true, receiptKind: 'OUTCOME' }); await f.inspect();
+  const before = f.card(); f.beforeCommit = async () => { f.fenceAcceptanceHash = digest('late immutable accepted provider event'); };
+  await assert.rejects(f.confirm(), { code: 'MANUAL_ASTRA_REVIEW_STALE' });
+  assert.deepEqual(f.card(), before); assert.equal(f.publications.length, 0);
 });

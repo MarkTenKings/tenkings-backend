@@ -11,6 +11,7 @@ import { createIdentification } from './identification.mjs';
 import { createDefectImageEffects } from './defect-images.mjs';
 import { createDefectAssistance } from './defect-assistance.mjs';
 import { measureDefectWorkspaceEdit } from '@atlas/measurement-runtime';
+import { validateConfirmationCommit } from './confirmation-fence.mjs';
 
 export const DEFAULT_LIMITS = Object.freeze({
   decode:{maxInputBytes:256*1024*1024,maxPixels:52_000_000,maxRasterBytes:512*1024*1024,maxOutputBytes:256*1024*1024,timeoutMs:90000},
@@ -32,7 +33,8 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     const actual=(await intake.read(staff,card.cardId)).card;
     requireThat(actual.ready && actual.sourceHash===card.draft.source?.sourceHash,409,'MANUAL_PHOTOS_CHANGED');return actual;
   }
-  const repository=createManualRepository({boundary,validateSource:async({tx,principal,cardId,draft,initial})=>{
+  const repository=createManualRepository({boundary,validateCommit: memoryEnabled ? validateConfirmationCommit : null,
+    validateSource:async({tx,principal,cardId,draft,initial})=>{
     await intakeRepository.assertCurrentPair(tx,principal,{cardId,sourceHash:draft.source?.sourceHash});
     if(initial){const [saved]=await tx.$queryRawUnsafe('SELECT revision FROM atlas_manual_connected.details WHERE card_id=$1::uuid FOR SHARE',cardId);
       requireThat(saved?.revision===draft.source.detailsRevision,409,'MANUAL_DETAILS_STALE');}
@@ -82,6 +84,8 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   let assistance;
   const workflow=createManualWorkflow({repository,artifacts,pythonExecutable,measurementLimits:limits.measurement,
     resolveProposal: input => assistance.resolveProposal(input),
+    resolveConfirmation: input => assistance.resolveConfirmation(input),
+    assertReviewComplete: input => assistance.assertReviewComplete(input),
     afterConfirm: memoryEnabled ? (staff,cardId,actionId)=>assistance.publish(staff,cardId,actionId) : null,
     measure:input=>limited(()=>measureDefectWorkspaceEdit(input)),
     assertCurrent:({card,staff})=>current(staff,card),

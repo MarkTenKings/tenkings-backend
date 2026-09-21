@@ -6,6 +6,7 @@ import {createIntakeClient,createBrowserIntakeJournal} from '@atlas/manual-intak
 import {createManualClient} from '@atlas/manual-workflow/client';
 import {PairedGeometryWorkspace} from '@atlas/manual-workspace';
 import {DefectReviewWorkspace} from '@atlas/manual-workspace/defects';
+import {FinalReportReview} from '@atlas/manual-workspace/report-review';
 import {geometryStatus} from '@atlas/manual-workspace/geometry-actions';
 import {manualRequest,manualMessage} from '../lib/manual-client.mjs';
 import {STAFF_BASE_PATH} from '../lib/routes.mjs';
@@ -140,6 +141,7 @@ export default function ManualCards({staff,cardId=null}){
 export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
   const [view,setView]=useState(null),[screen,setScreen]=useState('geometry'),[error,setError]=useState(''),[status,setStatus]=useState(''),[report,setReport]=useState(null),[editing,setEditing]=useState(false),[preparing,setPreparing]=useState({}),[approving,setApproving]=useState(false),[identity,setIdentity]=useState(null),[refreshingImages,setRefreshingImages]=useState(false);
   const client=useRef(null),analysisClient=useRef(null),imageRefresh=useRef(null),viewRef=useRef(null),interaction=useRef({}),router=useRouter();
+  const [reportImagesReady,setReportImagesReady]=useState(false),[loadingReport,setLoadingReport]=useState(false);
   interaction.current={...interaction.current,identity:Boolean(identity),approving,saving:status==='Saving…'};
   const changeEditing=useCallback(value=>{interaction.current.editing=value;setEditing(value);},[]);
   const attempt=async work=>{const owner=client.current;setError('');try{return await work();}catch(error){if(client.current===owner)setError(manualMessage(error));}};
@@ -232,9 +234,20 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
   }
   useEffect(()=>{if(!editing&&!identity)return;const warn=event=>{event.preventDefault();event.returnValue='';};const block=()=>{router.events.emit('routeChangeError');throw 'Save or discard the current edit before leaving';};window.addEventListener('beforeunload',warn);router.events.on('routeChangeStart',block);return()=>{window.removeEventListener('beforeunload',warn);router.events.off('routeChangeStart',block);};},[editing,identity,router]);
   const execute=action=>client.current.execute(action);
+  async function openReport(){
+    const owner=client.current;if(!owner||owner.hasPending())return;
+    setLoadingReport(true);setReportImagesReady(false);
+    try{
+      const preview=await owner.previewReport();
+      if(client.current!==owner)return;
+      const current=viewRef.current;
+      if(preview.sourceRevision!==current?.card.revision||preview.sourceHash!==current?.card.contentHash)throw {code:'MANUAL_REPORT_STALE'};
+      setReport(preview);setScreen('report');
+    }finally{if(client.current===owner)setLoadingReport(false);}
+  }
   async function prepare(side){setPreparing(old=>({...old,[side]:true}));try{await execute({type:'PREPARE_SIDE',side});}finally{setPreparing(old=>({...old,[side]:false}));}}
   const savePending=status==='Saving…'||Boolean(client.current?.hasPending());
-  const locked=editing||Boolean(identity)||approving||savePending;
+  const locked=editing||Boolean(identity)||approving||savePending||loadingReport;
   if(!view)return <div>{error&&<p role="alert">{error}</p>}<p role="status">Loading saved review…</p><button onClick={()=>attempt(()=>client.current.recover())}>Retry</button></div>;
   return <>
     {error&&<div className="mc-notice error" role="alert">{error}</div>}
@@ -249,10 +262,13 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
       onReviewProposal={async input=>{const owner=client.current;await owner.reviewProposal(input);if(client.current===owner&&input.action!=='REJECT')void attempt(()=>owner.execute({type:'MEASURE_SIDE',side:input.side}));}}
       onEdit={async input=>{await client.current.editDefect(input);void attempt(()=>execute({type:'MEASURE_SIDE',side:input.side}));}}
       onRetry={side=>execute({type:'MEASURE_SIDE',side})} onDiscardPending={({side,base})=>execute({type:'DISCARD_PENDING',side,base})}
-      onInspect={({side,base,inspected})=>execute({type:'INSPECT_SIDE',side,base,inspected})} onConfirm={({base,reviewed})=>execute({type:'CONFIRM_FINDINGS',base,reviewed})}
-      onContinue={()=>attempt(async()=>{setReport(await client.current.previewReport());setScreen('report');})}/>:
-    report&&<section className="mc-report"><p className="mc-kicker">ATLAS / FINAL HUMAN REVIEW</p><h1>Review draft report</h1><p>{Object.values(report.report.identity).filter(value=>typeof value==='string'&&value).join(' · ')}</p><strong className="mc-grade">{report.report.grade.overall.displayGrade}</strong><table><thead><tr><th>Condition</th><th>Front</th><th>Back</th><th>Subgrade</th></tr></thead><tbody>{['centering','corners','edges','surface'].map(name=><tr key={name}><th>{name}</th><td>{report.report.grade.front[name].score}</td><td>{report.report.grade.back[name].score}</td><td>{report.report.grade.subgrades[name]}</td></tr>)}</tbody></table><p>Front contributes 70%; Back contributes 30%.</p><p>{report.report.findingCounts.included} included findings · {report.report.findingCounts.removed} removed</p>
-      {view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash?<div className="mc-notice" role="status">Report approved and saved.</div>:<><p>Review the corrected identity, findings and grades before approving this exact report.</p>{view.approval&&<p>An earlier approved report is retained in history. This draft needs its own approval.</p>}<button className="primary" disabled={approving||savePending} onClick={()=>attempt(async()=>{setApproving(true);try{await execute({type:'APPROVE_REPORT',reportHash:report.reportHash,reviewed:true});}finally{setApproving(false);}})}>{approving?'Approving…':'Approve final report'}</button></>}
-    </section>}
+      onInspect={({side,base,inspected})=>execute({type:'INSPECT_SIDE',side,base,inspected})} onConfirm={({base,reviewed,proposalReview})=>execute({type:'CONFIRM_FINDINGS',base,reviewed,...(proposalReview?{proposalReview}:{})})}
+      onContinue={()=>attempt(openReport)}/>:
+    report&&<FinalReportReview key={report.reportHash} preview={report} workspace={view.defects} images={view.images} onReadyChange={setReportImagesReady}
+      approved={view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash}
+      rejectedSuggestions={report.sourceHash===view.card.contentHash?view.astra?.proposals?.filter(proposal=>proposal.reviewStatus==='REJECTED').length??0:0}
+      current={report.sourceHash===view.card.contentHash&&(report.sourceRevision===view.card.revision||view.approval?.reportHash===report.reportHash)}>
+      {view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash?<div className="mc-notice" role="status">Report approved and saved.</div>:<><p>Review the corrected identity, findings and grades before approving this exact report.</p>{view.approval&&<p>An earlier approved report is retained in history. This draft needs its own approval.</p>}<button className="primary" disabled={approving||savePending||!reportImagesReady} onClick={()=>attempt(async()=>{if(!reportImagesReady||report.sourceHash!==viewRef.current?.card.contentHash||report.sourceRevision!==viewRef.current?.card.revision)return;setApproving(true);try{await execute({type:'APPROVE_REPORT',reportHash:report.reportHash,reviewed:true});}finally{setApproving(false);}})}>{approving?'Approving…':'Approve final report'}</button></>}
+    </FinalReportReview>}
   </>;
 }
