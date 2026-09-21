@@ -26,7 +26,7 @@ stub('../hooks/useSession', { useSession: () => ({ session: { token: 'offline-re
 const Review = require('../pages/admin/set-ops-review').default as typeof import('../pages/admin/set-ops-review').default;
 for (const restore of restored.reverse()) restore();
 
-async function mount(withJob = false, post?: () => Promise<Response>) {
+async function mount(withJob = false, post?: () => Promise<Response>, buildOutcome?: string) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'https://collect.tenkings.co/admin/set-ops-review', pretendToBeVisual: true });
   const previous = new Map<string, PropertyDescriptor | undefined>();
   const calls: Array<{ url: string; method: string }> = [];
@@ -34,6 +34,7 @@ async function mount(withJob = false, post?: () => Promise<Response>) {
     const path = String(url), method = init?.method ?? 'GET';
     calls.push({ url: path, method });
     if (path === '/api/admin/set-ops/ingestion' && method === 'POST' && post) return post();
+    if (path === '/api/admin/set-ops/drafts/build' && method === 'POST' && buildOutcome) return Response.json({ summary: { rowCount: 138, blockingErrorCount: 0 }, taxonomyIngest: buildOutcome === 'missing' ? undefined : { outcome: buildOutcome, message: `Review draft created; taxonomy ${buildOutcome}.` } });
     assert.equal(method, 'GET', 'selecting or previewing a set must not write');
     if (path === '/api/admin/set-ops/access') return Response.json({ permissions: { reviewer: true, approver: true } });
     if (path.startsWith('/api/admin/set-ops/sets?')) return Response.json({ sets: [sportsSet, otherSet].map(setId => ({
@@ -45,6 +46,7 @@ async function mount(withJob = false, post?: () => Promise<Response>) {
       status: 'REVIEW_REQUIRED', createdAt: '2026-09-21T00:00:00Z',
     }] : [] });
     if (path.startsWith('/api/admin/variants/reference/status?')) return Response.json({ total: 0, pending: 0, processed: 0 });
+    if (path.startsWith('/api/admin/set-ops/seed/jobs?')) return Response.json({ jobs: [] });
     if (path.startsWith('/api/admin/set-ops/drafts?')) return Response.json({
       latestVersion: { id: 'legacy-version', version: 7, rows: [] }, versions: [{ id: 'legacy-version', version: 7 }],
       latestApprovedVersionId: 'legacy-approved-version',
@@ -156,6 +158,22 @@ test('late prepared-import completion preserves a newer explicit catalog choice'
       assert.ok(ui.host.textContent!.includes(`Catalog set: ${expected}`));
       assert.equal(ui.host.textContent!.includes('Prepare the Bowman University sports pilot'), changeSelection);
       assert.equal(ui.calls.filter(call => call.method === 'POST').length, 1);
+    } finally { await ui.close(); }
+  }
+});
+
+
+test('HTTP-successful draft creation exposes failed, skipped or absent taxonomy outcomes', async () => {
+  for (const outcome of ['failed', 'skipped', 'missing']) {
+    const ui = await mount(true, undefined, outcome);
+    try {
+      await ui.choose(otherSet);
+      const row = ui.host.querySelector('tbody tr'); assert.ok(row); await ui.clickNode(row);
+      await ui.click('Build Draft From Selected Job');
+      assert.match(ui.host.textContent!, outcome === 'missing' ? /taxonomy outcome was not confirmed/ : new RegExp(`taxonomy ${outcome}`));
+      assert.doesNotMatch(ui.host.textContent!, /Built draft from offline-pending-job/);
+      assert.equal(ui.calls.filter(call => call.url === '/api/admin/set-ops/drafts/build').length, 1);
+      assert.match(ui.host.textContent!, /Latest version: v7/);
     } finally { await ui.close(); }
   }
 });

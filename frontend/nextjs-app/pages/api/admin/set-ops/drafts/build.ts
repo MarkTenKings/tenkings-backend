@@ -46,11 +46,17 @@ type ResponseBody =
         errorCount: number;
         blockingErrorCount: number;
       };
+      taxonomyIngest: {
+        outcome: "applied" | "failed" | "skipped";
+        result: TaxonomyIngestResult | null;
+        message: string;
+      };
       audit: { id: string; status: string; action: string; createdAt: string } | null;
     }
   | { message: string };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
+  res.setHeader("Cache-Control", "private, no-store");
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ message: "Method not allowed" });
@@ -349,6 +355,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         rowCount: version.rowCount,
         errorCount: version.errorCount,
         blockingErrorCount: version.blockingErrorCount,
+      },
+      // HTTP success confirms the review version only. The independently
+      // committed taxonomy result may have failed or been disabled/skipped.
+      taxonomyIngest: {
+        outcome: taxonomyIngest?.applied ? "applied" : taxonomyIngest?.adapter === "error" ? "failed" : "skipped",
+        result: taxonomyIngest?.adapter === "error"
+          ? { ...taxonomyIngest, skippedReason: "taxonomy_ingest_failed" }
+          : taxonomyIngest,
+        message: taxonomyIngest?.applied
+          ? "Review draft created and taxonomy ingestion applied. Inspect the adapter, source and counts before approval."
+          : taxonomyIngest?.adapter === "error"
+            ? "Review draft created, but taxonomy ingestion failed. Inspect the saved job before another build; do not assume it was applied."
+            : "Review draft created, but taxonomy ingestion was skipped or unavailable. Inspect the saved job and configuration before proceeding.",
       },
       audit: audit
         ? {

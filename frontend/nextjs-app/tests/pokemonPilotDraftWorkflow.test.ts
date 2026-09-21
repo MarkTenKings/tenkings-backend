@@ -157,6 +157,11 @@ test("all 138 real source rows survive ingestion, review and one visible edit wi
     assert.equal(built.status, 200, JSON.stringify(built.body));
     const result = (jobs[0].parseSummaryJson as RecordValue).taxonomyIngest as RecordValue;
     assert.equal(result.applied, true);
+    assert.equal(built.headers["cache-control"], "private, no-store");
+    const outcome = (built.body as RecordValue).taxonomyIngest as RecordValue;
+    assert.equal(outcome.outcome, "applied");
+    assert.equal((outcome.result as RecordValue).sourceId, result.sourceId);
+    assert.deepEqual((outcome.result as RecordValue).counts, result.counts);
     assert.equal(result.adapter, "pinned-pilot-checklist-v1");
     assert.deepEqual(result.counts, { programs: 1, cards: 138, variations: 0, parallels: 0, scopes: 0,
       oddsRows: 0, conflicts: 0, ambiguities: 0, bridges: 0 });

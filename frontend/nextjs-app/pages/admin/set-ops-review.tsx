@@ -1314,6 +1314,7 @@ export default function SetOpsReviewPage() {
       const payload = (await response.json().catch(() => ({}))) as {
         message?: string;
         summary?: { rowCount: number; blockingErrorCount: number };
+        taxonomyIngest?: { outcome: "applied" | "failed" | "skipped"; message: string };
       };
       if (!response.ok) {
         throw new Error(payload.message ?? "Failed to build draft");
@@ -1328,9 +1329,11 @@ export default function SetOpsReviewPage() {
       }
       await fetchReferenceStatus(selectedJob.setId);
       await fetchIngestionJobs();
-      setStatus(
-        `Built draft from ${selectedJobId} (${payload.summary?.rowCount ?? 0} rows, blocking=${payload.summary?.blockingErrorCount ?? 0}).`
-      );
+      const taxonomy = payload.taxonomyIngest;
+      const taxonomyMessage = taxonomy?.message
+        ?? "Review draft created; taxonomy outcome was not confirmed. Inspect the saved job before another build.";
+      setStatus(`${taxonomyMessage} (${payload.summary?.rowCount ?? 0} rows, blocking=${payload.summary?.blockingErrorCount ?? 0}).`);
+      if (taxonomy?.outcome !== "applied") setError(taxonomyMessage);
       setActiveStepWithUrl("draft-approval");
     } catch (buildError) {
       setError(buildError instanceof Error ? buildError.message : "Failed to build draft");

@@ -1,0 +1,724 @@
+{
+  "schemaVersion": "setops-pokemon-additive-preparation-plan/v1",
+  "setId": "Black & White-Legendary Treasures",
+  "programId": "black-white-legendary-treasures",
+  "programLabel": "Black & White-Legendary Treasures",
+  "source": {
+    "url": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+    "sha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+    "byteSize": 2227474,
+    "ref": "catalog:sha256:d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+    "parserVersion": "catalog-pilot-complete-pokemon-transcription-v1",
+    "sourceFetchMetaSha256": "e9bbeca86db37d15109307dc28ade8f76d0d6d8c75eb8add65346630c1ec685d",
+    "rawPayloadSha256": "1a6069139bab9d6a3bf3734d6d2ee492a10cdac58f0081f5038baaa0d6c5447b"
+  },
+  "worksheet": {
+    "rowCount": 138,
+    "versionHash": "1925d4600ad866c6577279e39983fc6224f60d3f50ceb1abc6253427711e4e59",
+    "contentSha256": "1882e3906ba019ae39a7406741c5a7113f548e61883fc5920f91097c11bed021"
+  },
+  "cards": [
+    {
+      "number": "1",
+      "name": "Tangela",
+      "metadataSha256": "013a7421604ae43fb715e7c6cbffb72cb6af12fd9f442e2e3c8091167177e949"
+    },
+    {
+      "number": "2",
+      "name": "Tangrowth",
+      "metadataSha256": "6dd6526f94296fb29dd7a49e3778335c46ae2b164b38923fbd2dbc9e028a2ec2"
+    },
+    {
+      "number": "3",
+      "name": "Shuckle",
+      "metadataSha256": "d915b767086f5f2b11cd50ccc3d53707b991071985aa746c5aff557989dacc72"
+    },
+    {
+      "number": "4",
+      "name": "Cherubi",
+      "metadataSha256": "4ceb54b33fa9e8c2c3ab5b5c00623b387356b5e36a94b159da729f07f7248ee9"
+    },
+    {
+      "number": "5",
+      "name": "Carnivine",
+      "metadataSha256": "6a257cf938e5e3ad4f05a9410a6de7544188650d94c8c42c768fd9bcb290256a"
+    },
+    {
+      "number": "6",
+      "name": "Snivy",
+      "metadataSha256": "d8a2bbaa68db8e15df7236fa735144a8f413a1b37c5badc94b085a5915c13a41"
+    },
+    {
+      "number": "7",
+      "name": "Servine",
+      "metadataSha256": "5a2546b7a7ea00e5b5f648373edcd792fbd3bcc8ba5c06d8b2b18d7f27e1b45f"
+    },
+    {
+      "number": "8",
+      "name": "Serperior",
+      "metadataSha256": "0c485f78f6bd937f1e30306c1cf550ae80efdc4d647c9423bc6873801d3cead4"
+    },
+    {
+      "number": "9",
+      "name": "Sewaddle",
+      "metadataSha256": "3a4daa0934425f673efda3721e811d9c2467e1565bfdfdba5da7a859c0abbdd9"
+    },
+    {
+      "number": "10",
+      "name": "Sewaddle",
+      "metadataSha256": "2371003b817edee09073e2ee93c2b34334b92e917056f106ca73e1fffa1dde1b"
+    },
+    {
+      "number": "11",
+      "name": "Swadloon",
+      "metadataSha256": "6f21879fccc8741c268983b0383280bd061886cb4e01565dac6d48b790b762a6"
+    },
+    {
+      "number": "12",
+      "name": "Leavanny",
+      "metadataSha256": "643f7006f0f785b39f0921ff3b039791f56d735f7ae52c6edde8e1e662aa8c72"
+    },
+    {
+      "number": "13",
+      "name": "Dwebble",
+      "metadataSha256": "05f460ac110006b27e94cd67bc0aba06aa7e8a06c5d909e957c6f25717f151f1"
+    },
+    {
+      "number": "14",
+      "name": "Crustle",
+      "metadataSha256": "54ea96dd1b67616e37a37f3bc31b648f49b5720658361a1bd144e52db357e536"
+    },
+    {
+      "number": "15",
+      "name": "Virizion",
+      "metadataSha256": "7f545e9aa61c6cf26b7a0b09f096f13e95d5bdba8527842dc25237edb04f3311"
+    },
+    {
+      "number": "16",
+      "name": "Genesect",
+      "metadataSha256": "edf0a5cb7896ad24f453693f15dbe68dd5c1063bccedb542351e88eeefa19205"
+    },
+    {
+      "number": "17",
+      "name": "Charmander",
+      "metadataSha256": "c619088c6e1b69e145e5f36b56cf9dba6793523fac4b65c6e12eb0c6eef7c99a"
+    },
+    {
+      "number": "18",
+      "name": "Charmeleon",
+      "metadataSha256": "8fea9164c5f7d34a3f2b0243e52cd42581924ca297c66e832cd83ce5c835ef9a"
+    },
+    {
+      "number": "19",
+      "name": "Charizard",
+      "metadataSha256": "0cfb93859b6b003737b72f8f6bfd9136d212a55362f15cb55a3d5a3189d890b8"
+    },
+    {
+      "number": "20",
+      "name": "Vulpix",
+      "metadataSha256": "96e5c1af058b3c9c1673a0d6391896598d72afca8cce15474a600b202cc84ce7"
+    },
+    {
+      "number": "21",
+      "name": "Ninetales",
+      "metadataSha256": "89459d5c2bc49455219178a6c20c44403f54f2520b7e905fe3bdf618582e7c31"
+    },
+    {
+      "number": "22",
+      "name": "Moltres",
+      "metadataSha256": "fa885bd323f4a98b5dd8f4f0684d2ac9b5c2d5e5ed94d12b6500e6f81b7fe1c2"
+    },
+    {
+      "number": "23",
+      "name": "Victini",
+      "metadataSha256": "f64ed23734ade4f6b7edea73b53192e49b2f6e6fbca81d8d3c8af028b6df6cd2"
+    },
+    {
+      "number": "24",
+      "name": "Victini-EX",
+      "metadataSha256": "76df7b88a8be9b1180d9b70080d16f770f9815327e92ad84d2b5f6c18f8304fb"
+    },
+    {
+      "number": "25",
+      "name": "Tepig",
+      "metadataSha256": "196f737dfa1287fe6cd0d1ca9065a16980becb77d5a281812695e0c0488b7dc4"
+    },
+    {
+      "number": "26",
+      "name": "Pignite",
+      "metadataSha256": "1ed4307732d4f47ad6b76eb42531ff25ef1201e769a3c63f65f9bea627eb1e60"
+    },
+    {
+      "number": "27",
+      "name": "Emboar",
+      "metadataSha256": "3d4d04a7e703ab1ad2bd1d144647bd74851a8029b3d7ec5b8868c08acb169fc4"
+    },
+    {
+      "number": "28",
+      "name": "Reshiram",
+      "metadataSha256": "90c5b4437addd343da65d2df54e0f80c482b27653ab9bcf45d1f03e375f8eed7"
+    },
+    {
+      "number": "29",
+      "name": "Reshiram-EX",
+      "metadataSha256": "ef97667c0195200cbd2f7ce724d1161b0c2bc4bfc488b5a1d56f608c3eb29fc6"
+    },
+    {
+      "number": "30",
+      "name": "Magikarp",
+      "metadataSha256": "081af7466d753b0d492248dd05476100fdc9d9de45ed0839118d372ecf5ca73d"
+    },
+    {
+      "number": "31",
+      "name": "Gyarados",
+      "metadataSha256": "075caae86cbdc4f4b0438fb0284a2a973b362b60fbe6f87a6de52d8bf12b2847"
+    },
+    {
+      "number": "32",
+      "name": "Articuno",
+      "metadataSha256": "ca526ebd5df20270839d3576c8bb91b5264570e11b8de2ab90ca206b75442e5c"
+    },
+    {
+      "number": "33",
+      "name": "Piplup",
+      "metadataSha256": "22536c698cdce2504f2ca840f2d8189045a14210d50bd0ad3e59a5dba1a75f19"
+    },
+    {
+      "number": "34",
+      "name": "Prinplup",
+      "metadataSha256": "80119a12e33e49ca01c4f0fbf331fc05c53868b656cea5597e7d9cd49ac02bb3"
+    },
+    {
+      "number": "35",
+      "name": "Empoleon",
+      "metadataSha256": "04a5a6441ff8fbcde6da249cff59de0946a505036592d566d2b0232963ae46ce"
+    },
+    {
+      "number": "36",
+      "name": "Phione",
+      "metadataSha256": "51a1cf1272aef7f00750da68e068cfe06e8bfd4e439bcf0f295a04a13b70d6f2"
+    },
+    {
+      "number": "37",
+      "name": "Oshawott",
+      "metadataSha256": "09789bcefe91223082fb1c8d13517c0be6c71a1263d25ae50a4f35ac9a493528"
+    },
+    {
+      "number": "38",
+      "name": "Dewott",
+      "metadataSha256": "62d8f6f9e3b64fd47cae03eb56e6c36723f7a9224a7a0dc36f999cfc4a83c6ca"
+    },
+    {
+      "number": "39",
+      "name": "Samurott",
+      "metadataSha256": "854f8062cf6c5e6056210715b31c45f4fc4ebd1f1534daecc46a3a125b3cc733"
+    },
+    {
+      "number": "40",
+      "name": "Tympole",
+      "metadataSha256": "ca7f503b5fdb2c0e4f1e16ac51456f70a295e6a6893d3d077126d4e8aa7c6d3c"
+    },
+    {
+      "number": "41",
+      "name": "Palpitoad",
+      "metadataSha256": "2d5c70dd8c7baa88c452a21227bcd40b29b0ef1f918e9d6f45ef3be0851b0241"
+    },
+    {
+      "number": "42",
+      "name": "Seismitoad",
+      "metadataSha256": "c28a63f82e93840d85f8cf6f286622917925f7d890b250a4bd32a1ce03505ca8"
+    },
+    {
+      "number": "43",
+      "name": "Kyurem",
+      "metadataSha256": "bc5314d62cc19387186a620c1c0a1af71e1be48127012831a96341a7fdc30388"
+    },
+    {
+      "number": "44",
+      "name": "Kyurem-EX",
+      "metadataSha256": "ad97ad08ef278e27550e41c7d088eaba964620a1385037e094f1e5efabfcef10"
+    },
+    {
+      "number": "45",
+      "name": "Keldeo-EX",
+      "metadataSha256": "cbf74f9f7df7020dbf41bdd37e77eb7fc9b38b234c9904d2a6e3013bd8be9c4a"
+    },
+    {
+      "number": "46",
+      "name": "Zapdos",
+      "metadataSha256": "23a2f160af011138df0a024e6fb0dab5c7d47d130bd260cd64f5cd725443cb81"
+    },
+    {
+      "number": "47",
+      "name": "Plusle",
+      "metadataSha256": "9015972a43dc9267d7dec9ebd3a0dbe6f29364b0497fe5a9862e2116af4ac5f8"
+    },
+    {
+      "number": "48",
+      "name": "Minun",
+      "metadataSha256": "4896350878bdfe64b99eb5d45a82379b9e290803a7273ee907ef10cfbe0f4196"
+    },
+    {
+      "number": "49",
+      "name": "Emolga",
+      "metadataSha256": "471fcb2b6ad01f73f5e280e12ad5115ad3e13b8ea63ee30d60180310b77f2ca3"
+    },
+    {
+      "number": "50",
+      "name": "Thundurus",
+      "metadataSha256": "a0d31d531706d9c5285236cc707beab7045bb62a4d19acdba24ed00b8ce79363"
+    },
+    {
+      "number": "51",
+      "name": "Zekrom",
+      "metadataSha256": "9cbaaf147104cb1dbfa012cf152a65ff57c861dc82ad102b03e20092e4e0cad1"
+    },
+    {
+      "number": "52",
+      "name": "Zekrom-EX",
+      "metadataSha256": "153f318019ea8c173f0b9b28f25ceb9a1ff74f6af108a321943157616469896e"
+    },
+    {
+      "number": "53",
+      "name": "Mewtwo",
+      "metadataSha256": "45bd6e4bb26c26c0221cf01f85b5603b9e90b545152bab2026a301ca788fc19f"
+    },
+    {
+      "number": "54",
+      "name": "Mewtwo-EX",
+      "metadataSha256": "501317d767fdb6d5e20fe61c65f3c4ebde1f4b226d2cc8ea6814f054f66d467f"
+    },
+    {
+      "number": "55",
+      "name": "Natu",
+      "metadataSha256": "6377c32d9c60e8ea3b440b95821d219f2829a98625f53283581b0526d8eea3fc"
+    },
+    {
+      "number": "56",
+      "name": "Xatu",
+      "metadataSha256": "84138eaa5eaf95f1d192c738f5feed50755ee66b4ad390933c651af089adffa9"
+    },
+    {
+      "number": "57",
+      "name": "Misdreavus",
+      "metadataSha256": "911d8d92c97777d312cdb5219c4acc33cc0ecbfe3719abf9c278ad485b6f03f6"
+    },
+    {
+      "number": "58",
+      "name": "Mismagius",
+      "metadataSha256": "e19428f6364eab365e0c2ea2f4c3d42417739b4b23648242e319c4012664303e"
+    },
+    {
+      "number": "59",
+      "name": "Ralts",
+      "metadataSha256": "995770f3c69258844e3508be3540f3e4f682b9235a31442270587964cfc9a78a"
+    },
+    {
+      "number": "60",
+      "name": "Kirlia",
+      "metadataSha256": "06a4b227d702bce6c9e455a8786431a8dafdf751fc259fc8447deda1ba401fb0"
+    },
+    {
+      "number": "61",
+      "name": "Sableye",
+      "metadataSha256": "7a082a1e48f71cfe9dadac7e9d3fe2abebc697c0439f7a3e93d719f59d798829"
+    },
+    {
+      "number": "62",
+      "name": "Croagunk",
+      "metadataSha256": "08fddb22cbb36404f3247bd94b4709e3320bb7ba83d2c8a49403f61f872b93e1"
+    },
+    {
+      "number": "63",
+      "name": "Toxicroak",
+      "metadataSha256": "dce9e555196f49a0b14caf59c77b063aec22740a0cf6543d512d166573413883"
+    },
+    {
+      "number": "64",
+      "name": "Woobat",
+      "metadataSha256": "339c45f791bd71941e3c64f5c9701dfba8ad64be6b731c9dead6d3edfcb8f375"
+    },
+    {
+      "number": "65",
+      "name": "Swoobat",
+      "metadataSha256": "0a67360c287b5ceccfd03c62c59207d1482917443b42d916fb0a71959e3839ce"
+    },
+    {
+      "number": "66",
+      "name": "Sigilyph",
+      "metadataSha256": "0d2cab093f53c5c30b6595bcf4d1c5141fe75ba68248f973f94826722d3eba38"
+    },
+    {
+      "number": "67",
+      "name": "Trubbish",
+      "metadataSha256": "6fa46901ceb6dd21657f34e4871b4e252f155d4edf0c67de903c30643b13f835"
+    },
+    {
+      "number": "68",
+      "name": "Garbodor",
+      "metadataSha256": "51cc94047e433e18b855db9001e8ddf5afa2fede1fe191c722c86f71a3de1af2"
+    },
+    {
+      "number": "69",
+      "name": "Gothita",
+      "metadataSha256": "202ee99436849f89fc9193dbfe9c20194c11430de9e96a705e86bcb102f09f5f"
+    },
+    {
+      "number": "70",
+      "name": "Gothita",
+      "metadataSha256": "88d79374e60f2af9ad2e51c1531587339130a4388a01b8fc842bdc26c98bd6f0"
+    },
+    {
+      "number": "71",
+      "name": "Gothorita",
+      "metadataSha256": "ae6c6757617e60de08b4f3dc29146fea356c9765b98ce1998efa7e0eb5c3292d"
+    },
+    {
+      "number": "72",
+      "name": "Gothitelle",
+      "metadataSha256": "5acf4ca356bd315a1787a4bec6793540bd5154fa4ca6c1acc6e8626fbc3c8e24"
+    },
+    {
+      "number": "73",
+      "name": "Solosis",
+      "metadataSha256": "e0f34ec078a50555f21ae0220ee69ac28bb089cfc91573aa583a393504395172"
+    },
+    {
+      "number": "74",
+      "name": "Solosis",
+      "metadataSha256": "a0b9e3f0d5358ae56cf18f4d2b5ca7063e7f999cdc216d2711b17561532805a2"
+    },
+    {
+      "number": "75",
+      "name": "Duosion",
+      "metadataSha256": "b118a94f84b8766be32662621b0d69c8b0d89b2476606b734859b370e8138553"
+    },
+    {
+      "number": "76",
+      "name": "Reuniclus",
+      "metadataSha256": "3a30b36f937f2bf94eae70cd6dbbc449fb8f59e1fe22d95867ba9de927d26294"
+    },
+    {
+      "number": "77",
+      "name": "Chandelure-EX",
+      "metadataSha256": "f785aa9ead38e324fc6af089bea25e940be3ff9fb4176f210a11d0f9c916eea8"
+    },
+    {
+      "number": "78",
+      "name": "Meloetta",
+      "metadataSha256": "641131c23ac84603bcdf069b4d02bf7d544dff4ea372ecb5d59bf0cda893a1ed"
+    },
+    {
+      "number": "79",
+      "name": "Riolu",
+      "metadataSha256": "840499e6acbbaa88759f8571a379cbf5a10ceaee4a2612c03416b469e799c928"
+    },
+    {
+      "number": "80",
+      "name": "Lucario",
+      "metadataSha256": "318f2ad161e271668f5e528712522b7b4b26be067175931eb93c624d063f49d3"
+    },
+    {
+      "number": "81",
+      "name": "Gallade",
+      "metadataSha256": "27a8f3e254898ea5fda2982ec8fe41b82f5eae7eb4fc0bbca26220c6a42420b8"
+    },
+    {
+      "number": "82",
+      "name": "Excadrill-EX",
+      "metadataSha256": "39f936a3200cad1bb0ae18d2325756bef95d4b0f203b4295e2812c063a364f7f"
+    },
+    {
+      "number": "83",
+      "name": "Stunfisk",
+      "metadataSha256": "0755a5a84cd1b3813bed101641dbfe3d0002b13c1619fb693d2f70c89a1105be"
+    },
+    {
+      "number": "84",
+      "name": "Terrakion",
+      "metadataSha256": "d4f9b6b4639dce0d013b918e521da309f6240bf308e539102befc66577bfbd44"
+    },
+    {
+      "number": "85",
+      "name": "Landorus",
+      "metadataSha256": "8402794bfea9de008ad8ad16bf3aa39d9b46cd0ec074c647e8c333a8e8e16ecb"
+    },
+    {
+      "number": "86",
+      "name": "Meloetta",
+      "metadataSha256": "3b0bfc81ad2c132b134a62a12083d27f39df2aec93a6887711136e05021e50c7"
+    },
+    {
+      "number": "87",
+      "name": "Spiritomb",
+      "metadataSha256": "a4fc4f4646be0b1646ea74b6ecb6da284be8d22eda7ed8b3ed71acd49bd0f79a"
+    },
+    {
+      "number": "88",
+      "name": "Darkrai-EX",
+      "metadataSha256": "1b44dd5f7f40a08960bc8fb0bc8cbb90505970cc52bdf5527a1daf2e09279af7"
+    },
+    {
+      "number": "89",
+      "name": "Zorua",
+      "metadataSha256": "0f88bcc543e7dba842282ba3a09d9942e28e85dcbebc0393a3e613c1af6bfc8e"
+    },
+    {
+      "number": "90",
+      "name": "Zoroark",
+      "metadataSha256": "66a63a0e12016f1df9c5faea1770e0946259bbb75dd4e530626023f92ee60201"
+    },
+    {
+      "number": "91",
+      "name": "Cobalion",
+      "metadataSha256": "d9da1fa33d36044097d40dd88b4d1436c8abc16cb70cf68e6758491b959a6f45"
+    },
+    {
+      "number": "92",
+      "name": "Altaria",
+      "metadataSha256": "ef5c346e26139d5fc3f999d527935c5e023d3db3e365d88aa4ab083784234690"
+    },
+    {
+      "number": "93",
+      "name": "Rayquaza",
+      "metadataSha256": "6cf579449e802f4fef6678852ca5f3130f9bf75b94befdb14a9f8c0ab3d01264"
+    },
+    {
+      "number": "94",
+      "name": "Gible",
+      "metadataSha256": "13e528f4bcad18639bea6802bdaefa5e5337b0164b1b3e9eae3e19a26df29526"
+    },
+    {
+      "number": "95",
+      "name": "Gabite",
+      "metadataSha256": "c29e247bc231af52a5a30a4cec542ab1e5a005d4f513005738cdcc5bbb705d00"
+    },
+    {
+      "number": "96",
+      "name": "Garchomp",
+      "metadataSha256": "a1e0f92c74fe299add1cca2c067f6b06041c5db590a39550ce996a5d094193a8"
+    },
+    {
+      "number": "97",
+      "name": "Deino",
+      "metadataSha256": "c00ab0dc2dea8542addf58a82309a73f52deec52e7900a563b17841bac2ee2ac"
+    },
+    {
+      "number": "98",
+      "name": "Zweilous",
+      "metadataSha256": "c7d82dcff0410f79a00a3c419242fbb29735b6f4aa8aef79e02d9981b04a9e4f"
+    },
+    {
+      "number": "99",
+      "name": "Hydreigon",
+      "metadataSha256": "d3c85c775c06b9567554abf6a6b64d468cc3bfa71940f52fda205fa8a1f3b2c2"
+    },
+    {
+      "number": "100",
+      "name": "Black Kyurem-EX",
+      "metadataSha256": "c55570eeb2e0751acd7a4e983342e8080a1ee86d6b7ec064acad245c5d5e161c"
+    },
+    {
+      "number": "101",
+      "name": "White Kyurem-EX",
+      "metadataSha256": "2deeb30e334b052cbdfcf65140814bdeb421c2877d5c858f0f9f0cd211706fa0"
+    },
+    {
+      "number": "102",
+      "name": "Lugia-EX",
+      "metadataSha256": "3826fb12ee84b2f6dc3cc4fbedcfa3b1dfa6144a14eee7fde7908d75b1f03971"
+    },
+    {
+      "number": "103",
+      "name": "Swablu",
+      "metadataSha256": "80e275d711ebdf3a3508e08e34c316af4d1c182b350844ec28cf907e706f4306"
+    },
+    {
+      "number": "104",
+      "name": "Minccino",
+      "metadataSha256": "c86549d1db6bfec1208c66c55956b034ec706afc00e0d79aa42f0159b0e5a225"
+    },
+    {
+      "number": "105",
+      "name": "Cinccino",
+      "metadataSha256": "ae789d8ce08a2fb2826ebf5df3d25fe7226ed827afaee70040b6586f3efc776f"
+    },
+    {
+      "number": "106",
+      "name": "Druddigon",
+      "metadataSha256": "45de4c7690a68f98027e807b1aecbf2173b6fc39db23aef7b7a697a84990be18"
+    },
+    {
+      "number": "107",
+      "name": "Bouffalant",
+      "metadataSha256": "eb98e29adf8f009554b748c37df2053c41f91a61d13c6f771d5bb0b09f835568"
+    },
+    {
+      "number": "108",
+      "name": "Tornadus",
+      "metadataSha256": "ef4d363a7a5ee868d00cca5f6a4fc8f4a050141a1b6fcc556149ffd3273f41c6"
+    },
+    {
+      "number": "109",
+      "name": "Bianca",
+      "metadataSha256": "014953270d66147a5a781e7306851bee7ecafef847fea3340cb2f027f7645e72"
+    },
+    {
+      "number": "110",
+      "name": "Cedric Juniper",
+      "metadataSha256": "58e62c4dd89153c01f8d7df4d1abfe89180e7a9264a8801afdeabf9c13fcf577"
+    },
+    {
+      "number": "111",
+      "name": "Crushing Hammer",
+      "metadataSha256": "a2b02ca0ee6d8556c83b60359d38dbe4140a773fc86ccbd2ccd212283c9cb494"
+    },
+    {
+      "number": "112",
+      "name": "Energy Switch",
+      "metadataSha256": "22d31a162ec2a892025cedfea14d47b6fa22ab7bc0d92fd68e94325f31a16601"
+    },
+    {
+      "number": "113",
+      "name": "Double Colorless Energy",
+      "metadataSha256": "b133c3a1a211b7b7beef7f8dcf62d775645094b7fc8e7a0978371b11afbd785b"
+    },
+    {
+      "number": "RC1",
+      "name": "Snivy",
+      "metadataSha256": "6aaf9c410872c6a86677b276ba2bc92966c763053aeeb294547caeb1c5726093"
+    },
+    {
+      "number": "RC2",
+      "name": "Servine",
+      "metadataSha256": "85c0bc32eb7e400ff5ea19eb00485c34cd3fc3335d799944a47d6372dadb6aa4"
+    },
+    {
+      "number": "RC3",
+      "name": "Serperior",
+      "metadataSha256": "07368763e56de75752e9e5666ce15dfe4ef7a97c20faddce4d3fb8010f61a743"
+    },
+    {
+      "number": "RC4",
+      "name": "Growlithe",
+      "metadataSha256": "2b30657dd520c69176e2c787926041cf8231f05df04be498f5e07dba0da1ca03"
+    },
+    {
+      "number": "RC5",
+      "name": "Torchic",
+      "metadataSha256": "97ae1c588654973767f789396fcf0f94a5069e15a94788751a5fc3b3e36be04b"
+    },
+    {
+      "number": "RC6",
+      "name": "Piplup",
+      "metadataSha256": "19feccdeb19f695351ad95b265701b629f6b7a9df58221d09a01f7a6e50ecbe0"
+    },
+    {
+      "number": "RC7",
+      "name": "Pikachu",
+      "metadataSha256": "1c459b70d4e6e8e3e598c43e86f0dbfcaeabd5b116bb1e43a8079ab7c1cfb263"
+    },
+    {
+      "number": "RC8",
+      "name": "Ralts",
+      "metadataSha256": "baef56b15ff94e7f0624d1aa2de4b94df1d40be178945a40a47603ae62022747"
+    },
+    {
+      "number": "RC9",
+      "name": "Kirlia",
+      "metadataSha256": "f51ff4ba8f71ffc4cf5ea1f864cd08b2cfea1f924ef35f504ce5cf09b4dd6a8a"
+    },
+    {
+      "number": "RC10",
+      "name": "Gardevoir",
+      "metadataSha256": "d68d0ec2c396d7f663a1d625c90c992268368dc0c8b3fbb3b8af1ea95397767e"
+    },
+    {
+      "number": "RC11",
+      "name": "Meloetta-EX",
+      "metadataSha256": "61291821665994f212dae97a140079223688650f94cf0d96666a8d543cbec18e"
+    },
+    {
+      "number": "RC12",
+      "name": "Stunfisk",
+      "metadataSha256": "006f88a9aef874b33383c07332d80ba6dcea6b122339d7c460ce231d70db66a9"
+    },
+    {
+      "number": "RC13",
+      "name": "Purrloin",
+      "metadataSha256": "f21c7353c8271f505780a729164f185913b8efca99112634a5aa5e9e8dd0e077"
+    },
+    {
+      "number": "RC14",
+      "name": "Eevee",
+      "metadataSha256": "615c3b66b5d1f12bd7f7e7bc63f7256d74a02a253c494b35a633145bffab74f5"
+    },
+    {
+      "number": "RC15",
+      "name": "Teddiursa",
+      "metadataSha256": "d3434ff0bb8bc2545d8ee1765e3387aae6f674b24128390033a6f16b851e3d40"
+    },
+    {
+      "number": "RC16",
+      "name": "Ursaring",
+      "metadataSha256": "5c6c6eb496a9519aeb8191331333d6e1303b313081fbdddbf1a1c1fe76af36cf"
+    },
+    {
+      "number": "RC17",
+      "name": "Audino",
+      "metadataSha256": "774d7495e2c3456f7a8cadc1460852bed417c8cacfae482c8e982f9f0f0fb4e0"
+    },
+    {
+      "number": "RC18",
+      "name": "Minccino",
+      "metadataSha256": "35ce599bba27a0dc720671e07e95e121c20dbf36fa35d6cce6d6d27337929629"
+    },
+    {
+      "number": "RC19",
+      "name": "Cinccino",
+      "metadataSha256": "a4dc40339bf583f9661050860cf0b12a93bd58017039a3772fa8c7ea7a888601"
+    },
+    {
+      "number": "RC20",
+      "name": "Elesa",
+      "metadataSha256": "a7127db9fe33eb9413fd9d66c330e41bf7bf0976e0fa26aa50d79a17347f35d5"
+    },
+    {
+      "number": "RC21",
+      "name": "Shaymin-EX",
+      "metadataSha256": "bbcb5f2dde0704b4237155f994917384c2104cbb699f61733c8df2510d3c04a7"
+    },
+    {
+      "number": "RC22",
+      "name": "Reshiram",
+      "metadataSha256": "97c5c3e2f93cccccc33271b4f9c8d5823d3e6f88ee706d9fb814a4717eb4aa12"
+    },
+    {
+      "number": "RC23",
+      "name": "Emolga",
+      "metadataSha256": "a9d6dc736cbc948d30bd786ed2373d1d03102b636e3efcc956bf92fa6f58f6e6"
+    },
+    {
+      "number": "RC24",
+      "name": "Mew-EX",
+      "metadataSha256": "3136f11e8cfb95dba63c1730deda7dce63da4f801f1c8f7c8cebe8aa2e51a8d2"
+    },
+    {
+      "number": "RC25",
+      "name": "Meloetta-EX",
+      "metadataSha256": "b2a33a7c39d3da70f07931a07dc2d727e8ab4b7d692dbca74a16e20a28dfdf42"
+    }
+  ],
+  "printings": [
+    {
+      "parallelId": "standard-set",
+      "label": "standard set"
+    },
+    {
+      "parallelId": "parallel-set",
+      "label": "parallel set"
+    }
+  ],
+  "applicability": "unknown",
+  "publication": null
+}

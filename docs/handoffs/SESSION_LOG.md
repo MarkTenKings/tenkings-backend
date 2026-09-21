@@ -33556,3 +33556,19 @@ By enabling Rip It Live, I confirm:
 - Added separatelyversionedschema-v2/currentmapping forrealV4/V5resultcomparison. It verifiescanonicalresulthashes, checked-instrictV1–V5parser, catalogpublication/scopereceipts, V5candidate/search/detail/requestbindings andheld-outphoto roots. HistoricalschemaandvalidV1–V3scoregoldenbytesremainunchanged. Pairedarmsnowrejectdifferenthumantruth/evidenceforacommoncandidate.
 - All200cardsremaininthemetricdenominatorwiththefrozen50-perstratumprotocol; unknown/failurescannotincreasecoverage. Noactualheld-outcorpusorhumanlabels wereinventedandnogreater-than90percentaccuracyclaimismade.
 - Rootindependentlyreran21/21focusedNode22tests; agentlint/syntax andindependentreviewpasswithoutfindings. CompatibilitypacketrecordsV5andfactual-sourceV2schemas/sourcehashesforlaterATLAS-ownedadapterwork. Noappworker/writer/sharedschema/liveprovider/DB/build/deploymentchange.
+
+
+### September 21 — Planned Pokémon preparation PostgreSQL qualification
+
+- Root reviewed the nine-result fixture and the narrow differences from the previously qualified sports supervisor. Exact seal: a93059df162f8feb02ee7dc37a32225e391bd7e62c18c292a2d1c0d57f4b2bb6, retained at /private/tmp/tenkings-pokemon-preparation-review-20260921-r1/launch-seal.json. Prepare-only started no database and wrote no database records.
+- Run once against a new owned loopback PostgreSQL cluster, applying the canonical migration chain and verifying an unchanged second deploy. Verify all seventeen lock boundaries, stale inputs, rollback, concurrent replay, immutable audit receipts and unchanged 138-card identity roster. No existing database URL, real provider request, shared-host work or production migration is involved. Existing task authorization covers this isolated test.
+- Source files are held fixed during this run; root owns review and execution. Results and cleanup evidence will be appended after completion.
+
+
+### September 21 — Pokémon additive preparation and truthful draft outcomes implemented
+
+- Added a fixed, source-pinned preparation service/API/panel for the Legendary Treasures pilot. It reuses the original pending checklist source, job, program and 138-card worksheet, adding only two printing definitions, two scopes and an immutable actor-bound audit receipt. Applicability stays unknown; no approval or publication is implied. Snapshot, source-byte and same-request replay checks reject stale or changed evidence.
+- Mounted the panel in the existing catalog review. Draft building now returns the independent taxonomy outcome, and the real parent screen displays failed/skipped/unconfirmed ingestion instead of presenting HTTP success as a completed taxonomy application. The saved draft remains visible for inspection.
+- Twenty focused service/API/UI/workflow checks and seventeen integrated parent/sports/Pokémon UI checks pass. Scoped lint is clean. Project TypeScript reports the same twelve pre-existing unrelated grader-test diagnostics and no changed-file diagnostics. Independent service/schema review found no actionable issue.
+- Exact-seal PostgreSQL run /private/tmp/tenkings-pokemon-preparation-run-20260921-r1 passed nine TAP results in 16,825 ms. All seventeen table contention checks, five create/receipt rollback boundaries, real concurrent same-key replay, stale input/actor/source checks, count-accounted roster cap and append-only receipt constraints passed. All original 138 cards, one program/version/source/job were preserved. All 96 canonical migrations ran only in the owned loopback cluster; the second deploy left its ledger unchanged. Final source seal matched.
+- Root independently read the receipts/TAP and confirmed all five owned process IDs are absent, the temporary cluster is removed and cleanup reports no errors. No live database, real provider, hosted request, business record, source approval or catalog publication was touched. Hosted qualification and real source review remain separate.
