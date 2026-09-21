@@ -3,10 +3,12 @@ import { decodeSpeedsterTraceRleV1, encodeSpeedsterTraceRleV1, speedsterTraceRle
 import { decodeSpeedsterTraceBitmapWireV1, encodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
 import { applyCompletedSpeedsterTraceStroke, buildSpeedsterTraceProvenanceRevision, clipSpeedsterTraceToEditorBounds,
   createEmptySpeedsterTrace, initializeSpeedsterHighlighterStrokes, isNonEmptySpeedsterTrace,
-  panelPointToCanonicalPixel, rasterizeSpeedsterCanonicalContour } from '@atlas/grading-core/trace-editor';
+  rasterizeSpeedsterCanonicalContour } from '@atlas/grading-core/trace-editor';
 import { defectBase, defectStatus } from './defect-actions.mjs';
 import { useVerifiedImage } from './verified-image.mjs';
 import { astraReviewState, proposalFrameMatches, reviewedMemoryState, validProposalContour } from './astra-review-ui.mjs';
+import { INSPECTION_SIZE, MAX_INSPECTION_ZOOM, fitInspectionScale, clampInspectionPan, zoomInspectionAt,
+  focusInspectionBounds, canonicalInspectionPoint } from './inspection-viewport.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
 const GRID = { width: 1270, height: 1778 };
@@ -23,6 +25,18 @@ export const inspectionImageBinding = (workspace, side, image) => key({ card: wo
 const maskOf = finding => finding.finalTrace ?? finding.detectorMask;
 const regionsOf = finding => finding.measurementRegions ?? [{ zone: finding.zone, measurement: finding.measurement }];
 const areaOf = finding => regionsOf(finding).reduce((sum, region) => sum + region.measurement.areaMm2, 0);
+
+function inspectionBounds(target) {
+  const mask = maskOf(target);
+  let x = Infinity, y = Infinity, right = -Infinity, bottom = -Infinity;
+  const include = (px, py) => { x = Math.min(x, px); y = Math.min(y, py); right = Math.max(right, px); bottom = Math.max(bottom, py); };
+  if (mask) for (const span of speedsterTraceRleV1Spans(mask)) {
+    include(span.x / GRID.width, span.y / GRID.height);
+    include((span.x + span.width) / GRID.width, (span.y + 1) / GRID.height);
+  }
+  else for (const point of target.measurementRegions?.flatMap(region => region.canonicalContour ?? []) ?? target.canonicalContour ?? []) include(point.x, point.y);
+  return Number.isFinite(x) ? { x, y, width: right - x, height: bottom - y } : null;
+}
 
 function FindingOverlay({ findings, selected, trace, visible }) {
   const canvas = useRef(null);
@@ -64,17 +78,23 @@ function ProposalOverlay({ proposals, selected, visible }) {
   </svg>;
 }
 
-function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDiscardPending, onReady, onActivity, locked, astra, onReviewProposal }) {
+function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDiscardPending, onReady, onActivity, locked, astra, onReviewProposal, expanded, hidden, onExpand }) {
   const slot = workspace.sides[side], base = defectBase(workspace, side), currentBase = key(base);
   const descriptor = image?.inspection;
   const binding = inspectionImageBinding(workspace, side, image);
   const supplied = descriptor?.url && descriptor.sha256 === slot.frame.inspectionImageSha256;
   const verified = useVerifiedImage(supplied ? descriptor : null);
   const [loaded, setLoaded] = useState(null), [selected, setSelected] = useState(null), [editor, setEditor] = useState(null);
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 }), [showMasks, setShowMasks] = useState(true);
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [view, setView] = useState({ zoom: 1, pan: { x: 0, y: 0 } }), [showMasks, setShowMasks] = useState(true);
+  const { zoom, pan } = view;
+  const [viewportSize, setViewportSize] = useState({ width: 400, height: 560 });
+  const [magnifier, setMagnifier] = useState(false), [lens, setLens] = useState(null);
+  const [panMode, setPanMode] = useState(false), [spacePan, setSpacePan] = useState(false), [hideOverlays, setHideOverlays] = useState(false), [peek, setPeek] = useState(false);
+  const [inspecting, setInspecting] = useState('');
   const [tool, setTool] = useState('BRUSH'), [brush, setBrush] = useState(4), [newType, setNewType] = useState('LIGHT_SCRATCH_SCUFF');
   const [stroke, setStroke] = useState([]), strokeRef = useRef(null), plane = useRef(null);
+  const viewport = useRef(null), pointerPan = useRef(null);
   const [selectedProposal, setSelectedProposal] = useState(null), [showProposals, setShowProposals] = useState(true), busyRef = useRef(false);
   const ready = Boolean(supplied && verified.url && loaded === binding);
   const stale = Boolean(editor && editor.baseKey !== currentBase);
@@ -86,6 +106,38 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
   const proposalsCurrent = astra?.status === 'READY' && proposalFrameMatches(workspace, astra, side);
   const proposalDisabled = disabled || Boolean(editor) || !proposalsCurrent || !onReviewProposal;
   const inspected = Boolean(slot.inspection);
+  const scale = fitInspectionScale(viewportSize), overlaysVisible = !hideOverlays && !peek;
+  const viewingDisabled = !ready || busy || stroke.length > 0;
+  const fit = () => { setView({ zoom: 1, pan: { x: 0, y: 0 } }); setLens(null); setInspecting(''); };
+  const changeZoom = (next, anchor = { x: viewportSize.width / 2, y: viewportSize.height / 2 }) => {
+    setView(previous => zoomInspectionAt(previous, next, anchor, viewportSize)); setLens(null);
+  };
+  const moveView = delta => { setView(previous => ({ ...previous, pan: clampInspectionPan({ x: previous.pan.x + delta.x, y: previous.pan.y + delta.y }, previous.zoom, viewportSize) })); setLens(null); };
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const resize = () => {
+      if (!element.clientWidth || !element.clientHeight) return;
+      const next = { width: element.clientWidth, height: element.clientHeight };
+      setViewportSize(previous => previous.width === next.width && previous.height === next.height ? previous : next);
+      setView(previous => ({ ...previous, pan: clampInspectionPan(previous.pan, previous.zoom, next) })); setLens(null);
+    };
+    resize(); const observer = new ResizeObserver(resize); observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element?.addEventListener) return;
+    const wheel = event => {
+      if (!ready || busy || strokeRef.current || pointerPan.current) return;
+      event.preventDefault();
+      const box = element.getBoundingClientRect(), factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportSize.height : 1;
+      setView(previous => zoomInspectionAt(previous, previous.zoom * Math.exp(-event.deltaY * factor * .002),
+        { x: event.clientX - box.left, y: event.clientY - box.top }, viewportSize)); setLens(null);
+    };
+    element.addEventListener('wheel', wheel, { passive: false });
+    return () => element.removeEventListener('wheel', wheel);
+  }, [ready, busy, viewportSize]);
   useEffect(() => { onReady(side, ready ? binding : null); }, [side, ready, binding, onReady]);
   useEffect(() => { onActivity(side, Boolean(editor || busy)); }, [side, editor, busy, onActivity]);
   useEffect(() => {
@@ -123,10 +175,7 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
       cropTransform: FULL_CROP, id: crypto.randomUUID(), undo: [],
       proposal: { analysisId: astra.analysisId, proposalId: proposal.id } });
   };
-  const point = event => {
-    const box = plane.current.getBoundingClientRect();
-    return panelPointToCanonicalPixel({ x: (event.clientX - box.left) / box.width, y: (event.clientY - box.top) / box.height }, FULL_CROP);
-  };
+  const point = event => canonicalInspectionPoint({ x: event.clientX, y: event.clientY }, plane.current?.getBoundingClientRect());
   const finishStroke = () => {
     const captured = strokeRef.current; strokeRef.current = null; setStroke([]);
     const points = captured?.points;
@@ -135,6 +184,52 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
     const clipped = clipSpeedsterTraceToEditorBounds(next, editor.cropTransform, slot.cornerShape);
     setEditor(previous => ({ ...previous, trace: clipped, undo: [...previous.undo.slice(-19), previous.trace] }));
   };
+  const inspectTarget = (target, kind, index) => {
+    if (viewingDisabled || (kind === 'suggestion' && !proposalsCurrent)) return;
+    const bounds = inspectionBounds(target); if (!bounds) return;
+    // Focusing is display-only, even when another finding has an unsaved trace.
+    if (kind === 'suggestion') setSelectedProposal(target.id);
+    else if (!editor) setSelected(target.id);
+    setView(focusInspectionBounds(bounds, viewportSize)); setLens(null);
+    setInspecting(`${name(side)} ${kind} ${index + 1}`);
+    viewport.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+    viewport.current?.focus?.({ preventScroll: true });
+  };
+  const pointerDown = event => {
+    if (!ready || busy || event.button !== 0 || event.isPrimary === false) return;
+    event.preventDefault(); event.stopPropagation?.(); viewport.current?.focus?.({ preventScroll: true });
+    if (!editor || panMode || spacePan) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      pointerPan.current = { id: event.pointerId, x: event.clientX, y: event.clientY, pan };
+      setLens(null); return;
+    }
+    if (stale || disabled) return;
+    const first = point(event); if (!first) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    strokeRef.current = { id: event.pointerId, points: [first], tool, brush }; setStroke(strokeRef.current.points);
+  };
+  const pointerMove = event => {
+    if (pointerPan.current) {
+      const start = pointerPan.current;
+      if (event.pointerId !== undefined && event.pointerId !== start.id) return;
+      setView(previous => ({ ...previous, pan: clampInspectionPan({ x: start.pan.x + event.clientX - start.x,
+        y: start.pan.y + event.clientY - start.y }, previous.zoom, viewportSize) })); return;
+    }
+    if (strokeRef.current) {
+      if (event.pointerId !== undefined && event.pointerId !== strokeRef.current.id) return;
+      const next = point(event);
+      if (!next) { finishStroke(); return; }
+      strokeRef.current.points.push(next); setStroke([...strokeRef.current.points]);
+    }
+    if (magnifier && ready && viewport.current && plane.current) {
+      const box = viewport.current.getBoundingClientRect(), imageBox = plane.current.getBoundingClientRect();
+      setLens({ x: event.clientX - box.left, y: event.clientY - box.top, imageX: event.clientX - imageBox.left,
+        imageY: event.clientY - imageBox.top, width: imageBox.width, height: imageBox.height });
+    }
+  };
+  const ownsPointer = event => event?.pointerId === undefined || event.pointerId === (pointerPan.current ?? strokeRef.current)?.id;
+  const pointerUp = event => { if (ownsPointer(event)) { pointerPan.current = null; finishStroke(); } };
+  const cancelPointer = event => { if (ownsPointer(event)) { pointerPan.current = null; strokeRef.current = null; setStroke([]); setLens(null); } };
   const saveTrace = async () => {
     if (!editor || stale || disabled || !isNonEmptySpeedsterTrace(editor.trace)) return;
     const rle = encodeSpeedsterTraceRleV1(editor.trace);
@@ -148,40 +243,70 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
       : onEdit({ side, base: editor.base, actor: 'HUMAN', action: { type: 'TRACE_SAVE', side, findingId: editor.findingId, trace } }));
     if (saved) { setSelected(editor.id); setEditor(null); }
   };
-  return <section className="am-side ad-side" aria-label={`${name(side)} defects`}>
+  return <section className={`am-side ad-side${expanded ? ' ad-expanded' : ''}`} hidden={hidden} aria-label={`${name(side)} defects`}>
     <div className="am-side-heading"><h2>{name(side)}</h2><span>{busy ? 'Saving…' : editor ? 'Unsaved trace' : pending ? 'Measurement pending' : inspected ? 'Inspected' : 'Inspect this side'}</span></div>
-    <p className="am-view-label">Inspection image · card area</p>
-    <div className="ad-viewport">
-      {supplied ? <div ref={plane} className="ad-plane" style={{ transform: `translate(${pan.x}%,${pan.y}%) scale(${zoom})` }}
-        onPointerDown={event => {
-          if (!editor || stale || disabled || event.button !== 0) return;
-          event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
-          strokeRef.current = { points: [point(event)], tool, brush }; setStroke(strokeRef.current.points);
-        }} onPointerMove={event => {
-          if (!strokeRef.current) return; strokeRef.current.points.push(point(event)); setStroke([...strokeRef.current.points]);
-        }} onPointerUp={finishStroke} onPointerCancel={() => { strokeRef.current = null; setStroke([]); }}>
+    <div className="ad-inspection-panel">
+    <div className="am-local-tools ad-view-tools" aria-label={`${name(side)} inspection controls`}>
+      <label>Zoom <select disabled={viewingDisabled} aria-label={`${name(side)} defect zoom`} value={zoom} onChange={event => changeZoom(Number(event.target.value))}>
+        {[1, 2, 4, 8, 16, ...([1, 2, 4, 8, 16].includes(zoom) ? [] : [zoom])].sort((a, b) => a - b).map(value =>
+          <option key={value} value={value}>{value === 1 ? 'Fit' : `${Number(value.toFixed(1))}×`}</option>)}
+      </select></label>
+      <button disabled={viewingDisabled || zoom <= 1} aria-label={`Zoom out ${name(side)}`} onClick={() => changeZoom(zoom / 1.5)}>−</button>
+      <button disabled={viewingDisabled || zoom >= MAX_INSPECTION_ZOOM} aria-label={`Zoom in ${name(side)}`} onClick={() => changeZoom(zoom * 1.5)}>+</button>
+      <button disabled={viewingDisabled} onClick={fit}>Fit image</button>
+      <button disabled={stroke.length > 0} aria-label={expanded ? 'Return to paired inspection' : `Expand ${name(side)} inspection`} onClick={onExpand}>{expanded ? 'Return to pair' : 'Expand image'}</button>
+      <label><input type="checkbox" checked={magnifier} disabled={!ready} onChange={event => { setMagnifier(event.target.checked); setLens(null); }} />3× magnifier</label>
+      <label><input type="checkbox" checked={hideOverlays} onChange={event => setHideOverlays(event.target.checked)} />Hide overlays</label>
+      {editor && <button disabled={stroke.length > 0} aria-pressed={panMode} onClick={() => setPanMode(previous => !previous)}>Pan image</button>}
+    </div>
+    <div className="am-local-tools">
+      <label><input type="checkbox" checked={showMasks} onChange={event => setShowMasks(event.target.checked)} />Show findings</label>
+      {astra?.enabled && <label><input type="checkbox" checked={showProposals} onChange={event => setShowProposals(event.target.checked)} />Show Astra suggestions</label>}
+      {zoom > 1 && <div className="am-pan" aria-label={`${name(side)} defect pan`}>
+        {[[1, 0, 'Left', '←'], [0, 1, 'Up', '↑'], [0, -1, 'Down', '↓'], [-1, 0, 'Right', '→']].map(([x, y, label, symbol]) =>
+          <button disabled={viewingDisabled} key={label} aria-label={`Pan ${name(side)} ${label.toLowerCase()}`} onClick={() => moveView({ x: x * 80, y: y * 80 })}>{symbol}</button>)}
+      </div>}
+    </div>
+    <p className="ad-view-help">Scroll to zoom · drag to pan{editor ? ' with Pan image or hold Space' : ''} · hold H to hide outlines</p>
+    <div ref={viewport} className={`ad-viewport${editor && !panMode && !spacePan ? ' ad-drawing' : ''}`} tabIndex={0} role="region" aria-label={`${name(side)} image inspection`}
+      onPointerDown={event => { if (event.target === event.currentTarget && (!editor || panMode || spacePan)) pointerDown(event); }}
+      onPointerMove={event => { if (event.target === event.currentTarget) pointerMove(event); }} onPointerUp={pointerUp} onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer}
+      onPointerLeave={() => setLens(null)} onBlur={() => { setSpacePan(false); setPeek(false); }}
+      onKeyDown={event => {
+        if (event.target !== event.currentTarget || strokeRef.current) return;
+        if (event.key === ' ') { event.preventDefault(); setSpacePan(true); }
+        else if (event.key.toLowerCase() === 'h') { event.preventDefault(); setPeek(true); }
+        else if (!viewingDisabled) {
+          const deltas = { ArrowLeft: { x: 80, y: 0 }, ArrowRight: { x: -80, y: 0 }, ArrowUp: { x: 0, y: 80 }, ArrowDown: { x: 0, y: -80 } };
+          if (deltas[event.key]) { event.preventDefault(); moveView(deltas[event.key]); }
+          else if (['+', '=', '-'].includes(event.key)) { event.preventDefault(); changeZoom(event.key === '-' ? zoom / 1.5 : zoom * 1.5); }
+          else if (event.key === 'Home' || event.key === '0') { event.preventDefault(); fit(); }
+        }
+      }} onKeyUp={event => { if (event.key === ' ') setSpacePan(false); if (event.key.toLowerCase() === 'h') setPeek(false); }}>
+      {supplied ? <div ref={plane} className="ad-plane" style={{ width: INSPECTION_SIZE.width * scale, height: INSPECTION_SIZE.height * scale,
+        transform: `translate(-50%,-50%) translate(${pan.x}px,${pan.y}px) scale(${zoom})` }}
+        onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={cancelPointer}>
         {verified.url && <img key={binding} src={verified.url} alt={`${name(side)} inspection image`} draggable="false"
           onLoad={event => setLoaded(event.currentTarget.naturalWidth === 1350 && event.currentTarget.naturalHeight === 1858 ? binding : null)}
           onError={() => setLoaded(null)} />}
-        <FindingOverlay findings={slot.findings} selected={pendingTrace ? pendingAction.findingId ?? pendingAction.trace.id : selected} trace={editor?.trace ?? pendingTrace} visible={showMasks} />
-        <ProposalOverlay proposals={proposals} selected={selectedProposal} visible={showProposals && proposalsCurrent && ready && !editor} />
-        {stroke.length > 0 && <svg className="ad-stroke" viewBox="0 0 1269 1777" aria-hidden="true"><polyline
+        <div className="ad-card-plane">
+        <FindingOverlay findings={slot.findings} selected={pendingTrace ? pendingAction.findingId ?? pendingAction.trace.id : selected} trace={editor?.trace ?? pendingTrace} visible={showMasks && overlaysVisible && ready} />
+        <ProposalOverlay proposals={proposals} selected={selectedProposal} visible={showProposals && overlaysVisible && proposalsCurrent && ready && !editor} />
+        {overlaysVisible && stroke.length > 0 && <svg className="ad-stroke" viewBox="0 0 1269 1777" aria-hidden="true"><polyline
           points={stroke.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={strokeRef.current?.tool === 'ERASER' ? '#ffffff' : '#df3f24'}
           strokeWidth={strokeRef.current?.brush ?? brush} strokeLinecap="round" strokeLinejoin="round" /></svg>}
+        </div>
       </div> : <div className="am-empty">Inspection image unavailable.</div>}
+      {magnifier && lens && ready && <div className="ad-magnifier" aria-hidden="true" style={{
+        [lens.x > viewportSize.width / 2 ? 'left' : 'right']: 12,
+        backgroundImage: `url("${verified.url}")`, backgroundSize: `${lens.width * 3}px ${lens.height * 3}px`,
+        backgroundPosition: `${100 - lens.imageX * 3}px ${100 - lens.imageY * 3}px`,
+      }}><span>3× · image only</span></div>}
     </div>
+    <p className="ad-focus-status" role="status">{inspecting ? `Inspecting ${inspecting} · ` : ''}Full image includes space around every card edge.</p>
     {!ready && supplied && <p role={verified.error ? 'alert' : 'status'}>{verified.error ? 'Inspection image unavailable or its bytes did not match. Your trace is retained.' : 'Waiting for the current verified inspection image.'}</p>}
-    <div className="am-local-tools">
-      <label>Zoom <select disabled={stroke.length > 0 || busy} aria-label={`${name(side)} defect zoom`} value={zoom} onChange={event => { setZoom(Number(event.target.value)); setPan({ x: 0, y: 0 }); }}>
-        <option value="1">Fit</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
-      </select></label>
-      <label><input type="checkbox" disabled={Boolean(editor)} checked={showMasks} onChange={event => setShowMasks(event.target.checked)} />Show findings</label>
-      {astra?.enabled && <label><input type="checkbox" disabled={Boolean(editor)} checked={showProposals} onChange={event => setShowProposals(event.target.checked)} />Show Astra suggestions</label>}
-      {zoom > 1 && <div className="am-pan" aria-label={`${name(side)} defect pan`}>
-        {[[1, 0, 'Left', '←'], [0, 1, 'Up', '↑'], [0, -1, 'Down', '↓'], [-1, 0, 'Right', '→']].map(([x, y, label, symbol]) =>
-          <button disabled={stroke.length > 0 || busy} key={label} aria-label={`Pan ${name(side)} ${label.toLowerCase()}`} onClick={() => setPan(p => ({ x: p.x + x * 20, y: p.y + y * 20 }))}>{symbol}</button>)}
-      </div>}
     </div>
+    <div className="ad-review-panel">
     {editor ? <div className="ad-trace-tools">
       {editor.proposal && <p className="ad-proposal-note">Correcting an Astra suggestion. Save the trace to add your corrected finding.</p>}
       {stale && <p role="alert">This side changed while you were drawing. Discard this trace to use its latest saved version.</p>}
@@ -194,17 +319,18 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
         </select></label><button disabled={busy || stroke.length > 0 || !editor.undo.length} onClick={() => setEditor(previous => ({ ...previous, trace: previous.undo.at(-1), undo: previous.undo.slice(0, -1) }))}>Undo stroke</button></div>
       <div className="am-side-actions"><button className="am-primary" disabled={disabled || stale || stroke.length > 0 || !isNonEmptySpeedsterTrace(editor.trace)} onClick={saveTrace}>Save trace</button>
         <button disabled={busy} onClick={() => { strokeRef.current = null; setStroke([]); setEditor(null); setError(''); }}>Discard trace</button></div>
-    </div> : <>
-      <div className="am-side-actions"><button disabled={disabled || !onEdit} onClick={() => start(null)}>Add finding</button>
+    </div> : <div className="am-side-actions"><button disabled={disabled || !onEdit} onClick={() => start(null)}>Add finding</button>
         {pending && onRetry && <button disabled={busy || locked} onClick={() => perform(() => onRetry(side))}>Retry measurement</button>}
         {pending && onDiscardPending && <button disabled={busy || locked} onClick={() => perform(() => onDiscardPending({ side, base }))}>Discard pending change</button>}
-      </div>
+      </div>}
       <ul className="ad-findings" aria-label={`${name(side)} findings`}>
         {slot.findings.map((entry, index) => <li key={entry.id} className={`${selected === entry.id ? 'ad-selected' : ''} ${entry.reviewResult === 'REMOVED' ? 'ad-removed' : ''}`}>
-          <button className="ad-finding-name" aria-pressed={selected === entry.id} onClick={() => setSelected(entry.id)}>{index + 1}. {TYPES[entry.defectType]}</button>
+          <button className="ad-finding-name" disabled={Boolean(editor)} aria-pressed={selected === entry.id} onClick={() => setSelected(entry.id)}>{index + 1}. {TYPES[entry.defectType]}</button>
           <span>{entry.reviewResult === 'REMOVED' ? 'Removed' : `${areaOf(entry).toFixed(3)} mm² · ${regionsOf(entry).map(r => r.zone.toLowerCase()).join(', ')}`}</span>
+          <button className="ad-inspect-target" disabled={viewingDisabled} aria-label={`Inspect ${name(side)} finding ${index + 1}`} onClick={() => inspectTarget(entry, 'finding', index)}>Inspect finding</button>
         </li>)}
       </ul>
+      {!editor && <>
       {!slot.findings.length && <p className="ad-muted">No findings yet. Inspect the image and add any damage you can see.</p>}
       {finding && <div className="ad-finding-tools">
         <label>Defect type <select aria-label={`${name(side)} finding type`} disabled={disabled || finding.reviewResult === 'REMOVED' || !onEdit} value={finding.defectType}
@@ -223,12 +349,14 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
       <ul className="ad-proposal-list">{proposals.map((proposal, index) => {
         const unreviewed = proposal.reviewStatus === 'UNREVIEWED', valid = validProposalContour(proposal) && TYPES[proposal.defectType];
         return <li key={proposal.id} className={selectedProposal === proposal.id ? 'ad-proposal-selected' : ''}>
-          <button className="ad-finding-name" aria-pressed={selectedProposal === proposal.id} disabled={Boolean(editor)} onClick={() => setSelectedProposal(proposal.id)}>
+          <button className="ad-finding-name" aria-pressed={selectedProposal === proposal.id} onClick={() => setSelectedProposal(proposal.id)}>
             {index + 1}. {TYPES[proposal.defectType] ?? 'Unrecognized suggestion'}</button>
           <span className="ad-proposal-result">{{ UNREVIEWED: 'Unreviewed', ACCEPTED: 'Accepted', CORRECTED: 'Corrected', REJECTED: 'Rejected' }[proposal.reviewStatus] ?? 'Review status unavailable'}</span>
           {proposal.observation && <p>{proposal.observation}</p>}
           {proposal.uncertainty && <p className="ad-muted">Uncertainty: {{ LOW: 'Low', MEDIUM: 'Medium', HIGH: 'High' }[proposal.uncertainty] ?? proposal.uncertainty}</p>}
           {!valid && <p className="ad-muted">This suggestion has no usable outline or type. Add a finding manually if needed.</p>}
+          <button className="ad-inspect-target" disabled={viewingDisabled || !validProposalContour(proposal) || !proposalsCurrent}
+            aria-label={`Inspect ${name(side)} suggestion ${index + 1}`} onClick={() => inspectTarget(proposal, 'suggestion', index)}>Inspect suggestion</button>
           {unreviewed && <div className="am-side-actions">
             <button disabled={proposalDisabled || !valid} onClick={() => reviewProposal(proposal, 'ACCEPT')}>Accept suggestion</button>
             <button disabled={proposalDisabled || !valid} onClick={() => correctProposal(proposal)}>Correct trace</button>
@@ -238,6 +366,7 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
       })}</ul>
     </section>}
     {error && <p role="alert">{error}</p>}
+    </div>
   </section>;
 }
 
@@ -247,6 +376,7 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
 export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, onConfirm, onRetry, onDiscardPending, onContinue, onEditingChange, saveStatus = '', grade,
   astra, onAnalyzeDefects, onRefreshAnalysis, onResumeAnalysis, onReplaceAnalysis, onReviewProposal, reviewedMemory, onRetryReviewedMemory }) {
   const [activity, setActivity] = useState({}), [ready, setReady] = useState({}), [confirming, setConfirming] = useState(false), [error, setError] = useState('');
+  const [expandedSide, setExpandedSide] = useState(null);
   const status = defectStatus(workspace);
   const [unknownAnalysis, setUnknownAnalysis] = useState(null);
   const analysisKey = key({ analysisId: astra?.analysisId, status: astra?.status });
@@ -306,9 +436,12 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
           disabled={requesting || confirming || editing || !currentImagesReady} onClick={() => requestAnalysis('REPLACE')}>Start a new Astra analysis</button>}
       </div>
     </section>}
-    <div className="am-pair">{SIDES.map(side => <DefectSide key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]}
+    {expandedSide && <div className="ad-expanded-switch" aria-label="Expanded inspection side">{SIDES.map(side => <button key={side}
+      aria-pressed={expandedSide === side} onClick={() => setExpandedSide(side)}>Inspect {name(side)}</button>)}</div>}
+    <div className={`am-pair${expandedSide ? ' ad-expanded-pair' : ''}`}>{SIDES.map(side => <DefectSide key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]}
       onEdit={onEdit} onInspect={onInspect} onRetry={onRetry} onDiscardPending={onDiscardPending} onReady={onReady} onActivity={onActivity} locked={confirming}
-      astra={astra} onReviewProposal={onReviewProposal} />)}</div>
+      astra={astra} onReviewProposal={onReviewProposal} expanded={expandedSide === side} hidden={Boolean(expandedSide && expandedSide !== side)}
+      onExpand={() => setExpandedSide(previous => previous === side ? null : side)} />)}</div>
     {memory && <div className="ad-memory" aria-label="Reviewed example memory"><p role="status">{recoveringMemory ? 'Checking the saved reviewed examples…' : memory.message}</p>
       {memory.mayRecover && onRetryReviewedMemory && <button disabled={recoveringMemory || confirming} onClick={recoverMemory}>
         {memory.status === 'FAILED' ? 'Retry saving examples' : 'Check example save'}</button>}

@@ -263,3 +263,8 @@ a linked new analysis for this no-response-ID UNKNOWN attempt. Actual provider
 acknowledgement, collection, displayed proposals and inspection quality still
 require real-card evidence. Background completion must preserve the human draft
 and must not confirm findings or issue report approval.
+
+
+## Owner-observed background result and inspection improvements: September21 UTC
+
+Mark supplied five screenshots of successful Astra suggestions and traces on both faces of Charmander522610ad: three Front and four Back suggestions are visible, with uncertainty and review controls. He reports that detection and tracing worked well. This establishes owner-observed displayed background results, not objective defect accuracy, reviewed findings or final report approval. His requested next improvements are stronger zoom/magnification, direct focus on a suggestion and visible source-photo margin around all edges for both review and Astra detail crops. The [fresh-lead handoff](../2026-09-21/inspection-viewer-handoff.md) records the local implementation and remaining contract/release work. The currently live application remains ada00815; no new paid request or deployment was performed for this checkpoint.

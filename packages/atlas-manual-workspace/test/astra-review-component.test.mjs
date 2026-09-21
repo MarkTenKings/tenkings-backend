@@ -9,6 +9,7 @@ import * as traceWire from '@atlas/grading-core/trace-bitmap-wire';
 import * as traceEditor from '@atlas/grading-core/trace-editor';
 import * as actions from '../src/defect-actions.mjs';
 import * as presentation from '../src/astra-review-ui.mjs';
+import * as inspectionViewport from '../src/inspection-viewport.mjs';
 import { workspace } from './defect-fixtures.mjs';
 
 // The actual JSX and real trace tools run here; only React scheduling and image
@@ -32,7 +33,7 @@ function astraFor(state, status = 'READY') {
       observation: 'Possible short scratch.', uncertainty: 'May be a printed line.' }] };
 }
 function harness(initial = {}) {
-  const instances = new Map(); let current, cursor, dirty, effects = [], tree;
+  const instances = new Map(), elements = new Map(); let current, cursor, dirty, effects = [], tree;
   const memo = (make, deps) => { const i = cursor++, old = current[i]; if (!old || deps.some((value, n) => !Object.is(value, old.deps[n]))) current[i] = { deps, value: make() }; return current[i].value; };
   const react = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
     useState(initialValue) { const i = cursor++, slots = current; if (!(i in slots)) slots[i] = typeof initialValue === 'function' ? initialValue() : initialValue;
@@ -50,6 +51,7 @@ function harness(initial = {}) {
     if (name === '@atlas/grading-core/trace-editor') return traceEditor;
     if (name === './defect-actions.mjs') return actions;
     if (name === './astra-review-ui.mjs') return presentation;
+    if (name === './inspection-viewport.mjs') return inspectionViewport;
     if (name === './verified-image.mjs') return { useVerifiedImage: image => ({ url: image?.url ?? null }) };
     return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
   } });
@@ -60,11 +62,20 @@ function harness(initial = {}) {
       const identity = `${path}:${node.type.name}`; if (!instances.has(identity)) instances.set(identity, []);
       current = instances.get(identity); cursor = 0; return expand(node.type(node.props), `${identity}.out`);
     }
-    if (node.props?.ref && node.props.className === 'ad-plane') node.props.ref.current = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1270, height: 1778 }) };
+    if (node.props?.ref && ['ad-plane', 'ad-viewport'].some(name => node.props.className?.split(' ').includes(name))) {
+      if (!elements.has(path)) elements.set(path, { listeners: new Map(), focus() {}, scrollIntoView() {},
+        addEventListener(name, handler) { this.listeners.set(name, handler); },
+        removeEventListener(name, handler) { if (this.listeners.get(name) === handler) this.listeners.delete(name); },
+        setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture() { return true; } });
+      const element = elements.get(path), isPlane = node.props.className.split(' ').includes('ad-plane');
+      element.getBoundingClientRect = () => isPlane ? f.imageRect : f.viewportRect;
+      node.props.ref.current = element;
+    }
     return { ...node, props: { ...node.props, children: expand(node.props.children, `${path}.children`) } };
   }
   const state = workspace(false);
-  const f = { calls: [], props: { workspace: state,
+  const f = { calls: [], imageRect: { left: -40, top: -40, width: 1350, height: 1858 },
+    viewportRect: { left: 0, top: 0, width: 400, height: 560 }, props: { workspace: state,
     images: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { inspection: { url: `blob:${side}`, sha256: state.sides[side].frame.inspectionImageSha256 } }])),
     onEdit: async request => f.calls.push({ kind: 'edit', request }), onInspect: async () => {}, onConfirm: async () => {},
     onReviewProposal: async request => f.calls.push({ kind: 'proposal', request }), onAnalyzeDefects: async request => f.calls.push({ kind: 'analyze', request }),
@@ -75,8 +86,15 @@ function harness(initial = {}) {
   f.side = side => all(tree, node => node.type === 'section' && node.props['aria-label'] === `${side} defects`)[0];
   f.button = (label, side) => { const hit = f.nodes(node => node.type === 'button' && text(node) === label, side)[0]; assert.ok(hit, label); return hit; };
   f.click = async (label, side) => { const hit = f.button(label, side); assert.equal(Boolean(hit.props.disabled), false, `${label} enabled`); await hit.props.onClick(); f.render(); };
+  f.control = (label, side) => { const hit = f.nodes(node => node.props?.['aria-label'] === label, side)[0]; assert.ok(hit, label); return hit; };
+  f.clickControl = async (label, side) => { const hit = f.control(label, side); assert.equal(Boolean(hit.props.disabled), false, `${label} enabled`); await hit.props.onClick(); f.render(); };
+  f.select = (label, value, side) => { const hit = f.control(label, side); assert.equal(Boolean(hit.props.disabled), false); hit.props.onChange({ target: { value: String(value) } }); f.render(); };
+  f.check = (label, checked, side) => { const owner = f.nodes(node => node.type === 'label' && text(node) === label, side)[0]; assert.ok(owner, label);
+    const input = all(owner, node => node.type === 'input')[0]; assert.equal(Boolean(input.props.disabled), false); input.props.onChange({ target: { checked } }); f.render(); };
+  f.key = (value, side = 'Front', event = 'onKeyDown') => { const node = f.control(`${side} image inspection`), target = node.props.ref.current;
+    node.props[event]({ key: value, target, currentTarget: target, preventDefault() {} }); f.render(); };
   f.has = label => text(tree).includes(label);
-  f.ready = () => { f.nodes(node => node.type === 'img').forEach(node => node.props.onLoad({ currentTarget: { naturalWidth: 1350, naturalHeight: 1858 } })); f.render(); };
+  f.ready = () => { f.nodes(node => node.type === 'img' && node.props.onLoad).forEach(node => node.props.onLoad({ currentTarget: { naturalWidth: 1350, naturalHeight: 1858 } })); f.render(); };
   f.draw = (side = 'Front') => { const plane = f.nodes(node => node.props?.className === 'ad-plane', side)[0];
     plane.props.onPointerDown({ clientX: 650, clientY: 650, button: 0, pointerId: 1, preventDefault() {}, currentTarget: { setPointerCapture() {} } });
     plane.props.onPointerMove({ clientX: 680, clientY: 680 }); plane.props.onPointerUp(); f.render(); };
@@ -263,4 +281,87 @@ test('a durably refused concurrent action offers status recovery without another
   assert.equal(f.button('Check analysis status').props.disabled, false);
   await f.click('Check analysis status');
   assert.equal(refreshes, 1); assert.equal(f.calls.length, 0);
+});
+
+test('Inspect suggestion and finding focus the view without accepting, measuring, inspecting or saving', async () => {
+  const state = workspace(true), before = structuredClone(state), f = harness({ workspace: state, astra: astraFor(state) });
+  assert.equal(f.control('Inspect Front suggestion 1').props.disabled, true);
+  f.ready(); await f.clickControl('Inspect Front suggestion 1');
+  assert.ok(f.control('Front defect zoom').props.value > 1);
+  assert.equal(f.has('Inspecting Front suggestion 1'), true);
+  assert.equal(f.nodes(node => node.type === 'polygon' && node.props.className === 'ad-proposal-active').length, 1);
+  await f.clickControl('Inspect Front finding 1');
+  assert.equal(f.has('Inspecting Front finding 1'), true);
+  assert.equal(f.calls.length, 0); assert.deepEqual(f.props.workspace, before);
+  assert.equal(f.button('Confirm findings').props.disabled, true);
+});
+
+test('padding clicks never draw and a scaled padded image saves the independently expected canonical pixels', async () => {
+  const f = harness(); f.ready(); await f.click('Add finding', 'Front');
+  f.imageRect = { left: 100, top: 200, width: 675, height: 929 };
+  const plane = () => f.nodes(node => node.props.className === 'ad-plane', 'Front')[0];
+  const down = (x, y) => plane().props.onPointerDown({ clientX: x, clientY: y, button: 0, pointerId: 1, preventDefault() {}, currentTarget: plane().props.ref.current });
+  down(110, 664.5); plane().props.onPointerMove({ clientX: 118, clientY: 680 }); plane().props.onPointerUp(); f.render();
+  assert.equal(f.button('Save trace', 'Front').props.disabled, true, 'outside left card edge remains blank');
+  down(437.5, 664.5); plane().props.onPointerMove({ clientX: 442.5, clientY: 664.5 }); plane().props.onPointerUp(); f.render();
+  await f.click('Save trace', 'Front');
+  const pixels = traceWire.decodeSpeedsterTraceBitmapWireV1(f.calls[0].request.action.trace.traceWire);
+  assert.equal(pixels[889 * 1270 + 635], 1, 'padded image midpoint maps to canonical635,889');
+  assert.equal(pixels[889 * 1270], 0, 'margin click did not clamp to left card edge');
+  assert.equal(pixels[664 * 1270 + 437], 0, 'screen coordinates were not stored as canonical pixels');
+  assert.equal(f.calls.length, 1);
+});
+
+test('focus, zoom, overlay visibility and expanded side switching preserve both unsaved traces', async () => {
+  const state = workspace(false), f = harness({ workspace: state, astra: astraFor(state) }); f.ready();
+  await f.click('Add finding', 'Front'); f.draw('Front');
+  await f.click('Add finding', 'Back'); f.draw('Back');
+  f.select('Front defect zoom', 16); f.check('Hide overlays', true, 'Front');
+  await f.clickControl('Inspect Front suggestion 1');
+  await f.clickControl('Expand Front inspection'); assert.equal(f.side('Back').props.hidden, true);
+  await f.click('Inspect Back'); assert.equal(f.side('Front').props.hidden, true);
+  assert.equal(f.button('Save trace', 'Back').props.disabled, false);
+  await f.click('Inspect Front'); await f.clickControl('Return to paired inspection', 'Front');
+  f.props.astra = { ...f.props.astra, knowledgeRevision: 77 }; f.render();
+  assert.equal(f.side('Back').props.hidden, false); assert.equal(f.calls.length, 0);
+  await f.click('Save trace', 'Front'); await f.click('Save trace', 'Back');
+  assert.equal(f.calls.length, 2);
+  for (const { request } of f.calls) {
+    const pixels = traceWire.decodeSpeedsterTraceBitmapWireV1(request.action.trace.traceWire);
+    assert.equal(pixels[660 * 1270 + 660], 1);
+    assert.equal(pixels[365 * 1270 + 265], 0, 'focusing never substitutes Astra contour pixels');
+  }
+});
+
+test('keyboard, wheel, temporary overlay hiding and image-only magnifier are display-only', async () => {
+  const state = workspace(false), f = harness({ workspace: state, astra: astraFor(state) }); f.ready();
+  f.key('+'); assert.equal(f.control('Front defect zoom').props.value, 1.5);
+  f.key('ArrowRight');
+  assert.match(f.nodes(node => node.props.className === 'ad-plane', 'Front')[0].props.style.transform, /translate\(-[0-9.]+px,0px\)/);
+  f.key('h'); assert.equal(f.nodes(node => node.type === 'polygon').length, 0);
+  f.key('h', 'Front', 'onKeyUp'); assert.equal(f.nodes(node => node.type === 'polygon').length, 1);
+  const viewport = f.control('Front image inspection').props.ref.current, wheel = viewport.listeners.get('wheel'); assert.equal(typeof wheel, 'function');
+  wheel({ clientX: 200, clientY: 280, deltaY: -100, deltaMode: 0, preventDefault() {} }); f.render();
+  assert.ok(f.control('Front defect zoom').props.value > 1.5);
+  f.check('3× magnifier', true, 'Front');
+  const plane = f.nodes(node => node.props.className === 'ad-plane', 'Front')[0]; plane.props.onPointerMove({ clientX: 100, clientY: 200 }); f.render();
+  const lens = f.nodes(node => node.props.className === 'ad-magnifier', 'Front')[0]; assert.ok(lens);
+  assert.equal(lens.props.style.backgroundImage, 'url("blob:FRONT")');
+  assert.equal(lens.props.style.backgroundSize, '4050px 5574px');
+  assert.equal(lens.props.style.backgroundPosition, '-320px -620px');
+  f.key('Home'); assert.equal(f.control('Front defect zoom').props.value, 1);
+  assert.equal(f.nodes(node => node.props.className === 'ad-magnifier').length, 0);
+  assert.equal(f.calls.length, 0);
+});
+
+test('Pan image and held Space move the view without adding pixels to an active trace', async () => {
+  const f = harness(); f.ready(); await f.click('Add finding', 'Front'); f.select('Front defect zoom', 4);
+  const drag = () => { const plane = f.nodes(node => node.props.className === 'ad-plane', 'Front')[0];
+    plane.props.onPointerDown({ clientX: 650, clientY: 650, button: 0, pointerId: 1, preventDefault() {}, currentTarget: plane.props.ref.current });
+    plane.props.onPointerMove({ clientX: 680, clientY: 680 }); plane.props.onPointerUp(); f.render(); };
+  await f.click('Pan image', 'Front'); drag(); assert.equal(f.button('Save trace', 'Front').props.disabled, true);
+  await f.click('Pan image', 'Front'); f.key(' '); drag(); f.key(' ', 'Front', 'onKeyUp');
+  assert.equal(f.button('Save trace', 'Front').props.disabled, true);
+  f.draw(); assert.equal(f.button('Save trace', 'Front').props.disabled, false);
+  assert.equal(f.calls.length, 0);
 });
