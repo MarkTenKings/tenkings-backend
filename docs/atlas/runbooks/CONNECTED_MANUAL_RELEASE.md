@@ -1,5 +1,15 @@
 # Connected manual release
 
+Current inspection release, September 21 UTC: source `406466a089bdd2d34022bc8c06283a0649978b15`, native image `sha256:a5159e7478d87e4267e11433f68ba595d6d2e70c1968ad9754a53431fb47be4c`. See the [inspection release audit](../audits/2026-09-21/inspection-release.md) for the current identities and evidence. All previous action intents below are consumed; do not replay them.
+
+The active private container is `195b416f29475183361c380b890d00d934af9f8cecfe6fc0cae207f40e2b2e5f`, started at 06:24:51 UTC. Its root-owned config is `/opt/atlas/manual-inspection-20260921-72e8/private.env`. READY staff is `dpl_EmKqeZg4wN6PhVQX97DXc9BK71cC` (`atlas-grading-staff-7bmpf8r2c-ten-kings.vercel.app`); READY public is `dpl_DnjnMSVL4fKPFsqR1gscuMvsifr5` (`atlas-grading-public-opgjndzha-ten-kings.vercel.app`). StaffControl18 and STAFF SMS16 bind configHash `e9d83e9664c745297b73f9a5920428e18dc7ad41e219d8b4595040724ab95801`. All four aliases and the production target select this public build; www308 is preserved.
+
+This release applied no migrations or grants: production remains staff42/public97+13, with 14 manual history sets including the accepted background provider event preserved. The current source closure is 568 files, SHA `0b1eaacb4a0e448a13869154d575916e8a235f56fa4b406ae2476bac9ebe4404`. Exact native tests (458 package/59 staff), two offline PostgreSQL42 fixture groups and [all 14 CI jobs](https://github.com/MarkTenKings/tenkings-backend/actions/runs/35566957247) passed.
+
+The former ada008 container is retained stopped and detached as `atlas-manual-connected-20260917-retained-ada008-20260921`. The older source30d writer also remains stopped and detached. Do not restart either as an automatic rollback: future evidence may contain the new versioned crop layout, and the older source30d writer is incompatible with migration41. Preserve originals and receipts; any recovery needs fresh runtime evidence and a compatible reader. No paid inference, card action, review decision, or report approval was performed by this release.
+
+## Previous reliability release snapshot — historical
+
 Updated September20 Pacific / September21 UTC, 2026. The combined identification
 retry and background Astra release is live after native qualification and its
 production database, private runtime and control cutover. Public promotion was

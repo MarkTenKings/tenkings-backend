@@ -1,5 +1,7 @@
 # ATLAS inspection viewer — fresh Astra Ultra lead handoff
 
+Completion update — September 21, 2026: this handoff was executed by the fresh Astra lead and specialists. The viewer and versioned backend context crops are live at source `406466a089bdd2d34022bc8c06283a0649978b15`. See [the completed inspection release record](inspection-release.md). The implementation gaps and ada008 baseline below describe the original handoff; all associated previous release intents remain consumed.
+
 Owner direction: September 20 Pacific / September 21 UTC, 2026. Mark requests a fresh **gpt-6-astra / ultra** lead with its own **gpt-6-astra / xhigh** specialists to continue this work. All three specialists have finished and frozen their bounded work. This handoff records the tested local checkpoint; no changes from this follow-up are deployed.
 
 ## Current request and acceptance evidence

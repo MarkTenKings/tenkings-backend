@@ -5,7 +5,13 @@ manual grading workspace that Mark can test, with human-requested Astra
 assistance. Autonomous operation and completed slab finishing follow this
 milestone. SAM remains deferred unless real testing establishes a need.
 
-## Current evidence
+## Current inspection release — September 21, 06:26 UTC
+
+The requested viewer and photo-context improvements are now live on source `406466a089bdd2d34022bc8c06283a0649978b15` and native image `a5159e7478d87e4267e11433f68ba595d6d2e70c1968ad9754a53431fb47be4c`. Staff `dpl_EmKqeZg4wN6PhVQX97DXc9BK71cC`, public `dpl_DnjnMSVL4fKPFsqR1gscuMvsifr5`, private runtime and controls18/16 match, with all four public aliases and the production target verified. No migration, paid analysis or review action accompanied this release.
+
+The viewer exposes real surrounding photo pixels, 16× zoom and drag pan, individual suggestion focus, an image-only 3× magnifier and expanded inspection that preserves drafts and focus. Future explicit analyses use versioned context-inclusive crops; existing saved results retain their original contracts. The owner-observed three Front/four Back Charmander suggestions remain the preservation baseline. See [the full inspection release evidence](../2026-09-21/inspection-release.md) for qualification, runtime identities and remaining acceptance.
+
+## Previous reliability evidence — historical
 
 The combined identification retry and background Astra release is live at
 `ada00815447477cbd835e0e762f3c5aac8bd713b`. Its native image is
