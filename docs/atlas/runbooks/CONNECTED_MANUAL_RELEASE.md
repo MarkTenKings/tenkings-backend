@@ -6,7 +6,7 @@ activated. Public promotion and readback passed: all four public aliases and the
 production target select the new deployment, with the www-to-apex HTTP308 redirect preserved.
 The ordinary staff sign-in page renders at `https://atlasgrading.com/admin`;
 unauthenticated public/staff/customer routes and all32 observed assets passed.
-Owner login and real-card acceptance have not yet passed. The dedicated
+Owner login, native Front/Back intake, funded identification and paired geometry now pass on the owner’s Charmander test. First-pass Astra defect analysis reached the foreground provider timeout without findings; its background collection repair is still local and not deployed. The dedicated
 Vercel staff app remains behind the public `/admin` gateway; native work runs in
 the separate private service. Old operator history and private routes are retained.
 
@@ -40,10 +40,7 @@ container privileges and the proposed Caddy bytes were unchanged.
 Direct private TLS returned HTTP401 for an unsigned request, HTTP404 for an absent
 route and HTTP400 for an actual application proxy's signed malformed command
 before authentication or business effects.
-That proof used no human session. Still required: a fresh ordinary owner sign-in,
-authenticated manual access through the apex, the hosted 130-second terminal
-response check, and fresh physical-card upload, optical/manual grading and
-human-requested Astra acceptance. Report approval additionally needs genuine
+That proof used no human session. The owner subsequently signed in through the apex, uploaded real Front/Back photos and reached identified-card geometry review. Still required are full-resolution optical/manual grading acceptance, successful Astra findings and the remaining hosted long-response acceptance. Report approval additionally needs genuine
 reviewer certification; no certification was created by this release. Autonomous
 operation and slab finishing follow this milestone; SAM remains deferred unless
 real testing establishes a need.
@@ -293,3 +290,41 @@ records the actual controls and separates route, optical and report-approval
 results. Zero currently certified reviewers is a real approval prerequisite;
 obtain genuine reviewer authority through the existing process rather than
 creating fixture certification to pass this check.
+
+
+## September 21 recovery candidate — not yet deployed
+
+The next candidate combines an explicit same-photo identification retry after a
+verified saved API-credit rejection with versioned background Astra defect
+analysis. New V2 defect requests retain the existing model, xhigh reasoning,
+prompt, schema, images and `store:false`, adding `background:true`. A durable
+provider response ID enables GET-only native collection after the browser closes
+or staff login expires. The three-minute start window is separate from the
+30-minute application collection window; the latter is not a provider retention
+guarantee or evidence of cancellation. No request is automatically resubmitted.
+The owner’s older foreground attempt has no response ID; only an explicit linked
+new analysis can replace that retained UNKNOWN attempt.
+
+Apply the two new additive staff migrations only after their exact native
+PostgreSQL qualification and candidate image qualification:
+
+- `20260921000000_manual_identification_retry`
+- `20260921000100_defect_analysis_background`
+
+The identification migration changes the old pair-unique conflict target. Drain
+and stop only the private ATLAS manual service before applying these migrations;
+do not let the old source30d identification writer continue afterward. Start the
+new qualified image with coordinated staff deployment/source/control bindings,
+verify staff42/no unfinished rows and a second no-op deploy, and verify the
+restricted manual role’s14 tables and6 functions. Preserve the public97-migration
+ledger, all original photos, requests and receipts, and unrelated services. If
+cutover fails after41, keep the private service stopped or roll forward a corrected
+compatible candidate; do not restore the incompatible old writer.
+
+The native worker starts only after its server listens and receives accepted-work
+lookup/GET reconciliation capabilities. Browser status polling updates proposals
+without confirming findings or changing a human draft. Automatic checking stops
+truthfully when collection expires; a known response ID never qualifies for the
+no-ID replacement action. Deployment is not complete until actual runtime,
+restricted-role and hosted source/control readbacks pass. A real successful
+Astra result and its inspection quality remain owner acceptance after release.

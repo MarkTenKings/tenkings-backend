@@ -56,7 +56,7 @@ function harness(store, post, { readCard } = {}) {
   const field = label => find(tree, node => node.props?.['aria-label'] === label);
   const render = () => { cursor = 0; tree = exports.default({ staff: { id: 'reviewer', role: 'REVIEWER' }, cardId: 'card' }); for (const effect of effects.splice(0)) effect(); };
   return { render, click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
-    has(label) { return Boolean(button(label)); }, field,
+    has(label) { return Boolean(button(label)); }, disabled(label) { return button(label)?.props.disabled === true; }, text: () => text(tree), field,
     change(label, value) { const target = field(label); assert.ok(target, label); target.props.onChange({ target: { value } }); } };
 }
 
@@ -102,7 +102,7 @@ const pokemonCard = () => ({ revision: 7,
 
 for (const { label, field } of [
   { label: 'Card family', field: 'profile' },
-  { label: 'Pokémon layout', field: 'layoutType' },
+  { label: 'Pokémon card kind', field: 'layoutType' },
 ]) test(`actual card details keep a cleared saved ${field} blank and save explicit null`, async () => {
   const store = storage(null), posts = []; let card = pokemonCard();
   const f = harness(store, async (path, options) => {
@@ -112,10 +112,10 @@ for (const { label, field } of [
   }, { readCard: () => card });
   f.render(); await flush(); f.render();
   assert.equal(f.field('Card family').props.value, 'POKEMON');
-  assert.equal(f.field('Pokémon layout').props.value, 'TRAINER');
+  assert.equal(f.field('Pokémon card kind').props.value, 'TRAINER');
   f.change(label, ''); f.render();
   assert.equal(f.field(label).props.value, '', 'the explicit clear must not fall back to the saved value');
-  assert.equal(Boolean(f.field('Pokémon layout')), field !== 'profile', 'layout visibility follows the edited family');
+  assert.equal(Boolean(f.field('Pokémon card kind')), field !== 'profile', 'layout visibility follows the edited family');
   f.click('Save details'); await flush(); f.render();
   assert.equal(posts.length, 1);
   assert.match(posts[0].body.actionId, /^[0-9a-f-]{36}$/);
@@ -135,12 +135,12 @@ test('actual pending null selections and empty text survive a later recognition 
   }, { readCard: () => card });
   f.render(); await flush(); f.render();
   assert.equal(typeof finishIdentification, 'function', 'recognition is in flight while details are editable');
-  f.change('Pokémon layout', ''); f.change('Card family', ''); f.change('Name', ''); f.render();
+  f.change('Pokémon card kind', ''); f.change('Card family', ''); f.change('Name', ''); f.render();
   card = { ...pokemonCard(), revision: 9, details: { ...pokemonCard().details,
     fields: { name: 'Recognized name', set_name: 'Recognized set' } } };
   finishIdentification({}); await flush(); f.render();
   assert.equal(f.field('Card family').props.value, '');
-  assert.equal(f.field('Pokémon layout'), undefined);
+  assert.equal(f.field('Pokémon card kind'), undefined);
   assert.equal(f.field('Name').props.value, '');
   assert.equal(f.field('Product / set').props.value, 'Recognized set', 'untouched fields receive the new recognition');
   f.click('Save details'); await flush(); f.render();
@@ -148,4 +148,74 @@ test('actual pending null selections and empty text survive a later recognition 
   assert.deepEqual(posts[0], { path: '/api/staff/manual-connected/cards/card/details',
     body: { actionId: posts[0].body.actionId, expectedRevision: 9,
       changes: { layoutType: null, profile: null, name: '' } } });
+});
+
+const rejectedCard = () => ({ ...pokemonCard(), identification: { state: 'UNKNOWN', attemptId: 'rejected-attempt',
+  rejection: { code: 'API_CREDIT_BALANCE_EXHAUSTED', canRetry: true } } });
+
+test('a verified credit rejection explains the billing failure without automatically retrying', async () => {
+  const store = storage(null); let posts = 0;
+  const f = harness(store, async () => { posts++; return {}; }, { readCard: rejectedCard });
+  f.render(); await flush(); f.render(); await flush(); f.render();
+  assert.match(f.text(), /identification request was rejected because the ATLAS API credit balance was exhausted/);
+  assert.match(f.text(), /original photos are saved/);
+  assert.equal(f.has('Retry identification'), true);
+  assert.equal(posts, 0);
+  assert.equal(store.getItem(key), null);
+});
+
+test('explicit identification retry journals one action and resumes that same action after a lost reply', async () => {
+  const store = storage(null), posts = []; let card = rejectedCard();
+  const f = harness(store, async (path, options) => {
+    posts.push({ path, body: JSON.parse(JSON.stringify(options.body)) });
+    assert.deepEqual(JSON.parse(store.getItem(key)), posts.at(-1), 'journal exists before dispatch');
+    if (posts.length === 1) throw { status: 503 };
+    card = pokemonCard();
+    return { state: 'COMPLETE' };
+  }, { readCard: () => card });
+  f.render(); await flush(); f.render(); f.click('Retry identification'); await flush(); f.render();
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0], { path: '/api/staff/manual-connected/cards/card/identify', body: {
+    actionId: posts[0].body.actionId, expectedAttemptId: 'rejected-attempt', sourceHash: 'pokemon-source',
+  } });
+  assert.match(posts[0].body.actionId, /^[0-9a-f-]{36}$/);
+  assert.equal(f.disabled('Retry identification'), true);
+  assert.equal(f.has('Resume saved request'), true);
+  f.click('Resume saved request'); await flush(); f.render();
+  assert.deepEqual(posts[1], posts[0], 'resuming cannot create a replacement action');
+  assert.equal(store.getItem(key), null);
+  assert.equal(f.has('Retry identification'), false);
+});
+
+test('a second retry click before rerender cannot dispatch another action', async () => {
+  const store = storage(null), posts = []; let finish;
+  const f = harness(store, async (path, options) => {
+    posts.push({ path, body: JSON.parse(JSON.stringify(options.body)) });
+    return new Promise(resolve => { finish = resolve; });
+  }, { readCard: rejectedCard });
+  f.render(); await flush(); f.render(); f.click('Retry identification'); f.click('Retry identification'); await flush();
+  assert.equal(posts.length, 1);
+  assert.deepEqual(JSON.parse(store.getItem(key)), posts[0]);
+  finish({ state: 'UNKNOWN' }); await flush(); f.render();
+});
+
+test('unconfirmed or non-retryable identification outcomes offer no retry action', async () => {
+  for (const identification of [
+    { state: 'UNKNOWN', attemptId: 'uncertain' },
+    { state: 'UNKNOWN', attemptId: 'rejected', rejection: { code: 'API_REQUEST_REJECTED', canRetry: false } },
+    { state: 'UNKNOWN', attemptId: 'rejected', rejection: { code: 'API_CREDIT_BALANCE_EXHAUSTED', canRetry: false } },
+  ]) {
+    const f = harness(storage(null), async () => { assert.fail('must not dispatch'); },
+      { readCard: () => ({ ...pokemonCard(), identification }) });
+    f.render(); await flush(); f.render();
+    assert.equal(f.has('Retry identification'), false);
+  }
+});
+
+test('unsaved human card details disable identification retry and remain visible', async () => {
+  const f = harness(storage(null), async () => { assert.fail('must not dispatch'); }, { readCard: rejectedCard });
+  f.render(); await flush(); f.render();
+  f.change('Name', 'Human correction'); f.render();
+  assert.equal(f.disabled('Retry identification'), true);
+  assert.equal(f.field('Name').props.value, 'Human correction');
 });

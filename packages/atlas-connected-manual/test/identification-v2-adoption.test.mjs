@@ -8,6 +8,7 @@ import { createManualArtifactStore } from '@atlas/manual-service/artifacts';
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { createIdentification, identificationEffects } from '../src/identification.mjs';
 import { createDetailsStore, FIELDS, gradingIdentity } from '../src/details.mjs';
+import { createConnectedHandler } from '../src/http.mjs';
 
 const V1 = 'card-identification-v1', V2 = 'card-identification-v2';
 const MASK = 'responses(fullTextAnnotation/text,textAnnotations/description,error)';
@@ -37,12 +38,13 @@ function deferred() {
 // stores. Transactions serialize, roll back on errors, and enforce row CAS and
 // unique effect claims. They do not establish PostgreSQL or staff-session proof.
 async function fixture({ category = 'Sports cards', values = {}, pauseModel = false,
-  pauseRequestArtifact = false, httpStatus = 200 } = {}) {
+  pauseRequestArtifact = false, httpStatus = 200, modelError = null, ocrText = null, pauseClaim = false } = {}) {
   const cardId = randomUUID(), staff = { id: randomUUID(), edit: true };
   const sourceHash = digest('original synthetic pair'), objects = new Map();
   const db = { attempts: new Map(), details: new Map(), actions: new Map(), events: new Map() };
   const calls = { http: [], reads: [], authorization: [], receipts: [] };
   const modelEntered = deferred(), modelRelease = deferred();
+  const claimEntered = deferred(), claimRelease = deferred();
   const requestArtifactEntered = deferred(), requestArtifactRelease = deferred(), requestArtifactFinished = deferred();
   const modelReceiptSaved = deferred();
   const original = { FRONT: { side: 'FRONT', sha256: digest('native front original') },
@@ -55,26 +57,40 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
       decodePlan: { policy: 'synthetic-verified-working-frame' } } };
   }
   const originalPair = clone(pair);
+  let workspaceExists=false;
+  const latest=source=>[...db.attempts.values()].find(row=>row.card_id===cardId && row.source_hash===source && ![...db.attempts.values()].some(child=>child.retry_of===row.id));
   const tx = {
     async $queryRawUnsafe(sql, ...args) {
-      if (sql.startsWith('SELECT * FROM atlas_manual_connected.identification')) {
-        const row = db.attempts.get(`${args[0]}:${args[1]}`); return row ? [clone(row)] : [];
+      if (sql.startsWith('SELECT i.* FROM atlas_manual_connected.identification')) {
+        const row=latest(args[1]);return row?[clone(row)]:[];
       }
+      if (sql.startsWith('SELECT * FROM atlas_manual_connected.identification')) {
+        const row=[...db.attempts.values()].find(value=>
+          sql.includes('WHERE retry_of=')?value.retry_of===args[0]:
+          sql.includes('WHERE id=')?value.id===args[0] && value.card_id===args[1] && value.source_hash===args[2]:
+          value.card_id===args[0] && value.retry_action_id===args[1]);
+        return row?[clone(row)]:[];
+      }
+      if(sql.startsWith('SELECT * FROM atlas_manual_connected.effect'))return [...db.events.values()].filter(value=>value.attempt_id===args[0]).map(clone);
       if (sql.startsWith('SELECT * FROM atlas_manual_connected.details WHERE')) {
         const row = db.details.get(args[0]); return row ? [clone(row)] : [];
       }
       if (sql.startsWith('SELECT * FROM atlas_manual_connected.details_action')) {
         const row = db.actions.get(`${args[0]}:${args[1]}`); return row ? [clone(row)] : [];
       }
-      if (sql.startsWith('SELECT id FROM atlas_manual.card')) return [];
+      if (sql.startsWith('SELECT id FROM atlas_manual.card')) return workspaceExists?[{id:cardId}]:[];
       throw new Error(`Unexpected fixture query: ${sql}`);
     },
     async $executeRawUnsafe(sql, ...args) {
       if (sql.startsWith('INSERT INTO atlas_manual_connected.identification(')) {
-        const [id, card_id, source_hash, actor_id, input] = args, key = `${card_id}:${source_hash}`;
-        if (db.attempts.has(key)) return 0;
-        db.attempts.set(key, { id, card_id, source_hash, actor_id, input, state: 'RUNNING',
-          result: null, error: null, created_at: new Date(), finished_at: null }); return 1;
+        const [id, card_id, source_hash, actor_id, input, retry_of=null, retry_action_id=null, evidence_attempt_id=null] = args;
+        if([...db.attempts.values()].some(row=>retry_of?
+          row.retry_of===retry_of || row.card_id===card_id && row.retry_action_id===retry_action_id:
+          row.card_id===card_id && row.source_hash===source_hash && row.retry_of===null))return 0;
+        db.attempts.set(id, { id, card_id, source_hash, actor_id, input, retry_of, retry_action_id, evidence_attempt_id, state: 'RUNNING',
+          result: null, error: null, created_at: new Date(), finished_at: null });
+        if(retry_of && pauseClaim){claimEntered.resolve();await claimRelease.promise;}
+        return 1;
       }
       if (sql.startsWith('UPDATE atlas_manual_connected.identification SET')) {
         const [state, result, error, id] = args;
@@ -172,11 +188,11 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
       const parsed = new URL(url), body = JSON.parse(init.body);
       calls.http.push({ url: parsed, init, body });
       if (parsed.hostname === 'vision.googleapis.com') return Response.json({ responses: [{
-        fullTextAnnotation: { text: category === 'Pokémon' ? 'Pokémon HP 60 025' : 'Panini 2023 Example Player' },
+        fullTextAnnotation: { text: ocrText ?? (category === 'Pokémon' ? 'Pokémon HP 60 025' : 'Panini 2023 Example Player') },
       }] });
       assert.equal(parsed.href, 'https://api.openai.com/v1/responses');
       modelEntered.resolve(); if (pauseModel) await modelRelease.promise;
-      return Response.json(modelReply(proposed), { status: httpStatus });
+      return Response.json(modelError?{error:modelError}:modelReply(proposed), { status: httpStatus });
     },
   });
   const details = createDetailsStore({ boundary, intakeRepository });
@@ -184,9 +200,12 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
   const identification = createIdentification(config);
   return { cardId, staff, sourceHash, originalPair, workingBytes, objects, db, calls, artifacts, details,
     identification, proposed, modelEntered, modelRelease,
+    claimEntered, claimRelease,
     requestArtifactEntered, requestArtifactRelease, requestArtifactFinished, modelReceiptSaved,
     restart: () => createIdentification(config),
-    currentRow: () => db.attempts.get(`${cardId}:${pair.sourceHash}`),
+    currentRow: () => latest(pair.sourceHash),
+    setModel(status,error=null,{pause=false}={}){httpStatus=status;modelError=error;pauseModel=pause;},
+    setWorkspace(value=true){workspaceExists=value;},
     retake() {
       pair = { ...clone(pair), sourceHash: digest('replacement synthetic pair') };
       pair.sides.FRONT.photo.original.sha256 = digest('retaken native front original');
@@ -212,7 +231,8 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
       const row = { id: randomUUID(), card_id: cardId, source_hash: pair.sourceHash, actor_id: staff.id,
         input: canonical(input), state, result: ref ? canonical({ ref }) : null, error: null,
         created_at: new Date(Date.now() - ageMs), finished_at: state === 'COMPLETE' ? new Date() : null };
-      db.attempts.set(`${cardId}:${pair.sourceHash}`, row); return { row, input, result };
+      Object.assign(row,{retry_of:null,retry_action_id:null,evidence_attempt_id:null});
+      db.attempts.set(row.id, row); return { row, input, result };
     },
   };
 }
@@ -347,7 +367,7 @@ test('retake while V2 model is in flight saves stale evidence, fences adoption, 
   const result = await running; assert.equal(result.state, 'STALE');
   // The refused adoption transaction rolls back its snapshot; read the retained
   // row again rather than relying on an object reference from before rollback.
-  const staleRow = f.db.attempts.get(`${f.cardId}:${f.sourceHash}`);
+  const staleRow = [...f.db.attempts.values()].find(row=>row.source_hash===f.sourceHash);
   assert.equal(staleRow.state, 'STALE'); assert.ok(staleRow.result);
   assert.deepEqual(await f.details.read(f.staff, f.cardId), before);
   assert.equal((await f.restart().status(f.staff, f.cardId)).state, 'NOT_STARTED');
@@ -527,4 +547,173 @@ test('HTTP effects preserve historical V1 body, V2 fields transport, response li
   const cancelled = identificationEffects({ googleKey: GOOGLE_KEY, openaiKey: OPENAI_KEY,
     async fetchImpl(_url, init) { init.signal.throwIfAborted(); assert.fail('aborted request sent'); } });
   await assert.rejects(cancelled.ocr({ body, responseFields: MASK }, { signal: controller.signal, engineVersion: V2 }), { name: 'AbortError' });
+});
+
+const exhausted = { type:'insufficient_quota',code:'credit_balance_exhausted',param:null,message:'Synthetic API balance exhausted.' };
+const retryInput = f => ({actionId:randomUUID(),expectedAttemptId:f.currentRow().id,sourceHash:f.sourceHash});
+async function waitModelCalls(f,count){
+  for(let i=0;i<1000 && f.calls.http.length<count;i++)await nextTurn();
+  assert.equal(f.calls.http.length,count);
+}
+
+test('verified API credit rejection exposes a manual retry that reuses the exact saved pair/OCR/model request', async()=>{
+  const f=await fixture({httpStatus:429,modelError:exhausted}), failed=await f.identification.run(f.staff,f.cardId);
+  assert.deepEqual(failed.rejection,{code:'API_CREDIT_BALANCE_EXHAUSTED',canRetry:true});
+  const old=clone(f.currentRow()), events=clone([...f.db.events.values()]), command=retryInput(f);
+  for(let i=0;i<2;i++)await f.restart().run(f.staff,f.cardId);
+  assert.equal(f.calls.http.length,3);
+  f.setModel(200);
+  const recovered=await f.restart().retry(f.staff,f.cardId,command);
+  assert.equal(recovered.state,'COMPLETE');assert.notEqual(recovered.attemptId,old.id);
+  assert.deepEqual(f.db.attempts.get(old.id),old);
+  assert.deepEqual([...f.db.events.values()].filter(e=>e.attempt_id===old.id),events);
+  const current=f.currentRow();assert.equal(current.retry_of,old.id);assert.equal(current.evidence_attempt_id,old.id);
+  assert.equal(current.retry_action_id,command.actionId);assert.equal(current.input,old.input);
+  assert.equal(f.calls.http.length,4);assert.equal(f.calls.reads.length,2);
+  assert.equal(f.calls.http[3].init.body,f.calls.http[2].init.body);
+  assert.equal([...f.db.events.values()].filter(e=>e.attempt_id===current.id && e.stage.startsWith('OCR')).length,0);
+  assert.equal((await f.restart().status(f.staff,f.cardId)).attemptId,current.id);
+  assert.equal((await f.restart().run(f.staff,f.cardId)).attemptId,current.id);
+  assert.equal((await f.restart().retry(f.staff,f.cardId,command)).attemptId,current.id);
+  assert.equal(f.calls.http.length,4);
+  await assert.rejects(f.identification.retry(f.staff,f.cardId,{...command,expectedAttemptId:current.id}),{code:'IDENTIFICATION_RETRY_ACTION_CONFLICT'});
+});
+
+test('repeated explicit quota retries form one immutable chain using the original evidence, including Pokémon crop bytes', async()=>{
+  const f=await fixture({category:'Pokémon',httpStatus:429,modelError:exhausted});await f.identification.run(f.staff,f.cardId);
+  const root=clone(f.currentRow()), first=retryInput(f);
+  const again=await f.identification.retry(f.staff,f.cardId,first);
+  assert.equal(again.state,'UNKNOWN');assert.equal(again.rejection.canRetry,true);
+  const second=retryInput(f);f.setModel(200);
+  const complete=await f.identification.retry(f.staff,f.cardId,second);
+  assert.equal(complete.state,'COMPLETE');assert.equal(f.db.attempts.size,3);
+  assert.equal(f.currentRow().retry_of,again.attemptId);assert.equal(f.currentRow().evidence_attempt_id,root.id);
+  assert.deepEqual(f.db.attempts.get(root.id),root);assert.equal(f.calls.http.length,5);
+  assert.equal(f.calls.http[2].init.body,f.calls.http[3].init.body);assert.equal(f.calls.http[3].init.body,f.calls.http[4].init.body);
+  assert.equal((await f.identification.retry(f.staff,f.cardId,first)).attemptId,again.attemptId);
+  assert.equal(f.calls.http.length,5);
+});
+
+test('concurrent same-action retries claim one child and losing replay never settles the running child', async()=>{
+  const f=await fixture({httpStatus:429,modelError:exhausted});await f.identification.run(f.staff,f.cardId);
+  const command=retryInput(f);f.setModel(200,null,{pause:true});
+  const first=f.identification.retry(f.staff,f.cardId,command), second=f.restart().retry(f.staff,f.cardId,command);
+  await waitModelCalls(f,4);const pending=await Promise.race([first,second]);
+  assert.equal(pending.state,'RUNNING');assert.equal(f.currentRow().state,'RUNNING');assert.equal(f.db.attempts.size,2);
+  f.modelRelease.resolve();const results=await Promise.all([first,second]);
+  assert.ok(results.every(value=>value.attemptId===pending.attemptId));assert.equal(f.currentRow().state,'COMPLETE');
+  assert.equal(f.calls.http.length,4);
+});
+
+test('concurrent different-action retries refuse the stale parent and retain human edits during the winning request', async()=>{
+  const f=await fixture({httpStatus:429,modelError:exhausted});await f.identification.run(f.staff,f.cardId);
+  const firstInput=retryInput(f),secondInput={...firstInput,actionId:randomUUID()};f.setModel(200,null,{pause:true});
+  const first=f.identification.retry(f.staff,f.cardId,firstInput);await waitModelCalls(f,4);
+  await assert.rejects(f.identification.retry(f.staff,f.cardId,secondInput),{code:'IDENTIFICATION_RETRY_STALE'});
+  await f.save({name:'Human retained name',manufacturer:'',variant:''});f.modelRelease.resolve();
+  assert.equal((await first).state,'COMPLETE');const saved=await f.details.read(f.staff,f.cardId);
+  assert.equal(saved.details.fields.name,'Human retained name');assert.equal(saved.details.fields.manufacturer,'');
+  assert.equal(saved.details.fields.variant,'');assert.equal(f.calls.http.length,4);
+});
+
+test('a timed-out child claim retains same-action recovery and cannot dispatch after its deadline',async t=>{
+  const f=await fixture({httpStatus:429,modelError:exhausted,pauseClaim:true});await f.identification.run(f.staff,f.cardId);
+  const command=retryInput(f);f.setModel(200);t.mock.timers.enable({apis:['setTimeout']});
+  try{
+    const pending=f.identification.retry(f.staff,f.cardId,command);await f.claimEntered.promise;
+    t.mock.timers.tick(25001);
+    await assert.rejects(pending,{status:503,code:'IDENTIFICATION_RETRY_CLAIM_UNCERTAIN'});
+    f.claimRelease.resolve();await nextTurn();
+    const replay=await f.identification.retry(f.staff,f.cardId,command);
+    assert.equal(replay.state,'RUNNING');assert.equal(replay.attemptId,f.currentRow().id);
+    assert.equal(f.db.attempts.size,2);assert.equal(f.calls.http.length,3);
+    assert.equal([...f.db.events.values()].filter(event=>event.attempt_id===replay.attemptId).length,0);
+  }finally{f.claimRelease.resolve();t.mock.timers.reset();}
+});
+
+test('only the exact retained credit-balance rejection enables a successor', async t=>{
+  for(const [name,status,error] of [
+    ['rate limit',429,{...exhausted,type:'rate_limit_error',code:'rate_limit_exceeded'}],
+    ['other quota code',429,{...exhausted,code:'insufficient_quota'}],
+    ['wrong type',429,{...exhausted,type:'invalid_request_error'}],
+    ['wrong HTTP status',403,exhausted],['wrong parameter',429,{...exhausted,param:'model'}],
+  ])await t.test(name,async()=>{
+    const f=await fixture({httpStatus:status,modelError:error});await f.identification.run(f.staff,f.cardId);
+    assert.equal((await f.identification.status(f.staff,f.cardId)).rejection.canRetry,false);
+    await assert.rejects(f.identification.retry(f.staff,f.cardId,retryInput(f)),{code:'IDENTIFICATION_RETRY_NOT_ALLOWED'});
+    assert.equal(f.calls.http.length,3);assert.equal(f.db.attempts.size,1);
+  });
+});
+
+test('missing responses, mismatched receipts, failed OCR, and corrupted retained bytes never enable retries', async t=>{
+  for(const mutation of ['missing-model-response','mismatched-model-hash','missing-ocr-response','corrupt-artifact','failed-ocr'])await t.test(mutation,async()=>{
+    const f=await fixture({httpStatus:429,modelError:exhausted});await f.identification.run(f.staff,f.cardId);const row=f.currentRow();
+    if(mutation==='missing-model-response')f.db.events.delete(`${row.id}:MODEL:RESPONSE`);
+    else if(mutation==='mismatched-model-hash')f.db.events.get(`${row.id}:MODEL:RESPONSE`).request_hash=digest('different request');
+    else if(mutation==='missing-ocr-response')f.db.events.delete(`${row.id}:OCR_FRONT:RESPONSE`);
+    else if(mutation==='corrupt-artifact'){
+      const event=f.db.events.get(`${row.id}:MODEL:RESPONSE`),ref=JSON.parse(event.evidence).ref;
+      f.objects.get(ref.key).bytes=Buffer.from('corrupted retained artifact');
+    }else{
+      const event=f.db.events.get(`${row.id}:OCR_FRONT:RESPONSE`),old=JSON.parse(event.evidence).ref;
+      const reply=JSON.parse(f.objects.get(old.key).bytes);reply.status=403;
+      const ref=await f.artifacts.write(reply,{cardId:f.cardId,kind:'IDENTIFICATION_RESPONSE',sourceHash:f.sourceHash});event.evidence=canonical({ref});
+    }
+    assert.notEqual((await f.identification.status(f.staff,f.cardId)).rejection?.canRetry,true);
+    await assert.rejects(f.identification.retry(f.staff,f.cardId,retryInput(f)),{code:'IDENTIFICATION_RETRY_NOT_ALLOWED'});
+    assert.equal(f.calls.http.length,3);assert.equal(f.db.attempts.size,1);
+  });
+});
+
+test('reconstructed request mismatch is refused before successor claim or provider dispatch',async()=>{
+  const f=await fixture({httpStatus:429,modelError:exhausted});await f.identification.run(f.staff,f.cardId);const row=f.currentRow();
+  const dispatch=f.db.events.get(`${row.id}:MODEL:DISPATCH`),reply=f.db.events.get(`${row.id}:MODEL:RESPONSE`);
+  const ref=JSON.parse(dispatch.evidence).ref,stored=JSON.parse(f.objects.get(ref.key).bytes),request=JSON.parse(stored.requestJson);
+  request.instructions+=' Synthetic unsupported historical instruction.';stored.requestJson=JSON.stringify(request);stored.requestHash=digest(stored.requestJson);
+  const replacement=await f.artifacts.write(stored,{cardId:f.cardId,kind:'IDENTIFICATION_REQUEST',sourceHash:f.sourceHash});
+  dispatch.evidence=canonical({ref:replacement});dispatch.request_hash=stored.requestHash;reply.request_hash=stored.requestHash;
+  const before=clone(row);await assert.rejects(f.identification.retry(f.staff,f.cardId,retryInput(f)),{code:'IDENTIFICATION_RETRY_NOT_ALLOWED'});
+  assert.deepEqual(f.currentRow(),before);assert.equal(f.db.attempts.size,1);assert.equal(f.calls.http.length,3);
+});
+
+test('a changed OCR request cannot be hidden by the shared engines empty-text fallback',async()=>{
+  const f=await fixture({httpStatus:429,modelError:exhausted,ocrText:''});await f.identification.run(f.staff,f.cardId);const row=f.currentRow();
+  const dispatch=f.db.events.get(`${row.id}:OCR_FRONT:DISPATCH`),reply=f.db.events.get(`${row.id}:OCR_FRONT:RESPONSE`);
+  const ref=JSON.parse(dispatch.evidence).ref,stored=JSON.parse(f.objects.get(ref.key).bytes),request=JSON.parse(stored.requestJson);
+  request.body.requests[0].features[0].type='TEXT_DETECTION';stored.requestJson=JSON.stringify(request);stored.requestHash=digest(stored.requestJson);
+  const replacement=await f.artifacts.write(stored,{cardId:f.cardId,kind:'IDENTIFICATION_REQUEST',sourceHash:f.sourceHash});
+  dispatch.evidence=canonical({ref:replacement});dispatch.request_hash=stored.requestHash;reply.request_hash=stored.requestHash;
+  await assert.rejects(f.identification.retry(f.staff,f.cardId,retryInput(f)),{code:'IDENTIFICATION_RETRY_NOT_ALLOWED'});
+  assert.equal(f.db.attempts.size,1);assert.equal(f.calls.http.length,3);
+});
+
+test('changed photos and initialized workspaces fence new retry work; late initialization fences adoption',async()=>{
+  const f=await fixture({httpStatus:429,modelError:exhausted});await f.identification.run(f.staff,f.cardId);const command=retryInput(f);
+  f.setWorkspace();assert.equal((await f.identification.status(f.staff,f.cardId)).rejection.canRetry,false);
+  await assert.rejects(f.identification.retry(f.staff,f.cardId,command),{code:'IDENTIFICATION_RETRY_NOT_ALLOWED'});
+  f.setWorkspace(false);f.setModel(200,null,{pause:true});const retry=f.identification.retry(f.staff,f.cardId,command);
+  await waitModelCalls(f,4);f.setWorkspace();f.modelRelease.resolve();assert.equal((await retry).state,'STALE');
+  assert.equal(f.db.details.size,0);f.retake();
+  await assert.rejects(f.identification.retry(f.staff,f.cardId,command),{code:'INTAKE_PAIR_STALE'});
+  assert.equal(f.calls.http.length,4);
+});
+
+test('existing identify endpoint dispatches only a closed explicit retry body after ordinary auth and CSRF',async()=>{
+  const f=await fixture({httpStatus:429,modelError:exhausted}),origin='https://manual.fixture.invalid',calls=[];
+  const handler=createConnectedHandler({origin,assertRequest(){},boundary:{async authenticate(cookie,csrf){
+    requireThat(cookie==='ordinary-session' && csrf==='ordinary-csrf',403,'CSRF_REQUIRED');return f.staff;
+  }},connected:{intake:{},workflow:{service:{}},identification:{
+    async run(...args){calls.push(['run',args]);return {state:'UNKNOWN'};},
+    async retry(...args){calls.push(['retry',args]);return {state:'RUNNING'};},
+  }}});
+  const body={actionId:randomUUID(),expectedAttemptId:randomUUID(),sourceHash:f.sourceHash};
+  async function request(value,csrf='ordinary-csrf'){
+    const res={setHeader(){},status(value){this.code=value;return this;},json(value){this.body=value;}};
+    await handler({url:`/api/staff/manual-connected/cards/${f.cardId}/identify`,method:'POST',body:value,
+      headers:{origin,cookie:'ordinary-session','content-type':'application/json','x-atlas-csrf':csrf}},res);return res;
+  }
+  assert.equal((await request({})).code,200);assert.equal((await request(body)).code,200);
+  assert.deepEqual(calls.map(value=>value[0]),['run','retry']);assert.deepEqual(calls[1][1][2],body);
+  assert.equal((await request({...body,retry:true})).code,400);assert.equal((await request(body,'bad')).code,403);
+  assert.equal(calls.length,2);
 });

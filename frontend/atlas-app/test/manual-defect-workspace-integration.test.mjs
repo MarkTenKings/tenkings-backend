@@ -16,7 +16,7 @@ const text = node => Array.isArray(node) ? node.map(text).join('') : node && typ
 const all = (node, predicate, out = []) => { if (Array.isArray(node)) node.forEach(child => all(child, predicate, out));
   else if (node && typeof node === 'object') { if (predicate(node)) out.push(node); all(node.props?.children, predicate, out); } return out; };
 function harness({ journal } = {}) {
-  const values = new Map(journal ? [['atlas-defect-analysis:v1:staff:card', JSON.stringify(journal)]] : []), slots = [], effects = [];
+  const values = new Map(journal ? [['atlas-defect-analysis:v1:staff:card', JSON.stringify(journal)]] : []), slots = [], effects = [], timers = new Map(), cleanups = [];
   let cursor = 0, tree, viewCallback;
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
   const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment',
@@ -33,7 +33,8 @@ function harness({ journal } = {}) {
     reviewProposal: async input => { f.actions.push({ type: 'REVIEW_PROPOSAL', input }); return f.current; },
     editDefect: async input => { f.actions.push({ type: 'EDIT_DEFECT', input }); return f.current; }, previewReport: async () => ({}) };
   const exports = {};
-  vm.runInNewContext(compiled, { exports, crypto: { randomUUID }, localStorage: storage, setInterval: () => 1, clearInterval() {},
+  vm.runInNewContext(compiled, { exports, crypto: { randomUUID }, localStorage: storage,
+    setInterval: (callback, ms) => { timers.set(ms, callback); return ms; }, clearInterval: id => timers.delete(id),
     window: { addEventListener() {}, removeEventListener() {} }, require(name) {
       if (name === 'react') return react;
       if (name === 'next/router') return { useRouter: () => ({ events: { on() {}, off() {} } }) };
@@ -48,7 +49,9 @@ function harness({ journal } = {}) {
         f.calls.push({ path, options: options && structuredClone(options) }); return f.respond(path, options); } };
       return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
     } });
-  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: 'card', csrf: 'csrf', onPhotos() {} }); effects.splice(0).forEach(effect => effect()); };
+  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: 'card', csrf: 'csrf', onPhotos() {} }); effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
+  f.tick = async (ms = 5000) => { const tick = timers.get(ms); if (!tick) return; tick(); await flush(); f.render(); };
+  f.dispose = () => cleanups.splice(0).forEach(cleanup => cleanup());
   f.defects = () => { const node = all(tree, node => node.type === 'DefectReviewWorkspace')[0]; assert.ok(node, 'defect workspace rendered'); return node.props; };
   f.button = label => all(tree, node => node.type === 'button' && text(node) === label)[0];
   f.publish = next => { f.current = next; viewCallback(next); f.render(); };
@@ -130,4 +133,50 @@ test('an image-grant refresh begun before publication acknowledgement cannot rev
   const loading = f.button('Reload images').props.onClick();
   await f.defects().onRetryReviewedMemory(); f.render(); assert.equal(f.defects().reviewedMemory.status, 'SAVED');
   finish(earlier); await loading; f.render(); assert.equal(f.defects().reviewedMemory.status, 'SAVED');
+});
+
+
+test('accepted background analysis refreshes with GET only and preserves an active human edit', async () => {
+  const f = harness(); await flush(); f.render(); let analysisId;
+  f.respond = async (path, options) => {
+    if (path.endsWith('/view')) return f.current;
+    if (options?.method === 'POST') { analysisId = options.body.actionId; return { astra: { enabled: true, status: 'RUNNING', backgroundAccepted: true, analysisId, base, proposals: [] } }; }
+    assert.equal(path.endsWith('/' + analysisId), true);
+    return { astra: { enabled: true, status: 'READY', analysisId, base, proposals: [] } };
+  };
+  await f.defects().onAnalyzeDefects({ base }); f.render(); assert.equal(f.defects().astra.status, 'RUNNING');
+  f.defects().onEditingChange(true); f.publish({ ...f.current, card: { revision: 2, contentHash: 'edited' }, defects: { marker: 'unsaved-editor-still-open' } });
+  const before = f.calls.length; await f.tick();
+  assert.equal(f.calls.length, before + 1); assert.equal(f.calls.at(-1).options.method, undefined);
+  assert.equal(f.defects().astra.status, 'READY'); assert.equal(f.defects().workspace.marker, 'unsaved-editor-still-open');
+  assert.equal(f.button('Photos').props.disabled, true); assert.equal(f.actions.length, 0);
+  await f.tick(); assert.equal(f.calls.length, before + 1, 'settled analysis stops polling');
+  assert.equal(f.calls.filter(call => call.options?.method === 'POST').length, 1);
+  f.dispose();
+});
+
+test('status polling pauses after session denial and unmount removes its timer', async () => {
+  const id = '44444444-4444-4444-8444-444444444444';
+  const f = harness({ journal: { version: 1, phase: 'PENDING', canResume: false, body: { actionId: id, base } } });
+  let reads = 0;
+  f.respond = async () => {
+    if (reads++ === 0) return { astra: { enabled: true, status: 'RUNNING', backgroundAccepted: true, analysisId: id, base, proposals: [] } };
+    throw { status: 401, code: 'SIGN_IN_REQUIRED' };
+  };
+  await flush(); f.render(); await f.tick(); const count = f.calls.length;
+  await f.tick(); assert.equal(f.calls.length, count); assert.equal(count, 2);
+  assert.equal(f.calls.every(call => call.options.method === undefined), true);
+  f.dispose(); await f.tick(); assert.equal(f.calls.length, count);
+});
+
+test('exhausted background collection stops automatic browser polling without starting another analysis', async () => {
+  const id = '44444444-4444-4444-8444-444444444444';
+  const f = harness({ journal: { version: 1, phase: 'PENDING', canResume: false, body: { actionId: id, base } } });
+  f.respond = async () => ({ astra: { enabled: true, status: 'UNKNOWN', backgroundAccepted: true,
+    collectionStopped: true, analysisId: id, base, proposals: [] } });
+  await flush(); f.render(); const count = f.calls.length;
+  await f.tick(); await f.tick();
+  assert.equal(f.calls.length, count); assert.equal(f.defects().astra.collectionStopped, true);
+  assert.equal(f.calls.every(call => call.options.method === undefined), true);
+  f.dispose();
 });

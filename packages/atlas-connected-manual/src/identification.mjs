@@ -3,7 +3,8 @@ import sharp from 'sharp';
 import { CARD_IDENTIFICATION_VERSION, parseCardIdentificationInput, parseCardIdentificationResult } from '@tenkings/card-identification-core';
 import { CARD_IDENTIFICATION_VERSION_V2, CARD_IDENTIFICATION_GOOGLE_TEXT_FIELDS_V2,
   identifyCardV2, parseCardIdentificationResultV2 } from '@tenkings/card-identification-core/v2';
-import { canonical, digest, object, requireThat } from '@atlas/manual-service/contract';
+import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
+import { recordedIdentificationEffect, isCreditBalanceRejection, prepareIdentificationRecovery } from './identification-recovery.mjs';
 
 // Input is immutable in PostgreSQL. Historical bare inputs keep V1 semantics;
 // new attempts bind V2 before any dispatch. Never infer a version from a reply.
@@ -57,7 +58,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
   }
   async function read(staff,cardId,sourceHash) {
     return transaction(staff,cardId,async ({tx})=>{
-      const [row]=await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.identification WHERE card_id=$1::uuid AND source_hash=$2',cardId,sourceHash);
+      const [row]=await tx.$queryRawUnsafe('SELECT i.* FROM atlas_manual_connected.identification i WHERE i.card_id=$1::uuid AND i.source_hash=$2 AND NOT EXISTS(SELECT 1 FROM atlas_manual_connected.identification child WHERE child.retry_of=i.id)',cardId,sourceHash);
       return row??null;
     });
   }
@@ -71,7 +72,39 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
     const value={attemptId:row.id,state,startedAt:new Date(row.created_at).toISOString()};
     if(row.result){const stored=JSON.parse(row.result); const result=await artifacts.read(stored.ref,{cardId:row.card_id,kind:'IDENTIFICATION_RESULT',sourceHash:row.source_hash});
       value.result=saved.parseResult(result,saved.input);}
+    if(state==='UNKNOWN' && row.state==='UNKNOWN' && saved.engineVersion===CARD_IDENTIFICATION_VERSION_V2){
+      try{
+        const access=recoveryAccess(staff,row), model=await recordedIdentificationEffect(row,'MODEL',access);
+        if(model.status<200 || model.status>=300){
+          value.rejection={code:isCreditBalanceRejection(model)?'API_CREDIT_BALANCE_EXHAUSTED':'API_REQUEST_REJECTED',canRetry:false};
+          if(isCreditBalanceRejection(model) && effects){
+            await prepareIdentificationRecovery(row,access,model);
+            await requireUninitialized(staff,row);
+            value.rejection.canRetry=true;
+          }
+        }
+      }catch{/* Missing, malformed or uncertain evidence never enables paid work. */}
+    }
     return value;
+  }
+  function recoveryAccess(staff,row){
+    return {
+      events:record=>transaction(staff,row.card_id,({tx})=>tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.effect WHERE attempt_id=$1::uuid',record.id)),
+      attempt:id=>transaction(staff,row.card_id,async({tx})=>{
+        const [value]=await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.identification WHERE id=$1::uuid AND card_id=$2::uuid AND source_hash=$3',id,row.card_id,row.source_hash);
+        return value??null;
+      }),
+      artifact:async(record,kind,evidence)=>{
+        object(evidence,['ref']);
+        return artifacts.read(evidence.ref,{cardId:row.card_id,kind,sourceHash:row.source_hash});
+      },
+    };
+  }
+  async function requireUninitialized(staff,row){
+    return transaction(staff,row.card_id,async({tx})=>{
+      const [manual]=await tx.$queryRawUnsafe('SELECT id FROM atlas_manual.card WHERE id=$1::uuid',row.card_id);
+      requireThat(!manual,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
+    });
   }
   async function asset(cardId,kind,value,sourceHash){return {ref:await artifacts.write(value,{cardId,kind,sourceHash})};}
   async function event(staff,row,stage,eventName,requestHash,evidence,requireCurrent=false,signal=null) {
@@ -85,6 +118,13 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
     }
     return transaction(staff,row.card_id,async ({tx})=>{
       requireThat(!signal?.aborted,503,'IDENTIFICATION_CANCELLED');
+      if(row.retry_of){
+        // Provisioning takes a SHARE lock on these details before creating the
+        // workspace. Resolve that race before committing a new paid dispatch.
+        await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.details WHERE card_id=$1::uuid FOR UPDATE',row.card_id);
+        const [manual]=await tx.$queryRawUnsafe('SELECT id FROM atlas_manual.card WHERE id=$1::uuid',row.card_id);
+        requireThat(!manual,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
+      }
       const text=canonical(evidence);
       const changed=await tx.$executeRawUnsafe('INSERT INTO atlas_manual_connected.effect(attempt_id,stage,event,request_hash,evidence) VALUES($1::uuid,$2,$3,$4,$5) ON CONFLICT DO NOTHING',row.id,stage,eventName,requestHash,text);
       requireThat(changed===1,409,'IDENTIFICATION_EFFECT_ALREADY_DISPATCHED');
@@ -95,9 +135,120 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       await tx.$executeRawUnsafe("UPDATE atlas_manual_connected.identification SET state=$1,result=$2,error=$3,finished_at=clock_timestamp() WHERE id=$4::uuid AND state='RUNNING'",state,result?canonical(result):null,error,row.id);
     },{edit:true});
   }
+  async function execute(staff,seedRow,loaded,recovery=null){
+    const saved=storedInput(seedRow);
+    const cardId=seedRow.card_id, pair={sourceHash:seedRow.source_hash};
+    let row=recovery?null:seedRow, claimError=null, claimStarted=false;
+    const verifiedOcr=new Set();
+      requireThat(saved.engineVersion===CARD_IDENTIFICATION_VERSION_V2,503,'IDENTIFICATION_VERSION_UNSUPPORTED');
+      let dispatched=false;
+      const effect=kind=>async(request,context)=>{
+        requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
+        const stage=kind==='model'?'MODEL':`OCR_${context.side.toUpperCase()}`;
+        const requestJson=JSON.stringify(request);
+        requireThat(digest(requestJson)===context.requestHash,503,'IDENTIFICATION_REQUEST_HASH_INVALID');
+        const requestEvidence=await asset(cardId,'IDENTIFICATION_REQUEST',{engineVersion:saved.engineVersion,requestJson,requestHash:context.requestHash,stage,attemptId:row.id},pair.sourceHash);
+        requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
+        await event(staff,row,stage,'DISPATCH',context.requestHash,requestEvidence,true,context.signal);
+        // Once the durable claim exists, any uncertainty retains the attempt.
+        // Only a separately claimed, verified human retry can start a successor.
+        dispatched=true;
+        requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
+        try {
+          const response=await effects[kind](request,{...context,engineVersion:saved.engineVersion});
+          requireThat(response?.bytes instanceof Uint8Array && response.bytes.length<=262144,503,'IDENTIFICATION_PROVIDER_UNAVAILABLE');
+          const bytes=Buffer.from(response.bytes);let usage=null;
+          try {const body=JSON.parse(bytes);usage=body?.usage??null;}catch{}
+          const responseEvidence=await asset(cardId,'IDENTIFICATION_RESPONSE',{engineVersion:saved.engineVersion,attemptId:row.id,stage,status:response.status,base64:bytes.toString('base64'),sha256:digest(bytes),usage},pair.sourceHash);
+          await event(staff,row,stage,'RESPONSE',context.requestHash,responseEvidence);
+          requireThat(response.status>=200&&response.status<300,503,'IDENTIFICATION_PROVIDER_UNAVAILABLE');return bytes;
+        } catch(error){
+          await event(staff,row,stage,'FAILURE',context.requestHash,{outcome:'UNKNOWN_OR_REJECTED',code:'IDENTIFICATION_EFFECT_FAILED'}).catch(()=>{});
+          throw error;
+        }
+      };
+      try {
+        const result=await identifyCardV2(saved.input,{
+          readPhoto:async descriptor=>loaded.get(descriptor.ref),
+          ocr:recovery?async(request,context)=>{
+            const cached=recovery.ocr[context.side];
+            requireThat(cached && JSON.stringify(request)===cached.requestJson && context.requestHash===cached.requestHash,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
+            verifiedOcr.add(context.side);
+            return Buffer.from(cached.bytes);
+          }:effect('ocr'),
+          model:recovery?async(request,context)=>{
+            requireThat(verifiedOcr.size===2 && JSON.stringify(request)===recovery.model.requestJson && context.requestHash===recovery.model.requestHash,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
+            claimStarted=true;
+            try{row=await recovery.claim(context.signal);}catch(error){claimError=error;throw error;}
+            requireThat(row.won,409,'IDENTIFICATION_RETRY_REPLAY');
+            return effect('model')(request,context);
+          }:effect('model'),
+        });
+        const stored=await asset(cardId,'IDENTIFICATION_RESULT',result,pair.sourceHash);
+        try {await details.adopt(staff,cardId,pair.sourceHash,result);}
+        catch(error){if(error?.status===409){await settle(staff,row,'STALE',stored);return {attemptId:row.id,state:'STALE'};}throw error;}
+        await settle(staff,row,'COMPLETE',stored);
+        return await checkedResult(staff,cardId,pair.sourceHash,{attemptId:row.id,state:'COMPLETE',result});
+      } catch(error){
+        if(recovery && !row){
+          if(claimError)throw claimError;
+          // A slow transaction may still acknowledge a committed child. Keep
+          // the browser's exact action journal until same-action readback.
+          requireThat(!claimStarted,503,'IDENTIFICATION_RETRY_CLAIM_UNCERTAIN');
+          requireThat(false,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
+        }
+        if(recovery && !row.won)return checkedResult(staff,cardId,pair.sourceHash,await project(staff,row));
+        let persisted=false;
+        try{await settle(staff,row,dispatched?'UNKNOWN':'FAILED',null,'IDENTIFICATION_UNAVAILABLE');persisted=true;}catch{}
+        if(!persisted)return {attemptId:row.id,state:dispatched?'UNKNOWN':'FAILED'};
+        const terminal={...row,state:dispatched?'UNKNOWN':'FAILED',result:null,finished_at:new Date()};
+        return project(staff,terminal);
+      }
+  }
   return Object.freeze({
     async status(staff,cardId){const {card}=await intake.read(staff,cardId);const result=await project(staff,card.ready?await read(staff,cardId,card.sourceHash):null);
       const latest=(await intake.read(staff,cardId)).card;requireThat(latest.sourceHash===card.sourceHash,409,'INTAKE_PAIR_STALE');return result;},
+    async retry(staff,cardId,input){
+      object(input,['actionId','expectedAttemptId','sourceHash']);uuid(input.actionId);uuid(input.expectedAttemptId);
+      requireThat(typeof input.sourceHash==='string' && /^[a-f0-9]{64}$/.test(input.sourceHash));
+      input=structuredClone(input);
+      requireThat(effects,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
+      const pair=await intake.verifiedPair(staff,cardId);
+      requireThat(pair.sourceHash===input.sourceHash,409,'INTAKE_PAIR_STALE');
+      const replay=async tx=>{
+        const [found]=await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.identification WHERE card_id=$1::uuid AND retry_action_id=$2::uuid',cardId,input.actionId);
+        if(found)requireThat(found.retry_of===input.expectedAttemptId && found.source_hash===input.sourceHash && found.actor_id===staff.id,409,'IDENTIFICATION_RETRY_ACTION_CONFLICT');
+        return found??null;
+      };
+      const prior=await transaction(staff,cardId,({tx})=>replay(tx),{edit:true,sourceHash:input.sourceHash});
+      if(prior)return checkedResult(staff,cardId,input.sourceHash,await project(staff,prior));
+      const parent=await transaction(staff,cardId,async({tx})=>{
+        const [found]=await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.identification WHERE id=$1::uuid AND card_id=$2::uuid AND source_hash=$3',input.expectedAttemptId,cardId,input.sourceHash);
+        return found??null;
+      },{edit:true,sourceHash:input.sourceHash});
+      requireThat(parent?.id===input.expectedAttemptId,409,'IDENTIFICATION_RETRY_STALE');
+      await requireUninitialized(staff,parent);
+      let evidence;
+      try{evidence=await prepareIdentificationRecovery(parent,recoveryAccess(staff,parent));}
+      catch{requireThat(false,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');}
+      const claim=signal=>transaction(staff,cardId,async({tx,principal})=>{
+        requireThat(!signal.aborted,503,'IDENTIFICATION_CANCELLED');
+        const [locked]=await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.identification WHERE id=$1::uuid AND card_id=$2::uuid AND source_hash=$3 FOR UPDATE',parent.id,cardId,input.sourceHash);
+        const known=await replay(tx);if(known)return {...known,won:false};
+        requireThat(locked?.state==='UNKNOWN' && locked.input===parent.input && locked.result===null,409,'IDENTIFICATION_RETRY_STALE');
+        const [child]=await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.identification WHERE retry_of=$1::uuid',parent.id);
+        requireThat(!child,409,'IDENTIFICATION_RETRY_STALE');
+        const [manual]=await tx.$queryRawUnsafe('SELECT id FROM atlas_manual.card WHERE id=$1::uuid',cardId);
+        requireThat(!manual,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
+        requireThat(!signal.aborted,503,'IDENTIFICATION_CANCELLED');
+        const id=randomUUID();
+        const count=await tx.$executeRawUnsafe("INSERT INTO atlas_manual_connected.identification(id,card_id,source_hash,actor_id,state,input,retry_of,retry_action_id,evidence_attempt_id) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'RUNNING',$5,$6::uuid,$7::uuid,$8::uuid) ON CONFLICT DO NOTHING",id,cardId,input.sourceHash,principal.id,parent.input,parent.id,input.actionId,evidence.rootId);
+        const found=await replay(tx);
+        requireThat(found,409,'IDENTIFICATION_RETRY_ACTION_CONFLICT');
+        return {...found,won:count===1};
+      },{edit:true,sourceHash:input.sourceHash});
+      return execute(staff,parent,evidence.loaded,{...evidence,claim});
+    },
     async run(staff,cardId) {
       const pair=await intake.verifiedPair(staff,cardId);
       const existing=await read(staff,cardId,pair.sourceHash);
@@ -120,50 +271,12 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       const input=parseCardIdentificationInput({subject:{id:cardId,revision:pair.sourceHash},photos});
       const savedInput={engineVersion:CARD_IDENTIFICATION_VERSION_V2,input};
       const row=await transaction(staff,cardId,async ({tx,principal})=>{
-        const id=randomUUID(); const count=await tx.$executeRawUnsafe("INSERT INTO atlas_manual_connected.identification(id,card_id,source_hash,actor_id,state,input) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'RUNNING',$5) ON CONFLICT(card_id,source_hash) DO NOTHING",id,cardId,pair.sourceHash,principal.id,canonical(savedInput));
-        const [row]=await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.identification WHERE card_id=$1::uuid AND source_hash=$2',cardId,pair.sourceHash);
+        const id=randomUUID(); const count=await tx.$executeRawUnsafe("INSERT INTO atlas_manual_connected.identification(id,card_id,source_hash,actor_id,state,input) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'RUNNING',$5) ON CONFLICT(card_id,source_hash) WHERE retry_of IS NULL DO NOTHING",id,cardId,pair.sourceHash,principal.id,canonical(savedInput));
+        const [row]=await tx.$queryRawUnsafe('SELECT i.* FROM atlas_manual_connected.identification i WHERE i.card_id=$1::uuid AND i.source_hash=$2 AND NOT EXISTS(SELECT 1 FROM atlas_manual_connected.identification child WHERE child.retry_of=i.id)',cardId,pair.sourceHash);
         return {...row,won:count===1};
       },{edit:true,sourceHash:pair.sourceHash});
       if(!row.won)return checkedResult(staff,cardId,pair.sourceHash,await project(staff,row));
-      const saved=storedInput(row);
-      requireThat(saved.engineVersion===CARD_IDENTIFICATION_VERSION_V2,503,'IDENTIFICATION_VERSION_UNSUPPORTED');
-      let dispatched=false;
-      const effect=kind=>async(request,context)=>{
-        requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
-        const stage=kind==='model'?'MODEL':`OCR_${context.side.toUpperCase()}`;
-        const requestJson=JSON.stringify(request);
-        requireThat(digest(requestJson)===context.requestHash,503,'IDENTIFICATION_REQUEST_HASH_INVALID');
-        const requestEvidence=await asset(cardId,'IDENTIFICATION_REQUEST',{engineVersion:saved.engineVersion,requestJson,requestHash:context.requestHash,stage,attemptId:row.id},pair.sourceHash);
-        requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
-        await event(staff,row,stage,'DISPATCH',context.requestHash,requestEvidence,true,context.signal);
-        // Once the durable claim exists, any uncertainty retains the attempt.
-        // No recovery path starts another provider request for this source pair.
-        dispatched=true;
-        requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
-        try {
-          const response=await effects[kind](request,{...context,engineVersion:saved.engineVersion});
-          requireThat(response?.bytes instanceof Uint8Array && response.bytes.length<=262144,503,'IDENTIFICATION_PROVIDER_UNAVAILABLE');
-          const bytes=Buffer.from(response.bytes);let usage=null;
-          try {const body=JSON.parse(bytes);usage=body?.usage??null;}catch{}
-          const responseEvidence=await asset(cardId,'IDENTIFICATION_RESPONSE',{engineVersion:saved.engineVersion,attemptId:row.id,stage,status:response.status,base64:bytes.toString('base64'),sha256:digest(bytes),usage},pair.sourceHash);
-          await event(staff,row,stage,'RESPONSE',context.requestHash,responseEvidence);
-          requireThat(response.status>=200&&response.status<300,503,'IDENTIFICATION_PROVIDER_UNAVAILABLE');return bytes;
-        } catch(error){
-          await event(staff,row,stage,'FAILURE',context.requestHash,{outcome:'UNKNOWN_OR_REJECTED',code:'IDENTIFICATION_EFFECT_FAILED'}).catch(()=>{});
-          throw error;
-        }
-      };
-      try {
-        const result=await identifyCardV2(saved.input,{readPhoto:async descriptor=>loaded.get(descriptor.ref),ocr:effect('ocr'),model:effect('model')});
-        const stored=await asset(cardId,'IDENTIFICATION_RESULT',result,pair.sourceHash);
-        try {await details.adopt(staff,cardId,pair.sourceHash,result);}
-        catch(error){if(error?.status===409){await settle(staff,row,'STALE',stored);return {attemptId:row.id,state:'STALE'};}throw error;}
-        await settle(staff,row,'COMPLETE',stored);
-        return await checkedResult(staff,cardId,pair.sourceHash,{attemptId:row.id,state:'COMPLETE',result});
-      } catch(error){
-        await settle(staff,row,dispatched?'UNKNOWN':'FAILED',null,'IDENTIFICATION_UNAVAILABLE').catch(()=>{});
-        return {attemptId:row.id,state:dispatched?'UNKNOWN':'FAILED'};
-      }
+      return execute(staff,row,loaded);
     },
   });
 }

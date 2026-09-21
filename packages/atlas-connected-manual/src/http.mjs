@@ -45,7 +45,10 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
         res.setHeader('Content-Security-Policy',"default-src 'none'; sandbox");res.status(200).send(image.bytes);return true;
       }
       if(action==='details')result=await connected.details.save(staff,cardId,req.body);
-      else if(action==='identify'){object(req.body,[]);result=await connected.identification.run(staff,cardId);}
+      else if(action==='identify'){
+        if(req.body && Object.keys(req.body).length){object(req.body,['actionId','expectedAttemptId','sourceHash']);result=await connected.identification.retry(staff,cardId,req.body);}
+        else{object(req.body,[]);result=await connected.identification.run(staff,cardId);}
+      }
       else if(action==='initialize')result=await connected.initialize(staff,cardId,req.body);
       else result=await connected.open(staff,cardId);
       res.status(200).json(result);

@@ -4,6 +4,7 @@ import {StaffDatabase} from '../../../frontend/atlas-app/lib/server/access/datab
 import {DurableStaffAuth} from '../../../frontend/atlas-app/lib/server/access/auth.mjs';
 import {createServingConnectedManual} from '../../../frontend/atlas-app/lib/server/connected-manual-runtime.mjs';
 import {createPrivateManualServer} from './private-server.mjs';
+import {createAnalysisWorker} from './analysis-worker.mjs';
 
 const env=process.env,config=privateManualAccessConfig(env);
 const key=Buffer.from(env.ATLAS_MANUAL_SERVICE_KEY??'','base64');
@@ -14,12 +15,19 @@ const auth=new DurableStaffAuth({database:new StaffDatabase(client,config),confi
 const runtime=createServingConnectedManual({env,auth,staffConfig:config,Client:PrismaClient,assertRequest(){throw new Error('Private signed transport required');}});
 if(!runtime)throw new Error('Manual runtime is disabled');
 const server=createPrivateManualServer({connected:runtime.connected,boundary:runtime.boundary,origin:config.origin,key});
-server.listen(Number(env.PORT??4319),'0.0.0.0',()=>console.log(JSON.stringify({event:'MANUAL_PRIVATE_LISTENING',webDeployment:config.deploymentId,webReleaseSha:config.releaseSha,port:Number(env.PORT??4319),node:process.version,platform:process.platform,arch:process.arch})));
+const analysisWorker=runtime.analysisReconciler?createAnalysisWorker({reconciler:runtime.analysisReconciler,
+  onEvent:event=>console.log(JSON.stringify(event))}):null;
+server.listen(Number(env.PORT??4319),'0.0.0.0',()=>{
+  console.log(JSON.stringify({event:'MANUAL_PRIVATE_LISTENING',webDeployment:config.deploymentId,webReleaseSha:config.releaseSha,port:Number(env.PORT??4319),node:process.version,platform:process.platform,arch:process.arch}));
+  if(!stopping)analysisWorker?.start();
+});
 let stopping=false;
 async function stop(){
  if(stopping)return;stopping=true;
+ const workerStopped=analysisWorker?.stop();
  const deadline=setTimeout(()=>server.closeAllConnections(),215000);deadline.unref();
  await new Promise(resolve=>server.close(resolve));clearTimeout(deadline);
+ await workerStopped;
  await Promise.all([runtime.close(),client.$disconnect()]);
 }
 process.once('SIGTERM',()=>void stop());process.once('SIGINT',()=>void stop());

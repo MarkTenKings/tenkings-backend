@@ -11,8 +11,7 @@ The qualified application remains `30dbea77c484e61de56da522d67a841cb9df25ee`.
 Its exact 555-file native image is
 `sha256:50ffd1e6ab8a0967a7dbbb214788a9b134ae20625aac9ba9a85cf5967635b2f4`.
 The prior native pixel checks, 379 package tests, 42 staff/manual tests,
-49 PostgreSQL assertion groups and 14 required CI jobs passed. No runtime code
-has changed in this continuation. See the [native qualification](../2026-09-17/native-release-qualification.md).
+49 PostgreSQL assertion groups and 14 required CI jobs passed. The serving runtime is unchanged; the later local recovery repair below is not yet deployed. See the [native qualification](../2026-09-17/native-release-qualification.md).
 
 The five additive staff migrations have now applied, bringing the staff ledger
 from 35 to 40. The second deployment was a no-op, and an independent database
@@ -28,8 +27,7 @@ NOINHERIT, connection limit two and the same restricted privileges. Both hosted
 builds are READY and the qualified private service is running. Caddy now routes
 the manual endpoints to that service. Actual signed HTTPS transport passed, and
 the eight control updates passed independent exact-delta readback. All four public aliases and the production target now select the new release;
-the existing www308 redirect is preserved. Ordinary owner
-sign-in, hosted long-response acceptance and fresh-card testing remain pending.
+the existing www308 redirect is preserved. Ordinary owner sign-in, new-card identification and paired geometry are now observed; hosted long-response and the complete findings/Astra acceptance remain pending.
 
 Multiple Astra Extra High specialists cover storage, web/control release,
 database/private-host release and independent review. Their prepared actions have exact before-state
@@ -103,8 +101,7 @@ Environment result SHA256:
 
 ## Remaining acceptance
 
-Verify ordinary sign-in and the manual workspace. The public aliases and live
-staff sign-in page are verified. The
+Ordinary sign-in, original intake, successful identification on a subsequent card and both-side geometry are observed. Continue through findings, Astra assistance and reviewed learning. The public aliases and live staff sign-in page are verified. The
 five staff migrations, restricted role activation, private service, Caddy route
 and eight-row control transaction are complete; consumed actions must not be
 replayed. A real signed-in session is required to exercise the actual hosted
@@ -151,7 +148,7 @@ Release activation evidence:
 - StaffControl revision16 and STAFF SMS revision14 bind source30d/staff5cnmp/config157135; six legacy controls are disabled. Fifteen-table readback preserved customer and every unchanged row, snapshot `44294dc5bd617ca84af0611de74fc078e6aef89f1c78c2d5b3ced784b6f46a90`.
 - The old SMS expiry and caps are historical fields. Actual installed functions match the owner-approved migration removing those admission checks; no policy extension or reset occurred. Genuine phone verification, rate limits, sessions and CSRF remain.
 
-Final public promotion readback: `0f0e32a575710b6283814d858f72584a02983aa975cc8f13bad65006ac625499`. A fresh owner sign-in has been requested in the visible browser; no human-session or real-card acceptance is claimed yet.
+Final public promotion readback: `0f0e32a575710b6283814d858f72584a02983aa975cc8f13bad65006ac625499`. The subsequent hands-on checkpoint below supersedes the earlier pending sign-in/identification status.
 
 Unauthenticated live checks also pass: homepage, staff sign-in and customer pages
 return200; protected grading/manual pages redirect to sign-in; all32 observed
@@ -159,3 +156,24 @@ JavaScript/CSS assets return200 with correct types. Staff browser cookies retain
 Secure/HttpOnly/Path=/admin/SameSite=Lax attributes; no cookie or CSRF values were
 recorded. This proves the public delivery and login surface, not authenticated
 workspace operations.
+
+## First hands-on result: September21 UTC
+
+Ordinary owner sign-in and real Front/Back intake now succeeded, with both
+originals verified and working images prepared. Automatic identification stopped
+on a retained HTTP429 `credit_balance_exhausted` response from the API account.
+The uploaded photos are intact. This is a confirmed funding rejection, not
+accepted identification or Astra-quality evidence. The owner clarified that the
+earlier credits funded Codex, then reported funding the API account.
+
+The existing release keeps its terminal attempt immutable. An explicit retry
+repair is being built locally to use the same photos and saved OCR with a new
+linked attempt, preserving all earlier evidence. The clearer error message and
+retry controls are not yet deployed. Hosted130-second verification, full findings/Astra workflow and distinct-card learning acceptance remain open.
+
+After API funding, owner screenshots show successful suggestions for Charmander 004/165, Scarlet & Violet—151 (2023), on card `522610ad-3b06-4657-bf66-90f510fc9435`. Both Front/Back geometry panels subsequently show Ready to review and centering measurements. The owner initially reported a missing Front border, then confirmed it appeared after confirming the Front outline; this is not retained as an unresolved detector defect. The required human Pokémon/Trainer/Energy discriminator was confusingly labelled Pokémon layout. Local UI wording now says Pokémon card kind, explains its design-reference/reviewed-correction purpose, and uses native required-select validation. The discriminator and shared identification contract are unchanged.
+
+
+## First Astra defect-analysis acceptance result
+
+The owner confirmed both geometry sides and requested Astra’s initial defect inspection. Analysis `0bfd4f94-7b6a-40a7-8bc2-b5140b8e1015` dispatched at04:04:52UTC and recorded UNKNOWN at04:06:52UTC, matching the120-second provider deadline. No HTTP response, response ID, token usage or defect result was retained. A later read confirms no RESPONSE receipt. It is unknown how much provider work occurred; no completed inspection, failure to find defects, absence of charges or safe automatic replay is inferred. A versioned background-response/retrieval repair is under investigation. This live acceptance failure takes priority over releasing the already-reviewed identification retry.

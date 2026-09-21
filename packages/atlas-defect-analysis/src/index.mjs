@@ -4,6 +4,11 @@ export { DefectAnalysisError, assertCurrentBinding, parseBinding, DEFECT_TYPES }
 
 export const MODEL = 'gpt-6-astra';
 export const VERSION = 'atlas-astra-defect-analysis-v1';
+export const BACKGROUND_VERSION = 'atlas-astra-defect-analysis-v2';
+// This bounds our reconciliation work, not the provider's retention guarantee.
+// Keep it separate from immutable V1 request limits.
+export const BACKGROUND_POLICY = frozen({ acceptanceTimeoutMs: 60000, getTimeoutMs: 30000,
+  pollWindowMs: 30 * 60 * 1000, pollIntervalMs: 5000, batchSize: 8 });
 export const LIMITS = frozen({ imageBytes: 10 * 1024 * 1024, totalImageBytes: 32 * 1024 * 1024,
   requestBytes: 46 * 1024 * 1024, responseBytes: 1048576, outputBytes: 262144,
   lessons: 12, findings: 32, points: 64, timeoutMs: 120000, maxOutputTokens: 32768 });
@@ -62,6 +67,12 @@ Never output area, millimeters, confidence probabilities, grade, score, measurem
  * calling this builder. PUBLICATION_PENDING refuses dispatch; missing memory is
  * not silently replaced by an empty bank. Source/image effects happen outside DB. */
 export function buildAstraDefectRequest(input) {
+  return buildRequest(input, VERSION);
+}
+export function buildAstraBackgroundDefectRequest(input) {
+  return buildRequest(input, BACKGROUND_VERSION);
+}
+function buildRequest(input, version) {
   object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages']);
   uuid(input.analysisId); uuid(input.cardId); check(['SPORTS', 'POKEMON'].includes(input.profile));
   object(input.cornerShapes, SIDES); check(SIDES.every(side => ['SQUARE', 'ROUNDED_3_18_MM'].includes(input.cornerShapes[side])));
@@ -112,12 +123,13 @@ export function buildAstraDefectRequest(input) {
     content.push(inputText({ kind: 'HUMAN_REVIEWED_TRACE_OVERLAY', lessonId, traceSha256, ...overlay.descriptor }), inputImage(overlay));
   }
   const sourceBindingSha256 = digest(canonical({ cardId: input.cardId, profile: input.profile, cornerShapes: input.cornerShapes, binding }));
-  const evidence = { version: VERSION, analysisId: input.analysisId, cardId: input.cardId, profile: input.profile,
+  const evidence = { version, analysisId: input.analysisId, cardId: input.cardId, profile: input.profile,
     cornerShapes: input.cornerShapes, binding, sourceBindingSha256, model: MODEL, reasoningEffort: 'xhigh', images, totalImageBytes: byteCount,
     knowledge: { revision: knowledge.revision, generation: knowledge.generation, sha256: knowledge.sha256,
       status: knowledge.status, lessonIds: knowledge.lessonIds, lessonImages },
     promptSha256: digest(INSTRUCTIONS), schemaSha256: digest(canonical(RESULT_SCHEMA)), limits: LIMITS };
-  const request = { model: MODEL, reasoning: { effort: 'xhigh' }, store: false, max_output_tokens: LIMITS.maxOutputTokens,
+  const request = { model: MODEL, reasoning: { effort: 'xhigh' }, store: false,
+    ...(version === BACKGROUND_VERSION ? { background: true } : {}), max_output_tokens: LIMITS.maxOutputTokens,
     input: [{ role: 'system', content: INSTRUCTIONS }, { role: 'user', content: [inputText({ kind: 'ANALYSIS_CONTEXT',
       analysisId: input.analysisId, profile: input.profile, cornerShapes: input.cornerShapes, sourceBindingSha256, knowledgeRevision: knowledge.revision,
       knowledgeStatus: knowledge.status, taxonomy: DEFECT_TYPES }), ...content] }],
@@ -135,7 +147,7 @@ export function validateRequestEvidence(value) {
   if (providerBindingHash !== undefined) sha(providerBindingHash);
   object(evidence, ['version', 'analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'sourceBindingSha256', 'model',
     'reasoningEffort', 'images', 'totalImageBytes', 'knowledge', 'promptSha256', 'schemaSha256', 'limits']);
-  check(evidence.version === VERSION && evidence.model === MODEL && evidence.reasoningEffort === 'xhigh'
+  check([VERSION, BACKGROUND_VERSION].includes(evidence.version) && evidence.model === MODEL && evidence.reasoningEffort === 'xhigh'
     && ['SPORTS', 'POKEMON'].includes(evidence.profile)); uuid(evidence.analysisId); uuid(evidence.cardId); parseBinding(evidence.binding);
   object(evidence.cornerShapes, SIDES); check(SIDES.every(s => ['SQUARE', 'ROUNDED_3_18_MM'].includes(evidence.cornerShapes[s])));
   check(evidence.sourceBindingSha256 === digest(canonical({ cardId: evidence.cardId, profile: evidence.profile,
@@ -181,6 +193,7 @@ export function validateRequestEvidence(value) {
 export function restorePreparedRequest({ requestText, requestHash, evidence, evidenceHash }) {
   check(typeof requestText === 'string' && Buffer.byteLength(requestText) <= LIMITS.requestBytes
     && digest(requestText) === requestHash && digest(canonical(evidence)) === evidenceHash, 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
+  validateRequestEvidence(evidence);
   let request; try { request = JSON.parse(requestText); } catch { check(false, 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID'); }
   const content = request?.input?.[1]?.content;
   check(Array.isArray(content) && content.length >= 21 && content.length <= 69 && (content.length - 1) % 2 === 0,
@@ -209,8 +222,8 @@ export function restorePreparedRequest({ requestText, requestHash, evidence, evi
   const knowledge = { version: 'atlas-defect-memory-retrieval-v1', revision: evidence.knowledge.revision,
     generation: evidence.knowledge.generation, status: evidence.knowledge.status, pendingPublications: 0,
     lessonIds: evidence.knowledge.lessonIds, lessons, sha256: evidence.knowledge.sha256 };
-  const restored = buildAstraDefectRequest({ analysisId: evidence.analysisId, cardId: evidence.cardId, profile: evidence.profile,
-    cornerShapes: evidence.cornerShapes, binding: evidence.binding, images, knowledge, lessonImages });
+  const restored = buildRequest({ analysisId: evidence.analysisId, cardId: evidence.cardId, profile: evidence.profile,
+    cornerShapes: evidence.cornerShapes, binding: evidence.binding, images, knowledge, lessonImages }, evidence.version);
   check(restored.requestText === requestText && restored.requestHash === requestHash && restored.evidenceHash === evidenceHash,
     'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
   return restored;
@@ -270,11 +283,11 @@ export function parseDefectProposals(value, evidence) {
     const shape = canonical({ side: finding.side, canonicalContour }); check(!duplicate.has(shape), 'DEFECT_ANALYSIS_DUPLICATE_PROPOSAL'); duplicate.add(shape);
     return { id: `${evidence.analysisId}:${i + 1}`, side: finding.side, defectType: finding.defectType, canonicalContour,
       observation: finding.observation, uncertainty: finding.uncertainty, reviewStatus: 'UNREVIEWED',
-      provenance: { version: VERSION, analysisId: evidence.analysisId, sourceBindingSha256: evidence.sourceBindingSha256,
+      provenance: { version: evidence.version, analysisId: evidence.analysisId, sourceBindingSha256: evidence.sourceBindingSha256,
         frame: evidence.binding.sides[finding.side].frame, imageId: image.id, imageSha256: image.sha256,
         localContour: finding.localContour, crop: image.crop, knowledgeRevision: evidence.knowledge.revision, lessonIds: finding.lessonIds } };
   });
-  return clone({ version: VERSION, analysisId: evidence.analysisId, sourceBindingSha256: evidence.sourceBindingSha256,
+  return clone({ version: evidence.version, analysisId: evidence.analysisId, sourceBindingSha256: evidence.sourceBindingSha256,
     knowledgeRevision: evidence.knowledge.revision, proposals, limitations: value.limitations });
 }
 

@@ -5,6 +5,7 @@ import { createOwnedManualFixture } from '../../atlas-manual-service/scripts/own
 import { intakeGrantSQL } from '@atlas/manual-intake/repository';
 import { connectedGrantSQL } from '../src/details.mjs';
 import { runConnectedIntegration } from '../test/connected.test.mjs';
+import { runIdentificationRetryPostgres } from './identification-retry-postgres.mjs';
 
 const output = process.env.ATLAS_CONNECTED_EVIDENCE, pythonExecutable = process.env.ATLAS_FIXTURE_PYTHON;
 assert(output && resolve(output) === output, 'Absolute owned evidence directory required');
@@ -18,7 +19,9 @@ try {
     pythonExecutable, auth: 'actual DurableStaffAuth, explicitly synthetic SMS provider',
     storage: 'exact-byte injected SDK fixture, no live bucket', at: new Date().toISOString() }, null, 2));
   const result = await runConnectedIntegration({ fixture, pythonExecutable, output });
-  console.log(JSON.stringify({ status: result.status, assertions: result.assertions, output }));
+  const args = process.argv.slice(2);
+  const retry = await runIdentificationRetryPostgres({ cluster: fixture.cluster, pgModule: args[args.indexOf('--pg-module') + 1], output });
+  console.log(JSON.stringify({ status: result.status, assertions: result.assertions, retryAssertions: retry.assertionCount, output }));
 } finally {
   await fixture.stop();
   await copyFile(join(fixture.cluster.directory, 'cleanup.json'), join(output, 'database-cleanup.json'));

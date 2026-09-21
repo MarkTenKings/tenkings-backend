@@ -245,7 +245,7 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
  * and then update workspace. Full masks remain in verified artifact storage;
  * browser state and a checked descriptor are not approval or storage authority. */
 export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, onConfirm, onRetry, onDiscardPending, onContinue, onEditingChange, saveStatus = '', grade,
-  astra, onAnalyzeDefects, onRefreshAnalysis, onResumeAnalysis, onReviewProposal, reviewedMemory, onRetryReviewedMemory }) {
+  astra, onAnalyzeDefects, onRefreshAnalysis, onResumeAnalysis, onReplaceAnalysis, onReviewProposal, reviewedMemory, onRetryReviewedMemory }) {
   const [activity, setActivity] = useState({}), [ready, setReady] = useState({}), [confirming, setConfirming] = useState(false), [error, setError] = useState('');
   const status = defectStatus(workspace);
   const [unknownAnalysis, setUnknownAnalysis] = useState(null);
@@ -268,12 +268,15 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
     finally { confirmRef.current = false; setConfirming(false); }
   };
   const requestAnalysis = async (mode = 'START') => {
-    if (requestRef.current || confirming || (mode === 'START' && (!analysis.mayRequest || !currentImagesReady || editing || !onAnalyzeDefects))
-      || (mode === 'REFRESH' && !onRefreshAnalysis) || (mode === 'RESUME' && (!astra?.resumeAvailable || !onResumeAnalysis))) return;
-    requestRef.current = true; setRequesting(true); setError('');
+    if (requestRef.current || confirming || (mode === 'START' && (!analysis.mayRequest || astra?.followLatest || !currentImagesReady || editing || !onAnalyzeDefects))
+      || (mode === 'REFRESH' && !onRefreshAnalysis) || (mode === 'RESUME' && (!astra?.resumeAvailable || !onResumeAnalysis))
+      || (mode === 'REPLACE' && (analysis.status !== 'UNKNOWN' || !astra?.replacement || astra.backgroundAccepted
+        || !currentImagesReady || editing || !onReplaceAnalysis))) return;
+    requestRef.current = true; setRequesting(mode); setError('');
     try {
       if (mode === 'REFRESH') await onRefreshAnalysis();
       else if (mode === 'RESUME') await onResumeAnalysis();
+      else if (mode === 'REPLACE') await onReplaceAnalysis({ base: { FRONT: defectBase(workspace, 'FRONT'), BACK: defectBase(workspace, 'BACK') }, actor: 'HUMAN' });
       else await onAnalyzeDefects({ base: { FRONT: defectBase(workspace, 'FRONT'), BACK: defectBase(workspace, 'BACK') }, actor: 'HUMAN' });
       setUnknownAnalysis(null);
     } catch { setUnknownAnalysis(analysisKey); setError('The analysis result was not confirmed. Your manual findings and current trace are retained.'); }
@@ -288,17 +291,19 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
   };
   return <div className="atlas-manual ad-workspace">
     <header className="am-header"><span className="am-brand">ATLAS</span><h1>Defects & condition</h1><span>{saveStatus}</span></header>
-    <div className="am-toolbar"><span>Inspect both sides. Correct, remove or trace findings before confirming.</span>{grade && <strong>Draft grade {grade}</strong>}</div>
+    <div className="am-toolbar"><span>{analysis.enabled ? 'Run Astra’s initial inspection, then review and correct its findings on both sides.' : 'Inspect both sides. Correct, remove or trace findings before confirming.'}</span>{grade && <strong>Draft grade {grade}</strong>}</div>
     {analysis.enabled && <section className="ad-astra" aria-label="Astra defect assistance">
-      <div><h2>Astra defect assistance</h2><p role="status">{requesting ? 'Checking Astra analysis. You can keep inspecting and editing.' : analysis.message}</p>
+      <div><h2>Astra defect assistance</h2><p role="status">{requesting ? requesting === 'REFRESH' ? 'Checking the saved Astra analysis…' : 'Sending the card to Astra for its initial inspection…' : analysis.message}</p>
         {Array.isArray(astra?.limitations) && astra.limitations.some(value => typeof value === 'string' && value) && <ul className="ad-analysis-limitations" aria-label="Astra image limitations">
           {astra.limitations.filter(value => typeof value === 'string' && value).slice(0,8).map((value,index) => <li key={index}>{value}</li>)}
         </ul>}
       </div>
-      <div className="am-side-actions"><button disabled={requesting || confirming || editing || !currentImagesReady || !analysis.mayRequest || !onAnalyzeDefects}
+      <div className="am-side-actions"><button disabled={requesting || confirming || editing || !currentImagesReady || !analysis.mayRequest || astra?.followLatest || !onAnalyzeDefects}
         onClick={() => requestAnalysis()}>Find defects with Astra</button>
-        {['RUNNING', 'UNKNOWN'].includes(analysis.status) && onRefreshAnalysis && <button disabled={requesting || confirming} onClick={() => requestAnalysis('REFRESH')}>Check analysis status</button>}
+        {(['RUNNING', 'UNKNOWN'].includes(analysis.status) || astra?.followLatest) && onRefreshAnalysis && <button disabled={requesting || confirming} onClick={() => requestAnalysis('REFRESH')}>Check analysis status</button>}
         {astra?.resumeAvailable && onResumeAnalysis && <button disabled={requesting || confirming} onClick={() => requestAnalysis('RESUME')}>Retry saved analysis</button>}
+        {analysis.status === 'UNKNOWN' && astra?.replacement && !astra.backgroundAccepted && onReplaceAnalysis && <button
+          disabled={requesting || confirming || editing || !currentImagesReady} onClick={() => requestAnalysis('REPLACE')}>Start a new Astra analysis</button>}
       </div>
     </section>}
     <div className="am-pair">{SIDES.map(side => <DefectSide key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]}

@@ -59,5 +59,11 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   requireThat(!defectProvider||memoryEnabled,503,'DEFECT_ANALYSIS_MEMORY_REQUIRED');
   const connected=createConnectedManual({memoryEnabled,defectProvider,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
-  return {connected,boundary,handler,uploadOrigin:settings.uploadOrigin,async close(){await manualClient.$disconnect();client.destroy();}};
+  // Give the private host only GET reconciliation capabilities for its worker.
+  // Construction is cold: no database scan or provider request starts here.
+  const analysisReconciler=connected.assistance.executor?Object.freeze({
+    pending:input=>connected.assistance.executor.pending(input),
+    reconcile:input=>connected.assistance.executor.reconcile(input),
+  }):null;
+  return {connected,boundary,handler,analysisReconciler,uploadOrigin:settings.uploadOrigin,async close(){await manualClient.$disconnect();client.destroy();}};
 }

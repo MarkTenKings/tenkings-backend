@@ -3,7 +3,7 @@ import { geometryStatus } from '@atlas/manual-workspace/geometry-actions';
 import { defectBase } from '@atlas/manual-workspace/defect-actions';
 import { createDefectMemory, createDefectMemoryRepository } from '@atlas/defect-memory';
 import { authorizeManualCard } from '@atlas/defect-memory/repository';
-import { buildAstraDefectRequest } from '@atlas/defect-analysis';
+import { buildAstraBackgroundDefectRequest } from '@atlas/defect-analysis';
 import { createAnalysisRepository } from '@atlas/defect-analysis/repository';
 import { createAnalysisExecutor } from '@atlas/defect-analysis/executor';
 import { proposalRle } from '../../atlas-manual-workflow/src/proposal-review.mjs';
@@ -63,8 +63,14 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     if (!executor) return { astra: { enabled: false, status: 'IDLE' } };
     const run = analysisId ? await repository.status(staff, { cardId, analysisId }) : await repository.latest(staff, { cardId });
     if (!run) return analysisId ? { state: 'NOT_FOUND' } : { astra: { enabled: true, status: 'IDLE' } };
-    if (run.retired) return { state: 'REFUSED', astra: { enabled: true, status: 'REFUSED', analysisId: run.analysisId,
-      proposals: [], limitations: ['This request was retired before dispatch because its card state changed or its start window expired. Start a new analysis when the card is ready.'],
+    if (run.retired) return { state: 'REFUSED',
+      ...(['DEFECT_ANALYSIS_PENDING', 'DEFECT_ANALYSIS_REPLACEMENT_INVALID'].includes(run.code) ? { followLatest: true } : {}),
+      astra: { enabled: true, status: 'REFUSED', analysisId: run.analysisId,
+      proposals: [], limitations: [run.code === 'DEFECT_ANALYSIS_PENDING'
+        ? 'Another analysis is still pending. Check the saved analysis before starting another.'
+        : run.code === 'DEFECT_ANALYSIS_REPLACEMENT_INVALID'
+          ? 'The saved analysis changed. Reload its current status before requesting a replacement.'
+          : 'This request was retired before dispatch because its card state changed or its start window expired. Start a new analysis when the card is ready.'],
       resumeAvailable: false } };
     const card = snapshot?.card ?? await workflow.service.read(staff, cardId), state = snapshot?.state ?? await workflow.hydrate(card);
     const loaded = run.state === 'READY' ? await executor.readResult(staff, { cardId, analysisId: run.analysisId }) : null;
@@ -75,10 +81,25 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       const review = reviews.find(r => r.analysisId === run.analysisId && r.proposalId === proposal.id);
       return { ...proposal, reviewStatus: review ? { ACCEPT: 'ACCEPTED', TRACE_SAVE: 'CORRECTED', REJECT: 'REJECTED' }[review.action] : 'UNREVIEWED' };
     });
+    let replacement = null;
+    if (run.state === 'UNKNOWN' && !run.backgroundAccepted) {
+      // Eligibility is an authenticated read of the exact saved no-ID outcome.
+      // Read-only staff may still inspect the card without replacement authority.
+      try { replacement = await repository.replacementEligibility(staff, { cardId, analysisId: run.analysisId }); }
+      catch { /* No verified replacement capability is exposed on read failure. */ }
+    }
+    // The repository verifies acceptance and receipt evidence. Admission expiry
+    // never means that collection of an accepted provider response has stopped.
+    const collectionStopped = run.state === 'UNKNOWN' && run.backgroundAccepted && run.acceptance
+      && (Date.parse(run.acceptance.pollUntil) <= Date.now() || run.receipts.some(receipt => receipt.kind === 'OUTCOME'
+        && receipt.evidence.code === 'DEFECT_ANALYSIS_POLL_WINDOW_EXHAUSTED'
+        && receipt.evidence.responseId === run.acceptance.responseId));
     return { state: run.state, astra: { enabled: true, status, analysisId: run.analysisId,
       base: Object.fromEntries(SIDES.map(side => [side, baseFromRun(run, side)])), proposals,
       limitations: loaded?.result?.limitations ?? [],
-      resumeAvailable: run.state === 'PREPARED', knowledgeRevision: run.requestEvidence.knowledge.revision } };
+      resumeAvailable: run.state === 'PREPARED', knowledgeRevision: run.requestEvidence.knowledge.revision,
+      ...(run.backgroundAccepted ? { backgroundAccepted: true } : {}), ...(collectionStopped ? { collectionStopped: true } : {}),
+      ...(replacement ? { replacement } : {}) } };
   }
   return Object.freeze({
     memory, repository, executor,
@@ -91,7 +112,13 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     },
     async analyze(staff, cardId, input) {
       requireThat(executor, 503, 'DEFECT_ANALYSIS_DISABLED');
-      object(input, ['actionId', 'base']); uuid(input.actionId); object(input.base, SIDES);
+      object(input, Object.hasOwn(input ?? {}, 'replacement') ? ['actionId', 'base', 'replacement'] : ['actionId', 'base']);
+      uuid(input.actionId); object(input.base, SIDES);
+      if (input.replacement) {
+        object(input.replacement, ['analysisId', 'outcomeHash']); uuid(input.replacement.analysisId);
+        requireThat(input.replacement.analysisId !== input.actionId && typeof input.replacement.outcomeHash === 'string'
+          && /^[a-f0-9]{64}$/.test(input.replacement.outcomeHash));
+      } else requireThat(!Object.hasOwn(input, 'replacement'));
       input = JSON.parse(canonical(input));
       const baseHash = digest(canonical(input));
       try {
@@ -103,6 +130,16 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
         if (old.state === 'PREPARED') await executor.resume(staff, { cardId, analysisId: old.analysisId });
         return project(staff, cardId, old.analysisId);
       }
+      // Reads and same-action recovery never create another provider request.
+      // The repository repeats this latest-run gate under its card lock before
+      // prepare, closing the race between different human action IDs.
+      const latest = await repository.latest(staff, { cardId });
+      if (input.replacement) {
+        requireThat(latest?.analysisId === input.replacement.analysisId, 409, 'DEFECT_ANALYSIS_REPLACEMENT_INVALID');
+        const eligible = await repository.replacementEligibility(staff, { cardId, analysisId: input.replacement.analysisId });
+        requireThat(eligible && canonical(eligible) === canonical(input.replacement), 409, 'DEFECT_ANALYSIS_REPLACEMENT_INVALID');
+      } else requireThat(latest?.retired || !['PREPARED', 'DISPATCHED', 'RUNNING', 'UNKNOWN'].includes(latest?.state),
+        409, 'DEFECT_ANALYSIS_PENDING');
       const { card } = await workflow.service.authorizeEdit(staff, cardId), state = await workflow.hydrate(card);
       const binding = defectAnalysisBinding(card, state);
       requireThat(SIDES.every(side => canonical(input.base[side]) === canonical(defectBase(state.defects, side))), 409, 'DEFECT_ANALYSIS_STALE');
@@ -110,15 +147,17 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       // This is a fresh database retrieval for every new request, after costly
       // image preparation. Pending reviewed publications refuse paid dispatch.
       const knowledge = await memory.retrieve(staff, { cardId, limit: 12 });
-      const prepared = buildAstraDefectRequest({ analysisId: input.actionId, cardId, profile: state.geometry.profile,
+      const prepared = buildAstraBackgroundDefectRequest({ analysisId: input.actionId, cardId, profile: state.geometry.profile,
         cornerShapes: Object.fromEntries(SIDES.map(side => [side, state.defects.sides[side].cornerShape])),
         binding, images, knowledge, lessonImages: await imageEffects.lessonImages(knowledge) });
       await executor.prepareAndRun(staff, { cardId, actionId: input.actionId, prepared,
-        expiresAt: new Date(Date.now() + 180000).toISOString() });
+        expiresAt: new Date(Date.now() + 180000).toISOString(), baseHash,
+        ...(input.replacement ? { replacement: input.replacement } : {}) });
       return project(staff, cardId, input.actionId);
       } catch (error) {
         const stale = ['DEFECT_ANALYSIS_STALE', 'DEFECT_ANALYSIS_REQUEST_EXPIRED', 'MANUAL_DRAFT_STALE',
-          'MANUAL_GEOMETRY_REVIEW_REQUIRED', 'MANUAL_DEFECT_PENDING', 'MANUAL_PHOTOS_CHANGED', 'INTAKE_PAIR_STALE'];
+          'MANUAL_GEOMETRY_REVIEW_REQUIRED', 'MANUAL_DEFECT_PENDING', 'MANUAL_PHOTOS_CHANGED', 'INTAKE_PAIR_STALE',
+          'DEFECT_ANALYSIS_PENDING', 'DEFECT_ANALYSIS_REPLACEMENT_INVALID'];
         if (!stale.includes(error?.code)) throw error;
         // A durable card-serialized refusal proves this exact action can never
         // dispatch later. Generic HTTP failures never clear the browser journal.

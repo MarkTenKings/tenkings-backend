@@ -14,6 +14,12 @@ export function manualMessage(error){
     INTAKE_PHOTO_TOO_LARGE:'Choose an original photo smaller than 64 MiB.',
     MANUAL_PENDING_REQUEST:'Resume the saved request before starting another change.',
     MANUAL_STAFF_CHANGED:'The signed-in staff account changed. Reload this page before continuing.',
+    IDENTIFICATION_RETRY_NOT_ALLOWED:'This identification attempt cannot be retried yet. Your photos are saved; enter the printed details or contact the owner.',
+    IDENTIFICATION_RETRY_STALE:'The saved identification attempt or photos changed. Reload the saved card before retrying.',
+    IDENTIFICATION_RETRY_ACTION_CONFLICT:'This saved retry belongs to a different identification attempt. Reload the saved card to continue.',
+    DEFECT_ANALYSIS_PENDING:'An analysis is already pending for this card. Check its saved status before starting another.',
+    DEFECT_ANALYSIS_REPLACEMENT_INVALID:'The previous analysis changed. Check its saved status before starting a new analysis.',
+    MANUAL_ANALYSIS_RECONCILE_REQUIRED:'Check the saved analysis status before starting another request.',
     MANUAL_PROCESSING_BUSY:'Image processing is busy. Your saved work is retained; try again shortly.',
     INTAKE_PAIR_NOT_READY:'Save a Front and Back photo first.',MANUAL_IDENTITY_REQUIRED:'Complete the required card details.',
   })[error?.code]??'This step did not finish. Your saved work is retained. Retry the saved request to continue.';

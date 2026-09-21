@@ -75,6 +75,8 @@ export function createDetailsStore({ boundary, intakeRepository }) {
       await intakeRepository.assertCurrentPair(tx,principal,{cardId,sourceHash});
       const current=await row(tx,cardId,true);
       if(current.details.sourceHash===sourceHash)return current;
+      const [manual]=await tx.$queryRawUnsafe('SELECT id FROM atlas_manual.card WHERE id=$1::uuid',cardId);
+      requireThat(!manual,409,'MANUAL_USE_WORKSPACE_IDENTITY');
       return write(tx,cardId,current,mergeSuggestions(current.details,result,sourceHash));
     }); },
   });

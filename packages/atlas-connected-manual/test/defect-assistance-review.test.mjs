@@ -133,40 +133,55 @@ test('a later corrected Astra outline publishes a CORRECTED lesson with its orig
 });
 
 import { createDefectAssistance, defectAnalysisBinding } from '../src/defect-assistance.mjs';
-import { buildAstraDefectRequest, parseAstraResponse } from '../../atlas-defect-analysis/src/index.mjs';
+import { buildAstraDefectRequest, buildAstraBackgroundDefectRequest, parseAstraResponse } from '../../atlas-defect-analysis/src/index.mjs';
 import { inputFixture, responseFixture } from '../../atlas-defect-analysis/test/fixtures.mjs';
 
-async function savedAnalysisFixture() {
+async function savedAnalysisFixture({ background=false, receiptKind='RESPONSE', accepted=false, collectionExpired=false }={}) {
   const f = await fixture(), initial = f.card(), state = await f.state(), input = inputFixture();
   input.analysisId = f.analysisId; input.cardId = f.cardId; input.binding = defectAnalysisBinding(initial, state);
   for (const slot of input.images) slot.whole.sourceSha256 = input.binding.sides[slot.side].frame.inspectionImageSha256;
-  const prepared = buildAstraDefectRequest(input), raw = Buffer.from(JSON.stringify(responseFixture(prepared.evidence)));
+  const prepared = (background?buildAstraBackgroundDefectRequest:buildAstraDefectRequest)(input), raw = Buffer.from(JSON.stringify(responseFixture(prepared.evidence)));
   const parsed = parseAstraResponse(raw, prepared.evidence), source = { cardId: f.cardId, sourceHash: prepared.evidence.sourceBindingSha256 };
   const responseRef = await f.artifacts.write({ version: 1, analysisId: f.analysisId, requestHash: prepared.requestHash,
     sha256: digest(raw), base64: raw.toString('base64') }, { ...source, kind: 'DEFECT_RESPONSE' });
   const resultRef = await f.artifacts.write(parsed.result, { ...source, kind: 'DEFECT_RESULT' });
-  const provider = { bindingHash: digest('offline-review-provider'), dispatch: async () => { throw Error('No provider dispatch permitted'); } };
+  const calls={provider:0,images:0},refusals=new Map();
+  const provider = { bindingHash: digest('offline-review-provider'), dispatch: async () => { calls.provider++;throw Error('No provider dispatch permitted'); } };
   const evidence = canonical({ ...prepared.evidence, providerBindingHash: provider.bindingHash });
   const row = { id: f.analysisId, card_id: f.cardId, action_id: f.analysisId, actor_id: f.staff.id,
     binding: canonical(prepared.evidence.binding), binding_hash: digest(canonical(prepared.evidence.binding)),
     request_hash: prepared.requestHash, request_ref: JSON.stringify(responseRef), request_evidence: evidence, evidence_hash: digest(evidence),
-    base_hash: digest(canonical(Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])))), state: 'DISPATCHED', created_at: new Date(), expires_at: new Date(Date.now()+120000), dispatched_at: new Date() };
-  const receipt = { state: 'READY', responseRef, resultRef, responseHash: digest(raw), providerRequestId: 'offline-review-request',
+    base_hash: digest(canonical({actionId:f.analysisId,base:Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)]))})), state: 'DISPATCHED', created_at: new Date(), expires_at: new Date(Date.now()+120000), dispatched_at: new Date() };
+  const receipt = receiptKind==='OUTCOME'?{state:'UNKNOWN',responseRef:null,resultRef:null,responseHash:null,providerRequestId:null,responseId:null,httpStatus:null,usage:null,code:'DEFECT_ANALYSIS_OUTCOME_UNKNOWN'}:{ state: 'READY', responseRef, resultRef, responseHash: digest(raw), providerRequestId: 'offline-review-request',
     responseId: parsed.responseId, httpStatus: 200, usage: parsed.usage, code: null };
+  const receivedAt=Date.now()-(collectionExpired?1801000:0);
+  const acceptance=accepted?{responseId:'resp_fixture_pending',providerRequestId:'offline-acceptance-request',httpStatus:200,providerStatus:'queued',model:'gpt-6-astra',responseHash:digest('synthetic queued reply'),receivedAt:new Date(receivedAt).toISOString(),pollUntil:new Date(receivedAt+1800000).toISOString()}:null;
+  const acceptedRow=acceptance?{analysis_id:f.analysisId,kind:'ACCEPTED',request_hash:row.request_hash,provider_binding_hash:provider.bindingHash,response_id:acceptance.responseId,evidence:canonical(acceptance),evidence_hash:digest(canonical(acceptance)),recorded_at:new Date()}:null;
   const principal = { id: f.staff.id, role: 'REVIEWER' };
-  const tx = { async $queryRawUnsafe(sql) {
-    if (sql.includes('FROM atlas_defect_analysis.request_refusal')) return [];
+  const tx = { async $queryRawUnsafe(sql,...args) {
+    if (sql.includes('FROM atlas_defect_analysis.request_refusal') && !sql.includes('FROM atlas_defect_analysis.run r')) return [...refusals.values()].filter(value=>value.card_id===args[0] && (sql.includes('action_id=$2')?value.action_id:value.analysis_id)===args[1]);
+    if(sql.includes('FROM atlas_defect_analysis.provider_event'))return acceptedRow?[acceptedRow]:[];
     if (sql.includes('FROM atlas_manual.card')) { const current = f.card(); return [{ id: f.cardId, owner_id: f.staff.id, editors: [], readers: [], approvers: [],
       revision: current.revision, content: canonical(current.draft), content_hash: current.contentHash }]; }
-    if (sql.includes('FROM atlas_defect_analysis.run')) return [row];
-    if (sql.includes('FROM atlas_defect_analysis.receipt')) return row.state === 'PREPARED' ? [] : [{ kind: 'RESPONSE', evidence: canonical(receipt), recorded_at: new Date() }];
+    if (sql.includes('FROM atlas_defect_analysis.run')) {
+      if(sql.includes('replaces_analysis_id='))return [];
+      if(args[1] && (sql.includes('action_id=$2')?row.action_id:row.id)!==args[1])return [];
+      return [row];
+    }
+    if (sql.includes('FROM atlas_defect_analysis.receipt')) return row.state === 'PREPARED' || receiptKind===null ? [] : [{ kind: receiptKind, evidence: canonical(receipt), recorded_at: new Date() }];
     throw Error(`Unrecognized offline query: ${sql}`);
+  },async $executeRawUnsafe(sql,...args){
+    if(sql.startsWith('INSERT INTO atlas_defect_analysis.request_refusal')){
+      const [card_id,action_id,analysis_id,actor_id,base_hash,code]=args;
+      refusals.set(action_id,{card_id,action_id,analysis_id,actor_id,base_hash,code,created_at:new Date()});return 1;
+    }
+    throw Error(`Unrecognized offline write: ${sql}`);
   } };
   const boundary = { transaction: async (_staff, work) => work({ tx, principal, now: new Date(), refresh: async () => ({ principal, now: new Date() }) }) };
   const assistance = createDefectAssistance({ boundary, intakeRepository: { assertCurrentPair: async () => {} }, workflow: f.workflow,
-    artifacts: f.artifacts, imageEffects: { createExemplar: async () => { throw Error('No exemplar effect permitted'); } },
+    artifacts: f.artifacts, imageEffects: { createExemplar: async () => { throw Error('No exemplar effect permitted'); },currentImages:async()=>{calls.images++;throw Error('No image effects expected');} },
     memoryEnabled: true, provider, receiptClient: tx });
-  return { ...f, assistance, prepared, parsed, row };
+  return { ...f, assistance, prepared, parsed, row, receipt, acceptance, calls, refusals };
 }
 
 test('identity correction invalidates proposals informed by the old design memory while preserving raw receipts', async () => {
@@ -188,4 +203,75 @@ test('expired never-dispatched PREPARED requests remain exactly resumable for te
   assert.equal(result.state, 'PREPARED', 'Expiry cannot erase the distinction between never-dispatched and uncertain paid work');
   assert.equal(result.astra.resumeAvailable, true, 'The saved command must remain reachable for durable retirement');
   assert.deepEqual(result.astra.proposals, []);
+});
+
+test('durable background acceptance projects RUNNING after admission expiry without borrowing a browser session for polling',async()=>{
+  const f=await savedAnalysisFixture({background:true,accepted:true,receiptKind:null});
+  f.row.expires_at=new Date(Date.now()-60000);
+  const result=await f.assistance.status(f.staff,f.cardId,f.analysisId);
+  assert.equal(result.state,'DISPATCHED');assert.equal(result.astra.status,'RUNNING');
+  assert.equal(result.astra.backgroundAccepted,true);assert.equal(result.astra.resumeAvailable,false);
+  assert.equal(result.astra.collectionStopped,undefined);
+  assert.equal(result.astra.replacement,undefined);assert.deepEqual(f.calls,{provider:0,images:0});
+});
+
+test('verified accepted collection expiry projects a stopped UNKNOWN before or after its durable exhaustion receipt',async()=>{
+  for(const receiptKind of [null,'OUTCOME']){
+    const f=await savedAnalysisFixture({background:true,accepted:true,collectionExpired:true,receiptKind});
+    if(receiptKind){f.receipt.code='DEFECT_ANALYSIS_POLL_WINDOW_EXHAUSTED';f.receipt.responseId=f.acceptance.responseId;}
+    const result=await f.assistance.status(f.staff,f.cardId,f.analysisId);
+    assert.equal(result.astra.status,'UNKNOWN');assert.equal(result.astra.backgroundAccepted,true);
+    assert.equal(result.astra.collectionStopped,true);assert.equal(result.astra.resumeAvailable,false);
+    assert.equal(result.astra.replacement,undefined);assert.deepEqual(f.calls,{provider:0,images:0});
+  }
+});
+
+test('only the verified no-ID legacy UNKNOWN outcome exposes an explicit replacement token',async()=>{
+  const f=await savedAnalysisFixture({receiptKind:'OUTCOME'}),before=clone(f.row);
+  const result=await f.assistance.status(f.staff,f.cardId,f.analysisId);
+  assert.equal(result.astra.status,'UNKNOWN');assert.equal(result.astra.backgroundAccepted,undefined);
+  assert.equal(result.astra.collectionStopped,undefined);
+  assert.deepEqual(result.astra.replacement,{analysisId:f.analysisId,outcomeHash:digest(canonical(f.receipt))});
+  assert.deepEqual(f.row,before);assert.deepEqual(f.calls,{provider:0,images:0});
+});
+
+test('a different ordinary action while UNKNOWN is durably refused before image or paid work and cannot resume later',async()=>{
+  const f=await savedAnalysisFixture({receiptKind:'OUTCOME'}),state=await f.state();
+  const input={actionId:randomUUID(),base:Object.fromEntries(SIDES.map(side=>[side,defectBase(state.defects,side)]))};
+  const refused=await f.assistance.analyze(f.staff,f.cardId,input);
+  assert.equal(refused.state,'REFUSED');assert.equal(refused.astra.analysisId,input.actionId);
+  assert.equal(refused.followLatest,true);
+  assert.equal(refused.astra.resumeAvailable,false);assert.equal(f.refusals.get(input.actionId).code,'DEFECT_ANALYSIS_PENDING');
+  assert.equal((await f.assistance.analyze(f.staff,f.cardId,input)).state,'REFUSED');
+  assert.equal((await f.assistance.status(f.staff,f.cardId)).astra.analysisId,f.analysisId);
+  assert.deepEqual(f.calls,{provider:0,images:0});
+});
+
+test('a stale replacement outcome is durably refused without hiding or modifying the old UNKNOWN run',async()=>{
+  const f=await savedAnalysisFixture({receiptKind:'OUTCOME'}),state=await f.state(),before=clone(f.row);
+  const input={actionId:randomUUID(),base:Object.fromEntries(SIDES.map(side=>[side,defectBase(state.defects,side)])),
+    replacement:{analysisId:f.analysisId,outcomeHash:digest('different retained outcome')}};
+  const refused=await f.assistance.analyze(f.staff,f.cardId,input);
+  assert.equal(refused.state,'REFUSED');assert.equal(f.refusals.get(input.actionId).code,'DEFECT_ANALYSIS_REPLACEMENT_INVALID');
+  assert.equal(refused.followLatest,true);
+  assert.equal((await f.assistance.status(f.staff,f.cardId)).astra.analysisId,f.analysisId);
+  assert.deepEqual(f.row,before);assert.deepEqual(f.calls,{provider:0,images:0});
+});
+
+test('an ordinary verified retirement does not request a latest-analysis handoff',async()=>{
+  const f=await savedAnalysisFixture(),actionId=randomUUID();
+  f.refusals.set(actionId,{card_id:f.cardId,action_id:actionId,analysis_id:actionId,actor_id:f.staff.id,
+    base_hash:digest('ordinary retired request'),code:'DEFECT_ANALYSIS_STALE',created_at:new Date()});
+  const result=await f.assistance.status(f.staff,f.cardId,actionId);
+  assert.equal(result.state,'REFUSED');assert.equal(result.followLatest,undefined);
+  assert.deepEqual(f.calls,{provider:0,images:0});
+});
+
+test('known provider acceptance never exposes or accepts a no-ID replacement even with an earlier UNKNOWN receipt',async()=>{
+  const f=await savedAnalysisFixture({background:true,accepted:true,receiptKind:'OUTCOME'}),state=await f.state();
+  assert.equal((await f.assistance.status(f.staff,f.cardId,f.analysisId)).astra.replacement,undefined);
+  const input={actionId:randomUUID(),base:Object.fromEntries(SIDES.map(side=>[side,defectBase(state.defects,side)])),
+    replacement:{analysisId:f.analysisId,outcomeHash:digest(canonical(f.receipt))}};
+  assert.equal((await f.assistance.analyze(f.staff,f.cardId,input)).state,'REFUSED');
+  assert.deepEqual(f.calls,{provider:0,images:0});
 });

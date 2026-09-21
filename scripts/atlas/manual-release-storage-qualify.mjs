@@ -9,6 +9,7 @@ import { connectedGrantSQL } from '../../packages/atlas-connected-manual/src/det
 import { defectMemoryGrantSQL } from '../../packages/atlas-defect-memory/src/repository.mjs';
 import { analysisGrantSQL, analysisReceiptGrantSQL } from '../../packages/atlas-defect-analysis/src/repository.mjs';
 import { runConnectedIntegration } from '../../packages/atlas-connected-manual/test/connected.test.mjs';
+import { runIdentificationRetryPostgres } from '../../packages/atlas-connected-manual/scripts/identification-retry-postgres.mjs';
 
 const output=process.env.ATLAS_CONNECTED_EVIDENCE, pythonExecutable=process.env.ATLAS_FIXTURE_PYTHON;
 assert(output && resolve(output)===output && pythonExecutable && resolve(pythonExecutable)===pythonExecutable);
@@ -46,17 +47,18 @@ try {
     'atlas_manual.defect_memory_publication':[],
     'atlas_defect_analysis.run':['state','dispatched_at'],
     'atlas_defect_analysis.receipt':[],
+    'atlas_defect_analysis.provider_event':[],
     'atlas_defect_analysis.request_refusal':[],
   };
   const seen=new Set();
   for(const row of columns) {
     const key=`${row.schema}.${row.table}`, allowed=Object.hasOwn(updates,key);
-    assert.equal(row.sel,allowed,key);assert.equal(row.ins,allowed&&key!=='atlas_defect_analysis.receipt',key);
+    assert.equal(row.sel,allowed,key);assert.equal(row.ins,allowed&&!['atlas_defect_analysis.receipt','atlas_defect_analysis.provider_event'].includes(key),key);
     assert.equal(row.upd,allowed&&updates[key].includes(row.column),`${key}.${row.column}`);
     assert.equal(row.refs,false);assert.equal(row.extra,false);assert.equal(row.owner,false);
     if(allowed)seen.add(key);
   }
-  assert.equal(seen.size,13);
+  assert.equal(seen.size,14);
   const schemas=await db.$queryRawUnsafe(`SELECT nspname,has_schema_privilege(current_user,oid,'USAGE') usage,
     has_schema_privilege(current_user,oid,'CREATE') create_objects FROM pg_namespace
     WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema' ORDER BY nspname`);
@@ -65,7 +67,7 @@ try {
   const functions=await db.$queryRawUnsafe(`SELECT n.nspname AS schema,p.proname,oidvectortypes(p.proargtypes) args,p.prosecdef,
     pg_get_userbyid(p.proowner) owner,p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     WHERE n.nspname LIKE 'atlas_%' AND p.prorettype<>'trigger'::regtype AND has_function_privilege(current_user,p.oid,'EXECUTE') ORDER BY 1,2`);
-  assert.deepEqual(functions.map(row=>`${row.schema}.${row.proname}`),['atlas_defect_analysis.append_receipt','atlas_manual.authenticate','atlas_manual.defect_memory_design','atlas_manual_connected.append_receipt']);
+  assert.deepEqual(functions.map(row=>`${row.schema}.${row.proname}`),['atlas_defect_analysis.append_provider_event','atlas_defect_analysis.append_receipt','atlas_defect_analysis.read_background','atlas_manual.authenticate','atlas_manual.defect_memory_design','atlas_manual_connected.append_receipt']);
   assert(functions.every(row=>(row.proname==='defect_memory_design'?!row.prosecdef:row.prosecdef)&&row.owner!=='atlas_fixture_manual'&&row.proconfig.some(value=>/^search_path=pg_catalog(?:,|$)/.test(value))));
   const catalog=await fixture.cluster.sql(`SELECT n.nspname,c.relname,c.relacl::text,pg_get_userbyid(c.relowner) owner
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname LIKE 'atlas_manual%' OR n.nspname='atlas_defect_analysis' ORDER BY 1,2`,[],fixture.database.name);
@@ -78,8 +80,10 @@ try {
     source:fixture.cluster.source},null,2)+'\n',{mode:0o600,flag:'wx'});
   await connection.close();
   const result=await runConnectedIntegration({fixture,pythonExecutable,output});
+  const args=process.argv.slice(2);
+  const retry=await runIdentificationRetryPostgres({cluster:fixture.cluster,pgModule:args[args.indexOf('--pg-module')+1],output});
   for(const name of ['source.json','ledgers.json','validation.log'])await copyFile(join(fixture.cluster.directory,name),join(output,name));
-  console.log(JSON.stringify({status:'PASS',node:process.version,connectedAssertions:result.assertions,checkedColumns:columns.length,manualTables:seen.size,output}));
+  console.log(JSON.stringify({status:'PASS',node:process.version,connectedAssertions:result.assertions,retryAssertions:retry.assertionCount,checkedColumns:columns.length,manualTables:seen.size,output}));
 } finally {
   await fixture.stop();
   await copyFile(join(fixture.cluster.directory,'cleanup.json'),join(output,'database-cleanup.json'));

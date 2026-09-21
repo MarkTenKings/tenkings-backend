@@ -1,5 +1,5 @@
-import { check, digest } from './contract.mjs';
-import { LIMITS, validatePreparedRequest } from './index.mjs';
+import { check, digest, uuid, sha } from './contract.mjs';
+import { LIMITS, BACKGROUND_POLICY, BACKGROUND_VERSION, validatePreparedRequest } from './index.mjs';
 
 export const RESPONSE_ENDPOINT = 'https://api.openai.com/v1/responses';
 
@@ -7,21 +7,18 @@ export const RESPONSE_ENDPOINT = 'https://api.openai.com/v1/responses';
  * requestHash. No SDK retries, ambient credentials, alternate URL or tools.
  * The in-memory fence adds protection against reusing a granted prepared object;
  * it does not replace the durable claim across processes or restarts. */
-export function createAstraDefectProvider({ apiKey, projectId = null, fetchImpl = fetch, timeoutMs = LIMITS.timeoutMs }) {
+export function createAstraDefectProvider({ apiKey, projectId = null, fetchImpl = fetch, timeoutMs = LIMITS.timeoutMs,
+  getTimeoutMs = BACKGROUND_POLICY.getTimeoutMs }) {
   check(typeof apiKey === 'string' && /^sk-[A-Za-z0-9_-]{16,250}$/.test(apiKey), 'DEFECT_ANALYSIS_NOT_CONFIGURED', 503);
   check(projectId === null || /^proj_[A-Za-z0-9_-]{8,128}$/.test(projectId), 'DEFECT_ANALYSIS_NOT_CONFIGURED', 503);
   check(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= LIMITS.timeoutMs);
+  check(Number.isSafeInteger(getTimeoutMs) && getTimeoutMs > 0 && getTimeoutMs <= BACKGROUND_POLICY.getTimeoutMs);
   const dispatched = new WeakSet();
-  return Object.freeze({
-    bindingHash: digest(JSON.stringify({ endpoint: RESPONSE_ENDPOINT, projectId, keyHash: digest(apiKey) })),
-    async dispatch(prepared, { signal, deadlineMs = null } = {}) {
-      validatePreparedRequest(prepared);
-      check(!dispatched.has(prepared), 'DEFECT_ANALYSIS_ALREADY_DISPATCHED', 409);
+  async function receive({ analysisId, requestHash, method, url, body, budgetMs, signal, deadlineMs }) {
       signal?.throwIfAborted();
       check(deadlineMs === null || Number.isSafeInteger(deadlineMs), 'DEFECT_ANALYSIS_REQUEST_EXPIRED', 409);
-      const remaining = deadlineMs === null ? timeoutMs : Math.min(timeoutMs, deadlineMs - Date.now());
+      const remaining = deadlineMs === null ? budgetMs : Math.min(budgetMs, deadlineMs - Date.now());
       check(remaining > 0, 'DEFECT_ANALYSIS_REQUEST_EXPIRED', 409);
-      dispatched.add(prepared);
       const startedAt = new Date().toISOString(), controller = new AbortController();
       let response = null, reader = null, providerRequestId = null, timer;
       let abortReject;
@@ -30,10 +27,10 @@ export function createAstraDefectProvider({ apiKey, projectId = null, fetchImpl 
       signal?.addEventListener('abort', abort, { once: true });
       // Attach the rejection consumer before any synchronous abort is possible.
       const work = async () => {
-        response = await fetchImpl(RESPONSE_ENDPOINT, { method: 'POST', redirect: 'error', cache: 'no-store',
+        response = await fetchImpl(url, { method, redirect: 'error', cache: 'no-store',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`,
-            'X-Client-Request-Id': prepared.evidence.analysisId, ...(projectId ? { 'OpenAI-Project': projectId } : {}) },
-          body: prepared.requestText, signal: controller.signal });
+            'X-Client-Request-Id': analysisId, ...(projectId ? { 'OpenAI-Project': projectId } : {}) },
+          ...(body === undefined ? {} : { body }), signal: controller.signal });
         const requestId = response.headers.get('x-request-id');
         if (requestId !== null && /^[A-Za-z0-9_-]{1,180}$/.test(requestId)) providerRequestId = requestId;
         check(requestId === null || providerRequestId !== null, 'DEFECT_ANALYSIS_RESPONSE_INVALID');
@@ -48,7 +45,7 @@ export function createAstraDefectProvider({ apiKey, projectId = null, fetchImpl 
           chunks.push(Buffer.from(part.value));
         }
         const bytes = Buffer.concat(chunks, length);
-        return { state: 'RECEIVED', analysisId: prepared.evidence.analysisId, requestHash: prepared.requestHash, startedAt,
+        return { state: 'RECEIVED', analysisId, requestHash, startedAt,
           receivedAt: new Date().toISOString(), httpStatus: response.status, providerRequestId,
           contentType: response.headers.get('content-type')?.split(';')[0].trim().slice(0, 100) ?? null,
           responseHash: digest(bytes), bytes };
@@ -58,7 +55,7 @@ export function createAstraDefectProvider({ apiKey, projectId = null, fetchImpl 
         if (signal?.aborted) abort();
         return await Promise.race([work(), aborted]);
       } catch {
-        return { state: 'UNKNOWN', analysisId: prepared.evidence.analysisId, requestHash: prepared.requestHash, startedAt,
+        return { state: 'UNKNOWN', analysisId, requestHash, startedAt,
           receivedAt: new Date().toISOString(), httpStatus: response?.status ?? null, providerRequestId,
           code: 'DEFECT_ANALYSIS_OUTCOME_UNKNOWN' };
       } finally {
@@ -66,6 +63,27 @@ export function createAstraDefectProvider({ apiKey, projectId = null, fetchImpl 
         // A broken stream must not hold the request open after the deadline.
         void reader?.cancel().catch(() => {});
       }
+  }
+  return Object.freeze({
+    bindingHash: digest(JSON.stringify({ endpoint: RESPONSE_ENDPOINT, projectId, keyHash: digest(apiKey) })),
+    async dispatch(prepared, { signal, deadlineMs = null } = {}) {
+      validatePreparedRequest(prepared);
+      check(!dispatched.has(prepared), 'DEFECT_ANALYSIS_ALREADY_DISPATCHED', 409);
+      signal?.throwIfAborted();
+      check(deadlineMs === null || Number.isSafeInteger(deadlineMs) && deadlineMs > Date.now(), 'DEFECT_ANALYSIS_REQUEST_EXPIRED', 409);
+      dispatched.add(prepared);
+      return receive({ analysisId: prepared.evidence.analysisId, requestHash: prepared.requestHash,
+        method: 'POST', url: RESPONSE_ENDPOINT, body: prepared.requestText,
+        budgetMs: prepared.evidence.version === BACKGROUND_VERSION ? Math.min(timeoutMs, BACKGROUND_POLICY.acceptanceTimeoutMs) : timeoutMs,
+        signal, deadlineMs });
+    },
+    // The executor calls this only after reading a durable acceptance for the
+    // same provider binding. It cannot create or repeat model work.
+    async retrieve({ analysisId, requestHash, responseId }, { signal, deadlineMs = null } = {}) {
+      uuid(analysisId); sha(requestHash);
+      check(typeof responseId === 'string' && /^resp_[A-Za-z0-9_-]{1,180}$/.test(responseId), 'DEFECT_ANALYSIS_RESPONSE_INVALID');
+      return receive({ analysisId, requestHash, method: 'GET', url: `${RESPONSE_ENDPOINT}/${responseId}`,
+        budgetMs: getTimeoutMs, signal, deadlineMs });
     },
   });
 }
