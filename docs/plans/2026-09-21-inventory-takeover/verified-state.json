@@ -1,0 +1,70 @@
+{
+  "recordedAtUtc": "2026-09-21T19:14:39.731372+00:00",
+  "leadTaskId": "01a0c55f-aeb0-77d3-912c-0736a7f6c429",
+  "acceptedHandoffCommit": "297fd302b866286824fcea79b8f77c6d995ca3db",
+  "scope": "Ten Kings Inventory; ATLAS remains separately owned",
+  "inventory": {
+    "workspace": "/Users/markthomas/tenkings/codex-staff-inventory-release-20260910",
+    "branch": "codex/staff-inventory-release-20260910",
+    "localHeadAtReceipt": "297fd302b866286824fcea79b8f77c6d995ca3db",
+    "remoteAndPreviewSource": "e286ea0a190bfdc6807fe8ca58c47b34c94b55c1",
+    "deploymentId": "dpl_7xc2akyMGziEALNz3aCZFvWsnPCs",
+    "readyState": "READY"
+  },
+  "main": {
+    "workspace": "/Users/markthomas/tenkings/codex-main-site-release-20260916",
+    "branch": "codex/main-site-release-20260916",
+    "localHead": "6e507b390f98823c9b7027d55ef9f9134d44c43d",
+    "remoteAndPreviewSource": "895a3b34cc9cd7c8f6d2267ad4d763fb2ff0949d",
+    "deploymentId": "dpl_FpG7zsUwoyFHEqjiPfk44qmDE2ja",
+    "readyState": "READY"
+  },
+  "production": {
+    "deploymentId": "dpl_Bo43ux8vAyyDe6WEKy4Q1A6iT6sj",
+    "readyState": "READY",
+    "aliases": [
+      "collect.tenkings.co",
+      "tenkings-backend-nextjs-app.vercel.app",
+      "tenkings-backend-nextjs-app-ten-kings.vercel.app"
+    ],
+    "sourceFromReleaseRecord": "38c95335614df756c420127e6b94bedd5620fa2d",
+    "providerGitSha": null
+  },
+  "observedBy": "Fresh git status/log/ls-remote/diff and normal authenticated Vercel CLI GET metadata; no secret values recorded",
+  "mainInventoryNonDocumentationDifferences": [],
+  "archiveChecks": [
+    {
+      "archive": "20260917-intake-full-matrix",
+      "manifestSha256": "a05c1ab2e4d8812c6a3a934684cb8e48b90148798e58c980e13032a51d2ddeef",
+      "verifiedFiles": 172,
+      "verifiedBytes": 333338993,
+      "issues": []
+    },
+    {
+      "archive": "20260920-sports-cron-qualification",
+      "manifestSha256": "8b315aa08c5a9c232c62318abef35d11cb262a35da0350748ad6bfdcca473b7c",
+      "verifiedFiles": 44,
+      "verifiedBytes": 428736,
+      "issues": []
+    },
+    {
+      "archive": "20260920-preview-qualification",
+      "manifestSha256": "ca464e47cf04eebc70563a622c645a59797ad9ec12600197dc3e492a2fd7d24e",
+      "verifiedFiles": 12,
+      "verifiedBytes": 164364,
+      "issues": []
+    }
+  ],
+  "unrelatedUntrackedNoteSha256": "6166a6332e32cb380247358ef9040c0ad2e04a6a46f0448c632c42658fcfdb2d",
+  "phoneAcceptance": "Pending; previous request refreshed with owner, no result received at recording",
+  "mutations": {
+    "application": false,
+    "production": false,
+    "flags": false,
+    "dns": false,
+    "database": false,
+    "atlasResources": false,
+    "cacheCleanup": false,
+    "researchProviderCalls": 0
+  }
+}
