@@ -92,6 +92,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(404).json({ message: "Ingestion job not found" });
     }
 
+    // These jobs bind additive source evidence to the catalog review flow.
+    // A generic build would attach them to the existing draft and replace
+    // their review state, even when its empty worksheet later fails quality.
+    if (job.parserVersion === "catalog-sports-additive-preparation/v1") {
+      return res.status(409).json({
+        message: "This source belongs to shared catalog preparation. Review it in the catalog evidence workflow.",
+      });
+    }
+
     const setId = normalizeSetLabel(job.setId);
 
     try {

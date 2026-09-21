@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import type { CatalogManifest, PublicationPin } from '@tenkings/card-catalog-evidence';
 import SetCatalogProposalInbox from './SetCatalogProposalInbox';
+import SetCatalogSportsPreparation from './SetCatalogSportsPreparation';
 
 type ReviewPacket = { manifest: CatalogManifest; reviewEvidence: unknown };
 type Preview = { manifest: CatalogManifest; manifestSha256: string; verificationSha256: string; verification: unknown;
@@ -106,6 +107,7 @@ export default function SetCatalogEvidenceReview({ token, setId, canReview, canA
         const result = await api(`publication?setId=${encodeURIComponent(setId)}`); if (active()) { setCurrent(result.publication); setMessage(result.publication ? 'Current publication loaded.' : 'No usable current publication.'); }
       })}>Load current publication</button>
     </div>
+    <SetCatalogSportsPreparation token={token} setId={setId} canReview={canReview} />
     {message && <p role="status" className="my-3 whitespace-pre-wrap break-all text-sm text-amber-200">{message}</p>}
     {preview && <div className="mt-4 space-y-4">
       <h3 className="font-semibold">{preview.manifest.set.label} · revision {preview.manifest.revision}</h3>
