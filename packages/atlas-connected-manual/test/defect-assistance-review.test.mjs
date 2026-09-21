@@ -133,14 +133,19 @@ test('a later corrected Astra outline publishes a CORRECTED lesson with its orig
 });
 
 import { createDefectAssistance, defectAnalysisBinding } from '../src/defect-assistance.mjs';
-import { buildAstraDefectRequest, buildAstraBackgroundDefectRequest, parseAstraResponse } from '../../atlas-defect-analysis/src/index.mjs';
-import { inputFixture, responseFixture } from '../../atlas-defect-analysis/test/fixtures.mjs';
+import { buildAstraDefectRequest, buildAstraBackgroundDefectRequest, buildAstraContextBackgroundDefectRequest,
+  parseAstraResponse, validateRequestEvidence, restorePreparedRequest, INSPECTION_CONTEXT_CROP_LAYOUT } from '../../atlas-defect-analysis/src/index.mjs';
+import { readAnalysisRequest } from '../../atlas-defect-analysis/src/executor.mjs';
+import { inputFixture, contextInputFixture, outputFixture, responseFixture } from '../../atlas-defect-analysis/test/fixtures.mjs';
 
-async function savedAnalysisFixture({ background=false, receiptKind='RESPONSE', accepted=false, collectionExpired=false }={}) {
-  const f = await fixture(), initial = f.card(), state = await f.state(), input = inputFixture();
+async function savedAnalysisFixture({ background=false, contextLayout=false, receiptKind='RESPONSE', accepted=false, collectionExpired=false }={}) {
+  const f = await fixture(), initial = f.card(), state = await f.state(), input = contextLayout ? contextInputFixture() : inputFixture();
   input.analysisId = f.analysisId; input.cardId = f.cardId; input.binding = defectAnalysisBinding(initial, state);
   for (const slot of input.images) slot.whole.sourceSha256 = input.binding.sides[slot.side].frame.inspectionImageSha256;
-  const prepared = (background?buildAstraBackgroundDefectRequest:buildAstraDefectRequest)(input), raw = Buffer.from(JSON.stringify(responseFixture(prepared.evidence)));
+  const prepared = (contextLayout ? buildAstraContextBackgroundDefectRequest : background ? buildAstraBackgroundDefectRequest : buildAstraDefectRequest)(input);
+  const output = outputFixture(prepared.evidence);
+  if (contextLayout) output.findings[0].localContour = [{ x: 40, y: 40 }, { x: 50, y: 40 }, { x: 50, y: 52 }, { x: 40, y: 52 }];
+  const raw = Buffer.from(JSON.stringify(responseFixture(prepared.evidence, output)));
   const parsed = parseAstraResponse(raw, prepared.evidence), source = { cardId: f.cardId, sourceHash: prepared.evidence.sourceBindingSha256 };
   const responseRef = await f.artifacts.write({ version: 1, analysisId: f.analysisId, requestHash: prepared.requestHash,
     sha256: digest(raw), base64: raw.toString('base64') }, { ...source, kind: 'DEFECT_RESPONSE' });
@@ -183,6 +188,74 @@ async function savedAnalysisFixture({ background=false, receiptKind='RESPONSE', 
     memoryEnabled: true, provider, receiptClient: tx });
   return { ...f, assistance, prepared, parsed, row, receipt, acceptance, calls, refusals };
 }
+
+test('legacy V1/V2 and context V2 saved suggestions remain reviewable without new images, memory or provider dispatch', async () => {
+  for (const options of [{}, { background: true }, { contextLayout: true }]) {
+    const f = await savedAnalysisFixture(options), before = clone(f.row);
+    const status = await f.assistance.status(f.staff, f.cardId, f.analysisId);
+    assert.equal(status.astra.status, 'READY');
+    assert.deepEqual(status.astra.proposals, f.parsed.result.proposals);
+    const resolved = await f.assistance.resolveProposal({ staff: f.staff, card: f.card(), analysisId: f.analysisId,
+      proposalId: f.parsed.result.proposals[0].id });
+    assert.deepEqual(resolved.proposal, f.parsed.result.proposals[0]);
+    // Replaying the original completed action performs only the saved read path.
+    const state = await f.state();
+    await f.assistance.analyze(f.staff, f.cardId, { actionId: f.analysisId,
+      base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) });
+    assert.deepEqual(f.row, before); assert.deepEqual(f.calls, { provider: 0, images: 0 });
+  }
+});
+
+test('a new explicit connected analysis selects context image effects and stores exact context V2 request before provider work', async () => {
+  const f = await fixture(), state = await f.state(), before = f.card();
+  let imageCalls = 0, pendingRun;
+  const stop = new Error('fixture stops at the database insert boundary');
+  const tx = {
+    async $queryRawUnsafe(sql) {
+      if (sql.startsWith('WITH latest_action')) return [{ generation: 0, confirmation_hash: digest('empty'), pending: 0, selected: [] }];
+      if (sql.includes('FROM atlas_manual.card')) return [{ id: f.cardId, owner_id: f.staff.id, editors: [], readers: [], approvers: [],
+        revision: before.revision, content: canonical(before.draft), content_hash: before.contentHash }];
+      if (sql.includes('FROM atlas_defect_analysis.')) return [];
+      throw new Error(`Unexpected fixture read: ${sql}`);
+    },
+    async $executeRawUnsafe(sql, ...args) {
+      assert(sql.startsWith('INSERT INTO atlas_defect_analysis.run'));
+      pendingRun = { requestHash: args[6], requestRef: JSON.parse(args[7]), evidence: JSON.parse(args[8]), evidenceHash: args[9] };
+      throw stop;
+    },
+  };
+  const principal = { id: f.staff.id, role: 'REVIEWER' };
+  const boundary = { transaction: async (staff, work) => {
+    assert.equal(staff, f.staff);
+    return work({ tx, principal, now: new Date(), refresh: async () => ({ principal, now: new Date() }) });
+  } };
+  const assistance = createDefectAssistance({ boundary, intakeRepository: { assertCurrentPair: async () => {} },
+    workflow: f.workflow, artifacts: f.artifacts, memoryEnabled: true, receiptClient: tx,
+    provider: { bindingHash: digest('connected synthetic provider'), dispatch: async () => assert.fail('Cannot dispatch before preparation commits') },
+    imageEffects: {
+      async currentImages(staff, card, binding, layout) {
+        imageCalls++; assert.equal(staff, f.staff); assert.equal(card.cardId, f.cardId);
+        assert.equal(layout, INSPECTION_CONTEXT_CROP_LAYOUT);
+        const input = contextInputFixture();
+        for (const slot of input.images) slot.whole.sourceSha256 = binding.sides[slot.side].frame.inspectionImageSha256;
+        return input.images;
+      },
+      async lessonImages(knowledge) { assert.equal(knowledge.status, 'EMPTY_REVIEWED_BANK'); return []; },
+    } });
+  const actionId = randomUUID();
+  await assert.rejects(assistance.analyze(f.staff, f.cardId, { actionId,
+    base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) }), error => error === stop);
+  assert.equal(imageCalls, 1); assert.equal(pendingRun.evidence.cropLayoutVersion, INSPECTION_CONTEXT_CROP_LAYOUT);
+  validateRequestEvidence(pendingRun.evidence);
+  const stored = await readAnalysisRequest(pendingRun.requestRef, { cardId: f.cardId,
+    sourceHash: pendingRun.evidence.sourceBindingSha256 }, f.artifacts);
+  const restored = restorePreparedRequest({ requestText: stored.bytes.toString('utf8'), requestHash: stored.manifest.requestHash,
+    evidence: stored.manifest.evidence, evidenceHash: stored.manifest.evidenceHash });
+  assert.equal(restored.evidence.analysisId, actionId);
+  assert.equal(restored.requestHash, pendingRun.requestHash);
+  assert.equal(restored.evidence.cropLayoutVersion, INSPECTION_CONTEXT_CROP_LAYOUT);
+  assert.deepEqual(f.card(), before);
+});
 
 test('identity correction invalidates proposals informed by the old design memory while preserving raw receipts', async () => {
   const f = await savedAnalysisFixture();

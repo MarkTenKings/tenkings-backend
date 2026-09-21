@@ -61,6 +61,15 @@ export function inputFixture() {
   }
   return input;
 }
+// Independent rectangles keep the legacy fixture and its golden hashes intact.
+export function contextInputFixture() {
+  const input = inputFixture();
+  input.images.forEach((slot, i) => {
+    slot.crops = [[0, 0], [611, 0], [0, 865], [611, 865]].map(([x, y], index) =>
+      ({ id: `${slot.side}:crop:${index + 1}`, x, y, ...raster(739, 993, i * 255) }));
+  });
+  return input;
+}
 export const preparedFixture = () => buildAstraDefectRequest(inputFixture());
 export function outputFixture(evidence) {
   return { sourceBindingSha256: evidence.sourceBindingSha256, knowledgeRevision: evidence.knowledge.revision,

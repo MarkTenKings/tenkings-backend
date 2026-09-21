@@ -3,7 +3,7 @@ import { geometryStatus } from '@atlas/manual-workspace/geometry-actions';
 import { defectBase } from '@atlas/manual-workspace/defect-actions';
 import { createDefectMemory, createDefectMemoryRepository } from '@atlas/defect-memory';
 import { authorizeManualCard } from '@atlas/defect-memory/repository';
-import { buildAstraBackgroundDefectRequest } from '@atlas/defect-analysis';
+import { buildAstraContextBackgroundDefectRequest, INSPECTION_CONTEXT_CROP_LAYOUT } from '@atlas/defect-analysis';
 import { createAnalysisRepository } from '@atlas/defect-analysis/repository';
 import { createAnalysisExecutor } from '@atlas/defect-analysis/executor';
 import { proposalRle } from '../../atlas-manual-workflow/src/proposal-review.mjs';
@@ -143,11 +143,11 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       const { card } = await workflow.service.authorizeEdit(staff, cardId), state = await workflow.hydrate(card);
       const binding = defectAnalysisBinding(card, state);
       requireThat(SIDES.every(side => canonical(input.base[side]) === canonical(defectBase(state.defects, side))), 409, 'DEFECT_ANALYSIS_STALE');
-      const images = await imageEffects.currentImages(staff, card, binding);
+      const images = await imageEffects.currentImages(staff, card, binding, INSPECTION_CONTEXT_CROP_LAYOUT);
       // This is a fresh database retrieval for every new request, after costly
       // image preparation. Pending reviewed publications refuse paid dispatch.
       const knowledge = await memory.retrieve(staff, { cardId, limit: 12 });
-      const prepared = buildAstraBackgroundDefectRequest({ analysisId: input.actionId, cardId, profile: state.geometry.profile,
+      const prepared = buildAstraContextBackgroundDefectRequest({ analysisId: input.actionId, cardId, profile: state.geometry.profile,
         cornerShapes: Object.fromEntries(SIDES.map(side => [side, state.defects.sides[side].cornerShape])),
         binding, images, knowledge, lessonImages: await imageEffects.lessonImages(knowledge) });
       await executor.prepareAndRun(staff, { cardId, actionId: input.actionId, prepared,

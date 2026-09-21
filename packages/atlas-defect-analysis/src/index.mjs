@@ -5,6 +5,7 @@ export { DefectAnalysisError, assertCurrentBinding, parseBinding, DEFECT_TYPES }
 export const MODEL = 'gpt-6-astra';
 export const VERSION = 'atlas-astra-defect-analysis-v1';
 export const BACKGROUND_VERSION = 'atlas-astra-defect-analysis-v2';
+export const INSPECTION_CONTEXT_CROP_LAYOUT = 'inspection-context-v1';
 // This bounds our reconciliation work, not the provider's retention guarantee.
 // Keep it separate from immutable V1 request limits.
 export const BACKGROUND_POLICY = frozen({ acceptanceTimeoutMs: 60000, getTimeoutMs: 30000,
@@ -18,9 +19,16 @@ const preparedRequests = new WeakSet();
 
 /** Four overlapping, untranslated-resolution crops cover the physical card.
  * Host supplies verified PNG bytes from exactly these rectangles. The untouched
- * native originals and the existing inspection preparation remain unchanged. */
-export function planDefectCrops(side) {
+ * native originals and the existing inspection preparation remain unchanged.
+ * An absent layout preserves legacy bytes; context requires explicit selection. */
+export function planDefectCrops(side, cropLayoutVersion) {
   check(SIDES.includes(side));
+  check(cropLayoutVersion === undefined || cropLayoutVersion === INSPECTION_CONTEXT_CROP_LAYOUT,
+    'DEFECT_ANALYSIS_CROP_LAYOUT_INVALID');
+  if (cropLayoutVersion === INSPECTION_CONTEXT_CROP_LAYOUT) {
+    return clone([[0, 0], [611, 0], [0, 865], [611, 865]].map(([x, y], i) =>
+      ({ id: `${side}:crop:${i + 1}`, x, y, width: 739, height: 993 })));
+  }
   return clone([[40, 40], [611, 40], [40, 865], [611, 865]].map(([x, y], i) =>
     ({ id: `${side}:crop:${i + 1}`, x, y, width: 699, height: 953 })));
 }
@@ -72,7 +80,12 @@ export function buildAstraDefectRequest(input) {
 export function buildAstraBackgroundDefectRequest(input) {
   return buildRequest(input, BACKGROUND_VERSION);
 }
-function buildRequest(input, version) {
+/** Only a new human-requested analysis selects this layout. Legacy builders and
+ * retained-request restoration never upgrade image evidence implicitly. */
+export function buildAstraContextBackgroundDefectRequest(input) {
+  return buildRequest(input, BACKGROUND_VERSION, INSPECTION_CONTEXT_CROP_LAYOUT);
+}
+function buildRequest(input, version, cropLayoutVersion) {
   object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages']);
   uuid(input.analysisId); uuid(input.cardId); check(['SPORTS', 'POKEMON'].includes(input.profile));
   object(input.cornerShapes, SIDES); check(SIDES.every(side => ['SQUARE', 'ROUNDED_3_18_MM'].includes(input.cornerShapes[side])));
@@ -89,7 +102,7 @@ function buildRequest(input, version) {
     const { sourceSha256, ...wholeRaster } = slot.whole;
     check(sourceSha256 === binding.sides[side].frame.inspectionImageSha256, 'DEFECT_ANALYSIS_IMAGE_MISMATCH');
     const whole = image(wholeRaster, { width: WIDTH, height: HEIGHT });
-    const specs = planDefectCrops(side); check(Array.isArray(slot.crops) && slot.crops.length === specs.length);
+    const specs = planDefectCrops(side, cropLayoutVersion); check(Array.isArray(slot.crops) && slot.crops.length === specs.length);
     const current = [{ id: `${side}:whole`, crop: { x: 0, y: 0, width: WIDTH, height: HEIGHT }, ...whole }];
     for (const spec of specs) {
       const crop = slot.crops.find(x => x?.id === spec.id); object(crop, ['id', 'x', 'y', 'width', 'height', 'mime', 'sha256', 'bytes']);
@@ -123,7 +136,8 @@ function buildRequest(input, version) {
     content.push(inputText({ kind: 'HUMAN_REVIEWED_TRACE_OVERLAY', lessonId, traceSha256, ...overlay.descriptor }), inputImage(overlay));
   }
   const sourceBindingSha256 = digest(canonical({ cardId: input.cardId, profile: input.profile, cornerShapes: input.cornerShapes, binding }));
-  const evidence = { version, analysisId: input.analysisId, cardId: input.cardId, profile: input.profile,
+  const evidence = { version, ...(cropLayoutVersion === undefined ? {} : { cropLayoutVersion }),
+    analysisId: input.analysisId, cardId: input.cardId, profile: input.profile,
     cornerShapes: input.cornerShapes, binding, sourceBindingSha256, model: MODEL, reasoningEffort: 'xhigh', images, totalImageBytes: byteCount,
     knowledge: { revision: knowledge.revision, generation: knowledge.generation, sha256: knowledge.sha256,
       status: knowledge.status, lessonIds: knowledge.lessonIds, lessonImages },
@@ -145,8 +159,11 @@ export function validatePreparedRequest(prepared) {
 export function validateRequestEvidence(value) {
   const { providerBindingHash, ...evidence } = value ?? {};
   if (providerBindingHash !== undefined) sha(providerBindingHash);
-  object(evidence, ['version', 'analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'sourceBindingSha256', 'model',
+  const hasCropLayout = Object.hasOwn(evidence, 'cropLayoutVersion');
+  object(evidence, ['version', ...(hasCropLayout ? ['cropLayoutVersion'] : []), 'analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'sourceBindingSha256', 'model',
     'reasoningEffort', 'images', 'totalImageBytes', 'knowledge', 'promptSha256', 'schemaSha256', 'limits']);
+  check(!hasCropLayout || (evidence.version === BACKGROUND_VERSION && evidence.cropLayoutVersion === INSPECTION_CONTEXT_CROP_LAYOUT),
+    'DEFECT_ANALYSIS_CROP_LAYOUT_INVALID');
   check([VERSION, BACKGROUND_VERSION].includes(evidence.version) && evidence.model === MODEL && evidence.reasoningEffort === 'xhigh'
     && ['SPORTS', 'POKEMON'].includes(evidence.profile)); uuid(evidence.analysisId); uuid(evidence.cardId); parseBinding(evidence.binding);
   object(evidence.cornerShapes, SIDES); check(SIDES.every(s => ['SQUARE', 'ROUNDED_3_18_MM'].includes(evidence.cornerShapes[s])));
@@ -164,7 +181,7 @@ export function validateRequestEvidence(value) {
     object(item, ['id', 'side', 'sourceImageSha256', 'mime', 'sha256', 'width', 'height', 'byteCount', 'crop', 'cardBounds', 'coordinateSpace', 'noResampling']);
     check(SIDES.includes(item.side) && !ids.has(item.id)); ids.add(item.id); raster(item); bytes += item.byteCount;
     const spec = item.id === `${item.side}:whole` ? { x: 0, y: 0, width: WIDTH, height: HEIGHT }
-      : (() => { const found = planDefectCrops(item.side).find(x => x.id === item.id); check(found); const { id: _id, ...rect } = found; return rect; })();
+      : (() => { const found = planDefectCrops(item.side, evidence.cropLayoutVersion).find(x => x.id === item.id); check(found); const { id: _id, ...rect } = found; return rect; })();
     check(canonical(item.crop) === canonical(spec) && item.width === spec.width && item.height === spec.height
       && canonical(item.cardBounds) === canonical(CARD) && item.coordinateSpace === 'INSPECTION_LOCAL_PIXEL_CENTERS' && item.noResampling === true
       && item.sourceImageSha256 === evidence.binding.sides[item.side].frame.inspectionImageSha256);
@@ -223,7 +240,7 @@ export function restorePreparedRequest({ requestText, requestHash, evidence, evi
     generation: evidence.knowledge.generation, status: evidence.knowledge.status, pendingPublications: 0,
     lessonIds: evidence.knowledge.lessonIds, lessons, sha256: evidence.knowledge.sha256 };
   const restored = buildRequest({ analysisId: evidence.analysisId, cardId: evidence.cardId, profile: evidence.profile,
-    cornerShapes: evidence.cornerShapes, binding: evidence.binding, images, knowledge, lessonImages }, evidence.version);
+    cornerShapes: evidence.cornerShapes, binding: evidence.binding, images, knowledge, lessonImages }, evidence.version, evidence.cropLayoutVersion);
   check(restored.requestText === requestText && restored.requestHash === requestHash && restored.evidenceHash === evidenceHash,
     'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
   return restored;
@@ -283,7 +300,8 @@ export function parseDefectProposals(value, evidence) {
     const shape = canonical({ side: finding.side, canonicalContour }); check(!duplicate.has(shape), 'DEFECT_ANALYSIS_DUPLICATE_PROPOSAL'); duplicate.add(shape);
     return { id: `${evidence.analysisId}:${i + 1}`, side: finding.side, defectType: finding.defectType, canonicalContour,
       observation: finding.observation, uncertainty: finding.uncertainty, reviewStatus: 'UNREVIEWED',
-      provenance: { version: evidence.version, analysisId: evidence.analysisId, sourceBindingSha256: evidence.sourceBindingSha256,
+      provenance: { version: evidence.version, ...(evidence.cropLayoutVersion === undefined ? {} : { cropLayoutVersion: evidence.cropLayoutVersion }),
+        analysisId: evidence.analysisId, sourceBindingSha256: evidence.sourceBindingSha256,
         frame: evidence.binding.sides[finding.side].frame, imageId: image.id, imageSha256: image.sha256,
         localContour: finding.localContour, crop: image.crop, knowledgeRevision: evidence.knowledge.revision, lessonIds: finding.lessonIds } };
   });

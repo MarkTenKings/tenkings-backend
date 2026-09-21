@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fitInspectionScale, clampInspectionPan, zoomInspectionAt, focusInspectionBounds,
+import { fitInspectionScale, clampInspectionPan, zoomInspectionAt, resizeInspectionView, focusInspectionBounds,
   canonicalInspectionPoint } from '../src/inspection-viewport.mjs';
 
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≈ ${expected}`);
@@ -60,6 +60,24 @@ test('pan cannot move all image content out of view, including at maximum zoom',
   assert.deepEqual(clampInspectionPan({ x: 1e6, y: -1e6 }, 2, viewport), { x: 337.5, y: -464.5 });
   assert.deepEqual(clampInspectionPan({ x: 1e6, y: -1e6 }, 16, viewport), { x: 5062.5, y: -6967.5 });
   assert.deepEqual(clampInspectionPan({ x: -15, y: 30 }, 2, viewport), { x: -15, y: 30 });
+});
+
+test('expansion and return preserve the focused image center and zoom', () => {
+  const view = { zoom: 10, pan: { x: 1200, y: -900 } };
+  const expanded = { width: 1382, height: 1890 };
+  const resized = resizeInspectionView(view, viewport, expanded);
+  assert.deepEqual(resized, { zoom: 10, pan: { x: 2400, y: -1800 } });
+  // Center image coordinates: native center minus screen pan / rendered scale.
+  near(675 - view.pan.x / 5, 675 - resized.pan.x / 10);
+  near(929 - view.pan.y / 5, 929 - resized.pan.y / 10);
+  assert.deepEqual(resizeInspectionView(resized, expanded, viewport), view);
+});
+
+test('resize retains Fit and clamps only when the new viewport reaches an image edge', () => {
+  const fit = resizeInspectionView({ zoom: 1, pan: { x: 0, y: 0 } }, viewport, { width: 390, height: 844 });
+  near(fit.pan.x, 0); near(fit.pan.y, 0); assert.equal(fit.zoom, 1);
+  const edge = resizeInspectionView({ zoom: 2, pan: { x: 337.5, y: 0 } }, viewport, { width: 2000, height: 961 });
+  near(edge.pan.x, 0); near(edge.pan.y, 0); assert.equal(edge.zoom, 2);
 });
 
 test('finding focus centers a small interior region and retains complete edge/full-card regions', () => {

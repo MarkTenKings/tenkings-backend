@@ -7,6 +7,7 @@ import { createManualArtifactStore } from '@atlas/manual-service/artifacts';
 import { digest } from '@atlas/manual-service/contract';
 import { encodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
 import { reviewedCropTransform } from '@atlas/defect-memory/lessons';
+import { INSPECTION_CONTEXT_CROP_LAYOUT } from '@atlas/defect-analysis';
 
 async function setup() {
   const card = { cardId: randomUUID() }, objects = new Map();
@@ -43,6 +44,37 @@ test('actual PNG crops preserve every source pixel and separately bind prepared 
   }
   const wrong = structuredClone(binding); wrong.sides.FRONT.frame.inspectionImageSha256 = '0'.repeat(64);
   await assert.rejects(f.effects.currentImages({}, f.card, wrong), { code: 'DEFECT_IMAGE_STALE' });
+});
+test('explicit context crops preserve every independently expected source pixel, including all outside-edge strips', async () => {
+  const f = await setup(), binding = { sides: { FRONT: { frame: f.frame }, BACK: { frame: f.frame } } };
+  const originalHash = digest(f.prepared.inspection);
+  const legacy = await f.effects.currentImages({}, f.card, binding);
+  const context = await f.effects.currentImages({}, f.card, binding, INSPECTION_CONTEXT_CROP_LAYOUT);
+  for (const [sideIndex, slot] of context.entries()) {
+    assert.deepEqual(slot.whole, legacy[sideIndex].whole, 'The same complete whole-side PNG is retained');
+    assert.equal(slot.whole.sourceSha256, originalHash);
+    assert.equal(slot.crops.length, 4);
+    for (const [index, [x, y]] of [[0, 0], [611, 0], [0, 865], [611, 865]].entries()) {
+      const crop = slot.crops[index];
+      assert.deepEqual({ id: crop.id, x: crop.x, y: crop.y, width: crop.width, height: crop.height },
+        { id: `${slot.side}:crop:${index + 1}`, x, y, width: 739, height: 993 });
+      const expected = Buffer.alloc(739 * 993 * 3);
+      for (let dy = 0; dy < 993; dy++) for (let dx = 0; dx < 739; dx++) {
+        const offset = (dy * 739 + dx) * 3;
+        expected[offset] = (x + dx) % 251;
+        expected[offset + 1] = (y + dy) % 253;
+        expected[offset + 2] = (x + dx + y + dy) % 249;
+      }
+      assert.deepEqual(await sharp(crop.bytes).raw().toBuffer(), expected,
+        'Every crop pixel, including all 40px context strips, comes from the original pattern at its independent origin');
+      assert.equal(digest(crop.bytes), crop.sha256);
+    }
+  }
+  assert.equal(digest(f.prepared.inspection), originalHash);
+});
+test('unsupported image layout refuses before reading any source or storing any artifact', async () => {
+  const effects = createDefectImageEffects({ readPrepared: async () => { assert.fail('Must validate before source reads'); }, artifacts: {} });
+  await assert.rejects(effects.currentImages({}, {}, {}, 'unsupported-layout'), { code: 'DEFECT_ANALYSIS_CROP_LAYOUT_INVALID' });
 });
 test('reviewed crop and exact disconnected mask survive immutable storage; overlay marks only selected pixels', async () => {
   const f = await setup(), mask = new Uint8Array(1270 * 1778);

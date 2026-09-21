@@ -44,7 +44,11 @@ function harness(initial = {}) {
       slots[i] = { deps, cleanup: old?.cleanup }; effects.push(() => { slots[i].cleanup?.(); slots[i].cleanup = action(); }); } },
   };
   const exports = {};
-  vm.runInNewContext(compiled, { exports, crypto: { randomUUID }, require(name) {
+  vm.runInNewContext(compiled, { exports, crypto: { randomUUID }, ResizeObserver: class {
+    constructor(callback) { this.callback = callback; }
+    observe(element) { this.element = element; element.notifyResize = this.callback; }
+    disconnect() { delete this.element.notifyResize; }
+  }, require(name) {
     if (name === 'react') return react;
     if (name === '@atlas/grading-core/trace-codec') return traceCodec;
     if (name === '@atlas/grading-core/trace-bitmap-wire') return traceWire;
@@ -63,7 +67,7 @@ function harness(initial = {}) {
       current = instances.get(identity); cursor = 0; return expand(node.type(node.props), `${identity}.out`);
     }
     if (node.props?.ref && ['ad-plane', 'ad-viewport'].some(name => node.props.className?.split(' ').includes(name))) {
-      if (!elements.has(path)) elements.set(path, { listeners: new Map(), focus() {}, scrollIntoView() {},
+      if (!elements.has(path)) elements.set(path, { clientWidth: 400, clientHeight: 560, listeners: new Map(), focus() {}, scrollIntoView() {},
         addEventListener(name, handler) { this.listeners.set(name, handler); },
         removeEventListener(name, handler) { if (this.listeners.get(name) === handler) this.listeners.delete(name); },
         setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture() { return true; } });
@@ -93,6 +97,8 @@ function harness(initial = {}) {
     const input = all(owner, node => node.type === 'input')[0]; assert.equal(Boolean(input.props.disabled), false); input.props.onChange({ target: { checked } }); f.render(); };
   f.key = (value, side = 'Front', event = 'onKeyDown') => { const node = f.control(`${side} image inspection`), target = node.props.ref.current;
     node.props[event]({ key: value, target, currentTarget: target, preventDefault() {} }); f.render(); };
+  f.resize = (side, width, height) => { const element = f.control(`${side} image inspection`).props.ref.current;
+    element.clientWidth = width; element.clientHeight = height; element.notifyResize(); f.render(); };
   f.has = label => text(tree).includes(label);
   f.ready = () => { f.nodes(node => node.type === 'img' && node.props.onLoad).forEach(node => node.props.onLoad({ currentTarget: { naturalWidth: 1350, naturalHeight: 1858 } })); f.render(); };
   f.draw = (side = 'Front') => { const plane = f.nodes(node => node.props?.className === 'ad-plane', side)[0];
@@ -331,6 +337,39 @@ test('focus, zoom, overlay visibility and expanded side switching preserve both 
     assert.equal(pixels[660 * 1270 + 660], 1);
     assert.equal(pixels[365 * 1270 + 265], 0, 'focusing never substitutes Astra contour pixels');
   }
+});
+
+test('actual resize effects retain the focused target through expansion, hidden sides and return', async () => {
+  const state = workspace(false), f = harness({ workspace: state, astra: astraFor(state) }); f.ready();
+  await f.clickControl('Inspect Front suggestion 1');
+  const beforeZoom = f.control('Front defect zoom').props.value;
+  const centered = () => {
+    const style = f.nodes(node => node.props.className === 'ad-plane', 'Front')[0].props.style;
+    const [, px, py] = style.transform.match(/translate\(([-\d.]+)px,([-\d.]+)px\)/);
+    const x = Number(px) + style.width * ((40 + .21 * 1270) / 1350 - .5);
+    const y = Number(py) + style.height * ((40 + .21 * 1778) / 1858 - .5);
+    assert.ok(Math.abs(x) < .00001 && Math.abs(y) < .00001, `focused target offset ${x},${y}`);
+    assert.doesNotMatch(style.transform, /scale\(/, 'SVG non-scaling strokes have no scaled CSS ancestor');
+  };
+  centered(); await f.clickControl('Expand Front inspection'); f.resize('Front', 1000, 780); centered();
+  assert.equal(f.control('Front defect zoom').props.value, beforeZoom);
+  await f.click('Inspect Back'); f.resize('Front', 0, 0); centered();
+  await f.click('Inspect Front'); f.resize('Front', 1000, 780); centered();
+  await f.clickControl('Return to paired inspection', 'Front'); f.resize('Front', 400, 560); centered();
+  assert.equal(f.calls.length, 0);
+});
+
+test('resize cancels only the current pointer gesture and retains completed unsaved trace pixels', async () => {
+  const f = harness(); f.ready(); await f.click('Add finding', 'Front'); f.draw();
+  const plane = () => f.nodes(node => node.props.className === 'ad-plane', 'Front')[0];
+  plane().props.onPointerDown({ clientX: 850, clientY: 850, button: 0, pointerId: 1, preventDefault() {}, currentTarget: plane().props.ref.current });
+  plane().props.onPointerMove({ clientX: 880, clientY: 880 }); f.render();
+  f.resize('Front', 1000, 780); plane().props.onPointerUp(); f.render();
+  await f.click('Save trace', 'Front');
+  const pixels = traceWire.decodeSpeedsterTraceBitmapWireV1(f.calls[0].request.action.trace.traceWire);
+  assert.equal(pixels[660 * 1270 + 660], 1);
+  assert.equal(pixels[860 * 1270 + 860], 0, 'unfinished stroke across a layout change is not invented');
+  assert.equal(f.calls.length, 1);
 });
 
 test('keyboard, wheel, temporary overlay hiding and image-only magnifier are display-only', async () => {

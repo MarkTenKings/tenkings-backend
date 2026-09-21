@@ -8,7 +8,7 @@ import { defectBase, defectStatus } from './defect-actions.mjs';
 import { useVerifiedImage } from './verified-image.mjs';
 import { astraReviewState, proposalFrameMatches, reviewedMemoryState, validProposalContour } from './astra-review-ui.mjs';
 import { INSPECTION_SIZE, MAX_INSPECTION_ZOOM, fitInspectionScale, clampInspectionPan, zoomInspectionAt,
-  focusInspectionBounds, canonicalInspectionPoint } from './inspection-viewport.mjs';
+  resizeInspectionView, focusInspectionBounds, canonicalInspectionPoint } from './inspection-viewport.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
 const GRID = { width: 1270, height: 1778 };
@@ -89,6 +89,7 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
   const [view, setView] = useState({ zoom: 1, pan: { x: 0, y: 0 } }), [showMasks, setShowMasks] = useState(true);
   const { zoom, pan } = view;
   const [viewportSize, setViewportSize] = useState({ width: 400, height: 560 });
+  const viewportSizeRef = useRef(viewportSize);
   const [magnifier, setMagnifier] = useState(false), [lens, setLens] = useState(null);
   const [panMode, setPanMode] = useState(false), [spacePan, setSpacePan] = useState(false), [hideOverlays, setHideOverlays] = useState(false), [peek, setPeek] = useState(false);
   const [inspecting, setInspecting] = useState('');
@@ -119,8 +120,13 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
     const resize = () => {
       if (!element.clientWidth || !element.clientHeight) return;
       const next = { width: element.clientWidth, height: element.clientHeight };
-      setViewportSize(previous => previous.width === next.width && previous.height === next.height ? previous : next);
-      setView(previous => ({ ...previous, pan: clampInspectionPan(previous.pan, previous.zoom, next) })); setLens(null);
+      const previousSize = viewportSizeRef.current;
+      if (previousSize.width === next.width && previousSize.height === next.height) return;
+      viewportSizeRef.current = next;
+      setViewportSize(next);
+      setView(previous => resizeInspectionView(previous, previousSize, next)); setLens(null);
+      // A resize ends only an in-flight gesture; completed unsaved trace pixels remain.
+      pointerPan.current = null; strokeRef.current = null; setStroke([]);
     };
     resize(); const observer = new ResizeObserver(resize); observer.observe(element);
     return () => observer.disconnect();
@@ -273,7 +279,7 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
       onPointerMove={event => { if (event.target === event.currentTarget) pointerMove(event); }} onPointerUp={pointerUp} onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer}
       onPointerLeave={() => setLens(null)} onBlur={() => { setSpacePan(false); setPeek(false); }}
       onKeyDown={event => {
-        if (event.target !== event.currentTarget || strokeRef.current) return;
+        if (event.target !== event.currentTarget || strokeRef.current || pointerPan.current) return;
         if (event.key === ' ') { event.preventDefault(); setSpacePan(true); }
         else if (event.key.toLowerCase() === 'h') { event.preventDefault(); setPeek(true); }
         else if (!viewingDisabled) {
@@ -283,8 +289,9 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
           else if (event.key === 'Home' || event.key === '0') { event.preventDefault(); fit(); }
         }
       }} onKeyUp={event => { if (event.key === ' ') setSpacePan(false); if (event.key.toLowerCase() === 'h') setPeek(false); }}>
-      {supplied ? <div ref={plane} className="ad-plane" style={{ width: INSPECTION_SIZE.width * scale, height: INSPECTION_SIZE.height * scale,
-        transform: `translate(-50%,-50%) translate(${pan.x}px,${pan.y}px) scale(${zoom})` }}
+      {supplied ? <div ref={plane} className="ad-plane" style={{ width: INSPECTION_SIZE.width * scale * zoom, height: INSPECTION_SIZE.height * scale * zoom,
+        // Size the SVG viewport with the image; an ancestor CSS scale also scales non-scaling strokes.
+        transform: `translate(-50%,-50%) translate(${pan.x}px,${pan.y}px)` }}
         onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={cancelPointer}>
         {verified.url && <img key={binding} src={verified.url} alt={`${name(side)} inspection image`} draggable="false"
           onLoad={event => setLoaded(event.currentTarget.naturalWidth === 1350 && event.currentTarget.naturalHeight === 1858 ? binding : null)}

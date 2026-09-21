@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { createManualArtifactStore } from '../../atlas-manual-service/src/artifacts.mjs';
 import { createAnalysisExecutor, analysisActionHash } from '../src/executor.mjs';
 import { createAstraDefectProvider, RESPONSE_ENDPOINT } from '../src/provider.mjs';
-import { buildAstraDefectRequest, buildAstraBackgroundDefectRequest, restorePreparedRequest, parseAstraResponse,
-  VERSION, BACKGROUND_VERSION, BACKGROUND_POLICY, MODEL } from '../src/index.mjs';
+import { buildAstraDefectRequest, buildAstraBackgroundDefectRequest, buildAstraContextBackgroundDefectRequest, restorePreparedRequest, parseAstraResponse,
+  VERSION, BACKGROUND_VERSION, BACKGROUND_POLICY, MODEL, INSPECTION_CONTEXT_CROP_LAYOUT } from '../src/index.mjs';
+import { parseAcceptance } from '../src/background-persistence.mjs';
 import { digest, canonical } from '../src/contract.mjs';
-import { inputFixture, responseFixture, id, hash } from './fixtures.mjs';
+import { inputFixture, contextInputFixture, responseFixture, outputFixture, id, hash } from './fixtures.mjs';
 
 const apiKey = 'sk-background_fixture_no_live_secret_123456';
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status,
@@ -97,6 +98,36 @@ test('V2 changes only background mode and evidence version; V1 and V2 restore ex
   }
   const wrong = { ...current, requestText: old.requestText, requestHash: old.requestHash };
   assert.throws(() => restorePreparedRequest(wrong), { code: 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID' });
+});
+
+test('context V2 resumes saved preparation, preserves provider custody, and collects exact proposals using GET after restart', async () => {
+  const prepared = buildAstraContextBackgroundDefectRequest(contextInputFixture()), output = outputFixture(prepared.evidence);
+  output.findings[0].localContour = [{ x: 40, y: 40 }, { x: 50, y: 40 }, { x: 50, y: 52 }, { x: 40, y: 52 }];
+  const c = context(async (_url, options) => json(options.method === 'POST' ? ack() : responseFixture(prepared.evidence, output)));
+  const claim = c.repository.claim;
+  c.repository.claim = async () => { throw new Error('fixture stop before durable claim'); };
+  await assert.rejects(run(c, prepared), /fixture stop before durable claim/);
+  assert.equal(c.activity.calls.length, 0);
+  const saved = structuredClone(c.rows.get(prepared.evidence.analysisId));
+  assert.equal(saved.requestEvidence.cropLayoutVersion, INSPECTION_CONTEXT_CROP_LAYOUT);
+  c.repository.claim = claim;
+  const restarted = c.makeExecutor(c.makeProvider());
+  await restarted.resume(c.staff, { cardId: prepared.evidence.cardId, analysisId: prepared.evidence.analysisId });
+  assert.equal(c.activity.calls.length, 1);
+  assert.equal(c.activity.calls[0].body, prepared.requestText);
+  assert.deepEqual(c.rows.get(prepared.evidence.analysisId).requestEvidence, saved.requestEvidence);
+  const acceptance = c.accepted.get(prepared.evidence.analysisId);
+  assert.deepEqual(parseAcceptance({ analysis_id: saved.analysisId, kind: 'ACCEPTED', request_hash: saved.requestHash,
+    provider_binding_hash: c.makeProvider().bindingHash, response_id: acceptance.responseId,
+    evidence: canonical(acceptance), evidence_hash: digest(canonical(acceptance)) }, saved), acceptance);
+  assert.equal((await restarted.pending()).items.length, 1);
+  assert.equal((await restarted.reconcile({ analysisId: saved.analysisId })).state, 'SETTLED');
+  const read = await restarted.readResult(c.staff, { cardId: saved.cardId, analysisId: saved.analysisId });
+  assert.deepEqual(read.result, parseAstraResponse(Buffer.from(JSON.stringify(responseFixture(prepared.evidence, output))), prepared.evidence).result);
+  assert.equal(read.result.proposals[0].provenance.cropLayoutVersion, INSPECTION_CONTEXT_CROP_LAYOUT);
+  assert.deepEqual(read.result.proposals[0].canonicalContour[0], { x: 0, y: 0 });
+  assert.equal((await restarted.reconcile({ analysisId: saved.analysisId })).state, 'SKIPPED');
+  assert.deepEqual(c.activity.calls.map(call => call.method), ['POST', 'GET']);
 });
 
 test('acceptance returns without ACK object writes; restart collects after 180 seconds and expired staff session with exactly one POST', async t => {

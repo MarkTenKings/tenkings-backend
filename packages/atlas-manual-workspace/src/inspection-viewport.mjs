@@ -21,6 +21,12 @@ export function zoomInspectionAt(view, requestedZoom, anchor, viewport) {
   return { zoom, pan: clampInspectionPan({ x: x - (x - view.pan.x) * ratio, y: y - (y - view.pan.y) * ratio }, zoom, viewport) };
 }
 
+/** Keep the same image point at the viewport center when its fitted size changes. */
+export function resizeInspectionView(view, previousViewport, nextViewport) {
+  const ratio = fitInspectionScale(nextViewport) / fitInspectionScale(previousViewport);
+  return { ...view, pan: clampInspectionPan({ x: view.pan.x * ratio, y: view.pan.y * ratio }, view.zoom, nextViewport) };
+}
+
 /** Normalized canonical bounds, including edge findings, focus within the full inspection image. */
 export function focusInspectionBounds(bounds, viewport) {
   const scale = fitInspectionScale(viewport);

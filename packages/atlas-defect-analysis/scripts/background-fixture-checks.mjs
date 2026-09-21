@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '../src/contract.mjs';
-import { artifactRef, hash } from '../test/fixtures.mjs';
+import { artifactRef, contextInputFixture, hash } from '../test/fixtures.mjs';
+import { buildAstraContextBackgroundDefectRequest, restorePreparedRequest, validateRequestEvidence, INSPECTION_CONTEXT_CROP_LAYOUT } from '../src/index.mjs';
 
 // Called only inside the existing owned native PostgreSQL fixture; all rows and
 // provider responses are synthetic. No credentials, live URL or inference.
@@ -64,6 +65,35 @@ export async function runBackgroundFixtureChecks({ fixture, connection, reviewer
   await assert.rejects(receiptClient.$queryRawUnsafe('SELECT * FROM atlas_defect_analysis.run'), /permission denied/);
   await assert.rejects(receiptClient.$queryRawUnsafe("INSERT INTO atlas_defect_analysis.provider_event DEFAULT VALUES"), /permission denied/);
   checks.push('immutable ACK artifact and terminal ID binding; accounting-only capability cannot inspect arbitrary runs or edit events');
+
+  // Exercise the exact complete new evidence through unchanged migration42 and
+  // the same restricted SQL capabilities, retaining the legacy cases above.
+  const contextInput = contextInputFixture();
+  contextInput.analysisId = randomUUID(); contextInput.cardId = cardId; contextInput.binding = input.binding;
+  const contextPrepared = buildAstraContextBackgroundDefectRequest(contextInput);
+  const contextRun = fresh({ analysisId: contextInput.analysisId, actionId: contextInput.analysisId,
+    requestHash: contextPrepared.requestHash, requestEvidence: { ...contextPrepared.evidence, providerBindingHash: binding } });
+  await repository.prepare(reviewer.staff, contextRun);
+  const contextSaved = await repository.find(reviewer.staff, { cardId, analysisId: contextRun.analysisId });
+  assert.deepEqual(validateRequestEvidence(contextSaved.requestEvidence), contextRun.requestEvidence);
+  assert.equal(contextSaved.requestEvidence.cropLayoutVersion, INSPECTION_CONTEXT_CROP_LAYOUT);
+  const { providerBindingHash: _provider, ...retainedEvidence } = contextSaved.requestEvidence;
+  assert.equal(restorePreparedRequest({ ...contextPrepared, evidence: retainedEvidence,
+    evidenceHash: digest(canonical(retainedEvidence)) }).requestText, contextPrepared.requestText);
+  const { cropLayoutVersion: _layout, ...strippedEvidence } = contextSaved.requestEvidence;
+  await assert.rejects(fixture.admin.$executeRawUnsafe(`UPDATE atlas_defect_analysis.run
+    SET request_evidence=$2,evidence_hash=$3,state='DISPATCHED',dispatched_at=clock_timestamp() WHERE id=$1::uuid`,
+  contextRun.analysisId, canonical(strippedEvidence), digest(canonical(strippedEvidence))), /immutable evidence/);
+  await repository.claim(reviewer.staff, { cardId, analysisId: contextRun.analysisId, requestHash: contextRun.requestHash });
+  const contextAck = acceptance(contextRun); await repository.appendAcceptance(contextAck);
+  const contextPending = await repository.findAccepted({ analysisId: contextRun.analysisId, providerBindingHash: binding });
+  assert.deepEqual(contextPending.run.requestEvidence, contextSaved.requestEvidence);
+  assert.deepEqual(contextPending.acceptance, contextAck.evidence);
+  assert.deepEqual((await repository.listAcceptedPending({ providerBindingHash: binding })).items.map(x => x.run.analysisId), [contextRun.analysisId]);
+  await repository.recordReply(terminal(contextRun, contextAck.evidence.responseId));
+  assert.equal(await repository.findAccepted({ analysisId: contextRun.analysisId, providerBindingHash: binding }), null);
+  assert.deepEqual((await connection.repository.load(reviewer.staff, cardId)).card, originalCard);
+  checks.push('complete context-layout V2 evidence restores exactly, remains immutable and gains background custody under unchanged migration42');
 
   const expires = fresh(); await repository.prepare(reviewer.staff, expires);
   await repository.claim(reviewer.staff, { cardId, analysisId: expires.analysisId, requestHash: expires.requestHash });

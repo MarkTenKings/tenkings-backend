@@ -30,13 +30,14 @@ export function createDefectImageEffects({ readPrepared, artifacts, limited = wo
     return { ref: await artifacts.write(content, { cardId, kind, sourceHash }), sourceHash };
   }
   return Object.freeze({
-    currentImages: (staff, card, binding) => limited(async () => {
+    currentImages: (staff, card, binding, cropLayoutVersion) => limited(async () => {
+      const layouts = Object.fromEntries(SIDES.map(side => [side, planDefectCrops(side, cropLayoutVersion)]));
       const result = [];
       for (const side of SIDES) {
         const sourceSha256 = binding.sides[side].frame.inspectionImageSha256;
         const source = await decode(staff, card, side, 'inspection', sourceSha256);
         const whole = { ...await png(source), sourceSha256 }, crops = [];
-        for (const rectangle of planDefectCrops(side)) crops.push({ ...rectangle, ...await png(source, rectangle) });
+        for (const rectangle of layouts[side]) crops.push({ ...rectangle, ...await png(source, rectangle) });
         result.push({ side, whole, crops });
       }
       return result;
