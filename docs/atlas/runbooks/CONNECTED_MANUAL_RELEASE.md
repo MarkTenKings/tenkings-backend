@@ -1,53 +1,93 @@
 # Connected manual release
 
-Updated September 20 Pacific / September 21 UTC, 2026. The manual release's
-database, restricted login, private service, ingress and staff controls are now
-activated. Public promotion and readback passed: all four public aliases and the
-production target select the new deployment, with the www-to-apex HTTP308 redirect preserved.
-The ordinary staff sign-in page renders at `https://atlasgrading.com/admin`;
-unauthenticated public/staff/customer routes and all32 observed assets passed.
-Owner login, native Front/Back intake, funded identification and paired geometry now pass on the owner’s Charmander test. First-pass Astra defect analysis reached the foreground provider timeout without findings; its background collection repair is still local and not deployed. The dedicated
-Vercel staff app remains behind the public `/admin` gateway; native work runs in
-the separate private service. Old operator history and private routes are retained.
+Updated September20 Pacific / September21 UTC, 2026. The combined identification
+retry and background Astra release is live after native qualification and its
+production database, private runtime and control cutover. Public promotion was
+sent once; final readback confirms all four aliases and the production target
+select the new public deployment/sourceada00815, with www308 and project settings
+preserved. Owner login, native Front/Back
+intake, funded identification and paired geometry were observed on the preceding
+release. Successful new background Astra findings and their quality remain real
+owner acceptance after this cutover.
 
-Current application source `30dbea77c484e61de56da522d67a841cb9df25ee` produced
-image `sha256:50ffd1e6ab8a0967a7dbbb214788a9b134ae20625aac9ba9a85cf5967635b2f4`,
-555-file manifest `decf72799a6b479ac29dbd8f0a6cba2a635da3f1728bc3d98dbb6fab905b59b3`.
-Native/source/boundary checks,379 package tests,42 actual Next15.5.25 staff/manual
-tests, four disposable PostgreSQL validators and all14 required CI jobs pass.
-See the [current qualification](../audits/2026-09-17/native-release-qualification.md)
-and [concrete execution plan](../audits/2026-09-17/release-execution-plan.md).
-Actual application storage qualification passes with complete-byte SHA256 checks
-before decode/adoption; provider-native checksum refusal remains unqualified.
-Five staff migrations are applied and the ledger has 40 successful entries; the
-public ledger is unchanged. The restricted manual role passed actual TLS login
-and complete privilege checks. Staff deployment
-`dpl_D2d5usjWgiRMxJ3yLhY3XU4NRoNo` at
-`atlas-grading-staff-5cnmp4jnf-ten-kings.vercel.app` and public deployment
-`dpl_8SLu6tEzN9EXhG1sVbHvcLBVrK5C` at
-`atlas-grading-public-mzh92wy4i-ten-kings.vercel.app` are actual READY builds of
-source30d. StaffControl revision16 and STAFF SMS revision14 use the new staff
-binding; six legacy controls are disabled and unrelated/customer rows are unchanged.
+Current qualified application source is
+`ada00815447477cbd835e0e762f3c5aac8bd713b`, native image
+`sha256:6f06092ff4ddcd78a1c82741c37c58cc311074ab9b80a81c91df85ae42b968b0`,
+564-file manifest
+`93e95a507f5ee429463ba39f57904741016587f164f98d0b42d2878380a9d96d`.
+Actual Linux/amd64/Node20.20.2/Next15.5.25 build, source and boundary checks,
+429 package tests and 59 staff tests passed without skips. All 14 jobs passed in
+[exact-source CI35561351830](https://github.com/MarkTenKings/tenkings-backend/actions/runs/35561351830).
+Native source and actual addon/library hashes match the prior qualified image;
+its native pixel evidence carries forward through that verified equality.
 
-The native service is running on image50ffd with no published ports. Corrected
-isolated Caddy validation passed, the exact reviewed ingress was applied while
-preserving inode282983, and all existing containers remained unchanged. The first
-validator could not execute Caddy's file-capability binary with every capability
-dropped; its failed intent remains retained. The separate successful validator
-added only NET_BIND_SERVICE in its nonroot/network-none container. Serving
-container privileges and the proposed Caddy bytes were unchanged.
+Two isolated PostgreSQL17.11 runs passed: eight connected groups, 26 retry
+assertions and 22 memory/analysis groups including six background groups. Each
+verified 95 public/42 staff migrations and both no-op replays. The full privilege
+catalog checked 2,950 columns, 14 manual tables and six nontrigger functions;
+grant replay made no change. Both temporary clusters stopped and their owned data
+was removed. This is separate from the live public ledger of 97 migrations.
+Qualification summary SHA256:
+`f6e1d15761adfbed02443eaffb9c698e28c9014756e6be836379fd5805719e7a`, retained under
+`release-readiness/runtime/retry-candidate-20260921`.
 
-Direct private TLS returned HTTP401 for an unsigned request, HTTP404 for an absent
-route and HTTP400 for an actual application proxy's signed malformed command
-before authentication or business effects.
-That proof used no human session. The owner subsequently signed in through the apex, uploaded real Front/Back photos and reached identified-card geometry review. Still required are full-resolution optical/manual grading acceptance, successful Astra findings and the remaining hosted long-response acceptance. Report approval additionally needs genuine
-reviewer certification; no certification was created by this release. Autonomous
-operation and slab finishing follow this milestone; SAM remains deferred unless
-real testing establishes a need.
+Production staff41/42 and the exact 375-byte grants passed, including second
+no-op deploy and full ACL validation, receipt
+`075304314811f11ab9ead518371278b70772db3da7f68b59d3b16b91c289f82b`.
+The prior 40 staff records, public97 ledger and original manual history are
+unchanged. The first capacity preflight refused before any mutation because it
+counted nine background processes as clients. Read-only reconciliation found
+13 client backends and nine usable client slots; a distinct reviewed executor
+corrected only that calculation before applying the same sealed SQL. Preserve
+the refused attempt and do not replay either consumed action.
+
+New container `ae758fb3fcf597f19dd79c0b0768c2896cd0674eba4e891cf80d4ab9ccd55dc4`
+started at 05:06:14 UTC on September21 with exact image6f06092f/sourceada00815,
+receipt `5e9e5bb05d73d18e4d767bf29e9d8b59e781f7b0f37cd7f0d97c177efd7c4f48`.
+The old image50ffd/source30d container remains stopped, detached and retained;
+never restart its incompatible identification writer after migration41. Caddy
+and unrelated services are unchanged. Actual signed HTTPS returned unsigned401,
+absent-route404 and signed malformed-command400 before auth/business effects,
+receipt `ccf992254f9fbcf8b8065c2a6ce17769747445969120527dcc3362da0e55a667`.
+
+READY staff `dpl_79sny3VmF6szxpSVE8Gj6ydnajDc` at
+`atlas-grading-staff-3tk29xw6f-ten-kings.vercel.app` and READY public
+`dpl_5B1MvLxJ7rzREP8SowGw8jC5LA4y` at
+`atlas-grading-public-eaa1sly2b-ten-kings.vercel.app` both use sourceada00815.
+StaffControl17 and STAFF SMS15 bind that staff deployment, source and configHash
+`f8f15504b936f697747a421783cc5abca1bfdc44aaf05c578b8ff9a2121a652f`, receipt
+`f4f523857b0e44ce312d85d41beb9f38e25d3657813e92d9042e920304cdd834`.
+All other control rows and history are unchanged. A fresh ordinary owner sign-in
+is required after the changed binding; no human session or certification was
+created by release checks. Final independent host/database readback confirmed
+exact startup without errors/restarts, staff42/full ACL and unchanged prior40/
+public ledger/all13 original manual history sets. The background lookup worker
+was observed with one idle manual connection and no new provider events, retry
+links or replacement links.
+
+Final alias/target receipt: `baf46e28b707df78308e43377df4e48727015b174bbc07bcc4cef9a04fb2bd7d`.
+Seven unauthenticated routes and all 32 actual JavaScript/CSS assets passed with
+the new public/staff deployment IDs; customer delivery is unchanged. Route
+receipt: `aec53478b637f7f1bb36124f211071bf468003b7b67642e10df633ca025d30ba`;
+asset receipt: `eb5c788cd1bb38956ad1a6ea81b6316bde383d6794913bc0c3bbba8906db4c82`.
+These are delivery checks; ordinary fresh owner sign-in and new Astra results
+remain pending.
+
+Actual application storage qualification remains valid with complete-byte SHA256
+checks before decode/adoption; provider-native checksum refusal remains
+unqualified. No new paid analysis accompanied this release. Retain the original
+foreground UNKNOWN and its uncertain accounting. The owner must explicitly
+request any linked replacement analysis; actual acknowledgement, collection,
+proposals and optical quality remain unaccepted. Hosted long-response acceptance,
+reviewed learning and separate genuine human report approval also remain open.
+Autonomous operation and slab finishing follow this milestone; SAM stays deferred
+unless real testing establishes a need.
 
 See the [current milestone record](../audits/2026-09-20/live-manual-milestone.md)
-for observed receipts and remaining acceptance. The earlier images/counts and
-preparation below are historical or reusable instructions, not actions to replay.
+for verified receipts and the dated source30d release history. The
+[September17 qualification](../audits/2026-09-17/native-release-qualification.md)
+and [initial execution plan](../audits/2026-09-17/release-execution-plan.md)
+remain historical evidence. The earlier actions below must not be replayed.
 
 ## Earlier September 12 manual-only checkpoint
 
@@ -66,11 +106,11 @@ The September12 live metadata was96 successful public/35 staff migrations, no ma
 schemas/role, and zero currently certified reviewers. Never infer activation
 from local fixture counts.
 
-## Current Astra-first build status
+## Historical September17 Astra-first build status
 
 The earlier image/hash/counts above describe the manual-only candidate. The
-September17 image at the top includes reviewed memory, Astra and recognitionV2.
-Its new source closure is sealed and qualified offline. The packages use the
+September17 source30d image included reviewed memory, Astra and recognitionV2.
+That source closure was sealed and qualified offline. The packages use the
 existing workspace dependency traversal; no new native dependency was needed.
 
 The previously approved one-key storage canary ran once: Spaces accepted an
@@ -118,15 +158,15 @@ the subsequent deployment state is recorded above.
    secrets or native CPU/old orchestration imports in the new web path. Run all
    repository-required checks on the exact PR head before any merge/release.
 4. Inventory actual DB migrations and role privileges read-only. The September17
-   disposable proof used95 public/40 staff migrations with exact no-op replays;
-   the pre-release live inventory had97 successful public/35 staff. The current
-   staff ledger has40 successful migrations after the five-file release. Two installed public
-   Inventory/catalog migrations are outside this branch; preserve them and do not
-   run public migrations as part of this five-file staff-only schema addition.
+   disposable proof used95 public/40 staff migrations; the current reliability
+   proof uses95 public/42 staff with exact no-op replays. Production now has97
+   successful public/42 staff migrations. Two installed public Inventory/catalog
+   migrations are outside this branch; preserve them and do not run public
+   migrations as part of these staff-only additions.
 
 ## Database and service configuration
 
-The candidate adds `atlas_manual`, `atlas_manual_intake` and
+The initial release added `atlas_manual`, `atlas_manual_intake` and
 `atlas_manual_connected`, reviewed memory in `atlas_manual`, and
 `atlas_defect_analysis`. No code applies these schemas at startup. Their
 reviewed immutable proposal bytes are retained at:
@@ -292,9 +332,9 @@ obtain genuine reviewer authority through the existing process rather than
 creating fixture certification to pass this check.
 
 
-## September 21 recovery candidate — not yet deployed
+## September21 reliability release — live; real-card acceptance pending
 
-The next candidate combines an explicit same-photo identification retry after a
+The qualified release combines an explicit same-photo identification retry after a
 verified saved API-credit rejection with versioned background Astra defect
 analysis. New V2 defect requests retain the existing model, xhigh reasoning,
 prompt, schema, images and `store:false`, adding `background:true`. A durable
@@ -305,26 +345,27 @@ guarantee or evidence of cancellation. No request is automatically resubmitted.
 The owner’s older foreground attempt has no response ID; only an explicit linked
 new analysis can replace that retained UNKNOWN attempt.
 
-Apply the two new additive staff migrations only after their exact native
-PostgreSQL qualification and candidate image qualification:
+The following two additive staff migrations are applied and verified after exact
+native PostgreSQL and candidate image qualification:
 
 - `20260921000000_manual_identification_retry`
 - `20260921000100_defect_analysis_background`
 
-The identification migration changes the old pair-unique conflict target. Drain
-and stop only the private ATLAS manual service before applying these migrations;
-do not let the old source30d identification writer continue afterward. Start the
-new qualified image with coordinated staff deployment/source/control bindings,
-verify staff42/no unfinished rows and a second no-op deploy, and verify the
-restricted manual role’s14 tables and6 functions. Preserve the public97-migration
-ledger, all original photos, requests and receipts, and unrelated services. If
-cutover fails after41, keep the private service stopped or roll forward a corrected
-compatible candidate; do not restore the incompatible old writer.
+The identification migration changes the old pair-unique conflict target. The
+private service was drained and stopped before the migration; the old source30d
+writer remains stopped and detached. The new image has the coordinated staff
+deployment/source/control bindings. Live staff42/no unfinished rows, the second
+no-op deploy and restricted-role14-table/six-function checks passed. The public97
+ledger, original photos, requests and receipts, and unrelated services are
+preserved. If recovery is needed after41, keep the private service stopped or
+roll forward a corrected compatible candidate; do not restore the incompatible
+old writer.
 
 The native worker starts only after its server listens and receives accepted-work
 lookup/GET reconciliation capabilities. Browser status polling updates proposals
 without confirming findings or changing a human draft. Automatic checking stops
 truthfully when collection expires; a known response ID never qualifies for the
-no-ID replacement action. Deployment is not complete until actual runtime,
-restricted-role and hosted source/control readbacks pass. A real successful
-Astra result and its inspection quality remain owner acceptance after release.
+no-ID replacement action. Runtime, restricted-role and hosted source/control
+readbacks and final public alias propagation have passed. A real
+successful new Astra result and its inspection quality remain owner acceptance
+after release. No paid analysis was started by the cutover.

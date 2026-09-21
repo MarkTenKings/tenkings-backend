@@ -35411,3 +35411,122 @@ Node20 focused browser/client/actual-JSX suites pass48/48, including five new re
 ### 2026-09-21 UTC — combined reliability source freeze
 
 Root reviewed the final gate-refusal CAS handoff and accepted collection-stop projection; no remaining concrete source blocker was found. Final combined Node20 local verification passes190/190 across the affected connected/defect-analysis packages, staff/manual runtime/client/component suites and actual defect-review JSX. git diff --check is clean. These source/fixture passes do not establish a live provider result. Freeze the combined explicit identification retry, V2 background collection and UI recovery into one commit, push this task branch for all required CI, then package its exact committed dependency closure for native qualification. No paid analysis is authorized by this verification, and source30d/image50ffd remains live.
+
+
+### 2026-09-21 UTC — planned exact ada00815 native candidate qualification
+
+Combined reliability source ada00815447477cbd835e0e762f3c5aac8bd713b is committed and pushed. The exact committed564-file closure is sealed as93e95a507f5ee429463ba39f57904741016587f164f98d0b42d2878380a9d96d, plan12ae882cd137b0111721f30383fc4b062599c4bf89b6c1ee620622bc3c4cbddb. Root reviewed all32 source deltas and unchanged native/dependency protection, builderc89cc6a0 and runner6ae38b30. Authorize build_runtime to transfer this exact7MB context to a fresh owned build directory, execute one bounded network-none1CPU/3GiB candidate from exact50ffd, then run existing immutable-image source/boundary/package/staff checks with a fresh label. Preserve every serving container and captured failures; no new provider inference, private-service restart, migration or hosted deployment is included. The separately prepared native PostgreSQL42/ACL runner still requires its own exact root review and dispatch.
+
+
+### 2026-09-21 UTC — native candidate built; planned contained PostgreSQL42 qualification
+
+The bounded offline build completed04:35:53UTC and produced immutable image6f06092ff4ddcd78a1c82741c37c58cc311074ab9b80a81c91df85ae42b968b0. Its564 committed source files match93e95a50; actual Next build/boundary, inherited native binary/library bytes, runtime configuration and base-layer ancestry pass. All23 pre-existing containers were unchanged. Exact-image package/staff qualification is running; this is not production activation.
+
+Root reviewed the distinct native PG context planb91c10f84596f1c33440e5469b9d9a4176e43c6433416155951a554d44152ec3,669-file fixture manifestc4b99ba051a2e02dfc9d9b3b83a4328ac9221bb44c32df12d4f7ce49f6351452, overlay7c36a51c and runnerf521bb69. Authorize only after the running exact-image qualifier finishes: one fresh network-none1CPU/3GiB fixture-only overlay from exact0f19, actual committed fixture Git snapshot and generated Prisma/core/workspace, then two sequential read-only-root owned PG17 runs. The full ACL script covers connected behavior and identification retry; the memory validator covers background persistence. Require42 staff/95 fixture public chains, no-op replays,14-table/six-function authority, history/race checks and stopped/absent owned database data. No production URL, model request, serving restart or production migration. Existing containers and earlier qualification receipts remain unchanged; failures are retained for diagnosis instead of replay.
+
+
+### 2026-09-21 UTC — exact reliability CI passed
+
+GitHub CI35561351830 completed successfully for exact sourceada00815447477cbd835e0e762f3c5aac8bd713b; all14 required jobs are successful, independently checked from the run/job API. Receipt b1f2e82e2d31acf0439bc67b7aa8a0010d13e9e9eec46e8261abceb0c404bddc is retained at runtime/retry-candidate-20260921/ada00815-ci-result.json. Native image6f06092f source/boundary/package/staff groups also passed; detailed counts/readback are being collected, and the separate native PG42/ACL run has started. No live release action has occurred.
+
+
+### 2026-09-21 UTC — native runtime/database passed; planned staff source deployment
+
+Actual image6f06092f passes429/429 package tests and59/59 staff/manual tests without skips. Root independently verified all four exact-image result receipts against sourceada00815/manifest93e95a50. Combined native PG42 completed04:44:51UTC: full effective ACL checks2950 columns/14 tables/six functions, unchanged grant replay, eight connected and26 retry assertions; memory/analysis/background22 assertion groups. Each fixture applies95 public/42 staff migrations and both no-op replays; both clusters are stopped and owned data removed. All28 pre-existing container states remain unchanged. Native old50ffd remains live; production ledgers remain40staff/97public.
+
+Root now dispatches the sole new staff source upload with reviewed planc7dc35fd8045d7bfe919797cc32735f8443dc690fecb0ba0dc932829fbf5c701, exact authentic sourceada00815447477cbd835e0e762f3c5aac8bd713b/tree7f07b186, actual2528-file/168255917-byte dry manifest1334dbcd, unchanged guarded CLI59.15.1/wrapper82301d66/guarde6ccde57. A fresh eight-GET staff/public metadata fence must match the sealed baseline before upload. Reuse the already installed staff environment; no environment write or custom-domain promotion. Generated staff aliases may advance. Keep exclusive intent/output staff-upload-1; uncertain creation requires read-only reconciliation, never a second POST. Actual READY/source/deployment metadata is required before public gateway staging and private/control binding.
+
+
+### 2026-09-21 04:46 UTC — observed combined retry/background native qualification (build/runtime agent)
+
+- Executed the lead-dispatched offline immutable derivative build for frozen commit `ada00815447477cbd835e0e762f3c5aac8bd713b`, plan SHA `12ae882cd137b0111721f30383fc4b062599c4bf89b6c1ee620622bc3c4cbddb`, runtime manifest SHA `93e95a507f5ee429463ba39f57904741016587f164f98d0b42d2878380a9d96d` (564 files). Candidate image `sha256:6f06092ff4ddcd78a1c82741c37c58cc311074ab9b80a81c91df85ae42b968b0` retains exact50ffd base ancestry/config and unchanged native addon/custom-library hashes; actual grading-core/workspace/Prisma/Next15.5.25 build and boundary passed on Linuxamd64/Node20.20.2.
+- Exact candidate source and boundary checks passed; package TAP429/429 and staff TAP59/59 passed without skips. Package log SHA `c7c3bc15a005dfe6851c2553084365faf4d43512624d0a033cc7e82514c39279`; staff log SHA `75d407e2a2908d72fee4245f2d1a2512a68fbd7a57e0a5b32ae49d35a8b4e5db`. Prior native pixel evidence carries only through verified unchanged native source/artifact hashes; no duplicate full-resolution pixel run.
+- After all image checks completed, executed the separately lead-dispatched PostgreSQL42 plan `b91c10f84596f1c33440e5469b9d9a4176e43c6433416155951a554d44152ec3`. All669 current fixture files verified against manifest `c4b99ba051a2e02dfc9d9b3b83a4328ac9221bb44c32df12d4f7ce49f6351452`; fixture-only image `sha256:4999dbc68b1eb7b5dec7bd63ba3bbd570a819554ef6915f537a3df59c3858c60` rebuilds generated outputs over retained0f19 tooling and is distinct from the candidate serving image. Real fixture snapshot `024478b8eac61e6eb14175396fc0fe8d3d6d48c8` is fixture provenance, not the release commit.
+- Two sequential PostgreSQL17.11 runs passed: full ACL+connected (8 assertion groups)+identification retry (26 assertions), then memory/analysis (22 assertion groups including6 background groups). Each applied95 public and42 staff migrations and verified both no-op replays. Fresh catalog checked2950 columns,14 manual tables and6 nontrigger functions with grant replay `NO_CHANGE`. Both isolated clusters stopped and their owned data files were removed. PG final result SHA `c2290ed5eba9657a1c7d8606feb91c3149801df4c4bddc812552a270b5b400a7`.
+- Every build/check container used networknone,1CPU and3GiB. All8 task containers exited0 without OOM and remain retained for readback; no retry occurred. At04:45:54Z all28 pre-existing inventory entries matched their fenced image/running/start identities, the original serving50ffd container remained unchanged, and the old owned BuildKit container remained stopped. Host available memory5.70GB/free disk58.20GB/load1.83; task build/test load ended. No production deployment/restart/migration, storage request or live model call occurred.
+- Small exact logs, result manifests, migration ledgers, catalogs, cleanup and idle receipts retained beneath external `release-readiness/runtime/retry-candidate-20260921/{ada00815-native-receipts,ada00815-pg-receipts}`. Normalized `ada00815-qualification-summary.json` SHA `f6e1d15761adfbed02443eaffb9c698e28c9014756e6be836379fd5805719e7a`. Root retains release review, production action and commit ownership.
+
+
+## 2026-09-21T04:53:03.973320+00:00 — Reliability staff READY; planned public gateway staging
+
+Observed exact ada008154474 staff deployment dpl_79sny3VmF6szxpSVE8Gj6ydnajDc READY, immutable host atlas-grading-staff-3tk29xw6f-ten-kings.vercel.app. Full readback SHA acfe1e48ed71b55f9428725501d679ca6194efb8aff21ea8da71303a67008d8e; all four public aliases still select old dpl_8SLu6tEzN9EXhG1sVbHvcLBVrK5C; staff/public environment metadata unchanged. Next authorized action is the sole guarded PATCH of public ATLAS_STAFF_DEPLOYMENT_ORIGIN row 3VXXAPJEVp5MUvKM to the new immutable staff host, canonical plan SHA 8f0422c8b3814c3efa4cf6258154947e8ff87c74523fe698638184cccc6ee98a. This stages the next public build; active immutable public deployment remains unchanged. No paid analysis will be initiated. Private service and DB cutover remain separately gated.
+
+
+## 2026-09-21T04:53:56.695196+00:00 — Public origin staging observed
+
+The sole reviewed public origin PATCH completed successfully with status PROVIDER_METADATA_INSTALLED_RUNTIME_PROOF_PENDING, providerWrites=1, no automatic retry. Actual receipt: release-readiness/identification-retry-20260921/web-preparation/source-ada008154474/public-stage-1/execution/result.json, matching plan SHA 8f0422c8b3814c3efa4cf6258154947e8ff87c74523fe698638184cccc6ee98a. The resulting environment is being bound to the already-qualified public source upload; active public aliases, private service and database have not yet been changed by this reliability release.
+
+
+## 2026-09-21T04:54:56.925435+00:00 — Planned exact public reliability source upload
+
+Fresh read-only provider fence confirms the one staged public-origin change, all other environment/settings unchanged, staff dpl_79sny3VmF6szxpSVE8Gj6ydnajDc READY, and all four public aliases still on predecessor dpl_8SLu6tEzN9EXhG1sVbHvcLBVrK5C. Exact bound upload plan SHA 3603f95fd6d1f8e5d7cbc567560ceac91bd4c1d49d5854f5d9db36534f9e99d0 will dispatch once through the reviewed uploader in exclusive public-upload-1, using qualified clean ada008154474 source and actual installed environment receipt. Custom alias promotion remains separately gated on READY/private/DB/control evidence; no paid inference is part of this action.
+
+
+## 2026-09-21T04:55:53.818355+00:00 — Public reliability upload observed
+
+The sole public-upload-1 action completed with CLI exit0 and status CLI_COMPLETED_PROVIDER_READBACK_REQUIRED. Exact ada008154474 source and credential custody were unchanged; no automatic promotion occurred. Actual provider READY/source/deployment metadata is being read independently before private/DB cutover sealing. The public origin staging receipt and all consumed upload intents remain retained.
+
+
+## 2026-09-21T04:57:45.631837+00:00 — Both reliability hosted builds READY
+
+Authenticated provider readback confirms public dpl_5B1MvLxJ7rzREP8SowGw8jC5LA4y (atlas-grading-public-eaa1sly2b-ten-kings.vercel.app) READY/STAGED for exact ada008154474, root frontend/atlas-public, Node20; staff dpl_79sny3VmF6szxpSVE8Gj6ydnajDc remains READY. Standalone public metadata SHA f70f32b1c269a7deac78a8fee148a0b9901370c110d6709f8b405ae3266474a3; full readback b2eeed66b2ff38d09e7ef37a5ae1e5d2ae8f1af7c10b1b57311be7beed1c42a4. The generated team public alias has advanced, while apex/www/public.vercel and production target remain on predecessor 8SLu. Promotion plan is prepared only, canonical SHA 1f9eebba41560a4ca34066fd4d1dfda2de2391d40aa3836ed12763750f83203b. Private cutover package now binds actual READY identities; no private/DB/control action yet.
+
+
+## 2026-09-21T04:58:30.481651+00:00 — Planned sealed private reliability staging and cutover
+
+Root reviewed the final private/database/control/sealer/TLS executors and actual READY identities. Sealed action SHA ad8f9ac1c5368c0bafa7af6f2ea36c2421008f428380b6b331e3c373485948fc binds ada008154474, qualified native image6f06092f, actual staff79sny/public5B1Mv and constructor configHash f8f15504b936f697747a421783cc5abca1bfdc44aaf05c578b8ff9a2121a652f. Immediate actions: stage exact14 nonsecret helper files in the distinct root-owned directory, then verify new private config in the qualified network-none image while old service remains running. Later separately dispatched phases will require fresh zero-busy/history evidence, graceful stop/detach/retain old8acd container, exact staff41/42 migration plus375-byte grants and full ACL check, new service start/TLS proof, then only Staff revision17/STAFF SMS revision15 and reviewed public promotion. Each prior verified result is required by root before proceeding; any unknown result stops for read-only reconciliation with no replay. Original card history/public97 ledger/old files/Caddy/unrelated services remain protected. After41 old30d must never restart; hold stopped or roll forward.
+
+
+## 2026-09-21T04:59:09.250925+00:00 — Private config verified; planned graceful drain
+
+Exact14 helper staging passed with no database/service changes. PREPARE_PRIVATE_CONFIG passed, receipt SHA be7ad375f9c82128c916aba5a4c88c1e8cfcbb08da62627b561aa6c00f26f906: actual qualified Linux image constructors produced expected f8f15504 configHash, environment7b6ce266 and private.env a9f10dc6; network-none check made zero DB/provider calls. Old environment/Caddy bytes+inode/unrelated containers remain unchanged and old service is running. Next separate phase is STOP_DETACH_RETAIN_OLD under action ad8f9ac1: reread actual TLS database/history and require zero in-flight work, gracefully stop exact8acd container, detach its two private networks and retain under the reviewed name. No migration occurs until the verified stopped receipt is observed.
+
+
+## 2026-09-21T04:59:46.382145+00:00 — Old private service drained; planned staff41/42 and exact grants
+
+STOP_DETACH_RETAIN_OLD passed with receipt SHA 4c615b51d3c0b5b9300cc4541f876e14835e5151f04f765a683a7a07ff2301fc at04:59:28UTC. Exact8acd old50ffd container exited gracefully at04:59:27UTC, was detached from both networks and retained as atlas-manual-connected-20260917-retained-30d-20260921; private alias owners=0. Fresh database check passed zero active work/history fence. Caddy bytes/inode, original environment and unrelated containers are unchanged. Next separately dispatched action applies only two qualified staff migrations41/42, requires second no-op deploy, then adds exact375-byte privileges atomically with full ACL validation. Public migrations/history/control rows remain fenced. After41, never restart old30d.
+
+
+## 2026-09-21T05:02:19.379917+00:00 — Database phase refused before dispatch; read-only cause established
+
+The first DB phase returned REMOTE_REFUSED_OR_UNCERTAIN_READBACK_NO_REPLAY. Root halted later phases and did not replay it. Independent remote readback proves no DB-phase intent, immediate-before receipt, migration result or grants files exist; staff remains40/no unfinished, manual connections0 and every original history/control/public ledger/role/stopped-container fence passes. The preflight incorrectly subtracted all22 pg_stat_activity rows from max_connections25, yielding3 below threshold4; those rows include9 background processes and only13 client backends. Actual max25 minus3 reserved minus13 clients leaves9 usable client slots. Read-only capacity receipt SHA e18f39ce40748c11dcc5a01dfa61830444a8dba276368a2d618ee56f107366e8. Both reviewers confirmed this operational preflight bug. A distinct successor executor is being prepared to correct only fresh capacity measurement while retaining threshold4, original ad8f action, all14 sealed files and exact migrations/grants. Old service stays stopped; no database mutation has occurred.
+
+
+## 2026-09-21T05:05:37.386780+00:00 — Planned distinct corrected-capacity migration dispatch
+
+Root and independent reviewer approve only the measured-capacity correction: fresh read-only client backend count minus both configured reserved slot counts, retaining minimum4. Successor executor SHA32679cff33a2f4894304eeb7c44f9ca422da980acbcecdcf080a27384516c67d; exact correction manifest c8b23218215c40109b06644683a0341246d6f2c7071dd86e8bb85fc2a729d12a. Reverse substitution reproduces original executor8592 byte-for-byte. Root read frozen distinct caller00b5a036f5eb316f690849c2d63b893fccea0c1747f0adb062c40698988256ec in full; an earlier local hash mismatch stopped before any operation while its author finalized separate migration/control modes. Caller rechecks all14 sealed helpers and absent original remote DB intent/result before one migration dispatch, preserves actionad8f/stop4c615 and exact migration/grant scope, and retains separate successor intent/results. Read-only reconciliation proved no earlier migration dispatch occurred. Execute --execute-migrations once now; --execute-controls remains gated on verified migration, start and TLS receipts.
+
+
+## 2026-09-21T05:06:11.106678+00:00 — Staff42 and restricted ACL pass; planned new private start
+
+Distinct corrected-capacity migration dispatch passed: result SHA075304314811f11ab9ead518371278b70772db3da7f68b59d3b16b91c289f82b, TWO_RELIABILITY_MIGRATIONS_AND_EXACT_GRANTS_PASS. Exact staff41/42, second no-op deploy, full14-table/6-function ACL and unchanged historical40/public97/manual history/control/role checks succeeded; only reviewed375-byte grants added. Originalad8f sealed action retained, with capacity correction manifestc8b232 and successor32679 explicitly linked. Next separate action CREATE_START_NEW uses this verified DB receipt to start qualified6f06092f image under original private DNS alias with constructor-verified new staff binding. Old50ffd stays stopped/detached/retained. Caddy remains unchanged.
+
+
+## 2026-09-21T05:07:07.863082+00:00 — New private candidate running; planned signed HTTPS proof
+
+CREATE_START_NEW passed with receipt SHA5e9e5bb05d73d18e4d767bf29e9d8b59e781f7b0f37cd7f0d97c177efd7c4f48. Container ae758fb3fcf597f19dd79c0b0768c2896cd0674eba4e891cf80d4ab9ccd55dc4 started at05:06:14UTC, exact qualified6f06092f image and verified private env/compose/resource/network policy; exactly one private alias owner. Old8acd remains stopped and detached. Original Caddy bytes/inode and unrelated container states are unchanged. Next action is bounded actual signed HTTPS proof: unsigned manual GET401, absent route404, malformed signed command400 before authentication/business work; no human session or paid request. Controls remain pending until proof passes.
+
+
+## 2026-09-21T05:07:25.100125+00:00 — Private HTTPS proof passed; planned two existing control rebindings
+
+Actual signed HTTPS proof passed, receipt SHAccf992254f9fbcf8b8065c2a6ce17769747445969120527dcc3362da0e55a667: expected401/404/400 through actual application proxy, no human session/business effects. With verified DB42/ACL075304 and started image5e9e5b receipts, root now dispatches the separate --execute-controls mode of reviewed frozen capacity-corrected caller00b5. Exact SQL796394233f162672ec6a7e32286586bb56b15f91f17a2d1aa3611678e325d5eb changes only StaffControl revision16→17 and STAFF SMS revision14→15 to actual staff3tk29/sourceada008/configf8f155; all other rows across15 control tables, manual history and public ledger remain fenced. This requires normal fresh owner sign-in afterward. No legacy control enablement, policy extension or certification is requested.
+
+
+## 2026-09-21T05:08:05.742325+00:00 — Exact two controls active; planned public promotion
+
+Two-control transaction passed independent exact-delta verification, receipt SHA f4f523857b0e44ce312d85d41beb9f38e25d3657813e92d9042e920304cdd834. StaffControl17 and STAFF SMS15 now bind staff3tk29/sourceada008/configf8f155; all other control rows/history/public ledger unchanged. Verified new private runtime and signed TLS are active. Next action is the sole reviewed public promotion POST, canonical planSHA1f9eebba41560a4ca34066fd4d1dfda2de2391d40aa3836ed12763750f83203b, selecting actual READY public dpl_5B1MvLxJ7rzREP8SowGw8jC5LA4y under all four existing aliases and production target while preserving www308. Fresh provider fences precede dispatch; unknown outcomes are read-only reconciled, never replayed. No paid model request accompanies release.
+
+
+## 2026-09-21T05:09:01.147605+00:00 — Public promotion accepted; read-only propagation pending
+
+The sole reviewed promotion completed without replay. Initial readback reports PROMOTION_PENDING_READBACK: production target is already new dpl_5B1MvLxJ7rzREP8SowGw8jC5LA4y, generated team alias is new, while the other three aliases were still propagating at that instant. Root assigned only read-only final alias/source/environment/domain and bounded public route/assets checks; no second promotion is authorized or needed. Private/DB42/controls are already verified. No human sign-in or Astra inference has been performed as part of deployment.
+
+
+## 2026-09-21T05:10:12.288142+00:00 — Reliability release live; hosted read-only checks pass
+
+All four public aliases and production target now select READY dpl_5B1MvLxJ7rzREP8SowGw8jC5LA4y/sourceada008; exact settings/env/domain/www308 preserved. Final promotion readback SHA baf46e28b707df78308e43377df4e48727015b174bbc07bcc4cef9a04fb2bd7d. Bounded unauthenticated checks passed7routes and32discoveredJS/CSS assets with expected new staff/public and unchanged customer IDs and types. Route receipt aec53478b637f7f1bb36124f211071bf468003b7b67642e10df633ca025d30ba; asset receipt eb5c788cd1bb38956ad1a6ea81b6316bde383d6794913bc0c3bbba8906db4c82. Sign-in/session surface and Secure/HttpOnly/Path=/admin/SameSite=Lax attributes were verified without retaining cookie/CSRF values. Ordinary owner authentication and actual background findings remain user acceptance; deployment made no paid inference, did not change or confirm findings, and preserved original no-ID UNKNOWN attempt. Owner can refresh, sign in and explicitly start a linked new Astra analysis on existing Charmander card522610ad-3b06-4657-bf66-90f510fc9435 without uploading photos again.
+
+
+## 2026-09-21T05:11:08.599595+00:00 — Independent final host/database verification; quiet window released
+
+Independent read-only verification confirms newae758/image6f running with exactada008/staff3tk29 MANUAL_PRIVATE_LISTENING, restart0/noOOM/noerror events, sole ingress alias; old8acd stopped/networkless, Caddyf826/inode282983 unchanged. Background read_background polling is observed on one idle restricted-role client; accepted/provider events0 and original retry/replacement links0, proving deployment initiated no new analysis. DB42/14table6function ACL passes; historical40staff/full97+13public/all13manual-history aggregates remain unchanged. Exact two controls17/15 independently rechecked. Final receipt hashes: {'worker-database.json': 'f664fb809f951e8bc14a0f65ca1bb8e239132e0903b24cd7a6bbd3141b87450c', 'summary.json': 'e90a18fc9be874dc9c50ca2c378a3a4152f166e2b3c50576d9de203d23c0b3aa', 'control-validation.json': '10c8f2327370aeda195c3719f9aa5b5eb4b7b9051f836c04bf777b330b2c1240', 'controls.json': '9a6f121b4d82be05a96d966fb753d7e167822930393c1b3d6fb1a294c4ec844b', 'host.json': '55152aa679ac94bb1c12e239d21c10e17f79f09907fb3f8e160df9ef91c06e87', 'acl.json': 'ebeec490ae9ac8314ba7cd31a5a8e1e3a5b3c849323fa7496bed754fd907ea8f', 'database.json': 'f7391bddc738938e9c96a8d3989e086ffd8bc1e8a9cd0c8abc02593703230974'}. Shared-host/database quiet window released to the coordinating Inventory task; no further host mutation or qualification planned in this turn.

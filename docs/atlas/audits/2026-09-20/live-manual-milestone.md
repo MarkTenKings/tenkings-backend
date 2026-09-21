@@ -7,13 +7,88 @@ milestone. SAM remains deferred unless real testing establishes a need.
 
 ## Current evidence
 
-The qualified application remains `30dbea77c484e61de56da522d67a841cb9df25ee`.
-Its exact 555-file native image is
+The combined identification retry and background Astra release is live at
+`ada00815447477cbd835e0e762f3c5aac8bd713b`. Its native image is
+`sha256:6f06092ff4ddcd78a1c82741c37c58cc311074ab9b80a81c91df85ae42b968b0`;
+all 564 source files match manifest
+`93e95a507f5ee429463ba39f57904741016587f164f98d0b42d2878380a9d96d`.
+Actual Linux/amd64, Node20.20.2 and Next15.5.25 build, source and boundary checks
+passed, followed by 429 package tests and 59 staff tests without skips. All 14
+exact-source jobs passed in [CI run35561351830](https://github.com/MarkTenKings/tenkings-backend/actions/runs/35561351830).
+Native source and actual addon/library hashes are unchanged from the previously
+qualified image; its native pixel evidence carries forward on that verified basis.
+
+Two isolated PostgreSQL17.11 runs passed: eight connected assertion groups,
+26 identification retry assertions, and 22 memory/analysis groups including six
+background groups. Each applied 95 public and 42 staff migrations and verified
+both no-op replays. The fresh privilege catalog checked 2,950 columns, 14 manual
+tables and six nontrigger functions; grant replay made no change. Both temporary
+clusters stopped and their owned database files were removed. These fixture
+counts are distinct from the production public ledger of 97 migrations.
+
+Production staff migrations 41/42 and the exact 375-byte grant addition have now
+passed, with a second no-op deploy and full 14-table/six-function ACL validation.
+The prior 40 staff records, public97 ledger and original card/request/receipt
+history are unchanged. The first database preflight stopped before mutation
+because it counted nine background processes as client connections. Read-only
+reconciliation established 13 clients and nine usable client slots; a distinct,
+reviewed executor corrected only that capacity calculation and applied the same
+sealed migrations and grants. The refused attempt remains retained.
+
+The new private container
+`ae758fb3fcf597f19dd79c0b0768c2896cd0674eba4e891cf80d4ab9ccd55dc4`
+started at 05:06:14 UTC on September21 with exact image6f06092f and sourceada00815.
+The old source30d container remains stopped, detached and retained; it must not
+restart after migration41. Caddy and unrelated services are unchanged. Actual
+signed HTTPS proof passed with unsigned401, absent-route404 and signed malformed
+command400 before authentication or business effects.
+
+Staff deployment `dpl_79sny3VmF6szxpSVE8Gj6ydnajDc`
+(`atlas-grading-staff-3tk29xw6f-ten-kings.vercel.app`) and public deployment
+`dpl_5B1MvLxJ7rzREP8SowGw8jC5LA4y`
+(`atlas-grading-public-eaa1sly2b-ten-kings.vercel.app`) are READY for sourceada00815.
+StaffControl revision17 and STAFF SMS revision15 bind that staff deployment,
+source and configHash
+`f8f15504b936f697747a421783cc5abca1bfdc44aaf05c578b8ff9a2121a652f`.
+All other control rows and original history are unchanged. The public promotion
+was sent once; final readback confirms all four aliases and the production target
+select the new public deployment/sourceada00815, preserving the www308 redirect
+and project settings. Seven unauthenticated routes and all 32 actual JavaScript/
+CSS assets passed with the new public/staff deployment IDs; customer delivery is
+unchanged. These checks do not establish a new authenticated owner session or
+a real Astra result.
+
+Verified reliability receipts (SHA256):
+
+- Native/fixture qualification summary: `f6e1d15761adfbed02443eaffb9c698e28c9014756e6be836379fd5805719e7a`.
+- Production staff42 and ACL: `075304314811f11ab9ead518371278b70772db3da7f68b59d3b16b91c289f82b`.
+- New private runtime: `5e9e5bb05d73d18e4d767bf29e9d8b59e781f7b0f37cd7f0d97c177efd7c4f48`.
+- Signed HTTPS proof: `ccf992254f9fbcf8b8065c2a6ce17769747445969120527dcc3362da0e55a667`.
+- Exact two-control rebind: `f4f523857b0e44ce312d85d41beb9f38e25d3657813e92d9042e920304cdd834`.
+- Final public alias/target readback: `baf46e28b707df78308e43377df4e48727015b174bbc07bcc4cef9a04fb2bd7d`.
+- Seven unauthenticated routes: `aec53478b637f7f1bb36124f211071bf468003b7b67642e10df633ca025d30ba`.
+- Thirty-two actual JavaScript/CSS assets: `eb5c788cd1bb38956ad1a6ea81b6316bde383d6794913bc0c3bbba8906db4c82`.
+
+Final independent host/database readback confirmed exact sourceada00815/staff3tk29
+startup without errors or restarts, staff42 and the complete 14-table/six-function
+ACL, and unchanged prior40/public ledger/all13 original manual history sets.
+The background lookup worker was observed with one idle manual connection and
+zero new provider events, retry links or replacement links.
+
+No new paid analysis accompanied this release. The original foreground UNKNOWN
+attempt and its uncertain accounting remain intact. Real-card acceptance of a
+new background analysis, displayed proposals and inspection quality remains
+pending; deployment does not confirm findings or issue a human report approval.
+
+## Initial source30d release checkpoint: September20 Pacific / September21 UTC
+
+The initial release used `30dbea77c484e61de56da522d67a841cb9df25ee`.
+Its exact 555-file native image was
 `sha256:50ffd1e6ab8a0967a7dbbb214788a9b134ae20625aac9ba9a85cf5967635b2f4`.
 The prior native pixel checks, 379 package tests, 42 staff/manual tests,
-49 PostgreSQL assertion groups and 14 required CI jobs passed. The serving runtime is unchanged; the later local recovery repair below is not yet deployed. See the [native qualification](../2026-09-17/native-release-qualification.md).
+49 PostgreSQL assertion groups and 14 required CI jobs passed. That release is now superseded by the reliability cutover above; its receipts remain historical evidence. See the [native qualification](../2026-09-17/native-release-qualification.md).
 
-The five additive staff migrations have now applied, bringing the staff ledger
+The initial five additive staff migrations applied, bringing the staff ledger
 from 35 to 40. The second deployment was a no-op, and an independent database
 check passed. All 97 applied public migrations and 13 historical rolled-back
 attempts are unchanged; there are no unfinished migrations. The initial role
@@ -22,11 +97,11 @@ check against a toast relation. A separate role-only action corrected that type
 guard without changing any grants. The restricted role was first created NOLOGIN and passed all
 13-table/four-function effective privilege checks; receipt SHA256
 `494d828314681bddd2c130c01b8ab770185a833400eae21e7b7772b034f27a6a`.
-The role now passes actual TLS login with the new private credential, retaining
+The role then passed actual TLS login with the new private credential, retaining
 NOINHERIT, connection limit two and the same restricted privileges. Both hosted
-builds are READY and the qualified private service is running. Caddy now routes
+builds became READY and the qualified private service ran. Caddy routed
 the manual endpoints to that service. Actual signed HTTPS transport passed, and
-the eight control updates passed independent exact-delta readback. All four public aliases and the production target now select the new release;
+the eight control updates passed independent exact-delta readback. All four public aliases and the production target selected that release;
 the existing www308 redirect is preserved. Ordinary owner sign-in, new-card identification and paired geometry are now observed; hosted long-response and the complete findings/Astra acceptance remain pending.
 
 Multiple Astra Extra High specialists cover storage, web/control release,
@@ -102,9 +177,9 @@ Environment result SHA256:
 ## Remaining acceptance
 
 Ordinary sign-in, original intake, successful identification on a subsequent card and both-side geometry are observed. Continue through findings, Astra assistance and reviewed learning. The public aliases and live staff sign-in page are verified. The
-five staff migrations, restricted role activation, private service, Caddy route
-and eight-row control transaction are complete; consumed actions must not be
-replayed. A real signed-in session is required to exercise the actual hosted
+initial five staff migrations and reliability migrations41/42, restricted role
+activation, private service, current two-control rebind and final public alias
+readback are complete; consumed actions must not be replayed. A real signed-in session is required to exercise the actual hosted
 long-response path; synthetic credentials must not replace ordinary access.
 
 Mark's fresh-card test then checks original image quality, paired geometry,
@@ -115,8 +190,11 @@ bridge, physical slab completion or SAM integration is claimed.
 
 External normalized evidence is retained under
 `/Users/markthomas/.codex/atlas-handoffs/atlas-connected-manual-20260912/release-readiness/`
-in `storage/compatibility-20260920`, `release-auth-database-20260920` and
-`web-control-20260920`. Credentials are excluded from these receipts.
+in `storage/compatibility-20260920`, `release-auth-database-20260920`,
+`web-control-20260920`, `runtime/retry-candidate-20260921` and
+`identification-retry-20260921`. Credentials are excluded from these receipts.
+
+## Initial source30d delivery evidence
 
 The first staff upload was refused locally before any deployment or file POST.
 Three metadata GETs completed; provider readback found no new deployment. A
@@ -166,14 +244,22 @@ The uploaded photos are intact. This is a confirmed funding rejection, not
 accepted identification or Astra-quality evidence. The owner clarified that the
 earlier credits funded Codex, then reported funding the API account.
 
-The existing release keeps its terminal attempt immutable. An explicit retry
-repair is being built locally to use the same photos and saved OCR with a new
-linked attempt, preserving all earlier evidence. The clearer error message and
-retry controls are not yet deployed. Hosted130-second verification, full findings/Astra workflow and distinct-card learning acceptance remain open.
+The terminal attempt remains immutable. The qualified reliability release adds
+an explicit retry using the same photos and saved OCR with a new linked attempt,
+preserving all earlier evidence. Its clearer error message and retry controls are
+live in the new staff build after verified public alias propagation.
+Hosted130-second verification, full findings/Astra workflow and distinct-card
+learning acceptance remain open.
 
-After API funding, owner screenshots show successful suggestions for Charmander 004/165, Scarlet & Violet—151 (2023), on card `522610ad-3b06-4657-bf66-90f510fc9435`. Both Front/Back geometry panels subsequently show Ready to review and centering measurements. The owner initially reported a missing Front border, then confirmed it appeared after confirming the Front outline; this is not retained as an unresolved detector defect. The required human Pokémon/Trainer/Energy discriminator was confusingly labelled Pokémon layout. Local UI wording now says Pokémon card kind, explains its design-reference/reviewed-correction purpose, and uses native required-select validation. The discriminator and shared identification contract are unchanged.
+After API funding, owner screenshots show successful suggestions for Charmander 004/165, Scarlet & Violet—151 (2023), on card `522610ad-3b06-4657-bf66-90f510fc9435`. Both Front/Back geometry panels subsequently show Ready to review and centering measurements. The owner initially reported a missing Front border, then confirmed it appeared after confirming the Front outline; this is not retained as an unresolved detector defect. The required human Pokémon/Trainer/Energy discriminator was confusingly labelled Pokémon layout. The deployed UI now says Pokémon card kind, explains its design-reference/reviewed-correction purpose, and uses native required-select validation. The discriminator and shared identification contract are unchanged.
 
 
 ## First Astra defect-analysis acceptance result
 
-The owner confirmed both geometry sides and requested Astra’s initial defect inspection. Analysis `0bfd4f94-7b6a-40a7-8bc2-b5140b8e1015` dispatched at04:04:52UTC and recorded UNKNOWN at04:06:52UTC, matching the120-second provider deadline. No HTTP response, response ID, token usage or defect result was retained. A later read confirms no RESPONSE receipt. It is unknown how much provider work occurred; no completed inspection, failure to find defects, absence of charges or safe automatic replay is inferred. A versioned background-response/retrieval repair is under investigation. This live acceptance failure takes priority over releasing the already-reviewed identification retry.
+The owner confirmed both geometry sides and requested Astra’s initial defect inspection. Analysis `0bfd4f94-7b6a-40a7-8bc2-b5140b8e1015` dispatched at04:04:52UTC and recorded UNKNOWN at04:06:52UTC, matching the120-second provider deadline. No HTTP response, response ID, token usage or defect result was retained. A later read confirms no RESPONSE receipt. It is unknown how much provider work occurred; no completed inspection, failure to find defects, absence of charges or safe automatic replay is inferred. The combined reliability release above now includes the qualified versioned
+background-response/retrieval repair. No new paid analysis has been initiated by
+the release. The owner may now explicitly request
+a linked new analysis for this no-response-ID UNKNOWN attempt. Actual provider
+acknowledgement, collection, displayed proposals and inspection quality still
+require real-card evidence. Background completion must preserve the human draft
+and must not confirm findings or issue report approval.
