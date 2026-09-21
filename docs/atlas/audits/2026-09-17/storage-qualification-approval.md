@@ -1,8 +1,13 @@
 # September 17 bounded storage qualification
 
-Prepared, reviewed and sealed; **not authorized or executed**. This is a new
-qualification of the actual photo upload grant and manual artifact SDK adapter.
-The September 12 failed canary and its execution intent remain unchanged.
+Executed once on September20 Pacific / September21 UTC under the owner's direction
+to achieve the live manual/Astra milestone. **FAILED_SAFE: checksum refusal was
+not proven; cleanup verified absent.** The photo profile made12 requests, one65-byte
+PUT and one DELETE; artifact qualification did not run. The wrong-checksum PUT
+returned200. Exact owned-byte readback preceded deletion, followed by HEAD/GET404.
+The exclusive execution intent now exists; never rerun this plan. The September12
+failed canary and its separate intent also remain unchanged. The original prepared
+scope below is retained as historical action evidence, not unused authorization.
 
 ## Exact action for owner approval
 
@@ -39,8 +44,10 @@ binds the exact plans, synthetic payloads and all enumerated source files.
 Its SHA256 is
 `df241876bd306fb630ac605aa6a9341b442ee253f9ada1587fad4456dc586d1e`.
 The executor refuses source, target, key, payload, cap or evidence-path drift.
-Inputs were independently validated offline. No execution intent or execution
-evidence directory has been created for this new action.
+Inputs were independently validated offline. The later sole execution created
+`execution.intent.json` and `evidence/result.json` in that exact directory;
+preserve both permanently. Actual algorithm-header placement and conditional-write
+behavior remain under investigation before any distinct new qualification.
 
 Both independent reviewer and lead ran **57/57 passing offline tests**, covering
 the adapters, bounded executor, actual SDK serialization against synthetic HTTP,
