@@ -33549,3 +33549,10 @@ By enabling Rip It Live, I confirm:
 - Exactsealedrun/private/tmp/tenkings-v5-cron-run-20260921-01 completed in8560ms, all3syntheticsaves/actualclaims/durableV5results, no retries. Positiveordinarymissing/null-offerresultestimates1002cents from2independentimages; wrongcard/parallel/grade/raw/acceptedoffer/active controlsstayunknown;429andactual6secondtimeout arecachedacross3searches. Late response leavespersistedbytesunchanged; flag-offreaderspreserveV5results/hashes. Fixed5search/4detail/5model/10imagerequests match;0realprovider/storagecalls.
 - Fullcanonical96migrationchain runs only onownedlocalPG; seconddeploysameledger/noop. Pre/postsource sealsmatch. Rootreadsummary/TAP/cleanup; all5ownedPIDsabsent,temporaryclusterremoved,cleanupnoerrors. Independent sportsagentreviewfoundnoactionabledefect. Syntax/lint/typesand29existingV5unitcontrolspass.
 - This closes V5defaultcronfunctionalwiring only; hostedexact-input, addedbackgroundload, realprovider/visualtruth andallcardaccuracyremainseparatelyunqualified. Nooptionalfeatureflagorproductionactivationfollowsfromthispassalone. ExistingV3archivesealsunchanged.
+
+
+### September21 — Accuracy scorer V4/V5 compatibility implemented
+
+- Added separatelyversionedschema-v2/currentmapping forrealV4/V5resultcomparison. It verifiescanonicalresulthashes, checked-instrictV1–V5parser, catalogpublication/scopereceipts, V5candidate/search/detail/requestbindings andheld-outphoto roots. HistoricalschemaandvalidV1–V3scoregoldenbytesremainunchanged. Pairedarmsnowrejectdifferenthumantruth/evidenceforacommoncandidate.
+- All200cardsremaininthemetricdenominatorwiththefrozen50-perstratumprotocol; unknown/failurescannotincreasecoverage. Noactualheld-outcorpusorhumanlabels wereinventedandnogreater-than90percentaccuracyclaimismade.
+- Rootindependentlyreran21/21focusedNode22tests; agentlint/syntax andindependentreviewpasswithoutfindings. CompatibilitypacketrecordsV5andfactual-sourceV2schemas/sourcehashesforlaterATLAS-ownedadapterwork. Noappworker/writer/sharedschema/liveprovider/DB/build/deploymentchange.

@@ -5,8 +5,12 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import { z } from 'zod';
 
+export const LEGACY_MAPPING = 'inventory-v1-v3-ui-union-20260916';
+export const CURRENT_MAPPING = 'inventory-v1-v5-ui-union-20260921';
+const require = createRequire(import.meta.url);
 const text = z.string().min(1).max(240), hash = z.string().regex(/^[a-f0-9]{64}$/), date = z.string().datetime();
 const candidateId = z.string().regex(/^ebay:\d{6,20}$/);
 const cents = z.number().int().nonnegative().max(2147483647);
@@ -26,16 +30,39 @@ export const HoldoutCorpusSchema = z.object({ schema_version: z.literal(1), synt
     market_available: z.enum(['yes', 'no', 'unknown']), variant_correct: z.boolean().nullable(), labels: z.array(label).max(24),
     raw_result: z.record(z.string(), z.unknown()).nullable(), result_sha256: hash.nullable() }).strict()).min(200),
 }).strict();
+// A new study envelope, not a reinterpretation of sealed schema-v1 corpora.
+// Both arms use this mapping when comparing a historical result with V4/V5.
+export const HoldoutCorpusV4V5Schema = HoldoutCorpusSchema.extend({
+  schema_version: z.literal(2),
+  protocol: HoldoutCorpusSchema.shape.protocol.extend({ mapping: z.literal(CURRENT_MAPPING) }),
+  cards: HoldoutCorpusSchema.shape.cards.length(200),
+});
 export const canonical = value => value === null || typeof value !== 'object' ? JSON.stringify(value) : Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
 export const digest = value => createHash('sha256').update(canonical(value)).digest('hex');
 const unique = (values, name) => assert.equal(new Set(values).size, values.length, `${name} must be unique`);
 const amount = value => { const match = typeof value === 'string' && /^(\d{1,8})(?:\.(\d{1,2}))?$/.exec(value); return match ? Number(BigInt(match[1]) * 100n + BigInt((match[2] ?? '').padEnd(2, '0') || '0')) : null; };
-export function scoreCard(card, marketWindow = null) {
+export function scoreCard(card, marketWindow = null, mapping = LEGACY_MAPPING) {
+  assert.ok([LEGACY_MAPPING, CURRENT_MAPPING].includes(mapping), 'Unknown UI mapping');
   if (!card.raw_result) return { card_id: card.card_id, covered: false, assertions: 0, correct_assertions: 0, sold_assertions: 0, correct_sold_assertions: 0, false_price_assertions: 0, verified_value: false, variant: 'unresolved' };
   const result = card.raw_result;
   assert.ok(['base', 'variant', 'unresolved'].includes(result.identity?.status));
   assert.ok(['estimated', 'unknown'].includes(result.estimate?.status));
-  assert.ok(['staff-inventory-research-v1', 'staff-inventory-research-v2', 'staff-inventory-research-v3'].includes(result.engine_version), 'Unknown result version requires a separately reviewed UI mapping');
+  const legacy = ['staff-inventory-research-v1', 'staff-inventory-research-v2', 'staff-inventory-research-v3'].includes(result.engine_version);
+  assert.ok(legacy || mapping === CURRENT_MAPPING && ['staff-inventory-research-v4', 'staff-inventory-research-v5'].includes(result.engine_version), 'Unknown result version requires a separately reviewed UI mapping');
+  if (mapping === CURRENT_MAPPING) {
+    assert.equal(digest(result), card.result_sha256, 'Result bytes do not match sealed canonical hash');
+    // Use the same strict persistence/UI boundary for both arms: V5 request
+    // receipts bind exact candidate/search/detail hashes and times; V4 pins,
+    // scope receipts, applicability and final-current status are revalidated.
+    // Historical engine names cannot smuggle in newer evidence fields here.
+    // Load checked-in source, not a possibly stale generated workspace dist.
+    const { StaffInventoryResearchResultSchema } = require('tsx/cjs/api').require('../../../packages/shared/src/staffInventoryResearch.ts', import.meta.url);
+    const parsed = StaffInventoryResearchResultSchema.parse(result);
+    assert.equal(canonical(parsed), canonical(result), 'Result parser must preserve sealed bytes');
+    for (const photo of Object.values(result.photos)) if (photo) {
+      assert.ok(card.provenance_roots?.includes(`image:${photo.sha256}`), 'Result photo must bind a held-out image root');
+    }
+  }
   assert.equal(result.schema_version, 1); assert.ok(Array.isArray(result.candidates) && result.candidates.length <= 24);
   assert.ok(Array.isArray(result.selected_candidate_ids)); unique(result.candidates.map(x => x.id), 'Candidate IDs'); unique(result.selected_candidate_ids, 'Selections');
   const candidates = new Map(result.candidates.map(x => [x.id, x]));
@@ -90,7 +117,7 @@ function summarize(rows) {
     variant: Object.fromEntries(['correct', 'incorrect', 'unresolved', 'unreviewed'].map(key => [key, rows.filter(x => x.variant === key).length])) };
 }
 export function evaluateCorpus(input) {
-  const corpus = HoldoutCorpusSchema.parse(input), { protocol, cards } = corpus;
+  const corpus = (input?.schema_version === 2 ? HoldoutCorpusV4V5Schema : HoldoutCorpusSchema).parse(input), { protocol, cards } = corpus;
   unique(cards.map(x => x.card_id), 'Card IDs'); unique(cards.map(x => x.physical_card_key), 'Physical cards'); unique(cards.map(x => x.input_sha256), 'Inputs');
   unique(protocol.independent_reviewers, 'Reviewers');
   assert.ok(protocol.independent_reviewers.every(x => !protocol.implementers.includes(x)), 'Reviewers must be independent of implementation');
@@ -108,7 +135,7 @@ export function evaluateCorpus(input) {
     if (card.raw_result) assert.equal(digest(card.raw_result), card.result_sha256, 'Result bytes do not match sealed canonical hash');
     assert.equal(card.outcome === 'complete', card.raw_result !== null, 'Failure remains a denominator card without a fabricated result');
   }
-  const rows = cards.map(card => ({ ...scoreCard(card, [protocol.market_window_start, protocol.market_window_end]), category: card.category, cohort: card.cohort, condition: card.condition, rarity: card.rarity, look_alike: card.look_alike, family: card.family_id, market_available: card.market_available }));
+  const rows = cards.map(card => ({ ...scoreCard(card, [protocol.market_window_start, protocol.market_window_end], protocol.mapping), category: card.category, cohort: card.cohort, condition: card.condition, rarity: card.rarity, look_alike: card.look_alike, family: card.family_id, market_available: card.market_available }));
   const strata = {};
   for (const category of ['SPORTS', 'POKEMON']) for (const cohort of ['known_family', 'new_set']) {
     const group = rows.filter(x => x.category === category && x.cohort === cohort); assert.ok(group.length >= 50, 'Each frozen stratum requires at least 50 cards'); strata[`${category}/${cohort}`] = summarize(group);
@@ -160,6 +187,13 @@ export function evaluatePair(baselineInput, candidateInput) {
   for (const card of candidateInput.cards) {
     const original = baselineCards.get(card.card_id); assert.ok(original, 'Paired arms must use every same card');
     for (const key of sharedFields) assert.equal(digest(original[key]), digest(card[key]), `Paired card input/truth differs: ${card.card_id}/${key}`);
+    const commonCandidates = new Set(original.raw_result?.candidates.map(candidate => candidate.id) ?? []);
+    const originalLabels = new Map(original.labels.map(label => [label.candidate_id, label]));
+    const candidateLabels = new Map(card.labels.map(label => [label.candidate_id, label]));
+    for (const candidate of card.raw_result?.candidates ?? []) if (commonCandidates.has(candidate.id)) {
+      assert.equal(digest(originalLabels.get(candidate.id) ?? null), digest(candidateLabels.get(candidate.id) ?? null),
+        `Paired candidate human truth differs: ${card.card_id}/${candidate.id}`);
+    }
   }
   const before = new Map(baseline.rows.map(row => [row.card_id, row]));
   const pairedRows = candidate.rows.map(row => ({ card_id: row.card_id, baseline_covered: before.get(row.card_id).covered, candidate_covered: row.covered }));
@@ -171,7 +205,7 @@ export function evaluatePair(baselineInput, candidateInput) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const [input, output] = process.argv.slice(2);
   const readCorpus = async path => { const raw = await readFile(path); assert.ok(raw.length <= 64 * 1024 * 1024, 'Corpus exceeds 64 MiB'); return JSON.parse(raw); };
-  if (input === '--schema' && output) await writeFile(output, `${JSON.stringify(z.toJSONSchema(HoldoutCorpusSchema), null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+  if (['--schema', '--schema-v4-v5'].includes(input) && output) await writeFile(output, `${JSON.stringify(z.toJSONSchema(input === '--schema' ? HoldoutCorpusSchema : HoldoutCorpusV4V5Schema), null, 2)}\n`, { flag: 'wx', mode: 0o600 });
   else if (input === '--paired') {
     const [, baselinePath, candidatePath, reportPath] = process.argv.slice(2); assert.ok(baselinePath && candidatePath && reportPath, 'Usage: --paired BASELINE.json CANDIDATE.json NEW_REPORT.json');
     await writeFile(reportPath, `${JSON.stringify(evaluatePair(await readCorpus(baselinePath), await readCorpus(candidatePath)), null, 2)}\n`, { flag: 'wx', mode: 0o600 });
