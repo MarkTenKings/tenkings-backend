@@ -107,4 +107,8 @@ test('only the explicitly configured self branch Preview admits the private prov
   for (const patch of [{ VERCEL_ENV: 'production' }, { VERCEL_ENV: undefined }, { VERCEL_BRANCH_URL: 'other.vercel.app' }, { STAFF_RESEARCH_PROVIDER_QUALIFICATION_PREVIEW_HOST: undefined }]) {
     assert.equal(probe(host, page, 'GET', patch).kind, 'not-found'); assert.equal(probe(host, api, 'POST', patch).kind, 'not-found');
   }
+  const exact = '/api/v2/admin/inventory/research-qualification';
+  for (const method of ['GET', 'POST']) assert.equal(probe(host, exact, method).kind, 'next');
+  for (const other of ['tenkings.co', 'www.tenkings.co', 'other.vercel.app']) assert.equal(probe(other, exact, 'POST').kind, 'not-found');
+  assert.equal(probe(host, exact, 'DELETE').kind, 'not-found');
 });

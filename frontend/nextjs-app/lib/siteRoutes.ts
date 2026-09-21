@@ -98,7 +98,7 @@ export function resolveSiteRoute(input: { host: string | null | undefined; pathn
   // The handler independently requires a current human admin and same-origin POST.
   if (host === config.qualificationPreviewHost) {
     if (path === '/admin/inventory-research-qualification' && safe) return { kind: 'next', surface: 'main', noIndex: true };
-    if (path === '/api/v2/admin/inventory/provider-qualification' && ['GET', 'POST'].includes(input.method)) return { kind: 'next', surface: 'main', noIndex: true };
+    if (['/api/v2/admin/inventory/provider-qualification', '/api/v2/admin/inventory/research-qualification'].includes(path) && ['GET', 'POST'].includes(input.method)) return { kind: 'next', surface: 'main', noIndex: true };
   }
   if (path.startsWith('/api/')) return apiMethods[path]?.includes(input.method) ? { kind: 'next', surface: 'main', noIndex: true } : { kind: 'not-found' };
   if (!safe) return { kind: 'not-found' };

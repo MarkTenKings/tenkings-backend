@@ -6,6 +6,7 @@ import { useSession } from '../../hooks/useSession';
 import { buildAdminHeaders } from '../../lib/adminHeaders';
 import { hasAdminAccess, hasAdminPhoneAccess } from '../../constants/admin';
 import type { ProviderQualificationReport } from '../../lib/server/staffResearchProviderQualification';
+import StaffResearchExactInputQualification from '../../components/admin/StaffResearchExactInputQualification';
 
 type Plan = { enabled: boolean; plan_sha256: string; acknowledge: string; plan: {
   cohorts: { id: string; keyword: string; sold: boolean }[]; maximum_searches: number;
@@ -70,7 +71,7 @@ export default function InventoryResearchQualificationPage({ inventoryPath = '/a
   const admin = hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone);
   return <main className="min-h-screen bg-black px-4 py-8 text-white"><Head><title>Research qualification | Ten Kings</title><meta name="robots" content="noindex,nofollow" /></Head><div className="mx-auto max-w-3xl space-y-6">
     <Link href={inventoryPath} className="underline">Back to inventory</Link><h1 className="text-3xl font-semibold">Research provider qualification</h1>
-    {loading ? <p>Loading admin session…</p> : !session ? <button className={button} onClick={() => void ensureSession()}>Sign in</button> : !admin ? <p>Human inventory admin access is required.</p> : <ProviderQualificationPanel key={session.user.id} token={session.token} />}
+    {loading ? <p>Loading admin session…</p> : !session ? <button className={button} onClick={() => void ensureSession()}>Sign in</button> : !admin ? <p>Human inventory admin access is required.</p> : <div key={session.user.id} className="space-y-8"><ProviderQualificationPanel token={session.token} /><StaffResearchExactInputQualification token={session.token} actorId={session.user.id} /></div>}
   </div></main>;
 }
 
