@@ -1,5 +1,9 @@
 # ATLAS inspection viewer — fresh Astra Ultra lead handoff
 
+Current release pointer — September21,2026,23:21UTC: the subsequent [report-review release](report-review.md) is live on source `f00f2a18372f68c63dc5bbe8dada2b7c616104d8`, carrying forward this completed inspection viewer and its versioned context crops. It adds corrected collective confirmation, a full interactive draft and the owner's half-point final-grade policy. Final proof preserved the saved Charmander revision9 and seven proposals without adoption or report approval. See the [connected release runbook](../../runbooks/CONNECTED_MANUAL_RELEASE.md) for current runtime/control identities. The completion snapshot and original handoff below are historical; their actions must not be replayed.
+
+## Historical inspection completion and original handoff
+
 Completion update — September 21, 2026: this handoff was executed by the fresh Astra lead and specialists. The viewer and versioned backend context crops are live at source `406466a089bdd2d34022bc8c06283a0649978b15`. See [the completed inspection release record](inspection-release.md). The implementation gaps and ada008 baseline below describe the original handoff; all associated previous release intents remain consumed.
 
 Owner direction: September 20 Pacific / September 21 UTC, 2026. Mark requests a fresh **gpt-6-astra / ultra** lead with its own **gpt-6-astra / xhigh** specialists to continue this work. All three specialists have finished and frozen their bounded work. This handoff records the tested local checkpoint; no changes from this follow-up are deployed.

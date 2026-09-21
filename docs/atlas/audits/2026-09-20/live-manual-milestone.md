@@ -5,7 +5,17 @@ manual grading workspace that Mark can test, with human-requested Astra
 assistance. Autonomous operation and completed slab finishing follow this
 milestone. SAM remains deferred unless real testing establishes a need.
 
-## Current inspection release — September 21, 06:26 UTC
+## Current report-review release — September21,23:21UTC
+
+The corrected manual review/report workflow is live on source `f00f2a18372f68c63dc5bbe8dada2b7c616104d8` and native image `sha256:34d89ed5977ff59dd39fa907b92392502a043b163091a5a3b6af9086998625d2`. READY staff `dpl_joerdhDUQXN6UZEpy1nUg1MsVCj2`, public `dpl_7WrKqDV7upJPpdGJcfj1i8zXaAFi`, private runtime and controls19/17 match; all four public aliases and the production target are verified. The new private containerbd000154 started23:18:49UTC with zero restarts or runtime errors. See [the full report-review audit and release evidence](../2026-09-21/report-review.md) and [current release procedure](../../runbooks/CONNECTED_MANUAL_RELEASE.md).
+
+One explicit **Confirm findings** now adopts and measures remaining compatible saved suggestions atomically while preserving individual corrections/rejections and manual findings. The full interactive draft exposes verified Front/Back photographs, selectable exact traces, measurements and authoritative scoring explanations before separate human approval. New V2 reports award the raw overall rounded directly to the nearest0.5, with quarter-point ties upward; raw/tenth detail and historical V1 report policies/bytes remain unchanged. The prior inspection viewer and versioned context crops carry forward unchanged.
+
+Exact native source/boundary checks,496 package tests,63 staff tests, both PostgreSQL42 fixture groups and all14 exact-source CI jobs passed. The25 memory/analysis groups include both real restricted-role late-receipt lock orders. Final readback verified578 source files/16 native identities, full staff42/public97successful+13rolled-back ledgers, all14 manual history sets and unchanged retained writers/Caddy/unrelated services. Signed HTTPS boundaries passed;10 hosted routes and48 actual assets passed in58 GETs with all27 expected viewer/report markers. No migration or grant changed.
+
+Charmander remains revision9/hash `7a28c4ac08fa5a3fd5173d00a29fb47e0b992a1375244ab2b3b010ce6924019f`, eight actions, zero approvals and one existing publication. The seven displayed suggestions remain unadopted pending Mark's deliberate corrected confirmation. The offline seven-plus-manual replay gives eight findings, raw9.825/detail9.8/final10; it is not live human acceptance. No paid analysis, human sign-in, card action or approval accompanied release. Fresh ordinary sign-in, real correction/report acceptance, distinct-card learning and optical accuracy remain open.
+
+## Previous inspection release — September21,06:26UTC — historical
 
 The requested viewer and photo-context improvements are now live on source `406466a089bdd2d34022bc8c06283a0649978b15` and native image `a5159e7478d87e4267e11433f68ba595d6d2e70c1968ad9754a53431fb47be4c`. Staff `dpl_EmKqeZg4wN6PhVQX97DXc9BK71cC`, public `dpl_DnjnMSVL4fKPFsqR1gscuMvsifr5`, private runtime and controls18/16 match, with all four public aliases and the production target verified. No migration, paid analysis or review action accompanied this release.
 
