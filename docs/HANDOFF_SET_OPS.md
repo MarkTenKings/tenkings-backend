@@ -1,5 +1,11 @@
 # Set Ops Handoff (Living)
 
+## Inventory catalog status — September 21, 2026
+
+See the current [Inventory delivery index](plans/2026-09-21-inventory-takeover/README.md), [sports staging runbook](plans/2026-09-21-inventory-takeover/sports-staging-review-runbook.md) and [Pokémon pilot](plans/2026-09-21-inventory-takeover/pokemon-pilot.md). SetOps remains a specialist workflow on collect, not the main consumer hostname. The parent catalog-selection repair is live in Production `9a12cd35`; new Pokémon additive preparation and truthful build-outcome reporting are committed at `6de3dc3d` and passed local service/UI plus nine real disposable-PostgreSQL results. They are not yet a hosted catalog activation.
+
+The live read-only preflight confirms the existing 379-card/ten-program/six-version sports roster and no Legendary Treasures pilot or aliases. Catalog schema and immutable audit protections are present. No source staging, Pokémon import, approval or publication has occurred in this delivery. Preparation preserves unknown applicability; source-bound human publication and image permissions remain distinct. Do not rerun a queue/build after an uncertain response without reconciling its stored state.
+
 ## Approved Ten Kings V2 Blueprint Authority (2026-08-06)
 
 - Mark approved `docs/specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md` as the canonical product and architecture planning authority for the future Ten Kings V2 card platform.

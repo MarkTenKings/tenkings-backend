@@ -2,7 +2,7 @@
 
 September 21, 2026. Initial bounded read-only audit used Inventory HEAD `297fd302b866286824fcea79b8f77c6d995ca3db`, application `e286ea0a190bfdc6807fe8ca58c47b34c94b55c1`; main application `895a3b34cc9cd7c8f6d2267ad4d763fb2ff0949d`. The subsequent owner-authorized scorer implementation began at `7c7b61fc36c3e74ba667e3dd5f3c1b74ddaf1320` in the isolated Inventory checkout. This lane now owns only the offline scorer, its separate new schema, focused scorer tests and this packet. Root owns integration and SESSION_LOG. No provider, DB/UI write, configuration, build, deployment, shared-host or ATLAS action was performed by this lane.
 
-**Next useful work: independently review the implemented V4/V5 scorer mapping and assemble independently labeled inputs; prepare the sale-detail off/on load delta after its new durable fixture passes.** Mark confirmed phone testing complete on September 21; root closed that gate on owner confirmation without claiming a new device/build receipt. Keep phone acceptance, controlled load, broad accuracy and cross-app reuse as separate verdicts. None currently establishes the greater-than-90% all-card target.
+**Next useful work: assemble independently labeled inputs and prepare the sale-detail off/on load delta. The V4/V5 scorer independent review and the V5 durable fixture have both passed.** Mark confirmed phone testing complete on September 21; root closed that gate on owner confirmation without claiming a new device/build receipt. Keep phone acceptance, controlled load, broad accuracy and cross-app reuse as separate verdicts. None currently establishes the greater-than-90% all-card target.
 
 ## Evidence and concrete gaps
 
@@ -37,7 +37,7 @@ Retain [existing acceptance §5](../2026-09-16-intake-atlas-acceptance-next-slic
 
 ## Next independent load delta
 
-The [comp lane's three-input V5-on default-cron fixture](comp-qualification.md) must first establish durable enabled wiring. That lane owns it; do not duplicate the completed V3 fixture. Then prepare a **new feature-delta protocol**, not another pre-repair-versus-current study:
+The [comp lane's three-input V5-on default-cron fixture](comp-qualification.md) established durable enabled wiring on September 21 (commit `f3563a94`, exact retained run receipt). Do not duplicate it or the completed V3 fixture. Then prepare a **new feature-delta protocol**, not another pre-repair-versus-current study:
 
 - Pin the same final reviewed application in both arms; A has sale details off, B on. Keep catalog/contributions/full-resolution off. Use missing/null-offer sold search tapes with exact `/v1/item` responses, plus detail timeout/429 tapes. Existing full-matrix tapes explicitly report no offer and would trigger **zero** detail requests; they cannot qualify this stage.
 - Reuse separate driver/intake/worker/observer processes, 4/3/1 pools, two workers, identical seed/history/photo bytes and one/three intake sessions. Freeze idle, ordinary-detail, detail-timeout and detail-429 cells with ABBA, five warmups and 50 measured saves per session/block: 32 blocks, 3,200 measured + 320 warmups, 90-minute cap. This is only the newly activated load difference. Do not launch until exact code/config/tape/client/source seals and a local quiet window are reviewed.
@@ -62,7 +62,7 @@ Each receipt binds safe donor/recipient identities and independent image roots, 
 
 ## Scorer implementation and frozen compatibility delta
 
-The code change is local and uncommitted by this lane; root supplies the eventual reviewed result commit. Source-contract readback during implementation was at root's `f3563a9490c924f56fa43c9ff266defb818673e5`. Shared-contract files were not edited. V5's source change is already present in `bc7c55d5b0e54f1f8dbf479d66103f7ecc9fdb0c`; source-fact V2 is already present in `134c9df34a18f35aab720d57ca6bcf89245f8428`. These identifiers describe Inventory source; they do not imply ATLAS adoption.
+The reviewed scorer change is committed as `0ebd571a`; root independently reran all 21 tests and a separate agent found no actionable review issue. Source-contract readback during implementation was at root's `f3563a9490c924f56fa43c9ff266defb818673e5`. Shared-contract files were not edited. V5's source change is already present in `bc7c55d5b0e54f1f8dbf479d66103f7ecc9fdb0c`; source-fact V2 is already present in `134c9df34a18f35aab720d57ca6bcf89245f8428`. These identifiers describe Inventory source; they do not imply ATLAS adoption.
 
 | Wire boundary | Frozen compatibility |
 | --- | --- |
@@ -89,4 +89,4 @@ Exact SHA-256 file seals, relative to the Inventory repository:
 
 Fresh verification: qualified Node `22.23.2`, **21/21** scorer tests, `node --check` and scoped Next lint all pass. The first parser-loading run correctly failed because generated shared `dist` supported only V4; loading checked-in source resolved that mismatch without rebuilding. The first lint invocation used the repository root and found no Next pages; rerunning from the app directory passed. No real corpus was scored, no labels were supplied, and no >90% accuracy claim is made. Existing source-fact and research compatibility suites above are executable delivery fixtures and standing prior proof, not fresh runs by this lane.
 
-Independent review remains requested through root. Real reviewed publication pins/images, independent labels and ATLAS-owned adapter/admission/release remain outstanding. Product acceptance remains contingent on those distinct evidence boundaries; no new approval of the overall plan is requested.
+Independent review is complete with no actionable findings. Real reviewed publication pins/images, independent labels and ATLAS-owned adapter/admission/release remain outstanding. Product acceptance remains contingent on those distinct evidence boundaries; no new approval of the overall plan is requested.

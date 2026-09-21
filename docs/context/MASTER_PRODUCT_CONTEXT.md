@@ -8,7 +8,14 @@ repo_root_workstation: C:\TenKings\repos\tenkings-rip-it-live
 repo_root_droplet: /root/tenkings-backend
 default_branch: main
 active_feature_branch_example: chore/seed-timeout-hardening
-prod_site: https://collect.tenkings.co
+prod_site: https://tenkings.co
+legacy_customer_and_specialist_site: https://collect.tenkings.co
+
+## Inventory and main website verification — September 21, 2026
+
+The consumer/staff main website is live at `https://tenkings.co`; www redirects to the main origin. Collect retains specialist tools and existing customer/card/NFC links. Exact Production source is `9a12cd3591074dfe692976445fc30f51690ba043`, deployment `dpl_2XUGoG74E88eVeFGETVzFkQDBhRC`. The sole inventory research schedule remains on that deployment. DNS/TLS, routing, private unsigned guards and six natural cron requests passed; normal new-origin sign-in/private-photo/map acceptance remains pending. Mark has confirmed his previous phone test complete.
+
+The Inventory lead uses `codex-staff-inventory-release-20260910`; main release uses `codex-main-site-release-20260916`. ATLAS grading remains separately owned. New Pokémon preparation and V4/V5 accuracy tooling are locally tested but are not implied to be in the Production artifact above. Optional catalog/research enrichment stays off pending its own qualified release and evidence. Current receipts and remaining work are indexed in [Inventory delivery](../plans/2026-09-21-inventory-takeover/README.md) and [main release](../plans/2026-09-16-main-only-release.md). The older general verification date and architecture history below are retained with their original scope.
 
 ## Purpose
 This file is stable product/system context.

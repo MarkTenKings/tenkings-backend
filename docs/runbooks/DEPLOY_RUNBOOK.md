@@ -3,6 +3,15 @@
 last_verified_at: 2026-08-21
 owner: Mark
 
+## Inventory/main release addendum — September 21, 2026
+
+Use the exact-source release identities and qualified workflow in [main-site release](../plans/2026-09-16-main-only-release.md) and [Inventory delivery](../plans/2026-09-21-inventory-takeover/README.md). Main, www and collect now use Production `9a12cd35` / `dpl_2XUGoG74E88eVeFGETVzFkQDBhRC`. This release did not restart or deploy ATLAS.
+
+- Build from the intended Git commit and its Production/Preview environment. The sparse main worktree and the older checkout that holds the Vercel project link are not upload sources.
+- Vercel staging with `autoAssignCustomDomains:false` was observed to move generated team and branch aliases. Before and after staging, read each actual `/v4/aliases/{hostname}` destination and the sole cron owner; restore an unintended move before qualification. Project/deployment alias arrays can be stale.
+- Keep `RUN_DB_MIGRATIONS=false` unless a separately qualified migration is intended. The September 21 main cutover required no migration. Preserve collect permanent links, mail/TXT/service records and original-origin pending commands.
+- Phone workflow acceptance is already complete on Mark's confirmation. The pending new-apex normal sign-in/photo/map check is a distinct deployment postflight. Exact Preview database availability is branch-specific: successful builds and environment pulls do not establish signed-in data access.
+
 ## Capability-Scoped Operator Authority
 - Static operator authority is not an admin-session substitute. General admin routes accept only ordinary signed-in bearer sessions.
 - The only current static capability is `OPERATOR_API_CAPABILITIES=set-ops:batch-import`, accepted only by the five Set Ops batch CLI dependencies: set lookup, ingestion creation, draft build, draft read, and approval.

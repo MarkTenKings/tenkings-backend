@@ -1,10 +1,12 @@
 # Main-domain readiness — September 21, 2026
 
-The integrated main Preview is qualified for the retained checks, but it is not a Production-configured artifact and apex/www have not been attached or switched. The concrete remaining work is the pending real-phone result, two missing Production routing settings, a qualified Production build, exact attached-domain targets/TLS, current origin acceptance, and preservation/readback of the existing DNS zone. Mark's September 16 approval already covers the qualified Vercel release and domain cutover; no generic reapproval is required.
+**Current state at September 21, 20:54–20:57 UTC: main-domain rollout is live.** Production `dpl_2XUGoG74E88eVeFGETVzFkQDBhRC` is READY at exact source `9a12cd3591074dfe692976445fc30f51690ba043`; apex, www and collect resolve to this artifact. Public TLS/routing/assets, inherited specialist aliases, DNS preservation and natural minute-spaced cron HTTP 200 requests pass the independent postflight below. The stable main Preview remains on `dpl_8HebWQWJfa2YiuKbnYf4kd2x1dwx`.
 
-This packet performs only source/retained-evidence reads, authenticated Vercel metadata GETs, public DNS/HTTP HEAD, and auth OPTIONS checks. No account/configuration, deployment, DNS, database, cron, business record, provider-research, browser, shared-host, or ATLAS mutation occurred. The lead owns integration and SESSION_LOG.
+Mark confirmed phone testing complete and authorized the delivery lanes. That closes the old Preview phone gate. Normal apex sign-in, private-data/photo reads and new-origin map/permission acceptance remain distinct; root has already opened the ordinary sign-in and requested owner action. Do not repeat the phone request or ask for generic release reapproval. Sections marked pre-cutover are retained historical evidence, not outstanding deployment prerequisites.
 
-## Accepted baseline and superseded notes
+This lane performs only source/retained-evidence reads, authenticated Vercel metadata/runtime-log reads, public DNS/HTTP GET/HEAD, and auth OPTIONS checks. This lane made no account/configuration, deployment, DNS, database, cron, business-record, provider-research, browser, shared-host or ATLAS mutation. Root performed the authorized rollout and owns integration and SESSION_LOG.
+
+## Pre-cutover baseline and superseded notes
 
 - Inventory application `e286ea0a190bfdc6807fe8ca58c47b34c94b55c1`; main application `895a3b34cc9cd7c8f6d2267ad4d763fb2ff0949d`. Lead verification proves all non-documentation blobs equal. Main local documentation head is `6e507b39`; Inventory takeover head was `297fd302`.
 - Exact main Preview `dpl_FpG7zsUwoyFHEqjiPfk44qmDE2ja` is READY. Retained September 20 evidence proves Linux/native Sharp, 13 hosted assertions, and the normal human-session inventory read. Its stable origin is `tenkings-backend-nextjs-app-git-codex-main-sit-3a8ce9-ten-kings.vercel.app`.
@@ -13,7 +15,7 @@ This packet performs only source/retained-evidence reads, authenticated Vercel m
 - Auth hostname support was already released as source/image `6c953662`; retained September 17 receipts bind the exact collect/apex/stable-Preview roster. No new auth deployment is presumed necessary.
 - Root's September 21 parent catalog-selection repair is local and not in either Preview. Root reports 17 focused UI checks, lint, and zero changed-file type diagnostics; the same 12 unrelated diagnostics remain. Freeze the eventual integrated source after that decision, then qualify its actual Production build. Do not label the current Preview as containing the repair.
 
-## Fresh infrastructure facts
+## Pre-cutover infrastructure facts — historical
 
 Normal Vercel CLI 59.3.0 authenticated GETs around 19:21–19:24 UTC inspected project `prj_trW9xKIEQl6ye9Vq9V9PuDtCILxI`, scope `ten-kings`, through `/v9/projects/{id}`, `/domains`, `/env`, selected non-secret setting reads, and `/v6/domains/{name}/config?projectId={id}`. Secret values were neither printed nor retained.
 
@@ -42,7 +44,7 @@ HEAD requests still show apex 301 → `https://www.tenkings.co/`, www 200, colle
 
 This public query is not a complete zone export: other TXT selectors, verification records, subdomains, record IDs and authoritative TTLs still require the normal Wix DNS account snapshot. Current Wix session availability was not inspected. Preserve registrar/nameservers, MX, all TXT, CAA and every unrelated subdomain. No Wix content import, account cancellation, domain transfer, Cloudflare DNS migration, or Workers migration is required.
 
-## Exact Production configuration and origin acceptance
+## Production configuration and origin acceptance — release requirements
 
 Required routing delta for the chosen Production build:
 
@@ -61,10 +63,10 @@ Origin evidence and the remaining narrow checks:
 - **Auth transport passes this read-only check:** all nine OPTIONS combinations of apex, collect and stable Preview origins against `/send-code`, `/verify`, `/profile` return 204 with authorization/content-type and the requested method allowed. This matches existing permissive CORS source; no redesign is indicated. OPTIONS does not prove Turnstile challenge, SMS, profile authorization or a new apex login.
 - **Turnstile/auth host support is already implemented and previously activated:** retained receipts contain exactly collect, apex and the stable Preview. Preserve `send_code` action and server exact-host checks. Current provider/server allowlist readback or successful normal apex sign-in must confirm no drift; only a demonstrated mismatch requires configuration repair. No repeated blanket auth rollout or www login origin is needed because www is a safe-navigation redirect.
 - **Maps:** Production browser/server Maps key metadata exists. Current apex referrer restrictions, map-ID applicability and actual map rendering were not proven here. Confirm the existing `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID` and browser referrer configuration, and test the map/permission/unavailable states on the main origin. Do not infer success from key presence or change Location records.
-- **Phone and pending commands:** the sports/Pokémon front/back → cost → channel → save → reopen result is already requested by the lead; do not ask again. It remains required before the planned rollout. For each device changing entry, preserve original collect/Preview tabs and resolve only its actual pending command using its original exact retry/receipt path. Do not copy tokens/drafts between origins, clear storage, or recreate uncertain stock. Apex sign-in, camera and geolocation permissions are new-origin checks even after Preview phone success.
+- **Phone and pending commands:** Mark has confirmed the requested phone testing complete; this supersedes the earlier pending request and requires no repeat question. For each device changing entry, preserve original collect/Preview tabs and resolve only its actual pending command using its original exact retry/receipt path. Do not copy tokens/drafts between origins, clear storage, or recreate uncertain stock. Apex sign-in, camera and geolocation permissions remain new-origin checks after Preview phone acceptance.
 - **Private data:** qualify signed-in reads and original photo reads on the final origin, alongside unsigned rejection/private cache headers. Keep uploaded photos private and out of page props/shared image optimization. No synthetic live save, provider research run, or DB write is necessary to verify domain plumbing.
 
-## Ordered release and rollback packet
+## Retained release ordering and rollback packet
 
 1. Root freezes the final source and targeted repair evidence, records the phone outcome, current Production identity/aliases/cron owner and exact config in SESSION_LOG. Retain completed unchanged-source timing/SQL/default-cron evidence. This domain operation needs no migration; a later catalog/schema activation remains separately coordinated against the current ledger.
 2. Obtain the normal Wix zone snapshot and current account access. Attach only apex/www to the same Vercel project, obtain exact resulting A/CNAME/ownership/TLS requirements, and record them before changing DNS. Keep Wix web records serving during preparation. Changing only A/CNAME at the current DNS provider preserves the rest of the zone. [Vercel domain configuration](https://vercel.com/docs/domains/working-with-domains/add-a-domain).
@@ -83,4 +85,61 @@ Source checked: `frontend/nextjs-app/lib/siteRoutes.ts`, `middleware.ts`, `verce
 
 Retained authority: [lead verified state](verified-state.json), [transfer packet](../../handoffs/2026-09-21-ten-kings-inventory-astra-ultra-handoff.md), and the current main-workspace `docs/plans/2026-09-16-main-only-release.md`. Private September 20 Preview receipts and September 17 auth/widget receipts remain under `/Users/markthomas/Library/Application Support/TenKingsInventory/investigations`; no copies or new secrets were placed in Git.
 
-Next bounded coordinator action: finish integrating the local repair and phone outcome, then prepare the exact Production-configured build and Wix/Vercel attached-domain record sheet. The missing items are execution facts and acceptance, not renewed permission to implement or publish. Optional catalog/comp activation, ATLAS adoption, independent all-card accuracy and Wix marketing recreation are not new prerequisites for this default-off main shell.
+The Production build, domain/config preparation and cutover described below have now been executed by root. The current remaining acceptance is listed in the postflight, not this historical preflight. Optional catalog/comp activation, ATLAS adoption, independent all-card accuracy and Wix marketing recreation are not new prerequisites for this default-off main shell.
+
+## Archived read-only preflight after phone acceptance and integration
+
+Root merged Inventory documentation head `7c7b61fc` / application `de6fa5b6803000072bb27fb1f0616fec813b701a` into main as **`9a12cd3591074dfe692976445fc30f51690ba043`**. Fresh local HEAD confirms this main commit and `git diff --name-only HEAD de6fa5b6 -- . ':!docs'` is empty. The earlier three-file catalog-selection delta is now integrated; the previous local-only repair note is historical. At closeout root reports its exact Git Preview READY as `dpl_8HebWQWJfa2YiuKbnYf4kd2x1dwx`; that deployment inspection belongs to root.
+
+Root also reports a normal signed-in Wix domain UI and a private authoritative baseline of all 29 zone-record rows/types/TTLs, including five TXT records, at `20260921-main-production/wix-zone-before.json`. This supersedes the earlier missing Wix-session/full-zone facts. Root reports no DNS change at that checkpoint and owns subsequent guarded attachment/configuration/staging.
+
+Fresh metadata-only GETs still show unchanged `dpl_Bo43…` Production/aliases/sole schedule, only the two existing attached domains, no Production main routing keys, and Production database/cron-secret/migration-setting records. This pass fetched no environment values. The exact `STAFF_INVENTORY_CATALOG_CONTRIBUTIONS_ENABLED` key is now checked and absent; `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID` metadata exists for Production/Preview/development. Provider referrer settings and apex rendering remain separate checks.
+
+**Checkout/link boundary:** main is a sparse checkout. Neither release workspace has `.vercel/project.json`. The actual existing link is `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/.vercel/project.json`, containing the correct project above and organization `team_YaEhDoZXD2WsvqpoUp0KqBDh`. That saved-project checkout is not release source. Do not deploy it or upload the sparse main tree. Normal authenticated `vercel api` can identify the existing project explicitly and build its exact Git source without copying configuration or relinking checkouts.
+
+### Reviewed staged Production request — subsequently executed by root
+
+After the scoped Production configuration and pre-deploy log are complete, place this exact reviewed JSON in `/private/tmp/tenkings-main-production-staging-20260921.json` (re-freeze the SHA if the intended source changes):
+
+```json
+{
+  "name": "tenkings-backend-nextjs-app",
+  "project": "prj_trW9xKIEQl6ye9Vq9V9PuDtCILxI",
+  "target": "production",
+  "autoAssignCustomDomains": false,
+  "gitSource": {
+    "type": "github",
+    "repoId": 1074431573,
+    "ref": "codex/main-site-release-20260916",
+    "sha": "9a12cd3591074dfe692976445fc30f51690ba043"
+  }
+}
+```
+
+```bash
+/Users/markthomas/Library/Caches/tk-node22-20260909/node-v22.23.2-darwin-arm64/bin/node /Users/markthomas/.npm/_npx/67eb4586ca667318/node_modules/vercel/dist/index.js api /v13/deployments --method POST --scope ten-kings --input /private/tmp/tenkings-main-production-staging-20260921.json
+```
+
+The live project link verifies GitHub repository ID `1074431573`, `MarkTenKings/tenkings-backend`, tracked Production branch `main`, and root `frontend/nextjs-app`. Explicit target/ref/SHA avoids changing branch tracking or the existing `main:false` deployment policy. Omit `files`, `deploymentId`, `withLatestCommit`, credentials, and project-setting overrides.
+
+The [official deployment API schema](https://vercel.com/docs/rest-api/deployments/create-a-new-deployment) and its `https://openapi.vercel.sh` JSON confirm the GitHub `type/ref/repoId` variant with optional exact `sha`. The public schema omits `autoAssignCustomDomains`; support is established by the installed official CLI 59.3.0: `dist/commands/deploy/index.js:1850` maps `--skip-domain` to `false`, and `dist/chunks/chunk-G55RLNFE.js:1547` places it at the top level of the create-deployment request. CLI help says it disables automatic Production domain assignment. This is the same staging control, composed with the documented Git-source request. No request was sent by this agent. `vercel redeploy --help` exposes `--target` but no `--skip-domain`; do not invent that redeploy flag.
+
+Read back the returned deployment ID through `api /v13/deployments/<returned-id> --scope ten-kings`; require the exact Git SHA/project, `target=production`, READY build, intended configuration, domains still unassigned, and current Production aliases/cron still at the recorded baseline. If a request outcome is uncertain, inspect deployments before any retry. After the final hosted checks and logged release decision, the supported promotion command is the same Node/CLI prefix followed by `promote <verified-staged-deployment-id> --scope ten-kings`. Re-read aliases and the sole cron immediately afterward. No link/env/deployment/domain mutation, heavy build, commit or SESSION_LOG edit occurred in this preflight.
+
+## Independent read-only postflight — September 21, 20:54–20:57 UTC
+
+Normal authenticated CLI metadata reads confirm project `prj_trW9xKIEQl6ye9Vq9V9PuDtCILxI` now targets READY Production **`dpl_2XUGoG74E88eVeFGETVzFkQDBhRC`**, immutable host **`tenkings-backend-nextjs-6vjca6li1-ten-kings.vercel.app`**, Git source **`9a12cd3591074dfe692976445fc30f51690ba043`**, branch `codex/main-site-release-20260916`. Apex/www are verified attached domains with no provider-level redirect. Direct `/v4/aliases/{hostname}` reads bind apex, www and collect to this Production, and the exact stable main Preview alias to READY **`dpl_8HebWQWJfa2YiuKbnYf4kd2x1dwx`**. Deployment/project `alias` arrays retain historical assignments and are not the authoritative current alias lookup.
+
+| Postflight | Fresh observation |
+| --- | --- |
+| Production configuration | Root's retained `env-preservation.json` reports all 148 prior records identical and exactly two added keys, `MAIN_SITE_ENABLED` and `SITE_ROUTE_LEGACY_HOSTS`. No env values were fetched or emitted by this postflight. Runtime host behavior confirms main routing and both legacy platform aliases. |
+| DNS propagation | `1.1.1.1`, `8.8.8.8`, `ns14.wixdns.net` and `ns15.wixdns.net` all return apex A `216.150.1.1` / `216.150.16.1` and www CNAME `47388d6720762a26.vercel-dns-017.com.`. Wix remains authoritative. |
+| Preserved zone | Independent authoritative comparison against private `wix-zone-before.json` finds all 20 non-web A/CNAME/MX/NS rows retained, including all five Google MX names/priorities; all five prior TXT records across four queried names remain identical. Root reports two additional certificate-validation TXT records and completed TLS issuance. No unrelated service record removal was observed. |
+| Public TLS/main shell | Ordinary public HTTPS, with normal certificate verification and no forced address, returns 200 for apex `/` and `/staff/inventory`; both contain empty page props and build ID `n4R4fgngEeWqrNVY4kBZr`. Staff has `private, no-store` and `noindex, nofollow`. |
+| Private/specialist isolation | Unsigned apex workspace GET returns 401/private/no-store. Apex SetOps page and its exact build page-data URL return 404/private/no-store. www staff GET redirects 307 to apex and drops the supplied query; www workspace API returns 404. |
+| Assets/styles | Both CSS files referenced by the live apex HTML return 200 `text/css`; its `_app` and main-site JS return 200 `application/javascript`, all with immutable cache policy. Brand PNG returns 200 `image/png`. These are delivery checks, not a new visual or signed-in UI acceptance. |
+| Legacy tools | Collect SetOps and both inherited platform-alias Inventory/SetOps shells return 200 with empty page props and the same Production build ID. Root's retained corrected 13-route TLS matrix additionally passes customer/NFC/card redirects and collect private guards. |
+
+**Natural cron execution is observed, not merely configured.** Fresh project metadata has exactly one enabled definition, `/api/cron/inventory-research`, every minute, owned by the Production deployment/immutable host above. Normal bounded `vercel logs` with deployment/project, `--since 30m --limit 6 --no-follow --query /api/cron/inventory-research --json` returns six naturally occurring GET requests at **20:49:37, 20:50:37, 20:51:37, 20:52:37, 20:53:37 and 20:54:37 UTC**, all **HTTP 200**, `environment=production`, exact new deployment and `6vjca6li1` domain. Example provider request IDs: `jj4qr-1790023777219-9af026dbd794` and `gl2tq-1790024077495-3050ab6316b4`. No cron HTTP request was made by this agent. The returned records contain no nested application logs or response body, so they prove successful scheduled request handling, not jobs claimed/completed, empty-queue status or business-result correctness. Standing default-cron qualification remains the evidence for those unchanged code paths.
+
+No actionable infrastructure defect was found. Root's existing owner sign-in request remains pending for apex authenticated reads/private photos and new-origin map/permission acceptance; phone acceptance itself stays closed. No repeated old timing matrix, synthetic live stock, DB action, provider research, browser/account change, environment/DNS mutation, manual cron invocation, commit or SESSION_LOG edit occurred. Private rollout evidence remains in `/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260921-main-production`. The earlier DNS rollback record and compatibility-aware shared-project rollback rules remain applicable.

@@ -1,0 +1,26 @@
+{
+  "programRowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+  "cards": {
+    "TBK-1": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+    "TBK-2": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+    "TBK-3": "d6dde801-2673-46e1-8830-5d810b0c9ade"
+  },
+  "printings": {
+    "ordinary": {
+      "parallelRowId": null,
+      "scopeRowId": null
+    },
+    "orange": {
+      "parallelRowId": null,
+      "scopeRowId": null
+    },
+    "superfractor": {
+      "parallelRowId": null,
+      "scopeRowId": null
+    }
+  },
+  "sources": {
+    "sports-checklist": null,
+    "sports-odds-round2": null
+  }
+}
