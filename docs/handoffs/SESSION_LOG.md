@@ -33126,3 +33126,13 @@ By enabling Rip It Live, I confirm:
 ### September17 — Planned documentation-only main Preview handoff
 
 - Commit/push the observed provider closeout and corrected release record. Runtime remains byte-identical to qualified5aeff411; branch execution staysfalse, migrations stayfalse. Git-connected deployment is Preview only. No domain/production promotion, runtime edit, inventory/provider write or fifth experiment call is planned.
+
+
+### September17 — Documentation-only main Preview observed READY
+
+- Source624949f850711eb1a68458a76c4dc9b153df82e2 is READY as dpl_2PcvFaZKUmxfQFxAabSgmxbYsrM1 (m8k69zsvd). Git source delta since qualified5aeff411 contains documentation only. No runtime/flag/alias/DNS mutation, migration or provider call occurred. The signed-in disabled experiment closeout remains bound to its originalcc1 deployment; this later docs-only build is recorded separately, not presented as a repeated live test.
+
+### September20 — Planned integration into the existing main-site Preview
+
+- Read-only Git ort merge audit of main624949f8 and qualifiedInventorye286ea0a found only SESSION_LOG conflict; merged non-documentation tree exactly equalsInventory. Preserve this branch's uncommitted observedREADY record in a docs-only commit, then normally merge the qualified Inventory lineage and retain both log histories. Keep main-only release record but update its current status; original smaller-release evidence stays historical. No Atlas/currentmain branch merge or auth-host reconfiguration.
+- After exact non-doc tree equality and fresh branch-scoped configuration checks, push the merged branch for a Preview-only build. Existing mainPreview origin, auth/widget allowlists and original-session pending work remain in place. Migration/optional flags stay off; verify exact-sourceREADY/nativeSharp, main/legacy routing, private APIs and signed-in read-only Inventory. No provider/card write, public DNS cutover or production promotion is part of this integration. ATLAS shared-host release quiet window remains respected.
