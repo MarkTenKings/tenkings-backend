@@ -1,0 +1,117 @@
+{
+  "preparedAtUtc": "2026-09-21T19:08:11.706441+00:00",
+  "purpose": "Transfer Ten Kings Inventory to a new gpt-6-astra ultra owner-facing lead; ATLAS remains separate.",
+  "sourceTaskId": "01a0a64a-40a0-7202-8539-fab7da07faa2",
+  "handoffPath": "/Users/markthomas/tenkings/codex-staff-inventory-release-20260910/docs/handoffs/2026-09-21-ten-kings-inventory-astra-ultra-handoff.md",
+  "handoffSha256": "9545e8b6d652a61893af07d17dede0edc055114a7308456a0730cc427d7545c9",
+  "workspacesBeforeHandoffCommit": [
+    {
+      "path": "/Users/markthomas/tenkings/codex-staff-inventory-release-20260910",
+      "branch": "codex/staff-inventory-release-20260910",
+      "head": "596f9dfb107793d287b06c4cae0f2a46dd5423f7",
+      "upstream": "e286ea0a190bfdc6807fe8ca58c47b34c94b55c1",
+      "status": "?? docs/handoffs/2026-09-21-ten-kings-inventory-astra-ultra-handoff.md\n?? docs/plans/2026-09-10-atlas-staff-intake-reuse-update.md"
+    },
+    {
+      "path": "/Users/markthomas/tenkings/codex-main-site-release-20260916",
+      "branch": "codex/main-site-release-20260916",
+      "head": "6e507b390f98823c9b7027d55ef9f9134d44c43d",
+      "upstream": "895a3b34cc9cd7c8f6d2267ad4d763fb2ff0949d",
+      "status": ""
+    }
+  ],
+  "remoteHeadsFresh": [
+    "895a3b34cc9cd7c8f6d2267ad4d763fb2ff0949d\trefs/heads/codex/main-site-release-20260916",
+    "e286ea0a190bfdc6807fe8ca58c47b34c94b55c1\trefs/heads/codex/staff-inventory-release-20260910"
+  ],
+  "deployments": [
+    {
+      "id": "dpl_7xc2akyMGziEALNz3aCZFvWsnPCs",
+      "readyState": "READY",
+      "url": "tenkings-backend-nextjs-61fqqazwp-ten-kings.vercel.app",
+      "target": null,
+      "aliases": [
+        "tenkings-backend-nextjs-app-git-codex-staff-in-8b10f8-ten-kings.vercel.app"
+      ],
+      "gitCommitSha": "e286ea0a190bfdc6807fe8ca58c47b34c94b55c1",
+      "gitCommitRef": "codex/staff-inventory-release-20260910"
+    },
+    {
+      "id": "dpl_FpG7zsUwoyFHEqjiPfk44qmDE2ja",
+      "readyState": "READY",
+      "url": "tenkings-backend-nextjs-hlrtp486b-ten-kings.vercel.app",
+      "target": null,
+      "aliases": [
+        "tenkings-backend-nextjs-app-git-codex-main-sit-3a8ce9-ten-kings.vercel.app"
+      ],
+      "gitCommitSha": "895a3b34cc9cd7c8f6d2267ad4d763fb2ff0949d",
+      "gitCommitRef": "codex/main-site-release-20260916"
+    },
+    {
+      "id": "dpl_Bo43ux8vAyyDe6WEKy4Q1A6iT6sj",
+      "readyState": "READY",
+      "url": "tenkings-backend-nextjs-htr00ov35-ten-kings.vercel.app",
+      "target": "production",
+      "aliases": [
+        "collect.tenkings.co",
+        "tenkings-backend-nextjs-app.vercel.app",
+        "tenkings-backend-nextjs-app-ten-kings.vercel.app"
+      ],
+      "gitCommitSha": null,
+      "gitCommitRef": null
+    }
+  ],
+  "productionSourceRecord": {
+    "sha": "38c95335614df756c420127e6b94bedd5620fa2d",
+    "basis": "Existing release record; current Vercel deployment metadata exposes no git SHA."
+  },
+  "previewTestUrl": "https://tenkings-backend-nextjs-app-git-codex-main-sit-3a8ce9-ten-kings.vercel.app/staff/inventory",
+  "mainVsInventoryChangedPaths": [
+    "docs/handoffs/SESSION_LOG.md",
+    "docs/plans/2026-09-16-main-only-release.md"
+  ],
+  "archiveManifests": [
+    {
+      "path": "/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260917-intake-full-matrix/manifest.json",
+      "sha256": "a05c1ab2e4d8812c6a3a934684cb8e48b90148798e58c980e13032a51d2ddeef"
+    },
+    {
+      "path": "/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260920-sports-cron-qualification/manifest.json",
+      "sha256": "8b315aa08c5a9c232c62318abef35d11cb262a35da0350748ad6bfdcca473b7c"
+    },
+    {
+      "path": "/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260920-preview-qualification/manifest.json",
+      "sha256": "ca464e47cf04eebc70563a622c645a59797ad9ec12600197dc3e492a2fd7d24e"
+    }
+  ],
+  "preserveUntracked": {
+    "path": "/Users/markthomas/tenkings/codex-staff-inventory-release-20260910/docs/plans/2026-09-10-atlas-staff-intake-reuse-update.md",
+    "sha256": "6166a6332e32cb380247358ef9040c0ad2e04a6a46f0448c632c42658fcfdb2d"
+  },
+  "atlasCoordination": {
+    "currentLeadTaskId": "01a0c284-501c-7901-afe4-fbc6d215346e",
+    "previousLeadTaskId": "01a0aecf-f59f-77d3-8962-fbc49967f19c",
+    "sharedHost": "104.131.27.245",
+    "hold": "released by latest incoming ATLAS completion notice",
+    "authority": "ATLAS report; Inventory did not re-audit host",
+    "old50ffd": "Must remain stopped; incompatible after staff migration41",
+    "cleanup": "Do not prune retained ATLAS containers or artifacts"
+  },
+  "pending": [
+    "Real sports and Pokemon phone capture/save/reopen acceptance",
+    "Reviewed catalog pilot staging/publication and images",
+    "Enabled comp/catalog/provider/load qualification",
+    "Different-physical-card shared-catalog proof in both directions with ATLAS",
+    "Independent all-card accuracy measurement",
+    "Qualified production release and tenkings.co rollout"
+  ],
+  "unapprovedCleanup": "/private/tmp/tenkings-build-cache-cleanup-proposal-20260917.json",
+  "packagingEffects": {
+    "runtimeChanged": false,
+    "deploymentChanged": false,
+    "flagsChanged": false,
+    "databaseChanged": false,
+    "dnsChanged": false,
+    "providerCalls": 0
+  }
+}
