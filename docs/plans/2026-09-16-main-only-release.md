@@ -1,5 +1,19 @@
 # Main-site release record
 
+## Current production — September 21
+
+The reviewed Inventory/main application at `9a12cd3591074dfe692976445fc30f51690ba043` is live as Production `dpl_2XUGoG74E88eVeFGETVzFkQDBhRC`. [Main website](https://tenkings.co) and [staff Inventory](https://tenkings.co/staff/inventory) now use the new site; www redirects through the reviewed middleware. Collect and both existing production platform aliases use the same accepted artifact. The sole research cron moved to this deployment with its path and schedule unchanged.
+
+Mark confirmed his earlier phone test as complete. New-domain normal sign-in and private-photo/map checks remain postflight work; the lead opened the normal login form and requested sign-in only. Six naturally scheduled cron requests returned HTTP 200 on the new Production deployment, one minute apart from 20:49:37 through 20:54:37 UTC; response bodies were not exposed, so this does not establish processed-job counts. No repeat phone save test is requested.
+
+The Production build used the correct Production environment with migrations disabled and all optional catalog/contribution/full-resolution/sale-detail/diagnostic flags off. Linux/native Sharp and eight staged guards pass. Thirteen TLS/routing/compatibility checks pass against the exact artifact. The initial redirect probe incorrectly expected 308; the source explicitly uses 307, and the corrected probe passes without changing the application.
+
+DNS now has apex A `216.150.1.1` and `216.150.16.1`, and www CNAME `47388d6720762a26.vercel-dns-017.com`, retaining one-hour TTLs. Both Wix authoritative servers plus Cloudflare and Google public resolvers report these values. All pre-existing mail/TXT/nameserver/service/collect records are preserved. Two additional certificate-challenge TXT records were added to pre-generate exact apex/www HTTPS before switching traffic; no wildcard certificate, registrar, nameserver or account transfer. The complete before-state and receipts are private under `~/Library/Application Support/TenKingsInventory/investigations/20260921-main-production`.
+
+Staging with `autoAssignCustomDomains:false` still moved Vercel's generated team/branch aliases. The lead detected this by actual alias reads, restored both previous destinations, qualified the staged artifact, then deliberately promoted it. The stable main Preview remains the qualified Preview `dpl_8HebWQWJfa2YiuKbnYf4kd2x1dwx`. Future staging must inspect generated aliases as well as project/custom-domain state.
+
+The following dated entries are retained history. Concurrent Pokémon and scorer implementation is not part of this Production artifact.
+
 ## Current scope — September20 integrated Preview
 
 The main-site branch now integrates the complete qualified Inventory candidate `e286ea0a190bfdc6807fe8ca58c47b34c94b55c1` through a normal merge. Every application, dependency, schema and configuration blob equals that Inventory commit; only documentation differs. The original smaller release described below is historical and no longer defines the candidate's runtime scope.

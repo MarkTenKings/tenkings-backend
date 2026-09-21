@@ -33666,3 +33666,51 @@ The following branch-specific records are retained verbatim from the main-site p
 
 - Integrated committed Inventory7c7b61fc (applicationde6fa5b6) into the existing main release branch. Documentation conflicts are resolved by preserving both branch histories. Application blobs must equal the committed Inventory candidate; concurrent uncommitted agent changes are excluded.
 - Planned authorized action: commit and push only this reviewed integration to the existing Git-connected main Preview, retaining its exact origin and branch-scoped settings. Verify exact-source READY/nativeSharp, migration-disabled/default-off flags and hosted route/private guards. No production promotion, domain attachment, DNS change or feature activation is included in this push. Owner-confirmed phone acceptance is recorded; no repeat phone check is requested.
+
+
+### September 21 — Main Preview qualified; planned Production preparation
+
+- Exact9a12cd3591074dfe692976445fc30f51690ba043 is READY asdpl_8HebWQWJfa2YiuKbnYf4kd2x1dwx on the unchanged main Preview. Linux/nativeSharp0.34.5/calibration trace verification passes;11focused hosted route/private-cache guards pass. Normal Wix account access is available. Captured all29visible DNS records and TTLs, including authoritative text for5TXTrecords, in private20260921-main-production/wix-zone-before.json. No DNS mutation. Record IDs are not exposed by normal UI; all visible groups and exact values are captured.
+- Fresh project target metadata exposes production gitCommitSha38c95335614df756c420127e6b94bedd5620fa2d, consistent with the existing release record; earlier deployment inspection had not surfaced that field. Production still dpl_Bo43 and exactly one research schedule. Production migrationfalse, SITE_URLcollect, all sixoptionalexecutionflags absent/off.
+- Planned authorized provider actions: attach only tenkings.co andwww.tenkings.co to existing projectprj_trW9xKIEQl6ye9Vq9V9PuDtCILxI without redirect or Preview binding; capture exact post-attachment DNS/TLS instructions. Add only ProductionMAIN_SITE_ENABLED=true andSITE_ROUTE_LEGACY_HOSTS=tenkings-backend-nextjs-app.vercel.app,tenkings-backend-nextjs-app-ten-kings.vercel.app. Preserve every existing env record/secret, migrationsfalse, optionalflags off, collectpermanentlinks.
+- Then create one Git-bound Production-environment deployment at exact9a12cd35 withtop-level autoAssignCustomDomains=false (the installed CLI59.3 --skip-domain request behavior), repo1074431573/refcodex/main-site-release-20260916/shaexact. No sparse local upload. Inspect source,target,aliases/cron and actualbuild before anypromotion. DNS staysWix duringstaging; no migrations/providers/businesswrites/ATLASoperation.
+
+
+### September21 — Production staging observation and automatic-alias correction
+
+- Apex/www attachments verifyownership; exactnewtargetsare A216.150.1.1 and216.150.16.1, wwwCNAME47388d6720762a26.vercel-dns-017.com. WixDNSunchanged. Addedexactly2Productionroutingkeys; everypre-existingenvrecordcomparesidenticallyinmemory.
+- Productiondpl_2XUGoG74E88eVeFGETVzFkQDBhRC exact9a12cd35 is READY/STAGED withautoAssignCustomDomains=false. Actual aliasGETs discovered Vercelstillautomaticallymoved thegeneratedteamplatformalias andstablemainbranchalias despitecustomdomainsremainingunassigned. collect andprimaryprojectalias staydpl_Bo43; projectProductiontarget andsolecron staydpl_Bo43. Do notclaimallaliasesunchangedfromstaging.
+- Planned immediatecorrection: restoreonlytenkings-backend-nextjs-app-ten-kings.vercel.app todpl_Bo43 andmainstablebranchaliastodpl_8HebWQWJfa2YiuKbnYf4kd2x1dwx, preserving eachpreviousresolvedartifact. Verify exactaliasreadbacks. Thenqualify stagedimmutablehost andnativebuildbefore deliberatepromotion. NoDNSorcronchange.
+
+
+### September21 — Staged Production qualified; planned exact promotion
+
+- Stageddpl_2XUGoG74E88eVeFGETVzFkQDBhRC exact9a12cd35 passesLinux/nativeSharp0.34.5/sharedtrace/calibrationbundleverification withnomigrationexecution. All8stagedlegacy/privateAPIguardchecks pass; unsignedadminshellshaveemptypageProps. FreshactualaliasGETs verify all3pre-existingProductionaliasesrestoreddpl_Bo43 andstablemainPreviewrestoreddpl_8Heb. Evidenceprivate20260921-main-production.
+- Plannedauthorizedaction: promoteexactqualifiedProductionartifactdpl_2XUGoG74E88eVeFGETVzFkQDBhRC using normalVercelCLI/existingprojectlinkonly(no localupload). VerifyintendedProductionaliases,apex/wwwattachments andsolecronowner; preserve/restorestablemainPreviewdpl_8Heb ifproviderpromotionmovesitsgeneratedbranchalias. Thencheckcollectlegacy/customer/privateguardroutes andapex/wwwthroughprovideredgebeforeweb-onlyDNSmutation. OldWixDNScontinuesuntilthatcheck.
+
+
+### September21 — Production promoted; pre-generate apex/www TLS before DNS
+
+- Exactdpl_2XUGoG74E88eVeFGETVzFkQDBhRC is nowPROMOTED. All3Productionaliases andapex/www resolve to it byVercelaliasmetadata; stablemainPreview remainsdpl_8Heb. Exactlyoneschedule has movedto theintendednewProductionimmutablehost withsamepath/minuteschedule. NoDNSchange.
+- DirectTLSedgechecks forapex/www failed beforecertificateprovisioning whileWixDNSstillservesoldsite. NoTLSbypass. UseVercelofficialpre-generation workflow (https://vercel.com/docs/domains/pre-generating-ssl-certs): request challenge-only for EXACTtenkings.co andwww.tenkings.co (nowildcard), add onlyitsnew_acme-challengeTXTvalues throughnormalWixDNSUI, preserveexistingTXT/mail/subdomains, thenissueandverifyTLSthroughprovidededgeIPbeforewebDNSswitch. This is scopeddeploymentsetupunderexistingcutoverauthorization; noaccounttransfer/nameserverchange.
+
+
+### September21 — HTTPS pre-generated and web DNS cutover planned
+
+- Created only2new_acme-challengeTXTrecordsforapex/www withprovider-issuedvalues; bothWixauthoritativeserversand1.1.1.1readbackmatch. Existing_acme-challenge.auth.collectandallotherTXTpreserved. Exactapex/wwwcertificateissuedbyVercel. DirectedgeTLSnowvalidwithoutbypass.
+- All13pre-DNSroute/compatibility/privateguardchecks passagainstpromotedProduction. Initial harnessincorrectlyexpected308;actualmiddlewareexplicitlyreturns307. Correctedonlyfourredirectexpectations tosource307, retainedoriginalreceiptandreran; noappcodechange. Mainroot/staff200,privateAPI401/no-store,specialist404,wwwsafenavigationandNFC/card/customerpathstoexplicitcollect preserveintendedpolicy. collectlegacy200/emptyprivateprops,workspace401,packs200.
+- PlannedauthorizedWixweb-onlycutover: replaceapexA185.230.63.171with216.150.1.1 and185.230.63.186with216.150.16.1, removetheredundantoldapexA185.230.63.107, retain1hourTTL; changewwwCNAMEcdn3.wixdns.netto47388d6720762a26.vercel-dns-017.comwith1hourTTL. Preserveallmail/TXT/NS/collect/12serviceArows. FreshWixsnapshotinprivate20260921-main-productiondefinesexactrollback. Verifyauthoritative/publicDNS,TLS,routesandproviderconfigurationafter. Noaccountcancel/domaintransfer/nameserverchange.
+
+
+### September 21 — Main website DNS cutover observed
+
+- Wix confirmed the two apex A edits, removal of the obsolete third Wix address, and www CNAME replacement. Fresh DNS at 20:50:59 UTC agrees on both authoritative Wix servers and public resolvers 1.1.1.1/8.8.8.8. The complete pre-existing service A, collect CNAME, Google MX, nameserver and TXT values remain unchanged. Certificate challenge TXT additions are separate and documented.
+- Normal Chrome now opens https://tenkings.co/staff/inventory over valid HTTPS and displays the correct staff sign-in surface. Opened its normal login form without copying credentials or sessions; requested the owner complete sign-in for the new origin. His prior phone acceptance remains complete. Private inventory/photo/map postflight awaits that normal session.
+- Exact application and Production identity remain 9a12cd35 / dpl_2XUGoG74E88eVeFGETVzFkQDBhRC. Collect, both production platform aliases and apex/www match it; stable main Preview remains dpl_8Heb. Existing research path/schedule has one owner on the new production artifact. No live migration, synthetic inventory, catalog publication, comp probe, or ATLAS mutation occurred. Read-only natural cron observation is delegated.
+
+
+### September 21 — Independent Production postflight passed
+
+- Independent read-only verification confirms direct Vercel alias records bind apex, www and collect to dpl_2XUGoG74E88eVeFGETVzFkQDBhRC / 9a12cd35. Stable main Preview remains dpl_8Heb. Deployment/project alias arrays may retain stale assignments; direct alias lookups define observed current ownership.
+- Public TLS/routes, both CSS assets, main JavaScript and brand asset, specialist and page-data isolation, private unauthenticated guards and inherited aliases pass. Both authoritative nameservers and both public resolvers agree; all twenty original non-web DNS rows and five original TXT records remain intact.
+- Six natural minute-spaced research cron requests from 20:49:37 through 20:54:37 UTC returned HTTP 200 on the new Production artifact. No cron was manually invoked and response bodies/job counts were unavailable. The existing normal apex sign-in request remains pending; owner phone acceptance stays complete.
