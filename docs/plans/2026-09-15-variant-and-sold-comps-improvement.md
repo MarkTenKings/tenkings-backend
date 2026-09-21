@@ -1,6 +1,6 @@
 # Variant identification and sold-comparison improvement plan
 
-Date: September 15, 2026 (America/Los_Angeles). Status refreshed September 20 after resuming the owner-authorized implementation; dated observations retain their original test dates. **Production remains the Pokémon/photo-recovery release38c95335. The clean main Preview now integrates qualified Inventory code and loads99entries/109cards in the existing signed-in session; domain cutover awaits phone acceptance. Additional catalog and research changes are implemented and being qualified separately; no90% coverage claim.**
+Date: September 15, 2026 (America/Los_Angeles). Status refreshed September 20 after resuming the owner-authorized implementation; dated observations retain their original test dates. **Production remains the Pokémon/photo-recovery release38c95335. The clean main Preview now integrates qualified Inventory code and loads99entries/109cards in the existing signed-in session; Mark confirmed phone acceptance on September 21; production configuration and domain cutover are next. Additional catalog and research changes are implemented and being qualified separately; no90% coverage claim.**
 
 ## Lead transfer — September 21
 
