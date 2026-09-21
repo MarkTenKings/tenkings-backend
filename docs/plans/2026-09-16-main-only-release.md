@@ -10,11 +10,19 @@ The Production build used the correct Production environment with migrations dis
 
 DNS now has apex A `216.150.1.1` and `216.150.16.1`, and www CNAME `47388d6720762a26.vercel-dns-017.com`, retaining one-hour TTLs. Both Wix authoritative servers plus Cloudflare and Google public resolvers report these values. All pre-existing mail/TXT/nameserver/service/collect records are preserved. Two additional certificate-challenge TXT records were added to pre-generate exact apex/www HTTPS before switching traffic; no wildcard certificate, registrar, nameserver or account transfer. The complete before-state and receipts are private under `~/Library/Application Support/TenKingsInventory/investigations/20260921-main-production`.
 
-Staging with `autoAssignCustomDomains:false` still moved Vercel's generated team/branch aliases. The lead detected this by actual alias reads, restored both previous destinations, qualified the staged artifact, then deliberately promoted it. The stable main Preview remains the qualified Preview `dpl_8HebWQWJfa2YiuKbnYf4kd2x1dwx`. Future staging must inspect generated aliases as well as project/custom-domain state.
+Staging with `autoAssignCustomDomains:false` still moved Vercel's generated team/branch aliases. The lead detected this by actual alias reads, restored both previous destinations, qualified the staged artifact, then deliberately promoted it. The main Preview has since advanced through the separate diagnostic release below. Future staging must inspect generated aliases as well as project/custom-domain state.
 
 The following dated entries are retained history. Concurrent Pokémon and scorer implementation is not part of this Production artifact.
 
-## Current scope — September20 integrated Preview
+## September 21 — Qualified combined Preview and diagnostic shutdown
+
+Production remains the exact `9a12cd35` artifact above. Main Preview source is now `2c8e0554f847a11ead58ebd1caa87b0262bae234`, containing reviewed Pokémon preparation/build-outcome reporting, V4/V5 scorer tooling and the isolated exact-input diagnostic. Candidate `dpl_4YrsCHZA5Fa1aNbBXunzBMX3rCMX` passed native Linux Sharp and private route qualification. One normal human-session Snivy diagnostic completed, retained private evidence and left the saved research job unchanged; it established no exact selected comp or estimate. See [comp qualification](2026-09-21-inventory-takeover/comp-qualification.md).
+
+The exact Preview branch execution flag was then changed to false with every other environment record preserved. Same-source shutdown artifact `dpl_7Kbmt1fWpzWPuLVe6Ue3Xo7Pgiqm` / `tenkings-backend-nextjs-mo4vommjs-ten-kings.vercel.app` is READY with native Sharp, 79 pages and migrations disabled. Root assigned the stable main Preview alias to it explicitly because both Git deployment and redeploy left that alias on the previous artifact. Direct alias lookups remain the authority. Production aliases, source and sole cron were preserved throughout. This is neither a Production promotion nor catalog activation.
+
+Browser terminal download worked before shutdown and its full receipt checksum matches. At the final browser check Chrome's native surface no longer exposed accessibility content or a screenshot; root did not navigate or reload the unrelated active grading surface. Post-shutdown authenticated plan/recovery display is therefore not claimed; server flag/build/alias and unsigned guards are independently verified. The existing owner apex sign-in request and actual catalog human review remain pending.
+
+## Retained scope — September20 integrated Preview
 
 The main-site branch now integrates the complete qualified Inventory candidate `e286ea0a190bfdc6807fe8ca58c47b34c94b55c1` through a normal merge. Every application, dependency, schema and configuration blob equals that Inventory commit; only documentation differs. The original smaller release described below is historical and no longer defines the candidate's runtime scope.
 

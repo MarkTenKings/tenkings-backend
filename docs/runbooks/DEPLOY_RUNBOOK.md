@@ -9,6 +9,7 @@ Use the exact-source release identities and qualified workflow in [main-site rel
 
 - Build from the intended Git commit and its Production/Preview environment. The sparse main worktree and the older checkout that holds the Vercel project link are not upload sources.
 - Vercel staging with `autoAssignCustomDomains:false` was observed to move generated team and branch aliases. Before and after staging, read each actual `/v4/aliases/{hostname}` destination and the sole cron owner; restore an unintended move before qualification. Project/deployment alias arrays can be stale.
+- Git Preview creation and exact-source redeploy were also observed to leave the stable branch alias on the previous artifact despite automatic-alias metadata. Qualify the candidate and explicitly assign only the intended Preview alias if direct readback shows it stale. Environment edits affect new builds; an execution flag is not operationally closed until the stable host serves the qualified disabled artifact.
 - Keep `RUN_DB_MIGRATIONS=false` unless a separately qualified migration is intended. The September 21 main cutover required no migration. Preserve collect permanent links, mail/TXT/service records and original-origin pending commands.
 - Phone workflow acceptance is already complete on Mark's confirmation. The pending new-apex normal sign-in/photo/map check is a distinct deployment postflight. Exact Preview database availability is branch-specific: successful builds and environment pulls do not establish signed-in data access.
 

@@ -33780,3 +33780,44 @@ The following branch-specific records are retained verbatim from the main-site p
 - Planned authorized changes: create only server-side STAFF_RESEARCH_EXACT_INPUT_QUALIFICATION_CONFIG and STAFF_RESEARCH_EXACT_INPUT_QUALIFICATION_ENABLED=true, restricted to codex/main-site-release-20260916 Preview. Fill the private Snivy template with this final main commit SHA. Existing provider/storage credentials are reused without copying or printing them. Billing stays null; three searches/two details/three model calls/twelve candidate images are request limits, not dollar pricing.
 - Push the exact committed branch, qualify its hosted native build, actual duration/configuration, exact alias and private guards. Through the existing normal human Preview page, inspect the fixed card/input/photo/plan bindings and then run one deliberate invocation. This is a development diagnostic excluded from the independent holdout; unknown or failed results do not authorize another cohort. Private evidence is the only intended write; Inventory/research/catalog records remain unchanged.
 - After that invocation or an uncertain response, recover by reads only, retain the evidence and disable the new Preview execution flag through a qualified exact-source rebuild. Original apex sign-in remains pending and earlier phone acceptance remains complete.
+
+
+### September 21 — Exact main Preview configuration and push observed
+
+- Created exactly two plain server-only environment records restricted to the main release Preview branch: the fixed Snivy configuration bound to source 2c8e0554f847a11ead58ebd1caa87b0262bae234, and exact-input execution=true. Every pre-existing environment record compared identically before/after. Production, normal worker flags, database credentials and the old provider diagnostic are unchanged. Private configuration SHA-256 is e60dddd6064e3985b3f89a128312e7fc5c90b3d0714b3b0605e2140e774dae09.
+- Pushed main from 9a12cd35 to exact 2c8e0554 through the existing Git-connected branch. Application bytes equal reviewed Inventory 4e1b1c21; this main commit adds the pre-build operation record only. Hosted build/guards and actual diagnostic have not yet been qualified or executed. Evidence is private under investigations/20260921-exact-input-preview.
+
+
+### September 21 — Preview build passed; stable alias correction planned
+
+- Candidate dpl_4YrsCHZA5Fa1aNbBXunzBMX3rCMX is READY Preview at exact 2c8e0554 with 300-second Fluid configuration. Independent postflight verified native Linux Sharp 0.34.5 and all 79 pages. Migration nonexecution is supported by the exact build script and effective RUN_DB_MIGRATIONS=false; Preview intentionally emits no Production skip line.
+- Direct alias metadata still assigns the stable main Preview host to prior dpl_8Heb despite candidate automaticAliases metadata. The new endpoint therefore returns 404 there; no diagnostic was attempted. Production aliases and its sole cron remain unchanged.
+- Planned correction: use the normal Vercel alias command to assign only tenkings-backend-nextjs-app-git-codex-main-sit-3a8ce9-ten-kings.vercel.app to the exact qualified dpl_4Yrs candidate, then independently verify destination and private 401 guards before the already planned one-card invocation. No other alias or Production setting is included.
+
+
+### September 21 — Stable Preview corrected and invocation admitted
+
+- Normal alias command completed successfully. Independent 23:34:36 UTC readback verifies the stable main Preview now serves dpl_4Yrs/exact 2c8, its new unsigned API returns 401 with private/no-store/noindex, and the diagnostic page serves the candidate. Apex diagnostic remains 404. Production aliases/source and the sole research schedule are unchanged.
+- Existing normal human Preview session displays the expected Snivy unit/input/front/back hashes and deployed dpl_4Yrs; reviewed plan SHA-256 0215187c002c26e0ecd2f61acda1f592fb90d0e5a0686135529237485756e588. Old provider probe is disabled. Plan discloses zero legacy references, catalog/full-resolution/archive/business writes false, sale details true, limits and unavailable cost.
+- Bounded read-only pre-run database receipt at 23:25:10 UTC confirms the exact saved completed job is unchanged: full-row SHA-256 15ebb497f20296336ea74e8f81f3ce0f847ba10ae30d55d04cce7b5c22e90a47. Proceed with the single planned normal UI invocation; retain uncertainty and recover by reads only.
+
+
+### September 21 — One Snivy diagnostic completed; planned execution shutdown
+
+- Exactly one normal UI submission retained invocation f128eda0-75a6-40a1-831b-89b8701e1c5c. Terminal receipt is completed, started 23:35:19.510 UTC and completed 23:36:56.108 UTC, with two searches, two sale-detail requests, two model requests and nine image reads. No wrapper error or limit violation is recorded. Cost remains unavailable; independent result/evidence analysis is in progress.
+- Saved the normal authenticated short-lived evidence download privately as snivy-terminal.json, 512235 bytes, and matched the displayed SHA-256 c6fb1b0ccfcc848177330f0d5dd188c030b57abe5015ca209fb977edc0d1f41b. The same bounded READ ONLY job check at 23:38:53 UTC matches the pre-run complete-row SHA-256 exactly. No saved Inventory/research result was changed by the diagnostic.
+- Planned shutdown: PATCH only the value of exact Preview-branch env ID WPRmL533Ii0m6vSk to false, preserve its identity/branch/target and every other environment record. Then normal Vercel redeploy of exact dpl_4Yrs with target Preview and no latest-commit override; verify exact 2c8 source, native build, stable alias and disabled execution. Preserve configuration/private recovery, Production and its sole cron. No rerun or new cohort is authorized by this result.
+
+
+### September 21 — Shutdown build qualified; final alias correction planned
+
+- Exact Preview env record WPRmL533Ii0m6vSk now reads false; every other pre-existing env record compared identically. Normal exact-deployment redeploy created dpl_7Kbmt1fWpzWPuLVe6Ue3Xo7Pgiqm / tenkings-backend-nextjs-mo4vommjs-ten-kings.vercel.app at unchanged source 2c8e0554. Independent 23:44:05 UTC checks verify READY Preview, 300-second Fluid configuration, native Linux Sharp 0.34.5, all 79 pages, migrations false and unchanged config record. Production and sole cron remain unchanged.
+- Vercel again left the stable main alias on the previous enabled artifact. Planned immediate correction: assign only that exact stable main Preview alias to the qualified mo4vommjs shutdown artifact, then read back the actual destination and disabled normal UI/recovery. No other alias or Production mutation.
+- Independent offline Snivy review passes all envelope/plan/input/result and 14 retained blob hashes, V5 schema, response bindings and request-template/image structure. Full original-image wire reconstruction remains explicitly unavailable locally. The $1.08 observation is an auction; $1.55 is an explicitly hydrated accepted offer, not an ordinary fixed-price positive. One detail timed out without retry; 15 of 24 candidates were not imaged, nine retained thumbnails are at most 225 pixels. Result has zero selected comps and unknown value. Actual returned Astra usage totals 21276 tokens; dollar cost is unknown. Private analysis SHA-256 7146af34d8cf4925890dbf35d749ce0ba194a5bc458c74d38f5d15b801adfa3e.
+
+
+### September 21 — Diagnostic shutdown observed and four-lane closeout
+
+- Independent final readback at 23:45:52.265 UTC verifies the actual stable main Preview alias serves READY dpl_7Kbmt1fWpzWPuLVe6Ue3Xo7Pgiqm/mo4vommjs at exact 2c8e0554. The page contains the new artifact marker; the execution flag is false, new endpoint and workspace reject unsigned reads with private/no-store 401, and apex diagnostic is 404. Every Production alias/source and the sole enabled cron remain unchanged. Final private postflight SHA-256 ce2f2d32d4fef94ffdb33159bf236c4c12d198c5e152c762ef96c21f457375dd.
+- The browser successfully downloaded the terminal receipt before shutdown. Later Chrome exposed neither accessibility content nor a screenshot on the now-active unrelated grading surface. Root did not navigate/reload that surface, copy a session or infer post-shutdown authenticated UI recovery. That optional final UI display check remains distinct from the proved server configuration/build/alias closure. The original pending apex sign-in request remains open; phone acceptance remains complete.
+- Updated current Product Context, release/runbook and comp/main-domain packets to separate live Production, qualified disabled Preview, actual one-card limitations, completed local/SQL/scorer work, and outstanding normal specialist login, real source review/publication, independent labels and optional-load qualification. No ATLAS source, migration, service restart or unrelated artifact changed.
