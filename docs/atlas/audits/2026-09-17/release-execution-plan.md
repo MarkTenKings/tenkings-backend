@@ -1,11 +1,62 @@
 # Rebuild 3 prepared execution plan
 
+## September20 Pacific / September21 UTC execution supersession
+
+The September17 plan below is historical. Its successor actions have now applied
+the five staff migrations (40 successful staff entries; public unchanged),
+provisioned and proved the restricted manual LOGIN role, installed the actual
+staff/private configuration, and started native image
+`sha256:50ffd1e6ab8a0967a7dbbb214788a9b134ae20625aac9ba9a85cf5967635b2f4`
+from application source `30dbea77c484e61de56da522d67a841cb9df25ee`.
+
+Actual READY staff deployment is `dpl_D2d5usjWgiRMxJ3yLhY3XU4NRoNo` /
+`atlas-grading-staff-5cnmp4jnf-ten-kings.vercel.app`; actual READY public deployment
+is `dpl_8SLu6tEzN9EXhG1sVbHvcLBVrK5C` /
+`atlas-grading-public-mzh92wy4i-ten-kings.vercel.app`. The eight-row control
+transaction passed exact-delta readback: StaffControl revision16 and STAFF SMS
+revision14 select the new staff binding, six legacy controls are disabled, and
+customer/unchanged rows are preserved. Public promotion and final readback passed:
+all four public aliases and the production target select the new deployment,
+with the www-to-apex HTTP308 redirect preserved. Readback receipt
+`0f0e32a575710b6283814d858f72584a02983aa975cc8f13bad65006ac625499`
+records `PUBLIC_ALIAS_PROMOTION_VERIFIED`. The ordinary staff sign-in page renders
+at `https://atlasgrading.com/admin`. Unauthenticated public/staff/customer routes
+and all32 observed assets also passed; this does not prove a signed-in owner session.
+
+The separate corrected Caddy validator passed with the unchanged proposal,
+receipt `7452ffab6177b78f431173cf7c7a84ca6d7259834dc8fac2d468405a2c0056ef`.
+The original failed validator/intent remains preserved: Caddy's executable has
+`cap_net_bind_service=ep`, so the isolated replacement validator added only
+NET_BIND_SERVICE to its nonroot/network-none capability set and read the root444
+proposal through a read-only mount. This did not change serving privileges.
+Apply receipt `104676a25437f8a901cbea6c29eeb6f8e6efc2515ea86a2228aa3c112eca7db0`
+proves exactf826 ingress, inode282983 and unchanged containers. Direct TLS receipt
+`9fad5fd65553648bba643ca008d8178ad5d86b5de11c01ce9507076b2117bc47`
+returned HTTP401 for an unsigned request, HTTP404 for an absent route and HTTP400
+for an actual-proxy signed malformed command before authentication/business effects.
+Application storage qualification also passed;
+all earlier native-checksum failures remain retained and unrelabeled.
+
+Still pending are fresh ordinary owner login and authenticated manual access,
+the actual hosted 130-second terminal response, and fresh physical-card optical,
+manual workflow and human-requested Astra acceptance. The transport proof used
+no human session or real card. Final report approval still needs genuine reviewer
+certification. Autonomous operation and slab finishing follow the manual milestone;
+SAM remains deferred unless actual testing demonstrates a need.
+
+The [live milestone record](../2026-09-20/live-manual-milestone.md) and SESSION_LOG
+own current execution evidence. Preserve all original sealed packages and consumed
+intents; the null inputs, uncreated paths and non-executed commands below describe
+September17 preparation and must not be treated as current state or replayed.
+
+## Original September17 preparation
+
 Prepared September17,2026 from source `2b3c3c0d2203cee0609f58984b67013a932774c9`,
 with subsequent qualified application source `30dbea77c484e61de56da522d67a841cb9df25ee`.
-This is a non-executed release package. The final native image and its bundled
-staff build now pass the [offline qualification](native-release-qualification.md).
-Actual hosted staff deployment, constructor/control bindings and live storage
-qualification remain required inputs. No production database write, secret change,
+This was a non-executed release package. The final native image and its bundled
+staff build passed the [offline qualification](native-release-qualification.md).
+At preparation time, actual hosted staff deployment, constructor/control bindings
+and live storage qualification remained required inputs. No production database write, secret change,
 role provision, deployment, model call, network attachment or Caddy reload occurred
 in this preparation. Read-only provider requests use existing credential custody.
 
@@ -14,7 +65,7 @@ unchanged migration hashes and grant procedure. This plan adds concrete ingress,
 container/configuration paths, cutover ordering and the certification caveat
 found in the existing source. Root owns SESSION_LOG, final review and approval.
 
-## Prepared files and current ingress facts
+## Prepared files and September17 ingress facts
 
 All prepared files are under:
 `/Users/markthomas/.codex/atlas-handoffs/atlas-connected-manual-20260912/release-readiness/release-auth-database-20260917/prepared/`.
@@ -207,7 +258,7 @@ those bridge bindings unless a separately reviewed retained use requires them.
 Verify the resulting disabled bridge and all other old consumers through their
 actual constructors. Preserve the old deployment's bindings for rollback.
 
-## Non-executed command sequence
+## Historical non-executed command sequence
 
 These commands are run only by the lead after final artifacts, dependencies,
 coordination and applicable exact approval. They are not a complete unattended

@@ -1,9 +1,14 @@
-# Connected manual candidate release
+# Connected manual release
 
-Updated September 17, 2026. Build and local qualification instructions; **not a record of
-production activation**. Preserve the dedicated Vercel staff app and public
-`/admin` gateway. The new native CPU service is a separate private deployment.
-Do not replace the previous grading operator as a consequence of this release.
+Updated September 20 Pacific / September 21 UTC, 2026. The manual release's
+database, restricted login, private service, ingress and staff controls are now
+activated. Public promotion and readback passed: all four public aliases and the
+production target select the new deployment, with the www-to-apex HTTP308 redirect preserved.
+The ordinary staff sign-in page renders at `https://atlasgrading.com/admin`;
+unauthenticated public/staff/customer routes and all32 observed assets passed.
+Owner login and real-card acceptance have not yet passed. The dedicated
+Vercel staff app remains behind the public `/admin` gateway; native work runs in
+the separate private service. Old operator history and private routes are retained.
 
 Current application source `30dbea77c484e61de56da522d67a841cb9df25ee` produced
 image `sha256:50ffd1e6ab8a0967a7dbbb214788a9b134ae20625aac9ba9a85cf5967635b2f4`,
@@ -12,8 +17,40 @@ Native/source/boundary checks,379 package tests,42 actual Next15.5.25 staff/manu
 tests, four disposable PostgreSQL validators and all14 required CI jobs pass.
 See the [current qualification](../audits/2026-09-17/native-release-qualification.md)
 and [concrete execution plan](../audits/2026-09-17/release-execution-plan.md).
-Live storage qualification, hosted bindings/activation and owner acceptance are
-still outstanding. The older images/counts below are historical.
+Actual application storage qualification passes with complete-byte SHA256 checks
+before decode/adoption; provider-native checksum refusal remains unqualified.
+Five staff migrations are applied and the ledger has 40 successful entries; the
+public ledger is unchanged. The restricted manual role passed actual TLS login
+and complete privilege checks. Staff deployment
+`dpl_D2d5usjWgiRMxJ3yLhY3XU4NRoNo` at
+`atlas-grading-staff-5cnmp4jnf-ten-kings.vercel.app` and public deployment
+`dpl_8SLu6tEzN9EXhG1sVbHvcLBVrK5C` at
+`atlas-grading-public-mzh92wy4i-ten-kings.vercel.app` are actual READY builds of
+source30d. StaffControl revision16 and STAFF SMS revision14 use the new staff
+binding; six legacy controls are disabled and unrelated/customer rows are unchanged.
+
+The native service is running on image50ffd with no published ports. Corrected
+isolated Caddy validation passed, the exact reviewed ingress was applied while
+preserving inode282983, and all existing containers remained unchanged. The first
+validator could not execute Caddy's file-capability binary with every capability
+dropped; its failed intent remains retained. The separate successful validator
+added only NET_BIND_SERVICE in its nonroot/network-none container. Serving
+container privileges and the proposed Caddy bytes were unchanged.
+
+Direct private TLS returned HTTP401 for an unsigned request, HTTP404 for an absent
+route and HTTP400 for an actual application proxy's signed malformed command
+before authentication or business effects.
+That proof used no human session. Still required: a fresh ordinary owner sign-in,
+authenticated manual access through the apex, the hosted 130-second terminal
+response check, and fresh physical-card upload, optical/manual grading and
+human-requested Astra acceptance. Report approval additionally needs genuine
+reviewer certification; no certification was created by this release. Autonomous
+operation and slab finishing follow this milestone; SAM remains deferred unless
+real testing establishes a need.
+
+See the [current milestone record](../audits/2026-09-20/live-manual-milestone.md)
+for observed receipts and remaining acceptance. The earlier images/counts and
+preparation below are historical or reusable instructions, not actions to replay.
 
 ## Earlier September 12 manual-only checkpoint
 
@@ -47,15 +84,21 @@ The sealed execution intent exists; never rerun it. Conditional collision/privac
 checks later in the plan were not reached. Resolve provider upload-integrity and
 immutable-write behavior before live intake; do not relabel this result a pass.
 The build now uses a qualified isolated native Linux path; local Docker Desktop
-recovery is no longer a prerequisite. A distinct bounded live-storage plan is
-[prepared for owner approval](../audits/2026-09-17/storage-qualification-approval.md).
+recovery is no longer a prerequisite. The distinct September17 qualification also
+failed safely and remains sealed. The September20 application-level qualification
+passed under Mark's live-milestone direction: full SHA256 verification rejects
+altered bytes before decode/adoption, actual artifact reads verify content and
+lineage, conditional writes return412 with unchanged bytes, and cleanup is
+confirmed. Native checksum refusal remains unqualified. Preserve all earlier
+failures; see the [current result](../audits/2026-09-20/live-manual-milestone.md).
 
 September 16 recognition adoption adds the reviewed shared identifier V2 for new
 attempts while preserving saved V1 inputs/results. The immutable input envelope
 uses the existing connected schema; it adds no migration or dependency upgrade.
 The September17 artifacts include the new V2 runtime files and updated manual page.
 See [recognition adoption and its acceptance limits](../audits/2026-09-16/recognition-v2-adoption.md).
-This local update does not qualify or activate a hosted release.
+That local recognition update alone did not qualify or activate a hosted release;
+the subsequent deployment state is recorded above.
 
 ## Prepare and bind the candidate
 
@@ -78,8 +121,9 @@ This local update does not qualify or activate a hosted release.
    secrets or native CPU/old orchestration imports in the new web path. Run all
    repository-required checks on the exact PR head before any merge/release.
 4. Inventory actual DB migrations and role privileges read-only. The September17
-   disposable proof uses95 public/40 staff migrations with exact no-op replays;
-   read-only live inventory has97 successful public/35 staff. Two installed public
+   disposable proof used95 public/40 staff migrations with exact no-op replays;
+   the pre-release live inventory had97 successful public/35 staff. The current
+   staff ledger has40 successful migrations after the five-file release. Two installed public
    Inventory/catalog migrations are outside this branch; preserve them and do not
    run public migrations as part of this five-file staff-only schema addition.
 
@@ -106,7 +150,9 @@ Apply them through the existing **staff Prisma migration ledger**, in this order
 
 Each migration must match its proposal byte-for-byte. The proposals themselves
 are not idempotent and must not be run manually before or after the tracked
-chain. Under the separately authorized migration, use the reviewed migration
+chain. This release's five migrations are already applied and the second deploy
+was a verified no-op; preserve those receipts. For a future separately authorized
+target installation, use the reviewed migration
 credential targeting the same database with `schema=atlas_staff`, inspect status,
 then run the staff app's `prisma migrate deploy --schema prisma/schema.prisma`.
 Verify all five names/checksums, no unfinished rows and a second deploy that
@@ -186,7 +232,11 @@ successful OPTIONS preflights,
 with Content-Type, If-None-Match, x-amz-checksum-sha256,
 x-amz-meta-atlas-kind and x-amz-meta-atlas-binding-sha256. Confirm full-size GET
 returns the actual content type and correct bytes; public unauthenticated reads
-must fail. The retained local SDK fixture does not establish Spaces semantics.
+must fail. Provider-native checksum refusal is not an alternative to the actual
+adapter's complete-byte integrity check: the approved fallback permits bounded
+SHA256 verification when native checksum is absent. Prove rejection before
+decode/adoption, including an altered-byte object, and keep create-only protection.
+The retained local SDK fixture alone does not establish Spaces semantics.
 
 The separately approved September12 additive CORS change installed the two
 previously missing PUT headers, `x-amz-meta-atlas-kind` and

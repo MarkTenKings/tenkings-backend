@@ -14,14 +14,25 @@ The prior native pixel checks, 379 package tests, 42 staff/manual tests,
 49 PostgreSQL assertion groups and 14 required CI jobs passed. No runtime code
 has changed in this continuation. See the [native qualification](../2026-09-17/native-release-qualification.md).
 
-Fresh read-only production inventory confirms 97 applied public migrations,
-13 rolled-back public attempts, zero unfinished migrations and 35 staff
-migrations. Exactly five additive staff migrations are prepared. Inventory's
-additional public migrations must be preserved. The new restricted manual role,
-schemas, service, networks and web deployment have not been activated.
+The five additive staff migrations have now applied, bringing the staff ledger
+from 35 to 40. The second deployment was a no-op, and an independent database
+check passed. All 97 applied public migrations and 13 historical rolled-back
+attempts are unchanged; there are no unfinished migrations. The initial role
+transaction rolled back when a validation query evaluated a sequence privilege
+check against a toast relation. A separate role-only action corrected that type
+guard without changing any grants. The restricted role was first created NOLOGIN and passed all
+13-table/four-function effective privilege checks; receipt SHA256
+`494d828314681bddd2c130c01b8ab770185a833400eae21e7b7772b034f27a6a`.
+The role now passes actual TLS login with the new private credential, retaining
+NOINHERIT, connection limit two and the same restricted privileges. Both hosted
+builds are READY and the qualified private service is running. Caddy now routes
+the manual endpoints to that service. Actual signed HTTPS transport passed, and
+the eight control updates passed independent exact-delta readback. All four public aliases and the production target now select the new release;
+the existing www308 redirect is preserved. Ordinary owner
+sign-in, hosted long-response acceptance and fresh-card testing remain pending.
 
-Three fresh Astra Extra High specialists cover storage, web/control release and
-database/private-host release. Their prepared actions have exact before-state
+Multiple Astra Extra High specialists cover storage, web/control release,
+database/private-host release and independent review. Their prepared actions have exact before-state
 checks and separate, deliberate activation steps. Mark's instruction authorizes
 completion of this milestone; it does not fabricate a human certification or
 real-card acceptance.
@@ -68,12 +79,35 @@ create-only refusal, using the default Node SDK HTTP transport. Earlier failures
 failures; no checksum, conditional-write or read-verification check has been
 removed from the runtime.
 
-## Remaining activation and acceptance
+That distinct qualification subsequently **passed live**. Manifest
+`8f57fd8d95cd189e13c6330238eddc7523fcb4ad459a5cf5f13d1f2f9b4f1b98`
+produced result
+`5db8cb533bd1d1070d8c6abdda74218845846c218fabff1aaec43bd85e1bd06b`:
+43 requests, five PUTs totaling 325 bytes and three verified-owned DELETEs.
+Actual `decodeOriginal` rejected altered bytes with `PHOTO_STORAGE_CONFLICT`
+and zero decoder calls. Exact original SHA256, signed browser read/CORS and
+actual artifact-store content/SHA256/lineage verification passed. An incorrect
+artifact input hash was rejected without HTTP. Both overwrite attempts returned
+412 and preserved original bytes. Both final objects were deleted and verified
+absent by HEAD and GET. A second specialist independently checked every dispatch
+against the response journal. Native checksum refusal remains unqualified.
 
-Complete application-level storage qualification, then activate the five staff
-migrations, restricted role, private service, dedicated staff/public deployments
-and exact control bindings. Verify the hosted route, ordinary sign-in and manual
-workspace. A real signed-in session is required to exercise the actual hosted
+The eight reviewed staff-project environment operations have completed with
+per-operation readback and unchanged unrelated rows. Existing bridge values are
+preserved in private rollback custody. The new transport key is stored privately;
+provider metadata alone does not prove its runtime value. The actual READY staff build uses
+these settings, the public gateway selects that immutable staff deployment, and
+the database controls now match the new release.
+Environment result SHA256:
+`ee2e958356535a11bf95b6afadf91b04f43bc436e3362930a4f05fcac579a70b`.
+
+## Remaining acceptance
+
+Verify ordinary sign-in and the manual workspace. The public aliases and live
+staff sign-in page are verified. The
+five staff migrations, restricted role activation, private service, Caddy route
+and eight-row control transaction are complete; consumed actions must not be
+replayed. A real signed-in session is required to exercise the actual hosted
 long-response path; synthetic credentials must not replace ordinary access.
 
 Mark's fresh-card test then checks original image quality, paired geometry,
@@ -86,3 +120,42 @@ External normalized evidence is retained under
 `/Users/markthomas/.codex/atlas-handoffs/atlas-connected-manual-20260912/release-readiness/`
 in `storage/compatibility-20260920`, `release-auth-database-20260920` and
 `web-control-20260920`. Credentials are excluded from these receipts.
+
+The first staff upload was refused locally before any deployment or file POST.
+Three metadata GETs completed; provider readback found no new deployment. A
+second upload stopped after a definite missing-files response and incomplete
+content uploads, with no deployment created. Both consumed intents remain
+preserved. The corrected third staff upload succeeded with exact-byte source
+uploads and authentic provider Git metadata; application code did not change.
+
+A direct read-only OpenAI model-access check returned HTTP200 for
+`gpt-6-astra` using the retained configured account. It made no inference request
+and does not establish the account balance or real-card result quality.
+
+Hosted staff: `dpl_D2d5usjWgiRMxJ3yLhY3XU4NRoNo`,
+`atlas-grading-staff-5cnmp4jnf-ten-kings.vercel.app`.
+Hosted public: `dpl_8SLu6tEzN9EXhG1sVbHvcLBVrK5C`,
+`atlas-grading-public-mzh92wy4i-ten-kings.vercel.app`.
+Both actual provider readbacks confirm source `30dbea77`, their respective
+project roots and Node20. Final readback verifies all four public aliases and the production target on
+this new public deployment, preserving the www308 redirect. The live browser
+renders the ordinary staff sign-in page at https://atlasgrading.com/admin.
+The private service emitted its actual listening event for the same new staff
+host/source on port4319; all22 other container identities/states were preserved.
+
+Release activation evidence:
+
+- Corrected isolated Caddy validation passed: `7452ffab6177b78f431173cf7c7a84ca6d7259834dc8fac2d468405a2c0056ef`. The original failure came from the executable's file capability and remains recorded.
+- Serving Caddy reload passed: `104676a25437f8a901cbea6c29eeb6f8e6efc2515ea86a2228aa3c112eca7db0`. Exact reviewed bytes retain inode282983 and preserve all other routes and containers.
+- Actual signed HTTPS transport passed: `9fad5fd65553648bba643ca008d8178ad5d86b5de11c01ce9507076b2117bc47`. Unsigned manual access returned401, an absent route404, and a signed malformed command400 before authentication or card/model work.
+- StaffControl revision16 and STAFF SMS revision14 bind source30d/staff5cnmp/config157135; six legacy controls are disabled. Fifteen-table readback preserved customer and every unchanged row, snapshot `44294dc5bd617ca84af0611de74fc078e6aef89f1c78c2d5b3ced784b6f46a90`.
+- The old SMS expiry and caps are historical fields. Actual installed functions match the owner-approved migration removing those admission checks; no policy extension or reset occurred. Genuine phone verification, rate limits, sessions and CSRF remain.
+
+Final public promotion readback: `0f0e32a575710b6283814d858f72584a02983aa975cc8f13bad65006ac625499`. A fresh owner sign-in has been requested in the visible browser; no human-session or real-card acceptance is claimed yet.
+
+Unauthenticated live checks also pass: homepage, staff sign-in and customer pages
+return200; protected grading/manual pages redirect to sign-in; all32 observed
+JavaScript/CSS assets return200 with correct types. Staff browser cookies retain
+Secure/HttpOnly/Path=/admin/SameSite=Lax attributes; no cookie or CSRF values were
+recorded. This proves the public delivery and login surface, not authenticated
+workspace operations.
