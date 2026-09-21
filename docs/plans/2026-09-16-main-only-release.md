@@ -1,4 +1,14 @@
-# Independent main-site release candidate
+# Main-site release record
+
+## Current scope — September20 integrated Preview
+
+The main-site branch now integrates the complete qualified Inventory candidate `e286ea0a190bfdc6807fe8ca58c47b34c94b55c1` through a normal merge. Every application, dependency, schema and configuration blob equals that Inventory commit; only documentation differs. The original smaller release described below is historical and no longer defines the candidate's runtime scope.
+
+The clean site and all 21 site/diagnostic application/test files already matched Inventory. Integration preserves the existing main Preview origin, auth/widget setup and browser session; it requires no new host allowlist or shared-server mutation. Catalog, contributions, full-resolution images, sale details and provider diagnostic execution remain off; database migrations remain disabled. Existing cron ownership is unchanged.
+
+The complete controlled 3,200-save timing comparison and separate default cron functional fixture pass; sports preparation UI/API and isolated PostgreSQL qualification also pass. Their exact scope and limits remain in the [updated plan](2026-09-15-variant-and-sold-comps-improvement.md). Qualify the merged exact-source hosted build and signed-in read; real phone capture/save/reopen and actual feature/accuracy acceptance remain separate. No DNS cutover or production promotion has occurred.
+
+## Historical independent release scope
 
 Base: serving web commit `38c95335614df756c420127e6b94bedd5620fa2d`.
 The initial site slice extracted these frontend paths from `945812ca3a9d0c9e48f3a08d533e34919866d029` (identical through current catalog branch). The initial site slice omitted the research-qualification Queen exclusion from `_app.tsx`; the isolated diagnostic addition below now restores that one condition for its new page.

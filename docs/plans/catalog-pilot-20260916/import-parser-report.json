@@ -1,0 +1,620 @@
+{
+  "schemaVersion": "tenkings-pilot-import-parser-report/v1",
+  "authority": "offline_pure_function_observation_not_host_qualification",
+  "sourceHead": "12e13992cd341eeea96dbe0955cc4dbfba67bc1d",
+  "packetSha256": "b4a011058e0d63e30f5a7aabd911757021dfe46f3122d4677b2aeec6028e3e17",
+  "codePins": {
+    "docs/plans/catalog-pilot-20260916/prepare-pilot.mjs": "343f44743f6419b264d1c497d52dee2f7bcf322a6c5cbac1a93f12e2f6f978e0",
+    "frontend/nextjs-app/lib/server/setOpsDrafts.ts": "152a0ed4644118ff065f9e926db2573de1e7eb7eabf641356f1ba433869248fa",
+    "frontend/nextjs-app/lib/server/setOpsCsvContract.ts": "6ce6f320095dc62494523bbafe22db8d59ec1c797bac4404ac9965350a31a257",
+    "frontend/nextjs-app/lib/server/taxonomyV2ManufacturerAdapter.ts": "af76d4add59aeaa6d1f85b78dc588b1cf613c5f2c913488e7c16af9653c93e4b",
+    "frontend/nextjs-app/lib/server/taxonomyV2ToppsAdapter.ts": "72abd16a555e045f20021cece60d9f7bee060897e07918af9217df0be95f5930",
+    "frontend/nextjs-app/lib/server/taxonomyV2PaniniAdapter.ts": "0d08c984750478f50ebec34beadd4cb390e465ff5599cbce1b8582e938a1085e",
+    "frontend/nextjs-app/lib/server/taxonomyV2UpperDeckAdapter.ts": "c8abebbf9c77f571c918bcde61467fa714ec182e8eb179e74010642ddcd5cc43",
+    "frontend/nextjs-app/lib/server/taxonomyV2Core.ts": "add06fe482a1317f41a1f56486426e7e1aaad9b2937dffab918ba3f594378958",
+    "frontend/nextjs-app/pages/api/admin/set-ops/drafts/build.ts": "81c1c043ec230955c1203095a9d5872a4b1513b8e955d350e744bf5277ed546b"
+  },
+  "sourceVerification": {
+    "sports-checklist": {
+      "sha256": "bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+      "bytes": 529104,
+      "verified": true
+    },
+    "sports-odds-round2": {
+      "sha256": "72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+      "bytes": 265208,
+      "verified": true
+    },
+    "pokemon-checklist": {
+      "sha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+      "bytes": 2227474,
+      "verified": true
+    }
+  },
+  "sourceManifestSha256": "32d69d353d106ce7fb909ec13ebce68c7448bcf7c29fa5fdd81c5689f567780a",
+  "reports": [
+    {
+      "id": "sports-checklist",
+      "csvAdapted": false,
+      "normalization": {
+        "rowCount": 3,
+        "errorCount": 0,
+        "blockingErrorCount": 0
+      },
+      "quality": {
+        "score": 76.92,
+        "decision": "WARN",
+        "metrics": [
+          {
+            "key": "card_count_sanity",
+            "weight": 20,
+            "score": 0.25,
+            "passed": false,
+            "note": "3 rows"
+          },
+          {
+            "key": "duplicate_check",
+            "weight": 10,
+            "score": 1,
+            "passed": true,
+            "note": "0 duplicate-key errors"
+          },
+          {
+            "key": "player_name_coverage",
+            "weight": 20,
+            "score": 1,
+            "passed": true,
+            "note": "100%"
+          },
+          {
+            "key": "card_type_distribution",
+            "weight": 15,
+            "score": 1,
+            "passed": true,
+            "note": "1 card types, compact premium checklist"
+          }
+        ],
+        "warnings": [
+          "card_count_sanity: 3 rows"
+        ]
+      },
+      "normalizedRows": [
+        {
+          "cardNumber": "TBK-1",
+          "playerName": "Caleb Williams",
+          "program": "THE BIG KAHUNA",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": null,
+          "warnings": [],
+          "errors": []
+        },
+        {
+          "cardNumber": "TBK-2",
+          "playerName": "Drake Maye",
+          "program": "THE BIG KAHUNA",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": null,
+          "warnings": [],
+          "errors": []
+        },
+        {
+          "cardNumber": "TBK-3",
+          "playerName": "JJ McCarthy",
+          "program": "THE BIG KAHUNA",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": null,
+          "warnings": [],
+          "errors": []
+        }
+      ],
+      "taxonomyProjection": [
+        {
+          "cardNumber": "TBK-1",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        },
+        {
+          "cardNumber": "TBK-2",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        },
+        {
+          "cardNumber": "TBK-3",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        }
+      ],
+      "eligibleAdapters": {
+        "topps": false,
+        "panini": false,
+        "upperdeck": false
+      },
+      "taxonomyAdapterOutput": null,
+      "executedPath": "Pure functions only. Adapter output is counterfactual when draft quality rejects; no ingestion/job/version/taxonomy transaction was called."
+    },
+    {
+      "id": "sports-printing-vocabulary",
+      "csvAdapted": false,
+      "normalization": {
+        "rowCount": 3,
+        "errorCount": 0,
+        "blockingErrorCount": 0
+      },
+      "quality": {
+        "score": 64.1,
+        "decision": "REJECT",
+        "metrics": [
+          {
+            "key": "card_count_sanity",
+            "weight": 20,
+            "score": 0.25,
+            "passed": false,
+            "note": "3 rows"
+          },
+          {
+            "key": "duplicate_check",
+            "weight": 10,
+            "score": 1,
+            "passed": true,
+            "note": "0 duplicate-key errors"
+          },
+          {
+            "key": "odds_completeness",
+            "weight": 15,
+            "score": 0.6666666666666666,
+            "passed": false,
+            "note": "67%"
+          },
+          {
+            "key": "serial_parse_rate",
+            "weight": 10,
+            "score": 0.6666666666666666,
+            "passed": true,
+            "note": "67%"
+          },
+          {
+            "key": "cross_reference_program_parse",
+            "weight": 10,
+            "score": 1,
+            "passed": true,
+            "note": "100% cardType coverage"
+          }
+        ],
+        "warnings": [
+          "card_count_sanity: 3 rows",
+          "odds_completeness: 67%"
+        ]
+      },
+      "normalizedRows": [
+        {
+          "cardNumber": null,
+          "playerName": "THE BIG KAHUNA",
+          "program": "THE BIG KAHUNA",
+          "parallel": "THE BIG KAHUNA",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": true,
+          "warnings": [
+            "parallel retained without published odds because it is a catalog-only row"
+          ],
+          "errors": []
+        },
+        {
+          "cardNumber": null,
+          "playerName": "THE BIG KAHUNA",
+          "program": "THE BIG KAHUNA",
+          "parallel": "Orange Refractor",
+          "serial": "/25",
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": true,
+          "warnings": [],
+          "errors": []
+        },
+        {
+          "cardNumber": null,
+          "playerName": "THE BIG KAHUNA",
+          "program": "THE BIG KAHUNA",
+          "parallel": "Superfractor",
+          "serial": "/1",
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": true,
+          "warnings": [],
+          "errors": []
+        }
+      ],
+      "taxonomyProjection": [
+        {
+          "cardNumber": null,
+          "parallel": "THE BIG KAHUNA",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        },
+        {
+          "cardNumber": null,
+          "parallel": "Orange Refractor",
+          "serial": "/25",
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        },
+        {
+          "cardNumber": null,
+          "parallel": "Superfractor",
+          "serial": "/1",
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        }
+      ],
+      "eligibleAdapters": {
+        "topps": true,
+        "panini": false,
+        "upperdeck": false
+      },
+      "taxonomyAdapterOutput": {
+        "sourceKind": "OFFICIAL_ODDS",
+        "artifactType": "ODDS",
+        "programs": [
+          {
+            "label": "THE BIG KAHUNA",
+            "codePrefix": null,
+            "programClass": "insert",
+            "rowIndex": 1
+          }
+        ],
+        "cards": [],
+        "parallels": [
+          {
+            "label": "Orange Refractor",
+            "serialDenominator": 25,
+            "serialText": "/25",
+            "finishFamily": null,
+            "visualCues": {
+              "serial_denominator": 25,
+              "serial_location": "back",
+              "serial_text": "/25",
+              "border_color": "orange"
+            },
+            "rowIndex": 1
+          },
+          {
+            "label": "Superfractor",
+            "serialDenominator": 1,
+            "serialText": "/1",
+            "finishFamily": null,
+            "visualCues": {
+              "serial_denominator": 1,
+              "serial_location": "back",
+              "serial_text": "/1"
+            },
+            "rowIndex": 2
+          }
+        ],
+        "scopes": [
+          {
+            "programLabel": "THE BIG KAHUNA",
+            "parallelLabel": "Orange Refractor",
+            "variationLabel": null,
+            "formatKey": null,
+            "channelKey": null,
+            "rowIndex": 1
+          },
+          {
+            "programLabel": "THE BIG KAHUNA",
+            "parallelLabel": "Superfractor",
+            "variationLabel": null,
+            "formatKey": null,
+            "channelKey": null,
+            "rowIndex": 2
+          }
+        ],
+        "oddsRows": [
+          {
+            "oddsText": "/25",
+            "oddsNumeric": 25,
+            "programLabel": "THE BIG KAHUNA",
+            "parallelLabel": "Orange Refractor",
+            "formatKey": null,
+            "channelKey": null,
+            "rowIndex": 1
+          },
+          {
+            "oddsText": "/1",
+            "oddsNumeric": 1,
+            "programLabel": "THE BIG KAHUNA",
+            "parallelLabel": "Superfractor",
+            "formatKey": null,
+            "channelKey": null,
+            "rowIndex": 2
+          }
+        ],
+        "ambiguities": []
+      },
+      "executedPath": "Pure functions only. Adapter output is counterfactual when draft quality rejects; no ingestion/job/version/taxonomy transaction was called."
+    },
+    {
+      "id": "pokemon-checklist",
+      "csvAdapted": false,
+      "normalization": {
+        "rowCount": 4,
+        "errorCount": 0,
+        "blockingErrorCount": 0
+      },
+      "quality": {
+        "score": 76.92,
+        "decision": "WARN",
+        "metrics": [
+          {
+            "key": "card_count_sanity",
+            "weight": 20,
+            "score": 0.25,
+            "passed": false,
+            "note": "4 rows"
+          },
+          {
+            "key": "duplicate_check",
+            "weight": 10,
+            "score": 1,
+            "passed": true,
+            "note": "0 duplicate-key errors"
+          },
+          {
+            "key": "player_name_coverage",
+            "weight": 20,
+            "score": 1,
+            "passed": true,
+            "note": "100%"
+          },
+          {
+            "key": "card_type_distribution",
+            "weight": 15,
+            "score": 1,
+            "passed": true,
+            "note": "1 card types, compact premium checklist"
+          }
+        ],
+        "warnings": [
+          "card_count_sanity: 4 rows"
+        ]
+      },
+      "normalizedRows": [
+        {
+          "cardNumber": "6",
+          "playerName": "Snivy",
+          "program": "Black & White-Legendary Treasures",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": null,
+          "warnings": [],
+          "errors": []
+        },
+        {
+          "cardNumber": "7",
+          "playerName": "Servine",
+          "program": "Black & White-Legendary Treasures",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": null,
+          "warnings": [],
+          "errors": []
+        },
+        {
+          "cardNumber": "RC1",
+          "playerName": "Snivy",
+          "program": "Black & White-Legendary Treasures",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": null,
+          "warnings": [],
+          "errors": []
+        },
+        {
+          "cardNumber": "RC2",
+          "playerName": "Servine",
+          "program": "Black & White-Legendary Treasures",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": null,
+          "warnings": [],
+          "errors": []
+        }
+      ],
+      "taxonomyProjection": [
+        {
+          "cardNumber": "6",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        },
+        {
+          "cardNumber": "7",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        },
+        {
+          "cardNumber": "RC1",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        },
+        {
+          "cardNumber": "RC2",
+          "parallel": "",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        }
+      ],
+      "eligibleAdapters": {
+        "topps": false,
+        "panini": false,
+        "upperdeck": false
+      },
+      "taxonomyAdapterOutput": null,
+      "executedPath": "Pure functions only. Adapter output is counterfactual when draft quality rejects; no ingestion/job/version/taxonomy transaction was called."
+    },
+    {
+      "id": "pokemon-printing-vocabulary",
+      "csvAdapted": false,
+      "normalization": {
+        "rowCount": 2,
+        "errorCount": 0,
+        "blockingErrorCount": 0
+      },
+      "quality": {
+        "score": 53.85,
+        "decision": "REJECT",
+        "metrics": [
+          {
+            "key": "card_count_sanity",
+            "weight": 20,
+            "score": 0.25,
+            "passed": false,
+            "note": "2 rows"
+          },
+          {
+            "key": "duplicate_check",
+            "weight": 10,
+            "score": 1,
+            "passed": true,
+            "note": "0 duplicate-key errors"
+          },
+          {
+            "key": "odds_completeness",
+            "weight": 15,
+            "score": 0,
+            "passed": false,
+            "note": "0%"
+          },
+          {
+            "key": "serial_parse_rate",
+            "weight": 10,
+            "score": 1,
+            "passed": true,
+            "note": "100%"
+          },
+          {
+            "key": "cross_reference_program_parse",
+            "weight": 10,
+            "score": 1,
+            "passed": true,
+            "note": "100% cardType coverage"
+          }
+        ],
+        "warnings": [
+          "card_count_sanity: 2 rows",
+          "odds_completeness: 0%"
+        ]
+      },
+      "normalizedRows": [
+        {
+          "cardNumber": null,
+          "playerName": "Black & White-Legendary Treasures",
+          "program": "Black & White-Legendary Treasures",
+          "parallel": "standard set",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": true,
+          "warnings": [
+            "parallel retained without published odds because it is a catalog-only row"
+          ],
+          "errors": []
+        },
+        {
+          "cardNumber": null,
+          "playerName": "Black & White-Legendary Treasures",
+          "program": "Black & White-Legendary Treasures",
+          "parallel": "parallel set",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "rawCatalogOnlyFlag": true,
+          "warnings": [
+            "parallel retained without published odds because it is a catalog-only row"
+          ],
+          "errors": []
+        }
+      ],
+      "taxonomyProjection": [
+        {
+          "cardNumber": null,
+          "parallel": "standard set",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        },
+        {
+          "cardNumber": null,
+          "parallel": "parallel set",
+          "serial": null,
+          "odds": null,
+          "format": null,
+          "channel": null,
+          "hasCatalogOnlyFlag": false
+        }
+      ],
+      "eligibleAdapters": {
+        "topps": false,
+        "panini": false,
+        "upperdeck": false
+      },
+      "taxonomyAdapterOutput": null,
+      "executedPath": "Pure functions only. Adapter output is counterfactual when draft quality rejects; no ingestion/job/version/taxonomy transaction was called."
+    }
+  ],
+  "networkCalls": 0,
+  "databaseOperations": 0,
+  "heavyTestsRun": false
+}

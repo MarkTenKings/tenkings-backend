@@ -1,0 +1,48 @@
+{
+  "schema": "tenkings-pilot-factual-examples-draft-v1",
+  "status": "DRAFT_NOT_APPROVED_NOT_PUBLISHED",
+  "source_manifest_sha256": "32d69d353d106ce7fb909ec13ebce68c7448bcf7c29fa5fdd81c5689f567780a",
+  "examples": [
+    {
+      "product": "2023 Bowman University Chrome Football",
+      "source_id": "sports-checklist",
+      "source_pdf_page": 10,
+      "program": "THE BIG KAHUNA",
+      "card_number": "TBK-2",
+      "name": "Drake Maye",
+      "school": "UNC",
+      "fact_scope": "checklist membership only",
+      "exact_card_parallel_applicability": "unknown",
+      "physical_card_identity": "unresolved"
+    },
+    {
+      "product": "Black & White—Legendary Treasures",
+      "language": "English",
+      "source_id": "pokemon-checklist",
+      "source_pdf_page": 1,
+      "card_number": "6",
+      "name": "Snivy",
+      "printed_legend_markers": [
+        "standard set",
+        "parallel set"
+      ],
+      "fact_scope": "printed checklist row and legend only",
+      "collector_number_denominator": "not supplied by this checklist",
+      "physical_card_identity": "unresolved"
+    },
+    {
+      "product": "Black & White—Legendary Treasures",
+      "language": "English",
+      "source_id": "pokemon-checklist",
+      "source_pdf_page": 1,
+      "card_number": "RC1",
+      "name": "Snivy",
+      "printed_legend_markers": [
+        "standard set"
+      ],
+      "fact_scope": "printed checklist row and legend only; no inference that the physical finish is non-holo",
+      "collector_number_denominator": "not supplied by this checklist",
+      "physical_card_identity": "unresolved"
+    }
+  ]
+}

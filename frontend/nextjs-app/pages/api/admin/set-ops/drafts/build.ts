@@ -16,6 +16,7 @@ import {
 import { evaluateDraftQuality } from "../../../../../lib/server/setOpsCsvContract";
 import { readTaxonomyV2Flags } from "../../../../../lib/server/taxonomyV2Flags";
 import { ingestTaxonomyV2FromIngestionJob, type TaxonomyIngestResult } from "../../../../../lib/server/taxonomyV2Core";
+import { validatePilotChecklistOriginalInput } from "../../../../../lib/server/taxonomyV2PilotChecklistAdapter";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -91,7 +92,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(404).json({ message: "Ingestion job not found" });
     }
 
+    // These jobs bind additive source evidence to the catalog review flow.
+    // A generic build would attach them to the existing draft and replace
+    // their review state, even when its empty worksheet later fails quality.
+    if (job.parserVersion === "catalog-sports-additive-preparation/v1") {
+      return res.status(409).json({
+        message: "This source belongs to shared catalog preparation. Review it in the catalog evidence workflow.",
+      });
+    }
+
     const setId = normalizeSetLabel(job.setId);
+
+    try {
+      validatePilotChecklistOriginalInput({
+        setId,
+        datasetType: job.datasetType,
+        rawPayload: job.rawPayload,
+        sourceUrl: job.sourceUrl,
+        parserVersion: job.parserVersion,
+        parseSummary: asRecord(job.parseSummaryJson),
+      });
+    } catch (error) {
+      return res.status(422).json({ message: error instanceof Error ? error.message : "Invalid pinned checklist input" });
+    }
 
     const draft = job.draftId
       ? await prisma.setDraft.findUnique({ where: { id: job.draftId }, select: { id: true } })
@@ -173,6 +196,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           ingestionJobId: job.id,
           datasetType: job.datasetType,
           rawPayload: taxonomyRows,
+          originalRawPayload: job.rawPayload,
           sourceUrl: job.sourceUrl,
           parserVersion: job.parserVersion,
           parseSummary: asRecord(job.parseSummaryJson),

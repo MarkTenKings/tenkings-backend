@@ -8,7 +8,7 @@ const { readWorkflowHistoryV2, exportInventoryWorkflowPageV2 } = require('../dis
 const { staffInventoryWorkspaceV2 } = require('../dist/database/src/staffInventoryV2Read');
 const { buildStaffInventoryCommandsV2 } = require('../dist/database/src/staffInventoryV2');
 const { replayWorkflowEventsV2 } = require('../dist/database/src/inventoryWorkflowV2State');
-const { WORKFLOW_MAX_EVENT_BYTES_V2 } = require('../dist/database/src/inventoryWorkflowV2');
+const { WORKFLOW_MAX_EVENT_BYTES_V2, workflowEventIdV2 } = require('../dist/database/src/inventoryWorkflowV2');
 test('staff inventory PostgreSQL atomic commands and exact retries', { skip: process.env.TEN_KINGS_INVENTORY_DISPOSABLE_VALIDATION !== '1' }, async t => {
   const url = new URL(process.env.DATABASE_URL); assert.equal(url.hostname, '127.0.0.1'); assert.equal(url.pathname, '/tenkings_inventory_v2_disposable');
   const db = new PrismaClient({ datasources: { db: { url: url.href } } });
@@ -100,6 +100,100 @@ test('staff inventory PostgreSQL atomic commands and exact retries', { skip: pro
       await assert.rejects(save(partial), /incomplete/);
       assert.equal(await count(), before);
       await advanced({ request_id: randomUUID(), event_kind: 'purchase_cancelled', effective_at: at, evidence_ref: 'fixture:cancel-unused-partial-entry', data: { lot_id: first.data.lot_id, purchase_event_id: receipt.event.source_event_id, reason: 'fixture:unused-partial-entry' } });
+    });
+    const interceptRaw = (tx, intercept) => new Proxy(tx, { get(target, key) {
+      const original = Reflect.get(target, key);
+      if (!['$queryRaw', '$executeRaw'].includes(key)) return typeof original === 'function' ? original.bind(target) : original;
+      return async (...args) => intercept({ key, sql: args[0].sql, values: args[0].values, run: () => original.apply(target, args) });
+    } });
+    await t.test('new saves and exact retries reject a corrupt later history row', async () => {
+      for (const input of [command, { ...command, ...meta() }]) {
+        const before = await count(); let corrupted = false;
+        await assert.rejects(db.$transaction(tx => recordStaffInventoryV2(interceptRaw(tx, async call => {
+          const rows = await call.run();
+          if (call.key === '$queryRaw' && call.sql.includes('FROM bounded') && rows.length) {
+            corrupted = true;
+            return rows.map((row, index) => index === rows.length - 1 ? { ...row, contentHash: '0'.repeat(64) } : row);
+          }
+          return rows;
+        }), input, 'fixture-staff'), { timeout: 30000 }), error => error.code === 'INTEGRITY');
+        assert.equal(corrupted, true); assert.equal(await count(), before);
+      }
+    });
+    await t.test('a failed middle-component readback rolls back every preceding component', async () => {
+      const input = { ...command, ...meta() }, before = await count(); let corrupted = false;
+      await assert.rejects(db.$transaction(tx => recordStaffInventoryV2(interceptRaw(tx, async call => {
+        const rows = await call.run();
+        if (call.key === '$queryRaw' && call.sql.includes('SELECT * FROM "InventoryWorkflowEventV2"') && Array.isArray(rows)) {
+          return rows.map(row => {
+            if (JSON.parse(row.content).command.request_id !== `staff:${input.request_id}:1`) return row;
+            corrupted = true; return { ...row, contentHash: '0'.repeat(64) };
+          });
+        }
+        return rows;
+      }), input, 'fixture-staff'), { timeout: 30000 }), error => error.code === 'INTEGRITY');
+      assert.equal(corrupted, true); assert.equal(await count(), before);
+    });
+    await t.test('failure after description and research enqueue rolls back the complete save and job', async () => {
+      const input = { ...command, ...meta(), origin: 'purchase', quantity: 1, stage: 'unprocessed' };
+      const unitId = `staff:${input.request_id}:card:0001`, before = await count(); let sawJob = false;
+      await assert.rejects(db.$transaction(tx => recordStaffInventoryV2(interceptRaw(tx, async call => {
+        if (call.key === '$executeRaw' && call.sql.includes('INSERT INTO "InventoryWorkflowEventV2"') && call.values.some(value => typeof value === 'string' && value.startsWith('{') && JSON.parse(value).command?.request_id === `staff:${input.request_id}:3`)) {
+          const [jobs] = await tx.$queryRaw(Prisma.sql`SELECT count(*)::int AS n FROM "StaffInventoryResearchJobV2" WHERE "unitId" = ${unitId}`);
+          assert.equal(jobs.n, 1); sawJob = true;
+          throw Error('fixture final-component interruption');
+        }
+        return call.run();
+      }), input, 'fixture-staff'), { timeout: 30000 }), /final-component interruption/);
+      assert.equal(sawJob, true); assert.equal(await count(), before);
+      const [jobs] = await db.$queryRaw(Prisma.sql`SELECT count(*)::int AS n FROM "StaffInventoryResearchJobV2" WHERE "unitId" = ${unitId}`);
+      assert.equal(jobs.n, 0);
+    });
+    await t.test('staff and public commands interleaved in one transaction retain fresh history, preview and exact replay', async () => {
+      const first = { ...command, ...meta(), origin: 'purchase', quantity: 1, stage: 'unprocessed' };
+      const second = { ...first, ...meta() }, firstUnit = `staff:${first.request_id}:card:0001`, secondUnit = `staff:${second.request_id}:card:0001`;
+      const price = (unit, amount) => ({ request_id: randomUUID(), event_kind: 'price_set', effective_at: at, evidence_ref: 'fixture:interleaved-price', data: { unit_ids: [unit], intended_sale_price_cents: amount } });
+      const before = await count();
+      await db.$transaction(async tx => {
+        assert.equal((await recordStaffInventoryV2(tx, first, 'fixture-staff')).outcome, 'RECORDED');
+        const publicFirst = price(firstUnit, 701);
+        assert.equal((await recordInventoryWorkflowEventV2(tx, publicFirst, 'fixture-staff')).outcome, 'RECORDED');
+        assert.equal((await recordStaffInventoryV2(tx, second, 'fixture-staff')).outcome, 'RECORDED');
+        const publicSecond = price(secondUnit, 702);
+        assert.equal((await recordInventoryWorkflowEventV2(tx, publicSecond, 'fixture-staff', { preview: true })).outcome, 'PREVIEW');
+        assert.equal((await recordInventoryWorkflowEventV2(tx, publicSecond, 'fixture-staff')).outcome, 'RECORDED');
+        assert.equal((await recordInventoryWorkflowEventV2(tx, publicFirst, 'fixture-staff')).outcome, 'REPLAY');
+        assert.equal((await recordStaffInventoryV2(tx, first, 'fixture-staff')).outcome, 'REPLAY');
+      }, { isolationLevel: 'ReadCommitted', timeout: 30000 });
+      const history = await readWorkflowHistoryV2(db), state = replayWorkflowEventsV2(history);
+      assert.equal(history.length, before + 10);
+      assert.deepEqual(history.map(event => event.source_sequence), history.map((_, index) => index + 1));
+      assert.equal(state.units.get(firstUnit).intended_sale_price_cents, 701);
+      assert.equal(state.units.get(secondUnit).intended_sale_price_cents, 702);
+      for (const unitId of [firstUnit, secondUnit]) {
+        const [jobs] = await db.$queryRaw(Prisma.sql`SELECT count(*)::int AS n FROM "StaffInventoryResearchJobV2" WHERE "unitId" = ${unitId}`);
+        assert.equal(jobs.n, 1);
+        const receipt = history.find(event => event.event_kind === 'purchase_received' && event.data.unit_ids.includes(unitId));
+        // Retire this disposable receipt so the following queue suite keeps its own claim order.
+        await advanced({ request_id: randomUUID(), event_kind: 'purchase_cancelled', effective_at: at, evidence_ref: 'fixture:cancel-interleaved-entry', data: { lot_id: receipt.data.lot_id, purchase_event_id: receipt.source_event_id, reason: 'fixture:finished-interleaving-check' } });
+      }
+    });
+    await t.test('a public append between staff planning and its first component is included in verified history', async () => {
+      const input = { ...command, ...meta(), origin: 'purchase', quantity: 1, stage: 'unprocessed' };
+      const firstId = workflowEventIdV2(`staff:${input.request_id}:0`), before = await count(); let firstLookups = 0, injected = false;
+      await db.$transaction(tx => recordStaffInventoryV2(interceptRaw(tx, async call => {
+        if (call.key === '$queryRaw' && call.sql.includes('SELECT * FROM "InventoryWorkflowEventV2"') && call.values.includes(firstId) && ++firstLookups === 2) {
+          const result = await recordInventoryWorkflowEventV2(tx, { request_id: randomUUID(), event_kind: 'price_set', effective_at: at, evidence_ref: 'fixture:append-during-planning', data: { unit_ids: [initial.unit_ids[0]], intended_sale_price_cents: 1550 } }, 'fixture-staff');
+          assert.equal(result.outcome, 'RECORDED'); injected = true;
+        }
+        return call.run();
+      }), input, 'fixture-staff'), { isolationLevel: 'ReadCommitted', timeout: 30000 });
+      assert.equal(injected, true); assert.equal(await count(), before + 5);
+      assert.equal((await save(input)).outcome, 'REPLAY');
+      const history = await readWorkflowHistoryV2(db), receipt = history[before + 1];
+      assert.equal(receipt.event_kind, 'purchase_received'); assert.equal(receipt.source_event_id, firstId);
+      assert.deepEqual(history.slice(before + 1).map(event => event.source_sequence), [before + 2, before + 3, before + 4, before + 5]);
+      await advanced({ request_id: randomUUID(), event_kind: 'purchase_cancelled', effective_at: at, evidence_ref: 'fixture:cancel-planning-append-entry', data: { lot_id: receipt.data.lot_id, purchase_event_id: receipt.source_event_id, reason: 'fixture:finished-interleaving-check' } });
     });
     await t.test('unused staff metadata permits cancellation while later edits and cost writes cannot restore it', async () => {
       const unused = { ...command, ...meta(), origin: 'purchase', stage: 'unprocessed', quantity: 1, description: { ...command.description, name: 'Disposable unused receipt' } };

@@ -1,0 +1,671 @@
+{
+  "schemaVersion": "tenkings-pilot-import-preparation/v1",
+  "authority": "unreviewed_offline_import_draft",
+  "status": "BLOCKED_DO_NOT_SUBMIT",
+  "sourceHead": "12e13992cd341eeea96dbe0955cc4dbfba67bc1d",
+  "sourceManifestSha256": "32d69d353d106ce7fb909ec13ebce68c7448bcf7c29fa5fdd81c5689f567780a",
+  "networkCalls": 0,
+  "databaseOperations": 0,
+  "published": false,
+  "requests": [
+    {
+      "id": "sports-checklist",
+      "status": "UNSUBMITTED_REVIEW_DRAFT_NOT_IMPORT_AUTHORIZATION",
+      "purpose": "checklist",
+      "setBinding": "Historically observed exact set ID; refresh approved version and roster before any write.",
+      "requestDraft": {
+        "setId": "2023_Bowman_University_Chrome_Football",
+        "datasetType": "PLAYER_WORKSHEET",
+        "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFBChecklistNEW.pdf",
+        "parserVersion": "catalog-pilot-manual-transcription-v1",
+        "sourceProvider": "Topps",
+        "sourceQuery": {
+          "pilot": "sports",
+          "product": "2023 Bowman University Chrome Football",
+          "program": "THE BIG KAHUNA",
+          "scope": "selected source rows only"
+        },
+        "sourceFetchMeta": {
+          "sourceId": "sports-checklist",
+          "url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFBChecklistNEW.pdf",
+          "sha256": "bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+          "byteSize": 529104,
+          "sourceManifestSha256": "32d69d353d106ce7fb909ec13ebce68c7448bcf7c29fa5fdd81c5689f567780a",
+          "sourcePage": 10,
+          "sourceFact": "TBK-1 Caleb Williams; TBK-2 Drake Maye; TBK-3 JJ McCarthy. Membership in The Big Kahuna only.",
+          "sourceAcquisition": "Previously acquired complete manufacturer PDF; exact local bytes reverified for this draft.",
+          "manufacturerAttribution": "https://www.topps.com/pages/checklists",
+          "coverage": "partial",
+          "humanReviewed": false,
+          "grant": null,
+          "images": [],
+          "noCardPrintingCartesianProduct": true
+        },
+        "rawPayload": {
+          "setId": "2023_Bowman_University_Chrome_Football",
+          "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFBChecklistNEW.pdf",
+          "programs": [
+            {
+              "label": "THE BIG KAHUNA",
+              "cards": [
+                {
+                  "cardNumber": "TBK-1",
+                  "playerName": "Caleb Williams",
+                  "metadata": {
+                    "authority": "unreviewed_manufacturer_transcription",
+                    "sourceId": "sports-checklist",
+                    "sourceSha256": "bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+                    "sourcePage": 10,
+                    "sourceFact": "TBK-1 Caleb Williams; TBK-2 Drake Maye; TBK-3 JJ McCarthy. Membership in The Big Kahuna only.",
+                    "language": null,
+                    "edition": null,
+                    "format": null,
+                    "channel": null,
+                    "numberingScheme": "prefixed_insert_number",
+                    "collectorNumberDenominator": null
+                  }
+                },
+                {
+                  "cardNumber": "TBK-2",
+                  "playerName": "Drake Maye",
+                  "metadata": {
+                    "authority": "unreviewed_manufacturer_transcription",
+                    "sourceId": "sports-checklist",
+                    "sourceSha256": "bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+                    "sourcePage": 10,
+                    "sourceFact": "TBK-1 Caleb Williams; TBK-2 Drake Maye; TBK-3 JJ McCarthy. Membership in The Big Kahuna only.",
+                    "language": null,
+                    "edition": null,
+                    "format": null,
+                    "channel": null,
+                    "numberingScheme": "prefixed_insert_number",
+                    "collectorNumberDenominator": null
+                  }
+                },
+                {
+                  "cardNumber": "TBK-3",
+                  "playerName": "JJ McCarthy",
+                  "metadata": {
+                    "authority": "unreviewed_manufacturer_transcription",
+                    "sourceId": "sports-checklist",
+                    "sourceSha256": "bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+                    "sourcePage": 10,
+                    "sourceFact": "TBK-1 Caleb Williams; TBK-2 Drake Maye; TBK-3 JJ McCarthy. Membership in The Big Kahuna only.",
+                    "language": null,
+                    "edition": null,
+                    "format": null,
+                    "channel": null,
+                    "numberingScheme": "prefixed_insert_number",
+                    "collectorNumberDenominator": null
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalogApplicabilityDraft": [
+        {
+          "number": "TBK-1",
+          "printingKey": "ordinary",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-1",
+          "printingKey": "orange",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-1",
+          "printingKey": "superfractor",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-2",
+          "printingKey": "ordinary",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-2",
+          "printingKey": "orange",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-2",
+          "printingKey": "superfractor",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-3",
+          "printingKey": "ordinary",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-3",
+          "printingKey": "orange",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-3",
+          "printingKey": "superfractor",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        }
+      ],
+      "prohibitedInferences": [
+        "No official database IDs are supplied for missing rows.",
+        "No card-printing support from sports odds; no exclusion from a missing checklist marker.",
+        "No physical finish, collector denominator, format, channel or edition is inferred.",
+        "No rights, reviewer approval or publication is supplied."
+      ]
+    },
+    {
+      "id": "sports-printing-vocabulary",
+      "status": "UNSUBMITTED_REVIEW_DRAFT_NOT_IMPORT_AUTHORIZATION",
+      "purpose": "printing-vocabulary",
+      "setBinding": "Historically observed exact set ID; refresh approved version and roster before any write.",
+      "requestDraft": {
+        "setId": "2023_Bowman_University_Chrome_Football",
+        "datasetType": "PARALLEL_DB",
+        "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFootballRound2Odds.pdf",
+        "parserVersion": "catalog-pilot-manual-transcription-v1",
+        "sourceProvider": "Topps",
+        "sourceQuery": {
+          "pilot": "sports",
+          "product": "2023 Bowman University Chrome Football",
+          "program": "THE BIG KAHUNA",
+          "scope": "selected source rows only"
+        },
+        "sourceFetchMeta": {
+          "sourceId": "sports-odds-round2",
+          "url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFootballRound2Odds.pdf",
+          "sha256": "72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+          "byteSize": 265208,
+          "sourceManifestSha256": "32d69d353d106ce7fb909ec13ebce68c7448bcf7c29fa5fdd81c5689f567780a",
+          "sourcePage": 2,
+          "sourceFact": "The Big Kahuna; Orange Refractor numbered to 25; Superfractor numbered to 1. Round 2 format columns are not per-card applicability.",
+          "sourceAcquisition": "Previously acquired complete manufacturer PDF; exact local bytes reverified for this draft.",
+          "manufacturerAttribution": "https://www.topps.com/pages/odds",
+          "coverage": "partial",
+          "humanReviewed": false,
+          "grant": null,
+          "images": [],
+          "noCardPrintingCartesianProduct": true
+        },
+        "rawPayload": [
+          {
+            "setId": "2023_Bowman_University_Chrome_Football",
+            "program": "THE BIG KAHUNA",
+            "parallel": "THE BIG KAHUNA",
+            "serial": null,
+            "parallelCatalog": true,
+            "odds": null,
+            "format": null,
+            "channel": null,
+            "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFootballRound2Odds.pdf",
+            "metadataJson": {
+              "authority": "unreviewed_manufacturer_transcription",
+              "sourceId": "sports-odds-round2",
+              "sourceSha256": "72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+              "sourcePage": 2,
+              "sourceFact": "The Big Kahuna; Orange Refractor numbered to 25; Superfractor numbered to 1. Round 2 format columns are not per-card applicability.",
+              "language": null,
+              "edition": null,
+              "format": null,
+              "channel": null,
+              "printingKey": "ordinary",
+              "meaning": "Program printing vocabulary only; no per-card applicability."
+            }
+          },
+          {
+            "setId": "2023_Bowman_University_Chrome_Football",
+            "program": "THE BIG KAHUNA",
+            "parallel": "Orange Refractor",
+            "serial": "/25",
+            "parallelCatalog": true,
+            "odds": null,
+            "format": null,
+            "channel": null,
+            "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFootballRound2Odds.pdf",
+            "metadataJson": {
+              "authority": "unreviewed_manufacturer_transcription",
+              "sourceId": "sports-odds-round2",
+              "sourceSha256": "72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+              "sourcePage": 2,
+              "sourceFact": "The Big Kahuna; Orange Refractor numbered to 25; Superfractor numbered to 1. Round 2 format columns are not per-card applicability.",
+              "language": null,
+              "edition": null,
+              "format": null,
+              "channel": null,
+              "printingKey": "orange",
+              "meaning": "Program printing vocabulary only; no per-card applicability."
+            }
+          },
+          {
+            "setId": "2023_Bowman_University_Chrome_Football",
+            "program": "THE BIG KAHUNA",
+            "parallel": "Superfractor",
+            "serial": "/1",
+            "parallelCatalog": true,
+            "odds": null,
+            "format": null,
+            "channel": null,
+            "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFootballRound2Odds.pdf",
+            "metadataJson": {
+              "authority": "unreviewed_manufacturer_transcription",
+              "sourceId": "sports-odds-round2",
+              "sourceSha256": "72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+              "sourcePage": 2,
+              "sourceFact": "The Big Kahuna; Orange Refractor numbered to 25; Superfractor numbered to 1. Round 2 format columns are not per-card applicability.",
+              "language": null,
+              "edition": null,
+              "format": null,
+              "channel": null,
+              "printingKey": "superfractor",
+              "meaning": "Program printing vocabulary only; no per-card applicability."
+            }
+          }
+        ]
+      },
+      "catalogApplicabilityDraft": [
+        {
+          "number": "TBK-1",
+          "printingKey": "ordinary",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-1",
+          "printingKey": "orange",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-1",
+          "printingKey": "superfractor",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-2",
+          "printingKey": "ordinary",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-2",
+          "printingKey": "orange",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-2",
+          "printingKey": "superfractor",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-3",
+          "printingKey": "ordinary",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-3",
+          "printingKey": "orange",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        },
+        {
+          "number": "TBK-3",
+          "printingKey": "superfractor",
+          "status": "unknown",
+          "meaning": "Program odds do not establish per-card printing applicability."
+        }
+      ],
+      "prohibitedInferences": [
+        "No official database IDs are supplied for missing rows.",
+        "No card-printing support from sports odds; no exclusion from a missing checklist marker.",
+        "No physical finish, collector denominator, format, channel or edition is inferred.",
+        "No rights, reviewer approval or publication is supplied."
+      ]
+    },
+    {
+      "id": "pokemon-checklist",
+      "status": "UNSUBMITTED_REVIEW_DRAFT_NOT_IMPORT_AUTHORIZATION",
+      "purpose": "checklist",
+      "setBinding": "Proposed source-derived label only; exact canonical set ID and alias reconciliation require authorized host review.",
+      "requestDraft": {
+        "setId": "Black & White—Legendary Treasures",
+        "datasetType": "PLAYER_WORKSHEET",
+        "sourceUrl": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+        "parserVersion": "catalog-pilot-manual-transcription-v1",
+        "sourceProvider": "Pokémon",
+        "sourceQuery": {
+          "pilot": "pokemon",
+          "product": "Black & White—Legendary Treasures",
+          "program": "Black & White—Legendary Treasures",
+          "scope": "selected source rows only"
+        },
+        "sourceFetchMeta": {
+          "sourceId": "pokemon-checklist",
+          "url": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+          "sha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+          "byteSize": 2227474,
+          "sourceManifestSha256": "32d69d353d106ce7fb909ec13ebce68c7448bcf7c29fa5fdd81c5689f567780a",
+          "sourcePage": 1,
+          "sourceFact": "6 Snivy and 7 Servine show standard-set and parallel-set markers. RC1 Snivy and RC2 Servine show the standard-set marker. No denominator is printed.",
+          "sourceAcquisition": "Previously acquired complete manufacturer PDF; exact local bytes reverified for this draft.",
+          "manufacturerAttribution": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+          "coverage": "partial",
+          "humanReviewed": false,
+          "grant": null,
+          "images": [],
+          "noCardPrintingCartesianProduct": true
+        },
+        "rawPayload": {
+          "setId": "Black & White—Legendary Treasures",
+          "sourceUrl": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+          "programs": [
+            {
+              "label": "Black & White—Legendary Treasures",
+              "cards": [
+                {
+                  "cardNumber": "6",
+                  "playerName": "Snivy",
+                  "metadata": {
+                    "authority": "unreviewed_manufacturer_transcription",
+                    "sourceId": "pokemon-checklist",
+                    "sourceSha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+                    "sourcePage": 1,
+                    "sourceFact": "6 Snivy and 7 Servine show standard-set and parallel-set markers. RC1 Snivy and RC2 Servine show the standard-set marker. No denominator is printed.",
+                    "language": "en",
+                    "edition": null,
+                    "format": null,
+                    "channel": null,
+                    "numberingScheme": "manufacturer_checklist_number_no_denominator_in_source",
+                    "collectorNumberDenominator": null,
+                    "literalChecklistMarkers": [
+                      "standard set",
+                      "parallel set"
+                    ],
+                    "physicalFinish": null
+                  }
+                },
+                {
+                  "cardNumber": "7",
+                  "playerName": "Servine",
+                  "metadata": {
+                    "authority": "unreviewed_manufacturer_transcription",
+                    "sourceId": "pokemon-checklist",
+                    "sourceSha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+                    "sourcePage": 1,
+                    "sourceFact": "6 Snivy and 7 Servine show standard-set and parallel-set markers. RC1 Snivy and RC2 Servine show the standard-set marker. No denominator is printed.",
+                    "language": "en",
+                    "edition": null,
+                    "format": null,
+                    "channel": null,
+                    "numberingScheme": "manufacturer_checklist_number_no_denominator_in_source",
+                    "collectorNumberDenominator": null,
+                    "literalChecklistMarkers": [
+                      "standard set",
+                      "parallel set"
+                    ],
+                    "physicalFinish": null
+                  }
+                },
+                {
+                  "cardNumber": "RC1",
+                  "playerName": "Snivy",
+                  "metadata": {
+                    "authority": "unreviewed_manufacturer_transcription",
+                    "sourceId": "pokemon-checklist",
+                    "sourceSha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+                    "sourcePage": 1,
+                    "sourceFact": "6 Snivy and 7 Servine show standard-set and parallel-set markers. RC1 Snivy and RC2 Servine show the standard-set marker. No denominator is printed.",
+                    "language": "en",
+                    "edition": null,
+                    "format": null,
+                    "channel": null,
+                    "numberingScheme": "manufacturer_checklist_number_no_denominator_in_source",
+                    "collectorNumberDenominator": null,
+                    "literalChecklistMarkers": [
+                      "standard set"
+                    ],
+                    "physicalFinish": null
+                  }
+                },
+                {
+                  "cardNumber": "RC2",
+                  "playerName": "Servine",
+                  "metadata": {
+                    "authority": "unreviewed_manufacturer_transcription",
+                    "sourceId": "pokemon-checklist",
+                    "sourceSha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+                    "sourcePage": 1,
+                    "sourceFact": "6 Snivy and 7 Servine show standard-set and parallel-set markers. RC1 Snivy and RC2 Servine show the standard-set marker. No denominator is printed.",
+                    "language": "en",
+                    "edition": null,
+                    "format": null,
+                    "channel": null,
+                    "numberingScheme": "manufacturer_checklist_number_no_denominator_in_source",
+                    "collectorNumberDenominator": null,
+                    "literalChecklistMarkers": [
+                      "standard set"
+                    ],
+                    "physicalFinish": null
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "catalogApplicabilityDraft": [
+        {
+          "number": "6",
+          "printingKey": "standard",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "6",
+          "printingKey": "parallel",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "7",
+          "printingKey": "standard",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "7",
+          "printingKey": "parallel",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "RC1",
+          "printingKey": "standard",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "RC1",
+          "printingKey": "parallel",
+          "status": "unknown",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "RC2",
+          "printingKey": "standard",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "RC2",
+          "printingKey": "parallel",
+          "status": "unknown",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        }
+      ],
+      "prohibitedInferences": [
+        "No official database IDs are supplied for missing rows.",
+        "No card-printing support from sports odds; no exclusion from a missing checklist marker.",
+        "No physical finish, collector denominator, format, channel or edition is inferred.",
+        "No rights, reviewer approval or publication is supplied."
+      ]
+    },
+    {
+      "id": "pokemon-printing-vocabulary",
+      "status": "UNSUBMITTED_REVIEW_DRAFT_NOT_IMPORT_AUTHORIZATION",
+      "purpose": "printing-vocabulary",
+      "setBinding": "Proposed source-derived label only; exact canonical set ID and alias reconciliation require authorized host review.",
+      "requestDraft": {
+        "setId": "Black & White—Legendary Treasures",
+        "datasetType": "PARALLEL_DB",
+        "sourceUrl": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+        "parserVersion": "catalog-pilot-manual-transcription-v1",
+        "sourceProvider": "Pokémon",
+        "sourceQuery": {
+          "pilot": "pokemon",
+          "product": "Black & White—Legendary Treasures",
+          "program": "Black & White—Legendary Treasures",
+          "scope": "selected source rows only"
+        },
+        "sourceFetchMeta": {
+          "sourceId": "pokemon-checklist",
+          "url": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+          "sha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+          "byteSize": 2227474,
+          "sourceManifestSha256": "32d69d353d106ce7fb909ec13ebce68c7448bcf7c29fa5fdd81c5689f567780a",
+          "sourcePage": 1,
+          "sourceFact": "6 Snivy and 7 Servine show standard-set and parallel-set markers. RC1 Snivy and RC2 Servine show the standard-set marker. No denominator is printed.",
+          "sourceAcquisition": "Previously acquired complete manufacturer PDF; exact local bytes reverified for this draft.",
+          "manufacturerAttribution": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+          "coverage": "partial",
+          "humanReviewed": false,
+          "grant": null,
+          "images": [],
+          "noCardPrintingCartesianProduct": true
+        },
+        "rawPayload": [
+          {
+            "setId": "Black & White—Legendary Treasures",
+            "program": "Black & White—Legendary Treasures",
+            "parallel": "standard set",
+            "serial": null,
+            "parallelCatalog": true,
+            "odds": null,
+            "format": null,
+            "channel": null,
+            "sourceUrl": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+            "metadataJson": {
+              "authority": "unreviewed_manufacturer_transcription",
+              "sourceId": "pokemon-checklist",
+              "sourceSha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+              "sourcePage": 1,
+              "sourceFact": "6 Snivy and 7 Servine show standard-set and parallel-set markers. RC1 Snivy and RC2 Servine show the standard-set marker. No denominator is printed.",
+              "language": "en",
+              "edition": null,
+              "format": null,
+              "channel": null,
+              "printingKey": "standard",
+              "meaning": "Literal checklist marker; physical finish unresolved."
+            }
+          },
+          {
+            "setId": "Black & White—Legendary Treasures",
+            "program": "Black & White—Legendary Treasures",
+            "parallel": "parallel set",
+            "serial": null,
+            "parallelCatalog": true,
+            "odds": null,
+            "format": null,
+            "channel": null,
+            "sourceUrl": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+            "metadataJson": {
+              "authority": "unreviewed_manufacturer_transcription",
+              "sourceId": "pokemon-checklist",
+              "sourceSha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+              "sourcePage": 1,
+              "sourceFact": "6 Snivy and 7 Servine show standard-set and parallel-set markers. RC1 Snivy and RC2 Servine show the standard-set marker. No denominator is printed.",
+              "language": "en",
+              "edition": null,
+              "format": null,
+              "channel": null,
+              "printingKey": "parallel",
+              "meaning": "Literal checklist marker; physical finish unresolved."
+            }
+          }
+        ]
+      },
+      "catalogApplicabilityDraft": [
+        {
+          "number": "6",
+          "printingKey": "standard",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "6",
+          "printingKey": "parallel",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "7",
+          "printingKey": "standard",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "7",
+          "printingKey": "parallel",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "RC1",
+          "printingKey": "standard",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "RC1",
+          "printingKey": "parallel",
+          "status": "unknown",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "RC2",
+          "printingKey": "standard",
+          "status": "supported",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        },
+        {
+          "number": "RC2",
+          "printingKey": "parallel",
+          "status": "unknown",
+          "meaning": "Literal manufacturer row marker only; not physical finish confirmation."
+        }
+      ],
+      "prohibitedInferences": [
+        "No official database IDs are supplied for missing rows.",
+        "No card-printing support from sports odds; no exclusion from a missing checklist marker.",
+        "No physical finish, collector denominator, format, channel or edition is inferred.",
+        "No rights, reviewer approval or publication is supplied."
+      ]
+    }
+  ]
+}

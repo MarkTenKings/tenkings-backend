@@ -1,0 +1,11 @@
+{
+  "name": "@tenkings/card-catalog-evidence",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.mjs",
+  "types": "./src/index.d.ts",
+  "exports": { ".": { "types": "./src/index.d.ts", "default": "./src/index.mjs" } },
+  "scripts": { "test": "node --test tests/*.test.mjs" },
+  "engines": { "node": ">=20" }
+}

@@ -4,6 +4,7 @@ import {
   type SetDatasetType,
   SetIngestionJobStatus,
 } from "@tenkings/database";
+import { isDeepStrictEqual } from "node:util";
 import {
   buildTaxonomyCanonicalKey,
   normalizeChannelKey,
@@ -35,6 +36,8 @@ import {
 import { buildToppsTaxonomyAdapterOutput, canRunToppsAdapter } from "./taxonomyV2ToppsAdapter";
 import { buildPaniniTaxonomyAdapterOutput, canRunPaniniAdapter } from "./taxonomyV2PaniniAdapter";
 import { buildUpperDeckTaxonomyAdapterOutput, canRunUpperDeckAdapter } from "./taxonomyV2UpperDeckAdapter";
+import { buildPilotChecklistTaxonomyAdapterOutput, canRunPilotChecklistAdapter, validatePilotChecklistOriginalInput } from "./taxonomyV2PilotChecklistAdapter";
+import { buildTaxonomyIngestRows, normalizeDraftRows } from "./setOpsDrafts";
 
 const SOURCE_PRECEDENCE: Record<TaxonomySourceKind, number> = {
   [TaxonomySourceKind.OFFICIAL_CHECKLIST]: 400,
@@ -70,6 +73,7 @@ type TaxonomyIngestParams = {
   ingestionJobId: string;
   datasetType: SetDatasetType;
   rawPayload: unknown;
+  originalRawPayload?: unknown;
   sourceUrl?: string | null;
   parserVersion?: string | null;
   parseSummary?: Record<string, unknown> | null;
@@ -1265,6 +1269,11 @@ function createAdapterOutput(params: TaxonomyIngestParams): { adapter: string; o
     build: (nextParams: typeof adapterParams) => TaxonomyAdapterOutput;
   }> = [
     {
+      id: "pinned-pilot-checklist-v1",
+      canRun: canRunPilotChecklistAdapter,
+      build: buildPilotChecklistTaxonomyAdapterOutput,
+    },
+    {
       id: "topps-v1",
       canRun: canRunToppsAdapter,
       build: buildToppsTaxonomyAdapterOutput,
@@ -1321,6 +1330,18 @@ export async function ingestTaxonomyV2FromIngestionJob(params: TaxonomyIngestPar
       },
       skippedReason: "setId is required",
     };
+  }
+
+  const pinnedPilot = validatePilotChecklistOriginalInput({ ...params, rawPayload: params.originalRawPayload });
+  if (pinnedPilot) {
+    const normalized = normalizeDraftRows({
+      datasetType: params.datasetType,
+      fallbackSetId: params.setId,
+      rawPayload: params.originalRawPayload,
+    });
+    if (!isDeepStrictEqual(params.rawPayload, buildTaxonomyIngestRows(normalized.rows))) {
+      throw new Error("Pinned checklist projected rows differ from the validated original input.");
+    }
   }
 
   const adapterResult = createAdapterOutput(params);

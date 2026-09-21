@@ -1778,6 +1778,24 @@ export async function recordCardInventoryEventV2(
 export async function recordInventoryWorkflowEventV2(
   tx: CardPlatformV2Transaction, input: unknown, adminId: string, options: { preview?: boolean } = {},
 ): Promise<{ outcome: 'PREVIEW' | 'RECORDED' | 'REPLAY'; request_id: string; event: WorkflowEventV2; impact: { units: number; lots: number; batches: number; backdated: boolean } | null }> {
+  return recordInventoryWorkflowEventWithHistoryV2(tx, input, adminId, options);
+}
+
+type WorkflowInvocationHistoryV2 = { tx: CardPlatformV2Transaction; events: WorkflowEventV2[] };
+
+async function readInvocationWorkflowHistoryV2(tx: CardPlatformV2Transaction, history: WorkflowInvocationHistoryV2): Promise<WorkflowEventV2[]> {
+  if (history.tx !== tx) throw new CardInventoryErrorV2('INTEGRITY', 'Verified workflow history belongs to another transaction');
+  const [size] = await tx.$queryRaw<{ count: bigint; maximum: bigint }[]>(Prisma.sql`SELECT COUNT(*)::bigint AS count, COALESCE(MAX("sequence"), 0)::bigint AS maximum FROM "InventoryWorkflowEventV2"`);
+  if (size.count !== size.maximum || size.maximum > BigInt(Number.MAX_SAFE_INTEGER)) throw new CardInventoryErrorV2('INTEGRITY', 'Workflow evidence failed integrity verification');
+  // Transaction locks are reentrant: another invocation on this same transaction
+  // can append while this one awaits SQL. Reload through the full verifier then.
+  if (size.maximum !== BigInt(history.events.length)) history.events = await readWorkflowHistoryV2(tx);
+  return history.events;
+}
+
+async function recordInventoryWorkflowEventWithHistoryV2(
+  tx: CardPlatformV2Transaction, input: unknown, adminId: string, options: { preview?: boolean } = {}, historyContext?: WorkflowInvocationHistoryV2,
+): Promise<{ outcome: 'PREVIEW' | 'RECORDED' | 'REPLAY'; request_id: string; event: WorkflowEventV2; impact: { units: number; lots: number; batches: number; backdated: boolean } | null }> {
   const command = parseWorkflowCommandV2(input);
   const actor = requireAdminText(adminId, 'Authenticated inventory admin');
   if (actor.length > 200) throw new CardInventoryErrorV2('INVALID_INPUT', 'Admin identity is too long');
@@ -1791,7 +1809,7 @@ export async function recordInventoryWorkflowEventV2(
     if (previous.requestHash !== requestHash) conflict('Retry changed the accepted command or recording actor');
     return { outcome: 'REPLAY', request_id: command.request_id, event: stored.event, impact: null };
   }
-  const history = await readWorkflowHistoryV2(tx);
+  const history = historyContext ? await readInvocationWorkflowHistoryV2(tx, historyContext) : await readWorkflowHistoryV2(tx);
   if (command.event_kind === 'purchase_cancelled') {
     const blocked = workflowPurchaseCancellationBlockV2(replayWorkflowEventsV2(history), command.data.lot_id);
     if (blocked) conflict(blocked);
@@ -1835,11 +1853,13 @@ export async function recordInventoryWorkflowEventV2(
   if (options.preview) return { outcome: 'PREVIEW', request_id: command.request_id, event, impact };
   await tx.$executeRaw(Prisma.sql`INSERT INTO "InventoryWorkflowEventV2" ("sequence", "id", "recordedAt", "content", "contentHash", "requestHash") VALUES (${BigInt(event.source_sequence)}, ${id}, ${recordedAt}, ${text}, ${inventoryHash(content)}, ${requestHash})`);
   const [persisted] = await tx.$queryRaw<WorkflowRowV2[]>(Prisma.sql`SELECT * FROM "InventoryWorkflowEventV2" WHERE "id" = ${id}`);
-  if (!persisted || canonical(verifyWorkflowRowV2(persisted)) !== text) throw new CardInventoryErrorV2('INTEGRITY', 'Workflow evidence was not stored exactly');
+  const verifiedPersisted = persisted ? verifyWorkflowRowV2(persisted) : null;
+  if (!verifiedPersisted || canonical(verifiedPersisted) !== text) throw new CardInventoryErrorV2('INTEGRITY', 'Workflow evidence was not stored exactly');
   // Durable proposals are committed with the accepted description. No provider
   // work or research output participates in this inventory/financial journal.
   if (event.event_kind === 'item_described') await syncStaffInventoryResearchV2(tx, after, event.data.unit_ids);
   if (event.event_kind === 'purchase_cancelled') await syncStaffInventoryResearchV2(tx, after, after.lots.get(event.data.lot_id)!.data.unit_ids);
+  if (historyContext) historyContext.events.push(verifiedPersisted.event);
   return { outcome: 'RECORDED', request_id: command.request_id, event, impact };
 }
 
@@ -1870,9 +1890,12 @@ export async function recordStaffInventoryV2(tx: CardPlatformV2Transaction, inpu
     }
     return { outcome: 'REPLAY' as const, request_id: d.request_id };
   }
-  const state = replayWorkflowEventsV2(await readWorkflowHistoryV2(tx));
+  // Private to this fresh-save invocation, after both journal locks. Public
+  // events, previews and subsequent staff invocations always begin with a read.
+  const historyContext: WorkflowInvocationHistoryV2 = { tx, events: await readWorkflowHistoryV2(tx) };
+  const state = replayWorkflowEventsV2(historyContext.events);
   const commands = buildStaffInventoryCommandsV2(d, state);
-  for (const command of commands) await recordInventoryWorkflowEventV2(tx, command, actor);
+  for (const command of commands) await recordInventoryWorkflowEventWithHistoryV2(tx, command, actor, {}, historyContext);
   return { outcome: 'RECORDED' as const, request_id: d.request_id };
 }
 

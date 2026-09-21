@@ -1,0 +1,507 @@
+{
+  "schemaVersion": "tenkings-selected-sports-publication-preparation/v1",
+  "status": "UNSUBMITTED_PARTIAL_PILOT_MISSING_SOURCE_PRINTING_GRANT_REVIEW",
+  "authority": "offline_preparation_not_publication",
+  "sourceCodeReviewedAt": "0797ec59",
+  "decision": {
+    "selectedIdentityMappingReady": true,
+    "fullCatalogCompletionRequired": false,
+    "resolve171UnnumberedBeforePilot": false,
+    "existingIdentitiesToReplace": 0,
+    "originalThreePrintingRecipeReady": false,
+    "identityOnlyManifestStructurallyValid": true,
+    "identityOnlyLookupUseful": false,
+    "conclusion": "The three-card pilot can advance independently of the 171 unnumbered rows. A useful current lookup publication still needs real Big Kahuna parallel/scope and exact official-source rows, verified staged bytes, genuine grants and authorized review.",
+    "minimumContractPrintingCountForAnyLookupCandidate": 1,
+    "existingRecipePrintingCount": 3,
+    "minimumContractNote": "The schema/host can accept any bounded partial printing roster. At least one genuine existing-program printing and scope is needed for this lookup to emit candidates. The unchanged preparation compiler specifically selects all three recipe printings."
+  },
+  "provenance": {
+    "taxonomySnapshotSha256": "c042a3fd5b1c5fb25c8bc218f7125663fca49ab29382d8a97d4fdce9b0523bdc",
+    "taxonomyObservedAt": "2026-09-17T10:21:53.256Z",
+    "transcriptSha256": "f952b5d5c236c61921eebc2b13bfaead71c15867e3ba2f083fc0cac15ce5fdbf",
+    "sourceManifestSha256": "32d69d353d106ce7fb909ec13ebce68c7448bcf7c29fa5fdd81c5689f567780a",
+    "compilerSha256": "661796a714ce6c73d072abe6a47f36eebef0f9c02445fc3473241d4fdfff9361",
+    "manifestContractSha256": "626fa80afd81138af2258a5fb52673ad1de65a061ed94904de705bfcb5d2b4eb",
+    "hostReviewSourceSha256": "8429d7f06e54cb48bdf1201ad8d5fee671a25812a6623ac156347bad3613fd99",
+    "hostPublicationSourceSha256": "13340cfc4ac2c7b1c329503a8e2196df1193d971de931d9d47e50b586a72db3a"
+  },
+  "existingSetOpsBinding": {
+    "setId": "2023_Bowman_University_Chrome_Football",
+    "draftId": "2e8b2265-edcb-4910-922f-40a6e926ac38",
+    "draftStatusObserved": "APPROVED",
+    "draftArchivedAtObserved": null,
+    "draftVersionId": "52de475c-ee6a-4abf-b148-fffde0ec93af",
+    "version": 6,
+    "legacyVersionHash": "48314036838b6a481e87633c1b659541ca0a158ae91d7145e675fc5fb8292a1b",
+    "versionDatasetTypeFromSeparateBoundReceipt": "PARALLEL_DB",
+    "versionRows": 61,
+    "currentPublicationObserved": null,
+    "latestPublicationObserved": null,
+    "proposedFirstRevision": 1,
+    "refreshAtActualReview": true
+  },
+  "selectionForExistingCompiler": {
+    "programRowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+    "cards": {
+      "TBK-1": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+      "TBK-2": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+      "TBK-3": "d6dde801-2673-46e1-8830-5d810b0c9ade"
+    },
+    "printings": {
+      "ordinary": {
+        "parallelRowId": null,
+        "scopeRowId": null
+      },
+      "orange": {
+        "parallelRowId": null,
+        "scopeRowId": null
+      },
+      "superfractor": {
+        "parallelRowId": null,
+        "scopeRowId": null
+      }
+    },
+    "sources": {
+      "sports-checklist": null,
+      "sports-odds-round2": null
+    }
+  },
+  "selectedIdentities": [
+    {
+      "cardId": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+      "programId": "the-big-kahuna",
+      "number": "TBK-1",
+      "name": "Caleb Williams",
+      "numberingScheme": "prefixed_insert_number",
+      "sourceIds": [
+        "sports-checklist"
+      ],
+      "canonicalProgramRowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+      "sourceEvidence": [
+        {
+          "sourceId": "sports-checklist",
+          "sourcePage": 10,
+          "sourceRowOrdinal": 506,
+          "sourceLineOrdinal": 29,
+          "literalSourceRow": "TBK-1\tCaleb Williams\tUSC\t",
+          "bboxPoints": [
+            53.04,
+            449.372,
+            290.564,
+            459.332
+          ]
+        }
+      ]
+    },
+    {
+      "cardId": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+      "programId": "the-big-kahuna",
+      "number": "TBK-2",
+      "name": "Drake Maye",
+      "numberingScheme": "prefixed_insert_number",
+      "sourceIds": [
+        "sports-checklist"
+      ],
+      "canonicalProgramRowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+      "sourceEvidence": [
+        {
+          "sourceId": "sports-checklist",
+          "sourcePage": 10,
+          "sourceRowOrdinal": 507,
+          "sourceLineOrdinal": 30,
+          "literalSourceRow": "TBK-2\tDrake Maye\tUNC®\t",
+          "bboxPoints": [
+            53.04,
+            462.452,
+            301.103,
+            472.412
+          ]
+        }
+      ]
+    },
+    {
+      "cardId": "d6dde801-2673-46e1-8830-5d810b0c9ade",
+      "programId": "the-big-kahuna",
+      "number": "TBK-3",
+      "name": "JJ McCarthy",
+      "numberingScheme": "prefixed_insert_number",
+      "sourceIds": [
+        "sports-checklist"
+      ],
+      "canonicalProgramRowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+      "sourceEvidence": [
+        {
+          "sourceId": "sports-checklist",
+          "sourcePage": 10,
+          "sourceRowOrdinal": 508,
+          "sourceLineOrdinal": 31,
+          "literalSourceRow": "TBK-3\tJJ McCarthy\tMichigan®\t",
+          "bboxPoints": [
+            53.04,
+            475.532,
+            323.662,
+            485.492
+          ]
+        }
+      ]
+    }
+  ],
+  "sourceEvidence": [
+    {
+      "sourceId": "sports-checklist",
+      "url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFBChecklistNEW.pdf",
+      "sha256": "bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+      "byteSize": 529104,
+      "sourceRef": "catalog:sha256:bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+      "localEvidencePath": "/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260916-catalog-pilot-sources/sports-checklist.pdf",
+      "localBytesReverified": true,
+      "hostStagingVerified": false,
+      "proposedManifestKind": "OFFICIAL_CHECKLIST",
+      "requiredTaxonomyKinds": [
+        "OFFICIAL_CHECKLIST"
+      ],
+      "taxonomySourceId": null,
+      "sourceMappingStatus": "No exact official URL/classification row exists in the fresh six-row source roster; do not relabel the URL-less secondary rows.",
+      "grant": null
+    },
+    {
+      "sourceId": "sports-odds-round2",
+      "url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFootballRound2Odds.pdf",
+      "sha256": "72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+      "byteSize": 265208,
+      "sourceRef": "catalog:sha256:72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+      "localEvidencePath": "/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260916-catalog-pilot-sources/sports-odds-round2.pdf",
+      "localBytesReverified": true,
+      "hostStagingVerified": false,
+      "proposedManifestKind": "OFFICIAL_PRODUCT",
+      "requiredTaxonomyKinds": [
+        "OFFICIAL_CHECKLIST",
+        "OFFICIAL_ODDS"
+      ],
+      "taxonomySourceId": null,
+      "sourceMappingStatus": "No exact official URL/classification row exists in the fresh six-row source roster; do not relabel the URL-less secondary rows.",
+      "grant": null
+    }
+  ],
+  "printingVocabularyEvidence": [
+    {
+      "key": "ordinary",
+      "label": "THE BIG KAHUNA",
+      "sourceId": "sports-odds-round2",
+      "sourcePage": 2,
+      "literalExtractedLine": "THE BIG KAHUNA 1:288 1:12 - - 1:12 1:12",
+      "serialDenominator": null,
+      "serialMeaning": "No denominator stated in this selected program row.",
+      "parallelRowId": null,
+      "parallelId": null,
+      "scopeRowId": null,
+      "variationId": null,
+      "variationRowId": null,
+      "printingId": null,
+      "language": null,
+      "edition": null,
+      "format": null,
+      "channel": null,
+      "diagnostics": [],
+      "support": "Printed program vocabulary and stated denominator only. Format odds remain uninterpreted here; no physical-finish or exact-card applicability inference."
+    },
+    {
+      "key": "orange",
+      "label": "Orange Refractor",
+      "sourceId": "sports-odds-round2",
+      "sourcePage": 2,
+      "literalExtractedLine": "THE BIG KAHUNA ORANGE REFRACTOR 25 1:3,534 1:148 - - 1:670 1:670",
+      "serialDenominator": 25,
+      "serialMeaning": "Program-row denominator only; not proof for any selected card.",
+      "parallelRowId": null,
+      "parallelId": null,
+      "scopeRowId": null,
+      "variationId": null,
+      "variationRowId": null,
+      "printingId": null,
+      "language": null,
+      "edition": null,
+      "format": null,
+      "channel": null,
+      "diagnostics": [],
+      "support": "Printed program vocabulary and stated denominator only. Format odds remain uninterpreted here; no physical-finish or exact-card applicability inference."
+    },
+    {
+      "key": "superfractor",
+      "label": "Superfractor",
+      "sourceId": "sports-odds-round2",
+      "sourcePage": 2,
+      "literalExtractedLine": "THE BIG KAHUNA SUPERFRACTOR 1 1:97,586 1:4,067 - - 1:4,015 1:4,015",
+      "serialDenominator": 1,
+      "serialMeaning": "Program-row denominator only; not proof for any selected card.",
+      "parallelRowId": null,
+      "parallelId": null,
+      "scopeRowId": null,
+      "variationId": null,
+      "variationRowId": null,
+      "printingId": null,
+      "language": null,
+      "edition": null,
+      "format": null,
+      "channel": null,
+      "diagnostics": [],
+      "support": "Printed program vocabulary and stated denominator only. Format odds remain uninterpreted here; no physical-finish or exact-card applicability inference."
+    }
+  ],
+  "applicabilityDraft": [
+    {
+      "cardId": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+      "cardNumber": "TBK-1",
+      "printingKey": "ordinary",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+      "cardNumber": "TBK-1",
+      "printingKey": "orange",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+      "cardNumber": "TBK-1",
+      "printingKey": "superfractor",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+      "cardNumber": "TBK-2",
+      "printingKey": "ordinary",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+      "cardNumber": "TBK-2",
+      "printingKey": "orange",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+      "cardNumber": "TBK-2",
+      "printingKey": "superfractor",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "d6dde801-2673-46e1-8830-5d810b0c9ade",
+      "cardNumber": "TBK-3",
+      "printingKey": "ordinary",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "d6dde801-2673-46e1-8830-5d810b0c9ade",
+      "cardNumber": "TBK-3",
+      "printingKey": "orange",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    },
+    {
+      "cardId": "d6dde801-2673-46e1-8830-5d810b0c9ade",
+      "cardNumber": "TBK-3",
+      "printingKey": "superfractor",
+      "printingId": null,
+      "status": "unknown",
+      "sourceIds": [],
+      "note": "No per-card evidence supports or excludes this printing relation. Program odds are not card-level applicability."
+    }
+  ],
+  "identityOnlyContractProbe": {
+    "purpose": "Schema/lookup limitation probe only; do not publish as useful catalog evidence.",
+    "manifest": {
+      "aliases": [],
+      "applicability": [],
+      "cards": [
+        {
+          "cardId": "e5d38533-201e-4e4e-9d9b-11bc368050a7",
+          "name": "Caleb Williams",
+          "number": "TBK-1",
+          "numberingScheme": "prefixed_insert_number",
+          "programId": "the-big-kahuna",
+          "sourceIds": [
+            "sports-checklist"
+          ]
+        },
+        {
+          "cardId": "aa34c51c-adee-4272-bea0-d8f7ca3ab8a1",
+          "name": "Drake Maye",
+          "number": "TBK-2",
+          "numberingScheme": "prefixed_insert_number",
+          "programId": "the-big-kahuna",
+          "sourceIds": [
+            "sports-checklist"
+          ]
+        },
+        {
+          "cardId": "d6dde801-2673-46e1-8830-5d810b0c9ade",
+          "name": "JJ McCarthy",
+          "number": "TBK-3",
+          "numberingScheme": "prefixed_insert_number",
+          "programId": "the-big-kahuna",
+          "sourceIds": [
+            "sports-checklist"
+          ]
+        }
+      ],
+      "coverage": {
+        "applicability": {
+          "detail": "No printing rows are included in this contract probe. Program-level odds vocabulary does not establish any card/printing relation.",
+          "sourceIds": [],
+          "status": "unknown"
+        },
+        "images": {
+          "detail": "No reference images or image grants prepared.",
+          "sourceIds": [],
+          "status": "unknown"
+        },
+        "text": {
+          "detail": "Three selected Big Kahuna identities only. Other 376 numbered identities and 171 unnumbered source rows are outside this publication selection; no full-product coverage claim.",
+          "sourceIds": [
+            "sports-checklist"
+          ],
+          "status": "partial"
+        }
+      },
+      "images": [],
+      "printings": [],
+      "programs": [
+        {
+          "label": "THE BIG KAHUNA",
+          "programId": "the-big-kahuna",
+          "rowId": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+          "sourceIds": [
+            "sports-checklist"
+          ]
+        }
+      ],
+      "revision": 1,
+      "schemaVersion": "setops-catalog-evidence/v1",
+      "set": {
+        "category": "SPORTS",
+        "label": "2023 Bowman University Chrome Football",
+        "manufacturer": "Topps",
+        "publisher": null,
+        "setId": "2023_Bowman_University_Chrome_Football",
+        "sourceIds": [
+          "sports-checklist"
+        ],
+        "year": "2023"
+      },
+      "setOps": {
+        "draftId": "2e8b2265-edcb-4910-922f-40a6e926ac38",
+        "draftVersionId": "52de475c-ee6a-4abf-b148-fffde0ec93af",
+        "legacyVersionHash": "48314036838b6a481e87633c1b659541ca0a158ae91d7145e675fc5fb8292a1b"
+      },
+      "sources": [
+        {
+          "kind": "OFFICIAL_CHECKLIST",
+          "originKeys": [
+            "manufacturer-source:sha256:bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca"
+          ],
+          "parentSourceIds": [],
+          "sha256": "bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+          "sourceId": "sports-checklist",
+          "sourceRef": "catalog:sha256:bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+          "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFBChecklistNEW.pdf"
+        },
+        {
+          "kind": "OFFICIAL_PRODUCT",
+          "originKeys": [
+            "manufacturer-source:sha256:72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5"
+          ],
+          "parentSourceIds": [],
+          "sha256": "72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+          "sourceId": "sports-odds-round2",
+          "sourceRef": "catalog:sha256:72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+          "sourceUrl": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFootballRound2Odds.pdf"
+        }
+      ],
+      "supersedes": null
+    },
+    "manifestSha256": "111836359f417f79a2d92ca26f402e1041da9cbc3a07695e4e55d7df1b315fc0",
+    "query": {
+      "category": "SPORTS",
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "programId": "the-big-kahuna",
+      "cardNumber": "TBK-2"
+    },
+    "lookupObserved": {
+      "authority": "unreviewed_manifest",
+      "outcome": "not_found",
+      "totalCandidateCount": 0,
+      "absenceEstablishesExclusion": false
+    }
+  },
+  "reviewEvidenceDraft": {
+    "sources": [
+      {
+        "sourceId": "sports-checklist",
+        "taxonomySourceId": null,
+        "classificationNote": "Exact local manufacturer PDF bytes are pinned. A genuine matching official SetOps source row and documented consumer grant are still missing.",
+        "grant": null
+      },
+      {
+        "sourceId": "sports-odds-round2",
+        "taxonomySourceId": null,
+        "classificationNote": "Exact local manufacturer PDF bytes are pinned. A genuine matching official SetOps source row and documented consumer grant are still missing.",
+        "grant": null
+      }
+    ],
+    "images": []
+  },
+  "loadableReviewPacket": null,
+  "fullThreePrintingManifest": null,
+  "publicationRequest": null,
+  "remainingForUsefulPartialPilot": [
+    "Prepare actual official checklist/odds source records with exact URLs and proper classification using the existing reviewed workflow. Preserve all 379 card IDs, ten existing program IDs, secondary sources and draft history; no three-card replacement/reimport.",
+    "Prepare genuine existing-program parallel/scope records for the selected printing vocabulary: all three for the unchanged ordinary/Orange/Superfractor compiler recipe, or a separately reviewed smaller manifest selection (contract minimum one for any lookup candidate). Use actual canonical IDs; keep language/edition/format/channel and card/printing relations unknown unless separately evidenced.",
+    "Refresh the normal bounded taxonomy export and exact latest clean draft/history binding after that preparation. The custom read-only SQL receipt is mapping evidence, not a fabricated authenticated compiler export.",
+    "Document genuine permission/license and intended Inventory/Atlas consumers for every manufacturer source. No owned-original claim is inferred from possession of the PDF.",
+    "Stage the exact PDF bytes through the existing authenticated private checksum route; no image is required for this text/printing pilot. Then compile the explicit selection and source grant roster.",
+    "Have an authorized human review the entire selected manifest and source/rights evidence through normal preview/publication, bound to manifest and verification hashes. No acknowledgement, approval or publication authority is generated here."
+  ],
+  "notRequiredForThisPartialPilot": [
+    "Resolve the 171 unnumbered source identities",
+    "Import the remaining 376 numbered identities",
+    "Correct unrelated base-card school fields before selecting TBK-1/2/3",
+    "Populate every printing or image for the complete product",
+    "Infer all per-card printing applicability"
+  ],
+  "excludedCoverage": {
+    "otherNumberedCanonicalCards": 376,
+    "unnumberedSourceRows": 171,
+    "otherBigKahunaNumberedCards": 22,
+    "unreviewedImages": 0,
+    "fullCatalogClaim": false
+  },
+  "rightsVerified": false,
+  "humanReviewed": false,
+  "apiCalls": 0,
+  "databaseWrites": 0
+}

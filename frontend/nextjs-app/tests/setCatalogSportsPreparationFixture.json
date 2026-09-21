@@ -1,0 +1,125 @@
+{
+  "authority": "Offline fixture from the dated exported IDs; never a new database observation.",
+  "programs": [
+    {
+      "id": "0f33785b-11d2-4abe-abb8-ad567a1a63ab",
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "programId": "the-big-kahuna",
+      "label": "THE BIG KAHUNA",
+      "sourceId": "9e347dd0-d75a-4662-a39b-ca3567cdc150"
+    },
+    {
+      "id": "13170394-0535-41f0-a73e-144267e69cff",
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "programId": "ramblin-man",
+      "label": "RAMBLIN MAN",
+      "sourceId": "9e347dd0-d75a-4662-a39b-ca3567cdc150"
+    },
+    {
+      "id": "222188e8-abd7-4407-b3ac-c8de864531ba",
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "programId": "bowman-chrome-prospects-short-print-image-variations",
+      "label": "BOWMAN CHROME PROSPECTS SHORT PRINT IMAGE VARIATIONS",
+      "sourceId": "9e347dd0-d75a-4662-a39b-ca3567cdc150"
+    },
+    {
+      "id": "42346e84-6eee-4222-a1fc-af66ed18e63a",
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "programId": "future-of-football-autographs",
+      "label": "FUTURE OF FOOTBALL AUTOGRAPHS",
+      "sourceId": "9e347dd0-d75a-4662-a39b-ca3567cdc150"
+    },
+    {
+      "id": "5a12efb4-6cdf-4717-813d-a5348865a859",
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "programId": "bowman-chrome-prospects",
+      "label": "BOWMAN CHROME PROSPECTS",
+      "sourceId": "9e347dd0-d75a-4662-a39b-ca3567cdc150"
+    },
+    {
+      "id": "aee6f141-4e61-4894-81f4-c24fa89a212e",
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "programId": "ramblin-man-autograph-variation",
+      "label": "RAMBLIN MAN AUTOGRAPH VARIATION",
+      "sourceId": "9e347dd0-d75a-4662-a39b-ca3567cdc150"
+    },
+    {
+      "id": "b33f409a-b3e1-4673-91cf-1b81beed0878",
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "programId": "saturday-superstars",
+      "label": "SATURDAY SUPERSTARS",
+      "sourceId": "9e347dd0-d75a-4662-a39b-ca3567cdc150"
+    },
+    {
+      "id": "bd137087-9229-4c72-bb1e-126549d891ab",
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "programId": "1955-bowman-football",
+      "label": "1955 BOWMAN FOOTBALL",
+      "sourceId": "9e347dd0-d75a-4662-a39b-ca3567cdc150"
+    },
+    {
+      "id": "e1b53fa5-7626-4020-876a-fabe0c92a02b",
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "programId": "bowman-unexpected-delights-early-risers",
+      "label": "BOWMAN UNEXPECTED DELIGHTS EARLY RISERS",
+      "sourceId": "9e347dd0-d75a-4662-a39b-ca3567cdc150"
+    },
+    {
+      "id": "f26aded0-22a7-4d63-a285-a02b0711432d",
+      "setId": "2023_Bowman_University_Chrome_Football",
+      "programId": "1955-bowman-football-autograph-variation",
+      "label": "1955 BOWMAN FOOTBALL AUTOGRAPH VARIATION",
+      "sourceId": "9e347dd0-d75a-4662-a39b-ca3567cdc150"
+    }
+  ],
+  "versions": [
+    {
+      "id": "0964ca92-dc33-4993-96ef-ee876c496ffb",
+      "draftId": "2e8b2265-edcb-4910-922f-40a6e926ac38",
+      "version": 1,
+      "versionHash": "e524cd1db312d0fcebe5c685d07c45444cff9f1f9bfa60fcaf4f5bcc610178a7",
+      "rowCount": 379,
+      "blockingErrorCount": 0
+    },
+    {
+      "id": "20890214-8658-4c26-b88d-d0a9b90577af",
+      "draftId": "2e8b2265-edcb-4910-922f-40a6e926ac38",
+      "version": 4,
+      "versionHash": "48314036838b6a481e87633c1b659541ca0a158ae91d7145e675fc5fb8292a1b",
+      "rowCount": 61,
+      "blockingErrorCount": 0
+    },
+    {
+      "id": "3e709b2e-3e4a-4c04-8ae0-c7687cff98f6",
+      "draftId": "2e8b2265-edcb-4910-922f-40a6e926ac38",
+      "version": 2,
+      "versionHash": "e524cd1db312d0fcebe5c685d07c45444cff9f1f9bfa60fcaf4f5bcc610178a7",
+      "rowCount": 379,
+      "blockingErrorCount": 0
+    },
+    {
+      "id": "52de475c-ee6a-4abf-b148-fffde0ec93af",
+      "draftId": "2e8b2265-edcb-4910-922f-40a6e926ac38",
+      "version": 6,
+      "versionHash": "48314036838b6a481e87633c1b659541ca0a158ae91d7145e675fc5fb8292a1b",
+      "rowCount": 61,
+      "blockingErrorCount": 0
+    },
+    {
+      "id": "5b2592d6-d0d9-4c8d-b941-64a4f10de231",
+      "draftId": "2e8b2265-edcb-4910-922f-40a6e926ac38",
+      "version": 3,
+      "versionHash": "5d1b733e8182c3c87a70f2988cc214a07aaadd606850452821ee37cbfdc4a26d",
+      "rowCount": 379,
+      "blockingErrorCount": 0
+    },
+    {
+      "id": "baaae600-86b3-44ad-a72a-24759d20fa20",
+      "draftId": "2e8b2265-edcb-4910-922f-40a6e926ac38",
+      "version": 5,
+      "versionHash": "5d1b733e8182c3c87a70f2988cc214a07aaadd606850452821ee37cbfdc4a26d",
+      "rowCount": 379,
+      "blockingErrorCount": 0
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "refs": {
+    "A": "60572cec895ad63d4ab826cd366f6475b04e725a",
+    "B": null
+  },
+  "frozen_client_ledger_sha256": "e1a91c8dee8d08a561083f4976312f6d3b0faedaf3842489cda739b769db6345"
+}

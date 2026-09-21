@@ -358,6 +358,9 @@ importers:
       '@tenkings/browser-rip-client':
         specifier: workspace:*
         version: link:../../packages/browser-rip-client
+      '@tenkings/card-catalog-evidence':
+        specifier: workspace:*
+        version: link:../../packages/card-catalog-evidence
       '@tenkings/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -513,6 +516,17 @@ importers:
       typescript:
         specifier: ^5.5.4
         version: 5.5.4
+
+  packages/card-catalog-evidence: {}
+
+  packages/card-identification-core:
+    dependencies:
+      sharp:
+        specifier: 0.33.5
+        version: 0.33.5
+      zod:
+        specifier: 4.1.11
+        version: 4.1.11
 
   packages/database:
     dependencies:

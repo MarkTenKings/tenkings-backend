@@ -1,0 +1,48 @@
+{
+  "schema": "tenkings-source-discovery-draft-v1",
+  "status": "DRAFT_NOT_APPROVED_NOT_PUBLISHED",
+  "source_commit": "ece8223b",
+  "sources": [
+    {
+      "id": "sports-checklist",
+      "url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFBChecklistNEW.pdf",
+      "manufacturer_index": "https://www.topps.com/pages/checklists",
+      "retrieved_at": "2026-09-16T22:22:33.091087+00:00",
+      "final_url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFBChecklistNEW.pdf",
+      "http_content_type": "application/pdf",
+      "byte_size": 529104,
+      "sha256": "bf2f692f03dc215238001ed465d7ecda8bbf361cb459276b60482b839bc2a4ca",
+      "local_evidence_path": "/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260916-catalog-pilot-sources/sports-checklist.pdf"
+    },
+    {
+      "id": "sports-odds-round2",
+      "url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFootballRound2Odds.pdf",
+      "manufacturer_index": "https://www.topps.com/pages/odds",
+      "retrieved_at": "2026-09-16T22:22:33.214352+00:00",
+      "final_url": "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2023BowmanUChromeFootballRound2Odds.pdf",
+      "http_content_type": "application/pdf",
+      "byte_size": 265208,
+      "sha256": "72acc9a8682b495c028e278baa9825286ac98bbe8192bcba742ccc85f9175cf5",
+      "local_evidence_path": "/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260916-catalog-pilot-sources/sports-odds-round2.pdf"
+    },
+    {
+      "id": "pokemon-checklist",
+      "url": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+      "manufacturer_index": null,
+      "retrieved_at": "2026-09-16T22:22:54.598263+00:00",
+      "final_url": "https://assets.pokemon.com/assets/cms2/pdf/trading-card-game/checklist/bw11_web_cardlist_en.pdf",
+      "http_content_type": "application/pdf",
+      "byte_size": 2227474,
+      "sha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+      "local_evidence_path": "/Users/markthomas/Library/Application Support/TenKingsInventory/investigations/20260916-catalog-pilot-sources/pokemon-checklist.pdf"
+    }
+  ],
+  "scope": "Public manufacturer source acquisition only. No physical-card identity or reusable image approval. Not a card-catalog-evidence publication manifest.",
+  "coverage": {
+    "source_acquisition": "three complete PDF byte streams; partial source set overall",
+    "text_preparation": "selected factual examples only; no full normalized checklist import",
+    "card_printing_applicability": "partial; no sports Cartesian product",
+    "reference_images": "none acquired or approved",
+    "physical_card_identification": "unresolved; demand records are not confirmation"
+  }
+}

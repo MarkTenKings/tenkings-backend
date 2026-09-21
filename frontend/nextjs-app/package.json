@@ -25,6 +25,7 @@
     "@tenkings/ai-grader-capture-helper": "workspace:*",
     "@tenkings/ai-grader-simulator": "workspace:*",
     "@tenkings/browser-rip-client": "workspace:*",
+    "@tenkings/card-catalog-evidence": "workspace:*",
     "@tenkings/database": "workspace:*",
     "@tenkings/ebay-sold-comps-v2": "workspace:*",
     "@tenkings/shared": "workspace:*",

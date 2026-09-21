@@ -27,6 +27,7 @@ const password = randomBytes(24).toString('hex');
 const database = 'tenkings_inventory_v2_disposable';
 const cluster = new EmbeddedPostgres({ databaseDir: join(temp, 'db'), user: 'postgres', password, port,
   persistent: true, createPostgresUser: false,
+  initdbFlags: ['--encoding=UTF8'],
   postgresFlags: ['-h', '127.0.0.1', '-k', temp], onLog() {}, onError() {} });
 let started = false;
 let client;
@@ -60,8 +61,9 @@ try {
   await cluster.initialise(); await cluster.start(); started = true;
   await cluster.createDatabase(database);
   client = new Client({ connectionString: childEnv.DATABASE_URL }); await client.connect();
-  const version = (await client.query('SELECT version()')).rows[0].version;
-  console.log('Disposable loopback PostgreSQL:', version);
+  const { version, encoding } = (await client.query("SELECT version() AS version, current_setting('server_encoding') AS encoding")).rows[0];
+  if (encoding !== 'UTF8') throw new Error('Disposable inventory validation requires UTF8 encoding');
+  console.log('Disposable loopback PostgreSQL:', version, 'encoding:', encoding);
   const prismaCli = localRequire.resolve('prisma/build/index.js');
   // Copy the published migration tree, then verify both inventory files against
   // their immutable reviewed artifacts. A pre-publication checkout may add a

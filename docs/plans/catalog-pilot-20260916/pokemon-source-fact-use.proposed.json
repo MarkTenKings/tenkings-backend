@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "setops-catalog-source-fact-use-proposal/v1",
+  "authority": "unreviewed_proposal_not_legal_attestation",
+  "uses": {
+    "pokemon-checklist": {
+      "purpose": "catalog_facts",
+      "sourceSha256": "d597ba707c20f1f8ec11e4809bb1f6e85bb0e502c05a93df41f36116a56dc923",
+      "detail": "Proposed Inventory/Atlas catalog use of pinned checklist card names, printed numbers and program membership. No image ownership, image reuse or source-PDF distribution is asserted. Requires actual human evidence review.",
+      "consumers": [
+        "inventory",
+        "atlas"
+      ]
+    }
+  }
+}

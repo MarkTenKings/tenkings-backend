@@ -37,7 +37,8 @@ export type TurnstileFetch = (
 type VerifyTurnstileTokenOptions = {
   secretKey: string;
   token: string;
-  expectedHostname: string;
+  expectedHostname?: string;
+  allowedHostnames?: readonly string[];
   expectedAction?: string;
   timeoutMs?: number;
   fetchImpl?: TurnstileFetch;
@@ -52,10 +53,20 @@ const failure = (reason: TurnstileFailureReason, errorCodes: string[] = []): Tur
 const readErrorCodes = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 
+const validHostname = (value: string) => value.length <= 253 && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(value) && !value.includes('..') && value.split('.').every(label => label.length <= 63 && !label.startsWith('-') && !label.endsWith('-'));
+
+/** Additional exact hosts never remove the established collect/legacy hostname. Invalid configuration fails closed. */
+export function resolveTurnstileHostnames(legacyHostname?: string, additionalHostnames?: string): readonly string[] {
+  const values = [legacyHostname?.trim() || 'collect.tenkings.co', ...(additionalHostnames === undefined ? [] : additionalHostnames.split(',').map(value => value.trim()))];
+  if (values.some(value => !validHostname(value))) return [];
+  return [...new Set(values.map(value => value.toLowerCase()))];
+}
+
 export async function verifyTurnstileToken({
   secretKey,
   token,
   expectedHostname,
+  allowedHostnames,
   expectedAction = TURNSTILE_SEND_CODE_ACTION,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   fetchImpl = fetch,
@@ -63,6 +74,10 @@ export async function verifyTurnstileToken({
   if (!token || token.length > 2_048) {
     return failure("invalid-token");
   }
+
+  const hosts = allowedHostnames ?? (expectedHostname ? [expectedHostname] : []);
+  if (!hosts.length || hosts.some(host => !validHostname(host))) return failure("hostname-mismatch");
+  const expectedHosts = new Set(hosts.map(host => host.toLowerCase()));
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -90,7 +105,7 @@ export async function verifyTurnstileToken({
     }
 
     const hostname = typeof payload.hostname === "string" ? payload.hostname.toLowerCase() : "";
-    if (hostname !== expectedHostname.toLowerCase()) {
+    if (!expectedHosts.has(hostname)) {
       return failure("hostname-mismatch");
     }
 
