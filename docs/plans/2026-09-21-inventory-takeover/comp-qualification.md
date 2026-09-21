@@ -55,3 +55,10 @@ Can proceed now without Mark repeating approval: prepare the targeted fixture, f
 Missing evidence is **human truth and a suitable real input**, not generic build permission: confirm exact card/printing/condition and which candidate images are independently correct; identify a real ordinary fixed-price positive if available. The lead should first inspect the existing private corpus and obtain only labels genuinely absent there. An owner-provisioned local key is unnecessary if a reviewed server diagnostic can use the normal existing secret mechanism. Provider billing/account quota must be checked by the authorized lead before interpreting request caps as spending limits.
 
 The accuracy lane owns the independent 200-card holdout in [acceptance §5](../2026-09-16-intake-atlas-acceptance-next-slice.md): all cards stay in the denominator; assess the UI's union of matched assertions and selections, sold-event correctness and verified-value coverage separately. Neither this three-input fixture nor one fresh run establishes >90% all-card coverage.
+
+
+## September21 implementation and isolated execution
+
+Dedicated V5 test/runner siblings are implemented without changing the original V3 harness or application runtime. Root reviewed fresh seal `3e47594574ad695a812f54835667fed929496ef261dc5f54ba85b87db9632565` and ran it once. `/private/tmp/tenkings-v5-cron-run-20260921-01` passes:3saves/claims/durableV5completions, exact5search/4detail/5model/10candidateimage synthetic calls,0realproviders,8560ms total. Wrongcard/parallel/grade/raw/acceptedoffer/active controls, actual6secondtimeout/429cachedacross3searches, late-response immutability andV5flag-offreadback pass. Fullmigration/secondnoop are confined toownedloopbackPG. Cleanup is complete and everyownedPID absent. Independent review foundnoactionablefinding. Scopedlint/types/syntax and29existingV5enginechecks pass.
+
+The next gaps are a boundedexact-input hosted diagnostic and qualification of actually exercised additionalbackgroundload. This functional synthetic fixture makes no performance, real-providerquality orall-cardaccuracyclaim.
