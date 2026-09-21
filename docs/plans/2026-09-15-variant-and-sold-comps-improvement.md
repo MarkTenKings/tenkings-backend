@@ -4,6 +4,8 @@ Date: September 15, 2026 (America/Los_Angeles). Status refreshed September 20 af
 
 ## Lead transfer — September 21
 
+The new Inventory lead has accepted the handoff, created its five-agent Extra High fleet and verified the release/evidence state. Its [active delivery index](2026-09-21-inventory-takeover/README.md) records the five next-action packets and the first local catalog-selection repair. That repair is not deployed; the Preview and production identities below remain unchanged.
+
 Mark requested a fresh Astra Ultra lead and its own subagent fleet for **Ten Kings Inventory**. ATLAS Grading remains a separate project; sharing recognition/catalog knowledge does not transfer its project ownership. The [complete Inventory lead handoff](../handoffs/2026-09-21-ten-kings-inventory-astra-ultra-handoff.md) is the next-task entry point, with exact workspace/deployment state, qualification evidence, pending owner phone acceptance, remaining deliveries, and current ATLAS coordination. Both Preview deployments and the unchanged collect production aliases were rechecked; packaging makes no application or live-state change.
 
 ## Latest verified progress — September 20

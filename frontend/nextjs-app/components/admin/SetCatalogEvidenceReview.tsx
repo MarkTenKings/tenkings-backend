@@ -67,6 +67,7 @@ export default function SetCatalogEvidenceReview({ token, setId, canReview, canA
 
   return <details className={panel}>
     <summary className="cursor-pointer font-semibold text-white">Reviewed shared catalog evidence</summary>
+    <p className="mt-3 text-sm text-slate-300">Catalog set: {setId || 'Choose an existing Set ID below or select an ingestion job.'}</p>
     <p className="my-3 text-sm text-slate-300">Prepare a clean, approved SetOps draft first. This separate review publishes the complete identity, applicability, source and image evidence. Private review artifacts stay internal. Missing image coverage stays unknown.</p>
     <SetCatalogProposalInbox token={token} canReview={canReview} />
     <div className="flex flex-wrap gap-3">

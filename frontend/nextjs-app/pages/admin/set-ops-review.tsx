@@ -535,6 +535,14 @@ export default function SetOpsReviewPage() {
   const [selectedJobId, setSelectedJobId] = useState<string>("");
 
   const [selectedSetId, setSelectedSetId] = useState("");
+  // Catalog preparation can target an existing set without selecting an
+  // ingestion job. Keep its selection separate from the legacy draft editor.
+  const [catalogSetId, setCatalogSetId] = useState("");
+  const catalogSelectionGeneration = useRef(0);
+  const selectCatalogSet = useCallback((setId: string) => {
+    catalogSelectionGeneration.current++;
+    setCatalogSetId(setId);
+  }, []);
   const [latestVersion, setLatestVersion] = useState<DraftVersion | null>(null);
   const [versions, setVersions] = useState<DraftVersion[]>([]);
   const [latestApprovedVersionId, setLatestApprovedVersionId] = useState<string | null>(null);
@@ -769,6 +777,7 @@ export default function SetOpsReviewPage() {
       if (!cleaned) return;
       setShowAllPendingJobs(false);
       setSetIdInput(cleaned);
+      selectCatalogSet("");
       setShowSetIdOptions(false);
       if (setIdBlurTimerRef.current) {
         clearTimeout(setIdBlurTimerRef.current);
@@ -780,13 +789,14 @@ export default function SetOpsReviewPage() {
       }
       const selected = setIdOptions.find((option) => normalizeSetIdLookup(option.setId) === normalizeSetIdLookup(cleaned)) ?? null;
       if (!selected) return;
+      selectCatalogSet(selected.setId);
       setStatus(
         `Selected ${selected.setId}. SET LIST: ${formatConnectionBadgeLabel(
           selected.checklistStatus
         )}. PARALLEL LIST: ${formatConnectionBadgeLabel(selected.oddsStatus)}.`
       );
     },
-    [setIdOptions]
+    [selectCatalogSet, setIdOptions]
   );
 
   const fetchDraft = useCallback(
@@ -1102,6 +1112,7 @@ export default function SetOpsReviewPage() {
 
   const queuePreparedChecklist = useCallback(async () => {
     if (!session?.token || !isAdmin || !canReview || busy || preparedLoading || !preparedChecklist) return;
+    const catalogGenerationAtSubmit = catalogSelectionGeneration.current;
     const { requestBody, requestDraft } = preparedChecklist;
     // Latch synchronously before fetch: React state alone does not prevent two
     // clicks in one turn. An ambiguous response must never trigger a retry.
@@ -1120,6 +1131,7 @@ export default function SetOpsReviewPage() {
       const job = payload.job;
       setSelectedJobId(job.id);
       setSelectedSetId(requestDraft.setId);
+      if (catalogSelectionGeneration.current === catalogGenerationAtSubmit) setCatalogSetId(requestDraft.setId);
       setSetIdInput(requestDraft.setId);
       setSourceUrlInput(requestDraft.sourceUrl);
       setDatasetType("PLAYER_WORKSHEET");
@@ -2096,7 +2108,7 @@ export default function SetOpsReviewPage() {
         {status && <p className="text-xs text-emerald-300">{status}</p>}
         {error && <p className="text-xs text-rose-300">{error}</p>}
 
-        <SetCatalogEvidenceReview token={session?.token} setId={selectedSetId} canReview={canReview} canApprove={canApprove} />
+        <SetCatalogEvidenceReview token={session?.token} setId={catalogSetId} canReview={canReview} canApprove={canApprove} />
 
         <section className={adminPanelClass("p-5")}>
           <div className="mb-4">
@@ -2215,6 +2227,7 @@ export default function SetOpsReviewPage() {
                 value={setIdInput}
                 onChange={(event) => {
                   setSetIdInput(event.target.value);
+                  selectCatalogSet("");
                   setShowSetIdOptions(true);
                 }}
                 onFocus={() => setShowSetIdOptions(true)}
@@ -2425,6 +2438,7 @@ export default function SetOpsReviewPage() {
                       if (!canReview) return;
                       setSelectedJobId(job.id);
                       setSelectedSetId(job.setId);
+                      selectCatalogSet(job.setId);
                       setDatasetType(job.datasetType as DatasetType);
                       setQueueDatasetMode(job.datasetType as CombinedDatasetMode);
                       setSetIdInput(job.setId);
@@ -2458,6 +2472,7 @@ export default function SetOpsReviewPage() {
               onClick={() => {
                 setSelectedJobId("");
                 setSelectedSetId("");
+                selectCatalogSet("");
                 setVersions([]);
                 setLatestVersion(null);
                 setLatestApprovedVersionId(null);
