@@ -10,11 +10,11 @@ The active legacy lookup is a read-only SetOps database query. It requires year,
 
 Twenty of the 92 jobs retained at least two visually matched candidates. That does not establish two independently imaged, condition-correct listings with eligible verified prices. The catalog gate prevented selection regardless; sale/visual evidence remains a separate check afterward.
 
-## New cards and current deployment
+## Pre-recovery deployment snapshot
 
 Fresh normal Vercel reads at 01:56–01:58 UTC September 22 confirm tenkings.co still serves bc92b102 / dpl_FXLDCapouMhB7WtULnCTb45QXG31 and all five optional catalog-consumer/admin, sale-detail, full-resolution and contribution flags are absent in Production. New jobs therefore use the current V3 default engine with legacy references. The historical 92 results are V2, but both versions retain the same catalog-backed identity requirement. New individual-card intake/save/enqueue works; a new card without a usable reference can still finish research with no value. The UI release did not solve this coverage dependency or rerun historical work.
 
-## Current affected inventory and retry budget
+## Pre-recovery affected inventory and retry budget
 
 The 02:00:20 UTC read-only audit verified the complete canonical workflow hashes and replay before counting current cards. All **92 complete/unknown jobs are 92 distinct current, on-hand, individually received cards**, with matching latest description/input and no newer research job. They are not stale or cancelled historical duplicates. Eighteen miss at least one legacy lookup field; 74 have all four required fields. Missing fields overlap: year 16, set 8, card number 4 and manufacturer 4.
 
@@ -55,7 +55,7 @@ A reviewed, useful evidence digest permits a bounded automatic research attempt.
 Qualification must cover first-time missing details, existing unknown/failed/missing jobs, manual-budget exhaustion, changed-evidence wakeup, stale claims, concurrent workers, intake headroom, provider failure/backoff and reviewed-result protection. Staff UI must show the actual saved recovery status, missing fields/conflicts and the canonical Edit details route. Runtime activation requires the additive migration and qualified artifact; source implementation alone is not proof that the 92 recovered.
 
 
-## Local implementation and qualification
+## Implementation and qualification
 
 The local candidate adds five private recovery fields to the existing job, with immutable recognition, source-search and automatic-refresh histories. Per exact input: at most two original-photo attempts, two catalog-scope attempts and three distinct evidence-backed automatic research refreshes, within nine lifetime research attempts. Manual retries are retained unchanged. Normal checks back off six hours; unavailable services back off thirty minutes. New queued cards receive the same preflight, and canonical historical individual receipts without a current job are discovered automatically.
 
@@ -65,4 +65,12 @@ Missing catalog coverage can produce a reusable unreviewed source-search packet 
 
 Root Node22.23.2 final broad staff qualification passed423/423 tests. The final sealed disposable PostgreSQL run passed21/21 transaction cases, all98 local migrations and a no-op second deploy; owned processes and temporary database were removed. The migration SQL SHA-256 is `4d0c9374b9f28e896ac7a8e468dec3a783ec5d1959218f5d80b812b61b638c7a`. Four actual-component desktop/mobile renders had no overflow, external requests or browser errors. Full frontend type checking has only the twelve retained unrelated grading-test diagnostics; focused recovery/shared/database checks pass. A test-only acquired-lock barrier verified twenty full recovery replays and twenty actual writer contentions with no yielded recovery claims: save median29.06→43.71ms and p95 37.95→57.94ms passed the unchanged declared local bounds. Controlled local timing is not a claim about hosted saturation or live card coverage. The final review also added a claim-time evidence digest: a superseded automatic assessment cannot fall back to ordinary paid research.
 
-These are local candidate results. The shared-host/DB mutation hold remains active for the separately owned ATLAS rollout. No recovery migration, flag activation or real-card backfill has occurred yet. Migration, exact artifact qualification, activation and observed card outcomes must be recorded separately.
+## Production activation and initial observed results
+
+ATLAS explicitly released its shared-host/DB hold after its independent release. Root committed the qualified application as `6bfe43d81a2e16869a3f570d110959d40f8082dd`, applied only the additive recovery migration using managed Prisma 5.22, and verified exact old ledger/schema/all 97 research-row preservation plus a second no-op deployment. The managed ledger is 99 active / 13 historical rolled-back entries. No ATLAS restart, deployment or catalog approval occurred.
+
+Production is `dpl_5DmqXUVGtjUagX1oeKHBic1BYhV4`, immutable `tenkings-backend-nextjs-gig6dzjq7-ten-kings.vercel.app`; all five aliases / project target / sole minute cron were verified at 03:02:36 UTC September 22. Main Preview is `dpl_23hGjdJQQ31J1iboZvQpiEZsGjcx` (`g3q64ycuv`) from the same source. Both 79-page / Linux Sharp 0.34.5 / Fluid 300 builds and private boundaries passed. Production postflight passed 28 routes / six assets, build `zx4IFKyfqyJQiwnOAa9X5`; stable Preview passed six routes / five assets. Vercel builds skipped migrations. Only the new Production recovery execution flag is true; optional catalog/detail/image/contribution/diagnostic controls remain off.
+
+The preactivation snapshot at 02:58:58 UTC replays 402 canonical workflow events and confirms 98 current individual units: 92 unknown, four failed, two without jobs; 11 bulk units remain excluded. Natural cron requests at 03:02:37.319 and 03:03:37.220 UTC returned HTTP 200. A separate 03:04:20 UTC read-only audit confirms 99 total job rows, both missing jobs created, zero stale bindings and eight historical cards assessed/waiting for catalog evidence, with 84 still unchecked. Six source reservations produced eight reused/retained `not_found` packets. No photo call was needed for those first eight complete descriptions. All 97 baseline inputs and original manual-retry/attempt prefixes remained intact; no retries or research attempts were appended and no estimates were produced. These are observed initial results, not full backlog or accuracy completion.
+
+Private receipts: `investigations/20260921-research-recovery-migration`, `20260921-recovery-web-release`, `20260921-recovery-release-qualification`, and `20260921-recovery-outcome-audit`. The latter binds read-only outcome checks to preactivation SHA `7c127d643c2ad2252502b2d842b6a298a7a9c10d9fa5dfc5feb96ac9d118c743`. The process will continue automatically; actual source/applicability review remains required where positive catalog facts are missing.

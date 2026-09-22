@@ -1,6 +1,18 @@
 # Main-site release record
 
-## Current production — September 21, comp review release
+## Current production — September 21, automatic recovery release
+
+Production serves exact `6bfe43d81a2e16869a3f570d110959d40f8082dd` through `dpl_5DmqXUVGtjUagX1oeKHBic1BYhV4`, immutable host `tenkings-backend-nextjs-gig6dzjq7-ten-kings.vercel.app`. All five actual Production aliases, the project Production target and sole research cron were verified at **2026-09-22 03:02:36 UTC** (September 21 local). Qualified main Preview is `dpl_23hGjdJQQ31J1iboZvQpiEZsGjcx`, immutable host `tenkings-backend-nextjs-g3q64ycuv-ten-kings.vercel.app`, from the same source.
+
+The [ongoing Inventory recovery process](2026-09-21-inventory-research-recovery.md) is enabled in Production through the sole new setting `STAFF_INVENTORY_RESEARCH_RECOVERY_ENABLED=true`. It covers current unknown cards and future incomplete cards, retaining bounded original-photo receipts, proposing only missing identity details and scheduling research only when useful reviewed evidence supports the exact input. Unresolved cases expose catalog or staff-review needs. Other optional catalog, contribution, image, sale-detail and diagnostic flags remain off; hosted builds skipped migrations. The additive recovery migration passed with **99 active and 13 historical rolled-back entries**, every prior ledger entry preserved and a second deploy confirmed no-op. No DNS change accompanied this release.
+
+Production postflight passed **28 route/privacy checks and six assets**, build `zx4IFKyfqyJQiwnOAa9X5`. Preview passed **six routes and five assets**, build `6epgb__1r-4hykeB_4Ccj`. Local qualification passed **423 application tests and 21 PostgreSQL checks**. These results establish the qualified delivery and recovery boundaries, not all-card estimate accuracy.
+
+The initial read-only audit at **2026-09-22 03:03:11 UTC** found the two missing research jobs created and four of the 92 unknown cards checked, all waiting for catalog evidence; 88 remained pending. All 97 prior jobs retained their manual-retry records and prior attempt prefixes. This early audit establishes ongoing recovery activity without claiming an estimate improvement or catalog publication.
+
+Later readback confirmed the natural 03:02:37.319 and 03:03:37.220 UTC cron requests returned HTTP 200 on this exact deployment. No manual cron invocation occurred. The dated release entries below retain their original observations and do not describe the current serving artifact.
+
+## Historical production — September 21, comp review release
 
 Production is now exact `bc92b1023640ab21499506fb2d4fb5e2bdb188df`, deployment `dpl_FXLDCapouMhB7WtULnCTb45QXG31`, immutable `tenkings-backend-nextjs-drrqyvmk1-ten-kings.vercel.app`. All five actual Production aliases were verified at 01:17:39 UTC September 22 (September 21 local); stable main Preview remains `dpl_Hie34Nkq8rhtp1MGjURUAsY7J8yH` from the same source. No environment or DNS change accompanied this release.
 
