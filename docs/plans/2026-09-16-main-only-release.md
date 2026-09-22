@@ -1,6 +1,14 @@
 # Main-site release record
 
-## Current production — September 21, automatic recovery release
+## Current production — automatic recovery and source-search correction
+
+Production is exact `9e8a9c1d99cce0b4b8a4a5dbde241fc916cdb439`, deployment `dpl_6GK1WtpAY19dBQh5csQbZCR6qP8B`, immutable `tenkings-backend-nextjs-ewysxk0rw-ten-kings.vercel.app`. All five serving aliases, project target and sole minute cron were verified at September 22 03:33:39 UTC (September 21 local). Production passed 28 routes/six assets at build `b9EpiUYH5zneUEWK0NAfB`. Qualified main Preview is `dpl_3BwdAS3wHjkGD17M7ZY6r2DJvBpv` (`ocp9wiuex`), build `YJdmhH2vOZGhX8rM0l0Op`; its stable alias was explicitly assigned after qualification. Three final stable-alias/staff-shell/unsigned-API checks passed. Natural cron requests on final 6GK at 03:34:37.681 and 03:35:37.269 UTC returned HTTP 200.
+
+The source-only correction uses the canonical DuckDuckGo endpoint and rejects non-200, challenge and malformed search responses. Fifteen focused tests and 54 root source/worker integration tests pass. Both exact-source 79-page/Linux Sharp 0.34.5/fluid 300 builds and six staged routes/four assets pass; Production explicitly skipped migrations. No database, dependency, environment, capacity or history change accompanied this correction. Production recovery remains enabled; all other optional catalog/detail/image/contribution/diagnostic execution remains off. The managed ledger remains 99 active plus 13 historical rolled-back entries.
+
+The initial recovery pass is complete across 98 current individual cards: 80 wait for reviewed catalog evidence and 18 need staff review. Within the historical 92, the split is 76/16; all 18 missing-anchor photo analyses completed once. The four failed and two previously missing jobs were also checked. The 03:30:01 UTC canonical audit verifies exact original inputs/manual-retry/attempt prefixes across all 97 baseline jobs, no missing jobs or stale bindings, and no due checks or live/expired leases at that observation. No qualified estimate or new sold-research attempt was produced. Source candidate links are unreviewed; genuine catalog facts and staff corrections remain required where indicated. The existing cron continues future checks and new-card recovery. No manual cron invocation or catalog publication occurred.
+
+## Historical initial automatic recovery release — September 21
 
 Production serves exact `6bfe43d81a2e16869a3f570d110959d40f8082dd` through `dpl_5DmqXUVGtjUagX1oeKHBic1BYhV4`, immutable host `tenkings-backend-nextjs-gig6dzjq7-ten-kings.vercel.app`. All five actual Production aliases, the project Production target and sole research cron were verified at **2026-09-22 03:02:36 UTC** (September 21 local). Qualified main Preview is `dpl_23hGjdJQQ31J1iboZvQpiEZsGjcx`, immutable host `tenkings-backend-nextjs-g3q64ycuv-ten-kings.vercel.app`, from the same source.
 
