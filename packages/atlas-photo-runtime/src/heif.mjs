@@ -26,6 +26,20 @@ function verifyColorProperties(properties, probe) {
       && (data[10] === 0 || data[10] === 128) && data[10] / 128 === probe.nclx.fullRange, 'PHOTO_COLOR_UNSUPPORTED');
   }
 }
+// CLLI has precisely two unsigned 16-bit bounds. Zero means unspecified; this
+// metadata does not select a transfer function or trigger tone mapping.
+export function verifyHeifContentLightLevel(properties, observed, qualifiedAppleSdrBase) {
+  const entries = properties.filter(p => p.type === 'clli');
+  if (!entries.length) {
+    need(observed === null, 'PHOTO_SOURCE_MISMATCH');
+    return false;
+  }
+  need(qualifiedAppleSdrBase && entries.length === 1 && entries[0].data.length === 4, 'PHOTO_HDR_UNSUPPORTED');
+  const data = entries[0].data;
+  need(observed && observed.maxContentLightLevel === data.readUInt16BE(0)
+    && observed.maxPicAverageLightLevel === data.readUInt16BE(2), 'PHOTO_SOURCE_MISMATCH');
+  return true;
+}
 const hasIccProperty = properties => properties.some(p => p.type === 'colr'
   && ['prof', 'rICC'].includes(p.data.toString('ascii', 0, 4)));
 
@@ -164,6 +178,7 @@ export async function decodeHeif(bytes, request) {
     .every(value=>value%2===0), 'PHOTO_GEOMETRY_UNSUPPORTED');
   const primaryProperties = container.itemProperties.get(probe.primary);
   verifyColorProperties(primaryProperties, probe);
+  const hasClli = verifyHeifContentLightLevel(primaryProperties, probe.contentLightLevel, Boolean(gainMap));
   const primaryHasIcc = hasIccProperty(primaryProperties);
   need(probe.properties.length >= primaryProperties.length, 'PHOTO_SOURCE_MISMATCH');
   need(probe.properties.every((id,i)=>id===i+1), 'PHOTO_SOURCE_MISMATCH');
@@ -172,18 +187,19 @@ export async function decodeHeif(bytes, request) {
   // list. Original properties must match exactly; only verified color suffixes
   // are allowed. Tile NCLX equality was checked natively before this point.
   need(probe.propertyTypes.slice(primaryProperties.length).every(type=>probe.grid&&(probe.nclx||iccColorSpace)&&type==='colr'), 'PHOTO_SOURCE_MISMATCH');
-  for (const property of primaryProperties) need(['ispe', 'pixi', 'hvcC', 'colr', 'clap', 'irot', 'imir']
+  for (const property of primaryProperties) need(['ispe', 'pixi', 'hvcC', 'colr', 'clap', 'irot', 'imir', ...(hasClli ? ['clli'] : [])]
     .includes(property.type), 'PHOTO_HEIC_UNSUPPORTED');
   need(container.items.get(probe.primary) === (probe.grid ? 'grid' : 'hvc1'), 'PHOTO_SOURCE_MISMATCH');
   if (probe.grid) for (const id of probe.grid.tileIds) {
     need(container.items.get(id) === 'hvc1', 'PHOTO_SOURCE_MISMATCH');
     const properties = container.itemProperties.get(id); need(properties, 'PHOTO_SOURCE_MISMATCH');
     verifyColorProperties(properties, probe);
+    verifyHeifContentLightLevel(properties, probe.contentLightLevel, Boolean(gainMap));
     // libheif inherits a missing primary ICC from only the first tile. Without
     // an explicit primary profile, every tile must supply that same ICC; an
     // unprofiled tile cannot acquire preserved-color authority from its neighbor.
     if (iccColorSpace && !primaryHasIcc) need(hasIccProperty(properties), 'PHOTO_COLOR_UNSUPPORTED');
-    need(properties.every(p => ['ispe', 'pixi', 'hvcC', 'colr'].includes(p.type)), 'PHOTO_HEIC_UNSUPPORTED');
+    need(properties.every(p => ['ispe', 'pixi', 'hvcC', 'colr', ...(hasClli ? ['clli'] : [])].includes(p.type)), 'PHOTO_HEIC_UNSUPPORTED');
   }
   need(gainMap || request.existingOriginal?.metadata?.dynamicRange !== 'HDR', 'PHOTO_HDR_UNSUPPORTED');
   const metadata = {
@@ -208,7 +224,7 @@ export async function decodeHeif(bytes, request) {
   const output = await encodePng(native, decodePlan.geometry, outputPath, limits.maxOutputBytes);
   return { original, decodePlan, output,
     treatment: { decoder: 'libheif/libde265', version: probe.version,
-      policyVersion: gainMap ? 'atlas-heif-apple-sdr-base-v1' : 'atlas-heif-primary-lossless-v2', channels: 3, bitDepth: output.bitDepth,
+      policyVersion: hasClli ? 'atlas-heif-apple-sdr-base-clli-v1' : gainMap ? 'atlas-heif-apple-sdr-base-v1' : 'atlas-heif-primary-lossless-v2', channels: 3, bitDepth: output.bitDepth,
       colorSpace: iccColorSpace ?? (probe.nclx ? 'sRGB' : null), colorTreatment: iccColorSpace ? 'preserved' : probe.nclx ? 'converted' : 'unmanaged',
       hdrTreatment: gainMap ? 'sdr-base' : metadata.dynamicRange === 'SDR' ? 'not-present' : 'unknown' } };
 }

@@ -73,7 +73,15 @@ function metadata(value, mime) {
     requireThat(value.selection.kind === 'primary-still-image'); text(value.selection.itemId);
   } else {
     requireThat(value.orientationSource !== 'heif-properties');
-    object(value.selection, ['kind']); requireThat(value.selection.kind === 'single-frame');
+    if (mime === 'image/jpeg' && value.selection?.kind === 'primary-jpeg-sdr-base') {
+      object(value.selection, ['kind', 'primaryByteCount', 'gainMapByteCount', 'gainMapSha256', 'metadataSha256']);
+      integer(value.selection.primaryByteCount); integer(value.selection.gainMapByteCount);
+      sha(value.selection.gainMapSha256); sha(value.selection.metadataSha256);
+      requireThat(value.dynamicRange === 'HDR' && value.bitDepth === 8
+        && value.iccSha256 === '20789fdbea9835251a4f0796c8bf45cbd964896044886540da21ffc7457af0ab');
+    } else {
+      object(value.selection, ['kind']); requireThat(value.selection.kind === 'single-frame');
+    }
   }
   if (value.bitDepth !== null) { integer(value.bitDepth); requireThat(value.bitDepth <= 32); }
   if (value.iccSha256 !== null) sha(value.iccSha256);
@@ -135,6 +143,8 @@ export function parseOriginal(value) {
   requireThat(value.schemaVersion === 1 && value.kind === 'original');
   text(value.uploadId); binding(value.binding); storage(value.object); content(value.content, ORIGINAL_MIMES);
   if (value.metadata !== null) metadata(value.metadata, value.content.mime);
+  if (value.metadata?.selection.kind === 'primary-jpeg-sdr-base') requireThat(
+    value.metadata.selection.primaryByteCount + value.metadata.selection.gainMapByteCount === value.content.byteCount);
   return copy(value);
 }
 function matchesPlan(plan, original) {
@@ -182,6 +192,9 @@ function limits(value) {
  */
 export function planDecode(originalValue, observedMetadata, decodeLimits) {
   const original = parseOriginal(originalValue); metadata(observedMetadata, original.content.mime); limits(decodeLimits);
+  if (observedMetadata.selection.kind === 'primary-jpeg-sdr-base') requireThat(
+    observedMetadata.selection.primaryByteCount + observedMetadata.selection.gainMapByteCount === original.content.byteCount,
+    'PHOTO_SOURCE_MISMATCH');
   if (original.metadata !== null) {
     const unknownAllowed = ['bitDepth', 'iccSha256', 'colorSpace', 'dynamicRange'];
     requireThat(Object.keys(original.metadata).every(key =>
@@ -235,13 +248,16 @@ export function parseDecodedFrame(value, originalValue, decodePlan) {
   requireThat(Number.isSafeInteger(rasterBytes) && rasterBytes <= decodePlan.limits.maxRasterBytes
     && value.raster.content.byteCount <= decodePlan.limits.maxOutputBytes, 'PHOTO_DECODE_LIMIT');
   if (decodePlan.metadata.dynamicRange !== 'SDR') requireThat(value.treatment.hdrTreatment !== 'not-present');
-  if (value.treatment.hdrTreatment === 'sdr-base') requireThat(original.content.mime === 'image/heic'
+  if (value.treatment.hdrTreatment === 'sdr-base') requireThat((original.content.mime === 'image/heic'
+    || original.content.mime === 'image/jpeg' && decodePlan.metadata.selection.kind === 'primary-jpeg-sdr-base')
     && decodePlan.metadata.dynamicRange === 'HDR' && decodePlan.metadata.bitDepth === 8
     && decodePlan.metadata.iccSha256 === '20789fdbea9835251a4f0796c8bf45cbd964896044886540da21ffc7457af0ab'
     && value.treatment.bitDepth === 8 && value.treatment.channels === 3);
   if (value.schemaVersion === 1 && value.treatment.hdrTreatment === 'sdr-base') requireThat(
-    value.treatment.policyVersion === 'atlas-heif-apple-sdr-base-v1'
-    && value.treatment.colorSpace === 'Display P3' && value.treatment.colorTreatment === 'preserved');
+    original.content.mime === 'image/heic' ? ['atlas-heif-apple-sdr-base-v1', 'atlas-heif-apple-sdr-base-clli-v1'].includes(value.treatment.policyVersion)
+      && value.treatment.colorSpace === 'Display P3' && value.treatment.colorTreatment === 'preserved'
+      : value.treatment.policyVersion === 'atlas-jpeg-apple-sdr-base-srgb-v1'
+        && value.treatment.colorSpace === 'sRGB' && value.treatment.colorTreatment === 'converted');
   if (value.schemaVersion === 2) {
     const working = value.workingImage;
     object(working, ['policyVersion', 'sourceRaster', 'sourceTreatment', 'outputIccSha256', 'geometryTreatment']);

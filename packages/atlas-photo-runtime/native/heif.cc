@@ -91,8 +91,7 @@ static napi_value decode(napi_env env, napi_callback_info info) {
       heif_image_handle_release_auxiliary_type(aux.get(),&auxType);
       need(apple,"PHOTO_HEIC_UNSUPPORTED");
     }
-    need(!heif_image_handle_has_content_light_level(handle.get())
-      && !heif_image_handle_has_mastering_display_colour_volume(handle.get()), "PHOTO_HDR_UNSUPPORTED");
+    need(!heif_image_handle_has_mastering_display_colour_volume(handle.get()), "PHOTO_HDR_UNSUPPORTED");
     const int width = heif_image_handle_get_ispe_width(handle.get()), height = heif_image_handle_get_ispe_height(handle.get());
     need(width >= 2 && height >= 2);
     uint64_t pixels = static_cast<uint64_t>(width) * height;
@@ -100,7 +99,23 @@ static napi_value decode(napi_env env, napi_callback_info info) {
     const int depth = heif_image_handle_get_luma_bits_per_pixel(handle.get());
     need(depth == 8 || depth == 10 || depth == 12, "PHOTO_BIT_DEPTH_UNSUPPORTED");
     need(heif_image_handle_get_chroma_bits_per_pixel(handle.get()) == depth, "PHOTO_BIT_DEPTH_UNSUPPORTED");
+    // CLLI describes luminance bounds, not the primary's transfer function. Only
+    // the explicit Apple SDR-base path may retain it; JS separately verifies the
+    // exact SDR ICC and every original property before invoking pixel decode.
+    const bool hasClli = heif_image_handle_has_content_light_level(handle.get());
+    heif_content_light_level clli{};
+    if (hasClli) {
+      need(allowAppleSdrBase && appleGainMap && depth == 8, "PHOTO_HDR_UNSUPPORTED");
+      need(heif_image_handle_get_content_light_level(handle.get(), &clli), "PHOTO_SOURCE_MISMATCH");
+    }
     napi_value result = object(env);
+    napi_value contentLightLevel; napiCheck(napi_get_null(env, &contentLightLevel));
+    if (hasClli) {
+      contentLightLevel = object(env);
+      num(env,contentLightLevel,"maxContentLightLevel",clli.max_content_light_level);
+      num(env,contentLightLevel,"maxPicAverageLightLevel",clli.max_pic_average_light_level);
+    }
+    put(env,result,"contentLightLevel",contentLightLevel);
     num(env,result,"primary",primary); num(env,result,"width",width); num(env,result,"height",height);
     num(env,result,"displayWidth",heif_image_handle_get_width(handle.get()));
     num(env,result,"displayHeight",heif_image_handle_get_height(handle.get()));
@@ -109,6 +124,7 @@ static napi_value decode(napi_env env, napi_callback_info info) {
     str(env,result,"version","1.23.2/libde265-1.1.1");
     size_t iccSize = heif_image_handle_get_raw_color_profile_size(handle.get());
     need(iccSize <= std::min<uint64_t>(inputLimit,4096), "PHOTO_DECODE_LIMIT");
+    need(!hasClli || iccSize > 0, "PHOTO_HDR_UNSUPPORTED");
     std::vector<uint8_t> icc(iccSize);
     if (iccSize) check(heif_image_handle_get_raw_color_profile(handle.get(),icc.data()));
     put(env,result,"icc",buffer(env,icc.data(),icc.size()));
@@ -181,8 +197,15 @@ static napi_value decode(napi_env env, napi_callback_info info) {
         auto tileColorError=heif_image_handle_get_nclx_color_profile(tile.get(),&tileNclxPtr);
         owned<heif_color_profile_nclx,heif_nclx_color_profile_free> tileNclx(tileNclxPtr,heif_nclx_color_profile_free);
         if (tileNclx) need(tileNclx->transfer_characteristics != 16 && tileNclx->transfer_characteristics != 18,"PHOTO_HDR_UNSUPPORTED");
-        need(!heif_image_handle_has_content_light_level(tile.get())
-          && !heif_image_handle_has_mastering_display_colour_volume(tile.get()),"PHOTO_HDR_UNSUPPORTED");
+        need(!heif_image_handle_has_mastering_display_colour_volume(tile.get()),"PHOTO_HDR_UNSUPPORTED");
+        const bool tileHasClli = heif_image_handle_has_content_light_level(tile.get());
+        need(tileHasClli == hasClli,"PHOTO_HDR_UNSUPPORTED");
+        if (tileHasClli) {
+          heif_content_light_level tileClli{};
+          need(heif_image_handle_get_content_light_level(tile.get(), &tileClli)
+            && tileClli.max_content_light_level == clli.max_content_light_level
+            && tileClli.max_pic_average_light_level == clli.max_pic_average_light_level,"PHOTO_SOURCE_MISMATCH");
+        }
         if (nclx) need(tileColorError.code == heif_error_Ok && tileNclx
           && tileNclx->color_primaries == nclx->color_primaries && tileNclx->transfer_characteristics == nclx->transfer_characteristics
           && tileNclx->matrix_coefficients == nclx->matrix_coefficients && tileNclx->full_range_flag == nclx->full_range_flag,"PHOTO_COLOR_UNSUPPORTED");

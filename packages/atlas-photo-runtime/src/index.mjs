@@ -27,9 +27,10 @@ function checkedLimits(value) {
  * MIME or filename. This function does not fetch, write or authenticate storage.
  * Resource settings are required, with no product/card/spending allowance. */
 export async function verifyAndDecodePhoto({ uploadPlan, observedObject, bytes, limits: limitValue,
-  existingOriginal = null, signal, heicHdrPolicy = null } = {}) {
+  existingOriginal = null, signal, heicHdrPolicy = null, jpegHdrPolicy = null } = {}) {
   requireThat(!isAborted(signal), 'PHOTO_DECODE_CANCELLED');
   requireThat(heicHdrPolicy === null || heicHdrPolicy === 'retain-hdr-use-sdr-base', 'PHOTO_HDR_UNSUPPORTED');
+  requireThat(jpegHdrPolicy === null || jpegHdrPolicy === 'retain-hdr-use-sdr-base', 'PHOTO_HDR_UNSUPPORTED');
   const plan = parseUploadPlan(uploadPlan), limits = checkedLimits(limitValue);
   requireThat(bytes instanceof Uint8Array && bytes.buffer instanceof ArrayBuffer);
   requireThat(bytes.byteLength > 0 && bytes.byteLength <= limits.maxInputBytes, 'PHOTO_DECODE_LIMIT');
@@ -52,7 +53,7 @@ export async function verifyAndDecodePhoto({ uploadPlan, observedObject, bytes, 
     const inputPath = join(directory, 'original'), outputPath = join(directory, 'frame.png');
     await writeFile(inputPath, input, { flag: 'wx', mode: 0o600 });
     const result = await runDecoderProcess(worker, { inputPath, outputPath, plan, observedObject: observed,
-      limits, existingOriginal: existing, heicHdrPolicy }, { timeoutMs: limits.timeoutMs, signal });
+      limits, existingOriginal: existing, heicHdrPolicy, jpegHdrPolicy }, { timeoutMs: limits.timeoutMs, signal });
     const original = completeUpload(plan, result.original, existing);
     const decodePlan = planDecode(original, result.decodePlan.metadata, limits);
     requireThat(descriptorSha256(decodePlan) === descriptorSha256(result.decodePlan), 'PHOTO_SOURCE_MISMATCH');

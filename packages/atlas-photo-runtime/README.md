@@ -3,7 +3,8 @@
 Local Node server adapter for `@atlas/photo-core`, using pinned Sharp 0.33.5.
 It verifies an owned snapshot of exact bytes and produces a separate, full-size,
 oriented PNG in a disposable child process. It imports no old application,
-operator, database, storage client or model. No production route uses it yet.
+operator, database, storage client or model. The connected intake processor calls
+this adapter after reading and verifying the retained original.
 
 ```js
 import { verifyAndDecodePhoto, deriveSdrWorkingPhoto, describeDecodedFrame } from '@atlas/photo-runtime';
@@ -16,6 +17,7 @@ const decoded = await verifyAndDecodePhoto({
   existingOriginal: null, // or the immutable previously accepted receipt
   signal,           // optional AbortSignal
   heicHdrPolicy: 'retain-hdr-use-sdr-base', // explicit approved Apple working-view policy
+  jpegHdrPolicy: 'retain-hdr-use-sdr-base', // narrow Apple/ISO gain-map JPEG policy
 });
 
 // Persist decoded.png with a separate create-only key through your storage
@@ -52,10 +54,30 @@ working raster, not proof of wide-gamut/HDR or fine-defect fidelity. Original
 bytes are untouched. Dynamic range remains unknown unless independently known;
 an ordinary 8-bit file or ICC profile does not prove SDR. No HDR-preservation or
 tone-mapping claim is made. Explicit PNG PQ/HLG flags are refused. JPEG MPO/MPF
-(including an auxiliary gain-map container), APNG and animated WebP are refused
-instead of silently selecting a first frame. JPEG trailing data/concatenation,
+is refused by default; the explicit policy below admits one qualified gain-map
+structure. APNG and animated WebP remain refused. JPEG trailing data/concatenation,
 PNG trailing data and inconsistent WebP container lengths are rejected. RAW/DNG,
 AVIF and other codecs are outside this adapter.
+
+With `jpegHdrPolicy: 'retain-hdr-use-sdr-base'`, the JPEG verifier accepts exactly
+two MPF entries covering the whole original: an RGB8 primary with the qualified
+Apple Display P3 ICC and a single-channel auxiliary with matching Apple HDR
+gain-map XMP and ISO 21496-1 version-zero forward-SDR metadata. It validates real
+JPEG boundaries, all sizes/offsets, the auxiliary entropy stream and resource
+bounds. Other image types, dependent images, duplicate/unsupported metadata,
+HDR bases and mismatched headroom are refused. The complete original, including
+the gain map, stays byte-identical. The separately decoded primary is oriented
+once and converted from P3 to sRGB; no gain map is applied and no pixel is resized.
+`primary-jpeg-sdr-base` provenance records both byte spans and the auxiliary and
+metadata hashes. Treatment `atlas-jpeg-apple-sdr-base-srgb-v1` explicitly records
+this SDR view of an HDR original. Ordinary raster treatment remains unchanged.
+
+Format references: Apple's [HDR gain-map description](https://developer.apple.com/documentation/appkit/applying-apple-hdr-effect-to-your-photos)
+defines the auxiliary type and SDR-base/gain-map relationship; Google's reference
+[MPF implementation](https://github.com/google/libultrahdr/blob/main/lib/src/multipictureformat.cpp)
+and [ISO metadata implementation](https://github.com/google/libultrahdr/blob/main/lib/src/gainmapmetadata.cpp)
+document the two-entry offset convention, version/flags and rational fields.
+The accepted subset is deliberately narrower than either complete format.
 
 `original` is immutable, including a previously accepted `metadata: null`
 receipt. Later observations go into the decode plan. A provider-version or byte
@@ -188,6 +210,17 @@ may remain in the original only when its `dimg` inputs are the selected primary
 and that same gain map. It is never selected. Depth/alpha/unknown auxiliaries,
 HDR PQ/HLG primaries, unknown profiles and all prior geometry/tile guards remain
 refused. The default policy remains refusal.
+
+That same explicit policy also admits a single four-byte `clli` content-light
+property on the selected SDR base, with identical presence and values on every
+primary grid tile. Native observations must match both unsigned 16-bit wire
+values exactly (zero means unspecified). It records
+`atlas-heif-apple-sdr-base-clli-v1`; the existing no-CLLI path retains
+`atlas-heif-apple-sdr-base-v1`. This metadata is retained in the original and
+does not change the transfer function, apply a gain map or trigger tone mapping.
+Mastering-display metadata, PQ/HLG and other HDR-primary forms remain refused.
+Synthetic fixtures and independent libheif default-primary pixel comparisons
+qualify this metadata-only extension.
 
 The original/decode plan says `dynamicRange: HDR`. The separately decoded primary
 keeps exact P3 samples/profile and records `atlas-heif-apple-sdr-base-v1` with

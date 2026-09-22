@@ -28,6 +28,14 @@ license. `withExif` adds bounded synthetic TIFF graphs and correct `cdsc`/`iloc`
 metadata associations to genuine HEVC fixtures; no compressed image samples are
 rewritten. Tests compare preserved RGB/16-bit values and profile bytes, not names.
 Apple Display P3's exact observed hash is qualified separately using retained
-private task evidence; no Apple profile or user photograph is copied into this
-repository. Native-reference and independent matrix/TRC-versus-LittleCMS evidence
+private task evidence and the metadata-only fixture described below. No user
+photograph is copied into this repository. Native-reference and independent matrix/TRC-versus-LittleCMS evidence
 is retained under `atlas-speedster-defects-20260912/iphone/` outside the repository.
+
+`Apple-DisplayP3.icc` is only the standard 536-byte Apple Display P3 ICC metadata
+already qualified by `heif-metadata.mjs` (SHA-256
+`20789fdbea9835251a4f0796c8bf45cbd964896044886540da21ffc7457af0ab`).
+It was extracted from an owner-provided retained original for the synthetic
+Apple SDR-base/CLLI regression fixture. It contains no photo pixels, Exif,
+location, card identity or user-specific metadata. Existing licensed HEVC test
+pixels are reused unchanged; no owner photo is committed.

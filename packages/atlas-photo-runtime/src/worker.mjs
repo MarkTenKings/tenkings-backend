@@ -8,6 +8,7 @@ import { inspectContainer } from './container.mjs';
 import { PhotoRuntimeError } from './process.mjs';
 import { decodeHeif } from './heif.mjs';
 import { decodeSdrWorking } from './working.mjs';
+import { APPLE_P3_SHA256 } from './jpeg.mjs';
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const reject = code => { throw new PhotoRuntimeError(code); };
@@ -23,7 +24,7 @@ async function decode(request) {
   sharp.concurrency(1);
   if (request.mode === 'sdr-working') return decodeSdrWorking(bytes, request, sharp);
   if (bytes.length !== plan.expected.byteCount || sha256(bytes) !== plan.expected.sha256) reject('PHOTO_SOURCE_MISMATCH');
-  const container = inspectContainer(bytes);
+  const container = inspectContainer(bytes, { allowAppleJpegSdrBase: request.jpegHdrPolicy === 'retain-hdr-use-sdr-base' });
   const options = { limitInputPixels: limits.maxPixels, failOn: 'warning', sequentialRead: true };
   if (container.format === 'heif') {
     const decoded = await decodeHeif(bytes, request);
@@ -40,26 +41,46 @@ async function decode(request) {
       raster: { content: { mime: 'image/png', byteCount: size, sha256: sha256(output) },
         dimensions: { width: meta.width, height: meta.height } }, treatment: decoded.treatment };
   }
+  const jpegHdr = container.jpegHdr;
+  // The complete original was verified above. Only this independently bounded
+  // primary JPEG is decoded for grading; auxiliary gain pixels are never used.
+  const sourceBytes = jpegHdr ? bytes.subarray(0, jpegHdr.selection.primaryByteCount) : bytes;
   let meta;
   // metadata() reads headers without decoding compressed pixels. Plan the full
   // RGBA16 allocation from these dimensions before invoking the pixel pipeline.
-  try { meta = await sharp(bytes, { ...options, limitInputPixels: false }).metadata(); } catch { reject('PHOTO_DECODE_INVALID'); }
+  try { meta = await sharp(sourceBytes, { ...options, limitInputPixels: false }).metadata(); } catch { reject('PHOTO_DECODE_INVALID'); }
   if (meta.format !== container.format) reject('PHOTO_DECODE_INVALID');
   if ((meta.pages ?? 1) !== 1) reject('PHOTO_MULTIFRAME_UNSUPPORTED');
   if (!Number.isInteger(meta.width) || !Number.isInteger(meta.height)
     || meta.width < 2 || meta.height < 2) reject('PHOTO_DECODE_INVALID');
   if (![1, 2, 4, 8, 16].includes(container.bitDepth)) reject('PHOTO_BIT_DEPTH_UNSUPPORTED');
+  if (jpegHdr) {
+    if (meta.channels !== 3 || meta.width !== jpegHdr.primaryWidth || meta.height !== jpegHdr.primaryHeight
+      || !meta.icc || sha256(meta.icc) !== jpegHdr.iccSha256) reject('PHOTO_SOURCE_MISMATCH');
+    if (jpegHdr.iccSha256 !== APPLE_P3_SHA256) reject('PHOTO_COLOR_UNSUPPORTED');
+    if (meta.width * meta.height > limits.maxPixels
+      || meta.width * meta.height * 8 > limits.maxRasterBytes) reject('PHOTO_DECODE_LIMIT');
+    const auxiliary = bytes.subarray(jpegHdr.selection.primaryByteCount);
+    const gainMeta = await sharp(auxiliary, options).metadata();
+    if (gainMeta.format !== 'jpeg' || gainMeta.channels !== 1 || gainMeta.width !== jpegHdr.gainMapWidth
+      || gainMeta.height !== jpegHdr.gainMapHeight || gainMeta.orientation !== undefined
+      || (gainMeta.pages ?? 1) !== 1) reject('PHOTO_HDR_UNSUPPORTED');
+    // Validate the auxiliary entropy stream too, bounded by the primary budget.
+    // It remains intact in original storage, and is not resized or applied.
+    const gainPixels = await sharp(auxiliary, options).extractChannel(0).raw().toBuffer();
+    if (gainPixels.length !== jpegHdr.gainMapWidth * jpegHdr.gainMapHeight) reject('PHOTO_SOURCE_MISMATCH');
+  }
   const metadata = {
     encoded: { width: meta.width, height: meta.height },
     orientation: meta.orientation ?? 1,
     orientationSource: meta.orientation === undefined ? 'identity' : 'exif',
-    crop: null, selection: { kind: 'single-frame' }, bitDepth: container.bitDepth,
+    crop: null, selection: jpegHdr ? jpegHdr.selection : { kind: 'single-frame' }, bitDepth: container.bitDepth,
     iccSha256: meta.icc ? sha256(meta.icc) : null,
     colorSpace: meta.space ?? null,
     // An 8-bit header or ordinary ICC profile does not prove absence of HDR.
     // Preserve an independently verified prior observation on the exact same
     // bytes; absence of a new observation is not contradictory source evidence.
-    dynamicRange: existingOriginal?.metadata?.dynamicRange ?? null,
+    dynamicRange: jpegHdr ? 'HDR' : existingOriginal?.metadata?.dynamicRange ?? null,
   };
   const original = completeUpload(plan, {
     schemaVersion: 1, kind: 'original', uploadId: plan.uploadId,
@@ -80,7 +101,7 @@ async function decode(request) {
     },
   });
   try {
-    await pipeline(sharp(bytes, options).rotate().pipelineColourspace(colorSpace)
+    await pipeline(sharp(sourceBytes, options).rotate().pipelineColourspace(colorSpace)
       .withIccProfile('srgb').toColourspace(colorSpace)
       .png({ compressionLevel: 6, adaptiveFiltering: false, palette: false }),
     bound, createWriteStream(outputPath, { flags: 'wx', mode: 0o600 }));
@@ -103,8 +124,8 @@ async function decode(request) {
     },
     treatment: {
       decoder: 'sharp/libvips', version: `${sharp.versions.sharp}/${sharp.versions.vips}`,
-      policyVersion: 'atlas-native-raster-srgb-v1', channels: outputMeta.channels,
-      bitDepth, colorSpace: 'sRGB', colorTreatment: 'converted', hdrTreatment: 'unknown',
+      policyVersion: jpegHdr ? 'atlas-jpeg-apple-sdr-base-srgb-v1' : 'atlas-native-raster-srgb-v1', channels: outputMeta.channels,
+      bitDepth, colorSpace: 'sRGB', colorTreatment: 'converted', hdrTreatment: jpegHdr ? 'sdr-base' : 'unknown',
     },
   };
 }

@@ -83,7 +83,7 @@ export function orientationExif(orientation, littleEndian = false) {
 
 // A real 2×2 grid composed from four references to unchanged upstream HEVC tile
 // bytes. A nonmultiple canvas exercises native removal of padded right/bottom tiles.
-export function gridFixture(bytes, { primaryProperties=[], tileProperties=[], color=null, tileColor=color, tileColorIds=[1,2,3,4], padding=[3,5] }={}) {
+export function gridFixture(bytes, { primaryProperties=[], tileProperties=[], color=null, tileColor=color, tileColorIds=[1,2,3,4], padding=[3,5], auxiliaryType=null }={}) {
   const roots=boxes(bytes), meta=boxes(roots.find(b=>b.type==='meta').data,4);
   const props=boxes(boxes(meta.find(b=>b.type==='iprp').data).find(b=>b.type==='ipco').data);
   const tile=roots.find(b=>b.type==='mdat').data;
@@ -95,18 +95,21 @@ export function gridFixture(bytes, { primaryProperties=[], tileProperties=[], co
   for(const [values,associated] of [[tileProperties,tAssoc],[primaryProperties,pAssoc]]) for(const [kind,data]of values){all.push(box(kind,data));associated.push(all.length);}
   for(const [profile,associated]of[[tileColor,tAssoc],[color,pAssoc]]) if(profile){all.push(box('colr',profile));associated.push(all.length);}
   const tileColorIndex=tileColor?tAssoc.at(-1):null;
+  const auxiliaryAssoc=[1,2];
+  if(auxiliaryType){all.push(box('auxC',Buffer.concat([Buffer.alloc(4),Buffer.from(auxiliaryType+'\0')])));auxiliaryAssoc.push(all.length);}
+  const itemCount=auxiliaryType?6:5;
   const u16=n=>{const d=Buffer.alloc(2);d.writeUInt16BE(n);return d;};
   const u32=n=>{const d=Buffer.alloc(4);d.writeUInt32BE(n);return d;};
   const infe=(id,type,hidden)=>box('infe',Buffer.concat([Buffer.from([2,0,0,hidden?1:0]),u16(id),u16(0),Buffer.from(type+'\0')]));
   const associations=(id,ids)=>Buffer.concat([u16(id),Buffer.from([ids.length,...ids.map(n=>0x80|n)])]);
-  const iprp=box('iprp',Buffer.concat([box('ipco',Buffer.concat(all)),box('ipma',Buffer.concat([u32(0),u32(5),
-    ...[1,2,3,4].map(id=>associations(id,tAssoc.filter(index=>index!==tileColorIndex||tileColorIds.includes(id)))),associations(5,pAssoc)]))]));
+  const iprp=box('iprp',Buffer.concat([box('ipco',Buffer.concat(all)),box('ipma',Buffer.concat([u32(0),u32(itemCount),
+    ...[1,2,3,4].map(id=>associations(id,tAssoc.filter(index=>index!==tileColorIndex||tileColorIds.includes(id)))),associations(5,pAssoc),...(auxiliaryType?[associations(6,auxiliaryAssoc)]:[])]))]));
   const gridData=Buffer.concat([Buffer.from([0,0,1,1]),u16(width),u16(height)]);
   const ilocEntry=(id,offset,length)=>Buffer.concat([u16(id),u16(0),u32(offset),u16(1),u32(0),u32(length)]);
   const buildMeta=offset=>box('meta',Buffer.concat([u32(0),box('hdlr',meta.find(b=>b.type==='hdlr').data),box('pitm',Buffer.concat([u32(0),u16(5)])),
-    box('iloc',Buffer.concat([u32(0),Buffer.from([0x44,0x40]),u16(5),...[1,2,3,4].map(id=>ilocEntry(id,offset,tile.length)),ilocEntry(5,offset+tile.length,8)])),
-    box('iinf',Buffer.concat([u32(0),u16(5),...[1,2,3,4].map(id=>infe(id,'hvc1',true)),infe(5,'grid',false)])),
-    box('iref',Buffer.concat([u32(0),box('dimg',Buffer.concat([u16(5),u16(4),u16(1),u16(2),u16(3),u16(4)]))])),iprp]));
+    box('iloc',Buffer.concat([u32(0),Buffer.from([0x44,0x40]),u16(itemCount),...[1,2,3,4].map(id=>ilocEntry(id,offset,tile.length)),ilocEntry(5,offset+tile.length,8),...(auxiliaryType?[ilocEntry(6,offset,tile.length)]:[])])),
+    box('iinf',Buffer.concat([u32(0),u16(itemCount),...[1,2,3,4].map(id=>infe(id,'hvc1',true)),infe(5,'grid',false),...(auxiliaryType?[infe(6,'hvc1',true)]:[])])),
+    box('iref',Buffer.concat([u32(0),box('dimg',Buffer.concat([u16(5),u16(4),u16(1),u16(2),u16(3),u16(4)])),...(auxiliaryType?[box('auxl',Buffer.concat([u16(6),u16(1),u16(5)]))]:[])])),iprp]));
   const ftyp=box('ftyp',roots[0].data),length=buildMeta(0).length;
   return Buffer.concat([ftyp,buildMeta(ftyp.length+length+8),box('mdat',Buffer.concat([tile,gridData]))]);
 }

@@ -30,3 +30,21 @@ test('list pagination and exact upload/source routes do not bypass method or que
   const res = response(); await handler({ method: 'GET', url: `/api/staff/manual-intake/cards/${id}/uploads/${id}/source`, headers: {} }, res);
   assert.equal(res.statusCode, 200); assert.deepEqual(res.body, { source: true });
 });
+
+test('known photo refusals reach the browser as exact422 codes while conflicts and unknown internals stay distinct',async()=>{
+  let error;
+  const handler=createIntakeHandler({service:{prepare:async()=>{throw error;}},boundary:{authenticate:async()=>({})},origin,assertRequest:async()=>{}});
+  const request={method:'POST',url:`/api/staff/manual-intake/cards/${id}/uploads/${id}/prepare`,body:{},
+    headers:{origin,'content-type':'application/json','x-atlas-csrf':'csrf'}};
+  for(const code of ['PHOTO_MULTIFRAME_UNSUPPORTED','PHOTO_FORMAT_UNSUPPORTED','PHOTO_GEOMETRY_UNSUPPORTED','PHOTO_BIT_DEPTH_UNSUPPORTED',
+    'PHOTO_HEIC_UNSUPPORTED','PHOTO_HDR_UNSUPPORTED','PHOTO_COLOR_UNSUPPORTED','PHOTO_DECODE_INVALID','PHOTO_DECODE_LIMIT',
+    'PHOTO_DECODE_TIMEOUT','PHOTO_DECODE_CANCELLED','PHOTO_DECODER_FAILED','PHOTO_DECODER_PROTOCOL','PHOTO_DECODER_UNAVAILABLE']){
+    error={code};const res=response();await handler(request,res);assert.equal(res.statusCode,422,code);assert.deepEqual(res.body,{error:code});
+  }
+  for(const code of ['PHOTO_STORAGE_CONFLICT','PHOTO_SOURCE_MISMATCH','PHOTO_UPLOAD_CONFLICT']){
+    error={code};const res=response();await handler(request,res);assert.equal(res.statusCode,409);assert.deepEqual(res.body,{error:code});
+  }
+  error={code:'PHOTO_DECODE_INTERNAL_SECRET',message:'private diagnostic'};const unavailable=response();await handler(request,unavailable);
+  assert.equal(unavailable.statusCode,503);assert.deepEqual(unavailable.body,{error:'INTAKE_TEMPORARILY_UNAVAILABLE'});
+  error={code:'SIGN_IN_REQUIRED',status:401};const expired=response();await handler(request,expired);assert.equal(expired.statusCode,401);assert.deepEqual(expired.body,{error:'SIGN_IN_REQUIRED'});
+});

@@ -110,6 +110,20 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
     pending: () => journal.list(), resume,
     list: options => request(`${base}${options?.cursor ? `?cursor=${encodeURIComponent(options.cursor)}` : ''}`, { method: 'GET' }),
     read: cardId => request(`${base}/${cardId}`, { method: 'GET' }),
+    async prepareSaved(cardId, uploadId, { signal } = {}) {
+      // A verified original can outlive this device's journal. Reconcile that
+      // exact existing upload and prepare it without allocating or sending bytes.
+      const operation = `saved:${cardId}:${uploadId}`;
+      requireThat(!running.has(operation), 'INTAKE_UPLOAD_IN_PROGRESS'); running.add(operation);
+      try {
+        const path = `${base}/${cardId}/uploads/${uploadId}`;
+        const verified = await post(`${path}/complete`, {}, signal);
+        requireThat(verified.upload?.verification && verified.upload.uploadId === uploadId, 'INTAKE_UPLOAD_UNVERIFIED');
+        const prepared = await post(`${path}/prepare`, {}, signal);
+        requireThat(prepared.upload?.source && prepared.upload.uploadId === uploadId, 'INTAKE_PHOTO_NOT_PREPARED');
+        return prepared;
+      } finally { running.delete(operation); }
+    },
     async discardUnplanned(operationId) {
       requireThat(!running.has(operationId), 'INTAKE_UPLOAD_IN_PROGRESS'); running.add(operationId);
       try {

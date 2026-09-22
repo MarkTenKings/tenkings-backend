@@ -74,3 +74,21 @@ test('persisted byte corruption refuses before dispatch and keeps exact pending 
   await assert.rejects(fixture.client().resume(pending.id), { code: 'INTAKE_PENDING_BYTES_CONFLICT' });
   assert.equal(fixture.puts, 0); assert.equal((await fixture.client().pending()).length, 1);
 });
+
+test('cleared device journal still permits exact verified-original preparation without a new upload', async () => {
+  const fixture=setup({failPrepare:true}),file=new Blob(['retained-native-original']);
+  await assert.rejects(fixture.client().upload(cardId,'BACK',0,file),{code:'PHOTO_DECODE_TIMEOUT'});
+  const [pending]=await fixture.client().pending();await fixture.client().forgetVerified(pending.id);
+  const start=fixture.calls.length,result=await fixture.client().prepareSaved(cardId,uploadId);
+  assert.deepEqual(fixture.calls.slice(start).map(call=>call.url.split('/').at(-1)),['complete','prepare']);
+  assert.equal(result.upload.uploadId,uploadId);assert.equal(fixture.puts,1);
+  assert.deepEqual(fixture.original,Buffer.from(await file.arrayBuffer()));assert.equal((await fixture.client().pending()).length,0);
+});
+
+test('saved-original recovery refuses missing or mismatched proof before preparation and preserves errors',async()=>{
+  for(const result of [{upload:{uploadId,verification:null}},{upload:{uploadId:'other',verification:{}}},{failure:{code:'SIGN_IN_REQUIRED',status:401}}]){
+    const calls=[],journal=memoryJournal(),client=createIntakeClient({journal,request:async path=>{calls.push(path);if(result.failure)throw result.failure;return result;},fetchImpl:async()=>assert.fail('no PUT')});
+    await assert.rejects(client.prepareSaved(cardId,uploadId),result.failure??{code:'INTAKE_UPLOAD_UNVERIFIED'});
+    assert.equal(calls.length,1);assert.match(calls[0],/\/complete$/);assert.equal((await journal.list()).length,0);
+  }
+});

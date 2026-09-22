@@ -1,5 +1,12 @@
 import { object, requireThat } from './contract.mjs';
 
+// Only public decoder outcomes cross this boundary. An unrecognized error
+// remains an unavailable response rather than exposing internal diagnostics.
+const photoRefusals = new Set(['PHOTO_DECODE_INVALID', 'PHOTO_DECODE_LIMIT', 'PHOTO_DECODE_TIMEOUT',
+  'PHOTO_DECODE_CANCELLED', 'PHOTO_DECODER_FAILED', 'PHOTO_DECODER_PROTOCOL', 'PHOTO_DECODER_UNAVAILABLE',
+  'PHOTO_FORMAT_UNSUPPORTED', 'PHOTO_HEIC_UNSUPPORTED', 'PHOTO_HDR_UNSUPPORTED', 'PHOTO_BIT_DEPTH_UNSUPPORTED',
+  'PHOTO_COLOR_UNSUPPORTED', 'PHOTO_GEOMETRY_UNSUPPORTED', 'PHOTO_MULTIFRAME_UNSUPPORTED']);
+
 /** Node/Next-shaped handler. Host bounds JSON to 8KiB BEFORE parsing and applies
  * its existing request/deployment assertion. Browser PUT goes directly to the
  * exact signed private object; no native image bytes enter these JSON routes.
@@ -38,7 +45,7 @@ export function createIntakeHandler({ service, boundary, origin, assertRequest }
     } catch (error) {
       const known = Number.isInteger(error?.status) && typeof error?.code === 'string';
       const photoConflict = ['PHOTO_STORAGE_CONFLICT', 'PHOTO_SOURCE_MISMATCH', 'PHOTO_UPLOAD_CONFLICT'].includes(error?.code);
-      const photoRefused = /^PHOTO_(?:DECODE|HEIC|WORKING|COLOR|ICC|HDR)/.test(error?.code ?? '');
+      const photoRefused = photoRefusals.has(error?.code);
       res.status(known ? error.status : photoConflict ? 409 : photoRefused ? 422 : 503).json({
         error: known || photoConflict || photoRefused ? error.code : 'INTAKE_TEMPORARILY_UNAVAILABLE' });
     }

@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import vm from 'node:vm';
 import * as identity from '@atlas/grading-core/identity';
 import * as defectAnalysisClient from '../lib/manual-defect-analysis-client.mjs';
+import { manualMessage } from '../lib/manual-client.mjs';
 
 const require = createRequire(import.meta.url);
 const babel = require('next/dist/compiled/babel/core');
@@ -20,7 +21,7 @@ const storage = (initial = command) => { const values = new Map(initial ? [[key,
   getItem: k => values.get(k) ?? null, setItem: (k, v) => values.set(k, v), removeItem: k => values.delete(k),
 }; };
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-function harness(store, post, { readCard, intake = {} } = {}) {
+function harness(store, post, { readCard, intake = {}, message = error => error.code ?? 'Retained' } = {}) {
   const slots = [], effects = [], cleanups=[]; let cursor = 0, tree, activeCardId='card';
   const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment',
     useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = initial; return [slots[i], next => { slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; },
@@ -42,7 +43,7 @@ function harness(store, post, { readCard, intake = {} } = {}) {
       if (name.startsWith('@atlas/')) return {};
       if (name === '../lib/routes.mjs') return { STAFF_BASE_PATH: '/admin' };
       if (name === '../lib/manual-defect-analysis-client.mjs') return defectAnalysisClient;
-      if (name === '../lib/manual-client.mjs') return { manualMessage: error => error.code ?? 'Retained', manualRequest: async (path, options = {}) => {
+      if (name === '../lib/manual-client.mjs') return { manualMessage: message, manualRequest: async (path, options = {}) => {
         if (options.method === 'POST') return post(path, options);
         return path.endsWith('/session') ? { staff: { id: 'reviewer' }, csrf: 'csrf' } : readCard ? readCard(path) : card;
       } };
@@ -59,7 +60,7 @@ function harness(store, post, { readCard, intake = {} } = {}) {
   const submit = () => { const form=find(tree,node=>node.type==='form'); assert.ok(form,'details form');form.props.onSubmit({preventDefault(){}}); };
   const render = () => { cursor = 0; tree = exports.default({ staff: { id: 'reviewer', role: 'REVIEWER' }, cardId: activeCardId }); for (const effect of effects.splice(0)) effect(); };
   return { render, submit, navigate(cardId){activeCardId=cardId;render();}, upload(side,file={name:side}) { const target=field(`${side} original photo`);assert.ok(target);assert.notEqual(target.props.disabled,true);target.props.onChange({target:{files:[file],value:'picked'}}); }, workspace:()=>Boolean(find(tree,node=>node.type?.name==='ManualWorkspace')), click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
-    has(label) { return Boolean(button(label)); }, disabled(label) { return button(label)?.props.disabled === true; }, text: () => text(tree), field,
+    has(label) { return Boolean(button(label)); }, disabled(label) { return button(label)?.props.disabled === true; }, text: () => text(tree), sideText:side=>text(find(tree,node=>node.type==='article'&&text(node).startsWith(side))), field,
     change(label, value) { const target = field(label); assert.ok(target, label); target.props.onChange({ target: { value } }); } };
 }
 
@@ -336,4 +337,82 @@ test('a late details acknowledgement after changing cards cannot initialize or o
   f.render();await flush();f.render();f.change('Name','Original edit');f.render();f.submit();
   f.navigate('other');await flush();f.render();assert.match(f.text(),/Other card/);
   finish({});await flush();f.render();assert.equal(posts.length,1);assert.match(f.text(),/Other card/);assert.equal(f.workspace(),false);
+});
+
+test('both preparation failures refresh verified originals and offer independent exact-journal recovery',async()=>{
+  const pending=[],resumed=[],finish={};let reads=0;
+  let card={...sportsCard(),card:{...sportsCard().card,ready:false,sides:{FRONT:{version:0},BACK:{version:0}}}};
+  const f=harness(storage(null),async()=>assert.fail('no geometry or provider action'),{message:manualMessage,readCard:()=>{reads++;return plain(card);},intake:{
+    pending:async()=>plain(pending),
+    upload:async(_card,side)=>{await new Promise(resolve=>{finish[side]=resolve;});const uploadId=side+'-saved';
+      pending.push({id:side+'-journal',value:{kind:'upload',cardId:'card',input:{side},uploadId,verified:true}});
+      card={...card,card:{...card.card,revision:card.card.revision+1,sides:{...card.card.sides,[side]:{version:1,upload:{uploadId,verification:{sha256:side}}}}}};
+      throw {code:'PHOTO_DECODE_TIMEOUT',status:422};},
+    resume:async id=>{resumed.push(id);const index=pending.findIndex(item=>item.id===id),side=pending[index].value.input.side;
+      pending.splice(index,1);card={...card,card:{...card.card,revision:card.card.revision+1,sides:{...card.card.sides,[side]:{...card.card.sides[side],upload:{...card.card.sides[side].upload,source:{saved:true}}}}}};},
+    prepareSaved:async()=>assert.fail('existing journal identity must be used'),
+  }});
+  f.render();await flush();f.render();f.upload('FRONT');f.upload('BACK');finish.FRONT();finish.BACK();await flush();f.render();
+  assert.equal(reads,3,'each failed side refreshes durable state');
+  assert.doesNotMatch(f.text(),/Original photo needed/);assert.match(f.text(),/Original saved\. Resume image preparation/);
+  assert.match(f.text(),/Preparing the working image timed out/);
+  assert.equal(f.disabled('Resume Front photo'),false);assert.equal(f.disabled('Resume Back photo'),false);
+  assert.equal(f.field('FRONT original photo').props.disabled,true);assert.equal(f.field('BACK original photo').props.disabled,true);
+  f.click('Resume Back photo');await flush();f.render();
+  assert.deepEqual(resumed,['BACK-journal']);assert.equal(pending.length,1);assert.equal(pending[0].id,'FRONT-journal');
+  assert.equal(f.has('Resume Back photo'),false);assert.equal(f.has('Resume Front photo'),true);
+  assert.match(f.text(),/Preparing the working image timed out/,'Front error is retained');
+});
+
+test('failed saved-state refresh retains preparation error and journal proof instead of claiming the photo is missing',async()=>{
+  const pending=[];let reads=0;
+  const f=harness(storage(null),async()=>assert.fail('no command'),{message:manualMessage,readCard:()=>{
+    if(++reads>1)throw {code:'SIGN_IN_REQUIRED',status:401};return {...sportsCard(),card:{...sportsCard().card,ready:false}};
+  },intake:{pending:async()=>pending,upload:async()=>{pending.push({id:'back-recovery',value:{kind:'upload',cardId:'card',input:{side:'BACK'},uploadId:'back-upload',verified:true}});throw {code:'PHOTO_DECODER_FAILED',status:422};}}});
+  f.render();await flush();f.render();f.upload('BACK');await flush();f.render();
+  assert.match(f.text(),/photo decoder could not finish the working image/);assert.match(f.text(),/saved photo status could not be refreshed/);
+  assert.match(f.text(),/Your session ended/);assert.match(f.text(),/Original saved\. Resume image preparation/);
+  assert.equal(f.has('Resume Back photo'),true);assert.equal(pending[0].id,'back-recovery');
+});
+
+test('a verified original on another device can explicitly resume preparation without a local Blob or new upload',async()=>{
+  const calls=[];let card={...sportsCard(),card:{...sportsCard().card,ready:false,sides:{
+    FRONT:{version:1,upload:{uploadId:'front-ready',verification:{},source:{saved:true}}},
+    BACK:{version:1,upload:{uploadId:'back-verified',verification:{sha256:'original'}}}}}};
+  const f=harness(storage(null),async()=>assert.fail('no unrelated command'),{readCard:()=>card,intake:{
+    upload:async()=>assert.fail('must not upload again'),resume:async()=>assert.fail('no local journal'),
+    prepareSaved:async(...input)=>{calls.push(input);card={...card,card:{...card.card,revision:6,ready:true,sides:{...card.card.sides,BACK:{...card.card.sides.BACK,upload:{...card.card.sides.BACK.upload,source:{saved:true}}}}}};},
+  }});
+  f.render();await flush();f.render();assert.deepEqual(calls,[]);assert.equal(f.has('Resume Front photo'),false);
+  f.click('Resume Back photo');f.click('Resume Back photo');await flush();f.render();
+  assert.deepEqual(calls,[['card','back-verified']]);assert.equal(f.has('Resume Back photo'),false);assert.equal(f.disabled('Save & Review Geometry →'),false);
+});
+
+test('late failed upload on an old card cannot refresh or attach its error to the current card',async()=>{
+  let rejectUpload;const reads=[];
+  const f=harness(storage(null),async()=>assert.fail('no command'),{readCard:path=>{reads.push(path);return {...sportsCard(),card:{...sportsCard().card,ready:false,label:path.endsWith('/other')?'Other card':'Original card'}};},
+    intake:{upload:()=>new Promise((_resolve,reject)=>{rejectUpload=reject;})}});
+  f.render();await flush();f.render();f.upload('BACK');f.navigate('other');await flush();f.render();
+  const count=reads.length;rejectUpload({code:'OLD_PHOTO_ERROR'});await flush();f.render();
+  assert.equal(reads.length,count);assert.match(f.text(),/Other card/);assert.doesNotMatch(f.text(),/OLD_PHOTO_ERROR/);
+});
+
+test('an earlier verified journal cannot represent or hide recovery of a newer selected original',async()=>{
+  for(const verified of [false,true]){
+    const old={id:'old-journal',value:{kind:'upload',cardId:'card',input:{side:'BACK'},uploadId:'old-upload',verified:true}},calls=[];
+    const card={...sportsCard(),card:{...sportsCard().card,ready:false,sides:{...sportsCard().card.sides,BACK:{version:2,upload:{uploadId:'selected-upload',verification:verified?{sha256:'selected'}:null}}}}};
+    const f=harness(storage(null),async()=>assert.fail('no unrelated command'),{readCard:()=>card,intake:{pending:async()=>[old],
+      resume:async()=>assert.fail('must not resume an earlier upload as the selected photo'),prepareSaved:async(...args)=>{calls.push(args);}}});
+    f.render();await flush();f.render();assert.match(f.text(),/Earlier upload; this is not the selected photo/);
+    assert.equal(f.has('Check earlier upload'),true);
+    if(verified){assert.equal(f.has('Resume Back photo'),true);f.click('Resume Back photo');await flush();f.render();assert.deepEqual(calls,[['card','selected-upload']]);}
+    else {assert.equal(f.has('Resume Back photo'),false);assert.doesNotMatch(f.sideText('Back'),/Original (?:saved|verified)/);}
+  }
+});
+
+test('known unsupported photo treatments explain retained originals without directing another identical upload',()=>{
+  for(const code of ['PHOTO_MULTIFRAME_UNSUPPORTED','PHOTO_FORMAT_UNSUPPORTED','PHOTO_GEOMETRY_UNSUPPORTED','PHOTO_BIT_DEPTH_UNSUPPORTED','PHOTO_HEIC_UNSUPPORTED','PHOTO_HDR_UNSUPPORTED','PHOTO_COLOR_UNSUPPORTED']){
+    const message=manualMessage({code});assert.match(message,/original is saved/i);assert.ok(message.includes(code));
+    assert.doesNotMatch(message,/downsiz|compress|convert|try again|Resume this photo/i);
+  }
 });

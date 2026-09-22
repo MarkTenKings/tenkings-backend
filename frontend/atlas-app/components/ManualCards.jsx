@@ -60,9 +60,21 @@ export default function ManualCards({staff,cardId=null}){
     if(activity.current||uploadLocks.current[side])return;
     const token={},started=generation.current,owner=client.current;if(!owner)return;
     uploadLocks.current[side]=token;setUploadState(old=>({...old,[side]:{busy:true,label}}));
-    try{await work(owner);if(started===generation.current&&client.current===owner)await refresh();}
-    catch(error){if(started===generation.current)setUploadState(old=>({...old,[side]:{busy:false,error:manualMessage(error)}}));}
-    finally{if(uploadLocks.current[side]===token)delete uploadLocks.current[side];if(started===generation.current){setUploadState(old=>({...old,[side]:{...old[side],busy:false}}));await pendingList().catch(()=>{});}}
+    let failure,refreshFailure;
+    try{
+      try{await work(owner);}catch(error){failure=error;}
+      if(started===generation.current&&client.current===owner){
+        // Completion can durably save the original before preparation fails.
+        // Refresh both receipts on failure too; a failed follow-up read must
+        // never hide the preparation error or erase its recovery journal.
+        const results=await Promise.allSettled([refresh(),pendingList()]);
+        refreshFailure=results.find(result=>result.status==='rejected')?.reason;
+      }
+    }finally{
+      if(uploadLocks.current[side]===token)delete uploadLocks.current[side];
+      if(started===generation.current)setUploadState(old=>({...old,[side]:{busy:false,
+        ...(failure?{error:manualMessage(failure)}:{}),...(refreshFailure?{refreshError:manualMessage(refreshFailure)}:{})}}));
+    }
   }
   useEffect(()=>{
     const started=++generation.current;let stopped=false,journal,ownedClient;
@@ -148,13 +160,15 @@ export default function ManualCards({staff,cardId=null}){
   const profile=Object.hasOwn(changes,'profile')?changes.profile:saved?.details.profile;
   const layoutType=Object.hasOwn(changes,'layoutType')?changes.layoutType:saved?.details.layoutType;
   const activePending=pending.filter(item=>!cardId || item.value.cardId===cardId);
+  const olderUpload=item=>item.value.kind==='upload'&&saved?.card.sides[item.value.input.side]?.upload?.uploadId&&item.value.uploadId
+    &&item.value.uploadId!==saved.card.sides[item.value.input.side].upload.uploadId;
   const uploading=Object.values(uploadState).some(value=>value?.busy),pendingPhotos=activePending.some(item=>item.value.kind==='upload');
   const detailIssue=key=>invalidDetails[key]?<small className="mc-field-error" role="alert">{invalidDetails[key]}</small>:null;
   return <Shell staff={staff} title="Manual grading" manual><div className="mc-page">
     {error&&<div className="mc-notice error" role="alert">{error} <button onClick={()=>perform(()=>refresh(),'Loading saved card…')}>Reload saved state</button></div>}
     {busy&&<p role="status">{busy}</p>}
     {commandPending&&!busy&&<section className="mc-notice"><p>A saved request needs confirmation. Resume it before making another change.</p><button disabled={uploading} onClick={()=>perform(resumeCommand,'Checking the saved request…')}>Resume saved request</button></section>}
-    {activePending.length>0&&<section className="mc-notice"><h2>Saved uploads</h2>{activePending.map(item=><div key={item.id}><span>{item.value.kind==='create'?'New card':`${item.value.input.side==='FRONT'?'Front':'Back'} photo`} · {item.value.verified?'Original saved; working image needs preparation':'Upload saved on this device'}</span><button disabled={Boolean(busy)||Boolean(uploadState[item.value.input?.side]?.busy)} onClick={()=>{if(cardId&&item.value.kind==='upload')void uploadSide(item.value.input.side,owner=>owner.resume(item.id),'Resuming saved upload…');else perform(async()=>{const result=await client.current.resume(item.id);if(!cardId&&result.card)await router.push(`/manual/${result.card.cardId}`);else await refresh();},'Resuming saved upload…');}}>Resume</button>
+    {activePending.length>0&&<section className="mc-notice"><h2>Saved uploads</h2>{activePending.map(item=><div key={item.id}><span>{item.value.kind==='create'?'New card':`${item.value.input.side==='FRONT'?'Front':'Back'} photo`} · {olderUpload(item)?'Earlier upload; this is not the selected photo.':item.value.verified?'Original saved; working image needs preparation':'Upload saved on this device'}</span><button disabled={Boolean(busy)||Boolean(uploadState[item.value.input?.side]?.busy)} onClick={()=>{if(cardId&&item.value.kind==='upload')void uploadSide(item.value.input.side,owner=>owner.resume(item.id),'Resuming saved upload…');else perform(async()=>{const result=await client.current.resume(item.id);if(!cardId&&result.card)await router.push(`/manual/${result.card.cardId}`);else await refresh();},'Resuming saved upload…');}}>{olderUpload(item)?'Check earlier upload':'Resume'}</button>
       {item.value.verified&&<button disabled={Boolean(busy)||uploading} onClick={()=>perform(()=>client.current.forgetVerified(item.id),'Keeping the verified original…')}>Clear device copy</button>}
       {!item.value.uploadId&&item.value.planRefusal&&item.value.planUncertain===false&&<button disabled={Boolean(busy)||uploading} onClick={()=>perform(()=>client.current.discardUnplanned(item.id),'Clearing the refused upload…')}>Discard refused upload</button>}
     </div>)}</section>}
@@ -165,11 +179,17 @@ export default function ManualCards({staff,cardId=null}){
       {nextCursor&&<div className="mc-actions"><button disabled={Boolean(busy)} onClick={()=>perform(async()=>{const result=await client.current.list({cursor:nextCursor});setCards(old=>[...old,...result.cards.filter(card=>!old.some(value=>value.cardId===card.cardId))]);setNextCursor(result.nextCursor);},'Loading older cards…')}>Load more cards</button></div>}
     </>:!saved?<p role="status">Loading saved card…</p>:screen==='workspace'&&saved.manual?.current?<ManualWorkspace key={`${staff.id}:${cardId}`} staff={staff} cardId={cardId} csrf={session.current.csrf} onPhotos={()=>{setScreen('intake');perform(()=>refresh(),'Loading saved photos…');}}/>:<>
       <header className="mc-heading"><div><Link href="/manual">← All cards</Link><h1>{saved.card.label||'New card'}</h1><p>Select the original files from your iPhone photo library. The originals stay untouched.</p></div>{saved.manual?.current&&<button className="primary" disabled={Boolean(busy)||uploading||pendingPhotos} onClick={()=>setScreen('workspace')}>Return to review</button>}</header>
-      <section className="mc-photo-pair">{['FRONT','BACK'].map(side=>{const slot=saved.card.sides[side];return <article key={side}><h2>{side==='FRONT'?'Front':'Back'}</h2>
-        {slot.upload?.source?<img key={slot.version} alt={`${side==='FRONT'?'Front':'Back'} SDR working view`} src={saved.previews?.[side]?.url??`${STAFF_BASE_PATH}${prefix}/${cardId}/preview-image/${side}`} />:<div className="mc-photo-empty">{slot.upload?.verification?'Original saved. Resume image preparation.':'Original photo needed'}</div>}
+      <section className="mc-photo-pair">{['FRONT','BACK'].map(side=>{const slot=saved.card.sides[side],sideName=side==='FRONT'?'Front':'Back';
+        const sidePending=activePending.filter(item=>item.value.kind==='upload'&&item.value.input.side===side);
+        const recovery=slot.upload?.uploadId?sidePending.find(item=>item.value.uploadId===slot.upload.uploadId):sidePending[0];
+        const originalSaved=Boolean(slot.upload?.verification||recovery?.value.verified);
+        return <article key={side}><h2>{sideName}</h2>
+        {slot.upload?.source?<img key={slot.version} alt={`${sideName} SDR working view`} src={saved.previews?.[side]?.url??`${STAFF_BASE_PATH}${prefix}/${cardId}/preview-image/${side}`} />:<div className="mc-photo-empty">{originalSaved?'Original saved. Resume image preparation.':recovery?'Photo retained on this device. Resume its upload.':'Original photo needed'}</div>}
         <label className="mc-upload">{slot.upload?'Replace original photo':'Choose original photo'}<input aria-label={`${side} original photo`} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.HEIC,.heif,.HEIF" disabled={!localReady||Boolean(busy)||Boolean(uploadState[side]?.busy)||Boolean(commandPending)||staff.role!=='REVIEWER'||activePending.some(item=>item.value.kind==='upload'&&item.value.input.side===side)} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void uploadSide(side,owner=>owner.upload(cardId,side,slot.version,file),`Saving ${side==='FRONT'?'Front':'Back'} original…`);}}/></label>
         {uploadState[side]?.busy&&<p role="status">{uploadState[side].label}</p>}{uploadState[side]?.error&&<p className="mc-field-error" role="alert">{uploadState[side].error}</p>}
-        <p>{slot.upload?.source?'Original retained · full-resolution SDR working view':slot.upload?.verification?'Original verified and retained':'Choose one side of this card'}</p></article>;})}</section>
+        {uploadState[side]?.refreshError&&<p className="mc-field-error" role="alert">The saved photo status could not be refreshed. {uploadState[side].refreshError} <button type="button" disabled={Boolean(busy)||Boolean(uploadState[side]?.busy)} onClick={()=>void uploadSide(side,async()=>{},'Checking saved photo status…')}>Reload {sideName} photo status</button></p>}
+        {(recovery||slot.upload?.verification&&!slot.upload.source)&&<button type="button" disabled={!localReady||Boolean(busy)||Boolean(uploadState[side]?.busy)||Boolean(commandPending)||staff.role!=='REVIEWER'} onClick={()=>void uploadSide(side,owner=>recovery?owner.resume(recovery.id):owner.prepareSaved(cardId,slot.upload.uploadId),`Preparing saved ${sideName} photo…`)}>Resume {sideName} photo</button>}
+        <p>{slot.upload?.source?'Original retained · full-resolution SDR working view':originalSaved?'Original verified and retained':recovery?'Resume the saved upload before choosing a replacement.':'Choose one side of this card'}</p></article>;})}</section>
       {saved.manual?<section className="mc-notice"><p>{saved.manual.current?'Your geometry and findings are saved.':'A photo changed. Review the new side before confirming the pair again; the other side’s work is retained.'}</p>
         {!saved.manual.current&&<button className="primary" disabled={!saved.card.ready||Boolean(busy)||uploading||pendingPhotos} onClick={()=>perform(replace,'Preparing the changed photo…')}>Use replaced photo pair</button>}</section>:
       <section className="mc-details"><div className="mc-heading"><div><h2>Card details</h2><p>{identifying?'Reading the Front and Back photos…':saved.identification.state==='COMPLETE'?'Suggestions are ready. Check the details printed on your card.':saved.identification.rejection?.code==='API_CREDIT_BALANCE_EXHAUSTED'?'This identification request was rejected because the ATLAS API credit balance was exhausted. If credits have been added, retry identification. Your original photos are saved.':saved.identification.rejection?.code==='API_REQUEST_REJECTED'?'The identification provider rejected the request. Your photos are saved; enter the printed details or contact the owner.':['UNKNOWN','FAILED','UNAVAILABLE'].includes(saved.identification.state)?'Automatic details are unavailable. Enter the printed details to continue.':'Add both photos for automatic identification.'}</p>{saved.identification.rejection?.code==='API_CREDIT_BALANCE_EXHAUSTED'&&<a href="https://platform.openai.com/settings/organization/billing" target="_blank" rel="noopener noreferrer">Open API billing</a>}</div>{['RUNNING','NOT_STARTED'].includes(saved.identification.state)&&saved.card.ready&&!identifying&&<button onClick={()=>perform(async()=>{await request(`${prefix}/${cardId}/identify`,{method:'POST',body:{}});await refresh();},'Checking identification…')}>Check saved identification</button>}{saved.identification.rejection?.code==='API_CREDIT_BALANCE_EXHAUSTED'&&saved.identification.rejection.canRetry===true&&staff.role==='REVIEWER'&&<button disabled={!saved.card.ready||Boolean(busy)||Boolean(commandPending)||dirty||identifying} onClick={()=>perform(retryIdentification,'Retrying identification…')}>Retry identification</button>}</div>

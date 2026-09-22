@@ -14,7 +14,7 @@ export function createPhotoProcessor({ storage, keyPrefix, decodeLimits }) {
   const limits = Object.freeze(structuredClone(decodeLimits));
   return async ({ uploadPlan, verification, bytes, signal }) => {
     const decoded = await verifyAndDecodePhoto({ uploadPlan, observedObject: verification.object, bytes,
-      limits, heicHdrPolicy: 'retain-hdr-use-sdr-base', signal });
+      limits, heicHdrPolicy: 'retain-hdr-use-sdr-base', jpegHdrPolicy: 'retain-hdr-use-sdr-base', signal });
     const sourceHash = descriptorSha256({ original: decoded.original, decodePlan: decoded.decodePlan,
       raster: decoded.raster, treatment: decoded.treatment });
     const prefix = `${keyPrefix}/derived/${uploadPlan.binding.cardId}/${uploadPlan.uploadId}`;
