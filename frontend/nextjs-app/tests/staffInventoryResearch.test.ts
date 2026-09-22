@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import sharp from 'sharp';
+import { retainedEddyBeckettAnalysis } from './fixtures/staffInventoryResearchBeckett';
 import { prepareStaffInventoryResearchRecoveryIdentity } from '../lib/server/staffInventoryResearchRecoveryIdentity';
 import { STAFF_INVENTORY_IDENTIFICATION_FIELDS, type StaffInventoryIdentificationResponse } from '../lib/staffInventoryIdentification';
 import { canonical, inventoryHash } from '../../../packages/database/src/cardInventoryV2';
@@ -194,6 +195,81 @@ test('exact same visible grader and grade may match; no grade mapping occurs', a
   assert.equal(result.estimate.status, 'estimated'); assert.equal(result.target_condition.numeric_grade, 9);
   f.model.target_condition.numeric_grade = 9.5; f.model.target_condition.photo_evidence = 'Front label: PSA 9.5.';
   await assertAssessmentFailed(f);
+});
+
+test('retained Beckett 8.5 answer passes visual validation and executes its zero-result refinement offline', async () => {
+  const f = await fixture();
+  f.input.description = { name: 'Eddy Curry', category: 'Sports cards', year: '2001-02', manufacturer: 'Upper Deck', set_name: 'Hardcourt', card_number: '116', variant: 'Rookie On Court', card_type: 'Basketball' };
+  const refinedItems: Record<string, unknown>[] = f.items.splice(0).map(item => ({ ...item, title: '2001-02 Upper Deck Hardcourt Eddy Curry #116 Rookie On Court BGS 8.5' }));
+  f.deps.loadReferences = async () => [];
+  f.model = structuredClone(retainedEddyBeckettAnalysis);
+  for (const observation of f.model.photo_identity.observations) observation.photo_sha256 = sha(f.bytes[observation.side === 'front' ? 0 : 1]);
+  assert.equal(parseStaffInventoryResearchOutput(output(f.model)).target_condition.grader, 'BGS');
+  const fetch = f.deps.fetchImpl!;
+  f.deps.fetchImpl = ((url, init) => {
+    if (String(url).startsWith('https://api.sold-comps.com/') && f.calls.some(call => call.url === 'https://api.openai.com/v1/responses')) {
+      f.items.push(...refinedItems); f.model.refinement = null;
+      // The retained tape ends before this search. New responses are explicitly
+      // synthetic candidates with unresolved visual evidence, never real comps.
+      f.model.comparisons = refinedItems.map(item => ({ candidate_id: `ebay:${item.itemId}`, classification: 'possible',
+        identity_match: false, variant_match: false, visual_match: false, condition_match: false, reason: 'Synthetic continuation has no established visual match.' }));
+    }
+    return fetch(url, init);
+  }) as typeof fetch;
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  assert.deepEqual(result.research_queries?.map(query => query.query), ['2001-02 Upper Deck Hardcourt Eddy Curry 116 Rookie On Court', retainedEddyBeckettAnalysis.refinement.query]);
+  assert.equal(result.diagnostics?.reason_codes.includes('INITIAL_COMPARISON_FAILED'), false);
+  assert.equal(result.photo_identity?.status, 'supported'); assert.equal(result.identity.status, 'unresolved');
+  assert.deepEqual(result.target_condition, retainedEddyBeckettAnalysis.target_condition);
+  assert.equal(result.candidates.length, 2); assert.ok(result.comparison_assessments?.every(assessment => assessment.classification === 'possible'));
+  assert.deepEqual(result.selected_candidate_ids, []); assert.equal(result.estimate.status, 'unknown');
+});
+
+test('Beckett label alias cannot change grader or grade and rejects conflicting or absent visible evidence', async () => {
+  for (const evidence of ['Front: BECKETT BCCG 8.5.', 'Front: BECKETT BVG 8.5.', 'Front: Beckett Collectors Club Grading 8.5.', 'Front: Beckett Vintage Grading 8.5.',
+    'Front: BECKETT PSA 8.5.', 'Front: BECKETT SGC 8.5.', 'Front: BECKETT Certified Guaranty Company 8.5.', 'Front: BECKETT TAG 8.5.', 'Front: BECKETT NM-MT+.', 'Front: BECKETT 9.5.']) {
+    const f = await fixture();
+    for (const item of f.items) item.title = String(item.title).replace('Raw', 'BGS 8.5');
+    f.model.target_condition = { status: 'graded', grader: 'BGS', numeric_grade: 8.5, photo_evidence: evidence };
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.estimate.status, 'unknown', evidence); assert.deepEqual(result.selected_candidate_ids, []);
+    assert.ok(result.diagnostics?.reason_codes.includes('UNVERIFIED_GRADING_LABEL'), evidence);
+    assert.equal(result.diagnostics?.reason_codes.includes('MALFORMED_RESPONSE'), false, evidence);
+  }
+  const f = await fixture();
+  for (const item of f.items) item.title = String(item.title).replace('Raw', 'BGS 8.5');
+  f.model.target_condition = { status: 'graded', grader: 'BGS', numeric_grade: 8.5, photo_evidence: retainedEddyBeckettAnalysis.target_condition.photo_evidence };
+  for (const evidence of [retainedEddyBeckettAnalysis.target_condition.photo_evidence, 'Front: Beckett tag reads 8.5.']) {
+    f.model.target_condition.photo_evidence = evidence;
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.estimate.status, 'estimated'); assert.equal(result.target_condition.grader, 'BGS'); assert.equal(result.target_condition.numeric_grade, 8.5);
+  }
+  const title = String(f.items[0].title);
+  for (const condition of ['PSA 8.5', 'BGS 9.5', 'Raw']) {
+    f.items[0].title = title.replace('BGS 8.5', condition);
+    await assertAssessmentFailed(f);
+  }
+});
+
+test('original grading labels preserve exact decimal boundaries and accept surrounding punctuation', async () => {
+  for (const [grader, grade, evidence] of [
+    ['BGS', 8, 'Front: BECKETT 8.5.'], ['BGS', 9, 'Front: BECKETT 9.5.'], ['PSA', 8, 'Front: PSA 8.5.'],
+    ['BGS', 8.5, 'Front: BECKETT 8.'], ['BGS', 8.5, 'Front: BECKETT 18.5.'], ['BGS', 8.5, 'Front: BECKETT 8.55.'], ['BGS', 8.5, 'Front: BECKETT 8.5.1.'],
+  ] as const) {
+    const f = await fixture();
+    for (const item of f.items) item.title = String(item.title).replace('Raw', `${grader} ${grade}`);
+    f.model.target_condition = { status: 'graded', grader, numeric_grade: grade, photo_evidence: evidence };
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.estimate.status, 'unknown', evidence); assert.deepEqual(result.selected_candidate_ids, []);
+    assert.ok(result.diagnostics?.reason_codes.includes('UNVERIFIED_GRADING_LABEL'), evidence);
+  }
+  for (const [grade, evidence] of [[8, 'Front: BECKETT “8”.'], [8, 'Front: BECKETT “8.0”.'], [8.5, 'Front: BECKETT (8.5).'], [8.5, 'Front: BECKETT 8.50, NM-MT+.'], [9.5, 'Front: BECKETT: 9.5; NM-MT+.'], [10, 'Front: BECKETT [10].']] as const) {
+    const f = await fixture();
+    for (const item of f.items) item.title = String(item.title).replace('Raw', `BGS ${grade}`);
+    f.model.target_condition = { status: 'graded', grader: 'BGS', numeric_grade: grade, photo_evidence: evidence };
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.estimate.status, 'estimated', evidence); assert.equal(result.target_condition.numeric_grade, grade);
+  }
 });
 
 test('image downloads are source-allowlisted, bounded, redirect-free and hash-bound', async () => {

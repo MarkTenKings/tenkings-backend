@@ -43,7 +43,7 @@ type Side = 'front' | 'back';
 type ImageBytes = { bytes: Buffer; sha256: string; content_type: 'image/jpeg' | 'image/png' | 'image/webp'; source_url: string; retrieved_at: string; width?: number; height?: number };
 
 export class StaffInventoryResearchError extends Error {
-  constructor(readonly code: StaffInventoryResearchErrorCode) {
+  constructor(readonly code: StaffInventoryResearchErrorCode, readonly diagnosticCode?: 'UNVERIFIED_GRADING_LABEL') {
     super(STAFF_INVENTORY_RESEARCH_ERROR_MESSAGES[code]);
     this.name = 'StaffInventoryResearchError';
   }
@@ -576,7 +576,18 @@ function validateAnalysis(analysis: Analysis, input: StaffInventoryResearchInput
   } else if (identity.variant_name !== null || analysis.selected_candidate_ids.length > 0 && !photoSupported) throw new StaffInventoryResearchError('malformed_response');
   if (analysis.target_condition.status === 'graded') {
     const evidence = normalized(analysis.target_condition.photo_evidence);
-    if (!wholeSpan(evidence, normalized(analysis.target_condition.grader)) || !wholeSpan(evidence, normalized(String(analysis.target_condition.numeric_grade)))) throw new StaffInventoryResearchError('malformed_response');
+    const grader = analysis.target_condition.grader;
+    // BGS labels can print the Beckett brand instead of the service acronym.
+    // This alias applies only to the original label, never to listing grades,
+    // and must not translate another Beckett service or grader into BGS.
+    const namedGrader = wholeSpan(evidence, normalized(grader)) || grader === 'BGS' && wholeSpan(evidence, 'beckett');
+    const conflictingBgsService = grader === 'BGS' && (/\b(?:bccg|bvg|psa|sgc|cgc|hga|gma|ags|beckett (?:collectors? club|vintage)(?: grading)?)\b/.test(evidence)
+      || /\bTAG\b/.test(analysis.target_condition.photo_evidence!));
+    // Tokenize the original decimal text: punctuation normalization would make
+    // a claimed 8 match a photographed 8.5. Surrounding quotes/periods are safe.
+    const exactNumericGrade = [...analysis.target_condition.photo_evidence!.matchAll(/(?:^|[^\p{L}\p{N}.])(\d+(?:\.\d+)?)(?![\p{L}\p{N}]|\.\d)/gu)]
+      .some(match => Number(match[1]) === analysis.target_condition.numeric_grade);
+    if (!namedGrader || conflictingBgsService || !exactNumericGrade) throw new StaffInventoryResearchError('malformed_response', 'UNVERIFIED_GRADING_LABEL');
   }
   const selected = analysis.selected_candidate_ids.map(id => candidateMap.get(id)!);
   const catalogIdentity = references.find(reference => reference.kind === 'catalog' && reference.variant_name === identity.variant_name && identity.reference_ids.includes(reference.id));
@@ -867,7 +878,7 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
         if (innerSignal.aborted) throw new StaffInventoryResearchError('cancelled');
         initialComparisonFailed = true;
         for (const candidate of result.candidates) if (candidate.image) comparisonFailures.add(candidate.id);
-        result.diagnostics!.reason_codes.push('INITIAL_COMPARISON_FAILED', error instanceof StaffInventoryResearchError ? error.code.toUpperCase() : 'PROVIDER_ERROR');
+        result.diagnostics!.reason_codes.push('INITIAL_COMPARISON_FAILED', error instanceof StaffInventoryResearchError ? error.diagnosticCode ?? error.code.toUpperCase() : 'PROVIDER_ERROR');
         warn('The source listings were retrieved, but their visual assessment could not be verified. They remain available for review with no selected value.');
       }
       for (let pass = 1; pass < STAFF_INVENTORY_RESEARCH_LIMITS.searches && analysis?.refinement && result.estimate.status !== 'estimated'; pass++) {
