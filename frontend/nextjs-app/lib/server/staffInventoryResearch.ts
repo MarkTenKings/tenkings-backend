@@ -405,6 +405,13 @@ const analysisSchema = z.object({
   refinement: z.object({ query: modelText(400), reason: modelText(400) }).strict().nullable(),
 }).strict();
 type Analysis = z.infer<typeof analysisSchema>;
+// A retrieval proposal needs the provider's exact field structure, but never
+// inherits authority from its identity/condition assertions. Keep their field
+// validators; the full schemas below still decide whether any facts may apply.
+const analysisWireSchema = analysisSchema.extend({
+  photo_identity: z.object(StaffInventoryResearchPhotoIdentitySchema.shape).strict().optional(),
+  target_condition: z.object(StaffInventoryResearchConditionSchema.shape).strict(),
+});
 // The provider must always return the v6 observation block. The decoder still
 // accepts absent blocks from archived model fixtures, without granting them any
 // new authority; their catalog-only semantics remain unchanged.
@@ -861,29 +868,39 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
       const assess = async (parent: AbortSignal) => {
         const modelStart = Date.now();
         try {
-          return await bounded(async modelSignal => parseStaffInventoryResearchOutput((await jsonRequest(OPENAI_ENDPOINT, {
-            method: 'POST', headers: { Authorization: `Bearer ${modelKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(modelRequest(data, photos as Record<Side, StaffInventoryVerifiedPhoto>, result.references, result.candidates, candidateImages, referenceImages, result.research_queries)),
-          }, MAX_MODEL_BYTES, deps, modelSignal)).value), deadline(deps, 'model'), parent);
+          return await bounded(async modelSignal => {
+            const payload = (await jsonRequest(OPENAI_ENDPOINT, {
+              method: 'POST', headers: { Authorization: `Bearer ${modelKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(modelRequest(data, photos as Record<Side, StaffInventoryVerifiedPhoto>, result.references, result.candidates, candidateImages, referenceImages, result.research_queries)),
+            }, MAX_MODEL_BYTES, deps, modelSignal)).value;
+            const wire = analysisWireSchema.safeParse(decodeResearchModelOutput(payload));
+            if (!wire.success) throw new StaffInventoryResearchError('malformed_response');
+            return { payload, refinement: wire.data.refinement };
+          }, deadline(deps, 'model'), parent);
         } finally { timings.model += Date.now() - modelStart; }
       };
       await downloadEvidence(0, innerSignal);
-      let analysis: Analysis | null = null;
+      let pendingRefinement: Analysis['refinement'] = null;
       try {
-        const firstAnalysis = await assess(innerSignal);
+        const response = await assess(innerSignal);
+        pendingRefinement = response.refinement;
+        const firstAnalysis = parseStaffInventoryResearchOutput(response.payload);
         const applied = applyAnalysis(result, firstAnalysis, data, photos as Record<Side, StaffInventoryVerifiedPhoto>, referenceImages, duplicateImageSelections);
         insufficientSelection = applied.insufficient; comparisonDescription = applied.description;
-        rememberAnalysis(firstAnalysis); analysis = firstAnalysis;
+        rememberAnalysis(firstAnalysis);
       } catch (error) {
         if (innerSignal.aborted) throw new StaffInventoryResearchError('cancelled');
         initialComparisonFailed = true;
         for (const candidate of result.candidates) if (candidate.image) comparisonFailures.add(candidate.id);
         result.diagnostics!.reason_codes.push('INITIAL_COMPARISON_FAILED', error instanceof StaffInventoryResearchError ? error.diagnosticCode ?? error.code.toUpperCase() : 'PROVIDER_ERROR');
-        warn('The source listings were retrieved, but their visual assessment could not be verified. They remain available for review with no selected value.');
+        warn('The initial source listings were retained because their first visual assessment could not be verified.');
       }
-      for (let pass = 1; pass < STAFF_INVENTORY_RESEARCH_LIMITS.searches && analysis?.refinement && result.estimate.status !== 'estimated'; pass++) {
-        const refinement = analysis.refinement;
-        const nextQuery = validateRefinedStaffInventoryResearchQuery(comparisonDescription, refinement.query, result.references, analysis.target_condition);
+      for (let pass = 1; pass < STAFF_INVENTORY_RESEARCH_LIMITS.searches && pendingRefinement && result.estimate.status !== 'estimated'; pass++) {
+        const refinement = pendingRefinement;
+        // Consume each proposal once. A later transport/shape failure must not
+        // reuse it, and rejected assertions cannot supply new query anchors.
+        pendingRefinement = null;
+        const nextQuery = validateRefinedStaffInventoryResearchQuery(comparisonDescription, refinement.query, result.references, result.target_condition);
         if (!nextQuery || result.research_queries!.some(previous => querySignature(previous.query) === querySignature(nextQuery))) {
           warn('The proposed refinement did not preserve the saved identity or repeat-free query rules; prior research was retained.');
           break;
@@ -907,12 +924,13 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
               mergeCandidates(result, source.candidates, comparisonDescription, duplicateImageSelections, details);
             } finally { timings.sources += Date.now() - sourceStart; }
             await downloadEvidence(pass, refinementSignal);
-            const nextAnalysis = await assess(refinementSignal);
+            const response = await assess(refinementSignal);
             if (refinementSignal.aborted) throw new StaffInventoryResearchError('cancelled');
+            pendingRefinement = response.refinement;
+            const nextAnalysis = parseStaffInventoryResearchOutput(response.payload);
             const applied = applyAnalysis(result, nextAnalysis, data, photos as Record<Side, StaffInventoryVerifiedPhoto>, referenceImages, duplicateImageSelections);
             insufficientSelection = applied.insufficient; comparisonDescription = applied.description;
             rememberAnalysis(nextAnalysis);
-            analysis = nextAnalysis;
           }, Math.min(deadline(deps, 'refinement'), remaining - returnMargin), innerSignal);
         } catch (error) {
           if (innerSignal.aborted) throw new StaffInventoryResearchError('cancelled');
@@ -923,7 +941,7 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
           // A successful fetch is useful even if its optional model assessment
           // failed. Keep the last valid conclusions; new rows remain unassessed.
           warn(sourceCompleted ? 'Additional source results were retained, but their optional comparison could not be completed; prior verified research was preserved.' : 'The optional refined search could not be completed; prior verified research was preserved.');
-          break;
+          if (!sourceCompleted || !pendingRefinement) break;
         }
       }
     } else {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import sharp from 'sharp';
-import { retainedEddyBeckettAnalysis } from './fixtures/staffInventoryResearchBeckett';
+import { retainedEddyBeckettAnalysis, retainedEddyCorrectedAnalysis1, retainedEddyCorrectedAnalysis2 } from './fixtures/staffInventoryResearchBeckett';
 import { prepareStaffInventoryResearchRecoveryIdentity } from '../lib/server/staffInventoryResearchRecoveryIdentity';
 import { STAFF_INVENTORY_IDENTIFICATION_FIELDS, type StaffInventoryIdentificationResponse } from '../lib/staffInventoryIdentification';
 import { canonical, inventoryHash } from '../../../packages/database/src/cardInventoryV2';
@@ -223,6 +223,39 @@ test('retained Beckett 8.5 answer passes visual validation and executes its zero
   assert.deepEqual(result.target_condition, retainedEddyBeckettAnalysis.target_condition);
   assert.equal(result.candidates.length, 2); assert.ok(result.comparison_assessments?.every(assessment => assessment.classification === 'possible'));
   assert.deepEqual(result.selected_candidate_ids, []); assert.equal(result.estimate.status, 'unknown');
+});
+
+test('retained all-back photo assertion stays rejected while its independently valid third query retrieves evidence', async () => {
+  const f = await fixture();
+  f.input.description = { name: 'Eddy Curry', category: 'Sports cards', year: '2001-02', manufacturer: 'Upper Deck', set_name: 'Hardcourt', card_number: '116', variant: 'Rookie On Court', card_type: 'Basketball' };
+  const refinedItems = f.items.splice(0).map(item => ({ ...item, title: '2001 Upper Deck Hardcourt Eddy Curry #116 Rookie On Court BGS 8.5' }));
+  f.deps.loadReferences = async () => [];
+  const responses = [retainedEddyCorrectedAnalysis1, retainedEddyCorrectedAnalysis2].map(value => {
+    const answer = structuredClone(value);
+    for (const observation of answer.photo_identity.observations) observation.photo_sha256 = sha(f.bytes[observation.side === 'front' ? 0 : 1]);
+    return answer;
+  });
+  assert.throws(() => parseStaffInventoryResearchOutput(output(responses[1])), code('malformed_response'));
+  const fetch = f.deps.fetchImpl!;
+  f.deps.fetchImpl = ((url, init) => {
+    const modelCalls = f.calls.filter(call => call.url === 'https://api.openai.com/v1/responses').length;
+    if (String(url).startsWith('https://api.sold-comps.com/') && modelCalls === 2) f.items.push(...refinedItems);
+    if (String(url) === 'https://api.openai.com/v1/responses') {
+      f.model = structuredClone(responses[Math.min(modelCalls, 1)]);
+      // Only the first two responses are real. This third synthetic response
+      // repeats rejected authority and proposes a fourth, budget-forbidden query.
+      if (modelCalls === 2) f.model.refinement = { query: '2002 Hardcourt Eddy Curry 116', reason: 'Synthetic fourth proposal must never run.' };
+    }
+    return fetch(url, init);
+  }) as typeof fetch;
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  assert.deepEqual(result.research_queries?.map(query => query.query), ['2001-02 Upper Deck Hardcourt Eddy Curry 116 Rookie On Court', responses[0].refinement.query, responses[1].refinement.query]);
+  assert.equal(f.calls.filter(call => call.url === 'https://api.openai.com/v1/responses').length, 3);
+  assert.deepEqual(result.photo_identity, responses[0].photo_identity); assert.deepEqual(result.target_condition, responses[0].target_condition);
+  assert.deepEqual(result.identity, responses[0].identity); assert.equal(result.candidates.length, 2);
+  assert.ok(result.diagnostics?.candidates.every(candidate => candidate.model_assessment === null && candidate.comparison_status === 'failed'));
+  assert.deepEqual(result.selected_candidate_ids, []); assert.equal(result.estimate.status, 'unknown');
+  assert.throws(() => parseStaffInventoryResearchOutput(output(responses[1])), code('malformed_response'));
 });
 
 test('Beckett label alias cannot change grader or grade and rejects conflicting or absent visible evidence', async () => {
@@ -597,6 +630,79 @@ test('repeated or foreign-anchor model refinements are not searched and never er
     const result = await researchStaffInventoryCard(f.input, f.deps);
     assert.equal(f.sources.length, 1); assert.equal(result.candidates.length, 2);
     assert.match(result.warnings.join(' '), /repeat-free query rules/);
+  }
+});
+
+test('rejected first identity or condition assertions may propose retrieval but never establish facts or value', async () => {
+  for (const failure of ['photo', 'condition'] as const) {
+    const f = await fixture();
+    f.model.refinement = { query: '2024 Fixture Chrome Fixture Runner #007', reason: 'Try saved anchors without the manufacturer.' };
+    if (failure === 'photo') f.model.photo_identity = { schema_version: 1, status: 'supported', observations: [], reason: 'This unsupported assertion must remain rejected.' };
+    else f.model.target_condition = { status: 'raw', grader: 'PSA', numeric_grade: 10, photo_evidence: 'Contradictory condition assertion.' };
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.research_queries?.length, 2); assert.equal(result.candidates.length, 2);
+    assert.equal(result.identity.status, 'unresolved'); assert.equal(result.photo_identity?.status, 'unresolved'); assert.equal(result.target_condition.status, 'unresolved');
+    assert.deepEqual(result.selected_candidate_ids, []); assert.equal(result.estimate.status, 'unknown');
+    assert.ok(result.diagnostics?.candidates.every(candidate => candidate.model_assessment === null));
+  }
+});
+
+test('refinements from rejected assertions use only the last trusted anchors and condition', async () => {
+  for (const query of ['2024 Fixture Chrome Different Player #007 silver', '2024 Fixture Chrome Fixture Runner #7 silver',
+    '2024 Fixture Chrome Fixture Runner #007 blue', '2024 Fixture Chrome Fixture Runner #007 PSA 10',
+    '2024 Fixture Chrome Fixture Runner #007 https://evil.example']) {
+    const f = await adaptiveFixture();
+    f.setModel((value, round) => round !== 1 ? value : { ...value,
+      photo_identity: { schema_version: 1, status: 'supported', observations: [], reason: 'Rejected private name/printing assertion.' },
+      target_condition: { status: 'graded', grader: 'PSA', numeric_grade: 10, photo_evidence: 'Rejected label claim PSA 10.' },
+      selected_candidate_ids: value.comparisons.map((comparison: any) => comparison.candidate_id), refinement: { query, reason: 'Untrusted query proposal.' } });
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(f.sources.length, 2, query); assert.equal(result.target_condition.status, 'raw'); assert.equal(result.target_condition.grader, null);
+    assert.equal(result.identity.status, 'unresolved'); assert.deepEqual(result.selected_candidate_ids, []); assert.equal(result.estimate.status, 'unknown');
+  }
+});
+
+test('semantic rejection preserves prior facts across a valid refinement; malformed continuation cannot reuse its proposal', async () => {
+  for (const failure of ['photo', 'condition', 'selection'] as const) {
+    const f = await adaptiveFixture();
+    f.setModel((value, round) => {
+      if (round === 2) return { ...value, invented_price: 5000 };
+      if (round !== 1) return value;
+      if (failure === 'photo') return { ...value, photo_identity: { schema_version: 1, status: 'supported', observations: [], reason: 'Rejected identity.' } };
+      if (failure === 'condition') return { ...value, target_condition: { status: 'raw', grader: 'PSA', numeric_grade: 10, photo_evidence: 'Rejected inconsistent condition.' } };
+      return { ...value, selected_candidate_ids: ['ebay:999999999999'] };
+    });
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(f.sources.length, 3); assert.equal(f.modelBodies.length, 3); assert.equal(result.candidates.length, 6);
+    assert.equal(result.identity.reason, 'The exact published catalog is unavailable.'); assert.equal(result.target_condition.status, 'raw');
+    assert.equal(result.photo_identity?.status, 'unresolved'); assert.deepEqual(result.selected_candidate_ids, []); assert.equal(result.estimate.status, 'unknown');
+    const oldIds = new Set(f.rows(0).map(item => `ebay:${item.itemId}`));
+    assert.ok(result.diagnostics?.candidates.filter(candidate => !oldIds.has(candidate.candidate_id)).every(candidate => candidate.model_assessment === null));
+  }
+});
+
+test('a valid-looking proposal cannot bypass malformed response envelopes or field shapes', async () => {
+  for (const failure of ['model', 'incomplete', 'extra', 'photo', 'condition', 'refinement'] as const) {
+    const f = await adaptiveFixture(), fetch = f.deps.fetchImpl!; let models = 0;
+    f.deps.fetchImpl = (async (url, init) => {
+      const response = await fetch(url, init);
+      if (String(url) !== 'https://api.openai.com/v1/responses' || ++models !== 2) return response;
+      const payload = await response.json();
+      if (failure === 'model') payload.model = 'unapproved-model';
+      else if (failure === 'incomplete') payload.status = 'incomplete';
+      else {
+        const part = payload.output[1].content[0], value = JSON.parse(part.text);
+        if (failure === 'extra') value.invented_price = 5000;
+        if (failure === 'photo') value.photo_identity = { schema_version: 1, status: 'supported', observations: 'invalid', reason: 'Invalid wire type.' };
+        if (failure === 'condition') value.target_condition.numeric_grade = '10';
+        if (failure === 'refinement') value.refinement.extra = 'not allowed';
+        part.text = JSON.stringify(value);
+      }
+      return Response.json(payload);
+    }) as typeof fetch;
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(f.sources.length, 2, failure); assert.equal(models, 2); assert.equal(result.candidates.length, 4);
+    assert.deepEqual(result.selected_candidate_ids, []); assert.equal(result.estimate.status, 'unknown');
   }
 });
 
