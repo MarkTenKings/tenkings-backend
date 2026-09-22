@@ -1,5 +1,7 @@
 # ATLAS Sept 21, 20026 — fresh Astra Ultra lead handoff
 
+Continuation update — September 22, 2026 UTC: this handoff was accepted by the fresh lead. Mark's subsequent Back-geometry failure is fixed and deployed as source `053768aa4474f950017c43b659648668631f6b9e`. See the [Back-geometry audit](../audits/2026-09-22/back-geometry-recovery.md) and [current release runbook](../runbooks/CONNECTED_MANUAL_RELEASE.md). The a00f identities, pending onboarding steps and prior card counts below describe the original historical handoff; do not repeat its actions. Runtime4f9e/privateb95a7bf5/staff2qg5/publicGfz8 and controls22/20 supersede them. Mark's next test is the saved Back **Detect edges automatically** action and new-card optical behavior.
+
 Prepared at Mark's explicit request on September 21 Pacific / September 22 UTC, 2026. Preserve the requested task name **ATLAS Sept 21, 20026**, including `20026`. This is a fresh-context continuation of the existing ATLAS rebuild, not a new architecture.
 
 ## Owner request and first work
