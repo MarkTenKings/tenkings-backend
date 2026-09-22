@@ -29,7 +29,7 @@ import type { CatalogPhotos, CatalogScopeResolver, ResearchCatalogSnapshot } fro
 
 const SOLDCOMPS_ENDPOINT = 'https://api.sold-comps.com/v1/scrape';
 const OPENAI_ENDPOINT = 'https://api.openai.com/v1/responses';
-const DEADLINES = { photos: 6000, sources: 20000, images: 6000, imageRound: 18000, model: 45000, refinement: 84000, overall: STAFF_INVENTORY_RESEARCH_LIMITS.overallTimeoutMs } as const;
+const DEADLINES = { photos: 6000, sources: 20000, images: 6000, imageRound: 18000, model: 120000, refinement: 84000, overall: STAFF_INVENTORY_RESEARCH_LIMITS.overallTimeoutMs } as const;
 const IMAGE_BUDGETS = [6, 3, 3] as const;
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
@@ -868,6 +868,11 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
       const assess = async (parent: AbortSignal) => {
         const modelStart = Date.now();
         try {
+          // Leave time for final authority checks and result validation inside
+          // the existing engine limit. Tests proportionally shorten this reserve.
+          const returnReserve = Math.min(10000, deadline(deps, 'overall') / 15);
+          const remaining = deadline(deps, 'overall') - (modelStart - started) - returnReserve;
+          if (remaining <= 0) throw new StaffInventoryResearchError('timeout');
           return await bounded(async modelSignal => {
             const payload = (await jsonRequest(OPENAI_ENDPOINT, {
               method: 'POST', headers: { Authorization: `Bearer ${modelKey}`, 'Content-Type': 'application/json' },
@@ -876,7 +881,7 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
             const wire = analysisWireSchema.safeParse(decodeResearchModelOutput(payload));
             if (!wire.success) throw new StaffInventoryResearchError('malformed_response');
             return { payload, refinement: wire.data.refinement };
-          }, deadline(deps, 'model'), parent);
+          }, Math.min(deadline(deps, 'model'), remaining), parent);
         } finally { timings.model += Date.now() - modelStart; }
       };
       await downloadEvidence(0, innerSignal);
@@ -906,8 +911,8 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
           break;
         }
         const remaining = deadline(deps, 'overall') - (Date.now() - started);
-        // Reserve a complete source/image/model round and a return margin. Tests
-        // may shorten this window; production never borrows the worker lease.
+        // Keep the optional round's existing cap and return margin. Its model
+        // also respects the overall finalization reserve; no worker lease is borrowed.
         const reserve = deps.timeoutMs === undefined ? 84000 : Math.min(84000, deadline(deps, 'overall') / 2);
         const returnMargin = Math.min(1000, Math.max(5, deadline(deps, 'overall') / 20));
         if (remaining < reserve) { warn('Further refinement was skipped to preserve the completed research within the time limit.'); break; }

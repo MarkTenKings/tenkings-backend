@@ -476,6 +476,143 @@ test('provider failures, wrong-query results and stalled headers or bodies are b
   }
 });
 
+test('an imageful model response after ninety seconds can complete within the existing engine budget', async t => {
+  const f = await fixture(), original = f.deps.fetchImpl!;
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.parse(NOW) });
+  let began!: (signal: AbortSignal) => void, answer!: (response: Response) => void;
+  const active = new Promise<AbortSignal>(resolve => { began = resolve; });
+  f.deps.fetchImpl = (async (url, init) => {
+    if (String(url) === 'https://api.openai.com/v1/responses') {
+      began(init!.signal as AbortSignal);
+      return new Promise<Response>(resolve => { answer = resolve; });
+    }
+    return original(url, init);
+  }) as typeof fetch;
+  const running = researchStaffInventoryCard(f.input, f.deps), signal = await active;
+  t.mock.timers.tick(90000);
+  assert.equal(signal.aborted, false);
+  answer(Response.json(output(f.model)));
+  const result = await running;
+  assert.equal(result.estimate.status, 'estimated');
+  assert.equal(result.timings_ms.model, 90000);
+  assert.equal(result.timings_ms.total, 90000);
+  assert.equal(result.candidates.filter(candidate => candidate.image).length, 2);
+  assert.equal(f.calls.filter(call => call.url.startsWith('https://api.sold-comps.com/')).length, 1);
+});
+
+test('a hung first model stops at its cap and retains fetched evidence without another paid attempt', async t => {
+  const f = await fixture(), original = f.deps.fetchImpl!;
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.parse(NOW) });
+  let began!: (signal: AbortSignal) => void, models = 0;
+  const active = new Promise<AbortSignal>(resolve => { began = resolve; });
+  f.deps.fetchImpl = (async (url, init) => {
+    if (String(url) === 'https://api.openai.com/v1/responses') {
+      models++; began(init!.signal as AbortSignal); return new Promise<Response>(() => {});
+    }
+    return original(url, init);
+  }) as typeof fetch;
+  const running = researchStaffInventoryCard(f.input, f.deps), signal = await active;
+  t.mock.timers.tick(119999); assert.equal(signal.aborted, false);
+  t.mock.timers.tick(1);
+  const result = await running;
+  assert.equal(signal.aborted, true); assert.equal(models, 1);
+  assert.equal(result.timings_ms.total, 120000);
+  assert.equal(result.estimate.status, 'unknown'); assert.deepEqual(result.selected_candidate_ids, []);
+  assert.equal(result.candidates.filter(candidate => candidate.image).length, 2);
+  assert.ok(result.diagnostics!.reason_codes.includes('TIMEOUT'));
+  assert.equal(f.calls.filter(call => call.url.startsWith('https://api.sold-comps.com/')).length, 1);
+  assert.equal(StaffInventoryResearchResultSchema.safeParse(result).success, true);
+});
+
+test('late source and image setup shorten the model deadline and preserve ten seconds for engine finalization', async t => {
+  const f = await fixture(), original = f.deps.fetchImpl!, loadPhoto = f.deps.loadPhoto!;
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.parse(NOW) });
+  let sourceBegan!: () => void, imagesBegan!: () => void, modelBegan!: (signal: AbortSignal) => void;
+  let releaseSource!: () => void, releaseImages!: () => void, models = 0;
+  const sourceActive = new Promise<void>(resolve => { sourceBegan = resolve; });
+  const imagesActive = new Promise<void>(resolve => { imagesBegan = resolve; });
+  const modelActive = new Promise<AbortSignal>(resolve => { modelBegan = resolve; });
+  const sourceGate = new Promise<void>(resolve => { releaseSource = resolve; });
+  const imageGate = new Promise<void>(resolve => { releaseImages = resolve; });
+  let photosDone!: () => void, photoCompletions = 0;
+  const photosFinished = new Promise<void>(resolve => { photosDone = resolve; });
+  f.deps.loadPhoto = async (key, signal) => {
+    // Successful bounded reads abort their child signal during cleanup. Wait
+    // for native Sharp verification before advancing this synthetic clock.
+    signal.addEventListener('abort', () => { if (++photoCompletions === 2) photosDone(); }, { once: true });
+    return loadPhoto(key, signal);
+  };
+  f.deps.fetchImpl = (async (url, init) => {
+    const uri = String(url);
+    if (uri.startsWith('https://api.sold-comps.com/')) { sourceBegan(); await sourceGate; }
+    else if (uri.startsWith('https://i.ebayimg.com/')) { imagesBegan(); await imageGate; }
+    else if (uri === 'https://api.openai.com/v1/responses') {
+      models++; modelBegan(init!.signal as AbortSignal); return new Promise<Response>(() => {});
+    }
+    return original(url, init);
+  }) as typeof fetch;
+  const running = researchStaffInventoryCard(f.input, f.deps);
+  await sourceActive; await photosFinished; t.mock.timers.tick(19000); releaseSource();
+  await imagesActive; t.mock.timers.tick(5000); releaseImages();
+  const signal = await modelActive;
+  t.mock.timers.tick(115999); assert.equal(signal.aborted, false);
+  t.mock.timers.tick(1);
+  const result = await running;
+  assert.equal(signal.aborted, true); assert.equal(models, 1);
+  assert.equal(result.timings_ms.model, 116000); assert.equal(result.timings_ms.total, 140000);
+  assert.equal(result.estimate.status, 'unknown'); assert.deepEqual(result.selected_candidate_ids, []);
+  assert.equal(result.candidates.filter(candidate => candidate.image).length, 2);
+  assert.ok(result.diagnostics!.reason_codes.includes('TIMEOUT'));
+  assert.equal(result.research_queries?.length, 1);
+  assert.equal(StaffInventoryResearchResultSchema.safeParse(result).success, true);
+});
+
+test('a slow valid initial assessment skips refinement when its unchanged round reserve no longer fits', async t => {
+  const f = await fixture(), original = f.deps.fetchImpl!;
+  f.model.selected_candidate_ids = [];
+  f.model.refinement = { query: '2024 Fixture Chrome Fixture Runner #007', reason: 'Broaden with the saved identity.' };
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.parse(NOW) });
+  let began!: () => void, answer!: (response: Response) => void, models = 0;
+  const active = new Promise<void>(resolve => { began = resolve; });
+  f.deps.fetchImpl = (async (url, init) => {
+    if (String(url) === 'https://api.openai.com/v1/responses') {
+      models++; began(); return new Promise<Response>(resolve => { answer = resolve; });
+    }
+    return original(url, init);
+  }) as typeof fetch;
+  const running = researchStaffInventoryCard(f.input, f.deps); await active;
+  t.mock.timers.tick(90000); answer(Response.json(output(f.model)));
+  const result = await running;
+  assert.equal(models, 1); assert.equal(result.research_queries?.length, 1);
+  assert.equal(result.identity.status, 'base'); assert.equal(result.estimate.status, 'unknown');
+  assert.equal(result.timings_ms.total, 90000);
+  assert.ok(result.warnings.some(warning => /Further refinement was skipped/.test(warning)));
+});
+
+test('the existing eighty-four-second optional round still cancels a longer model and preserves prior facts', async t => {
+  const f = await fixture(), original = f.deps.fetchImpl!;
+  f.model.selected_candidate_ids = [];
+  f.model.refinement = { query: '2024 Fixture Chrome Fixture Runner #007', reason: 'Broaden with the saved identity.' };
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.parse(NOW) });
+  let began!: (signal: AbortSignal) => void, models = 0;
+  const active = new Promise<AbortSignal>(resolve => { began = resolve; });
+  f.deps.fetchImpl = (async (url, init) => {
+    if (String(url) === 'https://api.openai.com/v1/responses' && ++models === 2) {
+      began(init!.signal as AbortSignal); return new Promise<Response>(() => {});
+    }
+    return original(url, init);
+  }) as typeof fetch;
+  const running = researchStaffInventoryCard(f.input, f.deps), signal = await active;
+  t.mock.timers.tick(83999); assert.equal(signal.aborted, false);
+  t.mock.timers.tick(1);
+  const result = await running;
+  assert.equal(signal.aborted, true); assert.equal(models, 2);
+  assert.equal(result.research_queries?.length, 2); assert.equal(result.timings_ms.total, 84000);
+  assert.equal(result.identity.status, 'base'); assert.equal(result.estimate.status, 'unknown');
+  assert.equal(result.candidates.filter(candidate => candidate.image).length, 2);
+  assert.ok(result.warnings.some(warning => /prior verified research was preserved/.test(warning)));
+});
+
 test('provider rows, image reads and concurrency stay bounded even with a large source response', async () => {
   const f = await fixture(); f.deps.loadReferences = async () => [];
   f.items.splice(0, f.items.length, ...Array.from({ length: 250 }, (_, index) => ({
