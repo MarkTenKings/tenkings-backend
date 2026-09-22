@@ -1,12 +1,10 @@
 # Variant identification and sold-comparison improvement plan
 
-Date: September 15, 2026 (America/Los_Angeles). Status refreshed September 20 after resuming the owner-authorized implementation; dated observations retain their original test dates. **Production remains the Pokémon/photo-recovery release38c95335. The clean main Preview now integrates qualified Inventory code and loads99entries/109cards in the existing signed-in session; Mark confirmed phone acceptance on September 21; production configuration and domain cutover are next. Additional catalog and research changes are implemented and being qualified separately; no90% coverage claim.**
+Date: September 15, 2026 (America/Los_Angeles). The approved implementation scope and acceptance rules below remain authoritative. **Current delivery, September 21: main Production `9a12cd35` is live and Mark has accepted both the phone workflow and new website. Reviewed catalog/comp foundations, Pokémon preparation and accuracy tooling are built; actual catalog publication, useful approved references, normal optional-feature activation and measured all-card accuracy remain.** See the [active delivery index](2026-09-21-inventory-takeover/README.md) for current exact source/deployment identities and remaining work.
 
-## Lead transfer — September 21
+## Lead transfer and current authority — September 21
 
-The new Inventory lead has accepted the handoff, created its five-agent Extra High fleet and verified the release/evidence state. Its [active delivery index](2026-09-21-inventory-takeover/README.md) records the five next-action packets and the first local catalog-selection repair. That repair is not deployed; the Preview and production identities below remain unchanged.
-
-Mark requested a fresh Astra Ultra lead and its own subagent fleet for **Ten Kings Inventory**. ATLAS Grading remains a separate project; sharing recognition/catalog knowledge does not transfer its project ownership. The [complete Inventory lead handoff](../handoffs/2026-09-21-ten-kings-inventory-astra-ultra-handoff.md) is the next-task entry point, with exact workspace/deployment state, qualification evidence, pending owner phone acceptance, remaining deliveries, and current ATLAS coordination. Both Preview deployments and the unchanged collect production aliases were rechecked; packaging makes no application or live-state change.
+The Inventory lead accepted the [dated handoff](../handoffs/2026-09-21-ten-kings-inventory-astra-ultra-handoff.md), completed the five parallel delivery slices and main rollout, and recorded the one-card diagnostic plus verified shutdown. ATLAS Grading retains its separate ownership. The following dated implementation snapshots are history; their former pending-phone, undeployed-selection-repair and pre-cutover statements are superseded by the current index. No all-card accuracy target is claimed.
 
 ## Latest verified progress — September 20
 
