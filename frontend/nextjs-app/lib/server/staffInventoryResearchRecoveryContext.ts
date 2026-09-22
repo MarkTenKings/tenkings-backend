@@ -8,8 +8,7 @@ import { isStaffInventoryIdentificationResponse } from '../staffInventoryIdentif
 export function applyStaffInventoryResearchRecoveryContext(input: StaffInventoryResearchInput, value: unknown): StaffInventoryResearchInput {
   const assessment = StaffInventoryResearchRecoveryAssessmentSchema.parse(value);
   const hash = createHash('sha256').update(canonicalJson(input)).digest('hex');
-  if (!assessment.ready_for_research || assessment.need_codes.length || assessment.conflicts.length || assessment.missing_fields.length
-      || assessment.source_input_sha256 !== hash || assessment.description_event_id !== input.description_event_id || assessment.description_hash !== input.description_hash) {
+  if (!assessment.ready_for_research || assessment.source_input_sha256 !== hash || assessment.description_event_id !== input.description_event_id || assessment.description_hash !== input.description_hash) {
     throw new Error('Recovery context does not authorize this exact input.');
   }
   const additions: string[] = [];

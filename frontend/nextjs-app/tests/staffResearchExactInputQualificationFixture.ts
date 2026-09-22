@@ -33,6 +33,7 @@ export async function exactFixture() {
     if (uri === 'https://api.openai.com/v1/responses') return Response.json({ id: 'synthetic-response', model: 'gpt-6-astra', status: 'completed', error: null, incomplete_details: null,
       usage: { input_tokens: 123, output_tokens: 45, total_tokens: 168 }, output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: JSON.stringify({
         identity: { status: 'unresolved', variant_name: null, suggestion: null, reason: 'No exact published variant evidence.', reference_ids: [], photo_features: [] },
+        photo_identity: { schema_version: 1, status: 'unresolved', observations: [], reason: 'The original photos do not establish a distinct printing.' },
         target_condition: { status: 'raw', grader: null, numeric_grade: null, photo_evidence: 'Original photos show a raw card.' }, selected_candidate_ids: [], refinement: null,
         comparisons: items.map(item => ({ candidate_id: `ebay:${item.itemId}`, classification: 'possible', identity_match: true, variant_match: false, visual_match: false, condition_match: true, reason: 'The exact printing remains unresolved.' })),
       }) }] }] }, { headers: { 'x-request-id': 'synthetic-openai-request' } });

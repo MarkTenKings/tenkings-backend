@@ -38,7 +38,7 @@ export default function StaffInventoryResearchRecovery({ snapshot, enabled, onEd
     {sources && <div className={styles.sources}>
       <h5>Unreviewed source suggestions</h5>
       {sources.status === 'candidates' ? <><p>Search results only. The recovery check has not fetched or approved these pages as catalog evidence.</p><ul>{sources.candidates.map(source => <li key={source.url}><a href={source.url} target="_blank" rel="noopener noreferrer">{source.title}</a><span>{source.domain}</span></li>)}</ul></>
-        : <p>{sources.status === 'not_found' ? 'The bounded source search found no usable review links.' : 'Source search was unavailable during the last check.'} Catalog evidence is still needed.</p>}
+        : <p>{sources.status === 'not_found' ? 'The bounded source search found no usable review links.' : 'Source search was unavailable during the last check.'} This is separate from eBay comp retrieval.</p>}
     </div>}
     {(added.length > 0 || snapshot.conflicts.length > 0) && <div className={styles.proposals}>
       <h5>Photo suggestions · not saved to inventory</h5>
@@ -50,6 +50,6 @@ export default function StaffInventoryResearchRecovery({ snapshot, enabled, onEd
     {snapshot.checked_at && <p className={styles.timing}>Last checked <time dateTime={snapshot.checked_at}>{date(snapshot.checked_at)}</time>.</p>}
     {enabled && snapshot.next_check_at && snapshot.status !== 'resolved' && <p className={styles.timing}>Next eligible evidence check <time dateTime={snapshot.next_check_at}>{date(snapshot.next_check_at)}</time>. A check does not guarantee a new search or a value.</p>}
     {hasReview && (onEditDetails ? <button type="button" onClick={onEditDetails}>Review in Edit details</button> : <p>Use Edit details &amp; price to review or correct the saved card details.</p>)}
-    {needsCatalog && <div className={styles.catalog}><a href={`${COLLECT_SITE_ORIGIN}/admin/set-ops-review`} target="_blank" rel="noreferrer">Open catalog review</a><p>Catalog evidence must pass the existing authenticated review and publication steps before it can support research.</p></div>}
+    {needsCatalog && <details className={styles.catalog}><summary>Catalog evidence</summary><p>Missing catalog evidence does not block automatic eBay searches. Staff can review the retrieved listings without preparing a catalog entry.</p><a href={`${COLLECT_SITE_ORIGIN}/admin/set-ops-review`} target="_blank" rel="noreferrer">Open catalog review</a><p>Reusable catalog evidence still requires authenticated review and publication.</p></details>}
   </section>;
 }

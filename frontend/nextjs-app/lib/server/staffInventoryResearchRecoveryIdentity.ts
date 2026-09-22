@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson } from '@tenkings/card-catalog-evidence';
-import type { StaffInventoryResearchRecoveryAssessment } from '@tenkings/shared';
+import { STAFF_INVENTORY_RESEARCH_RECOVERY_BEHAVIOR_VERSION, STAFF_INVENTORY_RESEARCH_PHOTO_ENGINE_VERSION, type StaffInventoryResearchRecoveryAssessment } from '@tenkings/shared';
 import {
   STAFF_INVENTORY_IDENTIFICATION_FIELDS, StaffInventoryIdentificationRequestSchema,
   isStaffInventoryIdentificationResponse, type StaffInventoryIdentificationField,
@@ -13,9 +13,9 @@ import {
   type StaffInventoryResearchReference, type StaffInventoryResearchCatalogContext,
 } from '../staffInventoryResearch';
 import { retainResearchCatalogScope, type ResearchCatalogSnapshot } from './staffInventoryResearchCatalog';
-import { isExactStaffInventoryResearchReference } from './staffInventoryResearch';
+import { buildStaffInventoryResearchQuery, isExactStaffInventoryResearchReference } from './staffInventoryResearch';
 
-export const STAFF_INVENTORY_RECOVERY_IDENTITY_VERSION = 'staff-inventory-recovery-identity-v1' as const;
+export const STAFF_INVENTORY_RECOVERY_IDENTITY_VERSION = STAFF_INVENTORY_RESEARCH_RECOVERY_BEHAVIOR_VERSION;
 export type StaffInventoryRecoveryIdentityNeed =
   | 'MISSING_ORIGINAL_PHOTOS' | 'MISSING_IDENTITY_FIELDS' | 'DESCRIPTION_CONFLICT'
   | 'RECOGNITION_UNAVAILABLE' | 'RECOGNITION_FAILED' | 'RECOGNITION_DEFERRED'
@@ -32,6 +32,8 @@ export type StaffInventoryRecoveryIdentityDependencies = {
   loadReferences?: (description: StaffInventoryResearchDescription, signal: AbortSignal) => Promise<StaffInventoryResearchReference[]>;
   loadCatalog?: (description: StaffInventoryResearchDescription, signal: AbortSignal) => Promise<ResearchCatalogSnapshot>;
   researchEngineVersion?: string;
+  /** Revalidate retained v1 authority using its original resolver/hash contract. */
+  legacyAuthority?: boolean;
 };
 
 const sha = (value: unknown) => createHash('sha256').update(canonicalJson(value)).digest('hex');
@@ -71,8 +73,10 @@ export async function prepareStaffInventoryResearchRecoveryIdentity(
     ...(source.front_photo_key ? { front: { sha256: source.front_photo_key.slice(-68, -4) } } : {}),
     ...(source.back_photo_key ? { back: { sha256: source.back_photo_key.slice(-68, -4) } } : {}),
   });
+  const engineVersion = deps.researchEngineVersion ?? (deps.legacyAuthority ? STAFF_INVENTORY_RESEARCH_ENGINE_VERSION : STAFF_INVENTORY_RESEARCH_PHOTO_ENGINE_VERSION);
   const output: StaffInventoryRecoveryIdentity = {
-    schema_version: 1, resolver_version: STAFF_INVENTORY_RECOVERY_IDENTITY_VERSION,
+    schema_version: 1, resolver_version: deps.legacyAuthority ? 'staff-inventory-recovery-identity-v1' : STAFF_INVENTORY_RECOVERY_IDENTITY_VERSION,
+    ...(!deps.legacyAuthority ? { research_engine_version: engineVersion } : {}),
     source_input_sha256: sha(source), description_event_id: source.description_event_id, description_hash: source.description_hash,
     proposed_description: { ...source.description }, added_fields: [], conflicts: [], missing_fields: [],
     recognition: { status: 'not_needed', evidence: null }, references: [],
@@ -127,12 +131,15 @@ export async function prepareStaffInventoryResearchRecoveryIdentity(
   if (output.missing_fields.length) need('MISSING_IDENTITY_FIELDS');
   if (output.conflicts.length) need('DESCRIPTION_CONFLICT');
   if (!category(output.proposed_description.category)) need('UNSUPPORTED_CATEGORY');
-  // No expensive listing/model research or catalog scope model is useful until
-  // the original pair and exact descriptive anchors are available.
-  if (output.need_codes.length) return output;
-
+  // Catalog completeness and conflicting suggestions are selection warnings,
+  // not permission to skip eBay retrieval from the immutable saved facts.
+  // Missing original photos prevent visual qualification, not a saved-name search.
+  if (deps.legacyAuthority && output.need_codes.length || !buildStaffInventoryResearchQuery(output.proposed_description)) return output;
+  const canLookupCatalog = !output.missing_fields.length && !output.conflicts.length && !!category(output.proposed_description.category);
   try {
-    if (deps.loadCatalog) {
+    if (!canLookupCatalog) {
+      need('MISSING_CATALOG_REFERENCE');
+    } else if (deps.loadCatalog) {
       const snapshot = await deps.loadCatalog(output.proposed_description, signal);
       cancelled(signal);
       output.catalog_context = StaffInventoryResearchCatalogContextSchema.parse(snapshot.context);
@@ -140,7 +147,7 @@ export async function prepareStaffInventoryResearchRecoveryIdentity(
         output.catalog_context.scope_evidence = previousScope.scope_evidence;
         output.catalog_context.scope_receipt = previousScope.scope_receipt;
       }
-      if (output.catalog_context.status === 'unavailable') { need('CATALOG_UNAVAILABLE'); return output; }
+      if (output.catalog_context.status === 'unavailable') need('CATALOG_UNAVAILABLE');
       const records = snapshot.references.map(reference => StaffInventoryResearchReferenceSchema.parse(reference));
       if (records.length > 24 || new Set(records.map(reference => reference.id)).size !== records.length) throw new Error('Invalid catalog records.');
       for (const reference of records) {
@@ -170,19 +177,20 @@ export async function prepareStaffInventoryResearchRecoveryIdentity(
     // Never retain stale publication authority as a side effect of retaining an
     // already-paid observation; every later reference is read and checked anew.
     output.catalog_context = previousScope ? { schema_version: 1, status: 'unavailable', publications: [], ...previousScope } : null;
-    need('CATALOG_UNAVAILABLE'); return output;
+    need('CATALOG_UNAVAILABLE');
   }
   const catalogReferences = output.references.filter(reference => reference.kind === 'catalog');
   if (!catalogReferences.length) need('MISSING_CATALOG_REFERENCE');
   else if (!catalogReferences.some(reference => reference.distinguishing_features.length)) need('MISSING_DIAGNOSTIC_EVIDENCE');
-  output.ready_for_research = output.need_codes.length === 0;
+  output.ready_for_research = !deps.legacyAuthority || output.need_codes.length === 0;
   if (output.ready_for_research) {
     // Stable under receipt timestamps, provider wording and query row ordering.
     // A new reviewed manifest/row, photo, recovered fact or engine is material.
+    // Warning wording, catalog outages and empty lookups do not create retries.
     const evidence = output.references.map(({ captured_at: _captured, ...reference }) => reference)
       .sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b), 'en'));
     output.evidence_sha256 = sha({ resolver_version: output.resolver_version,
-      research_engine_version: deps.researchEngineVersion ?? STAFF_INVENTORY_RESEARCH_ENGINE_VERSION,
+      research_engine_version: engineVersion,
       source_input_sha256: output.source_input_sha256, description: output.proposed_description, references: evidence });
   }
   return output;

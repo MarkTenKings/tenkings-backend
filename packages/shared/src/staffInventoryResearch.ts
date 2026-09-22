@@ -4,6 +4,7 @@ import { resolveStaffInventoryResearchSaleDetails, STAFF_INVENTORY_RESEARCH_SALE
 export const STAFF_INVENTORY_RESEARCH_MODEL = 'gpt-6-astra' as const;
 export const STAFF_INVENTORY_RESEARCH_ENGINE_VERSION = 'staff-inventory-research-v3' as const;
 export const STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION = 'staff-inventory-research-v4' as const;
+export const STAFF_INVENTORY_RESEARCH_PHOTO_ENGINE_VERSION = 'staff-inventory-research-v6' as const;
 export const STAFF_INVENTORY_RESEARCH_LIMITS = { searches: 3, candidates: 24, candidateImages: 12, references: 24, referenceImages: 4, minimumComps: 2, overallTimeoutMs: 150000 } as const;
 
 const unsafeText = /[\u0000-\u001f\u007f]|https?:\/\/|data:|\b(?:sk|sess|proj)-[A-Za-z0-9_-]{8,}|(?:^|\s)(?:\/[\w.-]+){2,}|<\/?[a-z][^>]*>/i;
@@ -184,6 +185,26 @@ export const StaffInventoryResearchIdentitySchema = z.object({
   status: z.enum(['base', 'variant', 'unresolved']), variant_name: text(160).nullable(), suggestion: text(160).nullable(), reason: text(400),
   reference_ids: z.array(id).max(24), photo_features: z.array(StaffInventoryResearchPhotoFeatureSchema).max(12),
 }).strict();
+/** Private observations from this physical card, never catalog publication or
+ * grading authority. Kept separate so existing catalog conclusions retain their
+ * exact meaning and immutable v1-v5 snapshots keep their original bytes. */
+export const StaffInventoryResearchPhotoIdentitySchema = z.object({
+  schema_version: z.literal(1), status: z.enum(['supported', 'unresolved']),
+  observations: z.array(z.object({
+    field: z.enum(['name', 'year', 'manufacturer', 'set_name', 'card_number', 'treatment']),
+    value: text(160), side: z.enum(['front', 'back']), photo_sha256: sha256, observation: text(400),
+  }).strict()).max(6),
+  reason: text(400),
+}).strict().superRefine((value, ctx) => {
+  const fields = new Set(value.observations.map(observation => observation.field));
+  if (fields.size !== value.observations.length) ctx.addIssue({ code: 'custom', message: 'Duplicate photographed identity field.' });
+  if (value.status === 'supported' && value.observations.some(observation => /^(?:unknown|unresolved|n\/?a|not visible|not supplied)$/i.test(observation.value))) ctx.addIssue({ code: 'custom', message: 'Unknown observations cannot establish photographed identity.' });
+  const treatment = value.observations.find(observation => observation.field === 'treatment');
+  if (value.status === 'supported' && treatment && (/^(?:base(?: card)?|standard|regular|normal|non[- ]?holo(?:graphic)?|non[- ]?foil|raw|ungraded)$/i.test(treatment.value)
+    || /\b(?:no|without|absence of|lack of|not)\s+(?:visible\s+)?(?:foil|holo|stamp|parallel|variant|edition)\b|\b(?:appears|probably|likely)\s+(?:base|standard|regular)\b/i.test(`${treatment.value} ${treatment.observation}`))) ctx.addIssue({ code: 'custom', message: 'A generic label or absent feature is not positive printing evidence.' });
+  if (value.status === 'supported' && (['name', 'year', 'set_name', 'card_number', 'treatment'].some(field => !fields.has(field as typeof value.observations[number]['field']))
+    || new Set(value.observations.map(observation => observation.side)).size !== 2)) ctx.addIssue({ code: 'custom', message: 'Both original sides and positive identity/treatment observations are required.' });
+});
 export const StaffInventoryResearchConditionSchema = z.object({
   status: z.enum(['raw', 'graded', 'unresolved']), grader: z.enum(['PSA', 'BGS', 'SGC', 'CGC']).nullable(), numeric_grade: z.number().min(1).max(10).nullable(), photo_evidence: text(240).nullable(),
 }).strict().refine(value => value.status === 'graded' ? value.grader !== null && value.numeric_grade !== null && value.photo_evidence !== null : value.grader === null && value.numeric_grade === null && (value.status === 'unresolved' || value.photo_evidence !== null));
@@ -238,7 +259,7 @@ const saleDetails = z.object({
 /** This validates the private persistence boundary as well as the engine output. */
 export const StaffInventoryResearchResultSchema = z.object({
   schema_version: z.literal(1), unit_id: sourceId, description_event_id: sourceId, description_hash: sha256,
-  engine_version: z.enum(['staff-inventory-research-v1', 'staff-inventory-research-v2', STAFF_INVENTORY_RESEARCH_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_SALE_DETAILS_ENGINE_VERSION]), model: z.literal(STAFF_INVENTORY_RESEARCH_MODEL), researched_at: timestamp, timings_ms: timings,
+  engine_version: z.enum(['staff-inventory-research-v1', 'staff-inventory-research-v2', STAFF_INVENTORY_RESEARCH_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_SALE_DETAILS_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_PHOTO_ENGINE_VERSION]), model: z.literal(STAFF_INVENTORY_RESEARCH_MODEL), researched_at: timestamp, timings_ms: timings,
   photos: z.object({ front: photo.nullable(), back: photo.nullable() }).strict(), query: text(400).nullable(),
   // Do not add defaults: parsing an existing immutable v1 result must preserve its hash.
   research_queries: z.array(researchQuery).max(STAFF_INVENTORY_RESEARCH_LIMITS.searches).optional(),
@@ -246,6 +267,7 @@ export const StaffInventoryResearchResultSchema = z.object({
   diagnostics: diagnostics.optional(),
   catalog_context: StaffInventoryResearchCatalogContextSchema.optional(),
   sale_details: saleDetails.optional(),
+  photo_identity: StaffInventoryResearchPhotoIdentitySchema.optional(),
   identity: StaffInventoryResearchIdentitySchema, target_condition: StaffInventoryResearchConditionSchema,
   references: z.array(StaffInventoryResearchReferenceSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.references),
   candidates: z.array(StaffInventoryResearchCandidateSchema).max(STAFF_INVENTORY_RESEARCH_LIMITS.candidates),
@@ -257,7 +279,15 @@ export const StaffInventoryResearchResultSchema = z.object({
   const fail = (message: string) => ctx.addIssue({ code: 'custom', message });
   const candidates = new Map(value.candidates.map(candidate => [candidate.id, candidate]));
   const references = new Map(value.references.map(reference => [reference.id, reference]));
-  const detailEngine = value.engine_version === STAFF_INVENTORY_RESEARCH_SALE_DETAILS_ENGINE_VERSION;
+  const photoEngine = value.engine_version === STAFF_INVENTORY_RESEARCH_PHOTO_ENGINE_VERSION;
+  const photoIdentitySupported = photoEngine && value.photo_identity?.status === 'supported';
+  if (photoEngine ? !value.photo_identity : value.photo_identity !== undefined) fail('Photographed identity requires an explicit v6 result.');
+  if (value.photo_identity) {
+    if (value.photo_identity.observations.some(observation => value.photos[observation.side]?.sha256 !== observation.photo_sha256)) fail('Unbound photographed identity.');
+    if (photoIdentitySupported && (!value.photos.front || !value.photos.back || value.photos.front.sha256 === value.photos.back.sha256)) fail('Distinct original photographs are required.');
+  }
+  const detailEngine = value.engine_version === STAFF_INVENTORY_RESEARCH_SALE_DETAILS_ENGINE_VERSION || photoEngine && value.sale_details !== undefined;
+  if (photoEngine && value.sale_details && value.sale_details.base_engine_version !== (value.catalog_context ? STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION : STAFF_INVENTORY_RESEARCH_ENGINE_VERSION)) fail('Sale-detail mode does not match catalog provenance.');
   if (detailEngine) {
     if (!value.sale_details) fail('Missing v5 sale-detail evidence.');
     if (value.sale_details) {
@@ -271,8 +301,9 @@ export const StaffInventoryResearchResultSchema = z.object({
     }
   } else if (value.sale_details || value.candidates.some(candidate => candidate.ordinary_sale_detail)) fail('Sale-detail evidence requires an explicit v5 result.');
   const catalogEngine = value.engine_version === STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION
-    || detailEngine && value.sale_details?.base_engine_version === STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION;
-  if (value.engine_version === 'staff-inventory-research-v3' || catalogEngine || detailEngine) {
+    || detailEngine && value.sale_details?.base_engine_version === STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION
+    || photoEngine && value.catalog_context !== undefined;
+  if (value.engine_version === 'staff-inventory-research-v3' || catalogEngine || detailEngine || photoEngine) {
     if (!value.diagnostics || !value.research_queries || !value.comparison_assessments) fail('Missing v3 decision evidence.');
     if (value.candidates.some(candidate => !candidate.sale_evidence || !candidate.image_options || candidate.multiple_price_options === undefined)) fail('Missing source decision evidence.');
   }
@@ -290,7 +321,7 @@ export const StaffInventoryResearchResultSchema = z.object({
         if (!lookup || lookup.returned_count === 0 || lookup.truncated || lookup.coverage.text === 'truncated' || lookup.coverage.applicability === 'truncated') fail('Reference requires usable catalog coverage.');
         for (const field of ['language', 'edition', 'format', 'channel'] as const) if (ref.catalog_binding.scope[field] !== 'not_applicable' && !context.scope_evidence.some(e => e.field === field && e.value === ref.catalog_binding!.scope[field])) fail('Unobserved catalog printing scope.');
       }
-      if (context.status !== 'current' && (value.references.length || value.identity.status !== 'unresolved' || value.selected_candidate_ids.length)) fail('Unavailable catalog cannot establish identity.');
+      if (context.status !== 'current' && (value.references.length || value.identity.status !== 'unresolved' || value.selected_candidate_ids.length && !photoIdentitySupported)) fail('Unavailable catalog cannot establish identity.');
     }
   } else if (value.catalog_context || value.references.some(ref => ref.catalog_binding)) fail('Catalog evidence requires an explicit v4 result.');
   if (value.diagnostics) {
@@ -335,7 +366,7 @@ export const StaffInventoryResearchResultSchema = z.object({
   if (new Set(value.identity.reference_ids).size !== value.identity.reference_ids.length || value.identity.reference_ids.some(reference => !references.has(reference))) fail('Unknown identity reference.');
   if (value.identity.photo_features.some(feature => value.photos[feature.side]?.sha256 !== feature.photo_sha256 || !value.identity.reference_ids.includes(feature.reference_id))) fail('Unbound photo evidence.');
   if (value.identity.status === 'unresolved') {
-    if (value.identity.variant_name !== null || value.selected_candidate_ids.length) fail('Unresolved identity cannot establish a value.');
+    if (value.identity.variant_name !== null || value.selected_candidate_ids.length && !photoIdentitySupported) fail('Unresolved identity cannot establish a value.');
   } else {
     if (!value.photos.front || !value.photos.back || value.photos.front.sha256 === value.photos.back.sha256 || !value.identity.photo_features.length || value.identity.variant_name === null) fail('Missing exact photo evidence.');
     const authority = value.identity.reference_ids.map(reference => references.get(reference)).find(reference => reference?.kind === 'catalog' && reference.variant_name === value.identity.variant_name && (value.identity.status === 'base' ? reference.variant_kind === 'BASE' : reference.variant_kind !== 'BASE'));
@@ -358,6 +389,7 @@ export const StaffInventoryResearchResultSchema = z.object({
     const mean = prices.length ? Number((sum * 2n + BigInt(prices.length)) / (2n * BigInt(prices.length))) : null;
     if (prices.length < STAFF_INVENTORY_RESEARCH_LIMITS.minimumComps || value.estimate.count !== prices.length || value.estimate.value_cents !== mean || value.estimate.low_cents !== Math.min(...prices) || value.estimate.high_cents !== Math.max(...prices)) fail('Estimate does not match source cents.');
     if (new Set(selected.map(candidate => candidate?.image?.sha256)).size < STAFF_INVENTORY_RESEARCH_LIMITS.minimumComps) fail('Independent image comparisons are required.');
+    if (photoEngine && new Set(selected.map(candidate => candidate?.image?.sha256)).size !== selected.length) fail('Duplicate image evidence cannot receive extra weight.');
     if (value.target_condition.status === 'unresolved' || selected.some(candidate => !candidate || (value.target_condition.status === 'raw' ? !candidate.raw || /\b(?:PSA|BGS|SGC|CGC|HGA|GMA|AGS|TAG|graded|slab(?:bed)?)\b/i.test(`${candidate.title} ${candidate.condition ?? ''}`) : candidate.raw || candidate.grader !== value.target_condition.grader || candidate.numeric_grade !== value.target_condition.numeric_grade))) fail('Condition mismatch.');
   }
 });

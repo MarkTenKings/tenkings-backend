@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { getEventListeners } from 'node:events';
-import { prisma } from '@tenkings/database';
+import { prisma, canonical, inventoryHash } from '@tenkings/database';
+import { prepareStaffInventoryResearchRecoveryIdentity } from '../lib/server/staffInventoryResearchRecoveryIdentity';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createInventoryResearchCronHandler } from '../pages/api/cron/inventory-research';
 import { runStaffInventoryResearchWorker, staffInventoryResearchWorkerDependencies, type StaffInventoryResearchWorkerDependencies } from '../lib/server/staffInventoryResearchWorker';
@@ -205,4 +207,81 @@ test('superseded automatic authority or paused execution never falls back to pai
       (error: unknown) => error instanceof StaffInventoryResearchError && error.code === 'unavailable');
   }
   assert.equal(read.mock.callCount(), 1); assert.equal(fetch.mock.callCount(), 0);
+});
+
+
+test('v2 exact recovery claim reaches sold retrieval through a catalog outage without original photos', async t => {
+  const flags = { STAFF_INVENTORY_RESEARCH_RECOVERY_ENABLED: 'true', STAFF_INVENTORY_RESEARCH_CATALOG_EVIDENCE: 'false',
+    STAFF_INVENTORY_RESEARCH_SALE_DETAILS: 'false', SOLDCOMPS_API_KEY: 'synthetic-sold-key', OPENAI_API_KEY: 'synthetic-model-key' };
+  const previous = Object.fromEntries(Object.keys(flags).map(key => [key, process.env[key]]));
+  Object.assign(process.env, flags);
+  t.after(() => { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  const input = { schema_version: 1 as const, unit_id: 'fixture:recovery-dispatch', description_event_id: 'fixture:description', description_hash: 'a'.repeat(64),
+    front_photo_key: null, back_photo_key: null, description: { name: 'Fixture Runner', category: 'Sports cards', year: '2025', manufacturer: 'Fixture',
+      set_name: 'Fixture Product', card_number: '001', variant: null, card_type: null } };
+  const assessment = await prepareStaffInventoryResearchRecoveryIdentity(input, { loadReferences: async () => [] });
+  assert.equal(assessment.ready_for_research, true); assert.ok(assessment.need_codes.includes('MISSING_ORIGINAL_PHOTOS'));
+  const at = new Date().toISOString(), state = { schema_version: 1, behavior_revision: assessment.resolver_version, status: 'research_queued', reason: 'Synthetic current retrieval.', checked_at: at,
+    photo_attempts: [], source_attempts: [], scope_attempts: [], assessment,
+    refreshes: [{ evidence_sha256: assessment.evidence_sha256, at, attempt_count: 0, result_hash: null, assessment }] };
+  const row = { id: '11111111-1111-4111-8111-111111111111', unitId: input.unit_id, descriptionEventId: input.description_event_id, descriptionHash: input.description_hash,
+    input: canonical(input), inputHash: inventoryHash(input), status: 'running', attemptCount: 1, maxAttempts: 3, result: null, resultHash: null,
+    recoveryState: canonical(state), recoveryStateHash: inventoryHash(state) };
+  let catalogCalls = 0;
+  t.mock.method(prisma, '$queryRaw', (async (query: any) => {
+    if (String(query.sql).includes('FROM "StaffInventoryResearchJobV2"')) return [row];
+    catalogCalls++; throw Error('Synthetic catalog outage');
+  }) as any);
+  const fetch = t.mock.method(globalThis, 'fetch', async (target: any) => {
+    const url = new URL(String(target)); assert.equal(url.hostname, 'api.sold-comps.com');
+    return new Response(JSON.stringify({ keyword: url.searchParams.get('keyword'), page: 1, totalItems: 0, hasNextPage: false, items: [] }), { headers: { 'content-type': 'application/json' } });
+  });
+  const claim = { jobId: row.id, leaseToken: '22222222-2222-4222-8222-222222222222', leaseExpiresAt: new Date(Date.now() + 180000).toISOString(),
+    inputHash: row.inputHash, attempt: 1, recoveryEvidenceHash: assessment.evidence_sha256, input };
+  const result = await staffInventoryResearchWorkerDependencies.research(input, new AbortController().signal, claim);
+  assert.equal(fetch.mock.callCount(), 1); assert.equal(catalogCalls, 1); assert.equal(result.research_queries?.[0].status, 'completed');
+  assert.equal(result.estimate.status, 'unknown'); assert.deepEqual(result.photos, { front: null, back: null });
+});
+
+
+test('retained v1 queued authority uses its original preflight digest and still rejects lost catalog authority', async t => {
+  const flags = { STAFF_INVENTORY_RESEARCH_RECOVERY_ENABLED: 'true', STAFF_INVENTORY_RESEARCH_CATALOG_EVIDENCE: 'false', STAFF_INVENTORY_RESEARCH_FULL_RES_IMAGES: 'false',
+    STAFF_INVENTORY_RESEARCH_SALE_DETAILS: 'false', SOLDCOMPS_API_KEY: 'synthetic-sold-key', OPENAI_API_KEY: 'synthetic-model-key', STORAGE_MODE: 'local' };
+  const previous = Object.fromEntries(Object.keys(flags).map(key => [key, process.env[key]])); Object.assign(process.env, flags);
+  t.after(() => { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  const input = { schema_version: 1 as const, unit_id: 'fixture:v1-dispatch', description_event_id: 'fixture:v1-description', description_hash: 'a'.repeat(64), description,
+    front_photo_key: `inventory-photos/11111111-1111-4111-8111-111111111111/${'c'.repeat(64)}.jpg`, back_photo_key: `inventory-photos/11111111-1111-4111-8111-111111111111/${'d'.repeat(64)}.jpg` };
+  const catalogRow = { cardId: 'card', setId: '2025_Fixture_Chrome_Baseball', cardNumber: '007/100', playerName: 'Fixture Runner', metadataJson: null,
+    parallelId: 'gold', label: 'Gold', serialText: '/50', finishFamily: 'gold border', visualCuesJson: { border: 'Gold around image' }, variationId: null,
+    variationLabel: null, scopeNote: null, cardSourceId: 'cs', parallelSourceId: 'ps', scopeSourceId: 'ss', sourceUrl: null, sourceMetadata: null,
+    cardReviewedAt: new Date('2026-09-01T00:00:00.000Z'), parallelReviewedAt: new Date('2026-09-01T00:00:00.000Z'), scopeReviewedAt: new Date('2026-09-01T00:00:00.000Z'), variationSourceId: null, variationReviewedAt: null };
+  const references = staffInventoryResearchCatalogReferences(description, [catalogRow]); assert.equal(references.length, 1);
+  // Reconstruct the deployed v1 wire contract independently, never via the v2 preparer.
+  const evidence = references.map(({ captured_at: _time, ...value }) => value);
+  const originalDigest = createHash('sha256').update(canonical({ resolver_version: 'staff-inventory-recovery-identity-v1',
+    research_engine_version: 'staff-inventory-research-v3:search-prices:standard-images', source_input_sha256: inventoryHash(input), description, references: evidence })).digest('hex');
+  const assessment = { schema_version: 1, resolver_version: 'staff-inventory-recovery-identity-v1', source_input_sha256: inventoryHash(input),
+    description_event_id: input.description_event_id, description_hash: input.description_hash, proposed_description: description,
+    added_fields: [], conflicts: [], missing_fields: [], recognition: { status: 'not_needed', evidence: null }, references, catalog_context: null,
+    need_codes: [], evidence_sha256: originalDigest, ready_for_research: true };
+  const at = new Date().toISOString(), state = { schema_version: 1, status: 'research_queued', reason: 'Retained v1 authority.', checked_at: at,
+    photo_attempts: [], source_attempts: [], scope_attempts: [], assessment,
+    refreshes: [{ evidence_sha256: originalDigest, at, attempt_count: 0, result_hash: null, assessment }] };
+  const row = { id: '11111111-1111-4111-8111-111111111111', unitId: input.unit_id, descriptionEventId: input.description_event_id, descriptionHash: input.description_hash,
+    input: canonical(input), inputHash: inventoryHash(input), status: 'running', attemptCount: 1, maxAttempts: 3, result: null, resultHash: null, recoveryState: canonical(state), recoveryStateHash: inventoryHash(state) };
+  let catalogAvailable = true;
+  t.mock.method(prisma, '$queryRaw', (async (query: any) => String(query.sql).includes('FROM "StaffInventoryResearchJobV2"') ? [row] : catalogAvailable ? [catalogRow] : []) as any);
+  const fetch = t.mock.method(globalThis, 'fetch', async (target: any) => {
+    const url = new URL(String(target)); assert.equal(url.hostname, 'api.sold-comps.com');
+    return new Response(JSON.stringify({ keyword: url.searchParams.get('keyword'), page: 1, totalItems: 0, hasNextPage: false, items: [] }), { headers: { 'content-type': 'application/json' } });
+  });
+  const claim = { jobId: row.id, leaseToken: '22222222-2222-4222-8222-222222222222', leaseExpiresAt: new Date(Date.now() + 180000).toISOString(),
+    inputHash: row.inputHash, attempt: 1, recoveryEvidenceHash: originalDigest, input };
+  const bytes = row.recoveryState;
+  const result = await staffInventoryResearchWorkerDependencies.research(input, new AbortController().signal, claim);
+  assert.equal(result.research_queries?.[0].status, 'completed'); assert.equal(fetch.mock.callCount(), 1); assert.equal(row.recoveryState, bytes);
+  catalogAvailable = false;
+  await assert.rejects(staffInventoryResearchWorkerDependencies.research(input, new AbortController().signal, claim),
+    (error: unknown) => error instanceof StaffInventoryResearchError && error.code === 'unavailable');
+  assert.equal(fetch.mock.callCount(), 1);
 });

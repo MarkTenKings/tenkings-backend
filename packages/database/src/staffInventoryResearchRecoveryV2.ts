@@ -2,17 +2,17 @@ import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { StaffInventoryResearchInputSchema, StaffInventoryResearchResultSchema, StaffInventoryResearchRecoveryAssessmentSchema, StaffInventoryResearchRecoverySnapshotSchema,
-  StaffInventoryResearchRecoveryStatusSchema, STAFF_INVENTORY_RESEARCH_RECOVERY_LIMITS as LIMITS, type StaffInventoryResearchInput, type StaffInventoryResearchRecoveryAssessment,
+  StaffInventoryResearchRecoveryStatusSchema, STAFF_INVENTORY_RESEARCH_RECOVERY_BEHAVIOR_VERSION as BEHAVIOR_VERSION, STAFF_INVENTORY_RESEARCH_RECOVERY_LIMITS as LIMITS, type StaffInventoryResearchInput, type StaffInventoryResearchRecoveryAssessment,
   type StaffInventoryResearchRecoverySnapshot, type StaffInventoryRecoverySourceDiscovery } from '@tenkings/shared';
 import { canonical, inventoryHash, CardInventoryErrorV2 } from './cardInventoryV2';
 import { readWorkflowHistoryV2 } from './inventoryWorkflowV2Read';
 import { replayWorkflowEventsV2, type WorkflowStateV2 } from './inventoryWorkflowV2State';
-import { syncStaffInventoryResearchV2, STAFF_INVENTORY_RESEARCH_LIMITS_V2 } from './staffInventoryResearchV2';
+import { syncStaffInventoryResearchV2, isIndividuallyDescribedStaffInventoryUnitV2, STAFF_INVENTORY_RESEARCH_LIMITS_V2 } from './staffInventoryResearchV2';
 
 type Tx = Prisma.TransactionClient;
 type Reader = Pick<Tx, '$queryRaw'>;
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
-const stateSchema = z.object({ schema_version: z.literal(1), status: StaffInventoryResearchRecoveryStatusSchema, reason: z.string().min(1).max(400), checked_at: z.string().datetime().nullable(),
+const stateSchema = z.object({ schema_version: z.literal(1), behavior_revision: z.literal(BEHAVIOR_VERSION).optional(), status: StaffInventoryResearchRecoveryStatusSchema, reason: z.string().min(1).max(400), checked_at: z.string().datetime().nullable(),
   source_attempts: z.array(z.object({ lease_token: z.string().uuid(), started_at: z.string().datetime(), demand_sha256: sha }).strict()).max(1),
   scope_attempts: z.array(z.object({ lease_token: z.string().uuid(), started_at: z.string().datetime() }).strict()).max(2),
   photo_attempts: z.array(z.object({ lease_token: z.string().uuid(), started_at: z.string().datetime() }).strict()).max(LIMITS.photoAttempts),
@@ -61,7 +61,9 @@ function verifyAssessment(assessment: StaffInventoryResearchRecoveryAssessment, 
 function eligible(state: WorkflowStateV2, row: Pick<Row, 'unitId' | 'descriptionEventId' | 'descriptionHash'>) {
   const unit = state.units.get(row.unitId);
   return !!unit?.description && unit.description_event_id === row.descriptionEventId && inventoryHash(unit.description) === row.descriptionHash
-    && unit.possession === 'recorded' && unit.batch_id === null && state.lots.get(unit.lot_id)?.data.quantity === 1 && !state.cancellations.has(unit.lot_id);
+    // Private research follows a known described card even after loading. A
+    // historical machine roster does not prove current possession or a sale.
+    && isIndividuallyDescribedStaffInventoryUnitV2(state, row.unitId) && !state.cancellations.has(unit.lot_id);
 }
 async function save(tx: Tx, row: Row, state: RecoveryState, next: Date | null, lease: { token: string; expires: Date } | null = null) {
   const encoded = canonical(stateSchema.parse(state));
@@ -74,7 +76,7 @@ function snapshot(row: Row): StaffInventoryResearchRecoverySnapshot {
   const completedRefresh = state.status === 'research_queued' && (row.status === 'complete' || row.status === 'failed');
   return StaffInventoryResearchRecoverySnapshotSchema.parse({ schema_version: 1, job_id: row.id, unit_id: row.unitId, description_event_id: row.descriptionEventId, input_hash: row.inputHash,
     status: resolved ? 'resolved' : completedRefresh ? 'waiting_new_evidence' : state.status,
-    reason: resolved ? 'Research now has supported sale evidence.' : completedRefresh ? 'This evidence has been researched. Waiting for meaningful new reviewed evidence.' : state.reason, checked_at: state.checked_at,
+    reason: resolved ? 'Research now has supported sale evidence.' : completedRefresh ? 'This evidence has been researched. Waiting for meaningful new photo, identity or sale evidence.' : state.reason, checked_at: state.checked_at,
     next_check_at: resolved ? null : row.recoveryNextCheckAt?.toISOString() ?? null, photo_attempt_count: state.photo_attempts.length, automatic_refresh_count: state.refreshes.length,
     missing_fields: assessment?.missing_fields ?? [], need_codes: assessment?.need_codes ?? [], proposal: assessment?.proposed_description ?? null, added_fields: assessment?.added_fields ?? [], conflicts: assessment?.conflicts ?? [],
     ...(assessment?.source_discovery ? { source_discovery: { status: assessment.source_discovery.status, candidates: assessment.source_discovery.candidates } } : {}) });
@@ -96,7 +98,7 @@ export async function claimStaffInventoryResearchRecoveryV2(tx: Tx, options: { l
   // Read-only cheap probes run before any inventory lock or full history replay.
   // False positives are harmless: only canonical replay can authorize a claim.
   const [due] = await tx.$queryRaw<{ due: boolean }[]>(Prisma.sql`SELECT EXISTS (SELECT 1 FROM "StaffInventoryResearchJobV2" j WHERE "status" IN ('queued','complete','failed')
-    AND "recoveryNextCheckAt" <= clock_timestamp() AND ("recoveryLeaseExpiresAt" IS NULL OR "recoveryLeaseExpiresAt" <= clock_timestamp())
+    AND ("recoveryNextCheckAt" <= clock_timestamp() OR COALESCE("recoveryState"::jsonb ->> 'behavior_revision', '') <> ${BEHAVIOR_VERSION}) AND ("recoveryLeaseExpiresAt" IS NULL OR "recoveryLeaseExpiresAt" <= clock_timestamp())
     AND ("status" <> 'queued' OR "attemptCount" = 0 AND COALESCE("recoveryState"::jsonb ->> 'status', '') <> 'research_queued')
     AND ("result" IS NULL OR "result"::jsonb -> 'estimate' ->> 'status' = 'unknown')
     AND NOT EXISTS (SELECT 1 FROM "StaffInventoryResearchReviewV2" r WHERE r."jobId" = j."id")) AS due`);
@@ -106,7 +108,7 @@ export async function claimStaffInventoryResearchRecoveryV2(tx: Tx, options: { l
       WHERE d."content"::jsonb #>> '{event,event_kind}' = 'item_described'
       AND NOT EXISTS (SELECT 1 FROM "StaffInventoryResearchJobV2" j WHERE j."unitId" = u AND j."status" <> 'superseded')
       AND EXISTS (SELECT 1 FROM "InventoryWorkflowEventV2" receipt WHERE receipt."content"::jsonb #>> '{event,event_kind}' IN ('purchase_received','opening_stock_recorded')
-        AND receipt."content"::jsonb #>> '{event,data,quantity}' = '1' AND (receipt."content"::jsonb #> '{event,data,unit_ids}') @> jsonb_build_array(u)
+        AND (receipt."content"::jsonb #>> '{event,data,quantity}' = '1' OR (jsonb_array_length(d."content"::jsonb #> '{event,data,unit_ids}') = 1 AND d."content"::jsonb #>> '{event,data,description,photo_key}' IS NOT NULL AND d."content"::jsonb #>> '{event,data,description,back_photo_key}' IS NOT NULL)) AND (receipt."content"::jsonb #> '{event,data,unit_ids}') @> jsonb_build_array(u)
         AND NOT EXISTS (SELECT 1 FROM "InventoryWorkflowEventV2" cancelled WHERE cancelled."content"::jsonb #>> '{event,event_kind}' = 'purchase_cancelled'
           AND cancelled."content"::jsonb #>> '{event,data,lot_id}' = receipt."content"::jsonb #>> '{event,data,lot_id}')) LIMIT 1) AS missing`);
     if (!missing.missing) return null;
@@ -127,19 +129,20 @@ export async function claimStaffInventoryResearchRecoveryV2(tx: Tx, options: { l
   if (missing.length) await syncStaffInventoryResearchV2(tx, current, missing.map(row => row.unitId));
   const rows = await tx.$queryRaw<Row[]>(Prisma.sql`SELECT ${columns} FROM "StaffInventoryResearchJobV2" j WHERE "unitId" IN (${Prisma.join(ids)}) AND ("status" IN ('complete', 'failed') OR "status" = 'queued' AND "attemptCount" = 0)
     AND NOT ("status" = 'queued' AND COALESCE("recoveryState"::jsonb ->> 'status', '') = 'research_queued')
-    AND "recoveryNextCheckAt" <= ${at} AND ("recoveryLeaseExpiresAt" IS NULL OR "recoveryLeaseExpiresAt" <= ${at})
+    AND ("recoveryNextCheckAt" <= ${at} OR COALESCE("recoveryState"::jsonb ->> 'behavior_revision', '') <> ${BEHAVIOR_VERSION}) AND ("recoveryLeaseExpiresAt" IS NULL OR "recoveryLeaseExpiresAt" <= ${at})
     AND ("result" IS NULL OR "result"::jsonb -> 'estimate' ->> 'status' = 'unknown')
     AND NOT EXISTS (SELECT 1 FROM "StaffInventoryResearchReviewV2" r WHERE r."jobId" = j."id")
     ORDER BY "recoveryNextCheckAt", "createdAt", "id" LIMIT 20 FOR UPDATE SKIP LOCKED`);
   for (const row of rows) {
     if (!eligible(current, row)) continue;
     const { input, state } = verified(row);
+    state.behavior_revision = BEHAVIOR_VERSION;
     if (row.attemptCount >= 9 || state.refreshes.length >= LIMITS.automaticRefreshes) { state.status = 'limit_reached'; state.reason = 'Automatic recovery reached its bounded attempt limit. Staff can review the saved details and evidence.'; await save(tx, row, state, null); continue; }
     const token = randomUUID(), expires = new Date(at.getTime() + leaseMs);
     const needsFields = ['name', 'category', 'year', 'manufacturer', 'set_name', 'card_number'].some(field => input.description[field as keyof typeof input.description] === null);
-    const allowRecognition = needsFields && !state.assessment?.recognition.evidence && !!input.front_photo_key && !!input.back_photo_key && state.photo_attempts.length < LIMITS.photoAttempts;
+    const allowRecognition = needsFields && !state.assessment?.recognition.evidence && !!input.front_photo_key && !!input.back_photo_key && input.front_photo_key.slice(-68) !== input.back_photo_key.slice(-68) && state.photo_attempts.length < LIMITS.photoAttempts;
     if (allowRecognition) state.photo_attempts.push({ lease_token: token, started_at: at.toISOString() });
-    state.status = 'checking_details'; state.reason = 'Checking the saved card details and reviewed catalog evidence.';
+    state.status = 'checking_details'; state.reason = 'Checking the original photos and saved card details before automatic comp retrieval.';
     await save(tx, row, state, expires, { token, expires });
     return { jobId: row.id, leaseToken: token, leaseExpiresAt: expires.toISOString(), input, inputHash: row.inputHash, expectedResultHash: row.resultHash, previousAssessment: state.assessment, allowRecognition, allowScopeResolution: state.scope_attempts.length < 2 };
   }
@@ -155,6 +158,18 @@ async function owned(tx: Tx, claim: StaffInventoryResearchRecoveryClaimV2, at: D
   const current = replayWorkflowEventsV2(await readWorkflowHistoryV2(tx));
   if (review.present || !eligible(current, row)) return null;
   return row;
+}
+/** Losing catalog availability is not new paid research evidence. Compare
+ * positive retained payloads, ignoring lookup timestamps, against prior attempts
+ * under the same exact description and engine configuration. */
+function alreadyResearchedEvidenceSubset(assessment: StaffInventoryResearchRecoveryAssessment, prior: StaffInventoryResearchRecoveryAssessment): boolean {
+  if (assessment.resolver_version !== BEHAVIOR_VERSION || prior.resolver_version !== BEHAVIOR_VERSION
+      || assessment.research_engine_version !== prior.research_engine_version
+      || assessment.source_input_sha256 !== prior.source_input_sha256
+      || canonical(assessment.proposed_description) !== canonical(prior.proposed_description)) return false;
+  const reference = ({ captured_at: _captured, ...value }: StaffInventoryResearchRecoveryAssessment['references'][number]) => canonical(value);
+  const known = new Set(prior.references.map(reference));
+  return assessment.references.every(value => known.has(reference(value)));
 }
 export async function completeStaffInventoryResearchRecoveryV2(tx: Tx, args: { claim: StaffInventoryResearchRecoveryClaimV2; assessment: unknown }): Promise<'queued' | 'waiting' | 'stale'> {
   const assessment = StaffInventoryResearchRecoveryAssessmentSchema.parse(args.assessment);
@@ -174,10 +189,11 @@ export async function completeStaffInventoryResearchRecoveryV2(tx: Tx, args: { c
   }
   state.assessment = assessment; state.checked_at = at.toISOString();
   const digest = assessment.evidence_sha256;
-  const fresh = assessment.ready_for_research && digest && !state.refreshes.some(refresh => refresh.evidence_sha256 === digest);
+  const fresh = assessment.ready_for_research && digest && !state.refreshes.some(refresh => refresh.evidence_sha256 === digest
+    || alreadyResearchedEvidenceSubset(assessment, refresh.assessment));
   if (fresh && row.attemptCount < 9 && state.refreshes.length < LIMITS.automaticRefreshes) {
     state.refreshes.push({ evidence_sha256: digest, at: at.toISOString(), attempt_count: row.attemptCount, result_hash: row.resultHash, assessment });
-    state.status = 'research_queued'; state.reason = 'New supported identity evidence is ready. Automatic research is queued.';
+    state.status = 'research_queued'; state.reason = 'The saved card search identity is ready. Automatic eBay comp retrieval is queued.';
     await save(tx, row, state, new Date(at.getTime() + LIMITS.recheckMs));
     // One attempt per evidence digest, including explicit-retry-exhausted inputs.
     // Original attempts, manual retry authority and result bytes remain intact.
@@ -185,9 +201,9 @@ export async function completeStaffInventoryResearchRecoveryV2(tx: Tx, args: { c
     return 'queued';
   }
   if (state.refreshes.length >= LIMITS.automaticRefreshes || row.attemptCount >= 9) { state.status = 'limit_reached'; state.reason = 'Automatic recovery reached its bounded attempt limit. Staff review is needed.'; }
-  else if (assessment.conflicts.length || assessment.missing_fields.length) { state.status = 'needs_staff_review'; state.reason = 'Some saved details remain missing or conflict with the photos. Review the suggested details.'; }
-  else if (!assessment.ready_for_research) { state.status = 'waiting_catalog_evidence'; state.reason = 'Waiting for useful reviewed catalog evidence for this exact card.'; }
-  else { state.status = 'waiting_new_evidence'; state.reason = 'This evidence has already been researched. Waiting for meaningful new reviewed evidence.'; }
+  else if (!assessment.ready_for_research && assessment.resolver_version === BEHAVIOR_VERSION) { state.status = 'needs_staff_review'; state.reason = 'The photos and saved details did not provide a usable card search identity. Review the card details.'; }
+  else if (!assessment.ready_for_research) { state.status = 'waiting_catalog_evidence'; state.reason = 'The retained assessment awaits automatic re-evaluation.'; }
+  else { state.status = 'waiting_new_evidence'; state.reason = 'This evidence has already been researched. Waiting for meaningful new photo, identity or sale evidence.'; }
   const unavailable = assessment.need_codes.some(code => ['RECOGNITION_FAILED', 'RECOGNITION_UNAVAILABLE', 'CATALOG_UNAVAILABLE'].includes(code));
   if (unavailable && state.status !== 'limit_reached') { state.status = 'waiting_new_evidence'; state.reason = 'The evidence service was unavailable. Automatic recovery will check again later.'; }
   await save(tx, row, state, state.status === 'limit_reached' ? null : new Date(at.getTime() + (unavailable ? LIMITS.errorBackoffMs : LIMITS.recheckMs)));

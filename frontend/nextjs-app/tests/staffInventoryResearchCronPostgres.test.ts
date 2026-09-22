@@ -191,7 +191,7 @@ test('authenticated default cron → default worker → real engine and durable 
     const stored = await raw(activeUnit), visible = await read(activeUnit);
     assert.equal(stored.status, 'complete'); assert.equal(stored.attemptCount, 1); assert.equal(stored.leaseToken, null); assert.equal(stored.leaseExpiresAt, null);
     assert.ok(stored.result); assert.equal(stored.resultHash, database.inventoryHash(JSON.parse(stored.result)));
-    assert.equal(database.canonical(visible.result), stored.result); assert.equal(visible.result!.engine_version, 'staff-inventory-research-v3');
+    assert.equal(database.canonical(visible.result), stored.result); assert.equal(visible.result!.engine_version, 'staff-inventory-research-v6');
     assert.equal(visible.result!.estimate.value_cents, 1002); assert.equal(visible.result!.estimate.count, 2);
     assert.ok(visible.result!.candidates.every(({ image }) => image !== null && image.storage_key === `research-evidence/${image.sha256}.jpg`));
     assert.equal(Object.hasOwn(visible.result!, 'sale_details'), false); assert.equal(Object.hasOwn(visible.result!, 'catalog_context'), false);

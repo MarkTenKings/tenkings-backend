@@ -86,7 +86,7 @@ test('catalog-only blockers show exact needs and the existing review route witho
     assert.match(ui.container.textContent!, /More than one catalog identity remains plausible/);
     assert.doesNotMatch(ui.container.textContent!, /Review in Edit details|Use Edit details|Still missing:/);
     assert.equal(ui.container.querySelector('a')!.href, 'https://collect.tenkings.co/admin/set-ops-review');
-    assert.match(ui.container.textContent!, /authenticated review and publication steps/); assert.equal(edits, 0);
+    assert.match(ui.container.textContent!, /authenticated review and publication/); assert.match(ui.container.textContent!, /does not block automatic eBay searches/); assert.equal(edits, 0);
   } finally { await ui.close(); }
 });
 

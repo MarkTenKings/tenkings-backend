@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { StaffInventoryResearchDescriptionSchema, StaffInventoryResearchPhotoKeySchema, StaffInventoryResearchReferenceSchema, StaffInventoryResearchCatalogContextSchema } from './staffInventoryResearch';
 
+export const STAFF_INVENTORY_RESEARCH_RECOVERY_BEHAVIOR_VERSION = 'staff-inventory-recovery-identity-v2' as const;
 export const STAFF_INVENTORY_RESEARCH_RECOVERY_LIMITS = Object.freeze({ photoAttempts: 2, automaticRefreshes: 3, maxSnapshotBytes: 131072, recheckMs: 6 * 60 * 60 * 1000, errorBackoffMs: 30 * 60 * 1000 });
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const field = z.enum(['name', 'category', 'manufacturer', 'card_number', 'year', 'set_name', 'variant', 'card_type']);
@@ -44,7 +45,7 @@ export const StaffInventoryRecoveryRecognitionSchema = z.object({
   }).strict(),
 }).strict();
 export const StaffInventoryResearchRecoveryAssessmentSchema = z.object({
-  schema_version: z.literal(1), resolver_version: z.literal('staff-inventory-recovery-identity-v1'), source_input_sha256: sha,
+  schema_version: z.literal(1), resolver_version: z.enum(['staff-inventory-recovery-identity-v1', STAFF_INVENTORY_RESEARCH_RECOVERY_BEHAVIOR_VERSION]), research_engine_version: text(200).optional(), source_input_sha256: sha,
   description_event_id: text(200), description_hash: sha, proposed_description: StaffInventoryResearchDescriptionSchema,
   added_fields: z.array(field).max(8), conflicts: z.array(z.object({ field, saved_value: text(160), suggested_value: text(160), evidence: text(240) }).strict()).max(8), missing_fields: z.array(field).max(8),
   recognition: z.object({ status: z.enum(['not_needed', 'completed', 'unavailable', 'failed', 'deferred']), evidence: StaffInventoryRecoveryRecognitionSchema.nullable() }).strict(),
@@ -52,7 +53,13 @@ export const StaffInventoryResearchRecoveryAssessmentSchema = z.object({
   need_codes: z.array(StaffInventoryResearchRecoveryNeedSchema).max(16), evidence_sha256: sha.nullable(), ready_for_research: z.boolean(),
   source_discovery: StaffInventoryRecoverySourceDiscoverySchema.optional(),
 }).strict().superRefine((value, ctx) => {
-  if (value.ready_for_research !== (value.evidence_sha256 !== null) || value.ready_for_research && (!value.references.some(reference => reference.kind === 'catalog' && reference.distinguishing_features.length > 0) || value.missing_fields.length || value.conflicts.length || value.need_codes.length)) ctx.addIssue({ code: 'custom', message: 'Recovery requires complete, conflict-free reviewed evidence.' });
+  if (value.ready_for_research !== (value.evidence_sha256 !== null)) ctx.addIssue({ code: 'custom', message: 'Recovery readiness requires its exact evidence digest.' });
+  if (value.resolver_version === STAFF_INVENTORY_RESEARCH_RECOVERY_BEHAVIOR_VERSION && !value.research_engine_version
+      || value.resolver_version === 'staff-inventory-recovery-identity-v1' && value.research_engine_version !== undefined) ctx.addIssue({ code: 'custom', message: 'Recovery engine configuration belongs to the v2 evidence contract only.' });
+  // Retained v1 assessments are immutable; their original authority stays strict.
+  if (value.resolver_version === 'staff-inventory-recovery-identity-v1' && value.ready_for_research && (!value.references.some(reference => reference.kind === 'catalog' && reference.distinguishing_features.length > 0) || value.missing_fields.length || value.conflicts.length || value.need_codes.length)) ctx.addIssue({ code: 'custom', message: 'Recovery requires complete, conflict-free reviewed evidence.' });
+  // Retrieval permission is separate from the evidence needed to select a sale.
+  if (value.resolver_version === STAFF_INVENTORY_RESEARCH_RECOVERY_BEHAVIOR_VERSION && value.ready_for_research && !value.proposed_description.name) ctx.addIssue({ code: 'custom', message: 'Automatic retrieval needs a usable card name.' });
   if (value.recognition.status === 'completed' && !value.recognition.evidence) ctx.addIssue({ code: 'custom', message: 'Completed recognition requires its original-photo receipt.' });
   for (const values of [value.added_fields, value.missing_fields]) if (new Set(values).size !== values.length) ctx.addIssue({ code: 'custom', message: 'Recovery fields must be unique.' });
 });

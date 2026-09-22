@@ -89,7 +89,7 @@ async function fixture(options: { rounds?: Row[][]; photos?: boolean; references
 
 test('v5 uses two exact ordinary details without overwriting the original search evidence', async () => {
   const f = await fixture({ rounds: [[row(), row(1, { bestOfferAccepted: null })]] }), before = structuredClone(f.rounds), result = await researchStaffInventoryCard(f.input, f.deps);
-  assert.equal(result.engine_version, 'staff-inventory-research-v5'); assert.equal(result.sale_details?.base_engine_version, 'staff-inventory-research-v3');
+  assert.equal(result.engine_version, 'staff-inventory-research-v6'); assert.equal(result.sale_details?.base_engine_version, 'staff-inventory-research-v3');
   assert.equal(result.estimate.value_cents, 8950); assert.equal(result.estimate.count, 2);
   assert.deepEqual(result.selected_candidate_ids, ['ebay:900000000000', 'ebay:900000000001']);
   assert.equal(f.detailCalls().length, 2); assert.deepEqual(f.rounds, before);
@@ -265,20 +265,20 @@ test('a detail transport that ignores abort cannot mutate the returned result wh
   assert.equal(canonical(result), before); assert.equal(result.candidates[0].sold_price_cents, null);
 });
 
-test('default and false preserve the same v3 bytes and never request details', async () => {
+test('default and false preserve the same v6 bytes and never request details', async () => {
   const results: StaffInventoryResearchResult[] = [];
   const originalNow = Date.now; Date.now = () => 0;
   try {
     for (const flag of [undefined, 'false', 'TRUE']) {
       const f = await fixture({ photos: false }); f.deps.env!.STAFF_INVENTORY_RESEARCH_SALE_DETAILS = flag;
       const result = await researchStaffInventoryCard(f.input, f.deps); results.push(result);
-      assert.equal(f.detailCalls().length, 0); assert.equal(result.engine_version, 'staff-inventory-research-v3');
+      assert.equal(f.detailCalls().length, 0); assert.equal(result.engine_version, 'staff-inventory-research-v6');
       assert.equal(Object.hasOwn(result, 'sale_details'), false); assert.ok(result.candidates.every(candidate => !Object.hasOwn(candidate, 'ordinary_sale_detail')));
     }
   } finally { Date.now = originalNow; }
   assert.equal(canonical(results[0]), canonical(results[1])); assert.equal(canonical(results[0]), canonical(results[2]));
   for (const engine_version of ['staff-inventory-research-v1', 'staff-inventory-research-v2', 'staff-inventory-research-v3']) {
-    const original = { ...results[0], engine_version };
+    const original = { ...results[0], engine_version }; delete original.photo_identity;
     assert.equal(canonical(StaffInventoryResearchResultSchema.parse(original)), canonical(original));
     assert.equal(inventoryHash(StaffInventoryResearchResultSchema.parse(original)), inventoryHash(original));
   }
@@ -353,6 +353,6 @@ test('v5 catalog mode retains v4 pin, coverage, printing-scope and final-current
   assert.equal(stale.catalog_context!.status, 'unavailable'); assert.deepEqual(stale.references, []); assert.equal(stale.estimate.status, 'unknown');
   f.deps.env!.STAFF_INVENTORY_RESEARCH_SALE_DETAILS = 'false'; current = true;
   const old = await researchStaffInventoryCard(f.input, f.deps);
-  assert.equal(old.engine_version, 'staff-inventory-research-v4'); assert.equal(Object.hasOwn(old, 'sale_details'), false);
+  assert.equal(old.engine_version, 'staff-inventory-research-v6'); assert.equal(Object.hasOwn(old, 'sale_details'), false);
   assert.equal(canonical(StaffInventoryResearchResultSchema.parse(old)), canonical(old)); assert.equal(inventoryHash(StaffInventoryResearchResultSchema.parse(old)), inventoryHash(old));
 });

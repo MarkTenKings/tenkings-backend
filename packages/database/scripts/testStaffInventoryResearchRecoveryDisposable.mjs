@@ -130,8 +130,8 @@ async function packageInfo(loader, name) {
   throw Error(`Cannot locate installed package ${name}.`);
 }
 async function seal() {
-  const roots = ['packages/database/src', 'packages/shared/src', 'packages/ebay-sold-comps-v2/src', 'packages/card-catalog-evidence/src', 'packages/database/prisma'];
-  const singles = [fixture, runner, 'frontend/nextjs-app/tests/fixtures/staffInventoryMarketValue.ts', 'frontend/nextjs-app/lib/staffInventoryResearch.ts', 'frontend/nextjs-app/tsconfig.json', 'package.json', 'pnpm-lock.yaml',
+  const roots = ['frontend/nextjs-app/lib/server', 'packages/database/src', 'packages/shared/src', 'packages/ebay-sold-comps-v2/src', 'packages/card-catalog-evidence/src', 'packages/database/prisma'];
+  const singles = [fixture, runner, 'frontend/nextjs-app/tests/fixtures/staffInventoryMarketValue.ts', 'frontend/nextjs-app/lib/staffInventoryResearch.ts', 'frontend/nextjs-app/lib/staffInventoryIdentification.ts', 'frontend/nextjs-app/tsconfig.json', 'package.json', 'pnpm-lock.yaml',
     ...['frontend/nextjs-app', 'packages/database', 'packages/shared', 'packages/ebay-sold-comps-v2', 'packages/card-catalog-evidence'].map(path => `${path}/package.json`)];
   const sources = [...await filesLedger(repo, roots)];
   for (const path of singles) sources.push({ path, sha256: sha(await readFile(join(repo, path))) });
@@ -231,7 +231,7 @@ try {
     await disk(diskFloor);
     fixtureStarted = true;
     const tap = await run(process.execPath, ['--import', pathToFileURL(requireFront.resolve('tsx')).href, '--test', '--test-reporter=tap', '--test-concurrency=1', join(repo, fixture)], { env: fixtureEnv, cwd: frontend, label: 'research-recovery-functional', timeoutMs: 150_000 });
-    for (const [name, count] of [['tests', 21], ['pass', 21], ['fail', 0], ['cancelled', 0], ['skipped', 0]]) assert.match(tap, new RegExp(`^# ${name} ${count}$`, 'm'), `The actual fixture must pass without skip: ${name}.`);
+    for (const [name, count] of [['tests', 26], ['pass', 26], ['fail', 0], ['cancelled', 0], ['skipped', 0]]) assert.match(tap, new RegExp(`^# ${name} ${count}$`, 'm'), `The actual fixture must pass without skip: ${name}.`);
     assert.deepEqual(await limited(seal, 120_000, 'Final source seal'), current, 'Source changed during the functional fixture.');
     completed = true;
   }

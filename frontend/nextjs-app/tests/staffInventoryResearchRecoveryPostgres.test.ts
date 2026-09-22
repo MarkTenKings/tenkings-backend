@@ -25,13 +25,18 @@ test('real PostgreSQL automatic recovery is bounded, durable, exact-bound and co
   const previousFetch = globalThis.fetch; globalThis.fetch = async () => assert.fail('No external HTTP is permitted.');
   const { PrismaClient } = await import('@prisma/client');
   const database = await import('@tenkings/database');
-  const { StaffInventoryResearchResultSchema } = await import('@tenkings/shared');
+  const { StaffInventoryResearchResultSchema, STAFF_INVENTORY_RESEARCH_RECOVERY_BEHAVIOR_VERSION } = await import('@tenkings/shared');
+  const { prepareStaffInventoryResearchRecoveryIdentity } = await import('../lib/server/staffInventoryResearchRecoveryIdentity');
   const { marketResult } = await import('./fixtures/staffInventoryMarketValue');
   const db = new PrismaClient({ datasources: { db: { url: url.href } } });
   const competitor = new PrismaClient({ datasources: { db: { url: url.href } } });
   const tx = <T>(work: (client: Prisma.TransactionClient) => Promise<T>) => db.$transaction(work, { isolationLevel: 'ReadCommitted', timeout: 30_000 });
   const raw = async (id: string) => (await db.$queryRawUnsafe<any[]>('SELECT * FROM "StaffInventoryResearchJobV2" WHERE id=$1', id))[0];
   const focus = async (id: string) => {
+    // New-version pending markers isolate fixture due dates; the dedicated
+    // legacy case below explicitly supplies the actual pre-v2 bytes.
+    const pending = { schema_version: 1, behavior_revision: STAFF_INVENTORY_RESEARCH_RECOVERY_BEHAVIOR_VERSION, status: 'pending', reason: 'Synthetic check awaits its due date.', checked_at: null, photo_attempts: [], scope_attempts: [], source_attempts: [], refreshes: [], assessment: null };
+    await db.$executeRawUnsafe('UPDATE "StaffInventoryResearchJobV2" SET "recoveryState"=$1,"recoveryStateHash"=$2 WHERE "recoveryState" IS NULL', database.canonical(pending), database.inventoryHash(pending));
     await db.$executeRawUnsafe('UPDATE "StaffInventoryResearchJobV2" SET "recoveryNextCheckAt"=CASE WHEN id=$1 THEN clock_timestamp() ELSE clock_timestamp()+interval \'1 day\' END, "nextAttemptAt"=CASE WHEN id=$1 THEN clock_timestamp() ELSE clock_timestamp()+interval \'1 day\' END', id);
   };
   const recovery = async (id: string, leaseMs = 90000) => { await focus(id); const result = await tx(client => database.claimStaffInventoryResearchRecoveryV2(client, { leaseMs })); assert.ok(result); assert.equal(result.jobId, id); return result; };
@@ -62,12 +67,83 @@ test('real PostgreSQL automatic recovery is bounded, durable, exact-bound and co
       return { command, id: job.job_id, unitId: job.unit_id };
     };
     const nextPaid = () => tx(client => database.claimStaffInventoryResearchV2(client, { requireRecovery: true }));
-    await t.test('new queued card waits for a current-bound recovery preflight', async () => {
+    const retrievalAssessment = (claim: StaffInventoryResearchRecoveryClaimV2) => prepareStaffInventoryResearchRecoveryIdentity(claim.input, { allowRecognition: false, loadReferences: async () => [] });
+    await t.test('new queued card automatically reaches first retrieval without catalog approval', async () => {
       const card = await seed(true); assert.equal(await nextPaid(), null);
-      assert.deepEqual(await database.readStaffInventoryResearchRecoveryV2(db, { jobIds: [card.id] }), []);
-      const claim = await recovery(card.id); assert.equal(await settle(claim), 'waiting'); assert.equal(await nextPaid(), null);
-      const [status] = await database.readStaffInventoryResearchRecoveryV2(db, { jobIds: [card.id] }); assert.equal(status.status, 'waiting_catalog_evidence'); assert.equal(status.automatic_refresh_count, 0);
-      const ready = await recovery(card.id); assert.equal(await settle(ready, assessment(ready, true)), 'queued'); const paid = await nextPaid(); assert.ok(paid); assert.equal(paid.attempt, 1); await complete(paid);
+      const claim = await recovery(card.id), value = await retrievalAssessment(claim);
+      assert.equal(value.ready_for_research, true); assert.deepEqual(value.references, []); assert.ok(value.need_codes.includes('MISSING_CATALOG_REFERENCE'));
+      assert.equal(await settle(claim, value), 'queued');
+      const [status] = await database.readStaffInventoryResearchRecoveryV2(db, { jobIds: [card.id] }); assert.equal(status.status, 'research_queued'); assert.equal(status.automatic_refresh_count, 1);
+      const paid = await nextPaid(); assert.ok(paid); assert.equal(paid.attempt, 1); assert.equal(paid.recoveryEvidenceHash, value.evidence_sha256); await complete(paid);
+    });
+    await t.test('a legacy six-hour catalog wait is rechecked immediately once without resetting history or budgets', async () => {
+      const card = await seed();
+      const [job] = await database.readStaffInventoryResearchV2(db, { unitIds: [card.unitId] });
+      await tx(client => database.retryStaffInventoryResearchV2(client, { requestId: randomUUID(), jobId: job.job_id, unitId: job.unit_id, descriptionEventId: job.description_event_id, inputHash: job.input_hash, expectedAttemptCount: job.attempt_count }, 'fixture-staff'));
+      const manual = await nextPaid(); assert.ok(manual); await complete(manual);
+      const row = await raw(card.id), legacyClaim = { input: JSON.parse(row.input), inputHash: row.inputHash } as StaffInventoryResearchRecoveryClaimV2;
+      const legacy = { schema_version: 1, status: 'waiting_catalog_evidence', reason: 'Waiting for reviewed catalog evidence.', checked_at: new Date().toISOString(),
+        photo_attempts: [], scope_attempts: [], source_attempts: [], refreshes: [], assessment: assessment(legacyClaim) };
+      await db.$executeRawUnsafe('UPDATE "StaffInventoryResearchJobV2" SET "recoveryState"=$1,"recoveryStateHash"=$2,"recoveryNextCheckAt"=clock_timestamp()+interval \'6 hours\' WHERE id=$3', database.canonical(legacy), database.inventoryHash(legacy), card.id);
+      const before = await raw(card.id); assert.ok(before.recoveryNextCheckAt.getTime() > Date.now() + 5 * 60 * 60 * 1000);
+      const claim = await tx(client => database.claimStaffInventoryResearchRecoveryV2(client)); assert.ok(claim); assert.equal(claim.jobId, card.id);
+      assert.deepEqual(claim.previousAssessment, legacy.assessment);
+      const during = await raw(card.id); assert.deepEqual(JSON.parse(during.recoveryState).assessment, legacy.assessment);
+      assert.equal(JSON.parse(during.recoveryState).behavior_revision, STAFF_INVENTORY_RESEARCH_RECOVERY_BEHAVIOR_VERSION);
+      assert.deepEqual(during.attempts, before.attempts); assert.deepEqual(during.retries, before.retries); assert.equal(during.maxAttempts, before.maxAttempts);
+      const value = await retrievalAssessment(claim); assert.equal(await settle(claim, value), 'queued');
+      const paid = await nextPaid(); assert.ok(paid); assert.equal(paid.attempt, before.attemptCount + 1); await complete(paid);
+      assert.equal(await tx(client => database.claimStaffInventoryResearchRecoveryV2(client)), null);
+      const again = await recovery(card.id); assert.equal(await settle(again, await retrievalAssessment(again)), 'waiting'); assert.equal(await nextPaid(), null);
+      const after = await raw(card.id); assert.deepEqual(after.retries, before.retries); assert.deepEqual(after.attempts.slice(0, before.attempts.length), before.attempts);
+      assert.equal(JSON.parse(after.recoveryState).refreshes.length, 1);
+    });
+    await t.test('missing originals remain a visible warning but do not block saved-name retrieval', async () => {
+      const command = add(); command.description.photo_key = null as any; command.description.back_photo_key = null as any;
+      await tx(client => database.recordStaffInventoryV2(client, command, 'fixture-staff'));
+      const [job] = await database.readStaffInventoryResearchV2(db, { unitIds: [`staff:${command.request_id}:card:0001`] });
+      const claim = await recovery(job.job_id), value = await retrievalAssessment(claim);
+      assert.equal(claim.allowRecognition, false); assert.ok(value.need_codes.includes('MISSING_ORIGINAL_PHOTOS')); assert.equal(value.ready_for_research, true);
+      assert.equal(await settle(claim, value), 'queued'); const paid = await nextPaid(); assert.ok(paid); assert.equal(paid.attempt, 1);
+      await tx(client => database.failStaffInventoryResearchV2(client, { jobId: paid.jobId, leaseToken: paid.leaseToken, errorCode: 'PROVIDER_ERROR', errorMessage: 'Synthetic terminal retrieval.', retryable: false }));
+    });
+    await t.test('loading a known exact card before its first cron or after unknown research never blocks private retrieval', async () => {
+      for (const beforeFirstSearch of [true, false]) {
+        const card = await seed(beforeFirstSearch), machine = `fixture-recovery-${randomUUID()}`;
+        await tx(client => database.recordStaffInventoryV2(client, { action: 'prepare', request_id: randomUUID(), effective_at: new Date().toISOString(),
+          note: 'Synthetic exact-card packing.', unit_ids: [card.unitId], stage: 'packed', product_id: 'fixture-product' }, 'fixture-staff'));
+        await tx(client => database.recordStaffInventoryV2(client, { action: 'move', request_id: randomUUID(), effective_at: new Date().toISOString(),
+          note: 'Synthetic physical loading.', unit_ids: [card.unitId], planned: false,
+          destination: { location_id: location.id, kind: 'machine', machine_id: machine, product_id: 'fixture-product', door_id: null } }, 'fixture-staff'));
+        const history = database.canonical(await database.readWorkflowHistoryV2(db));
+        const current = database.replayWorkflowEventsV2(await database.readWorkflowHistoryV2(db)), loaded = current.units.get(card.unitId)!;
+        assert.equal(loaded.possession, 'batch_identity_uncertain'); assert.ok(loaded.batch_id); assert.equal(loaded.custody.custody_id, `machine:${machine}`);
+        const before = await raw(card.id), claim = await recovery(card.id), value = await retrievalAssessment(claim);
+        assert.equal(await settle(claim, value), 'queued'); const paid = await nextPaid(); assert.ok(paid);
+        assert.equal(paid.attempt, beforeFirstSearch ? 1 : 2); await complete(paid);
+        assert.equal(database.canonical(await database.readWorkflowHistoryV2(db)), history);
+        const after = await raw(card.id); assert.deepEqual(after.attempts.slice(0, before.attempts.length), before.attempts); assert.deepEqual(after.retries, before.retries);
+        assert.equal(after.input, before.input); assert.equal(after.status, 'complete'); assert.equal(JSON.parse(after.result).estimate.status, 'unknown');
+        assert.equal(database.canonical(database.replayWorkflowEventsV2(await database.readWorkflowHistoryV2(db)).units.get(card.unitId)), database.canonical(loaded));
+      }
+    });
+    await t.test('losing previously researched catalog evidence cannot spend a refresh; new evidence and engine changes can', async () => {
+      const card = await seed(), reference = marketResult().references[0];
+      const prepare = (claim: StaffInventoryResearchRecoveryClaimV2, references: typeof reference[], engine = 'fixture-engine', outage = false) =>
+        prepareStaffInventoryResearchRecoveryIdentity(claim.input, { researchEngineVersion: engine, loadReferences: async () => { if (outage) throw Error('Synthetic catalog outage'); return references; } });
+      const first = await recovery(card.id), original = await prepare(first, [reference]);
+      assert.equal(await settle(first, original), 'queued'); const paid = await nextPaid(); assert.ok(paid); await complete(paid);
+      const before = await raw(card.id);
+      const outage = await recovery(card.id), lost = await prepare(outage, [], 'fixture-engine', true);
+      assert.notEqual(lost.evidence_sha256, original.evidence_sha256); assert.ok(lost.need_codes.includes('CATALOG_UNAVAILABLE'));
+      assert.equal(await settle(outage, lost), 'waiting'); assert.equal(await nextPaid(), null);
+      const returned = await recovery(card.id), same = await prepare(returned, [{ ...reference, captured_at: new Date().toISOString() }]);
+      assert.equal(same.evidence_sha256, original.evidence_sha256); assert.equal(await settle(returned, same), 'waiting'); assert.equal(await nextPaid(), null);
+      const stable = await raw(card.id); assert.deepEqual(stable.attempts, before.attempts); assert.deepEqual(stable.retries, before.retries); assert.equal(JSON.parse(stable.recoveryState).refreshes.length, 1);
+      const newReference = { ...reference, source_sha256: 'e'.repeat(64), distinguishing_features: [...reference.distinguishing_features, 'New positive published diagnostic.'] };
+      const changed = await recovery(card.id); assert.equal(await settle(changed, await prepare(changed, [newReference])), 'queued'); const next = await nextPaid(); assert.ok(next); await complete(next);
+      const engine = await recovery(card.id); assert.equal(await settle(engine, await prepare(engine, [newReference], 'fixture-next-engine')), 'queued'); const final = await nextPaid(); assert.ok(final); await complete(final);
+      assert.equal(JSON.parse((await raw(card.id)).recoveryState).refreshes.length, 3);
     });
     await t.test('reviewed evidence queues exactly one same-input attempt and preserves financial journals', async () => {
       const card = await seed(), before = await raw(card.id), history = database.canonical(await database.readWorkflowHistoryV2(db));
@@ -243,6 +319,34 @@ test('real PostgreSQL automatic recovery is bounded, durable, exact-bound and co
         functions: await db.$queryRawUnsafe(`SELECT proname AS name, pg_get_functiondef(oid) AS definition FROM pg_proc WHERE proname='staffInventoryResearchRecoveryV2Preserve' ORDER BY proname`),
       };
       await writeFile(ownership.result_file, JSON.stringify({ scope: 'local-synthetic-canonical-saves-with-real-recovery-scans', samples_per_arm: 20, full_replay_claims: fullReplayClaims, writer_lock_contentions: writerLockContentions, recovery_yields: recoveryYields, baseline, concurrent, margins: { median_multiplier: 2, median_add_ms: 25, p95_multiplier: 2, p95_add_ms: 50 }, passed: true, hosted_load_proven: false, schema }), { mode: 0o600, flag: 'wx' });
+    });
+    await t.test('bulk units require their own exact single-unit description and regrouping supersedes prior research', async () => {
+      const batch = add(3); await tx(client => database.recordStaffInventoryV2(client, batch, 'fixture-staff'));
+      const units = [1, 2, 3].map(index => `staff:${batch.request_id}:card:${String(index).padStart(4, '0')}`);
+      assert.deepEqual(await database.readStaffInventoryResearchV2(db, { unitIds: units }), []);
+      const describe = async (unitIds: string[], description: typeof batch.description) => tx(client => database.recordStaffInventoryV2(client,
+        { action: 'edit', request_id: randomUUID(), effective_at: new Date().toISOString(), note: 'Exact physical-card fixture.', unit_ids: unitIds, description, expected_price_cents: 456 }, 'fixture-staff'));
+      await describe([units[1]], { ...batch.description, photo_key: batch.description.photo_key, back_photo_key: batch.description.photo_key });
+      assert.deepEqual(await database.readStaffInventoryResearchV2(db, { unitIds: units }), []);
+      await describe([units[0]], { ...batch.description, name: 'Title edit still uses the shared batch photos' });
+      assert.deepEqual(await database.readStaffInventoryResearchV2(db, { unitIds: units }), []);
+      await describe([units[0]], { ...batch.description, name: 'Only front replaced', photo_key: batch.description.photo_key.replace('d'.repeat(64), 'a'.repeat(64)) });
+      assert.deepEqual(await database.readStaffInventoryResearchV2(db, { unitIds: units }), []);
+      await describe([units[0]], { ...batch.description, name: 'Identified exact first card', photo_key: batch.description.photo_key.replace('d'.repeat(64), 'a'.repeat(64)), back_photo_key: batch.description.back_photo_key.replace('e'.repeat(64), 'b'.repeat(64)) });
+      const [job] = await database.readStaffInventoryResearchV2(db, { unitIds: units }); assert.equal(job.unit_id, units[0]);
+      const history = database.canonical(await database.readWorkflowHistoryV2(db));
+      const manual = await tx(client => database.startStaffInventoryResearchV2(client, { action: 'start', requestId: randomUUID(), unitId: units[0], descriptionEventId: job.description_event_id }, 'fixture-staff'));
+      assert.equal(manual.outcome, 'REPLAY'); assert.equal(manual.job.job_id, job.job_id); assert.equal(database.canonical(await database.readWorkflowHistoryV2(db)), history);
+      const claim = await recovery(job.job_id); assert.equal(await settle(claim, await retrievalAssessment(claim)), 'queued'); const paid = await nextPaid(); assert.ok(paid);
+      const before = await raw(job.job_id);
+      // The original card is deliberately NOT a target: copying its pair onto
+      // a group still revokes that now-shared evidence in the same transaction.
+      await describe([units[1], units[2]], { ...batch.description, name: 'Shared group description', photo_key: paid.input.front_photo_key!, back_photo_key: paid.input.back_photo_key! });
+      assert.deepEqual(await database.readStaffInventoryResearchV2(db, { unitIds: units }), []);
+      const after = await raw(job.job_id); assert.equal(after.status, 'superseded'); assert.equal(after.input, before.input); assert.deepEqual(after.retries, before.retries);
+      assert.equal(after.attempts.at(-1).outcome, 'superseded'); assert.equal(after.recoveryLeaseToken, null);
+      const current = database.replayWorkflowEventsV2(await database.readWorkflowHistoryV2(db));
+      for (const unitId of units) assert.equal(database.isIndividuallyDescribedStaffInventoryUnitV2(current, unitId), false);
     });
     await t.test('valid estimates, reviewed results and bulk stock never enter automatic recovery', async () => {
       const card = await seed(false, false, true), before = await raw(card.id); await focus(card.id);

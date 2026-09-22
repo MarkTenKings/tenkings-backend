@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { StaffInventoryResearchRecoveryAssessmentSchema } from '@tenkings/shared';
+import { applyStaffInventoryResearchRecoveryContext } from '../lib/server/staffInventoryResearchRecoveryContext';
 import { createPublishedCatalogReader } from '@tenkings/card-catalog-evidence';
 import { prepareStaffInventoryResearchRecoveryIdentity as recover } from '../lib/server/staffInventoryResearchRecoveryIdentity';
 import { createResearchCatalogAdapter, type CatalogPhotos } from '../lib/server/staffInventoryResearchCatalog';
@@ -59,7 +61,7 @@ test('low and medium confidence remain reviewable without silently becoming rese
     const source = structuredClone(input), recognized = receipt(); source.description.year = null; recognized.suggestions.year.confidence = confidence;
     const result = await recover(source, { recognize: async () => recognized, loadReferences: async () => assert.fail('Incomplete identity') });
     assert.deepEqual(result.missing_fields, ['year']); assert.equal(result.proposed_description.year, null);
-    assert.equal(result.recognition.evidence?.suggestions.year.confidence, confidence); assert.equal(result.evidence_sha256, null);
+    assert.equal(result.recognition.evidence?.suggestions.year.confidence, confidence); assert.match(result.evidence_sha256!, /^[a-f0-9]{64}$/); assert.equal(result.ready_for_research, true);
   }
 });
 
@@ -70,15 +72,16 @@ test('season, denominator, prefix, leading zero and saved variant conflicts requ
     recognized.suggestions[field] = { value: suggested, confidence: 'high', evidence: 'Synthetic conflicting printed detail.' };
     const result = await recover(source, { recognize: async () => recognized, loadReferences: async () => assert.fail('Conflict is not catalog authority') });
     assert.equal(result.proposed_description[field], source.description[field]);
-    assert.equal(result.conflicts[0].field, field); assert.ok(result.need_codes.includes('DESCRIPTION_CONFLICT')); assert.equal(result.evidence_sha256, null);
+    assert.equal(result.conflicts[0].field, field); assert.ok(result.need_codes.includes('DESCRIPTION_CONFLICT')); assert.match(result.evidence_sha256!, /^[a-f0-9]{64}$/); assert.equal(result.ready_for_research, true);
   }
 });
 
-test('missing, repeated, foreign or malformed photo evidence cannot trigger a usable proposal', async () => {
+test('missing or repeated photos retain retrieval permission but cannot trigger recognition or photo additions', async () => {
   for (const patch of [{ back_photo_key: null }, { back_photo_key: input.front_photo_key },
     { back_photo_key: input.front_photo_key!.replace('11111111', '22222222') }]) {
-    const result = await recover({ ...input, ...patch }, { recognize: async () => assert.fail('Invalid originals'), loadReferences: async () => assert.fail('Invalid originals') });
-    assert.ok(result.need_codes.includes('MISSING_ORIGINAL_PHOTOS')); assert.equal(result.ready_for_research, false);
+    const result = await recover({ ...input, ...patch }, { recognize: async () => assert.fail('Invalid originals'), loadReferences: async () => [] });
+    assert.ok(result.need_codes.includes('MISSING_ORIGINAL_PHOTOS')); assert.equal(result.ready_for_research, true);
+    assert.deepEqual(applyStaffInventoryResearchRecoveryContext({ ...input, ...patch }, result).description, input.description);
   }
   const source = { ...input, description: { ...input.description, year: null } }, foreign = receipt();
   foreign.provenance.photos.front.key = photoKey('e'); foreign.provenance.photos.front.sha256 = 'e'.repeat(64);
@@ -86,20 +89,20 @@ test('missing, repeated, foreign or malformed photo evidence cannot trigger a us
   assert.ok(result.need_codes.includes('RECOGNITION_FAILED')); assert.deepEqual(result.added_fields, []);
 });
 
-test('unavailable recognition and durable exhausted allowance are explicit and do not invoke catalog or sold work', async () => {
+test('unavailable recognition and exhausted allowance retain warnings without blocking saved-name retrieval', async () => {
   const source = { ...input, description: { ...input.description, year: null } };
   const deferred = await recover(source, { allowRecognition: false, recognize: async () => assert.fail('Exhausted allowance') });
-  assert.equal(deferred.recognition.status, 'deferred'); assert.equal(deferred.evidence_sha256, null);
+  assert.equal(deferred.recognition.status, 'deferred'); assert.match(deferred.evidence_sha256!, /^[a-f0-9]{64}$/); assert.equal(deferred.ready_for_research, true);
   const unavailable = await recover(source, { recognize: async () => { throw { code: 'unavailable' }; } });
   assert.equal(unavailable.recognition.status, 'unavailable'); assert.ok(unavailable.need_codes.includes('RECOGNITION_UNAVAILABLE'));
 });
 
-test('empty, unreviewed, wrong or diagnostic-free references never produce a refresh digest', async () => {
+test('empty, unreviewed, wrong or diagnostic-free references remain warnings while retrieval is authorized', async () => {
   for (const [records, need] of [[[], 'MISSING_CATALOG_REFERENCE'], [[{ ...reference(), distinguishing_features: [] }], 'MISSING_DIAGNOSTIC_EVIDENCE'],
     [[{ ...reference(), trust: 'model_inference' }], 'CATALOG_UNAVAILABLE'],
     [[{ ...reference(), identity: { ...reference().identity, card_number: '7/100' } }], 'CATALOG_UNAVAILABLE']] as const) {
     const result = await recover(input, { loadReferences: async () => records as unknown as StaffInventoryResearchReference[] });
-    assert.ok(result.need_codes.includes(need)); assert.equal(result.evidence_sha256, null); assert.equal(result.ready_for_research, false);
+    assert.ok(result.need_codes.includes(need)); assert.match(result.evidence_sha256!, /^[a-f0-9]{64}$/); assert.equal(result.ready_for_research, true);
   }
 });
 
@@ -128,7 +131,8 @@ test('real reviewed partial text-only catalog accepts explicit set alias but not
   const result = await recover(source, { loadCatalog });
   assert.equal(result.ready_for_research, true); assert.equal(result.references.length, 1); assert.equal(result.references[0].image, null);
   assert.equal(result.catalog_context?.publications[0].coverage.text, 'partial');
-  assert.equal((await recover({ ...source, description: { ...source.description, set_name: 'Fixture pokemon aliases' } }, { loadCatalog })).ready_for_research, false);
+  const fuzzy = await recover({ ...source, description: { ...source.description, set_name: 'Fixture pokemon aliases' } }, { loadCatalog });
+  assert.equal(fuzzy.ready_for_research, true); assert.deepEqual(fuzzy.references, []); assert.ok(fuzzy.need_codes.includes('MISSING_CATALOG_REFERENCE'));
 });
 
 test('same number/name on different approved programs stays ambiguous instead of silently choosing an insert', async () => {
@@ -141,8 +145,8 @@ test('same number/name on different approved programs stays ambiguous instead of
   const source = { ...input, description: { ...input.description, year: manifest.set.year, manufacturer: manifest.set.manufacturer,
     set_name: manifest.set.label, name: manifest.cards[0].name, card_number: manifest.cards[0].number } };
   const result = await recover(source, { loadCatalog: (description, signal) => adapter.load(description, {}, signal) });
-  assert.equal(result.ready_for_research, false); assert.ok(result.need_codes.includes('AMBIGUOUS_CATALOG_IDENTITY'));
-  assert.equal(result.evidence_sha256, null);
+  assert.equal(result.ready_for_research, true); assert.ok(result.need_codes.includes('AMBIGUOUS_CATALOG_IDENTITY'));
+  assert.match(result.evidence_sha256!, /^[a-f0-9]{64}$/); assert.equal(result.ready_for_research, true);
 });
 
 test('cancellation cannot be converted to a completed recovery assessment', async () => {
@@ -166,4 +170,48 @@ test('catalog outage or disabled consumer keeps the paid exact-photo receipt wit
   assert.equal(legacy.catalog_context?.status, 'not_consulted'); assert.deepEqual(legacy.catalog_context?.publications, []);
   const foreign = await recover({ ...input, front_photo_key: photoKey('f') }, { previousCatalogContext, loadReferences: async () => [] });
   assert.equal(foreign.catalog_context, null);
+});
+
+
+test('v1 assessment bytes and strict authority are preserved while v2 allows warning-ready retrieval', async () => {
+  const current = await recover(input, { loadReferences: async () => [reference()] });
+  const { research_engine_version: _engine, ...legacyFields } = current;
+  const legacy = { ...legacyFields, resolver_version: 'staff-inventory-recovery-identity-v1' as const };
+  const bytes = JSON.stringify(legacy);
+  assert.equal(JSON.stringify(StaffInventoryResearchRecoveryAssessmentSchema.parse(JSON.parse(bytes))), bytes);
+  for (const patch of [{ references: [] }, { missing_fields: ['year'] }, { need_codes: ['MISSING_CATALOG_REFERENCE'] },
+    { conflicts: [{ field: 'year', saved_value: '2025', suggested_value: '2026', evidence: 'Synthetic photo conflict.' }] }]) {
+    assert.equal(StaffInventoryResearchRecoveryAssessmentSchema.safeParse({ ...legacy, ...patch }).success, false);
+    assert.equal(StaffInventoryResearchRecoveryAssessmentSchema.safeParse({ ...current, ...patch }).success, true);
+  }
+  const retained = { ...legacy, references: [], need_codes: ['MISSING_CATALOG_REFERENCE'], ready_for_research: false, evidence_sha256: null };
+  assert.equal(JSON.stringify(StaffInventoryResearchRecoveryAssessmentSchema.parse(retained)), JSON.stringify(retained));
+});
+
+test('v2 context preserves nonnull staff facts with conflict and missing-evidence warnings', async () => {
+  const source = { ...input, description: { ...input.description, year: null } }, recognized = receipt();
+  recognized.suggestions.card_number = { value: '099', confidence: 'high', evidence: 'Back: synthetic different number.' };
+  const result = await recover(source, { recognize: async () => recognized, loadReferences: async () => assert.fail('Conflict blocks catalog authority only') });
+  const context = applyStaffInventoryResearchRecoveryContext(source, result);
+  assert.equal(context.description.card_number, source.description.card_number); assert.equal(context.description.year, '2025');
+  assert.equal(source.description.year, null); assert.ok(result.need_codes.includes('DESCRIPTION_CONFLICT'));
+  for (const patch of [{ source_input_sha256: 'f'.repeat(64) }, { proposed_description: { ...result.proposed_description, card_number: '099' } },
+    { added_fields: [] }, { proposed_description: { ...result.proposed_description, variant: 'Gold' }, added_fields: ['year', 'variant'] }]) {
+    assert.throws(() => applyStaffInventoryResearchRecoveryContext(source, { ...result, ...patch }));
+  }
+});
+
+test('unchanged saved identity produces the same retrieval digest through empty lookups and catalog outages', async () => {
+  const empty = await recover(input, { loadReferences: async () => [] });
+  const unavailable = await recover(input, { loadReferences: async () => { throw Error('Synthetic outage'); } });
+  const unavailableAgain = await recover(input, { loadReferences: async () => { throw Error('Different provider wording'); } });
+  assert.equal(unavailable.evidence_sha256, empty.evidence_sha256); assert.equal(unavailableAgain.evidence_sha256, empty.evidence_sha256);
+  assert.ok(unavailable.need_codes.includes('CATALOG_UNAVAILABLE')); assert.equal(unavailable.ready_for_research, true);
+});
+
+test('absent usable card name cannot fabricate a search or a ready assessment', async () => {
+  const source = { ...input, description: { ...input.description, name: null } };
+  const result = await recover(source, { allowRecognition: false, loadReferences: async () => assert.fail('No usable identity') });
+  assert.equal(result.ready_for_research, false); assert.equal(result.evidence_sha256, null); assert.ok(result.missing_fields.includes('name'));
+  assert.equal(StaffInventoryResearchRecoveryAssessmentSchema.safeParse({ ...result, ready_for_research: true, evidence_sha256: 'a'.repeat(64) }).success, false);
 });

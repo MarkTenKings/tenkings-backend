@@ -87,6 +87,23 @@ test('mixed saved states are separate from manual financial totals and open exac
   } finally { await ui.close(); }
 });
 
+test('a server-qualified individually described bulk card gets its own research while shared batch photos do not', async () => {
+  const items = [card('individual', { receipt_quantity: 500, research_eligible: true }), card('shared', { receipt_quantity: 500 })];
+  const queried: string[] = [];
+  const ui = await mount(async (url, init) => {
+    assert.notEqual(init?.method, 'POST');
+    if (!String(url).includes('view=summary')) return json(workspace(items));
+    queried.push(...new URL(String(url), 'https://fixture.invalid').searchParams.getAll('unit_id'));
+    return json({ version: 1, summaries: [summary('individual')] });
+  });
+  try {
+    assert.deepEqual(queried, ['individual']); assert.equal(ui.cell('individual').textContent, '$12.342 comps · Review');
+    assert.equal(ui.cell('shared').querySelector('button'), null);
+    await ui.click('Review eBay comps for Card individual: $12.34');
+    assert.equal(ui.container.querySelector('[data-research-unit]')?.getAttribute('data-research-unit'), 'individual');
+  } finally { await ui.close(); }
+});
+
 test('sequential summary chunks obey both 50-card and encoded URL bounds without per-row full reads', async () => {
   const cards = [...Array.from({ length: 105 }, (_, i) => card(`u-${i}`)), ...Array.from({ length: 12 }, (_, i) => card(`${'人'.repeat(110)}-${i}`))];
   const requests: { url: string; pending: ReturnType<typeof deferred<Response>> }[] = [];

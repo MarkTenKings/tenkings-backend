@@ -25,11 +25,12 @@ export const staffInventoryResearchWorkerDependencies: StaffInventoryResearchWor
       ? await readStaffInventoryResearchRecoveryAssessmentV2(prisma, { jobId: claim.jobId, inputHash: claim.inputHash, attempt: claim.attempt }) : null;
     if (claim?.recoveryEvidenceHash && (!inventoryRecoveryEnabled() || !recoveryAssessment
         || recoveryAssessment.evidence_sha256 !== claim.recoveryEvidenceHash)) throw new StaffInventoryResearchError('unavailable');
-    if (recoveryAssessment) {
-      // Catalog approval can change after the queued recovery check. Revalidate
-      // without buying OCR/scope work before any sold-provider call.
+    if (recoveryAssessment?.resolver_version === 'staff-inventory-recovery-identity-v1') {
+      // Preserve v1's catalog-bound authority. V2 authorizes retrieval from
+      // immutable saved/photo context; fresh engine checks qualify any value.
+      // A catalog outage must not consume its retrieval attempt before search.
       const current = await prepareInventoryRecoveryAssessment(input, { previousAssessment: recoveryAssessment,
-        allowRecognition: false, allowScopeResolution: false, attemptId: `inventory:${claim!.jobId}:${claim!.attempt}` }, signal);
+        allowRecognition: false, allowScopeResolution: false, legacyAuthority: true, attemptId: `inventory:${claim!.jobId}:${claim!.attempt}` }, signal);
       if (!current.ready_for_research || current.evidence_sha256 !== recoveryAssessment.evidence_sha256) throw new StaffInventoryResearchError('unavailable');
     }
     const common = { archiveCandidateImage: archiveStaffInventoryResearchImage, ...(recoveryAssessment ? { recoveryAssessment } : {}) };

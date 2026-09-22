@@ -64,6 +64,15 @@ async function fixture() {
   return { input, reference, items, bytes, deps, calls, get model() { return modelValue; }, set model(value: any) { modelValue = value; } };
 }
 
+async function assertAssessmentFailed(f: Awaited<ReturnType<typeof fixture>>) {
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  assert.equal(result.estimate.status, 'unknown'); assert.deepEqual(result.selected_candidate_ids, []);
+  assert.ok(result.candidates.length > 0, 'Successfully retrieved source evidence must remain visible');
+  assert.ok(result.diagnostics!.reason_codes.includes('INITIAL_COMPARISON_FAILED'));
+  assert.ok(result.diagnostics!.reason_codes.includes('MALFORMED_RESPONSE'));
+  return result;
+}
+
 test('private research selects only exact supplied sales and calculates source cents without model prices', async () => {
   const f = await fixture();
   const result = await researchStaffInventoryCard(f.input, f.deps);
@@ -140,7 +149,7 @@ test('source price eligibility preserves Best Offer, currency, malformed price a
 test('lots, proxy cards and other explicitly unsupported sale products stay unselectable', async () => {
   for (const suffix of ['lot of 2', 'custom proxy', 'sealed booster box', 'complete set']) {
     const f = await fixture(); f.items[0].title = `${f.items[0].title} ${suffix}`;
-    await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('malformed_response'));
+    await assertAssessmentFailed(f);
     f.input.front_photo_key = null;
     const result = await researchStaffInventoryCard(f.input, f.deps);
     assert.equal(result.candidates.find(candidate => candidate.id === 'ebay:111111111110')!.source_eligible, false);
@@ -174,7 +183,7 @@ test('foreign IDs, forged photo/reference facts, wrong identities and grade mism
     (f: Awaited<ReturnType<typeof fixture>>) => { f.items[0].bestOfferAccepted = true; },
     (f: Awaited<ReturnType<typeof fixture>>) => { f.model.target_condition = { status: 'graded', grader: 'PSA', numeric_grade: 10, photo_evidence: 'Front: PSA 10.' }; },
   ];
-  for (const change of changes) { const f = await fixture(); change(f); await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('malformed_response')); }
+  for (const change of changes) { const f = await fixture(); change(f); await assertAssessmentFailed(f); }
 });
 
 test('exact same visible grader and grade may match; no grade mapping occurs', async () => {
@@ -184,13 +193,13 @@ test('exact same visible grader and grade may match; no grade mapping occurs', a
   const result = await researchStaffInventoryCard(f.input, f.deps);
   assert.equal(result.estimate.status, 'estimated'); assert.equal(result.target_condition.numeric_grade, 9);
   f.model.target_condition.numeric_grade = 9.5; f.model.target_condition.photo_evidence = 'Front label: PSA 9.5.';
-  await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('malformed_response'));
+  await assertAssessmentFailed(f);
 });
 
 test('image downloads are source-allowlisted, bounded, redirect-free and hash-bound', async () => {
   for (const url of ['https://127.0.0.1/private', 'https://i.ebayimg.com.evil.example/card.jpg', 'http://i.ebayimg.com/card.jpg', 'https://i.ebayimg.com:444/card.jpg', 'https://user:password@i.ebayimg.com/card.jpg', 'https://i.ebayimg.com/card.jpg?token=secret']) {
     const f = await fixture(); f.items[0].thumbnailUrl = url;
-    await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('malformed_response'));
+    await assertAssessmentFailed(f);
     assert.equal(f.calls.some(call => call.url === url), false);
   }
   for (const response of [
@@ -200,7 +209,7 @@ test('image downloads are source-allowlisted, bounded, redirect-free and hash-bo
   ]) {
     const f = await fixture(), original = f.deps.fetchImpl!;
     f.deps.fetchImpl = ((url, init) => String(url).startsWith('https://i.ebayimg.com/') ? Promise.resolve(response()) : original(url, init)) as typeof fetch;
-    await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('malformed_response'));
+    await assertAssessmentFailed(f);
   }
 });
 
@@ -229,14 +238,15 @@ async function duplicateSelectionFixture() {
   return f;
 }
 
-test('actual V3 and V5 engines count an exact duplicate image once without price or model-order bias', async () => {
+test('v6 with and without sale details counts an exact duplicate image once without price or model-order bias', async () => {
   for (const detail of [false, true]) for (const reverse of [false, true]) {
     const f = await duplicateSelectionFixture();
     if (detail) f.deps.env!.STAFF_INVENTORY_RESEARCH_SALE_DETAILS = 'true';
     if (reverse) { f.items.reverse(); f.model.selected_candidate_ids.reverse(); f.model.comparisons.reverse(); }
     const sourceBefore = JSON.stringify(f.items), modelBefore = JSON.stringify(f.model);
     const result = await researchStaffInventoryCard(f.input, f.deps);
-    assert.equal(result.engine_version, detail ? 'staff-inventory-research-v5' : 'staff-inventory-research-v3');
+    assert.equal(result.engine_version, 'staff-inventory-research-v6');
+    assert.equal(Boolean(result.sale_details), detail);
     assert.deepEqual(result.selected_candidate_ids, ['ebay:111111111110', 'ebay:111111111112']);
     assert.equal(result.estimate.value_cents, 6502); // (10001 + 3002) / 2, half-cent rounds up
     assert.equal(result.estimate.count, 2); assert.equal(result.estimate.low_cents, 3002); assert.equal(result.estimate.high_cents, 10001);
@@ -258,7 +268,7 @@ test('actual V3 and V5 engines count an exact duplicate image once without price
 test('duplicate-image collapsing cannot hide an ineligible selected sale', async () => {
   for (const patch of [{ listingType: 'active' }, { bestOfferAccepted: true }, { soldCurrency: 'CAD' }]) {
     const f = await duplicateSelectionFixture(); Object.assign(f.items[1], patch);
-    await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('malformed_response'));
+    await assertAssessmentFailed(f);
   }
 });
 
@@ -268,7 +278,7 @@ test('immutable historical duplicate-weighted estimates still parse without rewr
   const historical = { ...result, selected_candidate_ids: ['ebay:111111111110', 'ebay:111111111111', 'ebay:111111111112'], rejections: [],
     estimate: { ...result.estimate, value_cents: 4368, low_cents: 101, high_cents: 10001, count: 3 } };
   for (const engine of ['staff-inventory-research-v1', 'staff-inventory-research-v2', 'staff-inventory-research-v3', 'staff-inventory-research-v5'] as const) {
-    const prior = structuredClone(historical); prior.engine_version = engine;
+    const prior = structuredClone(historical); prior.engine_version = engine; delete prior.photo_identity;
     if (engine === 'staff-inventory-research-v1') { delete prior.research_queries; delete prior.comparison_assessments; delete prior.diagnostics; }
     if (engine === 'staff-inventory-research-v5') prior.sale_details = { schema_version: 1, base_engine_version: 'staff-inventory-research-v3', requests: [] };
     const bytes = canonical(prior);
@@ -307,7 +317,7 @@ test('approved reference image evidence requires the exact retained source hash'
   f.model.identity.photo_features = [{ side: 'back', photo_sha256: sha(f.bytes[1]), reference_id: reference.id, evidence_type: 'reference_image', reference_feature: sha(f.bytes[4]), observation: 'Back: the exact reference circular printed base mark matches.' }];
   const result = await researchStaffInventoryCard(f.input, f.deps); assert.equal(result.estimate.status, 'estimated');
   f.deps.loadReferenceImage = async () => f.bytes[2];
-  await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('malformed_response'));
+  await assertAssessmentFailed(f);
 });
 
 test('private image archives record exact key/hash and failed archives remain explicitly unretained', async () => {
@@ -603,7 +613,7 @@ test('equivalent consecutive-season listing wording remains a possible visual ma
 test('legacy immutable results parse with identical JSON and hashes without inserting optional research or price fields', async () => {
   const f = await fixture(), current = await researchStaffInventoryCard(f.input, f.deps);
   const legacy = { ...current, engine_version: 'staff-inventory-research-v1' } as any;
-  delete legacy.research_queries; delete legacy.comparison_assessments; delete legacy.diagnostics;
+  delete legacy.photo_identity; delete legacy.research_queries; delete legacy.comparison_assessments; delete legacy.diagnostics;
   for (const candidate of legacy.candidates) { delete candidate.sale_evidence; delete candidate.image_options; delete candidate.multiple_price_options; }
   const bytes = JSON.stringify(legacy), parsed = StaffInventoryResearchResultSchema.parse(JSON.parse(bytes));
   assert.equal(JSON.stringify(parsed), bytes);
@@ -747,7 +757,7 @@ test('documented anniversary, NM-MT and sport-suffix failure mechanisms pass the
     assert.equal(JSON.stringify(f.input), saved);
     assert.ok(result.diagnostics!.candidates.every(row => row.model_assessment?.classification === 'matched'));
     f.items[0].title = wrong;
-    await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('malformed_response'), wrong);
+    await assertAssessmentFailed(f);
   }
 });
 
@@ -764,7 +774,7 @@ test('v3 diagnostics reject removed or mismatched model-image, source and price-
     assert.equal(StaffInventoryResearchResultSchema.safeParse(altered).success, false);
   }
   const legacy = structuredClone(result) as any;
-  legacy.engine_version = 'staff-inventory-research-v2'; delete legacy.diagnostics;
+  legacy.engine_version = 'staff-inventory-research-v2'; delete legacy.photo_identity; delete legacy.diagnostics;
   for (const candidate of legacy.candidates) { delete candidate.sale_evidence; delete candidate.image_options; delete candidate.multiple_price_options; }
   const bytes = JSON.stringify(legacy);
   assert.equal(JSON.stringify(StaffInventoryResearchResultSchema.parse(legacy)), bytes);
@@ -796,7 +806,7 @@ test('v4 catalog authority is explicit, photo-scoped and revalidated; revoked ev
       scope_evidence: [{ field: 'language', value: 'en', side: 'front', photo_sha256: photos.front!.sha256, observation: 'Synthetic English card text.' }] } });
     let checked = false; f.deps.isCatalogCurrent = async () => { checked = true; return current; };
     const result = await researchStaffInventoryCard(f.input, f.deps);
-    assert.equal(result.engine_version, 'staff-inventory-research-v4'); assert.equal(checked, true);
+    assert.equal(result.engine_version, 'staff-inventory-research-v6'); assert.equal(checked, true);
     assert.equal(result.identity.status, current ? 'base' : 'unresolved'); assert.equal(result.estimate.status, current ? 'estimated' : 'unknown');
     assert.equal(result.catalog_context?.status, current ? 'current' : 'unavailable');
     if (!current) { assert.equal(result.references.length, 0); assert.equal(result.selected_candidate_ids.length, 0); assert.ok(result.comparison_assessments?.every(a => a.classification !== 'matched')); }
@@ -870,4 +880,123 @@ test('foreign, unready, or human-overwriting recovery context fails before provi
     await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('invalid_input'));
     assert.equal(f.calls.length, 0);
   }
+});
+
+async function photoIdentityFixture() {
+  const f = await fixture();
+  f.deps.loadReferences = async () => [];
+  f.model.identity = { status: 'unresolved', variant_name: null, suggestion: null, reason: 'No published catalog establishes official variant authority.', reference_ids: [], photo_features: [] };
+  f.model.photo_identity = { schema_version: 1, status: 'supported', reason: 'The original front and back identify this exact printed card and distinguishing circular mark.', observations: [
+    { field: 'name', value: 'Fixture Runner', side: 'front', photo_sha256: sha(f.bytes[0]), observation: 'The full printed player name reads Fixture Runner.' },
+    { field: 'year', value: '2024', side: 'back', photo_sha256: sha(f.bytes[1]), observation: 'The release line identifies the 2024 series.' },
+    { field: 'manufacturer', value: 'Fixture Cards', side: 'back', photo_sha256: sha(f.bytes[1]), observation: 'The publisher line reads Fixture Cards.' },
+    { field: 'set_name', value: 'Fixture Chrome', side: 'front', photo_sha256: sha(f.bytes[0]), observation: 'The set logo reads Fixture Chrome.' },
+    { field: 'card_number', value: '007', side: 'back', photo_sha256: sha(f.bytes[1]), observation: 'The printed card number is 007, retaining both leading zeroes.' },
+    { field: 'treatment', value: 'Printed circular base mark beneath the card number', side: 'back', photo_sha256: sha(f.bytes[1]), observation: 'A distinct printed circular mark beneath 007 establishes the photographed printing.' },
+  ] };
+  return f;
+}
+
+test('v6 selects exact photographed sales without a catalog and preserves saved facts and catalog uncertainty', async () => {
+  for (const catalog of ['disabled', 'no_publication', 'unavailable'] as const) {
+    const f = await photoIdentityFixture();
+    f.input.description.name = '2024 Fixture Cards Fixture Runner #007';
+    f.input.description.year = null; f.input.description.set_name = null; f.input.description.card_number = null;
+    if (catalog !== 'disabled') f.deps.loadCatalog = async () => {
+      if (catalog === 'unavailable') throw new Error('private-catalog-error');
+      return { references: [], context: { schema_version: 1, status: 'no_publication', publications: [], scope_evidence: [], scope_receipt: null } };
+    };
+    const saved = canonical(f.input), result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.engine_version, 'staff-inventory-research-v6');
+    assert.equal(result.photo_identity?.status, 'supported'); assert.equal(result.identity.status, 'unresolved');
+    assert.deepEqual(result.references, []); assert.deepEqual(result.identity.reference_ids, []);
+    assert.equal(result.estimate.value_cents, 1002); assert.equal(result.estimate.count, 2);
+    assert.equal(canonical(f.input), saved); assert.equal(result.description_hash, f.input.description_hash);
+    assert.equal(result.comparison_assessments!.every(row => row.classification === 'matched'), true);
+    assert.ok(result.diagnostics!.reason_codes.includes('CATALOG_COVERAGE_MISSING'));
+    assert.equal(result.diagnostics!.reason_codes.includes('PHOTO_IDENTITY_UNRESOLVED'), false);
+    assert.equal(JSON.stringify(result).includes('private-catalog-error'), false);
+    const request = f.calls.find(call => call.url === 'https://api.openai.com/v1/responses')!.body;
+    assert.ok(request.text.format.schema.required.includes('photo_identity'));
+    assert.match(request.instructions, /both sides must contribute/i);
+  }
+});
+
+test('v6 rejects incomplete, generic, absent-feature, foreign-photo and saved-fact-conflicting identity while retaining fetched listings', async () => {
+  const changes: Array<(f: Awaited<ReturnType<typeof photoIdentityFixture>>) => void> = [
+    f => { f.model.photo_identity.observations = f.model.photo_identity.observations.filter((row: any) => row.field !== 'year'); },
+    f => { f.model.photo_identity.observations = f.model.photo_identity.observations.filter((row: any) => row.field !== 'manufacturer'); },
+    f => { f.model.photo_identity.observations[0].photo_sha256 = 'e'.repeat(64); },
+    f => { f.model.photo_identity.observations.forEach((row: any) => { row.side = 'front'; row.photo_sha256 = sha(f.bytes[0]); }); },
+    f => { f.model.photo_identity.observations[0].value = 'Different Player'; },
+    f => { f.model.photo_identity.observations[1].value = '2023'; },
+    f => { f.model.photo_identity.observations[2].value = 'Different Cards'; },
+    f => { f.model.photo_identity.observations[3].value = 'Fixture Chrome Update'; },
+    f => { f.model.photo_identity.observations[4].value = '7'; },
+    f => { f.model.photo_identity.observations[4].value = '007/100'; },
+    f => { f.model.photo_identity.observations[5].value = 'Base'; },
+    f => { f.model.photo_identity.observations[5].value = 'standard'; },
+    f => { f.model.photo_identity.observations[5].value = 'non-holo'; },
+    f => { f.model.photo_identity.observations[5].observation = 'No visible foil establishes the printing.'; },
+    f => { f.model.photo_identity.observations[5].observation = 'It probably base from the layout.'; },
+    f => { f.input.description.variant = 'Gold Refractor'; },
+    f => { f.items[0].title = String(f.items[0].title).replace('#007', '#008'); },
+    f => { f.items[0].title = String(f.items[0].title).replace('2024', '2025'); },
+    f => { f.items[0].title = String(f.items[0].title).replace('Raw', 'PSA 10'); },
+    f => { f.items[0].bestOfferAccepted = true; },
+    f => { f.model.comparisons[0].variant_match = false; },
+  ];
+  for (const change of changes) {
+    const f = await photoIdentityFixture(); change(f);
+    const result = await assertAssessmentFailed(f);
+    assert.equal(result.photo_identity?.status, 'unresolved');
+    assert.equal(result.identity.status, 'unresolved');
+  }
+});
+
+test('v6 unresolved photo observations retain candidates without inventing printing or a price', async () => {
+  const f = await photoIdentityFixture();
+  f.model.photo_identity.status = 'unresolved';
+  f.model.photo_identity.observations = f.model.photo_identity.observations.filter((row: any) => row.field !== 'treatment');
+  f.model.selected_candidate_ids = [];
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  assert.equal(result.photo_identity?.status, 'unresolved'); assert.equal(result.estimate.status, 'unknown');
+  assert.equal(result.candidates.length, 2); assert.deepEqual(result.selected_candidate_ids, []);
+  assert.equal(result.diagnostics!.reason_codes.includes('INITIAL_COMPARISON_FAILED'), false);
+});
+
+test('first malformed or unavailable model response preserves source evidence with explicit failure and no model authority', async () => {
+  for (const failure of ['malformed', 'http', 'throw'] as const) {
+    const f = await photoIdentityFixture(), original = f.deps.fetchImpl!;
+    f.deps.fetchImpl = (async (url, init) => {
+      if (String(url) !== 'https://api.openai.com/v1/responses') return original(url, init);
+      if (failure === 'throw') throw new Error('private-provider-error');
+      return failure === 'http' ? new Response('private-provider-error', { status: 502 }) : Response.json(output({ invented: true }));
+    }) as typeof fetch;
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.candidates.length, 2); assert.equal(result.estimate.status, 'unknown');
+    assert.deepEqual(result.selected_candidate_ids, []); assert.equal(result.photo_identity?.status, 'unresolved');
+    assert.ok(result.diagnostics!.reason_codes.includes('INITIAL_COMPARISON_FAILED'));
+    assert.ok(result.diagnostics!.candidates.every(row => row.comparison_status === 'failed' && row.model_assessment === null));
+    assert.equal(JSON.stringify(result).includes('private-provider-error'), false);
+  }
+});
+
+test('v6 persistence requires its photo block and exact provenance; legacy versions cannot receive photo authority', async () => {
+  const f = await photoIdentityFixture(), valid = await researchStaffInventoryCard(f.input, f.deps);
+  for (const mutate of [
+    (row: any) => { delete row.photo_identity; },
+    (row: any) => { row.photo_identity.observations[0].photo_sha256 = 'f'.repeat(64); },
+    (row: any) => { row.photo_identity.observations[5].value = 'Base'; },
+    (row: any) => { row.photo_identity.status = 'unresolved'; },
+    (row: any) => { row.photos.front = null; },
+    (row: any) => { row.candidates[0].sale_evidence.status = 'unknown'; row.candidates[0].sale_evidence.basis = 'not_supplied'; },
+    (row: any) => { row.candidates[0].best_offer_accepted = true; },
+  ]) { const changed = structuredClone(valid); mutate(changed); assert.equal(StaffInventoryResearchResultSchema.safeParse(changed).success, false); }
+  for (const engine of ['staff-inventory-research-v1', 'staff-inventory-research-v2', 'staff-inventory-research-v3', 'staff-inventory-research-v4', 'staff-inventory-research-v5']) {
+    assert.equal(StaffInventoryResearchResultSchema.safeParse({ ...valid, engine_version: engine }).success, false);
+    const changed = { ...valid, engine_version: engine }; delete changed.photo_identity;
+    assert.equal(StaffInventoryResearchResultSchema.safeParse(changed).success, false, 'Historical unresolved identity must still reject selected values');
+  }
+  assert.equal(canonical(StaffInventoryResearchResultSchema.parse(valid)), canonical(valid));
 });

@@ -77,27 +77,64 @@ function status(row: Row) {
 }
 export type StaffInventoryResearchStatusV2 = ReturnType<typeof status>;
 
+/** A bulk receipt supplies bookkeeping IDs, not individual card identity. Only
+ * an explicit one-unit description with its own photo pair identifies a card. */
+export function isIndividuallyDescribedStaffInventoryUnitV2(state: WorkflowStateV2, unitId: string): boolean {
+  const unit = state.units.get(unitId);
+  if (!unit) return false;
+  if (state.lots.get(unit.lot_id)?.data.quantity === 1) return true;
+  const event = unit.description_event_id && state.events.get(unit.description_event_id);
+  if (!unit.description?.photo_key || !unit.description.back_photo_key
+    || unit.description.photo_key.slice(-68) === unit.description.back_photo_key.slice(-68)
+    || !event || event.event_kind !== 'item_described' || event.data.unit_ids.length !== 1 || event.data.unit_ids[0] !== unitId) return false;
+  // A one-unit edit can inherit a batch's photo defaults. Its target alone must
+  // not promote a known shared picture into evidence of that physical card.
+  const originals = new Set([unit.description.photo_key.slice(-68), unit.description.back_photo_key.slice(-68)]);
+  for (const prior of state.events.values()) {
+    if (prior.event_kind !== 'item_described' || prior.data.unit_ids.length < 2) continue;
+    const sharedPhoto = [prior.data.description.photo_key, prior.data.description.back_photo_key].some(key => key && originals.has(key.slice(-68)));
+    if (sharedPhoto && prior.data.unit_ids.some(id => state.units.get(id)?.lot_id === unit.lot_id)) return false;
+  }
+  return true;
+}
+
 /** Called only from the inventory sole writer with its fully replayed state.
  * A description mutation, including an advanced/backdated edit, supersedes old
- * work in this same transaction. Quantity refers to the original receipt. */
+ * work in this same transaction. Bulk identity requires a one-card description. */
 export async function syncStaffInventoryResearchV2(tx: Tx, state: WorkflowStateV2, unitIds: string[], requested?: { requestId: string; actor: string }) {
   if (requested) { parse(z.string().uuid(), requested.requestId); parse(identity, requested.actor); }
-  const eligibleIds = [...new Set(unitIds)].filter(id => {
-    const unit = state.units.get(id);
-    return !unit || state.lots.get(unit.lot_id)?.data.quantity === 1;
-  });
+  const affected = new Set(unitIds);
+  // A newly shared batch picture also invalidates any same-lot individual job
+  // that used that exact picture. Its physical unit may not be an edit target.
+  const sharedByLot = new Map<string, Set<string>>();
+  for (const id of affected) {
+    const unit = state.units.get(id), event = unit?.description_event_id && state.events.get(unit.description_event_id);
+    if (!unit || !event || event.event_kind !== 'item_described' || event.data.unit_ids.length < 2) continue;
+    const photos = sharedByLot.get(unit.lot_id) ?? new Set<string>();
+    for (const key of [event.data.description.photo_key, event.data.description.back_photo_key]) if (key) photos.add(key.slice(-68));
+    sharedByLot.set(unit.lot_id, photos);
+  }
+  for (const [lotId, photos] of sharedByLot) {
+    for (const id of state.lots.get(lotId)?.data.unit_ids ?? []) {
+      const description = state.units.get(id)?.description;
+      if ([description?.photo_key, description?.back_photo_key].some(key => key && photos.has(key.slice(-68)))) affected.add(id);
+    }
+  }
+  const ids = [...affected];
+  const describedIds = ids.filter(id => isIndividuallyDescribedStaffInventoryUnitV2(state, id));
+  // One bounded query also finds removed or re-grouped units whose previous
+  // individual research must be superseded, without N queries for a bulk save.
+  const otherIds = ids.filter(id => !describedIds.includes(id));
+  const previousIds = otherIds.length ? (await tx.$queryRaw<{ unitId: string }[]>(Prisma.sql`SELECT "unitId" FROM "StaffInventoryResearchJobV2" WHERE "unitId" IN (${Prisma.join(otherIds)}) AND "status" <> 'superseded'`)).map(row => row.unitId) : [];
+  const eligibleIds = [...describedIds, ...previousIds];
   if (!eligibleIds.length) return;
   await queueLock(tx);
   const at = await now(tx);
-  // A removed bulk receipt never had a research job. Read once so cancellation
-  // cannot turn a 2,000-card correction into thousands of research queries.
-  const removedIds = eligibleIds.filter(id => !state.units.has(id));
-  const existingRemoved = removedIds.length ? new Set((await tx.$queryRaw<{ unitId: string }[]>(Prisma.sql`SELECT "unitId" FROM "StaffInventoryResearchJobV2" WHERE "unitId" IN (${Prisma.join(removedIds)}) AND "status" <> 'superseded'`)).map(row => row.unitId)) : new Set<string>();
-  for (const unitId of eligibleIds.filter(id => state.units.has(id) || existingRemoved.has(id))) {
-    const unit = state.units.get(unitId), receipt = unit && state.lots.get(unit.lot_id);
+  for (const unitId of eligibleIds) {
+    const unit = state.units.get(unitId);
     const description = unit?.description;
     let input: StaffInventoryResearchInput | null = null;
-    if (unit && receipt?.data.quantity === 1 && description && unit.description_event_id) {
+    if (unit && isIndividuallyDescribedStaffInventoryUnitV2(state, unitId) && description && unit.description_event_id) {
       const details = description.card_details;
       input = StaffInventoryResearchInputSchema.parse({ schema_version: 1, unit_id: unitId,
         description_event_id: unit.description_event_id, description_hash: inventoryHash(description),

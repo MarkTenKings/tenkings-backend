@@ -5,6 +5,7 @@ import type { ExactInputPlanResponse, ExactInputReceiptStatus } from '../../lib/
 const endpoint = '/api/v2/admin/inventory/research-qualification';
 const button = 'min-h-[48px] rounded-lg border border-white/30 px-4 py-3 text-sm disabled:opacity-40';
 type Pending = { invocation_id: string; plan_sha256: string };
+type RetainedReceipt = Pending & { receipt_sha256: string; status: string; download_url: string };
 function readPending(key: string): Pending | null {
   const raw = window.localStorage.getItem(key);
   if (!raw) return null;
@@ -24,11 +25,12 @@ function verifiedReceipt(value: unknown, saved: Pending): ExactInputReceiptStatu
 export default function StaffResearchExactInputQualification({ token, actorId }: { token: string; actorId: string }) {
   const [plan, setPlan] = useState<ExactInputPlanResponse | null>(null), [ack, setAck] = useState('');
   const [pending, setPending] = useState<Pending | null>(null), [receipt, setReceipt] = useState<ExactInputReceiptStatus | null>(null);
+  const [retainedReceipts, setRetainedReceipts] = useState<RetainedReceipt[]>([]);
   const [message, setMessage] = useState('Loading the exact-input plan…'), [busy, setBusy] = useState(false), [storageReady, setStorageReady] = useState(false);
   const generation = useRef(0), running = useRef(false), key = `tk-exact-research-invocation:${actorId}`;
   useEffect(() => {
     const controller = new AbortController(), requestGeneration = generation, current = ++requestGeneration.current;
-    setPlan(null); setReceipt(null); setAck(''); setPending(null); setBusy(false); setStorageReady(false); running.current = false;
+    setPlan(null); setReceipt(null); setRetainedReceipts([]); setAck(''); setPending(null); setBusy(false); setStorageReady(false); running.current = false;
     try { const prior = readPending(key); setPending(prior); setStorageReady(true); if (prior) setMessage('A previous invocation is retained. Read its receipt before any further action.'); }
     catch { setMessage('Invocation storage is unavailable or damaged. Execution is disabled to preserve uncertain requests.'); }
     void fetch(endpoint, { headers: buildAdminHeaders(token), cache: 'no-store', signal: controller.signal }).then(async response => {
@@ -69,8 +71,24 @@ export default function StaffResearchExactInputQualification({ token, actorId }:
     } catch { if (current === generation.current) setMessage('The response is uncertain. Recover the retained receipt; do not repeat the provider run.'); }
     finally { if (current === generation.current) { running.current = false; setBusy(false); } }
   }
+  const canPrepareAnother = !!pending && !!receipt?.receipt_sha256 && !!receipt.download_url
+    && ['completed', 'failed'].includes(receipt.status);
+  function prepareAnotherCheck() {
+    if (!canPrepareAnother || !pending || !receipt?.receipt_sha256 || !receipt.download_url || running.current || busy || !storageReady) return;
+    try {
+      const stored = readPending(key);
+      if (!stored || stored.invocation_id !== pending.invocation_id || stored.plan_sha256 !== pending.plan_sha256) {
+        setMessage('The retained invocation changed. Reload and recover that receipt before preparing another check.'); return;
+      }
+      window.localStorage.removeItem(key);
+      if (readPending(key) !== null) throw Error();
+      setRetainedReceipts(prior => [...prior, { ...pending, receipt_sha256: receipt.receipt_sha256!, status: receipt.status, download_url: receipt.download_url! }]);
+      setPending(null); setReceipt(null); setAck('');
+      setMessage('Previous receipt identifiers are retained below. Review the currently configured card and acknowledge any new check separately.');
+    } catch { setMessage('The invocation pointer could not be cleared. Its receipt remains available; no new check was submitted.'); }
+  }
   return <section className="space-y-4 border-t border-white/20 pt-6" aria-label="Exact-input research diagnostic">
-    <h2 className="text-xl">One saved card: V5 research diagnostic</h2>
+    <h2 className="text-xl">One saved card: research diagnostic</h2>
     <p className="text-white/70">Uses one server-pinned physical input and two verified original photos. It retains private evidence without updating Inventory or saved research jobs.</p>
     <p role="status">{message}</p>
     {plan && <>
@@ -78,6 +96,7 @@ export default function StaffResearchExactInputQualification({ token, actorId }:
       {plan.plan && <>
         <dl className="space-y-2 break-all text-sm"><dt>Saved card</dt><dd>{plan.plan.input.description.name} · {plan.plan.input.description.year} · {plan.plan.input.description.set_name} · #{plan.plan.input.description.card_number}</dd>
           <dt>Physical unit</dt><dd>{plan.plan.config.unit_id}</dd><dt>Exact input SHA-256</dt><dd>{plan.plan.config.input_sha256}</dd>
+          <dt>Expected research engine</dt><dd>{plan.plan.expected_engine_version}</dd>
           <dt>Front / back SHA-256</dt><dd>{plan.plan.config.photos.front.sha256}<br />{plan.plan.config.photos.back.sha256}</dd>
           <dt>Plan SHA-256</dt><dd>{plan.plan_sha256}</dd></dl>
         <p>At most 3 searches, 2 details, 3 {plan.plan.model.requested} model requests and 12 candidate-image reads. No automatic retry.</p>
@@ -95,5 +114,11 @@ export default function StaffResearchExactInputQualification({ token, actorId }:
     {receipt && <div className="space-y-3"><p>Receipt status: {receipt.status}</p><p className="break-all text-xs">SHA-256: {receipt.receipt_sha256 ?? 'unavailable'}</p>
       {receipt.download_url && <a className="underline" href={receipt.download_url} rel="noreferrer" target="_blank">Download private replay evidence (short-lived link)</a>}
       <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(receipt.summary, null, 2)}</pre></div>}
+    {canPrepareAnother && <button className={button} disabled={busy || !storageReady} onClick={prepareAnotherCheck}>Prepare another check</button>}
+    {retainedReceipts.map(prior => <div className="space-y-2 break-all text-xs" key={prior.invocation_id} aria-label="Previous diagnostic receipt">
+      <p>Previous receipt: {prior.status}. Server evidence is unchanged.</p>
+      <p>Invocation: {prior.invocation_id}</p><p>Plan SHA-256: {prior.plan_sha256}</p><p>Receipt SHA-256: {prior.receipt_sha256}</p>
+      <a className="underline" href={prior.download_url} rel="noreferrer" target="_blank">Previous private evidence (short-lived link)</a>
+    </div>)}
   </section>;
 }

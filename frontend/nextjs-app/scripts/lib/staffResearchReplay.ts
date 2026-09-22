@@ -18,7 +18,9 @@ const fileMap = {
   decisions: 'frontend/nextjs-app/lib/server/staffInventoryResearchDecisions.ts',
   evidence: 'frontend/nextjs-app/lib/server/staffInventoryResearchEvidence.ts',
   scopeEffect: 'frontend/nextjs-app/lib/server/cardCatalogScopeEffect.ts',
+  saleDetails: 'packages/shared/src/staffInventoryResearchSaleDetails.ts',
 };
+const recoveryDisabled = 'export function applyStaffInventoryResearchRecoveryContext(){throw Error("Frozen replay does not admit recovery enrichment")}\n';
 const git = (root: string, args: string[]) => execFileSync('/usr/bin/git', args, { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
 export async function loadResearchReplayVersions(root: string) {
   const baselineCommit = git(root, ['rev-parse', `${RESEARCH_REPLAY_BASELINE}^{commit}`]).trim();
@@ -32,13 +34,22 @@ export async function loadResearchReplayVersions(root: string) {
   const runtimeImports = new Map([
     ['../staffInventoryResearch', 'schema'], ['./staffInventoryResearchPrice', 'price'],
     ['./staffInventoryResearchDecisions', 'decisions'], ['./cardCatalogScopeEffect', 'scopeEffect'], ['./staffInventoryResearchEvidence', 'evidence'],
+    ['./staffInventoryResearchSaleDetails', 'saleDetails'],
+    // The fixed baseline tapes contain no recognition/recovery receipt. Fail
+    // closed if a caller tries to enrich them, rather than loading live shared
+    // recovery logic or silently treating a supplied assessment as valid.
+    ['./staffInventoryResearchRecoveryContext', 'no-recovery'],
     ['./staffInventoryIdentification', 'no-io'], ['./storage', 'no-io'],
   ]);
   try {
     for (const version of ['baseline', 'candidate'] as const) {
       await writeFile(join(directory, `${version}-no-io.ts`), 'export function readStaffInventoryPhoto(){throw Error("Replay storage is disabled")}\nexport function getStorageMode(){throw Error("Replay storage is disabled")}\n', { mode: 0o600 });
+      if (version === 'candidate') {
+        await writeFile(join(directory, 'candidate-no-recovery.ts'), recoveryDisabled, { mode: 0o600 });
+        hashes.candidate['replay:recovery-disabled'] = replayHash(recoveryDisabled);
+      }
       for (const [name, path] of Object.entries(fileMap)) {
-        if (version === 'baseline' && ['decisions', 'evidence', 'scopeEffect'].includes(name)) continue;
+        if (version === 'baseline' && ['decisions', 'evidence', 'scopeEffect', 'saleDetails'].includes(name)) continue;
         let source = version === 'baseline' ? git(root, ['show', `${baselineCommit}:${path}`]) : await readFile(join(root, path), 'utf8');
         hashes[version][path] = replayHash(source);
         // Resolve only known relative dependencies; unexpected imports stop the

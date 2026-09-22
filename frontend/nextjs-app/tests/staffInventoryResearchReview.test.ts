@@ -23,7 +23,7 @@ test('snapshot validates latest decision head, unique candidate/request/revision
   for (const changed of [{ revision: 0 }, { revision: 2 }, { updated_at: null }, { decisions: [] }, { decisions: [...current.decisions, current.decisions[0]] }]) assert.equal(StaffInventoryResearchReviewSnapshotSchema.safeParse({ ...current, ...changed }).success, false);
 });
 test('projection preserves exact legacy and modern baseline math and fails closed on corrupted evidence or result bindings', () => {
-  for (const version of [1, 2, 3, 5] as const) {
+  for (const version of [1, 2, 3, 5, 6] as const) {
     const result = marketResult(version), snapshot = base(result), before = JSON.stringify(result);
     const projected = projectStaffInventoryResearchReview(result, snapshot, snapshot.result_hash)!;
     assert.equal(projected.value_cents, 1002); assert.equal(projected.total_cents, 2003); assert.equal(projected.count, 2);

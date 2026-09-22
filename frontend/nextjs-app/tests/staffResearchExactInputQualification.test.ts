@@ -4,12 +4,16 @@ import { canonical, inventoryHash } from '@tenkings/database';
 import { exactFixture, sha, invocation, actorId } from './staffResearchExactInputQualificationFixture';
 import { EXACT_INPUT_LIMITS, exactInputQualificationPlan, exactInputQualificationTransport, recoverExactInputQualification, runExactInputQualification } from '../lib/server/staffResearchExactInputQualification';
 
-test('actual pure V5 engine uses verified originals and bounded exact-byte receipts; sequential replay/recovery never redispatch', async () => {
+test('actual pure V6 engine uses verified originals and bounded exact-byte receipts; sequential replay/recovery never redispatch', async () => {
   const f = await exactFixture();
+  assert.equal(f.plan.plan!.diagnostic_version, 'exact-input-v2');
+  assert.equal(f.plan.plan!.expected_engine_version, 'staff-inventory-research-v6');
   const outcome = await runExactInputQualification(actorId, f.plan.plan_sha256!, invocation, f.env, f.deps);
   assert.equal(outcome.status, 'completed'); assert.equal(f.storage.size, 2);
   assert.deepEqual(outcome.summary!.counts, { search: 1, detail: 2, model: 1, image: 2 });
-  assert.equal((outcome.summary!.result as any).engine_version, 'staff-inventory-research-v5');
+  assert.equal((outcome.summary!.result as any).engine_version, 'staff-inventory-research-v6');
+  assert.equal((outcome.summary!.result as any).photo_identity.status, 'unresolved');
+  assert.equal((outcome.summary!.result as any).sale_details.base_engine_version, 'staff-inventory-research-v3');
   assert.equal((outcome.summary!.result as any).estimate.status, 'unknown');
   const raw = [...f.storage.entries()].find(([key]) => key.endsWith('/terminal.json'))![1], terminal = JSON.parse(raw.toString());
   assert.equal(terminal.payload_sha256, inventoryHash(terminal.payload)); assert.equal(outcome.receipt_sha256, sha(raw));
@@ -30,6 +34,36 @@ test('actual pure V5 engine uses verified originals and bounded exact-byte recei
   await runExactInputQualification(actorId, f.plan.plan_sha256!, invocation, f.env, f.deps);
   assert.equal(f.requests.length, calls); assert.equal(f.storage.size, 2);
   assert.equal((await recoverExactInputQualification('another-admin', f.plan.plan_sha256!, invocation, f.deps)).status, 'not_found');
+});
+
+test('a fresh qualification cannot pass by returning a legacy V5 result under the V6 plan', async () => {
+  const f = await exactFixture(), original = f.deps.research;
+  f.deps.research = async (...args) => {
+    const result = await original(...args);
+    const { photo_identity: _photoIdentity, ...legacy } = result;
+    return { ...legacy, engine_version: 'staff-inventory-research-v5' };
+  };
+  const receipt = await runExactInputQualification(actorId, f.plan.plan_sha256!, invocation, f.env, f.deps);
+  assert.equal(receipt.status, 'failed'); assert.equal(receipt.summary!.error_code, 'result_binding');
+});
+
+test('legacy V5 terminal receipts recover byte-for-byte without current config, execution or relabeling', async () => {
+  const f = await exactFixture();
+  const legacyPlan = { diagnostic_version: 'exact-input-v1', config: f.config };
+  const planHash = inventoryHash(legacyPlan), legacyResult = { engine_version: 'staff-inventory-research-v5', estimate: { status: 'unknown' } };
+  const payload = { stage: 'terminal', status: 'completed', actor_sha256: sha(actorId), plan_sha256: planHash, invocation_id: invocation,
+    plan: legacyPlan, summary: { status: 'completed', result: legacyResult } };
+  const bytes = Buffer.from(canonical({ schema_version: 1, payload_sha256: inventoryHash(payload), payload }));
+  const key = `inventory-research-qualification/${sha(actorId)}/${planHash}/${invocation}/terminal.json`;
+  f.storage.set(key, bytes);
+  const receipt = await recoverExactInputQualification(actorId, planHash, invocation, { ...f.deps,
+    readInput: async () => assert.fail('Legacy recovery must not read current input'),
+    writeReceipt: async () => assert.fail('Legacy recovery must not rewrite evidence'),
+    fetchImpl: async () => assert.fail('Legacy recovery must not invoke providers'),
+  });
+  assert.equal(receipt.status, 'completed'); assert.deepEqual(receipt.summary!.result, legacyResult);
+  assert.equal(receipt.receipt_sha256, sha(bytes)); assert.deepEqual(f.storage.get(key), bytes);
+  assert.equal(f.requests.length, 0);
 });
 
 test('configuration/default-off/stale pins and corrupt actual original bytes fail before provider dispatch', async () => {

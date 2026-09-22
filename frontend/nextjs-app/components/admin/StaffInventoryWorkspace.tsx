@@ -41,7 +41,7 @@ const salesChannels = ['Vending machines', 'Stores', 'Kiosks', 'Ten Kings online
 const fresh = () => ({ origin: 'existing', type: 'single', name: '', category: '', quantity: '', cost: '', price: '', salesChannel: '', location: '', kind: '', machine: '', product: '', door: '', stage: 'unprocessed', date: localNow(), note: '', photo_key: null as string | null, photo_url: null as string | null, back_photo_key: null as string | null, back_photo_url: null as string | null, manufacturer: '', card_number: '', year: '', set_name: '', variant: '', card_type: '', address: '', loadedConfirmed: false, planned: false, costSplit: 'equal', cardCosts: {} as Record<string, string> });
 type Draft = ReturnType<typeof fresh>;
 type MarketEntry = { summary: StaffInventoryMarketValueSummary | null; unavailable: boolean; refreshAt: number };
-const researchBinding = (item: Item) => item.receipt_quantity === 1 && item.unit_ids.length === 1 && item.provenance.description
+const researchBinding = (item: Item) => (item.research_eligible === true || item.receipt_quantity === 1) && item.unit_ids.length === 1 && item.provenance.description
   ? [item.unit_ids[0], item.provenance.description] as const : null;
 const marketKey = (binding: readonly [string, string]) => JSON.stringify(binding);
 
@@ -467,7 +467,7 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     if (!mode && item && researchFocus) { researchSection.current?.focus({ preventScroll: true }); researchSection.current?.scrollIntoView?.({ block: 'start', behavior: 'auto' }); }
   }, [mode, item, researchFocus]);
   function marketValue(i: Item) {
-    if (i.receipt_quantity !== 1 || i.unit_ids.length !== 1) return <span className={styles.marketState}>Individual card research</span>;
+    if (i.receipt_quantity !== 1 && i.research_eligible !== true || i.unit_ids.length !== 1) return <span className={styles.marketState}>Individual card research</span>;
     const binding = researchBinding(i), entry = binding ? market.entries[marketKey(binding)] : undefined;
     const summary = entry?.summary;
     const label = !binding || entry?.unavailable ? 'Unavailable' : !entry ? 'Checking value…' : !summary ? 'Not researched'

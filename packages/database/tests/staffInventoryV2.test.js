@@ -29,6 +29,7 @@ function fixture() {
 }
 test('current stock records description, exact cent allocation, expected margin and independent card edits', () => {
   const f = fixture(); f.save(added()); const before = f.view(), item = before.items[0];
+  assert.equal(item.research_eligible, undefined, 'A shared batch description cannot authorize individual research.');
   assert.equal(item.quantity, 3); assert.deepEqual(item.units.map(u => u.cost_cents), [334, 334, 333]);
   assert.equal(item.expected_profit_cents, 1999); assert.equal(item.expected_margin_pct, 1999 / 3000 * 100);
   f.save({ ...meta(), action: 'edit', unit_ids: [item.unit_ids[1]], description: { name: 'Individual fixture card', category: 'Sports cards', notes: 'identified card', photo_key: null }, expected_price_cents: 2000 });
@@ -93,9 +94,11 @@ test('front/back photos and card details persist as description history without 
   const item = f.view().items.find(i => i.card_details);
   assert.equal(item.photo_key, photo('a')); assert.equal(item.back_photo_key, photo('b')); assert.deepEqual(item.card_details, details);
   assert.equal(item.quantity, 1); assert.equal(item.units[0].permanent_card_id, null);
+  assert.equal(item.research_eligible, true, 'An exact, individually photographed unit is researchable even when its receipt was bulk.');
   assert.equal(f.view().totals.on_hand, 3); assert.equal(f.view().totals.cost_cents, initial.cost_cents);
   assert.equal(canonical(f.events.slice(0, JSON.parse(originalEvents).length)), originalEvents);
   const legacy = f.view().items.find(i => !i.card_details); assert.equal(legacy.back_photo_key, null);
+  assert.equal(legacy.research_eligible, undefined);
   const stored = f.events.findLast(e => e.event_kind === 'item_described'); assert.deepEqual(stored.data.description, description);
   for (const patch of [{ back_photo_key: 'https://fixture.invalid/photo' }, { card_details: { ...details, year: 2026 } }, { card_details: { ...details, variant: '' } }, { card_details: { ...details, card_number: ' 007 ' } }, { card_details: { ...details, grade: '10' } }, { card_details: { ...details, card_number: 'a'.repeat(81) } }]) assert.equal(InventoryItemDescriptionV2.safeParse({ ...description, ...patch }).success, false);
 });

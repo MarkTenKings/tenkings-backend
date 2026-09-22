@@ -5,7 +5,7 @@ import type { StaffInventoryResearchReviewSnapshot } from '../../lib/staffInvent
 
 export const MARKET_TIME = '2026-09-21T12:00:00.000Z';
 /** Synthetic in-memory evidence; never contacts storage, a provider, or a DB. */
-export function marketResult(version: 1 | 2 | 3 | 5 = 1): StaffInventoryResearchResult {
+export function marketResult(version: 1 | 2 | 3 | 5 | 6 = 1): StaffInventoryResearchResult {
   const candidates = [1001, 1002, 9900].map((price, index) => {
     const id = `ebay:${111111111110 + index}`, image_url = `https://i.ebayimg.com/images/g/fixture${index}/s-l1600.jpg`;
     return {
@@ -33,6 +33,17 @@ export function marketResult(version: 1 | 2 | 3 | 5 = 1): StaffInventoryResearch
     ...(version >= 2 ? { comparison_assessments: comparisons, research_queries: [{ sequence: 1, query: 'Fixture Runner Base Raw', reason: 'Search the saved card.', status: 'completed', source_response_sha256: 'c'.repeat(64), candidate_ids: candidates.map(candidate => candidate.id), error_code: null }] } : {}),
     ...(version >= 3 ? { diagnostics: { schema_version: 1, reason_codes: [], sources: [{ sequence: 1, returned_count: 3, parsed_count: 3, retained_count: 3, has_next_page: false }], candidates: candidates.map((candidate, index) => ({ candidate_id: candidate.id, model_assessment: comparisons[index], model_image_sha256: candidate.image.sha256, decision_codes: [], comparison_status: 'assessed', image_attempts: [], image_width: 100, image_height: 140 })) } } : {}),
     ...(version === 5 ? { sale_details: { schema_version: 1, base_engine_version: 'staff-inventory-research-v3', requests: [] } } : {}),
+    ...(version === 6 ? {
+      identity: { status: 'unresolved', variant_name: null, suggestion: null, reason: 'No published catalog record.', reference_ids: [], photo_features: [] }, references: [],
+      photo_identity: { schema_version: 1, status: 'supported', reason: 'Original front and back identify the exact card and visible treatment.',
+        observations: [
+          { field: 'name', value: 'Fixture Runner', side: 'front', photo_sha256: 'd'.repeat(64), observation: 'The front prints Fixture Runner.' },
+          { field: 'year', value: '2024', side: 'back', photo_sha256: 'e'.repeat(64), observation: 'The back prints the year 2024.' },
+          { field: 'set_name', value: 'Fixture Chrome', side: 'back', photo_sha256: 'e'.repeat(64), observation: 'The back names Fixture Chrome.' },
+          { field: 'card_number', value: '007', side: 'back', photo_sha256: 'e'.repeat(64), observation: 'The back prints card number 007.' },
+          { field: 'treatment', value: 'Circular printed base mark beneath card number', side: 'back', photo_sha256: 'e'.repeat(64), observation: 'The distinctive circular base-printing mark is visible beneath 007.' },
+        ] },
+    } : {}),
   });
 }
 

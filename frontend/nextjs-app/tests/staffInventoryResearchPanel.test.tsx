@@ -4,6 +4,7 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { webcrypto } from 'node:crypto';
 import { StaffInventoryResearchResultSchema, type StaffInventoryResearchCandidate, type StaffInventoryResearchResult } from '../lib/staffInventoryResearch';
+import { marketResult } from './fixtures/staffInventoryMarketValue';
 const { JSDOM } = require('jsdom');
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 const cssLoader = require.extensions['.css']; require.extensions['.css'] = module => { module.exports = {}; };
@@ -49,6 +50,19 @@ test('research progress is a private read and never a save dependency', async ()
   const ui = await mount(async (url, init) => { calls++; assert.match(String(url), /research\?unit_id=fixture-unit/); assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer fixture-admin'); assert.equal(init?.cache, 'no-store'); assert.equal(init?.method, undefined); assert.ok(init?.signal); return Response.json({ version: 1, jobs: [job], image_previews: {} }); });
   try { assert.match(ui.container.textContent!, /Queued/); assert.match(ui.container.textContent!, /keep adding inventory or close this page/); assert.equal(calls, 1); } finally { await ui.close(); }
 });
+test('private photo matching shows selected sale value without claiming published catalog identity', async () => {
+  const result = { ...marketResult(6), description_event_id: job.description_event_id, description_hash: job.description_hash };
+  const before = JSON.stringify(result), ui = await mount(async () => responseFor(result));
+  try {
+    assert.match(ui.container.textContent!, /Card matched from original photos/);
+    assert.match(ui.container.textContent!, /private research match/);
+    assert.match(ui.container.textContent!, /\$10\.02/);
+    const catalog = [...ui.container.querySelectorAll('details')].find(node => node.querySelector('summary')?.textContent === 'Catalog identity')!;
+    assert.ok(catalog); assert.equal(catalog.open, false); assert.match(catalog.textContent!, /No published catalog record/);
+    assert.equal(ui.container.querySelector('article')?.getAttribute('aria-label'), result.candidates[0].title);
+    assert.equal(JSON.stringify(result), before);
+  } finally { await ui.close(); }
+});
 test('old description results and unavailable reads cannot replace the current card', async () => {
   const ui = await mount(async () => Response.json({ version: 1, jobs: [{ ...job, description_event_id: 'old-revision' }] }));
   try { assert.match(ui.container.textContent!, /Not researched/); assert.doesNotMatch(ui.container.textContent!, /Queued/); } finally { await ui.close(); }
@@ -82,7 +96,7 @@ test('legacy results display each source price honestly without inventing a matc
     assert.match(ui.container.textContent!, /No matching comparisons established yet/);
     assert.doesNotMatch(ui.container.textContent!, /verified matching sales|Matching research candidates|\$0.00|—/);
     const other = [...ui.container.querySelectorAll('details')].find(node => node.querySelector('summary')?.textContent?.startsWith('Other results'))!;
-    assert.ok(other); assert.equal(other.open, false); assert.equal(other.querySelectorAll('article').length, items.length);
+    assert.ok(other); assert.equal(other.open, true); assert.equal(other.querySelectorAll('article').length, items.length);
     assert.equal(JSON.stringify(result), before); assert.equal(ui.container.querySelectorAll('img').length, 0);
     const source = article(ui.container, items[1]).querySelector('a')!; assert.equal(source.href, items[1].listing_url); assert.equal(source.target, '_blank'); assert.equal(source.rel, 'noreferrer');
   } finally { await ui.close(); }

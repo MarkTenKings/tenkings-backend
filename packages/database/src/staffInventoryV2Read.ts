@@ -1,6 +1,7 @@
 import { canonical, inventoryHash, type WorkflowEventV2 } from './inventoryWorkflowV2';
 import { replayWorkflowEventsV2, type WorkflowUnitV2 } from './inventoryWorkflowV2State';
 import { expectedInventoryValueV2 } from './staffInventoryV2';
+import { isIndividuallyDescribedStaffInventoryUnitV2 } from './staffInventoryResearchV2';
 
 export type InventoryLocationV2 = { id: string; name: string; slug: string; address: string; locationType: string | null };
 export function staffInventoryWorkspaceV2(events: WorkflowEventV2[], locations: InventoryLocationV2[]) {
@@ -28,6 +29,7 @@ export function staffInventoryWorkspaceV2(events: WorkflowEventV2[], locations: 
       unit_ids: units.map(u => u.unit_id),
       units: units.map((u, i) => ({ id: u.unit_id, number: receipt.data.unit_ids.indexOf(u.unit_id) + 1, cost_cents: u.cost?.cost_cents ?? null, expected_price_cents: u.intended_sale_price_cents, permanent_card_id: u.permanent_card_id, pack_id: u.pack_id, planned_location_name: locations.find(l => l.id === u.reservation?.location_id)?.name ?? null })),
       receipt_quantity: receipt.data.quantity, purchase_total_cents: state.costAuthorities.get(first.lot_id)?.data.total_cost_cents ?? null,
+      ...(units.length === 1 && isIndividuallyDescribedStaffInventoryUnitV2(state, first.unit_id) ? { research_eligible: true as const } : {}),
       created_at: receipt.effective_at, origin: receipt.event_kind === 'purchase_received' ? 'purchase' : 'existing',
       provenance: { receipt: first.receipt_event_id, description: first.description_event_id ?? null, cost: first.cost_event_id, price: first.price_event_id, custody: first.state_event_id },
     };

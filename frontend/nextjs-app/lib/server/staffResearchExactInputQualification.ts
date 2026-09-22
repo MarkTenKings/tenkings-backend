@@ -5,7 +5,7 @@ import { Prisma } from '@prisma/client';
 import { prisma, canonical, inventoryHash } from '@tenkings/database';
 import {
   StaffInventoryResearchInputSchema, StaffInventoryResearchReferenceSchema, StaffInventoryResearchResultSchema,
-  isStaffInventoryResearchImageUrl, STAFF_INVENTORY_RESEARCH_MODEL,
+  isStaffInventoryResearchImageUrl, STAFF_INVENTORY_RESEARCH_MODEL, STAFF_INVENTORY_RESEARCH_PHOTO_ENGINE_VERSION,
   type StaffInventoryResearchInput, type StaffInventoryResearchReference, type StaffInventoryResearchResult,
 } from '../staffInventoryResearch';
 import { researchStaffInventoryCard, isExactStaffInventoryResearchReference } from './staffInventoryResearch';
@@ -38,7 +38,7 @@ export const ExactInputConfigurationSchema = z.object({
 }).strict();
 export type ExactInputConfiguration = z.infer<typeof ExactInputConfigurationSchema>;
 export type ExactInputPlan = {
-  schema_version: 1; diagnostic_version: 'exact-input-v1'; config: ExactInputConfiguration;
+  schema_version: 1; diagnostic_version: 'exact-input-v2'; expected_engine_version: typeof STAFF_INVENTORY_RESEARCH_PHOTO_ENGINE_VERSION; config: ExactInputConfiguration;
   input: StaffInventoryResearchInput; references: StaffInventoryResearchReference[]; references_sha256: string;
   limits: typeof EXACT_INPUT_LIMITS; model: { requested: typeof STAFF_INVENTORY_RESEARCH_MODEL; reasoning: 'medium'; store: false; max_output_tokens: 6500 };
   effects: { sale_details: true; catalog: false; full_resolution: false; candidate_archive: false; business_writes: false; private_receipt_writes: 2 };
@@ -111,7 +111,8 @@ export async function exactInputQualificationPlan(env: Record<string, string | u
   const plan = await bounded(EXACT_INPUT_LIMITS.preflight_ms, async signal => {
     const input = verifiedInput(config, await abortable(deps.readInput(config), signal));
     const references = verifiedReferences(input, await abortable(deps.readReferences(input.description, signal), signal));
-    return { schema_version: 1 as const, diagnostic_version: 'exact-input-v1' as const, config, input, references,
+    return { schema_version: 1 as const, diagnostic_version: 'exact-input-v2' as const,
+      expected_engine_version: STAFF_INVENTORY_RESEARCH_PHOTO_ENGINE_VERSION, config, input, references,
       references_sha256: inventoryHash(references), limits: EXACT_INPUT_LIMITS,
       model: { requested: STAFF_INVENTORY_RESEARCH_MODEL, reasoning: 'medium' as const, store: false as const, max_output_tokens: 6500 as const },
       effects: { sale_details: true as const, catalog: false as const, full_resolution: false as const, candidate_archive: false as const, business_writes: false as const, private_receipt_writes: 2 as const },
@@ -344,7 +345,8 @@ export async function runExactInputQualification(actor: string, planHash: string
         fetchImpl: transport.fetchImpl, loadPhoto: async key => { const value = originals.find(photo => photo.key === key); check(value, 'unverified_photo'); return value; },
         loadReferences: async () => plan.references, now: deps.now, ...(deps.timeoutMs ? { timeoutMs: deps.timeoutMs } : {}),
       }, signal), signal));
-      check(result.engine_version === 'staff-inventory-research-v5' && result.unit_id === plan.input.unit_id
+      check(result.engine_version === plan.expected_engine_version && result.sale_details?.base_engine_version === 'staff-inventory-research-v3'
+        && result.unit_id === plan.input.unit_id
         && result.description_event_id === plan.input.description_event_id && result.description_hash === plan.input.description_hash, 'result_binding');
     } catch (error) { errorCode = failureCode(error); }
     finally { tape = transport.finish(); phaseSignal.removeEventListener('abort', stop); disconnected?.removeEventListener('abort', stop); control.abort(); }

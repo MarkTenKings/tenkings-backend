@@ -65,7 +65,7 @@ for (const category of ['SPORTS', 'POKEMON'] as const) for (const truncatedField
     const scoped = lookups[1]; assert.equal(scoped.truncated, false); assert.ok(scoped.returnedCount > 0);
     assert.ok(scoped.candidates.some(candidate => candidate.applicability === 'supported'), 'the real reader supplies positive evidence before converter eligibility');
     assert.equal(StaffInventoryResearchResultSchema.safeParse(result).success, true);
-    assert.equal(result.engine_version, 'staff-inventory-research-v4'); assert.equal(result.catalog_context?.status, 'current');
+    assert.equal(result.engine_version, 'staff-inventory-research-v6'); assert.equal(result.catalog_context?.status, 'current');
     const coverage = result.catalog_context!.publications[0];
     assert.equal(coverage.coverage.text, truncatedField === 'text' ? 'truncated' : 'partial');
     assert.equal(coverage.coverage.applicability, truncatedField === 'applicability' ? 'truncated' : 'partial');

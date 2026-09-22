@@ -260,7 +260,7 @@ test('V5 enabled: default cron → worker → engine → durable PostgreSQL evid
       assert.equal(stored.status, 'complete'); assert.equal(stored.attemptCount, 1); assert.equal(stored.leaseToken, null); assert.equal(stored.leaseExpiresAt, null);
       assert.equal(stored.errorCode, null); assert.equal(stored.errorMessage, null);
       assert.ok(stored.result && stored.resultHash); assert.equal(stored.resultHash, database.inventoryHash(JSON.parse(stored.result)));
-      assert.equal(database.canonical(result), stored.result); assert.equal(result.engine_version, 'staff-inventory-research-v5');
+      assert.equal(database.canonical(result), stored.result); assert.equal(result.engine_version, 'staff-inventory-research-v6');
       assert.equal(result.sale_details!.base_engine_version, 'staff-inventory-research-v3'); assert.equal(Object.hasOwn(result, 'catalog_context'), false);
       assert.ok(result.candidates.every(({ image }) => image !== null && image.storage_key === `research-evidence/${image.sha256}.jpg`));
       assert.deepEqual(stored.attempts.map(attempt => attempt.outcome), ['complete']); assert.equal(await history(), before);
@@ -321,7 +321,7 @@ test('V5 enabled: default cron → worker → engine → durable PostgreSQL evid
     try {
       for (const prior of persisted) {
         const visible = await read(prior.unitId), stored = await raw(prior.unitId);
-        assert.equal(visible.result!.engine_version, 'staff-inventory-research-v5'); assert.equal(database.canonical(visible.result), prior.result);
+        assert.equal(visible.result!.engine_version, 'staff-inventory-research-v6'); assert.equal(database.canonical(visible.result), prior.result);
         assert.equal(stored.resultHash, prior.resultHash); assert.deepEqual(stored.attempts, prior.attempts);
       }
       const counts = { ...calls }; assert.deepEqual((await callCron()).body, { ok: true, claimed: 0, completed: 0, failed: 0, superseded: 0 }); assert.deepEqual(calls, counts);

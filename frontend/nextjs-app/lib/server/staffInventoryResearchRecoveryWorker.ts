@@ -3,7 +3,7 @@ import {
   prisma, claimStaffInventoryResearchRecoveryV2, completeStaffInventoryResearchRecoveryV2, failStaffInventoryResearchRecoveryV2,
   reserveStaffInventoryResearchRecoveryScopeV2, reserveStaffInventoryResearchRecoverySourcesV2, readStaffInventoryResearchRecoverySourcesV2, type StaffInventoryResearchRecoveryClaimV2,
 } from '@tenkings/database';
-import { StaffInventoryResearchRecoveryAssessmentSchema, STAFF_INVENTORY_RESEARCH_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION,
+import { StaffInventoryResearchRecoveryAssessmentSchema, STAFF_INVENTORY_RESEARCH_PHOTO_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_ENGINE_VERSION, STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION,
   type StaffInventoryResearchInput, type StaffInventoryResearchRecoveryAssessment } from '@tenkings/shared';
 import { identifyStaffInventoryCard, readStaffInventoryPhoto } from './staffInventoryIdentification';
 import { researchCatalogScopeResolver } from './staffInventoryResearch';
@@ -27,6 +27,7 @@ export async function prepareInventoryRecoveryAssessment(input: StaffInventoryRe
   reserveSources?: (demandHash: string) => Promise<boolean>;
   readSources?: (demandHash: string) => ReturnType<typeof readStaffInventoryResearchRecoverySourcesV2>;
   attemptId: string;
+  legacyAuthority?: boolean;
 }, signal: AbortSignal) {
   const env = process.env;
   const catalogEnabled = inventoryRecoveryCatalogEnabled();
@@ -43,7 +44,9 @@ export async function prepareInventoryRecoveryAssessment(input: StaffInventoryRe
     previousRecognition: options.previousAssessment?.recognition.evidence ?? null,
     previousCatalogContext: options.previousAssessment?.catalog_context ?? null,
     recognize: (request, recognitionSignal) => identifyStaffInventoryCard(request, { env }, recognitionSignal),
-    researchEngineVersion: [catalogEnabled ? STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION : STAFF_INVENTORY_RESEARCH_ENGINE_VERSION,
+    legacyAuthority: options.legacyAuthority,
+    researchEngineVersion: [...(options.legacyAuthority ? [catalogEnabled ? STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION : STAFF_INVENTORY_RESEARCH_ENGINE_VERSION]
+      : [STAFF_INVENTORY_RESEARCH_PHOTO_ENGINE_VERSION, catalogEnabled ? 'catalog-enabled' : 'catalog-disabled']),
       env.STAFF_INVENTORY_RESEARCH_SALE_DETAILS === 'true' ? STAFF_INVENTORY_RESEARCH_SALE_DETAILS_ENGINE_VERSION : 'search-prices',
       env.STAFF_INVENTORY_RESEARCH_FULL_RES_IMAGES === 'true' ? 'full-res-images' : 'standard-images'].join(':'),
     ...(catalogEnabled ? { loadCatalog: async (description: StaffInventoryResearchInput['description'], catalogSignal: AbortSignal) => {

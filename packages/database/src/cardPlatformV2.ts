@@ -1,5 +1,5 @@
 import { StaffInventoryCommandV2, buildStaffInventoryCommandsV2, staffInventoryProofV2 } from './staffInventoryV2';
-import { syncStaffInventoryResearchV2, readStaffInventoryResearchV2, StaffInventoryResearchStartV2 } from './staffInventoryResearchV2';
+import { syncStaffInventoryResearchV2, readStaffInventoryResearchV2, StaffInventoryResearchStartV2, isIndividuallyDescribedStaffInventoryUnitV2 } from './staffInventoryResearchV2';
 import { randomBytes } from "crypto";
 
 import { Prisma } from "@prisma/client";
@@ -1899,7 +1899,7 @@ export async function recordStaffInventoryV2(tx: CardPlatformV2Transaction, inpu
   return { outcome: 'RECORDED' as const, request_id: d.request_id };
 }
 
-/** Human-requested research for a pre-existing individual receipt. It reads the
+/** Human-requested research for a pre-existing individually described card. It reads the
  * same locked, verified inventory state and writes proposals only: no new
  * inventory event, price, cost, physical fact or identity correction. */
 export async function startStaffInventoryResearchV2(tx: CardPlatformV2Transaction, input: unknown, adminId: string) {
@@ -1913,7 +1913,7 @@ export async function startStaffInventoryResearchV2(tx: CardPlatformV2Transactio
   const state = replayWorkflowEventsV2(await readWorkflowHistoryV2(tx));
   const unit = state.units.get(d.unitId);
   if (!unit || !unit.description || unit.description_event_id !== d.descriptionEventId) throw new CardInventoryErrorV2('CONFLICT', 'This card or its description changed. Refresh before starting research.');
-  if (state.lots.get(unit.lot_id)?.data.quantity !== 1) throw new CardInventoryErrorV2('CONFLICT', 'Research requires an individually received card. A batch does not identify one physical card.');
+  if (!isIndividuallyDescribedStaffInventoryUnitV2(state, d.unitId)) throw new CardInventoryErrorV2('CONFLICT', 'Research requires an individually received or individually photographed card. A shared batch description does not identify one physical card.');
   const [before] = await readStaffInventoryResearchV2(tx, { unitIds: [d.unitId] });
   await syncStaffInventoryResearchV2(tx, state, [d.unitId], { requestId: d.requestId, actor });
   const [job] = await readStaffInventoryResearchV2(tx, { unitIds: [d.unitId] });

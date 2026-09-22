@@ -5,7 +5,7 @@ import { getStaffInventoryMarketCalculation, StaffInventoryMarketValueResponseSc
 import { marketJob, marketResult, marketReview, MARKET_TIME } from './fixtures/staffInventoryMarketValue';
 
 test('legacy and modern summaries use only selected evidence, half-cent rounds up, and inputs stay immutable', () => {
-  for (const version of [1, 2, 3, 5] as const) {
+  for (const version of [1, 2, 3, 5, 6] as const) {
     const result = marketResult(version), job = marketJob(result), before = JSON.stringify(job);
     const calculated = getStaffInventoryMarketCalculation(result)!;
     assert.deepEqual({ ...calculated, selected_candidates: calculated.selected_candidates.map(candidate => candidate.id) }, {
