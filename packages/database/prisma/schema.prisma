@@ -3951,6 +3951,7 @@ model InventoryWorkflowEventV2 {
   contentHash String
   requestHash String
   staffResearchJobs StaffInventoryResearchJobV2[]
+  staffResearchReviews StaffInventoryResearchReviewV2[]
 }
 
 // Private, non-authoritative research; never exported as financial evidence.
@@ -3980,10 +3981,37 @@ model StaffInventoryResearchJobV2 {
   retries            Json @default("[]") @db.JsonB
   startRequestId     String? @unique
   requestedBy        String?
+  staffResearchReviews StaffInventoryResearchReviewV2[]
 
   @@unique([unitId, descriptionEventId, inputHash], map: "StaffInventoryResearchJobV2_revision_key")
   @@index([status, nextAttemptAt])
   @@index([unitId, createdAt])
+}
+
+// Append-only decisions over immutable private research, enforced by migration
+// 20260922000000_staff_inventory_research_review_v2 and the raw-SQL sole writer.
+model StaffInventoryResearchReviewV2 {
+  requestId          String @id
+  jobId              String
+  job                StaffInventoryResearchJobV2 @relation(fields: [jobId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  unitId             String
+  descriptionEventId String
+  descriptionEvent   InventoryWorkflowEventV2 @relation(fields: [descriptionEventId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  inputHash          String
+  resultHash         String
+  expectedRevision   Int
+  revision           Int
+  candidateId        String
+  decision           String
+  actorId            String
+  reviewedAt         DateTime @db.Timestamptz(3)
+  request            String
+  requestHash        String
+  content            String
+  contentHash        String
+
+  @@unique([jobId, revision], map: "StaffInventoryResearchReviewV2_job_revision_key")
+  @@index([jobId, candidateId, revision(sort: Desc)], map: "StaffInventoryResearchReviewV2_latest_candidate_idx")
 }
 
 // Short-lived server-owned claims share intake headroom across web instances.

@@ -115,7 +115,7 @@ test('estimate selections come first, research matches stay separate, and mismat
     const included = ui.container.querySelector('section[aria-label="Included in market estimate"]')!;
     assert.deepEqual([...included.querySelectorAll('article')].map(node => node.getAttribute('aria-label')), items.slice(0, 2).map(item => item.title));
     assert.match(ui.container.querySelector('section[aria-label="Matching research candidates"]')!.textContent!, /Reported price\$99.99Final sale unverified/);
-    assert.match(ui.container.textContent!, /2 verified matching sales/); assert.equal(result.estimate.value_cents, 2500);
+    assert.match(ui.container.textContent!, /2 AI-selected sold comps/); assert.equal(result.estimate.value_cents, 2500);
     const mismatch = article(ui.container, items[4]); assert.equal(mismatch.closest('details')?.open, false); assert.match(mismatch.textContent!, /Rejected comparison/);
     const searches = [...ui.container.querySelectorAll('details')].find(node => node.querySelector('summary')?.textContent?.startsWith('Searches & evidence'))!;
     assert.equal(searches.open, false); assert.match(searches.textContent!, /3 searches/); assert.match(searches.textContent!, /Initial search/); assert.match(searches.textContent!, /Refined search 2/); assert.match(searches.textContent!, /Earlier results remain available/);
@@ -161,4 +161,56 @@ test('late responses and a changed authentication token cannot retain another ca
   let call = 0;
   const changedAuth = await mount(async () => ++call === 1 ? responseFor(unknownResult([item]), { [item.image!.storage_key!]: 'https://private-preview.invalid/old.jpg' }) : Response.json({}, { status: 401 }));
   try { assert.ok(changedAuth.container.querySelector('img')); await changedAuth.render({ token: 'new-fixture-admin' }); assert.equal(changedAuth.container.querySelector('img'), null); assert.equal(changedAuth.container.querySelector('article'), null); assert.match(changedAuth.container.textContent!, /Research is temporarily unavailable/); } finally { await changedAuth.close(); }
+});
+
+
+test('value arithmetic uses selected sold prices and leaves the incorrect comp out', async () => {
+  const prices = [10000, 11000, 9000, 90000];
+  const items = prices.map((price, index) => withImage(candidate(123500 + index, {
+    sold_price: (price / 100).toFixed(2), sold_price_cents: price,
+    ...(index === 3 ? { title: 'Different player and parallel' } : {}),
+  }), String(index + 1).repeat(64)));
+  const result = { ...estimatedResult(items), selected_candidate_ids: items.slice(0, 3).map(item => item.id),
+    rejections: [{ candidate_id: items[3].id, reason: 'Wrong card and parallel.' }],
+    estimate: { status: 'estimated' as const, value_cents: 10000, low_cents: 9000, high_cents: 11000, currency: 'USD' as const, count: 3, reason: 'Arithmetic mean of selected verified USD sold prices.' } };
+  const before = JSON.stringify(result), methods: (string | undefined)[] = [];
+  const ui = await mount(async (_, init) => { methods.push(init?.method); return responseFor(result); });
+  try {
+    const formula = ui.container.querySelector('[aria-label="How the eBay comp value is calculated"]')!;
+    assert.ok(formula); assert.match(formula.textContent!, /\$100.00 \+ \$110.00 \+ \$90.00 = \$300.00/);
+    assert.match(formula.textContent!, /\$300.00 ÷ 3 sales = \$100.00/);
+    assert.match(formula.textContent!, /3 included · 1 listing not used/);
+    assert.doesNotMatch(formula.textContent!, /\$900.00/);
+    assert.match(formula.textContent!, /excludes shipping/);
+    assert.match(formula.textContent!, /AI matching can make mistakes/);
+    assert.match(article(ui.container, items[3]).textContent!, /Wrong card and parallel/);
+    assert.equal(JSON.stringify(result), before); assert.deepEqual(methods, [undefined]);
+  } finally { await ui.close(); }
+});
+
+test('value formula rounds a half cent upward and does not round each sale first', async () => {
+  const items = [1001, 1002].map((price, index) => withImage(candidate(123510 + index, { sold_price: (price / 100).toFixed(2), sold_price_cents: price }), String(index + 1).repeat(64)));
+  const result = { ...estimatedResult(items), estimate: { status: 'estimated' as const, value_cents: 1002, low_cents: 1001, high_cents: 1002, currency: 'USD' as const, count: 2, reason: 'Arithmetic mean rounded to nearest cent.' } };
+  const ui = await mount(async () => responseFor(result));
+  try { const formula = ui.container.querySelector('[aria-label="How the eBay comp value is calculated"]')!;
+    assert.match(formula.textContent!, /\$10.01 \+ \$10.02 = \$20.03/);
+    assert.match(formula.textContent!, /\$20.03 ÷ 2 sales = \$10.02/);
+    assert.match(formula.textContent!, /nearest cent/);
+  } finally { await ui.close(); }
+});
+
+test('historical duplicate-image weighting keeps its evidence but cannot present a current value', async () => {
+  const items = [1000, 2000, 3000].map((price, index) => withImage(candidate(123520 + index, { sold_price: (price / 100).toFixed(2), sold_price_cents: price }), (index < 2 ? '1' : '2').repeat(64)));
+  const result = { ...estimatedResult(items), selected_candidate_ids: items.map(item => item.id), rejections: [],
+    estimate: { status: 'estimated' as const, value_cents: 2000, low_cents: 1000, high_cents: 3000, currency: 'USD' as const, count: 3, reason: 'Historical equal-weight result.' } };
+  const before = JSON.stringify(result), ui = await mount(async () => responseFor(result));
+  try {
+    assert.match(ui.container.textContent!, /More evidence needed/);
+    const formula = ui.container.querySelector('[aria-label="How the eBay comp value is calculated"]')!;
+    assert.match(formula.textContent!, /saved selection needs review/);
+    assert.match(formula.textContent!, /0 included · 3 listings not used/);
+    assert.equal(ui.container.querySelector('[aria-label="Included in market estimate"]'), null);
+    assert.equal(ui.container.querySelectorAll('article').length, 3);
+    assert.equal(JSON.stringify(result), before);
+  } finally { await ui.close(); }
 });

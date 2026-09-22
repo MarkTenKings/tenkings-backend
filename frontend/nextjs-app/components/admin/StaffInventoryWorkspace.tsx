@@ -9,6 +9,7 @@ import StaffInventoryLocationBrowser from './StaffInventoryLocationBrowser';
 import { createStaffInventoryPointCache, parseStaffInventoryMapPointResponse, type StaffInventoryMapLocation } from '../../lib/staffInventoryLocationsMap';
 import StaffInventoryCardCapture from './StaffInventoryCardCapture';
 import StaffInventoryResearchPanel from './StaffInventoryResearchPanel';
+import { StaffInventoryMarketValueResponseSchema, type StaffInventoryMarketValueSummary } from '../../lib/staffInventoryMarketValue';
 import { isStaffInventoryIdentificationResponse } from '../../lib/staffInventoryIdentification';
 import { createStaffInventoryLocator, staffInventoryLocationKind } from '../../lib/staffInventoryGeolocation';
 import { readStaffInventoryPosition } from '../../lib/staffInventoryBrowserPosition';
@@ -39,6 +40,74 @@ const cardFieldLabels: Record<typeof cardFields[number], string> = { manufacture
 const salesChannels = ['Vending machines', 'Stores', 'Kiosks', 'Ten Kings online', 'eBay', 'Whatnot', 'Amazon'];
 const fresh = () => ({ origin: 'existing', type: 'single', name: '', category: '', quantity: '', cost: '', price: '', salesChannel: '', location: '', kind: '', machine: '', product: '', door: '', stage: 'unprocessed', date: localNow(), note: '', photo_key: null as string | null, photo_url: null as string | null, back_photo_key: null as string | null, back_photo_url: null as string | null, manufacturer: '', card_number: '', year: '', set_name: '', variant: '', card_type: '', address: '', loadedConfirmed: false, planned: false, costSplit: 'equal', cardCosts: {} as Record<string, string> });
 type Draft = ReturnType<typeof fresh>;
+type MarketEntry = { summary: StaffInventoryMarketValueSummary | null; unavailable: boolean; refreshAt: number };
+const researchBinding = (item: Item) => item.receipt_quantity === 1 && item.unit_ids.length === 1 && item.provenance.description
+  ? [item.unit_ids[0], item.provenance.description] as const : null;
+const marketKey = (binding: readonly [string, string]) => JSON.stringify(binding);
+
+function useInventoryMarketValues(scope: string, token: string, bindings: string, paused: boolean, reviewBinding: string | null) {
+  const [visible, setVisible] = useState(true), [revision, setRevision] = useState(0);
+  const [view, setView] = useState<{ scope: string; entries: Record<string, MarketEntry> }>({ scope, entries: {} });
+  const cache = useRef({ scope, entries: new Map<string, MarketEntry>() });
+  const request = useRef<AbortController | null>(null);
+  const current = useRef({ scope, paused }); current.current = { scope, paused: paused || !visible };
+  useEffect(() => {
+    const changed = () => { if (document.hidden) request.current?.abort(); setVisible(!document.hidden); };
+    changed(); document.addEventListener('visibilitychange', changed);
+    return () => document.removeEventListener('visibilitychange', changed);
+  }, []);
+  useEffect(() => {
+    if (cache.current.scope !== scope) cache.current = { scope, entries: new Map() };
+    // A deliberate drawer review can start/retry research. Refresh that card when the list resumes.
+    if (reviewBinding) {
+      cache.current.entries.delete(reviewBinding);
+      setView(previous => { if (previous.scope !== scope || !previous.entries[reviewBinding]) return previous;
+        const entries = { ...previous.entries }; delete entries[reviewBinding]; return { scope, entries }; });
+    }
+    if (paused || !visible || !bindings) return;
+    const pairs = JSON.parse(bindings) as [string, string][];
+    let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, readTimeout: ReturnType<typeof setTimeout> | undefined;
+    const valid = () => !stopped && current.current.scope === scope && !current.current.paused && !document.hidden;
+    async function read() {
+      const due = pairs.filter(pair => (cache.current.entries.get(marketKey(pair))?.refreshAt ?? 0) <= Date.now());
+      for (let offset = 0; offset < due.length && valid();) {
+        const params = new URLSearchParams({ view: 'summary' }), chunk: [string, string][] = [];
+        while (offset < due.length && chunk.length < 50) {
+          const next = new URLSearchParams(params); next.append('unit_id', due[offset][0]);
+          if (chunk.length && next.toString().length > 5900) break;
+          params.append('unit_id', due[offset][0]); chunk.push(due[offset++]);
+        }
+        const ids = new Set(chunk.map(pair => pair[0]));
+        const controller = new AbortController(); request.current = controller;
+        const timeout = setTimeout(() => controller.abort(), 15000); readTimeout = timeout;
+        try {
+          const response = await fetch(`/api/v2/admin/inventory/research?${params}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: controller.signal });
+          const parsed = StaffInventoryMarketValueResponseSchema.safeParse(await response.json());
+          if (!response.ok || !parsed.success || new Set(parsed.data.summaries.map(summary => summary.unit_id)).size !== parsed.data.summaries.length
+            || parsed.data.summaries.some(summary => !ids.has(summary.unit_id))) throw new Error('Invalid market summary');
+          if (!valid()) return;
+          if (controller.signal.aborted) throw new Error('Market summary timed out');
+          for (const pair of chunk) {
+            const summary = parsed.data.summaries.find(value => value.unit_id === pair[0]);
+            const matches = summary?.description_event_id === pair[1];
+            cache.current.entries.set(marketKey(pair), { summary: matches ? summary! : null, unavailable: !!summary && !matches,
+              refreshAt: matches && ['queued', 'running'].includes(summary.status) ? Date.now() + 30000 : Infinity });
+          }
+        } catch {
+          if (!valid()) return;
+          chunk.forEach(pair => cache.current.entries.set(marketKey(pair), { summary: null, unavailable: true, refreshAt: Infinity }));
+        } finally { clearTimeout(timeout); if (request.current === controller) request.current = null; }
+        if (valid()) setView({ scope, entries: Object.fromEntries(cache.current.entries) });
+      }
+      if (!valid()) return;
+      const next = Math.min(...pairs.map(pair => cache.current.entries.get(marketKey(pair))?.refreshAt ?? Infinity));
+      if (Number.isFinite(next)) timer = setTimeout(() => void read(), Math.max(1000, next - Date.now()));
+    }
+    void read();
+    return () => { stopped = true; clearTimeout(timer); clearTimeout(readTimeout); request.current?.abort(); };
+  }, [scope, token, bindings, paused, visible, reviewBinding, revision]);
+  return { entries: view.scope === scope ? view.entries : {}, refresh: () => { cache.current = { scope, entries: new Map() }; setView({ scope, entries: {} }); setRevision(value => value + 1); } };
+}
 function Icon({ name, size = 20 }: { name: string; size?: number }) {
   const paths: Record<string, ReactNode> = {
     plus: <path d="M12 5v14M5 12h14" />, search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></>,
@@ -64,10 +133,14 @@ function Field({ label, help, children }: { label: string; help?: string; childr
 }
 
 export default function StaffInventoryWorkspace({ token, adminId, displayName, onAdvanced, navigation }: { token: string; adminId: string; displayName?: string | null; onAdvanced: () => void; navigation?: { homeHref: string; homeLabel: string } }) {
-  const [data, setData] = useState<Data | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const scope = JSON.stringify([adminId, token]), session = useRef(scope); session.current = scope;
+  const workspaceRequest = useRef<AbortController | null>(null);
+  const [workspace, setWorkspace] = useState<{ scope: string; data: Data } | null>(null), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const data = workspace?.scope === scope ? workspace.data : null;
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [tab, setTab] = useState('inventory'), [query, setQuery] = useState(''), [location, setLocation] = useState(''), [category, setCategory] = useState(''), [salesChannel, setSalesChannel] = useState('');
   const [item, setItem] = useState<Item | null>(null), [selected, setSelected] = useState<string[]>([]), [mode, setMode] = useState<Mode>(null), [draft, setDraft] = useState<Draft>(fresh);
+  const [researchFocus, setResearchFocus] = useState(false), researchSection = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false), [uploading, setUploading] = useState(false), [pending, setPending] = useState<Pending | null>(null), [rejected, setRejected] = useState(false);
   const [photoStatus, setPhotoStatus] = useState(''), [photoError, setPhotoError] = useState(''), [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [autoStartCamera, setAutoStartCamera] = useState(true);
@@ -101,17 +174,20 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
   const pendingKey = `tenkings:staff-inventory:pending:${adminId}`, draftKey = `tenkings:staff-inventory:draft:${adminId}`;
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   async function load() {
+    if (session.current !== scope) return;
+    workspaceRequest.current?.abort(); const controller = new AbortController(); workspaceRequest.current = controller;
     try {
-      const response = await fetch(API, { headers, cache: 'no-store' }); const value = await response.json();
+      const response = await fetch(API, { headers, cache: 'no-store', signal: controller.signal }); const value = await response.json();
       if (!response.ok) throw new Error(value.message || 'Inventory is temporarily unavailable.');
       if (value.version !== 1 || !Array.isArray(value.items) || !Array.isArray(value.locations)) throw new Error('Inventory returned an unreadable response.');
-      if (active.current) { setData(value); if (!dialog.current) setError(''); }
-    } catch (e) { if (active.current) setError(e instanceof Error ? e.message : 'Inventory could not be loaded.'); }
+      if (active.current && session.current === scope && !controller.signal.aborted) { setWorkspace({ scope, data: value }); if (!dialog.current) setError(''); }
+    } catch (e) { if (active.current && session.current === scope && !controller.signal.aborted) setError(e instanceof Error ? e.message : 'Inventory could not be loaded.'); }
+    finally { if (workspaceRequest.current === controller) workspaceRequest.current = null; }
   }
   useEffect(() => {
     active.current = true; locator.current = null; void load();
     try { const saved = sessionStorage.getItem(pendingKey); if (saved) { const value = JSON.parse(saved); if (value.actor !== adminId || !value.command?.request_id) throw new Error(); setPending(value.command); if (value.ui) { setDraft({ ...fresh(), ...value.ui.draft }); setMode(value.ui.mode); setItem(value.ui.item); setSelected(value.ui.selected ?? []); } setNotice('Your last save needs confirmation. Retry it below to finish without adding a duplicate.'); } } catch { setError('Your last saved request could not be read. Keep this tab open and contact your administrator.'); }
-    return () => { active.current = false; releasePhotoAttempt(); cancelLocation(); };
+    return () => { active.current = false; workspaceRequest.current?.abort(); releasePhotoAttempt(); cancelLocation(); };
   // Accounts remount this component; refreshed tokens must also refresh lookup authorization.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminId, token]);
@@ -150,7 +226,7 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     let next = { ...fresh(), ...sessionLocation.current }; try { const saved = sessionStorage.getItem(draftKey); if (saved) { const stored = JSON.parse(saved); autoLocation.current = stored.autoSelectedLocation === true; locationUpdatedAt.current = Number.isFinite(stored.autoLocationUpdatedAt) ? stored.autoLocationUpdatedAt : 0; next = { ...next, ...stored, price: '', origin: stored.origin || 'existing', type: stored.type || 'single', stage: stored.stage || 'unprocessed' }; const restoredFields = Array.isArray(stored.manuallyEditedFields) ? stored.manuallyEditedFields : ['name', 'category', ...cardFields].filter(key => stored[key]); editedFields.current = Object.fromEntries(restoredFields.map((key: string) => [key, 1])); aiFields.current = new Set((Array.isArray(stored.automaticallyReadFields) ? stored.automaticallyReadFields : []).filter((key: keyof Draft) => !editedFields.current[key])); } } catch { /* Start a clean unsaved form. */ }
     sessionLocation.current = { location: next.location, kind: next.kind }; setDraft(next); setMode('add');
   }
-  function openItem(i: Item) { setItem(i); setSelected(i.unit_ids); setError(''); setMode(null); }
+  function openItem(i: Item, focusResearch = false) { setResearchFocus(focusResearch); setItem(i); setSelected(i.unit_ids); setError(''); setMode(null); }
   function edit(next: Exclude<Mode, 'add' | 'location' | null>) {
     if (!item) return;
     cancelPhoto();
@@ -382,6 +458,25 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
     if (active.current && attempt === photoAttempt.current) { photoLock.current = false; photoController.current = null; setUploading(false); }
   }
   const items = (data?.items ?? []).filter(i => (!location || i.location_id === location) && (!category || i.category === category) && (!salesChannel || (salesChannel === '__unset' ? !i.planned_sales_channel : i.planned_sales_channel === salesChannel.slice(8))) && (!query || [i.name, i.category, i.location_name, i.notes, i.planned_sales_channel].some(v => v?.toLowerCase().includes(query.toLowerCase()))));
+  const bindings = JSON.stringify([...new Map(items.flatMap(i => { const binding = researchBinding(i); return binding ? [[binding[0], binding] as const] : []; })).values()]);
+  const reviewItem = item && data?.items.find(current => current.id === item.id);
+  const reviewBinding = reviewItem ? researchBinding(reviewItem) : null;
+  const market = useInventoryMarketValues(scope, token, bindings, tab !== 'inventory' || !!mode || !!item || busy || uploading || captureOpen || !!pending,
+    reviewBinding ? marketKey(reviewBinding) : null);
+  useEffect(() => {
+    if (!mode && item && researchFocus) { researchSection.current?.focus({ preventScroll: true }); researchSection.current?.scrollIntoView?.({ block: 'start', behavior: 'auto' }); }
+  }, [mode, item, researchFocus]);
+  function marketValue(i: Item) {
+    if (i.receipt_quantity !== 1 || i.unit_ids.length !== 1) return <span className={styles.marketState}>Individual card research</span>;
+    const binding = researchBinding(i), entry = binding ? market.entries[marketKey(binding)] : undefined;
+    const summary = entry?.summary;
+    const label = !binding || entry?.unavailable ? 'Unavailable' : !entry ? 'Checking value…' : !summary ? 'Not researched'
+      : summary.status === 'estimated' ? money(summary.value_cents) : summary.status === 'queued' ? 'Queued'
+        : summary.status === 'running' ? 'Researching…' : summary.status === 'failed' ? 'Unavailable' : 'More evidence needed';
+    return <button type="button" className={styles.marketButton} aria-label={`Review eBay comps for ${i.name || 'inventory'}: ${label}`} onClick={() => openItem(i, true)}>
+      <strong>{label}</strong><small>{summary?.status === 'estimated' ? `${summary.comp_count} comps · Review` : 'Review research'}</small>
+    </button>;
+  }
   const categories = [...new Set((data?.items ?? []).flatMap(i => i.category ? [i.category] : []))];
   const channelOptions = [...new Set([...salesChannels, ...(data?.items ?? []).flatMap(i => i.planned_sales_channel ? [i.planned_sales_channel] : []), ...(draft.salesChannel ? [draft.salesChannel] : [])])];
   const close = () => { if (!saveLock.current && !pending) { cancelPhoto(); cancelLocation(); setCaptureOpen(false); setMode(null); setItem(null); setError(''); } };
@@ -428,9 +523,9 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
       {!mode && !item && <>{error && <div role="alert" className={styles.error}>{error}<button onClick={() => { setError(''); void load(); }}>Try again</button></div>}{notice && <div role="status" className={styles.success}><Icon name="check" />{notice}</div>}{retryControls}</>}
       <section className={styles.stats} aria-label="Inventory overview"><div><span>Recorded on hand</span><strong>{data?.totals.on_hand.toLocaleString() ?? '—'}<small>cards</small></strong><p>{data?.totals.machine_roster ? `${data.totals.machine_roster.toLocaleString()} additional cards in machine loading records` : 'At HQ, stores and kiosks'}</p></div><div><span>Acquisition cost</span><strong>{money(data?.totals.cost_cents)}</strong><p>{data?.totals.value_overflow ? 'Total exceeds supported range' : data?.totals.on_hand ? `${data.totals.costed_units} of ${data.totals.on_hand} held cards have a cost` : 'Enter costs when you add stock'}</p></div><div><span>Expected gross profit</span><strong className={data?.totals.expected_profit_cents != null && data.totals.expected_profit_cents < 0 ? styles.loss : styles.profit}>{money(data?.totals.expected_profit_cents)}</strong><p>{data?.totals.expected_margin_pct != null ? `${data.totals.expected_margin_pct.toFixed(1)}% margin · before fees & overhead` : 'Expected sale price less acquisition cost'}</p></div></section>
       {tab === 'inventory' ? <section className={styles.panel}>
-        <div className={styles.panelHeading}><h2>All inventory <span>{data?.items.length ?? '—'}</span></h2><button className={styles.iconButton} aria-label="Refresh inventory" onClick={() => void load()}><Icon name="refresh" size={18} /></button></div>
+        <div className={styles.panelHeading}><h2>All inventory <span>{data?.items.length ?? '—'}</span></h2><button className={styles.iconButton} aria-label="Refresh inventory" onClick={() => { market.refresh(); void load(); }}><Icon name="refresh" size={18} /></button></div>
         {!!data?.items.length && <div className={styles.filters}><label className={styles.search}><Icon name="search" size={18} /><input aria-label="Search inventory" placeholder="Search inventory" value={query} onChange={e => setQuery(e.target.value)} /></label><select aria-label="Filter by location" value={location} onChange={e => setLocation(e.target.value)}><option value="">All locations</option>{data.locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select><select aria-label="Filter by category" value={category} onChange={e => setCategory(e.target.value)}><option value="">All categories</option>{categories.map(c => <option key={c}>{c}</option>)}</select><select aria-label="Filter by sales channel" value={salesChannel} onChange={e => setSalesChannel(e.target.value)}><option value="">All sales channels</option><option value="__unset">Not decided yet</option>{channelOptions.map(c => <option key={c} value={`channel:${c}`}>{c}</option>)}</select></div>}
-        {!data ? <div className={styles.empty}><span className={styles.emptyIcon}><Icon name="box" size={36} /></span><h3>Loading your inventory…</h3></div> : !data.items.length ? <div className={styles.empty}><span className={styles.emptyIcon}><Icon name="box" size={42} /></span><span className={styles.eyebrow}>LET’S GET YOUR STOCK ORGANIZED</span><h3>Your inventory starts here.</h3><p>Add the cards you already have or record a new purchase.<br />Start with one card or an entire batch.</p><button className={styles.primary} onClick={addInventory} disabled={!!pending}><Icon name="plus" />Add your first inventory</button><div className={styles.emptySteps}><span><b>1</b>Add your cards</span><span><b>2</b>Enter cost</span><span><b>3</b>Choose a sales channel</span></div></div> : !items.length ? <div className={styles.empty}><h3>No matching inventory</h3><p>Try another name or clear your filters.</p><button className={styles.secondary} onClick={() => { setQuery(''); setLocation(''); setCategory(''); setSalesChannel(''); }}>Clear filters</button></div> : <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Inventory</th><th>Location</th><th>Quantity</th><th>Cost</th><th>Expected sale / card</th><th>Expected profit</th><th><span className={styles.srOnly}>Open item</span></th></tr></thead><tbody>{items.map(i => <tr key={i.id}><td><button className={styles.itemButton} onClick={() => openItem(i)}><span className={styles.thumb}>{i.photo_url ? <img src={i.photo_url} alt="" /> : <Icon name="cards" size={25} />}</span><span><strong>{i.name || 'Unnamed inventory'}</strong><small>{i.category || 'Category not set'} <i>·</i> {stageNames[i.stage]}</small></span></button></td><td data-label="Location"><span className={styles.locationName}>{i.location_name || 'Location not named'}</span><small>{i.custody_id.startsWith('machine:') ? 'Vending machine' : i.custody_id.startsWith('store:') ? 'Store' : i.custody_id.startsWith('kiosk:') ? 'Kiosk' : 'HQ / storage'}</small></td><td data-label="Quantity"><strong>{i.quantity.toLocaleString()}</strong><small>{i.quantity_kind === 'loaded_roster' ? 'loaded · count needed' : i.quantity === 1 ? 'card on hand' : 'cards on hand'}</small></td><td data-label="Cost">{money(i.cost_cents)}<small>{i.value_overflow ? 'Total exceeds supported range' : i.cost_cents === null ? 'Cost not fully entered' : 'Total cost'}</small></td><td data-label="Expected sale / card">{money(i.expected_price_cents)}<small>{i.planned_sales_channel || 'Sales channel not set'}</small></td><td data-label="Expected profit" className={i.expected_profit_cents !== null && i.expected_profit_cents < 0 ? styles.loss : styles.profit}>{money(i.expected_profit_cents)}<small>{i.expected_margin_pct === null ? 'Price or cost not set' : `${i.expected_margin_pct.toFixed(1)}% margin`}</small></td><td><button className={styles.iconButton} aria-label={`Open ${i.name || 'inventory'}`} onClick={() => openItem(i)}><Icon name="chevron" /></button></td></tr>)}</tbody></table></div>}
+        {!data ? <div className={styles.empty}><span className={styles.emptyIcon}><Icon name="box" size={36} /></span><h3>Loading your inventory…</h3></div> : !data.items.length ? <div className={styles.empty}><span className={styles.emptyIcon}><Icon name="box" size={42} /></span><span className={styles.eyebrow}>LET’S GET YOUR STOCK ORGANIZED</span><h3>Your inventory starts here.</h3><p>Add the cards you already have or record a new purchase.<br />Start with one card or an entire batch.</p><button className={styles.primary} onClick={addInventory} disabled={!!pending}><Icon name="plus" />Add your first inventory</button><div className={styles.emptySteps}><span><b>1</b>Add your cards</span><span><b>2</b>Enter cost</span><span><b>3</b>Choose a sales channel</span></div></div> : !items.length ? <div className={styles.empty}><h3>No matching inventory</h3><p>Try another name or clear your filters.</p><button className={styles.secondary} onClick={() => { setQuery(''); setLocation(''); setCategory(''); setSalesChannel(''); }}>Clear filters</button></div> : <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>Inventory</th><th>Location</th><th>Quantity</th><th>Cost</th><th>Expected sale / card</th><th className={styles.marketHeading}>eBay comp value</th><th>Expected profit</th><th><span className={styles.srOnly}>Open item</span></th></tr></thead><tbody>{items.map(i => <tr key={i.id}><td><button className={styles.itemButton} onClick={() => openItem(i)}><span className={styles.thumb}>{i.photo_url ? <img src={i.photo_url} alt="" /> : <Icon name="cards" size={25} />}</span><span><strong>{i.name || 'Unnamed inventory'}</strong><small>{i.category || 'Category not set'} <i>·</i> {stageNames[i.stage]}</small></span></button></td><td data-label="Location"><span className={styles.locationName}>{i.location_name || 'Location not named'}</span><small>{i.custody_id.startsWith('machine:') ? 'Vending machine' : i.custody_id.startsWith('store:') ? 'Store' : i.custody_id.startsWith('kiosk:') ? 'Kiosk' : 'HQ / storage'}</small></td><td data-label="Quantity"><strong>{i.quantity.toLocaleString()}</strong><small>{i.quantity_kind === 'loaded_roster' ? 'loaded · count needed' : i.quantity === 1 ? 'card on hand' : 'cards on hand'}</small></td><td data-label="Cost">{money(i.cost_cents)}<small>{i.value_overflow ? 'Total exceeds supported range' : i.cost_cents === null ? 'Cost not fully entered' : 'Total cost'}</small></td><td data-label="Expected sale / card">{money(i.expected_price_cents)}<small>{i.planned_sales_channel || 'Sales channel not set'}</small></td><td data-label="eBay comp value" className={styles.marketCell}>{marketValue(i)}</td><td data-label="Expected profit" className={i.expected_profit_cents !== null && i.expected_profit_cents < 0 ? styles.loss : styles.profit}>{money(i.expected_profit_cents)}<small>{i.expected_margin_pct === null ? 'Price or cost not set' : `${i.expected_margin_pct.toFixed(1)}% margin`}</small></td><td><button className={styles.iconButton} aria-label={`Open ${i.name || 'inventory'}`} onClick={() => openItem(i)}><Icon name="chevron" /></button></td></tr>)}</tbody></table></div>}
       </section> : <StaffInventoryLocationBrowser locations={data?.locations ?? []} items={data?.items ?? []} token={token} pointCache={pointCache.current} onViewInventory={id => { setLocation(id); setCategory(''); setQuery(''); setSalesChannel(''); setTab('inventory'); }} />}
       <footer className={styles.footer}><button className={styles.mobileAdvanced} onClick={onAdvanced}>Advanced records</button><span>Staff records are saved securely in Ten Kings.</span><span>{data?.updated_at ? `Latest activity ${new Date(data.updated_at).toLocaleString()}` : 'Ready for your first entry'}</span></footer>
     </main>
@@ -463,7 +558,7 @@ export default function StaffInventoryWorkspace({ token, adminId, displayName, o
         {item.back_photo_url && <div className={styles.detailBack}><img src={item.back_photo_url} alt="Back of inventory card" /><span>Back</span></div>}
         {item.card_details && <dl className={styles.savedCardMetadata}>{cardFields.filter(field => item.card_details?.[field]).map(field => <div key={field}><dt>{cardFieldLabels[field]}</dt><dd>{item.card_details?.[field]}</dd></div>)}</dl>}
         <div className={styles.detailFacts}><div><span>Location</span><strong>{item.location_name || 'Not named'}</strong></div><div><span>Condition</span><strong>{stageNames[item.stage]}</strong></div><div><span>{item.quantity_kind === 'loaded_roster' ? 'Loaded roster' : 'On hand'}</span><strong>{item.quantity} cards</strong></div><div><span>Acquisition cost</span><strong>{money(item.cost_cents)}</strong></div><div><span>Expected sale / card</span><strong>{money(item.expected_price_cents)}</strong></div><div><span>Expected gross profit</span><strong className={styles.profit}>{money(item.expected_profit_cents)}</strong></div><div><span>Sales channel</span><strong>{item.planned_sales_channel || 'Not decided yet'}</strong></div></div>
-        {item.receipt_quantity === 1 && item.unit_ids.length === 1 && <StaffInventoryResearchPanel key={item.unit_ids[0]} unitId={item.unit_ids[0]} token={token} descriptionEventId={item.provenance.description} />}
+        {reviewBinding && <div ref={researchSection} tabIndex={-1} role="region" aria-label="Card research" className={styles.researchSection}><StaffInventoryResearchPanel key={marketKey(reviewBinding)} unitId={reviewBinding[0]} token={token} descriptionEventId={reviewBinding[1]} actorId={adminId} inventoryPhotos={{ front: reviewItem?.photo_url ?? null, back: reviewItem?.back_photo_url ?? null }} /></div>}
         {item.quantity_kind === 'loaded_roster' && <p className={styles.helper}>This is a machine’s loading record. A physical count is needed to establish what remains; individual sold cards are not identified by aggregate sales.</p>}
         {item.last_count && <p className={styles.helper}>Last physical count for this machine product: <strong>{item.last_count.quantity} cards</strong> on {new Date(item.last_count.at).toLocaleString()}.</p>}
         <div className={styles.detailActions}>{item.machine_scope && <button className={styles.primary} disabled={!!pending} onClick={() => edit('count')}>Record machine count</button>}<button className={styles.primary} disabled={!selected.length || !!pending} onClick={() => edit('edit')}>Edit details & price</button><button className={styles.secondary} disabled={!selected.length || !!pending || item.quantity_kind === 'loaded_roster'} onClick={() => edit('move')}><Icon name="pin" size={18} />Move / assign</button><button className={styles.secondary} disabled={!selected.length || !!pending || item.quantity_kind === 'loaded_roster'} onClick={() => edit('prepare')}>Update condition</button><button className={styles.secondary} disabled={!!pending} onClick={() => edit('cost')}>Edit purchase cost</button></div>

@@ -39,10 +39,10 @@ test('main pages and normalized page data follow the same host boundary', () => 
 });
 
 test('only current staff API methods are reachable on main; collect specialist APIs are preserved', () => {
-  const calls: [string, string][] = [['access', 'GET'], ['workspace', 'GET'], ['workspace', 'POST'], ['photo', 'POST'], ['identify', 'POST'], ['research', 'GET'], ['research', 'POST'], ['location-map', 'GET']];
+  const calls: [string, string][] = [['access', 'GET'], ['workspace', 'GET'], ['workspace', 'POST'], ['photo', 'POST'], ['identify', 'POST'], ['research', 'GET'], ['research', 'POST'], ['research-review', 'POST'], ['location-map', 'GET']];
   for (const [endpoint, method] of calls) assert.equal(route(`/api/v2/admin/inventory/${endpoint}`, 'tenkings.co', method).kind, 'next');
   for (const path of ['/api/admin/locations', '/api/wallet/me']) assert.equal(route(path).kind, 'next');
-  for (const [path, method] of [['/api/v2/admin/inventory/photo', 'GET'], ['/api/v2/admin/inventory/workspace', 'DELETE'], ['/api/v2/admin/inventory/access', 'POST'], ['/api/admin/locations', 'PATCH'], ['/api/wallet/me', 'POST'], ['/api/admin/pack-types', 'GET'], ['/api/v2/admin/inventory/events', 'POST']]) assert.equal(route(path, 'tenkings.co', method).kind, 'not-found');
+  for (const [path, method] of [['/api/v2/admin/inventory/photo', 'GET'], ['/api/v2/admin/inventory/workspace', 'DELETE'], ['/api/v2/admin/inventory/access', 'POST'], ['/api/v2/admin/inventory/research-review', 'GET'], ['/api/v2/admin/inventory/research-review', 'PUT'], ['/api/admin/locations', 'PATCH'], ['/api/wallet/me', 'POST'], ['/api/admin/pack-types', 'GET'], ['/api/v2/admin/inventory/events', 'POST']]) assert.equal(route(path, 'tenkings.co', method).kind, 'not-found');
   assert.equal(route('/api/admin/pack-types', 'collect.tenkings.co', 'POST').kind, 'next');
   for (const operation of ['discover', 'lookup', 'media', 'proposals']) {
     assert.equal(route(`/api/internal/card-catalog/v1/${operation}`, 'collect.tenkings.co', 'POST').kind, 'next');

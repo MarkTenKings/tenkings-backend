@@ -545,28 +545,41 @@ function comparisonAssessment(candidate: StaffInventoryResearchCandidate, descri
   return assessStaffInventoryResearchComparison(candidate, description, condition, comparison).assessment;
 }
 
-function updateEstimate(result: StaffInventoryResearchResult) {
+const DUPLICATE_IMAGE_REASON = 'Duplicate listing image—not counted again in the estimate.';
+
+function updateEstimate(result: StaffInventoryResearchResult, duplicateImageSelections: ReadonlySet<string>) {
   const selected = new Set(result.selected_candidate_ids);
   const prices = result.candidates.filter(candidate => selected.has(candidate.id)).map(candidate => candidate.sold_price_cents!);
   if (prices.length) {
     const sum = prices.reduce((total, price) => total + BigInt(price), 0n);
     result.estimate = { status: 'estimated', value_cents: Number((sum * 2n + BigInt(prices.length)) / (2n * BigInt(prices.length))), low_cents: Math.min(...prices), high_cents: Math.max(...prices), currency: 'USD', count: prices.length, reason: 'Arithmetic mean of the selected verified USD sold prices, excluding shipping; a research estimate for staff review.' };
   } else result.estimate = { status: 'unknown', value_cents: null, low_cents: null, high_cents: null, currency: 'USD', count: 0, reason: result.identity.status === 'unresolved' ? 'Exact card identity or distinguishing catalog evidence remains unresolved.' : 'Fewer than two safe, visually matched sold comparisons support this card.' };
-  result.rejections = result.comparison_assessments!.filter(assessment => !selected.has(assessment.candidate_id)).map(assessment => ({ candidate_id: assessment.candidate_id, reason: assessment.reason }));
+  result.rejections = result.comparison_assessments!.filter(assessment => !selected.has(assessment.candidate_id)).map(assessment => ({ candidate_id: assessment.candidate_id,
+    reason: duplicateImageSelections.has(assessment.candidate_id) ? DUPLICATE_IMAGE_REASON : assessment.reason }));
 }
-function applyAnalysis(result: StaffInventoryResearchResult, analysis: Analysis, input: StaffInventoryResearchInput, photos: Record<Side, StaffInventoryVerifiedPhoto>, referenceImages: Map<string, ImageBytes>) {
+function applyAnalysis(result: StaffInventoryResearchResult, analysis: Analysis, input: StaffInventoryResearchInput, photos: Record<Side, StaffInventoryVerifiedPhoto>, referenceImages: Map<string, ImageBytes>, duplicateImageSelections: Set<string>) {
   const insufficient = validateAnalysis(analysis, input, photos, result.references, result.candidates, referenceImages);
   const comparisons = new Map(analysis.comparisons.map(comparison => [comparison.candidate_id, comparison]));
   const assessments = result.candidates.map(candidate => comparisonAssessment(candidate, input.description, analysis.target_condition, comparisons.get(candidate.id)));
   if (analysis.selected_candidate_ids.some(id => assessments.find(assessment => assessment.candidate_id === id)?.classification !== 'matched')) throw new StaffInventoryResearchError('malformed_response');
   result.identity = analysis.identity; result.target_condition = analysis.target_condition;
-  result.selected_candidate_ids = insufficient.length ? [] : analysis.selected_candidate_ids;
+  // Validate every proposed sale before collapsing exact image duplicates. A
+  // duplicate must never hide an ineligible sale or alter its retained evidence.
+  // Lowest listing ID is deterministic and independent of price/model order.
+  duplicateImageSelections.clear();
+  const images = new Set<string>(), uniqueSelections: string[] = [];
+  for (const id of [...analysis.selected_candidate_ids].sort()) {
+    const image = result.candidates.find(candidate => candidate.id === id)!.image!.sha256;
+    if (images.has(image)) duplicateImageSelections.add(id);
+    else { images.add(image); uniqueSelections.push(id); }
+  }
+  result.selected_candidate_ids = insufficient.length ? [] : uniqueSelections;
   result.comparison_assessments = assessments;
-  updateEstimate(result);
-  for (const rejection of result.rejections) if (insufficient.includes(rejection.candidate_id)) rejection.reason = 'Fewer than two independent verified matching sales support an estimate.';
+  updateEstimate(result, duplicateImageSelections);
+  for (const rejection of result.rejections) if (insufficient.includes(rejection.candidate_id) && !duplicateImageSelections.has(rejection.candidate_id)) rejection.reason = 'Fewer than two independent verified matching sales support an estimate.';
   return insufficient;
 }
-function mergeCandidates(result: StaffInventoryResearchResult, incoming: StaffInventoryResearchCandidate[], description: StaffInventoryResearchDescription, details?: SaleDetailState) {
+function mergeCandidates(result: StaffInventoryResearchResult, incoming: StaffInventoryResearchCandidate[], description: StaffInventoryResearchDescription, duplicateImageSelections: ReadonlySet<string>, details?: SaleDetailState) {
   const priorAssessments = new Map(result.comparison_assessments?.map(assessment => [assessment.candidate_id, assessment]));
   const merged = new Map(result.candidates.map(candidate => [candidate.id, candidate]));
   const sourceEvidence = (candidate: StaffInventoryResearchCandidate) => {
@@ -600,7 +613,7 @@ function mergeCandidates(result: StaffInventoryResearchResult, incoming: StaffIn
   result.comparison_assessments = result.candidates.map(candidate => comparisonAssessment(candidate, description, result.target_condition, priorAssessments.get(candidate.id)));
   result.selected_candidate_ids = result.selected_candidate_ids.filter(id => result.candidates.some(candidate => candidate.id === id && candidate.source_eligible));
   if (result.selected_candidate_ids.length < STAFF_INVENTORY_RESEARCH_LIMITS.minimumComps) result.selected_candidate_ids = [];
-  updateEstimate(result);
+  updateEstimate(result, duplicateImageSelections);
 }
 
 /** One private pure research result. No database, grading, public comps, catalog or inventory mutation. */
@@ -701,6 +714,7 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
     const modelAssessments = new Map<string, { comparison: StaffInventoryResearchComparison; imageHash: string | null }>();
     const comparisonFailures = new Set<string>();
     let insufficientSelection: string[] = [];
+    const duplicateImageSelections = new Set<string>();
     const rememberAnalysis = (analysis: Analysis) => {
       for (const comparison of analysis.comparisons) modelAssessments.set(comparison.candidate_id, {
         comparison: { ...comparison }, imageHash: result.candidates.find(candidate => candidate.id === comparison.candidate_id)?.image?.sha256 ?? null,
@@ -782,7 +796,7 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
       };
       await downloadEvidence(0, innerSignal);
       let analysis = await assess(innerSignal);
-      insufficientSelection = applyAnalysis(result, analysis, data, photos as Record<Side, StaffInventoryVerifiedPhoto>, referenceImages);
+      insufficientSelection = applyAnalysis(result, analysis, data, photos as Record<Side, StaffInventoryVerifiedPhoto>, referenceImages, duplicateImageSelections);
       rememberAnalysis(analysis);
       for (let pass = 1; pass < STAFF_INVENTORY_RESEARCH_LIMITS.searches && analysis.refinement && result.estimate.status !== 'estimated'; pass++) {
         const refinement = analysis.refinement;
@@ -807,12 +821,12 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
               sourceCompleted = true;
               result.diagnostics!.sources.push({ sequence: pass + 1, ...source.diagnostic });
               result.research_queries!.push({ sequence: pass + 1, query: nextQuery, reason: refinement.reason, status: 'completed', source_response_sha256: source.source_response_sha256, candidate_ids: source.candidates.map(candidate => candidate.id), error_code: null });
-              mergeCandidates(result, source.candidates, data.description, details);
+              mergeCandidates(result, source.candidates, data.description, duplicateImageSelections, details);
             } finally { timings.sources += Date.now() - sourceStart; }
             await downloadEvidence(pass, refinementSignal);
             const nextAnalysis = await assess(refinementSignal);
             if (refinementSignal.aborted) throw new StaffInventoryResearchError('cancelled');
-            insufficientSelection = applyAnalysis(result, nextAnalysis, data, photos as Record<Side, StaffInventoryVerifiedPhoto>, referenceImages);
+            insufficientSelection = applyAnalysis(result, nextAnalysis, data, photos as Record<Side, StaffInventoryVerifiedPhoto>, referenceImages, duplicateImageSelections);
             rememberAnalysis(nextAnalysis);
             analysis = nextAnalysis;
           }, Math.min(deadline(deps, 'refinement'), remaining - returnMargin), innerSignal);
@@ -876,11 +890,11 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
         result.diagnostics!.reason_codes.push('CATALOG_PUBLICATION_UNAVAILABLE');
       }
     }
-    updateEstimate(result);
+    updateEstimate(result, duplicateImageSelections);
     if (!hasPhotos) result.estimate.reason = 'Two different verified card photos are needed to assess the fetched sold comparisons.';
     if (insufficientSelection.length && !result.selected_candidate_ids.length) {
       result.diagnostics!.reason_codes.push('INSUFFICIENT_INDEPENDENT_SALES');
-      for (const rejection of result.rejections) if (insufficientSelection.includes(rejection.candidate_id)
+      for (const rejection of result.rejections) if (insufficientSelection.includes(rejection.candidate_id) && !duplicateImageSelections.has(rejection.candidate_id)
         && result.candidates.find(candidate => candidate.id === rejection.candidate_id)?.source_eligible
         && result.comparison_assessments!.find(assessment => assessment.candidate_id === rejection.candidate_id)?.classification === 'matched') {
         rejection.reason = 'Fewer than two independent verified matching sales support an estimate.';

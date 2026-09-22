@@ -34,6 +34,10 @@ This is the current Inventory/recognition/catalog scope, as authorized in the Se
 
 Prioritize reviewed pilot data and visual references, then actual consumer/shared integration and sold-comp qualification; finish with independent accuracy/load measurement and Production activation. Normal specialist access and human source judgment are operational inputs, not a request to reapprove the development plan. The wider future V2 commerce phases are not silently added to this Inventory completion checklist.
 
+## Added owner request — visible value and staff comp review
+
+Mark subsequently requested an eBay comp value on the Inventory list and confirmed that staff must be able to remove an incorrect Astra-selected comparison, recalculate the value, and quickly review selected comps beside their Inventory card. The [dated implementation and qualification plan](../2026-09-21-inventory-comp-review.md) records the exact behavior and boundaries. This addition is locally qualified (250 application tests, 13 actual PostgreSQL checks, package builds, focused UI types/lint and actual-component browser checks); its live migration and hosted release are pending. Original research evidence and manual expected-price/accounting records stay unchanged.
+
 ## Five next-action packets
 
 | Lane | Concrete next delivery |

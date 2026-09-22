@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import sharp from 'sharp';
+import { canonical, inventoryHash } from '../../../packages/database/src/cardInventoryV2';
 import {
   StaffInventoryResearchInputSchema, StaffInventoryResearchResultSchema,
   type StaffInventoryResearchInput, type StaffInventoryResearchReference,
@@ -206,10 +207,73 @@ test('duplicate images across distinct listing IDs do not provide two independen
   f.deps.fetchImpl = ((url, init) => String(url).startsWith('https://i.ebayimg.com/') ? Promise.resolve(new Response(new Uint8Array(f.bytes[2]), { headers: { 'content-type': 'image/jpeg' } })) : original(url, init)) as typeof fetch;
   const result = await researchStaffInventoryCard(f.input, f.deps);
   assert.equal(result.estimate.status, 'unknown'); assert.equal(result.candidates.length, 2); assert.equal(result.rejections.length, 2);
-  assert.ok(result.rejections.every(rejection => /Fewer than two independent/.test(rejection.reason)));
+  assert.match(result.rejections.find(rejection => rejection.candidate_id === 'ebay:111111111110')!.reason, /Fewer than two independent/);
+  assert.equal(result.rejections.find(rejection => rejection.candidate_id === 'ebay:111111111111')!.reason, 'Duplicate listing image—not counted again in the estimate.');
   const one = await fixture(); one.model.selected_candidate_ids.pop();
   const insufficient = await researchStaffInventoryCard(one.input, one.deps);
   assert.equal(insufficient.estimate.status, 'unknown'); assert.equal(insufficient.estimate.value_cents, null); assert.equal(insufficient.candidates.length, 2);
+});
+
+async function duplicateSelectionFixture() {
+  const f = await fixture();
+  f.items[0].soldPrice = '100.01'; f.items[1].soldPrice = '1.01';
+  f.items.push({ ...f.items[0], itemId: '111111111112', url: 'https://www.ebay.com/itm/111111111112', soldPrice: '30.02', thumbnailUrl: 'https://i.ebayimg.com/images/g/fixture2/s-l400.jpg' });
+  f.model.selected_candidate_ids.push('ebay:111111111112');
+  f.model.comparisons.push({ ...f.model.comparisons[0], candidate_id: 'ebay:111111111112' });
+  const original = f.deps.fetchImpl!;
+  f.deps.fetchImpl = ((url, init) => String(url).startsWith('https://i.ebayimg.com/')
+    ? Promise.resolve(new Response(new Uint8Array(String(url).includes('/fixture2/') ? f.bytes[3] : f.bytes[2]), { headers: { 'content-type': 'image/jpeg' } }))
+    : original(url, init)) as typeof fetch;
+  return f;
+}
+
+test('actual V3 and V5 engines count an exact duplicate image once without price or model-order bias', async () => {
+  for (const detail of [false, true]) for (const reverse of [false, true]) {
+    const f = await duplicateSelectionFixture();
+    if (detail) f.deps.env!.STAFF_INVENTORY_RESEARCH_SALE_DETAILS = 'true';
+    if (reverse) { f.items.reverse(); f.model.selected_candidate_ids.reverse(); f.model.comparisons.reverse(); }
+    const sourceBefore = JSON.stringify(f.items), modelBefore = JSON.stringify(f.model);
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(result.engine_version, detail ? 'staff-inventory-research-v5' : 'staff-inventory-research-v3');
+    assert.deepEqual(result.selected_candidate_ids, ['ebay:111111111110', 'ebay:111111111112']);
+    assert.equal(result.estimate.value_cents, 6502); // (10001 + 3002) / 2, half-cent rounds up
+    assert.equal(result.estimate.count, 2); assert.equal(result.estimate.low_cents, 3002); assert.equal(result.estimate.high_cents, 10001);
+    assert.equal(result.candidates.length, 3); assert.equal(result.comparison_assessments!.length, 3);
+    assert.deepEqual(Object.fromEntries(result.candidates.map(candidate => [candidate.id, candidate.sold_price_cents])), {
+      'ebay:111111111110': 10001, 'ebay:111111111111': 101, 'ebay:111111111112': 3002,
+    });
+    assert.ok(result.candidates.every(candidate => candidate.source_eligible));
+    assert.ok(result.comparison_assessments!.every(assessment => assessment.classification === 'matched'));
+    assert.deepEqual(result.rejections, [{ candidate_id: 'ebay:111111111111', reason: 'Duplicate listing image—not counted again in the estimate.' }]);
+    assert.deepEqual(result.diagnostics!.candidates.map(candidate => candidate.model_assessment).sort((a, b) => a!.candidate_id.localeCompare(b!.candidate_id)),
+      [...f.model.comparisons].sort((a, b) => a.candidate_id.localeCompare(b.candidate_id)));
+    assert.equal(JSON.stringify(f.items), sourceBefore); assert.equal(JSON.stringify(f.model), modelBefore);
+    assert.equal(StaffInventoryResearchResultSchema.safeParse(result).success, true);
+    assert.equal(f.calls.filter(call => call.url === 'https://api.openai.com/v1/responses').length, 1);
+  }
+});
+
+test('duplicate-image collapsing cannot hide an ineligible selected sale', async () => {
+  for (const patch of [{ listingType: 'active' }, { bestOfferAccepted: true }, { soldCurrency: 'CAD' }]) {
+    const f = await duplicateSelectionFixture(); Object.assign(f.items[1], patch);
+    await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('malformed_response'));
+  }
+});
+
+test('immutable historical duplicate-weighted estimates still parse without rewriting their bytes', async () => {
+  const f = await duplicateSelectionFixture();
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  const historical = { ...result, selected_candidate_ids: ['ebay:111111111110', 'ebay:111111111111', 'ebay:111111111112'], rejections: [],
+    estimate: { ...result.estimate, value_cents: 4368, low_cents: 101, high_cents: 10001, count: 3 } };
+  for (const engine of ['staff-inventory-research-v1', 'staff-inventory-research-v2', 'staff-inventory-research-v3', 'staff-inventory-research-v5'] as const) {
+    const prior = structuredClone(historical); prior.engine_version = engine;
+    if (engine === 'staff-inventory-research-v1') { delete prior.research_queries; delete prior.comparison_assessments; delete prior.diagnostics; }
+    if (engine === 'staff-inventory-research-v5') prior.sale_details = { schema_version: 1, base_engine_version: 'staff-inventory-research-v3', requests: [] };
+    const bytes = canonical(prior);
+    const parsed = StaffInventoryResearchResultSchema.parse(JSON.parse(bytes));
+    assert.equal(canonical(parsed), bytes); assert.equal(inventoryHash(parsed), inventoryHash(prior));
+    assert.equal(parsed.estimate.value_cents, 4368); assert.equal(parsed.estimate.count, 3);
+  }
 });
 
 test('reference matching requires exact explicit card anchors and admits unambiguous composite names', async () => {

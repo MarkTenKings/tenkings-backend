@@ -62,6 +62,7 @@ const apiMethods: Record<string, readonly string[]> = {
   '/api/v2/admin/inventory/photo': ['POST'],
   '/api/v2/admin/inventory/identify': ['POST'],
   '/api/v2/admin/inventory/research': ['GET', 'POST'],
+  '/api/v2/admin/inventory/research-review': ['POST'],
   '/api/v2/admin/inventory/location-map': ['GET'],
   '/api/admin/locations': ['GET', 'POST'],
   '/api/wallet/me': ['GET'],

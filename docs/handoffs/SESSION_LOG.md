@@ -33833,3 +33833,48 @@ The following branch-specific records are retained verbatim from the main-site p
 
 - Mark reports: “I reviewed it and new website works.” Record main-website acceptance complete alongside his earlier completed phone test. Close the previous owner-facing apex acceptance/sign-in request; do not ask for repeated phone or website acceptance. This is owner-reported acceptance, not a newly captured per-control browser trace. No deployment or runtime action was performed in this follow-up.
 - Reconciled current context/release/accuracy/readiness records and the canonical improvement-plan status with that acceptance. Added a concise remaining-completion table to the Inventory index, distinguishing already-built catalog/research/proposal/evaluator foundations from real source/image review/publication, ATLAS-owned adapter integration, missing independent 200-card labels, enabled-load qualification and final optional-feature activation. Preserve the approved current Inventory scope without importing future commerce or grading work.
+
+
+### September 21 — Owner adds visible eBay comp value and calculation review
+
+- Mark supplied the main Inventory-list screenshot and requested a visible eBay sold-comp value, asking how multiple and incorrect comps affect it. Added the narrow request to the canonical blueprint. Plan: read-only bounded saved-research summaries, a separate responsive list column linked to card evidence, and explicit selected-price arithmetic. Cost, expected sale and profit stay authoritative and unchanged; unknown/stale research is not zero. No provider work from the list.
+- Source audit confirms equal-weight selected-price mean, nearest-cent half-up, excluding shipping and requiring at least two matching priced comparisons. It also found that selected image hashes A,A,B could over-weight the same imagery. The narrow correction will retain all evidence and give exact duplicate images one contribution; broader relisting independence and AI matching remain imperfect. No median/outlier policy change is intended. A separate optional owner question asks whether incorrect comps should be manually excludable with a saved recalculation.
+- Agent ownership: summary helper/API, list UI, and independent engine/math audit are separate. Root owns detail calculation UI, integration, tests and qualified release. No live Inventory record, research retry, provider call or setting has changed for this addition.
+
+
+### September 21 — Owner authorizes saved staff comp review
+
+- Mark answered the optional question: staff must correct incorrect Astra selections, recalculate value, and quickly confirm/exclude comparisons beside the Inventory card. Added that refinement to the canonical blueprint. Implementation now includes append-only revision-bound review persistence, authenticated idempotent decisions, a common reviewed-value projection and side-by-side buttons/swipes. No automatic promotion of uncertain candidates, financial edits or historical-result rewrites is included.
+- Ownership revised: main-domain agent owns shared review contracts/database/migration and focused PostgreSQL proof; comp agent owns web API/read/summary integration and backend review; UI agent owns list plus detail review UX; root owns independent integration, qualification and release records. Existing list/API/engine baseline tests pass; the expanded review is still being implemented. No live migration, review record or provider call has occurred.
+
+
+### September 21 — Review integration and legacy-client correction
+
+- Root's actual-component local browser fixture confirms an initial $10.02 two-sale estimate, staff confirmation, exclusion down to one eligible comparison producing More evidence needed, and the same state on drawer close in the main list; expected sale remains $12.00. These are synthetic local interactions, not real staff decisions or Production proof. At a 390-pixel viewport the dialog/document remain within 390 pixels and card/comp photos remain side-by-side; layout refinements are continuing.
+- Independent integration review found that an already-open old Panel would ignore the additive staff-review field. Full reads with saved decisions will therefore declare response version 2, understood by the new client and rejected by the old one. Original research bytes stay intact. Recovery after real reviews must preserve the reviewed projection. No live action has occurred.
+
+
+### September 21 — Planned owned PostgreSQL review qualification
+
+- Root reviewed the new disposable supervisor against the previously qualified cron supervisor and inspected the complete twelve-subtest review fixture. Preparation seal 8fab317811c6ee10883e15fd0f276fa486e9559967a22d049b121f8bb64933af has 165 source members, generated-client bytes and native PostgreSQL binaries independently rehashed with zero mismatches; preparation started no database.
+- Authorized one finite local loopback PostgreSQL run with the complete migration chain, second-deploy no-op, exact review writer/readback, replay/concurrency/current-card checks, SQL immutability and owned cleanup. The new model uses raw SQL; only its named unused reciprocal relation is excluded from existing generated-client compatibility comparison. Existing retained cached tools are reused. This test cannot touch the shared host, real Inventory, providers or ATLAS, and does not release the ATLAS coordination hold.
+
+
+### September 21 — Local migration chain passed; fixture correction and planned rerun
+
+- First owned run applied all 97 local migrations and the second deploy left its ledger unchanged. Eleven review subtests passed; the remaining bulk-receipt setup used an individual-card cost method, correctly rejected by the existing Inventory writer before reaching the review check. No production implementation was changed to bypass that guard. All owned processes/database stopped and temporary storage was removed without errors.
+- Correct only the fixture to use equal_card for a batch, then run the same finite owned test against the newly reviewed seal a9f9cb812af630409b1ca13a1837a922f8f9d8874ec1bc529c6e7146b040c22a. Root verified the fixture is the only changed sealed member and every other seal section is identical. Retain both failed and corrected evidence. No live action.
+
+
+### September 21 — Owned review PostgreSQL proof passed
+
+- Corrected owned run r2 passed all 13 tests (twelve subtests plus parent), no skip/failure, in 2.952 seconds including supervision. All 97 local migrations applied; a second deploy left the ledger unchanged. Confirm/exclude/restore arithmetic, exact retry after later decisions, two-staff concurrency, strict binding/actor checks, current description and cancellation, bulk rejection, SQL append-only and result protection, and all three existing writer locks passed. Original research row and workflow/cost/price history remain identical across review operations.
+- All five owned process groups and PostgreSQL stopped; temporary storage was removed without errors. Final seal comparison and independent rehash of 165 source, 13 generated-client and two native files show zero mismatch against a9f9cb812af630409b1ca13a1837a922f8f9d8874ec1bc529c6e7146b040c22a. Evidence: /private/tmp/tenkings-research-review-run-20260921-r2. This is a controlled local transaction/migration proof, not a live migration or responsiveness/accuracy claim.
+
+
+### September 21 — Comp review final integration passed; planned qualified release
+
+- Root's final combined application run passed 250/250 tests, zero skips/failures, across research/worker/legacy compatibility, arithmetic, API, routing, review, list and all existing Inventory workspace flows. Shared and database package TypeScript builds pass. Scoped lint/focused UI types pass; whole-app types retain only the twelve pre-existing unrelated grading-test errors. Independent final API/DB/UI review reports no remaining blocker. Root confirmed source hashes match the independently reviewed UI.
+- Final actual-component browser fixture verifies phone photo alignment/no document overflow, confirm auto-advance, exclusion to insufficient evidence, main-list refresh, version-2 review reopening and restoration to the exact rounded value. Expected sale remains unchanged. Temporary viewport reset, fixture tab closed and local HTTP server stopped; no real card was reviewed.
+- ATLAS explicitly released its shared-host/DB hold after its own successful cutover. Preserve its new container 6e40e2ea4909abb1d04ab3d931d68b26eab246bbdde49bc5ee79350fda428665 and all existing schemas/bindings. Inventory's next action is the qualified one-table additive review migration and exact-source Vercel release, without ATLAS operations.
+- Planned sequence: commit the reviewed Inventory slice, fast-forward the existing main release branch and push its Git-connected Preview. Keep RUN_DB_MIGRATIONS=false, all catalog/enrichment/diagnostic flags unchanged/off, and Production/cron ownership unchanged during build. Independently verify the hosted artifact, apply only the qualified Inventory migration after a fresh exact-ledger preflight, then stage/qualify/promote the matching Production artifact and verify actual aliases/private guards/sole cron. No DNS change, provider research or catalog publication is included.

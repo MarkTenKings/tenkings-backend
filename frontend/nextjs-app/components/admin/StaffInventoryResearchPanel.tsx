@@ -1,7 +1,9 @@
 /* eslint-disable @next/next/no-img-element -- Private, expiring evidence previews must bypass the shared image optimizer. */
-import { useEffect, useState } from 'react';
-import type { StaffInventoryResearchStatusV2 } from '@tenkings/database';
+import { useEffect, useRef, useState } from 'react';
 import { StaffInventoryResearchResultSchema, type StaffInventoryResearchCandidate, type StaffInventoryResearchResult } from '../../lib/staffInventoryResearch';
+import { getStaffInventoryMarketCalculation, StaffInventoryResearchReviewSnapshotSchema, projectStaffInventoryResearchReview,
+  type StaffInventoryResearchJobWithReview, type StaffInventoryResearchReviewProjection } from '../../lib/staffInventoryMarketValue';
+import StaffInventoryCompReview, { type InventoryReviewPhotos } from './StaffInventoryCompReview';
 import styles from './StaffInventoryResearchPanel.module.css';
 
 const dollars = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
@@ -21,8 +23,8 @@ function priceEvidence(candidate: StaffInventoryResearchCandidate) {
   return { amount: reported, label: candidate.best_offer_accepted === true ? 'Listed price' : 'Reported price', detail: `${candidate.best_offer_accepted === true ? 'Accepted offer unavailable' : 'Final sale unverified'}${candidate.sold_currency ? '' : ' · Currency not provided'}`, reported: null, available: true };
 }
 
-function ComparisonCard({ candidate, preview, status, reason, included = false }: {
-  candidate: StaffInventoryResearchCandidate; preview?: string; status: string; reason: string; included?: boolean;
+function ComparisonCard({ candidate, preview, status, reason, assessmentReason, included = false }: {
+  candidate: StaffInventoryResearchCandidate; preview?: string; status: string; reason: string; assessmentReason?: string; included?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false), [imageFailed, setImageFailed] = useState(false);
   useEffect(() => { setImageFailed(false); setExpanded(false); }, [preview]);
@@ -44,29 +46,32 @@ function ComparisonCard({ candidate, preview, status, reason, included = false }
       </div>
     </div>
     <a className={styles.listingTitle} href={candidate.listing_url} target="_blank" rel="noreferrer">{candidate.title}<span aria-hidden="true"> ↗</span></a>
-    <div className={styles.matchReason}><span className={included ? styles.includedBadge : styles.matchBadge}>{status}</span><p>{reason}</p>{candidate.exclusion_reason && candidate.exclusion_reason !== reason && <p>{candidate.exclusion_reason}</p>}</div>
+    <div className={styles.matchReason}><span className={included ? styles.includedBadge : styles.matchBadge}>{status}</span><p>{reason}</p>{candidate.exclusion_reason && candidate.exclusion_reason !== reason && <p>{candidate.exclusion_reason}</p>}{assessmentReason && assessmentReason !== reason && assessmentReason !== candidate.exclusion_reason && <p><strong>AI comparison: </strong>{assessmentReason}</p>}</div>
   </article>;
 }
 
-function ResearchEvidence({ result, previews }: { result: StaffInventoryResearchResult; previews: Record<string, string> }) {
-  const selected = new Set(result.estimate.status === 'estimated' ? result.selected_candidate_ids : []);
+function ResearchEvidence({ result, previews, calculation, projection }: { result: StaffInventoryResearchResult; previews: Record<string, string>; calculation: ReturnType<typeof getStaffInventoryMarketCalculation>; projection: StaffInventoryResearchReviewProjection | null }) {
+  const selected = new Set(projection?.selected_candidate_ids ?? calculation?.selected_candidates.map(candidate => candidate.id) ?? []);
+  const staffExcludedIds = new Set(projection?.excluded_candidate_ids ?? []), duplicates = new Set(projection?.duplicate_candidate_ids ?? []);
   const assessments = new Map(result.comparison_assessments?.map(assessment => [assessment.candidate_id, assessment]));
   const included = result.candidates.filter(candidate => selected.has(candidate.id));
-  const matched = result.candidates.filter(candidate => !selected.has(candidate.id) && assessments.get(candidate.id)?.classification === 'matched');
+  const staffExcluded = result.candidates.filter(candidate => staffExcludedIds.has(candidate.id));
+  const matched = result.candidates.filter(candidate => !selected.has(candidate.id) && !staffExcludedIds.has(candidate.id) && assessments.get(candidate.id)?.classification === 'matched');
   const possible = result.candidates.filter(candidate => !selected.has(candidate.id) && assessments.get(candidate.id)?.classification === 'possible');
   const rejected = result.candidates.filter(candidate => !selected.has(candidate.id) && assessments.get(candidate.id)?.classification === 'rejected');
   // Older research recorded every unselected listing as a rejection, including unresolved
   // prices and catalog coverage. That is not enough evidence to call the card a mismatch.
-  const other = result.candidates.filter(candidate => !selected.has(candidate.id) && !assessments.has(candidate.id));
+  const other = result.candidates.filter(candidate => !selected.has(candidate.id) && !staffExcludedIds.has(candidate.id) && !assessments.has(candidate.id));
   function cards(candidates: StaffInventoryResearchCandidate[], status: string, usedInEstimate = false) {
     return <div className={styles.comps}>{candidates.map(candidate => <ComparisonCard key={candidate.id} candidate={candidate}
-      preview={candidate.image?.storage_key ? previews[candidate.image.storage_key] : undefined} included={usedInEstimate} status={status}
-      reason={assessments.get(candidate.id)?.reason ?? result.rejections.find(rejection => rejection.candidate_id === candidate.id)?.reason ?? candidate.exclusion_reason ?? (usedInEstimate ? 'Selected from matching sales with verified prices.' : 'This listing has not been established as a matching comparison.')} />)}</div>;
+      preview={candidate.image?.storage_key ? previews[candidate.image.storage_key] : undefined} included={usedInEstimate} status={status} assessmentReason={assessments.get(candidate.id)?.reason}
+      reason={staffExcludedIds.has(candidate.id) ? 'Excluded by a saved staff decision. Restore it using the review controls above if appropriate.' : duplicates.has(candidate.id) && !selected.has(candidate.id) ? 'Repeated listing image. This evidence does not receive additional weight.' : !usedInEstimate ? result.rejections.find(rejection => rejection.candidate_id === candidate.id)?.reason ?? assessments.get(candidate.id)?.reason ?? candidate.exclusion_reason ?? 'This listing has not been established as a matching comparison.' : assessments.get(candidate.id)?.reason ?? 'Selected from matching sales with verified prices.'} />)}</div>;
   }
   const searches = result.research_queries;
   return <div className={styles.evidence}>
-    {included.length > 0 && <section className={styles.resultGroup} aria-label="Included in market estimate"><h4>Included in estimate <span>{included.length}</span></h4><p>Matching sales with verified prices used in the estimate above.</p>{cards(included, 'Included in estimate', true)}</section>}
-    {matched.length > 0 && <section className={styles.resultGroup} aria-label="Matching research candidates"><h4>Matching research candidates <span>{matched.length}</span></h4><p>Research found a match. These listings still lack the evidence required for the estimate.</p>{cards(matched, 'Research match · Not in estimate')}</section>}
+    {included.length > 0 && <section className={styles.resultGroup} aria-label={calculation ? 'Included in market estimate' : 'Eligible selected comps'}><h4>{calculation ? 'Included in estimate' : 'Selected comps · More evidence needed'} <span>{included.length}</span></h4><p>{calculation ? 'These selected sales enter the value above.' : 'The remaining selection does not yet establish a value.'} Check the card, printing and condition against your photos.</p>{cards(included, calculation ? 'Included in estimate' : 'Selected · Value unavailable', true)}</section>}
+    {staffExcluded.length > 0 && <details className={styles.disclosure}><summary>Staff-excluded comps <span>{staffExcluded.length}</span></summary>{cards(staffExcluded, 'Staff excluded · Not used')}</details>}
+    {matched.length > 0 && <section className={styles.resultGroup} aria-label="Matching research candidates"><h4>Matching research candidates <span>{matched.length}</span></h4><p>Research found a card match. These listings are not used in the value. The reason is shown with each listing.</p>{cards(matched, 'Research match · Not in estimate')}</section>}
     {possible.length > 0 && <section className={styles.resultGroup} aria-label="Candidates to review"><h4>Candidates to review <span>{possible.length}</span></h4><p>Possible comparisons with unresolved matching details. No prices here enter the estimate.</p>{cards(possible, 'Needs review · Not in estimate')}</section>}
     {!included.length && !matched.length && !possible.length && <div className={styles.emptyMatches}><strong>{result.candidates.length ? 'No matching comparisons established yet' : 'No usable listings returned'}</strong><p>{result.candidates.length ? 'The inspected listings remain available below, with their source prices and the reason each was not selected.' : 'Research did not find usable sale evidence for this card.'}</p></div>}
     {other.length > 0 && <details className={styles.disclosure}><summary>Other results <span>{other.length}</span></summary><p>Saved listings from earlier research. A source price or a sold listing alone does not establish a matching card.</p>{cards(other, 'Not included in estimate')}</details>}
@@ -83,9 +88,23 @@ function ResearchEvidence({ result, previews }: { result: StaffInventoryResearch
   </div>;
 }
 
-export default function StaffInventoryResearchPanel({ unitId, token, descriptionEventId }: { unitId: string; token: string; descriptionEventId?: string | null }) {
-  const scope = JSON.stringify([unitId, descriptionEventId ?? null, token]);
-  const [snapshot, setSnapshot] = useState<{ scope: string; job: StaffInventoryResearchStatusV2 | null; previews: Record<string, string> } | null>(null);
+function ValueCalculation({ result, calculation, projection }: { result: StaffInventoryResearchResult; calculation: ReturnType<typeof getStaffInventoryMarketCalculation>; projection: StaffInventoryResearchReviewProjection | null }) {
+  const included = projection?.count ?? calculation?.count ?? 0, excluded = result.candidates.length - included;
+  return <div className={styles.calculation} aria-label="How the eBay comp value is calculated">
+    <h4>How this value is calculated</h4>
+    {calculation ? <>
+      <p className={styles.formula}>{calculation.selected_candidates.map(candidate => dollars(candidate.sold_price_cents!)).join(' + ')} <span aria-hidden="true">=</span> <strong>{dollars(calculation.total_cents)}</strong></p>
+      <p className={styles.formula}>{dollars(calculation.total_cents)} ÷ {calculation.count} {calculation.count === 1 ? 'sale' : 'sales'} = <strong>{dollars(calculation.value_cents)}</strong></p>
+      <p>Each selected sale has equal weight. The average is rounded to the nearest cent and excludes shipping.</p>
+    </> : <p>{projection?.reason ?? (result.estimate.status === 'estimated' ? 'The saved selection needs review before a value can be shown. Its evidence does not pass the current calculation checks.' : 'At least two matching sold comparisons with verified prices and different listing images are needed for a value.')}</p>}
+    <p className={styles.calculationCounts}><strong>{included} included</strong> · {excluded} {excluded === 1 ? 'listing' : 'listings'} not used</p>
+    <p>Only selected sales enter the average. Possible matches, rejected cards and unverified prices are excluded. AI matching can make mistakes; inspect the selected photos, printing and condition below.</p>
+  </div>;
+}
+
+export default function StaffInventoryResearchPanel({ unitId, token, descriptionEventId, actorId, inventoryPhotos = { front: null, back: null } }: { unitId: string; token: string; descriptionEventId?: string | null; actorId?: string; inventoryPhotos?: InventoryReviewPhotos }) {
+  const scope = JSON.stringify([unitId, descriptionEventId ?? null, token, actorId ?? null]), current = useRef(scope); current.current = scope;
+  const [snapshot, setSnapshot] = useState<{ scope: string; job: StaffInventoryResearchJobWithReview | null; previews: Record<string, string> } | null>(null);
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [retrying, setRetrying] = useState(false), [revision, setRevision] = useState(0);
   const job = snapshot?.scope === scope ? snapshot.job : null, previews = snapshot?.scope === scope ? snapshot.previews : {};
   useEffect(() => {
@@ -95,9 +114,17 @@ export default function StaffInventoryResearchPanel({ unitId, token, description
       try {
         const response = await fetch(`/api/v2/admin/inventory/research?unit_id=${encodeURIComponent(unitId)}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: controller.signal });
         const value = await response.json();
-        if (!response.ok || value.version !== 1 || !Array.isArray(value.jobs)) throw new Error();
-        const next = value.jobs.find((item: StaffInventoryResearchStatusV2) => item.unit_id === unitId && (!descriptionEventId || item.description_event_id === descriptionEventId)) ?? null;
+        if (!response.ok || ![1, 2].includes(value.version) || !Array.isArray(value.jobs)) throw new Error();
+        const next: StaffInventoryResearchJobWithReview | null = value.jobs.find((item: StaffInventoryResearchJobWithReview) => item.unit_id === unitId && (!descriptionEventId || item.description_event_id === descriptionEventId)) ?? null;
         if (next && (!['queued', 'running', 'complete', 'failed'].includes(next.status) || next.result !== null && (!StaffInventoryResearchResultSchema.safeParse(next.result).success || next.result.unit_id !== next.unit_id || next.result.description_event_id !== next.description_event_id || next.result.description_hash !== next.description_hash))) throw new Error();
+        // This single-unit response must never fall back to the original AI value after staff review.
+        if (value.version === 2 && (!next || next.status !== 'complete' || !next.review || !next.result_hash || next.review.revision < 1)) throw new Error();
+        if (next?.review) {
+          const review = StaffInventoryResearchReviewSnapshotSchema.parse(next.review);
+          if (review.job_id !== next.job_id || review.unit_id !== next.unit_id || review.description_event_id !== next.description_event_id
+            || review.input_hash !== next.input_hash || review.result_hash !== next.result_hash || !next.result
+            || !projectStaffInventoryResearchReview(next.result, review, next.result_hash)) throw new Error();
+        }
         if (controller.signal.aborted) return;
         setSnapshot({ scope, job: next, previews: value.image_previews && typeof value.image_previews === 'object' ? value.image_previews : {} });
         setError(''); setLoading(false);
@@ -130,15 +157,26 @@ export default function StaffInventoryResearchPanel({ unitId, token, description
     finally { setRetrying(false); }
   }
   const result = job?.result, researching = job?.status === 'queued' || job?.status === 'running';
+  const review = job?.review ?? null;
+  const projection = job?.status === 'complete' && result && review && job.result_hash ? projectStaffInventoryResearchReview(result, review, job.result_hash) : null;
+  const calculation = job?.status === 'complete' && result ? getStaffInventoryMarketCalculation(result, review, job.result_hash ?? undefined) : null;
+  const reviewed = review?.decisions.length ?? 0, totalSelected = result?.selected_candidate_ids.length ?? 0;
   return <section className={styles.panel} aria-label="Card market research">
-    <header><div><p className={styles.eyebrow}>SOLD COMPS · CARD RESEARCH</p><h3>Market research</h3></div><span className={styles.status}>{loading ? 'Loading' : researching ? job.status === 'running' ? 'Researching' : 'Queued' : job?.status === 'failed' ? 'Needs attention' : result?.estimate.status === 'estimated' ? 'Updated' : result ? 'More evidence needed' : 'Not researched'}</span></header>
+    <header><div><p className={styles.eyebrow}>SOLD COMPS · CARD RESEARCH</p><h3>Market research</h3></div><span className={styles.status}>{loading ? 'Loading' : researching ? job.status === 'running' ? 'Researching' : 'Queued' : job?.status === 'failed' ? 'Needs attention' : calculation ? 'Updated' : result ? 'More evidence needed' : 'Not researched'}</span></header>
     {loading ? <p>Loading this card’s research…</p> : researching ? <p>We’re checking the card and recent eBay sales. You can keep adding inventory or close this page.</p> : !job ? <p>New individual cards receive automatic research after they are saved.</p> : job.status === 'failed' ? <p>{job.error?.message ?? 'This research attempt could not finish.'}</p> : null}
     {result && <>
-      <div className={styles.value}><div><span>Estimated market value</span><strong className={result.estimate.value_cents === null ? styles.unknownValue : undefined}>{result.estimate.value_cents === null ? 'More evidence needed' : dollars(result.estimate.value_cents)}</strong></div>{result.estimate.status === 'estimated' && <div className={styles.valueRange}><span>{result.estimate.count} verified matching sales</span><p>{dollars(result.estimate.low_cents!)}–{dollars(result.estimate.high_cents!)}</p></div>}</div>
-      <p>{result.estimate.reason}</p>
+      <div className={styles.value}><div><span>eBay comp value · Research estimate</span><strong className={!calculation ? styles.unknownValue : undefined}>{calculation ? dollars(calculation.value_cents) : 'More evidence needed'}</strong></div>{calculation && <div className={styles.valueRange}><span>{calculation.count} {reviewed ? 'remaining sold comps' : 'AI-selected sold comps'}</span><p>{dollars(calculation.low_cents)}–{dollars(calculation.high_cents)}</p></div>}</div>
+      {reviewed > 0 && <p className={styles.reviewStatus}>{reviewed === totalSelected ? 'Staff-reviewed selection' : 'Partially staff-reviewed'} · {reviewed} of {totalSelected} comps reviewed</p>}
+      {result.estimate.status !== 'estimated' && <p>{result.estimate.reason}</p>}
+      {actorId && review && job.result_hash && <StaffInventoryCompReview key={`${scope}:${job.job_id}:${job.input_hash}:${job.result_hash}`} actorId={actorId} token={token}
+        binding={{ jobId: job.job_id, unitId, descriptionEventId: job.description_event_id, inputHash: job.input_hash, resultHash: job.result_hash }}
+        result={result} review={review} previews={previews} photos={inventoryPhotos}
+        onSaved={next => { if (current.current === scope) setSnapshot(previous => previous?.scope === scope && previous.job?.job_id === next.job_id ? { ...previous, job: { ...previous.job, review: next } } : previous); }}
+        onConflict={() => { if (current.current === scope) setRevision(value => value + 1); }} />}
+      <ValueCalculation result={result} calculation={calculation} projection={projection} />
       <div className={styles.identity}><span>{result.identity.status === 'base' ? 'Base card' : result.identity.status === 'variant' ? 'Variant identified' : 'Variant check'}</span><strong>{result.identity.variant_name ?? result.identity.suggestion ?? 'Unresolved'}</strong><p>{result.identity.reason}</p></div>
       <p className={styles.note}>Researched {new Date(result.researched_at).toLocaleDateString()}. Market estimates are separate from your cost and expected sale price.</p>
-      <ResearchEvidence key={`${job.job_id}:${result.researched_at}`} result={result} previews={previews} />
+      <ResearchEvidence key={`${job.job_id}:${result.researched_at}`} result={result} previews={previews} calculation={calculation} projection={projection} />
     </>}
     {error && <p role="alert">{error}</p>}
     <footer>{!loading && !job && descriptionEventId && <button type="button" onClick={() => void startResearch()} disabled={retrying}>{retrying ? 'Requesting…' : 'Research this card'}</button>}{job?.can_retry && <button type="button" onClick={() => void retry()} disabled={retrying}>{retrying ? 'Requesting…' : 'Research again'}</button>}{error && <button type="button" onClick={() => setRevision(value => value + 1)}>Refresh research</button>}</footer>
