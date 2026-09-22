@@ -1,6 +1,16 @@
 # Main-site release record
 
-## Current production — September 21
+## Current production — September 21, comp review release
+
+Production is now exact `bc92b1023640ab21499506fb2d4fb5e2bdb188df`, deployment `dpl_FXLDCapouMhB7WtULnCTb45QXG31`, immutable `tenkings-backend-nextjs-drrqyvmk1-ten-kings.vercel.app`. All five actual Production aliases were verified at 01:17:39 UTC September 22 (September 21 local); stable main Preview remains `dpl_Hie34Nkq8rhtp1MGjURUAsY7J8yH` from the same source. No environment or DNS change accompanied this release.
+
+This includes the later Pokémon/scorer implementation, disabled exact-input diagnostic and [Inventory comp value/review feature](2026-09-21-inventory-comp-review.md). Optional catalog, contributions, enrichment and diagnostic execution remain off. The new review migration passed live exact-ledger preservation and second-deploy no-op: 98 active plus 13 historical rolled-back migrations. The qualified Linux build produced 79 pages, native Sharp 0.34.5 and valid shared traces, skipped migrations, and passed ten staged private/legacy guards. Local functional evidence is 250 application tests, 13 PostgreSQL checks and synthetic actual-component phone/desktop review interactions. These are not a real staff decision or market-accuracy proof.
+
+All 92 completed saved research jobs remain legacy V2 unknowns with zero references and unresolved identity; no live estimate exists yet. The release adds review capability, not missing catalog/sold evidence. Preserve audit semantics in any later recovery once staff reviews exist.
+
+Live postflight passed: all 28 routing/private-header checks and six referenced CSS/JS/brand assets, shared build BXAmDdh8X-Ikg6B_GxbR1. The sole minute cron belongs to the new deployment; its natural 01:18:37.171 UTC request returned HTTP 200. No manual cron invocation occurred, and the request log does not establish job outcomes.
+
+## Historical initial main website production — September 21
 
 The reviewed Inventory/main application at `9a12cd3591074dfe692976445fc30f51690ba043` is live as Production `dpl_2XUGoG74E88eVeFGETVzFkQDBhRC`. [Main website](https://tenkings.co) and [staff Inventory](https://tenkings.co/staff/inventory) now use the new site; www redirects through the reviewed middleware. Collect and both existing production platform aliases use the same accepted artifact. The sole research cron moved to this deployment with its path and schedule unchanged.
 
