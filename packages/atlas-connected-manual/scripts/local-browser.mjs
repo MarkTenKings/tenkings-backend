@@ -19,7 +19,7 @@ import {assertLocalRequest,fixtureCookie} from '../../../frontend/atlas-app/lib/
 const evidence=resolve(process.env.ATLAS_CONNECTED_EVIDENCE),root=resolve(new URL('../../../',import.meta.url).pathname);
 await mkdir(evidence,{recursive:true});
 const fixture=await createOwnedManualFixture(process.argv.slice(2));
-let server,uploadServer,app,connection,privateServer;
+let server,uploadServer,app,connection,privateServer,geometryWorker;
 try{
   await fixture.cluster.sql(intakeGrantSQL('atlas_fixture_manual')+'\n'+connectedGrantSQL('atlas_fixture_manual'),[],fixture.database.name);
   connection=fixture.connect();
@@ -55,6 +55,7 @@ try{
   const effects={ocr:async()=>({status:200,bytes:Buffer.from(JSON.stringify({responses:[{fullTextAnnotation:{text:'Synthetic Player 2026 Fixture Test 007'}}]}))}),
     model:async()=>({status:200,bytes:Buffer.from(JSON.stringify({model:'gpt-6-astra',status:'completed',error:null,incomplete_details:null,output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify(Object.fromEntries(Object.entries({name:'Synthetic Player',category:'Sports cards',manufacturer:'Fixture',card_number:'007',year:'2026',set_name:'Test Set',variant:null,card_type:'Basketball'}).map(([key,value])=>[key,{value,confidence:value?'high':'unknown',evidence:value?'Front printed test text':null}])))}]}],usage:{input_tokens:100,output_tokens:100,total_tokens:200}}))})};
   const connected=createConnectedManual({boundary:connection.boundary,storage,artifacts:fixture.artifacts,keyPrefix:'atlas-connected',pythonExecutable:process.env.ATLAS_MANUAL_PYTHON,effects,receiptClient:connection.manualClient,imageReadUrl:({kind,descriptor,photo})=>kind==='original'?storage.createDecodedFrameRead({frame:descriptor,original:photo.original,decodePlan:photo.decodePlan}):storage.createDerivativeRead({descriptor,frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan})});
+  geometryWorker=connected.earlyGeometry;geometryWorker.start();
   const assertRequest=req=>assertLocalRequest(req,{NODE_ENV:'development',ATLAS_LOCAL_SYNTHETIC:'1'});
   const key=Buffer.alloc(32,87);
   privateServer=createPrivateManualServer({connected,boundary:connection.boundary,origin:fixture.config.origin,key});
@@ -78,6 +79,7 @@ try{
   console.log('Connected actual Next staff app ready at http://127.0.0.1:4318/admin');
   await new Promise(done=>{process.once('SIGTERM',done);process.once('SIGINT',done);});
 }finally{
+  await geometryWorker?.stop();
   for(const instance of [server,uploadServer])if(instance?.listening)await new Promise(done=>{instance.closeAllConnections();instance.close(done);});
   await fixture.stop();await copyFile(join(fixture.cluster.directory,'cleanup.json'),join(evidence,'database-cleanup.json'));
   await Promise.race([app?.close(),new Promise(done=>setTimeout(done,5000))]);

@@ -208,6 +208,15 @@ export function createGeometryWorkspace(input) {
   return copy(validateState(initial));
 }
 
+/** The same geometry/pixel checks before identity is known. These validators
+ * grant no workspace edit authority and do not invent a card profile. */
+export function validatePhotoGeometryQuad(quad) { return copy(validQuad(quad)); }
+export function validatePreparedPhotoFrame(frame, descriptor, quad) {
+  image(descriptor); validQuad(quad);
+  preparedFrame(frame, { image: descriptor, physical: { quad } });
+  return copy(frame);
+}
+
 /** Bases are exact, JSON-serializable dependency fingerprints, not signatures.
  * Independent Back edits do not stale Front results. Advancing a revision even
  * after edit-and-undo prevents an old proposal from regaining write authority.

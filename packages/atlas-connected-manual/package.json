@@ -7,7 +7,10 @@
     ".": "./src/index.mjs",
     "./http": "./src/http.mjs",
     "./identification": "./src/identification.mjs",
-    "./transport": "./src/transport.mjs"
+    "./transport": "./src/transport.mjs",
+    "./publication": "./src/publication.mjs",
+    "./publication-repository": "./src/publication-repository.mjs",
+    "./publication-reader": "./src/publication-reader.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
@@ -23,6 +26,8 @@
     "@atlas/photo-storage": "workspace:*",
     "@atlas/preparation-runtime": "workspace:*",
     "@atlas/grading-core": "workspace:*",
+    "@atlas/report-view": "workspace:*",
+    "@atlas/service-bridge": "workspace:*",
     "@tenkings/card-identification-core": "workspace:*",
     "sharp": "0.33.5",
     "@aws-sdk/client-s3": "3.914.0",

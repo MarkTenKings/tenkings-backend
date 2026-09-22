@@ -10,6 +10,8 @@ import { defectMemoryGrantSQL } from '../../packages/atlas-defect-memory/src/rep
 import { analysisGrantSQL, analysisReceiptGrantSQL } from '../../packages/atlas-defect-analysis/src/repository.mjs';
 import { runConnectedIntegration } from '../../packages/atlas-connected-manual/test/connected.test.mjs';
 import { runIdentificationRetryPostgres } from '../../packages/atlas-connected-manual/scripts/identification-retry-postgres.mjs';
+import { runEarlyGeometryPostgres } from '../../packages/atlas-connected-manual/scripts/early-geometry-postgres.mjs';
+import { runPublicationPostgres } from '../../packages/atlas-connected-manual/scripts/validate-publication-postgres.mjs';
 
 const output=process.env.ATLAS_CONNECTED_EVIDENCE, pythonExecutable=process.env.ATLAS_FIXTURE_PYTHON;
 assert(output && resolve(output)===output && pythonExecutable && resolve(pythonExecutable)===pythonExecutable);
@@ -38,12 +40,16 @@ try {
   const updates={
     'atlas_manual.card':['revision','content','content_hash','updated_at'],
     'atlas_manual.action':[], 'atlas_manual.approval':[],
+    'atlas_manual.public_report_identity':[],
+    'atlas_manual.publication':['state','manifest','manifest_hash','public_hash','published_at'],
     'atlas_manual_intake.card':['revision','front_version','back_version','front_upload_id','back_upload_id','updated_at'],
     'atlas_manual_intake.upload':['verification','verification_hash','source','source_hash'],
     'atlas_manual_connected.details':['revision','content','content_hash'],
     'atlas_manual_connected.details_action':[],
     'atlas_manual_connected.identification':['state','result','error','finished_at'],
     'atlas_manual_connected.effect':[],
+    'atlas_manual_connected.early_geometry_intent':['access_version'],
+    'atlas_manual_connected.early_geometry':['state','result','error','claim_id','lease_until','access_version','attempts','updated_at'],
     'atlas_manual.defect_memory_publication':[],
     'atlas_defect_analysis.run':['state','dispatched_at'],
     'atlas_defect_analysis.receipt':[],
@@ -58,7 +64,7 @@ try {
     assert.equal(row.refs,false);assert.equal(row.extra,false);assert.equal(row.owner,false);
     if(allowed)seen.add(key);
   }
-  assert.equal(seen.size,14);
+  assert.equal(seen.size,18);
   const schemas=await db.$queryRawUnsafe(`SELECT nspname,has_schema_privilege(current_user,oid,'USAGE') usage,
     has_schema_privilege(current_user,oid,'CREATE') create_objects FROM pg_namespace
     WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema' ORDER BY nspname`);
@@ -67,7 +73,7 @@ try {
   const functions=await db.$queryRawUnsafe(`SELECT n.nspname AS schema,p.proname,oidvectortypes(p.proargtypes) args,p.prosecdef,
     pg_get_userbyid(p.proowner) owner,p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     WHERE n.nspname LIKE 'atlas_%' AND p.prorettype<>'trigger'::regtype AND has_function_privilege(current_user,p.oid,'EXECUTE') ORDER BY 1,2`);
-  assert.deepEqual(functions.map(row=>`${row.schema}.${row.proname}`),['atlas_defect_analysis.append_provider_event','atlas_defect_analysis.append_receipt','atlas_defect_analysis.read_background','atlas_manual.authenticate','atlas_manual.defect_memory_design','atlas_manual_connected.append_receipt']);
+  assert.deepEqual(functions.map(row=>`${row.schema}.${row.proname}`),['atlas_defect_analysis.append_provider_event','atlas_defect_analysis.append_receipt','atlas_defect_analysis.read_background','atlas_manual.authenticate','atlas_manual.defect_memory_design','atlas_manual.read_publication','atlas_manual_connected.append_receipt','atlas_manual_connected.claim_early_geometry','atlas_manual_connected.finish_early_geometry','atlas_manual_connected.pending_early_geometry','atlas_manual_connected.queue_early_geometry']);
   assert(functions.every(row=>(row.proname==='defect_memory_design'?!row.prosecdef:row.prosecdef)&&row.owner!=='atlas_fixture_manual'&&row.proconfig.some(value=>/^search_path=pg_catalog(?:,|$)/.test(value))));
   const catalog=await fixture.cluster.sql(`SELECT n.nspname,c.relname,c.relacl::text,pg_get_userbyid(c.relowner) owner
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname LIKE 'atlas_manual%' OR n.nspname='atlas_defect_analysis' ORDER BY 1,2`,[],fixture.database.name);
@@ -80,10 +86,12 @@ try {
     source:fixture.cluster.source},null,2)+'\n',{mode:0o600,flag:'wx'});
   await connection.close();
   const result=await runConnectedIntegration({fixture,pythonExecutable,output});
+  const publication=await runPublicationPostgres({fixture,output:join(output,'publication')});
+  const earlyGeometry=await runEarlyGeometryPostgres({fixture,output});
   const args=process.argv.slice(2);
   const retry=await runIdentificationRetryPostgres({cluster:fixture.cluster,pgModule:args[args.indexOf('--pg-module')+1],output});
   for(const name of ['source.json','ledgers.json','validation.log'])await copyFile(join(fixture.cluster.directory,name),join(output,name));
-  console.log(JSON.stringify({status:'PASS',node:process.version,connectedAssertions:result.assertions,retryAssertions:retry.assertionCount,checkedColumns:columns.length,manualTables:seen.size,output}));
+  console.log(JSON.stringify({status:'PASS',node:process.version,connectedAssertions:result.assertions,publicationChecks:publication.assertionGroups,earlyGeometryChecks:earlyGeometry.checks.length,retryAssertions:retry.assertionCount,checkedColumns:columns.length,manualTables:seen.size,output}));
 } finally {
   await fixture.stop();
   await copyFile(join(fixture.cluster.directory,'cleanup.json'),join(output,'database-cleanup.json'));

@@ -4,7 +4,8 @@ import { canonical, document, immutable, photoSourceHash, processedPhoto, requir
  * authenticated repository transactions; each subsequent commit reauthorizes.
  * The verifier stores untouched originals before attempting any decoder.
  */
-export function createManualIntake({ repository, storage, artifacts, processPhoto, uploadExpiresIn = 300 }) {
+export { processedPhoto } from './contract.mjs';
+export function createManualIntake({ repository, storage, artifacts, processPhoto, sourcePrepared = null, uploadExpiresIn = 300 }) {
   requireThat(repository && storage && artifacts && Number.isInteger(uploadExpiresIn) && uploadExpiresIn > 0
     && uploadExpiresIn <= 3600, 500, 'INTAKE_CONFIG_INVALID');
   const readSource = async (staff, cardId, uploadId, options = {}) => {
@@ -54,6 +55,7 @@ export function createManualIntake({ repository, storage, artifacts, processPhot
       if (!upload.verification) ({ upload } = await this.complete(staff, cardId, uploadId, { signal }));
       if (upload.source) {
         await readSource(staff, cardId, uploadId, { signal });
+        if (sourcePrepared) await sourcePrepared(staff, cardId, uploadId);
         return { card: (await repository.read(staff, cardId)).card, upload };
       }
       const found = await storage.readOriginal({ uploadPlan: upload.plan, object: upload.verification.object, signal });
@@ -64,8 +66,10 @@ export function createManualIntake({ repository, storage, artifacts, processPhot
       const sourceHash = photoSourceHash(upload), ref = await artifacts.write(processed, { cardId, kind: 'PHOTO_SOURCE', sourceHash }, { signal });
       // Late successful work may be retained as historical evidence, but cannot
       // replace a newer selected side. Current pair readiness uses selected IDs.
-      return repository.recordSource(staff, cardId, uploadId, { verificationHash: document(upload.verification).hash,
+      const result = await repository.recordSource(staff, cardId, uploadId, { verificationHash: document(upload.verification).hash,
         source: { photoSourceHash: sourceHash, ref } });
+      if (sourcePrepared) await sourcePrepared(staff, cardId, uploadId);
+      return result;
     },
     readSource,
     async verifiedPair(staff, cardId, options = {}) {

@@ -48,14 +48,26 @@ function adaptResponse(req, res) {
  * Bind/listen and lifecycle ownership belong to the caller. Inject a shared
  * atomic nonceStore when routing requests among multiple private processes. */
 export function createPrivateManualServer({ connected, boundary, origin, key,
-  nonceStore = createPrivateManualNonceStore(), maxSkewMs = 60000 }) {
+  nonceStore = createPrivateManualNonceStore(), maxSkewMs = 60000, publicHandler = null }) {
   if (!connected || typeof boundary?.authenticate !== 'function') throw new ManualTransportError(500, 'MANUAL_TRANSPORT_CONFIG_INVALID');
+  if(publicHandler!==null&&typeof publicHandler!=='function')throw new ManualTransportError(500,'MANUAL_TRANSPORT_CONFIG_INVALID');
   const verify = createPrivateManualRequestVerifier({ key, origin, nonceStore, maxSkewMs });
   const verified = new WeakSet();
   const handler = createConnectedHandler({ connected, boundary, origin, assertRequest(req) {
     if (!verified.has(req)) throw new ManualTransportError(401, 'MANUAL_PRIVATE_SIGNATURE_REQUIRED');
   } });
   const server = createServer({ maxHeaderSize: 32768, requestTimeout: 30000, headersTimeout: 10000 }, async (req, nativeRes) => {
+    // Public evidence has its own signed read-only protocol and scoped reader.
+    // It never passes through a staff session or the mutation-capable handler.
+    if(publicHandler){
+      try{if(await publicHandler(req,nativeRes))return;}
+      catch{
+        if(nativeRes.headersSent){nativeRes.destroy();return;}
+        nativeRes.statusCode=503;nativeRes.setHeader('Cache-Control','no-store');nativeRes.setHeader('X-Content-Type-Options','nosniff');
+        nativeRes.setHeader('Connection','close');nativeRes.setHeader('Content-Type','application/json');
+        nativeRes.once('finish',()=>req.destroy());nativeRes.end(JSON.stringify({error:'MANUAL_PUBLIC_UNAVAILABLE'}));return;
+      }
+    }
     const res = adaptResponse(req, nativeRes); manualPrivateHeaders(res);
     try {
       if (!isManualServicePath(req.url)) throw new ManualTransportError(404, 'NOT_FOUND');

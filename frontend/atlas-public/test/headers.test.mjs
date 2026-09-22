@@ -21,7 +21,7 @@ test('public router permits the staff camera while preserving customer/public de
         { key: 'X-Content-Type-Options', value: 'nosniff' },
         { key: 'X-Frame-Options', value: 'DENY' },
     ];
-    const publicPolicy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+    const publicPolicy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
     const mounted = ['/admin', '/admin/', '/admin/add-cards', '/admin/workspace/card',
         '/admin/licenses/libheif-js.txt', '/admin/_next/static/chunks/worker.js',
         '/admin/_next/data/build/add-cards.json', '/account', '/account/', '/account/cards',

@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import vm from 'node:vm';
 import * as analysisClient from '../lib/manual-defect-analysis-client.mjs';
+import * as earlyGeometryClient from '../lib/early-geometry-client.mjs';
 
 const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
 const compiled = babel.transformSync(readFileSync(new URL('../components/ManualCards.jsx', import.meta.url), 'utf8'), {
@@ -41,6 +42,8 @@ function harness({ journal } = {}) {
       if (name === 'react') return react;
       if (name === 'next/router') return { useRouter: () => ({ events: { on() {}, off() {} } }) };
       if (name === 'next/link' || name === './Shell') return { default: name };
+      if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
+      if (name === '../lib/early-geometry-client.mjs') return earlyGeometryClient;
       if (name === '@atlas/manual-workflow/client') return { createManualClient: options => { viewCallback = options.onView; return client; } };
       if (name === '@atlas/manual-workspace') return { PairedGeometryWorkspace: 'PairedGeometryWorkspace' };
       if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace' };

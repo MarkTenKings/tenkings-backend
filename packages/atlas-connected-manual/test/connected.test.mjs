@@ -173,6 +173,18 @@ export async function runConnectedIntegration({ fixture, pythonExecutable, outpu
     assert.equal(approved.receipt.approval.sourceHash, measured.card.contentHash);
     const savedApproval = await manual.readApproval(owner.staff, cardId, approvalAction);
     assert.equal(savedApproval.reportHash, preview.reportHash);
+    assert.equal(approved.publication.state, 'PUBLISHED'); assert.equal(approved.publication.version, 1);
+    const firstPublication = await connected.publication.status(owner.staff, cardId, approvalAction);
+    assert.deepEqual(approved.publication, firstPublication);
+    const delivered = await request(owner, `${base}/publication`, { actionId: approvalAction });
+    assert.equal(delivered.statusCode, 200); assert.deepEqual(delivered.body.publication, firstPublication);
+    const [publicRow] = await fixture.admin.$queryRawUnsafe('SELECT manifest FROM atlas_manual.publication WHERE card_id=$1::uuid AND action_id=$2::uuid', cardId, approvalAction);
+    const publicManifest = JSON.parse(publicRow.manifest), publicPacket = await artifacts.read(publicManifest.packet.ref, { cardId, kind: 'PUBLIC_REPORT', sourceHash: publicManifest.packet.sourceHash });
+    assert.deepEqual(publicPacket.report.grade, preview.review.report.grade);
+    assert.equal(publicPacket.report.finalGrade, preview.review.report.finalGrade);
+    assert.equal(publicPacket.images.BACK.sha256, measured.geometry.sides.BACK.prepared.frame.inspection.sha256);
+    assert.deepEqual(publicPacket.report.findings[0].finalTrace, preview.review.report.findings[0].finalTrace);
+    record('actual CPU-approved packet publishes exact grades, trace and inspection hashes; HTTP same-action delivery replay preserves version one');
     record('actual staged trace and checked CPU Back measurement, findings confirmation and separate exact trained-human approval');
 
     const beforeReplace = await state(), backGeometry = beforeReplace.geometry.sides.BACK, backDefects = beforeReplace.defects.sides.BACK;
@@ -213,7 +225,10 @@ export async function runConnectedIntegration({ fixture, pythonExecutable, outpu
     const currentPreview = await manual.previewReport(owner.staff, cardId);
     assert.notEqual(currentPreview.sourceHash, savedApproval.sourceHash);
     await denied(execute({ type: 'APPROVE_REPORT', reportHash: preview.reportHash, reviewed: true }), 'MANUAL_REPORT_STALE');
-    await execute({ type: 'APPROVE_REPORT', reportHash: currentPreview.reportHash, reviewed: true });
+    const newlyApproved = await execute({ type: 'APPROVE_REPORT', reportHash: currentPreview.reportHash, reviewed: true });
+    assert.equal(newlyApproved.publication.state, 'PUBLISHED'); assert.equal(newlyApproved.publication.version, 2);
+    assert.equal(newlyApproved.publication.reportNumber, firstPublication.reportNumber);
+    assert.deepEqual(await connected.publication.status(owner.staff, cardId, approvalAction), firstPublication);
     assert.deepEqual(await manual.readApproval(owner.staff, cardId, approvalAction), savedApproval);
     const approvals = await fixture.admin.$queryRawUnsafe('SELECT source_hash,report_hash FROM atlas_manual.approval WHERE card_id=$1::uuid ORDER BY source_revision', cardId);
     assert.equal(approvals.length, 2); assert.notEqual(approvals[0].source_hash, approvals[1].source_hash);
@@ -240,5 +255,5 @@ export async function runConnectedIntegration({ fixture, pythonExecutable, outpu
   } catch (error) {
     await writeFile(join(output, 'connected-failure.json'), JSON.stringify({ code: error.code, message: error.message, stack: error.stack, checks }, null, 2));
     throw error;
-  } finally { await connection.close(); }
+  } finally { await Promise.all([connected.earlyGeometry.stop(),fallback.earlyGeometry.stop()]); await connection.close(); }
 }

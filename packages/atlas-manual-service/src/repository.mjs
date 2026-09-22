@@ -29,7 +29,7 @@ function approvalSnapshot(row) {
 /** No provider/storage/reducer effect is accepted inside these transactions.
  * Brief row locks cover auth/ACL, CAS, action receipt and optional approval.
  */
-export function createManualRepository({ boundary, validateSource = null, validateCommit = null }) {
+export function createManualRepository({ boundary, validateSource = null, validateCommit = null, approvalCommitted = null }) {
   const loadRow = async (tx, cardId, lock = false) => (await tx.$queryRawUnsafe(
     `SELECT * FROM atlas_manual.card WHERE id=$1::uuid${lock ? ' FOR UPDATE' : ''}`, cardId))[0];
   return Object.freeze({
@@ -121,6 +121,9 @@ export function createManualRepository({ boundary, validateSource = null, valida
           VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8)`, cardId, command.actionId, principal.id, row.revision, nextRevision, requestHash, request, resultText);
         if (report) await tx.$executeRawUnsafe(`INSERT INTO atlas_manual.approval(card_id,action_id,actor_id,source_revision,source_hash,report_hash,report)
           VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7)`, cardId, command.actionId, principal.id, row.revision, row.content_hash, report.hash, report.text);
+        // Compact durable publication intent only. Object storage and media
+        // verification run after this transaction, never under the card lock.
+        if (report && approvalCommitted) await approvalCommitted({ tx, principal, cardId, actionId: command.actionId });
         if (report) access(row, (await refresh()).principal, 'approve');
         return result;
       });

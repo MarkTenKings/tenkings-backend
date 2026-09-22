@@ -8,6 +8,7 @@ import { identificationEffects } from '@atlas/connected-manual/identification';
 import { createAstraDefectProvider } from '@atlas/defect-analysis/provider';
 import { requireThat } from '@atlas/manual-service/contract';
 import { descriptorSha256 } from '@atlas/photo-core';
+import { createApprovedManualReader } from '@atlas/connected-manual/publication-reader';
 
 export function manualRuntimeSettings(env,staffConfig) {
   if(env.ATLAS_MANUAL_ENABLED!=='true')return null;
@@ -65,5 +66,6 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     pending:input=>connected.assistance.executor.pending(input),
     reconcile:input=>connected.assistance.executor.reconcile(input),
   }):null;
-  return {connected,boundary,handler,analysisReconciler,uploadOrigin:settings.uploadOrigin,async close(){await manualClient.$disconnect();client.destroy();}};
+  const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage});
+  return {connected,boundary,handler,analysisReconciler,approvedManualReader,uploadOrigin:settings.uploadOrigin,async close(){await manualClient.$disconnect();client.destroy();}};
 }

@@ -1,21 +1,21 @@
 # ATLAS report experience and early geometry
 
-September 22, 2026 Pacific. This records Mark's product direction and a source audit; it is not an implementation or deployment receipt. Deployed application source remains `053768aa4474f950017c43b659648668631f6b9e`.
+September 22, 2026 Pacific. This records Mark's approved implementation direction and the preceding source audit; it is not a deployment receipt. Deployed application source remains `053768aa4474f950017c43b659648668631f6b9e`.
 
 ## Owner direction
 
 - Start geometry automatically when uploaded photos become usable. Do not wait for card identification, complete details or a Geometry button click.
 - Use the ATLAS logo and black/gold identity throughout staff and customer experiences.
 - Aim for exceptional visual quality, understandable results, unusual depth of evidence and direct interaction with photographs and defects.
-- Treat the report as a flagship product. The user has not approved a particular new layout or changed grading rules.
+- Treat the report as a flagship product. Mark subsequently approved implementing this full direction with three Astra/xhigh specialists; grading rules remain unchanged.
 
-## What approval currently does
+## Deployed approval behavior before this implementation
 
-The connected manual **Approve final report** action is actual human approval. Once it succeeds, the system saves the exact recomputed report, approving actor and source/report hashes in immutable approval history, with an atomic action receipt. Later working-draft changes require their own approval and cannot rewrite the earlier approved snapshot.
+In deployed source `053768aa`, the connected manual **Approve final report** action is actual human approval. Once it succeeds, the system saves the exact recomputed report, approving actor and source/report hashes in immutable approval history, with an atomic action receipt. Later working-draft changes require their own approval and cannot rewrite the earlier approved snapshot.
 
 This manual path does not yet publish a customer-facing report URL, generate a PDF/report number or connect the approval to physical NFC/slab finishing. The public `/reports/[token]` page uses a separate legacy public projection. Its current contract accepts V1 graded reports and its displayed grade uses that version's `displayGrade`. It must not receive a new manual V2 report through an unchecked cast or a global change of grade formatting.
 
-The September 7 approved product direction says human approval should make the final report public. Current source therefore has a known implementation gap. Public delivery must project only the approved snapshot, preserve the persisted V2 half-point award and rule, and continue rendering historical reports according to their original policy. Design polish alone does not close this gap.
+The September 7 approved product direction says human approval should make the final report public. That deployed source therefore has a known implementation gap. Public delivery must project only the approved snapshot, preserve the persisted V2 half-point award and rule, and continue rendering historical reports according to their original policy. Design polish alone does not close this gap.
 
 Source references:
 
@@ -24,9 +24,21 @@ Source references:
 - `packages/atlas-manual-workspace/src/FinalReportReview.jsx`: current rich staff review.
 - `frontend/atlas-public/pages/reports/[token].jsx` and `packages/atlas-report-view/src/public-contract.mjs`: separate public reader and V1 contract.
 
+## Current implementation qualification
+
+The September 22 working source supports a dedicated manual-only public reader without legacy DB/media credentials. A complete legacy configuration retains its original hash and behavior; partial configurations fail closed. Production activation requires a first PublicReaderControl admission and the separately reviewed exact private Caddy path. The working source now connects a new immutable manual V2 approval to a durable pending publication, verified public projection and stable versioned report link. Focused local and full 44-migration PostgreSQL fixtures verify retry without reapproval, exact approved media/traces/grades, immutable version history and read-only public control. This is source qualification, not a deployment receipt or approval of a real card. The deployed behavior above remains the production baseline until the coordinated release is verified. Print / save PDF is a browser capability; no stored PDF generation or physical NFC/slab action is claimed. See `packages/atlas-connected-manual/README.md` for delivery and configuration boundaries.
+
+## Certificate, label and NFC boundary
+
+The new manual publication assigns a stable ATLAS report number and public token, with a separate immutable version for each exact human approval (`packages/atlas-connected-manual/src/publication-repository.mjs`). These identify the approved report; they do not issue a slab label, physical certificate or NFC credential, nor record printing, tag programming, assembly or welding. Browser print/save PDF is a report copy. This remains source-qualified work awaiting the coordinated release, not evidence that a production card has been approved or physically finished.
+
+The existing finishing service is a different, legacy path: `frontend/atlas-app/lib/server/access/finishing.mjs` requires `StaffSpecimen`, `StaffReportApproval`, `StaffPublicReport` and the V1 public packet; the finishing migration enforces those legacy foreign keys. It cannot consume a new `atlas_manual` publication. Its V1 grade-only label also requires an explicit versioned adapter to represent the manual V2 final half-point award correctly. The smallest future integration is an approval-bound manual finishing ledger and label projection that retain the report number, exact approval/version/hash and immutable history, with separate label issue, verified NFC and human physical-stage receipts. This design is not certificate issuer-policy approval or authority to reuse the Ten Kings permanent-card writer. Any physical certificate identity/policy must be explicitly settled before issuance, as required by the canonical blueprint.
+
+The selected Mac/ACR1552U/F8215 path still needs a qualified production writer and permanent-lock proof, protected station signing/pairing, hosted acknowledgement/recovery and the bounded armed finishing session. The successful earlier diagnostic test-URI write/readback does not establish those capabilities. See [Mac NFC status](../MAC_NFC.md). No automatic tag provisioning or physical-completion action is part of this report release.
+
 ## Proposed report experience
 
-The report should answer **What grade? Why? Show me the evidence.** These proposals remain design recommendations until translated into reviewed implementation.
+The report should answer **What grade? Why? Show me the evidence.** Mark approved implementing these interactions on September 22; exact source, qualification and deployment status remain separately recorded.
 
 1. **Clear opening view.** Deep black/charcoal, restrained gold accents, readable white text, ATLAS branding, large genuine card photography, the awarded grade and four subgrades. Keep photographs color-neutral. Place a short explanation of the result beside the grade; make deeper calculations available on demand.
 2. **Linked evidence exploration.** A persistent findings list and numbered image markers stay synchronized. Selecting a finding moves to its real location and shows its close-up, measured extent and category effect. Add next/previous navigation and a whole-card minimap so deep zoom does not lose context. Retain verified masks, existing pan/zoom, magnifier and overlay controls.

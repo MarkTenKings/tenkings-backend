@@ -7,7 +7,8 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
   const intake=createIntakeHandler({service:connected.intake,boundary,origin,assertRequest});
   const id='[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
   const assistanceRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/(defect-analysis|defect-memory)(?:/(${id}))?$`);
-  const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|preview-image)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
+  const publicationRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/publication$`);
+  const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|geometry|preview-image)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
   return async(req,res)=>{
     const url=new URL(req.url,origin);
     if(!/^\/api\/staff\/(manual|manual-intake|manual-connected)(?:\/|$)/.test(url.pathname))return false;
@@ -16,6 +17,16 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
       if(req.method==='POST')requireThat(Buffer.byteLength(JSON.stringify(req.body??{})) <= (/\/(?:proposal-)?trace$/.test(url.pathname)?1048576:url.pathname.startsWith('/api/staff/manual-intake/')?8192:65536),413,'REQUEST_TOO_LARGE');
       if(await intake(req,res))return true;
       if(await workflow(req,res))return true;
+      const publicationFound=publicationRoute.exec(url.pathname);
+      if(publicationFound){
+        requireThat(!url.search && req.method==='POST',405,'METHOD_NOT_ALLOWED');
+        requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
+          && typeof req.headers['x-atlas-csrf']==='string' && req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
+        object(req.body,['actionId']);
+        const staff=await boundary.authenticate(req.headers.cookie??'',req.headers['x-atlas-csrf']);
+        const publication=await connected.publication.publish(staff,publicationFound[1],req.body.actionId);
+        res.setHeader('Cache-Control','no-store');res.status(200).json({publication});return true;
+      }
       const assistanceFound=assistanceRoute.exec(url.pathname);
       if(assistanceFound){
         const [,cardId,kind,analysisId]=assistanceFound;
@@ -33,7 +44,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
       }
       const found=route.exec(url.pathname);requireThat(found && !url.search,404,'NOT_FOUND');
       const [,cardId,action,previewSide,imageSide,kind,hash]=found;
-      const write=['details','identify','initialize'].includes(action);
+      const write=['details','identify','initialize','geometry'].includes(action);
       requireThat(req.method===(write?'POST':'GET'),405,'METHOD_NOT_ALLOWED');
       if(write)requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
         && typeof req.headers['x-atlas-csrf']==='string',403,'CSRF_REQUIRED');
@@ -50,6 +61,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
         else{object(req.body,[]);result=await connected.identification.run(staff,cardId);}
       }
       else if(action==='initialize')result=await connected.initialize(staff,cardId,req.body);
+      else if(action==='geometry')result=await connected.earlyGeometry.ensure(staff,cardId,req.body);
       else result=await connected.open(staff,cardId);
       res.status(200).json(result);
     }catch(error){

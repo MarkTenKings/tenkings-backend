@@ -36,7 +36,7 @@ async function view(tx, row) {
  * deliberately absent from transaction callbacks. All mutation locks one card.
  * The ordinary existing staff boundary authenticates and rechecks expiry.
  */
-export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes }) {
+export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes, sourceCommitted = null }) {
   requireThat(typeof boundary?.transaction === 'function' && typeof keyPrefix === 'string'
     && /^[a-zA-Z0-9][a-zA-Z0-9_/-]{0,100}$/.test(keyPrefix) && !keyPrefix.includes('..') && !keyPrefix.endsWith('/'), 500, 'INTAKE_CONFIG_INVALID');
   integer(maxOriginalBytes, 1);
@@ -133,7 +133,7 @@ export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes }
     },
     async recordSource(staff, cardId, uploadId, { verificationHash, source }) {
       uuid(uploadId); hash(verificationHash); const next = document(source);
-      return mutate(staff, cardId, async (tx, row) => {
+      return mutate(staff, cardId, async (tx, row, principal) => {
         const saved = await uploadRow(tx, cardId, uploadId), upload = uploadView(saved); requireThat(upload, 404, 'INTAKE_UPLOAD_NOT_FOUND');
         requireThat(saved.verification_hash === verificationHash, 409, 'INTAKE_UPLOAD_CONFLICT');
         if (upload.source) requireThat(saved.source_hash === next.hash, 409, 'INTAKE_SOURCE_CONFLICT');
@@ -143,6 +143,7 @@ export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes }
           if (row[`${upload.side.toLowerCase()}_upload_id`] === uploadId) await tx.$executeRawUnsafe(
             'UPDATE atlas_manual_intake.card SET revision=revision+1,updated_at=clock_timestamp() WHERE id=$1::uuid', cardId);
         }
+        if (sourceCommitted) await sourceCommitted({ tx, principal, cardId, uploadId });
         return { card: await view(tx, await cardRow(tx, cardId)), upload: uploadView(await uploadRow(tx, cardId, uploadId)) };
       });
     },

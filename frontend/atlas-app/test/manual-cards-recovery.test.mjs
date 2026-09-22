@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import vm from 'node:vm';
 import * as identity from '@atlas/grading-core/identity';
 import * as defectAnalysisClient from '../lib/manual-defect-analysis-client.mjs';
+import * as earlyGeometryClient from '../lib/early-geometry-client.mjs';
 import { manualMessage } from '../lib/manual-client.mjs';
 
 const require = createRequire(import.meta.url);
@@ -22,7 +23,7 @@ const storage = (initial = command) => { const values = new Map(initial ? [[key,
 }; };
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 function harness(store, post, { readCard, intake = {}, message = error => error.code ?? 'Retained' } = {}) {
-  const slots = [], effects = [], cleanups=[]; let cursor = 0, tree, activeCardId='card';
+  const slots = [], effects = [], cleanups=[],timers=new Map(); let cursor = 0, tree, activeCardId='card';
   const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment',
     useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = initial; return [slots[i], next => { slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; },
     useRef(initial) { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; },
@@ -32,17 +33,19 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
   const card = { revision: 1, card: { ready: false, sourceHash: 'source', sides: { FRONT: { version: 0 }, BACK: { version: 0 } } },
     identification: { state: 'UNAVAILABLE' }, details: { fields: {}, profile: 'SPORTS' } };
   const exports = {};
-  vm.runInNewContext(compiled, { exports, crypto: { randomUUID }, localStorage: store, setInterval, clearInterval,
+  vm.runInNewContext(compiled, { exports, crypto: { randomUUID }, localStorage: store, setInterval:(callback,ms)=>{timers.set(ms,callback);return ms;}, clearInterval:ms=>timers.delete(ms),
     window: { addEventListener() {}, removeEventListener() {} },
     require(name) {
       if (name === 'react') return react;
       if (name === 'next/router') return { useRouter: () => ({ events: { on() {}, off() {} } }) };
       if (name === 'next/link' || name === './Shell') return { default: name };
+      if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
       if (name === '@atlas/manual-intake/client') return { createBrowserIntakeJournal: () => ({ close() {} }), createIntakeClient: () => ({ pending: async () => [], ...intake }) };
       if (name === '@atlas/grading-core/identity') return identity;
       if (name.startsWith('@atlas/')) return {};
       if (name === '../lib/routes.mjs') return { STAFF_BASE_PATH: '/admin' };
       if (name === '../lib/manual-defect-analysis-client.mjs') return defectAnalysisClient;
+      if (name === '../lib/early-geometry-client.mjs') return earlyGeometryClient;
       if (name === '../lib/manual-client.mjs') return { manualMessage: message, manualRequest: async (path, options = {}) => {
         if (options.method === 'POST') return post(path, options);
         return path.endsWith('/session') ? { staff: { id: 'reviewer' }, csrf: 'csrf' } : readCard ? readCard(path) : card;
@@ -59,7 +62,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
   const field = label => find(tree, node => node.props?.['aria-label'] === label);
   const submit = () => { const form=find(tree,node=>node.type==='form'); assert.ok(form,'details form');form.props.onSubmit({preventDefault(){}}); };
   const render = () => { cursor = 0; tree = exports.default({ staff: { id: 'reviewer', role: 'REVIEWER' }, cardId: activeCardId }); for (const effect of effects.splice(0)) effect(); };
-  return { render, submit, navigate(cardId){activeCardId=cardId;render();}, upload(side,file={name:side}) { const target=field(`${side} original photo`);assert.ok(target);assert.notEqual(target.props.disabled,true);target.props.onChange({target:{files:[file],value:'picked'}}); }, workspace:()=>Boolean(find(tree,node=>node.type?.name==='ManualWorkspace')), click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
+  return { render, submit,async tick(){timers.get(2000)?.();await flush();render();},dispose(){cleanups.forEach(cleanup=>cleanup?.());}, navigate(cardId){activeCardId=cardId;render();}, upload(side,file={name:side}) { const target=field(`${side} original photo`);assert.ok(target);assert.notEqual(target.props.disabled,true);target.props.onChange({target:{files:[file],value:'picked'}}); }, workspace:()=>Boolean(find(tree,node=>node.type?.name==='ManualWorkspace')), click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
     has(label) { return Boolean(button(label)); }, disabled(label) { return button(label)?.props.disabled === true; }, text: () => text(tree), sideText:side=>text(find(tree,node=>node.type==='article'&&text(node).startsWith(side))), field,
     change(label, value) { const target = field(label); assert.ok(target, label); target.props.onChange({ target: { value } }); } };
 }
@@ -415,4 +418,19 @@ test('known unsupported photo treatments explain retained originals without dire
     const message=manualMessage({code});assert.match(message,/original is saved/i);assert.ok(message.includes(code));
     assert.doesNotMatch(message,/downsiz|compress|convert|try again|Resume this photo/i);
   }
+});
+
+test('actual intake reconciles first-side geometry before identity, then reads background progress without erasing typed details',async()=>{
+  const calls=[];let card=pokemonCard();card.card.ready=false;card.identification.state='NOT_STARTED';card.details.fields.name='';
+  card.card.sides.FRONT.upload={uploadId:'first-front',source:{ready:true}};
+  card.earlyGeometry={FRONT:{state:'QUEUED',key:'front-work'},BACK:{state:'WAITING_PHOTO'}};
+  const f=harness(storage(null),async(path,options)=>{calls.push({path,body:JSON.parse(JSON.stringify(options.body))});return {};},{readCard:()=>structuredClone(card)});
+  try{
+    f.render();await flush();f.render();await flush();f.render();
+    assert.deepEqual(calls,[{path:'/api/staff/manual-connected/cards/card/geometry',body:{}}]);
+    assert.equal(f.workspace(),false,'early preparation does not initialize a manual workspace');
+    f.change('Name','My unsaved detail');f.render();
+    card.earlyGeometry.FRONT.state='READY';await f.tick();f.render();
+    assert.equal(f.field('Name').props.value,'My unsaved detail');assert.equal(calls.length,1);
+  }finally{f.dispose();}
 });

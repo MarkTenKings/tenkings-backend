@@ -13,6 +13,10 @@ import { createDefectAssistance } from './defect-assistance.mjs';
 import { measureDefectWorkspaceEdit } from '@atlas/measurement-runtime';
 import { validateConfirmationCommit } from './confirmation-fence.mjs';
 import { createImageDescriptors } from './image-descriptors.mjs';
+import { createEarlyGeometryStore, recordEarlyGeometryIntent } from './early-geometry-store.mjs';
+import { createEarlyGeometry, adoptEarlyGeometry } from './early-geometry.mjs';
+import { createPublicationRepository } from './publication-repository.mjs';
+import { createManualPublication } from './publication.mjs';
 
 export const DEFAULT_LIMITS = Object.freeze({
   decode:{maxInputBytes:256*1024*1024,maxPixels:52_000_000,maxRasterBytes:512*1024*1024,maxOutputBytes:256*1024*1024,timeoutMs:90000},
@@ -25,16 +29,22 @@ export function createWorkLimiter(maximum=2){let active=0;return async work=>{
   requireThat(active<maximum,503,'MANUAL_PROCESSING_BUSY');active++;try{return await work();}finally{active--;}
 };}
 export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null}) {
-  const intakeRepository=createIntakeRepository({boundary,keyPrefix,maxOriginalBytes:64*1024*1024});
+  let earlyGeometry;
+  const intakeRepository=createIntakeRepository({boundary,keyPrefix,maxOriginalBytes:64*1024*1024,sourceCommitted:recordEarlyGeometryIntent});
   const limited=createWorkLimiter(2),photoProcessor=createPhotoProcessor({storage,keyPrefix,decodeLimits:limits.decode});
-  const intake=createManualIntake({repository:intakeRepository,storage,artifacts,processPhoto:input=>limited(()=>photoProcessor(input))});
+  const intake=createManualIntake({repository:intakeRepository,storage,artifacts,processPhoto:input=>limited(()=>photoProcessor(input)),
+    sourcePrepared:(staff,cardId,uploadId)=>earlyGeometry.sourcePrepared(staff,cardId,uploadId)});
   const details=createDetailsStore({boundary,intakeRepository});
+  earlyGeometry=createEarlyGeometry({store:createEarlyGeometryStore({boundary,intakeRepository,receiptClient}),intake,details,storage,artifacts,keyPrefix,
+    limited,pythonExecutable,limits:limits.preparation});
   const identification=createIdentification({boundary,intake,intakeRepository,storage,artifacts,details,effects,receiptClient});
+  const publicationRepository=createPublicationRepository({boundary});
+  const publication=createManualPublication({repository:publicationRepository,artifacts,storage,readSource:intake.readSource});
   async function current(staff,card){
     const actual=(await intake.read(staff,card.cardId)).card;
     requireThat(actual.ready && actual.sourceHash===card.draft.source?.sourceHash,409,'MANUAL_PHOTOS_CHANGED');return actual;
   }
-  const repository=createManualRepository({boundary,validateCommit: memoryEnabled ? validateConfirmationCommit : null,
+  const repository=createManualRepository({boundary,validateCommit: memoryEnabled ? validateConfirmationCommit : null,approvalCommitted:publicationRepository.approvalCommitted,
     validateSource:async({tx,principal,cardId,draft,initial})=>{
     await intakeRepository.assertCurrentPair(tx,principal,{cardId,sourceHash:draft.source?.sourceHash});
     if(initial){const [saved]=await tx.$queryRawUnsafe('SELECT revision FROM atlas_manual_connected.details WHERE card_id=$1::uuid FOR SHARE',cardId);
@@ -69,17 +79,12 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
       packet.source.prepared={...previous.source.prepared};
       for(const side of changedSides){packet.geometry=replaceGeometryImage(packet.geometry,{side,base:geometryBase(packet.geometry,side,'IMAGE'),image:fresh.sides[side].image}).state;packet.source.prepared[side]=null;}
     }
+    await earlyGeometry.ensure(staff,cardId,{},Object.fromEntries(SIDES.map(side=>[side,packet.geometry.sides[side]])));
     for(const side of changedSides){
-      const photo=await readPhoto(staff,cardId,source.uploads[side]);
-      let proposal;
-      try{proposal=await proposePhysicalGeometry({workspace:packet.geometry,side,source:photo,limits:limits.preparation,pythonExecutable});}
-      catch(error){if(error?.name==='PreparationError')continue;throw error;}
-      if(proposal.proposal?.outcome!=='ACCEPTED')continue;
-      const adoption=adoptPhysicalGeometryProposal(packet.geometry,proposal);
-      if(!adoption.proposalApplied)continue;
-      packet.geometry=adoption.state;
-      try{packet=await prepared(packet.geometry,side,packet.source,photo);}
-      catch(error){if(error?.name!=='PreparationError')throw error;}
+      const cached=await earlyGeometry.consume(staff,cardId,side,pair.sides[side].upload,pair.sides[side].photo,packet.geometry.sides[side]);
+      if(!cached.packet)continue;
+      const adopted=adoptEarlyGeometry(packet.geometry,side,cached.packet,cached.input);
+      packet.geometry=adopted.geometry;packet.source.prepared[side]=adopted.prepared;
     }
     return {...packet,changedSides};
   }
@@ -89,6 +94,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     resolveConfirmation: input => assistance.resolveConfirmation(input),
     assertReviewComplete: input => assistance.assertReviewComplete(input),
     afterConfirm: memoryEnabled ? (staff,cardId,actionId)=>assistance.publish(staff,cardId,actionId) : null,
+    afterApprove: (staff,cardId,actionId)=>publication.publish(staff,cardId,actionId),
     measure:input=>limited(()=>measureDefectWorkspaceEdit(input)),
     assertCurrent:({card,staff})=>current(staff,card),
     prepare:({geometry,side,source,staff})=>limited(async()=>{
@@ -103,10 +109,10 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
       }
       return prepared(geometry,side,source,photo);
     }),
-    replaceSources:({card,geometry,sourceHash,staff})=>limited(async()=>{
+    replaceSources:async({card,geometry,sourceHash,staff})=>{
       const pair=await intake.verifiedPair(staff,card.cardId);requireThat(pair.sourceHash===sourceHash,409,'MANUAL_PHOTOS_CHANGED');
       return build(staff,card.cardId,{profile:geometry.profile,cornerShape:geometry.sides.FRONT.cornerShape,matColor:geometry.sides.FRONT.matColor},pair,{geometry,source:card.draft.source});
-    }),
+    },
   });
   async function manifest(card,side){const stored=card.draft.source.prepared[side];return stored?artifacts.read(stored.ref,{cardId:card.cardId,kind:'PREPARED_IMAGES',sourceHash:stored.sourceHash}):null;}
   const imageUrl=(cardId,side,kind,hash)=>`${basePath}/api/staff/manual-connected/cards/${cardId}/images/${side}/${kind}/${hash}`;
@@ -122,18 +128,22 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   }
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
   assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,provider:defectProvider,receiptClient});
-  return Object.freeze({boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,
-    workspaceExtras: assistance.workspaceExtras,
+  return Object.freeze({boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,earlyGeometry,publication,
+    workspaceExtras: async input => {
+      const [extras,status]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId)]);
+      return {...extras,publication:status};
+    },
     async open(staff,cardId){
       const [{card},saved]=await Promise.all([intake.read(staff,cardId),details.read(staff,cardId)]);
       let manual=null;try{manual=await workflow.service.read(staff,cardId);}catch(error){if(error?.code!=='MANUAL_CARD_NOT_FOUND')throw error;}
       const previews={};
       if(imageReadUrl)for(const side of SIDES)if(card.sides[side].upload?.source){const {photo}=await intake.readSource(staff,cardId,card.sides[side].upload.uploadId);previews[side]=await imageReadUrl({kind:'original',descriptor:photo.workingFrame,photo});}
       const identificationState=await identification.status(staff,cardId);
+      const geometryState=await earlyGeometry.status(staff,cardId);
       const currentCard=(await intake.read(staff,cardId)).card;
       requireThat(currentCard.revision===card.revision&&currentCard.sourceHash===card.sourceHash,409,'MANUAL_PHOTOS_CHANGED');
       return {card,...saved,previews,manual:manual?{revision:manual.revision,current:manual.draft.source?.sourceHash===card.sourceHash}:null,
-        identification:identificationState};
+        identification:identificationState,earlyGeometry:geometryState};
     },
     async initialize(staff,cardId,input){
       requireThat(input && Object.keys(input).length===2 && /^[a-f0-9]{64}$/.test(input.sourceHash) && Number.isSafeInteger(input.detailsRevision));
@@ -142,7 +152,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
       const identity=gradingIdentity(saved.details);
       try{const existing=await workflow.service.read(staff,cardId);await current(staff,existing);return {card:existing};}
       catch(error){if(error?.code!=='MANUAL_CARD_NOT_FOUND')throw error;}
-      const packet=await limited(()=>build(staff,cardId,saved.details,pair));
+      const packet=await build(staff,cardId,saved.details,pair);
       // A details edit during CPU preparation cannot be silently overwritten.
       requireThat((await details.read(staff,cardId)).revision===saved.revision,409,'MANUAL_DETAILS_STALE');
       return {card:await workflow.provision(staff,{...packet,source:{...packet.source,detailsRevision:saved.revision},identity})};

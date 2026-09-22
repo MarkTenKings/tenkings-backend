@@ -6,6 +6,7 @@ import { useRouter } from 'next/router';
 import { api } from '../lib/client';
 import { stateNames } from '../lib/workspace-client.mjs';
 import styles from './WorkspaceUi.module.css';
+import AtlasBrand from './AtlasBrand';
 export function Unavailable() {
     return <main className="unavailable"><Head><title>ATLAS · Access unavailable</title></Head><div className="brand">ATLAS<span>STAFF</span></div><h1>Staff access is not enabled here.</h1><p>Open the active ATLAS staff workspace to sign in.</p></main>;
 }
@@ -30,11 +31,11 @@ export default function Shell({ children, staff, title = 'Grading workspace', wo
             setBusy(false);
         }
     }
-    if(manual)return <div className="mc-shell"><Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head><header className="mc-shell-header"><Link href="/manual" className="brand">ATLAS<span>STAFF WORKSPACE</span></Link><nav><Link href="/manual">Cards</Link><span>{staff?.name}</span><button disabled={busy} onClick={logout}>Sign out</button></nav></header>{staff?.mode!=='PRODUCTION'&&<div className="fixture-strip">Local verification environment · ordinary staff authentication · private test storage</div>}{error&&<Notice error>{error}</Notice>}{children}</div>;
+    if(manual)return <div className="mc-shell"><Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head><header className="mc-shell-header"><Link href="/manual" className="atlas-brand" aria-label="ATLAS grading studio"><AtlasBrand/></Link><nav aria-label="Staff workspace"><Link href="/manual" className="mc-nav-current">Your cards</Link><span className="mc-staff-name"><i aria-hidden="true"/>{staff?.name}</span><button disabled={busy} onClick={logout}>Sign out</button></nav></header>{staff?.mode!=='PRODUCTION'&&<div className="fixture-strip">Local verification environment · ordinary staff authentication · private test storage</div>}{error&&<Notice error>{error}</Notice>}{children}</div>;
     return <div className="app-shell">
     <Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head>
     <aside className="rail">
-      <Link href="/grading" className="brand" aria-label="ATLAS staff grading workspace">ATLAS<span>STAFF WORKSPACE</span></Link>
+      <Link href="/grading" className="atlas-brand" aria-label="ATLAS staff grading workspace"><AtlasBrand compact/></Link>
       <div className="rail-label">GRADING</div>
       {staff?.role !== 'OBSERVER' && <Link className={`nav-item ${styles.addNav}${intake ? ' active' : ''}`} href="/add-cards"><span className="nav-icon">+</span>Add cards</Link>}
       {Object.entries(stateNames).map(([state, label]) => <Link key={state} className={`nav-item${!operations && !intake && !workspace && router.pathname === '/grading' && activeQueue === state ? ' active' : ''}`} href={`/grading?queue=${state}`}><span className="nav-icon">{state === 'WAITING' ? '▦' : state === 'APPROVED' ? '✓' : state === 'NEEDS_ATTENTION' ? '!' : '·'}</span>{label}</Link>)}

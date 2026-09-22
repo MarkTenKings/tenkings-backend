@@ -115,3 +115,64 @@ Later edits and source changes remain subject to ordinary manual CAS checks.
 The new migration pair and grants must be activated with the coordinated private
 service release. Synthetic tests demonstrate contract behavior, not real-card
 defect accuracy or learning improvement. Live card comparisons remain required.
+
+## Approved manual report delivery
+
+A new manual V2 approval atomically saves its existing immutable approval/action
+and a `PENDING` publication intent. Numbering follows the established issuer:
+`ATLAS-` plus 12 uppercase hexadecimal characters and a separate `ar_` token.
+One card keeps that identity; each approval receives the next version under the
+card row lock. This does not issue a certificate, slab label or NFC association.
+
+After commit, delivery hydrates the **saved approval action**, verifies its exact
+report, geometry and two inspection derivatives, then stores an allowlisted
+public packet and private media manifest. Only accepted findings and their exact
+traces/measurements appear publicly. Staff identifiers, rejected suggestions,
+storage locations, credentials and model provenance are excluded. V2 retains
+its persisted half-point award; the legacy V1 parser, records and tenth-point
+award are unchanged. A public link is bearer-readable and should be shared only
+when the approved report is intended to be public; it exposes no draft access.
+
+Storage or delivery failure leaves the original approval intact and the intent
+pending. `POST /api/staff/manual-connected/cards/:cardId/publication` with only
+`{actionId}` retries delivery of that exact approval under current staff/card
+approval access. It cannot create another approval or invoke a paid model.
+Workspace GET includes `publication` status and never starts delivery. Published
+manifests are immutable. `/reports/:token?v=:version` preserves an exact version;
+the unversioned route resolves the latest **published** version, skipping pending
+successors. Browser print / save PDF uses the rendered report; there is no claim
+of a separately generated or stored PDF file.
+
+Production manual-only public delivery uses `ATLAS_PUBLIC_RUNTIME=manual`,
+`ATLAS_PUBLIC_ORIGIN=https://atlasgrading.com`, no legacy database/media tuple,
+and the paired public-app configuration
+`ATLAS_PUBLIC_MANUAL_ORIGIN=https://private.atlasgrading.com` and
+`ATLAS_PUBLIC_MANUAL_KEY`, a dedicated base64-encoded 32-byte key distinct from the
+legacy media key. The native host uses the same dedicated key as
+`ATLAS_MANUAL_PUBLIC_READ_KEY`, separate from staff transport/session/phone/router
+keys. The manual-only configuration has its own `atlas-public-manual-reader-v1`
+hash and constructs no database or legacy media client. First admission creates
+`PublicReaderControl` revision1 with the actual public deployment/source/hash.
+A complete legacy database/media configuration uses runtime `postgres` and
+retains its exact old hash when manual settings are absent; partial legacy
+tuples always fail closed. A bridge added to a full legacy configuration changes
+its hash and requires a coordinated control binding. Key material stays server-only.
+
+The fixed private `POST /api/internal/atlas/manual-public` port accepts only
+signed report/version/media selectors, a 30-second TTL and one-use nonce. It
+cannot authenticate staff or dispatch mutations. The native role alone receives
+`atlas_manual.read_publication(text,integer,text,text,text)`; the manual-only public app
+has no database role or connection. Fully configured legacy public readers
+retain exactly their three existing legacy reader functions. The native read
+checks deployment/release/config control before and after artifact/media reads.
+Failure is bounded, sanitized and never automatically retried. The public app
+serves exact inspection bytes from its same-origin report image route and checks
+the approved hash again; the viewer independently verifies before display.
+
+Migrations `20260922010000_manual_early_geometry` and
+`20260922020000_manual_publication`, their narrow grants, the matching native and
+public source, dedicated keys and current public control must be qualified and
+activated together. Source implementation and synthetic local qualification do
+not establish deployment or owner approval of any real card. The owned
+`validate-publication-postgres.mjs` qualifier runs against all 44 current
+migrations and is also included in the connected and release-storage qualifiers.

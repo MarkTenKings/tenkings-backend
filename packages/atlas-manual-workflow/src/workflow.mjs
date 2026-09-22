@@ -26,7 +26,7 @@ export function frameFromGeometry(geometry, side) {
  * immutable artifacts. No photo, mask or model call occurs in a DB transaction.
  */
 export function createManualWorkflow({ repository, artifacts, pythonExecutable, measurementLimits, prepare = null, replaceSources = null, assertCurrent = null, measure = measureDefectWorkspaceEdit, resolveProposal = null, afterConfirm = null,
-  resolveConfirmation = null, assertReviewComplete = null, confirmationTimeoutMs = 180000 }) {
+  resolveConfirmation = null, assertReviewComplete = null, confirmationTimeoutMs = 180000, afterApprove = null }) {
   requireThat(Number.isSafeInteger(confirmationTimeoutMs) && confirmationTimeoutMs > 0 && confirmationTimeoutMs <= 180000);
   const domain = work => async (...args) => {
     try { return await work(...args); }
@@ -222,6 +222,12 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
     }, async execute(staff, cardId, input) {
     const startedAt = Date.now();
     const result = await ordinaryService.execute(staff, cardId, input);
+    // Approval is already durable, including its pending publication intent.
+    // Replays resume that same approval; a failed projection never reapproves.
+    if (input.action.type === 'APPROVE_REPORT' && afterApprove) {
+      try { return { ...result, publication: await afterApprove(staff, cardId, input.actionId) }; }
+      catch { return { ...result, publication: { state: 'PENDING', actionId: input.actionId, retryable: true } }; }
+    }
     // Confirmation is already durable. Publication failure must not turn a
     // committed review into an uncertain or lost manual save.
     if (input.action.type === 'CONFIRM_FINDINGS' && afterConfirm) {

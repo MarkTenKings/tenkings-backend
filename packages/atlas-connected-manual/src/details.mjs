@@ -1,4 +1,6 @@
 import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
+import {earlyGeometryGrantSQL} from './early-geometry-store.mjs';
+import {publicationGrantSQL} from './publication-repository.mjs';
 import { canonicalizeNewSpeedsterSessionIdentity } from '@atlas/grading-core/identity';
 
 export const FIELDS = ['name','category','manufacturer','card_number','year','set_name','variant','card_type'];
@@ -88,5 +90,7 @@ export function connectedGrantSQL(role) {
 GRANT SELECT,INSERT ON ALL TABLES IN SCHEMA atlas_manual_connected TO "${role}";
 GRANT UPDATE(revision,content,content_hash) ON atlas_manual_connected.details TO "${role}";
 GRANT UPDATE(state,result,error,finished_at) ON atlas_manual_connected.identification TO "${role}";
-GRANT EXECUTE ON FUNCTION atlas_manual_connected.append_receipt(uuid,text,text,text,text) TO "${role}";`;
+GRANT EXECUTE ON FUNCTION atlas_manual_connected.append_receipt(uuid,text,text,text,text) TO "${role}";
+${earlyGeometryGrantSQL(role)}
+${publicationGrantSQL(role)}`;
 }

@@ -454,6 +454,9 @@ importers:
 
   frontend/atlas-public:
     dependencies:
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../../packages/atlas-manual-workspace
       '@atlas/grading-core':
         specifier: workspace:*
         version: link:../../packages/atlas-grading-core
@@ -682,6 +685,12 @@ importers:
 
   packages/atlas-connected-manual:
     dependencies:
+      '@atlas/service-bridge':
+        specifier: workspace:*
+        version: link:../atlas-service-bridge
+      '@atlas/report-view':
+        specifier: workspace:*
+        version: link:../atlas-report-view
       '@atlas/defect-analysis':
         specifier: workspace:*
         version: link:../atlas-defect-analysis
@@ -892,6 +901,9 @@ importers:
 
   packages/atlas-report-view:
     dependencies:
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../atlas-grading-core
       react:
         specifier: 18.3.1
         version: 18.3.1

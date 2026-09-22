@@ -1,24 +1,40 @@
 import { createHash } from 'node:crypto';
 import { bridgeOrigin, keyBytes } from '@atlas/service-bridge/protocol';
+import { MANUAL_PUBLIC_ORIGIN } from '@atlas/service-bridge/manual-public';
 export const PUBLIC_ORIGIN = 'https://atlasgrading.com';
 export const LOCAL_ORIGIN = 'http://127.0.0.1:4319';
 export const digest = value => createHash('sha256').update(value).digest('hex');
 export function unavailable() { throw new Error('PUBLIC_REPORTS_UNAVAILABLE'); }
 export function makePublicConfig(input) {
-    return Object.freeze({ ...input, configHash: digest(JSON.stringify({ version: 'atlas-public-reader-v1',
+    const binding = input.databaseUrl ? { version: 'atlas-public-reader-v1',
         mode: input.mode, origin: input.origin, databaseBindingHash: digest(input.databaseUrl),
-        mediaOrigin: input.mediaOrigin ?? null, mediaKeyHash: input.mediaKey ? digest(input.mediaKey) : null })) });
+        mediaOrigin: input.mediaOrigin ?? null, mediaKeyHash: input.mediaKey ? digest(input.mediaKey) : null,
+        ...(input.manualOrigin ? { manualOrigin: input.manualOrigin, manualKeyHash: digest(input.manualKey) } : {}) }
+        : { version: 'atlas-public-manual-reader-v1', mode: input.mode, origin: input.origin,
+            manualOrigin: input.manualOrigin, manualKeyHash: digest(input.manualKey) };
+    return Object.freeze({ ...input, configHash: digest(JSON.stringify(binding)) });
 }
 export function productionConfig(env) {
-    if (env.NODE_ENV !== 'production' || env.VERCEL_ENV !== 'production' || env.ATLAS_PUBLIC_RUNTIME !== 'postgres'
+    if (env.NODE_ENV !== 'production' || env.VERCEL_ENV !== 'production'
         || env.ATLAS_PUBLIC_ORIGIN !== PUBLIC_ORIGIN || Object.keys(env).some(k => k.startsWith('ATLAS_LOCAL_'))
         || !/^[a-z0-9-]+\.vercel\.app$/.test(env.VERCEL_URL ?? '') || !/^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? '')) unavailable();
-    let url; try { url = new URL(env.ATLAS_PUBLIC_DATABASE_URL); } catch { unavailable(); }
-    if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.searchParams.get('schema') !== 'atlas_staff'
-        || url.searchParams.get('sslmode') !== 'require' || !url.username || !url.password || url.pathname.length < 2) unavailable();
+    const legacyKeys = ['ATLAS_PUBLIC_DATABASE_URL','ATLAS_PUBLIC_MEDIA_ORIGIN','ATLAS_PUBLIC_MEDIA_KEY'];
+    const legacyConfigured = legacyKeys.some(key => env[key] !== undefined);
+    if (legacyConfigured && !legacyKeys.every(key => typeof env[key] === 'string' && env[key])) unavailable();
+    const manualConfigured = env.ATLAS_PUBLIC_MANUAL_ORIGIN !== undefined || env.ATLAS_PUBLIC_MANUAL_KEY !== undefined;
+    if (!legacyConfigured && !manualConfigured || env.ATLAS_PUBLIC_RUNTIME !== (legacyConfigured ? 'postgres' : 'manual')) unavailable();
+    if (manualConfigured && env.ATLAS_PUBLIC_MANUAL_ORIGIN !== MANUAL_PUBLIC_ORIGIN) unavailable();
+    const manual = manualConfigured ? { manualOrigin: MANUAL_PUBLIC_ORIGIN, manualKey: keyBytes(env.ATLAS_PUBLIC_MANUAL_KEY) } : {};
+    const legacy = {};
+    if (legacyConfigured) {
+        let url; try { url = new URL(env.ATLAS_PUBLIC_DATABASE_URL); } catch { unavailable(); }
+        if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.searchParams.get('schema') !== 'atlas_staff'
+            || url.searchParams.get('sslmode') !== 'require' || !url.username || !url.password || url.pathname.length < 2) unavailable();
+        Object.assign(legacy, { databaseUrl: url.href, mediaOrigin: bridgeOrigin(env.ATLAS_PUBLIC_MEDIA_ORIGIN), mediaKey: keyBytes(env.ATLAS_PUBLIC_MEDIA_KEY) });
+        if (manual.manualKey?.equals(legacy.mediaKey)) unavailable();
+    }
     return makePublicConfig({ mode: 'PRODUCTION', origin: PUBLIC_ORIGIN, deploymentId: env.VERCEL_URL,
-        releaseSha: env.VERCEL_GIT_COMMIT_SHA, databaseUrl: url.href,
-        mediaOrigin: bridgeOrigin(env.ATLAS_PUBLIC_MEDIA_ORIGIN), mediaKey: keyBytes(env.ATLAS_PUBLIC_MEDIA_KEY) });
+        releaseSha: env.VERCEL_GIT_COMMIT_SHA, ...legacy, ...manual });
 }
 export function assertPublicRequest(req, config) {
     if (!['GET', 'HEAD'].includes(req.method) || req.headers.authorization) unavailable();

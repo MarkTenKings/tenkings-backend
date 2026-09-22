@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { describeDecodedFrame, verifyAndDecodePhoto } from '@atlas/photo-runtime';
 import { applyGeometryEdit, createGeometryWorkspace, geometryBase, updateGeometrySettings } from '@atlas/manual-workspace/geometry-actions';
-import { adoptGeometryPreparation, describePreparationDerivative, prepareGeometry, proposePhysicalGeometry } from '../src/index.mjs';
+import { adoptGeometryPreparation, describePreparationDerivative, prepareGeometry, proposePhysicalGeometry,
+  preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry } from '../src/index.mjs';
 import { runPreparationWorker } from '../src/process.mjs';
 
 const python = process.env.ATLAS_PREPARATION_PYTHON;
@@ -73,6 +74,20 @@ test('actual physical proposal uses the source frame and preserves its current g
   assert.equal(result.proposal.outcome, 'ACCEPTED');
   assert.deepEqual(result.base, geometryBase(workspace, 'FRONT', 'PHYSICAL'));
   assert.ok(result.proposal.proposal.length === 4);
+});
+
+test('identity-independent preparation retains actual proposals and all five legacy pixel hashes', async () => {
+  const engine = await preparationRuntimeIdentity(python);
+  assert.equal(engine.identity.opencv, '4.10.0'); assert.ok(Object.keys(engine.native).length > 0);
+  const options = { source, matColor: 'BLACK', limits, pythonExecutable: python, engine };
+  const proposal = await proposePhotoGeometry(options), legacy = await proposePhysicalGeometry(input());
+  assert.deepEqual(proposal.proposal, legacy.proposal);
+  const early = await preparePhotoGeometry({ ...options, quad: workspace.sides.FRONT.physical.quad });
+  assert.deepEqual(Object.values(early.outputs).map(o => o.sha256), Object.values(prepared.outputs).map(o => o.sha256));
+  assert.deepEqual(early.frame.sourceToRectified, prepared.frame.sourceToRectified);
+  assert.deepEqual(early.proposal, prepared.proposal);
+  const changed = structuredClone(engine); changed.identity.opencv = 'unmatched-runtime';
+  await assert.rejects(proposePhotoGeometry({ ...options, engine: changed }), e => e.code === 'PREPARATION_ENGINE_CHANGED');
 });
 
 test('late preparation cannot erase a newer physical edit; changed mat keeps warp but discards old proposal', () => {

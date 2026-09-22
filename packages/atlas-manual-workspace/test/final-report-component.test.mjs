@@ -28,8 +28,10 @@ function fixture() {
     images: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { inspection: { sha256: state.sides[side].frame.inspectionImageSha256, url: `blob:${side}` } }])), children: 'SEPARATE_APPROVAL_SLOT' };
 }
 
-function harness(props = fixture()) {
+function harness(props = fixture(), { publicView = false, fragment = '', reducedMotion = false } = {}) {
   const instances = new Map(), elements = new Map(); let current, cursor, dirty, effects = [], tree;
+  const listeners = new Map(), browser = { location: { hash: fragment }, matchMedia: () => ({ matches: reducedMotion }),
+    addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name), print() {} };
   const memo = (make, deps) => { const i = cursor++, old = current[i]; if (!old || deps.some((v, j) => !Object.is(v, old.deps[j]))) current[i] = { deps, value: make() }; return current[i].value; };
   const react = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
     useState(initial) { const i = cursor++, slots = current; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial; return [slots[i], change => { const next = typeof change === 'function' ? change(slots[i]) : change; if (!Object.is(next, slots[i])) { slots[i] = next; dirty = true; } }]; },
@@ -38,8 +40,9 @@ function harness(props = fixture()) {
   };
   const modules = {};
   for (const [name, code] of Object.entries(sources)) {
-    const exports = {}; vm.runInNewContext(code, { exports, ResizeObserver: class { constructor(callback) { this.callback = callback; } observe(element) { element.resize = this.callback; } disconnect() {} }, require(name) {
+    const exports = {}; vm.runInNewContext(code, { exports, window: browser, ResizeObserver: class { constructor(callback) { this.callback = callback; } observe(element) { element.resize = this.callback; } disconnect() {} }, require(name) {
       if (name === 'react') return react;
+      if (name === 'react-dom') return { flushSync: callback => callback() };
       if (name === '@atlas/grading-core/trace-codec') return traceCodec;
       if (name === './inspection-viewport.mjs') return viewportMath;
       if (name === './report-review-ui.mjs') return presentation;
@@ -53,20 +56,20 @@ function harness(props = fixture()) {
     if (!node || typeof node !== 'object') return node;
     if (typeof node.type === 'function') { const key = `${path}:${node.type.name}`; if (!instances.has(key)) instances.set(key, []); current = instances.get(key); cursor = 0; return expand(node.type(node.props), `${key}.out`); }
     if (node.props.ref && ['rr-viewport', 'rr-plane'].includes(node.props.className)) {
-      if (!elements.has(path)) elements.set(path, { clientWidth: 400, clientHeight: 540, listeners: new Map(), focus() {}, scrollIntoView() {},
+      if (!elements.has(path)) elements.set(path, { clientWidth: 400, clientHeight: 540, listeners: new Map(), focus() {}, scrollIntoView(options) { this.scrollOptions = options; },
         addEventListener(name, fn) { this.listeners.set(name, fn); }, removeEventListener(name) { this.listeners.delete(name); }, setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture() { return true; } });
       const element = elements.get(path); element.getBoundingClientRect = () => node.props.className === 'rr-plane' ? f.imageRect : f.viewportRect; node.props.ref.current = element;
     }
     return { ...node, props: { ...node.props, children: expand(node.props.children, `${path}.children`) } };
   }
-  const f = { props, readyValues: [], imageRect: { left: -40, top: -40, width: 1350, height: 1858 }, viewportRect: { left: 0, top: 0, width: 400, height: 540 } };
+  const f = { props, browser, listeners, readyValues: [], imageRect: { left: -40, top: -40, width: 1350, height: 1858 }, viewportRect: { left: 0, top: 0, width: 400, height: 540 } };
   f.props.onReadyChange = value => f.readyValues.push(value);
-  f.render = () => { let rounds = 0; do { dirty = false; tree = expand({ type: modules.FinalReportReview.FinalReportReview, props: f.props }); const pending = effects; effects = []; pending.forEach(callback => callback()); assert.ok(++rounds < 20); } while (dirty); return tree; };
+  f.render = () => { let rounds = 0; do { dirty = false; tree = expand({ type: modules.FinalReportReview[publicView ? 'ApprovedReportView' : 'FinalReportReview'], props: f.props }); const pending = effects; effects = []; pending.forEach(callback => callback()); assert.ok(++rounds < 20); } while (dirty); return tree; };
   f.nodes = predicate => all(tree, predicate); f.has = value => text(tree).includes(value);
   f.control = label => { const node = f.nodes(node => node.props?.['aria-label'] === label)[0]; assert.ok(node, label); return node; };
   f.button = label => { const node = f.nodes(node => node.type === 'button' && text(node) === label)[0]; assert.ok(node, label); return node; };
   f.click = label => { const node = f.button(label); assert.equal(Boolean(node.props.disabled), false); node.props.onClick(); f.render(); };
-  f.ready = side => { f.nodes(node => node.type === 'img' && (!side || node.props.alt.startsWith(side))).forEach(node => node.props.onLoad({ currentTarget: { naturalWidth: 1350, naturalHeight: 1858 } })); f.render(); };
+  f.ready = side => { f.nodes(node => node.type === 'img' && typeof node.props.onLoad === 'function' && (!side || node.props.alt.startsWith(side))).forEach(node => node.props.onLoad({ currentTarget: { naturalWidth: 1350, naturalHeight: 1858 } })); f.render(); };
   f.render(); return f;
 }
 
@@ -74,12 +77,12 @@ test('full report keeps approval readiness separate until both exact photographs
   const f = harness(); assert.equal(f.readyValues.at(-1), false); assert.equal(f.has('DRAFT GRADE'), true);
   f.ready('Front'); assert.equal(f.readyValues.at(-1), false); f.ready('Back'); assert.equal(f.readyValues.at(-1), true);
   assert.equal(f.has('How this grade is calculated'), true); assert.equal(f.has('rounded directly from'), true);
-  assert.equal(f.nodes(node => node.type === 'img').length, 2);
+  assert.equal(f.nodes(node => node.type === 'img' && typeof node.props.onLoad === 'function').length, 2);
 });
 
 test('selecting an included finding focuses its side and renders core measurements without changing report bytes', () => {
   const f = harness(), before = structuredClone(f.props.preview); f.ready();
-  const buttons = f.nodes(node => node.type === 'button' && text(node).startsWith('Back 1 ·')); assert.equal(buttons.length, 1);
+  const buttons = f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Back 1 ·')); assert.equal(buttons.length, 1);
   buttons[0].props.onClick(); f.render();
   assert.equal(f.has('Selected finding'), false); assert.ok(f.control('Back report zoom').props.value > 1);
   assert.ok(f.control('Selected finding calculation')); assert.equal(f.has('Measured area'), true); assert.equal(f.has('Marginal unrounded overall effect'), true);
@@ -131,4 +134,123 @@ test('new final grade uses the authoritative half-point field and historical rep
   props.preview.review.explanation = explainAtlasManualReport(report);
   const f = harness(props); assert.equal(f.has('Original historical grade'), true); assert.equal(f.has('retains its original tenth-point policy'), true);
   assert.equal(f.has('Final ATLAS grade, rounded to the nearest half point'), false);
+});
+
+test('finding filters and next/previous retain side numbering and never change approval evidence', () => {
+  const f = harness(), before = structuredClone(f.props.preview); f.ready();
+  f.control('Filter findings by side').props.onChange({ target: { value: 'BACK' } }); f.render();
+  assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Front 1 ·')).length, 0);
+  assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Back 1 ·')).length, 1);
+  f.click('Next finding'); assert.ok(f.control('Back report zoom').props.value > 1); f.click('Previous finding');
+  assert.equal(f.readyValues.at(-1), true); assert.deepEqual(f.props.preview, before);
+  f.control('Filter findings by category').props.onChange({ target: { value: 'centering' } }); f.render();
+  assert.equal(f.button('Next finding').props.disabled, true); assert.equal(f.has('Centering uses the saved border geometry'), true);
+});
+
+test('deep links select only a finding in the exact report and honor reduced motion', () => {
+  const props = fixture(), finding = props.preview.review.report.findings.find(value => value.side === 'BACK');
+  const fragment = presentation.reportFindingFragment(props.preview.reportHash, finding.id);
+  const f = harness(props, { fragment, reducedMotion: true }); f.ready();
+  assert.ok(f.control('Back report zoom').props.value > 1);
+  assert.equal(f.control('Back report inspection').props.ref.current.scrollOptions.behavior, 'auto');
+  assert.equal(f.nodes(node => node.type === 'a' && node.props.href === fragment).length, 1);
+  const wrong = harness(fixture(), { fragment: fragment.replace('f'.repeat(64), 'a'.repeat(64)) }); wrong.ready();
+  assert.equal(wrong.control('Back report zoom').props.value, 1);
+  assert.equal(presentation.reportFindingFromFragment(fragment + '&finding=another', props.preview.reportHash, props.preview.review.report.findings), null);
+});
+
+test('touch pinch changes view without selecting a finding and keyboard remains available', () => {
+  const f = harness(), before = structuredClone(f.props.preview); f.ready();
+  const event = (id, x, y) => ({ pointerId: id, pointerType: 'touch', button: 0, clientX: x, clientY: y, preventDefault() {}, currentTarget: f.control('Front report inspection').props.ref.current });
+  f.control('Front report inspection').props.onPointerDown(event(1, 100, 200));
+  f.control('Front report inspection').props.onPointerDown(event(2, 200, 200));
+  f.control('Front report inspection').props.onPointerMove(event(2, 300, 200)); f.render();
+  assert.equal(f.control('Front report zoom').props.value, 2);
+  f.control('Front report inspection').props.onPointerUp(event(2, 300, 200));
+  f.control('Front report inspection').props.onPointerUp(event(1, 100, 200)); f.render();
+  assert.equal(f.nodes(node => node.props?.['aria-label'] === 'Selected finding calculation').length, 0);
+  const viewport = f.control('Front report inspection').props.ref.current;
+  f.control('Front report inspection').props.onKeyDown({ key: '0', target: viewport, currentTarget: viewport, preventDefault() {} }); f.render();
+  assert.equal(f.control('Front report zoom').props.value, 1); assert.deepEqual(f.props.preview, before);
+});
+
+test('explicit precision and print disclosure preserve original report and approval state', () => {
+  const f = harness(), before = structuredClone(f.props.preview); f.ready();
+  f.click('Show full precision'); assert.ok(f.nodes(node => node.props?.className?.includes('rr-precision')).length > 0);
+  assert.equal(f.readyValues.at(-1), true);
+  f.listeners.get('beforeprint')(); f.render();
+  assert.equal(f.nodes(node => node.props?.className === 'rr-category-disclosure' && node.props.open === true).length, 4);
+  f.listeners.get('afterprint')(); f.render(); assert.deepEqual(f.props.preview, before);
+});
+
+test('approved public rendering has the same verified viewer without staff approval or removed history', () => {
+  const fixtureProps = fixture(), { report, explanation } = fixtureProps.preview.review;
+  const props = { report, explanation, images: fixtureProps.images, publication: { version: 1, approvedAt: '2026-09-22T00:00:00Z', reportHash: fixtureProps.preview.reportHash, reportNumber: 'ATLAS-TEST' } };
+  const f = harness(props, { publicView: true }); assert.equal(f.has('APPROVED GRADE'), true);
+  assert.equal(f.nodes(node => node.props?.className === 'rr-approval').length, 0);
+  assert.equal(f.has('rejected suggestions'), false); assert.equal(f.button('Print approved report').props.disabled, true);
+  f.ready(); assert.equal(f.button('Print approved report').props.disabled, false);
+  assert.equal(f.has('ATLAS-TEST'), true);
+  const bad = harness({ ...props, publication: { ...props.publication, reportHash: 'not-a-hash' } }, { publicView: true });
+  assert.equal(bad.has('approved evidence could not be verified'), true);
+});
+
+test('geometry layers bind staff printed coordinates to the exact report frame', () => {
+  const props = fixture(), report = props.preview.review.report, quad = [{ x: .05, y: .04 }, { x: .95, y: .04 }, { x: .95, y: .96 }, { x: .05, y: .96 }];
+  props.geometry = { sides: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { prepared: { frame: { id: side, inspection: { sha256: report.inspection[side.toLowerCase()].imageSha256 }, rectified: { sha256: 'a'.repeat(64) } } }, printed: { frameId: side, frameSha256: 'a'.repeat(64), quad } }])) };
+  const f = harness(props); f.ready(); assert.equal(f.button('Printed border').props.disabled, false); f.click('Printed border');
+  assert.equal(f.nodes(node => node.props?.className === 'rr-printed-line').length, 1);
+  assert.deepEqual(presentation.reportDisplayGeometry(props.geometry, report).FRONT.printedQuad, quad);
+  props.geometry.sides.FRONT.prepared.frame.inspection.sha256 = 'b'.repeat(64);
+  assert.equal(presentation.reportDisplayGeometry(props.geometry, report).FRONT, null);
+});
+
+test('minimap and crop coordinates preserve verified image bounds at fit and deep zoom', () => {
+  const size = { width: 400, height: 540 };
+  assert.deepEqual(presentation.reportMinimap({ zoom: 1, pan: { x: 0, y: 0 } }, size), { x: 0, y: 0, width: 1, height: 1 });
+  const map = presentation.reportMinimap({ zoom: 16, pan: { x: 0, y: 0 } }, size);
+  assert.ok(map.width < .1 && map.height < .1 && map.x > .4 && map.y > .4);
+  for (const box of [{ x: 0, y: 0, width: .001, height: .001 }, { x: .99, y: .99, width: .01, height: .01 }]) {
+    const crop = presentation.reportCropBounds(box); assert.ok(crop.x >= 40 && crop.y >= 40 && crop.x + crop.width <= 1310 && crop.y + crop.height <= 1818);
+  }
+});
+
+test('public finding links retain the approved version and refuse foreign or mismatched URLs', () => {
+  const fragment = presentation.reportFindingFragment('a'.repeat(64), 'FRONT:one');
+  assert.equal(presentation.reportFindingLink({ version: 3, url: '/reports/am_test?v=3' }, fragment), '/reports/am_test?v=3' + fragment);
+  assert.equal(presentation.reportFindingLink({ version: 3, url: 'https://example.com/reports/am_test?v=3' }, fragment), fragment);
+  assert.equal(presentation.reportFindingLink({ version: 3, url: '/reports/am_test?v=4' }, fragment), fragment);
+  assert.equal(presentation.reportFindingLink({ version: 3, url: 'javascript:alert(1)' }, fragment), fragment);
+});
+
+test('a newly matched report image cannot inherit readiness from the previous verified hash', () => {
+  const f = harness(); f.ready(); assert.equal(f.readyValues.at(-1), true);
+  const nextHash = '9'.repeat(64);
+  f.props.preview.review.report.inspection.front.imageSha256 = nextHash;
+  f.props.workspace.sides.FRONT.frame.inspectionImageSha256 = nextHash;
+  f.props.images.FRONT.inspection = { sha256: nextHash, url: 'blob:new-front' };
+  f.render(); assert.equal(f.readyValues.at(-1), false);
+  f.ready('Front'); assert.equal(f.readyValues.at(-1), true);
+});
+
+test('print appendix includes every numbered finding despite screen filters and preserves exact report metadata', () => {
+  const props = fixture(); props.approved = true;
+  props.publication = { version: 3, reportNumber: 'ATLAS-012345ABCDEF', approvedAt: '2026-09-22T00:00:00Z', reportHash: props.preview.reportHash };
+  const before = structuredClone(props.preview), f = harness(props); f.ready();
+  const entries = presentation.reportFindingEntries(props.preview.review.report.findings);
+  f.control('Filter findings by side').props.onChange({ target: { value: 'BACK' } }); f.render();
+  assert.ok(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Front 1 ·')).length === 0);
+  f.listeners.get('beforeprint')(); f.render();
+  for (const entry of entries) assert.equal(f.nodes(node => node.props?.['aria-label'] === `${entry.label} calculation`).length, 1);
+  assert.equal(f.nodes(node => node.props?.className === 'rr-print-findings-intro').length, 1);
+  assert.equal(f.nodes(node => node.props?.className === 'rr-report-reference' && node.props.open).length, 1);
+  assert.equal(f.has(props.preview.reportHash), true); assert.equal(f.has('ATLAS-012345ABCDEF'), true); assert.equal(f.has('Version 3'), true);
+  for (const finding of props.preview.review.explanation.findings) for (const region of finding.regions) {
+    assert.ok(f.nodes(node => node.type === 'data' && node.props.value === region.weightedAreaMm2).length > 0);
+    assert.ok(f.nodes(node => node.type === 'data' && node.props.value === region.marginalOverallEffect).length > 0);
+  }
+  f.listeners.get('afterprint')(); f.render();
+  assert.equal(f.control('Filter findings by side').props.value, 'BACK');
+  assert.equal(f.nodes(node => node.props?.className === 'rr-print-findings').length, 0);
+  assert.equal(f.readyValues.at(-1), true); assert.deepEqual(props.preview, before);
 });
