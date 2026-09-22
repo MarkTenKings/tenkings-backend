@@ -1,6 +1,8 @@
 # ATLAS report review and grading audit — September 21, 2026
 
-Status: released and verified September 21, 2026, at 23:21 UTC. The serving report-review release is `f00f2a18372f68c63dc5bbe8dada2b7c616104d8`. Final read-only verification preserved the production card, findings, approvals and analysis history. Actual human confirmation and report approval remain separate.
+Current release pointer — September22,2026,00:56UTC: [the intake/performance release](../2026-09-22/intake-performance.md) is live at source3cfab20a, carrying forward the report/inspection work recorded here. The f00 and earlier runtime/card snapshots below are historical; their actions are consumed. Mark has since reviewed Charmander at revision10, with no report approval.
+
+Status: released and verified September 21, 2026, at 23:21 UTC. The report-review release at that checkpoint was `f00f2a18372f68c63dc5bbe8dada2b7c616104d8`. Final read-only verification preserved the production card, findings, approvals and analysis history. Actual human confirmation and report approval remain separate.
 
 Mark reviewed Astra's suggestions for Charmander, added one Back mark, checked both inspection boxes, confirmed findings, and opened a report showing all 10s and one included finding. He requested an arithmetic audit and a full interactive report draft with exact defects and calculation details before final approval.
 

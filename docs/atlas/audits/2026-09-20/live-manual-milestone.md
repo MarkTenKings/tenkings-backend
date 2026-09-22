@@ -1,11 +1,13 @@
 # Live manual grading and Astra assistance
 
+Current release pointer — September22,2026,00:56UTC: [the intake/performance release](../2026-09-22/intake-performance.md) is live at source3cfab20a, carrying forward the report/inspection work recorded here. The f00 and earlier runtime/card snapshots below are historical; their actions are consumed. Mark has since reviewed Charmander at revision10, with no report approval.
+
 Owner direction: September 20 Pacific / September 21 UTC, 2026. Complete a live
 manual grading workspace that Mark can test, with human-requested Astra
 assistance. Autonomous operation and completed slab finishing follow this
 milestone. SAM remains deferred unless real testing establishes a need.
 
-## Current report-review release — September21,23:21UTC
+## Previous report-review release — September21,23:21UTC
 
 The corrected manual review/report workflow is live on source `f00f2a18372f68c63dc5bbe8dada2b7c616104d8` and native image `sha256:34d89ed5977ff59dd39fa907b92392502a043b163091a5a3b6af9086998625d2`. READY staff `dpl_joerdhDUQXN6UZEpy1nUg1MsVCj2`, public `dpl_7WrKqDV7upJPpdGJcfj1i8zXaAFi`, private runtime and controls19/17 match; all four public aliases and the production target are verified. The new private containerbd000154 started23:18:49UTC with zero restarts or runtime errors. See [the full report-review audit and release evidence](../2026-09-21/report-review.md) and [current release procedure](../../runbooks/CONNECTED_MANUAL_RELEASE.md).
 

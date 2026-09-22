@@ -1,6 +1,8 @@
 # ATLAS inspection viewer — fresh Astra Ultra lead handoff
 
-Current release pointer — September21,2026,23:21UTC: the subsequent [report-review release](report-review.md) is live on source `f00f2a18372f68c63dc5bbe8dada2b7c616104d8`, carrying forward this completed inspection viewer and its versioned context crops. It adds corrected collective confirmation, a full interactive draft and the owner's half-point final-grade policy. Final proof preserved the saved Charmander revision9 and seven proposals without adoption or report approval. See the [connected release runbook](../../runbooks/CONNECTED_MANUAL_RELEASE.md) for current runtime/control identities. The completion snapshot and original handoff below are historical; their actions must not be replayed.
+Current release pointer — September22,2026,00:56UTC: [the intake/performance release](../2026-09-22/intake-performance.md) is live at source3cfab20a, carrying forward the report/inspection work recorded here. The f00 and earlier runtime/card snapshots below are historical; their actions are consumed. Mark has since reviewed Charmander at revision10, with no report approval.
+
+Previous release pointer — September21,2026,23:21UTC: the subsequent [report-review release](report-review.md) is live on source `f00f2a18372f68c63dc5bbe8dada2b7c616104d8`, carrying forward this completed inspection viewer and its versioned context crops. It adds corrected collective confirmation, a full interactive draft and the owner's half-point final-grade policy. Final proof preserved the saved Charmander revision9 and seven proposals without adoption or report approval. See the [connected release runbook](../../runbooks/CONNECTED_MANUAL_RELEASE.md) for current runtime/control identities. The completion snapshot and original handoff below are historical; their actions must not be replayed.
 
 ## Historical inspection completion and original handoff
 
