@@ -87,7 +87,7 @@ The original screenshot's one-mark all10 report was not itself evidence of bad m
 
 ### Intake and speed
 
-**Save & Review Geometry** combines identity persistence and progression, preserving required-field validation and edited details. Front/Back uploads can overlap with same-side exclusion and per-side progress. Geometry/Findings navigation changes immediately while refreshing current image grants. Request-local descriptor reuse reduced repeated DB operations41→6 and artifact reads16→4 in the measured initialization path; unchanged immutable artifacts reuse verified references.
+**Save & Review Geometry** combines identity persistence and progression, preserving required-field validation and edited details. Front/Back uploads can overlap with same-side exclusion and per-side progress. Geometry/Findings navigation changes immediately while refreshing current image grants. Request-local descriptor reuse reduced repeated DB operations41→6 and artifact reads16→4 in the representative paired-image descriptor path; unchanged immutable artifacts reuse verified references.
 
 The reported Jamal Murray next-step blocker was actually an automatic Back physical outline outside the photo (`y=1.1143079485212053`), despite the detector calling it accepted. The fix opens manual outlining for that side while preserving valid Front preparation. It does not clamp coordinates or invent geometry. Do not reintroduce a separate-save prerequisite.
 
