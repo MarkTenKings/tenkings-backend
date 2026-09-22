@@ -9,6 +9,7 @@ import { HttpError, type AdminSession } from '../lib/server/adminSessionAuthorit
 import handler, { createStaffInventoryResearchHandler } from '../pages/api/v2/admin/inventory/research';
 import { StaffInventoryMarketValueResponseSchema } from '../lib/staffInventoryMarketValue';
 import { marketJob, marketResult, marketReview, MARKET_TIME } from './fixtures/staffInventoryMarketValue';
+import { recoveryJob, recoverySnapshot } from './fixtures/staffInventoryResearchRecovery';
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 const ADMIN: AdminSession = { sessionId: 'fixture-session', tokenHash: 'fixture-session-hash', authority: 'auth-service', user: { id: 'fixture-admin', phone: '+15555550100', displayName: 'Fixture admin' } };
@@ -57,7 +58,7 @@ test('research reads select bounded distinct units and never return worker token
   const calls: string[][] = [];
   const get = createStaffInventoryResearchHandler({ ...deps(), read: async ids => { calls.push(ids); return [job]; } });
   const valid = response(); await get(request('GET', undefined, { unit_id: ['fixture-unit', 'fixture-second'] }), valid.res);
-  assert.equal(valid.result.code, 200); assert.deepEqual(calls, [['fixture-unit', 'fixture-second']]); assert.deepEqual(valid.result.body, { version: 1, jobs: [{ ...job, result_hash: null, review: null }], image_previews: {} });
+  assert.equal(valid.result.code, 200); assert.deepEqual(calls, [['fixture-unit', 'fixture-second']]); assert.deepEqual(valid.result.body, { version: 1, jobs: [{ ...job, result_hash: null, review: null, recovery: null }], image_previews: {}, recovery_enabled: false });
   assert.equal(JSON.stringify(valid.result.body).includes('lease'), false);
   for (const query of [{}, { unit_id: '' }, { unit_id: ['fixture-unit', 'fixture-unit'] }, { unit_id: ' fixture' }, { unit_id: 'fixture\n' }, { unit_id: ['x'.repeat(201)] }, { unit_id: Array.from({ length: 51 }, (_, i) => `fixture-${i}`) }, { unit_id: 'fixture-unit', unrelated: '1' }]) {
     const out = response(); await get(request('GET', undefined, query), out.res); assert.equal(out.result.code, 400);
@@ -238,4 +239,58 @@ test('full research signs original selected candidates first, including a staff-
   assert.equal(out.result.code, 200);
   assert.deepEqual(new Set(signed.slice(0, 2)), new Set(candidates.filter(candidate => saved.result!.selected_candidate_ids.includes(candidate.id)).map(candidate => candidate.image!.storage_key)));
   assert.equal(signed[2], candidates.find(candidate => !saved.result!.selected_candidate_ids.includes(candidate.id))!.image!.storage_key);
+});
+
+test('recovery GET exposes only a bound saved snapshot and exact execution state without starting work', async () => {
+  const saved = recoveryJob(), snapshot = recoverySnapshot(), calls: string[][] = [], before = JSON.stringify(saved);
+  for (const enabled of [false, true]) {
+    const out = response();
+    await createStaffInventoryResearchHandler({ ...deps(), ...reviewedRead(async () => [saved]), recoveryEnabled: () => enabled,
+      readRecovery: async ids => { calls.push(ids); return [snapshot]; },
+      retry: async () => assert.fail('GET must not retry'), start: async () => assert.fail('GET must not start research'),
+    })(request(), out.res);
+    assert.equal(out.result.code, 200); assert.equal(out.result.body.recovery_enabled, enabled);
+    assert.deepEqual(out.result.body.jobs[0].recovery, snapshot); assert.deepEqual(out.result.body.jobs[0].result, saved.result);
+    assert.equal(out.result.headers['Cache-Control'], 'private, no-store');
+  }
+  assert.deepEqual(calls, [[saved.job_id], [saved.job_id]]); assert.equal(JSON.stringify(saved), before);
+});
+
+test('recovery reads reject stale, duplicate, foreign and malformed snapshots before signing images', async () => {
+  const saved = recoveryJob(), valid = recoverySnapshot();
+  const cases = [[{ ...valid, unit_id: 'other' }], [{ ...valid, description_event_id: 'other' }], [{ ...valid, input_hash: 'f'.repeat(64) }],
+    [{ ...valid, job_id: '22222222-2222-4222-8222-222222222222' }], [valid, valid], [{ ...valid, status: 'automatically_approved' }], [{ ...valid, missing_fields: ['price'] }]];
+  for (const snapshots of cases) {
+    const out = response();
+    await createStaffInventoryResearchHandler({ ...deps(), ...reviewedRead(async () => [saved]), readRecovery: async () => snapshots as any,
+      signImage: async () => assert.fail('Do not sign on invalid recovery evidence'),
+    })(request(), out.res);
+    assert.equal(out.result.code, 503); assert.deepEqual(out.result.body, { message: 'Card research is unavailable. Your inventory is saved.' });
+  }
+});
+
+test('summary preserves its compact wire format and unknown cents while showing saved recovery status', async () => {
+  const saved = recoveryJob(), snapshot = recoverySnapshot({ status: 'checking_details' });
+  for (const enabled of [false, true]) {
+    const out = response();
+    await createStaffInventoryResearchHandler({ ...deps(), ...reviewedRead(async () => [saved]), readRecovery: async () => [snapshot], recoveryEnabled: () => enabled,
+      signImage: async () => assert.fail('Compact summary must not sign images'),
+    })(request('GET', undefined, { unit_id: saved.unit_id, view: 'summary' }), out.res);
+    assert.equal(out.result.code, 200); const value = StaffInventoryMarketValueResponseSchema.parse(out.result.body);
+    assert.equal(value.summaries[0].status, 'unknown'); assert.equal(value.summaries[0].value_cents, null);
+    assert.match(value.summaries[0].reason, enabled ? /Checking missing details/ : /Automatic checks paused/);
+    assert.equal('recovery' in value.summaries[0], false); assert.equal('proposal' in value.summaries[0], false);
+  }
+});
+
+test('no persisted recovery row creates no running claim; authority and unit limits still precede recovery reads', async () => {
+  const saved = recoveryJob(); let calls = 0;
+  const base = { ...deps(), ...reviewedRead(async () => [saved]), recoveryEnabled: () => true, readRecovery: async () => { calls++; return []; } };
+  const out = response(); await createStaffInventoryResearchHandler(base)(request(), out.res);
+  assert.equal(out.result.code, 200); assert.equal(out.result.body.jobs[0].recovery, null); assert.equal(calls, 1);
+  for (const query of [{ unit_id: Array.from({ length: 51 }, (_, i) => `unit-${i}`) }, { unit_id: 'fixture-unit', recovery: 'start' }]) {
+    const invalid = response(); await createStaffInventoryResearchHandler(base)(request('GET', undefined, query), invalid.res); assert.equal(invalid.result.code, 400);
+  }
+  const denied = response(); await createStaffInventoryResearchHandler({ ...base, requireAdmin: async () => { throw new HttpError(401, 'No session'); } })(request(), denied.res);
+  assert.equal(denied.result.code, 401); assert.equal(calls, 1);
 });

@@ -1,9 +1,10 @@
 /* eslint-disable @next/next/no-img-element -- Private, expiring evidence previews must bypass the shared image optimizer. */
 import { useEffect, useRef, useState } from 'react';
 import { StaffInventoryResearchResultSchema, type StaffInventoryResearchCandidate, type StaffInventoryResearchResult } from '../../lib/staffInventoryResearch';
-import { getStaffInventoryMarketCalculation, StaffInventoryResearchReviewSnapshotSchema, projectStaffInventoryResearchReview,
+import { getStaffInventoryMarketCalculation, StaffInventoryResearchReviewSnapshotSchema, projectStaffInventoryResearchReview, bindStaffInventoryResearchRecovery, staffInventoryRecoveryDisplay,
   type StaffInventoryResearchJobWithReview, type StaffInventoryResearchReviewProjection } from '../../lib/staffInventoryMarketValue';
 import StaffInventoryCompReview, { type InventoryReviewPhotos } from './StaffInventoryCompReview';
+import StaffInventoryResearchRecovery from './StaffInventoryResearchRecovery';
 import styles from './StaffInventoryResearchPanel.module.css';
 
 const dollars = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
@@ -102,9 +103,9 @@ function ValueCalculation({ result, calculation, projection }: { result: StaffIn
   </div>;
 }
 
-export default function StaffInventoryResearchPanel({ unitId, token, descriptionEventId, actorId, inventoryPhotos = { front: null, back: null } }: { unitId: string; token: string; descriptionEventId?: string | null; actorId?: string; inventoryPhotos?: InventoryReviewPhotos }) {
+export default function StaffInventoryResearchPanel({ unitId, token, descriptionEventId, actorId, inventoryPhotos = { front: null, back: null }, onEditDetails }: { unitId: string; token: string; descriptionEventId?: string | null; actorId?: string; inventoryPhotos?: InventoryReviewPhotos; onEditDetails?: () => void }) {
   const scope = JSON.stringify([unitId, descriptionEventId ?? null, token, actorId ?? null]), current = useRef(scope); current.current = scope;
-  const [snapshot, setSnapshot] = useState<{ scope: string; job: StaffInventoryResearchJobWithReview | null; previews: Record<string, string> } | null>(null);
+  const [snapshot, setSnapshot] = useState<{ scope: string; job: StaffInventoryResearchJobWithReview | null; previews: Record<string, string>; recoveryEnabled: boolean } | null>(null);
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [retrying, setRetrying] = useState(false), [revision, setRevision] = useState(0);
   const job = snapshot?.scope === scope ? snapshot.job : null, previews = snapshot?.scope === scope ? snapshot.previews : {};
   useEffect(() => {
@@ -125,10 +126,14 @@ export default function StaffInventoryResearchPanel({ unitId, token, description
             || review.input_hash !== next.input_hash || review.result_hash !== next.result_hash || !next.result
             || !projectStaffInventoryResearchReview(next.result, review, next.result_hash)) throw new Error();
         }
+        if (value.recovery_enabled !== undefined && typeof value.recovery_enabled !== 'boolean') throw new Error();
+        const recoveryEnabled = value.recovery_enabled === true;
+        const recovery = next ? bindStaffInventoryResearchRecovery(next.recovery, next) : null;
         if (controller.signal.aborted) return;
-        setSnapshot({ scope, job: next, previews: value.image_previews && typeof value.image_previews === 'object' ? value.image_previews : {} });
+        setSnapshot({ scope, job: next ? { ...next, recovery } : null, previews: value.image_previews && typeof value.image_previews === 'object' ? value.image_previews : {}, recoveryEnabled });
         setError(''); setLoading(false);
-        if (next?.status === 'queued' || next?.status === 'running') timer = setTimeout(read, 15000);
+        if (next?.status === 'running' || next?.status === 'queued' && (!recovery || recovery.status === 'research_queued')
+          || recovery && staffInventoryRecoveryDisplay(recovery, recoveryEnabled).active) timer = setTimeout(read, 15000);
       } catch {
         if (!controller.signal.aborted) { setLoading(false); setError('Research is temporarily unavailable. Your inventory is saved.'); }
       }
@@ -156,14 +161,17 @@ export default function StaffInventoryResearchPanel({ unitId, token, description
     } catch { setError('Research could not be started. Refresh this card and try again.'); }
     finally { setRetrying(false); }
   }
-  const result = job?.result, researching = job?.status === 'queued' || job?.status === 'running';
+  const result = job?.result, researching = job?.status === 'running' || job?.status === 'queued' && (!job.recovery || job.recovery.status === 'research_queued');
   const review = job?.review ?? null;
   const projection = job?.status === 'complete' && result && review && job.result_hash ? projectStaffInventoryResearchReview(result, review, job.result_hash) : null;
   const calculation = job?.status === 'complete' && result ? getStaffInventoryMarketCalculation(result, review, job.result_hash ?? undefined) : null;
+  const recoveryEnabled = snapshot?.scope === scope && snapshot.recoveryEnabled === true;
+  const recoveryDisplay = job?.recovery ? staffInventoryRecoveryDisplay(job.recovery, recoveryEnabled) : null;
   const reviewed = review?.decisions.length ?? 0, totalSelected = result?.selected_candidate_ids.length ?? 0;
   return <section className={styles.panel} aria-label="Card market research">
-    <header><div><p className={styles.eyebrow}>SOLD COMPS · CARD RESEARCH</p><h3>Market research</h3></div><span className={styles.status}>{loading ? 'Loading' : researching ? job.status === 'running' ? 'Researching' : 'Queued' : job?.status === 'failed' ? 'Needs attention' : calculation ? 'Updated' : result ? 'More evidence needed' : 'Not researched'}</span></header>
+    <header><div><p className={styles.eyebrow}>SOLD COMPS · CARD RESEARCH</p><h3>Market research</h3></div><span className={styles.status}>{loading ? 'Loading' : researching ? job.status === 'running' ? 'Researching' : 'Queued' : calculation ? 'Updated' : recoveryDisplay?.label ?? (job?.status === 'failed' ? 'Needs attention' : result ? 'More evidence needed' : 'Not researched')}</span></header>
     {loading ? <p>Loading this card’s research…</p> : researching ? <p>We’re checking the card and recent eBay sales. You can keep adding inventory or close this page.</p> : !job ? <p>New individual cards receive automatic research after they are saved.</p> : job.status === 'failed' ? <p>{job.error?.message ?? 'This research attempt could not finish.'}</p> : null}
+    {job?.recovery && <StaffInventoryResearchRecovery snapshot={job.recovery} enabled={recoveryEnabled} onEditDetails={onEditDetails} />}
     {result && <>
       <div className={styles.value}><div><span>eBay comp value · Research estimate</span><strong className={!calculation ? styles.unknownValue : undefined}>{calculation ? dollars(calculation.value_cents) : 'More evidence needed'}</strong></div>{calculation && <div className={styles.valueRange}><span>{calculation.count} {reviewed ? 'remaining sold comps' : 'AI-selected sold comps'}</span><p>{dollars(calculation.low_cents)}–{dollars(calculation.high_cents)}</p></div>}</div>
       {reviewed > 0 && <p className={styles.reviewStatus}>{reviewed === totalSelected ? 'Staff-reviewed selection' : 'Partially staff-reviewed'} · {reviewed} of {totalSelected} comps reviewed</p>}

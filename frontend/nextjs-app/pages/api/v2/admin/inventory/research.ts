@@ -1,14 +1,16 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { prisma, CardInventoryErrorV2, inventoryHash, readStaffInventoryResearchV2, readStaffInventoryResearchReviewsV2, retryStaffInventoryResearchV2, startStaffInventoryResearchV2, StaffInventoryResearchRetryV2, StaffInventoryResearchStartV2, type StaffInventoryResearchStatusV2 } from '@tenkings/database';
+import { prisma, CardInventoryErrorV2, inventoryHash, readStaffInventoryResearchV2, readStaffInventoryResearchReviewsV2, readStaffInventoryResearchRecoveryV2, retryStaffInventoryResearchV2, startStaffInventoryResearchV2, StaffInventoryResearchRetryV2, StaffInventoryResearchStartV2, type StaffInventoryResearchStatusV2 } from '@tenkings/database';
 import { requireInventoryAdminSession } from '../../../../../lib/server/inventoryAdmin';
 import { presignReadUrl } from '../../../../../lib/server/storage';
-import { StaffInventoryMarketValueResponseSchema, StaffInventoryResearchReviewSnapshotSchema, summarizeStaffInventoryResearchMarketValue, type StaffInventoryResearchJobWithReview } from '../../../../../lib/staffInventoryMarketValue';
+import { StaffInventoryMarketValueResponseSchema, StaffInventoryResearchReviewSnapshotSchema, StaffInventoryResearchRecoverySnapshotSchema, bindStaffInventoryResearchRecovery, summarizeStaffInventoryResearchMarketValue, type StaffInventoryResearchJobWithReview } from '../../../../../lib/staffInventoryMarketValue';
 
 export const config = { api: { bodyParser: { sizeLimit: '8kb' }, responseLimit: '4mb' } };
 export function createStaffInventoryResearchHandler(deps: {
   requireAdmin: typeof requireInventoryAdminSession;
   read(unitIds: string[]): Promise<StaffInventoryResearchStatusV2[]>;
   readReviews(jobIds: string[]): ReturnType<typeof readStaffInventoryResearchReviewsV2>;
+  readRecovery?(jobIds: string[]): ReturnType<typeof readStaffInventoryResearchRecoveryV2>;
+  recoveryEnabled?(): boolean;
   retry(input: unknown, actor: string): ReturnType<typeof retryStaffInventoryResearchV2>;
   start(input: unknown, actor: string): ReturnType<typeof startStaffInventoryResearchV2>;
   signImage?(key: string): Promise<string>;
@@ -29,18 +31,27 @@ export function createStaffInventoryResearchHandler(deps: {
           || savedJobs.some(job => !unitIds.includes(job.unit_id))) throw new Error('Unexpected research unit.');
         const complete = savedJobs.filter(job => job.status === 'complete' && job.result !== null);
         const completeIds = new Set(complete.map(job => job.job_id));
-        const reviews = complete.length ? (await deps.readReviews([...completeIds])).map(review => StaffInventoryResearchReviewSnapshotSchema.parse(review)) : [];
+        const recoveryEnabled = deps.recoveryEnabled?.() === true;
+        const [loadedReviews, loadedRecovery] = await Promise.all([
+          complete.length ? deps.readReviews([...completeIds]) : Promise.resolve([]),
+          savedJobs.length && deps.readRecovery ? deps.readRecovery(savedJobs.map(job => job.job_id)) : Promise.resolve([]),
+        ]);
+        const reviews = loadedReviews.map(review => StaffInventoryResearchReviewSnapshotSchema.parse(review));
         if (reviews.length !== complete.length || new Set(reviews.map(review => review.job_id)).size !== reviews.length
           || reviews.some(review => !completeIds.has(review.job_id))) throw new Error('Incomplete current review evidence.');
         const byJob = new Map(reviews.map(review => [review.job_id, review]));
+        const recoveries = loadedRecovery.map(snapshot => StaffInventoryResearchRecoverySnapshotSchema.parse(snapshot));
+        if (recoveries.length > savedJobs.length || new Set(recoveries.map(snapshot => snapshot.job_id)).size !== recoveries.length
+          || recoveries.some(snapshot => !savedJobs.some(job => job.job_id === snapshot.job_id))) throw new Error('Unexpected recovery snapshot.');
+        const recoveryByJob = new Map(recoveries.map(snapshot => [snapshot.job_id, snapshot]));
         const jobs: StaffInventoryResearchJobWithReview[] = savedJobs.map(job => {
           const review = byJob.get(job.job_id) ?? null;
           if (review && (review.unit_id !== job.unit_id || review.description_event_id !== job.description_event_id
             || review.input_hash !== job.input_hash || review.result_hash !== inventoryHash(job.result))) throw new Error('Research changed while loading its review.');
-          return { ...job, result_hash: review?.result_hash ?? null, review };
+          return { ...job, result_hash: review?.result_hash ?? null, review, recovery: bindStaffInventoryResearchRecovery(recoveryByJob.get(job.job_id), job) };
         });
         if (req.query.view === 'summary') {
-          return res.status(200).json(StaffInventoryMarketValueResponseSchema.parse({ version: 1, summaries: jobs.map(summarizeStaffInventoryResearchMarketValue) }));
+          return res.status(200).json(StaffInventoryMarketValueResponseSchema.parse({ version: 1, summaries: jobs.map(job => summarizeStaffInventoryResearchMarketValue(job, recoveryEnabled)) }));
         }
         // Originally selected evidence stays reviewable after an exclusion. Sign
         // it first, then other retained candidates, without reading any images.
@@ -57,7 +68,7 @@ export function createStaffInventoryResearchHandler(deps: {
         const image_previews = Object.fromEntries(previews.filter((entry): entry is readonly [string, string] => entry !== null));
         // Older panels read the immutable AI estimate and do not understand
         // staff exclusions. Their version-1 guard must reject reviewed reads.
-        const result = { version: jobs.some(job => (job.review?.revision ?? 0) > 0) ? 2 : 1, jobs, image_previews };
+        const result = { version: jobs.some(job => (job.review?.revision ?? 0) > 0) ? 2 : 1, jobs, image_previews, recovery_enabled: recoveryEnabled };
         if (Buffer.byteLength(JSON.stringify(result)) > 4 * 1024 * 1024) return res.status(503).json({ message: 'Research exceeds the read limit. Choose fewer cards.' });
         return res.status(200).json(result);
       }
@@ -82,6 +93,8 @@ export default createStaffInventoryResearchHandler({
   requireAdmin: requireInventoryAdminSession,
   read: unitIds => readStaffInventoryResearchV2(prisma, { unitIds }),
   readReviews: jobIds => readStaffInventoryResearchReviewsV2(prisma, { jobIds }),
+  readRecovery: jobIds => readStaffInventoryResearchRecoveryV2(prisma, { jobIds }),
+  recoveryEnabled: () => process.env.STAFF_INVENTORY_RESEARCH_RECOVERY_ENABLED === 'true',
   signImage: key => presignReadUrl(key, 600),
   retry: (input, actor) => prisma.$transaction(tx => retryStaffInventoryResearchV2(tx, input, actor), { isolationLevel: 'ReadCommitted', maxWait: 5000, timeout: 10000 }),
   start: (input, actor) => prisma.$transaction(tx => startStaffInventoryResearchV2(tx, input, actor), { isolationLevel: 'ReadCommitted', maxWait: 5000, timeout: 30000 }),

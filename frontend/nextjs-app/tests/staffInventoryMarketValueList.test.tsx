@@ -11,7 +11,7 @@ const { JSDOM } = require('jsdom');
 const cssLoader = require.extensions['.css']; require.extensions['.css'] = module => { module.exports = {}; };
 const panelPath = require.resolve('../components/admin/StaffInventoryResearchPanel'), savedPanel = require.cache[panelPath];
 require.cache[panelPath] = { id: panelPath, filename: panelPath, loaded: true, exports: { __esModule: true,
-  default: (props: { unitId: string; descriptionEventId: string }) => <div data-research-unit={props.unitId} data-description={props.descriptionEventId}>Existing research drawer</div> } } as NodeModule;
+  default: (props: { unitId: string; descriptionEventId: string; onEditDetails?: () => void }) => <div data-research-unit={props.unitId} data-description={props.descriptionEventId}>Existing research drawer{props.onEditDetails && <button onClick={props.onEditDetails}>Review in Edit details fixture</button>}</div> } } as NodeModule;
 const capturePath = require.resolve('../components/admin/StaffInventoryCardCapture'), savedCapture = require.cache[capturePath];
 require.cache[capturePath] = { id: capturePath, filename: capturePath, loaded: true, exports: { __esModule: true,
   default: (props: { open: boolean; onClose(): void }) => props.open ? <button onClick={props.onClose}>Close camera fixture</button> : null } } as NodeModule;
@@ -101,6 +101,23 @@ test('sequential summary chunks obey both 50-card and encoded URL bounds without
       await act(async () => request.pending.resolve(json({ version: 1, summaries: [] })));
     }
     assert.equal(new Set(received).size, cards.length); assert.deepEqual(new Set(received), new Set(cards.map(card => card.unit_ids[0])));
+  } finally { await ui.close(); }
+});
+
+test('recovery detail review opens the canonical saved edit form without applying proposals or writing inventory', async () => {
+  const current = card('recovery', { card_details: { manufacturer: 'Saved publisher', year: '1999', set_name: 'Saved set', card_number: '007', variant: null, card_type: null } });
+  const calls: string[] = [];
+  const ui = await mount(async (url, init) => {
+    assert.notEqual(init?.method, 'POST'); calls.push(String(url));
+    return String(url).includes('view=summary') ? json({ version: 1, summaries: [summary('recovery', 'unknown')] }) : json(workspace([current]));
+  });
+  try {
+    await ui.click('Review eBay comps for Card recovery: More evidence needed');
+    await ui.click('Review in Edit details fixture');
+    assert.match(ui.container.textContent!, /Edit selected cards/);
+    const values = [...ui.container.querySelectorAll('input')].map(input => input.value);
+    for (const value of ['Card recovery', 'Saved publisher', '1999', 'Saved set', '007', '2.00']) assert.ok(values.includes(value), `Retained saved value: ${value}`);
+    assert.equal(calls.filter(url => url.includes('/workspace')).length, 1);
   } finally { await ui.close(); }
 });
 

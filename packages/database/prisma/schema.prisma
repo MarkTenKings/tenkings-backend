@@ -3981,6 +3981,11 @@ model StaffInventoryResearchJobV2 {
   retries            Json @default("[]") @db.JsonB
   startRequestId     String? @unique
   requestedBy        String?
+  recoveryState      String?
+  recoveryStateHash  String?
+  recoveryNextCheckAt DateTime? @default(now()) @db.Timestamptz(3)
+  recoveryLeaseToken String?
+  recoveryLeaseExpiresAt DateTime? @db.Timestamptz(3)
   staffResearchReviews StaffInventoryResearchReviewV2[]
 
   @@unique([unitId, descriptionEventId, inputHash], map: "StaffInventoryResearchJobV2_revision_key")

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson, type CatalogQuery, type DeepReadonly, type LookupResult, type PublicationPin } from '@tenkings/card-catalog-evidence';
-import { StaffInventoryResearchReferenceSchema, type StaffInventoryResearchCatalogContext, type StaffInventoryResearchDescription, type StaffInventoryResearchReference } from '../staffInventoryResearch';
+import { StaffInventoryResearchReferenceSchema, StaffInventoryResearchCatalogContextSchema, type StaffInventoryResearchCatalogContext, type StaffInventoryResearchDescription, type StaffInventoryResearchReference } from '../staffInventoryResearch';
 
 
 export type CatalogPhotos = Partial<Record<'front' | 'back', { key?: string; sha256: string; bytes: Buffer; mimeType?: 'image/jpeg' | 'image/png' | 'image/webp'; sourceSha256?: string | null }>>;
@@ -11,6 +11,23 @@ export type CatalogScopeResolver = (input: { choices: Record<'language' | 'editi
 const fields = ['language', 'edition', 'format', 'channel'] as const;
 const sha = (value: unknown) => createHash('sha256').update(canonicalJson(value)).digest('hex');
 const pinKey = (pin: PublicationPin) => canonicalJson(pin);
+
+/** Photo observations survive a catalog outage or revocation. Only their exact
+ * original-photo receipt survives; publication authority and references do not. */
+export function retainResearchCatalogScope(
+  previous: Pick<StaffInventoryResearchCatalogContext, 'scope_evidence' | 'scope_receipt'> | null | undefined,
+  photos: Partial<Record<'front' | 'back', { sha256: string }>>,
+): Pick<StaffInventoryResearchCatalogContext, 'scope_evidence' | 'scope_receipt'> | null {
+  if (!previous || !photos.front || !photos.back || photos.front.sha256 === photos.back.sha256) return null;
+  const parsed = StaffInventoryResearchCatalogContextSchema.safeParse({ schema_version: 1, status: 'not_consulted', publications: [],
+    scope_evidence: previous.scope_evidence, scope_receipt: previous.scope_receipt });
+  if (!parsed.success || !parsed.data.scope_receipt) return null;
+  const { scope_evidence: evidence, scope_receipt: receipt } = parsed.data;
+  if (receipt.images.some(image => photos[image.side]?.sha256 !== image.transmitted_sha256)
+    || new Set(evidence.map(item => item.field)).size !== evidence.length
+    || evidence.some(item => photos[item.side]?.sha256 !== item.photo_sha256)) return null;
+  return { scope_evidence: evidence, scope_receipt: receipt };
+}
 
 export function researchCatalogQuery(description: StaffInventoryResearchDescription): CatalogQuery | null {
   const category = description.category?.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -92,10 +109,16 @@ export function catalogResearchReferences(lookups: readonly DeepReadonly<LookupR
   return references.length > 24 ? [] : references;
 }
 
-export function createResearchCatalogAdapter(dependencies: { host?: CatalogHost; resolveScope?: CatalogScopeResolver; targetOriginKeys?: readonly string[] } = {}) {
+export function createResearchCatalogAdapter(dependencies: { host?: CatalogHost; resolveScope?: CatalogScopeResolver; targetOriginKeys?: readonly string[];
+  previousScope?: Pick<StaffInventoryResearchCatalogContext, 'scope_evidence' | 'scope_receipt'>;
+  /** Scheduled rechecks can reuse receipts without buying another scope read. */
+  allowScopeResolution?: boolean;
+} = {}) {
   const host = async () => dependencies.host ?? await import('./setCatalogEvidence');
   async function load(description: StaffInventoryResearchDescription, photos: CatalogPhotos, signal: AbortSignal): Promise<ResearchCatalogSnapshot> {
     const context: StaffInventoryResearchCatalogContext = { schema_version: 1, status: 'no_publication', publications: [], scope_evidence: [], scope_receipt: null };
+    const previous = retainResearchCatalogScope(dependencies.previousScope, photos);
+    if (previous) { context.scope_evidence = previous.scope_evidence; context.scope_receipt = previous.scope_receipt; }
     const query = researchCatalogQuery(description);
     if (!query || signal.aborted) return { context, references: [] };
     const api = await host(), pins = await api.findCurrentSetCatalogPublications({ query, consumer: 'inventory' });
@@ -103,12 +126,29 @@ export function createResearchCatalogAdapter(dependencies: { host?: CatalogHost;
     if (!pins.length) return { context, references: [] };
     const read = (q: CatalogQuery) => Promise.all(pins.map(publication => api.lookupPublishedSetCatalogEvidence({ publication, query: q, consumer: 'inventory' })));
     let lookups = await read(query);
-    const choices = Object.fromEntries(fields.map(field => [field, [...new Set(lookups.flatMap(l => l.candidates.map(c => c.printing[field])).filter((v): v is string => v !== null && v !== 'not_applicable'))].slice(0, 32)])) as Record<typeof fields[number], string[]>;
-    if (dependencies.resolveScope && photos.front && photos.back && photos.front.sha256 !== photos.back.sha256 && fields.some(f => choices[f].length)) {
-      const { evidence, receipt } = await dependencies.resolveScope({ choices, photos }, signal);
-      if (evidence.length && !receipt || receipt?.images.some(image => photos[image.side]?.sha256 !== image.transmitted_sha256) || evidence.length > 4 || new Set(evidence.map(e => e.field)).size !== evidence.length || evidence.some(e => !choices[e.field].includes(e.value) || photos[e.side]?.sha256 !== e.photo_sha256)) throw new Error('Invalid observed catalog scope.');
-      context.scope_evidence = evidence; context.scope_receipt = receipt;
-      lookups = await read({ ...query, ...Object.fromEntries(evidence.map(e => [e.field, e.value])) });
+    let scopeChoices = lookups;
+    if (photos.front && photos.back && photos.front.sha256 !== photos.back.sha256
+      && (previous || dependencies.resolveScope && dependencies.allowScopeResolution !== false)
+      && lookups.every(lookup => lookup.candidates.length === 0 && !lookup.truncated)) {
+      // A reviewed card-number/name alias can itself be language-scoped. Read
+      // only this exact set's bounded positive printing choices to bootstrap
+      // observed scope; these broader card rows NEVER become identity evidence.
+      const { cardName: _name, cardNumber: _number, ...scopeQuery } = query;
+      const discovery = await read(scopeQuery);
+      if (discovery.every(lookup => !lookup.truncated && lookup.coverage.text.status !== 'truncated'
+        && lookup.coverage.applicability.status !== 'truncated')) scopeChoices = discovery;
+    }
+    const choices = Object.fromEntries(fields.map(field => [field, [...new Set(scopeChoices.flatMap(l => l.candidates.map(c => c.printing[field])).filter((v): v is string => v !== null && v !== 'not_applicable'))].slice(0, 32)])) as Record<typeof fields[number], string[]>;
+    if (photos.front && photos.back && photos.front.sha256 !== photos.back.sha256 && fields.some(f => choices[f].length)) {
+      const previousIsBound = previous && previous.scope_evidence.every(e => choices[e.field].includes(e.value));
+      const resolved = previousIsBound ? { evidence: previous.scope_evidence, receipt: previous.scope_receipt }
+        : dependencies.resolveScope && dependencies.allowScopeResolution !== false ? await dependencies.resolveScope({ choices, photos }, signal) : null;
+      if (resolved) {
+        const { evidence, receipt } = resolved;
+        if (evidence.length && !receipt || receipt?.images.some(image => photos[image.side]?.sha256 !== image.transmitted_sha256) || evidence.length > 4 || new Set(evidence.map(e => e.field)).size !== evidence.length || evidence.some(e => !choices[e.field].includes(e.value) || photos[e.side]?.sha256 !== e.photo_sha256)) throw new Error('Invalid observed catalog scope.');
+        context.scope_evidence = evidence; context.scope_receipt = receipt;
+        lookups = await read({ ...query, ...Object.fromEntries(evidence.map(e => [e.field, e.value])) });
+      }
     }
     for (const [index, lookup] of lookups.entries()) {
       if (!lookup.publication || lookup.authority !== 'host_authorized_setops_publication') throw new Error('Missing catalog authority.');

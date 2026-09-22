@@ -1,33 +1,50 @@
 import { randomUUID } from 'node:crypto';
-import { prisma, claimStaffInventoryResearchV2, completeStaffInventoryResearchV2, failStaffInventoryResearchV2, type StaffInventoryResearchClaimV2 } from '@tenkings/database';
+import { prisma, claimStaffInventoryResearchV2, completeStaffInventoryResearchV2, failStaffInventoryResearchV2, readStaffInventoryResearchRecoveryAssessmentV2, type StaffInventoryResearchClaimV2 } from '@tenkings/database';
 import { researchStaffInventoryCard, researchCatalogScopeResolver, StaffInventoryResearchError } from './staffInventoryResearch';
 import { STAFF_INVENTORY_RESEARCH_LIMITS } from '../staffInventoryResearch';
 import { loadStaffInventoryResearchReferences } from './staffInventoryResearchReferences';
 import { archiveStaffInventoryResearchImage } from './staffInventoryResearchStorage';
 import { createResearchCatalogAdapter } from './staffInventoryResearchCatalog';
+import { inventoryRecoveryEnabled, inventoryRecoveryCatalogEnabled, prepareInventoryRecoveryAssessment, runStaffInventoryResearchRecovery } from './staffInventoryResearchRecoveryWorker';
 
 export type StaffInventoryResearchWorkerDependencies = {
   claim: () => Promise<StaffInventoryResearchClaimV2 | null>;
   research: (input: StaffInventoryResearchClaimV2['input'], signal: AbortSignal, claim?: StaffInventoryResearchClaimV2) => ReturnType<typeof researchStaffInventoryCard>;
   complete: (claim: StaffInventoryResearchClaimV2, result: Awaited<ReturnType<typeof researchStaffInventoryCard>>) => Promise<boolean>;
   fail: (claim: StaffInventoryResearchClaimV2, error: StaffInventoryResearchError) => Promise<boolean>;
+  recover?: (input: { remainingBudgetMs: number; signal: AbortSignal }) => Promise<unknown>;
   reconcileCatalog?: (input: { remainingBudgetMs: number; signal: AbortSignal }) => Promise<unknown>;
   now?: () => number;
 };
 
 const transactionOptions = { isolationLevel: 'ReadCommitted' as const, maxWait: 5000, timeout: 15000 };
 export const staffInventoryResearchWorkerDependencies: StaffInventoryResearchWorkerDependencies = {
-  claim: () => prisma.$transaction(tx => claimStaffInventoryResearchV2(tx, { leaseMs: 180000, maxConcurrent: 2 }), transactionOptions),
-  research: (input, signal, claim) => {
-    if (process.env.STAFF_INVENTORY_RESEARCH_CATALOG_EVIDENCE !== 'true' || process.env.SET_CATALOG_EVIDENCE_ENABLED !== 'true') return researchStaffInventoryCard(input, { loadReferences: loadStaffInventoryResearchReferences, archiveCandidateImage: archiveStaffInventoryResearchImage }, signal);
-    const catalog = createResearchCatalogAdapter({ targetOriginKeys: [`inventory-unit:${input.unit_id}`], resolveScope: researchCatalogScopeResolver({ catalogScopeInvocation: { attemptId: claim ? `inventory:${claim.jobId}:${claim.attempt}` : `inventory:${randomUUID()}`, invocationId: `scope:${randomUUID()}` } }) });
-    return researchStaffInventoryCard(input, { loadCatalog: catalog.load, isCatalogCurrent: catalog.current, loadReferenceImage: catalog.image, archiveCandidateImage: archiveStaffInventoryResearchImage }, signal);
+  claim: () => prisma.$transaction(tx => claimStaffInventoryResearchV2(tx, { leaseMs: 180000, maxConcurrent: 2, requireRecovery: inventoryRecoveryEnabled() }), transactionOptions),
+  research: async (input, signal, claim) => {
+    const recoveryAssessment = inventoryRecoveryEnabled() && claim
+      ? await readStaffInventoryResearchRecoveryAssessmentV2(prisma, { jobId: claim.jobId, inputHash: claim.inputHash, attempt: claim.attempt }) : null;
+    if (claim?.recoveryEvidenceHash && (!inventoryRecoveryEnabled() || !recoveryAssessment
+        || recoveryAssessment.evidence_sha256 !== claim.recoveryEvidenceHash)) throw new StaffInventoryResearchError('unavailable');
+    if (recoveryAssessment) {
+      // Catalog approval can change after the queued recovery check. Revalidate
+      // without buying OCR/scope work before any sold-provider call.
+      const current = await prepareInventoryRecoveryAssessment(input, { previousAssessment: recoveryAssessment,
+        allowRecognition: false, allowScopeResolution: false, attemptId: `inventory:${claim!.jobId}:${claim!.attempt}` }, signal);
+      if (!current.ready_for_research || current.evidence_sha256 !== recoveryAssessment.evidence_sha256) throw new StaffInventoryResearchError('unavailable');
+    }
+    const common = { archiveCandidateImage: archiveStaffInventoryResearchImage, ...(recoveryAssessment ? { recoveryAssessment } : {}) };
+    if (!inventoryRecoveryCatalogEnabled()) return researchStaffInventoryCard(input, { ...common, loadReferences: loadStaffInventoryResearchReferences }, signal);
+    const catalog = createResearchCatalogAdapter({ targetOriginKeys: [`inventory-unit:${input.unit_id}`],
+      ...(recoveryAssessment ? { previousScope: recoveryAssessment.catalog_context ?? undefined, allowScopeResolution: false } : {}),
+      resolveScope: researchCatalogScopeResolver({ catalogScopeInvocation: { attemptId: claim ? `inventory:${claim.jobId}:${claim.attempt}` : `inventory:${randomUUID()}`, invocationId: `scope:${randomUUID()}` } }) });
+    return researchStaffInventoryCard(input, { ...common, loadCatalog: catalog.load, isCatalogCurrent: catalog.current, loadReferenceImage: catalog.image }, signal);
   },
   complete: (claim, result) => prisma.$transaction(tx => completeStaffInventoryResearchV2(tx, { jobId: claim.jobId, leaseToken: claim.leaseToken, result }), transactionOptions),
   fail: (claim, error) => prisma.$transaction(tx => failStaffInventoryResearchV2(tx, {
     jobId: claim.jobId, leaseToken: claim.leaseToken, errorCode: error.code.toUpperCase(), errorMessage: error.message,
     retryable: ['provider_error', 'timeout', 'cancelled'].includes(error.code),
   }), transactionOptions),
+  recover: async input => { if (inventoryRecoveryEnabled()) return runStaffInventoryResearchRecovery(input); },
   reconcileCatalog: async input => {
     if (process.env.SET_CATALOG_EVIDENCE_ENABLED !== 'true' || process.env.STAFF_INVENTORY_CATALOG_CONTRIBUTIONS_ENABLED !== 'true') return;
     const { reconcileStaffInventoryCatalogObservations } = await import('./staffInventoryCatalogObservations');
@@ -48,6 +65,7 @@ export async function runStaffInventoryResearchWorker(deps = staffInventoryResea
   if (parent?.aborted) abort();
   const timer = setTimeout(abort, runBudgetMs);
   const counts = { claimed: 0, completed: 0, failed: 0, superseded: 0 };
+  let recovery: unknown;
   try {
     while (!controller.signal.aborted && counts.claimed < 4 && now() - started < runBudgetMs - attemptBudgetMs) {
       const claim = await deps.claim();
@@ -83,12 +101,17 @@ export async function runStaffInventoryResearchWorker(deps = staffInventoryResea
         attemptController.abort();
       }
     }
+    // Ready paid work goes first: a stream of slow recovery checks must never
+    // starve cards already authorized for research. The next cron sees new work.
+    if (!controller.signal.aborted && deps.recover) {
+      recovery = await deps.recover({ remainingBudgetMs: Math.max(0, runBudgetMs - (now() - started)), signal: controller.signal });
+    }
     // Completed results are already durable. This optional, bounded scan has
     // its own cursor and must never retry paid research when contribution fails.
     if (!controller.signal.aborted && deps.reconcileCatalog) {
       try { await deps.reconcileCatalog({ remainingBudgetMs: Math.max(0, runBudgetMs - (now() - started)), signal: controller.signal }); }
       catch { console.warn('[inventory-research] Optional catalog contribution deferred.'); }
     }
-    return counts;
+    return recovery === undefined ? counts : { ...counts, recovery };
   } finally { clearTimeout(timer); parent?.removeEventListener('abort', abort); controller.abort(); }
 }

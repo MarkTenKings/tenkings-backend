@@ -114,7 +114,7 @@ export async function syncStaffInventoryResearchV2(tx: Tx, state: WorkflowStateV
     }
     const abandoned = await tx.$queryRaw<Row[]>(Prisma.sql`SELECT ${JOB_COLUMNS} FROM "StaffInventoryResearchJobV2" WHERE "unitId" = ${unitId} AND "status" = 'running' AND (${inputHash}::text IS NULL OR "inputHash" <> ${inputHash}) FOR UPDATE`);
     for (const row of abandoned) await appendAttempt(tx, row, at, 'superseded', { code: 'STALE_INPUT', message: 'Staff changed the inventory description or removed this receipt.' }, null);
-    await tx.$executeRaw(Prisma.sql`UPDATE "StaffInventoryResearchJobV2" SET "status" = 'superseded', "leaseToken" = NULL, "leaseExpiresAt" = NULL, "updatedAt" = ${at}
+    await tx.$executeRaw(Prisma.sql`UPDATE "StaffInventoryResearchJobV2" SET "status" = 'superseded', "leaseToken" = NULL, "leaseExpiresAt" = NULL, "recoveryLeaseToken" = NULL, "recoveryLeaseExpiresAt" = NULL, "updatedAt" = ${at}
       WHERE "unitId" = ${unitId} AND "status" <> 'superseded' AND (${inputHash}::text IS NULL OR "inputHash" <> ${inputHash})`);
     if (!input) continue;
     await tx.$executeRaw(Prisma.sql`INSERT INTO "StaffInventoryResearchJobV2"
@@ -152,8 +152,8 @@ async function appendAttempt(tx: Tx, row: Row, at: Date, outcome: Attempt['outco
   const entry: Attempt = { attempt: row.attemptCount, lease_token: row.leaseToken!, started_at: row.startedAt!.toISOString(), completed_at: at.toISOString(), outcome, error, result };
   await tx.$executeRaw(Prisma.sql`UPDATE "StaffInventoryResearchJobV2" SET "attempts" = "attempts" || ${JSON.stringify([entry])}::jsonb WHERE "id" = ${row.id}`);
 }
-export type StaffInventoryResearchClaimV2 = { jobId: string; leaseToken: string; leaseExpiresAt: string; attempt: number; inputHash: string; input: StaffInventoryResearchInput };
-export async function claimStaffInventoryResearchV2(tx: Tx, options: { leaseMs?: number; maxConcurrent?: number } = {}): Promise<StaffInventoryResearchClaimV2 | null> {
+export type StaffInventoryResearchClaimV2 = { jobId: string; leaseToken: string; leaseExpiresAt: string; attempt: number; inputHash: string; input: StaffInventoryResearchInput; recoveryEvidenceHash?: string | null };
+export async function claimStaffInventoryResearchV2(tx: Tx, options: { leaseMs?: number; maxConcurrent?: number; requireRecovery?: boolean } = {}): Promise<StaffInventoryResearchClaimV2 | null> {
   const leaseMs = parse(z.number().int().min(1000).max(STAFF_INVENTORY_RESEARCH_LIMITS_V2.maxLeaseMs), options.leaseMs ?? STAFF_INVENTORY_RESEARCH_LIMITS_V2.defaultLeaseMs);
   const maxConcurrent = parse(z.number().int().min(1).max(STAFF_INVENTORY_RESEARCH_LIMITS_V2.maxConcurrent), options.maxConcurrent ?? 1);
   await queueLock(tx);
@@ -163,19 +163,29 @@ export async function claimStaffInventoryResearchV2(tx: Tx, options: { leaseMs?:
   const expired = await tx.$queryRaw<Row[]>(Prisma.sql`SELECT ${JOB_COLUMNS} FROM "StaffInventoryResearchJobV2" WHERE "status" = 'running' AND "leaseExpiresAt" <= ${at} ORDER BY "leaseExpiresAt" LIMIT 20 FOR UPDATE`);
   for (const row of expired) {
     verified(row);
+    const [automatic] = await tx.$queryRaw<{ active: boolean }[]>(Prisma.sql`SELECT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE("recoveryState"::jsonb -> 'refreshes', '[]'::jsonb)) entry WHERE (entry ->> 'attempt_count')::integer + 1 = "attemptCount") AS active FROM "StaffInventoryResearchJobV2" WHERE "id" = ${row.id}`);
     const error = { code: 'LEASE_EXPIRED', message: 'The research worker stopped before recording a result.' };
     await appendAttempt(tx, row, at, 'expired', error, null);
-    await tx.$executeRaw(Prisma.sql`UPDATE "StaffInventoryResearchJobV2" SET "status" = ${row.attemptCount < row.maxAttempts ? 'queued' : 'failed'}, "leaseToken" = NULL, "leaseExpiresAt" = NULL, "updatedAt" = ${at}, "completedAt" = ${at}, "nextAttemptAt" = ${at}, "errorCode" = ${error.code}, "errorMessage" = ${error.message} WHERE "id" = ${row.id}`);
+    await tx.$executeRaw(Prisma.sql`UPDATE "StaffInventoryResearchJobV2" SET "status" = ${!automatic.active && row.attemptCount < row.maxAttempts ? 'queued' : 'failed'}, "leaseToken" = NULL, "leaseExpiresAt" = NULL, "updatedAt" = ${at}, "completedAt" = ${at}, "nextAttemptAt" = ${at}, "errorCode" = ${error.code}, "errorMessage" = ${error.message} WHERE "id" = ${row.id}`);
   }
   const [capacity] = await tx.$queryRaw<{ research: bigint; intake: bigint }[]>(Prisma.sql`SELECT
-    (SELECT count(*) FROM "StaffInventoryResearchJobV2" WHERE "status" = 'running' AND "leaseExpiresAt" > ${at}) AS research,
+    (SELECT count(*) FROM "StaffInventoryResearchJobV2" WHERE ("status" = 'running' AND "leaseExpiresAt" > ${at}) OR "recoveryLeaseExpiresAt" > ${at}) AS research,
     (SELECT count(*) FROM "StaffInventoryIntakeLeaseV2" WHERE "expiresAt" > ${at}) AS intake`);
   if (capacity.research >= BigInt(maxConcurrent) || capacity.intake >= BigInt(STAFF_INVENTORY_RESEARCH_LIMITS_V2.intakePauseThreshold)) return null;
-  const [row] = await tx.$queryRaw<Row[]>(Prisma.sql`SELECT ${JOB_COLUMNS} FROM "StaffInventoryResearchJobV2" WHERE "status" = 'queued' AND "nextAttemptAt" <= ${at} AND "attemptCount" < "maxAttempts" ORDER BY "nextAttemptAt", "createdAt", "id" LIMIT 1 FOR UPDATE SKIP LOCKED`);
+  const [row] = await tx.$queryRaw<Row[]>(Prisma.sql`SELECT ${JOB_COLUMNS} FROM "StaffInventoryResearchJobV2" WHERE "status" = 'queued' AND "nextAttemptAt" <= ${at} AND "attemptCount" < "maxAttempts" AND ("recoveryLeaseExpiresAt" IS NULL OR "recoveryLeaseExpiresAt" <= ${at})
+    AND (${options.requireRecovery !== true} OR "attemptCount" > 0 OR "recoveryState"::jsonb ->> 'status' = 'research_queued')
+    AND (${options.requireRecovery === true} OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE("recoveryState"::jsonb -> 'refreshes', '[]'::jsonb)) entry WHERE (entry ->> 'attempt_count')::integer = "attemptCount"))
+    ORDER BY "nextAttemptAt", "createdAt", "id" LIMIT 1 FOR UPDATE SKIP LOCKED`);
   if (!row) return null;
   const { input } = verified(row), leaseToken = randomUUID(), leaseExpiresAt = new Date(at.getTime() + leaseMs);
-  await tx.$executeRaw(Prisma.sql`UPDATE "StaffInventoryResearchJobV2" SET "status" = 'running', "attemptCount" = "attemptCount" + 1, "leaseToken" = ${leaseToken}, "leaseExpiresAt" = ${leaseExpiresAt}, "startedAt" = ${at}, "completedAt" = NULL, "updatedAt" = ${at} WHERE "id" = ${row.id}`);
-  return { jobId: row.id, leaseToken, leaseExpiresAt: leaseExpiresAt.toISOString(), attempt: row.attemptCount + 1, inputHash: row.inputHash, input };
+  // Capture automatic authority while the exact job is locked. A later stale
+  // assessment read must not turn this paid recovery attempt into a manual run.
+  const recovery = await tx.$queryRaw<{ evidenceHash: string }[]>(Prisma.sql`SELECT entry ->> 'evidence_sha256' AS "evidenceHash"
+    FROM "StaffInventoryResearchJobV2", jsonb_array_elements(COALESCE("recoveryState"::jsonb -> 'refreshes', '[]'::jsonb)) entry
+    WHERE "id" = ${row.id} AND (entry ->> 'attempt_count')::integer = ${row.attemptCount} LIMIT 2`);
+  if (recovery.length > 1 || recovery[0] && !/^[a-f0-9]{64}$/.test(recovery[0].evidenceHash)) integrity('Research recovery authority is ambiguous or invalid.');
+  await tx.$executeRaw(Prisma.sql`UPDATE "StaffInventoryResearchJobV2" SET "status" = 'running', "recoveryLeaseToken" = NULL, "recoveryLeaseExpiresAt" = NULL, "attemptCount" = "attemptCount" + 1, "leaseToken" = ${leaseToken}, "leaseExpiresAt" = ${leaseExpiresAt}, "startedAt" = ${at}, "completedAt" = NULL, "updatedAt" = ${at} WHERE "id" = ${row.id}`);
+  return { jobId: row.id, leaseToken, leaseExpiresAt: leaseExpiresAt.toISOString(), attempt: row.attemptCount + 1, inputHash: row.inputHash, input, recoveryEvidenceHash: recovery[0]?.evidenceHash ?? null };
 }
 async function owned(tx: Tx, jobId: string, leaseToken: string, at: Date) {
   parse(z.string().uuid(), jobId); parse(z.string().uuid(), leaseToken);
@@ -209,7 +219,8 @@ export async function failStaffInventoryResearchV2(tx: Tx, args: { jobId: string
   await queueLock(tx);
   const at = await now(tx), row = await owned(tx, args.jobId, args.leaseToken, at);
   if (!row) return false;
-  const retry = args.retryable && row.attemptCount < row.maxAttempts;
+  const [automatic] = await tx.$queryRaw<{ active: boolean }[]>(Prisma.sql`SELECT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE("recoveryState"::jsonb -> 'refreshes', '[]'::jsonb)) entry WHERE (entry ->> 'attempt_count')::integer + 1 = "attemptCount") AS active FROM "StaffInventoryResearchJobV2" WHERE "id" = ${row.id}`);
+  const retry = args.retryable && !automatic.active && row.attemptCount < row.maxAttempts;
   const next = new Date(at.getTime() + Math.min(300000, 30000 * 2 ** (row.attemptCount - 1)));
   await appendAttempt(tx, row, at, 'failed', { code, message }, null);
   await tx.$executeRaw(Prisma.sql`UPDATE "StaffInventoryResearchJobV2" SET "status" = ${retry ? 'queued' : 'failed'}, "leaseToken" = NULL, "leaseExpiresAt" = NULL, "updatedAt" = ${at}, "completedAt" = ${at}, "nextAttemptAt" = ${next}, "errorCode" = ${code}, "errorMessage" = ${message} WHERE "id" = ${row.id}`);
@@ -235,7 +246,7 @@ export async function retryStaffInventoryResearchV2(tx: Tx, input: unknown, admi
   if (!canRetry(row)) conflict('Research is already active, has an estimate, or has reached its retry limit.');
   const at = await now(tx), retry: Retry = { request_id: d.requestId, actor, at: at.toISOString(), expected_attempt_count: d.expectedAttemptCount };
   const max = Math.min(STAFF_INVENTORY_RESEARCH_LIMITS_V2.lifetimeAttempts, row.attemptCount + STAFF_INVENTORY_RESEARCH_LIMITS_V2.attemptsPerRun);
-  await tx.$executeRaw(Prisma.sql`UPDATE "StaffInventoryResearchJobV2" SET "status" = 'queued', "maxAttempts" = ${max}, "nextAttemptAt" = ${at}, "updatedAt" = ${at}, "retries" = "retries" || ${JSON.stringify([retry])}::jsonb WHERE "id" = ${row.id}`);
+  await tx.$executeRaw(Prisma.sql`UPDATE "StaffInventoryResearchJobV2" SET "status" = 'queued', "recoveryLeaseToken" = NULL, "recoveryLeaseExpiresAt" = NULL, "maxAttempts" = ${max}, "nextAttemptAt" = ${at}, "updatedAt" = ${at}, "retries" = "retries" || ${JSON.stringify([retry])}::jsonb WHERE "id" = ${row.id}`);
   const [updated] = await tx.$queryRaw<Row[]>(Prisma.sql`SELECT ${JOB_COLUMNS} FROM "StaffInventoryResearchJobV2" WHERE "id" = ${row.id}`);
   return { outcome: 'QUEUED' as const, request_id: d.requestId, job: status(updated) };
 }

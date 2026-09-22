@@ -285,3 +285,4 @@ export {
 } from "./aiGrader";
 export * from './staffInventoryResearch';
 export * from './staffInventoryResearchReview';
+export * from './staffInventoryResearchRecovery';

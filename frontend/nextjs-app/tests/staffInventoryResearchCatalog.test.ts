@@ -146,6 +146,72 @@ test('invented scope values, wrong photo hashes and duplicate field assertions f
   ]) await assert.rejects(createResearchCatalogAdapter({ host: f.host, resolveScope: async () => ({ evidence, receipt: scopeReceipt(f.photos) }) }).load(f.description, f.photos, f.signal), /Invalid observed/);
 });
 
+test('a language-scoped reviewed number alias discovers bounded positive scope before retrying the original exact query', async () => {
+  const f = harness('POKEMON');
+  const alias = f.manifest.aliases.find((entry: { kind: string }) => entry.kind === 'card_number').value;
+  let calls = 0;
+  const adapter = createResearchCatalogAdapter({ host: f.host, resolveScope: async ({ choices }) => {
+    calls++; assert.deepEqual(choices.language, ['fr']);
+    return { receipt: scopeReceipt(f.photos), evidence: [
+      { field: 'language', value: 'fr', side: 'front', photo_sha256: f.photos.front!.sha256, observation: 'Synthetic printed French text.' },
+      { field: 'edition', value: 'standard', side: 'back', photo_sha256: f.photos.back!.sha256, observation: 'Synthetic explicit standard edition.' },
+    ] };
+  } });
+  const snapshot = await adapter.load({ ...f.description, card_number: alias }, f.photos, f.signal);
+  assert.equal(calls, 1); assert.equal(f.queries.length, 3);
+  assert.equal(f.queries[0].cardNumber, alias); assert.equal(f.queries[1].cardNumber, undefined);
+  assert.equal(f.queries[1].cardName, undefined); assert.equal(f.queries[1].setLabel, f.description.set_name);
+  assert.equal(f.queries[2].cardNumber, alias); assert.equal(f.queries[2].language, 'fr');
+  assert.ok(snapshot.references.length > 0);
+  assert.ok(snapshot.references.every(reference => reference.catalog_binding?.card_id === f.manifest.cards[0].cardId));
+});
+
+test('successful exact-photo scope receipts are reused, including empty observations, without another paid resolver call', async () => {
+  for (const empty of [false, true]) {
+    const f = harness('POKEMON');
+    const previousScope = { scope_receipt: scopeReceipt(f.photos), scope_evidence: empty ? [] : [
+      { field: 'language' as const, value: 'fr', side: 'front' as const, photo_sha256: f.photos.front!.sha256, observation: 'Synthetic visible French text.' },
+      { field: 'edition' as const, value: 'standard', side: 'back' as const, photo_sha256: f.photos.back!.sha256, observation: 'Synthetic printed edition.' },
+    ] };
+    const adapter = createResearchCatalogAdapter({ host: f.host, previousScope, allowScopeResolution: false,
+      resolveScope: async () => assert.fail('Cached observation must not be purchased twice') });
+    const snapshot = await adapter.load(f.description, f.photos, f.signal);
+    assert.deepEqual(snapshot.context.scope_receipt, previousScope.scope_receipt);
+    assert.equal(snapshot.references.length > 0, !empty);
+  }
+});
+
+test('foreign cached photos and truncated broader discovery cannot authorize a hidden paid scope retry', async () => {
+  const f = harness('POKEMON');
+  const previousScope = { scope_receipt: { ...scopeReceipt(f.photos), images: scopeReceipt(f.photos).images.map(image => ({ ...image, transmitted_sha256: 'e'.repeat(64) })) }, scope_evidence: [] };
+  const snapshot = await createResearchCatalogAdapter({ host: f.host, previousScope, allowScopeResolution: false,
+    resolveScope: async () => assert.fail('Paid work is closed') }).load(f.description, f.photos, f.signal);
+  assert.equal(snapshot.references.length, 0); assert.equal(snapshot.context.scope_receipt, null);
+  const read = f.host!.lookupPublishedSetCatalogEvidence;
+  const truncatedHost: NonNullable<Parameters<typeof createResearchCatalogAdapter>[0]>['host'] = { ...f.host!, lookupPublishedSetCatalogEvidence: async args => {
+    const lookup = await read(args); return args.query.cardNumber ? lookup : { ...lookup, truncated: true };
+  } };
+  const alias = f.manifest.aliases.find((entry: { kind: string }) => entry.kind === 'card_number').value;
+  const truncated = await createResearchCatalogAdapter({ host: truncatedHost, resolveScope: async () => assert.fail('Truncated choices') })
+    .load({ ...f.description, card_number: alias }, f.photos, f.signal);
+  assert.equal(truncated.references.length, 0);
+});
+
+test('a temporary absence of publication retains only exact-photo scope for a later cheap recheck', async () => {
+  const f = harness('POKEMON');
+  const previousScope = { scope_receipt: scopeReceipt(f.photos), scope_evidence: [
+    { field: 'language' as const, value: 'fr', side: 'front' as const, photo_sha256: f.photos.front!.sha256, observation: 'Synthetic printed language.' },
+    { field: 'edition' as const, value: 'standard', side: 'back' as const, photo_sha256: f.photos.back!.sha256, observation: 'Synthetic visible edition.' },
+  ] };
+  const absent = await createResearchCatalogAdapter({ host: { ...f.host!, findCurrentSetCatalogPublications: async () => [] }, previousScope, allowScopeResolution: false })
+    .load(f.description, f.photos, f.signal);
+  assert.deepEqual(absent.references, []); assert.deepEqual(absent.context.publications, []); assert.equal(absent.context.status, 'no_publication');
+  assert.deepEqual(absent.context.scope_receipt, previousScope.scope_receipt);
+  const restored = await createResearchCatalogAdapter({ host: f.host, previousScope: absent.context, allowScopeResolution: false,
+    resolveScope: async () => assert.fail('Restored publication reuses original receipt') }).load(f.description, f.photos, f.signal);
+  assert.ok(restored.references.length > 0); assert.deepEqual(restored.context.scope_receipt, previousScope.scope_receipt);
+});
+
 test('unreviewed, truncated and excluded candidate rows cannot become catalog references', async () => {
   const f = harness();
   const lookup = await createPublishedCatalogReader({ loadAuthorizedPublication: async () => f.stored.loaded }).lookup({ publication: f.stored.pin,

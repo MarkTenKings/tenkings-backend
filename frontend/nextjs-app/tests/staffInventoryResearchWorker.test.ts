@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getEventListeners } from 'node:events';
+import { prisma } from '@tenkings/database';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createInventoryResearchCronHandler } from '../pages/api/cron/inventory-research';
-import { runStaffInventoryResearchWorker, type StaffInventoryResearchWorkerDependencies } from '../lib/server/staffInventoryResearchWorker';
+import { runStaffInventoryResearchWorker, staffInventoryResearchWorkerDependencies, type StaffInventoryResearchWorkerDependencies } from '../lib/server/staffInventoryResearchWorker';
 import { StaffInventoryResearchError } from '../lib/server/staffInventoryResearch';
 import { staffInventoryResearchSetKeys, staffInventoryResearchCatalogReferences } from '../lib/server/staffInventoryResearchReferences';
 
@@ -171,4 +172,37 @@ test('catalog aliases require exact year/maker/product/card number and source re
   const [reference] = staffInventoryResearchCatalogReferences(description, [reviewedRow]);
   assert.equal(reference.variant_kind, 'PARALLEL'); assert.equal(reference.identity.category, null); assert.match(reference.source_sha256, /^[a-f0-9]{64}$/);
   for (const patch of [{ cardNumber: '7/100' }, { setId: '2024_Fixture_Chrome_Baseball' }, { scopeReviewedAt: null }, { variationId: 'variation', variationLabel: 'Image variation' }]) assert.deepEqual(staffInventoryResearchCatalogReferences(description, [{ ...reviewedRow, ...patch }]), []);
+});
+
+
+test('ready research cannot be starved by slow recovery; idle cron still performs recovery', async () => {
+  const f = workerFixture(0); let time = 0; f.deps.now = () => time;
+  f.deps.complete = async () => { f.calls.push('complete'); time = 150000; return true; };
+  f.deps.recover = async input => {
+    assert.deepEqual(f.calls, ['claim', 'research', 'complete']);
+    assert.equal(input.remainingBudgetMs, 90000); f.calls.push('recovery');
+  };
+  assert.equal((await runStaffInventoryResearchWorker(f.deps)).completed, 1);
+  assert.deepEqual(f.calls, ['claim', 'research', 'complete', 'recovery']);
+  const idle = workerFixture(); idle.deps.claim = async () => null;
+  idle.deps.recover = async input => { assert.equal(input.remainingBudgetMs, 240000); idle.calls.push('recovery'); };
+  assert.equal((await runStaffInventoryResearchWorker(idle.deps)).claimed, 0);
+  assert.deepEqual(idle.calls, ['recovery']);
+});
+
+
+test('superseded automatic authority or paused execution never falls back to paid original-input research', async t => {
+  const previous = process.env.STAFF_INVENTORY_RESEARCH_RECOVERY_ENABLED;
+  t.after(() => { if (previous === undefined) delete process.env.STAFF_INVENTORY_RESEARCH_RECOVERY_ENABLED; else process.env.STAFF_INVENTORY_RESEARCH_RECOVERY_ENABLED = previous; });
+  const claim = { jobId: '11111111-1111-4111-8111-111111111111', leaseToken: '22222222-2222-4222-8222-222222222222',
+    leaseExpiresAt: new Date(Date.now() + 180000).toISOString(), inputHash: 'a'.repeat(64), attempt: 2,
+    recoveryEvidenceHash: 'b'.repeat(64), input: { unit_id: 'superseded-unit' } } as any;
+  const read = t.mock.method(prisma, '$queryRaw', (async () => []) as any);
+  const fetch = t.mock.method(globalThis, 'fetch', async () => assert.fail('Stale automatic authority must not reach a provider.'));
+  for (const flag of ['true', 'false']) {
+    process.env.STAFF_INVENTORY_RESEARCH_RECOVERY_ENABLED = flag;
+    await assert.rejects(staffInventoryResearchWorkerDependencies.research(claim.input, new AbortController().signal, claim),
+      (error: unknown) => error instanceof StaffInventoryResearchError && error.code === 'unavailable');
+  }
+  assert.equal(read.mock.callCount(), 1); assert.equal(fetch.mock.callCount(), 0);
 });

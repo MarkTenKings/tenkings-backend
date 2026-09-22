@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { StaffInventoryResearchResultSchema, type StaffInventoryResearchCandidate, type StaffInventoryResearchResult } from './staffInventoryResearch';
-import { StaffInventoryResearchReviewSnapshotSchema, projectStaffInventoryResearchReview, type StaffInventoryResearchReviewSnapshot } from '@tenkings/shared';
+import { StaffInventoryResearchReviewSnapshotSchema, StaffInventoryResearchRecoverySnapshotSchema, projectStaffInventoryResearchReview, type StaffInventoryResearchReviewSnapshot, type StaffInventoryResearchRecoverySnapshot } from '@tenkings/shared';
 export { StaffInventoryResearchReviewCommandSchema, StaffInventoryResearchReviewSnapshotSchema, projectStaffInventoryResearchReview } from '@tenkings/shared';
 export type { StaffInventoryResearchReviewCommand, StaffInventoryResearchReviewSnapshot } from '@tenkings/shared';
 export type StaffInventoryResearchReviewProjection = NonNullable<ReturnType<typeof projectStaffInventoryResearchReview>>;
+export { StaffInventoryResearchRecoverySnapshotSchema } from '@tenkings/shared';
+export type { StaffInventoryResearchRecoverySnapshot } from '@tenkings/shared';
 
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value));
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -17,7 +19,30 @@ export const StaffInventoryResearchReviewResponseSchema = z.object({
 export type StaffInventoryResearchReviewResponse = z.infer<typeof StaffInventoryResearchReviewResponseSchema>;
 export type StaffInventoryResearchJobWithReview = import('@tenkings/database').StaffInventoryResearchStatusV2 & {
   result_hash: string | null; review: StaffInventoryResearchReviewSnapshot | null;
+  recovery?: StaffInventoryResearchRecoverySnapshot | null;
 };
+
+export function bindStaffInventoryResearchRecovery(input: unknown, job: { job_id: string; unit_id: string; description_event_id: string; input_hash: string }): StaffInventoryResearchRecoverySnapshot | null {
+  if (input === undefined || input === null) return null;
+  const snapshot = StaffInventoryResearchRecoverySnapshotSchema.parse(input);
+  if (snapshot.job_id !== job.job_id || snapshot.unit_id !== job.unit_id || snapshot.description_event_id !== job.description_event_id || snapshot.input_hash !== job.input_hash) throw new Error('Recovery belongs to another saved research input.');
+  return snapshot;
+}
+
+export function staffInventoryRecoveryDisplay(snapshot: StaffInventoryResearchRecoverySnapshot, enabled: boolean) {
+  const active = enabled && ['pending', 'checking_details', 'research_queued'].includes(snapshot.status);
+  const paused = !enabled && ['pending', 'checking_details', 'research_queued'].includes(snapshot.status);
+  const labels: Record<StaffInventoryResearchRecoverySnapshot['status'], string> = {
+    pending: 'Automatic check pending', checking_details: 'Checking missing details', waiting_catalog_evidence: 'Waiting for catalog evidence',
+    needs_staff_review: 'Details need staff review', waiting_new_evidence: 'Waiting for new evidence', research_queued: 'New research queued',
+    resolved: 'Recovery check complete', limit_reached: 'Waiting for new evidence',
+  };
+  return { label: paused ? 'Automatic checks paused' : labels[snapshot.status], active, paused };
+}
+
+export function staffInventoryRecoveryWaiting(snapshot: StaffInventoryResearchRecoverySnapshot): boolean {
+  return ['waiting_catalog_evidence', 'needs_staff_review', 'waiting_new_evidence', 'limit_reached'].includes(snapshot.status);
+}
 
 export const StaffInventoryMarketValueSummarySchema = z.object({
   unit_id: identity,
@@ -90,20 +115,24 @@ const jobEnvelope = z.object({
   status: z.enum(['queued', 'running', 'complete', 'failed', 'superseded']),
   completed_at: timestamp.nullable(), result: z.unknown(),
   job_id: z.string().uuid().optional(), result_hash: hash.nullable().optional(), review: z.unknown().optional(),
+  recovery: z.unknown().optional(),
 });
 
 /** Use only after readStaffInventoryResearchV2 has verified the persisted input
  * and result hashes. This adds display/status/binding checks, not DB authority. */
-export function summarizeStaffInventoryResearchMarketValue(input: unknown): StaffInventoryMarketValueSummary {
+export function summarizeStaffInventoryResearchMarketValue(input: unknown, recoveryEnabled = false): StaffInventoryMarketValueSummary {
   const job = jobEnvelope.parse(input);
+  const recovery = job.recovery == null ? null : bindStaffInventoryResearchRecovery(job.recovery, { ...job, job_id: job.job_id ?? '' });
+  const recoveryReason = recovery ? `${staffInventoryRecoveryDisplay(recovery, recoveryEnabled).label}. Open research for details.` : null;
   const summary: StaffInventoryMarketValueSummary = {
     unit_id: job.unit_id, description_event_id: job.description_event_id,
     status: 'unknown', value_cents: null, low_cents: null, high_cents: null,
     comp_count: 0, researched_at: null, reason: 'Saved research needs review before an estimate can be shown.',
   };
   if (job.status === 'queued' || job.status === 'running' || job.status === 'failed') {
-    return { ...summary, status: job.status, reason: job.status === 'queued' ? 'Research is queued.'
-      : job.status === 'running' ? 'Research is in progress.' : 'Research did not complete. Open research for details.' };
+    if (job.status === 'queued' && recovery && (staffInventoryRecoveryWaiting(recovery) || !recoveryEnabled && recovery.status !== 'research_queued')) return { ...summary, reason: recoveryReason! };
+    return { ...summary, status: job.status, reason: recoveryReason ?? (job.status === 'queued' ? 'Research is queued.'
+      : job.status === 'running' ? 'Research is in progress.' : 'Research did not complete. Open research for details.') };
   }
   if (job.status === 'superseded') return { ...summary, reason: 'This research belongs to an earlier card description.' };
   if (!job.completed_at) return summary;
@@ -122,7 +151,7 @@ export function summarizeStaffInventoryResearchMarketValue(input: unknown): Staf
       high_cents: projection.high_cents, comp_count: projection.status === 'estimated' ? projection.count : 0,
       researched_at: result.researched_at, reason: projection.reason };
   }
-  if (result.estimate.status === 'unknown') return { ...summary, researched_at: result.researched_at, reason: result.estimate.reason };
+  if (result.estimate.status === 'unknown') return { ...summary, researched_at: result.researched_at, reason: recoveryReason ?? result.estimate.reason };
   const value = calculation(result);
   if (!value) return summary;
   return { ...summary, status: 'estimated', value_cents: value.value_cents, low_cents: value.low_cents, high_cents: value.high_cents,

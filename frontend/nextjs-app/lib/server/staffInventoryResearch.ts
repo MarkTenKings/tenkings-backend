@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { StaffInventoryResearchRecoveryAssessment } from '@tenkings/shared';
+import { applyStaffInventoryResearchRecoveryContext } from './staffInventoryResearchRecoveryContext';
 import sharp from 'sharp';
 import { z } from 'zod';
 import {
@@ -45,6 +47,8 @@ export class StaffInventoryResearchError extends Error {
   }
 }
 export type StaffInventoryResearchDependencies = {
+  /** Audited private enrichment; output retains the original description binding. */
+  recoveryAssessment?: StaffInventoryResearchRecoveryAssessment;
   env?: Record<string, string | undefined>;
   fetchImpl?: typeof fetch;
   loadPhoto?: (key: string, signal: AbortSignal) => Promise<StaffInventoryVerifiedPhoto>;
@@ -620,7 +624,12 @@ function mergeCandidates(result: StaffInventoryResearchResult, incoming: StaffIn
 export async function researchStaffInventoryCard(input: StaffInventoryResearchInput, deps: StaffInventoryResearchDependencies = {}, signal?: AbortSignal): Promise<StaffInventoryResearchResult> {
   const parsed = StaffInventoryResearchInputSchema.safeParse(input);
   if (!parsed.success) throw new StaffInventoryResearchError('invalid_input');
-  const data = parsed.data, env = deps.env ?? process.env, started = Date.now();
+  let data = parsed.data;
+  if (deps.recoveryAssessment) {
+    try { data = applyStaffInventoryResearchRecoveryContext(data, deps.recoveryAssessment); }
+    catch { throw new StaffInventoryResearchError('invalid_input'); }
+  }
+  const env = deps.env ?? process.env, started = Date.now();
   const details: SaleDetailState | undefined = env.STAFF_INVENTORY_RESEARCH_SALE_DETAILS === 'true'
     ? { requests: [], cache: new Map(), completed: new Map(), facts: new Map(), originals: new WeakMap(), conflicts: new Set() } : undefined;
   const baseEngineVersion = deps.loadCatalog ? STAFF_INVENTORY_RESEARCH_CATALOG_ENGINE_VERSION : STAFF_INVENTORY_RESEARCH_ENGINE_VERSION;
@@ -673,7 +682,7 @@ export async function researchStaffInventoryCard(input: StaffInventoryResearchIn
         const source = await bounded(sourceSignal => fetchCandidates(data.description, query, soldKey, deps, sourceSignal, details), deadline(deps, 'sources'), innerSignal);
         result.candidates = source.candidates;
         result.diagnostics!.sources.push({ sequence: 1, ...source.diagnostic });
-        result.research_queries!.push({ sequence: 1, query, reason: 'Initial search from the saved card description.', status: 'completed', source_response_sha256: source.source_response_sha256, candidate_ids: source.candidates.map(candidate => candidate.id), error_code: null });
+        result.research_queries!.push({ sequence: 1, query, reason: deps.recoveryAssessment ? 'Initial search from saved details and receipt-bound original-photo recovery.' : 'Initial search from the saved card description.', status: 'completed', source_response_sha256: source.source_response_sha256, candidate_ids: source.candidates.map(candidate => candidate.id), error_code: null });
         timings.sources = Date.now() - start;
       })(),
       (async () => {

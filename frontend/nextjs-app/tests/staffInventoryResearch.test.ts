@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import sharp from 'sharp';
+import { prepareStaffInventoryResearchRecoveryIdentity } from '../lib/server/staffInventoryResearchRecoveryIdentity';
+import { STAFF_INVENTORY_IDENTIFICATION_FIELDS, type StaffInventoryIdentificationResponse } from '../lib/staffInventoryIdentification';
 import { canonical, inventoryHash } from '../../../packages/database/src/cardInventoryV2';
 import {
   StaffInventoryResearchInputSchema, StaffInventoryResearchResultSchema,
@@ -832,4 +834,40 @@ test('catalog printing-scope model cannot assert absent-stamp defaults, wrong ph
     await assert.rejects(researchCatalogScopeResolver(f.deps)(input, new AbortController().signal));
   }
   assert.match(f.calls.find(c => c.body?.text?.format?.name === 'card_printing_scope')!.body.instructions, /absence of a stamp does not establish/);
+});
+
+
+test('recovered missing fields drive research while original input and result binding remain unchanged', async () => {
+  const f = await fixture(), original = structuredClone(f.input);
+  f.input.description.year = null;
+  const before = JSON.stringify(f.input);
+  const receipt: StaffInventoryIdentificationResponse = {
+    suggestions: Object.fromEntries(STAFF_INVENTORY_IDENTIFICATION_FIELDS.map(field => [field, original.description[field] === null
+      ? { value: null, confidence: 'unknown', evidence: null }
+      : { value: original.description[field], confidence: 'high', evidence: `Printed ${field} visible on fixture photo.` }])) as StaffInventoryIdentificationResponse['suggestions'],
+    warnings: [], provenance: { model: 'gpt-6-astra', reasoning_effort: 'low', identified_at: NOW, elapsed_ms: 10,
+      photos: { front: { key: f.input.front_photo_key!, sha256: sha(f.bytes[0]) }, back: { key: f.input.back_photo_key!, sha256: sha(f.bytes[1]) } },
+      ocr: { provider: 'google_vision', front: 'read', back: 'read' } },
+  };
+  const recovery = await prepareStaffInventoryResearchRecoveryIdentity(f.input, { recognize: async () => receipt, loadReferences: async () => [f.reference] });
+  f.deps.recoveryAssessment = recovery;
+  const result = await researchStaffInventoryCard(f.input, f.deps);
+  assert.equal(result.estimate.value_cents, 1002);
+  assert.equal(result.description_event_id, f.input.description_event_id); assert.equal(result.description_hash, f.input.description_hash);
+  assert.equal(JSON.stringify(f.input), before); assert.equal(f.input.description.year, null);
+  assert.match(result.query!, /2024/); assert.match(result.research_queries![0].reason, /original-photo recovery/);
+});
+
+test('foreign, unready, or human-overwriting recovery context fails before provider work', async () => {
+  for (const mutation of ['foreign', 'unready', 'overwrite', 'unrecorded'] as const) {
+    const f = await fixture();
+    const recovery = await prepareStaffInventoryResearchRecoveryIdentity(f.input, { loadReferences: async () => [f.reference] });
+    if (mutation === 'foreign') recovery.source_input_sha256 = 'f'.repeat(64);
+    if (mutation === 'unready') { recovery.ready_for_research = false; recovery.evidence_sha256 = null; }
+    if (mutation === 'overwrite') recovery.proposed_description.year = '2023';
+    if (mutation === 'unrecorded') recovery.proposed_description.variant = 'Gold';
+    f.deps.recoveryAssessment = recovery;
+    await assert.rejects(researchStaffInventoryCard(f.input, f.deps), code('invalid_input'));
+    assert.equal(f.calls.length, 0);
+  }
 });

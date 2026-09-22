@@ -57,3 +57,4 @@ export * from "./staffInventoryV2";
 export * from "./staffInventoryV2Read";
 export * from "./staffInventoryResearchV2";
 export * from "./staffInventoryResearchReviewV2";
+export * from "./staffInventoryResearchRecoveryV2";
