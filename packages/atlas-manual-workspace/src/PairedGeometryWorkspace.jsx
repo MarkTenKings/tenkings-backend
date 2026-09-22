@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { sanitizeSpeedsterUnitQuad } from '@atlas/grading-core/geometry';
-import { geometryBase, geometryStatus, printedQuadOnOriginal } from './geometry-actions.mjs';
+import { canDetectMissingPhysical, geometryBase, geometryStatus, printedQuadOnOriginal } from './geometry-actions.mjs';
 import { gradientMapFromImage, snapSpeedsterPoint } from './gradient-snap';
 import { useVerifiedImage } from './verified-image.mjs';
 
@@ -37,6 +37,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
   const image = geometryImage(state, side, kind, images);
   const verified = useVerifiedImage(image);
   const current = (kind === 'PHYSICAL' ? slot.physical : slot.printed)?.quad ?? null;
+  const canDetect = canDetectMissingPhysical(state, side);
   const base = geometryBase(state, side, kind);
   const [draft, setDraft] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [corner, setCorner] = useState(0), [snap, setSnap] = useState(true), [readyKey, setReadyKey] = useState(null);
@@ -76,8 +77,10 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
   };
   const prepare = async () => {
     if (!onPrepare || busy || dirty || locked || preparing) return;
-    setBusy('PREPARING'); setError('');
-    try { await onPrepare(side); } catch { setError('Preparation did not finish. The saved physical edge is retained.'); }
+    setBusy(canDetect ? 'DETECTING' : 'PREPARING'); setError('');
+    try { await onPrepare(side); } catch { setError(canDetect
+      ? 'Automatic edges could not be prepared. Your saved photo and the other side are retained. You can retry or place the physical edge manually.'
+      : 'Preparation did not finish. The saved physical edge is retained.'); }
     finally { setBusy(false); }
   };
   let physical = kind === 'PHYSICAL' ? quad : slot.prepared ? [{ x: 0, y: 0 }, { x: 1269 / 1270, y: 0 }, { x: 1269 / 1270, y: 1777 / 1778 }, { x: 0, y: 1777 / 1778 }] : null;
@@ -89,7 +92,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
   };
   const inactive = busy || locked || stale || !ready;
   return <section className="am-side" aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} geometry`}>
-    <div className="am-side-heading"><h2>{side === 'FRONT' ? 'Front' : 'Back'}</h2><span>{busy ? busy === 'PREPARING' ? 'Preparing…' : 'Saving…' : dirty ? 'Unsaved adjustment' : preparing ? 'Preparing…' : STATUS[status.stage]}</span></div>
+    <div className="am-side-heading"><h2>{side === 'FRONT' ? 'Front' : 'Back'}</h2><span>{busy ? busy === 'DETECTING' ? 'Detecting edges…' : busy === 'PREPARING' ? 'Preparing…' : 'Saving…' : dirty ? 'Unsaved adjustment' : preparing ? canDetect ? 'Detecting edges…' : 'Preparing…' : STATUS[status.stage]}</span></div>
     <div className="am-view-label">{kind === 'PHYSICAL' ? 'Original view' : 'Straightened view'}</div>
     <div className="am-viewport" onPointerMove={pointerMove} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
       {image ? <div className="am-image-plane" ref={area} style={{ transform: `translate(${pan.x}%,${pan.y}%) scale(${zoom})`, aspectRatio: `${image.width}/${image.height}` }}>
@@ -111,7 +114,10 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
           aria-label={`${side} ${kind === 'PHYSICAL' ? 'physical edge' : 'printed border'} ${CORNERS[index]}`}
           onFocus={() => setCorner(index)} onPointerDown={event => { if (inactive || event.button !== 0) return; setCorner(index); drag.current = { pointerId: event.pointerId, corner: index }; event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault(); }}
           onKeyDown={event => { const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }; const move = moves[event.key]; if (!move) return; event.preventDefault(); const step = event.shiftKey ? 10 : 1; setPoint(index, { x: point.x + move[0] * step / image.width, y: point.y + move[1] * step / image.height }); }} />)}
-      </div> : <div className="am-empty">{kind === 'PRINTED' && slot.physical ? 'This side needs a current straightened image.' : 'Waiting for a verified photo.'}</div>}
+      </div> : <div className="am-empty">{kind === 'PRINTED' && slot.image
+        ? slot.physical ? 'This side needs a current straightened image.'
+          : 'The photo is saved. Detect the physical edge first to create the straightened view for printed-border review.'
+        : 'Waiting for a verified photo.'}</div>}
     </div>
     {image && !verified.url && <p role={verified.error ? 'alert' : 'status'}>{verified.error ? 'Photo unavailable or its bytes did not match. Your saved work is retained.' : 'Loading the verified photo…'}</p>}
     <div className="am-local-tools">
@@ -123,6 +129,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
     {stale && <p role="alert">This side changed while you were editing. Your unsaved adjustment has been retained.</p>}
     {error && <p role="alert">{error}</p>}
     <div className="am-side-actions">
+      {!dirty && canDetect && onPrepare && <button type="button" className="am-primary" onClick={prepare} disabled={busy || locked || preparing}>Detect edges automatically</button>}
       {!quad && <button type="button" onClick={start} disabled={!ready || busy || locked}>Start manual outline</button>}
       {dirty && <><button type="button" className="am-primary" onClick={save} disabled={inactive || !onEdit}>Save outline</button><button type="button" disabled={busy || locked} onClick={() => { setDraft(null); setError(''); }}>Discard adjustment</button></>}
       {!dirty && slot.physical && !slot.prepared && onPrepare && <button type="button" onClick={prepare} disabled={busy || locked || preparing}>Prepare this side</button>}

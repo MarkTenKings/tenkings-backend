@@ -3,7 +3,7 @@ import { createIntakeRepository } from '@atlas/manual-intake/repository';
 import { createPhotoProcessor } from '@atlas/manual-intake/photo-processing';
 import { createManualRepository } from '@atlas/manual-service/repository';
 import { createManualWorkflow } from '@atlas/manual-workflow';
-import { createGeometryWorkspace, replaceGeometryImage, geometryBase } from '@atlas/manual-workspace/geometry-actions';
+import { createGeometryWorkspace, replaceGeometryImage, geometryBase, canDetectMissingPhysical } from '@atlas/manual-workspace/geometry-actions';
 import { proposePhysicalGeometry, prepareGeometry, describePreparationDerivative, adoptGeometryPreparation, adoptPhysicalGeometryProposal } from '@atlas/preparation-runtime';
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { createDetailsStore, gradingIdentity } from './details.mjs';
@@ -93,7 +93,15 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     assertCurrent:({card,staff})=>current(staff,card),
     prepare:({geometry,side,source,staff})=>limited(async()=>{
       await current(staff,{cardId:geometry.cardId,draft:{source}});
-      return prepared(geometry,side,source,await readPhoto(staff,geometry.cardId,source.uploads[side]));
+      const photo=await readPhoto(staff,geometry.cardId,source.uploads[side]);
+      if(!geometry.sides[side].physical){
+        requireThat(canDetectMissingPhysical(geometry,side),409,'MANUAL_GEOMETRY_RECOVERY_UNAVAILABLE');
+        const proposal=await proposePhysicalGeometry({workspace:geometry,side,source:photo,limits:limits.preparation,pythonExecutable});
+        const adoption=adoptPhysicalGeometryProposal(geometry,proposal);
+        requireThat(adoption.proposalApplied,422,'MANUAL_PHYSICAL_DETECTION_UNAVAILABLE');
+        geometry=adoption.state;
+      }
+      return prepared(geometry,side,source,photo);
     }),
     replaceSources:({card,geometry,sourceHash,staff})=>limited(async()=>{
       const pair=await intake.verifiedPair(staff,card.cardId);requireThat(pair.sourceHash===sourceHash,409,'MANUAL_PHOTOS_CHANGED');

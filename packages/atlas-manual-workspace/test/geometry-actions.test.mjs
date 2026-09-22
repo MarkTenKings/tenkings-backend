@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import {
-  GEOMETRY_CONVENTION, applyGeometryEdit, applyPreparedFrame, confirmBothGeometry,
+  GEOMETRY_CONVENTION, applyGeometryEdit, applyPreparedFrame, canDetectMissingPhysical, confirmBothGeometry,
   createGeometryWorkspace, geometryBase, geometryStatus, originalPointToPrepared,
   parseGeometryWorkspace, preparationBase, preparedPointToOriginal, printedQuadOnOriginal,
   replaceGeometryImage, serializeGeometryWorkspace, updateGeometrySettings,
@@ -74,6 +74,17 @@ test('a new paired workspace contains no fabricated physical edge, prepared imag
   assert.equal(state.sides.FRONT.prepared, null);
   assert.equal(state.sides.FRONT.printed, null);
   assert.throws(() => createGeometryWorkspace({ ...state, profile: 'OVERSIZED' }));
+});
+
+test('automatic physical recovery is limited to a photo with no adopted side work', () => {
+  assert.equal(canDetectMissingPhysical(initial(), 'BACK'), true);
+  assert.equal(canDetectMissingPhysical(initial({ absent: true }), 'BACK'), false);
+  const human = edit(initial(), 'BACK', 'PHYSICAL');
+  assert.equal(canDetectMissingPhysical(human, 'BACK'), false);
+  const replaced = replaceGeometryImage(human, { side: 'BACK', base: geometryBase(human, 'BACK', 'IMAGE'), image: image('BACK', 2) }).state;
+  assert.equal(replaced.sides.BACK.physical, null);
+  assert.equal(canDetectMissingPhysical(replaced, 'BACK'), false, 'A missing outline cannot erase evidence of previous human work');
+  assert.equal(canDetectMissingPhysical(replaced, 'FRONT'), true);
 });
 
 test('independent side intake begins with no photo, accepts version one, and leaves Back alone', () => {

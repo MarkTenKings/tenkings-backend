@@ -117,13 +117,22 @@ export async function runConnectedIntegration({ fixture, pythonExecutable, outpu
     }
     await denied(manual.previewReport(owner.staff, cardId), 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
     record('preparation-resource refusal saves truthful manual geometry fallback with no invented outline, preparation, defects or report');
+    assert.deepEqual((await connected.initialize(owner.staff, cardId, { sourceHash: pair.sourceHash, detailsRevision: details.body.revision })).card,
+      initialState.card, 'Opening an existing initialized card does not mutate its missing geometry');
 
     for (const side of ['FRONT', 'BACK']) {
-      const { geometry } = await state();
-      await execute({ type: 'GEOMETRY_EDIT', edit: { side, kind: 'PHYSICAL', base: geometryBase(geometry, side, 'PHYSICAL'), quad: samples[side].physical } });
+      const before = await state(), { geometry } = before;
+      if (side === 'FRONT') await execute({ type: 'GEOMETRY_EDIT', edit: { side, kind: 'PHYSICAL', base: geometryBase(geometry, side, 'PHYSICAL'), quad: samples[side].physical } });
       await execute({ type: 'PREPARE_SIDE', side });
-      const prepared = (await state()).geometry;
+      const after = await state(), prepared = after.geometry;
       assert(prepared.sides[side].prepared);
+      if (side === 'BACK') {
+        assert.equal(prepared.sides.BACK.physical.actor, 'ENGINE');
+        assert.equal(prepared.sides.BACK.confirmation, null);
+        assert.deepEqual(prepared.sides.FRONT, before.geometry.sides.FRONT);
+        assert.deepEqual(after.card.draft.source.prepared.FRONT, before.card.draft.source.prepared.FRONT);
+        record('retained missing Back recovers actual deterministic physical detection and preparation without changing human Front geometry or stored Front images');
+      }
       // A human can also set a printed border when automatic proposal has no
       // accepted result; manual tool authority never fabricates engine success.
       await execute({ type: 'GEOMETRY_EDIT', edit: { side, kind: 'PRINTED', base: geometryBase(prepared, side, 'PRINTED'), quad: samples[side].printed } });

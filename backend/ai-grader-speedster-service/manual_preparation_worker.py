@@ -15,7 +15,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from card_geometry import warp_to_card_map, warp_to_inspection_map
-from color_geometry import engine_error_result, propose_physical_outer, propose_printed_frame, serialize_proposal
+from color_geometry import engine_error_result, propose_printed_frame, serialize_proposal
+from atlas_photo_geometry import POLICY_VERSION, propose_physical_outer
 from preparation_pixels import encode_webp, reveal_views
 
 
@@ -57,9 +58,9 @@ def execute(request):
     image = checked_image(request)
     root = Path(__file__).resolve().parent
     identity = {
-        "opencv": cv2.__version__, "numpy": np.__version__,
+        "opencv": cv2.__version__, "numpy": np.__version__, "physicalProposalPolicy": POLICY_VERSION,
         "sources": {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in
-                    ("card_geometry.py", "color_geometry.py", "defect_math.py", "preparation_pixels.py")},
+                    ("card_geometry.py", "color_geometry.py", "atlas_photo_geometry.py", "defect_math.py", "preparation_pixels.py")},
     }
     if request["mode"] == "PHYSICAL":
         return {"ok": True, "identity": identity, "proposal": color_proposal(image, request["matColor"], "PHYSICAL_OUTER")}

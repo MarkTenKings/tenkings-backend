@@ -220,6 +220,14 @@ export function preparationBase(state, side) {
   requireThat(state.sides[side].physical, 'ATLAS_GEOMETRY_PHYSICAL_REQUIRED');
   return copy(baseFor(state, side, 'PREPARATION'));
 }
+/** Retry automatic detection only where no physical/prepared/review work has
+ * ever been adopted. A missing outline after replacing reviewed imagery is not
+ * permission to overwrite or reinterpret that side's historical work. */
+export function canDetectMissingPhysical(state, side) {
+  const slot = state.sides[side];
+  return Boolean(slot?.image && !slot.physical && !slot.prepared && !slot.printed && !slot.confirmation
+    && ['physicalRevision', 'preparationRevision', 'printedRevision', 'reviewRevision'].every(key => slot[key] === 0));
+}
 function change(state, sideName, side, invalidated) {
   const result = { ...state, reportRevision: next(state.reportRevision), sides: { ...state.sides, [sideName]: side } };
   validateState(result);

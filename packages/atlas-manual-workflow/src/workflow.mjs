@@ -1,6 +1,6 @@
 import { canonical, digest, object, requireThat, ManualServiceError } from '@atlas/manual-service/contract';
 import { createManualService } from '@atlas/manual-service';
-import { applyGeometryEdit, confirmBothGeometry, geometryStatus, parseGeometryWorkspace, GeometryActionError } from '@atlas/manual-workspace/geometry-actions';
+import { applyGeometryEdit, canDetectMissingPhysical, confirmBothGeometry, geometryStatus, parseGeometryWorkspace, GeometryActionError } from '@atlas/manual-workspace/geometry-actions';
 import { beginDefectEdit, applyDefectMeasurement, confirmDefectFindings, createDefectWorkspace, defectBase,
   markDefectSideInspected, parseDefectWorkspace, previewDefectReport, replaceDefectFrame, discardPendingDefectEdit, DefectActionError } from '@atlas/manual-workspace/defect-actions';
 import { measureDefectWorkspaceEdit, MeasurementError } from '@atlas/measurement-runtime';
@@ -105,6 +105,8 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       // saved physical outline and a reload still exposes Retry preparation.
     } else if (action.type === 'PREPARE_SIDE') {
       object(action, ['type', 'side']); requireThat(SIDES.includes(action.side) && typeof prepare === 'function', 503, 'MANUAL_PREPARATION_UNAVAILABLE');
+      if (!geometry.sides[action.side].physical) requireThat(canDetectMissingPhysical(geometry, action.side) && !defects,
+        409, 'MANUAL_GEOMETRY_RECOVERY_UNAVAILABLE');
       try {
         const prepared = await prepare({ geometry, side: action.side, source: draft.source, staff });
         geometry = parseGeometryWorkspace(prepared.geometry ?? prepared);

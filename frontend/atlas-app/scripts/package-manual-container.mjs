@@ -12,7 +12,7 @@ const tracked=execFileSync('git',['ls-files','-co','--exclude-standard'],{cwd:ro
 for(const file of tracked.filter(file=>/^(packages|frontend)\/[^/]+\/package.json$/.test(file))){const value=JSON.parse(await readFile(join(root,file),'utf8'));packages.set(value.name,{directory:dirname(file),value});}
 const allowed=new Set();function visit(name){const item=packages.get(name);if(!item||allowed.has(item.directory))return;allowed.add(item.directory);for(const [key,value]of Object.entries({...item.value.dependencies,...item.value.devDependencies}))if(value.startsWith('workspace:'))visit(key);}
 visit('@atlas/staff-app');
-const cpu=['manual_preparation_worker.py','manual_measurement_worker.py','manual_measurement.py','card_geometry.py','color_geometry.py','preparation_pixels.py','defect_math.py','trace_rle.py'];
+const cpu=['manual_preparation_worker.py','atlas_photo_geometry.py','test_atlas_photo_geometry.py','manual_measurement_worker.py','manual_measurement.py','card_geometry.py','color_geometry.py','preparation_pixels.py','defect_math.py','trace_rle.py'];
 const manifest=[];
 for(const file of [...new Set(tracked)].filter(file=>['package.json','pnpm-lock.yaml','pnpm-workspace.yaml'].includes(file)||[...allowed].some(directory=>file.startsWith(`${directory}/`))||cpu.some(name=>file===`backend/ai-grader-speedster-service/${name}`))){
   if(/(?:^|\/)(?:node_modules|\.next|\.generated)(?:\/|$)/.test(file))continue;
