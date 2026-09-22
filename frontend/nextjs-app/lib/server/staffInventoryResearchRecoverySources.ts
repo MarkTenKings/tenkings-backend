@@ -63,6 +63,21 @@ function relevant(found: InventoryRecoverySourceDiscovery['candidates'][number],
   const product = normalized(description.set_name!).match(/[\p{L}\p{N}]+/gu) ?? [];
   return new RegExp(`(?:^|[^\\d/-])${year}(?:$|[^\\d/-])`).test(text) && product.length > 0 && product.every(word => words.has(word));
 }
+function validSearchPayload(provider: Provider, text: string) {
+  if (provider === 'bing_rss') {
+    const channel = /^\s*(?:<\?xml\b[^?]*\?>\s*)?<rss\b[^>]*>\s*<channel\b[^>]*>([\s\S]*)<\/channel>\s*<\/rss>\s*$/i.exec(text)?.[1];
+    if (channel === undefined || /<\/?(?:html|body)\b/i.test(channel)) return false;
+    const items = channel.match(/<item\b[^>]*>[\s\S]*?<\/item>/gi) ?? [];
+    return items.length === (channel.match(/<item\b/gi) ?? []).length
+      && items.length === (channel.match(/<\/item\s*>/gi) ?? []).length
+      && items.every(item => /<title\b[^>]*>[\s\S]*?<\/title>/i.test(item) && /<link\b[^>]*>[\s\S]*?<\/link>/i.test(item));
+  }
+  // A challenge or an unrelated HTML page is unavailable, never a successful
+  // search with no matches. Do not submit or bypass the provider's challenge.
+  return !/(?:challenge-form|anomaly-modal|anomaly\.js|cf-chl-|g-recaptcha|h-captcha)/i.test(text)
+    && /<html\b[^>]*>[\s\S]*<body\b[^>]*>[\s\S]*<\/body>\s*<\/html>\s*$/i.test(text)
+    && /\bclass\s*=\s*["'][^"']*\b(?:result__a|no-results|result--no-result)\b[^"']*["']/i.test(text);
+}
 function parse(provider: Provider, text: string, description: StaffInventoryResearchDescription) {
   const candidates: InventoryRecoverySourceDiscovery['candidates'] = [];
   const pattern = provider === 'bing_rss' ? /<item\b[^>]*>([\s\S]*?)<\/item>/gi : /<a\b([^>]{0,4096})>([\s\S]*?)<\/a>/gi;
@@ -120,7 +135,7 @@ export async function prepareRecoverySources(description: StaffInventoryResearch
     for (const provider of ['bing_rss', 'duckduckgo_html'] as const) {
       if (controller.signal.aborted || receipt.candidates.length >= STAFF_INVENTORY_RECOVERY_SOURCE_LIMITS.candidates) break;
       const url = provider === 'bing_rss' ? `https://www.bing.com/search?format=rss&q=${encodeURIComponent(demand.query)}`
-        : `https://duckduckgo.com/html/?q=${encodeURIComponent(demand.query)}`;
+        : `https://html.duckduckgo.com/html/?q=${encodeURIComponent(demand.query)}`;
       let rejectAbort: (() => void) | undefined;
       try {
         const cancelled = new Promise<never>((_, reject) => {
@@ -129,17 +144,20 @@ export async function prepareRecoverySources(description: StaffInventoryResearch
         const read = async () => {
           const response = await (deps.fetchImpl ?? fetch)(url, { method: 'GET', redirect: 'error', cache: 'no-store', signal: controller.signal,
             headers: { Accept: provider === 'bing_rss' ? 'application/rss+xml,application/xml,text/xml' : 'text/html', 'User-Agent': 'TenKingsCatalogSourceReview/1.0' } });
-          if (controller.signal.aborted || !response.ok || response.redirected || response.url && response.url !== url) {
+          if (controller.signal.aborted || response.status !== 200 || response.redirected || response.url && response.url !== url) {
             void response.body?.cancel().catch(() => {}); throw new DiscoveryFailure(controller.signal.aborted ? 'cancelled' : 'failed');
           }
-          if (!/^(?:application\/(?:rss\+xml|xml)|text\/(?:xml|html))\b/i.test(response.headers.get('content-type') ?? '')) {
+          const contentType = response.headers.get('content-type') ?? '';
+          if (!(provider === 'bing_rss' ? /^(?:application\/(?:rss\+xml|xml)|text\/xml)\b/i : /^text\/html\b/i).test(contentType)) {
             void response.body?.cancel().catch(() => {}); throw new DiscoveryFailure('failed');
           }
           return responseBytes(response, controller.signal);
         };
         const bytes = await Promise.race([read(), cancelled]);
+        const text = bytes.toString('utf8');
+        if (!validSearchPayload(provider, text)) throw new DiscoveryFailure('failed');
         receipt.requests.push({ provider, response_sha256: sha(bytes), status: 'completed' });
-        for (const found of parse(provider, bytes.toString('utf8'), description)) {
+        for (const found of parse(provider, text, description)) {
           if (!receipt.candidates.some(prior => prior.url === found.url)) receipt.candidates.push(found);
           if (receipt.candidates.length === STAFF_INVENTORY_RECOVERY_SOURCE_LIMITS.candidates) break;
         }

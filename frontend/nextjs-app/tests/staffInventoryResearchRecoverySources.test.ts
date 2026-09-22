@@ -11,7 +11,7 @@ const description: StaffInventoryResearchDescription = { name: 'Private card dis
 const signal = () => new AbortController().signal;
 const rss = (rows: { title: string; url: string }[]) => `<rss><channel>${rows.map(row => `<item><title>${row.title}</title><link>${row.url}</link></item>`).join('')}</channel></rss>`;
 const xml = (body: string) => new Response(body, { headers: { 'content-type': 'application/rss+xml' } });
-const html = (body: string) => new Response(body, { headers: { 'content-type': 'text/html' } });
+const html = (body: string) => new Response(`<!doctype html><html><body>${body}</body></html>`, { headers: { 'content-type': 'text/html' } });
 
 test('only normalized public product demand enters queries and distinct years/seasons never merge', () => {
   const demand = inventoryRecoverySourceDemand(description)!;
@@ -52,10 +52,13 @@ test('three review candidates stop after one search and bind only actual search 
 test('second bounded search unwraps DuckDuckGo data links, deduplicates and rejects untrusted/search targets without visiting them', async () => {
   const a = 'https://www.topps.com/checklist-a', b = 'https://www.beckett.com/news/synthetic-checklist/';
   let calls = 0;
-  const result = await prepareRecoverySources(description, signal(), { fetchImpl: async url => {
+  const result = await prepareRecoverySources(description, signal(), { fetchImpl: async (url, init) => {
     calls++;
     if (String(url).startsWith('https://www.bing.com/')) return xml(rss([{ title: '2023-24 Donruss Optic A', url: a }, { title: 'Search', url: 'https://www.topps.com/search?q=optic' }]));
-    assert.ok(String(url).startsWith('https://duckduckgo.com/html/'));
+    const endpoint = new URL(String(url));
+    assert.equal(endpoint.origin, 'https://html.duckduckgo.com'); assert.equal(endpoint.pathname, '/html/');
+    assert.equal(endpoint.searchParams.get('q'), inventoryRecoverySourceDemand(description)!.query);
+    assert.equal(init?.redirect, 'error');
     return html(`<a class="result__a" href="${a}">Duplicate A</a><a href="//duckduckgo.com/l/?uddg=${encodeURIComponent(b)}&amp;rut=ignored" class="result__a"><b>2023-24 Donruss Optic B</b></a>
       <a class="result__a" href="https://evil.example/steal">Ignore</a><a class="result__a" href="https://www.topps.com/search/something">Ignore search</a>`);
   } });
@@ -77,11 +80,68 @@ test('response byte bounds cancel oversized bodies and redirects or unsupported 
 });
 
 test('bounded no-result and provider failure are honest terminal receipts, not synthetic source links', async () => {
-  const empty = await prepareRecoverySources(description, signal(), { fetchImpl: async () => xml(rss([])) });
+  const empty = await prepareRecoverySources(description, signal(), { fetchImpl: async url => String(url).startsWith('https://www.bing.com/')
+    ? xml(rss([])) : html('<div class="no-results"><h1>No results found</h1></div>') });
   assert.equal(empty.status, 'not_found'); assert.equal(empty.requests.length, 2); assert.deepEqual(empty.candidates, []);
+  assert.deepEqual(empty.requests.map(request => request.status), ['completed', 'completed']);
+  assert.ok(empty.requests.every(request => request.response_sha256 !== null));
   let calls = 0;
   const unavailable = await prepareRecoverySources(description, signal(), { fetchImpl: async () => { calls++; throw new Error('private detail'); } });
   assert.equal(calls, 2); assert.equal(unavailable.status, 'unavailable'); assert.equal(JSON.stringify(unavailable).includes('private detail'), false);
+});
+
+test('only HTTP 200 can complete a provider request, even when another success status contains plausible results', async () => {
+  for (const status of [202, 204, 206]) {
+    let calls = 0;
+    const result = await prepareRecoverySources(description, signal(), { fetchImpl: async url => {
+      calls++;
+      const bing = String(url).startsWith('https://www.bing.com/');
+      return new Response(status === 204 ? null : bing ? rss([]) : '<html><body><div class="no-results">No results found</div></body></html>',
+        { status, headers: { 'content-type': bing ? 'application/rss+xml' : 'text/html' } });
+    } });
+    assert.equal(calls, 2); assert.equal(result.status, 'unavailable'); assert.deepEqual(result.candidates, []);
+    assert.deepEqual(result.requests.map(request => [request.status, request.response_sha256]), [['failed', null], ['failed', null]]);
+  }
+});
+
+test('DuckDuckGo challenges and malformed pages fail instead of becoming completed empty searches', async () => {
+  const plausible = '<a class="result__a" href="https://www.topps.com/2023-24-donruss-optic">2023-24 Donruss Optic checklist</a>';
+  const payloads = [
+    `<html><body><form id="challenge-form"></form>${plausible}</body></html>`,
+    `<html><body><div class="anomaly-modal"></div>${plausible}</body></html>`,
+    '<html><body><script src="/anomaly.js"></script><div class="no-results">No results found</div></body></html>',
+    '<html><body>Temporarily unavailable</body></html>',
+    `<html><body>${plausible}`,
+    rss([]),
+  ];
+  for (const payload of payloads) {
+    let calls = 0;
+    const result = await prepareRecoverySources(description, signal(), { fetchImpl: async url => {
+      calls++; if (String(url).startsWith('https://www.bing.com/')) throw new Error('Fixture unavailable');
+      return new Response(payload, { headers: { 'content-type': 'text/html' } });
+    } });
+    assert.equal(calls, 2); assert.equal(result.status, 'unavailable'); assert.deepEqual(result.candidates, []);
+    assert.deepEqual(result.requests.map(request => [request.status, request.response_sha256]), [['failed', null], ['failed', null]]);
+  }
+});
+
+test('Bing requires a complete RSS feed rather than HTML, a truncated feed or malformed result items', async () => {
+  const payloads = [
+    '<html><body>Provider challenge</body></html>',
+    '<rss><channel><item><title>2023-24 Donruss Optic</title></item></channel></rss>',
+    '<rss><channel><item><link>https://www.topps.com/2023-24-donruss-optic</link></item></channel></rss>',
+    '<rss><channel><item><title>2023-24 Donruss Optic</title></channel></rss>',
+    '<rss><channel></channel>',
+  ];
+  for (const payload of payloads) {
+    const result = await prepareRecoverySources(description, signal(), { fetchImpl: async url => {
+      if (String(url).startsWith('https://www.bing.com/')) return xml(payload);
+      return html('<div class="no-results">No results found</div>');
+    } });
+    assert.equal(result.status, 'not_found'); assert.deepEqual(result.candidates, []);
+    assert.deepEqual(result.requests[0], { provider: 'bing_rss', status: 'failed', response_sha256: null });
+    assert.equal(result.requests[1].status, 'completed'); assert.ok(result.requests[1].response_sha256);
+  }
 });
 
 test('one overall deadline stops even an abort-ignoring fetch and prevents the second search', async t => {
