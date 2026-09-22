@@ -1,6 +1,10 @@
 # ATLAS implementation and operational acceptance
 
-> Current I acceptance outcome (2026-09-11, observed through 19:05 UTC): source `89c55d916130` remains deployed, but the owner’s fresh-card test failed. Automatic first-pair enrollment succeeded; the first run stopped in IDENTITY after database timeouts, and the next card is blocked by the one-distinct-card pilot allowance. A settled FAILED run also lacks manual takeover. The cohort is no longer empty. See the [architecture dissection and repair recommendation](audits/2026-09-11/README.md). No application or production-state change was made by this audit; old-card recovery remains canceled.
+Current implementation checkpoint — September22,2026: source `79483f13` implements independent durable per-side geometry, the branded interactive report and exact-approval immutable versioned publication with delivery retry. Native/PG44/CI/browser qualification passed; migrations43/44 and native startup are complete. Caddy activation, all five control bindings, public promotion and final hosted verification are complete; the release is live. See the [current audit](audits/2026-09-22/report-early-geometry-release.md).
+
+Software qualification is separate from Mark's signed-in real-card/optical acceptance. Browser print/save PDF and stable report numbering do not issue physical certificates, slab labels or NFC credentials. Manual finishing integration, qualified Mac writing/permanent locking, signing/pairing and hosted recovery remain unfinished; no production card approval or physical finishing is claimed. The I/H/G observations below remain historical.
+
+> Historical I acceptance outcome (2026-09-11, observed through 19:05 UTC): source `89c55d916130` was deployed, but the owner’s fresh-card test failed. Automatic first-pair enrollment succeeded; the first run stopped in IDENTITY after database timeouts, and the next card was blocked by the one-distinct-card pilot allowance. A settled FAILED run also lacked manual takeover. The cohort was no longer empty. See the [architecture dissection and repair recommendation](audits/2026-09-11/README.md). No application or production-state change was made by that audit; old-card recovery remained canceled.
 
 ## Historical runtime checkpoints
 

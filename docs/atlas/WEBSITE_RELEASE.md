@@ -1,8 +1,12 @@
 # ATLAS website release status
 
-> Current I acceptance outcome (2026-09-11, observed through 19:05 UTC): source `89c55d916130` remains deployed, but the owner’s fresh-card test failed. Automatic first-pair enrollment succeeded; the first run stopped in IDENTITY after database timeouts, and the next card is blocked by the one-distinct-card pilot allowance. A settled FAILED run also lacks manual takeover. The cohort is no longer empty. See the [architecture dissection and repair recommendation](audits/2026-09-11/README.md). No application or production-state change was made by this audit; old-card recovery remains canceled.
+Current release checkpoint — September22,2026: manual report/early-geometry source `79483f13` has qualified all three READY web builds and the native image; staff schema44 is applied and private `aba32d6d…` is started. Caddy activation, all five control bindings, public promotion and final hosted verification are complete; the release is live. See the [current release audit](audits/2026-09-22/report-early-geometry-release.md) and [connected manual runbook](runbooks/CONNECTED_MANUAL_RELEASE.md). The I/H/G records below are historical and must not be used as current runtime or replay instructions.
 
-## Current I deployment and evidence
+> Historical I acceptance outcome (2026-09-11, observed through 19:05 UTC): source `89c55d916130` was deployed, but the owner’s fresh-card test failed. Automatic first-pair enrollment succeeded; the first run stopped in IDENTITY after database timeouts, and the next card was blocked by the one-distinct-card pilot allowance. A settled FAILED run also lacked manual takeover. The cohort was no longer empty. See the [architecture dissection and repair recommendation](audits/2026-09-11/README.md). No application or production-state change was made by that audit; old-card recovery remained canceled.
+
+<a id="current-i-deployment-and-evidence"></a>
+
+## Historical I deployment and evidence — September11 checkpoint
 
 **Fresh-card acceptance failed after deployment.** At 18:54 UTC the first fresh card was stored IN_PROGRESS/IDENTITY with run FAILED and three APPLIED attempts; the second was WAITING/PHOTOS. The latest private log identifies ledger reserve → Prisma P2028 after 10,215 ms at 18:31:29 UTC. At 19:02 UTC the live continuation was 12,207,165 bytes, the uploaded HEIC-derived PNG pair totaled 30,096,524 bytes, and processingLimit remained 1. Current grading-control revision is 8, compared with 7 in the earlier release snapshot. Final human review/approval remains untested and reviewer certification is not currently valid. See [the complete audit](audits/2026-09-11/README.md). This supersedes pending/empty-state statements in the earlier deployment observations below.
 
