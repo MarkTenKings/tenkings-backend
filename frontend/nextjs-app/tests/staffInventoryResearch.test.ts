@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import sharp from 'sharp';
 import { retainedEddyBeckettAnalysis, retainedEddyCorrectedAnalysis1, retainedEddyCorrectedAnalysis2 } from './fixtures/staffInventoryResearchBeckett';
+import { retainedSnivyAnalysis1, retainedSnivyAnalysis2 } from './fixtures/staffInventoryResearchSnivy';
 import { prepareStaffInventoryResearchRecoveryIdentity } from '../lib/server/staffInventoryResearchRecoveryIdentity';
 import { STAFF_INVENTORY_IDENTIFICATION_FIELDS, type StaffInventoryIdentificationResponse } from '../lib/staffInventoryIdentification';
 import { canonical, inventoryHash } from '../../../packages/database/src/cardInventoryV2';
@@ -256,6 +257,81 @@ test('retained all-back photo assertion stays rejected while its independently v
   assert.ok(result.diagnostics?.candidates.every(candidate => candidate.model_assessment === null && candidate.comparison_status === 'failed'));
   assert.deepEqual(result.selected_candidate_ids, []); assert.equal(result.estimate.status, 'unknown');
   assert.throws(() => parseStaffInventoryResearchOutput(output(responses[1])), code('malformed_response'));
+});
+
+test('retained duplicate-field Snivy response preserves six comparisons; a uniquely cited response accepts nine without a value', async () => {
+  for (const scenario of ['duplicate', 'conflicting_duplicate', 'foreign_photo', 'compliant']) {
+    const compliant = scenario === 'compliant';
+    const f = await fixture();
+    f.input.description = { name: 'Snivy', category: 'Pokemon', year: '2013', manufacturer: 'Pokémon', set_name: 'Legendary Treasures Radiant Collection', card_number: 'RC1/RC25', variant: null, card_type: 'Basic Pokémon' };
+    f.deps.loadReferences = async () => [];
+    const responses = [retainedSnivyAnalysis1, retainedSnivyAnalysis2].map(value => {
+      const answer = structuredClone(value);
+      for (const observation of answer.photo_identity.observations) observation.photo_sha256 = sha(f.bytes[observation.side === 'front' ? 0 : 1]);
+      return { ...answer, refinement: answer.refinement as typeof answer.refinement | null };
+    });
+    const rejected = structuredClone(responses[1]);
+    assert.throws(() => parseStaffInventoryResearchOutput(output(rejected)), code('malformed_response'));
+    if (compliant || scenario === 'foreign_photo') {
+      // An explicitly authored contract-compliant answer, not a parser repair:
+      // retain the existing back manufacturer citation and every other fact.
+      // Production must still reject the actual duplicate response unchanged.
+      responses[1].photo_identity.observations.splice(3, 1);
+      assert.deepEqual(responses[1].photo_identity.observations, rejected.photo_identity.observations.filter((_, index) => index !== 3));
+      assert.deepEqual(responses[1].comparisons, rejected.comparisons);
+      assert.deepEqual(responses[1].target_condition, rejected.target_condition);
+      assert.deepEqual(parseStaffInventoryResearchOutput(output(responses[1])).photo_identity, responses[1].photo_identity);
+    }
+    if (scenario === 'conflicting_duplicate') {
+      responses[1].photo_identity.observations[3].value = 'Conflicting Manufacturer';
+      assert.throws(() => parseStaffInventoryResearchOutput(output(responses[1])), code('malformed_response'));
+    }
+    if (scenario === 'foreign_photo') responses[1].photo_identity.observations[3].photo_sha256 = 'f'.repeat(64);
+    // End this offline two-response experiment after round two. Its proposed
+    // third search is outside the photo-observation contract being exercised.
+    responses[1].refinement = null;
+    const candidateBytes = await Promise.all(Array.from({ length: 9 }, (_, index) => sharp({ create: { width: 100, height: 140, channels: 3, background: { r: 20 + index * 20, g: 90, b: 160 } } }).jpeg().toBuffer()));
+    const template = f.items[0];
+    f.items.splice(0, f.items.length, ...candidateBytes.map((_, index) => ({
+      ...template, itemId: `${111111111100 + index}`, url: `https://www.ebay.com/itm/${111111111100 + index}`,
+      title: '2013 Pokémon Legendary Treasures Radiant Collection Snivy RC1/RC25',
+      thumbnailUrl: `https://i.ebayimg.com/images/g/snivy-fixture-${index}/s-l400.jpg`,
+      // Synthetic source prices do not qualify any uncertain printing. Preserve
+      // the one eligible / undisclosed offer / unknown-price distinction.
+      bestOfferAccepted: index === 0 ? false : index === 1 ? true : null,
+    })));
+    const fetch = f.deps.fetchImpl!;
+    let modelCalls = 0;
+    f.deps.fetchImpl = ((url, init) => {
+      const index = f.items.findIndex(item => item.thumbnailUrl === String(url));
+      if (index >= 0) return Promise.resolve(new Response(new Uint8Array(candidateBytes[index]), { headers: { 'content-type': 'image/jpeg' } }));
+      if (String(url) === 'https://api.openai.com/v1/responses') {
+        assert.ok(modelCalls < 2, 'The offline fixture has only two model responses');
+        f.model = responses[modelCalls++];
+      }
+      return fetch(url, init);
+    }) as typeof fetch;
+    const result = await researchStaffInventoryCard(f.input, f.deps);
+    assert.equal(modelCalls, 2); assert.equal(result.research_queries?.length, 2);
+    assert.equal(result.candidates.length, 9); assert.equal(result.candidates.filter(candidate => candidate.image).length, 9);
+    assert.equal(StaffInventoryResearchResultSchema.safeParse(result).success, true);
+    assert.deepEqual(result.photo_identity, responses[compliant ? 1 : 0].photo_identity);
+    assert.deepEqual(result.target_condition, responses[compliant ? 1 : 0].target_condition);
+    assert.equal(result.photo_identity?.status, 'unresolved'); assert.equal(result.identity.status, 'unresolved');
+    assert.deepEqual(result.selected_candidate_ids, []); assert.equal(result.estimate.status, 'unknown'); assert.equal(result.estimate.value_cents, null);
+    assert.ok(result.comparison_assessments?.every(comparison => comparison.classification === 'possible'));
+    assert.equal(result.diagnostics?.reason_codes.includes('OPTIONAL_COMPARISON_FAILED'), !compliant);
+    assert.equal(result.diagnostics?.candidates.filter(candidate => candidate.comparison_status === 'assessed').length, compliant ? 9 : 6);
+    assert.equal(result.diagnostics?.candidates.filter(candidate => candidate.comparison_status === 'failed').length, compliant ? 0 : 3);
+    for (const diagnostic of result.diagnostics!.candidates.filter(candidate => candidate.comparison_status === 'assessed')) {
+      assert.deepEqual(diagnostic.model_assessment, responses[compliant ? 1 : 0].comparisons.find(comparison => comparison.candidate_id === diagnostic.candidate_id));
+      assert.equal(diagnostic.model_image_sha256, result.candidates.find(candidate => candidate.id === diagnostic.candidate_id)?.image?.sha256);
+    }
+    const request = f.calls.find(call => call.url === 'https://api.openai.com/v1/responses')!.body;
+    assert.match(request.instructions, /at most one entry for each field/);
+    assert.match(request.instructions, /This rule also applies when status is unresolved/);
+    assert.throws(() => parseStaffInventoryResearchOutput(output(rejected)), code('malformed_response'));
+  }
 });
 
 test('Beckett label alias cannot change grader or grade and rejects conflicting or absent visible evidence', async () => {

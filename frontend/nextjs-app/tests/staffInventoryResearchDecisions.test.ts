@@ -159,6 +159,56 @@ test('card number contradictions preserve prefixes, denominators and leading zer
   assert.equal(inspectStaffInventoryResearchTitle(description({ card_number: 'RC1/RC25' }), candidate('2023-24 Panini Contenders Jayson Tatum #RC1 / RC25')).estimate_anchored, true);
 });
 
+test('sports numeric card numbers remain distinct from whitespace-separated serial limits', () => {
+  const saved = description({ name: 'Draymond Green', year: '2024-25', set_name: 'Select Basketball', card_number: '302' });
+  const prefix = 'Panini 2024-25 Select Basketball Draymond Green Prizm Mezzanine';
+  for (const number of ['#302 /99', '#302 / 99', '(#302 /99)', '# 302 /99']) {
+    const listing = candidate(`${prefix} ${number}`);
+    const title = inspectStaffInventoryResearchTitle(saved, listing);
+    assert.equal(title.number_anchored, true, number);
+    assert.equal(title.estimate_anchored, true, number);
+    assert.equal(title.reason_codes.includes('card_number_conflict'), false, number);
+    assert.equal(assessStaffInventoryResearchComparison(listing, saved, raw, comparison()).assessment.classification, 'matched', number);
+    assert.equal(assessStaffInventoryResearchComparison(listing, saved, raw, comparison({ classification: 'possible', variant_match: false })).assessment.classification, 'possible', number);
+  }
+  assert.equal(inspectStaffInventoryResearchTitle(description({ card_number: '007' }), candidate('2023-24 Panini Contenders Jayson Tatum #007 /99')).estimate_anchored, true);
+});
+
+test('sports serial separation preserves wrong numbers, leading zeros and unseparated slash ambiguity', () => {
+  const saved = description({ card_number: '302' });
+  for (const number of ['#303 /99', '#0302 /99', '#302/99', '#302/ 99', '#302 /99 /10', '#302 /RC25']) {
+    const decision = assessStaffInventoryResearchComparison(candidate(`2023-24 Panini Contenders Jayson Tatum ${number}`), saved, raw, comparison());
+    assert.equal(decision.assessment.classification, 'rejected', number);
+    assert.ok(decision.reason_codes.includes('card_number_conflict'), number);
+  }
+  const leadingZero = inspectStaffInventoryResearchTitle(description({ card_number: '007' }), candidate('2023-24 Panini Contenders Jayson Tatum #7 /99'));
+  assert.equal(leadingZero.number_anchored, false);
+  assert.ok(leadingZero.reason_codes.includes('card_number_conflict'));
+});
+
+test('serial separation does not discard saved fractional or alphanumeric card numbers or Pokemon denominators', () => {
+  for (const category of ['Sports cards', 'Pokemon'] as const) {
+    for (const [number, shown] of [['74/102', '#74 / 102'], ['RC1/RC25', '#RC1 / RC25'], ['302/99', '#302 /99']]) {
+      const saved = description({ category, card_number: number });
+      assert.equal(inspectStaffInventoryResearchTitle(saved, candidate(`2023-24 Panini Contenders Jayson Tatum ${shown}`)).number_anchored, true, `${category}: ${number}`);
+      const wrong = inspectStaffInventoryResearchTitle(saved, candidate(`2023-24 Panini Contenders Jayson Tatum ${shown.replace(/\d+$/, '100')}`));
+      assert.ok(wrong.reason_codes.includes('card_number_conflict'), `${category}: ${number}`);
+    }
+  }
+  for (const saved of [description({ category: 'Pokemon', card_number: '302' }), description({ card_number: 'RC1' })]) {
+    const title = inspectStaffInventoryResearchTitle(saved, candidate(`2023-24 Panini Contenders Jayson Tatum #${saved.card_number} /99`));
+    assert.ok(title.reason_codes.includes('card_number_conflict'));
+  }
+});
+
+test('a serial denominator, certification or grade still cannot supply the saved number after serial separation', () => {
+  for (const [number, shown] of [['302', '/302'], ['302', '/ 302'], ['302', '#303 /302'], ['302', '#303 / 302'], ['302', 'PSA Cert #302 /99'], ['302', 'serial 302'], ['302', '$302'], ['8', 'PSA 8 /99']]) {
+    const title = inspectStaffInventoryResearchTitle(description({ card_number: number }), candidate(`2023-24 Panini Contenders Jayson Tatum ${shown}`));
+    assert.equal(title.number_anchored, false, shown);
+    assert.equal(title.estimate_anchored, false, shown);
+  }
+});
+
 test('serial denominators, slab grades, certification numbers and prices cannot stand in for a missing card number', () => {
   for (const [number, shown] of [['35', '/35'], ['8', 'PSA 8'], ['8', 'Professional Sports Authenticator 8'], ['12345678', 'PSA 8 Cert #12345678'], ['8', '$8']]) {
     const result = inspectStaffInventoryResearchTitle(description({ card_number: number }), candidate(`2023-24 Panini Contenders Jayson Tatum ${shown}`));

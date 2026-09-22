@@ -134,7 +134,13 @@ function cardNumberEvidence(description: StaffInventoryResearchDescription, titl
   if (!expected) return { matched: false, conflicting: [] as string[] };
   const isCert = (index: number) => /\b(?:cert|certificate|certification)(?:\s+(?:number|no\.?))?\s*$/i.test(text.slice(Math.max(0, index - 30), index));
   const explicit = [...text.matchAll(/(?:^|[\s(])#\s*([A-Za-z0-9]+(?:\s*[-/]\s*[A-Za-z0-9]+)*)(?=$|[\s),.;:])/g)]
-    .filter(match => !isCert(match.index! + match[0].indexOf('#'))).map(match => numberIdentity(match[1]));
+    .filter(match => !isCert(match.index! + match[0].indexOf('#'))).map(match => {
+      // For a saved single numeric sports number, "#302 /99" names #302
+      // followed by a serial limit. Keep joined fractions and every saved
+      // fractional/alphanumeric number intact, including Pokémon denominators.
+      const serial = description.category === 'Sports cards' && /^\d+$/.test(expected) ? match[1].match(/^(\d+)\s+\/\s*\d+$/) : null;
+      return numberIdentity(serial ? serial[1] : match[1]);
+    });
   // A Pokémon denominator is part of the card number. A serial /35 is not #35.
   const numerator = expected.split('/')[0];
   const denominatorConflicts = expected.includes('/') ? [...text.matchAll(/\b([A-Za-z0-9]+\s*\/\s*[A-Za-z0-9]+)\b/g)]
@@ -144,7 +150,7 @@ function cardNumberEvidence(description: StaffInventoryResearchDescription, titl
   const found = [...text.matchAll(new RegExp(`(^|[^A-Za-z0-9/#-])#?(${expectedPattern})(?=$|[^A-Za-z0-9/#-])`, 'gi'))].some(match => {
     const index = match.index! + match[1].length;
     const before = text.slice(Math.max(0, index - 24), index);
-    return !gradeSpans.some(([start, end]) => index >= start && index < end) && !isCert(index) && !/(?:[$£€]|\b(?:USD|GBP|EUR|serial))\s*$/i.test(before);
+    return !gradeSpans.some(([start, end]) => index >= start && index < end) && !isCert(index) && !/(?:[/$£€]|\b(?:USD|GBP|EUR|serial))\s*$/i.test(before);
   });
   return { matched: found, conflicting: unique([...explicit.filter(number => number !== expected), ...denominatorConflicts]) };
 }
