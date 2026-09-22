@@ -51,7 +51,7 @@ test('lost plan reply survives client recreation and replays exact request and u
 test('lost successful PUT response reconciles exact key and never blindly uploads twice', async () => {
   const fixture = setup({ losePut: true });
   await fixture.client().upload(cardId, 'FRONT', 0, new Blob(['unchanged-native-photo']));
-  assert.equal(fixture.puts, 1); assert.equal(fixture.calls.filter(call => call.url.endsWith('/complete')).length, 2);
+  assert.equal(fixture.puts, 1); assert.equal(fixture.calls.filter(call => call.url.endsWith('/complete')).length, 1);
 });
 test('working preparation failure retains pending original for same-upload resume after reload', async () => {
   const fixture = setup({ failPrepare: true });

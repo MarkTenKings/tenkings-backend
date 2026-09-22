@@ -33,7 +33,8 @@ function geometry(cardId) {
 async function fixture() {
   const cardId = randomUUID(), staff = { id: randomUUID() }, principal = { id: staff.id, canCertify: true };
   let card;
-  const commands = new Map(), objects = new Map(), proposals = new Map(), f = { commits: [], measured: [], publications: [], publisher: async () => {}, resolve: null };
+  const commands = new Map(), objects = new Map(), proposals = new Map(), f = { commits: [], measured: [], publications: [], publisher: async () => {}, resolve: null,
+    artifactPuts: [], artifactGets: [], corruptNextWrite: false, corruptKey: null };
   const authorize = (actor, id) => { requireThat(actor === staff && id === cardId, 403, 'SYNTHETIC_ACCESS_DENIED'); };
   const repository = {
     async provision(actor, input) { authorize(actor, input.cardId); const document = stateDocument(input.draft);
@@ -50,8 +51,9 @@ async function fixture() {
     },
   };
   const artifacts = createManualArtifactStore({ transport: {
-    async putIfAbsent({ key, bytes, contentType, lineageSha256 }) { if (objects.has(key)) throw Error('immutable existing object'); objects.set(key, { bytes: Buffer.from(bytes), contentType, lineageSha256 }); },
-    async read({ key }) { return objects.get(key); },
+    async putIfAbsent({ key, bytes, contentType, lineageSha256 }) { f.artifactPuts.push(key); if (objects.has(key)) throw Error('immutable existing object');
+      objects.set(key, { bytes: Buffer.from(bytes), contentType, lineageSha256 }); if (f.corruptNextWrite) f.corruptKey = key; },
+    async read({ key }) { f.artifactGets.push(key); return key === f.corruptKey ? { ...objects.get(key), bytes: Buffer.from('corrupt') } : objects.get(key); },
   } });
   const workflow = createManualWorkflow({ repository, artifacts,
     resolveProposal: async ({ staff: actor, card: current, analysisId, proposalId }) => { authorize(actor, current.cardId); const found = proposals.get(`${analysisId}:${proposalId}`);
@@ -89,6 +91,39 @@ async function fixture() {
   });
   return f;
 }
+
+test('identity-only saves retain verified geometry/defect refs without repeat PUT/readback and preserve exact replay', async () => {
+  const f = await fixture(), before = f.card(); f.artifactPuts.length = 0; f.artifactGets.length = 0;
+  const command = { actionId: randomUUID(), expectedRevision: before.revision,
+    action: { type: 'IDENTITY_EDIT', identity: { ...before.draft.identity, playerName: 'Reviewed name' } } };
+  const result = await f.workflow.service.execute(f.staff, f.cardId, command);
+  assert.deepEqual(result.card.draft.geometry, before.draft.geometry); assert.deepEqual(result.card.draft.defects, before.draft.defects);
+  assert.equal(f.artifactPuts.length, 0); assert.equal(f.artifactGets.length, 2, 'both reused objects are still verified before the action');
+  assert.equal(result.card.revision, before.revision + 1);
+  assert.deepEqual(await f.workflow.service.execute(f.staff, f.cardId, command), result);
+  assert.equal(f.commits.length, 1); assert.equal(f.artifactGets.length, 2);
+  await assert.rejects(f.workflow.service.execute(f.staff, f.cardId, { ...command, actionId: randomUUID() }), { code: 'MANUAL_DRAFT_STALE' });
+  assert.equal(f.artifactPuts.length, 0);
+});
+
+test('inspection saves write and verify only changed defects; tampered readback commits nothing', async () => {
+  const f = await fixture(), state = await f.state(), before = f.card(); f.artifactPuts.length = 0; f.artifactGets.length = 0;
+  await f.execute({ type: 'INSPECT_SIDE', side: 'FRONT', inspected: true, base: defectBase(state.defects, 'FRONT') });
+  assert.equal(f.artifactPuts.length, 1); assert.match(f.artifactPuts[0], /\/DEFECTS\//);
+  assert.equal(f.artifactGets.length, 3); assert.deepEqual(f.card().draft.geometry, before.draft.geometry);
+  assert.notDeepEqual(f.card().draft.defects, before.draft.defects);
+  const current = f.card(), next = await f.state(); f.corruptNextWrite = true;
+  await assert.rejects(f.execute({ type: 'INSPECT_SIDE', side: 'BACK', inspected: true, base: defectBase(next.defects, 'BACK') }), { code: 'MANUAL_ARTIFACT_UNVERIFIED' });
+  assert.deepEqual(f.card(), current); assert.equal(f.commits.length, 1);
+});
+
+test('unchanged artifacts still require exact verified bytes before reference reuse', async () => {
+  const f = await fixture(), before = f.card(); f.corruptKey = before.draft.geometry.ref.key;
+  f.artifactPuts.length = 0;
+  await assert.rejects(f.execute({ type: 'IDENTITY_EDIT', identity: { ...before.draft.identity, playerName: 'Must not save' } }),
+    { code: 'MANUAL_ARTIFACT_UNVERIFIED' });
+  assert.deepEqual(f.card(), before); assert.equal(f.artifactPuts.length, 0); assert.equal(f.commits.length, 0);
+});
 
 test('acceptance stages a separate exact trace for measurement, never model-authored area or inspection authority', async () => {
   const f = await fixture(); await f.review(); const state = await f.state(), pending = state.defects.sides.FRONT.pending;

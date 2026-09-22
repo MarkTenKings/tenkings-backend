@@ -22,10 +22,14 @@ export function createWorkflowHandler({ workflow, boundary, origin, assertReques
       const staff = await boundary.authenticate(req.headers.cookie ?? '', write ? req.headers['x-atlas-csrf'] : undefined);
       if (write) res.status(200).json(await (found[2] === 'proposal-trace' ? workflow.stageProposalTrace : workflow.stageTrace)(staff, found[1], req.body));
       else {
-        const card = await workflow.service.read(staff, found[1]), state = await workflow.hydrate(card);
-        const approval = await workflow.service.latestApproval(staff, found[1]);
-        const images = await imageDescriptors({ card, state, staff });
-        const extras = workspaceExtras ? await workspaceExtras({ card, state, staff }) : {};
+        const card = await workflow.service.read(staff, found[1]);
+        const [state, approval] = await Promise.all([
+          workflow.hydrate(card), workflow.service.latestApproval(staff, found[1]),
+        ]);
+        const [images, extras] = await Promise.all([
+          imageDescriptors({ card, state, staff }),
+          workspaceExtras ? workspaceExtras({ card, state, staff }) : {},
+        ]);
         res.status(200).json({ card, ...state, images, approval, ...extras });
       }
     } catch (error) {

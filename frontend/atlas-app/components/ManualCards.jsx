@@ -8,35 +8,66 @@ import {PairedGeometryWorkspace} from '@atlas/manual-workspace';
 import {DefectReviewWorkspace} from '@atlas/manual-workspace/defects';
 import {FinalReportReview} from '@atlas/manual-workspace/report-review';
 import {geometryStatus} from '@atlas/manual-workspace/geometry-actions';
+import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
 import {manualRequest,manualMessage} from '../lib/manual-client.mjs';
 import {STAFF_BASE_PATH} from '../lib/routes.mjs';
 import {createDefectAnalysisClient} from '../lib/manual-defect-analysis-client.mjs';
 
 const labels={name:'Name',category:'Printed category',manufacturer:'Manufacturer',card_number:'Card number',year:'Year',set_name:'Product / set',variant:'Printed variant',card_type:'Printed card type'};
 const prefix='/api/staff/manual-connected/cards';
+function detailErrors(details,changes){
+  const value={...details,...changes,fields:{...details.fields,...Object.fromEntries(Object.entries(changes).filter(([key])=>Object.hasOwn(labels,key)))}};
+  if(!['SPORTS','POKEMON'].includes(value.profile))return {profile:'Choose Sports or Pokémon.'};
+  const f=value.fields;
+  try{canonicalizeNewSpeedsterSessionIdentity(value.profile,value.profile==='SPORTS'
+    ?{playerName:f.name,year:f.year,manufacturer:f.manufacturer,productSet:f.set_name,parallel:value.parallel,insert:value.insert,cardNumber:f.card_number}
+    :{cardName:f.name,year:f.year,productSet:f.set_name,parallel:value.parallel,cardNumber:f.card_number,layoutType:value.layoutType});return {};}
+  catch(error){return Object.fromEntries(Object.entries(error.fields??{identity:'Complete the required card details.'}).map(([key,message])=>[({playerName:'name',cardName:'name',productSet:'set_name',cardNumber:'card_number'})[key]??key,message]));}
+}
 export default function ManualCards({staff,cardId=null}){
   const router=useRouter(),client=useRef(null),session=useRef(null),auto=useRef(new Set()),generation=useRef(0);
+  const savedRef=useRef(null),changesRef=useRef({}),activity=useRef(null),uploadLocks=useRef({}),reads=useRef({next:0,applied:0}),pendingRead=useRef(0);
   const [cards,setCards]=useState([]),[saved,setSaved]=useState(null),[pending,setPending]=useState([]),[error,setError]=useState(''),[busy,setBusy]=useState(''),[screen,setScreen]=useState('intake');
   const [identifying,setIdentifying]=useState(false),[changes,setChanges]=useState({}),[localReady,setLocalReady]=useState(false);
   const [commandPending,setCommandPending]=useState(null);
   const [nextCursor,setNextCursor]=useState(null);
+  const [uploadState,setUploadState]=useState({}),[invalidDetails,setInvalidDetails]=useState({});
   const commandKey=`atlas-connected-command:${staff.id}:${cardId??'new'}`;
   const dirty=Object.keys(changes).length>0;
   const request=(path,options={})=>manualRequest(path,{...options,csrf:session.current?.csrf});
   async function refresh(){
-    const started=generation.current;
-    if(cardId){const value=await request(`${prefix}/${cardId}`);if(started===generation.current)setSaved(value);return value;}
+    const started=generation.current,sequence=++reads.current.next;
+    if(cardId){const value=await request(`${prefix}/${cardId}`);if(started!==generation.current)return null;
+      const current=savedRef.current;
+      if(current&&(sequence<reads.current.applied||value.card.revision<current.card.revision||value.revision<current.revision||value.manual?.revision<current.manual?.revision))return current;
+      reads.current.applied=sequence;savedRef.current=value;setSaved(value);return value;}
     const result=await client.current.list();if(started===generation.current){setCards(result.cards??[]);setNextCursor(result.nextCursor??null);}
   }
-  async function pendingList(){const started=generation.current,result=await client.current.pending();if(started===generation.current)setPending(result);}
+  async function pendingList(){const started=generation.current,sequence=++pendingRead.current,result=await client.current.pending();if(started===generation.current&&sequence===pendingRead.current)setPending(result);}
   async function attempt(work,label='Saving…'){
-    const started=generation.current;
+    if(activity.current)return;
+    const started=generation.current,token={};activity.current=token;
     setError('');setBusy(label);try{return await work();}catch(error){if(started===generation.current)setError(manualMessage(error));throw error;}
-    finally{if(started===generation.current){setBusy('');if(client.current)await pendingList().catch(()=>{});}}
+    finally{if(activity.current===token)activity.current=null;if(started===generation.current){setBusy('');if(client.current)await pendingList().catch(()=>{});}}
   }
   function perform(work,label){void attempt(work,label).catch(()=>{});}
+  function changeDetail(key,value){const next={...changesRef.current,[key]:value};changesRef.current=next;setChanges(next);setInvalidDetails(old=>({...old,[key]:null}));}
+  function acknowledgeDetails(input){
+    const next={...changesRef.current};for(const [key,value] of Object.entries(input))if(Object.hasOwn(next,key)&&next[key]===value)delete next[key];
+    changesRef.current=next;setChanges(next);
+  }
+  async function uploadSide(side,work,label){
+    if(activity.current||uploadLocks.current[side])return;
+    const token={},started=generation.current,owner=client.current;if(!owner)return;
+    uploadLocks.current[side]=token;setUploadState(old=>({...old,[side]:{busy:true,label}}));
+    try{await work(owner);if(started===generation.current&&client.current===owner)await refresh();}
+    catch(error){if(started===generation.current)setUploadState(old=>({...old,[side]:{busy:false,error:manualMessage(error)}}));}
+    finally{if(uploadLocks.current[side]===token)delete uploadLocks.current[side];if(started===generation.current){setUploadState(old=>({...old,[side]:{...old[side],busy:false}}));await pendingList().catch(()=>{});}}
+  }
   useEffect(()=>{
     const started=++generation.current;let stopped=false,journal,ownedClient;
+    savedRef.current=null;changesRef.current={};uploadLocks.current={};activity.current=null;reads.current={next:0,applied:0};
+    setSaved(null);setChanges({});setUploadState({});setInvalidDetails({});setBusy('');setError('');setIdentifying(false);setCommandPending(null);setPending([]);setScreen('intake');setLocalReady(false);
     (async()=>{
       const currentSession=await request('/api/staff/session');
       if(stopped)return;
@@ -61,9 +92,9 @@ export default function ManualCards({staff,cardId=null}){
     window.addEventListener('beforeunload',warn);router.events.on('routeChangeStart',block);
     return()=>{window.removeEventListener('beforeunload',warn);router.events.off('routeChangeStart',block);};
   },[dirty,router]);
-  async function durable(path,body){
+  async function durable(path,body,intent){
     if(localStorage.getItem(commandKey))throw {code:'MANUAL_PENDING_REQUEST'};
-    const command={path,body};localStorage.setItem(commandKey,JSON.stringify(command));setCommandPending(command);
+    const command={path,body,...(intent?{intent}:{})};localStorage.setItem(commandKey,JSON.stringify(command));setCommandPending(command);
     return sendSaved(command);
   }
   async function sendSaved(input){
@@ -76,38 +107,56 @@ export default function ManualCards({staff,cardId=null}){
       if(localStorage.getItem(commandKey)===serialized)localStorage.removeItem(commandKey);
       updatePending();
     };
-    try{const result=await request(command.path,{method:'POST',body:command.body});clear();return result;}
-    catch(error){if([400,403,404,409,413,422].includes(error.status)){clear();await refresh();}throw error;}
+    try{const result=await request(command.path,{method:'POST',body:command.body});clear();if(started===generation.current&&command.path.endsWith('/details'))acknowledgeDetails(command.body.changes);return result;}
+    catch(error){if([400,403,404,409,413,422].includes(error.status)){clear();if(started===generation.current)await refresh();}throw error;}
   }
-  async function saveDetails(){
-    if(!dirty)return saved;
-    await durable(`${prefix}/${cardId}/details`,{actionId:crypto.randomUUID(),expectedRevision:saved.revision,changes});
-    setChanges({});return refresh();
+  async function saveDetails(value,changes){
+    if(!Object.keys(changes).length)return value;
+    const started=generation.current;
+    setBusy('Saving card details…');
+    await durable(`${prefix}/${cardId}/details`,{actionId:crypto.randomUUID(),expectedRevision:value.revision,changes},'REVIEW_GEOMETRY');
+    return started===generation.current?refresh():null;
   }
   async function retryIdentification(){
-    if(dirty||saved?.identification?.rejection?.canRetry!==true)return;
+    const started=generation.current;if(dirty||Object.keys(uploadLocks.current).length||saved?.identification?.rejection?.canRetry!==true)return;
     await durable(`${prefix}/${cardId}/identify`,{actionId:crypto.randomUUID(),expectedAttemptId:saved.identification.attemptId,sourceHash:saved.card.sourceHash});
-    await refresh();
+    if(started===generation.current)await refresh();
   }
   async function initialize(){
-    const value=await saveDetails();
+    const started=generation.current,original=savedRef.current,edits={...changesRef.current};
+    if(!original?.card.ready||Object.keys(uploadLocks.current).length||identifying)return;
+    const invalid=detailErrors(original.details,edits);setInvalidDetails(invalid);
+    if(Object.keys(invalid).length){setError('Check the highlighted card details before reviewing geometry.');return;}
+    const value=await saveDetails(original,edits);
+    if(started!==generation.current||!value)return;
+    if(value.card.sourceHash!==original.card.sourceHash||Object.keys(changesRef.current).length)throw {code:'MANUAL_DETAILS_STALE'};
+    setBusy('Preparing geometry…');
     await durable(`${prefix}/${cardId}/initialize`,{sourceHash:value.card.sourceHash,detailsRevision:value.revision});
-    await refresh();setScreen('workspace');
+    if(started!==generation.current)return;
+    const result=await refresh();if(started===generation.current&&result?.manual?.current)setScreen('workspace');
+  }
+  async function resumeCommand(){
+    const started=generation.current,input=commandPending;await sendSaved(input);if(started!==generation.current)return;const result=await refresh();if(started!==generation.current)return;
+    if(result?.manual?.current)setScreen('workspace');
+    else if(input.intent==='REVIEW_GEOMETRY')await initialize();
   }
   async function replace(){
+    const started=generation.current;if(Object.keys(uploadLocks.current).length)return;
     await durable(`/api/staff/manual/cards/${cardId}/actions`,{actionId:crypto.randomUUID(),expectedRevision:saved.manual.revision,action:{type:'REPLACE_SOURCES',sourceHash:saved.card.sourceHash}});
-    await refresh();setScreen('workspace');
+    if(started!==generation.current)return;const result=await refresh();if(started===generation.current&&result?.manual?.current)setScreen('workspace');
   }
   const profile=Object.hasOwn(changes,'profile')?changes.profile:saved?.details.profile;
   const layoutType=Object.hasOwn(changes,'layoutType')?changes.layoutType:saved?.details.layoutType;
   const activePending=pending.filter(item=>!cardId || item.value.cardId===cardId);
+  const uploading=Object.values(uploadState).some(value=>value?.busy),pendingPhotos=activePending.some(item=>item.value.kind==='upload');
+  const detailIssue=key=>invalidDetails[key]?<small className="mc-field-error" role="alert">{invalidDetails[key]}</small>:null;
   return <Shell staff={staff} title="Manual grading" manual><div className="mc-page">
     {error&&<div className="mc-notice error" role="alert">{error} <button onClick={()=>perform(()=>refresh(),'Loading saved card…')}>Reload saved state</button></div>}
     {busy&&<p role="status">{busy}</p>}
-    {commandPending&&!busy&&<section className="mc-notice"><p>A saved request needs confirmation. Resume it before making another change.</p><button onClick={()=>perform(async()=>{await sendSaved(commandPending);const result=await refresh();if(result?.manual?.current)setScreen('workspace');},'Checking the saved request…')}>Resume saved request</button></section>}
-    {activePending.length>0&&<section className="mc-notice"><h2>Saved uploads</h2>{activePending.map(item=><div key={item.id}><span>{item.value.kind==='create'?'New card':`${item.value.input.side==='FRONT'?'Front':'Back'} photo`} · {item.value.verified?'Original saved; working image needs preparation':'Upload saved on this device'}</span><button disabled={Boolean(busy)} onClick={()=>perform(async()=>{const result=await client.current.resume(item.id);if(!cardId&&result.card)await router.push(`/manual/${result.card.cardId}`);else await refresh();},'Resuming saved upload…')}>Resume</button>
-      {item.value.verified&&<button disabled={Boolean(busy)} onClick={()=>perform(()=>client.current.forgetVerified(item.id),'Keeping the verified original…')}>Clear device copy</button>}
-      {!item.value.uploadId&&item.value.planRefusal&&item.value.planUncertain===false&&<button disabled={Boolean(busy)} onClick={()=>perform(()=>client.current.discardUnplanned(item.id),'Clearing the refused upload…')}>Discard refused upload</button>}
+    {commandPending&&!busy&&<section className="mc-notice"><p>A saved request needs confirmation. Resume it before making another change.</p><button disabled={uploading} onClick={()=>perform(resumeCommand,'Checking the saved request…')}>Resume saved request</button></section>}
+    {activePending.length>0&&<section className="mc-notice"><h2>Saved uploads</h2>{activePending.map(item=><div key={item.id}><span>{item.value.kind==='create'?'New card':`${item.value.input.side==='FRONT'?'Front':'Back'} photo`} · {item.value.verified?'Original saved; working image needs preparation':'Upload saved on this device'}</span><button disabled={Boolean(busy)||Boolean(uploadState[item.value.input?.side]?.busy)} onClick={()=>{if(cardId&&item.value.kind==='upload')void uploadSide(item.value.input.side,owner=>owner.resume(item.id),'Resuming saved upload…');else perform(async()=>{const result=await client.current.resume(item.id);if(!cardId&&result.card)await router.push(`/manual/${result.card.cardId}`);else await refresh();},'Resuming saved upload…');}}>Resume</button>
+      {item.value.verified&&<button disabled={Boolean(busy)||uploading} onClick={()=>perform(()=>client.current.forgetVerified(item.id),'Keeping the verified original…')}>Clear device copy</button>}
+      {!item.value.uploadId&&item.value.planRefusal&&item.value.planUncertain===false&&<button disabled={Boolean(busy)||uploading} onClick={()=>perform(()=>client.current.discardUnplanned(item.id),'Clearing the refused upload…')}>Discard refused upload</button>}
     </div>)}</section>}
     {!cardId?<>
       <header className="mc-heading"><div><p className="mc-kicker">ATLAS / MANUAL GRADING</p><h1>Your cards</h1><p>Upload original Front and Back photos, review the geometry, then inspect the findings.</p></div>
@@ -115,23 +164,24 @@ export default function ManualCards({staff,cardId=null}){
       <div className="mc-card-list">{cards.map(card=><Link href={`/manual/${card.cardId}`} key={card.cardId}><strong>{card.label||'Untitled card'}</strong><span>{card.sides.FRONT.upload?.source?'Front ready':'Front needed'} · {card.sides.BACK.upload?.source?'Back ready':'Back needed'}</span><small>{new Date(card.createdAt).toLocaleString()}</small></Link>)}{localReady&&!cards.length&&<p>No cards yet. Add a card to upload the original photos.</p>}</div>
       {nextCursor&&<div className="mc-actions"><button disabled={Boolean(busy)} onClick={()=>perform(async()=>{const result=await client.current.list({cursor:nextCursor});setCards(old=>[...old,...result.cards.filter(card=>!old.some(value=>value.cardId===card.cardId))]);setNextCursor(result.nextCursor);},'Loading older cards…')}>Load more cards</button></div>}
     </>:!saved?<p role="status">Loading saved card…</p>:screen==='workspace'&&saved.manual?.current?<ManualWorkspace key={`${staff.id}:${cardId}`} staff={staff} cardId={cardId} csrf={session.current.csrf} onPhotos={()=>{setScreen('intake');perform(()=>refresh(),'Loading saved photos…');}}/>:<>
-      <header className="mc-heading"><div><Link href="/manual">← All cards</Link><h1>{saved.card.label||'New card'}</h1><p>Select the original files from your iPhone photo library. The originals stay untouched.</p></div>{saved.manual?.current&&<button className="primary" onClick={()=>setScreen('workspace')}>Return to review</button>}</header>
+      <header className="mc-heading"><div><Link href="/manual">← All cards</Link><h1>{saved.card.label||'New card'}</h1><p>Select the original files from your iPhone photo library. The originals stay untouched.</p></div>{saved.manual?.current&&<button className="primary" disabled={Boolean(busy)||uploading||pendingPhotos} onClick={()=>setScreen('workspace')}>Return to review</button>}</header>
       <section className="mc-photo-pair">{['FRONT','BACK'].map(side=>{const slot=saved.card.sides[side];return <article key={side}><h2>{side==='FRONT'?'Front':'Back'}</h2>
         {slot.upload?.source?<img key={slot.version} alt={`${side==='FRONT'?'Front':'Back'} SDR working view`} src={saved.previews?.[side]?.url??`${STAFF_BASE_PATH}${prefix}/${cardId}/preview-image/${side}`} />:<div className="mc-photo-empty">{slot.upload?.verification?'Original saved. Resume image preparation.':'Original photo needed'}</div>}
-        <label className="mc-upload">{slot.upload?'Replace original photo':'Choose original photo'}<input aria-label={`${side} original photo`} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.HEIC,.heif,.HEIF" disabled={!localReady||Boolean(busy)||Boolean(commandPending)||dirty||staff.role!=='REVIEWER'} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)perform(async()=>{await client.current.upload(cardId,side,slot.version,file);await refresh();},`Saving ${side==='FRONT'?'Front':'Back'} original…`);}}/></label>
+        <label className="mc-upload">{slot.upload?'Replace original photo':'Choose original photo'}<input aria-label={`${side} original photo`} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.HEIC,.heif,.HEIF" disabled={!localReady||Boolean(busy)||Boolean(uploadState[side]?.busy)||Boolean(commandPending)||staff.role!=='REVIEWER'||activePending.some(item=>item.value.kind==='upload'&&item.value.input.side===side)} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void uploadSide(side,owner=>owner.upload(cardId,side,slot.version,file),`Saving ${side==='FRONT'?'Front':'Back'} original…`);}}/></label>
+        {uploadState[side]?.busy&&<p role="status">{uploadState[side].label}</p>}{uploadState[side]?.error&&<p className="mc-field-error" role="alert">{uploadState[side].error}</p>}
         <p>{slot.upload?.source?'Original retained · full-resolution SDR working view':slot.upload?.verification?'Original verified and retained':'Choose one side of this card'}</p></article>;})}</section>
       {saved.manual?<section className="mc-notice"><p>{saved.manual.current?'Your geometry and findings are saved.':'A photo changed. Review the new side before confirming the pair again; the other side’s work is retained.'}</p>
-        {!saved.manual.current&&<button className="primary" disabled={!saved.card.ready||Boolean(busy)} onClick={()=>perform(replace,'Preparing the changed photo…')}>Use replaced photo pair</button>}</section>:
+        {!saved.manual.current&&<button className="primary" disabled={!saved.card.ready||Boolean(busy)||uploading||pendingPhotos} onClick={()=>perform(replace,'Preparing the changed photo…')}>Use replaced photo pair</button>}</section>:
       <section className="mc-details"><div className="mc-heading"><div><h2>Card details</h2><p>{identifying?'Reading the Front and Back photos…':saved.identification.state==='COMPLETE'?'Suggestions are ready. Check the details printed on your card.':saved.identification.rejection?.code==='API_CREDIT_BALANCE_EXHAUSTED'?'This identification request was rejected because the ATLAS API credit balance was exhausted. If credits have been added, retry identification. Your original photos are saved.':saved.identification.rejection?.code==='API_REQUEST_REJECTED'?'The identification provider rejected the request. Your photos are saved; enter the printed details or contact the owner.':['UNKNOWN','FAILED','UNAVAILABLE'].includes(saved.identification.state)?'Automatic details are unavailable. Enter the printed details to continue.':'Add both photos for automatic identification.'}</p>{saved.identification.rejection?.code==='API_CREDIT_BALANCE_EXHAUSTED'&&<a href="https://platform.openai.com/settings/organization/billing" target="_blank" rel="noopener noreferrer">Open API billing</a>}</div>{['RUNNING','NOT_STARTED'].includes(saved.identification.state)&&saved.card.ready&&!identifying&&<button onClick={()=>perform(async()=>{await request(`${prefix}/${cardId}/identify`,{method:'POST',body:{}});await refresh();},'Checking identification…')}>Check saved identification</button>}{saved.identification.rejection?.code==='API_CREDIT_BALANCE_EXHAUSTED'&&saved.identification.rejection.canRetry===true&&staff.role==='REVIEWER'&&<button disabled={!saved.card.ready||Boolean(busy)||Boolean(commandPending)||dirty||identifying} onClick={()=>perform(retryIdentification,'Retrying identification…')}>Retry identification</button>}</div>
-        <form onSubmit={event=>{event.preventDefault();perform(initialize,'Preparing the review workspace…');}}><fieldset disabled={Boolean(busy)||Boolean(commandPending)} style={{border:0,padding:0,margin:0}}>
-          <div className="mc-fields"><label>Card family<select aria-label="Card family" value={profile??''} onChange={event=>setChanges(old=>({...old,profile:event.target.value||null}))}><option value="">Choose Sports or Pokémon</option><option value="SPORTS">Sports</option><option value="POKEMON">Pokémon</option></select></label>
-            {Object.entries(labels).map(([key,label])=><label key={key}>{label}<input aria-label={label} value={changes[key]??saved.details.fields[key]} maxLength={key==='year'?24:160} onChange={event=>setChanges(old=>({...old,[key]:event.target.value}))}/></label>)}
-            {profile==='POKEMON'&&<label>Pokémon card kind<select required aria-label="Pokémon card kind" value={layoutType??''} onChange={event=>setChanges(old=>({...old,layoutType:event.target.value||null}))}><option value="">Choose character, Trainer or Energy</option><option value="POKEMON">Pokémon character</option><option value="TRAINER">Trainer</option><option value="ENERGY">Energy</option></select><small>Choose what the front shows. This keeps design references and reviewed corrections matched to the right kind of card.</small></label>}
-            <label>Parallel for report<input value={changes.parallel??saved.details.parallel} maxLength={120} onChange={event=>setChanges(old=>({...old,parallel:event.target.value}))}/><small>Confirm the printed variant here if it is the card’s parallel.</small></label>
-            <label>Insert for report<input value={changes.insert??saved.details.insert} maxLength={120} onChange={event=>setChanges(old=>({...old,insert:event.target.value}))}/></label>
-            <label>Corner shape<select value={changes.cornerShape??saved.details.cornerShape} onChange={event=>setChanges(old=>({...old,cornerShape:event.target.value}))}><option value="ROUNDED_3_18_MM">Rounded</option><option value="SQUARE">Square</option></select></label>
-            <label>Background mat<select value={changes.matColor??saved.details.matColor} onChange={event=>setChanges(old=>({...old,matColor:event.target.value}))}><option value="BLACK">Black</option><option value="WHITE">White</option><option value="MAGENTA">Magenta</option></select></label>
-          </div><div className="mc-actions"><button type="button" disabled={!dirty||Boolean(busy)} onClick={()=>perform(saveDetails,'Saving card details…')}>Save details</button><button className="primary" disabled={!saved.card.ready||Boolean(busy)||identifying}>Review geometry →</button></div>
+        <form noValidate onSubmit={event=>{event.preventDefault();if(!uploading&&!pendingPhotos&&!commandPending&&staff.role==='REVIEWER')perform(initialize,'Checking card details…');}}><fieldset disabled={Boolean(busy)||Boolean(commandPending)||uploading||staff.role!=='REVIEWER'} style={{border:0,padding:0,margin:0}}>
+          <div className="mc-fields"><label>Card family<select aria-label="Card family" aria-invalid={Boolean(invalidDetails.profile)} value={profile??''} onChange={event=>changeDetail('profile',event.target.value||null)}><option value="">Choose Sports or Pokémon</option><option value="SPORTS">Sports</option><option value="POKEMON">Pokémon</option></select>{detailIssue('profile')}</label>
+            {Object.entries(labels).map(([key,label])=><label key={key}>{label}<input aria-label={label} aria-invalid={Boolean(invalidDetails[key])} value={changes[key]??saved.details.fields[key]??''} maxLength={key==='year'?24:160} onChange={event=>changeDetail(key,event.target.value)}/>{detailIssue(key)}</label>)}
+            {profile==='POKEMON'&&<label>Pokémon card kind<select aria-label="Pokémon card kind" aria-invalid={Boolean(invalidDetails.layoutType)} value={layoutType??''} onChange={event=>changeDetail('layoutType',event.target.value||null)}><option value="">Choose character, Trainer or Energy</option><option value="POKEMON">Pokémon character</option><option value="TRAINER">Trainer</option><option value="ENERGY">Energy</option></select>{detailIssue('layoutType')}<small>Choose what the front shows. This keeps design references and reviewed corrections matched to the right kind of card.</small></label>}
+            <label>Parallel for report<input aria-invalid={Boolean(invalidDetails.parallel)} value={changes.parallel??saved.details.parallel} maxLength={120} onChange={event=>changeDetail('parallel',event.target.value)}/>{detailIssue('parallel')}<small>Confirm the printed variant here if it is the card’s parallel.</small></label>
+            <label>Insert for report<input aria-invalid={Boolean(invalidDetails.insert)} value={changes.insert??saved.details.insert} maxLength={120} onChange={event=>changeDetail('insert',event.target.value)}/>{detailIssue('insert')}</label>
+            <label>Corner shape<select value={changes.cornerShape??saved.details.cornerShape} onChange={event=>changeDetail('cornerShape',event.target.value)}><option value="ROUNDED_3_18_MM">Rounded</option><option value="SQUARE">Square</option></select></label>
+            <label>Background mat<select value={changes.matColor??saved.details.matColor} onChange={event=>changeDetail('matColor',event.target.value)}><option value="BLACK">Black</option><option value="WHITE">White</option><option value="MAGENTA">Magenta</option></select></label>
+          </div><div className="mc-actions"><button className="primary" disabled={!saved.card.ready||Boolean(busy)||Boolean(commandPending)||uploading||pendingPhotos||identifying||staff.role!=='REVIEWER'}>Save &amp; Review Geometry →</button></div>
         </fieldset></form>
       </section>}
     </>}
@@ -193,6 +243,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
       const fresh=await manualRequest(`/api/staff/manual/cards/${cardId}/view`,{csrf});
       if(client.current!==owner)return;
       const current=viewRef.current;
+      if(current?.card.revision!==requested?.card.revision||current?.card.contentHash!==requested?.card.contentHash)return;
       if(!current||fresh.card.revision!==current.card.revision||fresh.card.contentHash!==current.card.contentHash)throw {code:'MANUAL_REVISION_CONFLICT'};
       // Renew access to these exact pixels without replacing an unsaved edit or the client's command base.
       const renewed=withLocalAnalysis({...current,images:fresh.images,astra:fresh.astra,
@@ -200,9 +251,14 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
     })();imageRefresh.current=work;
     try{await work;}finally{if(imageRefresh.current===work)imageRefresh.current=null;if(client.current===owner)setRefreshingImages(false);}
   }
-  async function switchStage(next){
-    const owner=client.current;await refreshImages();const active=interaction.current;
-    if(client.current===owner&&!active.editing&&!active.identity&&!active.approving&&!active.saving&&!owner.hasPending()){setReport(null);setScreen(next);}
+  function switchStage(next){
+    const owner=client.current,active=interaction.current;
+    if(!owner||active.editing||active.identity||active.approving||active.saving||owner.hasPending())return;
+    if(next==='defects'&&!geometryStatus(viewRef.current.geometry).confirmed)return;
+    setReport(null);setReportImagesReady(false);setScreen(next);
+    // The current verified pixels are usable immediately. Renew their grants
+    // in the background without replacing the command base or a new edit.
+    void attempt(refreshImages);
   }
   async function refreshAssistance(owner){
     const requested=viewRef.current;
@@ -251,7 +307,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
   if(!view)return <div>{error&&<p role="alert">{error}</p>}<p role="status">Loading saved review…</p><button onClick={()=>attempt(()=>client.current.recover())}>Retry</button></div>;
   return <>
     {error&&<div className="mc-notice error" role="alert">{error}</div>}
-    <nav className="mc-review-nav"><button disabled={locked||refreshingImages} onClick={onPhotos}>Photos</button><button disabled={locked||refreshingImages||screen==='geometry'} onClick={()=>attempt(()=>switchStage('geometry'))}>Geometry</button><button disabled={locked||refreshingImages||screen==='defects'||!geometryStatus(view.geometry).confirmed} onClick={()=>attempt(()=>switchStage('defects'))}>Findings</button><button disabled={locked} onClick={()=>setIdentity({...view.identity})}>Edit card details</button><button disabled={savePending||refreshingImages} onClick={()=>attempt(refreshImages)}>{refreshingImages?'Loading images…':'Reload images'}</button><span>{status||'Saved'}</span>{client.current.hasPending()&&<button onClick={()=>attempt(()=>client.current.recover())}>Retry pending save</button>}</nav>
+    <nav className="mc-review-nav"><button disabled={locked} onClick={onPhotos}>Photos</button><button disabled={locked||screen==='geometry'} onClick={()=>switchStage('geometry')}>Geometry</button><button disabled={locked||screen==='defects'||!geometryStatus(view.geometry).confirmed} onClick={()=>switchStage('defects')}>Findings</button><button disabled={locked} onClick={()=>setIdentity({...view.identity})}>Edit card details</button><button disabled={savePending||refreshingImages} onClick={()=>attempt(refreshImages)}>{refreshingImages?'Loading images…':'Reload images'}</button><span>{status||'Saved'}</span>{client.current.hasPending()&&<button onClick={()=>attempt(()=>client.current.recover())}>Retry pending save</button>}</nav>
     {identity?<section className="mc-details"><h1>Correct card details</h1><form onSubmit={event=>{event.preventDefault();if(savePending)return;void attempt(async()=>{await execute({type:'IDENTITY_EDIT',identity});setIdentity(null);setReport(null);setScreen('geometry');});}}><fieldset disabled={savePending} style={{border:0,padding:0,margin:0}}><div className="mc-fields">{Object.entries(identity).map(([key,value])=><label key={key}>{({playerName:'Player name',cardName:'Card name',productSet:'Product / set',cardNumber:'Card number',layoutType:'Pokémon card kind'})[key]??key}{key==='layoutType'?<select value={value} onChange={event=>setIdentity(old=>({...old,[key]:event.target.value}))}>{['POKEMON','TRAINER','ENERGY'].map(layout=><option key={layout}>{layout}</option>)}</select>:<input value={value??''} onChange={event=>setIdentity(old=>({...old,[key]:event.target.value}))}/>}</label>)}</div><div className="mc-actions"><button className="primary">Save card details</button><button type="button" onClick={()=>setIdentity(null)}>Discard changes</button></div></fieldset></form></section>:
     screen==='geometry'?<PairedGeometryWorkspace workspace={view.geometry} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} preparingSides={preparing} onPrepare={prepare}
       onEdit={async input=>{const {actor,proposal,...edit}=input;await execute({type:'GEOMETRY_EDIT',edit});if(input.kind==='PHYSICAL')void attempt(()=>prepare(input.side));}}

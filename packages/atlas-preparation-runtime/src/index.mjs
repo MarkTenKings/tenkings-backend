@@ -8,7 +8,7 @@ import { applyPreparedFrame, geometryBase, parseGeometryWorkspace, preparationBa
 import { aborted, PreparationError, runPreparationWorker } from './process.mjs';
 
 export { PreparationError };
-export { adoptGeometryPreparation } from '@atlas/manual-workspace/preparation-result';
+export { adoptGeometryPreparation, adoptPhysicalGeometryProposal } from '@atlas/manual-workspace/preparation-result';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const worker = fileURLToPath(new URL('../../../backend/ai-grader-speedster-service/manual_preparation_worker.py', import.meta.url));
 const NAMES = ['rectified', 'inspection', 'normalized', 'microDefect', 'directional'];

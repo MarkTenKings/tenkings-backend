@@ -3,8 +3,8 @@ import { createIntakeRepository } from '@atlas/manual-intake/repository';
 import { createPhotoProcessor } from '@atlas/manual-intake/photo-processing';
 import { createManualRepository } from '@atlas/manual-service/repository';
 import { createManualWorkflow } from '@atlas/manual-workflow';
-import { createGeometryWorkspace, replaceGeometryImage, applyGeometryEdit, geometryBase } from '@atlas/manual-workspace/geometry-actions';
-import { proposePhysicalGeometry, prepareGeometry, describePreparationDerivative, adoptGeometryPreparation } from '@atlas/preparation-runtime';
+import { createGeometryWorkspace, replaceGeometryImage, geometryBase } from '@atlas/manual-workspace/geometry-actions';
+import { proposePhysicalGeometry, prepareGeometry, describePreparationDerivative, adoptGeometryPreparation, adoptPhysicalGeometryProposal } from '@atlas/preparation-runtime';
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { createDetailsStore, gradingIdentity } from './details.mjs';
 import { createIdentification } from './identification.mjs';
@@ -12,6 +12,7 @@ import { createDefectImageEffects } from './defect-images.mjs';
 import { createDefectAssistance } from './defect-assistance.mjs';
 import { measureDefectWorkspaceEdit } from '@atlas/measurement-runtime';
 import { validateConfirmationCommit } from './confirmation-fence.mjs';
+import { createImageDescriptors } from './image-descriptors.mjs';
 
 export const DEFAULT_LIMITS = Object.freeze({
   decode:{maxInputBytes:256*1024*1024,maxPixels:52_000_000,maxRasterBytes:512*1024*1024,maxOutputBytes:256*1024*1024,timeoutMs:90000},
@@ -74,8 +75,9 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
       try{proposal=await proposePhysicalGeometry({workspace:packet.geometry,side,source:photo,limits:limits.preparation,pythonExecutable});}
       catch(error){if(error?.name==='PreparationError')continue;throw error;}
       if(proposal.proposal?.outcome!=='ACCEPTED')continue;
-      packet.geometry=applyGeometryEdit(packet.geometry,{side,kind:'PHYSICAL',base:geometryBase(packet.geometry,side,'PHYSICAL'),quad:proposal.proposal.proposal,
-        actor:'ENGINE',proposal:{id:proposal.id,ambiguous:Boolean(proposal.proposal.ambiguity?.ambiguous)}}).state;
+      const adoption=adoptPhysicalGeometryProposal(packet.geometry,proposal);
+      if(!adoption.proposalApplied)continue;
+      packet.geometry=adoption.state;
       try{packet=await prepared(packet.geometry,side,packet.source,photo);}
       catch(error){if(error?.name!=='PreparationError')throw error;}
     }
@@ -100,23 +102,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   });
   async function manifest(card,side){const stored=card.draft.source.prepared[side];return stored?artifacts.read(stored.ref,{cardId:card.cardId,kind:'PREPARED_IMAGES',sourceHash:stored.sourceHash}):null;}
   const imageUrl=(cardId,side,kind,hash)=>`${basePath}/api/staff/manual-connected/cards/${cardId}/images/${side}/${kind}/${hash}`;
-  async function descriptor(staff,card,side,kind,image){
-    const source=await intake.readSource(staff,card.cardId,card.draft.source.uploads[side]);
-    const content=image.raster.content;
-    const result=imageReadUrl?await imageReadUrl({kind,descriptor:image,photo:source.photo}):{url:imageUrl(card.cardId,side,kind,content.sha256),sha256:content.sha256,byteCount:content.byteCount,mime:content.mime};
-    await current(staff,card);return result;
-  }
-  async function imageDescriptors({card,state,staff}){
-    await current(staff,card);const images={};
-    for(const side of SIDES){
-      const slot=state.geometry.sides[side],saved=await manifest(card,side);
-      const original=await intake.readSource(staff,card.cardId,card.draft.source.uploads[side]);
-      images[side]={original:await descriptor(staff,card,side,'original',original.photo.workingFrame)};
-      if(slot.prepared && saved){requireThat(saved.frameId===slot.prepared.frame.id,503,'MANUAL_IMAGE_BINDING_INVALID');
-        for(const [kind,image]of Object.entries(saved.images))images[side][kind]=await descriptor(staff,card,side,kind,image);}
-    }
-    return images;
-  }
+  const imageDescriptors=createImageDescriptors({current,readSource:intake.readSource,readManifest:manifest,imageReadUrl,imageUrl});
   async function readPrepared(staff,card,side,kind){
     await current(staff,card);
     const saved=await manifest(card,side),descriptor=saved?.images?.[kind];

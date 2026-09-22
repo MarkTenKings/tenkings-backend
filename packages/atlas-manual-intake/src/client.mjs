@@ -15,7 +15,7 @@ const definitePlanRefusal = failure => [400, 403, 404, 409, 413].includes(failur
 export function createIntakeClient({ request, journal, fetchImpl = globalThis.fetch, cryptoImpl = globalThis.crypto, uploadTimeoutMs = 90000 }) {
   requireThat(typeof request === 'function' && journal && typeof fetchImpl === 'function', 'INTAKE_CLIENT_INVALID');
   requireThat(Number.isSafeInteger(uploadTimeoutMs) && uploadTimeoutMs > 0 && uploadTimeoutMs <= 2_147_483_647, 'INTAKE_CLIENT_INVALID');
-  const running = new Set();
+  const running = new Set(), uploadingSides = new Set();
   const post = (path, body, signal) => request(path, { method: 'POST', body, signal });
   async function putNative(url, options, signal) {
     const controller = new AbortController();
@@ -46,6 +46,7 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
       if (saved.kind === 'create') {
         const result = await post(base, saved.input, signal); await journal.remove(operationId); return result;
       }
+      let freshPlan = false;
       if (!saved.uploadId) {
         // A closed response to the first request can be safely discarded by
         // the human. Earlier missing replies (including legacy journal rows)
@@ -64,13 +65,23 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
           throw failure;
         }
         saved = { ...saved, uploadId: result.upload.uploadId }; await journal.put(operationId, saved);
+        // Only this invocation can know the plan had no earlier uncertain
+        // dispatch. Reloads and retries always reconcile before another PUT.
+        freshPlan = previouslyCertain;
       }
       const path = `${base}/${saved.cardId}/uploads/${saved.uploadId}`;
-      let verified;
+      let verified, needsUpload = freshPlan;
       // A lost PUT or committed completion starts with exact-plan readback.
-      try { verified = await post(`${path}/complete`, {}, signal); }
-      catch (failure) {
-        if (failure.code !== 'INTAKE_UPLOAD_ABSENT') throw failure;
+      // A genuinely new plan can go straight to signing; the mandatory
+      // post-PUT checksum/readback remains the only original acceptance proof.
+      if (!freshPlan) {
+        try { verified = await post(`${path}/complete`, {}, signal); }
+        catch (failure) {
+          if (failure.code !== 'INTAKE_UPLOAD_ABSENT') throw failure;
+          needsUpload = true;
+        }
+      }
+      if (needsUpload) {
         const signed = await post(`${path}/sign`, {}, signal);
         if (signed.state === 'UPLOAD') {
           requireThat(signed.uploadId === saved.uploadId && signed.method === 'PUT' && signed.byteCount === saved.file.size
@@ -123,14 +134,20 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
     async upload(cardId, side, expectedVersion, file, options = {}) {
       requireThat(file instanceof Blob && file.size > 0, 'INTAKE_NATIVE_FILE_REQUIRED');
       requireThat(file.size <= MAX_NATIVE_PHOTO_BYTES, 'INTAKE_PHOTO_TOO_LARGE');
-      const pending = await journal.list();
-      requireThat(!pending.some(item => item.value.kind === 'upload' && item.value.cardId === cardId
-        && item.value.input.side === side && !item.value.verified), 'INTAKE_SIDE_UPLOAD_PENDING');
-      const sha256 = hex(await cryptoImpl.subtle.digest('SHA-256', await file.arrayBuffer()));
-      const operationId = cryptoImpl.randomUUID();
-      await journal.put(operationId, { kind: 'upload', cardId, file, planUncertain: false, input: { requestId: operationId, side,
-        expectedVersion, sha256, byteCount: file.size } });
-      return resume(operationId, options);
+      const sideKey = `${cardId}:${side}`;
+      // Reserve before the first journal/hash await. Opposite sides are
+      // independent, while a double selection cannot allocate two side plans.
+      requireThat(!uploadingSides.has(sideKey), 'INTAKE_UPLOAD_IN_PROGRESS'); uploadingSides.add(sideKey);
+      try {
+        const pending = await journal.list();
+        requireThat(!pending.some(item => item.value.kind === 'upload' && item.value.cardId === cardId
+          && item.value.input.side === side && !item.value.verified), 'INTAKE_SIDE_UPLOAD_PENDING');
+        const sha256 = hex(await cryptoImpl.subtle.digest('SHA-256', await file.arrayBuffer()));
+        const operationId = cryptoImpl.randomUUID();
+        await journal.put(operationId, { kind: 'upload', cardId, file, planUncertain: false, input: { requestId: operationId, side,
+          expectedVersion, sha256, byteCount: file.size } });
+        return await resume(operationId, options);
+      } finally { uploadingSides.delete(sideKey); }
     },
   });
 }

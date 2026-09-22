@@ -42,6 +42,7 @@ function harness({ journal } = {}) {
       if (name === 'next/router') return { useRouter: () => ({ events: { on() {}, off() {} } }) };
       if (name === 'next/link' || name === './Shell') return { default: name };
       if (name === '@atlas/manual-workflow/client') return { createManualClient: options => { viewCallback = options.onView; return client; } };
+      if (name === '@atlas/manual-workspace') return { PairedGeometryWorkspace: 'PairedGeometryWorkspace' };
       if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace' };
       if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview' };
       if (name === '@atlas/manual-workspace/geometry-actions') return { geometryStatus: value => value };
@@ -57,6 +58,7 @@ function harness({ journal } = {}) {
   f.dispose = () => cleanups.splice(0).forEach(cleanup => cleanup());
   f.defects = () => { const node = all(tree, node => node.type === 'DefectReviewWorkspace')[0]; assert.ok(node, 'defect workspace rendered'); return node.props; };
   f.button = label => all(tree, node => node.type === 'button' && text(node) === label)[0];
+  f.geometry = () => all(tree, node => node.type === 'PairedGeometryWorkspace')[0]?.props;
   f.report = () => all(tree, node => node.type === 'FinalReportReview')[0]?.props;
   f.text = () => text(tree);
   f.publish = next => { f.current = next; viewCallback(next); f.render(); };
@@ -231,4 +233,27 @@ test('returning to Findings discards the displayed report and opens a fresh corr
   assert.equal(f.report().preview.reportHash, 'report-2'); assert.equal(f.report().preview.sourceHash, 'corrected');
   assert.equal(f.button('Approve final report').props.disabled, true, 'new report must verify its images again');
   assert.equal(f.actions.length, 0); f.dispose();
+});
+
+test('stage navigation is immediate while one background image-grant refresh is pending',async()=>{
+  const f=harness();await flush();f.render();let finish;
+  f.respond=()=>new Promise(resolve=>{finish=resolve;});
+  f.button('Geometry').props.onClick();f.render();
+  assert.ok(f.geometry(),'geometry opens without waiting for the network');assert.equal(f.geometry().images.marker,'original-grants');
+  assert.equal(f.button('Findings').props.disabled,false);assert.equal(f.button('Photos').props.disabled,false);
+  f.button('Findings').props.onClick();f.render();assert.ok(f.defects());assert.equal(f.calls.filter(call=>call.path.endsWith('/view')).length,1,'switches share the existing refresh');
+  finish({...f.current,images:{marker:'renewed-grants'}});await flush();f.render();
+  assert.equal(f.defects().images.marker,'renewed-grants');assert.equal(f.actions.length,0);f.dispose();
+});
+
+test('background navigation refresh cannot replace a new save or active editor and a failed refresh leaves the stage usable',async()=>{
+  const f=harness();await flush();f.render();let finish;
+  const earlier=structuredClone(f.current);f.respond=()=>new Promise(resolve=>{finish=resolve;});
+  f.button('Geometry').props.onClick();f.render();f.geometry().onEditingChange(true);
+  f.publish({...f.current,card:{revision:2,contentHash:'new'},images:{marker:'new-pixels'}});
+  finish(earlier);await flush();f.render();assert.ok(f.geometry());assert.equal(f.geometry().images.marker,'new-pixels');
+  assert.equal(f.button('Findings').props.disabled,true);assert.doesNotMatch(f.text(),/MANUAL_REVISION_CONFLICT/);
+  f.geometry().onEditingChange(false);f.render();f.respond=async()=>{throw {code:'IMAGE_ACCESS_UNAVAILABLE'};};
+  f.button('Findings').props.onClick();f.render();assert.ok(f.defects());await flush();f.render();
+  assert.ok(f.defects());assert.match(f.text(),/IMAGE_ACCESS_UNAVAILABLE/);assert.equal(f.actions.length,0);f.dispose();
 });

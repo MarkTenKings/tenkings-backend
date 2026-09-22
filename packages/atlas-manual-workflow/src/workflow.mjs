@@ -43,6 +43,13 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
     const hash = sourceHash(value);
     return { ref: await artifacts.write(value, { cardId, kind, sourceHash: hash }), sourceHash: hash };
   }
+  async function storeCurrent(value, cardId, kind, verifiedPrevious) {
+    // Only called after hydrate verified this draft's exact immutable bytes.
+    // Reuse the reference when the unchanged serialization has the same hash;
+    // changed content still takes the full immutable write/readback path.
+    return verifiedPrevious && sourceHash(value) === verifiedPrevious.sourceHash
+      ? verifiedPrevious : store(value, cardId, kind);
+  }
   async function read(cardId, kind, ref, hash) {
     const value = await artifacts.read(ref, { cardId, kind, sourceHash: hash });
     requireThat(sourceHash(value) === hash, 503, 'MANUAL_ARTIFACT_UNVERIFIED');
@@ -52,8 +59,9 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
     const draft = card.draft;
     object(draft, ['version', 'geometry', 'defects', 'identity', 'identityRevision', ...(draft.version === 'atlas-manual-workflow-v2' ? ['source'] : []), ...(Object.hasOwn(draft, 'assistance') ? ['assistance'] : [])]);
     requireThat(['atlas-manual-workflow-v1', 'atlas-manual-workflow-v2'].includes(draft.version), 503, 'MANUAL_DRAFT_INVALID');
-    const [g, d] = await Promise.all([read(card.cardId, 'GEOMETRY', draft.geometry.ref, draft.geometry.sourceHash),
-      draft.defects ? read(card.cardId, 'DEFECTS', draft.defects.ref, draft.defects.sourceHash) : null]);
+    const [g, d, assistance] = await Promise.all([read(card.cardId, 'GEOMETRY', draft.geometry.ref, draft.geometry.sourceHash),
+      draft.defects ? read(card.cardId, 'DEFECTS', draft.defects.ref, draft.defects.sourceHash) : null,
+      draft.assistance ? read(card.cardId, 'ASSISTANCE', draft.assistance.ref, draft.assistance.sourceHash) : null]);
     const geometry = parseGeometryWorkspace(g), defects = d ? parseDefectWorkspace(d) : null;
     requireThat(geometry.cardId === card.cardId && (!defects || defects.cardId === card.cardId && geometry.profile === defects.profile),
       503, 'MANUAL_DRAFT_INVALID');
@@ -61,7 +69,6 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       requireThat(equal(frameFromGeometry(geometry, side), defects.sides[side].frame)
         && geometry.sides[side].cornerShape === defects.sides[side].cornerShape, 503, 'MANUAL_FRAME_MISMATCH');
     }
-    const assistance = draft.assistance ? await read(card.cardId, 'ASSISTANCE', draft.assistance.ref, draft.assistance.sourceHash) : null;
     requireThat(!assistance || assistance.version === 'atlas-defect-assistance-v1' && Array.isArray(assistance.reviews) && assistance.reviews.length <= 200, 503, 'MANUAL_ASSISTANCE_INVALID');
     return { geometry, defects, identity: draft.identity, ...(assistance ? { assistance } : {}) };
   }
@@ -178,7 +185,11 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
         budget.check();
       } else requireThat(false, 400, 'MANUAL_ACTION_UNSUPPORTED');
     }
-    return { ...draft, geometry: await store(geometry, card.cardId, 'GEOMETRY'), defects: defects ? await store(defects, card.cardId, 'DEFECTS') : null };
+    const [savedGeometry, savedDefects] = await Promise.all([
+      storeCurrent(geometry, card.cardId, 'GEOMETRY', card.draft.geometry),
+      defects ? storeCurrent(defects, card.cardId, 'DEFECTS', card.draft.defects) : null,
+    ]);
+    return { ...draft, geometry: savedGeometry, defects: savedDefects };
   }
   async function buildReport({ card, principal }, staff) {
     if (assertCurrent) await assertCurrent({ card, principal, staff });
