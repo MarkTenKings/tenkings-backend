@@ -23,8 +23,16 @@ import { createIdentityCorrectionRuntime } from './access/identity-correction-ru
 import { StaffCustomerIntake } from './access/customer-intake.mjs';
 import { createWorkspaceRuntime, workspaceRuntimeSettings } from './access/workspace-runtime.mjs';
 import { localWorkspaceFixture } from './access/workspace-fixture.mjs';
+import { createFrontendManualRuntime } from './manual-frontend-runtime.mjs';
+import { staffContentSecurityPolicy } from '../content-security.mjs';
 
 export function runtime(req, env = process.env) {
+    if (env.ATLAS_CONNECTED_LOCAL_FIXTURE === '1') {
+        assertLocalRequest(req, { ...env, ATLAS_LOCAL_SYNTHETIC: '1' });
+        const fixture = globalThis[Symbol.for('atlas.staff.connected.local-fixture')];
+        if (!fixture) deny(503, 'STAFF_ACCESS_NOT_ENABLED');
+        return fixture;
+    }
     if (env.ATLAS_LOCAL_SYNTHETIC === '1') {
         assertLocalRequest(req, env);
         const key = Symbol.for('atlas.staff.local.v1');
@@ -58,6 +66,7 @@ export function runtime(req, env = process.env) {
             operations: createOperationsRuntime({ settings: operationsSettings, auth, Client: PrismaClient }) };
     }
     const state = globalThis[key];
+    if (env.ATLAS_MANUAL_ENABLED === 'true' && !state.connectedManual) state.connectedManual = createFrontendManualRuntime({env,auth:state.auth,staffConfig:config,assertRequest});
     Object.setPrototypeOf(state.auth, DurableStaffAuth.prototype);
     Object.setPrototypeOf(state.auth.database, StaffDatabase.prototype);
     Object.setPrototypeOf(state.review, DurableReviewStore.prototype);
@@ -94,11 +103,16 @@ export async function pageAccess(ctx, { authenticated = true } = {}) {
     }
     try {
         const state = runtime(ctx.req);
+        // Next's build-time headers cannot know a later private storage binding.
+        // The authenticated staff runtime supplies its validated origin
+        // on every HTML response, including the initial sign-in document.
+        if(state.connectedManual) ctx.res.setHeader('Content-Security-Policy',staffContentSecurityPolicy({development:process.env.NODE_ENV==='development',
+            uploadOrigins:[process.env.ATLAS_WORKSPACE_UPLOAD_ORIGIN,state.connectedManual.uploadOrigin]}));
         if (state.auth.database) await state.auth.database.transaction(() => undefined);
         if (!authenticated) return { props: { mode: state.mode ?? 'SYNTHETIC_LOCAL' } };
         const staff = await state.auth.maybeAuthenticate(ctx.req.headers.cookie);
         if (!staff) return { redirect: { destination: '/', permanent: false } };
-        return { props: { staff } };
+        return { props: { staff, manualEnabled: Boolean(state.connectedManual) } };
     } catch {
         ctx.res.statusCode = 503; return { props: { unavailable: true } };
     }

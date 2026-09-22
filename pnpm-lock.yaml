@@ -350,12 +350,36 @@ importers:
 
   frontend/atlas-app:
     dependencies:
+      '@atlas/defect-analysis':
+        specifier: workspace:*
+        version: link:../../packages/atlas-defect-analysis
+      '@atlas/connected-manual':
+        specifier: workspace:*
+        version: link:../../packages/atlas-connected-manual
       '@atlas/finishing':
         specifier: workspace:*
         version: link:../../packages/atlas-finishing
       '@atlas/grading-core':
         specifier: workspace:*
         version: link:../../packages/atlas-grading-core
+      '@atlas/manual-intake':
+        specifier: workspace:*
+        version: link:../../packages/atlas-manual-intake
+      '@atlas/manual-service':
+        specifier: workspace:*
+        version: link:../../packages/atlas-manual-service
+      '@atlas/manual-workflow':
+        specifier: workspace:*
+        version: link:../../packages/atlas-manual-workflow
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../../packages/atlas-manual-workspace
+      '@atlas/photo-core':
+        specifier: workspace:*
+        version: link:../../packages/atlas-photo-core
+      '@atlas/photo-storage':
+        specifier: workspace:*
+        version: link:../../packages/atlas-photo-storage
       '@atlas/report-view':
         specifier: workspace:*
         version: link:../../packages/atlas-report-view
@@ -365,6 +389,9 @@ importers:
       '@atlas/site-router':
         specifier: workspace:*
         version: link:../../packages/atlas-site-router
+      '@aws-sdk/client-s3':
+        specifier: 3.914.0
+        version: 3.914.0
       '@prisma/client':
         specifier: 5.22.0
         version: 5.22.0(prisma@5.22.0)
@@ -427,6 +454,9 @@ importers:
 
   frontend/atlas-public:
     dependencies:
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../../packages/atlas-manual-workspace
       '@atlas/grading-core':
         specifier: workspace:*
         version: link:../../packages/atlas-grading-core
@@ -653,7 +683,76 @@ importers:
         specifier: ^5.5.4
         version: 5.5.4
 
+  packages/atlas-connected-manual:
+    dependencies:
+      '@atlas/service-bridge':
+        specifier: workspace:*
+        version: link:../atlas-service-bridge
+      '@atlas/report-view':
+        specifier: workspace:*
+        version: link:../atlas-report-view
+      '@atlas/defect-analysis':
+        specifier: workspace:*
+        version: link:../atlas-defect-analysis
+      '@atlas/defect-memory':
+        specifier: workspace:*
+        version: link:../atlas-defect-memory
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../atlas-grading-core
+      '@atlas/manual-intake':
+        specifier: workspace:*
+        version: link:../atlas-manual-intake
+      '@atlas/manual-service':
+        specifier: workspace:*
+        version: link:../atlas-manual-service
+      '@atlas/manual-workflow':
+        specifier: workspace:*
+        version: link:../atlas-manual-workflow
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../atlas-manual-workspace
+      '@atlas/measurement-runtime':
+        specifier: workspace:*
+        version: link:../atlas-measurement-runtime
+      '@atlas/photo-core':
+        specifier: workspace:*
+        version: link:../atlas-photo-core
+      '@atlas/photo-runtime':
+        specifier: workspace:*
+        version: link:../atlas-photo-runtime
+      '@atlas/photo-storage':
+        specifier: workspace:*
+        version: link:../atlas-photo-storage
+      '@atlas/preparation-runtime':
+        specifier: workspace:*
+        version: link:../atlas-preparation-runtime
+      '@aws-sdk/client-s3':
+        specifier: 3.914.0
+        version: 3.914.0
+      '@tenkings/card-identification-core':
+        specifier: workspace:*
+        version: link:../card-identification-core
+      sharp:
+        specifier: 0.33.5
+        version: 0.33.5
+
   packages/atlas-contracts: {}
+
+  packages/atlas-defect-analysis:
+    dependencies:
+      '@atlas/defect-memory':
+        specifier: workspace:*
+        version: link:../atlas-defect-memory
+
+  packages/atlas-defect-memory:
+    dependencies:
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../atlas-grading-core
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../atlas-manual-workspace
 
   packages/atlas-finishing: {}
 
@@ -667,6 +766,88 @@ importers:
         specifier: 0.27.7
         version: 0.27.7
 
+  packages/atlas-manual-intake:
+    dependencies:
+      '@atlas/manual-service':
+        specifier: workspace:*
+        version: link:../atlas-manual-service
+      '@atlas/photo-core':
+        specifier: workspace:*
+        version: link:../atlas-photo-core
+      '@atlas/photo-runtime':
+        specifier: workspace:*
+        version: link:../atlas-photo-runtime
+      '@atlas/photo-storage':
+        specifier: workspace:*
+        version: link:../atlas-photo-storage
+
+  packages/atlas-manual-service: {}
+
+  packages/atlas-manual-workflow:
+    dependencies:
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../atlas-grading-core
+      '@atlas/manual-service':
+        specifier: workspace:*
+        version: link:../atlas-manual-service
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../atlas-manual-workspace
+      '@atlas/measurement-runtime':
+        specifier: workspace:*
+        version: link:../atlas-measurement-runtime
+    devDependencies:
+      '@atlas/photo-runtime':
+        specifier: workspace:*
+        version: link:../atlas-photo-runtime
+      '@atlas/preparation-runtime':
+        specifier: workspace:*
+        version: link:../atlas-preparation-runtime
+      esbuild:
+        specifier: 0.27.7
+        version: 0.27.7
+      playwright:
+        specifier: 1.57.0
+        version: 1.57.0
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: 18.3.1
+        version: 18.3.1(react@18.3.1)
+
+  packages/atlas-manual-workspace:
+    dependencies:
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../atlas-grading-core
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: 18.3.1
+        version: 18.3.1(react@18.3.1)
+    devDependencies:
+      '@atlas/photo-runtime':
+        specifier: workspace:*
+        version: link:../atlas-photo-runtime
+      '@atlas/preparation-runtime':
+        specifier: workspace:*
+        version: link:../atlas-preparation-runtime
+      esbuild:
+        specifier: 0.27.7
+        version: 0.27.7
+      playwright:
+        specifier: 1.57.0
+        version: 1.57.0
+
+  packages/atlas-measurement-runtime:
+    dependencies:
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../atlas-manual-workspace
+
   packages/atlas-operator:
     dependencies:
       '@atlas/grading-core':
@@ -679,8 +860,50 @@ importers:
         specifier: 4.1.11
         version: 4.1.11
 
+  packages/atlas-photo-core: {}
+
+  packages/atlas-photo-runtime:
+    dependencies:
+      '@atlas/photo-core':
+        specifier: workspace:*
+        version: link:../atlas-photo-core
+      sharp:
+        specifier: 0.33.5
+        version: 0.33.5
+
+  packages/atlas-photo-storage:
+    dependencies:
+      '@atlas/photo-core':
+        specifier: workspace:*
+        version: link:../atlas-photo-core
+      '@atlas/photo-runtime':
+        specifier: workspace:*
+        version: link:../atlas-photo-runtime
+      '@aws-sdk/client-s3':
+        specifier: 3.914.0
+        version: 3.914.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: 3.982.0
+        version: 3.982.0
+
+  packages/atlas-preparation-runtime:
+    dependencies:
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../atlas-manual-workspace
+      '@atlas/photo-core':
+        specifier: workspace:*
+        version: link:../atlas-photo-core
+    devDependencies:
+      '@atlas/photo-runtime':
+        specifier: workspace:*
+        version: link:../atlas-photo-runtime
+
   packages/atlas-report-view:
     dependencies:
+      '@atlas/grading-core':
+        specifier: workspace:*
+        version: link:../atlas-grading-core
       react:
         specifier: 18.3.1
         version: 18.3.1
@@ -701,6 +924,15 @@ importers:
       typescript:
         specifier: ^5.5.4
         version: 5.5.4
+
+  packages/card-identification-core:
+    dependencies:
+      sharp:
+        specifier: 0.33.5
+        version: 0.33.5
+      zod:
+        specifier: 4.1.11
+        version: 4.1.11
 
   packages/database:
     dependencies:
@@ -8573,7 +8805,7 @@ snapshots:
       eslint: 8.57.0
       eslint-import-resolver-node: 0.3.9
       eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(eslint@8.57.0))(eslint@8.57.0)
-      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@7.2.0(eslint@8.57.0)(typescript@5.5.4))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@8.57.0))(eslint@8.57.0))(eslint@8.57.0)
+      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@7.2.0(eslint@8.57.0)(typescript@5.5.4))(eslint-import-resolver-typescript@3.10.1)(eslint@8.57.0)
       eslint-plugin-jsx-a11y: 6.10.2(eslint@8.57.0)
       eslint-plugin-react: 7.37.5(eslint@8.57.0)
       eslint-plugin-react-hooks: 5.0.0-canary-7118f5dd7-20230705(eslint@8.57.0)
@@ -8623,7 +8855,7 @@ snapshots:
       tinyglobby: 0.2.15
       unrs-resolver: 1.11.1
     optionalDependencies:
-      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@7.2.0(eslint@8.57.0)(typescript@5.5.4))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@8.57.0))(eslint@8.57.0))(eslint@8.57.0)
+      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@7.2.0(eslint@8.57.0)(typescript@5.5.4))(eslint-import-resolver-typescript@3.10.1)(eslint@8.57.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -8664,7 +8896,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-plugin-import@2.32.0(@typescript-eslint/parser@7.2.0(eslint@8.57.0)(typescript@5.5.4))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@8.57.0))(eslint@8.57.0))(eslint@8.57.0):
+  eslint-plugin-import@2.32.0(@typescript-eslint/parser@7.2.0(eslint@8.57.0)(typescript@5.5.4))(eslint-import-resolver-typescript@3.10.1)(eslint@8.57.0):
     dependencies:
       '@rtsao/scc': 1.1.0
       array-includes: 3.1.9

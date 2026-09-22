@@ -9,6 +9,7 @@ export function createHandler(resolveRuntime, env = process.env) {
             const { auth, review } = state;
             if (state.assertRequest) state.assertRequest(req);
             else assertLocalRequest(req, env);
+            if (state.connectedManual && await state.connectedManual.handler(req,res)) return;
             const cookieNames = state.cookies ?? { browser: BROWSER_COOKIE, session: SESSION_COOKIE };
             const serializeCookie = state.cookie ?? fixtureCookie;
             const cardPattern = '(sample-\\d{3}|[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})';

@@ -138,7 +138,7 @@ export default function AccountWorkspace({ initialView = 'dashboard', submission
     if (unavailable) return <><Head><title>Account unavailable · ATLAS Grading</title><meta name="robots" content="noindex,nofollow"/></Head>
         <main className="workspace"><span className="eyebrow">ATLAS Grading</span><h1>Account access is unavailable.</h1><p>Please return to ATLAS and try again later.</p><a href="https://atlasgrading.com/" className="secondary">Return to ATLAS</a></main></>;
     return <><Head><title>{signedIn ? 'Your account' : 'Sign in'} · ATLAS Grading</title><meta name="robots" content="noindex,nofollow"/></Head>
-        <header className="site-header"><a href="/" className="brand" aria-label="ATLAS Grading home"><span className="brand-mark" aria-hidden="true">A</span><span>ATLAS<small>GRADING</small></span></a>
+        <header className="site-header"><a href="/" className="atlas-brand" aria-label="ATLAS Grading home"><img src="/account/brand/atlas-brand.png" width="124" height="70" alt="ATLAS"/><span className="atlas-brand-copy">Your collection<small>Know what you have</small></span></a>
             {signedIn ? <nav aria-label="Account"><Link href="/">Your cards</Link><Link href="/profile">Return details</Link><button disabled={busy} onClick={() => run(async () => { await request('/auth/logout', { body: {}, csrf }); clearRetainedSubmission(window.sessionStorage); window.location.assign('/account'); })}>Sign out</button></nav> : <a href="/" className="home-link">Back to ATLAS</a>}</header>
         <main className={signedIn ? 'workspace' : 'entry'}>
             {mode === 'LOCAL_FIXTURE' && <div className="fixture-banner">Local demonstration · Synthetic SMS code: 424242 · No real submission or SMS delivery</div>}

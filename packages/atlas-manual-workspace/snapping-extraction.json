@@ -1,0 +1,7 @@
+{
+  "source": "frontend/nextjs-app/lib/ai-grader-v2/gradient-snap.ts",
+  "sourceCommit": "6d2e588bad3ce13ed0121fd7c77a9735fe90031f",
+  "sourceSha256": "55abb73a4d26f1e4b1c196c2aefaab1f8674e64d435efee51e7b73691bcf5195",
+  "extracted": "packages/atlas-manual-workspace/src/gradient-snap.ts",
+  "change": "Type-only contracts import points to grading-core; all implementation bytes unchanged."
+}

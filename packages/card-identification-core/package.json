@@ -1,0 +1,12 @@
+{
+  "name": "@tenkings/card-identification-core",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": { "types": "./src/index.d.ts", "default": "./src/index.mjs" },
+    "./v2": { "types": "./src/v2.d.ts", "default": "./src/v2.mjs" }
+  },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": { "sharp": "0.33.5", "zod": "4.1.11" }
+}

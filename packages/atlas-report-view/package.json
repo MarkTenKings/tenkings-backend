@@ -7,10 +7,12 @@
     "./GradedReport": "./src/GradedReport.jsx",
     "./styles.css": "./src/report.css",
     "./public-contract": "./src/public-contract.mjs",
+    "./manual-public-contract": "./src/manual-public-contract.mjs",
     "./fixture-artwork": "./src/fixture-artwork.mjs"
   },
   "dependencies": {
-    "zod": "4.1.11"
+    "zod": "4.1.11",
+    "@atlas/grading-core": "workspace:*"
   },
   "peerDependencies": {
     "react": "18.3.1"

@@ -41,10 +41,28 @@ LABEL org.opencontainers.image.source=${SPEEDSTER_SOURCE_REPOSITORY} \
       io.tenkings.speedster.compiler.target=${SPEEDSTER_COMPILER_TARGET}
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir pycocotools==2.0.11 psutil==7.2.2
-RUN apt-get update \
+COPY requirements.txt requirements.preparation.txt ./
+# Shared preparation packages must retain the qualified CPU artifact versions.
+RUN pip install --no-cache-dir -c requirements.preparation.txt -r requirements.txt
+RUN pip install --no-cache-dir -c requirements.preparation.txt pycocotools==2.0.11 psutil==7.2.2
+# Retain the qualified compiler/libc versions after mutable Debian mirrors roll
+# forward. Only archive expiry is disabled; Debian signatures and TLS remain on.
+RUN printf '%s\n' \
+      'Types: deb' \
+      'URIs: https://snapshot.debian.org/archive/debian/20260820T000000Z/' \
+      'Suites: trixie trixie-updates' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      'Check-Valid-Until: no' \
+      '' \
+      'Types: deb' \
+      'URIs: https://snapshot.debian.org/archive/debian-security/20260820T000000Z/' \
+      'Suites: trixie-security' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      'Check-Valid-Until: no' \
+      > /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       "gcc-14=${SPEEDSTER_COMPILER_PACKAGE_VERSION}" \
       "libc6-dev=${SPEEDSTER_LIBC_DEV_PACKAGE_VERSION}" \

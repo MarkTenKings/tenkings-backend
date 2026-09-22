@@ -21,6 +21,21 @@ export function productionAccessConfig(env) {
         || env.ATLAS_STAFF_BASE_PATH !== STAFF_BASE_PATH
         || !/^[a-z0-9-]+\.vercel\.app$/.test(env.VERCEL_URL ?? '')
         || !/^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? '')) deny(503, 'STAFF_ACCESS_NOT_ENABLED');
+    return productionAccessDetails(env,env.VERCEL_URL,env.VERCEL_GIT_COMMIT_SHA);
+}
+
+/** The private CPU service verifies the same admitted web session/policy.
+ * These are explicit web release bindings, not assertions that this host runs
+ * on Vercel. It exposes no sign-in, roster, operations or account routes. */
+export function privateManualAccessConfig(env) {
+    if(env.NODE_ENV!=='production'||env.ATLAS_MANUAL_RUNTIME!=='private-cpu'||env.ATLAS_STAFF_RUNTIME!=='postgres'
+        || env.VERCEL || env.VERCEL_ENV || env.ATLAS_LOCAL_SYNTHETIC || env.ATLAS_LOCAL_POSTGRES || env.ATLAS_LOCAL_POSTGRES_FILE
+        || env.ATLAS_STAFF_ORIGIN!==STAFF_ORIGIN || env.ATLAS_STAFF_BASE_PATH!==STAFF_BASE_PATH
+        || !/^[a-z0-9-]+\.vercel\.app$/.test(env.ATLAS_MANUAL_WEB_DEPLOYMENT??'')
+        || !/^[a-f0-9]{40}$/.test(env.ATLAS_MANUAL_WEB_RELEASE_SHA??''))deny(503,'STAFF_ACCESS_NOT_ENABLED');
+    return productionAccessDetails(env,env.ATLAS_MANUAL_WEB_DEPLOYMENT,env.ATLAS_MANUAL_WEB_RELEASE_SHA);
+}
+function productionAccessDetails(env,deploymentId,releaseSha) {
     const accountSid = env.ATLAS_AUTH_TWILIO_ACCOUNT_SID, serviceSid = env.ATLAS_AUTH_TWILIO_VERIFY_SERVICE_SID;
     if (!/^AC[0-9a-fA-F]{32}$/.test(accountSid ?? '') || !/^VA[0-9a-fA-F]{32}$/.test(serviceSid ?? ''))
         deny(503, 'ACCESS_CONFIGURATION_INVALID');
@@ -33,8 +48,8 @@ export function productionAccessConfig(env) {
         routerKey = secret(env.ATLAS_STAFF_ROUTER_KEY);
     if (sessionKey.equals(phoneKey) || routerKey.equals(sessionKey) || routerKey.equals(phoneKey))
         deny(503, 'ACCESS_CONFIGURATION_INVALID');
-    return makeAccessConfig({ mode: 'PRODUCTION', origin: STAFF_ORIGIN, basePath: STAFF_BASE_PATH, deploymentId: env.VERCEL_URL,
-        releaseSha: env.VERCEL_GIT_COMMIT_SHA, accountSid, serviceSid, databaseUrl: database.href, cookies: ACCESS_COOKIES,
+    return makeAccessConfig({ mode: 'PRODUCTION', origin: STAFF_ORIGIN, basePath: STAFF_BASE_PATH, deploymentId,
+        releaseSha, accountSid, serviceSid, databaseUrl: database.href, cookies: ACCESS_COOKIES,
         sessionKey, phoneKey, routerKey,
         approvedPhones: parseApprovedPhones(env.ATLAS_ADMIN_PHONES),
         // Release activation must attest the actual Verify service lifetime.

@@ -1,0 +1,12 @@
+@font-face{font-family:"Atlas Sans";src:url("/account/brand/fonts/original-4.woff2") format("woff2");font-weight:200 800;font-style:normal;font-display:swap}
+@font-face{font-family:"Atlas Serif";src:url("/account/brand/fonts/original-2.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Atlas Serif";src:url("/account/brand/fonts/original-1.woff2") format("woff2");font-weight:400;font-style:italic;font-display:swap}
+@font-face{font-family:"Atlas Mono";src:url("/account/brand/fonts/original-3.woff2") format("woff2");font-weight:100 800;font-style:normal;font-display:swap}
+:root{--atlas-ink:#080807;--atlas-panel:#131310;--atlas-raised:#1b1b16;--atlas-line:#353229;--atlas-gold:#cda955;--atlas-gold-light:#f0d17d;--atlas-white:#f5f1e7;--atlas-muted:#b5ae9f;--atlas-serif:"Atlas Serif",Georgia,serif;--atlas-sans:"Atlas Sans",system-ui,sans-serif;--atlas-mono:"Atlas Mono",ui-monospace,monospace}
+::selection{background:#cda955;color:#080807}
+.atlas-brand{display:inline-flex;align-items:center;gap:18px;text-decoration:none;color:var(--atlas-white)}
+.atlas-brand img{display:block;width:124px;height:70px;object-fit:contain;flex-shrink:0}
+.atlas-brand-copy{display:flex;flex-direction:column;gap:5px;border-left:1px solid var(--atlas-line);padding-left:18px;font:500 12px/1.4 var(--atlas-sans);letter-spacing:.02em}
+.atlas-brand-copy small{color:var(--atlas-muted);font:400 9px/1.4 var(--atlas-mono);letter-spacing:.13em;text-transform:uppercase}
+@media(max-width:600px){.atlas-brand{gap:12px}.atlas-brand img{width:96px;height:55px}.atlas-brand-copy{padding-left:12px;font-size:11px}.atlas-brand-copy small{font-size:8px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}

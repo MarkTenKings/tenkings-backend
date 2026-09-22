@@ -4,6 +4,7 @@ import { PrismaClient } from '../../.generated/public-database/index.js';
 import { assertPublicRequest, LOCAL_ORIGIN, makePublicConfig, productionConfig, unavailable } from './policy.mjs';
 import { PublicReportReader } from './reader.mjs';
 import { publicMediaClient } from '@atlas/service-bridge/public-media';
+import { manualPublicClient } from '@atlas/service-bridge/manual-public';
 import { fixtureArtwork } from '@atlas/report-view/fixture-artwork';
 
 function localConfig(env) {
@@ -25,8 +26,9 @@ export function runtime(req, env = process.env) {
     const config = env.ATLAS_LOCAL_PUBLIC === '1' ? localConfig(env) : productionConfig(env);
     assertPublicRequest(req, config);
     const key = Symbol.for(`atlas.public.reader.${config.configHash}.${config.deploymentId}.${config.releaseSha}`);
-    globalThis[key] ??= new PublicReportReader(new PrismaClient({ datasources: { db: { url: config.databaseUrl } }, errorFormat: 'minimal' }), config,
-        config.mode === 'LOCAL_FIXTURE' ? { async read(_reference, descriptor) { return fixtureArtwork(descriptor.sourceRef); } } : publicMediaClient(config));
+    globalThis[key] ??= new PublicReportReader(config.databaseUrl ? new PrismaClient({ datasources: { db: { url: config.databaseUrl } }, errorFormat: 'minimal' }) : null, config,
+        config.mode === 'LOCAL_FIXTURE' ? { async read(_reference, descriptor) { return fixtureArtwork(descriptor.sourceRef); } } : config.mediaOrigin ? publicMediaClient(config) : null,
+        config.manualOrigin ? manualPublicClient(config) : null);
     Object.setPrototypeOf(globalThis[key], PublicReportReader.prototype);
     return globalThis[key];
 }

@@ -1,0 +1,9 @@
+{
+  "name": "@atlas/defect-analysis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.mjs", "./provider": "./src/provider.mjs", "./repository": "./src/repository.mjs", "./executor": "./src/executor.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": { "@atlas/defect-memory": "workspace:*" }
+}

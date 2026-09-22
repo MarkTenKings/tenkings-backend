@@ -38,3 +38,25 @@ test('owned local requests accept Next forwarding normalization but reject a sub
     assert.throws(() => assertPublicRequest({ ...req, headers: { ...req.headers, 'x-forwarded-host': 'app.atlasgrading.com' } }, config));
     assert.throws(() => assertPublicRequest({ ...req, socket: { remoteAddress: '203.0.113.1' } }, config));
 });
+
+test('dedicated manual bridge is paired, fixed-host, separately keyed and included in configuration binding', () => {
+    const base=productionConfig(env),key=Buffer.alloc(32,8).toString('base64');
+    const configured=productionConfig({...env,ATLAS_PUBLIC_MANUAL_ORIGIN:'https://private.atlasgrading.com',ATLAS_PUBLIC_MANUAL_KEY:key});
+    assert.notEqual(configured.configHash,base.configHash);assert.deepEqual(configured.manualKey,Buffer.alloc(32,8));
+    for(const change of [{ATLAS_PUBLIC_MANUAL_ORIGIN:'https://private.atlasgrading.com'},{ATLAS_PUBLIC_MANUAL_KEY:key},{ATLAS_PUBLIC_MANUAL_ORIGIN:'https://attacker.invalid',ATLAS_PUBLIC_MANUAL_KEY:key},{ATLAS_PUBLIC_MANUAL_ORIGIN:'https://private.atlasgrading.com',ATLAS_PUBLIC_MANUAL_KEY:env.ATLAS_PUBLIC_MEDIA_KEY}])assert.throws(()=>productionConfig({...env,...change}));
+    assert.equal(productionConfig({...env}).configHash,base.configHash);
+});
+
+test('manual-only public runtime needs no legacy credential, has a distinct binding and rejects every partial legacy tuple',()=>{
+    const manual={...env,ATLAS_PUBLIC_RUNTIME:'manual',ATLAS_PUBLIC_MANUAL_ORIGIN:'https://private.atlasgrading.com',ATLAS_PUBLIC_MANUAL_KEY:Buffer.alloc(32,8).toString('base64')};
+    const keys=['ATLAS_PUBLIC_DATABASE_URL','ATLAS_PUBLIC_MEDIA_ORIGIN','ATLAS_PUBLIC_MEDIA_KEY'];for(const key of keys)delete manual[key];
+    const config=productionConfig(manual);assert.equal(config.databaseUrl,undefined);assert.equal(config.mediaKey,undefined);assert.ok(config.manualKey);
+    for(let mask=1;mask<7;mask++){const partial={...manual};keys.forEach((key,index)=>{if(mask&(1<<index))partial[key]=env[key];});assert.throws(()=>productionConfig(partial));}
+    assert.throws(()=>productionConfig({...manual,ATLAS_PUBLIC_RUNTIME:'postgres'}));
+    const changed=productionConfig({...manual,ATLAS_PUBLIC_MANUAL_KEY:Buffer.alloc(32,9).toString('base64')});assert.notEqual(changed.configHash,config.configHash);
+});
+test('fully configured legacy public hash retains the exact pre-manual serialization',async()=>{
+    const {digest}=await import('../lib/server/policy.mjs');const config=productionConfig(env);
+    const old=digest(JSON.stringify({version:'atlas-public-reader-v1',mode:'PRODUCTION',origin:PUBLIC_ORIGIN,databaseBindingHash:digest(new URL(env.ATLAS_PUBLIC_DATABASE_URL).href),mediaOrigin:env.ATLAS_PUBLIC_MEDIA_ORIGIN,mediaKeyHash:digest(Buffer.from(env.ATLAS_PUBLIC_MEDIA_KEY,'base64'))}));
+    assert.equal(config.configHash,old);
+});

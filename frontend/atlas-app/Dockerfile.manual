@@ -1,0 +1,33 @@
+# Build from scripts/package-manual-container.mjs's explicit source closure.
+# Qualified separately from the old Vercel and grading-operator deployments.
+ARG NODE_IMAGE=node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+FROM ${NODE_IMAGE} AS build
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 python3-venv cmake g++ make pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY vendor /opt/vendor
+RUN cd /opt/vendor && echo '5b4fac677018e6074196e8f9889f3e4a5310e46afbf22a893f620d4e24d3510e  libde265-1.1.1.tar.gz' | sha256sum -c - \
+    && echo '1405ed070421459b569ff49deab109b7f1a30a447e72a9b20a4154f774634a44  libheif-1.23.2.tar.gz' | sha256sum -c - \
+    && tar -xzf libde265-1.1.1.tar.gz && cmake -S libde265-1.1.1 -B de265-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/atlas-native -DENABLE_DECODER=OFF -DENABLE_ENCODER=OFF \
+    && cmake --build de265-build -j2 && cmake --install de265-build \
+    && tar -xzf libheif-1.23.2.tar.gz && cmake -S libheif-1.23.2 -B heif-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/atlas-native -DCMAKE_PREFIX_PATH=/opt/atlas-native \
+       -DWITH_LIBDE265=ON -DWITH_LIBDE265_PLUGIN=OFF -DWITH_X265=OFF -DWITH_AOM_DECODER=OFF -DWITH_AOM_ENCODER=OFF -DWITH_DAV1D=OFF -DWITH_RAV1E=OFF -DWITH_SvtEnc=OFF -DWITH_EXAMPLES=OFF -DBUILD_TESTING=OFF \
+    && cmake --build heif-build -j2 && cmake --install heif-build
+# Decoder children intentionally omit loader environment variables. Register
+# both reviewed native libraries so transitive libde265 resolution is explicit.
+RUN echo '/opt/atlas-native/lib' > /etc/ld.so.conf.d/atlas-native.conf && ldconfig
+ENV PATH="/opt/atlas-python/bin:${PATH}" LD_LIBRARY_PATH=/opt/atlas-native/lib
+RUN python3 -m venv /opt/atlas-python && pip install --no-cache-dir numpy==1.26.4 opencv-python-headless==4.10.0.84
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+WORKDIR /workspace
+COPY source/ ./
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter @atlas/staff-app...
+RUN node packages/atlas-grading-core/scripts/build.mjs && node packages/atlas-manual-workspace/scripts/build.mjs \
+    && node packages/atlas-photo-runtime/scripts/build-native.mjs /opt/atlas-native/include /opt/atlas-native/lib /usr/local/include/node \
+    && node frontend/atlas-app/scripts/generate-database.mjs
+RUN pnpm --filter @atlas/staff-app exec next build
+RUN node frontend/atlas-app/scripts/check-boundary.mjs
+ENV NODE_ENV=production ATLAS_MANUAL_RUNTIME=private-cpu ATLAS_MANUAL_PYTHON=/opt/atlas-python/bin/python
+USER node
+EXPOSE 4319
+WORKDIR /workspace
+CMD ["node","packages/atlas-connected-manual/scripts/serve.mjs"]
