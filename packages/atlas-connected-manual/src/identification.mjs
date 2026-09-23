@@ -107,7 +107,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
     });
   }
   async function asset(cardId,kind,value,sourceHash){return {ref:await artifacts.write(value,{cardId,kind,sourceHash})};}
-  async function event(staff,row,stage,eventName,requestHash,evidence,requireCurrent=false,signal=null) {
+  async function event(staff,row,stage,eventName,requestHash,evidence,requireCurrent=false,signal=null,dispatchSignal=null) {
     if(eventName!=='DISPATCH'){
       const receipt=canonical(evidence);
       // Retry only the same already-received receipt, never provider dispatch.
@@ -118,6 +118,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
     }
     return transaction(staff,row.card_id,async ({tx})=>{
       requireThat(!signal?.aborted,503,'IDENTIFICATION_CANCELLED');
+      dispatchSignal?.throwIfAborted();
       if(row.retry_of){
         // Provisioning takes a SHARE lock on these details before creating the
         // workspace. Resolve that race before committing a new paid dispatch.
@@ -126,8 +127,10 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         requireThat(!manual,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
       }
       const text=canonical(evidence);
+      dispatchSignal?.throwIfAborted();
       const changed=await tx.$executeRawUnsafe('INSERT INTO atlas_manual_connected.effect(attempt_id,stage,event,request_hash,evidence) VALUES($1::uuid,$2,$3,$4,$5) ON CONFLICT DO NOTHING',row.id,stage,eventName,requestHash,text);
       requireThat(changed===1,409,'IDENTIFICATION_EFFECT_ALREADY_DISPATCHED');
+      dispatchSignal?.throwIfAborted();
     },{edit:true,sourceHash:requireCurrent?row.source_hash:null});
   }
   async function settle(staff,row,state,result=null,error=null) {
@@ -135,7 +138,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       await tx.$executeRawUnsafe("UPDATE atlas_manual_connected.identification SET state=$1,result=$2,error=$3,finished_at=clock_timestamp() WHERE id=$4::uuid AND state='RUNNING'",state,result?canonical(result):null,error,row.id);
     },{edit:true});
   }
-  async function execute(staff,seedRow,loaded,recovery=null){
+  async function execute(staff,seedRow,loaded,recovery=null,dispatchSignal=null){
     const saved=storedInput(seedRow);
     const cardId=seedRow.card_id, pair={sourceHash:seedRow.source_hash};
     let row=recovery?null:seedRow, claimError=null, claimStarted=false;
@@ -144,17 +147,21 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       let dispatched=false;
       const effect=kind=>async(request,context)=>{
         requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
+        dispatchSignal?.throwIfAborted();
         const stage=kind==='model'?'MODEL':`OCR_${context.side.toUpperCase()}`;
         const requestJson=JSON.stringify(request);
         requireThat(digest(requestJson)===context.requestHash,503,'IDENTIFICATION_REQUEST_HASH_INVALID');
         const requestEvidence=await asset(cardId,'IDENTIFICATION_REQUEST',{engineVersion:saved.engineVersion,requestJson,requestHash:context.requestHash,stage,attemptId:row.id},pair.sourceHash);
         requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
-        await event(staff,row,stage,'DISPATCH',context.requestHash,requestEvidence,true,context.signal);
+        await event(staff,row,stage,'DISPATCH',context.requestHash,requestEvidence,true,context.signal,dispatchSignal);
         // Once the durable claim exists, any uncertainty retains the attempt.
         // Only a separately claimed, verified human retry can start a successor.
         dispatched=true;
         requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
+        dispatchSignal?.throwIfAborted();
         try {
+          // The admission signal stops only new effects. An in-flight request
+          // keeps the engine deadline and always retains its real response.
           const response=await effects[kind](request,{...context,engineVersion:saved.engineVersion});
           requireThat(response?.bytes instanceof Uint8Array && response.bytes.length<=262144,503,'IDENTIFICATION_PROVIDER_UNAVAILABLE');
           const bytes=Buffer.from(response.bytes);let usage=null;
@@ -249,7 +256,8 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       },{edit:true,sourceHash:input.sourceHash});
       return execute(staff,parent,evidence.loaded,{...evidence,claim});
     },
-    async run(staff,cardId) {
+    async run(staff,cardId,{dispatchSignal}={}) {
+      dispatchSignal?.throwIfAborted();
       const pair=await intake.verifiedPair(staff,cardId);
       const existing=await read(staff,cardId,pair.sourceHash);
       if(existing){
@@ -262,6 +270,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       if(!effects)return {state:'UNAVAILABLE'};
       const photos={},loaded=new Map();
       for(const [side,slot] of Object.entries(pair.sides)){
+        dispatchSignal?.throwIfAborted();
         const photo=slot.photo, found=await storage.readDecodedFrame({frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan});
         const bytes=await sharp(found.bytes,{limitInputPixels:52_000_000,failOn:'warning'}).resize(1400,1400,{fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer();
         requireThat(bytes.length<=3*1024*1024,422,'IDENTIFICATION_PHOTO_TOO_LARGE');
@@ -270,13 +279,16 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       }
       const input=parseCardIdentificationInput({subject:{id:cardId,revision:pair.sourceHash},photos});
       const savedInput={engineVersion:CARD_IDENTIFICATION_VERSION_V2,input};
+      dispatchSignal?.throwIfAborted();
       const row=await transaction(staff,cardId,async ({tx,principal})=>{
+        dispatchSignal?.throwIfAborted();
         const id=randomUUID(); const count=await tx.$executeRawUnsafe("INSERT INTO atlas_manual_connected.identification(id,card_id,source_hash,actor_id,state,input) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'RUNNING',$5) ON CONFLICT(card_id,source_hash) WHERE retry_of IS NULL DO NOTHING",id,cardId,pair.sourceHash,principal.id,canonical(savedInput));
         const [row]=await tx.$queryRawUnsafe('SELECT i.* FROM atlas_manual_connected.identification i WHERE i.card_id=$1::uuid AND i.source_hash=$2 AND NOT EXISTS(SELECT 1 FROM atlas_manual_connected.identification child WHERE child.retry_of=i.id)',cardId,pair.sourceHash);
+        dispatchSignal?.throwIfAborted();
         return {...row,won:count===1};
       },{edit:true,sourceHash:pair.sourceHash});
       if(!row.won)return checkedResult(staff,cardId,pair.sourceHash,await project(staff,row));
-      return execute(staff,row,loaded);
+      return execute(staff,row,loaded,null,dispatchSignal);
     },
   });
 }

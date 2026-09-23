@@ -66,8 +66,7 @@ test('same approved label produces exactly reproducible vector PDF at both physi
   assert.equal([...pdf.matchAll(/\/MediaBox \[0 0 196\.56 59\.76\]/g)].length, 2);
   assert.match(pdf, /\/Subtype \/Image/); // Exact owner-supplied raster logo, vector text/layout.
   const next = await render(samplePlan({ version: 4 })); assert.notEqual(next.sha256, a.sha256);
-  const mono = createManualLabelPdfRenderer({ layout, palette: 'MONOCHROME' });
-  assert.notEqual(mono.profileHash, render.profileHash); await assert.rejects(mono(plan), /MANUAL_LABEL_PALETTE_INVALID/);
+  assert.throws(() => createManualLabelPdfRenderer({ layout, palette: 'MONOCHROME' }), /MANUAL_LABEL_PALETTE_INVALID/);
 });
 test('layout refuses cropped/overlapping/missing faces and unsupported scripts rather than damaged identity', async () => {
   for (const invalid of [{ ...layout, widthPoints: 190 }, { ...layout, pages: [layout.pages[0]] },

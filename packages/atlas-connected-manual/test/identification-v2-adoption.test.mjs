@@ -237,6 +237,33 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
   };
 }
 
+test('shutdown during identification request persistence prevents a new model dispatch and retains completed OCR evidence', async () => {
+  const f = await fixture({ pauseRequestArtifact: true }), admission = new AbortController();
+  const pending = f.identification.run(f.staff, f.cardId, { dispatchSignal: admission.signal });
+  await f.requestArtifactEntered.promise;
+  admission.abort(Object.assign(Error('BATCH_STOPPED'), { code: 'BATCH_STOPPED' }));
+  f.requestArtifactRelease.resolve();
+  const result = await pending;
+  assert.equal(result.state, 'UNKNOWN');
+  assert.equal(f.calls.http.length, 2); assert.equal(f.calls.http.every(call => call.url.hostname === 'vision.googleapis.com'), true);
+  assert.equal(f.calls.receipts.filter(value => value.event === 'RESPONSE').length, 2);
+  assert.equal([...f.db.events.values()].some(value => value.stage === 'MODEL' && value.event === 'DISPATCH'), false);
+  await f.identification.run(f.staff, f.cardId); assert.equal(f.calls.http.length, 2);
+});
+
+test('shutdown admission does not cancel an identification model already dispatched or discard its response', async () => {
+  const f = await fixture({ pauseModel: true }), admission = new AbortController();
+  const pending = f.identification.run(f.staff, f.cardId, { dispatchSignal: admission.signal });
+  await f.modelEntered.promise;
+  admission.abort(Object.assign(Error('BATCH_STOPPED'), { code: 'BATCH_STOPPED' }));
+  const model = f.calls.http.find(call => call.url.hostname === 'api.openai.com');
+  assert.equal(model.init.signal.aborted, false);
+  f.modelRelease.resolve();
+  assert.equal((await pending).state, 'COMPLETE');
+  assert.equal(f.calls.http.length, 3);
+  assert.equal(f.calls.receipts.some(value => value.stage === 'MODEL' && value.event === 'RESPONSE'), true);
+});
+
 test('new sports attempt transports V2 OCR envelopes and retains exact request, response and original-frame evidence', async () => {
   const f = await fixture(), result = await f.identification.run(f.staff, f.cardId);
   assert.equal(result.state, 'COMPLETE'); assert.equal(result.result.provenance.engine_version, V2);

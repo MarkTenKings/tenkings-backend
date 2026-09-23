@@ -2,7 +2,7 @@
 // shaped publications exercise persistence; they are not hardware qualification.
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile, copyFile } from 'node:fs/promises';
+import { mkdir, writeFile, copyFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createOwnedManualFixture } from '../../atlas-manual-service/scripts/owned-fixture.mjs';
 import { createManualRepository } from '@atlas/manual-service/repository';
@@ -23,7 +23,8 @@ await mkdir(output, { mode: 0o700 });
 const fixture = await createOwnedManualFixture(process.argv.slice(2));
 try {
   const checks = [];
-  await fixture.cluster.sql(await readFile(new URL('../sql/finishing-station-proposal.sql', import.meta.url), 'utf8'), [], fixture.database.name);
+  const [installed] = await fixture.admin.$queryRawUnsafe("SELECT to_regclass('atlas_manual_connected.station_arm')::text AS relation");
+  assert.equal(installed.relation, 'atlas_manual_connected.station_arm', 'Station must be installed by the tracked staff migration chain');
   for (const grants of [publicationGrantSQL, finishingStationGrantSQL]) await fixture.cluster.sql(grants('atlas_fixture_manual'), [], fixture.database.name);
   const connection = fixture.connect(), { boundary, auth } = connection;
   async function login(phone) {

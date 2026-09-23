@@ -26,6 +26,11 @@ try {
   const cap = spawnSync(executable,['capabilities'],{encoding:'utf8',timeout:10000}); assert.equal(cap.status,0); const capabilities=JSON.parse(cap.stdout);
   assert.equal(capabilities.protocol,'atlas-mac-companion-rpc-v1'); assert.equal(capabilities.qualifiedProfileAvailable,false);
   assert.equal(capabilities.keyCreationAvailable,true); assert.equal(capabilities.productionReady,false);
+  const checked=spawnSync(executable,['validate-configuration','--configuration',path],{encoding:'utf8',timeout:10000});
+  assert.equal(checked.status,0); assert.deepEqual(JSON.parse(checked.stdout),{configurationValid:true});
+  const badPath=join(temp,'bad-config.json'); await writeFile(badPath,stationCanonical({...config,profile:{...profile,profileHash:'0'.repeat(64)}}),{mode:0o600});
+  const rejected=spawnSync(executable,['validate-configuration','--configuration',badPath],{encoding:'utf8',timeout:10000});
+  assert.equal(rejected.status,64); assert.equal(JSON.parse(rejected.stdout).error,'COMPANION_INPUT_INVALID');
   const plan=samplePlan(), now=Date.now();
   const claims = {version:'atlas-mac-nfc-arm-v1',origin:'https://atlasgrading.com',stationId:config.stationId,enrollmentId:config.enrollmentId,keyId:config.keyId,
     intentId:plan.nfc.intentId,planHash:plan.planHash,profileHash:profile.profileHash,qualificationHash:profile.qualificationHash,
@@ -72,5 +77,5 @@ try {
   assert.equal(restoredReplies[0].result.restored,true); assert.equal(restoredReplies[1].error,'COMPANION_RECOVERY_READ_ONLY');
   assert.equal(restoredReplies[2].error,'COMPANION_REMOVAL_ACK_REQUIRED'); assert.equal(restoredReplies[3].result.acknowledged,true);
   verifyStationSignature(stationKey.publicKey.export({format:'der',type:'spki'}).toString('base64'),removal,restoredReplies[5].result.signature);
-  console.log(JSON.stringify({test:'node_native_signed_protocol_interop',ok:true,scenarios:17,hardwareCalls:0,keychainCalls:0}));
+  console.log(JSON.stringify({test:'node_native_signed_protocol_interop',ok:true,scenarios:19,hardwareCalls:0,keychainCalls:0}));
 } finally { await rm(temp,{recursive:true,force:true}); }

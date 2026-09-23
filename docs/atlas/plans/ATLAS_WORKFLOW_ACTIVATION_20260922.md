@@ -12,13 +12,13 @@ This is source implementation and local acceptance evidence for Mark's September
 - `ATLAS_MANUAL_PRESENTATION_ENABLED=true` is an explicit native-service opt-in after presentation SQL/grants. Optional original slab photos use a separate upload namespace, full native verification and a separate SDR WebP display copy up to 2400 pixels. They do not replace Front/Back grading evidence. Revisions are append-only and bind to one exact public report version/hash.
 - The public signed transport admits only the new exact presentation-image selector. Public report details may enrich omitted identity fields only when the original accepted details revision, source and grading identity match the immutable approval. Missing optional data leaves verified grade evidence readable.
 
-## Inactive SQL candidates
+## Tracked additive migrations, not yet applied to production
 
 - `packages/atlas-batch-grading/sql/proposal.sql` and `batchGrantSQL(role)`.
 - `packages/atlas-connected-manual/sql/presentation-proposal.sql` and `presentationGrantSQL(role)`.
 - `packages/atlas-connected-manual/sql/finishing-station-proposal.sql` and `finishingStationGrantSQL(role)`.
 
-These are candidates, not applied production migrations. Numbered migration allocation reserved during implementation: presentation `20260922210000`, batch `20260922210100`, station `20260922210200`. Before release, review final SQL/grants and promote through the existing ATLAS deployment runbook, recording planned and observed actions in `SESSION_LOG.md`. Do not turn flags on against schema 44 without the required additive schema.
+On September 23, the three proposal files were promoted byte-for-byte into the staff migration chain: presentation `20260922210000_manual_presentation`, batch `20260922210100_batch_grading`, station `20260922210200_finishing_station`. Three separate disposable PostgreSQL runs verified the full staff47 chain, no-op replay and the domain lifecycle checks. Fresh production inventory still shows staff44; these three migrations and their scoped grants remain unapplied. Apply only the reviewed staff additions through the existing deployment runbook, recording planned and observed actions in `SESSION_LOG.md`. Preserve the independent public migration history. Do not turn flags on against schema44.
 
 ## Label and station acceptance
 

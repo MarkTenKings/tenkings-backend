@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile, copyFile } from 'node:fs/promises';
+import { mkdir, writeFile, copyFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createOwnedManualFixture } from '../../atlas-manual-service/scripts/owned-fixture.mjs';
 import { createManualRepository } from '@atlas/manual-service/repository';
@@ -19,7 +19,8 @@ await mkdir(output, { mode: 0o700 });
 const fixture = await createOwnedManualFixture(process.argv.slice(2));
 try {
   const checks = [];
-  await fixture.cluster.sql(await readFile(new URL('../sql/presentation-proposal.sql', import.meta.url), 'utf8'), [], fixture.database.name);
+  const [installed] = await fixture.admin.$queryRawUnsafe("SELECT to_regclass('atlas_manual.presentation')::text AS relation");
+  assert.equal(installed.relation, 'atlas_manual.presentation', 'Presentation must be installed by the tracked staff migration chain');
   for (const grants of [publicationGrantSQL, presentationGrantSQL]) await fixture.cluster.sql(grants('atlas_fixture_manual'), [], fixture.database.name);
   const { boundary, auth, manualClient } = fixture.connect();
   async function login(phone) {
@@ -153,7 +154,7 @@ try {
   assert.equal((await presentation.status(staff, f.cardId)).revision, 0);
   assert.deepEqual(await repository.readApproval(staff, f.cardId, f.actionId), unchangedApproval);
   checks.push('a new approval fences prior pending uploads and starts a separate optional presentation without rewriting old approval');
-  const result = { status: 'PASS', checks, schema: 'inactive proposal applied only to owned disposable PostgreSQL', paidEffects: 0, hardwareEffects: 0, remoteEffects: 0 };
+  const result = { status: 'PASS', checks, schema: 'tracked staff migration chain in owned disposable PostgreSQL', paidEffects: 0, hardwareEffects: 0, remoteEffects: 0 };
   await writeFile(join(output, 'result.json'), JSON.stringify(result, null, 2), { mode: 0o600 }); console.log(JSON.stringify(result));
 } finally {
   await fixture.stop(); await copyFile(join(fixture.cluster.directory, 'cleanup.json'), join(output, 'cleanup.json'));

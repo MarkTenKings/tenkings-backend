@@ -34,17 +34,25 @@ export function createBatchWorker({ repository, prepare, concurrency = 2, heartb
   assertBatch(repository && typeof prepare?.run === 'function' && Number.isInteger(concurrency)
     && concurrency >= 1 && concurrency <= 8, 'BATCH_CONFIG_INVALID', 500);
   assertBatch(Number.isInteger(heartbeatMs) && heartbeatMs >= 10 && heartbeatMs <= 30000, 'BATCH_CONFIG_INVALID', 500);
-  const owners = new Map(); let stopped = false, active = 0, draining = false;
+  const owners = new Map(), stopWaiters = new Set(), dispatchAdmission = new AbortController();
+  let stopped = false, active = 0, draining = false;
+  function settled() {
+    if (draining || active) return;
+    for (const resolve of stopWaiters) resolve(); stopWaiters.clear();
+  }
   async function execute(staff, job) {
-    const controller = new AbortController(); let renewing = false;
+    const controller = new AbortController(); let renewal = null;
     const timer = timers.setInterval(() => {
-      if (renewing || controller.signal.aborted) return; renewing = true;
-      repository.renew(staff, job).then(ok => { if (!ok) controller.abort(batchError('BATCH_LEASE_LOST')); })
-        .catch(error => controller.abort(error)).finally(() => { renewing = false; });
+      if (renewal || controller.signal.aborted) return;
+      renewal = repository.renew(staff, job).then(ok => { if (!ok) controller.abort(batchError('BATCH_LEASE_LOST')); })
+        .catch(error => controller.abort(error)).finally(() => { renewal = null; });
     }, heartbeatMs);
     timer?.unref?.();
     try {
-      const outcome = await prepare.run(staff, job, { signal: controller.signal });
+      // Admission cancellation fences new provider effects; it must not abort
+      // an already dispatched response or its immutable receipt persistence.
+      const outcome = await prepare.run(staff, job, { signal: controller.signal,
+        dispatchSignal: AbortSignal.any([controller.signal, dispatchAdmission.signal]) });
       if (controller.signal.aborted) throw controller.signal.reason;
       assertBatch(outcome && ['CONTINUE', 'WAIT', 'REVIEW', 'ATTENTION'].includes(outcome.kind), 'BATCH_OUTCOME_INVALID', 500);
       assertBatch(outcome.kind !== 'CONTINUE' || job.stage !== 'REPORT', 'BATCH_OUTCOME_INVALID', 500);
@@ -57,12 +65,12 @@ export function createBatchWorker({ repository, prepare, concurrency = 2, heartb
       // This precise native-capacity refusal occurs before the limited work
       // starts. Retain the same durable job/action; do not ask a reviewer to
       // resolve ordinary contention with an upload or another measurement.
-      const outcome=error?.code==='MANUAL_PROCESSING_BUSY'&&!controller.signal.aborted
+      const outcome=['MANUAL_PROCESSING_BUSY','BATCH_STOPPED'].includes(error?.code)&&!controller.signal.aborted
         ?{kind:'WAIT',retryAfterMs:3000}
         :{kind:'ATTENTION',code:/^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code??'')?error.code:'BATCH_STAGE_INTERRUPTED'};
       try { await repository.finish(staff, job, outcome); }
       catch (saveError) { onError(saveError); }
-    } finally { timers.clearInterval(timer); }
+    } finally { timers.clearInterval(timer); await renewal; }
   }
   async function drain() {
     if (draining || stopped) return; draining = true;
@@ -72,19 +80,31 @@ export function createBatchWorker({ repository, prepare, concurrency = 2, heartb
         for (const [id, staff] of owners) {
           try { job = await repository.claim(staff, randomUUID(), concurrency); }
           catch (error) { if (error?.status === 401 || error?.status === 403) owners.delete(id); onError(error); continue; }
+          // A claim can commit while SIGTERM is waiting on the database. Return
+          // that exact lease to the queue without starting another CPU/provider
+          // stage; shutdown must never create a fresh paid dispatch.
+          if (stopped) {
+            if (job) try { await repository.finish(staff, job, { kind: 'WAIT', retryAfterMs: 1000 }); }
+            catch (error) { onError(error); }
+            return;
+          }
           if (job) { owner = staff; owners.delete(id); owners.set(id, staff); break; }
         }
         if (!job) break;
         active++;
-        void execute(owner, job).finally(() => { active--; if (!stopped) void drain(); });
+        void execute(owner, job).finally(() => { active--; settled(); if (!stopped) void drain(); });
       }
-    } finally { draining = false; }
+    } finally { draining = false; settled(); }
   }
   const poll = timers.setInterval(() => { if (owners.size) void drain(); }, 2000); poll?.unref?.();
   return Object.freeze({
     wake(staff) { if (stopped) return false; assertBatch(staff?.id, 'SIGN_IN_REQUIRED', 401); owners.set(staff.id, staff); void drain(); return true; },
-    async tick(staff) { if (staff) owners.set(staff.id, staff); await drain(); },
-    stop() { stopped = true; owners.clear(); timers.clearInterval(poll); },
+    async tick(staff) { if (stopped) return; if (staff) owners.set(staff.id, staff); await drain(); },
+    stop() {
+      stopped = true; owners.clear(); timers.clearInterval(poll);
+      dispatchAdmission.abort(batchError('BATCH_STOPPED'));
+      return new Promise(resolve => { stopWaiters.add(resolve); settled(); });
+    },
     status: () => ({ active, stopped, authenticatedOwners: owners.size, observedAt: clock() }),
   });
 }

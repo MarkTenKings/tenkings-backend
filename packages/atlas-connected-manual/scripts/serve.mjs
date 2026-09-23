@@ -30,10 +30,12 @@ async function stop(){
  if(stopping)return;stopping=true;
  const workerStopped=analysisWorker?.stop();
  const geometryStopped=runtime.connected.earlyGeometry.stop();
+ const batchStopped=runtime.connected.batch?.worker.stop();
  const deadline=setTimeout(()=>server.closeAllConnections(),215000);deadline.unref();
  await new Promise(resolve=>server.close(resolve));clearTimeout(deadline);
  await workerStopped;
  await geometryStopped;
+ await batchStopped;
  await Promise.all([runtime.close(),client.$disconnect()]);
 }
 process.once('SIGTERM',()=>void stop());process.once('SIGINT',()=>void stop());

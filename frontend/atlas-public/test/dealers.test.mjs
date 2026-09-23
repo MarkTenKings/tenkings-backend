@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {activeDealers,parseDealerDirectory,selectDealers,distanceMiles,dealerDirections} from '../lib/dealers.mjs';
 import {dealerDirectory} from '../lib/server/dealers.mjs';
 const now=Date.parse('2026-09-22T12:00:00.000Z');
@@ -27,4 +28,23 @@ test('directions preserves supplied address as URL data only',()=>{
 test('only full valid optional map configuration is exposed',()=>{
  const source=JSON.stringify(directory());assert.equal(dealerDirectory({ATLAS_PUBLIC_DEALER_DIRECTORY_JSON:source,ATLAS_PUBLIC_GOOGLE_MAPS_BROWSER_KEY:'x'.repeat(30)},now).map,null);
  const result=dealerDirectory({ATLAS_PUBLIC_DEALER_DIRECTORY_JSON:source,ATLAS_PUBLIC_GOOGLE_MAPS_BROWSER_KEY:'x'.repeat(30),ATLAS_PUBLIC_GOOGLE_MAP_ID:'f'.repeat(16)},now);assert.equal(result.dealers.length,2);assert.equal(result.map.mapId,'f'.repeat(16));
+});
+test('owner-authorized contact-only shop is discoverable without inferred services, terms, pins or phone',()=>{
+ const source=readFileSync(new URL('../config/authorized-dealers-20260923.json',import.meta.url),'utf8');
+ const result=dealerDirectory({ATLAS_PUBLIC_DEALER_DIRECTORY_JSON:source},Date.parse('2026-09-24T00:00:00.000Z'));
+ assert.equal(result.dealers.length,1);assert.equal(result.map,null);
+ const [dealer]=result.dealers;assert.equal(dealer.id,'centercourt-cards-roseville');
+ assert.equal(dealer.contactOnly,true);assert.deepEqual(dealer.services,[]);assert.deepEqual(dealer.programs,[]);
+ assert.equal(dealer.phone,null);assert.equal(dealer.position,null);assert.equal(dealer.website,'https://www.centercourtcardsroseville.com/');
+ for(const service of ['ALL','BUY','SUBMIT'])assert.equal(selectDealers(result.dealers,{query:'Roseville',service}).length,1);
+ const destination=new URL(dealerDirections(dealer)).searchParams.get('destination');
+ assert.equal(destination,'307 Lincoln St, Roseville, CA, 95678, US');
+ assert.equal(selectDealers(result.dealers,{query:'95678'})[0].distanceMiles,null);
+});
+test('contact-only authorization cannot publish a service, program or unusable contact',()=>{
+ const valid=()=>{const d=directory();d.dealers[0]={...d.dealers[0],contactOnly:true,services:[]};return d;};
+ assert.equal(parseDealerDirectory(valid()).dealers[0].contactOnly,true);
+ for(const mutate of [d=>d.dealers[0].contactOnly=false,d=>d.dealers[0].services=['BUY'],d=>d.dealers[0].website=null,d=>d.dealers[0].programs=[{name:'Invented',priceMinor:1000,currency:'USD',turnaroundBusinessDays:{min:2,max:5},terms:'Unsupported',expiresAt:'2027-01-01T00:00:00.000Z'}],d=>delete d.dealers[0].contactOnly]){
+   const d=valid();mutate(d);assert.throws(()=>parseDealerDirectory(d));
+ }
 });

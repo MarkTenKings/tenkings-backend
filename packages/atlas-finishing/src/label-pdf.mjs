@@ -51,7 +51,9 @@ export function createManualLabelPdfRenderer({ layout, palette = 'NOIR_GOLD', la
   if (layoutVersion === 'atlas-noir-gold-v1') return createLegacyRenderer({ layout, palette });
   assert(layoutVersion === CURRENT_LABEL_LAYOUT, 'LABEL_PDF_LAYOUT_VERSION_INVALID');
   const selected = parseLayout(layout);
-  assert(['NOIR_GOLD', 'MONOCHROME'].includes(palette), 'MANUAL_LABEL_PALETTE_INVALID');
+  // V2 is the owner's exact supplied full-color logo/black-and-gold artwork.
+  // Refuse unsupported palettes during setup, before a station can look ready.
+  assert(palette === 'NOIR_GOLD', 'MANUAL_LABEL_PALETTE_INVALID');
   const profileHash = sha(stable({ version: VERSION, layout: selected, palette, fonts: ['Helvetica', 'Times-Roman'], logoSha256: LABEL_LOGO_SHA256, pdfkit: '0.17.2', svgToPdfkit: '0.1.8', qrcode: '1.5.4' }));
   const render = async plan => {
     plan = structuredClone(plan); validateManualFinishingPlan(plan);

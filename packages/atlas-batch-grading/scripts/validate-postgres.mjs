@@ -2,7 +2,6 @@
 // Synthetic photo metadata isolates actual queue SQL/auth/lease behavior. The
 // connected intake and CPU suites separately qualify photographs and scoring.
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { createOwnedManualFixture } from '../../atlas-manual-service/scripts/owned-fixture.mjs';
 import { canonical, digest, requireThat } from '../../atlas-manual-service/src/contract.mjs';
@@ -13,7 +12,7 @@ const fixture = await createOwnedManualFixture(process.argv.slice(2));
 const checks = [];
 try {
   const [installed] = await fixture.admin.$queryRawUnsafe("SELECT to_regclass('atlas_manual_connected.batch_grading')::text AS relation");
-  if (!installed.relation) await fixture.cluster.sql(await readFile(new URL('../sql/proposal.sql', import.meta.url), 'utf8'), [], fixture.database.name);
+  assert.equal(installed.relation, 'atlas_manual_connected.batch_grading', 'Batch must be installed by the tracked staff migration chain');
   await fixture.cluster.sql(intakeGrantSQL('atlas_fixture_manual'), [], fixture.database.name);
   await fixture.cluster.sql('GRANT USAGE ON SCHEMA atlas_manual_connected TO atlas_fixture_manual', [], fixture.database.name);
   await fixture.cluster.sql(batchGrantSQL('atlas_fixture_manual'), [], fixture.database.name);

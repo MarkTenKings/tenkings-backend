@@ -24,8 +24,11 @@ do {
     if args.count == 3 && args[0] == "full-sync" && args[1] == "--fd", let descriptor = Int32(args[2]), descriptor >= 3 {
         guard atlas_companion_full_sync(descriptor) == 0 else { throw CompanionFailure("COMPANION_FULL_SYNC_FAILED") }; emit(["synced": true]); exit(0)
     }
-    guard args.count == 3 && ["serve", "key-info", "init-key"].contains(args[0]) && args[1] == "--configuration" else { throw CompanionFailure("COMPANION_ARGUMENTS_INVALID") }
+    guard args.count == 3 && ["serve", "validate-configuration", "key-info", "init-key"].contains(args[0]) && args[1] == "--configuration" else { throw CompanionFailure("COMPANION_ARGUMENTS_INVALID") }
     let config = try readCompanionConfiguration(args[2])
+    // Pure configuration admission: no PC/SC context, Keychain lookup, key
+    // creation or station runtime. A valid file is not hardware qualification.
+    if args[0] == "validate-configuration" { emit(["configurationValid": true]); exit(0) }
     if args[0] == "key-info" { emit(try ProtectedCompanionKeyStore().identity(config)); exit(0) }
     if args[0] == "init-key" { emit(try ProtectedCompanionKeyStore().initialize(config, configurationPath: args[2])); exit(0) }
     let runtime = CompanionRuntime(configuration: config)

@@ -75,22 +75,26 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
     return value;
   }
   return Object.freeze({
-    async run(staff, job, { signal } = {}) {
+    async run(staff, job, { signal, dispatchSignal } = {}) {
       requireThat(!signal?.aborted, 409, 'BATCH_INTERRUPTED');
+      dispatchSignal?.throwIfAborted();
       let opened = await current(staff, job);
       if (job.stage === 'PREPARE') {
         if (!opened.manual) {
           if (opened.identification.state !== 'COMPLETE') {
-            const identification = await connected.identification.run(staff, job.cardId);
+            dispatchSignal?.throwIfAborted();
+            const identification = await connected.identification.run(staff, job.cardId, { dispatchSignal });
             if (identification.state === 'RUNNING') return wait();
             if (identification.state !== 'COMPLETE') return attention('BATCH_IDENTITY_NEEDS_REVIEW');
             opened = await current(staff, job);
           }
           try { gradingIdentity(opened.details); } catch { return attention('BATCH_IDENTITY_NEEDS_REVIEW'); }
+          dispatchSignal?.throwIfAborted();
           await connected.earlyGeometry.ensure(staff, job.cardId);
           const geometry = await connected.earlyGeometry.status(staff, job.cardId);
           if (SIDES.some(side => ['FAILED', 'NEEDS_REVIEW'].includes(geometry[side].state))) return attention('BATCH_GEOMETRY_NEEDS_REVIEW');
           if (!SIDES.every(side => geometry[side].state === 'READY')) return wait();
+          dispatchSignal?.throwIfAborted();
           await connected.initialize(staff, job.cardId, { sourceHash: job.sourceHash, detailsRevision: opened.revision });
         }
         const card = await connected.workflow.service.read(staff, job.cardId), state = await connected.workflow.hydrate(card);
@@ -103,8 +107,9 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
       const card = await connected.workflow.service.read(staff, job.cardId), state = await connected.workflow.hydrate(card);
       requireThat(card.revision === job.evidence.manualRevision && card.contentHash === job.evidence.manualContentHash, 409, 'BATCH_MANUAL_DRAFT_CHANGED');
       if (job.stage === 'ANALYZE') {
+        dispatchSignal?.throwIfAborted();
         const response = await connected.assistance.analyzeMachine(staff, job.cardId, { actionId: job.analysisActionId,
-          base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) });
+          base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) }, { dispatchSignal });
         const astra = response.astra;
         if (astra?.status === 'READY') return { kind: 'CONTINUE', evidence: { analysisId: astra.analysisId } };
         if (['RUNNING', 'PREPARED', 'DISPATCHED'].includes(response.state) || astra?.status === 'RUNNING') return wait();

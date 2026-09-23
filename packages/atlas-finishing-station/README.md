@@ -6,6 +6,8 @@ Production NFC remains **SETUP_PENDING** while the native compiled F8215 lock qu
 
 ## Launch after operator provisioning
 
+Use [setup and acceptance](SETUP.md) for the reproducible review-bundle build and exact remaining hardware steps. `--check-configuration /absolute/private/station.json` validates the protected files, executable digest, actual native parser and optional render/media profile without Keychain, reader, printer, journal or hosted effects. It cannot claim readiness. The same parser check runs before ordinary startup; malformed native config is not hidden as a missing key. A missing selected printer remains `printer:null,label:null`.
+
 Use Node 20 and a reviewed native `atlas-mac-nfc-companion` build from `packages/atlas-mac-nfc`. Provisioning, existing protected Secure Enclave identity, host trust, activation and physical printer/tag qualification are separate operator steps. Ordinary launch does not create a key.
 
 ```sh

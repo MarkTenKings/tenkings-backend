@@ -4,6 +4,7 @@ import { buildMachineReport, createBatchPreparation } from '../src/batch-prepara
 import { workspace } from '../../atlas-manual-workspace/test/defect-fixtures.mjs';
 import { runDefectMeasurement } from '../../atlas-manual-workspace/src/defect-actions.mjs';
 import { decodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
+import { createBatchWorker } from '@atlas/batch-grading';
 
 const SIDES = ['FRONT', 'BACK'];
 const quad = [{ x: .04, y: .03 }, { x: .96, y: .03 }, { x: .96, y: .97 }, { x: .04, y: .97 }];
@@ -67,4 +68,34 @@ test('preparation pauses safely for missing identity without calling human actio
   };
   const result = await createBatchPreparation({ connected }).run({}, { cardId: 'synthetic-card', sourceHash: 'b'.repeat(64), uploads: { FRONT: 'front', BACK: 'back' }, stage: 'PREPARE' });
   assert.equal(result.code, 'BATCH_IDENTITY_NEEDS_REVIEW'); assert.equal(initialized, false);
+});
+
+for (const stage of ['PREPARE', 'ANALYZE']) test(`shutdown during real ${stage} preparation reads prevents provider admission and retains the same stage`, async () => {
+  const f = fixture(), staff = { id: 'synthetic-staff' }, uploads = { FRONT: 'front', BACK: 'back' };
+  const job = { cardId: f.card.cardId, sourceHash: f.card.draft.source.sourceHash, uploads, stage,
+    analysisActionId: 'same-analysis-action', evidence: { manualRevision: f.card.revision, manualContentHash: f.card.contentHash } };
+  let entered, release, claims = 0, effects = 0;
+  const reading = new Promise(resolve => { entered = resolve; }), pending = new Promise(resolve => { release = resolve; });
+  const delayedRead = async value => { entered(); await pending; return value; };
+  const opened = { card: { ready: true, sourceHash: job.sourceHash,
+    sides: Object.fromEntries(SIDES.map(side => [side, { upload: { uploadId: uploads[side] } }])) },
+    manual: stage === 'ANALYZE' ? {} : null, identification: { state: 'NOT_STARTED' } };
+  const connected = { open: async () => stage === 'PREPARE' ? delayedRead(opened) : opened,
+    identification: { async run() { effects++; throw Error('identification must not start after stop'); } },
+    workflow: { service: { read: async () => f.card }, hydrate: () => delayedRead(f.state) },
+    assistance: { async analyzeMachine() { effects++; throw Error('analysis must not start after stop'); } } };
+  const finished = [];
+  const worker = createBatchWorker({ concurrency: 1, prepare: createBatchPreparation({ connected }), repository: {
+    async claim() { claims++; return job; }, async renew() { return true; },
+    async finish(_staff, value, outcome) { finished.push({ value, outcome }); return true; },
+  } });
+  try {
+    worker.wake(staff); await reading;
+    let stopped = false;
+    const stopping = worker.stop().then(() => { stopped = true; });
+    assert.equal(stopped, false); release(); await stopping;
+    assert.equal(effects, 0); assert.equal(claims, 1); assert.equal(finished.length, 1);
+    assert.equal(finished[0].value.stage, stage); assert.equal(finished[0].outcome.kind, 'WAIT');
+    assert.equal(worker.status().active, 0);
+  } finally { release(); await worker.stop(); }
 });

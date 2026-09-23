@@ -1,0 +1,25 @@
+{
+  "version": "atlas-dealer-directory-v1",
+  "updatedAt": "2026-09-23T20:16:39.000Z",
+  "dealers": [
+    {
+      "id": "centercourt-cards-roseville",
+      "name": "CenterCourt Cards",
+      "authorizedAt": "2026-09-23T20:16:39.000Z",
+      "authorizationExpiresAt": null,
+      "contactOnly": true,
+      "services": [],
+      "address": {
+        "line1": "307 Lincoln St",
+        "city": "Roseville",
+        "region": "CA",
+        "postalCode": "95678",
+        "country": "US"
+      },
+      "position": null,
+      "website": "https://www.centercourtcardsroseville.com/",
+      "phone": null,
+      "programs": []
+    }
+  ]
+}

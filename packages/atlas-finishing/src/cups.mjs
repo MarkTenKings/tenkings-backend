@@ -8,7 +8,7 @@ import { validateManualFinishingPlan } from './manual.mjs';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const assert = (ok, code) => { if (!ok) throw new Error(code); };
 const MAX_PDF = 8 * 1024 * 1024;
-function configuration(config) {
+export function validateCupsConfiguration(config) {
   assert(config?.version === 'atlas-cups-printer-v1' && config.qualified === true
     && /^[a-f0-9]{64}$/.test(config.qualificationHash) && /^[A-Za-z0-9][A-Za-z0-9_-]{0,126}$/.test(config.printer)
     && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,126}$/.test(config.media) && ['atlas-noir-gold-v1', 'atlas-signature-v2'].includes(config.layoutVersion)
@@ -69,7 +69,7 @@ export function createFileCupsJournal({ directory, fullSync }) {
  * A reservation survives restart and is never deleted to permit a blind reprint.
  */
 export function createCupsPrinter({ config, journal, transport, renderDocument }) {
-  const profile = configuration(config), profileHash = sha(JSON.stringify(profile));
+  const profile = validateCupsConfiguration(config), profileHash = sha(JSON.stringify(profile));
   assert(journal?.reserve && journal?.get && journal?.commit && transport?.submit && transport?.inspect
     && typeof renderDocument === 'function', 'CUPS_ADAPTER_CONFIGURATION_INVALID');
   async function status(intentId, planHash) {

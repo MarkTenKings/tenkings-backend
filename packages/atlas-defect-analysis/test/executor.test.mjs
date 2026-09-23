@@ -68,6 +68,22 @@ test('a PREPARED crash resumes exact saved bytes without resolving newer images 
   assert.equal(resumed.state, 'READY'); assert.equal(sent, prepared.requestText); assert.equal(context.activity.prepares, 1);
 });
 
+test('shutdown after a committed analysis claim fences provider dispatch and retains the claim without replay', async () => {
+  const prepared = preparedFixture(), context = setup(async () => { throw Error('must not dispatch'); }), admission = new AbortController();
+  let entered, release;
+  const claimed = new Promise(resolve => { entered = resolve; }), pending = new Promise(resolve => { release = resolve; });
+  const claim = context.repository.claim;
+  context.repository.claim = async (...args) => { const result = await claim(...args); entered(); await pending; return result; };
+  const running = context.executor.prepareAndRun(context.staff, { cardId: prepared.evidence.cardId,
+    actionId: prepared.evidence.analysisId, prepared, expiresAt: new Date(Date.now() + 120000).toISOString(), dispatchSignal: admission.signal });
+  await claimed; admission.abort(Object.assign(Error('BATCH_STOPPED'), { code: 'BATCH_STOPPED' })); release();
+  const result = await running;
+  assert.equal(result.state, 'UNKNOWN'); assert.equal(context.activity.calls, 0);
+  assert.equal(result.receipts[0].kind, 'OUTCOME');
+  await context.executor.resume(context.staff, { cardId: prepared.evidence.cardId, analysisId: prepared.evidence.analysisId });
+  assert.equal(context.activity.calls, 0);
+});
+
 test('UNKNOWN request reconciliation never creates a new model request or a zero-findings result', async () => {
   const prepared = preparedFixture(), context = setup(async () => { throw new Error('possible network dispatch'); });
   const result = await call(context, prepared); assert.equal(result.state, 'UNKNOWN'); assert.equal(context.activity.calls, 1);

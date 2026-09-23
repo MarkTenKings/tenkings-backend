@@ -12,15 +12,19 @@ export function parseDealerDirectory(value) {
   check(value.version === 'atlas-dealer-directory-v1' && (value.updatedAt === null || date(value.updatedAt)) && Array.isArray(value.dealers) && value.dealers.length <= 1000);
   const ids = new Set();
   for (const dealer of value.dealers) {
-    exact(dealer,['id','name','authorizedAt','authorizationExpiresAt','services','address','position','website','phone','programs']);
+    exact(dealer,['id','name','authorizedAt','authorizationExpiresAt','services','address','position','website','phone','programs'],['contactOnly']);
     check(/^[a-z0-9][a-z0-9-]{0,63}$/.test(dealer.id) && !ids.has(dealer.id)); ids.add(dealer.id);
     check(text(dealer.name) && date(dealer.authorizedAt) && (dealer.authorizationExpiresAt === null || date(dealer.authorizationExpiresAt) && Date.parse(dealer.authorizationExpiresAt) > Date.parse(dealer.authorizedAt)));
-    check(Array.isArray(dealer.services) && dealer.services.length > 0 && dealer.services.length <= 2 && new Set(dealer.services).size === dealer.services.length && dealer.services.every(v => ['BUY','SUBMIT'].includes(v)));
+    check(!Object.hasOwn(dealer,'contactOnly') || dealer.contactOnly === true);
+    check(Array.isArray(dealer.services) && (dealer.contactOnly ? dealer.services.length === 0 : dealer.services.length > 0) && dealer.services.length <= 2 && new Set(dealer.services).size === dealer.services.length && dealer.services.every(v => ['BUY','SUBMIT'].includes(v)));
     exact(dealer.address,['line1','city','region','postalCode','country']);
     check(Object.values(dealer.address).every(v => text(v)) && /^[A-Z]{2}$/.test(dealer.address.country));
     if (dealer.position !== null) { exact(dealer.position,['lat','lng']); check(Number.isFinite(dealer.position.lat) && Math.abs(dealer.position.lat) <= 90 && Number.isFinite(dealer.position.lng) && Math.abs(dealer.position.lng) <= 180); }
     check(dealer.website === null || httpsLink(dealer.website));
     check(dealer.phone === null || /^\+[1-9][0-9]{6,14}$/.test(dealer.phone));
+    // Authorization to appear in the directory does not supply buying or
+    // submission terms. Contact-only partners cannot assert a service/program.
+    check(!dealer.contactOnly || dealer.website !== null || dealer.phone !== null);
     check(Array.isArray(dealer.programs) && dealer.programs.length <= 12 && (!dealer.programs.length || dealer.services.includes('SUBMIT')));
     for (const program of dealer.programs) {
       exact(program,['name','priceMinor','currency','turnaroundBusinessDays','terms','expiresAt']);
@@ -44,7 +48,7 @@ export function distanceMiles(from,to) {
 }
 export function selectDealers(dealers,{query='',service='ALL',position=null}={}) {
   const search=query.trim().toLocaleLowerCase();
-  return dealers.filter(d => (service === 'ALL' || d.services.includes(service)) && (!search || [d.name,...Object.values(d.address)].join(' ').toLocaleLowerCase().includes(search)))
+  return dealers.filter(d => (service === 'ALL' || d.services.includes(service) || d.contactOnly === true) && (!search || [d.name,...Object.values(d.address)].join(' ').toLocaleLowerCase().includes(search)))
     .map(d => ({...d,distanceMiles:distanceMiles(position,d.position)}))
     .sort((a,b) => (a.distanceMiles ?? Infinity)-(b.distanceMiles ?? Infinity) || a.name.localeCompare(b.name));
 }

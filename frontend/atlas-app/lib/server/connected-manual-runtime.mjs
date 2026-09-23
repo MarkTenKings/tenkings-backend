@@ -91,5 +91,5 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     reconcile:input=>connected.assistance.executor.reconcile(input),
   }):null;
   const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled});
-  return {connected,boundary,handler,analysisReconciler,approvedManualReader,uploadOrigin:settings.uploadOrigin,async close(){connected.batch?.worker.stop();await manualClient.$disconnect();client.destroy();}};
+  return {connected,boundary,handler,analysisReconciler,approvedManualReader,uploadOrigin:settings.uploadOrigin,async close(){await connected.batch?.worker.stop();await manualClient.$disconnect();client.destroy();}};
 }

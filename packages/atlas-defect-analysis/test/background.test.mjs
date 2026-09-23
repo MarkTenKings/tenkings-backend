@@ -176,6 +176,24 @@ test('racing background human handlers create one paid POST and one durable acce
   assert.equal(c.activity.calls.length, 1);
 });
 
+test('shutdown admission preserves a background POST already in flight and its accepted response custody', async () => {
+  const prepared = prepare(), admission = new AbortController();
+  let entered, release, transportSignal;
+  const dispatched = new Promise(resolve => { entered = resolve; }), pending = new Promise(resolve => { release = resolve; });
+  const c = context(async (_url, options) => {
+    if (options.method === 'GET') return json({ ...responseFixture(prepared.evidence), id: ack().id });
+    transportSignal = options.signal; entered(); await pending; return json(ack());
+  });
+  const running = run(c, prepared, { dispatchSignal: admission.signal });
+  await dispatched; admission.abort(Object.assign(Error('BATCH_STOPPED'), { code: 'BATCH_STOPPED' }));
+  assert.equal(transportSignal.aborted, false); release();
+  assert.equal((await running).state, 'RUNNING'); assert.equal(c.accepted.size, 1);
+  assert.equal((await c.executor.pending()).items.length, 1);
+  assert.equal((await c.executor.reconcile({ analysisId: prepared.evidence.analysisId })).state, 'SETTLED');
+  assert.equal(c.activity.calls.filter(value => value.method === 'POST').length, 1);
+  assert.equal(c.rows.get(prepared.evidence.analysisId).receipts[0].kind, 'RESPONSE');
+});
+
 test('ambiguous POST without response ID stays UNKNOWN and cannot produce GET work or automatic POST replay', async () => {
   const prepared = prepare(), c = context(async () => { throw new Error('connection lost after possible dispatch'); });
   assert.equal((await run(c, prepared)).state, 'UNKNOWN');

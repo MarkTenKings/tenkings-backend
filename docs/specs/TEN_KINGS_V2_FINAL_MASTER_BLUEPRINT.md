@@ -1,5 +1,9 @@
 # Ten Kings V2 — Final Master Product and Architecture Blueprint
 
+### Owner execution direction — complete ATLAS workflow, September 23, 2026
+
+After approving the new label and receiving the explicit built-versus-live status, Mark directs completing all four next steps now: release the web/batch/report updates; connect and qualify physical printing/NFC; verify one real card and then the supervised ten-card workflow before expansion; and activate market/dealer capabilities with actual provider access and approved partner information. Use four fresh Astra Extra High specialists, one per step, within runtime concurrency limits. This is execution authority for the reviewed implementation and release work, superseding the earlier local-only next-phase checkpoint. Prepare and verify exact source, additive schema, runtime and configuration changes before effects, and record planned/observed release evidence. The direction does not supply missing printer/media or dealer terms, identify a new test-card cohort, waive physical evidence, or substitute machine approval for the human's card review.
+
 ### Owner clarification — ATLAS label artwork and existing Mac NFC, September 23, 2026
 
 Owner design acceptance — September 23: Mark explicitly approved the displayed `atlas-signature-v2` label from source `f54c7425`, including the supplied logo, large bold name, optional variant, grade/NFC area and completely black reverse. This is approval of the artwork shown in his screenshot. Actual printer/material fit, NFC integration and production release remain separately evidenced work.

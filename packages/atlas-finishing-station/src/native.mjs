@@ -111,6 +111,7 @@ export function createNativeCompanion({ executable, configurationPath, spawnImpl
   }
   return Object.freeze({
     capabilities: () => run(executable, ['capabilities'], { spawnImpl }),
+    validateConfiguration: () => run(executable, ['validate-configuration', '--configuration', configurationPath], { spawnImpl }),
     keyInfo: () => run(executable, ['key-info', '--configuration', configurationPath], { spawnImpl }),
     fullSync: fd => { check(Number.isSafeInteger(fd) && fd >= 0); return run(executable, ['full-sync', '--fd', '3'], { spawnImpl, fd }); },
     request,

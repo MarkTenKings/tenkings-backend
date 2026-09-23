@@ -140,7 +140,7 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
     return reply;
   }
   const executor = {
-    async run({ staff, prepared, actionId, expiresAt, signal, baseHash = null, replacement = null }) {
+    async run({ staff, prepared, actionId, expiresAt, signal, dispatchSignal, baseHash = null, replacement = null }) {
       validatePreparedRequest(prepared);
       const { analysisId, cardId, binding } = prepared.evidence;
       const actionHash = analysisActionHash(prepared.evidence, actionId, replacement);
@@ -157,17 +157,24 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
         if (run.state !== 'PREPARED') return repository.status(staff, { cardId, analysisId });
       } else {
         signal?.throwIfAborted();
+        dispatchSignal?.throwIfAborted();
         const requestRef = await storeAnalysisRequest(prepared, artifacts);
+        dispatchSignal?.throwIfAborted();
         run = await repository.prepare(staff, { analysisId, cardId, actionId, baseHash: actionHash, binding, requestHash: prepared.requestHash,
           requestRef, requestEvidence: { ...prepared.evidence, providerBindingHash: provider.bindingHash }, expiresAt,
           ...(replacement === null ? {} : { replacement }) });
       }
       signal?.throwIfAborted();
+      dispatchSignal?.throwIfAborted();
       const claim = await repository.claim(staff, { cardId, analysisId, requestHash: prepared.requestHash });
       if (!claim.claimed) return repository.status(staff, { cardId, analysisId });
       let response = null, retained = null;
       const unknown = () => unknownResponse(response);
       try {
+        // Stop admission again after the awaited claim. A committed claim is
+        // retained conservatively if shutdown won this race. Do not pass the
+        // admission signal to an already-started provider/receipt operation.
+        dispatchSignal?.throwIfAborted();
         response = await provider.dispatch(prepared, { signal, deadlineMs: Date.parse(claim.run.expiresAt) });
         if (response.state !== 'RECEIVED') {
           await repository.recordReply({ analysisId, requestHash: prepared.requestHash, kind: 'OUTCOME', evidence: unknown() });
@@ -196,11 +203,11 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
       // expired session's card authority or make the proposals automatically live.
       return repository.status(staff, { cardId, analysisId });
     },
-    async prepareAndRun(staff, { cardId, actionId, prepared, expiresAt, signal, baseHash = null, replacement = null }) {
+    async prepareAndRun(staff, { cardId, actionId, prepared, expiresAt, signal, dispatchSignal, baseHash = null, replacement = null }) {
       validatePreparedRequest(prepared); check(cardId === prepared.evidence.cardId, 'DEFECT_ANALYSIS_ACTION_CONFLICT', 409);
-      return executor.run({ staff, actionId, prepared, expiresAt, signal, baseHash, replacement });
+      return executor.run({ staff, actionId, prepared, expiresAt, signal, dispatchSignal, baseHash, replacement });
     },
-    async resume(staff, { cardId, analysisId, signal }) {
+    async resume(staff, { cardId, analysisId, signal, dispatchSignal }) {
       const run = await repository.find(staff, { cardId, analysisId });
       check(run, 'DEFECT_ANALYSIS_NOT_FOUND', 404);
       if (run.state !== 'PREPARED') return repository.status(staff, { cardId, analysisId });
@@ -212,7 +219,7 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
       const prepared = restorePreparedRequest({ requestText: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
         requestHash: manifest.requestHash, evidence: manifest.evidence, evidenceHash: manifest.evidenceHash });
       const replacement = run.replacesAnalysisId ? { analysisId: run.replacesAnalysisId, outcomeHash: run.replacesOutcomeHash } : null;
-      return executor.run({ staff, actionId: run.actionId, prepared, expiresAt: run.expiresAt, signal, replacement, baseHash: run.baseHash });
+      return executor.run({ staff, actionId: run.actionId, prepared, expiresAt: run.expiresAt, signal, dispatchSignal, replacement, baseHash: run.baseHash });
     },
     pending({ limit = BACKGROUND_POLICY.batchSize, cursor = null } = {}) {
       return repository.listAcceptedPending({ providerBindingHash: provider.bindingHash, limit, cursor });

@@ -88,6 +88,49 @@ test('stop is permanent and creates no later claims', async () => {
   const f = fixture(2), worker = createBatchWorker({ repository: f.repo, prepare: { run: () => { throw Error('must not execute'); } } });
   worker.stop(); assert.equal(worker.wake(f.staff), false); await worker.tick(f.staff); assert.equal(f.rows.every(row => row.attempts === 0), true);
 });
+test('shutdown waits for the running stage and durable finish without claiming the next card', async () => {
+  const f = fixture(2); let release, finishing, finishRelease;
+  const stage = new Promise(resolve => { release = resolve; });
+  const finish = new Promise(resolve => { finishRelease = resolve; });
+  const originalFinish = f.repo.finish;
+  f.repo.finish = async (...args) => { finishing = true; await finish; return originalFinish(...args); };
+  const worker = createBatchWorker({ repository: f.repo, concurrency: 1, prepare: { async run() { await stage; return { kind: 'CONTINUE' }; } } });
+  let stopped = false;
+  try {
+    worker.wake(f.staff); await until(() => worker.status().active === 1);
+    const stopping = worker.stop().then(() => { stopped = true; });
+    await delay(5); assert.equal(stopped, false);
+    release(); await until(() => finishing); assert.equal(stopped, false);
+    finishRelease(); await stopping;
+    assert.equal(f.rows[0].stage, 'ANALYZE'); assert.equal(f.rows[0].state, 'QUEUED');
+    assert.equal(f.rows[1].attempts, 0); assert.equal(worker.status().active, 0);
+  } finally { release(); finishRelease(); await worker.stop(); }
+});
+test('shutdown returns a concurrently committed claim without dispatching its stage', async () => {
+  const f = fixture(1); let release, claimed = false, effects = 0;
+  const pending = new Promise(resolve => { release = resolve; }), originalClaim = f.repo.claim;
+  f.repo.claim = async (...args) => { const job = await originalClaim(...args); claimed = true; await pending; return job; };
+  const worker = createBatchWorker({ repository: f.repo, prepare: { async run() { effects++; return { kind: 'CONTINUE' }; } } });
+  try {
+    worker.wake(f.staff); await until(() => claimed); let stopped = false;
+    const stopping = worker.stop().then(() => { stopped = true; }); await delay(5); assert.equal(stopped, false);
+    release(); await stopping;
+    assert.equal(effects, 0); assert.equal(f.rows[0].stage, 'PREPARE'); assert.equal(f.rows[0].state, 'QUEUED');
+    assert.equal(worker.status().authenticatedOwners, 0);
+  } finally { release(); await worker.stop(); }
+});
+test('shutdown also waits for a lease renewal already in flight before releasing database custody', async () => {
+  const f = fixture(1); let release, renewRelease, renewing = false;
+  const stage = new Promise(resolve => { release = resolve; }), renewal = new Promise(resolve => { renewRelease = resolve; });
+  f.repo.renew = async () => { renewing = true; await renewal; return true; };
+  const worker = createBatchWorker({ repository: f.repo, heartbeatMs: 10, prepare: { async run() { await stage; return { kind: 'CONTINUE' }; } } });
+  try {
+    worker.wake(f.staff); await until(() => renewing); let stopped = false;
+    const stopping = worker.stop().then(() => { stopped = true; }); release();
+    await until(() => f.rows[0].stage === 'ANALYZE'); assert.equal(stopped, false);
+    renewRelease(); await stopping; assert.equal(worker.status().active, 0);
+  } finally { release(); renewRelease(); await worker.stop(); }
+});
 test('temporary native capacity waits on the same job instead of requiring human recovery',async()=>{
  const f=fixture(1),actions=[];let refused=false;
  const worker=createBatchWorker({repository:f.repo,prepare:{async run(_staff,job){
