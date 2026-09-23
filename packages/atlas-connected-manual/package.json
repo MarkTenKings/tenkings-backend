@@ -20,7 +20,7 @@
     "./finishing-station-repository": "./src/finishing-station-repository.mjs"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "pnpm --filter @tenkings/ebay-sold-comps-v2 build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@atlas/batch-grading": "workspace:*",

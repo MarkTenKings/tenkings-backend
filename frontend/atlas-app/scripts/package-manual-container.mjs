@@ -14,7 +14,7 @@ const allowed=new Set();function visit(name){const item=packages.get(name);if(!i
 visit('@atlas/staff-app');
 const cpu=['manual_preparation_worker.py','atlas_photo_geometry.py','test_atlas_photo_geometry.py','manual_measurement_worker.py','manual_measurement.py','card_geometry.py','color_geometry.py','preparation_pixels.py','defect_math.py','trace_rle.py'];
 const manifest=[];
-for(const file of [...new Set(tracked)].filter(file=>['package.json','pnpm-lock.yaml','pnpm-workspace.yaml'].includes(file)||[...allowed].some(directory=>file.startsWith(`${directory}/`))||cpu.some(name=>file===`backend/ai-grader-speedster-service/${name}`))){
+for(const file of [...new Set(tracked)].filter(file=>['package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.base.json'].includes(file)||[...allowed].some(directory=>file.startsWith(`${directory}/`))||cpu.some(name=>file===`backend/ai-grader-speedster-service/${name}`))){
   if(/(?:^|\/)(?:node_modules|\.next|\.generated)(?:\/|$)/.test(file))continue;
   const bytes=await readFile(join(root,file));await mkdir(dirname(join(output,'source',file)),{recursive:true});await writeFile(join(output,'source',file),bytes);
   manifest.push({path:file,sha256:createHash('sha256').update(bytes).digest('hex'),byteCount:bytes.length});

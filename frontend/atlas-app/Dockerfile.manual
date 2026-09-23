@@ -21,7 +21,7 @@ RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /workspace
 COPY source/ ./
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter @atlas/staff-app...
-RUN node packages/atlas-grading-core/scripts/build.mjs && node packages/atlas-manual-workspace/scripts/build.mjs \
+RUN pnpm --filter @tenkings/ebay-sold-comps-v2 build && node packages/atlas-grading-core/scripts/build.mjs && node packages/atlas-manual-workspace/scripts/build.mjs \
     && node packages/atlas-photo-runtime/scripts/build-native.mjs /opt/atlas-native/include /opt/atlas-native/lib /usr/local/include/node \
     && node frontend/atlas-app/scripts/generate-database.mjs
 RUN pnpm --filter @atlas/staff-app exec next build
