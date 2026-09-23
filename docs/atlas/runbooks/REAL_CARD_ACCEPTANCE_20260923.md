@@ -2,9 +2,10 @@
 
 Prepared September 23, 2026. **No real-card trial is recorded as complete here.**
 Mark's approved label artwork is separate from grading, printing and NFC acceptance.
-The release coordinator owns current deployed identities; the previous documented
-live baseline was source `79483f13`, staff schema44. Never reuse that baseline as
-proof that the new batch candidate is deployed. Do not reuse the September17
+The software release is now verified at source `c0a42a24`, staff schema47,
+private image `3babc854…`, with batch/presentation enabled. See
+[actual workflow release evidence](../audits/2026-09-23/workflow-completion.md).
+This establishes deployment only; the real-card checkpoints below remain open. Do not reuse the September17
 record's historical NULL-certification or private-only-publication statements as
 current facts.
 
@@ -12,7 +13,7 @@ current facts.
 
 | Checkpoint | Result | Evidence needed |
 | --- | --- | --- |
-| Exact new release / batch activation | NOT RUN in this acceptance record | Coordinator's source, image, staff/public deployment, applied SQL/grants, flags and final qualification receipts |
+| Exact new release / batch activation | PASS — software release only | [Current release evidence](../audits/2026-09-23/workflow-completion.md): c0a42a24, staff47, current runtime/bindings, batch=true |
 | Fresh physical cohort and operator access | NOT RUN | Mark's new specimen selection, native Front/Back originals, ordinary staff access and actual current certification at approval |
 | First real card through public report | NOT RUN | Native-photo lineage, actual Astra request/result, human review/approval and exact public version |
 | First card physical finishing | NOT RUN | Actual printer/media fit, approved-report NFC write/readback/qualified lock/phone scan, separate assembly/welding observations |

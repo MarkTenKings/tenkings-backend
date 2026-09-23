@@ -1,6 +1,6 @@
 # ATLAS complete workflow — September 22, 2026
 
-Status: owner-requested next build, following the live manual/report release at application source `79483f13`. New work is local until explicitly recorded otherwise. Mark reports the current workflow looks good overall. The canonical blueprint records the new scope.
+Status updated September 23: the scoped web/batch/report release and authorized contact-only dealer directory are live at source `c0a42a24`. See [actual release evidence](../audits/2026-09-23/workflow-completion.md). Physical finishing, real-card acceptance and live market-provider activation remain incomplete pending genuine inputs. The design and intended flow below preserve the September 22 owner request and canonical blueprint scope.
 
 ## Intended operator flow
 

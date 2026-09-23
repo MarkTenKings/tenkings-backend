@@ -2,7 +2,7 @@
 
 Mark named “Center courts cards located in Roseville, California” as the first authorized dealer in the September 23 execution session. This is roster authority; no dealer buying commitment, ATLAS submission price, turnaround or commercial offer was supplied.
 
-The reviewed production configuration is `frontend/atlas-public/config/authorized-dealers-20260923.json`. Load its exact JSON into `ATLAS_PUBLIC_DEALER_DIRECTORY_JSON` on the **public ATLAS application only** through the coordinated release. The default without this explicit configuration remains empty. Configuration publication and actual hosted verification are recorded separately by the release coordinator.
+The reviewed production configuration is `frontend/atlas-public/config/authorized-dealers-20260923.json`. Its exact JSON was installed in `ATLAS_PUBLIC_DEALER_DIRECTORY_JSON` on the **public ATLAS application only** and is live after the c0a42a24 public promotion. The live `/dealers` read verifies the exact roster, contact-only message and Google directions. See [release evidence](../audits/2026-09-23/workflow-completion.md). This configuration action is consumed; do not repeat it. The default without explicit configuration remains empty.
 
 The entry is explicitly `contactOnly: true`, with no claimed BUY/SUBMIT services and no programs. It remains discoverable from buying/submission inquiry filters and says to confirm availability and current arrangements with the dealer before visiting. It does not enroll a customer submission, promise custody, offer a buyback or contact the business automatically.
 
@@ -23,4 +23,4 @@ Activation requires the reviewed presentation schema/grants, `ATLAS_MANUAL_PRESE
 
 Dealer offers remain absent until exact authorized scope, amount/currency, expiry and terms are supplied. The existing presentation contract supports such evidence without a payment/trade execution path. No Ten Kings inventory, ownership, TKD buyback, credentials or locations are copied implicitly.
 
-This record describes the source/configuration candidate. The coordinator must add exact tests and hosted activation evidence to the shared session log; this document is not a live-release receipt.
+Dealer publication is verified; market remains disabled. The signed-in provider account has one masked existing Ten Kings key, and the scoped legitimate configuration checks found no accessible original. Do not rotate/revoke it or invent a credential. A saved original must enter through protected local custody, or a separately issued/coordinated replacement is needed. The provider currently documents a40-result cap without cookies and429 for both rate/quota exhaustion; real bounded contract qualification remains necessary before activation. No paid market request or dealer communication was made. Exact receipts and remaining inputs are in the current release audit and shared session log.

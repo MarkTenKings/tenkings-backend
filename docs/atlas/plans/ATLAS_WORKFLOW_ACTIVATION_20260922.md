@@ -1,6 +1,6 @@
 # ATLAS workflow activation notes
 
-This is source implementation and local acceptance evidence for Mark's September 22 next-phase request. It does not record a production deployment or physical printer/NFC acceptance.
+The scoped software activation is complete on September 23 at source `c0a42a24`: batch/presentation enabled, staff47 and exact grants verified, current controls and public promotion complete. See [actual release evidence](../audits/2026-09-23/workflow-completion.md). The implementation and local checks below remain supporting evidence. Physical printer/NFC acceptance and market activation remain open; station/market are disabled.
 
 ## Software boundaries
 
@@ -12,13 +12,13 @@ This is source implementation and local acceptance evidence for Mark's September
 - `ATLAS_MANUAL_PRESENTATION_ENABLED=true` is an explicit native-service opt-in after presentation SQL/grants. Optional original slab photos use a separate upload namespace, full native verification and a separate SDR WebP display copy up to 2400 pixels. They do not replace Front/Back grading evidence. Revisions are append-only and bind to one exact public report version/hash.
 - The public signed transport admits only the new exact presentation-image selector. Public report details may enrich omitted identity fields only when the original accepted details revision, source and grading identity match the immutable approval. Missing optional data leaves verified grade evidence readable.
 
-## Tracked additive migrations, not yet applied to production
+## Tracked additive migrations — applied September 23
 
 - `packages/atlas-batch-grading/sql/proposal.sql` and `batchGrantSQL(role)`.
 - `packages/atlas-connected-manual/sql/presentation-proposal.sql` and `presentationGrantSQL(role)`.
 - `packages/atlas-connected-manual/sql/finishing-station-proposal.sql` and `finishingStationGrantSQL(role)`.
 
-On September 23, the three proposal files were promoted byte-for-byte into the staff migration chain: presentation `20260922210000_manual_presentation`, batch `20260922210100_batch_grading`, station `20260922210200_finishing_station`. Three separate disposable PostgreSQL runs verified the full staff47 chain, no-op replay and the domain lifecycle checks. Fresh production inventory still shows staff44; these three migrations and their scoped grants remain unapplied. Apply only the reviewed staff additions through the existing deployment runbook, recording planned and observed actions in `SESSION_LOG.md`. Preserve the independent public migration history. Do not turn flags on against schema44.
+On September 23, the three proposal files were promoted byte-for-byte into the staff migration chain: presentation `20260922210000_manual_presentation`, batch `20260922210100_batch_grading`, station `20260922210200_finishing_station`. Three separate disposable PostgreSQL runs verified the full staff47 chain, no-op replay and the domain lifecycle checks. The independent lead applied exactly these three migrations and their narrow grants once, with no-op replays and full preservation verified. Production now has staff47; the complete public112 ledger and existing histories/ACL remain unchanged. See `SESSION_LOG.md` and the current release audit. Their intents are consumed; do not replay proposal SQL, migrations, grants or the old activation actions.
 
 ## Label and station acceptance
 
