@@ -10,12 +10,18 @@
     "./transport": "./src/transport.mjs",
     "./publication": "./src/publication.mjs",
     "./publication-repository": "./src/publication-repository.mjs",
-    "./publication-reader": "./src/publication-reader.mjs"
+    "./publication-reader": "./src/publication-reader.mjs",
+    "./finishing": "./src/finishing.mjs",
+    "./presentation-market": "./src/presentation-market.mjs",
+    "./presentation-market-service": "./src/presentation-market-service.mjs",
+    "./presentation-market-provider": "./src/presentation-market-provider.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@atlas/batch-grading": "workspace:*",
+    "@atlas/finishing": "workspace:*",
     "@atlas/manual-intake": "workspace:*",
     "@atlas/manual-service": "workspace:*",
     "@atlas/manual-workflow": "workspace:*",
@@ -32,6 +38,7 @@
     "sharp": "0.33.5",
     "@aws-sdk/client-s3": "3.914.0",
     "@atlas/defect-analysis": "workspace:*",
-    "@atlas/defect-memory": "workspace:*"
+    "@atlas/defect-memory": "workspace:*",
+    "@tenkings/ebay-sold-comps-v2": "workspace:*"
   }
 }

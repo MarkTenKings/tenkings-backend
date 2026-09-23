@@ -41,3 +41,68 @@
 @media(max-width:1100px){.rr-mobile-finding-nav{display:flex;gap:7px;position:sticky;top:8px;z-index:5;background:#13110cf5;border:1px solid #796032;box-shadow:0 4px 20px #0005;border-radius:9px;padding:8px;margin-bottom:18px}.rr-mobile-finding-nav select{min-width:0;flex:1;font-size:12px}.rr-mobile-finding-nav button{padding:8px;font-size:11px}}
 @media(max-width:700px){.rr-mobile-finding-nav select{font-size:16px}}
 @media print{.rr-mobile-finding-nav{display:none!important}}
+
+/* Optional presentation never replaces or changes the calibrated photographs. */
+.rr-slab-hero{position:relative;display:flex;flex-direction:column;align-items:center;min-height:500px;margin:0;padding:54px 32px 24px;border-bottom:1px solid var(--rr-line);background:radial-gradient(ellipse at 50% 30%,#65512655,transparent 55%),linear-gradient(135deg,#141109,#070706 70%);overflow:hidden;touch-action:pan-y}
+.rr-slab-wordmark{position:absolute;inset:auto -10px 22%;text-align:center;font-family:var(--rr-serif);font-size:clamp(100px,22vw,280px);line-height:1;letter-spacing:.06em;color:#bfa1610d;pointer-events:none;user-select:none}
+.rr-slab-brand{position:absolute;left:32px;top:25px;width:100px;height:auto;max-height:85px;object-fit:contain;object-position:left top}
+.rr-slab-stage{position:relative;width:480px;max-width:100%;height:420px;flex:none;perspective:1100px;z-index:1}
+.rr-slab-plane{position:absolute;inset:0;transform:rotateX(var(--rr-tilt-x,0deg)) rotateY(var(--rr-tilt-y,0deg));transition:transform 180ms ease-out}
+.rr-slab-plane>img{display:block;width:100%;height:100%;min-height:0;max-width:100%;max-height:100%;object-fit:contain;filter:none;user-select:none}
+.rr-slab-hero figcaption{position:relative;z-index:1;display:flex;justify-content:center;gap:16px;flex-wrap:wrap;margin-top:25px;font-family:var(--rr-mono);font-size:9px;letter-spacing:.12em;color:var(--rr-gold)}
+.rr-slab-hero figcaption time{color:var(--rr-muted);letter-spacing:0}
+.rr-report:has(>.rr-slab-hero)>.rr-heading .rr-brand{display:none}
+.rr-card-details,.rr-market,.rr-dealers{padding:34px 32px;border-bottom:1px solid var(--rr-line)}
+.rr-card-details{background:var(--rr-panel)}
+.rr-detail-note{color:var(--rr-muted);font-size:11px}
+.rr-identity-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px 30px;margin:0}
+.rr-identity-grid>div{min-width:0;border-top:1px solid var(--rr-line);padding-top:13px}
+.rr-identity-grid dt{font-size:10px;color:var(--rr-muted);margin-bottom:7px}
+.rr-identity-grid dd{margin:0;font-size:14px;line-height:1.6;overflow-wrap:anywhere}
+.rr-market,.rr-dealers{border-top:1px solid var(--rr-line);border-bottom:0}
+.rr-grader-filter{min-width:150px;color:var(--rr-muted);font-size:11px;flex-shrink:0}
+.rr-grader-filter select{display:block;width:100%;margin-top:7px}
+.rr-valuation{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:30px;padding:22px 25px;border:1px solid #415746;border-radius:10px;background:#142017;margin:20px 0 25px}
+.rr-valuation strong{display:block;font-family:var(--rr-serif);font-size:clamp(26px,3vw,40px);font-weight:400;color:#b9ebc3;margin:10px 0;overflow-wrap:anywhere}
+.rr-valuation p:not(.rr-eyebrow){color:#bfd0c1;font-size:11px}
+.rr-sales-scroll{max-width:100%;overflow-x:auto;border:1px solid var(--rr-line);border-radius:10px;scrollbar-color:var(--rr-line) transparent;outline-offset:4px}
+.rr-sales-scroll:focus-visible{outline:2px solid var(--rr-hot)}
+.rr-sales-table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}
+.rr-sales-table caption{text-align:left;padding:15px 18px;color:var(--rr-muted);font-size:10px;letter-spacing:.03em;background:var(--rr-panel);border-bottom:1px solid var(--rr-line)}
+.rr-sales-table th{background:var(--rr-panel);padding:13px 18px;font-size:10px;white-space:nowrap;color:var(--rr-gold);font-weight:500;border-bottom:1px solid var(--rr-line)}
+.rr-sales-table td{padding:17px 18px;border-bottom:1px solid var(--rr-line);vertical-align:top;line-height:1.6}
+.rr-sales-table tr:last-child td{border:0}.rr-sales-table td:first-child{width:130px;font-size:11px;white-space:nowrap;color:var(--rr-muted)}
+.rr-sales-table td:nth-child(2){min-width:170px;max-width:460px;overflow-wrap:anywhere}.rr-sales-table td:nth-child(2)>a{color:var(--rr-text)}
+.rr-sales-table td:last-child{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--rr-text);min-width:145px}
+.rr-sales-table th:last-child{text-align:right}.rr-sale-grader{font-family:var(--rr-mono);font-size:10px;color:var(--rr-gold)}
+.rr-sale-grade{display:block;margin-top:3px;color:var(--rr-text)}.rr-price-unknown{font-size:10px;color:var(--rr-muted)}.rr-external-mark{color:var(--rr-gold)}
+.rr-dealers{background:radial-gradient(ellipse at 80% 0,#49391c44,transparent 80%),var(--rr-panel)}
+.rr-dealers>.rr-section-heading{margin-bottom:0}.rr-dealers h2{font-family:var(--rr-serif);font-size:clamp(28px,3.2vw,40px)}
+.rr-dealer-cta{display:inline-flex;justify-content:space-between;align-items:center;gap:18px;flex-shrink:0;min-height:46px;padding:13px 18px;border:1px solid #806a3e;border-radius:8px;text-decoration:none;font-size:12px}
+.rr-offer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:26px}
+.rr-dealer-offer{padding:24px;border:1px solid #5f5035;border-radius:12px;background:#100e09;min-width:0}.rr-dealer-offer h3{margin-top:10px;font-size:16px}
+.rr-dealer-offer>strong{display:block;margin:14px 0 8px;font-family:var(--rr-serif);font-size:38px;color:var(--rr-hot);font-weight:400;overflow-wrap:anywhere}
+.rr-dealer-offer>p:not(.rr-eyebrow){font-size:12px;color:var(--rr-muted);overflow-wrap:anywhere}.rr-dealer-offer .rr-offer-expiry{font-family:var(--rr-mono);font-size:9px!important;line-height:1.7}
+.rr-dealer-offer>a{display:inline-flex;align-items:center;gap:25px;min-height:44px;margin-top:14px;font-size:12px}
+@media(min-width:1500px){.rr-card-details,.rr-market,.rr-dealers{padding:40px 48px}}
+@media(max-width:1100px){.rr-identity-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.rr-dealers>.rr-section-heading{align-items:flex-start;flex-direction:column}}
+@media(max-width:700px){
+  .rr-slab-hero{padding:65px 20px 23px;min-height:400px}.rr-slab-brand{width:75px;left:18px;top:16px}.rr-slab-stage{height:350px;width:340px}
+  .rr-slab-hero figcaption{font-size:8px;gap:8px;margin-top:20px}.rr-slab-wordmark{font-size:30vw}
+  .rr-card-details,.rr-market,.rr-dealers{padding:25px 16px}.rr-identity-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.rr-identity-grid dd{font-size:12px}
+  .rr-card-details>.rr-section-heading{gap:10px}.rr-detail-note{font-size:10px}.rr-valuation{grid-template-columns:1fr;gap:12px;padding:18px}
+  .rr-grader-filter{width:100%}.rr-grader-filter select{font-size:16px}.rr-sales-table th,.rr-sales-table td{padding:13px 12px}.rr-sales-table td:first-child{width:auto;min-width:105px}
+  .rr-dealer-cta{width:100%}.rr-offer-grid{grid-template-columns:1fr}.rr-dealer-offer{padding:20px}
+}
+@media(prefers-reduced-motion:reduce){.rr-slab-plane{transform:none!important}}
+@media print{
+  .rr-slab-hero{min-height:0;background:#fff;padding:12px 0;border:0;break-inside:avoid}.rr-slab-wordmark,.rr-slab-brand{display:none}.rr-slab-stage{height:65mm;width:80mm;perspective:none}.rr-slab-plane{transform:none!important;transition:none!important}.rr-slab-plane>img{box-shadow:none}.rr-slab-hero figcaption{color:#514d43;font-size:7pt;margin-top:8px}
+  .rr-report:has(>.rr-slab-hero)>.rr-heading .rr-brand{display:block}.rr-card-details,.rr-market,.rr-dealers{padding:16px 0;background:#fff}.rr-identity-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px 18px}.rr-identity-grid>div{padding-top:8px;break-inside:avoid}.rr-identity-grid dt{font-size:7pt}.rr-identity-grid dd{font-size:8pt}.rr-detail-note{font-size:7pt}
+  .rr-grader-filter,.rr-dealer-cta{display:none}.rr-valuation{background:#fff;border-color:#777;padding:14px;gap:18px;break-inside:avoid}.rr-valuation strong{font-size:22pt;color:#254e30}.rr-valuation p:not(.rr-eyebrow){color:#333;font-size:8pt}
+  .rr-sales-scroll{overflow:visible;border:0}.rr-sales-table{font-size:8pt}.rr-sales-table caption{background:#fff;padding:10px 0;font-size:7pt}.rr-sales-table th,.rr-sales-table td{padding:8px;min-width:0!important;font-size:8pt}.rr-sales-table td:first-child{font-size:7pt;white-space:normal}.rr-sales-table td:last-child{white-space:normal}.rr-sales-table tr{break-inside:avoid}.rr-sale-grader,.rr-price-unknown{font-size:7pt}
+  .rr-offer-grid{grid-template-columns:1fr 1fr;gap:12px;margin-top:15px}.rr-dealer-offer{background:#fff;padding:14px;break-inside:avoid}.rr-dealer-offer>strong{font-size:24pt}.rr-dealer-offer>p:not(.rr-eyebrow){font-size:8pt}.rr-dealer-offer>a{font-size:8pt;min-height:0;margin-top:10px}.rr-dealers h2{font-size:23pt}
+}
+
+/* The human batch decision stays next to its evidence, with detail on demand. */
+.rr-machine .rr-heading{padding:20px 24px;gap:24px;grid-template-columns:minmax(0,1fr) 110px}.rr-machine .rr-heading h1{font-size:30px;margin:8px 0}.rr-machine .rr-brand,.rr-machine .rr-why,.rr-machine .rr-review-history{display:none}.rr-machine .rr-overall{min-height:100px;padding:8px}.rr-machine .rr-overall>strong{font-size:56px}.rr-machine .rr-overall>p{display:none}.rr-machine .rr-trust-row{margin-top:12px}.rr-machine .rr-score-strip>button{padding:12px 18px;gap:5px}.rr-machine .rr-score-strip strong{font-size:30px}.rr-machine .rr-photo-review{padding:20px 24px}.rr-machine .rr-section-heading h2{font-size:25px}.rr-machine .rr-section-heading{margin-bottom:18px}.rr-machine-details>summary,.rr-machine .rr-calculation>summary{cursor:pointer;color:var(--rr-gold);padding:13px 24px;font-size:12px}.rr-machine .rr-calculation{padding:0}.rr-machine .rr-calculation[open]{padding:20px 24px}.rr-quick-approval{position:sticky;top:8px;z-index:8;background:#11100ef5;padding:8px 12px 6px;border-bottom:1px solid #735f37;box-shadow:0 5px 20px #0006}.rr-quick-approval>p{font-size:10px;color:#b8b0a0;margin:6px 4px}.rr-quick-approval>div{position:static;padding:8px;border:0;background:transparent;box-shadow:none}.rr-quick-approval button{padding:10px 16px}.rr-machine .rr-image-pair{gap:12px}
+.rr-machine{margin:0;max-width:none}.rr-machine .rr-heading{padding:14px 20px}.rr-machine .rr-heading h1{font-size:26px}.rr-machine .rr-overall{min-height:85px}.rr-machine .rr-trust-row{margin-top:8px}.rr-machine .rr-score-strip>button{padding:9px 16px}.rr-machine .rr-score-strip .rr-score-index,.rr-machine .rr-score-strip small{display:none}.rr-machine .rr-score-strip strong{font-size:26px}.rr-machine .rr-photo-review{padding:15px 20px}.rr-machine .rr-photo-review>.rr-section-heading .rr-eyebrow,.rr-machine .rr-photo-review>.rr-section-heading p:not(.rr-eyebrow){display:none}.rr-machine .rr-image-tools button,.rr-machine .rr-layer-tools button{padding:6px 8px;font-size:10px}.rr-machine .rr-image-tools select{padding:6px}.rr-machine .rr-viewport{height:clamp(350px,48vh,540px);min-height:0}.rr-machine .rr-image-expanded .rr-viewport{height:70vh}.rr-machine .rr-image-side>.rr-help{display:none}.rr-machine .rr-selection-prompt{font-size:11px;padding:12px;margin-top:14px!important}

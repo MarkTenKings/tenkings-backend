@@ -16,7 +16,8 @@ test('cold connected composition accepts explicit resource configuration without
   let calls = 0;
   const boundary = { transaction() { calls++; throw new Error('Unexpected database work'); } };
   const { storage } = memoryPhotoStorage();
-  const connected = createConnectedManual({ boundary, storage, artifacts: {}, keyPrefix: 'intake',
+  const artifacts = { async read() { calls++; throw new Error('Unexpected artifact read'); } };
+  const connected = createConnectedManual({ boundary, storage, artifacts, keyPrefix: 'intake',
     pythonExecutable: '/synthetic/not-invoked/python', receiptClient: { $queryRawUnsafe() { calls++; } },
     effects: { async ocr() { calls++; throw new Error('Unexpected OCR'); }, async model() { calls++; throw new Error('Unexpected model'); } } });
   assert.equal(calls, 0); assert.equal(typeof connected.intake.create, 'function');

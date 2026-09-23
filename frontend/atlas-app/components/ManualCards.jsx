@@ -14,6 +14,9 @@ import {STAFF_BASE_PATH} from '../lib/routes.mjs';
 import {createDefectAnalysisClient} from '../lib/manual-defect-analysis-client.mjs';
 import {createEarlyGeometryClient,earlyGeometryIdentity} from '../lib/early-geometry-client.mjs';
 import EarlyGeometryPreview,{EarlyGeometryStatus} from './EarlyGeometryPreview';
+import ManualFinishing,{openManualLabelPrintWindow} from './ManualFinishing';
+import ReportPhotoUploader from './ReportPhotoUploader';
+import ReportMarketPicker from './ReportMarketPicker';
 
 const labels={name:'Name',category:'Printed category',manufacturer:'Manufacturer',card_number:'Card number',year:'Year',set_name:'Product / set',variant:'Printed variant',card_type:'Printed card type'};
 const prefix='/api/staff/manual-connected/cards';
@@ -242,6 +245,8 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
   const client=useRef(null),analysisClient=useRef(null),imageRefresh=useRef(null),viewRef=useRef(null),interaction=useRef({}),router=useRouter();
   const [reportImagesReady,setReportImagesReady]=useState(false),[loadingReport,setLoadingReport]=useState(false);
   const [publishing,setPublishing]=useState(false),[copyStatus,setCopyStatus]=useState('');
+  const [finishing,setFinishing]=useState(null),[finishingError,setFinishingError]=useState(''),[loadingFinishing,setLoadingFinishing]=useState(false),[autoPrintWindow,setAutoPrintWindow]=useState(null);
+  const finishingRead=useRef(0),approvalPrintWindow=useRef(null),approvalInFlight=useRef(false);
   interaction.current={...interaction.current,identity:Boolean(identity),approving,saving:status==='Saving…'};
   const changeEditing=useCallback(value=>{interaction.current.editing=value;setEditing(value);},[]);
   const attempt=async work=>{const owner=client.current;setError('');try{return await work();}catch(error){if(client.current===owner)setError(manualMessage(error));}};
@@ -270,7 +275,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
         if(!stopped&&[401,403].includes(error?.status)){pollingDenied=true;setError(manualMessage(error));}
       }).finally(()=>{polling=false;});
     },5000);
-    return()=>{stopped=true;clearInterval(timer);clearInterval(analysisTimer);ownedAnalysis.dispose();if(analysisClient.current===ownedAnalysis)analysisClient.current=null;if(client.current===ownedClient)client.current=null;};
+    return()=>{stopped=true;finishingRead.current++;approvalPrintWindow.current?.close();approvalPrintWindow.current=null;clearInterval(timer);clearInterval(analysisTimer);ownedAnalysis.dispose();if(analysisClient.current===ownedAnalysis)analysisClient.current=null;if(client.current===ownedClient)client.current=null;};
   },[cardId,staff.id,csrf]);
   function withLocalAnalysis(value){
     const owned=analysisClient.current;
@@ -356,6 +361,45 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
     try{await navigator.clipboard.writeText(href);setCopyStatus('Report link copied.');}
     catch{setCopyStatus('Select and copy the report link below.');}
   }
+  async function loadFinishing(publication,ownedWindow=null){
+    const owner=client.current,sequence=++finishingRead.current;
+    if(!owner||publication?.state!=='PUBLISHED'||!publication.actionId){ownedWindow?.close();return;}
+    setLoadingFinishing(true);setFinishingError('');
+    try{
+      const plan=await manualRequest(`${prefix}/${cardId}/finishing/${publication.actionId}`,{csrf});
+      if(client.current!==owner||sequence!==finishingRead.current){ownedWindow?.close();return;}
+      const latest=viewRef.current?.publication;
+      if(latest?.actionId!==publication.actionId||latest?.publicHash!==publication.publicHash){ownedWindow?.close();return;}
+      if(plan?.binding?.cardId!==cardId||plan.binding.approvalActionId!==publication.actionId||plan.binding.publicHash!==publication.publicHash
+        ||plan.binding.reportHash!==publication.reportHash||plan.binding.approvalVersion!==publication.version)throw {code:'MANUAL_FINISHING_APPROVAL_MISMATCH'};
+      setFinishing(plan);if(ownedWindow)setAutoPrintWindow(ownedWindow);
+    }catch(error){ownedWindow?.close();if(client.current===owner&&sequence===finishingRead.current)setFinishingError(manualMessage(error));}
+    finally{if(client.current===owner&&sequence===finishingRead.current)setLoadingFinishing(false);}
+  }
+  useEffect(()=>{
+    const publication=view?.publication;
+    if(screen!=='report'||approving||publication?.state!=='PUBLISHED'||publication.reportHash!==report?.reportHash)return;
+    if(finishing?.binding.approvalActionId===publication.actionId&&finishing.binding.publicHash===publication.publicHash)return;
+    setFinishing(null);setAutoPrintWindow(null);void loadFinishing(publication);
+  },[screen,approving,view?.publication?.actionId,view?.publication?.state,view?.publication?.publicHash,report?.reportHash]);
+  async function approveAndPrepareLabel(){
+    const owner=client.current,current=viewRef.current;
+    if(!owner||approvalInFlight.current||approving||owner.hasPending()||!reportImagesReady||report?.sourceHash!==current?.card.contentHash||report.sourceRevision!==current?.card.revision)return;
+    // One deliberate approval gesture owns this popup. Navigation and saved
+    // report reads can prepare a preview, but cannot trigger printing.
+    approvalInFlight.current=true;
+    let ownedWindow;
+    try{ownedWindow=openManualLabelPrintWindow();}catch{ownedWindow=null;}
+    approvalPrintWindow.current=ownedWindow;
+    setAutoPrintWindow(null);setFinishing(null);setApproving(true);
+    try{
+      const result=await execute({type:'APPROVE_REPORT',reportHash:report.reportHash,reviewed:true});
+      if(client.current!==owner){ownedWindow?.close();return;}
+      if(result?.publication?.reportHash===report.reportHash&&result.publication.state==='PUBLISHED')await loadFinishing(result.publication,ownedWindow);
+      else ownedWindow?.close();
+    }catch(error){ownedWindow?.close();throw error;}
+    finally{approvalInFlight.current=false;if(client.current===owner)setApproving(false);}
+  }
   useEffect(()=>{if(!editing&&!identity)return;const warn=event=>{event.preventDefault();event.returnValue='';};const block=()=>{router.events.emit('routeChangeError');throw 'Save or discard the current edit before leaving';};window.addEventListener('beforeunload',warn);router.events.on('routeChangeStart',block);return()=>{window.removeEventListener('beforeunload',warn);router.events.off('routeChangeStart',block);};},[editing,identity,router]);
   const execute=action=>client.current.execute(action);
   async function openReport(){
@@ -375,6 +419,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
   if(!view)return <div>{error&&<p role="alert">{error}</p>}<p role="status">Loading saved review…</p><button onClick={()=>attempt(()=>client.current.recover())}>Retry</button></div>;
   return <>
     {error&&<div className="mc-notice error" role="alert">{error}</div>}
+    {router.query?.from==='batch'&&<Link className="mc-back" href="/batch">← Back to batch review</Link>}
     <nav className="mc-review-nav" aria-label="Review stages"><button disabled={locked} onClick={onPhotos}>Photos</button><button aria-current={screen==='geometry'?'step':undefined} disabled={locked||screen==='geometry'} onClick={()=>switchStage('geometry')}>Geometry</button><button aria-current={screen==='defects'?'step':undefined} disabled={locked||screen==='defects'||!geometryStatus(view.geometry).confirmed} onClick={()=>switchStage('defects')}>Findings</button><button disabled={locked} onClick={()=>setIdentity({...view.identity})}>Edit card details</button><button disabled={savePending||refreshingImages} onClick={()=>attempt(refreshImages)}>{refreshingImages?'Loading images…':'Reload images'}</button><span>{screen==='report'?'Final report · ':''}{status||'Saved'}</span>{client.current.hasPending()&&<button onClick={()=>attempt(()=>client.current.recover())}>Retry pending save</button>}</nav>
     {identity?<section className="mc-details"><h1>Correct card details</h1><form onSubmit={event=>{event.preventDefault();if(savePending)return;void attempt(async()=>{await execute({type:'IDENTITY_EDIT',identity});setIdentity(null);setReport(null);setScreen('geometry');});}}><fieldset disabled={savePending} style={{border:0,padding:0,margin:0}}><div className="mc-fields">{Object.entries(identity).map(([key,value])=><label key={key}>{({playerName:'Player name',cardName:'Card name',productSet:'Product / set',cardNumber:'Card number',layoutType:'Pokémon card kind'})[key]??key}{key==='layoutType'?<select value={value} onChange={event=>setIdentity(old=>({...old,[key]:event.target.value}))}>{['POKEMON','TRAINER','ENERGY'].map(layout=><option key={layout}>{layout}</option>)}</select>:<input value={value??''} onChange={event=>setIdentity(old=>({...old,[key]:event.target.value}))}/>}</label>)}</div><div className="mc-actions"><button className="primary">Save card details</button><button type="button" onClick={()=>setIdentity(null)}>Discard changes</button></div></fieldset></form></section>:
     screen==='geometry'?<PairedGeometryWorkspace workspace={view.geometry} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} preparingSides={preparing} onPrepare={prepare}
@@ -398,7 +443,14 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
         </div>
         {view.publication?.reportHash===report.reportHash&&<div className="mc-publication-actions">{view.publication.state==='PUBLISHED'?<><a href={view.publication.href} target="_blank" rel="noopener noreferrer">Open final report ↗</a><button type="button" onClick={()=>void copyReportLink()}>Copy report link</button><button type="button" disabled={!reportImagesReady} onClick={()=>window.print()}>Print / save PDF</button></>:view.publication.retryable&&<button type="button" disabled={publishing} onClick={()=>attempt(publishReport)}>{publishing?'Publishing…':'Retry report publication'}</button>}</div>}
         {copyStatus&&<div className="mc-copy-result"><p role="status">{copyStatus}</p><input aria-label="Approved report link" readOnly value={view.publication?.href??''} onFocus={event=>event.target.select()}/></div>}
-      </div>:<><p>Approve this exact identity, evidence and grade to create the final, publicly shareable report.</p>{view.approval&&<p>An earlier approved report is retained in history. This draft needs its own approval.</p>}<button className="primary" disabled={approving||savePending||!reportImagesReady} onClick={()=>attempt(async()=>{if(!reportImagesReady||report.sourceHash!==viewRef.current?.card.contentHash||report.sourceRevision!==viewRef.current?.card.revision)return;setApproving(true);try{await execute({type:'APPROVE_REPORT',reportHash:report.reportHash,reviewed:true});}finally{setApproving(false);}})}>{approving?'Approving…':'Approve final report'}</button></>}
+        {view.publication?.state==='PUBLISHED'&&view.publication.reportHash===report.reportHash&&<>
+          {loadingFinishing&&<p role="status">Preparing approved label…</p>}
+          {finishingError&&<p role="alert">{finishingError} <button type="button" onClick={()=>void loadFinishing(view.publication)}>Reload approved label</button></p>}
+          {finishing?.binding.approvalActionId===view.publication.actionId&&finishing.binding.publicHash===view.publication.publicHash&&<ManualFinishing plan={finishing} autoPrintWindow={autoPrintWindow} printDisabled={approving||savePending}/>}
+          <ReportPhotoUploader key={view.publication.actionId} cardId={cardId} staffId={staff.id} csrf={csrf} available={view.presentationEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
+          <ReportMarketPicker key={`market:${view.publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={view.publication.actionId} csrf={csrf} available={view.marketEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
+        </>}
+      </div>:<><p>Approve this exact identity, evidence and grade to create the final report and prepare its label.</p>{view.approval&&<p>An earlier approved report is retained in history. This draft needs its own approval.</p>}<button className="primary" disabled={approving||savePending||!reportImagesReady} onClick={()=>attempt(approveAndPrepareLabel)}>{approving?'Approving…':'Approve & print label'}</button></>}
     </FinalReportReview>}
   </>;
 }

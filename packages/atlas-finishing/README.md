@@ -1,5 +1,7 @@
 # ATLAS approved-report NFC protocol
 
+September 22 manual workflow extension: [manual finishing and label integration](MANUAL_FINISHING.md) adds a distinct approval/hash-bound plan, vector black/gold label, browser print view and opt-in local CUPS adapter. It does not convert manual V2 approvals into the historical Windows protocol below. Native Mac production locking/signing remains unqualified.
+
 Local implementation candidate; no operational activation. This package has no database, network, device or provider dependencies. Its Node ECDSA code is server-only. It does not grant report approval or access to a Ten Kings card writer.
 
 Mark's ATLAS grading workstation is a MacBook browser. The Windows device helper documented here is solely the existing NFC integration and is not a grading/review/approval prerequisite. Mark has now selected direct MacBook encoding with the same reader/tags and automatic in-ATLAS progression. That rework requires a distinct native device/signing profile, hosted acknowledgement and hardware acceptance; cross-platform protocol tests do not establish it. See [MAC_NFC.md](../../docs/atlas/MAC_NFC.md).

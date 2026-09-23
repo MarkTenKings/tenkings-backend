@@ -11,6 +11,8 @@ export function reportTraceSpans(mask) {
 }
 
 export function reportAwardedGrade(report) {
+  if (report?.version === 'atlas-machine-provisional-report-v1' && report.authority === 'MACHINE_PROPOSAL'
+    && report.certification === null && report.finalGradePolicy === 'atlas-final-half-point-v1') return report.proposedGrade;
   if (report?.version === 'atlas-manual-draft-report-v1') return report.grade?.overall?.displayGrade;
   if (report?.version === 'atlas-manual-draft-report-v2' && report.finalGradePolicy === 'atlas-final-half-point-v1') return report.finalGrade;
   return null;

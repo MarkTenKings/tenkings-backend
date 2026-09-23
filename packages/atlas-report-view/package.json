@@ -8,6 +8,8 @@
     "./styles.css": "./src/report.css",
     "./public-contract": "./src/public-contract.mjs",
     "./manual-public-contract": "./src/manual-public-contract.mjs",
+    "./presentation-contract": "./src/presentation-contract.mjs",
+    "./sold-reference-projection": "./src/sold-reference-projection.mjs",
     "./fixture-artwork": "./src/fixture-artwork.mjs"
   },
   "dependencies": {

@@ -40,6 +40,9 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name === 'next/router') return { useRouter: () => ({ events: { on() {}, off() {} } }) };
       if (name === 'next/link' || name === './Shell') return { default: name };
       if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
+      if (name === './ReportPhotoUploader') return {__esModule:true,default:'ReportPhotoUploader'};
+      if (name === './ReportMarketPicker') return {__esModule:true,default:'ReportMarketPicker'};
+      if (name === './ManualFinishing') return {__esModule:true,default:'ManualFinishing',openManualLabelPrintWindow:()=>null};
       if (name === '@atlas/manual-intake/client') return { createBrowserIntakeJournal: () => ({ close() {} }), createIntakeClient: () => ({ pending: async () => [], ...intake }) };
       if (name === '@atlas/grading-core/identity') return identity;
       if (name.startsWith('@atlas/')) return {};

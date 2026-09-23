@@ -9,12 +9,13 @@ export const MANUAL_PUBLIC_MAX_JSON = 16 * 1024 * 1024 + 4096;
 const purpose = 'atlas-approved-manual-public-read-v1';
 function key(value) { requireBridge(Buffer.isBuffer(value) && value.length === 32, 'MANUAL_PUBLIC_CONFIGURATION_INVALID'); return value; }
 function selector(value) {
-  keys(value, ['kind', 'token', 'version', 'side', 'findingId']);
-  requireBridge(['REPORT','IMAGE','TRACE'].includes(value.kind) && /^ar_[A-Za-z0-9_-]{24}$/.test(value.token)
+  keys(value, ['kind', 'token', 'version', 'side', 'findingId', ...(value.kind === 'PRESENTATION_IMAGE' ? ['presentationRevision'] : [])]);
+  requireBridge(['REPORT','IMAGE','TRACE','PRESENTATION_IMAGE'].includes(value.kind) && /^ar_[A-Za-z0-9_-]{24}$/.test(value.token)
     && (value.kind === 'REPORT' && value.version === null || Number.isSafeInteger(value.version) && value.version > 0 && value.version <= 2147483647)
     && (value.kind === 'IMAGE' ? ['FRONT','BACK'].includes(value.side) : value.side === null)
     && (value.kind === 'TRACE' ? typeof value.findingId === 'string' && value.findingId.length > 0 && value.findingId.length <= 180 : value.findingId === null),
   'MANUAL_PUBLIC_REQUEST_INVALID');
+  if(value.kind === 'PRESENTATION_IMAGE') requireBridge(Number.isSafeInteger(value.presentationRevision) && value.presentationRevision > 0 && value.presentationRevision <= 2147483647, 'MANUAL_PUBLIC_REQUEST_INVALID');
 }
 export function signManualPublicRequest(config, request, now = Date.now()) {
   requireBridge(config.manualOrigin === MANUAL_PUBLIC_ORIGIN, 'MANUAL_PUBLIC_CONFIGURATION_INVALID');
@@ -46,9 +47,10 @@ export function manualPublicClient(config, fetchImpl = fetch) {
       headers: { 'content-type':'application/json', 'x-atlas-manual-public-signature': signed.signature }, body: signed.body, signal: AbortSignal.timeout(25000) });
     if (response.status === 404) return null;
     requireBridge(response.status === 200, 'MANUAL_PUBLIC_UNAVAILABLE');
-    const expected = request.kind === 'IMAGE' ? 'image/webp' : 'application/json';
+    const isImage = request.kind === 'IMAGE' || request.kind === 'PRESENTATION_IMAGE';
+    const expected = isImage ? 'image/webp' : 'application/json';
     requireBridge(response.headers.get('content-type')?.split(';')[0] === expected, 'MANUAL_PUBLIC_UNAVAILABLE');
-    const bytes = await boundedBytes(response, request.kind === 'IMAGE' ? 50 * 1024 * 1024 : MANUAL_PUBLIC_MAX_JSON);
-    return request.kind === 'IMAGE' ? bytes : JSON.parse(bytes.toString('utf8'));
+    const bytes = await boundedBytes(response, isImage ? 50 * 1024 * 1024 : MANUAL_PUBLIC_MAX_JSON);
+    return isImage ? bytes : JSON.parse(bytes.toString('utf8'));
   } });
 }

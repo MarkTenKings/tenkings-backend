@@ -7,6 +7,7 @@ import { parseSpeedsterTraceRleV1, decodeSpeedsterTraceRleV1 } from '@atlas/grad
 import { encodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
+import { parseReportPresentation } from '@atlas/report-view/presentation-contract';
 
 export class PublicReportReader {
     constructor(client, config, media = null, manual = null) { if (!client && (!manual || media)) unavailable(); this.client = client; this.config = config; this.media = media; this.manual = manual; }
@@ -17,7 +18,19 @@ export class PublicReportReader {
         const packet = parsePublicManualReport(result.packet);
         if (packet.mode !== this.config.mode || packet.publicToken !== token || version !== null && packet.approvalVersion !== version
             || digest(JSON.stringify(packet)) !== result.publicHash) unavailable();
-        return { packet, publicHash: result.publicHash, explanation: explainAtlasManualReport(packet.report) };
+        let presentation = null;
+        try { if (result.presentation) presentation = parseReportPresentation(result.presentation,
+            { publicToken: token, approvalVersion: packet.approvalVersion, publicHash: result.publicHash }); } catch { /* Optional presentation cannot replace or suppress the verified grading packet. */ }
+        return { packet, publicHash: result.publicHash, explanation: explainAtlasManualReport(packet.report), ...(presentation ? { presentation } : {}) };
+    }
+    async presentationImage({ token, version, revision }) {
+        const report = await this.manualReport({ token, version }), extra = report?.presentation;
+        if (!extra?.slabPhoto || extra.revision !== revision) return null;
+        const found = await this.manual.read({ kind: 'PRESENTATION_IMAGE', token, version, side: null, findingId: null, presentationRevision: revision });
+        if (!found) return null;
+        const bytes = Buffer.from(found);
+        if (bytes.length !== extra.slabPhoto.byteCount || digest(bytes) !== extra.slabPhoto.sha256) unavailable();
+        return { bytes, contentType: extra.slabPhoto.contentType };
     }
     async read({ token, version }) {
         const config = this.config;

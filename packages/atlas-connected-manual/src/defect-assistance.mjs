@@ -10,14 +10,21 @@ import { proposalRle } from '../../atlas-manual-workflow/src/proposal-review.mjs
 import { readConfirmationFence } from './confirmation-fence.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
+const MACHINE_PREPARATION = Symbol('atlas-machine-preparation');
 function confirmationOffer(run, result, state) {
   const reviews = state.assistance?.reviews ?? [];
   return { analysisId: run.analysisId, resultHash: digest(canonical(result)),
     proposalIds: result.proposals.filter(proposal => !reviews.some(review => review.analysisId === run.analysisId
       && review.proposalId === proposal.id)).map(proposal => proposal.id).sort() };
 }
-export function defectAnalysisBinding(card, state) {
-  requireThat(state.defects && geometryStatus(state.geometry).confirmed, 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
+export function defectAnalysisBinding(card, state, preparation = null) {
+  const geometry = geometryStatus(state.geometry);
+  // Batch analysis consumes prepared geometry as a machine proposal. It never
+  // creates the human confirmation needed to certify a report or a lesson.
+  const ready = preparation === MACHINE_PREPARATION
+    ? geometry.canConfirmBoth && SIDES.every(side => !geometry.sides[side].ambiguous)
+    : geometry.confirmed;
+  requireThat(state.defects && ready, 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
   requireThat(SIDES.every(side => !state.defects.sides[side].pending), 409, 'MANUAL_DEFECT_PENDING');
   return { sourceHash: card.draft.source.sourceHash, manualRevision: card.revision, manualContentHash: card.contentHash,
     identityRevision: card.draft.identityRevision, geometryRevision: state.geometry.reportRevision,
@@ -25,6 +32,9 @@ export function defectAnalysisBinding(card, state) {
       const slot = state.defects.sides[side];
       return [side, { frame: slot.frame, findingRevision: slot.findingRevision, reviewRevision: slot.reviewRevision }];
     })) };
+}
+export function machineDefectAnalysisBinding(card, state) {
+  return defectAnalysisBinding(card, state, MACHINE_PREPARATION);
 }
 function baseFromRun(run, side) {
   const evidence = run.requestEvidence, slot = run.binding.sides[side];
@@ -139,7 +149,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       ...(run.backgroundAccepted ? { backgroundAccepted: true } : {}), ...(collectionStopped ? { collectionStopped: true } : {}),
       ...(replacement ? { replacement } : {}) } };
   }
-  return Object.freeze({
+  const api = Object.freeze({
     memory, repository, executor,
     async resolveConfirmation({ staff, card, selection = null }) {
       const context = await reviewContext(staff, card);
@@ -164,7 +174,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       await memory.publish(staff, cardId, current.actionId);
       return { reviewedMemory: await memoryStatus(staff, cardId) };
     },
-    async analyze(staff, cardId, input) {
+    async analyze(staff, cardId, input, preparation = null) {
       requireThat(executor, 503, 'DEFECT_ANALYSIS_DISABLED');
       object(input, Object.hasOwn(input ?? {}, 'replacement') ? ['actionId', 'base', 'replacement'] : ['actionId', 'base']);
       uuid(input.actionId); object(input.base, SIDES);
@@ -174,7 +184,8 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
           && /^[a-f0-9]{64}$/.test(input.replacement.outcomeHash));
       } else requireThat(!Object.hasOwn(input, 'replacement'));
       input = JSON.parse(canonical(input));
-      const baseHash = digest(canonical(input));
+      const machine = preparation === MACHINE_PREPARATION;
+      const baseHash = digest(canonical(machine ? { version: 'atlas-batch-analysis-v1', request: input } : input));
       try {
       const old = await repository.find(staff, { cardId, actionId: input.actionId });
       if (old) {
@@ -195,7 +206,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       } else requireThat(latest?.retired || !['PREPARED', 'DISPATCHED', 'RUNNING', 'UNKNOWN'].includes(latest?.state),
         409, 'DEFECT_ANALYSIS_PENDING');
       const { card } = await workflow.service.authorizeEdit(staff, cardId), state = await workflow.hydrate(card);
-      const binding = defectAnalysisBinding(card, state);
+      const binding = defectAnalysisBinding(card, state, preparation);
       requireThat(SIDES.every(side => canonical(input.base[side]) === canonical(defectBase(state.defects, side))), 409, 'DEFECT_ANALYSIS_STALE');
       const images = await imageEffects.currentImages(staff, card, binding, INSPECTION_CONTEXT_CROP_LAYOUT);
       // This is a fresh database retrieval for every new request, after costly
@@ -221,6 +232,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
         return project(staff, cardId, input.actionId);
       }
     },
+    analyzeMachine: (staff, cardId, input) => api.analyze(staff, cardId, input, MACHINE_PREPARATION),
     status: (staff, cardId, analysisId = null) => project(staff, cardId, analysisId),
     async resolveProposal({ staff, card, analysisId, proposalId }) {
       requireThat(reader, 503, 'DEFECT_ANALYSIS_DISABLED'); uuid(analysisId);
@@ -242,4 +254,5 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       return extras;
     },
   });
+  return api;
 }

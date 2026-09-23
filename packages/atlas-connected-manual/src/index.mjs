@@ -17,6 +17,14 @@ import { createEarlyGeometryStore, recordEarlyGeometryIntent } from './early-geo
 import { createEarlyGeometry, adoptEarlyGeometry } from './early-geometry.mjs';
 import { createPublicationRepository } from './publication-repository.mjs';
 import { createManualPublication } from './publication.mjs';
+import { createBatchGrading, createBatchWorker, batchActionId } from '@atlas/batch-grading';
+import { createBatchRepository } from '@atlas/batch-grading/repository';
+import { createBatchPreparation } from './batch-preparation.mjs';
+import { createBatchReview } from './batch-review.mjs';
+import { createManualFinishing } from './finishing.mjs';
+import { createPresentationRepository } from './presentation-repository.mjs';
+import { createPresentationService } from './presentation.mjs';
+import { createPresentationMarketService } from './presentation-market-service.mjs';
 
 export const DEFAULT_LIMITS = Object.freeze({
   decode:{maxInputBytes:256*1024*1024,maxPixels:52_000_000,maxRasterBytes:512*1024*1024,maxOutputBytes:256*1024*1024,timeoutMs:90000},
@@ -28,18 +36,27 @@ const SIDES=['FRONT','BACK'];
 export function createWorkLimiter(maximum=2){let active=0;return async work=>{
   requireThat(active<maximum,503,'MANUAL_PROCESSING_BUSY');active++;try{return await work();}finally{active--;}
 };}
-export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null}) {
-  let earlyGeometry;
+export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null}) {
+  let earlyGeometry,batch=null;
+  requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
   const intakeRepository=createIntakeRepository({boundary,keyPrefix,maxOriginalBytes:64*1024*1024,sourceCommitted:recordEarlyGeometryIntent});
   const limited=createWorkLimiter(2),photoProcessor=createPhotoProcessor({storage,keyPrefix,decodeLimits:limits.decode});
   const intake=createManualIntake({repository:intakeRepository,storage,artifacts,processPhoto:input=>limited(()=>photoProcessor(input)),
-    sourcePrepared:(staff,cardId,uploadId)=>earlyGeometry.sourcePrepared(staff,cardId,uploadId)});
+    sourcePrepared:async(staff,cardId,uploadId)=>{
+      await earlyGeometry.sourcePrepared(staff,cardId,uploadId);
+      if(batch){const {card}=await intake.read(staff,cardId);if(card.ready)await batch.enqueue(staff,{
+        actionId:batchActionId(card.sourceHash,'ENQUEUE'),cards:[{cardId,sourceHash:card.sourceHash}]});}
+    }});
   const details=createDetailsStore({boundary,intakeRepository});
   earlyGeometry=createEarlyGeometry({store:createEarlyGeometryStore({boundary,intakeRepository,receiptClient}),intake,details,storage,artifacts,keyPrefix,
     limited,pythonExecutable,limits:limits.preparation});
   const identification=createIdentification({boundary,intake,intakeRepository,storage,artifacts,details,effects,receiptClient});
   const publicationRepository=createPublicationRepository({boundary});
   const publication=createManualPublication({repository:publicationRepository,artifacts,storage,readSource:intake.readSource});
+  const finishing=createManualFinishing({repository:publicationRepository,artifacts});
+  const presentationRepository=presentationEnabled?createPresentationRepository({boundary,keyPrefix}):null;
+  const presentation=presentationEnabled?createPresentationService({repository:presentationRepository,storage,processPhoto:photoProcessor,keyPrefix,run:limited}):null;
+  const market=presentationEnabled?createPresentationMarketService({repository:presentationRepository,approved:finishing,artifacts,provider:marketProvider,run:limited}):null;
   async function current(staff,card){
     const actual=(await intake.read(staff,card.cardId)).card;
     requireThat(actual.ready && actual.sourceHash===card.draft.source?.sourceHash,409,'MANUAL_PHOTOS_CHANGED');return actual;
@@ -128,10 +145,10 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   }
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
   assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,provider:defectProvider,receiptClient});
-  return Object.freeze({boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,earlyGeometry,publication,
+  const connected={boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,earlyGeometry,publication,finishing,presentation,market,
     workspaceExtras: async input => {
       const [extras,status]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId)]);
-      return {...extras,publication:status};
+      return {...extras,publication:status,presentationEnabled,marketEnabled:Boolean(marketProvider)};
     },
     async open(staff,cardId){
       const [{card},saved]=await Promise.all([intake.read(staff,cardId),details.read(staff,cardId)]);
@@ -176,5 +193,14 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
       const {photo}=await intake.readSource(staff,cardId,upload.uploadId);const found=await storage.readDecodedFrame({frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan});
       requireThat((await intake.read(staff,cardId)).card.sides[side]?.upload?.uploadId===upload.uploadId,409,'MANUAL_PHOTOS_CHANGED');
       return {bytes:found.bytes,contentType:found.contentType};},
-  });
+  };
+  if(batchEnabled){
+    const batchRepository=createBatchRepository({boundary,intakeRepository});
+    const prepare=createBatchPreparation({connected,artifacts,pythonExecutable,measurementLimits:limits.measurement,
+      measure:input=>limited(()=>measureDefectWorkspaceEdit(input))});
+    batch=createBatchGrading({repository:batchRepository,worker:createBatchWorker({repository:batchRepository,prepare,concurrency:2}),
+      review:createBatchReview({connected,repository:batchRepository,artifacts})});
+  }
+  connected.batch=batch;
+  return Object.freeze(connected);
 }

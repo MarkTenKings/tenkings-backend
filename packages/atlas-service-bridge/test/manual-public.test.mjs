@@ -22,3 +22,19 @@ test('client makes one fixed HTTPS POST with no redirect or retry; checks type a
  assert.equal(await manualPublicClient(config,async()=>new Response(null,{status:404})).read(request),null);
  await assert.rejects(manualPublicClient(config,async()=>new Response('{}',{headers:{'content-type':'text/html'}})).read(request));
 });
+test('presentation image binds an exact revision without broadening ordinary report selectors',async()=>{
+ const image={...request,kind:'PRESENTATION_IMAGE',presentationRevision:3};
+ const signed=signManualPublicRequest(config,image);
+ assert.deepEqual(verifyManualPublicRequest({key:config.manualKey},signed.body,signed.signature).request,image);
+ for(const change of [{version:null},{presentationRevision:0},{presentationRevision:1.5},{presentationRevision:2147483648},{side:'FRONT'},{findingId:'finding-1'},{url:'https://other.invalid/photo.webp'}])assert.throws(()=>signManualPublicRequest(config,{...image,...change}));
+ assert.throws(()=>signManualPublicRequest(config,{...request,presentationRevision:3}));
+ const bytes=Buffer.from('signed-media-fixture');
+ const client=manualPublicClient(config,async(url,options)=>{
+  assert.equal(url,MANUAL_PUBLIC_ORIGIN+MANUAL_PUBLIC_PATH);
+  const claims=verifyManualPublicRequest({key:config.manualKey},options.body,options.headers['x-atlas-manual-public-signature']);
+  assert.deepEqual(claims.request,image);
+  return new Response(bytes,{headers:{'content-type':'image/webp'}});
+ });
+ assert.deepEqual(await client.read(image),bytes);
+ await assert.rejects(manualPublicClient(config,async()=>new Response('{}',{headers:{'content-type':'application/json'}})).read(image));
+});

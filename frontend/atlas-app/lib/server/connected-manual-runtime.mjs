@@ -9,6 +9,7 @@ import { createAstraDefectProvider } from '@atlas/defect-analysis/provider';
 import { requireThat } from '@atlas/manual-service/contract';
 import { descriptorSha256 } from '@atlas/photo-core';
 import { createApprovedManualReader } from '@atlas/connected-manual/publication-reader';
+import { createSoldReferenceProvider } from '@atlas/connected-manual/presentation-market-provider';
 
 export function manualRuntimeSettings(env,staffConfig) {
   if(env.ATLAS_MANUAL_ENABLED!=='true')return null;
@@ -58,7 +59,13 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const memoryEnabled=env.ATLAS_MANUAL_DEFECT_MEMORY_ENABLED==='true';
   const defectProvider=env.ATLAS_MANUAL_DEFECT_ANALYSIS_ENABLED==='true'?createAstraDefectProvider({apiKey:env.ATLAS_MANUAL_OPENAI_KEY}):null;
   requireThat(!defectProvider||memoryEnabled,503,'DEFECT_ANALYSIS_MEMORY_REQUIRED');
-  const connected=createConnectedManual({memoryEnabled,defectProvider,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl});
+  // Cold by default: enabling requires the separate additive queue migration
+  // and narrow serving grants. Construction never resumes paid work by itself.
+  const batchEnabled=env.ATLAS_MANUAL_BATCH_ENABLED==='true';
+  const presentationEnabled=env.ATLAS_MANUAL_PRESENTATION_ENABLED==='true';
+  const marketProvider=env.ATLAS_MANUAL_MARKET_ENABLED==='true'?createSoldReferenceProvider({apiKey:env.ATLAS_MANUAL_SOLD_COMPS_API_KEY}):null;
+  requireThat(!marketProvider||presentationEnabled,503,'MARKET_PRESENTATION_REQUIRED');
+  const connected=createConnectedManual({memoryEnabled,defectProvider,batchEnabled,presentationEnabled,marketProvider,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
   // Construction is cold: no database scan or provider request starts here.
@@ -66,6 +73,6 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     pending:input=>connected.assistance.executor.pending(input),
     reconcile:input=>connected.assistance.executor.reconcile(input),
   }):null;
-  const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage});
-  return {connected,boundary,handler,analysisReconciler,approvedManualReader,uploadOrigin:settings.uploadOrigin,async close(){await manualClient.$disconnect();client.destroy();}};
+  const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled});
+  return {connected,boundary,handler,analysisReconciler,approvedManualReader,uploadOrigin:settings.uploadOrigin,async close(){connected.batch?.worker.stop();await manualClient.$disconnect();client.destroy();}};
 }

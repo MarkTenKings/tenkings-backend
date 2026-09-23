@@ -26,13 +26,13 @@ function harness({ journal } = {}) {
     useCallback: callback => callback,
     useEffect(callback, deps) { const i = cursor++, prior = slots[i]; if (!prior || deps.some((value, n) => value !== prior[n])) { slots[i] = deps; effects.push(callback); } },
   };
-  const f = { calls: [], actions: [], pending: false, current: { card: { revision: 1, contentHash: 'one' }, geometry: { confirmed: true },
+  const f = { calls: [], actions: [], popups: [], closedPopups: 0, pending: false, current: { card: { revision: 1, contentHash: 'one' }, geometry: { confirmed: true },
     defects: { marker: 'saved-original-defects' }, images: { marker: 'original-grants' }, identity: {}, astra: { enabled: true, status: 'IDLE', proposals: [] }, reviewedMemory: { enabled: true, status: 'UNSAVED' } } };
   f.respond = async (path, options) => path.endsWith('/view') ? f.current : { astra: f.current.astra };
   f.preview = async () => ({ reportHash: 'exact-report-hash', sourceRevision: f.current.card.revision,
     sourceHash: f.current.card.contentHash, report: {}, review: {} });
   const client = { recover: async () => { viewCallback(f.current); return f.current; }, hasPending: () => f.pending,
-    execute: async action => { f.actions.push(action); return f.current; },
+    execute: async action => { f.actions.push(action); await f.onExecute?.(action); return f.current; },
     reviewProposal: async input => { f.actions.push({ type: 'REVIEW_PROPOSAL', input }); return f.current; },
     editDefect: async input => { f.actions.push({ type: 'EDIT_DEFECT', input }); return f.current; }, previewReport: async () => f.preview() };
   const exports = {};
@@ -43,6 +43,9 @@ function harness({ journal } = {}) {
       if (name === 'next/router') return { useRouter: () => ({ events: { on() {}, off() {} } }) };
       if (name === 'next/link' || name === './Shell') return { default: name };
       if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
+      if (name === './ReportPhotoUploader') return {__esModule:true,default:'ReportPhotoUploader'};
+      if (name === './ReportMarketPicker') return {__esModule:true,default:'ReportMarketPicker'};
+      if (name === './ManualFinishing') return {__esModule:true,default:'ManualFinishing',openManualLabelPrintWindow:()=>{const popup={close(){f.closedPopups++;}};f.popups.push(popup);return popup;}};
       if (name === '../lib/early-geometry-client.mjs') return earlyGeometryClient;
       if (name === '@atlas/manual-workflow/client') return { createManualClient: options => { viewCallback = options.onView; return client; } };
       if (name === '@atlas/manual-workspace') return { PairedGeometryWorkspace: 'PairedGeometryWorkspace' };
@@ -62,6 +65,7 @@ function harness({ journal } = {}) {
   f.defects = () => { const node = all(tree, node => node.type === 'DefectReviewWorkspace')[0]; assert.ok(node, 'defect workspace rendered'); return node.props; };
   f.button = label => all(tree, node => node.type === 'button' && text(node) === label)[0];
   f.geometry = () => all(tree, node => node.type === 'PairedGeometryWorkspace')[0]?.props;
+  f.finishing = () => all(tree, node => node.type === 'ManualFinishing')[0]?.props;
   f.report = () => all(tree, node => node.type === 'FinalReportReview')[0]?.props;
   f.text = () => text(tree);
   f.publish = next => { f.current = next; viewCallback(next); f.render(); };
@@ -203,14 +207,14 @@ test('opening the full draft is read-only and approval requires verified images 
   const f = harness(); await flush(); f.render();
   await f.defects().onContinue(); f.render();
   assert.equal(f.report().preview.reportHash, 'exact-report-hash'); assert.equal(f.report().current, true);
-  assert.equal(f.actions.length, 0); assert.equal(f.button('Approve final report').props.disabled, true);
-  await f.button('Approve final report').props.onClick(); assert.equal(f.actions.length, 0);
-  f.report().onReadyChange(true); f.render(); assert.equal(f.button('Approve final report').props.disabled, false);
-  await f.button('Approve final report').props.onClick(); f.render();
+  assert.equal(f.actions.length, 0); assert.equal(f.button('Approve & print label').props.disabled, true);
+  await f.button('Approve & print label').props.onClick(); assert.equal(f.actions.length, 0);
+  f.report().onReadyChange(true); f.render(); assert.equal(f.button('Approve & print label').props.disabled, false);
+  await f.button('Approve & print label').props.onClick(); f.render();
   assert.deepEqual(JSON.parse(JSON.stringify(f.actions)), [{ type: 'APPROVE_REPORT', reportHash: 'exact-report-hash', reviewed: true }]);
   f.publish({ ...f.current, card: { revision: 2, contentHash: 'changed-after-preview' } });
   assert.equal(f.report().current, false);
-  await f.button('Approve final report').props.onClick(); assert.equal(f.actions.length, 1, 'a stale enabled callback cannot approve changed content');
+  await f.button('Approve & print label').props.onClick(); assert.equal(f.actions.length, 1, 'a stale enabled callback cannot approve changed content');
   f.dispose();
 });
 
@@ -225,6 +229,29 @@ test('a report response that arrives after a newer saved edit is refused before 
   assert.equal(f.actions.length, 0); f.dispose();
 });
 
+const finishingPublication = { actionId: 'approved-action', state: 'PUBLISHED', reportHash: 'exact-report-hash', publicHash: 'published-packet', version: 1, reportNumber: 'ATLAS-EXAMPLE' };
+const finishingPlan = { id: 'synthetic-plan', binding: { cardId: 'card', approvalActionId: 'approved-action', reportHash: 'exact-report-hash', publicHash: 'published-packet', approvalVersion: 1 } };
+test('reopening an approved report only reads its saved label and never owns a print popup', async () => {
+  const f = harness(); await flush(); f.render();
+  f.publish({ ...f.current, approval: { sourceHash: 'one', reportHash: 'exact-report-hash' }, publication: finishingPublication });
+  f.respond = async path => path.includes('/finishing/') ? finishingPlan : f.current;
+  await f.defects().onContinue(); f.render(); await flush(); f.render();
+  assert.equal(f.finishing().plan.id, 'synthetic-plan'); assert.equal(f.finishing().autoPrintWindow, null); assert.equal(f.popups.length, 0);
+  assert.equal(f.calls.filter(call => call.path.includes('/finishing/')).length, 1);
+  assert.equal(f.calls.filter(call => call.options?.method === 'POST').length, 0); f.dispose();
+});
+test('one explicit approval gesture hands its popup to the exact saved label after publication', async () => {
+  const f = harness(); await flush(); f.render();
+  f.respond = async path => path.includes('/finishing/') ? finishingPlan : f.current;
+  f.onExecute = () => f.publish({ ...f.current, approval: { sourceHash: 'one', reportHash: 'exact-report-hash' }, publication: finishingPublication });
+  await f.defects().onContinue(); f.render(); f.report().onReadyChange(true); f.render();
+  await f.button('Approve & print label').props.onClick(); f.render(); await flush(); f.render();
+  assert.equal(f.popups.length, 1); assert.equal(f.closedPopups, 0); assert.equal(f.finishing().autoPrintWindow, f.popups[0]);
+  assert.equal(f.finishing().plan.binding.approvalActionId, finishingPublication.actionId);
+  assert.equal(f.calls.filter(call => call.path.includes('/finishing/')).length, 1); assert.equal(f.actions.length, 1);
+  f.render(); assert.equal(f.popups.length, 1); f.dispose();
+});
+
 test('returning to Findings discards the displayed report and opens a fresh corrected draft without implicit approval', async () => {
   const f = harness(); await flush(); f.render(); let previews = 0;
   f.preview = async () => ({ reportHash: `report-${++previews}`, sourceRevision: f.current.card.revision,
@@ -234,7 +261,7 @@ test('returning to Findings discards the displayed report and opens a fresh corr
   f.publish({ ...f.current, card: { revision: 2, contentHash: 'corrected' } });
   await f.defects().onContinue(); f.render();
   assert.equal(f.report().preview.reportHash, 'report-2'); assert.equal(f.report().preview.sourceHash, 'corrected');
-  assert.equal(f.button('Approve final report').props.disabled, true, 'new report must verify its images again');
+  assert.equal(f.button('Approve & print label').props.disabled, true, 'new report must verify its images again');
   assert.equal(f.actions.length, 0); f.dispose();
 });
 

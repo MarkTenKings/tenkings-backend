@@ -350,12 +350,12 @@ importers:
 
   frontend/atlas-app:
     dependencies:
-      '@atlas/defect-analysis':
-        specifier: workspace:*
-        version: link:../../packages/atlas-defect-analysis
       '@atlas/connected-manual':
         specifier: workspace:*
         version: link:../../packages/atlas-connected-manual
+      '@atlas/defect-analysis':
+        specifier: workspace:*
+        version: link:../../packages/atlas-defect-analysis
       '@atlas/finishing':
         specifier: workspace:*
         version: link:../../packages/atlas-finishing
@@ -454,12 +454,12 @@ importers:
 
   frontend/atlas-public:
     dependencies:
-      '@atlas/manual-workspace':
-        specifier: workspace:*
-        version: link:../../packages/atlas-manual-workspace
       '@atlas/grading-core':
         specifier: workspace:*
         version: link:../../packages/atlas-grading-core
+      '@atlas/manual-workspace':
+        specifier: workspace:*
+        version: link:../../packages/atlas-manual-workspace
       '@atlas/report-view':
         specifier: workspace:*
         version: link:../../packages/atlas-report-view
@@ -683,20 +683,26 @@ importers:
         specifier: ^5.5.4
         version: 5.5.4
 
+  packages/atlas-batch-grading:
+    dependencies:
+      '@atlas/manual-service':
+        specifier: workspace:*
+        version: link:../atlas-manual-service
+
   packages/atlas-connected-manual:
     dependencies:
-      '@atlas/service-bridge':
+      '@atlas/batch-grading':
         specifier: workspace:*
-        version: link:../atlas-service-bridge
-      '@atlas/report-view':
-        specifier: workspace:*
-        version: link:../atlas-report-view
+        version: link:../atlas-batch-grading
       '@atlas/defect-analysis':
         specifier: workspace:*
         version: link:../atlas-defect-analysis
       '@atlas/defect-memory':
         specifier: workspace:*
         version: link:../atlas-defect-memory
+      '@atlas/finishing':
+        specifier: workspace:*
+        version: link:../atlas-finishing
       '@atlas/grading-core':
         specifier: workspace:*
         version: link:../atlas-grading-core
@@ -727,12 +733,21 @@ importers:
       '@atlas/preparation-runtime':
         specifier: workspace:*
         version: link:../atlas-preparation-runtime
+      '@atlas/report-view':
+        specifier: workspace:*
+        version: link:../atlas-report-view
+      '@atlas/service-bridge':
+        specifier: workspace:*
+        version: link:../atlas-service-bridge
       '@aws-sdk/client-s3':
         specifier: 3.914.0
         version: 3.914.0
       '@tenkings/card-identification-core':
         specifier: workspace:*
         version: link:../card-identification-core
+      '@tenkings/ebay-sold-comps-v2':
+        specifier: workspace:*
+        version: link:../ebay-sold-comps-v2
       sharp:
         specifier: 0.33.5
         version: 0.33.5

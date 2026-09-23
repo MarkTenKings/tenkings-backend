@@ -3,8 +3,17 @@ import { parsePublicManualReport } from '@atlas/report-view/manual-public-contra
 import { parseSpeedsterTraceRleV1, decodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
 import { encodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
 import { MANUAL_PUBLIC_PATH, verifyManualPublicRequest } from '@atlas/service-bridge/manual-public';
+import { presentationRow } from './presentation-repository.mjs';
+import { parseReportPresentation } from '@atlas/report-view/presentation-contract';
+import { readApprovedIdentityDetails } from './presentation-identity.mjs';
 
-export function createApprovedManualReader({ client, artifacts, storage }) {
+export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false }) {
+  async function presentation(row, token) {
+    if (!presentationEnabled) return null;
+    const rows = await client.$transaction(tx => tx.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation WHERE card_id=$1::uuid AND approval_action_id=$2::uuid ORDER BY revision DESC LIMIT 1', row.card_id, row.action_id), { maxWait: 1500, timeout: 3000 });
+    if (!rows.length) return null;
+    return { row: rows[0], value: presentationRow(rows[0], { publicToken: token, approvalVersion: row.version, publicHash: row.public_hash }) };
+  }
   async function selected(claims) {
     requireThat(claims.expiresAt > Date.now(), 403, 'MANUAL_PUBLIC_REQUEST_EXPIRED');
     const rows = await client.$transaction(async tx => tx.$queryRawUnsafe('SELECT * FROM atlas_manual.read_publication($1::text,$2::integer,$3::text,$4::text,$5::text)',
@@ -29,7 +38,32 @@ export function createApprovedManualReader({ client, artifacts, storage }) {
     requireThat(packet.publicToken === claims.request.token && packet.approvalVersion === row.version && (claims.request.version === null || claims.request.version === row.version) && packet.mode === row.mode
       && digest(JSON.stringify(packet)) === row.public_hash, 503, 'MANUAL_PUBLICATION_CORRUPT');
     let result;
-    if (claims.request.kind === 'REPORT') result = { contentType: 'application/json', bytes: Buffer.from(JSON.stringify({ packet, publicHash: row.public_hash })) };
+    if (claims.request.kind === 'REPORT') {
+      // Auxiliary availability must not take an independently verified grade
+      // offline. Corrupt/absent optional data is omitted; image reads still
+      // require the exact persisted descriptor and fail closed independently.
+      let additional;
+      try { additional = (await presentation(row, packet.publicToken))?.value; } catch { /* No optional presentation. */ }
+      if (presentationEnabled) {
+        const identityDetails = additional?.identityDetails ?? await readApprovedIdentityDetails({ client, publication: row, packet });
+        additional = parseReportPresentation({ ...(additional ?? { version: 'atlas-report-presentation-v1',
+          binding: { publicToken: packet.publicToken, approvalVersion: packet.approvalVersion, publicHash: row.public_hash },
+          revision: 1, updatedAt: packet.approvedAt, dealerDirectory: { url: '/dealers?service=buy' } }),
+          ...(identityDetails ? { identityDetails } : {}) });
+      }
+      result = { contentType: 'application/json', bytes: Buffer.from(JSON.stringify({ packet, publicHash: row.public_hash, ...(additional ? { presentation: additional } : {}) })) };
+    }
+    else if (claims.request.kind === 'PRESENTATION_IMAGE') {
+      const extra = await presentation(row, packet.publicToken);
+      if (!extra?.value.slabPhoto || extra.value.revision !== claims.request.presentationRevision) return null;
+      requireThat(typeof extra.row.media === 'string' && digest(extra.row.media) === extra.row.media_hash, 503, 'PRESENTATION_CORRUPT');
+      const media = JSON.parse(extra.row.media), descriptor = extra.value.slabPhoto;
+      const photo = await storage.readDerivative({ ...media, signal });
+      requireThat(photo.bytes.length === descriptor.byteCount && digest(photo.bytes) === descriptor.sha256 && descriptor.contentType === 'image/webp', 503, 'PRESENTATION_IMAGE_MISMATCH');
+      result = { bytes: photo.bytes, contentType: descriptor.contentType };
+      const current = await presentation(row, packet.publicToken);
+      requireThat(current?.row.presentation_hash === extra.row.presentation_hash, 409, 'PRESENTATION_CHANGED');
+    }
     else if (claims.request.kind === 'IMAGE') {
       const media = await readArtifact(manifest.media, row, 'APPROVED_MEDIA', signal), side = claims.request.side;
       const descriptor = packet.images[side];
