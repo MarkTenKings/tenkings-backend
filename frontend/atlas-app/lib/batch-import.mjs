@@ -43,7 +43,8 @@ export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThi
   };
 }
 
-export function createBatchImporter({ request, intake, journal, cryptoImpl = globalThis.crypto, onProgress = () => {} }) {
+export function createBatchImporter({ request, intake, journal, cryptoImpl = globalThis.crypto, onProgress = () => {},
+  pause = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   let running = false, disposed = false, drained = Promise.resolve(), finish = null;
   const post = (path, body) => request(path, { method: 'POST', body });
   async function save(value) { await journal.put(value); if (!disposed) onProgress(structuredClone(value)); }
@@ -80,7 +81,7 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
               if (!item.hashes[side]) item.hashes[side] = hex(await cryptoImpl.subtle.digest('SHA-256', await item.files[side].arrayBuffer()));
             }
             await save(batch);
-            const outcomes = await Promise.allSettled(['FRONT', 'BACK'].map(async side => {
+            const prepareSide = async side => {
               if (disposed) return;
               const pending = (await intake.pending()).filter(entry => entry.value.kind === 'upload' && entry.value.cardId === item.cardId && entry.value.input.side === side);
               check(pending.length <= 1, 'BATCH_IMPORT_UPLOAD_CONFLICT');
@@ -95,13 +96,26 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
                 await intake.prepareSaved(item.cardId, slot.upload.uploadId); return;
               }
               await intake.upload(item.cardId, side, slot.version, item.files[side]);
+            };
+            const outcomes = await Promise.allSettled(['FRONT', 'BACK'].map(async side => {
+              for(let attempt=0;attempt<30;attempt++){
+                if(disposed)return;
+                try{return await prepareSide(side);}
+                catch(error){
+                  // Only this explicit pre-work capacity refusal is automatic.
+                  // Reload the same saved upload intent before every retry;
+                  // transport uncertainty and source changes remain visible.
+                  if(error?.code!=='MANUAL_PROCESSING_BUSY'||attempt===29||disposed)throw error;
+                  item.code='MANUAL_PROCESSING_BUSY';await save(batch);await pause(3000);
+                }
+              }
             }));
             const failed = outcomes.find(outcome => outcome.status === 'rejected'); if (failed) throw failed.reason;
             if (disposed) continue;
             const { card } = await intake.read(item.cardId);
             check(card.ready && ['FRONT', 'BACK'].every(side => card.sides[side].upload?.plan.expected.sha256 === item.hashes[side]), 'BATCH_IMPORT_UPLOAD_CONFLICT');
             await post('/api/staff/manual-connected/cards/batch', { actionId: item.enqueueId, cards: [{ cardId: item.cardId, sourceHash: card.sourceHash }] });
-            item.done = true; item.files = null; await save(batch);
+            item.done = true; item.files = null; item.code=null; await save(batch);
           } catch (error) {
             item.code = /^[A-Z][A-Z0-9_]{1,100}$/.test(error?.code ?? '') ? error.code : 'BATCH_IMPORT_INTERRUPTED';
             await save(batch);

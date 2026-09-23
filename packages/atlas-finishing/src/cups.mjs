@@ -13,11 +13,13 @@ function configuration(config) {
     && /^[a-f0-9]{64}$/.test(config.qualificationHash) && /^[A-Za-z0-9][A-Za-z0-9_-]{0,126}$/.test(config.printer)
     && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,126}$/.test(config.media) && config.layoutVersion === 'atlas-noir-gold-v1'
     && config.actualSize === true, 'CUPS_QUALIFIED_CONFIGURATION_REQUIRED');
+  assert(/^[a-f0-9]{64}$/.test(config.renderProfileHash), 'CUPS_RENDER_PROFILE_REQUIRED');
   return { version: config.version, printer: config.printer, media: config.media, layoutVersion: config.layoutVersion,
-    qualificationHash: config.qualificationHash, actualSize: true };
+    qualificationHash: config.qualificationHash, renderProfileHash: config.renderProfileHash, actualSize: true };
 }
-export function createFileCupsJournal({ directory }) {
+export function createFileCupsJournal({ directory, fullSync }) {
   assert(typeof directory === 'string' && isAbsolute(directory), 'CUPS_JOURNAL_DIRECTORY_INVALID');
+  assert(fullSync === undefined || typeof fullSync === 'function', 'CUPS_JOURNAL_FULLSYNC_INVALID');
   const path = (id, suffix = '') => { assert(/^afprint_[a-f0-9]{64}$/.test(id), 'CUPS_INTENT_INVALID'); return join(directory, `${id}${suffix}.json`); };
   async function checkedDirectory() {
     await mkdir(directory, { recursive: true, mode: 0o700 }); const stat = await lstat(directory);
@@ -32,7 +34,7 @@ export function createFileCupsJournal({ directory }) {
   async function create(file, record) {
     const bytes = JSON.stringify(record); assert(Buffer.byteLength(bytes) <= 4096, 'CUPS_JOURNAL_INVALID');
     let handle;
-    try { handle = await open(file, 'wx', 0o600); await handle.writeFile(bytes); await handle.sync(); }
+    try { handle = await open(file, 'wx', 0o600); await handle.writeFile(bytes); await handle.sync(); if (fullSync) await fullSync(handle.fd); }
     catch (error) { if (error.code === 'EEXIST') return false; throw error; }
     finally { await handle?.close(); }
     const dir = await open(directory, 'r'); try { await dir.sync(); } finally { await dir.close(); } return true;
@@ -87,7 +89,7 @@ export function createCupsPrinter({ config, journal, transport, renderDocument }
       const document = await renderDocument(structuredClone(plan));
       assert(document?.planHash === plan.planHash && document.layoutVersion === profile.layoutVersion
         && Buffer.isBuffer(document.bytes) && document.bytes.length > 8 && document.bytes.length <= MAX_PDF
-        && document.bytes.subarray(0, 5).toString('ascii') === '%PDF-', 'CUPS_DOCUMENT_MISMATCH');
+        && document.bytes.subarray(0, 5).toString('ascii') === '%PDF-' && document.renderProfileHash === profile.renderProfileHash, 'CUPS_DOCUMENT_MISMATCH');
       const ownedPdf = Buffer.from(document.bytes), documentHash = sha(ownedPdf);
       assert(document.sha256 === documentHash, 'CUPS_DOCUMENT_MISMATCH');
       const record = { version: 'atlas-cups-intent-v1', intentId: plan.print.intentId, planHash: plan.planHash,

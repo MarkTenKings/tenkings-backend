@@ -8,9 +8,9 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { createCupsPrinter, createFileCupsJournal, createLocalCupsTransport, cupsJobRequest, parseCupsJobResponse } from '../src/cups.mjs';
 import { samplePlan } from './manual-fixture.mjs';
-const config = { version: 'atlas-cups-printer-v1', qualified: true, qualificationHash: 'e'.repeat(64), printer: 'Atlas_Test', media: 'Letter', layoutVersion: 'atlas-noir-gold-v1', actualSize: true };
+const config = { version: 'atlas-cups-printer-v1', qualified: true, qualificationHash: 'e'.repeat(64), renderProfileHash: 'a'.repeat(64), printer: 'Atlas_Test', media: 'Letter', layoutVersion: 'atlas-noir-gold-v1', actualSize: true };
 const bytes = Buffer.from('%PDF-1.7\nsynthetic document, no printer is contacted');
-const renderDocument = plan => ({ bytes, sha256: createHash('sha256').update(bytes).digest('hex'), planHash: plan.planHash, layoutVersion: plan.label.layoutVersion });
+const renderDocument = plan => ({ bytes, sha256: createHash('sha256').update(bytes).digest('hex'), planHash: plan.planHash, layoutVersion: plan.label.layoutVersion, renderProfileHash: config.renderProfileHash });
 test('durable CUPS intent reopens exact receipt without duplicate spool submission', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'atlas-cups-test-')); let calls = 0, jobState = 5; const plan = samplePlan();
   const transport = { submit: async () => { calls++; return { jobId: 17, printer: 'Atlas_Test' }; },
@@ -30,6 +30,20 @@ test('uncertain submit remains unknown after restart and never automatically rep
     for (let i = 0; i < 2; i++) assert.equal((await createCupsPrinter({ config, journal: createFileCupsJournal({ directory }), transport, renderDocument }).prepare({ plan })).state, 'UNKNOWN');
     assert.equal(calls, 1);
   } finally { await rm(directory, { recursive: true }); }
+});
+test('native full-sync must finish before spool dispatch and a failed sync never prints', async () => {
+  const directory=await mkdtemp(join(tmpdir(),'atlas-cups-fullsync-'));let calls=0,synced=false;
+  const transport={submit:async()=>{assert.equal(synced,true);calls++;return{jobId:17,printer:'Atlas_Test'};},inspect:async()=>null};
+  try{
+    const failed=createFileCupsJournal({directory,fullSync:async()=>{throw new Error('Native sync failed');}});
+    await assert.rejects(createCupsPrinter({config,journal:failed,transport,renderDocument}).prepare({plan:samplePlan()}),/Native sync failed/);
+    assert.equal(calls,0);
+    const recovered=createFileCupsJournal({directory,fullSync:async()=>{synced=true;}});
+    assert.equal((await createCupsPrinter({config,journal:recovered,transport,renderDocument}).prepare({plan:samplePlan()})).state,'UNKNOWN');
+    assert.equal(calls,0);
+    await createCupsPrinter({config,journal:recovered,transport,renderDocument}).prepare({plan:samplePlan({version:4})});
+    assert.equal(calls,1);
+  }finally{await rm(directory,{recursive:true});}
 });
 test('printer/profile/document changes and fixture printing fail before dispatch', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'atlas-cups-test-')); let calls = 0;

@@ -10,6 +10,22 @@ import { requireThat } from '@atlas/manual-service/contract';
 import { descriptorSha256 } from '@atlas/photo-core';
 import { createApprovedManualReader } from '@atlas/connected-manual/publication-reader';
 import { createSoldReferenceProvider } from '@atlas/connected-manual/presentation-market-provider';
+import { createStationSigner } from '@atlas/connected-manual/finishing-station-protocol';
+
+export function manualStationSettings(env,origin) {
+  if(env.ATLAS_MANUAL_STATION_ENABLED!=='true')return null;
+  requireThat(origin==='https://atlasgrading.com'
+    && typeof env.ATLAS_MANUAL_STATION_PRIVATE_KEY_PEM==='string' && env.ATLAS_MANUAL_STATION_PRIVATE_KEY_PEM.length<=8192
+    && typeof env.ATLAS_MANUAL_STATION_TRUSTED_STATIONS_JSON==='string' && Buffer.byteLength(env.ATLAS_MANUAL_STATION_TRUSTED_STATIONS_JSON)<=65536,
+  503,'FINISHING_STATION_CONFIGURATION_INVALID');
+  let trustedStations,signer;
+  try{
+    trustedStations=JSON.parse(env.ATLAS_MANUAL_STATION_TRUSTED_STATIONS_JSON);
+    requireThat(Array.isArray(trustedStations)&&trustedStations.length<=64);
+    signer=createStationSigner({keyId:env.ATLAS_MANUAL_STATION_KEY_ID,privateKey:env.ATLAS_MANUAL_STATION_PRIVATE_KEY_PEM});
+  }catch{requireThat(false,503,'FINISHING_STATION_CONFIGURATION_INVALID');}
+  return{origin,signer,trustedStations};
+}
 
 export function manualRuntimeSettings(env,staffConfig) {
   if(env.ATLAS_MANUAL_ENABLED!=='true')return null;
@@ -65,7 +81,8 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const presentationEnabled=env.ATLAS_MANUAL_PRESENTATION_ENABLED==='true';
   const marketProvider=env.ATLAS_MANUAL_MARKET_ENABLED==='true'?createSoldReferenceProvider({apiKey:env.ATLAS_MANUAL_SOLD_COMPS_API_KEY}):null;
   requireThat(!marketProvider||presentationEnabled,503,'MARKET_PRESENTATION_REQUIRED');
-  const connected=createConnectedManual({memoryEnabled,defectProvider,batchEnabled,presentationEnabled,marketProvider,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl});
+  const stationConfig=manualStationSettings(env,staffConfig.origin);
+  const connected=createConnectedManual({memoryEnabled,defectProvider,batchEnabled,presentationEnabled,marketProvider,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
   // Construction is cold: no database scan or provider request starts here.

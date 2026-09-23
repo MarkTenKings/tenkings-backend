@@ -1,3 +1,4 @@
+import { clearStationBrowserCredential } from '@atlas/finishing-station/browser';
 import { STAFF_SIGN_IN_PATH } from '../lib/routes.mjs';
 import Link from 'next/link';
 import Head from 'next/head';
@@ -24,6 +25,7 @@ export default function Shell({ children, staff, title = 'Grading workspace', wo
         try {
             const session = await api('session');
             await api('auth/logout', { body: {}, csrf: session.csrf });
+            clearStationBrowserCredential();
             window.location.replace(STAFF_SIGN_IN_PATH);
         }
         catch (e) {
@@ -31,7 +33,7 @@ export default function Shell({ children, staff, title = 'Grading workspace', wo
             setBusy(false);
         }
     }
-    if(manual)return <div className="mc-shell"><Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head><header className="mc-shell-header"><Link href="/manual" className="atlas-brand" aria-label="ATLAS grading studio"><AtlasBrand/></Link><nav aria-label="Staff workspace"><Link href="/manual" className={router.pathname.startsWith('/manual')?'mc-nav-current':undefined}>Your cards</Link><Link href="/batch" className={router.pathname==='/batch'?'mc-nav-current':undefined}>Batch grading</Link><span className="mc-staff-name"><i aria-hidden="true"/>{staff?.name}</span><button disabled={busy} onClick={logout}>Sign out</button></nav></header>{staff?.mode!=='PRODUCTION'&&<div className="fixture-strip">Local verification environment · ordinary staff authentication · private test storage</div>}{error&&<Notice error>{error}</Notice>}{children}</div>;
+    if(manual)return <div className="mc-shell"><Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head><header className="mc-shell-header"><Link href="/manual" className="atlas-brand" aria-label="ATLAS grading studio"><AtlasBrand/></Link><nav aria-label="Staff workspace"><Link href="/manual" className={router.pathname.startsWith('/manual')?'mc-nav-current':undefined}>Your cards</Link><Link href="/batch" className={router.pathname==='/batch'?'mc-nav-current':undefined}>Batch grading</Link><Link href="/station" className={router.pathname==='/station'?'mc-nav-current':undefined}>Station</Link><span className="mc-staff-name"><i aria-hidden="true"/>{staff?.name}</span><button disabled={busy} onClick={logout}>Sign out</button></nav></header>{staff?.mode!=='PRODUCTION'&&<div className="fixture-strip">Local verification environment · ordinary staff authentication · private test storage</div>}{error&&<Notice error>{error}</Notice>}{children}</div>;
     return <div className="app-shell">
     <Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head>
     <aside className="rail">

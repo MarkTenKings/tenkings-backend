@@ -42,7 +42,8 @@ async function fixture() {
       enrollmentId: enrollment.enrollmentId, expiresAt: association.expiresAt, nonce: 'synthetic-signed-host-nonce' };
   } };
   const host = { async acknowledge({ receipt }) { f.acks++; if (f.hostDown) throw new Error('Lost hosted reply');
-    return { intentId: receipt.intentId, receiptHash: sha(stable(receipt)), stationId: receipt.stationId, enrollmentId: receipt.enrollmentId, committed: true }; },
+    return { intentId: receipt.intentId, receiptHash: sha(stable(receipt)), stationId: receipt.stationId, enrollmentId: receipt.enrollmentId,
+      planHash: receipt.planHash, authorizationHash: receipt.authorizationHash, kind: 'WRITE', committed: true }; },
   async verifyAcknowledgement(value) { return value; } };
   const pcsc = { async connectExclusive() { f.connects++; return session; }, async observeEmpty() { return f.empty; } };
   f.args = { profile, signer, authority, host, pcsc, journal, clock: () => f.time };
@@ -112,6 +113,20 @@ test('wrong host acknowledgement cannot release station or fake a saved result',
     assert.equal(result.state, 'WAITING_FOR_HOST_ACK'); assert.equal(result.removalObserved, true); assert.equal(result.hostedAcknowledged, false);
     const next = samplePlan({ version: 4 });
     await assert.rejects(f.station.prepare({ plan: next, association: { ...f.association, planHash: next.planHash } }), /STATION_BUSY/);
+  } finally { await f.cleanup(); }
+});
+test('expired recovery relays only an already signed receipt and exact host acknowledgement without RF or new signing', async () => {
+  const f = await fixture(); f.hostDown = true; f.removal = false;
+  try {
+    await f.station.prepare(f.input); await f.station.onTagPresent(f.input);
+    const counts = { writes: f.writes.length, signs: f.signs, connects: f.connects };
+    f.time = 200000; f.hostDown = false; f.empty = true;
+    f.args.pcsc.observeEmpty = () => { throw new Error('Expired recovery must not observe reader'); };
+    const result = await f.create().recover(f.input);
+    assert.equal(result.state, 'WAITING_FOR_REMOVAL'); assert.equal(result.hostedAcknowledged, true); assert.equal(result.removalObserved, false);
+    assert.deepEqual({ writes: f.writes.length, signs: f.signs, connects: f.connects }, counts);
+    await assert.rejects(f.create().prepare(f.input), /ASSOCIATION/);
+    await assert.rejects(f.create().onTagPresent(f.input), /ASSOCIATION/);
   } finally { await f.cleanup(); }
 });
 test('recreated journals exclude other intents while UNKNOWN or awaiting removal, and only complete releases the slot', async () => {

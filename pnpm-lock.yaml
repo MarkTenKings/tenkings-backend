@@ -359,6 +359,9 @@ importers:
       '@atlas/finishing':
         specifier: workspace:*
         version: link:../../packages/atlas-finishing
+      '@atlas/finishing-station':
+        specifier: workspace:*
+        version: link:../../packages/atlas-finishing-station
       '@atlas/grading-core':
         specifier: workspace:*
         version: link:../../packages/atlas-grading-core
@@ -769,7 +772,23 @@ importers:
         specifier: workspace:*
         version: link:../atlas-manual-workspace
 
-  packages/atlas-finishing: {}
+  packages/atlas-finishing:
+    dependencies:
+      pdfkit:
+        specifier: 0.17.2
+        version: 0.17.2
+      qrcode:
+        specifier: 1.5.4
+        version: 1.5.4
+      svg-to-pdfkit:
+        specifier: 0.1.8
+        version: 0.1.8
+
+  packages/atlas-finishing-station:
+    dependencies:
+      '@atlas/finishing':
+        specifier: workspace:*
+        version: link:../atlas-finishing
 
   packages/atlas-grading-core:
     dependencies:
@@ -3314,6 +3333,7 @@ packages:
 
   crypto-js@4.2.0:
     resolution: {integrity: sha512-KALDyEYgpY+Rlob/iriUtjV6d5Eq+Y191A5g4UqLAi8CyGP9N1+FdVbkc1SxKc2r4YAYqG8JzO2KGL+AizD70Q==}
+    deprecated: Active development of CryptoJS has been discontinued. This library is no longer maintained.
 
   css-background-parser@0.1.0:
     resolution: {integrity: sha512-2EZLisiZQ+7m4wwur/qiYJRniHX4K5Tc9w93MT3AS0WS1u5kaZ4FKXlOTBhOjc+CgEgPiGY+fX1yWD8UwpEqUA==}
@@ -5366,6 +5386,9 @@ packages:
     resolution: {integrity: sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==}
     engines: {node: '>= 0.4'}
 
+  svg-to-pdfkit@0.1.8:
+    resolution: {integrity: sha512-QItiGZBy5TstGy+q8mjQTMGRlDDOARXLxH+sgVm1n/LYeo0zFcQlcCh8m4zi8QxctrxB9Kue/lStc/RD5iLadQ==}
+
   symbol-tree@3.2.4:
     resolution: {integrity: sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==}
 
@@ -5613,7 +5636,7 @@ packages:
 
   uuid@3.4.0:
     resolution: {integrity: sha512-HjSDRw6gZE5JMggctHBcjVak08+KEVhSIiDzFnT9S9aegmp85S/bReBVTb4QTFaRNptJ9kuYaNhnbNEOkbKb/A==}
-    deprecated: Please upgrade  to version 7 or higher.  Older versions may use Math.random() in certain circumstances, which is known to be problematic.  See https://v8.dev/blog/math-random for details.
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   v8-compile-cache-lib@3.0.1:
@@ -11039,6 +11062,10 @@ snapshots:
       has-flag: 4.0.0
 
   supports-preserve-symlinks-flag@1.0.0: {}
+
+  svg-to-pdfkit@0.1.8:
+    dependencies:
+      pdfkit: 0.17.2
 
   symbol-tree@3.2.4: {}
 

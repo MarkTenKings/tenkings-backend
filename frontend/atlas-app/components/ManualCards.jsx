@@ -446,7 +446,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
         {view.publication?.state==='PUBLISHED'&&view.publication.reportHash===report.reportHash&&<>
           {loadingFinishing&&<p role="status">Preparing approved label…</p>}
           {finishingError&&<p role="alert">{finishingError} <button type="button" onClick={()=>void loadFinishing(view.publication)}>Reload approved label</button></p>}
-          {finishing?.binding.approvalActionId===view.publication.actionId&&finishing.binding.publicHash===view.publication.publicHash&&<ManualFinishing plan={finishing} autoPrintWindow={autoPrintWindow} printDisabled={approving||savePending}/>}
+          {finishing?.binding.approvalActionId===view.publication.actionId&&finishing.binding.publicHash===view.publication.publicHash&&<ManualFinishing plan={finishing} autoPrintWindow={autoPrintWindow} staffId={staff.id} csrf={csrf} printDisabled={approving||savePending}/>}
           <ReportPhotoUploader key={view.publication.actionId} cardId={cardId} staffId={staff.id} csrf={csrf} available={view.presentationEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
           <ReportMarketPicker key={`market:${view.publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={view.publication.actionId} csrf={csrf} available={view.marketEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
         </>}

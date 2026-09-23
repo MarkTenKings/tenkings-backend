@@ -54,7 +54,13 @@ export function createBatchWorker({ repository, prepare, concurrency = 2, heartb
       await repository.finish(staff, job, outcome);
     } catch (error) {
       if (error?.status === 401 || error?.status === 403) owners.delete(staff.id);
-      try { await repository.finish(staff, job, { kind: 'ATTENTION', code: /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'BATCH_STAGE_INTERRUPTED' }); }
+      // This precise native-capacity refusal occurs before the limited work
+      // starts. Retain the same durable job/action; do not ask a reviewer to
+      // resolve ordinary contention with an upload or another measurement.
+      const outcome=error?.code==='MANUAL_PROCESSING_BUSY'&&!controller.signal.aborted
+        ?{kind:'WAIT',retryAfterMs:3000}
+        :{kind:'ATTENTION',code:/^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code??'')?error.code:'BATCH_STAGE_INTERRUPTED'};
+      try { await repository.finish(staff, job, outcome); }
       catch (saveError) { onError(saveError); }
     } finally { timers.clearInterval(timer); }
   }

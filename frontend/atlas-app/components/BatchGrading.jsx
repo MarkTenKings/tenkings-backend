@@ -176,7 +176,7 @@ export default function BatchGrading({ staff }) {
         {finishingError && <p className={styles.error} role="alert">{finishingError}{' '}
           {lastApproved.publication?.state === 'PUBLISHED' && <button disabled={busy || preparingLabel} onClick={() => void loadApprovedLabel(lastApproved)}>Reload label</button>}{' '}
           <Link href={`/manual/${lastApproved.cardId}?from=batch`}>Open approved card</Link></p>}
-        {finishing && <ManualFinishing key={finishing.id} plan={finishing} autoPrintWindow={autoPrintWindow}
+        {finishing && <ManualFinishing key={finishing.id} plan={finishing} autoPrintWindow={autoPrintWindow} staffId={staff.id} csrf={session.current?.csrf}
           onPrintDialog={() => setAutoPrintWindow(null)} printDisabled={busy} />}
       </section>}
       {tab === 'INTAKE' ? <section className={styles.intake}>

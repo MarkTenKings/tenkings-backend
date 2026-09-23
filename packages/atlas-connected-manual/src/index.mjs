@@ -25,6 +25,8 @@ import { createManualFinishing } from './finishing.mjs';
 import { createPresentationRepository } from './presentation-repository.mjs';
 import { createPresentationService } from './presentation.mjs';
 import { createPresentationMarketService } from './presentation-market-service.mjs';
+import { createFinishingStationRepository } from './finishing-station-repository.mjs';
+import { createFinishingStationService } from './finishing-station-service.mjs';
 
 export const DEFAULT_LIMITS = Object.freeze({
   decode:{maxInputBytes:256*1024*1024,maxPixels:52_000_000,maxRasterBytes:512*1024*1024,maxOutputBytes:256*1024*1024,timeoutMs:90000},
@@ -36,7 +38,7 @@ const SIDES=['FRONT','BACK'];
 export function createWorkLimiter(maximum=2){let active=0;return async work=>{
   requireThat(active<maximum,503,'MANUAL_PROCESSING_BUSY');active++;try{return await work();}finally{active--;}
 };}
-export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null}) {
+export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,stationConfig=null}) {
   let earlyGeometry,batch=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
   const intakeRepository=createIntakeRepository({boundary,keyPrefix,maxOriginalBytes:64*1024*1024,sourceCommitted:recordEarlyGeometryIntent});
@@ -54,6 +56,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const publicationRepository=createPublicationRepository({boundary});
   const publication=createManualPublication({repository:publicationRepository,artifacts,storage,readSource:intake.readSource});
   const finishing=createManualFinishing({repository:publicationRepository,artifacts});
+  const station=stationConfig?createFinishingStationService({...stationConfig,finishing,repository:createFinishingStationRepository({boundary})}):null;
   const presentationRepository=presentationEnabled?createPresentationRepository({boundary,keyPrefix}):null;
   const presentation=presentationEnabled?createPresentationService({repository:presentationRepository,storage,processPhoto:photoProcessor,keyPrefix,run:limited}):null;
   const market=presentationEnabled?createPresentationMarketService({repository:presentationRepository,approved:finishing,artifacts,provider:marketProvider,run:limited}):null;
@@ -145,7 +148,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   }
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
   assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,provider:defectProvider,receiptClient});
-  const connected={boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,earlyGeometry,publication,finishing,presentation,market,
+  const connected={boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,earlyGeometry,publication,finishing,presentation,market,station,
     workspaceExtras: async input => {
       const [extras,status]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId)]);
       return {...extras,publication:status,presentationEnabled,marketEnabled:Boolean(marketProvider)};

@@ -7,6 +7,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
   const workflow=createWorkflowHandler({workflow:connected.workflow,boundary,origin,assertRequest,imageDescriptors:connected.imageDescriptors,workspaceExtras:connected.workspaceExtras});
   const intake=createIntakeHandler({service:connected.intake,boundary,origin,assertRequest});
   const batch=connected.batch?createBatchHandler({service:connected.batch,boundary,origin,assertRequest}):null;
+  const stationRoute=/^\/api\/staff\/manual-connected\/stations(?:\/(challenge|enroll|arm|acknowledge|complete))?$/;
   const id='[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
   const assistanceRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/(defect-analysis|defect-memory)(?:/(${id}))?$`);
   const publicationRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/publication$`);
@@ -23,6 +24,18 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
         requireThat(batch,503,'BATCH_DISABLED');return batch(req,res);
       }
       if(req.method==='POST')requireThat(Buffer.byteLength(JSON.stringify(req.body??{})) <= (/\/(?:proposal-)?trace$/.test(url.pathname)?1048576:url.pathname.startsWith('/api/staff/manual-intake/')?8192:65536),413,'REQUEST_TOO_LARGE');
+      const stationFound=stationRoute.exec(url.pathname);
+      if(stationFound){
+        const action=stationFound[1],write=Boolean(action);
+        requireThat(!url.search && req.method===(write?'POST':'GET'),405,'METHOD_NOT_ALLOWED');
+        if(write)requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
+          && typeof req.headers['x-atlas-csrf']==='string' && req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
+        const staff=await boundary.authenticate(req.headers.cookie??'',write?req.headers['x-atlas-csrf']:undefined);
+        if(write)requireThat(connected.station,503,'FINISHING_STATION_DISABLED');
+        const result=write?await connected.station[action](staff,req.body)
+          :connected.station?await connected.station.list(staff):{enabled:false,stations:[]};
+        res.setHeader('Cache-Control','private, no-store');res.status(200).json(result);return true;
+      }
       if(await intake(req,res))return true;
       if(await workflow(req,res))return true;
       const marketFound=marketRoute.exec(url.pathname);

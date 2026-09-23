@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {manualRuntimeSettings} from '../lib/server/connected-manual-runtime.mjs';
+import {manualRuntimeSettings,manualStationSettings} from '../lib/server/connected-manual-runtime.mjs';
+import {generateKeyPairSync} from 'node:crypto';
 import {staffContentSecurityPolicy} from '../lib/content-security.mjs';
 import {privateManualAccessConfig,productionAccessConfig} from '../lib/server/access/config.mjs';
 const config={mode:'PRODUCTION',databaseUrl:'postgresql://staff:password@db.example.com:5432/atlas?schema=atlas_staff&sslmode=require'};
@@ -27,6 +28,18 @@ test('runtime document CSP keeps both approved upload origins and does not accep
  const policy=staffContentSecurityPolicy({uploadOrigins:['https://old.example.com','https://new.example.com','https://old.example.com']});
  assert(policy.includes('https://old.example.com https://new.example.com'));assert(!policy.includes("'unsafe-eval'"));
  assert.equal(policy.match(/https:\/\/old.example.com/g).length,2);
+ assert.match(policy,/connect-src 'self' http:\/\/127\.0\.0\.1:47662 http:\/\/127\.0\.0\.1:47664 /);
+ assert.doesNotMatch(policy,/localhost|127\.0\.0\.1:\*|http:\/\/\*/);
  for(const origin of ['http://new.example.com','https://new.example.com/path',"https://new.example.com; script-src *",'https://user:pass@new.example.com'])
   assert.throws(()=>staffContentSecurityPolicy({uploadOrigins:[origin]}));
+});
+test('station runtime is cold by default and requires explicit dedicated P256 signing and trusted configuration',()=>{
+ assert.equal(manualStationSettings({},'https://atlasgrading.com'),null);
+ const keys=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
+ const settings={ATLAS_MANUAL_STATION_ENABLED:'true',ATLAS_MANUAL_STATION_KEY_ID:'synthetic-host-key',
+  ATLAS_MANUAL_STATION_PRIVATE_KEY_PEM:keys.privateKey.export({format:'pem',type:'pkcs8'}),ATLAS_MANUAL_STATION_TRUSTED_STATIONS_JSON:'[]'};
+ const parsed=manualStationSettings(settings,'https://atlasgrading.com');assert.deepEqual(parsed.trustedStations,[]);assert.equal(typeof parsed.signer.signClaims,'function');
+ for(const change of [{ATLAS_MANUAL_STATION_PRIVATE_KEY_PEM:'invalid'},{ATLAS_MANUAL_STATION_KEY_ID:''},{ATLAS_MANUAL_STATION_TRUSTED_STATIONS_JSON:'{}'}])
+  assert.throws(()=>manualStationSettings({...settings,...change},'https://atlasgrading.com'),{code:'FINISHING_STATION_CONFIGURATION_INVALID'});
+ assert.throws(()=>manualStationSettings(settings,'https://other.invalid'),{code:'FINISHING_STATION_CONFIGURATION_INVALID'});
 });

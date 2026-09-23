@@ -88,3 +88,12 @@ test('stop is permanent and creates no later claims', async () => {
   const f = fixture(2), worker = createBatchWorker({ repository: f.repo, prepare: { run: () => { throw Error('must not execute'); } } });
   worker.stop(); assert.equal(worker.wake(f.staff), false); await worker.tick(f.staff); assert.equal(f.rows.every(row => row.attempts === 0), true);
 });
+test('temporary native capacity waits on the same job instead of requiring human recovery',async()=>{
+ const f=fixture(1),actions=[];let refused=false;
+ const worker=createBatchWorker({repository:f.repo,prepare:{async run(_staff,job){
+  if(job.stage==='ANALYZE'){actions.push(job.analysisActionId);if(!refused){refused=true;throw Object.assign(new Error('Busy'),{code:'MANUAL_PROCESSING_BUSY',status:503});}}
+  return job.stage==='REPORT'?{kind:'REVIEW',evidence:{authority:'MACHINE_PROPOSAL',sourceHash:job.sourceHash,reportHash:'a'.repeat(64),manualRevision:1}}:{kind:'CONTINUE'};
+ }}});
+ try{worker.wake(f.staff);await until(()=>f.rows[0].state==='REVIEW');assert.equal(actions.length,2);assert.equal(new Set(actions).size,1);assert.equal(f.rows[0].code,undefined);}
+ finally{worker.stop();}
+});

@@ -68,13 +68,13 @@ export function createMacNfcStation({ profile, signer, authority, pcsc, host, jo
     readbackVerified: record.readbackVerified, lockVerified: record.lockVerified,
     removalObserved: record.removalObserved, hostedAcknowledged: record.hostedAcknowledged, assembly: 'NOT_RECORDED' });
   const checkTime = (record, signal) => { signal?.throwIfAborted(); assert(record.expiresAt > clock(), 'MAC_NFC_AUTHORIZATION_EXPIRED'); };
-  async function authorize(plan, association) {
+  async function authorize(plan, association, allowExpired = false) {
     validateManualFinishingPlan(plan); assert(plan.label.mode === 'PRODUCTION', 'MAC_NFC_FIXTURE_REJECTED');
     assert(association?.armed === true && association.stationId === enrollment.stationId && association.planHash === plan.planHash
       && association.cardId === plan.binding.cardId && association.approvalActionId === plan.binding.approvalActionId
-      && Number.isSafeInteger(association.expiresAt) && association.expiresAt > clock()
+      && Number.isSafeInteger(association.expiresAt) && (allowExpired || association.expiresAt > clock())
       && association.expiresAt - clock() <= 15 * 60000, 'MAC_NFC_ASSOCIATION_INVALID');
-    const claims = await authority.verifyArm({ plan: structuredClone(plan), association: structuredClone(association), profileHash, enrollment });
+    const claims = await authority.verifyArm({ plan: structuredClone(plan), association: structuredClone(association), profileHash, enrollment, allowExpired });
     assert(claims?.intentId === plan.nfc.intentId && claims.planHash === plan.planHash && claims.profileHash === profileHash
       && claims.stationId === enrollment.stationId && claims.enrollmentId === enrollment.enrollmentId
       && claims.expiresAt === association.expiresAt && ID.test(claims.nonce), 'MAC_NFC_AUTHORIZATION_INVALID');
@@ -84,8 +84,8 @@ export function createMacNfcStation({ profile, signer, authority, pcsc, host, jo
       ndefHash: hash(encodeApprovedNdef(plan)), revision: 0, state: 'WAITING_FOR_TAG',
       readbackVerified: false, lockVerified: false, removalObserved: false, hostedAcknowledged: false };
   }
-  async function exact(plan, association) {
-    const expected = await authorize(plan, association), record = await journal.read(expected.intentId);
+  async function exact(plan, association, allowExpired = false) {
+    const expected = await authorize(plan, association, allowExpired), record = await journal.read(expected.intentId);
     assert(record && ['intentId', 'planHash', 'profileHash', 'stationId', 'enrollmentId', 'keyId', 'expiresAt', 'authorizationHash', 'ndefHash']
       .every(key => record[key] === expected[key]), 'MAC_NFC_INTENT_CONFLICT'); return record;
   }
@@ -93,11 +93,15 @@ export function createMacNfcStation({ profile, signer, authority, pcsc, host, jo
   async function acknowledge(record) {
     if (record.hostedAcknowledged) return record;
     try {
-      checkTime(record);
+      // Custody relay may outlive the arm only for the immutable signed receipt.
+      // The host must return an exact already-committed result after expiry.
+      assert(record.receipt && hash(stable(record.receipt)) === record.receiptHash
+        && await signer.verify(Buffer.from(stable(record.receipt)), record.signature), 'MAC_NFC_STORED_RECEIPT_INVALID');
       const response = await host.acknowledge({ receipt: record.receipt, signature: record.signature });
       const ack = await host.verifyAcknowledgement(response);
       assert(ack?.intentId === record.intentId && ack.receiptHash === record.receiptHash && ack.enrollmentId === record.enrollmentId
-        && ack.stationId === record.stationId && ack.committed === true, 'MAC_NFC_HOST_ACK_INVALID');
+        && ack.stationId === record.stationId && ack.planHash === record.planHash && ack.authorizationHash === record.authorizationHash
+        && ack.kind === 'WRITE' && ack.committed === true, 'MAC_NFC_HOST_ACK_INVALID');
       return advance(record, { hostedAcknowledged: true, state: record.removalObserved ? 'NFC_COMPLETE' : 'WAITING_FOR_REMOVAL' });
     } catch { return record; } // Lost acknowledgement never means saved, nor permits a tag rewrite.
   }
@@ -177,7 +181,13 @@ export function createMacNfcStation({ profile, signer, authority, pcsc, host, jo
       return view(record);
     },
     async recover({ plan, association }) {
-      let record = await exact(structuredClone(plan), structuredClone(association));
+      let record = await exact(structuredClone(plan), structuredClone(association), true);
+      if (record.expiresAt <= clock()) {
+        // No new RF observation, signature, mutation attempt or renewed arm.
+        // Missing signed evidence keeps this occupied for explicit reconciliation.
+        if (record.receipt && !record.hostedAcknowledged) record = await acknowledge(record);
+        return view(record);
+      }
       if (interrupted.has(record.state)) return view(await advance(record, { state: 'UNKNOWN' }));
       if (record.state === 'LOCK_VERIFIED') record = await signVerified(record);
       if (record.receipt) {

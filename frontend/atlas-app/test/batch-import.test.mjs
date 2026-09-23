@@ -5,12 +5,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { pairBatchPhotos, createBatchImporter } from '../lib/batch-import.mjs';
 const file = (name, content = name) => Object.assign(new Blob([content]), { name });
 function fixture() {
-  let saved = null, active = 0, peak = 0, loseCreate = false, loseEnqueue = false;
+  let saved = null, active = 0, peak = 0, loseCreate = false, loseEnqueue = false, busyFront = false, pauses=0;
   const cards = new Map(), creates = new Map(), queued = new Map(), uploads = [];
   const journal = { get: async () => structuredClone(saved), put: async value => { saved = structuredClone(value); }, remove: async () => { saved = null; } };
   const intake = {
     pending: async () => [], read: async id => ({ card: structuredClone(cards.get(id)) }),
     async upload(id, side, version, value) {
+      if(side==='FRONT'&&busyFront){busyFront=false;throw Object.assign(new Error('Busy'),{code:'MANUAL_PROCESSING_BUSY',status:503});}
       active++; peak = Math.max(peak, active); await delay(1);
       try {
         const card = cards.get(id), sha = Buffer.from(await webcrypto.subtle.digest('SHA-256', await value.arrayBuffer())).toString('hex');
@@ -34,8 +35,8 @@ function fixture() {
     if (loseCreate) { loseCreate = false; throw Error('lost committed create reply'); }
     return { card: structuredClone(creates.get(body.requestId)) };
   }
-  const importer = () => createBatchImporter({ request, intake, journal, cryptoImpl: webcrypto });
-  return { importer, journal, cards, creates, queued, uploads, get peak() { return peak; }, loseCreate: () => { loseCreate = true; }, loseEnqueue: () => { loseEnqueue = true; } };
+  const importer = () => createBatchImporter({ request, intake, journal, cryptoImpl: webcrypto,pause:async ms=>{assert.equal(ms,3000);pauses++;} });
+  return { importer, journal, cards, creates, queued, uploads, get peak() { return peak; },get pauses(){return pauses;},busy:()=>{busyFront=true;}, loseCreate: () => { loseCreate = true; }, loseEnqueue: () => { loseEnqueue = true; } };
 }
 test('pairs exact filename stems regardless of file order and refuses ambiguous or incomplete physical pairings', () => {
   assert.equal(pairBatchPhotos([file('card-A_back.HEIC'), file('card-A_front.jpg')])[0].label, 'card-A');
@@ -66,4 +67,9 @@ test('unstarted selection may be cleared but a pending import cannot be replaced
   const f = fixture(), owner = f.importer(); await owner.stage([file('one_front.jpg'), file('one_back.jpg')]);
   await assert.rejects(owner.stage([file('two_front.jpg'), file('two_back.jpg')]), /BATCH_IMPORT_PENDING/);
   await owner.clearSelection(); assert.equal(await owner.read(), null);
+});
+test('ordinary CPU contention automatically waits then finishes the same pair without extra clicks',async()=>{
+ const f=fixture(),owner=f.importer();await owner.stage([file('one_front.jpg'),file('one_back.jpg')]);f.busy();
+ const result=await owner.run();assert.equal(result.items[0].done,true);assert.equal(result.items[0].code,null);
+ assert.equal(f.pauses,1);assert.equal(f.creates.size,1);assert.equal(f.uploads.length,2);assert.equal(f.queued.size,1);
 });

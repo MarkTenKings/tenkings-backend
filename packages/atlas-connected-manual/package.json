@@ -14,7 +14,10 @@
     "./finishing": "./src/finishing.mjs",
     "./presentation-market": "./src/presentation-market.mjs",
     "./presentation-market-service": "./src/presentation-market-service.mjs",
-    "./presentation-market-provider": "./src/presentation-market-provider.mjs"
+    "./presentation-market-provider": "./src/presentation-market-provider.mjs",
+    "./finishing-station-protocol": "./src/finishing-station-protocol.mjs",
+    "./finishing-station-service": "./src/finishing-station-service.mjs",
+    "./finishing-station-repository": "./src/finishing-station-repository.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
