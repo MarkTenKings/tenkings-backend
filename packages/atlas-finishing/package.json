@@ -11,6 +11,7 @@
     "./browser": "./browser.mjs",
     "./manual": "./src/manual.mjs",
     "./label": "./src/label.mjs",
+    "./label-design": "./src/label-design.mjs",
     "./label-pdf": "./src/label-pdf.mjs",
     "./dispatch": "./src/dispatch.mjs",
     "./cups": "./src/cups.mjs",
@@ -26,5 +27,8 @@
     "pdfkit": "0.17.2",
     "qrcode": "1.5.4",
     "svg-to-pdfkit": "0.1.8"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.7"
   }
 }

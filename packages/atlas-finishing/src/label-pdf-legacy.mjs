@@ -3,16 +3,14 @@ import PDFDocument from 'pdfkit';
 import SVGtoPDF from 'svg-to-pdfkit';
 import QRCode from 'qrcode';
 import { validateManualFinishingPlan } from './manual.mjs';
-import { renderManualLabel, MANUAL_LABEL_GEOMETRY, CURRENT_LABEL_LAYOUT } from './label.mjs';
-import { LABEL_LOGO_DATA_URI, LABEL_LOGO_SHA256 } from './label-logo.mjs';
-import { createManualLabelPdfRenderer as createLegacyRenderer } from './label-pdf-legacy.mjs';
+import { renderManualLabel, MANUAL_LABEL_GEOMETRY } from './label-legacy.mjs';
 
 const assert = (value, code) => { if (!value) throw new Error(code); };
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const stable = value => value && typeof value === 'object' ? Array.isArray(value) ? `[${value.map(stable).join(',')}]`
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}` : JSON.stringify(value);
 const exact = (value, keys) => assert(value && Object.keys(value).sort().join(',') === [...keys].sort().join(','), 'LABEL_PDF_LAYOUT_INVALID');
-const VERSION = 'atlas-label-vector-pdf-v2';
+const VERSION = 'atlas-label-vector-pdf-v1';
 const { width, height } = MANUAL_LABEL_GEOMETRY;
 
 function parseLayout(input) {
@@ -41,21 +39,17 @@ function parseLayout(input) {
 
 /** A concrete deterministic renderer. Media placement is explicitly configured
  * and physically qualified outside this module; no printer/feed is guessed.
- * It renders the SAME SVG layout as the browser: vector text and the original
- * raster logo. Checked standard fonts refuse unsupported identity glyphs.
+ * It renders the SAME SVG layout as the browser, retaining vector QR modules.
+ * Standard Helvetica glyph support is checked before accepting any identity.
  * Unsupported scripts fail visibly; no replacement glyph or name truncation.
  */
-export function createManualLabelPdfRenderer({ layout, palette = 'NOIR_GOLD', layoutVersion = CURRENT_LABEL_LAYOUT }) {
-  // Render profile and PDF bytes are part of durable CUPS custody. An existing
-  // v1 station must retain the original generator, including its metadata.
-  if (layoutVersion === 'atlas-noir-gold-v1') return createLegacyRenderer({ layout, palette });
-  assert(layoutVersion === CURRENT_LABEL_LAYOUT, 'LABEL_PDF_LAYOUT_VERSION_INVALID');
+export function createManualLabelPdfRenderer({ layout, palette = 'NOIR_GOLD' }) {
   const selected = parseLayout(layout);
   assert(['NOIR_GOLD', 'MONOCHROME'].includes(palette), 'MANUAL_LABEL_PALETTE_INVALID');
-  const profileHash = sha(stable({ version: VERSION, layout: selected, palette, fonts: ['Helvetica', 'Times-Roman'], logoSha256: LABEL_LOGO_SHA256, pdfkit: '0.17.2', svgToPdfkit: '0.1.8', qrcode: '1.5.4' }));
+  const profileHash = sha(stable({ version: VERSION, layout: selected, palette, font: 'Helvetica', pdfkit: '0.17.2', svgToPdfkit: '0.1.8', qrcode: '1.5.4' }));
   const render = async plan => {
     plan = structuredClone(plan); validateManualFinishingPlan(plan);
-    assert(plan.label.layoutVersion === CURRENT_LABEL_LAYOUT, 'LABEL_PDF_LAYOUT_VERSION_MISMATCH');
+    assert(plan.label.layoutVersion === 'atlas-noir-gold-v1', 'LABEL_PDF_LAYOUT_VERSION_MISMATCH');
     const document = new PDFDocument({ autoFirstPage: false, compress: false, margin: 0,
       info: { Title: `ATLAS ${plan.label.reportNumber} v${plan.label.approvalVersion}`, Author: 'ATLAS Grading',
         Creator: VERSION, Producer: VERSION, Subject: `${plan.planHash}:${profileHash}`,
@@ -64,14 +58,13 @@ export function createManualLabelPdfRenderer({ layout, palette = 'NOIR_GOLD', la
       document.on('data', chunk => chunks.push(chunk)); document.on('end', () => resolve(Buffer.concat(chunks))); document.on('error', reject);
     });
     // The helper is pinned to PDFKit's AFM standard-font implementation.
-    const measureText = (text, size, weight, fontFamily = '') => {
-      const times = fontFamily.includes('Times');
-      document.font(times ? weight >= 700 ? 'Times-Bold' : 'Times-Roman' : weight >= 700 ? 'Helvetica-Bold' : 'Helvetica').fontSize(size);
+    const measureText = (text, size, weight) => {
+      document.font(weight >= 700 ? 'Helvetica-Bold' : 'Helvetica').fontSize(size);
       assert(document._font.font.glyphsForString(text).every(glyph => glyph !== '.notdef'), 'LABEL_PDF_FONT_UNSUPPORTED');
       return document.widthOfString(text);
     };
     try {
-      const qr = plan.label.layoutVersion === 'atlas-noir-gold-v1' ? QRCode.create(plan.label.url, { errorCorrectionLevel: 'M' }).modules : undefined;
+      const qr = QRCode.create(plan.label.url, { errorCorrectionLevel: 'M' }).modules;
       const svg = renderManualLabel({ label: plan.label, measureText, qr, palette });
       for (const page of selected.pages) {
         document.addPage({ size: [selected.widthPoints, selected.heightPoints], margin: 0 });
@@ -85,9 +78,9 @@ export function createManualLabelPdfRenderer({ layout, palette = 'NOIR_GOLD', la
             .replace('width="2.73in" height="0.83in"', `width="${width}" height="${height}"`);
           SVGtoPDF(document, face, 0, 0, {
             width, height, assumePt: true,
-            fontCallback: (family, bold, italic) => { assert(!italic, 'LABEL_PDF_FONT_UNSUPPORTED'); return family.includes('Times') ? bold ? 'Times-Bold' : 'Times-Roman' : bold ? 'Helvetica-Bold' : 'Helvetica'; },
+            fontCallback: (_family, bold, italic) => { assert(!italic, 'LABEL_PDF_FONT_UNSUPPORTED'); return bold ? 'Helvetica-Bold' : 'Helvetica'; },
             warningCallback: () => { throw new Error('LABEL_PDF_RENDER_WARNING'); },
-            imageCallback: source => { assert(source === LABEL_LOGO_DATA_URI, 'LABEL_PDF_EXTERNAL_RESOURCE_REJECTED'); return Buffer.from(LABEL_LOGO_DATA_URI.split(',')[1], 'base64'); },
+            imageCallback: () => { throw new Error('LABEL_PDF_EXTERNAL_RESOURCE_REJECTED'); },
             documentCallback: () => { throw new Error('LABEL_PDF_EXTERNAL_RESOURCE_REJECTED'); },
           });
           document.restore();

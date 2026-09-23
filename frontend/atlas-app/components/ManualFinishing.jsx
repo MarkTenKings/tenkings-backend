@@ -15,19 +15,34 @@ export function openManualLabelPrintWindow() {
   if (owned) { owned.opener = null; owned.document.title = 'Preparing ATLAS label'; owned.document.body.textContent = 'Preparing approved label…'; }
   return owned;
 }
-function printLabel(owned, rendered, label) {
+async function printLabel(owned, rendered, label, isCurrent) {
   if (!owned || owned.closed) throw new Error('Allow the label print window, then select Print label.');
   const doc = owned.document; doc.body.replaceChildren(); doc.head.replaceChildren();
   doc.title = `${label.reportNumber} · v${label.approvalVersion}`;
   const style = doc.createElement('style');
-  style.textContent = '@page{size:letter;margin:1in}body{margin:0;background:white}.face{width:2.73in;height:.83in;margin-bottom:.25in;break-inside:avoid;print-color-adjust:exact;-webkit-print-color-adjust:exact}svg{display:block;width:2.73in;height:.83in}';
+  style.textContent = '@page{size:letter;margin:1in}body{margin:0;background:white}.face{width:2.73in;height:.83in;margin-bottom:.25in;break-inside:avoid;print-color-adjust:exact;-webkit-print-color-adjust:exact}.face > svg{display:block;width:2.73in;height:.83in}';
   doc.head.append(style);
+  const resources = [];
   for (const source of [rendered.front, rendered.reverse]) {
     const parsed = new DOMParser().parseFromString(source, 'image/svg+xml');
     if (parsed.querySelector('parsererror')) throw new Error('The label preview could not be printed.');
-    const face = doc.createElement('div'); face.className = 'face'; face.append(doc.importNode(parsed.documentElement, true)); doc.body.append(face);
+    const svg = doc.importNode(parsed.documentElement, true);
+    // Register before attachment: the original embedded logo must finish loading
+    // in this print document, not merely in the staff page's earlier preview.
+    for (const image of svg.querySelectorAll('image')) resources.push(new Promise((resolve, reject) => {
+      image.addEventListener('load', resolve, { once: true });
+      image.addEventListener('error', () => reject(new Error('The label logo could not load. Please retry printing.')), { once: true });
+    }));
+    const face = doc.createElement('div'); face.className = 'face'; face.append(svg); doc.body.append(face);
   }
-  owned.focus(); owned.print();
+  let timer;
+  try {
+    await Promise.race([Promise.all([...resources, doc.fonts.ready]), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('The label is still preparing. Please retry printing.')), 10000);
+    })]);
+  } finally { clearTimeout(timer); }
+  if (owned.closed || !isCurrent()) { if (!owned.closed) owned.close(); return false; }
+  owned.focus(); owned.print(); return true;
 }
 
 /** The plan comes only from the authenticated approved-report endpoint. This
@@ -55,7 +70,19 @@ export default function ManualFinishing({ plan, autoPrintWindow = null, onPrintD
     try { const result = await stationRef.current.finish(plan, staffId); if (currentPlan.current !== expected) return; setOperation(result); onPrintDialog?.({ intentId: plan.print.intentId, planHash: plan.planHash, state: 'STATION_DISPATCHED' }); }
     catch (failure) { if (currentPlan.current === expected) setError(stationMessage(failure)); }
   }
-  const [palette, setPalette] = useState('NOIR_GOLD'); const autoAttempt = useRef(null);
+  const [palette, setPalette] = useState('NOIR_GOLD'); const autoAttempt = useRef(null), browserAttempt = useRef(null);
+  const [printingPlan, setPrintingPlan] = useState(null);
+  async function printInBrowser(target) {
+    const expected = plan.planHash, attempt = Symbol('label-print');
+    browserAttempt.current = attempt; setPrintingPlan(expected);
+    const isCurrent = () => currentPlan.current === expected && browserAttempt.current === attempt;
+    try {
+      if (await printLabel(target, rendered, plan.label, isCurrent)) {
+        setDialogOpened(true); onPrintDialog?.({ intentId: plan.print.intentId, planHash: expected, state: 'DIALOG_OPENED' });
+      }
+    } catch (failure) { if (isCurrent()) setError(failure.message); }
+    finally { if (browserAttempt.current === attempt) setPrintingPlan(null); }
+  }
   useEffect(() => {
     setRendered(null); setError(''); setDialogOpened(false); setOperation(null);
     try {
@@ -63,9 +90,9 @@ export default function ManualFinishing({ plan, autoPrintWindow = null, onPrintD
       validateManualLabel(plan.label);
       const context = document.createElement('canvas').getContext('2d');
       if (!context) throw new Error('Label measurement is unavailable.');
-      const code = QRCode.create(plan.label.url, { errorCorrectionLevel: 'M' });
-      setRendered({ ...renderManualLabel({ label: plan.label, palette, qr: code.modules,
-        measureText: (value, size, weight) => { context.font = `${weight} ${size}px Arial`; return context.measureText(value).width; } }), planId: plan.id });
+      const code = plan.label.layoutVersion === 'atlas-noir-gold-v1' ? QRCode.create(plan.label.url, { errorCorrectionLevel: 'M' }) : null;
+      setRendered({ ...renderManualLabel({ label: plan.label, palette: plan.label.layoutVersion === 'atlas-signature-v2' ? 'NOIR_GOLD' : palette, qr: code?.modules,
+        measureText: (value, size, weight, family = 'Arial') => { context.font = `${weight} ${size}px ${family}`; return context.measureText(value).width; } }), planId: plan.id });
     } catch (failure) {
       setError(failure.message === 'MANUAL_LABEL_IDENTITY_REQUIRES_LAYOUT' ? 'This identity needs a reviewed label layout to fit in full.' : 'The approved label could not be prepared.');
     }
@@ -75,16 +102,14 @@ export default function ManualFinishing({ plan, autoPrintWindow = null, onPrintD
     if (!rendered || rendered.planId !== plan.id || !autoPrintWindow || printDisabled || autoAttempt.current === plan.id) return;
     autoAttempt.current = plan.id;
     if (isStationApprovalTarget(autoPrintWindow)) { void finishAtStation(autoPrintWindow); return; }
-    try { printLabel(autoPrintWindow, rendered, plan.label); setDialogOpened(true); onPrintDialog?.({ intentId: plan.print.intentId, planHash: plan.planHash, state: 'DIALOG_OPENED' }); }
-    catch (failure) { setError(failure.message); }
+    void printInBrowser(autoPrintWindow);
   }, [rendered, error, autoPrintWindow, printDisabled, plan, onPrintDialog]);
   const print = () => {
-    if (!rendered || rendered.planId !== plan?.id || printDisabled) return;
+    if (!rendered || rendered.planId !== plan?.id || printDisabled || printingPlan === plan?.planHash) return;
     setError('');
     const target = openManualLabelPrintWindow();
     if (isStationApprovalTarget(target)) { void finishAtStation(target); return; }
-    try { printLabel(target, rendered, plan.label); setDialogOpened(true); onPrintDialog?.({ intentId: plan.print.intentId, planHash: plan.planHash, state: 'DIALOG_OPENED' }); }
-    catch (failure) { setError(failure.message); }
+    void printInBrowser(target);
   };
   const currentOperation = operation?.planHash === plan?.planHash ? operation : null;
   return <section className={styles.station} aria-label="Label and NFC finishing">
@@ -95,12 +120,12 @@ export default function ManualFinishing({ plan, autoPrintWindow = null, onPrintD
       <figure><figcaption>FRONT</figcaption><div className={styles.face} dangerouslySetInnerHTML={{ __html: rendered.front }} /></figure>
       <figure><figcaption>REVERSE</figcaption><div className={styles.face} dangerouslySetInnerHTML={{ __html: rendered.reverse }} /></figure>
     </div>}
-    <div className={styles.controls}><button type="button" className={styles.print} onClick={print} disabled={!rendered || rendered.planId !== plan?.id || printDisabled || Boolean(station?.selected && currentOperation)}>
-      {station?.selected ? 'Finish at station' : 'Print label'} <span aria-hidden="true">↗</span></button>
-      <label>Ink<select disabled={station?.selected === true} aria-label="Label ink" value={palette} onChange={event => setPalette(event.target.value)}><option value="NOIR_GOLD">Black + gold</option><option value="MONOCHROME">Monochrome</option></select></label>
+    <div className={styles.controls}><button type="button" className={styles.print} onClick={print} disabled={!rendered || rendered.planId !== plan?.id || printDisabled || printingPlan === plan?.planHash || Boolean(station?.selected && currentOperation)}>
+      {station?.selected ? 'Finish at station' : printingPlan === plan?.planHash ? 'Preparing print…' : 'Print label'} <span aria-hidden="true">↗</span></button>
+      {plan?.label?.layoutVersion === 'atlas-noir-gold-v1' && <label>Ink<select disabled={station?.selected === true} aria-label="Label ink" value={palette} onChange={event => setPalette(event.target.value)}><option value="NOIR_GOLD">Black + gold</option><option value="MONOCHROME">Monochrome</option></select></label>}
       <Link href="/station">{station?.selected ? 'Station & recovery' : 'Set up station'}</Link>
       {plan?.label && <a href={plan.label.url} target="_blank" rel="noreferrer">Open approved report ↗</a>}
     </div>
-    <details className={styles.details}><summary>Print and NFC setup</summary><p>Each face is 2.73 × 0.83 in. Print at actual size with headers and footers off. The front reserves 11 mm for NFC with a 9 mm guide. Verify physical fit and QR scanning once for the selected printer and material.</p><p>Automatic printing requires the configured Mac print bridge. NFC tap-to-write requires the qualified Mac bridge for ACS ACR1552U / F8215. The report reference is unchanged; printing does not record tag verification, assembly or welding.</p></details>
+    <details className={styles.details}><summary>Print and NFC setup</summary><p>Each face is 2.73 × 0.83 in. Print at actual size with headers and footers off. The front reserves 11 mm for NFC with a 9 mm guide. Verify physical fit for the selected printer and material. The current design has a plain black reverse.</p><p>Automatic printing requires the configured Mac print bridge. NFC tap-to-write requires the qualified Mac bridge for ACS ACR1552U / F8215. The report reference is unchanged; printing does not record tag verification, assembly or welding.</p></details>
   </section>;
 }

@@ -11,7 +11,7 @@ const MAX_PDF = 8 * 1024 * 1024;
 function configuration(config) {
   assert(config?.version === 'atlas-cups-printer-v1' && config.qualified === true
     && /^[a-f0-9]{64}$/.test(config.qualificationHash) && /^[A-Za-z0-9][A-Za-z0-9_-]{0,126}$/.test(config.printer)
-    && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,126}$/.test(config.media) && config.layoutVersion === 'atlas-noir-gold-v1'
+    && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,126}$/.test(config.media) && ['atlas-noir-gold-v1', 'atlas-signature-v2'].includes(config.layoutVersion)
     && config.actualSize === true, 'CUPS_QUALIFIED_CONFIGURATION_REQUIRED');
   assert(/^[a-f0-9]{64}$/.test(config.renderProfileHash), 'CUPS_RENDER_PROFILE_REQUIRED');
   return { version: config.version, printer: config.printer, media: config.media, layoutVersion: config.layoutVersion,

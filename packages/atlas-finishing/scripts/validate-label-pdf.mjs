@@ -22,10 +22,8 @@ try{
     execFileSync(python,['-c',`import cv2,sys
 image=cv2.imread(sys.argv[1])
 assert image.shape[:2] == (249,819), image.shape
-value,points,_=cv2.QRCodeDetector().detectAndDecode(image)
-assert value == sys.argv[2], repr(value)
-assert points is not None
+assert image.max() == 0, 'Reverse must be entirely black with no text, logo, border or QR'
 `,`${prefix}-2.png`,plan.label.url],{timeout:15000,stdio:'pipe'});
   }
-  console.log(JSON.stringify({status:'LABEL_PDF_OPTICAL_PASS',checks:['exact physical page dimensions','reproducible vector rendering','QR decoded at 300dpi in both qualified rotations'],hardwareEffects:0}));
+  console.log(JSON.stringify({status:'LABEL_PDF_OPTICAL_PASS',checks:['exact physical page dimensions','reproducible vector text with original logo','reverse entirely black at 300dpi in both rotations'],hardwareEffects:0}));
 }finally{await rm(directory,{recursive:true});}

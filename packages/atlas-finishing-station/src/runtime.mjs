@@ -26,7 +26,7 @@ export async function createLocalStationRuntime({ configurationPath }) {
   const nfcJournal = createFileMacNfcJournal({ directory: join(config.stateDirectory, 'nfc'), fullSync });
   let printer = null;
   if (config.printer !== null && config.label !== null) {
-    const renderer = createManualLabelPdfRenderer(config.label);
+    const renderer = createManualLabelPdfRenderer({ ...config.label, layoutVersion: config.printer.layoutVersion });
     check(config.printer.renderProfileHash === renderer.profileHash, 'STATION_RENDER_PROFILE_MISMATCH');
     printer = createCupsPrinter({ config: config.printer,
       journal: createFileCupsJournal({ directory: join(config.stateDirectory, 'cups'), fullSync }),

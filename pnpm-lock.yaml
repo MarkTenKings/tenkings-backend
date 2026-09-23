@@ -783,6 +783,10 @@ importers:
       svg-to-pdfkit:
         specifier: 0.1.8
         version: 0.1.8
+    devDependencies:
+      esbuild:
+        specifier: 0.27.7
+        version: 0.27.7
 
   packages/atlas-finishing-station:
     dependencies:

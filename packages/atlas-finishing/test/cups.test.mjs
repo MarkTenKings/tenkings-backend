@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { createCupsPrinter, createFileCupsJournal, createLocalCupsTransport, cupsJobRequest, parseCupsJobResponse } from '../src/cups.mjs';
 import { samplePlan } from './manual-fixture.mjs';
-const config = { version: 'atlas-cups-printer-v1', qualified: true, qualificationHash: 'e'.repeat(64), renderProfileHash: 'a'.repeat(64), printer: 'Atlas_Test', media: 'Letter', layoutVersion: 'atlas-noir-gold-v1', actualSize: true };
+const config = { version: 'atlas-cups-printer-v1', qualified: true, qualificationHash: 'e'.repeat(64), renderProfileHash: 'a'.repeat(64), printer: 'Atlas_Test', media: 'Letter', layoutVersion: 'atlas-signature-v2', actualSize: true };
 const bytes = Buffer.from('%PDF-1.7\nsynthetic document, no printer is contacted');
 const renderDocument = plan => ({ bytes, sha256: createHash('sha256').update(bytes).digest('hex'), planHash: plan.planHash, layoutVersion: plan.label.layoutVersion, renderProfileHash: config.renderProfileHash });
 test('durable CUPS intent reopens exact receipt without duplicate spool submission', async () => {

@@ -27,6 +27,8 @@ The launcher reads this exact configuration shape; values below describe require
 
 `printer` and `label` must both be present or both be null. `printer.renderProfileHash` must equal the renderer's computed `.profileHash`; actual media dimensions, face positions and feed rotations are explicit, never guessed. The native configuration follows `atlas-mac-companion-config-v1`, including the pre-provisioned enrollment UUID, key identity, protection evidence hash, pinned host SPKI, and expected profile bounds/hashes. Do not substitute placeholder qualification values as authorization.
 
+The runtime selects the PDF generator using `printer.layoutVersion`. `atlas-noir-gold-v1` retains the original PDF bytes, metadata and render profile for existing plans/journals; `atlas-signature-v2` selects the new artwork. Each generator refuses plans for the other layout. Direct callers of `createManualLabelPdfRenderer` default to v2 and must pass `layoutVersion: 'atlas-noir-gold-v1'` explicitly when recovering a v1 job. Do not change an existing station's qualified layout/profile while its saved jobs need recovery.
+
 Configuration files must be owned by the current user, mode 0600, in an owned 0700 parent. Paths must be canonical absolute paths with no symlink ancestry. The reviewed executable and ancestors must be owned by the current user or root and not group/world writable (root-owned sticky ancestors are allowed). Reads use `O_NOFOLLOW` and descriptor metadata. The executable digest is checked before spawning. The native executable independently verifies its configuration and signed host arm.
 
 ## Transport and effect boundary
