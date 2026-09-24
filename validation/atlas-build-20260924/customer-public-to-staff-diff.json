@@ -1,0 +1,7 @@
+{
+  "changed": [
+    "frontend/atlas-customer/scripts/validate-dealer-postgres.mjs"
+  ],
+  "added": [],
+  "removed": []
+}

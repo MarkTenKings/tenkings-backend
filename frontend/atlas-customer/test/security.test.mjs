@@ -11,7 +11,7 @@ import { retainSubmission, readRetainedSubmission, clearRetainedSubmission } fro
 import { customerPage } from '../lib/server/page.mjs';
 import { acceptsSiteRequest } from '@atlas/site-router/server';
 import { signRoute } from '@atlas/site-router/proof';
-const returns = { name: 'Alex Customer', address1: '1 Example Road', address2: '', city: 'Example', region: 'CA', postalCode: '90001', country: 'US' };
+const returns = { name: 'Alex Customer', email: 'alex@example.test', address1: '1 Example Road', address2: '', city: 'Example', region: 'CA', postalCode: '90001', country: 'US' };
 const cfg = () => makeConfig({ mode: 'LOCAL_FIXTURE', origin: 'http://127.0.0.1:4318', deploymentId: 'local-customer-fixture',
     releaseSha: '0'.repeat(40), sessionKey: randomBytes(32), phoneKey: randomBytes(32), cookies: LOCAL_COOKIES,
     accountSid: `AC${'1'.repeat(32)}`, serviceSid: `VA${'2'.repeat(32)}` });
@@ -22,7 +22,7 @@ test('U.S. phone aliases share identity while explicit international numbers ret
     assert.equal(normalizePhone('+44 7700 900123'), '+447700900123');
     for (const raw of ['447700900123', '0012025550141', '+1 202 555 0141 ext 2', '+01 202 555 0141', '+1/202/555/0141', '++12025550141', '+1234', '', null, 12025550141]) fails(() => normalizePhone(raw), 'USE_INTERNATIONAL_PHONE');
 });
-test('profile is deferred; submission requires confirmed bounded details and a delivery method', () => {
+test('new profile requires email; legacy submission retry retains historical seven-field profile', () => {
     assert.equal(profile({ ...returns, name: ' Alex Customer ', country: 'us' }).name, 'Alex Customer');
     const input = { requestId: randomUUID(), profile: returns, cards: [{ title: '1999 Example card', category: 'SPORTS' }], confirmed: true, intakeMethod: 'MAIL_IN' };
     assert.equal(submission(input).intakeMethod, 'MAIL_IN');
@@ -30,6 +30,10 @@ test('profile is deferred; submission requires confirmed bounded details and a d
     fails(() => submission({ ...input, accountId: randomUUID() }), 'INVALID_REQUEST');
     fails(() => profile({ ...returns, phone: '+12025550141' }), 'INVALID_REQUEST');
     fails(() => profile({ ...returns, name: 'Alex\nCustomer' }), 'RETURN_DETAILS_REQUIRED');
+    const { email, ...legacy } = returns;
+    assert.throws(() => profile(legacy));
+    assert.deepEqual(submission({ ...input, profile: legacy }).profile, legacy);
+    fails(() => profile({ ...returns, email: 'bad email' }), 'RETURN_DETAILS_REQUIRED');
 });
 test('separate cookie names, path and CSRF purpose deny staff or browser authority at customer session writes', () => {
     const config = cfg(), auth = new CustomerAuth({ config }), browser = randomBytes(32).toString('base64url'), token = randomBytes(32).toString('base64url');

@@ -1,0 +1,308 @@
+{
+  "pass": true,
+  "completedAt": "2026-09-24T09:22:54.549493+00:00",
+  "scope": "Synthetic source95public/48-to52 upgrade and source95public/52staff commerce/dealer qualification on PostgreSQL17.11; no production112-history replication, provider, human, financial or physical acceptance",
+  "sourceCommit": "4cbb40a35d9d4a858bd3fa0fb7ec4041c5769051",
+  "postgresImage": "sha256:a2ea0e68c465e0acf4c3672471b22b6b62972bb341e6f31544c855d85ba43745",
+  "postgres": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+  "node": "v20.20.1",
+  "originalUpgradeValidatorUnchangedFromPg15Receipt": true,
+  "predecessor143MigrationBytesMatchHead": true,
+  "allThreeMigrationInventoriesMatchCurrentSource": true,
+  "capturedHarnessValidatorCommerceSourcesUnchanged": true,
+  "sourceSha256": {
+    "frontend/atlas-app/scripts/disposable-postgres.mjs": "9fb318532d9a32acb744ac9323d369244681080af71e4bdb0dd94733a7bd267b",
+    "frontend/atlas-app/scripts/remote-disposable-postgres.mjs": "3614102a36d300982d453732fc1f9386db405b638ec7de29eeb8fa5bf4bb47ce",
+    "frontend/atlas-app/test/disposable-postgres.test.mjs": "50478b281247345f3ee936f3137ef1ee28900c68d8be5f1f2faeeffa2d36be67",
+    "frontend/atlas-app/test/remote-disposable-postgres.test.mjs": "570a606e9b5bf7d539aa4e1e9223f9db5cbbc5034f57ffcd4ebcc5df751dc721",
+    "frontend/atlas-customer/scripts/validate-upgrade-postgres.mjs": "797bcad05874c17a4604108dad88200d640b67473cba4444e3a33267d69b79dc",
+    "frontend/atlas-customer/scripts/validate-private-commerce-postgres.mjs": "e0514917c4193d00f71cf3350318c430329ab3a89f5647a98d4c6649dc29ab90",
+    "frontend/atlas-customer/scripts/validate-dealer-postgres.mjs": "e0c5c2dcf4e59910ce0b5f056da3d5df67b97add61166c7d5053107cf57198b2",
+    "packages/atlas-commerce/src/service.mjs": "d3cfcf9f538989d6ecf9bd87ef87b8a1f4c727082aa15882934d7a986345b82b",
+    "packages/atlas-commerce/src/shipping-plan.mjs": "80a2a2f1daba2988babdb9739fdb0816a9a536fb83ca1225b67d7788fb97d833",
+    "packages/atlas-commerce/src/providers.mjs": "bae037bb5c7ef45bb683ba1a70be024c47fe0404c1b456ff459c166c7ece522b"
+  },
+  "guardTestsPassed": 8,
+  "fixtures": [
+    {
+      "name": "upgrade",
+      "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-KjZcbQ",
+      "sourceCommit": "4cbb40a35d9d4a858bd3fa0fb7ec4041c5769051",
+      "result": {
+        "pass": true,
+        "syntheticOnly": true,
+        "networkProviders": false,
+        "preUpgradeStaffMigrations": 48,
+        "publicMigrations": 95,
+        "staffMigrations": 52,
+        "postgres": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+        "node": "v20.20.1",
+        "oldTablesVerified": 238,
+        "populatedTablesVerified": 18,
+        "originalGatewayBodySha256": "fa98e6503a7865eda484f413e81754439e77e39310c299d4eb03ef22b9a404ab",
+        "originalGatewayAclSha256": "a69d296ebcbaf1db7789d8aba0d2ef26f9daf75a8894ad1a8014e13976c8c0e2",
+        "beforeSnapshotSha256": "7675449b9d1a9a447b1ea93fa817553b8f0ba46cb5d85241f22529a7ea6e444a",
+        "afterSnapshotSha256": "14a44f4302d2bbd90bb7580f7155f79be9cdc2b82a3c833b49838d61bf98c612",
+        "checks": [
+          "schema48: actual restricted customer SMS sessions, legacy profiles and both-channel submissions; original staff gateway creates action/resolution events",
+          "all preexisting table contents and physical row versions, public ledger, first48 staff ledger rows, table/column/schema ACLs, roles and memberships unchanged",
+          "original gateway OID/body/owner/security/settings retained; exact existing EXECUTE ACL moves to wrapper; other predecessor functions unchanged except approved profile body and fixed search path",
+          "original customer role passes exact one-function privilege verifier without regrant; old/internal/private gateways and direct tables denied",
+          "same pre-upgrade session, profile, list/detail/card/request reads and exact submit/staff-event retries survive; foreign ownership and changed retries denied without row changes",
+          "legacy no-email profiles remain valid; complete email profile accepted and malformed email rejected",
+          "new customer service, identification and commerce controls remain absent with false defaults; no invented dealer/location/order or legacy conversion",
+          "new separately provisioned private role passes exact one-function verifier, is denied customer/internal/table access and refuses work while service control is absent",
+          "new legacy submission succeeds with the original no-email request contract and exact retry remains idempotent; existing event history stays intact"
+        ],
+        "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-KjZcbQ"
+      },
+      "assertionGroups": 9,
+      "cleanup": {
+        "stoppedVerified": true,
+        "removed": "owned tmpfs container",
+        "evidenceRetained": true
+      },
+      "container": {
+        "id": "ad3f25c9a4166b398518ac19520121d117c11acafaa271b4b9934afb16acbc16",
+        "nonce": "fb47ca1858052c9fdd63fc27027872c8",
+        "port": 64960,
+        "remote": true,
+        "image": "sha256:a2ea0e68c465e0acf4c3672471b22b6b62972bb341e6f31544c855d85ba43745"
+      },
+      "transport": {
+        "host": "root@104.131.27.245",
+        "image": "sha256:a2ea0e68c465e0acf4c3672471b22b6b62972bb341e6f31544c855d85ba43745",
+        "architecture": "amd64",
+        "encryptedSshLoopbackTunnel": true,
+        "port": 64960,
+        "containerId": "ad3f25c9a4166b398518ac19520121d117c11acafaa271b4b9934afb16acbc16",
+        "nonce": "fb47ca1858052c9fdd63fc27027872c8"
+      },
+      "migration49Through52": [
+        {
+          "name": "20260924060000_customer_photo_intake",
+          "sha256": "41382fa3725251c92e461f5e7fd344d17e6e313a66ffe2e2ca625d834c0d58aa",
+          "byteCount": 33072
+        },
+        {
+          "name": "20260924061000_customer_commerce",
+          "sha256": "9c1363b8b02d1188d5e9c2340be6624a58ee8137ebed9e9a9f5d07ff648aa47e",
+          "byteCount": 46011
+        },
+        {
+          "name": "20260924062000_dealer_custody_tracking",
+          "sha256": "f1286c7634594103a216a749448507d1c5d79dd280706e9f6b8d80edee6b136d",
+          "byteCount": 43183
+        },
+        {
+          "name": "20260924063000_customer_private_service",
+          "sha256": "152ca79fd3a1d1ac1b7f8bbfdae14e01c77f7f6133feb4ca120694f2529e1b85",
+          "byteCount": 4064
+        }
+      ],
+      "evidenceFileSha256": {
+        "source.json": "d0d853ccd098160b1b1c4448d5e832887787384d92cb1d09d48d08b1c3777c8a",
+        "ledgers.json": "23cfece3e8ee408bd882038c4116fb2dfd0667386f0320a21fafc4cfcb787f11",
+        "upgrade-result.json": "6079c216888442f163d68199e4f4222116002080f372c5b35431a6148b924a17",
+        "cleanup.json": "bad8075f83dabce5dacbcddc6be803a49a1c1522b8746660401bdf3d927fb543",
+        "container.json": "c58f0677b87f5aa8f51a12c9a9d106e301b977f2cf4628e377b4967b0f6a59cd",
+        "transport.json": "03ef6a98269d34cd2542e79556e20909001902e7b731200a250a65dd91a8bb2a",
+        "validation.log": "d30fd02c87d77247e690ebf0639a64317203cff79637327fc2992eaa772e5800",
+        "postgres.log": "da176cb65cc48825fd4227e01ef851c5a9f20052d97bf2a19c5646e7123b7fc6",
+        "upgrade-through-48-ledger.json": "5990d1e2cf278973b6ab506c0c977d6d686dcbff3f9f13e1910b300c4792012e",
+        "upgrade-before.json": "c441f76c8e9bc7faa0891d10a2fce01e74728eb161a790caa5773a7ce48ab503",
+        "upgrade-after.json": "89ba02a0f7045f47a8584f34267751ece11191d103a8de66acb07e5bd40e19e6"
+      }
+    },
+    {
+      "name": "private-commerce",
+      "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-gEQmkO",
+      "sourceCommit": "4cbb40a35d9d4a858bd3fa0fb7ec4041c5769051",
+      "result": {
+        "pass": true,
+        "syntheticOnly": true,
+        "networkProviders": false,
+        "checks": [
+          "dealer schedule SQL: owner example, cutoff, closures, extra route, DST and malformed schedules",
+          "private service cold by default; identification separately disabled; action allowlist enforced",
+          "private role has only exact service function; customer role cannot enter private gateway",
+          "real synthetic customer session required for private upload verification; foreign owner refused",
+          "measured shipping plan binds exact card count, original weight/ship date and sourced measurement; SQL filters invalid/expired plans and refuses forged requests",
+          "server price, photo/identity snapshot, tax and shipping total bound; foreign cart and forged total refused",
+          "customer SQL checkout and service quote use safe DTOs; original provider, photo, account and profile evidence remains stored internally",
+          "unknown payment retains exact attempt; both same and changed browser request cannot charge again or edit locked cart",
+          "one immutable paid order, four durable receipt/tax/postage effects, one custody card and no mail-in commission",
+          "customer paid order exposes safe totals/identity/delivery effects; immutable stored receipt retains money/photo/provider proof",
+          "saved paid checkout remains readable with commerce providers disabled and no provider call"
+        ],
+        "publicMigrations": 95,
+        "staffMigrations": 52,
+        "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-gEQmkO"
+      },
+      "assertionGroups": 11,
+      "cleanup": {
+        "stoppedVerified": true,
+        "removed": "owned tmpfs container",
+        "evidenceRetained": true
+      },
+      "container": {
+        "id": "e05da12045b543a3280c2ac6543888e7a75ec1bd0839c7bbf8991ca0ff612c34",
+        "nonce": "6dd66bd9e2706ad16fefea082c500c84",
+        "port": 50109,
+        "remote": true,
+        "image": "sha256:a2ea0e68c465e0acf4c3672471b22b6b62972bb341e6f31544c855d85ba43745"
+      },
+      "transport": {
+        "host": "root@104.131.27.245",
+        "image": "sha256:a2ea0e68c465e0acf4c3672471b22b6b62972bb341e6f31544c855d85ba43745",
+        "architecture": "amd64",
+        "encryptedSshLoopbackTunnel": true,
+        "port": 50109,
+        "containerId": "e05da12045b543a3280c2ac6543888e7a75ec1bd0839c7bbf8991ca0ff612c34",
+        "nonce": "6dd66bd9e2706ad16fefea082c500c84"
+      },
+      "migration49Through52": [
+        {
+          "name": "20260924060000_customer_photo_intake",
+          "sha256": "41382fa3725251c92e461f5e7fd344d17e6e313a66ffe2e2ca625d834c0d58aa",
+          "byteCount": 33072
+        },
+        {
+          "name": "20260924061000_customer_commerce",
+          "sha256": "9c1363b8b02d1188d5e9c2340be6624a58ee8137ebed9e9a9f5d07ff648aa47e",
+          "byteCount": 46011
+        },
+        {
+          "name": "20260924062000_dealer_custody_tracking",
+          "sha256": "f1286c7634594103a216a749448507d1c5d79dd280706e9f6b8d80edee6b136d",
+          "byteCount": 43183
+        },
+        {
+          "name": "20260924063000_customer_private_service",
+          "sha256": "152ca79fd3a1d1ac1b7f8bbfdae14e01c77f7f6133feb4ca120694f2529e1b85",
+          "byteCount": 4064
+        }
+      ],
+      "evidenceFileSha256": {
+        "source.json": "d0d853ccd098160b1b1c4448d5e832887787384d92cb1d09d48d08b1c3777c8a",
+        "ledgers.json": "a4b031b27127a76510991a48f02318d110ef37ae0bf2fae773f692c11d82da0a",
+        "private-commerce-result.json": "b099714be55b56e9da126adfb71d59518d23eaf6d84e56656e9004e9e049af51",
+        "cleanup.json": "bad8075f83dabce5dacbcddc6be803a49a1c1522b8746660401bdf3d927fb543",
+        "container.json": "78cdd487f9b64415d67a5636edb528d368a7abd258006464c25eb752cd191cec",
+        "transport.json": "378154df9cb1120a5fac51519a3690332f526a9c05146bdc5b78d04f3f8e90c9",
+        "validation.log": "30eb8a626a996561283a50dc0a824aa33aa17c8096c22b102642bfe2146c1aad",
+        "postgres.log": "7910daabb1db94030ba97d4ae2773f94a0ea2b9fbe8cb876af6114f7c051974e"
+      }
+    },
+    {
+      "name": "dealer",
+      "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-LstbLV",
+      "sourceCommit": "4cbb40a35d9d4a858bd3fa0fb7ec4041c5769051",
+      "result": {
+        "pass": true,
+        "syntheticOnly": true,
+        "networkProviders": false,
+        "humanOrPhysicalAcceptance": false,
+        "checks": [
+          "actual staff WeakMap/session, reviewer role and fresh operations grant required for location/member configuration",
+          "customer sign-in cannot replace separate dealer session; membership and browser bind exact location",
+          "intake create/read/list/card/verify/correct/review and customer checkout/quote/order hide dealer/device IDs while stored location snapshot retains exact binding",
+          "two kiosk locations stay isolated; exact500 cents per full-price card accrue once, tax888 cents excluded and shipping0",
+          "customer order history contains only owned orders and rejects another owner\u2019s pagination cursor",
+          "NULL predecessor cannot bypass first-event rules; manual link refused before actual synthetic receipt",
+          "declaration proves no collection; custody order and exact retry enforced; received card binds only to accessible manual card; no return before approval",
+          "owner-only tracker exposes actual collection-based week and current manual status, excludes private notes/addresses/payment/session data",
+          "membership revocation invalidates only its dealer session; CSRF/logout and operations grant revocation enforced"
+        ],
+        "publicMigrations": 95,
+        "staffMigrations": 52,
+        "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-LstbLV"
+      },
+      "assertionGroups": 9,
+      "cleanup": {
+        "stoppedVerified": true,
+        "removed": "owned tmpfs container",
+        "evidenceRetained": true
+      },
+      "container": {
+        "id": "950fc9ac796b4b51ecc31c9366932f42c5d5be02d0b737bbfad42081dd1f3b38",
+        "nonce": "d91a1eb6063a31cb37719cf465c10e4d",
+        "port": 50476,
+        "remote": true,
+        "image": "sha256:a2ea0e68c465e0acf4c3672471b22b6b62972bb341e6f31544c855d85ba43745"
+      },
+      "transport": {
+        "host": "root@104.131.27.245",
+        "image": "sha256:a2ea0e68c465e0acf4c3672471b22b6b62972bb341e6f31544c855d85ba43745",
+        "architecture": "amd64",
+        "encryptedSshLoopbackTunnel": true,
+        "port": 50476,
+        "containerId": "950fc9ac796b4b51ecc31c9366932f42c5d5be02d0b737bbfad42081dd1f3b38",
+        "nonce": "d91a1eb6063a31cb37719cf465c10e4d"
+      },
+      "migration49Through52": [
+        {
+          "name": "20260924060000_customer_photo_intake",
+          "sha256": "41382fa3725251c92e461f5e7fd344d17e6e313a66ffe2e2ca625d834c0d58aa",
+          "byteCount": 33072
+        },
+        {
+          "name": "20260924061000_customer_commerce",
+          "sha256": "9c1363b8b02d1188d5e9c2340be6624a58ee8137ebed9e9a9f5d07ff648aa47e",
+          "byteCount": 46011
+        },
+        {
+          "name": "20260924062000_dealer_custody_tracking",
+          "sha256": "f1286c7634594103a216a749448507d1c5d79dd280706e9f6b8d80edee6b136d",
+          "byteCount": 43183
+        },
+        {
+          "name": "20260924063000_customer_private_service",
+          "sha256": "152ca79fd3a1d1ac1b7f8bbfdae14e01c77f7f6133feb4ca120694f2529e1b85",
+          "byteCount": 4064
+        }
+      ],
+      "evidenceFileSha256": {
+        "source.json": "d0d853ccd098160b1b1c4448d5e832887787384d92cb1d09d48d08b1c3777c8a",
+        "ledgers.json": "88d38fed7594b6f32bd9c41937d8b4103d5202d001e9e0b4f91a3f76cb95fbd3",
+        "dealer-result.json": "96e73ba18f2fa7d6563f9597c504a0cf2b72404c56afa318180e4249506c7870",
+        "cleanup.json": "bad8075f83dabce5dacbcddc6be803a49a1c1522b8746660401bdf3d927fb543",
+        "container.json": "e82a2156f28f2778c361652611fc1f28f6cf6a7a5e367a446fe0b05305c44472",
+        "transport.json": "7e522a2647717e31e4a2c101ac045dac3ae63c72df37870cf80b6376c7a95c53",
+        "validation.log": "f30d64f432e4f50a1b923d39cb80548d9973497008e1dec3854a0f49a9d264b2",
+        "postgres.log": "13fe82b280f8162302b1aecf3930329b82e6105f1c25914ce1ff185dfcc20208"
+      }
+    }
+  ],
+  "hostReadback": {
+    "productionContainer": {
+      "id": "c302eeb7c4036c42049b3ed96f8d88d30afa6f058d7156e69b03fe60ae866b63",
+      "image": "sha256:857ec5612661921cb235013d81a1b2793615ebb2c2f987b661275efdd646f94a",
+      "name": "/atlas-manual-connected-20260917",
+      "running": true,
+      "startedAt": "2026-09-24T03:44:03.657738463Z",
+      "restartCount": 0
+    },
+    "ownedFixtureIdsVerifiedAbsent": [
+      "ad3f25c9a4166b398518ac19520121d117c11acafaa271b4b9934afb16acbc16",
+      "e05da12045b543a3280c2ac6543888e7a75ec1bd0839c7bbf8991ca0ff612c34",
+      "950fc9ac796b4b51ecc31c9366932f42c5d5be02d0b737bbfad42081dd1f3b38"
+    ],
+    "runningDisposablePostgresIds": [],
+    "capacity": {
+      "memoryTotalBytes": 8326975488,
+      "memoryAvailableBytes": 6616346624,
+      "rootDiskAvailableBytes": 51836571648
+    },
+    "observedAt": "2026-09-24T09:20:54.783729+00:00",
+    "scope": "Read-only container metadata, exact owned-ID absence and OS capacity; no production database/env read",
+    "productionContainerUnchanged": true
+  },
+  "hostBeforeSha256": "da935d6503bdc01a53b2220ad30abacf8e8698d94640fe405bef9926706acf13",
+  "hostAfterSha256": "40c9a8e30e82f7a9e341cf7da7e56642c1ee55b65abc6c9914e3f38b5f64c673",
+  "retainedFailedPreflight": {
+    "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-P2xEs2",
+    "reason": "SSH agent socket initially omitted from SSH-only clean environment",
+    "containerCreated": false
+  }
+}

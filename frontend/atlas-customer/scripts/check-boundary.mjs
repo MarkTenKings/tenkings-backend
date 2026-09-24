@@ -4,7 +4,7 @@ import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(readFileSync(join(app, '.next/server/pages-manifest.json'), 'utf8'));
-assert.deepEqual(Object.keys(manifest).sort(), ['/', '/404', '/_app', '/_document', '/_error', '/api/customer/[...path]', '/profile', '/submissions/[id]', '/submit'].sort());
+assert.deepEqual(Object.keys(manifest).sort(), ['/', '/404', '/_app', '/_document', '/_error', '/api/customer/[...path]', '/profile', '/submissions/[id]', '/submit', '/dealer', '/orders/[id]'].sort());
 const routes = JSON.parse(readFileSync(join(app, '.next/routes-manifest.json'), 'utf8'));
 assert.equal(routes.basePath, '/account');
 const database = resolve(app, '.generated/customer-database');

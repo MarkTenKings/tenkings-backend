@@ -1,0 +1,260 @@
+TAP version 13
+# Subtest: exact kiosk unit prices and commissions exclude actual tax; shipping never called
+ok 1 - exact kiosk unit prices and commissions exclude actual tax; shipping never called
+  ---
+  duration_ms: 20.590541
+  ...
+# Subtest: mail rates use measured preset and actual confirmed customer address, $40 each
+ok 2 - mail rates use measured preset and actual confirmed customer address, $40 each
+  ---
+  duration_ms: 4.114792
+  ...
+# Subtest: both legs obtain independent quotes and package inputs
+ok 3 - both legs obtain independent quotes and package inputs
+  ---
+  duration_ms: 1.604917
+  ...
+# Subtest: mail unknown terms fail closed {}
+ok 4 - mail unknown terms fail closed {}
+  ---
+  duration_ms: 1.860166
+  ...
+# Subtest: mail unknown terms fail closed {"mailClockStart":"ATLAS_RECEIPT"}
+ok 5 - mail unknown terms fail closed {"mailClockStart":"ATLAS_RECEIPT"}
+  ---
+  duration_ms: 0.462834
+  ...
+# Subtest: mail unknown terms fail closed {"mailChargedLegs":"INBOUND_ONLY"}
+ok 6 - mail unknown terms fail closed {"mailChargedLegs":"INBOUND_ONLY"}
+  ---
+  duration_ms: 0.35675
+  ...
+# Subtest: missing tax is never zero tax
+ok 7 - missing tax is never zero tax
+  ---
+  duration_ms: 0.741083
+  ...
+# Subtest: real zero tax calculation is valid with source
+ok 8 - real zero tax calculation is valid with source
+  ---
+  duration_ms: 1.676459
+  ...
+# Subtest: mismatched tax, amount, currency and source binding fail
+ok 9 - mismatched tax, amount, currency and source binding fail
+  ---
+  duration_ms: 7.754917
+  ...
+# Subtest: caller amounts cannot override server pricing; stale revision denied
+ok 10 - caller amounts cannot override server pricing; stale revision denied
+  ---
+  duration_ms: 2.501125
+  ...
+# Subtest: unverified or duplicate photo roster cannot quote
+ok 11 - unverified or duplicate photo roster cannot quote
+  ---
+  duration_ms: 1.233166
+  ...
+# Subtest: concurrent payment requests produce one provider intent; ACK is not paid
+ok 12 - concurrent payment requests produce one provider intent; ACK is not paid
+  ---
+  duration_ms: 4.563791
+  ...
+# Subtest: lost create reply stays unknown, repeated Pay does not create another intent
+ok 13 - lost create reply stays unknown, repeated Pay does not create another intent
+  ---
+  duration_ms: 2.438166
+  ...
+# Subtest: confirmed payment atomically creates one order and durable receipt effects on retries
+ok 14 - confirmed payment atomically creates one order and durable receipt effects on retries
+  ---
+  duration_ms: 4.411125
+  ...
+# Subtest: provider amount/merchant/mode/hash mismatches cannot mark paid
+ok 15 - provider amount/merchant/mode/hash mismatches cannot mark paid
+  ---
+  duration_ms: 5.213292
+  ...
+# Subtest: unknown notification effect is durable and never automatically redispatched
+ok 16 - unknown notification effect is durable and never automatically redispatched
+  ---
+  duration_ms: 1.903708
+  ...
+# Subtest: FedEx label async acknowledgement never counts as a saved label
+ok 17 - FedEx label async acknowledgement never counts as a saved label
+  ---
+  duration_ms: 3.293958
+  ...
+# Subtest: configuration defaults disabled, exposes presence only and ignores legacy keys
+ok 18 - configuration defaults disabled, exposes presence only and ignores legacy keys
+  ---
+  duration_ms: 0.982708
+  ...
+# Subtest: explicit enabled with missing actual tax or merchant fails
+ok 19 - explicit enabled with missing actual tax or merchant fails
+  ---
+  duration_ms: 0.202541
+  ...
+# Subtest: missing delivery adapter leaves outbox pending without claiming
+ok 20 - missing delivery adapter leaves outbox pending without claiming
+  ---
+  duration_ms: 1.6075
+  ...
+# Subtest: historical paid order survives disabled kiosk and absent payment configuration
+ok 21 - historical paid order survives disabled kiosk and absent payment configuration
+  ---
+  duration_ms: 1.12425
+  ...
+# Subtest: known async FedEx reconciliation retrieves original job and never creates another shipment
+ok 22 - known async FedEx reconciliation retrieves original job and never creates another shipment
+  ---
+  duration_ms: 2.124917
+  ...
+# Subtest: customer quote and checkout allowlists preserve display fields while internal immutable evidence stays complete
+ok 23 - customer quote and checkout allowlists preserve display fields while internal immutable evidence stays complete
+  ---
+  duration_ms: 27.190417
+  ...
+# Subtest: mail quote exposes leg amounts without FedEx parties, accounts, requests or tax provider IDs
+ok 24 - mail quote exposes leg amounts without FedEx parties, accounts, requests or tax provider IDs
+  ---
+  duration_ms: 1.512375
+  ...
+# Subtest: pay, repeated pay and reconcile project paid receipts and never expose provider/payment evidence
+ok 25 - pay, repeated pay and reconcile project paid receipts and never expose provider/payment evidence
+  ---
+  duration_ms: 8.121667
+  ...
+# Subtest: historical receipt recovery projects both raw private source and safe SQL DTO when providers/kiosk are disabled
+ok 26 - historical receipt recovery projects both raw private source and safe SQL DTO when providers/kiosk are disabled
+  ---
+  duration_ms: 4.858375
+  ...
+# Subtest: disabled safe checkout remains readable; only the active online awaiting-payment response gets its form secret
+ok 27 - disabled safe checkout remains readable; only the active online awaiting-payment response gets its form secret
+  ---
+  duration_ms: 0.655792
+  ...
+# Subtest: Stripe transport validates ATLAS merchant before dispatch and sends pinned version/idempotency
+ok 28 - Stripe transport validates ATLAS merchant before dispatch and sends pinned version/idempotency
+  ---
+  duration_ms: 72.76225
+  ...
+# Subtest: wrong merchant or disabled account prevents payment dispatch
+ok 29 - wrong merchant or disabled account prevents payment dispatch
+  ---
+  duration_ms: 2.246917
+  ...
+# Subtest: Stripe live/test mismatch fails before network
+ok 30 - Stripe live/test mismatch fails before network
+  ---
+  duration_ms: 0.120625
+  ...
+# Subtest: terminal uses only configured reader/location and one PaymentIntent identity
+ok 31 - terminal uses only configured reader/location and one PaymentIntent identity
+  ---
+  duration_ms: 4.826708
+  ...
+# Subtest: offline, other-location and busy readers fail before PaymentIntent creation
+ok 32 - offline, other-location and busy readers fail before PaymentIntent creation
+  ---
+  duration_ms: 2.043958
+  ...
+# Subtest: lost terminal command reply retains provider intent, does not infer failure
+ok 33 - lost terminal command reply retains provider intent, does not infer failure
+  ---
+  duration_ms: 2.895583
+  ...
+# Subtest: unknown intent uses metadata read search only; empty result stays unknown
+ok 34 - unknown intent uses metadata read search only; empty result stays unknown
+  ---
+  duration_ms: 0.842291
+  ...
+# Subtest: online card flow returns private client secret, no reader action
+ok 35 - online card flow returns private client secret, no reader action
+  ---
+  duration_ms: 0.34725
+  ...
+# Subtest: tax requires explicitly configured classification and sourcing; no implicit zero
+ok 36 - tax requires explicitly configured classification and sourcing; no implicit zero
+  ---
+  duration_ms: 0.774458
+  ...
+# Subtest: tax uses configured kiosk address and returns real amount/reference
+ok 37 - tax uses configured kiosk address and returns real amount/reference
+  ---
+  duration_ms: 7.114125
+  ...
+# Subtest: FedEx authenticates then quotes actual account rate with measured package and selected service
+ok 38 - FedEx authenticates then quotes actual account rate with measured package and selected service
+  ---
+  duration_ms: 4.288417
+  ...
+# Subtest: FedEx list rate, other service, unsupported currency or missing total do not become quotes
+ok 39 - FedEx list rate, other service, unsupported currency or missing total do not become quotes
+  ---
+  duration_ms: 10.310959
+  ...
+# Subtest: missing package measurements or explicit billing stops before network
+ok 40 - missing package measurements or explicit billing stops before network
+  ---
+  duration_ms: 0.335541
+  ...
+# Subtest: FedEx creates and saves exact PDF label and tracking without refetching external URLs
+ok 41 - FedEx creates and saves exact PDF label and tracking without refetching external URLs
+  ---
+  duration_ms: 4.999333
+  ...
+# Subtest: FedEx lost shipment reply is not retried inside adapter
+ok 42 - FedEx lost shipment reply is not retried inside adapter
+  ---
+  duration_ms: 1.458
+  ...
+# Subtest: package label is exact order/card count PDF without print completion
+ok 43 - package label is exact order/card count PDF without print completion
+  ---
+  duration_ms: 1.632625
+  ...
+# Subtest: webhook requires unchanged raw bytes, matching signature and fresh timestamp
+ok 44 - webhook requires unchanged raw bytes, matching signature and fresh timestamp
+  ---
+  duration_ms: 3.9665
+  ...
+# Subtest: webhook ignores irrelevant events without payment effects
+ok 45 - webhook ignores irrelevant events without payment effects
+  ---
+  duration_ms: 5.225958
+  ...
+# Subtest: notification adapter records acceptance separately from delivery and uses ATLAS senders
+ok 46 - notification adapter records acceptance separately from delivery and uses ATLAS senders
+  ---
+  duration_ms: 29.454125
+  ...
+# Subtest: disabled private customer service constructs no database or provider client
+ok 47 - disabled private customer service constructs no database or provider client
+  ---
+  duration_ms: 2.283625
+  ...
+# Subtest: production customer service rejects hosted execution, weak binding and reused credentials
+ok 48 - production customer service rejects hosted execution, weak binding and reused credentials
+  ---
+  duration_ms: 8.788208
+  ...
+# Subtest: photo storage requires its own complete canonical configuration
+ok 49 - photo storage requires its own complete canonical configuration
+  ---
+  duration_ms: 1.31325
+  ...
+# Subtest: cold runtime serves only signed directory reads through its restricted role and drains on close
+ok 50 - cold runtime serves only signed directory reads through its restricted role and drains on close
+  ---
+  duration_ms: 268.310958
+  ...
+1..50
+# tests 50
+# suites 0
+# pass 50
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1448.894417

@@ -1,0 +1,1 @@
+{"path":"/build/frontend/atlas-customer/.next/server/functions-config-manifest.json","manifest":{"version":1,"functions":{"/api/customer/[...path]":{"maxDuration":110}}}}

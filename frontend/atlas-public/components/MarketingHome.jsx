@@ -722,7 +722,7 @@ function JourneyScene({ progress, profile, selectedDealer, onSelectDealer }) {
   );
 }
 
-function RolexJourney({ selectedCard }) {
+function RolexJourney({ selectedCard, customerFunnelEnabled }) {
   const [journeyProgress, setJourneyProgress] = useState(0);
   const [autoPlay, setAutoPlay] = useState(false);
   const [selectedDealer, setSelectedDealer] = useState("SAC-01");
@@ -774,7 +774,7 @@ function RolexJourney({ selectedCard }) {
           <p className="hero-overline">DEALER DROP-OFF · MAIL-IN</p>
           <h1 id="hero-title"><span>The Rolex of</span><span>Grading.</span></h1>
           <p className="hero-tagline">KNOW WHAT YOU HAVE</p>
-          <p className="hero-deck">Choose authorized-dealer drop-off or mail-in. Sign in with your mobile number, submit your cards, and follow their recorded progress.</p>
+          {customerFunnelEnabled ? <><p className="hero-deck">Mail-in: $40 per card plus FedEx shipping, two-week service. Kiosk: $50 per card, one week from ATLAS collection, with pickup and return included.</p></> : <><p className="hero-deck">Choose authorized-dealer drop-off or mail-in. Sign in with your mobile number, submit your cards, and follow their recorded progress.</p></>}
           <p className="journey-promise-line"><span>YOUR CARDS.</span> EVERY STEP.</p>
         </header>
 
@@ -825,9 +825,9 @@ function RolexJourney({ selectedCard }) {
           </ol>
         </div>
 
-        <p className="hero-proof">Choose dealer drop-off or mail-in when you create your submission. Confirm the intake instructions before handing over or sending cards. The demonstration above illustrates the process; your account shows recorded progress and confirmed service details.</p>
+        {customerFunnelEnabled ? <><p className="hero-proof">Choose your service, photograph both sides from your phone, review your cards and pay. Kiosk locations show their actual collection and return schedules. The demonstration above illustrates the process; your account shows recorded events.</p></> : <><p className="hero-proof">Choose dealer drop-off or mail-in when you create your submission. Confirm the intake instructions before handing over or sending cards. The demonstration above illustrates the process; your account shows recorded progress and confirmed service details.</p></>}
         <div className="hero-actions">
-          <a className="button button--gold" href="/account/submit">Submit your cards</a>
+          {customerFunnelEnabled ? <><a className="button button--gold" href="/account/submit">Start mail-in · $40/card</a><Link className="button button--outline" href="/dealers?service=submit">Find a kiosk · $50/card</Link></> : <><a className="button button--gold" href="/account/submit">Submit your cards</a></>}
           <a className="text-link" href="#measurement">See how ATLAS grades <span aria-hidden="true">↓</span></a>
         </div>
       </div>
@@ -1216,7 +1216,7 @@ function FinalScanner() {
   );
 }
 
-export default function AtlasSite() {
+export default function AtlasSite({ customerFunnelEnabled = false }) {
   const [selectedCard, setSelectedCard] = useState("sports");
   const [heroInspecting, setHeroInspecting] = useState(false);
 
@@ -1249,7 +1249,7 @@ export default function AtlasSite() {
 
       <AtlasProofRibbon />
 
-      <RolexJourney selectedCard={selectedCard} />
+      <RolexJourney selectedCard={selectedCard} customerFunnelEnabled={customerFunnelEnabled} />
 
       <section className="measurement section-shell" id="measurement" aria-labelledby="measurement-title">
         <SectionIntro number="01" label="THE MEASUREMENT STANDARD" title="Every grade ever given was an opinion. Until now." id="measurement-title" />
@@ -1410,7 +1410,7 @@ export default function AtlasSite() {
         <SectionIntro number="08" label="HOW YOU GET ONE" title="Your cards. Your choice. Submit through an authorized dealer or choose mail-in, with your cards and return details recorded from the start." id="custody-title" />
         <div className="chain">
           <ChainStep number="01" title="SUBMIT">
-            Sign in and choose dealer drop-off or mail-in.
+            {customerFunnelEnabled ? 'Choose $40-per-card mail-in or $50-per-card kiosk grading. Photograph both sides from your phone, review and pay.' : 'Sign in and choose dealer drop-off or mail-in.'}
           </ChainStep>
           <ChainStep number="02" title="CONFIRMED RECEIPT">
             Follow your intake instructions. ATLAS records receipt of each physical card.
@@ -1419,7 +1419,7 @@ export default function AtlasSite() {
             Measurements and findings enter human review before the final report is approved.
           </ChainStep>
           <ChainStep number="04" title="SEALED">
-            The chain of custody never breaks — from your hand, to ours, to yours.
+            ATLAS records dispatch and return when your physical cards move. Follow each card in your account.
           </ChainStep>
         </div>
         <Link className="button button--outline" href="/dealers?service=submit">Find an authorized dealer <span aria-hidden="true">↗</span></Link>
@@ -1427,7 +1427,7 @@ export default function AtlasSite() {
           ATLAS is selective. Not every card needs certification, and not every submission gets one. A grade only means something if it can’t be handed out carelessly. Scarcity isn’t a marketing trick here — it’s quality control.
         </p>
 
-        <div className="turnaround"><p className="section-code"><span>YOUR SUBMISSION</span>RECORDED PROGRESS</p><div className="time-row time-row--atlas"><div><span>Dealer drop-off or mail-in</span><b>Follow every card</b></div><p>Confirm current intake instructions, service details and return arrangements for your submission.</p><i /></div></div><p className="kicker">Royalty isn’t a price point. It’s a chain that never breaks.</p>
+        {customerFunnelEnabled ? <><div className="turnaround"><p className="section-code"><span>CHOOSE YOUR SERVICE</span>APPLICABLE TAX AT CHECKOUT</p><div className="time-row time-row--atlas"><div><span>Mail-in · Two-week service</span><b>$40 / card + shipping</b></div><p>See your actual FedEx quote before payment, then print your shipping label.</p><i /></div><div className="time-row time-row--atlas"><div><span>Kiosk · One week from ATLAS collection</span><b>$50 / card</b></div><p>ATLAS collection and return included. See the next pickup, local cutoff and projected return at your enabled kiosk.</p><i /></div></div><p className="kicker">Royalty isn’t a price point. It’s a chain that never breaks.</p></> : <><div className="turnaround"><p className="section-code"><span>YOUR SUBMISSION</span>RECORDED PROGRESS</p><div className="time-row time-row--atlas"><div><span>Dealer drop-off or mail-in</span><b>Follow every card</b></div><p>Confirm current intake instructions, service details and return arrangements for your submission.</p><i /></div></div><p className="kicker">Royalty isn’t a price point. It’s a chain that never breaks.</p></>}
       </section>
 
       <section className="options full-bleed" id="options" aria-labelledby="options-title">

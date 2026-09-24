@@ -6,6 +6,7 @@ import { PublicReportReader } from './reader.mjs';
 import { publicMediaClient } from '@atlas/service-bridge/public-media';
 import { manualPublicClient } from '@atlas/service-bridge/manual-public';
 import { fixtureArtwork } from '@atlas/report-view/fixture-artwork';
+import { createCustomerServiceClient } from '@atlas/service-bridge/customer-service';
 
 function localConfig(env) {
     if (env.NODE_ENV !== 'development' || env.ATLAS_LOCAL_PUBLIC !== '1'
@@ -30,5 +31,11 @@ export function runtime(req, env = process.env) {
         config.mode === 'LOCAL_FIXTURE' ? { async read(_reference, descriptor) { return fixtureArtwork(descriptor.sourceRef); } } : config.mediaOrigin ? publicMediaClient(config) : null,
         config.manualOrigin ? manualPublicClient(config) : null);
     Object.setPrototypeOf(globalThis[key], PublicReportReader.prototype);
+    globalThis[key].dealerLocations = async () => {
+        const encoded = env.ATLAS_CUSTOMER_DIRECTORY_KEY;
+        if (typeof encoded !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(encoded)) throw new Error('KIOSK_DIRECTORY_UNAVAILABLE');
+        const client = createCustomerServiceClient({url:env.ATLAS_CUSTOMER_SERVICE_URL,key:Buffer.from(encoded,'base64')});
+        return client.call('dealer-locations',{input:{}});
+    };
     return globalThis[key];
 }

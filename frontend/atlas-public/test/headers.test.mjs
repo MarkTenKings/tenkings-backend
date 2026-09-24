@@ -10,7 +10,7 @@ const { getPathMatch } = require('next/dist/shared/lib/router/utils/path-match.j
 const { modifyRouteRegex } = require('next/dist/lib/redirect-status.js');
 const { buildCustomRoute } = require('next/dist/lib/build-custom-route.js');
 
-test('public router permits the staff camera while preserving customer/public denial and mounted CSP', async () => {
+test('public router permits scoped staff/customer cameras and optional customer location with mounted CSP', async () => {
     const rules = (await config.headers()).map(rule => ({ ...rule,
         match: getPathMatch(rule.source, { strict: true, sensitive: false, removeUnnamedParams: true,
             regexModifier: regex => modifyRouteRegex(regex) }),
@@ -33,8 +33,9 @@ test('public router permits the staff camera while preserving customer/public de
             for (const rule of rules) assert.equal(Boolean(rule.match(path)), rule.built.test(path), path);
             const headers = rules.filter(rule => rule.match(path)).flatMap(rule => rule.headers);
             const staffPath = /^\/admin(?:\/|$)/i.test(path);
+            const customerPath = /^\/account(?:\/|$)/i.test(path);
             assert.deepEqual(headers.filter(h => h.key !== 'Content-Security-Policy'), [...common,
-                { key: 'Permissions-Policy', value: `camera=${staffPath ? '(self)' : '()'}, microphone=(), geolocation=()` }], path);
+                { key: 'Permissions-Policy', value: `camera=${staffPath || customerPath ? '(self)' : '()'}, microphone=(), geolocation=${customerPath ? '(self)' : '()'}` }], path);
             assert.deepEqual(headers.filter(h => h.key === 'Content-Security-Policy'), expectedCsp, path);
         }
     }
@@ -45,5 +46,5 @@ test('direct staff camera permission matches its mounted policy and supports a l
     assert.equal(headers.find(h => h.key === 'Permissions-Policy').value, 'camera=(self), microphone=(), geolocation=()');
     assert.match(headers.find(h => h.key === 'Content-Security-Policy').value, /(?:^|;) media-src 'self' blob:;/);
     const customer = (await customerConfig.headers()).flatMap(rule => rule.headers);
-    assert.equal(customer.find(h => h.key === 'Permissions-Policy').value, 'camera=(), microphone=(), geolocation=()');
+    assert.equal(customer.find(h => h.key === 'Permissions-Policy').value, 'camera=(self), microphone=(), geolocation=(self)');
 });

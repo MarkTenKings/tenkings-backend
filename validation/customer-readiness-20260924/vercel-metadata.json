@@ -1,0 +1,977 @@
+{
+  "version": "atlas-manual-web-release-readback-v1",
+  "at": "2026-09-24T07:04:41.829Z",
+  "teamId": "team_YaEhDoZXD2WsvqpoUp0KqBDh",
+  "projects": {
+    "staff": {
+      "settings": {
+        "id": "prj_s21BObRmeZfvljnx7gLceXFBFlCG",
+        "name": "atlas-grading-staff",
+        "accountId": "team_YaEhDoZXD2WsvqpoUp0KqBDh",
+        "rootDirectory": "frontend/atlas-app",
+        "framework": "nextjs",
+        "nodeVersion": "20.x",
+        "autoExposeSystemEnvs": true,
+        "link": null,
+        "rollingRelease": null
+      },
+      "projectProductionTarget": null,
+      "aliases": [
+        {
+          "uid": "879c4fc106b1d830d99a2a580536db86bff8427c119f4f07c9bc0b5bb6e53cf55f56b669d092be7ea832c8398ac44ca74c0a9bda124a1a550ddc7cf2327fde33",
+          "alias": "atlas-grading-staff-ten-kings.vercel.app",
+          "projectId": "prj_s21BObRmeZfvljnx7gLceXFBFlCG",
+          "createdAt": 1788971737243,
+          "updatedAt": 1790220012149,
+          "redirect": null,
+          "redirectStatusCode": null,
+          "deploymentId": "dpl_FsCKsJ3Qwao7rzkj844R1kn6p2mg"
+        }
+      ],
+      "aliasDeploymentIds": [
+        "dpl_FsCKsJ3Qwao7rzkj844R1kn6p2mg"
+      ],
+      "observedDeployments": {
+        "dpl_FsCKsJ3Qwao7rzkj844R1kn6p2mg": {
+          "id": "dpl_FsCKsJ3Qwao7rzkj844R1kn6p2mg",
+          "url": "atlas-grading-staff-4dcwzxrdd-ten-kings.vercel.app",
+          "projectId": "prj_s21BObRmeZfvljnx7gLceXFBFlCG",
+          "readyState": "READY",
+          "readySubstate": "STAGED",
+          "target": "production",
+          "source": "cli",
+          "createdAt": 1790219961821,
+          "ready": 1790220012017,
+          "aliasAssigned": true,
+          "aliasAssignedAt": 1790220012216,
+          "autoAssignCustomDomains": false,
+          "meta": {
+            "githubCommitSha": "e29567c200800b5bb7f3054dcbd3e41b751a4594",
+            "githubCommitOrg": "MarkTenKings",
+            "githubCommitRepo": "tenkings-backend",
+            "githubOrg": "MarkTenKings",
+            "githubRepo": "tenkings-backend",
+            "gitRootDirectory": "frontend/atlas-app"
+          },
+          "projectSettings": {
+            "rootDirectory": null,
+            "autoExposeSystemEnvs": null,
+            "framework": "nextjs",
+            "nodeVersion": "20.x"
+          }
+        }
+      },
+      "env": [
+        {
+          "id": "1YvxG4HOr55gzkTo",
+          "key": "ATLAS_ADMIN_PHONES",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701
+        },
+        {
+          "id": "jsqrN1fTkPh1w29u",
+          "key": "ATLAS_AUTH_PHONE_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701
+        },
+        {
+          "id": "1Wu2K7giDNuIYwA4",
+          "key": "ATLAS_AUTH_SESSION_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701
+        },
+        {
+          "id": "YAh4tRvvovTkSnZD",
+          "key": "ATLAS_AUTH_TWILIO_ACCOUNT_SID",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701
+        },
+        {
+          "id": "MlVpcO8OUNR7Mpzc",
+          "key": "ATLAS_AUTH_TWILIO_API_KEY_SECRET",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701
+        },
+        {
+          "id": "JbShv0ZZQSXHnk4E",
+          "key": "ATLAS_AUTH_TWILIO_API_KEY_SID",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701
+        },
+        {
+          "id": "NVjAve2U6aW3StCx",
+          "key": "ATLAS_AUTH_TWILIO_VERIFY_SERVICE_SID",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701
+        },
+        {
+          "id": "cWGHTHlnMYzLiy0O",
+          "key": "ATLAS_DATABASE_URL",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701
+        },
+        {
+          "id": "QF8L8ed9HIFTcrnk",
+          "key": "ATLAS_IDENTIFICATION_ENABLED",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789106025183,
+          "updatedAt": 1789952103043,
+          "value": "false"
+        },
+        {
+          "id": "y0CAJZWkT01LGufW",
+          "key": "ATLAS_IDENTIFICATION_GOOGLE_VISION_API_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789106025183,
+          "updatedAt": 1789106025183
+        },
+        {
+          "id": "onhikIt40lLrebTS",
+          "key": "ATLAS_IDENTIFICATION_OPENAI_API_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789106025183,
+          "updatedAt": 1789106025183
+        },
+        {
+          "id": "mo28127vAVLD3k8R",
+          "key": "ATLAS_IDENTIFICATION_POLICY_JSON",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789106025183,
+          "updatedAt": 1789106025183
+        },
+        {
+          "id": "XCtvWThQcqgh5SvF",
+          "key": "ATLAS_IDENTITY_CORRECTION_ENABLED",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701,
+          "value": "false"
+        },
+        {
+          "id": "8ifNNBugEejTERTC",
+          "key": "ATLAS_INTAKE_ENABLED",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701,
+          "value": "false"
+        },
+        {
+          "id": "IYLXjzrUgqLdwwH3",
+          "key": "ATLAS_MACHINE_INITIALIZATION_ENABLED",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701,
+          "value": "false"
+        },
+        {
+          "id": "YF03AYJ5yBhBh173",
+          "key": "ATLAS_MANUAL_ENABLED",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789952106603,
+          "updatedAt": 1789952106603,
+          "value": "true"
+        },
+        {
+          "id": "6JKOKiZ2BtN5WKaX",
+          "key": "ATLAS_MANUAL_SERVICE_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789952107586,
+          "updatedAt": 1789952107586
+        },
+        {
+          "id": "D9xNNFzzYAf9g5zK",
+          "key": "ATLAS_MANUAL_SERVICE_ORIGIN",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789952106907,
+          "updatedAt": 1789952106907,
+          "value": "https://private.atlasgrading.com"
+        },
+        {
+          "id": "a0SpvOinEx2nTiRi",
+          "key": "ATLAS_MANUAL_UPLOAD_ORIGIN",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789952107236,
+          "updatedAt": 1789952107236,
+          "value": "https://atlas-grading-private-20260910.nyc3.digitaloceanspaces.com"
+        },
+        {
+          "id": "zP4bENgCfcwDzRGE",
+          "key": "ATLAS_NFC_ENABLED",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701,
+          "value": "false"
+        },
+        {
+          "id": "1wm0CRA8ffKzKgLT",
+          "key": "ATLAS_OPERATIONS_ENABLED",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701,
+          "value": "false"
+        },
+        {
+          "id": "sVC8aTJLPHvhADPL",
+          "key": "ATLAS_STAFF_BASE_PATH",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701,
+          "value": "/admin"
+        },
+        {
+          "id": "Z6FFunoANvwnwqq1",
+          "key": "ATLAS_STAFF_ORIGIN",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701,
+          "value": "https://atlasgrading.com"
+        },
+        {
+          "id": "44ABb7T9PcKIpbND",
+          "key": "ATLAS_STAFF_ROUTER_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701
+        },
+        {
+          "id": "GeSvFbhyAl4CACoQ",
+          "key": "ATLAS_STAFF_RUNTIME",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701,
+          "value": "postgres"
+        },
+        {
+          "id": "TZcf6KaTswPCQSIE",
+          "key": "ATLAS_TRUSTED_LEARNING_ENABLED",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981511701,
+          "updatedAt": 1788981511701,
+          "value": "false"
+        },
+        {
+          "id": "Swcf1U8GgPoNUlAD",
+          "key": "ATLAS_WORKSPACE_ENABLED",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789037352634,
+          "updatedAt": 1789952102637,
+          "value": "false"
+        },
+        {
+          "id": "fy6e29uBU4asE2ud",
+          "key": "ATLAS_WORKSPACE_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789037352634,
+          "updatedAt": 1789037352634
+        },
+        {
+          "id": "0tCDUppBhpiN6X32",
+          "key": "ATLAS_WORKSPACE_SERVICE_DEPLOYMENT_ID",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789037352634,
+          "updatedAt": 1789037352634
+        },
+        {
+          "id": "ZaDkgpJIeqWsw3Zw",
+          "key": "ATLAS_WORKSPACE_SERVICE_ORIGIN",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789037352634,
+          "updatedAt": 1789037352634
+        },
+        {
+          "id": "GpUWHH4DLeJc6cy3",
+          "key": "ATLAS_WORKSPACE_SERVICE_RELEASE_SHA",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789037352634,
+          "updatedAt": 1789135698478
+        },
+        {
+          "id": "XDllDLlAKWNtvCUq",
+          "key": "ATLAS_WORKSPACE_UPLOAD_ORIGIN",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1789037352634,
+          "updatedAt": 1789037352634
+        }
+      ]
+    },
+    "customer": {
+      "settings": {
+        "id": "prj_7nLO2ZaekTNdXIsJsaSmEkI5qZud",
+        "name": "atlas-grading-customer",
+        "accountId": "team_YaEhDoZXD2WsvqpoUp0KqBDh",
+        "rootDirectory": "frontend/atlas-customer",
+        "framework": "nextjs",
+        "nodeVersion": "20.x",
+        "autoExposeSystemEnvs": true,
+        "link": null,
+        "rollingRelease": null
+      },
+      "projectProductionTarget": null,
+      "aliases": [
+        {
+          "uid": "16eac651f9b54a4b178fb77babf5497bc58ab99bcecdfb493057a52aa8b8c82e34822fbbb5c5cc5411915a7182ba0a2fcfe066e2f462375abf4679b33822790a",
+          "alias": "atlas-grading-customer-ten-kings.vercel.app",
+          "projectId": "prj_7nLO2ZaekTNdXIsJsaSmEkI5qZud",
+          "createdAt": 1788972067925,
+          "updatedAt": 1790092771045,
+          "redirect": null,
+          "redirectStatusCode": null,
+          "deploymentId": "dpl_7GzDxKz2MP36vESc8YkZq87Xht44"
+        }
+      ],
+      "aliasDeploymentIds": [
+        "dpl_7GzDxKz2MP36vESc8YkZq87Xht44"
+      ],
+      "observedDeployments": {
+        "dpl_7GzDxKz2MP36vESc8YkZq87Xht44": {
+          "id": "dpl_7GzDxKz2MP36vESc8YkZq87Xht44",
+          "url": "atlas-grading-customer-bpx50s9i7-ten-kings.vercel.app",
+          "projectId": "prj_7nLO2ZaekTNdXIsJsaSmEkI5qZud",
+          "readyState": "READY",
+          "readySubstate": "STAGED",
+          "target": "production",
+          "source": "cli",
+          "createdAt": 1790092736555,
+          "ready": 1790092770892,
+          "aliasAssigned": true,
+          "aliasAssignedAt": 1790092771112,
+          "autoAssignCustomDomains": false,
+          "meta": {
+            "githubCommitSha": "79483f13000c23dfed62c0c03f1239beb8f74dfb",
+            "githubCommitOrg": "MarkTenKings",
+            "githubCommitRepo": "tenkings-backend",
+            "githubOrg": "MarkTenKings",
+            "githubRepo": "tenkings-backend",
+            "gitRootDirectory": "frontend/atlas-customer"
+          },
+          "projectSettings": {
+            "rootDirectory": null,
+            "autoExposeSystemEnvs": null,
+            "framework": "nextjs",
+            "nodeVersion": "20.x"
+          }
+        }
+      },
+      "env": [
+        {
+          "id": "vp0ZOr0Oin0S1OE7",
+          "key": "ATLAS_CUSTOMER_DATABASE_URL",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981512298,
+          "updatedAt": 1788981512298
+        },
+        {
+          "id": "gjxadS3xqYwZTagf",
+          "key": "ATLAS_CUSTOMER_ORIGIN",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981512298,
+          "updatedAt": 1788981512298,
+          "value": "https://atlasgrading.com"
+        },
+        {
+          "id": "Ra1nt7SYoND3wIQ2",
+          "key": "ATLAS_CUSTOMER_PHONE_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981512298,
+          "updatedAt": 1788981512298
+        },
+        {
+          "id": "Eizinq60SqDOpPAj",
+          "key": "ATLAS_CUSTOMER_ROUTER_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981512298,
+          "updatedAt": 1788981512298
+        },
+        {
+          "id": "ELQLUrTqZ2R6KL5V",
+          "key": "ATLAS_CUSTOMER_RUNTIME",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981512298,
+          "updatedAt": 1788981512298,
+          "value": "postgres"
+        },
+        {
+          "id": "tepPJBZDKKBRoeux",
+          "key": "ATLAS_CUSTOMER_SESSION_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981512298,
+          "updatedAt": 1788981512298
+        },
+        {
+          "id": "3PBdageHkon6tfSB",
+          "key": "ATLAS_CUSTOMER_TWILIO_ACCOUNT_SID",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981512298,
+          "updatedAt": 1788981512298
+        },
+        {
+          "id": "JlfP02K2CAWJzGwQ",
+          "key": "ATLAS_CUSTOMER_TWILIO_API_KEY_SECRET",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981512298,
+          "updatedAt": 1788981512298
+        },
+        {
+          "id": "HbC0uARh76rk4zNv",
+          "key": "ATLAS_CUSTOMER_TWILIO_API_KEY_SID",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981512298,
+          "updatedAt": 1788981512298
+        },
+        {
+          "id": "kwBjnUdFslQOjm2n",
+          "key": "ATLAS_CUSTOMER_TWILIO_VERIFY_SERVICE_SID",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981512298,
+          "updatedAt": 1788981512298
+        }
+      ]
+    },
+    "public": {
+      "settings": {
+        "id": "prj_YUR9vwqRjIqm91QOmum08r0GgV9S",
+        "name": "atlas-grading-public",
+        "accountId": "team_YaEhDoZXD2WsvqpoUp0KqBDh",
+        "rootDirectory": "frontend/atlas-public",
+        "framework": "nextjs",
+        "nodeVersion": "20.x",
+        "autoExposeSystemEnvs": true,
+        "link": null,
+        "rollingRelease": null
+      },
+      "projectProductionTarget": {
+        "id": "dpl_Dd4ziXvByaGYPD6gSyfHU8vwJBrK",
+        "url": "atlas-grading-public-1siso2tfu-ten-kings.vercel.app",
+        "readyState": "READY",
+        "target": "production"
+      },
+      "aliases": [
+        {
+          "uid": "4b02ff29ecfcd5e0991c0e4646194d371b2685ea98d8ead32374c81595f1e12e550743965d1ad662e7558bf4bebd229017002d38c085a5aff3aeed9f71b4a04c",
+          "alias": "atlas-grading-public-ten-kings.vercel.app",
+          "projectId": "prj_YUR9vwqRjIqm91QOmum08r0GgV9S",
+          "createdAt": 1788972063942,
+          "updatedAt": 1790220241549,
+          "redirect": null,
+          "redirectStatusCode": null,
+          "deploymentId": "dpl_Dd4ziXvByaGYPD6gSyfHU8vwJBrK"
+        },
+        {
+          "uid": "59a50240ec38a8fff3e589d80ccfb321a8ca68ad42b8dd12bce497d1de622a7010b87db18e69a2f016e6cb413a749c01b3be08867f7ef472c58ef2b30cee64a2",
+          "alias": "atlas-grading-public.vercel.app",
+          "projectId": "prj_YUR9vwqRjIqm91QOmum08r0GgV9S",
+          "createdAt": 1788983682311,
+          "updatedAt": 1790222043282,
+          "redirect": null,
+          "redirectStatusCode": null,
+          "deploymentId": "dpl_Dd4ziXvByaGYPD6gSyfHU8vwJBrK"
+        },
+        {
+          "uid": "a3e80ee4f732fe19355bf2f970f1173ac2055489be4a82ddb74c7437d14e7d0baee21a90798c6e6bfdd8521d851cebb24cc988e0265952195db9fdb2e53942c0",
+          "alias": "atlasgrading.com",
+          "projectId": "prj_YUR9vwqRjIqm91QOmum08r0GgV9S",
+          "createdAt": 1788983682336,
+          "updatedAt": 1790222043282,
+          "redirect": null,
+          "redirectStatusCode": null,
+          "deploymentId": "dpl_Dd4ziXvByaGYPD6gSyfHU8vwJBrK"
+        },
+        {
+          "uid": "cffc54527b74dcd02e1c676e9080737d670e9bf19a5d0a957a8046371aa4014f06fba980ed43ebc23185be7a8b3bacdaf7a62144a537210f87b89b0becbf8451",
+          "alias": "www.atlasgrading.com",
+          "projectId": "prj_YUR9vwqRjIqm91QOmum08r0GgV9S",
+          "createdAt": 1788983682333,
+          "updatedAt": 1790222043282,
+          "redirect": "atlasgrading.com",
+          "redirectStatusCode": 308,
+          "deploymentId": "dpl_Dd4ziXvByaGYPD6gSyfHU8vwJBrK"
+        }
+      ],
+      "aliasDeploymentIds": [
+        "dpl_Dd4ziXvByaGYPD6gSyfHU8vwJBrK"
+      ],
+      "observedDeployments": {
+        "dpl_Dd4ziXvByaGYPD6gSyfHU8vwJBrK": {
+          "id": "dpl_Dd4ziXvByaGYPD6gSyfHU8vwJBrK",
+          "url": "atlas-grading-public-1siso2tfu-ten-kings.vercel.app",
+          "projectId": "prj_YUR9vwqRjIqm91QOmum08r0GgV9S",
+          "readyState": "READY",
+          "readySubstate": "PROMOTED",
+          "target": "production",
+          "source": "cli",
+          "createdAt": 1790220198460,
+          "ready": 1790220241404,
+          "aliasAssigned": true,
+          "aliasAssignedAt": 1790222043405,
+          "autoAssignCustomDomains": false,
+          "meta": {
+            "githubCommitSha": "e29567c200800b5bb7f3054dcbd3e41b751a4594",
+            "githubCommitOrg": "MarkTenKings",
+            "githubCommitRepo": "tenkings-backend",
+            "githubOrg": "MarkTenKings",
+            "githubRepo": "tenkings-backend",
+            "gitRootDirectory": "frontend/atlas-public"
+          },
+          "projectSettings": {
+            "rootDirectory": null,
+            "autoExposeSystemEnvs": null,
+            "framework": "nextjs",
+            "nodeVersion": "20.x"
+          }
+        }
+      },
+      "env": [
+        {
+          "id": "nRACTXmoRVreeNkR",
+          "key": "ATLAS_CUSTOMER_DEPLOYMENT_BYPASS",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981813302,
+          "updatedAt": 1788981813302
+        },
+        {
+          "id": "xilCUdDYZa7S3xDQ",
+          "key": "ATLAS_CUSTOMER_DEPLOYMENT_ORIGIN",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981813302,
+          "updatedAt": 1790093032189,
+          "value": "https://atlas-grading-customer-bpx50s9i7-ten-kings.vercel.app"
+        },
+        {
+          "id": "UO0q7KamZp5XVdrL",
+          "key": "ATLAS_CUSTOMER_ROUTER_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981813302,
+          "updatedAt": 1788981813302
+        },
+        {
+          "id": "q12OouEyeE30rTZ6",
+          "key": "ATLAS_PUBLIC_DEALER_DIRECTORY_JSON",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1790202230381,
+          "updatedAt": 1790202230381
+        },
+        {
+          "id": "D4J3sYicpJNOuCH9",
+          "key": "ATLAS_PUBLIC_MANUAL_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1790093068611,
+          "updatedAt": 1790093068611
+        },
+        {
+          "id": "Nnk0Gj0Ol91YYaEr",
+          "key": "ATLAS_PUBLIC_MANUAL_ORIGIN",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1790093059938,
+          "updatedAt": 1790093059938,
+          "value": "https://private.atlasgrading.com"
+        },
+        {
+          "id": "7DwdrHCMmzzie0oQ",
+          "key": "ATLAS_PUBLIC_ORIGIN",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1790093050224,
+          "updatedAt": 1790093050224,
+          "value": "https://atlasgrading.com"
+        },
+        {
+          "id": "YRl1AFvoYuwUHOrM",
+          "key": "ATLAS_PUBLIC_RUNTIME",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1790093041126,
+          "updatedAt": 1790093041126,
+          "value": "manual"
+        },
+        {
+          "id": "BgABssxBQ53SQK9X",
+          "key": "ATLAS_STAFF_DEPLOYMENT_BYPASS",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981813302,
+          "updatedAt": 1788981813302
+        },
+        {
+          "id": "3VXXAPJEVp5MUvKM",
+          "key": "ATLAS_STAFF_DEPLOYMENT_ORIGIN",
+          "type": "plain",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981813302,
+          "updatedAt": 1790220107678,
+          "value": "https://atlas-grading-staff-4dcwzxrdd-ten-kings.vercel.app"
+        },
+        {
+          "id": "VDdmxAE6rVFsYkaz",
+          "key": "ATLAS_STAFF_ROUTER_KEY",
+          "type": "sensitive",
+          "target": [
+            "production"
+          ],
+          "gitBranch": null,
+          "customEnvironmentIds": null,
+          "createdAt": 1788981813302,
+          "updatedAt": 1788981813302
+        }
+      ]
+    }
+  },
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/v9/projects/prj_s21BObRmeZfvljnx7gLceXFBFlCG",
+      "query": {},
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v10/projects/prj_s21BObRmeZfvljnx7gLceXFBFlCG/env",
+      "query": {
+        "target": "production",
+        "decrypt": "false"
+      },
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v4/aliases",
+      "query": {
+        "projectId": "prj_s21BObRmeZfvljnx7gLceXFBFlCG",
+        "limit": 100
+      },
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v13/deployments/dpl_FsCKsJ3Qwao7rzkj844R1kn6p2mg",
+      "query": {},
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v9/projects/prj_7nLO2ZaekTNdXIsJsaSmEkI5qZud",
+      "query": {},
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v10/projects/prj_7nLO2ZaekTNdXIsJsaSmEkI5qZud/env",
+      "query": {
+        "target": "production",
+        "decrypt": "false"
+      },
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v4/aliases",
+      "query": {
+        "projectId": "prj_7nLO2ZaekTNdXIsJsaSmEkI5qZud",
+        "limit": 100
+      },
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v13/deployments/dpl_7GzDxKz2MP36vESc8YkZq87Xht44",
+      "query": {},
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v9/projects/prj_YUR9vwqRjIqm91QOmum08r0GgV9S",
+      "query": {},
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v10/projects/prj_YUR9vwqRjIqm91QOmum08r0GgV9S/env",
+      "query": {
+        "target": "production",
+        "decrypt": "false"
+      },
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v4/aliases",
+      "query": {
+        "projectId": "prj_YUR9vwqRjIqm91QOmum08r0GgV9S",
+        "limit": 100
+      },
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/v13/deployments/dpl_Dd4ziXvByaGYPD6gSyfHU8vwJBrK",
+      "query": {},
+      "status": 200
+    }
+  ],
+  "providerWrites": 0,
+  "secretValuesIncluded": false,
+  "credentialFileUnchanged": true
+}

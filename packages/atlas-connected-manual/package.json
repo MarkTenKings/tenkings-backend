@@ -26,6 +26,8 @@
     "test": "pnpm --filter @tenkings/ebay-sold-comps-v2 build && node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@atlas/customer-intake": "workspace:*",
+    "@atlas/commerce": "workspace:*",
     "@atlas/batch-grading": "workspace:*",
     "@atlas/finishing": "workspace:*",
     "@atlas/manual-intake": "workspace:*",

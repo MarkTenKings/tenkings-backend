@@ -12,6 +12,7 @@ import { createApprovedManualReader } from '@atlas/connected-manual/publication-
 import { createSoldReferenceProvider } from '@atlas/connected-manual/presentation-market-provider';
 import { createStationSigner } from '@atlas/connected-manual/finishing-station-protocol';
 import { manualResearchSettings, manualDealerConfigurationLoader } from './market-runtime-settings.mjs';
+import { createDealerStaffService } from '../../../../packages/atlas-connected-manual/src/dealer-operations.mjs';
 
 export function manualStationSettings(env,origin) {
   if(env.ATLAS_MANUAL_STATION_ENABLED!=='true')return null;
@@ -84,7 +85,8 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   requireThat(!marketProvider||presentationEnabled,503,'MARKET_PRESENTATION_REQUIRED');
   const stationConfig=manualStationSettings(env,staffConfig.origin);
   const researchConfig=manualResearchSettings(env),dealerConfiguration=manualDealerConfigurationLoader(env);
-  const connected=createConnectedManual({memoryEnabled,defectProvider,batchEnabled,presentationEnabled,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl});
+  const dealerOperations=env.ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED==='true'?createDealerStaffService({auth,boundary}):null;
+  const connected=createConnectedManual({dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
   // Construction is cold: no database scan or provider request starts here.

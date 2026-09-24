@@ -42,7 +42,10 @@ export function createPageAccess({ resolveRuntime, environment = () => process.e
       stage = 'SESSION_ACCESS';
       const staff = await state.auth.maybeAuthenticate(ctx.req.headers.cookie);
       if (!staff) return { redirect: { destination: '/', permanent: false } };
-      return { props: { staff, manualEnabled: Boolean(state.connectedManual) } };
+      // Display capability only. The private service independently enforces its
+      // flag, actual reviewer session and deployment-bound operations grant.
+      const customerOperationsEnabled = Boolean(state.connectedManual) && env.ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED === 'true';
+      return { props: { staff: { ...staff, customerOperationsEnabled }, manualEnabled: Boolean(state.connectedManual), customerOperationsEnabled } };
     } catch (error) {
       const { kind, code } = diagnosis(error, stage, env), id = reference();
       // Only fixed categories, allowlisted codes and a fresh opaque reference

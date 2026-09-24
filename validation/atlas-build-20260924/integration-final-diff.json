@@ -1,0 +1,11 @@
+{
+  "changed": [
+    "frontend/atlas-app/prisma/migrations/20260924060000_customer_photo_intake/migration.sql",
+    "frontend/atlas-customer/scripts/validate-dealer-postgres.mjs",
+    "packages/atlas-commerce/INTEGRATION.md",
+    "packages/atlas-commerce/src/service.mjs",
+    "packages/atlas-customer-intake/sql/proposal.sql"
+  ],
+  "added": [],
+  "removed": []
+}

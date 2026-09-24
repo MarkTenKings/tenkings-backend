@@ -1,0 +1,104 @@
+
+> @atlas/staff-app@0.1.0 build /build/frontend/atlas-app
+> pnpm --filter @tenkings/ebay-sold-comps-v2 build && node ../../packages/atlas-grading-core/scripts/build.mjs && node ../../packages/atlas-manual-workspace/scripts/build.mjs && node scripts/generate-database.mjs && next build && node scripts/check-boundary.mjs
+
+
+> @tenkings/ebay-sold-comps-v2@0.1.0 build /build/packages/ebay-sold-comps-v2
+> tsc -p .
+
+{"status":"PURE_GRADING_CORE_BUILD_PASS","entries":13,"ambientEffectDependencies":0}
+Prisma schema loaded from prisma/schema.prisma
+
+✔ Generated Prisma Client (v5.22.0) to ./.generated/staff-database in 419ms
+
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+
+Tip: Want real-time updates to your database without manual polling? Discover how with Pulse: https://pris.ly/tip-0-pulse
+
+⚠ No build cache found. Please configure build caching for faster rebuilds. Read more: https://nextjs.org/docs/messages/no-cache
+   ▲ Next.js 15.5.25
+   - Experiments (use with caution):
+     · cpus: 2
+
+   Linting and checking validity of types ...
+
+./components/BatchGrading.jsx
+74:44  Warning: The ref value 'current.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'current.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+74:65  Warning: The ref value 'labelRead.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'labelRead.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+
+./components/GradingActions.jsx
+70:8  Warning: React Hook useEffect has missing dependencies: 'card.grading.analysisHash', 'card.grading.analysisRevision', 'card.id', 'csrf', and 'finding'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+
+./components/ManualCards.jsx
+102:72  Warning: The ref value 'generation.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'generation.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+103:5  Warning: React Hook useEffect has missing dependencies: 'commandKey' and 'refresh'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+108:5  Warning: React Hook useEffect has missing dependencies: 'cardId', 'refresh', and 'saved.card.ready'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+120:5  Warning: React Hook useEffect has a missing dependency: 'refresh'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+120:44  Warning: React Hook useEffect has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked.  react-hooks/exhaustive-deps
+121:63  Warning: React Hook useEffect has a missing dependency: 'saved'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+121:64  Warning: React Hook useEffect has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked.  react-hooks/exhaustive-deps
+280:43  Warning: The ref value 'finishingRead.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'finishingRead.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+281:5  Warning: React Hook useEffect has a missing dependency: 'refreshImages'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+386:5  Warning: React Hook useEffect has missing dependencies: 'finishing.binding.approvalActionId', 'finishing.binding.publicHash', 'loadFinishing', and 'view?.publication'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+
+./components/ManualFinishing.jsx
+106:6  Warning: React Hook useEffect has missing dependencies: 'finishAtStation' and 'printInBrowser'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+
+./components/PhotoIntake.jsx
+89:76  Warning: The ref value 'preparations.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'preparations.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+89:134  Warning: The ref value 'timers.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'timers.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+95:8  Warning: React Hook useEffect has missing dependencies: 'activity' and 'progress'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+95:9  Warning: React Hook useEffect has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked.  react-hooks/exhaustive-deps
+95:39  Warning: React Hook useEffect has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked.  react-hooks/exhaustive-deps
+264:8  Warning: React Hook useEffect has missing dependencies: 'errors', 'prepareSelection', 'run', and 'staff.role'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+
+./components/ReportResearchPicker.jsx
+11:188  Warning: The ref value 'generation.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'generation.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+
+./components/TrustedLearning.jsx
+124:8  Warning: React Hook useEffect has a missing dependency: 'loadHistory'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./lib/useWorkspaceMutation.js
+85:8  Warning: React Hook useEffect has a missing dependency: 'execute'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 20.7s
+   Collecting page data ...
+   Generating static pages (0/2) ...
+ ✓ Generating static pages (2/2)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (pages)                                Size  First Load JS
+┌ ƒ /                                      2.1 kB         103 kB
+├   /_app                                     0 B        84.8 kB
+├ ○ /404                                    181 B          85 kB
+├ ƒ /add-cards                              656 B         1.2 MB
+├   └ css/43caab82e38d7ead.css             4.5 kB
+├ ƒ /api/staff/[...path]                      0 B        84.8 kB
+├ ƒ /batch                                  390 B        1.18 MB
+├   └ css/5553af6f9764eb20.css            3.33 kB
+├ ƒ /cards/[cardId]                       33.8 kB         202 kB
+├   └ css/1f2a105d10c13dc3.css            2.47 kB
+├ ƒ /customer-operations                  10.4 kB         112 kB
+├   └ css/f8f8da7f24302b13.css            1.86 kB
+├ ƒ /grading                              6.44 kB        1.34 MB
+├ ƒ /manual                                 391 B        1.33 MB
+├ ƒ /manual/[cardId]                        421 B        1.33 MB
+├ ƒ /operations                           15.5 kB         121 kB
+├   └ css/4a51a54c8dfb7467.css            2.43 kB
+├ ƒ /station                              4.69 kB         106 kB
+├   └ css/0860eccdadfbdc46.css              956 B
+└ ƒ /workspace/[cardId]                   19.3 kB         137 kB
+    └ css/20bfb1dc88ce1b88.css            1.65 kB
++ First Load JS shared by all              106 kB
+  ├ chunks/framework-1c02a2e60068b586.js  44.8 kB
+  ├ chunks/main-8fdc02fecd916fa7.js         36 kB
+  ├ css/f1a13c45bd817ac0.css              20.8 kB
+  └ other shared chunks (total)           3.98 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+{"status":"STAFF_BUILD_BOUNDARY_PASS","pages":["/_app","/_error","/api/staff/[...path]","/batch","/customer-operations","/add-cards","/operations","/station","/","/manual/[cardId]","/grading","/manual","/workspace/[cardId]","/cards/[cardId]","/_document","/404"],"browserChunks":32,"serverTraces":15,"tracedFilesChecked":3003,"databaseEngines":["libquery_engine-debian-openssl-3.0.x.so.node"],"basePath":"/admin","durableStore":"atlas_staff","providerAdapters":["explicitly activated ATLAS Verify"],"certificationRoutes":1}

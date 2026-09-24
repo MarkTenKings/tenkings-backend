@@ -1,0 +1,173 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { createServer } from 'node:http';
+import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Actual customer JSX/CSS and browser IndexedDB/File behavior. Authentication,
+// uploaded subjects, provider replies and database records are synthetic only.
+// No production session or external network is available to this harness.
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..'), require = createRequire(join(root, 'package.json'));
+const toolModules = process.argv[2], output = resolve(process.argv[3] ?? '/private/tmp/atlas-customer-ui-browser');
+if (!toolModules) throw Error('Pass the bundled node_modules path for Playwright.');
+const { chromium } = createRequire(join(resolve(toolModules), '__atlas_customer__.cjs'))('playwright');
+const babel = require('next/dist/compiled/babel/core'), modules = new Map();
+for (const file of ['components/AccountWorkspace.jsx', 'components/intake/CustomerIntake.jsx', 'components/intake/ProfileFields.jsx', 'components/intake/ServiceChoice.jsx',
+    'components/commerce/CommerceCheckout.jsx', 'components/commerce/OrderReceipt.jsx', 'components/orders/CustomerOrderHistory.jsx', 'components/orders/CustomerOrderTracking.jsx',
+    'components/dealer/DealerWorkspace.jsx', 'components/dealer/DealerPortal.jsx', 'lib/progress.mjs', 'lib/pending-submission.mjs', 'lib/intake-journal.mjs']) {
+    modules.set(file, babel.transformSync(readFileSync(join(root, file), 'utf8'), { filename: file, presets: [[require.resolve('next/babel'), {
+        'preset-env': { targets: { chrome: '120' } }, 'transform-runtime': { helpers: false }
+    }]], babelrc: false, configFile: false }).code);
+}
+const classes = {};
+const css = readFileSync(join(root, 'components/commerce/commerce.module.css'), 'utf8').replace(/\.([a-zA-Z_][\w-]*)/g, (_, name) => { classes[name] = `commerce_${name}`; return `.commerce_${name}`; });
+modules.set('components/commerce/commerce.module.css', `module.exports=${JSON.stringify(classes)};`);
+modules.set('react', 'module.exports=window.React;');
+modules.set('next/head', 'module.exports=function Head(){return null};');
+modules.set('next/link', 'module.exports=function Link(props){return React.createElement("a",props,props.children)};');
+modules.set('lib/client.mjs', 'exports.request=(...args)=>window.__request(...args);');
+const bundle = `const factories={${[...modules].map(([name, source]) => `${JSON.stringify(name)}:function(require,module,exports){${source}\n}`).join(',')}};
+const cache={};function load(name){if(cache[name])return cache[name].exports;const factory=factories[name];if(!factory)throw Error('Unknown fixture module '+name);const module={exports:{}};cache[name]=module;factory(dependency=>{
+if(!dependency.startsWith('.'))return load(dependency);const parts=name.split('/');parts.pop();for(const part of dependency.split('/')){if(part==='..')parts.pop();else if(part!=='.')parts.push(part)}const key=parts.join('/');return load([key,key+'.jsx',key+'.mjs'].find(value=>factories[value])??key);
+},module,module.exports);return module.exports}window.__load=load;`;
+const fixture = `
+const copy=value=>structuredClone(value),id=n=>String(n).padStart(8,'0')+'-1111-4111-8111-111111111111';
+const kioskLocation={id:id(2),name:'Synthetic Harbor Kiosk',address:{line1:'1 Fixture Street',city:'Testville',region:'CA',postalCode:'90210',country:'US'},timeZone:'America/Los_Angeles',nextCollection:'2026-09-30T17:00:00Z',projectedReturn:'2026-10-07T17:00:00Z',schedule:{timeZone:'America/Los_Angeles',nextCollectionAt:'2026-09-30T17:00:00Z',projectedReturnAt:'2026-10-07T17:00:00Z',cutoffAt:'2026-09-30T16:00:00Z',pickups:[{weekday:3,time:'10:00',cutoff:'09:00'}],returns:[{weekday:3,time:'10:00'}],exceptions:[]}};
+const fresh=()=>({signedIn:false,customer:{id:id(1),phone:'+12025550141',profile:{}},calls:[],draft:null,payment:null,quote:null,order:null,uploads:{},settled:false,paymentCreates:0,dealer:false,deposited:false});
+const state=window.__fixture=JSON.parse(sessionStorage.getItem('synthetic-state')||'null')||fresh();
+const save=()=>sessionStorage.setItem('synthetic-state',JSON.stringify(state));window.__save=save;
+const failure=code=>{throw Object.assign(Error(code),{code});};
+window.__request=async(path,options={})=>{state.calls.push({path,body:copy(options.body)});const body=options.body;let result;
+if(path==='/session')result={csrf:'synthetic-csrf',mode:'LOCAL_FIXTURE',customer:state.signedIn?state.customer:null};
+else if(path==='/auth/request')result={challengeId:'synthetic-code'};
+else if(path==='/auth/verify'){if(body.code!=='424242')failure('CODE_NOT_ACCEPTED');state.signedIn=true;result={csrf:'synthetic-csrf',customer:state.customer};}
+else if(path==='/submissions')result={submissions:[],nextCursor:null};
+else if(path==='/profile'){state.customer.profile=copy(body.profile);result={customer:state.customer};}
+else if(path.startsWith('/intake/locations'))result={locations:[kioskLocation],...(path.includes('entry=')?{resolvedLocationId:kioskLocation.id}:{})};
+else if(path==='/intake/drafts'){if(body&&!state.draft)state.draft={id:id(3),revision:1,state:'DRAFT',intakeMethod:body.intakeMethod,kioskId:body.kioskId,cards:[]};result=body?{draft:state.draft}:{drafts:state.draft?[state.draft]:[]};}
+else if(path.endsWith('/cards')){let card=state.draft.cards.find(c=>c.id===body.cardId);if(!card){card={id:body.cardId,revision:1,identityState:'UPLOADING',uploads:{}};for(const side of ['FRONT','BACK'])card.uploads[side]={id:body[side.toLowerCase()].uploadId,state:'PLANNED'};state.draft.cards.push(card);state.draft.revision++;}result={draft:state.draft};}
+else if(path.endsWith('/sign')){result={state:'UPLOAD',method:'PUT',url:'https://upload.synthetic.invalid/'+path.split('/').at(-2),headers:{}};}
+else if(path.endsWith('/complete')){const uploadId=path.split('/').at(-2),card=state.draft.cards.find(c=>Object.values(c.uploads).some(u=>u.id===uploadId));const upload=Object.values(card.uploads).find(u=>u.id===uploadId);if(!state.uploads[uploadId])failure('NO_SYNTHETIC_BYTES');upload.state='VERIFIED';if(Object.values(card.uploads).every(u=>u.state==='VERIFIED')){card.identityState='READY';card.identity={category:'SPORTS',title:'Synthetic card '+(state.draft.cards.indexOf(card)+1),playerName:'Fixture Player',year:'2026',manufacturer:'Fixture',setName:'Synthetic Set',cardNumber:'1'};}state.draft.revision++;result={draft:state.draft};}
+else if(path.endsWith('/correct')){const card=state.draft.cards.find(c=>c.id===path.split('/').at(-2));card.identity=copy(body.identity);card.revision++;state.draft.revision++;result={draft:state.draft};}
+else if(path.endsWith('/review')){state.draft.state='REVIEW';state.draft.revision++;result={draft:state.draft};}
+else if(path.startsWith('/intake/drafts/'))result={draft:state.draft};
+else if(path.startsWith('/commerce/checkout'))result={draftId:state.draft.id,revision:state.draft.revision,channel:state.draft.intakeMethod==='MAIL_IN'?'MAIL_IN':'KIOSK',cards:state.draft.cards,location:kioskLocation,activePayment:state.payment,unitCents:5000,blockers:[],shippingOptions:[{packingPresetId:'fixture-box',shippingServiceCode:'FEDEX_GROUND',label:'Synthetic measured package'}]};
+else if(path==='/commerce/quotes'){const kiosk=state.draft.intakeMethod!=='MAIL_IN',n=state.draft.cards.length;state.quote={id:id(4),draftId:state.draft.id,channel:kiosk?'KIOSK':'MAIL_IN',cards:state.draft.cards.map(c=>({...c,unitCents:kiosk?5000:4000})),location:kiosk?kioskLocation:null,terms:{days:kiosk?7:14,clockStart:kiosk?'ATLAS_COLLECTION':'ATLAS_RECEIPT',mailChargedLegs:kiosk?null:'BOTH_LEGS'},subtotalCents:n*(kiosk?5000:4000),shippingCents:kiosk?0:1350,taxCents:n*450,totalCents:n*(kiosk?5450:4450)+(kiosk?0:1350),expiresAt:new Date(Date.now()+600000).toISOString()};result=state.quote;}
+else if(path==='/commerce/payments'){state.paymentCreates++;state.payment=state.quote.channel==='MAIL_IN'?{attemptId:id(5),state:'AWAITING_PAYMENT',clientSecret:'synthetic-only',publishableKey:'synthetic-only'}:{attemptId:id(5),state:'UNKNOWN'};result=state.payment;}
+else if(path.endsWith('/reconcile')){if(state.settled){state.order??={id:id(6),reference:'ATLAS-SYNTHETIC',receipt:copy(state.quote),effects:[{id:'email',kind:'EMAIL_RECEIPT',state:'SUCCEEDED',deliveryStatus:'ACCEPTED'},{id:'sms',kind:'SMS_RECEIPT',state:'SUCCEEDED',deliveryStatus:'QUEUED'},{id:'label',kind:'PACKAGE_LABEL',state:'SUCCEEDED',artifactState:'GENERATED'}]};state.payment={attemptId:id(5),state:'PAID',order:state.order};state.draft.state='ORDERED';}result=state.payment;}
+else if(path.startsWith('/commerce/orders/'))result=state.order;
+else if(path==='/orders')result={orders:state.order?[{id:state.order.id,reference:state.order.reference,channel:state.order.receipt.channel,cardCount:state.order.receipt.cards.length}]:[],nextCursor:null};
+else if(path.endsWith('/deposit')){state.deposited=true;result={};}
+else if(path.startsWith('/orders/'))result={reference:state.order.reference,cards:state.order.receipt.cards.map(c=>({cardId:c.id,identity:c.identity,channel:state.order.receipt.channel,originalLocation:kioskLocation.name,originalSchedule:kioskLocation.schedule,currentProjection:{nextCollection:kioskLocation.nextCollection,projectedReturn:kioskLocation.projectedReturn},grading:'NOT_STARTED',events:state.deposited?[{id:'deposit',kind:'DEPOSIT_DECLARED',occurredAt:'2026-09-24T17:00:00Z'}]:[]}))};
+else if(path==='/dealer/session'){if(body)state.dealer=true;if(!state.dealer)failure('DEALER_SIGN_IN_REQUIRED');result={csrf:'dealer-csrf',location:{name:kioskLocation.name},customerCount:1,orderCount:1,cardCount:2,commission:{accruedCents:1000,reversedCents:0},orders:[{reference:'ATLAS-SYNTHETIC',cardCount:2,cards:[{cardId:id(7),custody:'DEPOSIT_DECLARED',grading:'NOT_STARTED'},{cardId:id(8),custody:'ATLAS_RECEIVED',grading:'IN_GRADING'}]}]};}
+else if(path==='/dealer/memberships')result={memberships:[{locationId:kioskLocation.id,name:kioskLocation.name}]};
+else if(path==='/dealer/logout'){state.dealer=false;result={};}
+else throw Error('Unexpected synthetic API '+path);save();return copy(result);};
+const journal=__load('lib/intake-journal.mjs'),uploader=journal.createCustomerUploader;
+journal.createCustomerUploader=options=>uploader({...options,put:async(signed,file)=>{state.uploads[signed.url.split('/').at(-1)]={name:file.name,size:file.size,bytes:Array.from(new Uint8Array(await file.arrayBuffer()))};save();}});
+window.Stripe=()=>({elements:()=>({create:()=>({mount:node=>{node.textContent='Synthetic secure payment form. No card is collected.';},on:(name,callback)=>{if(name==='ready')queueMicrotask(callback);},destroy(){}})}),confirmPayment:async()=>{state.settled=true;save();return {};}});
+let app;window.__render=(mode='account')=>{app?.unmount();app=ReactDOM.createRoot(document.getElementById('app'));const component=mode==='dealer'?'components/dealer/DealerWorkspace.jsx':mode==='receipt'?'components/commerce/OrderReceipt.jsx':'components/AccountWorkspace.jsx';app.render(React.createElement(__load(component).default,mode==='receipt'?{orderId:state.order.id}:mode==='dealer'?{}:{initialView:'submit'}));};window.__render();`;
+const assets = new Map([
+    ['/react.js', readFileSync(join(dirname(require.resolve('react/package.json')), 'umd/react.production.min.js'))],
+    ['/react-dom.js', readFileSync(join(dirname(require.resolve('react-dom/package.json')), 'umd/react-dom.production.min.js'))],
+    ['/bundle.js', Buffer.from(bundle + '\n' + fixture)], ['/style.css', Buffer.from(['customer.css', 'atlas-brand.css', 'atlas-theme.css'].map(file => readFileSync(join(root, 'styles', file), 'utf8')).join('\n') + '\n' + css)],
+    ['/account/brand/atlas-brand.png', readFileSync(join(root, 'public/brand/atlas-brand.png'))]
+]);
+for (const file of ['original-1.woff2', 'original-2.woff2', 'original-3.woff2', 'original-4.woff2']) assets.set(`/account/brand/fonts/${file}`, readFileSync(join(root, 'public/brand/fonts', file)));
+mkdirSync(output, { recursive: true });
+const server = createServer((request, response) => {
+    const path = new URL(request.url, 'http://127.0.0.1').pathname;
+    if (path === '/') { response.setHeader('Content-Type', 'text/html'); response.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ATLAS synthetic customer verification</title><link rel="stylesheet" href="/style.css"></head><body><p style="text-align:center">SYNTHETIC LOCAL VERIFICATION · NO REAL EFFECTS</p><div id="app"></div><script src="/react.js"></script><script src="/react-dom.js"></script><script src="/bundle.js"></script></body></html>'); return; }
+    const value = assets.get(path); response.writeHead(value ? 200 : 404, { 'Content-Type': path.endsWith('.png') ? 'image/png' : path.endsWith('.woff2') ? 'font/woff2' : path.endsWith('.css') ? 'text/css' : 'text/javascript' }); response.end(value);
+});
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const origin = `http://127.0.0.1:${server.address().port}`, browser = await chromium.launch({ channel: 'chrome', headless: true });
+const context = await browser.newContext({ viewport: { width: 390, height: 844 } }), page = await context.newPage(), errors = [];
+page.on('pageerror', error => errors.push(error.message));
+await context.route(/^https?:\/\//, route => { assert.equal(new URL(route.request().url()).origin, origin, 'External requests are prohibited'); return route.continue(); });
+const shot = name => page.screenshot({ path: join(output, `${name}.png`), fullPage: true });
+try {
+    await page.goto(`${origin}/?kiosk=synthetic-entry`);
+    await page.getByRole('button', { name: 'Continue with your phone' }).click();
+    await page.getByRole('textbox', { name: 'Mobile number' }).fill('2025550141');
+    await page.getByRole('button', { name: 'Send verification code' }).click();
+    await page.getByRole('textbox', { name: 'Verification code' }).fill('424242');
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('heading', { name: 'Complete your details.' }).waitFor(); await shot('01-profile-mobile');
+    for (const [name, value] of [['Full name', 'Synthetic Customer'], ['Email for your receipt', 'synthetic@example.invalid'], ['Street address', '2 Fixture Way'], ['City', 'Testville'], ['State / province / region', 'CA'], ['Postal code', '90210']]) await page.getByRole('textbox', { name, exact: true }).fill(value);
+    await page.getByRole('button', { name: 'Save and add cards' }).click();
+    await page.getByRole('heading', { name: 'One card. Two photos.' }).waitFor();
+    for (let i = 1; i <= 2; i++) {
+        await page.getByLabel('Front photo', { exact: true }).setInputFiles({ name: `IMG_${i}F.jpg`, mimeType: 'image/jpeg', buffer: Buffer.from(`synthetic-front-${i}`) });
+        await page.getByRole('button', { name: 'Take back photo' }).waitFor();
+        await page.getByLabel('Back photo', { exact: true }).setInputFiles({ name: `IMG_${i}B.jpg`, mimeType: 'image/jpeg', buffer: Buffer.from(`synthetic-back-${i}`) });
+        await page.getByRole('button', { name: '＋ Add card', exact: true }).waitFor();
+        await page.waitForFunction(n => window.__fixture.draft.cards.length === n && window.__fixture.draft.cards.every(c => c.identityState === 'READY'), i);
+    }
+    await shot('02-capture-mobile');
+    await page.getByRole('button', { name: 'Done · Review cards' }).click();
+    await page.getByRole('heading', { name: 'Synthetic card 2' }).waitFor(); await shot('03-review-mobile');
+    await page.getByRole('button', { name: 'Continue to checkout' }).click();
+    await page.getByRole('button', { name: 'Get exact total' }).click();
+    await page.getByRole('button', { name: 'Pay $109.00', exact: true }).waitFor(); await shot('04-checkout-mobile');
+    await page.getByRole('button', { name: 'Pay $109.00', exact: true }).click();
+    await page.getByText('We are checking your original payment. Please do not pay again.').waitFor();
+    await page.reload();
+    await page.getByRole('button', { name: 'Check payment status' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Pay $109.00', exact: true }).count(), 0);
+    assert.equal(await page.evaluate(() => window.__fixture.paymentCreates), 1);
+    await page.evaluate(() => { window.__fixture.settled = true; window.__save(); });
+    await page.getByRole('button', { name: 'Check payment status' }).click();
+    await page.getByRole('region', { name: 'Order receipt' }).waitFor();
+    await page.getByText('Accepted for delivery', { exact: true }).waitFor(); await page.getByText('Queued for delivery', { exact: true }).waitFor();
+    assert.equal(await page.getByText('Sent', { exact: true }).count(), 0);
+    await shot('05-paid-receipt-mobile');
+    await page.getByRole('button', { name: 'I placed this card in the kiosk dropbox' }).first().click();
+    await page.getByText('This is your declaration. ATLAS collection and receipt are confirmed separately.').first().waitFor();
+    await page.evaluate(() => window.__render('receipt'));
+    await page.getByText('ATLAS-SYNTHETIC', { exact: true }).waitFor();
+    await page.getByText('Drop-off cutoff:', { exact: false }).waitFor();
+    assert.equal(await page.evaluate(() => window.__fixture.paymentCreates), 1);
+    await page.setViewportSize({ width: 1280, height: 900 }); await shot('06-saved-receipt-desktop');
+    await page.evaluate(() => window.__render('dealer'));
+    await page.getByRole('button', { name: 'Synthetic Harbor Kiosk', exact: true }).click();
+    await page.getByRole('heading', { name: 'Synthetic Harbor Kiosk' }).waitFor();
+    await page.getByText('Customer reports dropbox deposit', { exact: false }).waitFor();
+    assert.equal(await page.getByText('synthetic@example.invalid', { exact: false }).count(), 0); await shot('07-dealer-desktop');
+    await page.setViewportSize({ width: 390, height: 844 }); await shot('08-dealer-mobile');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Mobile layout must not scroll horizontally');
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await page.getByRole('heading', { name: 'Choose your location' }).waitFor();
+    assert.deepEqual(errors, []);
+    const evidence = await page.evaluate(() => ({ cards: window.__fixture.draft.cards.length, originals: Object.values(window.__fixture.uploads).map(({ name, size }) => ({ name, size })), paymentCreates: window.__fixture.paymentCreates, reviewWrites: window.__fixture.calls.filter(c => c.path.endsWith('/review')).length, profileWrites: window.__fixture.calls.filter(c => c.path === '/profile').length, dealerEntries: window.__fixture.calls.filter(c => c.path === '/dealer/session' && c.body).length }));
+    assert.equal(evidence.reviewWrites, 1); assert.equal(evidence.originals.length, 4);
+    await page.evaluate(() => { Object.assign(window.__fixture, { draft: null, quote: null, payment: null, order: null, settled: false, deposited: false }); history.replaceState(null, '', '/'); window.__save(); window.__render('account'); });
+    await page.getByRole('button', { name: /^MAIL YOUR CARDS/ }).click();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('heading', { name: 'One card. Two photos.' }).waitFor();
+    assert.equal(await page.getByRole('heading', { name: 'Complete your details.' }).count(), 0, 'Returning complete profile skips entry');
+    await page.getByLabel('Front photo', { exact: true }).setInputFiles({ name: 'mail-front.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('synthetic-mail-front') });
+    await page.getByRole('button', { name: 'Take back photo' }).waitFor();
+    await page.getByLabel('Back photo', { exact: true }).setInputFiles({ name: 'mail-back.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('synthetic-mail-back') });
+    await page.getByRole('button', { name: '＋ Add card', exact: true }).waitFor();
+    await page.waitForFunction(() => window.__fixture.draft.cards[0]?.identityState === 'READY');
+    await page.getByRole('button', { name: 'Done · Review cards' }).click();
+    await page.getByRole('button', { name: 'Continue to checkout' }).click();
+    await page.getByRole('combobox', { name: 'Your package and FedEx service' }).selectOption('0');
+    await page.getByRole('button', { name: 'Get exact total' }).click();
+    await page.getByText('Two weeks from physical receipt at ATLAS.', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Pay $58.00', exact: true }).click();
+    await page.getByRole('button', { name: 'Pay securely', exact: true }).click();
+    await page.getByRole('heading', { name: 'Prepare your shipment' }).waitFor();
+    await page.getByText('Shipping paid for the trip to ATLAS and the return trip.').waitFor(); await shot('09-mail-receipt-mobile');
+    assert.equal(await page.evaluate(() => window.__fixture.paymentCreates), 2, 'Exactly one payment per distinct synthetic order');
+    assert.equal(await page.evaluate(() => window.__fixture.calls.filter(c => c.path === '/profile').length), 1);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.deepEqual(errors, []);
+    const mail = await page.evaluate(() => ({ cards: window.__fixture.draft.cards.length, paymentState: window.__fixture.payment.state, totalDistinctPaymentCreates: window.__fixture.paymentCreates, profileWrites: window.__fixture.calls.filter(c => c.path === '/profile').length }));
+    writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'PASS', syntheticOnly: true, browserErrors: errors, kiosk: evidence, mail }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ status: 'PASS', output, kiosk: evidence, mail }) + '\n');
+} catch (error) {
+    await shot('failure'); writeFileSync(join(output, 'failure.json'), JSON.stringify({ error: error.message, browserErrors: errors, text: await page.locator('body').innerText() }, null, 2)); throw error;
+} finally { await context.close(); await browser.close(); await new Promise(resolve => server.close(resolve)); }

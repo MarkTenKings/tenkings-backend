@@ -40,7 +40,7 @@ const SIDES=['FRONT','BACK'];
 export function createWorkLimiter(maximum=2){let active=0;return async work=>{
   requireThat(active<maximum,503,'MANUAL_PROCESSING_BUSY');active++;try{return await work();}finally{active--;}
 };}
-export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,dealerConfiguration=null,researchConfig=null,stationConfig=null}) {
+export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null}) {
   let earlyGeometry,batch=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
   const intakeRepository=createIntakeRepository({boundary,keyPrefix,maxOriginalBytes:64*1024*1024,sourceCommitted:recordEarlyGeometryIntent});
@@ -153,7 +153,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   }
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
   assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,provider:defectProvider,receiptClient});
-  const connected={boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
+  const connected={dealerOperations,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
     workspaceExtras: async input => {
       const [extras,status]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId)]);
       return {...extras,publication:status,presentationEnabled,marketEnabled:Boolean(marketProvider),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};

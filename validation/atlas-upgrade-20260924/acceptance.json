@@ -1,0 +1,78 @@
+{
+  "scope": "Owned synthetic schema48-to52 rehearsal; no production/provider/human approval",
+  "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-1Wq8oz",
+  "sourceCommit": "4cbb40a35d9d4a858bd3fa0fb7ec4041c5769051",
+  "postgresImage": "sha256:9b1d34adbce1dd07ee6e94b4a2cf698884b89bd44a6c9c12f5da8f3acbfe4957",
+  "result": {
+    "pass": true,
+    "syntheticOnly": true,
+    "networkProviders": false,
+    "preUpgradeStaffMigrations": 48,
+    "publicMigrations": 95,
+    "staffMigrations": 52,
+    "postgres": "PostgreSQL 15.19 (Debian 15.19-1.pgdg13+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+    "node": "v20.20.1",
+    "oldTablesVerified": 238,
+    "populatedTablesVerified": 18,
+    "originalGatewayBodySha256": "fa98e6503a7865eda484f413e81754439e77e39310c299d4eb03ef22b9a404ab",
+    "originalGatewayAclSha256": "a69d296ebcbaf1db7789d8aba0d2ef26f9daf75a8894ad1a8014e13976c8c0e2",
+    "beforeSnapshotSha256": "365428f5b27bb14e0db7ffa7b2be66174c1e8cbeb351d9bc8b2ad15cb7a768d8",
+    "afterSnapshotSha256": "505d60f807026f7f8630cae393709462b8b43f649df792c055e537c410cf6abb",
+    "checks": [
+      "schema48: actual restricted customer SMS sessions, legacy profiles and both-channel submissions; original staff gateway creates action/resolution events",
+      "all preexisting table contents and physical row versions, public ledger, first48 staff ledger rows, table/column/schema ACLs, roles and memberships unchanged",
+      "original gateway OID/body/owner/security/settings retained; exact existing EXECUTE ACL moves to wrapper; other predecessor functions unchanged except approved profile body and fixed search path",
+      "original customer role passes exact one-function privilege verifier without regrant; old/internal/private gateways and direct tables denied",
+      "same pre-upgrade session, profile, list/detail/card/request reads and exact submit/staff-event retries survive; foreign ownership and changed retries denied without row changes",
+      "legacy no-email profiles remain valid; complete email profile accepted and malformed email rejected",
+      "new customer service, identification and commerce controls remain absent with false defaults; no invented dealer/location/order or legacy conversion",
+      "new separately provisioned private role passes exact one-function verifier, is denied customer/internal/table access and refuses work while service control is absent",
+      "new legacy submission succeeds with the original no-email request contract and exact retry remains idempotent; existing event history stays intact"
+    ],
+    "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-1Wq8oz"
+  },
+  "cleanup": {
+    "stoppedVerified": true,
+    "removed": "owned tmpfs container",
+    "evidenceRetained": true
+  },
+  "migration49Through52": [
+    {
+      "name": "20260924060000_customer_photo_intake",
+      "sha256": "41382fa3725251c92e461f5e7fd344d17e6e313a66ffe2e2ca625d834c0d58aa",
+      "byteCount": 33072
+    },
+    {
+      "name": "20260924061000_customer_commerce",
+      "sha256": "568042d384cde0fdee873531648b52006f7666077386910e670c642d579982ac",
+      "byteCount": 40068
+    },
+    {
+      "name": "20260924062000_dealer_custody_tracking",
+      "sha256": "f1286c7634594103a216a749448507d1c5d79dd280706e9f6b8d80edee6b136d",
+      "byteCount": 43183
+    },
+    {
+      "name": "20260924063000_customer_private_service",
+      "sha256": "152ca79fd3a1d1ac1b7f8bbfdae14e01c77f7f6133feb4ca120694f2529e1b85",
+      "byteCount": 4064
+    }
+  ],
+  "predecessorMigrationBytesMatchHead": true,
+  "migrationSourcesStillMatchAtIndependentReadback": true,
+  "evidenceFileSha256": {
+    "source.json": "df268696c4b0e3a51ba680cb11f224f1b054e50365edf0b1b42b8297d9332107",
+    "ledgers.json": "f103be8ac810fa3c9f2df0b99797fd70c1f8c9d438ebb4b0c98c879b1d1f56b0",
+    "upgrade-through-48-ledger.json": "8194e0e849d09810d7c1aee1f07afd5afb139a43614e74236a4edc8a10408298",
+    "upgrade-before.json": "e3799891d618f0a78e8d5006668f6ee15c323934827bdb3ac6807ae71ef2237c",
+    "upgrade-after.json": "35175c30f7214531ebda513edea3194b79b3f65178aa8efa797e2787f188410e",
+    "upgrade-result.json": "41ecd2480c05f7a0a098cdee8897eefb538318dceb94915c76c1c601b1d02e15",
+    "cleanup.json": "bad8075f83dabce5dacbcddc6be803a49a1c1522b8746660401bdf3d927fb543",
+    "container.json": "b7dde3220db489a5844e030ff632cceef7117701c76a3d0a2c6b043990cc0dc0"
+  },
+  "validatorSourceSha256": {
+    "frontend/atlas-app/scripts/disposable-postgres.mjs": "b5d555749cb158ba8003e76fa7bb360d2fe25e28ca5da93a1aa5e97143bd6ce4",
+    "frontend/atlas-app/test/disposable-postgres.test.mjs": "007d4ea867b1659f265e0f37be603fe6fb873363113184901944bb65f75d3692",
+    "frontend/atlas-customer/scripts/validate-upgrade-postgres.mjs": "797bcad05874c17a4604108dad88200d640b67473cba4444e3a33267d69b79dc"
+  }
+}

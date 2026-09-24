@@ -12,7 +12,7 @@ const code = babel.transformSync(readFileSync(new URL('../components/BatchGradin
 }).code;
 const all = (value, match, out = []) => { if (Array.isArray(value)) value.forEach(item => all(item, match, out)); else if (value && typeof value === 'object') { if (match(value)) out.push(value); all(value.props?.children, match, out); } return out; };
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
-async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false } = {}) {
+async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null } = {}) {
   const plan = samplePlan(), key = 'a'.repeat(64); let staff = { id: 'fixture-reviewer', role: 'REVIEWER' };
   const packet = { key, cardId: plan.binding.cardId, canCertify: true, reportHash: 'c'.repeat(64), report: {
     geometry: { FRONT: { frame: { inspectionImageSha256: 'd'.repeat(64) } }, BACK: { frame: { inspectionImageSha256: 'e'.repeat(64) } } },
@@ -25,7 +25,8 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
   let resolveApproval, resolveJobs; const response = deferred ? new Promise(resolve => { resolveApproval = resolve; }) : Promise.resolve(result);
   f.release = () => resolveApproval?.(result);
   f.releaseJobs = jobs => resolveJobs?.({ jobs });
-  f.jobs = [{ key, cardId: packet.cardId, state: 'REVIEW', evidence: { proposedGrade: 9.5 } }];
+  f.jobs = [{ key, cardId: packet.cardId, state: attention ? 'NEEDS_ATTENTION' : 'REVIEW', revision: 7,
+    canResumeProcessing: attention, evidence: { proposedGrade: 9.5 } }];
   const slots = [], effects = []; let cursor = 0, dirty = false, tree;
   const changed = (old, deps) => !old || deps.some((value, index) => value !== old[index]);
   const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
@@ -44,10 +45,15 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
     }
     if (url.endsWith(`/${key}`)) return packet;
     if (url.endsWith(`/${key}/review`)) { f.approved = true; return response; }
+    if (url.endsWith('/batch/resume')) {
+      f.jobs = [{ ...f.jobs[0], state: 'QUEUED', revision: 8, canResumeProcessing: false }];
+      if (resumeFailure) throw resumeFailure;
+      return { job: f.jobs[0] };
+    }
     if (url.includes('/finishing/')) return mismatch ? { ...plan, binding: { ...plan.binding, cardId: randomUUID() } } : plan;
     throw new Error(`Unexpected fixture request ${url}`);
   };
-  const exports = {}, local = new Map(), router = { query: { tab: intake ? 'INTAKE' : 'REVIEW' }, pathname: '/batch', push() {}, replace() {} };
+  const exports = {}, local = new Map(), router = { query: { tab: intake ? 'INTAKE' : attention ? 'NEEDS_ATTENTION' : 'REVIEW' }, pathname: '/batch', push() {}, replace() {} };
   vm.runInNewContext(code, { exports, crypto: { randomUUID }, setInterval: () => 1, clearInterval() {},
     window: { addEventListener() {}, removeEventListener() {} }, document: { visibilityState: 'visible' },
     localStorage: { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value), removeItem: key => local.delete(key) },
@@ -121,4 +127,22 @@ test('photo intake stays mounted while switching to review so saved uploads keep
   assert.equal(f.importer().length, 1); assert.equal(f.importer()[0].props.enabled, true);
   assert.equal(f.reviews().length, 1);
   assert.equal(f.calls.some(call => call.options.method === 'POST'), false); f.dispose();
+});
+test('resume binds the displayed revision once and reconciles a lost response without reenqueuing', async () => {
+  for (const resumeFailure of [null, { code: 'NETWORK_FAILED' }]) {
+    const f = await fixture({ attention: true, resumeFailure });
+    const button = f.find(node => node.type === 'button' && text(node) === 'Resume saved processing')[0];
+    assert.ok(button);
+    const attempt = button.props.onClick();
+    await button.props.onClick(); // a rapid second click cannot dispatch again
+    await attempt; await f.flush();
+    const posts = f.calls.filter(call => call.options.method === 'POST');
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].url, '/api/staff/manual-connected/cards/batch/resume');
+    assert.equal(posts[0].options.body.key, f.packet.key);
+    assert.equal(posts[0].options.body.expectedRevision, 7);
+    assert.equal(f.find(node => node.type === 'button' && text(node) === 'Resume saved processing').length, 0);
+    assert.equal(f.calls.at(-1).url, '/api/staff/manual-connected/cards/batch');
+    f.dispose();
+  }
 });

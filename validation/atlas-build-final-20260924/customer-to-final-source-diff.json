@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "path": "packages/atlas-commerce/INTEGRATION.md",
+      "before": "beebf90cb311f171a2263de28aadba57da630db4ce8391acb072ad59a58acfcd",
+      "after": "6d6e0497a5e031be2d55dcd7551b97adff793e84015a8ad437adf63d2eff4c86"
+    }
+  ],
+  "runtimeOrBuildInputsChanged": false
+}

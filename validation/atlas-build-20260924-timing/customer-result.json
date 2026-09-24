@@ -1,0 +1,21 @@
+{
+  "app": "customer",
+  "container": "ec921efc2ed78787414dc5add0aaab50786fd7082d6dd11e8afbdecde6ea4f68",
+  "command": [
+    "docker",
+    "exec",
+    "--workdir",
+    "/build/frontend/atlas-customer",
+    "--env",
+    "PATH=/tmp/bin:/opt/atlas-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "--env",
+    "NODE_OPTIONS=--max-old-space-size=2048",
+    "ec921efc2ed78787414dc5add0aaab50786fd7082d6dd11e8afbdecde6ea4f68",
+    "node",
+    "/tmp/pnpm/bin/pnpm.cjs",
+    "run",
+    "build"
+  ],
+  "exitCode": 0,
+  "durationSeconds": 26.79
+}

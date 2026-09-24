@@ -1,0 +1,31 @@
+{
+  "container": "4bd337734a73005dc3fd805a98482a7fbd0d7ea3d38cc853e49af0c70cc9a8dc",
+  "testFileCount": 22,
+  "tests": [
+    "frontend/atlas-app/test/access.test.mjs",
+    "frontend/atlas-app/test/batch-finishing.test.mjs",
+    "frontend/atlas-app/test/connected-manual-runtime.test.mjs",
+    "frontend/atlas-app/test/customer-operations.test.mjs",
+    "frontend/atlas-app/test/page-access.test.mjs",
+    "frontend/atlas-app/test/routes.test.mjs",
+    "frontend/atlas-app/test/staff-unavailable.test.mjs",
+    "frontend/atlas-customer/test/commerce-client.test.mjs",
+    "frontend/atlas-customer/test/commerce-receipt.test.mjs",
+    "frontend/atlas-customer/test/dealer-http.test.mjs",
+    "frontend/atlas-customer/test/dealer-ui.test.mjs",
+    "frontend/atlas-customer/test/document-policy.test.mjs",
+    "frontend/atlas-customer/test/intake-http.test.mjs",
+    "frontend/atlas-customer/test/intake-journal.test.mjs",
+    "frontend/atlas-customer/test/intake-resume.test.mjs",
+    "frontend/atlas-customer/test/security.test.mjs",
+    "frontend/atlas-public/test/dealer-pages.test.mjs",
+    "frontend/atlas-public/test/dealers.test.mjs",
+    "frontend/atlas-public/test/headers.test.mjs",
+    "frontend/atlas-public/test/manual-reader.test.mjs",
+    "frontend/atlas-public/test/manual-report-component.test.mjs",
+    "frontend/atlas-public/test/policy.test.mjs"
+  ],
+  "sourceManifestSha256": "bba67e1ced915580936c604007ac1c75016f0d9a3244d3a9e07bc6b2962aff23",
+  "exitCode": 0,
+  "durationSeconds": 9.14
+}

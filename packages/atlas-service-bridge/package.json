@@ -9,6 +9,7 @@
     "./executor": { "types": "./src/executor.d.mts", "default": "./src/executor.mjs" },
     "./public-media": { "types": "./src/public-media.d.mts", "default": "./src/public-media.mjs" },
     "./manual-public": "./src/manual-public.mjs",
+    "./customer-service": "./src/customer-service.mjs",
     "./operator-images": { "types": "./src/operator-images.d.mts", "default": "./src/operator-images.mjs" },
     "./operator-evidence": { "types": "./src/operator-evidence.d.mts", "default": "./src/operator-evidence.mjs" },
     "./intake": { "types": "./src/intake.d.mts", "default": "./src/intake.mjs" },

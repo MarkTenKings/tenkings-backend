@@ -14,7 +14,10 @@
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "@prisma/client": "5.22.0",
-    "@atlas/site-router": "workspace:*"
+    "@atlas/site-router": "workspace:*",
+    "@atlas/customer-intake": "workspace:*",
+    "@atlas/service-bridge": "workspace:*",
+    "@atlas/dealer-operations": "workspace:*"
   },
   "devDependencies": {
     "prisma": "5.22.0",

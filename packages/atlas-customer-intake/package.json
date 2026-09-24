@@ -1,0 +1,9 @@
+{
+  "name": "@atlas/customer-intake",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/service.mjs", "./contract": "./src/contract.mjs", "./repository": "./src/repository.mjs", "./identification": "./src/identification.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": { "@atlas/photo-core": "workspace:*", "@atlas/manual-intake": "workspace:*", "@tenkings/card-identification-core": "workspace:*", "sharp": "0.33.5" }
+}

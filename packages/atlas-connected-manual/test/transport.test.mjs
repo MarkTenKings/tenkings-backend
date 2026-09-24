@@ -10,6 +10,15 @@ const key = Buffer.alloc(32, 83), origin = 'https://app.atlasgrading.test';
 const card = '0336918d-0204-47e0-acdf-6ef4b22b62c1';
 const path = '/api/staff/manual-intake/cards';
 const imagePath = `/api/staff/manual-connected/cards/${card}/preview-image/FRONT`;
+test('station and customer-operations transport admits only explicit service routes', () => {
+  for (const suffix of ['', '/challenge', '/enroll', '/arm', '/acknowledge', '/complete'])
+    assert.equal(isManualServicePath('/api/staff/manual-connected/stations' + suffix), true);
+  for (const suffix of ['', '/location-configure', '/membership-configure', '/custody', '/bind-manual'])
+    assert.equal(isManualServicePath('/api/staff/manual-connected/dealer-operations' + suffix), true);
+  for (const path of ['/api/staff/manual-connected/stations/unlock', '/api/staff/manual-connected/dealer-operations/delete',
+    '/api/customer/commerce/payments', '/api/staff/manual-connected/stations/../dealer-operations',
+    '/api/staff/manual-connected/dealer-operations%2fcustody']) assert.equal(isManualServicePath(path), false);
+});
 function response() {
   return { statusCode: null, headers: {}, setHeader(name, value) { this.headers[name.toLowerCase()] = value; },
     status(code) { this.statusCode = code; return this; }, json(value) { this.value = value; },

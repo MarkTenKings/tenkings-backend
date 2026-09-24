@@ -1,0 +1,776 @@
+[
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/site-router",
+    "lockedVersion": "link:../../packages/atlas-site-router",
+    "target": "packages/atlas-site-router"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "next",
+    "lockedVersion": "15.5.25(react-dom@18.3.1(react@18.3.1))(react@18.3.1)",
+    "target": "node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "react",
+    "lockedVersion": "18.3.1",
+    "target": "node_modules/.pnpm/react@18.3.1/node_modules/react"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "react-dom",
+    "lockedVersion": "18.3.1(react@18.3.1)",
+    "target": "node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@prisma/client",
+    "lockedVersion": "5.22.0(prisma@5.22.0)",
+    "target": "node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/grading-core",
+    "lockedVersion": "link:../../packages/atlas-grading-core",
+    "target": "packages/atlas-grading-core"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/finishing",
+    "lockedVersion": "link:../../packages/atlas-finishing",
+    "target": "packages/atlas-finishing"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "qrcode",
+    "lockedVersion": "1.5.4",
+    "target": "node_modules/.pnpm/qrcode@1.5.4/node_modules/qrcode"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/report-view",
+    "lockedVersion": "link:../../packages/atlas-report-view",
+    "target": "packages/atlas-report-view"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/service-bridge",
+    "lockedVersion": "link:../../packages/atlas-service-bridge",
+    "target": "packages/atlas-service-bridge"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "libheif-js",
+    "lockedVersion": "1.23.2",
+    "target": "node_modules/.pnpm/libheif-js@1.23.2/node_modules/libheif-js"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "sharp",
+    "lockedVersion": "0.33.5",
+    "target": "node_modules/.pnpm/sharp@0.33.5/node_modules/sharp"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/connected-manual",
+    "lockedVersion": "link:../../packages/atlas-connected-manual",
+    "target": "packages/atlas-connected-manual"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/manual-intake",
+    "lockedVersion": "link:../../packages/atlas-manual-intake",
+    "target": "packages/atlas-manual-intake"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/manual-service",
+    "lockedVersion": "link:../../packages/atlas-manual-service",
+    "target": "packages/atlas-manual-service"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/manual-workflow",
+    "lockedVersion": "link:../../packages/atlas-manual-workflow",
+    "target": "packages/atlas-manual-workflow"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/manual-workspace",
+    "lockedVersion": "link:../../packages/atlas-manual-workspace",
+    "target": "packages/atlas-manual-workspace"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/photo-storage",
+    "lockedVersion": "link:../../packages/atlas-photo-storage",
+    "target": "packages/atlas-photo-storage"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@aws-sdk/client-s3",
+    "lockedVersion": "3.914.0",
+    "target": "node_modules/.pnpm/@aws-sdk+client-s3@3.914.0/node_modules/@aws-sdk/client-s3"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/photo-core",
+    "lockedVersion": "link:../../packages/atlas-photo-core",
+    "target": "packages/atlas-photo-core"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/defect-analysis",
+    "lockedVersion": "link:../../packages/atlas-defect-analysis",
+    "target": "packages/atlas-defect-analysis"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "@atlas/finishing-station",
+    "lockedVersion": "link:../../packages/atlas-finishing-station",
+    "target": "packages/atlas-finishing-station"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "eslint",
+    "lockedVersion": "8.57.0",
+    "target": "node_modules/.pnpm/eslint@8.57.0/node_modules/eslint"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "eslint-config-next",
+    "lockedVersion": "15.5.25(eslint@8.57.0)(typescript@5.9.3)",
+    "target": "node_modules/.pnpm/eslint-config-next@15.5.25_eslint@8.57.0_typescript@5.9.3/node_modules/eslint-config-next"
+  },
+  {
+    "directory": "frontend/atlas-app",
+    "name": "prisma",
+    "lockedVersion": "5.22.0",
+    "target": "node_modules/.pnpm/prisma@5.22.0/node_modules/prisma"
+  },
+  {
+    "directory": "frontend/atlas-customer",
+    "name": "next",
+    "lockedVersion": "15.5.25(react-dom@18.3.1(react@18.3.1))(react@18.3.1)",
+    "target": "node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next"
+  },
+  {
+    "directory": "frontend/atlas-customer",
+    "name": "react",
+    "lockedVersion": "18.3.1",
+    "target": "node_modules/.pnpm/react@18.3.1/node_modules/react"
+  },
+  {
+    "directory": "frontend/atlas-customer",
+    "name": "react-dom",
+    "lockedVersion": "18.3.1(react@18.3.1)",
+    "target": "node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom"
+  },
+  {
+    "directory": "frontend/atlas-customer",
+    "name": "@prisma/client",
+    "lockedVersion": "5.22.0(prisma@5.22.0)",
+    "target": "node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client"
+  },
+  {
+    "directory": "frontend/atlas-customer",
+    "name": "@atlas/site-router",
+    "lockedVersion": "link:../../packages/atlas-site-router",
+    "target": "packages/atlas-site-router"
+  },
+  {
+    "directory": "frontend/atlas-customer",
+    "name": "@atlas/customer-intake",
+    "lockedVersion": "link:../../packages/atlas-customer-intake",
+    "target": "packages/atlas-customer-intake"
+  },
+  {
+    "directory": "frontend/atlas-customer",
+    "name": "@atlas/service-bridge",
+    "lockedVersion": "link:../../packages/atlas-service-bridge",
+    "target": "packages/atlas-service-bridge"
+  },
+  {
+    "directory": "frontend/atlas-customer",
+    "name": "@atlas/dealer-operations",
+    "lockedVersion": "link:../../packages/atlas-dealer-operations",
+    "target": "packages/atlas-dealer-operations"
+  },
+  {
+    "directory": "frontend/atlas-customer",
+    "name": "prisma",
+    "lockedVersion": "5.22.0",
+    "target": "node_modules/.pnpm/prisma@5.22.0/node_modules/prisma"
+  },
+  {
+    "directory": "frontend/atlas-customer",
+    "name": "eslint",
+    "lockedVersion": "8.57.0",
+    "target": "node_modules/.pnpm/eslint@8.57.0/node_modules/eslint"
+  },
+  {
+    "directory": "frontend/atlas-customer",
+    "name": "eslint-config-next",
+    "lockedVersion": "15.5.25(eslint@8.57.0)(typescript@5.9.3)",
+    "target": "node_modules/.pnpm/eslint-config-next@15.5.25_eslint@8.57.0_typescript@5.9.3/node_modules/eslint-config-next"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "@atlas/site-router",
+    "lockedVersion": "link:../../packages/atlas-site-router",
+    "target": "packages/atlas-site-router"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "next",
+    "lockedVersion": "15.5.25(react-dom@18.3.1(react@18.3.1))(react@18.3.1)",
+    "target": "node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "react",
+    "lockedVersion": "18.3.1",
+    "target": "node_modules/.pnpm/react@18.3.1/node_modules/react"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "react-dom",
+    "lockedVersion": "18.3.1(react@18.3.1)",
+    "target": "node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "@prisma/client",
+    "lockedVersion": "5.22.0(prisma@5.22.0)",
+    "target": "node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "@atlas/report-view",
+    "lockedVersion": "link:../../packages/atlas-report-view",
+    "target": "packages/atlas-report-view"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "@atlas/manual-workspace",
+    "lockedVersion": "link:../../packages/atlas-manual-workspace",
+    "target": "packages/atlas-manual-workspace"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "@atlas/grading-core",
+    "lockedVersion": "link:../../packages/atlas-grading-core",
+    "target": "packages/atlas-grading-core"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "@atlas/service-bridge",
+    "lockedVersion": "link:../../packages/atlas-service-bridge",
+    "target": "packages/atlas-service-bridge"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "prisma",
+    "lockedVersion": "5.22.0",
+    "target": "node_modules/.pnpm/prisma@5.22.0/node_modules/prisma"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "eslint",
+    "lockedVersion": "8.57.0",
+    "target": "node_modules/.pnpm/eslint@8.57.0/node_modules/eslint"
+  },
+  {
+    "directory": "frontend/atlas-public",
+    "name": "eslint-config-next",
+    "lockedVersion": "15.5.25(eslint@8.57.0)(typescript@5.9.3)",
+    "target": "node_modules/.pnpm/eslint-config-next@15.5.25_eslint@8.57.0_typescript@5.9.3/node_modules/eslint-config-next"
+  },
+  {
+    "directory": "packages/atlas-batch-grading",
+    "name": "@atlas/manual-service",
+    "lockedVersion": "link:../atlas-manual-service",
+    "target": "packages/atlas-manual-service"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/customer-intake",
+    "lockedVersion": "link:../atlas-customer-intake",
+    "target": "packages/atlas-customer-intake"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/commerce",
+    "lockedVersion": "link:../atlas-commerce",
+    "target": "packages/atlas-commerce"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/batch-grading",
+    "lockedVersion": "link:../atlas-batch-grading",
+    "target": "packages/atlas-batch-grading"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/finishing",
+    "lockedVersion": "link:../atlas-finishing",
+    "target": "packages/atlas-finishing"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/manual-intake",
+    "lockedVersion": "link:../atlas-manual-intake",
+    "target": "packages/atlas-manual-intake"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/manual-service",
+    "lockedVersion": "link:../atlas-manual-service",
+    "target": "packages/atlas-manual-service"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/manual-workflow",
+    "lockedVersion": "link:../atlas-manual-workflow",
+    "target": "packages/atlas-manual-workflow"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/manual-workspace",
+    "lockedVersion": "link:../atlas-manual-workspace",
+    "target": "packages/atlas-manual-workspace"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/measurement-runtime",
+    "lockedVersion": "link:../atlas-measurement-runtime",
+    "target": "packages/atlas-measurement-runtime"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/photo-core",
+    "lockedVersion": "link:../atlas-photo-core",
+    "target": "packages/atlas-photo-core"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/photo-runtime",
+    "lockedVersion": "link:../atlas-photo-runtime",
+    "target": "packages/atlas-photo-runtime"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/photo-storage",
+    "lockedVersion": "link:../atlas-photo-storage",
+    "target": "packages/atlas-photo-storage"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/preparation-runtime",
+    "lockedVersion": "link:../atlas-preparation-runtime",
+    "target": "packages/atlas-preparation-runtime"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/grading-core",
+    "lockedVersion": "link:../atlas-grading-core",
+    "target": "packages/atlas-grading-core"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/report-view",
+    "lockedVersion": "link:../atlas-report-view",
+    "target": "packages/atlas-report-view"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/service-bridge",
+    "lockedVersion": "link:../atlas-service-bridge",
+    "target": "packages/atlas-service-bridge"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@tenkings/card-identification-core",
+    "lockedVersion": "link:../card-identification-core",
+    "target": "packages/card-identification-core"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@tenkings/card-research-core",
+    "lockedVersion": "link:../card-research-core",
+    "target": "packages/card-research-core"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@tenkings/card-catalog-evidence",
+    "lockedVersion": "link:../card-catalog-evidence",
+    "target": "packages/card-catalog-evidence"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "sharp",
+    "lockedVersion": "0.33.5",
+    "target": "node_modules/.pnpm/sharp@0.33.5/node_modules/sharp"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@aws-sdk/client-s3",
+    "lockedVersion": "3.914.0",
+    "target": "node_modules/.pnpm/@aws-sdk+client-s3@3.914.0/node_modules/@aws-sdk/client-s3"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/defect-analysis",
+    "lockedVersion": "link:../atlas-defect-analysis",
+    "target": "packages/atlas-defect-analysis"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@atlas/defect-memory",
+    "lockedVersion": "link:../atlas-defect-memory",
+    "target": "packages/atlas-defect-memory"
+  },
+  {
+    "directory": "packages/atlas-connected-manual",
+    "name": "@tenkings/ebay-sold-comps-v2",
+    "lockedVersion": "link:../ebay-sold-comps-v2",
+    "target": "packages/ebay-sold-comps-v2"
+  },
+  {
+    "directory": "packages/atlas-customer-intake",
+    "name": "@atlas/photo-core",
+    "lockedVersion": "link:../atlas-photo-core",
+    "target": "packages/atlas-photo-core"
+  },
+  {
+    "directory": "packages/atlas-customer-intake",
+    "name": "@atlas/manual-intake",
+    "lockedVersion": "link:../atlas-manual-intake",
+    "target": "packages/atlas-manual-intake"
+  },
+  {
+    "directory": "packages/atlas-customer-intake",
+    "name": "@tenkings/card-identification-core",
+    "lockedVersion": "link:../card-identification-core",
+    "target": "packages/card-identification-core"
+  },
+  {
+    "directory": "packages/atlas-customer-intake",
+    "name": "sharp",
+    "lockedVersion": "0.33.5",
+    "target": "node_modules/.pnpm/sharp@0.33.5/node_modules/sharp"
+  },
+  {
+    "directory": "packages/atlas-defect-analysis",
+    "name": "@atlas/defect-memory",
+    "lockedVersion": "link:../atlas-defect-memory",
+    "target": "packages/atlas-defect-memory"
+  },
+  {
+    "directory": "packages/atlas-defect-memory",
+    "name": "@atlas/grading-core",
+    "lockedVersion": "link:../atlas-grading-core",
+    "target": "packages/atlas-grading-core"
+  },
+  {
+    "directory": "packages/atlas-defect-memory",
+    "name": "@atlas/manual-workspace",
+    "lockedVersion": "link:../atlas-manual-workspace",
+    "target": "packages/atlas-manual-workspace"
+  },
+  {
+    "directory": "packages/atlas-finishing",
+    "name": "pdfkit",
+    "lockedVersion": "0.17.2",
+    "target": "node_modules/.pnpm/pdfkit@0.17.2/node_modules/pdfkit"
+  },
+  {
+    "directory": "packages/atlas-finishing",
+    "name": "qrcode",
+    "lockedVersion": "1.5.4",
+    "target": "node_modules/.pnpm/qrcode@1.5.4/node_modules/qrcode"
+  },
+  {
+    "directory": "packages/atlas-finishing",
+    "name": "svg-to-pdfkit",
+    "lockedVersion": "0.1.8",
+    "target": "node_modules/.pnpm/svg-to-pdfkit@0.1.8/node_modules/svg-to-pdfkit"
+  },
+  {
+    "directory": "packages/atlas-finishing",
+    "name": "esbuild",
+    "lockedVersion": "0.27.7",
+    "target": "node_modules/.pnpm/esbuild@0.27.7/node_modules/esbuild"
+  },
+  {
+    "directory": "packages/atlas-finishing-station",
+    "name": "@atlas/finishing",
+    "lockedVersion": "link:../atlas-finishing",
+    "target": "packages/atlas-finishing"
+  },
+  {
+    "directory": "packages/atlas-grading-core",
+    "name": "zod",
+    "lockedVersion": "4.1.11",
+    "target": "node_modules/.pnpm/zod@4.1.11/node_modules/zod"
+  },
+  {
+    "directory": "packages/atlas-grading-core",
+    "name": "esbuild",
+    "lockedVersion": "0.27.7",
+    "target": "node_modules/.pnpm/esbuild@0.27.7/node_modules/esbuild"
+  },
+  {
+    "directory": "packages/atlas-manual-intake",
+    "name": "@atlas/manual-service",
+    "lockedVersion": "link:../atlas-manual-service",
+    "target": "packages/atlas-manual-service"
+  },
+  {
+    "directory": "packages/atlas-manual-intake",
+    "name": "@atlas/photo-core",
+    "lockedVersion": "link:../atlas-photo-core",
+    "target": "packages/atlas-photo-core"
+  },
+  {
+    "directory": "packages/atlas-manual-intake",
+    "name": "@atlas/photo-runtime",
+    "lockedVersion": "link:../atlas-photo-runtime",
+    "target": "packages/atlas-photo-runtime"
+  },
+  {
+    "directory": "packages/atlas-manual-intake",
+    "name": "@atlas/photo-storage",
+    "lockedVersion": "link:../atlas-photo-storage",
+    "target": "packages/atlas-photo-storage"
+  },
+  {
+    "directory": "packages/atlas-manual-workflow",
+    "name": "@atlas/manual-service",
+    "lockedVersion": "link:../atlas-manual-service",
+    "target": "packages/atlas-manual-service"
+  },
+  {
+    "directory": "packages/atlas-manual-workflow",
+    "name": "@atlas/manual-workspace",
+    "lockedVersion": "link:../atlas-manual-workspace",
+    "target": "packages/atlas-manual-workspace"
+  },
+  {
+    "directory": "packages/atlas-manual-workflow",
+    "name": "@atlas/measurement-runtime",
+    "lockedVersion": "link:../atlas-measurement-runtime",
+    "target": "packages/atlas-measurement-runtime"
+  },
+  {
+    "directory": "packages/atlas-manual-workflow",
+    "name": "@atlas/grading-core",
+    "lockedVersion": "link:../atlas-grading-core",
+    "target": "packages/atlas-grading-core"
+  },
+  {
+    "directory": "packages/atlas-manual-workflow",
+    "name": "@atlas/photo-runtime",
+    "lockedVersion": "link:../atlas-photo-runtime",
+    "target": "packages/atlas-photo-runtime"
+  },
+  {
+    "directory": "packages/atlas-manual-workflow",
+    "name": "@atlas/preparation-runtime",
+    "lockedVersion": "link:../atlas-preparation-runtime",
+    "target": "packages/atlas-preparation-runtime"
+  },
+  {
+    "directory": "packages/atlas-manual-workflow",
+    "name": "esbuild",
+    "lockedVersion": "0.27.7",
+    "target": "node_modules/.pnpm/esbuild@0.27.7/node_modules/esbuild"
+  },
+  {
+    "directory": "packages/atlas-manual-workflow",
+    "name": "playwright",
+    "lockedVersion": "1.57.0",
+    "target": "node_modules/.pnpm/playwright@1.57.0/node_modules/playwright"
+  },
+  {
+    "directory": "packages/atlas-manual-workflow",
+    "name": "react",
+    "lockedVersion": "18.3.1",
+    "target": "node_modules/.pnpm/react@18.3.1/node_modules/react"
+  },
+  {
+    "directory": "packages/atlas-manual-workflow",
+    "name": "react-dom",
+    "lockedVersion": "18.3.1(react@18.3.1)",
+    "target": "node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom"
+  },
+  {
+    "directory": "packages/atlas-manual-workspace",
+    "name": "@atlas/grading-core",
+    "lockedVersion": "link:../atlas-grading-core",
+    "target": "packages/atlas-grading-core"
+  },
+  {
+    "directory": "packages/atlas-manual-workspace",
+    "name": "react",
+    "lockedVersion": "18.3.1",
+    "target": "node_modules/.pnpm/react@18.3.1/node_modules/react"
+  },
+  {
+    "directory": "packages/atlas-manual-workspace",
+    "name": "react-dom",
+    "lockedVersion": "18.3.1(react@18.3.1)",
+    "target": "node_modules/.pnpm/react-dom@18.3.1_react@18.3.1/node_modules/react-dom"
+  },
+  {
+    "directory": "packages/atlas-manual-workspace",
+    "name": "esbuild",
+    "lockedVersion": "0.27.7",
+    "target": "node_modules/.pnpm/esbuild@0.27.7/node_modules/esbuild"
+  },
+  {
+    "directory": "packages/atlas-manual-workspace",
+    "name": "playwright",
+    "lockedVersion": "1.57.0",
+    "target": "node_modules/.pnpm/playwright@1.57.0/node_modules/playwright"
+  },
+  {
+    "directory": "packages/atlas-manual-workspace",
+    "name": "@atlas/photo-runtime",
+    "lockedVersion": "link:../atlas-photo-runtime",
+    "target": "packages/atlas-photo-runtime"
+  },
+  {
+    "directory": "packages/atlas-manual-workspace",
+    "name": "@atlas/preparation-runtime",
+    "lockedVersion": "link:../atlas-preparation-runtime",
+    "target": "packages/atlas-preparation-runtime"
+  },
+  {
+    "directory": "packages/atlas-measurement-runtime",
+    "name": "@atlas/manual-workspace",
+    "lockedVersion": "link:../atlas-manual-workspace",
+    "target": "packages/atlas-manual-workspace"
+  },
+  {
+    "directory": "packages/atlas-photo-runtime",
+    "name": "@atlas/photo-core",
+    "lockedVersion": "link:../atlas-photo-core",
+    "target": "packages/atlas-photo-core"
+  },
+  {
+    "directory": "packages/atlas-photo-runtime",
+    "name": "sharp",
+    "lockedVersion": "0.33.5",
+    "target": "node_modules/.pnpm/sharp@0.33.5/node_modules/sharp"
+  },
+  {
+    "directory": "packages/atlas-photo-storage",
+    "name": "@atlas/photo-core",
+    "lockedVersion": "link:../atlas-photo-core",
+    "target": "packages/atlas-photo-core"
+  },
+  {
+    "directory": "packages/atlas-photo-storage",
+    "name": "@atlas/photo-runtime",
+    "lockedVersion": "link:../atlas-photo-runtime",
+    "target": "packages/atlas-photo-runtime"
+  },
+  {
+    "directory": "packages/atlas-photo-storage",
+    "name": "@aws-sdk/client-s3",
+    "lockedVersion": "3.914.0",
+    "target": "node_modules/.pnpm/@aws-sdk+client-s3@3.914.0/node_modules/@aws-sdk/client-s3"
+  },
+  {
+    "directory": "packages/atlas-photo-storage",
+    "name": "@aws-sdk/s3-request-presigner",
+    "lockedVersion": "3.982.0",
+    "target": "node_modules/.pnpm/@aws-sdk+s3-request-presigner@3.982.0/node_modules/@aws-sdk/s3-request-presigner"
+  },
+  {
+    "directory": "packages/atlas-preparation-runtime",
+    "name": "@atlas/photo-core",
+    "lockedVersion": "link:../atlas-photo-core",
+    "target": "packages/atlas-photo-core"
+  },
+  {
+    "directory": "packages/atlas-preparation-runtime",
+    "name": "@atlas/manual-workspace",
+    "lockedVersion": "link:../atlas-manual-workspace",
+    "target": "packages/atlas-manual-workspace"
+  },
+  {
+    "directory": "packages/atlas-preparation-runtime",
+    "name": "@atlas/photo-runtime",
+    "lockedVersion": "link:../atlas-photo-runtime",
+    "target": "packages/atlas-photo-runtime"
+  },
+  {
+    "directory": "packages/atlas-report-view",
+    "name": "react",
+    "lockedVersion": "18.3.1",
+    "target": "node_modules/.pnpm/react@18.3.1/node_modules/react"
+  },
+  {
+    "directory": "packages/atlas-report-view",
+    "name": "zod",
+    "lockedVersion": "4.1.11",
+    "target": "node_modules/.pnpm/zod@4.1.11/node_modules/zod"
+  },
+  {
+    "directory": "packages/atlas-report-view",
+    "name": "@atlas/grading-core",
+    "lockedVersion": "link:../atlas-grading-core",
+    "target": "packages/atlas-grading-core"
+  },
+  {
+    "directory": "packages/atlas-service-bridge",
+    "name": "@atlas/grading-core",
+    "lockedVersion": "link:../atlas-grading-core",
+    "target": "packages/atlas-grading-core"
+  },
+  {
+    "directory": "packages/card-identification-core",
+    "name": "sharp",
+    "lockedVersion": "0.33.5",
+    "target": "node_modules/.pnpm/sharp@0.33.5/node_modules/sharp"
+  },
+  {
+    "directory": "packages/card-identification-core",
+    "name": "zod",
+    "lockedVersion": "4.1.11",
+    "target": "node_modules/.pnpm/zod@4.1.11/node_modules/zod"
+  },
+  {
+    "directory": "packages/card-research-core",
+    "name": "@tenkings/ebay-sold-comps-v2",
+    "lockedVersion": "link:../ebay-sold-comps-v2",
+    "target": "packages/ebay-sold-comps-v2"
+  },
+  {
+    "directory": "packages/card-research-core",
+    "name": "@tenkings/card-catalog-evidence",
+    "lockedVersion": "link:../card-catalog-evidence",
+    "target": "packages/card-catalog-evidence"
+  },
+  {
+    "directory": "packages/card-research-core",
+    "name": "sharp",
+    "lockedVersion": "0.33.5",
+    "target": "node_modules/.pnpm/sharp@0.33.5/node_modules/sharp"
+  },
+  {
+    "directory": "packages/card-research-core",
+    "name": "zod",
+    "lockedVersion": "4.1.11",
+    "target": "node_modules/.pnpm/zod@4.1.11/node_modules/zod"
+  },
+  {
+    "directory": "packages/ebay-sold-comps-v2",
+    "name": "typescript",
+    "lockedVersion": "5.5.4",
+    "target": "node_modules/.pnpm/typescript@5.5.4/node_modules/typescript"
+  }
+]

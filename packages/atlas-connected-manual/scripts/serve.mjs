@@ -6,6 +6,7 @@ import {createServingConnectedManual} from '../../../frontend/atlas-app/lib/serv
 import {createPrivateManualServer} from './private-server.mjs';
 import {createAnalysisWorker} from './analysis-worker.mjs';
 import {createManualPublicHandler} from '../src/publication-reader.mjs';
+import {createServingCustomerService} from './customer-runtime.mjs';
 
 const env=process.env,config=privateManualAccessConfig(env);
 const key=Buffer.from(env.ATLAS_MANUAL_SERVICE_KEY??'','base64');
@@ -18,12 +19,13 @@ const auth=new DurableStaffAuth({database:new StaffDatabase(client,config),confi
 const runtime=createServingConnectedManual({env,auth,staffConfig:config,Client:PrismaClient,assertRequest(){throw new Error('Private signed transport required');}});
 if(!runtime)throw new Error('Manual runtime is disabled');
 const publicHandler=publicKey?createManualPublicHandler({key:publicKey,reader:runtime.approvedManualReader}):null;
-const server=createPrivateManualServer({connected:runtime.connected,boundary:runtime.boundary,origin:config.origin,key,publicHandler});
+const customerRuntime=createServingCustomerService({env,Client:PrismaClient,onEvent:event=>console.log(JSON.stringify(event))});
+const server=createPrivateManualServer({connected:runtime.connected,boundary:runtime.boundary,origin:config.origin,key,publicHandler,customerHandler:customerRuntime?.handler??null});
 const analysisWorker=runtime.analysisReconciler?createAnalysisWorker({reconciler:runtime.analysisReconciler,
   onEvent:event=>console.log(JSON.stringify(event))}):null;
 server.listen(Number(env.PORT??4319),'0.0.0.0',()=>{
   console.log(JSON.stringify({event:'MANUAL_PRIVATE_LISTENING',webDeployment:config.deploymentId,webReleaseSha:config.releaseSha,port:Number(env.PORT??4319),node:process.version,platform:process.platform,arch:process.arch}));
-  if(!stopping){analysisWorker?.start();runtime.connected.earlyGeometry.start();}
+  if(!stopping){analysisWorker?.start();runtime.connected.earlyGeometry.start();customerRuntime?.start();}
 });
 let stopping=false;
 async function stop(){
@@ -31,11 +33,13 @@ async function stop(){
  const workerStopped=analysisWorker?.stop();
  const geometryStopped=runtime.connected.earlyGeometry.stop();
  const batchStopped=runtime.connected.batch?.worker.stop();
+ const customerStopped=customerRuntime?.stopWorkers();
  const deadline=setTimeout(()=>server.closeAllConnections(),215000);deadline.unref();
  await new Promise(resolve=>server.close(resolve));clearTimeout(deadline);
  await workerStopped;
  await geometryStopped;
  await batchStopped;
- await Promise.all([runtime.close(),client.$disconnect()]);
+ await customerStopped;
+ await Promise.all([runtime.close(),client.$disconnect(),customerRuntime?.close()]);
 }
 process.once('SIGTERM',()=>void stop());process.once('SIGINT',()=>void stop());

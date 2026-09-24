@@ -1,0 +1,32 @@
+{
+  "packages": [
+    "atlas-customer-intake",
+    "atlas-commerce",
+    "atlas-dealer-operations",
+    "atlas-service-bridge",
+    "atlas-connected-manual",
+    "atlas-batch-grading"
+  ],
+  "focus": "native",
+  "testFileCount": 1,
+  "sourceManifestSha256": "bba67e1ced915580936c604007ac1c75016f0d9a3244d3a9e07bc6b2962aff23",
+  "container": "4bd337734a73005dc3fd805a98482a7fbd0d7ea3d38cc853e49af0c70cc9a8dc",
+  "command": [
+    "docker",
+    "exec",
+    "--workdir",
+    "/build",
+    "--env",
+    "NODE_OPTIONS=--max-old-space-size=2048",
+    "--env",
+    "ATLAS_MEASUREMENT_PYTHON=/opt/atlas-python/bin/python",
+    "4bd337734a73005dc3fd805a98482a7fbd0d7ea3d38cc853e49af0c70cc9a8dc",
+    "node",
+    "--test",
+    "--test-concurrency=2",
+    "--test-name-pattern=checked native CPU yields",
+    "packages/atlas-connected-manual/test/batch-review.test.mjs"
+  ],
+  "exitCode": 0,
+  "durationSeconds": 11.15
+}

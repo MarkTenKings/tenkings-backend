@@ -1,0 +1,595 @@
+TAP version 13
+# Subtest: durable staff phone aliases use the approved canonical identity and replay one existing challenge
+ok 1 - durable staff phone aliases use the approved canonical identity and replay one existing challenge
+  ---
+  duration_ms: 23.783042
+  ...
+# Subtest: a new durable staff challenge sends canonical E.164 through the strict Verify transport and replays without another send
+ok 2 - a new durable staff challenge sends canonical E.164 through the strict Verify transport and replays without another send
+  ---
+  duration_ms: 76.015292
+  ...
+# Subtest: durable reauthentication bootstrap changes CSRF purpose only and cannot rejuvenate current opaque human authority
+ok 3 - durable reauthentication bootstrap changes CSRF purpose only and cannot rejuvenate current opaque human authority
+  ---
+  duration_ms: 3.466375
+  ...
+# Subtest: durable reauthentication still enforces session/browser/control/access expiry and never revives an old session
+ok 4 - durable reauthentication still enforces session/browser/control/access expiry and never revives an old session
+  ---
+  duration_ms: 5.886584
+  ...
+# Subtest: production configuration requires exact environment, host, schema and dedicated keys
+ok 5 - production configuration requires exact environment, host, schema and dedicated keys
+  ---
+  duration_ms: 3.308084
+  ...
+# Subtest: production cookies, hosts, Origin and JSON cannot inherit local or legacy authority
+ok 6 - production cookies, hosts, Origin and JSON cannot inherit local or legacy authority
+  ---
+  duration_ms: 5.806708
+  ...
+# Subtest: every production ingress requires a fresh proof bound to method, path, deployment and dedicated key
+ok 7 - every production ingress requires a fresh proof bound to method, path, deployment and dedicated key
+  ---
+  duration_ms: 5.139792
+  ...
+# Subtest: customer and legacy host cookies never become a staff session
+ok 8 - customer and legacy host cookies never become a staff session
+  ---
+  duration_ms: 0.712667
+  ...
+# Subtest: Verify transport uses one fixed origin, no redirects/retries and exact SID-based check
+ok 9 - Verify transport uses one fixed origin, no redirects/retries and exact SID-based check
+  ---
+  duration_ms: 1.06075
+  ...
+# Subtest: Verify send formats a canonical number and rejects invalid input before transport
+ok 10 - Verify send formats a canonical number and rejects invalid input before transport
+  ---
+  duration_ms: 0.832375
+  ...
+# Subtest: ambiguous, oversized and substituted provider responses never leak details or retry
+ok 11 - ambiguous, oversized and substituted provider responses never leak details or retry
+  ---
+  duration_ms: 7.312416
+  ...
+# Subtest: batch approval owns one popup before POST and prepares only the exact committed label
+ok 12 - batch approval owns one popup before POST and prepares only the exact committed label
+  ---
+  duration_ms: 36.508958
+  ...
+# Subtest: mismatched label cannot print; pending publication closes popup without reading a label
+ok 13 - mismatched label cannot print; pending publication closes popup without reading a label
+  ---
+  duration_ms: 11.849542
+  ...
+# Subtest: unmount during approval closes its popup and discards late label effects
+ok 14 - unmount during approval closes its popup and discards late label effects
+  ---
+  duration_ms: 4.12725
+  ...
+# Subtest: a delayed queue response cannot display a prior staff account after account change
+ok 15 - a delayed queue response cannot display a prior staff account after account change
+  ---
+  duration_ms: 7.01825
+  ...
+# Subtest: photo intake stays mounted while switching to review so saved uploads keep running
+ok 16 - photo intake stays mounted while switching to review so saved uploads keep running
+  ---
+  duration_ms: 2.639167
+  ...
+# Subtest: resume binds the displayed revision once and reconciles a lost response without reenqueuing
+ok 17 - resume binds the displayed revision once and reconciles a lost response without reenqueuing
+  ---
+  duration_ms: 13.140083
+  ...
+# Subtest: connected runtime is explicitly disabled or requires isolated encrypted manual role and exact private origins
+ok 18 - connected runtime is explicitly disabled or requires isolated encrypted manual role and exact private origins
+  ---
+  duration_ms: 5.841459
+  ...
+# Subtest: private CPU auth binds the actual approved web deployment without pretending to be Vercel
+ok 19 - private CPU auth binds the actual approved web deployment without pretending to be Vercel
+  ---
+  duration_ms: 9.02675
+  ...
+# Subtest: runtime document CSP keeps both approved upload origins and does not accept paths or injected directives
+ok 20 - runtime document CSP keeps both approved upload origins and does not accept paths or injected directives
+  ---
+  duration_ms: 1.651958
+  ...
+# Subtest: station runtime is cold by default and requires explicit dedicated P256 signing and trusted configuration
+ok 21 - station runtime is cold by default and requires explicit dedicated P256 signing and trusted configuration
+  ---
+  duration_ms: 20.359166
+  ...
+# Subtest: custody availability follows actual physical sequence and approval, never a projected collection time
+ok 22 - custody availability follows actual physical sequence and approval, never a projected collection time
+  ---
+  duration_ms: 9.445667
+  ...
+# Subtest: empty registry defaults disabled with no fabricated schedule; actual structured configuration is preserved
+ok 23 - empty registry defaults disabled with no fabricated schedule; actual structured configuration is preserved
+  ---
+  duration_ms: 47.855
+  ...
+# Subtest: reconciliation requires exact staff event identity and content; public timeline is insufficient
+ok 24 - reconciliation requires exact staff event identity and content; public timeline is insufficient
+  ---
+  duration_ms: 3.982167
+  ...
+# Subtest: rendered empty roster is honest and received-card binding uses only accessible saved cards
+ok 25 - rendered empty roster is honest and received-card binding uses only accessible saved cards
+  ---
+  duration_ms: 25.064125
+  ...
+# Subtest: lost custody reply survives remount, prevents double click, and reconciles by read without resubmitting
+ok 26 - lost custody reply survives remount, prevents double click, and reconciles by read without resubmitting
+  ---
+  duration_ms: 19.005916
+  ...
+# Subtest: explicit retry keeps request ID/content and fresh csrf; a retry refusal never erases earlier uncertainty
+ok 27 - explicit retry keeps request ID/content and fresh csrf; a retry refusal never erases earlier uncertainty
+  ---
+  duration_ms: 2.591459
+  ...
+# Subtest: acknowledged custody with unavailable read remains locked and offers no repeat mutation
+ok 28 - acknowledged custody with unavailable read remains locked and offers no repeat mutation
+  ---
+  duration_ms: 2.859375
+  ...
+# Subtest: first definitive rejection unlocks editing while blocked storage and another-tab ownership prevent writes
+ok 29 - first definitive rejection unlocks editing while blocked storage and another-tab ownership prevent writes
+  ---
+  duration_ms: 2.55475
+  ...
+# Subtest: unconfirmed dealer setup has no retry write and only exact saved membership version clears it
+ok 30 - unconfirmed dealer setup has no retry write and only exact saved membership version clears it
+  ---
+  duration_ms: 1.854167
+  ...
+# Subtest: explicit disabled runtime is identified using the real production config gate
+ok 31 - explicit disabled runtime is identified using the real production config gate
+  ---
+  duration_ms: 4.743583
+  ...
+# Subtest: database control mismatch never claims the deployment is disabled or returns staff
+ok 32 - database control mismatch never claims the deployment is disabled or returns staff
+  ---
+  duration_ms: 0.657
+  ...
+# Subtest: configuration errors get their own safe category while ingress remains denied
+ok 33 - configuration errors get their own safe category while ingress remains denied
+  ---
+  duration_ms: 2.342917
+  ...
+# Subtest: Prisma and unknown failures retain only allowlisted diagnostics, never raw errors or context
+ok 34 - Prisma and unknown failures retain only allowlisted diagnostics, never raw errors or context
+  ---
+  duration_ms: 6.098
+  ...
+# Subtest: runtime configuration ambiguity does not become a disabled-deployment claim
+ok 35 - runtime configuration ambiguity does not become a disabled-deployment claim
+  ---
+  duration_ms: 1.034542
+  ...
+# Subtest: invalid upload CSP remains fail closed and is logged without the unsafe origin
+ok 36 - invalid upload CSP remains fail closed and is logged without the unsafe origin
+  ---
+  duration_ms: 1.14825
+  ...
+# Subtest: session lookup failure does not return an actor or bypass the database check
+ok 37 - session lookup failure does not return an actor or bypass the database check
+  ---
+  duration_ms: 0.334291
+  ...
+# Subtest: normal sign-in, signed-out redirect and verified staff paths preserve existing checks
+ok 38 - normal sign-in, signed-out redirect and verified staff paths preserve existing checks
+  ---
+  duration_ms: 1.631167
+  ...
+# Subtest: customer operations display capability requires explicit enablement and an available private manual service
+ok 39 - customer operations display capability requires explicit enablement and an available private manual service
+  ---
+  duration_ms: 1.248291
+  ...
+# Subtest: non-read methods never invoke runtime, database, session, or a replay
+ok 40 - non-read methods never invoke runtime, database, session, or a replay
+  ---
+  duration_ms: 1.349625
+  ...
+# Subtest: logger failure cannot alter denial and each failed check has a fresh reference
+ok 41 - logger failure cannot alter denial and each failed check has a fresh reference
+  ---
+  duration_ms: 1.215875
+  ...
+# Subtest: staff native URLs and Next artifact use the same exact admin mount
+ok 42 - staff native URLs and Next artifact use the same exact admin mount
+  ---
+  duration_ms: 4.37475
+  ...
+# Subtest: staff browser transport rejects unmounted, cross-origin and traversal paths
+ok 43 - staff browser transport rejects unmounted, cross-origin and traversal paths
+  ---
+  duration_ms: 2.750292
+  ...
+# Subtest: unknown and transient failures explain the access check and offer only user-driven GET navigation
+ok 44 - unknown and transient failures explain the access check and offer only user-driven GET navigation
+  ---
+  duration_ms: 8.283208
+  ...
+# Subtest: explicit disabled deployment points to the active workspace and configuration failures remain distinct
+ok 45 - explicit disabled deployment points to the active workspace and configuration failures remain distinct
+  ---
+  duration_ms: 1.745875
+  ...
+# Subtest: diagnostic UI displays only a valid opaque reference, never arbitrary reason/code text
+ok 46 - diagnostic UI displays only a valid opaque reference, never arbitrary reason/code text
+  ---
+  duration_ms: 0.681291
+  ...
+# Subtest: every staff page forwards the safe category without rendering its protected workspace on failure
+ok 47 - every staff page forwards the safe category without rendering its protected workspace on failure
+  ---
+  duration_ms: 607.250792
+  ...
+# Subtest: saved label JSON may exceed ordinary response cap, unrelated routes retain cap
+ok 48 - saved label JSON may exceed ordinary response cap, unrelated routes retain cap
+  ---
+  duration_ms: 102.229958
+  ...
+# Subtest: label-specific response cap still rejects oversized replies
+ok 49 - label-specific response cap still rejects oversized replies
+  ---
+  duration_ms: 15.70875
+  ...
+# Subtest: only long private operations outlive the API deadline; auth and ordinary reads retain25 seconds
+ok 50 - only long private operations outlive the API deadline; auth and ordinary reads retain25 seconds
+  ---
+  duration_ms: 16.884
+  ...
+# Subtest: a long payment timeout retains the exact caller request and never retries automatically
+ok 51 - a long payment timeout retains the exact caller request and never retries automatically
+  ---
+  duration_ms: 2.254667
+  ...
+# Subtest: paid kiosk receipt retains exact saved location, schedule, terms, amounts and honest delivery/print states
+ok 52 - paid kiosk receipt retains exact saved location, schedule, terms, amounts and honest delivery/print states
+  ---
+  duration_ms: 70.56925
+  ...
+# Subtest: mail paid receipt uses its retained clock and shipping-leg terms
+ok 53 - mail paid receipt uses its retained clock and shipping-leg terms
+  ---
+  duration_ms: 2.46625
+  ...
+# Subtest: provider acceptance and unknown delivery never assert sent or delivered
+ok 54 - provider acceptance and unknown delivery never assert sent or delivered
+  ---
+  duration_ms: 0.173167
+  ...
+# Subtest: resumed paid checkout renders receipt from the original paid order even when current view differs
+ok 55 - resumed paid checkout renders receipt from the original paid order even when current view differs
+  ---
+  duration_ms: 139.391001
+  ...
+# Subtest: dealer entry exchanges existing customer proof for separate HttpOnly cookie without exposing token
+ok 56 - dealer entry exchanges existing customer proof for separate HttpOnly cookie without exposing token
+  ---
+  duration_ms: 19.283542
+  ...
+# Subtest: dealer HTTP rejects forged account selectors, absent distinct session, cross-origin and mutation without CSRF
+ok 57 - dealer HTTP rejects forged account selectors, absent distinct session, cross-origin and mutation without CSRF
+  ---
+  duration_ms: 1.017292
+  ...
+# Subtest: dealer memberships uses authenticated customer gateway and rejects location query or wrong method
+ok 58 - dealer memberships uses authenticated customer gateway and rejects location query or wrong method
+  ---
+  duration_ms: 0.853166
+  ...
+# Subtest: dealer portal renders scoped counts/custody/commission without private grade, profile or transfer claims
+ok 59 - dealer portal renders scoped counts/custody/commission without private grade, profile or transfer claims
+  ---
+  duration_ms: 35.293209
+  ...
+# Subtest: new dealer route and location session workspace compile
+ok 60 - new dealer route and location session workspace compile
+  ---
+  duration_ms: 66.857917
+  ...
+# Subtest: customer current-card tracker renders declared and actual custody as separate facts with no guessed approval
+ok 61 - customer current-card tracker renders declared and actual custody as separate facts with no guessed approval
+  ---
+  duration_ms: 36.14
+  ...
+# Subtest: order detail/history and paid-receipt mount compile without replacing legacy tracker
+ok 62 - order detail/history and paid-receipt mount compile without replacing legacy tracker
+  ---
+  duration_ms: 442.800542
+  ...
+# Subtest: each customer HTML response gets its own nonce and private CSP
+ok 63 - each customer HTML response gets its own nonce and private CSP
+  ---
+  duration_ms: 10.074209
+  ...
+# Subtest: build-time document rendering needs no request or external runtime
+ok 64 - build-time document rendering needs no request or external runtime
+  ---
+  duration_ms: 0.251292
+  ...
+# Subtest: photo and payment sources are narrowly scoped and payment origins are disabled by default
+ok 65 - photo and payment sources are narrowly scoped and payment origins are disabled by default
+  ---
+  duration_ms: 3.424458
+  ...
+# Subtest: customer upload effects forward only server-derived session authority and exact owned IDs
+ok 66 - customer upload effects forward only server-derived session authority and exact owned IDs
+  ---
+  duration_ms: 16.429542
+  ...
+# Subtest: checkout refuses browser prices, account selectors and arbitrary reader IDs
+ok 67 - checkout refuses browser prices, account selectors and arbitrary reader IDs
+  ---
+  duration_ms: 4.366875
+  ...
+# Subtest: public location listing does not fabricate a customer and bounds location input
+ok 68 - public location listing does not fabricate a customer and bounds location input
+  ---
+  duration_ms: 2.126667
+  ...
+# Subtest: saved label reads route only to owner-scoped gateway and reject path traversal
+ok 69 - saved label reads route only to owner-scoped gateway and reject path traversal
+  ---
+  duration_ms: 2.218333
+  ...
+# Subtest: private runtime is disabled absent exact config and refuses partial or noncanonical authority
+ok 70 - private runtime is disabled absent exact config and refuses partial or noncanonical authority
+  ---
+  duration_ms: 2.275917
+  ...
+# Subtest: paid order tracking and deposit declaration retain ownership gateway and exact order binding
+ok 71 - paid order tracking and deposit declaration retain ownership gateway and exact order binding
+  ---
+  duration_ms: 4.1955
+  ...
+# Subtest: customer pair is durable before network, explicit sides retain original bytes and successful uploads release only local blobs
+ok 72 - customer pair is durable before network, explicit sides retain original bytes and successful uploads release only local blobs
+  ---
+  duration_ms: 34.303958
+  ...
+# Subtest: append during upload cannot be overwritten by the earlier upload progress
+ok 73 - append during upload cannot be overwritten by the earlier upload progress
+  ---
+  duration_ms: 7.561
+  ...
+# Subtest: lost creation reply resumes the same request/card/pair and does not duplicate cards
+ok 74 - lost creation reply resumes the same request/card/pair and does not duplicate cards
+  ---
+  duration_ms: 6.793583
+  ...
+# Subtest: browser quota failure keeps originals with caller and dispatches nothing
+ok 75 - browser quota failure keeps originals with caller and dispatches nothing
+  ---
+  duration_ms: 2.078625
+  ...
+# Subtest: identical sides are retained as a correctable local error and never dispatched
+ok 76 - identical sides are retained as a correctable local error and never dispatched
+  ---
+  duration_ms: 3.043625
+  ...
+# Subtest: browser journal refuses missing account, draft or IndexedDB before opening any store
+ok 77 - browser journal refuses missing account, draft or IndexedDB before opening any store
+  ---
+  duration_ms: 0.314208
+  ...
+# Subtest: resuming a reviewed cart opens payment reconciliation without attempting a frozen review mutation
+ok 78 - resuming a reviewed cart opens payment reconciliation without attempting a frozen review mutation
+  ---
+  duration_ms: 17.10525
+  ...
+# Subtest: U.S. phone aliases share identity while explicit international numbers retain their prefix
+ok 79 - U.S. phone aliases share identity while explicit international numbers retain their prefix
+  ---
+  duration_ms: 22.047666
+  ...
+# Subtest: new profile requires email; legacy submission retry retains historical seven-field profile
+ok 80 - new profile requires email; legacy submission retry retains historical seven-field profile
+  ---
+  duration_ms: 4.94225
+  ...
+# Subtest: separate cookie names, path and CSRF purpose deny staff or browser authority at customer session writes
+ok 81 - separate cookie names, path and CSRF purpose deny staff or browser authority at customer session writes
+  ---
+  duration_ms: 7.404666
+  ...
+# Subtest: deployment configuration cannot promote a local fixture or reuse staff verification purpose
+ok 82 - deployment configuration cannot promote a local fixture or reuse staff verification purpose
+  ---
+  duration_ms: 1.3005
+  ...
+# Subtest: account pages and Next data require signed customer ingress and remain private on denials
+ok 83 - account pages and Next data require signed customer ingress and remain private on denials
+  ---
+  duration_ms: 24.166458
+  ...
+# Subtest: mixed-card progress does not advance sibling cards or fill unrecorded milestones
+ok 84 - mixed-card progress does not advance sibling cards or fill unrecorded milestones
+  ---
+  duration_ms: 2.311
+  ...
+# Subtest: uncertain submission recovery survives a new page instance and remains customer-bound
+ok 85 - uncertain submission recovery survives a new page instance and remains customer-bound
+  ---
+  duration_ms: 2.331833
+  ...
+# Subtest: private HTTP boundaries refuse wrong origin, missing CSRF, foreign routes and caller identities
+ok 86 - private HTTP boundaries refuse wrong origin, missing CSRF, foreign routes and caller identities
+  ---
+  duration_ms: 6.143292
+  ...
+# Subtest: durable provider claim commits before I/O; a timeout finalizes an unknown result without automatic resend
+ok 87 - durable provider claim commits before I/O; a timeout finalizes an unknown result without automatic resend
+  ---
+  duration_ms: 2.126834
+  ...
+# Subtest: SMS transport binds account/service/verification/phone, bounds body and does not follow redirects
+ok 88 - SMS transport binds account/service/verification/phone, bounds body and does not follow redirects
+  ---
+  duration_ms: 55.282042
+  ...
+# Subtest: public submission directory renders actual configured schedule and kiosk CTA
+ok 89 - public submission directory renders actual configured schedule and kiosk CTA
+  ---
+  duration_ms: 61.072625
+  ...
+# Subtest: empty enabled kiosk directory is explicit and shows no contact-only submission CTA
+ok 90 - empty enabled kiosk directory is explicit and shows no contact-only submission CTA
+  ---
+  duration_ms: 1.654292
+  ...
+# Subtest: public marketing service comparison source compiles
+ok 91 - public marketing service comparison source compiles
+  ---
+  duration_ms: 416.685125
+  ...
+# Subtest: cold public directory preserves contact information without advertising an unavailable kiosk checkout
+ok 92 - cold public directory preserves contact information without advertising an unavailable kiosk checkout
+  ---
+  duration_ms: 1.230125
+  ...
+# Subtest: public kiosk service is not called until the server display switch is explicitly true
+ok 93 - public kiosk service is not called until the server display switch is explicitly true
+  ---
+  duration_ms: 0.901917
+  ...
+# Subtest: public marketing advertises paid intake only when its server capability is enabled
+ok 94 - public marketing advertises paid intake only when its server capability is enabled
+  ---
+  duration_ms: 436.27125
+  ...
+# Subtest: an unconfigured directory contains no invented dealer or map credentials
+ok 95 - an unconfigured directory contains no invented dealer or map credentials
+  ---
+  duration_ms: 7.405125
+  ...
+# Subtest: expired authorization/programs and future dealers cannot reach the public list
+ok 96 - expired authorization/programs and future dealers cannot reach the public list
+  ---
+  duration_ms: 10.737625
+  ...
+# Subtest: nearest ordering uses actual coordinates, keeps unlocated dealers, and filters service and address
+ok 97 - nearest ordering uses actual coordinates, keeps unlocated dealers, and filters service and address
+  ---
+  duration_ms: 19.31525
+  ...
+# Subtest: directory refuses duplicate IDs, code links, malformed coordinates and invented negative prices
+ok 98 - directory refuses duplicate IDs, code links, malformed coordinates and invented negative prices
+  ---
+  duration_ms: 1.271208
+  ...
+# Subtest: directions preserves supplied address as URL data only
+ok 99 - directions preserves supplied address as URL data only
+  ---
+  duration_ms: 1.395959
+  ...
+# Subtest: only full valid optional map configuration is exposed
+ok 100 - only full valid optional map configuration is exposed
+  ---
+  duration_ms: 3.233208
+  ...
+# Subtest: owner-authorized contact-only shop is discoverable without inferred services, terms, pins or phone
+ok 101 - owner-authorized contact-only shop is discoverable without inferred services, terms, pins or phone
+  ---
+  duration_ms: 2.227083
+  ...
+# Subtest: contact-only authorization cannot publish a service, program or unusable contact
+ok 102 - contact-only authorization cannot publish a service, program or unusable contact
+  ---
+  duration_ms: 0.693542
+  ...
+# Subtest: only enabled registry kiosks appear in submission filter; contact roster cannot invent them
+ok 103 - only enabled registry kiosks appear in submission filter; contact roster cannot invent them
+  ---
+  duration_ms: 2.443625
+  ...
+# Subtest: public router permits scoped staff/customer cameras and optional customer location with mounted CSP
+ok 104 - public router permits scoped staff/customer cameras and optional customer location with mounted CSP
+  ---
+  duration_ms: 19.682042
+  ...
+# Subtest: direct staff camera permission matches its mounted policy and supports a local video stream
+ok 105 - direct staff camera permission matches its mounted policy and supports a local video stream
+  ---
+  duration_ms: 0.708417
+  ...
+# Subtest: public reader displays approved manual V2 with exact award and retrieves hash-verified images and traces
+ok 106 - public reader displays approved manual V2 with exact award and retrieves hash-verified images and traces
+  ---
+  duration_ms: 257.448917
+  ...
+# Subtest: manual public reader rejects wrong binding or bytes, and retains no publication authority
+ok 107 - manual public reader rejects wrong binding or bytes, and retains no publication authority
+  ---
+  duration_ms: 84.757083
+  ...
+# Subtest: legacy V1 packet and historical tenth-point grade stay byte-equivalent; manual bridge is never consulted
+ok 108 - legacy V1 packet and historical tenth-point grade stay byte-equivalent; manual bridge is never consulted
+  ---
+  duration_ms: 17.067541
+  ...
+# Subtest: manual-only reader has no DB/media client, returns native not-found directly and serves exact manual evidence
+ok 109 - manual-only reader has no DB/media client, returns native not-found directly and serves exact manual evidence
+  ---
+  duration_ms: 149.590291
+  ...
+# Subtest: the actual published allowlist renders through the shared approved report without staff authority or private rejection counts
+ok 110 - the actual published allowlist renders through the shared approved report without staff authority or private rejection counts
+  ---
+  duration_ms: 117.38775
+  ...
+# Subtest: public deployment configuration requires exact host, environment, release and dedicated DB
+ok 111 - public deployment configuration requires exact host, environment, release and dedicated DB
+  ---
+  duration_ms: 12.390083
+  ...
+# Subtest: only exact apex GET/HEAD requests can read; machine headers and writes never borrow public authority
+ok 112 - only exact apex GET/HEAD requests can read; machine headers and writes never borrow public authority
+  ---
+  duration_ms: 3.287125
+  ...
+# Subtest: public selectors preserve exact versions and reject arrays, loose numbers and foreign tokens
+ok 113 - public selectors preserve exact versions and reject arrays, loose numbers and foreign tokens
+  ---
+  duration_ms: 1.386417
+  ...
+# Subtest: owned local requests accept Next forwarding normalization but reject a substituted host
+ok 114 - owned local requests accept Next forwarding normalization but reject a substituted host
+  ---
+  duration_ms: 0.307833
+  ...
+# Subtest: dedicated manual bridge is paired, fixed-host, separately keyed and included in configuration binding
+ok 115 - dedicated manual bridge is paired, fixed-host, separately keyed and included in configuration binding
+  ---
+  duration_ms: 5.611166
+  ...
+# Subtest: manual-only public runtime needs no legacy credential, has a distinct binding and rejects every partial legacy tuple
+ok 116 - manual-only public runtime needs no legacy credential, has a distinct binding and rejects every partial legacy tuple
+  ---
+  duration_ms: 1.379
+  ...
+# Subtest: fully configured legacy public hash retains the exact pre-manual serialization
+ok 117 - fully configured legacy public hash retains the exact pre-manual serialization
+  ---
+  duration_ms: 1.053417
+  ...
+1..117
+# tests 117
+# suites 0
+# pass 117
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 8759.074795

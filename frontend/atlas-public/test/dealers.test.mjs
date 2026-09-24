@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import {activeDealers,parseDealerDirectory,selectDealers,distanceMiles,dealerDirections} from '../lib/dealers.mjs';
+import {activeDealers,parseDealerDirectory,selectDealers,distanceMiles,dealerDirections,withKiosks} from '../lib/dealers.mjs';
 import {dealerDirectory} from '../lib/server/dealers.mjs';
 const now=Date.parse('2026-09-22T12:00:00.000Z');
 const entry=(id,lat)=>({id,name:`Fixture ${id}`,authorizedAt:'2026-09-01T00:00:00.000Z',authorizationExpiresAt:null,services:['BUY','SUBMIT'],address:{line1:'100 Test Street',city:'Fixture City',region:'CA',postalCode:'90000',country:'US'},position:{lat,lng:-118},website:'https://example.com/',phone:null,programs:[]});
@@ -36,7 +36,8 @@ test('owner-authorized contact-only shop is discoverable without inferred servic
  const [dealer]=result.dealers;assert.equal(dealer.id,'centercourt-cards-roseville');
  assert.equal(dealer.contactOnly,true);assert.deepEqual(dealer.services,[]);assert.deepEqual(dealer.programs,[]);
  assert.equal(dealer.phone,null);assert.equal(dealer.position,null);assert.equal(dealer.website,'https://www.centercourtcardsroseville.com/');
- for(const service of ['ALL','BUY','SUBMIT'])assert.equal(selectDealers(result.dealers,{query:'Roseville',service}).length,1);
+ assert.equal(selectDealers(result.dealers,{query:'Roseville',service:'ALL'}).length,1);
+ for(const service of ['BUY','SUBMIT'])assert.equal(selectDealers(result.dealers,{query:'Roseville',service}).length,0);
  const destination=new URL(dealerDirections(dealer)).searchParams.get('destination');
  assert.equal(destination,'307 Lincoln St, Roseville, CA, 95678, US');
  assert.equal(selectDealers(result.dealers,{query:'95678'})[0].distanceMiles,null);
@@ -47,4 +48,11 @@ test('contact-only authorization cannot publish a service, program or unusable c
  for(const mutate of [d=>d.dealers[0].contactOnly=false,d=>d.dealers[0].services=['BUY'],d=>d.dealers[0].website=null,d=>d.dealers[0].programs=[{name:'Invented',priceMinor:1000,currency:'USD',turnaroundBusinessDays:{min:2,max:5},terms:'Unsupported',expiresAt:'2027-01-01T00:00:00.000Z'}],d=>delete d.dealers[0].contactOnly]){
    const d=valid();mutate(d);assert.throws(()=>parseDealerDirectory(d));
  }
+});
+
+test('only enabled registry kiosks appear in submission filter; contact roster cannot invent them',()=>{
+ const legacy=directory();const data=withKiosks({...legacy,dealers:legacy.dealers,map:null},{locations:[{id:'kiosk-id',name:'Enabled fixture',address:entry('k',34).address,position:{lat:34,lng:-118},schedule:{},entryUrl:'/account/submit?kiosk=fixture'}]});
+ assert.deepEqual(selectDealers(data.dealers,{service:'SUBMIT'}).map(d=>d.id),['kiosk-id']);
+ assert.equal(selectDealers(withKiosks({...legacy,map:null},{locations:[]}).dealers,{service:'SUBMIT'}).length,0);
+ assert.throws(()=>withKiosks(legacy,null),/KIOSK_DIRECTORY_UNAVAILABLE/);
 });

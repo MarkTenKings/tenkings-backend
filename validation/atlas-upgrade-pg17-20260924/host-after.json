@@ -1,0 +1,24 @@
+{
+  "productionContainer": {
+    "id": "c302eeb7c4036c42049b3ed96f8d88d30afa6f058d7156e69b03fe60ae866b63",
+    "image": "sha256:857ec5612661921cb235013d81a1b2793615ebb2c2f987b661275efdd646f94a",
+    "name": "/atlas-manual-connected-20260917",
+    "running": true,
+    "startedAt": "2026-09-24T03:44:03.657738463Z",
+    "restartCount": 0
+  },
+  "ownedFixtureIdsVerifiedAbsent": [
+    "ad3f25c9a4166b398518ac19520121d117c11acafaa271b4b9934afb16acbc16",
+    "e05da12045b543a3280c2ac6543888e7a75ec1bd0839c7bbf8991ca0ff612c34",
+    "950fc9ac796b4b51ecc31c9366932f42c5d5be02d0b737bbfad42081dd1f3b38"
+  ],
+  "runningDisposablePostgresIds": [],
+  "capacity": {
+    "memoryTotalBytes": 8326975488,
+    "memoryAvailableBytes": 6616346624,
+    "rootDiskAvailableBytes": 51836571648
+  },
+  "observedAt": "2026-09-24T09:20:54.783729+00:00",
+  "scope": "Read-only container metadata, exact owned-ID absence and OS capacity; no production database/env read",
+  "productionContainerUnchanged": true
+}

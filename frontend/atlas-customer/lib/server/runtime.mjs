@@ -1,9 +1,25 @@
 import { acceptsSiteRequest } from '@atlas/site-router/server';
 import { CustomerAuth } from './auth.mjs';
+import {createDealerAccess} from './dealer.mjs';
 import { CustomerDatabase } from './database.mjs';
 import { productionConfig, cookie } from './config.mjs';
 import { deny } from './policy.mjs';
 import { twilioVerifyTransport } from './twilio.mjs';
+import { createCustomerServiceClient } from '@atlas/service-bridge/customer-service';
+
+export function privateCustomerServices(env) {
+    const url = env.ATLAS_CUSTOMER_SERVICE_URL, encoded = env.ATLAS_CUSTOMER_SERVICE_KEY;
+    if (!url && !encoded) return {};
+    const key = typeof encoded === 'string' ? Buffer.from(encoded, 'base64') : Buffer.alloc(0);
+    if (!url || key.length !== 32 || key.toString('base64') !== encoded) deny(503, 'CUSTOMER_SERVICE_CONFIGURATION_REQUIRED');
+    const client = createCustomerServiceClient({ url, key });
+    const call = operation => (authority, input) => client.call(operation, { authority, input });
+    return {
+        intake: { sign: call('intake-sign'), complete: call('intake-complete') },
+        commerce: { checkout: call('commerce-checkout'), quote: call('commerce-quote'), pay: call('commerce-pay'), reconcile: call('commerce-reconcile') },
+        directory: input => client.call('dealer-locations', { input }),
+    };
+}
 let current;
 export async function runtime() {
     if (current) return current;
@@ -19,7 +35,7 @@ export async function runtime() {
     const { PrismaClient } = await import('../../.generated/customer-database/index.js');
     const client = new PrismaClient({ datasources: { db: { url: config.databaseUrl } } });
     const database = new CustomerDatabase(client, config), auth = new CustomerAuth({ database, config, provider });
-    current = { auth, config, cookie: (name, value, age) => cookie(config, name, value, age),
+    current = { auth, config, dealer:createDealerAccess({auth,config}), ...privateCustomerServices(env), cookie: (name, value, age) => cookie(config, name, value, age),
         assertRequest(req) {
             if (req.headers.authorization) deny(403, 'CUSTOMER_COOKIE_REQUIRED');
             if (config.mode === 'PRODUCTION') {

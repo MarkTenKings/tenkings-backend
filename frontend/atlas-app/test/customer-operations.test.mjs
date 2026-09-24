@@ -1,0 +1,140 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+import vm from 'node:vm';
+import * as contract from '../lib/customer-operations.mjs';
+import * as routes from '../lib/routes.mjs';
+
+const require = createRequire(import.meta.url), babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
+const code = babel.transformSync(readFileSync(new URL('../components/CustomerOperations.jsx', import.meta.url), 'utf8'), {
+  filename: 'CustomerOperations.jsx', presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false,
+}).code;
+const staff = { id: randomUUID(), name: 'Fixture reviewer', role: 'REVIEWER', mode: 'LOCAL_FIXTURE' };
+const card = { cardId: randomUUID(), channel: 'KIOSK', events: [], identity: { title: 'Synthetic intake card' }, grading: 'NOT_STARTED', manualCardId: null };
+const input = { cardId: card.cardId, requestId: randomUUID(), kind: 'COLLECTED', occurredAt: '2026-09-22T12:00:00.000Z', evidence: { reference: 'fixture-custody-001', note: 'Verified fixture only' } };
+const empty = { orders: [], manualCards: [], memberships: [], locations: [] };
+const record = () => ({ version: 1, staffId: staff.id, action: 'custody', input: structuredClone(input), acknowledged: false });
+function storage() { const rows = new Map(); return { getItem: k => rows.get(k) ?? null, setItem: (k, v) => rows.set(k, v), removeItem: k => rows.delete(k) }; }
+function load(react, overrides = {}) {
+  const exports = {};
+  vm.runInNewContext(code, { exports, crypto: { randomUUID }, Intl, ...overrides, require(name) {
+    if (name === 'react') return react;
+    if (name === 'next/link') return 'a';
+    if (name === './Shell') return { __esModule: true, default: ({ children }) => react.createElement('main', null, children) };
+    if (name === '../lib/customer-operations.mjs') return contract;
+    if (name === '../lib/routes.mjs') return routes;
+    if (name === '../lib/client') return overrides.client ?? { useStaffResource: () => { throw Error('Unexpected staff read'); } };
+    if (name.endsWith('.module.css')) return {};
+    return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
+  } });
+  return exports;
+}
+function harness(existingStorage = storage()) {
+  const slots = [], effects = []; let cursor = 0, tree;
+  const react = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+    useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial; return [slots[i], next => { slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; },
+    useRef(initial) { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; },
+    useEffect(action, deps) { const i = cursor++, prior = slots[i]; if (!prior || deps.some((v, n) => v !== prior[n])) { slots[i] = deps; effects.push(action); } } };
+  const f = { storage: existingStorage, calls: [], data: structuredClone(empty), csrf: 'fixture-csrf', staff, reloads: 0, lock: false, signedIn: true,
+    response: async () => { throw Error('No fixture response was configured'); } };
+  const api = async (path, options = {}) => {
+    f.calls.push({ path, ...options, ...(options.body ? { body: structuredClone(options.body) } : {}) });
+    if (path === 'session') return { csrf: f.csrf, staff: f.signedIn ? f.staff : null };
+    if (!options.body) return structuredClone(f.data);
+    return f.response(path, options);
+  };
+  const exported = load(react, { window: { localStorage: f.storage, addEventListener() {}, removeEventListener() {} }, navigator: { locks: { request: async (_key, _options, fn) => {
+    if (f.lock) return fn(null); f.lock = true; try { return await fn({}); } finally { f.lock = false; }
+  } } }, client: { api, useStaffResource: () => ({ loading: false, data: f.data, session: { staff, csrf: f.csrf }, error: '', reload: () => { f.reloads++; } }) } });
+  const all = (node, predicate, out = []) => { if (Array.isArray(node)) node.forEach(n => all(n, predicate, out)); else if (node && typeof node === 'object') { if (predicate(node)) out.push(node); all(node.props?.children, predicate, out); } return out; };
+  const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
+  f.render = () => { cursor = 0; tree = exported.Operations({ staff }); for (const effect of effects.splice(0)) effect(); return tree; };
+  f.nodes = (type, label) => all(tree, n => n.type === type && (label === undefined || text(n).includes(label)));
+  f.click = async label => { const node = f.nodes('button', label)[0]; assert.ok(node, label); await node.props.onClick(); f.render(); };
+  f.action = (...args) => { const roster = all(tree, n => n.type === exported.OrderRoster)[0]; assert.ok(roster); return roster.props.onAction(...args); };
+  f.writes = () => f.calls.filter(row => row.body);
+  f.saved = () => contract.browserJournal(existingStorage, staff.id).read();
+  f.render(); f.render(); return f;
+}
+function confirmedData(entry = record()) {
+  return { ...structuredClone(empty), orders: [{ id: randomUUID(), reference: 'ATLAS-FIXTURE', cards: [{ ...card, custodyEvents: [{ id: randomUUID(), actorId: entry.staffId, requestId: entry.input.requestId, kind: entry.input.kind, occurredAt: '2026-09-22T12:00:00+00:00', evidence: structuredClone(entry.input.evidence) }] }] }] };
+}
+
+test('custody availability follows actual physical sequence and approval, never a projected collection time', () => {
+  assert.deepEqual(contract.availableCustody({ ...card, currentProjection: { nextCollectionAt: '2020-01-01' } }), ['COLLECTED', 'DELAY_REPORTED', 'DELAY_RESOLVED']);
+  const received = { ...card, events: [{ kind: 'COLLECTED' }, { kind: 'ATLAS_RECEIVED' }] };
+  assert.equal(contract.availableCustody(received).includes('RETURN_DISPATCHED'), false);
+  assert.equal(contract.availableCustody({ ...received, manualCardId: randomUUID(), grading: 'HUMAN_APPROVED' }).includes('RETURN_DISPATCHED'), true);
+  assert.equal(contract.availableCustody({ ...card, channel: 'MAIL_IN' })[0], 'ATLAS_RECEIVED');
+  assert.throws(() => contract.custodyInput(card, { kind: 'COLLECTED', confirmed: false }, randomUUID), /Confirm the actual event/);
+  assert.throws(() => contract.custodyInput(card, { kind: 'COLLECTED', confirmed: true, occurredAt: '2099-01-01', reference: 'x' }, randomUUID, Date.now()), /already happened/);
+});
+
+test('empty registry defaults disabled with no fabricated schedule; actual structured configuration is preserved', () => {
+  const form = contract.newLocation(); assert.equal(form.enabled, false); assert.deepEqual(form.schedule.pickups, []); assert.equal(form.authorizedUntil, '');
+  assert.throws(() => contract.locationInput(form, randomUUID), /time zone|schedule/);
+  Object.assign(form, { dealerId: randomUUID(), name: 'Fixture location', address: { line1: '1 Fixture Way', city: 'Test', region: 'CA', postalCode: '90001', country: 'US' }, position: { lat: '34', lng: '-118' }, schedule: { timeZone: 'America/Los_Angeles', pickups: [{ weekday: '2', time: '10:00', cutoff: '09:00' }], returns: [{ weekday: 2, time: '11:00' }], exceptions: [{ date: '2026-10-06', kind: 'pickups', cancelled: true, reason: 'Fixture closure' }] }, terminalId: 'fixture-reader', terminalLocationId: 'fixture-location', packagePrinterId: 'fixture-printer', entryToken: 'a'.repeat(64), authorizedUntil: '2026-10-01T12:00:00Z' });
+  const result = contract.locationInput(form, randomUUID);
+  assert.equal(result.enabled, false); assert.deepEqual(result.position, { lat: 34, lng: -118 }); assert.equal(result.schedule.pickups[0].weekday, 2); assert.equal(result.schedule.exceptions[0].time, undefined); assert.equal(result.authorizedUntil, '2026-10-01T12:00:00.000Z');
+});
+
+test('reconciliation requires exact staff event identity and content; public timeline is insufficient', () => {
+  const entry = record(), data = confirmedData(entry); assert.equal(contract.operationRecorded(data, entry), true);
+  for (const change of [{ actorId: randomUUID() }, { requestId: randomUUID() }, { evidence: { reference: 'different' } }, { occurredAt: '2026-09-22T12:01:00Z' }]) {
+    const altered = structuredClone(data); Object.assign(altered.orders[0].cards[0].custodyEvents[0], change); assert.equal(contract.operationRecorded(altered, entry), false);
+  }
+  delete data.orders[0].cards[0].custodyEvents; data.orders[0].cards[0].events = [{ ...entry.input }]; assert.equal(contract.operationRecorded(data, entry), false);
+});
+
+test('rendered empty roster is honest and received-card binding uses only accessible saved cards', () => {
+  const React = require('react'), { renderToStaticMarkup } = require('react-dom/server'), exported = load(React);
+  const emptyHtml = renderToStaticMarkup(React.createElement(exported.OrderRoster, { data: empty })); assert.match(emptyHtml, /No paid customer submissions yet/);
+  const observer = renderToStaticMarkup(React.createElement(exported.default, { staff: { ...staff, role: 'OBSERVER' } })); assert.match(observer, /reviewer staff account is required/);
+  const received = { ...card, events: [{ id: randomUUID(), kind: 'ATLAS_RECEIVED', occurredAt: input.occurredAt }] };
+  const html = renderToStaticMarkup(React.createElement(exported.CustodyCard, { card: received, manualCards: [], disabled: false })); assert.match(html, /No accessible, unlinked grading cards/); assert.match(html, /<fieldset disabled=""><legend>Match the physical card/); assert.match(html, /type="datetime-local"[^>]*value=""/);
+  const member = renderToStaticMarkup(React.createElement(exported.MembershipEditor, { data: empty, disabled: false })); assert.match(member, /No dealer memberships/); assert.match(member, /<fieldset disabled="">/);
+  const setup = renderToStaticMarkup(React.createElement(exported.LocationEditor, { locations: [], disabled: false })); assert.match(setup, /No kiosk locations are configured/); assert.match(setup, /No weekly pickups entered/); assert.doesNotMatch(setup, /type="checkbox"[^>]*checked/);
+});
+
+test('lost custody reply survives remount, prevents double click, and reconciles by read without resubmitting', async () => {
+  const f = harness(); let reject; f.response = () => new Promise((resolve, no) => { reject = no; });
+  const first = f.action('custody', structuredClone(input)); await f.action('custody', structuredClone(input));
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(f.writes().length, 1); assert.deepEqual(f.saved().input, input);
+  reject(Error('Fixture lost reply')); await first; f.render(); assert.equal(f.saved().acknowledged, false);
+  const restored = harness(f.storage); assert.equal(restored.writes().length, 0); assert.equal(restored.nodes('button', 'Retry exact saved request').length, 1);
+  restored.data = confirmedData(restored.saved()); await restored.click('Check saved status'); assert.equal(restored.saved(), null); assert.equal(restored.writes().length, 0);
+});
+
+test('explicit retry keeps request ID/content and fresh csrf; a retry refusal never erases earlier uncertainty', async () => {
+  const s = storage(); contract.browserJournal(s, staff.id).save(record()); const f = harness(s);
+  f.response = async () => { throw { status: 403, code: 'FRESH_HUMAN_OPERATIONS_REQUIRED' }; }; f.csrf = 'fresh-csrf';
+  await f.click('Retry exact saved request'); assert.deepEqual(f.writes()[0].body, input); assert.equal(f.writes()[0].csrf, 'fresh-csrf'); assert.ok(f.saved());
+  f.signedIn = false; await f.click('Retry exact saved request'); assert.equal(f.writes().length, 1); assert.ok(f.saved());
+  f.signedIn = true; f.response = async () => { f.data = confirmedData(f.saved()); return { eventId: randomUUID() }; };
+  await f.click('Retry exact saved request'); assert.equal(f.saved(), null); assert.deepEqual(f.writes()[1].body, input);
+});
+
+test('acknowledged custody with unavailable read remains locked and offers no repeat mutation', async () => {
+  const f = harness(); f.response = async () => ({ eventId: randomUUID() });
+  await f.action('custody', structuredClone(input)); f.render(); assert.equal(f.saved().acknowledged, true); assert.equal(f.nodes('button', 'Retry exact saved request').length, 0);
+  await f.action('custody', { ...input, requestId: randomUUID() }); assert.equal(f.writes().length, 1);
+  await f.click('Check saved status'); assert.equal(f.writes().length, 1); assert.ok(f.saved());
+});
+
+test('first definitive rejection unlocks editing while blocked storage and another-tab ownership prevent writes', async () => {
+  const f = harness(); f.response = async () => { throw { status: 400, code: 'ACTUAL_CUSTODY_EVIDENCE_REQUIRED' }; };
+  await f.action('custody', structuredClone(input)); assert.equal(f.saved(), null); assert.equal(f.writes().length, 1);
+  const blocked = harness({ getItem: () => null, setItem() { throw Error('Storage unavailable'); }, removeItem() {} });
+  await blocked.action('custody', structuredClone(input)); assert.equal(blocked.writes().length, 0);
+  const competing = harness(); competing.lock = true; await competing.action('custody', structuredClone(input)); assert.equal(competing.writes().length, 0);
+});
+
+test('unconfirmed dealer setup has no retry write and only exact saved membership version clears it', async () => {
+  const f = harness(), membership = { accountId: randomUUID(), locationId: randomUUID(), enabled: true };
+  f.response = async () => { throw Error('Lost setup reply'); };
+  await f.action('membership-configure', membership, { priorVersion: 2 }); f.render(); assert.equal(f.nodes('button', 'Retry exact saved request').length, 0);
+  f.data.memberships = [{ ...membership, revokedAt: null, version: 4 }]; await f.click('Check saved status'); assert.ok(f.saved());
+  f.data.memberships[0].version = 3; await f.click('Check saved status'); assert.equal(f.saved(), null); assert.equal(f.writes().length, 1);
+});

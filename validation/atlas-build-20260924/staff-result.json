@@ -1,0 +1,21 @@
+{
+  "app": "staff",
+  "container": "f17b52f57293995b36e0e9ac5dc280f67f070692fa03ea878c1caac976f74ebd",
+  "command": [
+    "docker",
+    "exec",
+    "--workdir",
+    "/build/frontend/atlas-app",
+    "--env",
+    "PATH=/tmp/bin:/opt/atlas-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "--env",
+    "NODE_OPTIONS=--max-old-space-size=2048",
+    "f17b52f57293995b36e0e9ac5dc280f67f070692fa03ea878c1caac976f74ebd",
+    "node",
+    "/tmp/pnpm/bin/pnpm.cjs",
+    "run",
+    "build"
+  ],
+  "exitCode": 0,
+  "durationSeconds": 51.14
+}

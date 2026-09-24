@@ -12,8 +12,10 @@ function fixture() {
   const spawnImpl = (executable, args, options) => {
     const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.killed = false;
     child.kill = () => { child.killed = true; queueMicrotask(() => child.emit('close', 0)); }; processes.push(child); calls.push({ executable, args, options });
-    child.stdin = new Writable({ write(chunk, encoding, done) { const value = JSON.parse(chunk.toString()); queueMicrotask(() => child.stdout.write(JSON.stringify({ id: f.corrupt ? 'wrong-id' : value.id, ok: true, result: { op: value.op } }) + '\n')); done(); } });
-    if (args[0] !== 'serve') queueMicrotask(() => { child.stdout.write(JSON.stringify(args[0] === 'full-sync' ? { synced: true } : { qualifiedProfileAvailable: false })); child.emit('close', 0); });
+    child.stdin = new Writable({ write(chunk, encoding, done) { const value = JSON.parse(chunk.toString()); queueMicrotask(() => child.stdout.write(JSON.stringify(f.response ? f.response(value)
+      : { id: f.corrupt ? 'wrong-id' : value.id, ok: true, result: { op: value.op } }) + '\n')); done(); } });
+    if (args[0] !== 'serve') queueMicrotask(() => { child.stdout.write(JSON.stringify(Object.hasOwn(f, 'oneShotResponse') ? f.oneShotResponse
+      : args[0] === 'full-sync' ? { synced: true } : { qualifiedProfileAvailable: false })); child.emit('close', 0); });
     return child;
   };
   f.native = createNativeCompanion({ executable: '/protected/companion', configurationPath: '/protected/station.json', spawnImpl }); return f;
@@ -33,6 +35,35 @@ test('unexpected native response terminates that session, never auto-restarts, a
   const f = fixture(); f.corrupt = true; await assert.rejects(f.native.request('presence'), /RESPONSE_INVALID/);
   await assert.rejects(f.native.request('presence'), /SESSION_CLOSED/); assert.equal(f.processes.length, 1); assert.equal(f.processes[0].killed, true);
   f.corrupt = false; f.native.resetAfterCompletion(); assert.equal((await f.native.request('presence')).op, 'presence'); assert.equal(f.processes.length, 2); f.native.shutdown();
+});
+test('malformed native envelopes reject pending work and fence the child without uncaught callback errors', async () => {
+  const invalid = [() => null, () => [], () => 'reply', () => 42,
+    ({ id }) => ({ id, ok: true }),
+    ({ id }) => ({ id, ok: true, result: null }),
+    ({ id }) => ({ id, ok: true, result: [] }),
+    ({ id }) => ({ id, ok: true, result: 'PRESENT' }),
+    ({ id }) => ({ id, ok: true, result: {}, error: 'EXTRA_FIELD' }),
+    ({ id }) => ({ id, ok: false }),
+    ({ id }) => ({ id, ok: false, error: null }),
+    ({ id }) => ({ id, ok: false, error: 'unsafe raw text' }),
+    ({ id }) => ({ id, ok: false, error: 'REFUSED', extra: true })];
+  for (const response of invalid) {
+    const f = fixture(); f.response = response;
+    await assert.rejects(f.native.request('presence'), { code: 'STATION_NATIVE_RESPONSE_INVALID' });
+    assert.equal(f.processes[0].killed, true);
+    await assert.rejects(f.native.request('presence'), { code: 'STATION_NATIVE_SESSION_CLOSED' });
+    assert.equal(f.processes.length, 1);
+  }
+});
+test('valid native refusals remain typed replies and one-shot JSON requires an object', async () => {
+  const f = fixture(); f.response = ({ id }) => ({ id, ok: false, error: 'COMPANION_PROFILE_UNQUALIFIED' });
+  await assert.rejects(f.native.request('open'), { code: 'COMPANION_PROFILE_UNQUALIFIED' });
+  assert.equal(f.processes[0].killed, false);
+  delete f.response; assert.equal((await f.native.request('presence')).op, 'presence'); f.native.shutdown();
+  for (const response of [null, [], 'reply', 42]) {
+    const single = fixture(); single.oneShotResponse = response;
+    await assert.rejects(single.native.capabilities(), { code: 'STATION_NATIVE_RESPONSE_INVALID' });
+  }
 });
 test('configuration check has one fixed native command and does not start a persistent session or key lookup', async () => {
   const f = fixture(); await f.native.validateConfiguration();

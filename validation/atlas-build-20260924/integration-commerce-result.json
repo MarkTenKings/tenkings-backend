@@ -1,0 +1,32 @@
+{
+  "packages": [
+    "atlas-customer-intake",
+    "atlas-commerce",
+    "atlas-dealer-operations",
+    "atlas-service-bridge",
+    "atlas-connected-manual",
+    "atlas-batch-grading"
+  ],
+  "focus": "commerce",
+  "testFileCount": 4,
+  "sourceManifestSha256": "543cd85b1499ac7d8051caa9ac9d34bdd5caabc92dcd55c0d6a11f4ec2bc6e01",
+  "container": "f17b52f57293995b36e0e9ac5dc280f67f070692fa03ea878c1caac976f74ebd",
+  "command": [
+    "docker",
+    "exec",
+    "--workdir",
+    "/build",
+    "--env",
+    "NODE_OPTIONS=--max-old-space-size=2048",
+    "f17b52f57293995b36e0e9ac5dc280f67f070692fa03ea878c1caac976f74ebd",
+    "node",
+    "--test",
+    "--test-concurrency=2",
+    "packages/atlas-commerce/test/commerce.test.mjs",
+    "packages/atlas-commerce/test/privacy.test.mjs",
+    "packages/atlas-commerce/test/providers.test.mjs",
+    "packages/atlas-connected-manual/test/customer-runtime.test.mjs"
+  ],
+  "exitCode": 0,
+  "durationSeconds": 1.76
+}

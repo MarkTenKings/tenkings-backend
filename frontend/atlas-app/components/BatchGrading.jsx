@@ -19,6 +19,9 @@ const messages = {
   BATCH_MANUAL_DRAFT_CHANGED: 'Review updated card', BATCH_PHOTOS_CHANGED: 'Review current photos',
   BATCH_ACCESS_CHANGED: 'Resume with your current access',
   BATCH_UNAVAILABLE: 'Batch grading is unavailable. Your saved cards are retained.',
+  BATCH_RESUME_STALE: 'This card changed. Its current progress has been refreshed.',
+  BATCH_ALREADY_APPROVED: 'This report is already approved.',
+  BATCH_CONTINUE_MANUAL_REVIEW: 'Continue your saved corrections in the card workspace.',
 };
 export default function BatchGrading({ staff }) {
   const router = useRouter(), session = useRef(null), current = useRef(0), mutation = useRef(false);
@@ -142,6 +145,25 @@ export default function BatchGrading({ staff }) {
       }
     }
   }
+  async function resume(job) {
+    if (mutation.current || !session.current || !job.canResumeProcessing) return;
+    const owner = lifetime.current;
+    mutation.current = true; reviewing.current = job.key; setBusy(true); setError('');
+    try {
+      // The exact revision and existing job retain their original analysis
+      // action. A lost response is reconciled by refreshing, never a new job.
+      await request(`${path}/resume`, { method: 'POST', body: { key: job.key, expectedRevision: job.revision } });
+      if (lifetime.current !== owner) return;
+      setActive(null);
+    } catch (failure) {
+      if (lifetime.current === owner) setError(messages[failure.code] ?? manualMessage(failure));
+    } finally {
+      if (lifetime.current === owner) {
+        reviewing.current = null; mutation.current = false; setBusy(false);
+        await refresh().catch(failure => setError(manualMessage(failure)));
+      }
+    }
+  }
   return <Shell staff={staff} manual title="Batch grading">
     <main className={styles.studio}>
       <header className={styles.heading}><div><p>ATLAS STUDIO</p><h1>Grading queue</h1></div><button type="button" className={styles.add} onClick={() => selectTab('INTAKE')}>+ Add cards</button></header>
@@ -175,7 +197,9 @@ export default function BatchGrading({ staff }) {
         </section> : focused ? <section className={styles.focus} aria-label="Selected card">
           <div className={styles.focusHeader}><div><p>{focused.state === 'REVIEW' ? 'MACHINE DRAFT · HUMAN REVIEW' : status[focused.state]}</p><h2>{focused.evidence?.name || focused.label || 'Card review'}</h2></div>{focused.evidence?.proposedGrade !== undefined && <div className={styles.grade}><strong>{focused.evidence.proposedGrade}</strong><span>PROPOSED</span></div>}</div>
           <div className={styles.photos}>{['FRONT', 'BACK'].map(side => <figure key={side}><img src={`${STAFF_BASE_PATH}/api/staff/manual-connected/cards/${focused.cardId}/preview-image/${side}`} alt={`${side === 'FRONT' ? 'Front' : 'Back'} of selected card`}/><figcaption>{side}</figcaption></figure>)}</div>
-          <footer className={styles.actions}><span>{focused.state === 'REVIEW' ? `${focused.evidence.findingCount ?? 0} proposed findings` : messages[focused.code] ?? stages[focused.stage]}<small>↑ ↓ select · Enter review</small></span><button className={styles.primary} onClick={() => open(focused)}>{focused.state === 'NEEDS_ATTENTION' ? 'Check card' : 'Review card'} <span aria-hidden="true">↗</span></button></footer>
+          <footer className={styles.actions}><span>{focused.state === 'REVIEW' ? `${focused.evidence.findingCount ?? 0} proposed findings` : messages[focused.code] ?? stages[focused.stage]}<small>↑ ↓ select · Enter review</small></span>
+            {focused.canResumeProcessing && <button disabled={busy} onClick={() => resume(focused)}>{busy ? 'Resuming…' : 'Resume saved processing'}</button>}
+            <button disabled={busy} className={styles.primary} onClick={() => open(focused)}>{focused.state === 'NEEDS_ATTENTION' ? 'Check card' : 'Review card'} <span aria-hidden="true">↗</span></button></footer>
         </section> : <section className={styles.empty}><span aria-hidden="true">◇</span><h2>{loaded ? tab === 'REVIEW' ? 'Your next review lands here.' : 'All clear.' : 'Loading saved work…'}</h2><p>{tab === 'REVIEW' ? 'Finished Astra drafts appear automatically.' : 'Every card keeps its own progress.'}</p></section>}
       </div>}
     </main>

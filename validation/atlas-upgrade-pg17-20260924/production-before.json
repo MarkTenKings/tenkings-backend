@@ -1,0 +1,12 @@
+{
+  "observedAt": "2026-09-24T08:57:33.030386+00:00",
+  "scope": "read-only existing production container metadata; no database or environment read",
+  "productionContainer": {
+    "id": "c302eeb7c4036c42049b3ed96f8d88d30afa6f058d7156e69b03fe60ae866b63",
+    "image": "sha256:857ec5612661921cb235013d81a1b2793615ebb2c2f987b661275efdd646f94a",
+    "name": "/atlas-manual-connected-20260917",
+    "running": true,
+    "startedAt": "2026-09-24T03:44:03.657738463Z",
+    "restartCount": 0
+  }
+}

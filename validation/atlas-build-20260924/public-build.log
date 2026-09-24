@@ -1,0 +1,94 @@
+
+> @atlas/public-app@0.1.0 build /build/frontend/atlas-public
+> node ../../packages/atlas-grading-core/scripts/build.mjs && node ../../packages/atlas-manual-workspace/scripts/build.mjs && node scripts/generate-database.mjs && next build && node scripts/check-boundary.mjs
+
+{"status":"PURE_GRADING_CORE_BUILD_PASS","entries":13,"ambientEffectDependencies":0}
+Prisma schema loaded from prisma/schema.prisma
+
+✔ Generated Prisma Client (v5.22.0) to ./.generated/public-database in 85ms
+
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+
+Tip: Interested in query caching in just a few lines of code? Try Accelerate today! https://pris.ly/tip-3-accelerate
+
+⚠ No build cache found. Please configure build caching for faster rebuilds. Read more: https://nextjs.org/docs/messages/no-cache
+   ▲ Next.js 15.5.25
+   - Experiments (use with caution):
+     · cpus: 2
+     · proxyTimeout: 240000
+
+   Linting and checking validity of types ...
+
+./pages/dealers.jsx
+35:78  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./pages/reports/[token].jsx
+19:176  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+34:106  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/ApprovedPhotographs.jsx
+23:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/DealerMap.jsx
+31:5  Warning: React Hook useEffect has a missing dependency: 'configuration'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./components/MarketingHome.jsx
+246:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+325:15  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+470:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+1195:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+   Creating an optimized production build ...
+<w> [webpack.cache.PackFileCacheStrategy] Skipped not serializable cache item 'Compilation/modules|/build/node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[1]!/build/node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[2]!/build/frontend/atlas-public/styles/global.css': No serializer registered for Warning
+<w> while serializing webpack/lib/cache/PackFileCacheStrategy.PackContentItems -> webpack/lib/NormalModule -> Array { 1 items } -> webpack/lib/ModuleWarning -> Warning
+<w> [webpack.cache.PackFileCacheStrategy] Skipped not serializable cache item 'Compilation/modules|/build/node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[1]!/build/node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[2]!/build/frontend/atlas-public/styles/marketing-home.css': No serializer registered for Warning
+<w> while serializing webpack/lib/cache/PackFileCacheStrategy.PackContentItems -> webpack/lib/NormalModule -> Array { 1 items } -> webpack/lib/ModuleWarning -> Warning
+ ⚠ Compiled with warnings in 4.0s
+
+./styles/global.css.webpack[javascript/auto]!=!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[1]!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[2]!./styles/global.css
+Warning
+
+(29:49) autoprefixer: end value has mixed support, consider using flex-end instead
+
+Import trace for requested module:
+./styles/global.css.webpack[javascript/auto]!=!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[1]!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[2]!./styles/global.css
+./styles/global.css
+
+./styles/marketing-home.css.webpack[javascript/auto]!=!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[1]!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[2]!./styles/marketing-home.css
+Warning
+
+(6194:67) autoprefixer: end value has mixed support, consider using flex-end instead
+
+Import trace for requested module:
+./styles/marketing-home.css.webpack[javascript/auto]!=!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[1]!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[2]!./styles/marketing-home.css
+./styles/marketing-home.css
+
+ ✓ Compiled successfully in 12.2s
+   Collecting page data ...
+   Generating static pages (0/2) ...
+ ✓ Generating static pages (2/2)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (pages)                                   Size  First Load JS
+┌ ƒ /                                        14.4 kB        98.7 kB
+├   /_app                                        0 B          82 kB
+├ ○ /404                                       436 B        82.4 kB
+├ ƒ /api/reports/[token]/images/[side]           0 B          82 kB
+├ ƒ /api/reports/[token]/presentation/image      0 B          82 kB
+├ ƒ /api/reports/[token]/traces/[findingId]      0 B          82 kB
+├ ƒ /dealers                                 4.66 kB          89 kB
+└ ƒ /reports/[token]                         23.4 kB         108 kB
++ First Load JS shared by all                 127 kB
+  ├ chunks/framework-1c02a2e60068b586.js     44.8 kB
+  ├ chunks/main-8403028f36db967f.js          36.1 kB
+  ├ css/0df92f4a648e2da8.css                 45.3 kB
+  └ other shared chunks (total)              1.07 kB
+
+ƒ Middleware                                 35.1 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+{"status":"PUBLIC_BUILD_BOUNDARY_PASS","pages":["/_app","/_error","/404","/api/reports/[token]/images/[side]","/api/reports/[token]/presentation/image","/","/api/reports/[token]/traces/[findingId]","/reports/[token]","/dealers","/_document"],"browserChunks":13,"serverTraces":10,"tracedFilesChecked":712,"databaseEngines":["libquery_engine-debian-openssl-3.0.x.so.node"],"staffRoutes":0,"writeRoutes":0,"databasePorts":["read_approved_report","read_approved_image","read_approved_trace"]}

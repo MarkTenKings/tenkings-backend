@@ -1,0 +1,17 @@
+{
+  "observedAt": "2026-09-24T08:59:37.292681+00:00",
+  "sourceCommit": "4cbb40a35d9d4a858bd3fa0fb7ec4041c5769051",
+  "predecessorMigrationBytesMatchHead": true,
+  "sourceSha256": {
+    "frontend/atlas-app/scripts/disposable-postgres.mjs": "9fb318532d9a32acb744ac9323d369244681080af71e4bdb0dd94733a7bd267b",
+    "frontend/atlas-app/scripts/remote-disposable-postgres.mjs": "3614102a36d300982d453732fc1f9386db405b638ec7de29eeb8fa5bf4bb47ce",
+    "frontend/atlas-app/test/disposable-postgres.test.mjs": "50478b281247345f3ee936f3137ef1ee28900c68d8be5f1f2faeeffa2d36be67",
+    "frontend/atlas-app/test/remote-disposable-postgres.test.mjs": "570a606e9b5bf7d539aa4e1e9223f9db5cbbc5034f57ffcd4ebcc5df751dc721",
+    "frontend/atlas-customer/scripts/validate-upgrade-postgres.mjs": "797bcad05874c17a4604108dad88200d640b67473cba4444e3a33267d69b79dc",
+    "frontend/atlas-customer/scripts/validate-private-commerce-postgres.mjs": "e0514917c4193d00f71cf3350318c430329ab3a89f5647a98d4c6649dc29ab90",
+    "frontend/atlas-customer/scripts/validate-dealer-postgres.mjs": "e0c5c2dcf4e59910ce0b5f056da3d5df67b97add61166c7d5053107cf57198b2",
+    "packages/atlas-commerce/src/service.mjs": "d3cfcf9f538989d6ecf9bd87ef87b8a1f4c727082aa15882934d7a986345b82b",
+    "packages/atlas-commerce/src/shipping-plan.mjs": "80a2a2f1daba2988babdb9739fdb0816a9a536fb83ca1225b67d7788fb97d833",
+    "packages/atlas-commerce/src/providers.mjs": "bae037bb5c7ef45bb683ba1a70be024c47fe0404c1b456ff459c166c7ece522b"
+  }
+}

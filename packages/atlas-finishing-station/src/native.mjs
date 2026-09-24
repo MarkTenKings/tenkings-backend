@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 const fail = code => Object.assign(new Error(code), { code });
 const check = (value, code = 'STATION_NATIVE_INVALID') => { if (!value) throw fail(code); };
+const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeEnvironment = { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C' };
 async function protectedParents(path, privateParent) {
   check(isAbsolute(path) && resolve(path) === path, 'STATION_CONFIG_PATH_INVALID');
@@ -54,7 +55,7 @@ function run(executable, args, { spawnImpl, fd, timeoutMs = 15000 }) {
     child.on('close', code => {
       clearTimeout(timer); if (failed) return;
       if (code !== 0) { reject(fail('STATION_NATIVE_REFUSED')); return; }
-      try { const result = JSON.parse(output); check(result && typeof result === 'object'); resolve(result); }
+      try { const result = JSON.parse(output); check(object(result)); resolve(result); }
       catch { reject(fail('STATION_NATIVE_RESPONSE_INVALID')); }
     });
   });
@@ -86,9 +87,17 @@ export function createNativeCompanion({ executable, configurationPath, spawnImpl
       while ((at = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, at); buffer = buffer.slice(at + 1);
         let value; try { value = JSON.parse(line); } catch { abort('STATION_NATIVE_RESPONSE_INVALID'); return; }
-        if (!pending || value.id !== pending.id || typeof value.ok !== 'boolean') { abort('STATION_NATIVE_RESPONSE_INVALID'); return; }
+        // JSON parsing also accepts null, primitives and arrays. Validate the
+        // fixed envelope before dereferencing it so a corrupt reply fences the
+        // child and pending request instead of escaping the stdout callback.
+        if (!object(value) || !pending || value.id !== pending.id || typeof value.ok !== 'boolean'
+          || Object.keys(value).length !== 3 || !(value.ok
+            ? Object.hasOwn(value, 'result') && object(value.result)
+            : Object.hasOwn(value, 'error') && typeof value.error === 'string' && /^[A-Z0-9_]{1,100}$/.test(value.error))) {
+          abort('STATION_NATIVE_RESPONSE_INVALID'); return;
+        }
         const request = pending; pending = null; clearTimeout(request.timer);
-        value.ok ? request.resolve(value.result) : request.reject(fail(typeof value.error === 'string' && /^[A-Z0-9_]{1,100}$/.test(value.error) ? value.error : 'STATION_NATIVE_REFUSED'));
+        value.ok ? request.resolve(value.result) : request.reject(fail(value.error));
       }
     });
     child.on('error', () => { if (child === owned) abort('STATION_NATIVE_UNAVAILABLE'); });

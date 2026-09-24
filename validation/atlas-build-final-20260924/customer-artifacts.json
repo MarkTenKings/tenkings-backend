@@ -1,0 +1,28 @@
+{
+  "app": "atlas-customer",
+  "node": "v20.20.2",
+  "platform": "linux",
+  "architecture": "x64",
+  "sourceManifestSha256": "5fd35cd99528e8a6dba817a8bf115c1772e92781fe755ee7129ad165141fed50",
+  "artifactSha256": "a73e72cf6b8f4f879808b2c65eebf9249891238e9334df607ffd0546fbcf4c6e",
+  "artifactFileCount": 99,
+  "artifactBytes": 18893883,
+  "buildId": "-dIA-Q1q9C5gKs1uITpQC",
+  "pages": {
+    "/_app": "pages/_app.js",
+    "/404": "pages/404.html",
+    "/_document": "pages/_document.js",
+    "/_error": "pages/_error.js",
+    "/": "pages/index.js",
+    "/dealer": "pages/dealer.js",
+    "/api/customer/[...path]": "pages/api/customer/[...path].js",
+    "/profile": "pages/profile.js",
+    "/submit": "pages/submit.js",
+    "/submissions/[id]": "pages/submissions/[id].js",
+    "/orders/[id]": "pages/orders/[id].js"
+  },
+  "basePath": "/account",
+  "serverTraces": 13,
+  "tracedFiles": 1645,
+  "externalTracePaths": 0
+}

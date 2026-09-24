@@ -1,0 +1,10 @@
+{
+  "removedContainerId": "f17b52f57293995b36e0e9ac5dc280f67f070692fa03ea878c1caac976f74ebd",
+  "image": "sha256:315bae6df16bf090faa0c1d23682eb88fb113b79dc793f61680da5a1b5e10bcc",
+  "nonce": "7e8bf109-13ad-4c69-88d5-68b7bca2f931",
+  "verifiedAbsent": true,
+  "capturedIdNonceImageNameConfigurationChecked": true,
+  "hostCleanup": false,
+  "utc": "2026-09-24T07:12:48.451660+00:00",
+  "verificationNote": "Fixture removal succeeded; initial absence assertion expected a different Docker stderr phrase. Subsequent successful docker ps -a exact-ID filter confirms absence."
+}

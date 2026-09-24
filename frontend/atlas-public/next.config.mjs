@@ -7,7 +7,9 @@ const config = {
         { key: 'X-Frame-Options', value: 'DENY' },
     ] }, { source: '/admin/:path*', headers: [
         { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=()' },
-    ] }, { source: '/((?!admin(?:/|$)|dealers(?:/|$)).*)', headers: [
+    ] }, { source: '/account/:path*', headers: [
+        { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=(self)' },
+    ] }, { source: '/((?!admin(?:/|$)|account(?:/|$)|dealers(?:/|$)).*)', headers: [
         { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
     ] }, { source: '/((?!admin(?:/|$)|account(?:/|$)|dealers(?:/|$)).*)', headers: [
         // Mounted apps provide their own CSP for their pages and static assets.

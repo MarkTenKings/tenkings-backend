@@ -1,0 +1,28 @@
+{
+  "pass": true,
+  "syntheticOnly": true,
+  "networkProviders": false,
+  "preUpgradeStaffMigrations": 48,
+  "publicMigrations": 95,
+  "staffMigrations": 52,
+  "postgres": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+  "node": "v20.20.1",
+  "oldTablesVerified": 238,
+  "populatedTablesVerified": 18,
+  "originalGatewayBodySha256": "fa98e6503a7865eda484f413e81754439e77e39310c299d4eb03ef22b9a404ab",
+  "originalGatewayAclSha256": "a69d296ebcbaf1db7789d8aba0d2ef26f9daf75a8894ad1a8014e13976c8c0e2",
+  "beforeSnapshotSha256": "7675449b9d1a9a447b1ea93fa817553b8f0ba46cb5d85241f22529a7ea6e444a",
+  "afterSnapshotSha256": "14a44f4302d2bbd90bb7580f7155f79be9cdc2b82a3c833b49838d61bf98c612",
+  "checks": [
+    "schema48: actual restricted customer SMS sessions, legacy profiles and both-channel submissions; original staff gateway creates action/resolution events",
+    "all preexisting table contents and physical row versions, public ledger, first48 staff ledger rows, table/column/schema ACLs, roles and memberships unchanged",
+    "original gateway OID/body/owner/security/settings retained; exact existing EXECUTE ACL moves to wrapper; other predecessor functions unchanged except approved profile body and fixed search path",
+    "original customer role passes exact one-function privilege verifier without regrant; old/internal/private gateways and direct tables denied",
+    "same pre-upgrade session, profile, list/detail/card/request reads and exact submit/staff-event retries survive; foreign ownership and changed retries denied without row changes",
+    "legacy no-email profiles remain valid; complete email profile accepted and malformed email rejected",
+    "new customer service, identification and commerce controls remain absent with false defaults; no invented dealer/location/order or legacy conversion",
+    "new separately provisioned private role passes exact one-function verifier, is denied customer/internal/table access and refuses work while service control is absent",
+    "new legacy submission succeeds with the original no-email request contract and exact retry remains idempotent; existing event history stays intact"
+  ],
+  "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-KjZcbQ"
+}

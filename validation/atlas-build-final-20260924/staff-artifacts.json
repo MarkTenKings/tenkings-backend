@@ -1,0 +1,33 @@
+{
+  "app": "atlas-app",
+  "node": "v20.20.2",
+  "platform": "linux",
+  "architecture": "x64",
+  "sourceManifestSha256": "bba67e1ced915580936c604007ac1c75016f0d9a3244d3a9e07bc6b2962aff23",
+  "artifactSha256": "b0600683c366329f6b8b1d5182df5467170669b55fb3eda5a23a92589f1fb265",
+  "artifactFileCount": 135,
+  "artifactBytes": 31949406,
+  "buildId": "QabkavNbi4Yuani0FESL8",
+  "pages": {
+    "/_app": "pages/_app.js",
+    "/_error": "pages/_error.js",
+    "/api/staff/[...path]": "pages/api/staff/[...path].js",
+    "/batch": "pages/batch.js",
+    "/customer-operations": "pages/customer-operations.js",
+    "/add-cards": "pages/add-cards.js",
+    "/": "pages/index.js",
+    "/grading": "pages/grading.js",
+    "/manual": "pages/manual.js",
+    "/manual/[cardId]": "pages/manual/[cardId].js",
+    "/station": "pages/station.js",
+    "/operations": "pages/operations.js",
+    "/cards/[cardId]": "pages/cards/[cardId].js",
+    "/workspace/[cardId]": "pages/workspace/[cardId].js",
+    "/_document": "pages/_document.js",
+    "/404": "pages/404.html"
+  },
+  "basePath": "/admin",
+  "serverTraces": 17,
+  "tracedFiles": 3767,
+  "externalTracePaths": 0
+}

@@ -48,15 +48,20 @@ function adaptResponse(req, res) {
  * Bind/listen and lifecycle ownership belong to the caller. Inject a shared
  * atomic nonceStore when routing requests among multiple private processes. */
 export function createPrivateManualServer({ connected, boundary, origin, key,
-  nonceStore = createPrivateManualNonceStore(), maxSkewMs = 60000, publicHandler = null }) {
+  nonceStore = createPrivateManualNonceStore(), maxSkewMs = 60000, publicHandler = null, customerHandler = null }) {
   if (!connected || typeof boundary?.authenticate !== 'function') throw new ManualTransportError(500, 'MANUAL_TRANSPORT_CONFIG_INVALID');
   if(publicHandler!==null&&typeof publicHandler!=='function')throw new ManualTransportError(500,'MANUAL_TRANSPORT_CONFIG_INVALID');
+  if(customerHandler!==null&&typeof customerHandler!=='function')throw new ManualTransportError(500,'MANUAL_TRANSPORT_CONFIG_INVALID');
   const verify = createPrivateManualRequestVerifier({ key, origin, nonceStore, maxSkewMs });
   const verified = new WeakSet();
   const handler = createConnectedHandler({ connected, boundary, origin, assertRequest(req) {
     if (!verified.has(req)) throw new ManualTransportError(401, 'MANUAL_PRIVATE_SIGNATURE_REQUIRED');
   } });
   const server = createServer({ maxHeaderSize: 32768, requestTimeout: 30000, headersTimeout: 10000 }, async (req, nativeRes) => {
+    if(customerHandler){
+      try{if(await customerHandler(req,nativeRes))return;}
+      catch{if(nativeRes.headersSent){nativeRes.destroy();return;}nativeRes.statusCode=503;nativeRes.setHeader('Cache-Control','no-store');nativeRes.setHeader('Content-Type','application/json');nativeRes.end(JSON.stringify({error:'CUSTOMER_SERVICE_UNAVAILABLE'}));return;}
+    }
     // Public evidence has its own signed read-only protocol and scoped reader.
     // It never passes through a staff session or the mutation-capable handler.
     if(publicHandler){

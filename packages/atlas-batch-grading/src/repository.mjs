@@ -16,22 +16,28 @@ function project(row) {
 }
 const safeRow = row => {
   const { claimId, ...result } = project(row);
+  result.canResumeProcessing = false;
   // Approval is read from the existing exact human authority, never asserted
   // by the worker. A changed manual draft must not show an old proposed score.
   if (row.photos_changed === true) return { ...result, state: 'SUPERSEDED', code: 'BATCH_PHOTOS_CHANGED', evidence: {} };
   if (row.current_approval === true) return { ...result, state: 'APPROVED', evidence: {} };
   if (row.access_changed === true && accessResumeAvailable(row))
-    return { ...result, state: 'NEEDS_ATTENTION', code: 'BATCH_ACCESS_CHANGED', evidence: {} };
+    return { ...result, state: 'NEEDS_ATTENTION', code: 'BATCH_ACCESS_CHANGED', evidence: {}, canResumeProcessing: canResume(row) };
   if (row.manual_changed === true && row.review_started === true && result.state === 'REVIEW')
     return { ...result, resumeAvailable: true, evidence: { name: result.evidence.name }, code: 'BATCH_REVIEW_IN_PROGRESS' };
   if (row.manual_changed === true && result.state === 'REVIEW') return { ...result, state: 'NEEDS_ATTENTION', code: 'BATCH_MANUAL_DRAFT_CHANGED', evidence: {} };
-  return result;
+  return { ...result, canResumeProcessing: canResume(row) };
 };
 // A fresh authenticated session may explicitly resume its own saved work, but
 // cannot take a still-live claim. REVIEW must retain its report and any partial
 // human-review receipts rather than sending those findings through the worker.
 const accessResumeAvailable = row => ['QUEUED', 'NEEDS_ATTENTION', 'REVIEW'].includes(row.state)
   || (row.state === 'RUNNING' && row.lease_active === false);
+const canResume = row => Boolean(!row.current_approval && !row.photos_changed
+  && (row.state === 'NEEDS_ATTENTION' || (row.access_changed && accessResumeAvailable(row)))
+  && (row.state === 'REVIEW' || (!row.review_started
+    && row.code !== 'BATCH_HUMAN_WORK_PRESENT'
+    && (row.stage === 'PREPARE' || !row.manual_changed))));
 
 /** All calls run through the existing ordinary staff boundary. No worker DB
  * credential can borrow a human review, publication or certification action. */
@@ -192,6 +198,15 @@ export function createBatchRepository({ boundary, intakeRepository }) {
         const row = await owned(tx, principal, key, 'UPDATE'); await source(tx, principal, { ...row, access_version: principal.accessVersion }, 'SHARE');
         const accessChanged = row.access_version !== principal.accessVersion && accessResumeAvailable(row);
         requireThat(row.revision === expectedRevision && (row.state === 'NEEDS_ATTENTION' || accessChanged), 409, 'BATCH_RESUME_STALE');
+        const [manual] = await tx.$queryRawUnsafe(`SELECT m.content_hash,
+          EXISTS(SELECT 1 FROM atlas_manual.approval a WHERE a.card_id=m.id AND a.source_hash=m.content_hash) AS current_approval
+          FROM atlas_manual.card m WHERE m.id=$1::uuid FOR SHARE`, row.card_id);
+        requireThat(!manual?.current_approval, 409, 'BATCH_ALREADY_APPROVED');
+        const [review] = await tx.$queryRawUnsafe('SELECT job_key FROM atlas_manual_connected.batch_review WHERE job_key=$1', key);
+        const evidence = row.evidence ? JSON.parse(row.evidence) : {};
+        requireThat(canResume({ ...row, access_changed: accessChanged, review_started: Boolean(review),
+          manual_changed: Boolean(manual?.content_hash && manual.content_hash !== evidence.manualContentHash) }),
+        409, 'BATCH_CONTINUE_MANUAL_REVIEW');
         const [saved] = await tx.$queryRawUnsafe(`UPDATE atlas_manual_connected.batch_grading SET state=$3,code=NULL,
           claim_id=NULL,lease_until=NULL,access_version=$2,revision=revision+1,available_at=clock_timestamp(),updated_at=clock_timestamp()
           WHERE key=$1 RETURNING *`, key, principal.accessVersion, row.state === 'REVIEW' ? 'REVIEW' : 'QUEUED');

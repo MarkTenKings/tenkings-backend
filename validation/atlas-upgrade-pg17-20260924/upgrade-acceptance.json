@@ -1,0 +1,90 @@
+{
+  "name": "upgrade",
+  "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-KjZcbQ",
+  "sourceCommit": "4cbb40a35d9d4a858bd3fa0fb7ec4041c5769051",
+  "result": {
+    "pass": true,
+    "syntheticOnly": true,
+    "networkProviders": false,
+    "preUpgradeStaffMigrations": 48,
+    "publicMigrations": 95,
+    "staffMigrations": 52,
+    "postgres": "PostgreSQL 17.11 (Debian 17.11-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+    "node": "v20.20.1",
+    "oldTablesVerified": 238,
+    "populatedTablesVerified": 18,
+    "originalGatewayBodySha256": "fa98e6503a7865eda484f413e81754439e77e39310c299d4eb03ef22b9a404ab",
+    "originalGatewayAclSha256": "a69d296ebcbaf1db7789d8aba0d2ef26f9daf75a8894ad1a8014e13976c8c0e2",
+    "beforeSnapshotSha256": "7675449b9d1a9a447b1ea93fa817553b8f0ba46cb5d85241f22529a7ea6e444a",
+    "afterSnapshotSha256": "14a44f4302d2bbd90bb7580f7155f79be9cdc2b82a3c833b49838d61bf98c612",
+    "checks": [
+      "schema48: actual restricted customer SMS sessions, legacy profiles and both-channel submissions; original staff gateway creates action/resolution events",
+      "all preexisting table contents and physical row versions, public ledger, first48 staff ledger rows, table/column/schema ACLs, roles and memberships unchanged",
+      "original gateway OID/body/owner/security/settings retained; exact existing EXECUTE ACL moves to wrapper; other predecessor functions unchanged except approved profile body and fixed search path",
+      "original customer role passes exact one-function privilege verifier without regrant; old/internal/private gateways and direct tables denied",
+      "same pre-upgrade session, profile, list/detail/card/request reads and exact submit/staff-event retries survive; foreign ownership and changed retries denied without row changes",
+      "legacy no-email profiles remain valid; complete email profile accepted and malformed email rejected",
+      "new customer service, identification and commerce controls remain absent with false defaults; no invented dealer/location/order or legacy conversion",
+      "new separately provisioned private role passes exact one-function verifier, is denied customer/internal/table access and refuses work while service control is absent",
+      "new legacy submission succeeds with the original no-email request contract and exact retry remains idempotent; existing event history stays intact"
+    ],
+    "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-KjZcbQ"
+  },
+  "assertionGroups": 9,
+  "cleanup": {
+    "stoppedVerified": true,
+    "removed": "owned tmpfs container",
+    "evidenceRetained": true
+  },
+  "container": {
+    "id": "ad3f25c9a4166b398518ac19520121d117c11acafaa271b4b9934afb16acbc16",
+    "nonce": "fb47ca1858052c9fdd63fc27027872c8",
+    "port": 64960,
+    "remote": true,
+    "image": "sha256:a2ea0e68c465e0acf4c3672471b22b6b62972bb341e6f31544c855d85ba43745"
+  },
+  "transport": {
+    "host": "root@104.131.27.245",
+    "image": "sha256:a2ea0e68c465e0acf4c3672471b22b6b62972bb341e6f31544c855d85ba43745",
+    "architecture": "amd64",
+    "encryptedSshLoopbackTunnel": true,
+    "port": 64960,
+    "containerId": "ad3f25c9a4166b398518ac19520121d117c11acafaa271b4b9934afb16acbc16",
+    "nonce": "fb47ca1858052c9fdd63fc27027872c8"
+  },
+  "migration49Through52": [
+    {
+      "name": "20260924060000_customer_photo_intake",
+      "sha256": "41382fa3725251c92e461f5e7fd344d17e6e313a66ffe2e2ca625d834c0d58aa",
+      "byteCount": 33072
+    },
+    {
+      "name": "20260924061000_customer_commerce",
+      "sha256": "9c1363b8b02d1188d5e9c2340be6624a58ee8137ebed9e9a9f5d07ff648aa47e",
+      "byteCount": 46011
+    },
+    {
+      "name": "20260924062000_dealer_custody_tracking",
+      "sha256": "f1286c7634594103a216a749448507d1c5d79dd280706e9f6b8d80edee6b136d",
+      "byteCount": 43183
+    },
+    {
+      "name": "20260924063000_customer_private_service",
+      "sha256": "152ca79fd3a1d1ac1b7f8bbfdae14e01c77f7f6133feb4ca120694f2529e1b85",
+      "byteCount": 4064
+    }
+  ],
+  "evidenceFileSha256": {
+    "source.json": "d0d853ccd098160b1b1c4448d5e832887787384d92cb1d09d48d08b1c3777c8a",
+    "ledgers.json": "23cfece3e8ee408bd882038c4116fb2dfd0667386f0320a21fafc4cfcb787f11",
+    "upgrade-result.json": "6079c216888442f163d68199e4f4222116002080f372c5b35431a6148b924a17",
+    "cleanup.json": "bad8075f83dabce5dacbcddc6be803a49a1c1522b8746660401bdf3d927fb543",
+    "container.json": "c58f0677b87f5aa8f51a12c9a9d106e301b977f2cf4628e377b4967b0f6a59cd",
+    "transport.json": "03ef6a98269d34cd2542e79556e20909001902e7b731200a250a65dd91a8bb2a",
+    "validation.log": "d30fd02c87d77247e690ebf0639a64317203cff79637327fc2992eaa772e5800",
+    "postgres.log": "da176cb65cc48825fd4227e01ef851c5a9f20052d97bf2a19c5646e7123b7fc6",
+    "upgrade-through-48-ledger.json": "5990d1e2cf278973b6ab506c0c977d6d686dcbff3f9f13e1910b300c4792012e",
+    "upgrade-before.json": "c441f76c8e9bc7faa0891d10a2fce01e74728eb161a790caa5773a7ce48ab503",
+    "upgrade-after.json": "89ba02a0f7045f47a8584f34267751ece11191d103a8de66acb07e5bd40e19e6"
+  }
+}

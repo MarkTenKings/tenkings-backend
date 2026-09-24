@@ -1,0 +1,45 @@
+TAP version 13
+# Subtest: reading exact machine evidence does not attest; one explicit human command adopts displayed traces, grades and approves
+ok 1 - reading exact machine evidence does not attest; one explicit human command adopts displayed traces, grades and approves # SKIP test name does not match pattern
+  ---
+  duration_ms: 2.11925
+  ...
+# Subtest: lost committed findings response resumes identical receipts without duplicate adoption or approval
+ok 2 - lost committed findings response resumes identical receipts without duplicate adoption or approval # SKIP test name does not match pattern
+  ---
+  duration_ms: 0.122459
+  ...
+# Subtest: zero findings still require the same actual human inspection and approval
+ok 3 - zero findings still require the same actual human inspection and approval # SKIP test name does not match pattern
+  ---
+  duration_ms: 0.051292
+  ...
+# Subtest: different photo/report authority, missing deliberate decision and untrained staff never begin review
+ok 4 - different photo/report authority, missing deliberate decision and untrained staff never begin review # SKIP test name does not match pattern
+  ---
+  duration_ms: 0.352958
+  ...
+# Subtest: intervening manual edits or replaced source after partial review cannot be silently adopted
+ok 5 - intervening manual edits or replaced source after partial review cannot be silently adopted # SKIP test name does not match pattern
+  ---
+  duration_ms: 0.112167
+  ...
+# Subtest: a reclassified or differently measured final finding refuses approval even when final rounded grade is unchanged
+ok 6 - a reclassified or differently measured final finding refuses approval even when final rounded grade is unchanged # SKIP test name does not match pattern
+  ---
+  duration_ms: 0.056
+  ...
+# Subtest: checked native CPU yields exactly the same proposal and approved traces, overlap ownership and score
+ok 7 - checked native CPU yields exactly the same proposal and approved traces, overlap ownership and score
+  ---
+  duration_ms: 9315.454796
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 6
+# todo 0
+# duration_ms 9925.105296

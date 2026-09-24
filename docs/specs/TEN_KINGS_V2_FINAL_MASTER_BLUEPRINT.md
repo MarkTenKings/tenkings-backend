@@ -1,5 +1,12 @@
 # Ten Kings V2 — Final Master Product and Architecture Blueprint
 
+### Owner printer and automation planning clarification — September 23 Pacific / September 24 UTC, 2026
+
+The parallel printer task records Mark’s selection of **xTool O1** as the printer planning candidate and acceptance of xTool Studio UI automation. The current R2 physical concept has eight stations above **one straight conveyor**, an NFC reader **above** a twelve-pocket tray on an XY gantry and a fixed overhead camera. Prefer precut black inserts with preattached blank NFC subject to actual material, optical, RF and slab-fit qualification. Preserve the approved label artwork and dimensions; no barcode is added to the sold label. The under-$5,000 budget is for the printer, not the complete line. The500-per-day launch and later10,000–20,000-per-day goals are unproven capacity targets; shift length remains unresolved.
+
+Detailed hardware/BOM/model research belongs to the independent **ATLAS Automation — Blueprint & Build Lead** task. The workflow lead owns report/label association, native signing/enrollment and finishing integration. The offline22-label Studio layout does not prove printing or recovery; R2 geometry is illustrative, not fabrication-ready CAD. No purchase, vendor message, motion, print, tag lock or station activation is implied. Batch printing or in-tray NFC departure requires reviewed versioned contracts; RF-off and XY movement cannot impersonate the existing physical removal acknowledgement. This supplement supersedes the old printer-unselected shortlist, not the exact-stock permanent-lock or human physical acceptance gates.
+
+
 ### Owner submission clarification — automated ATLAS kiosk and mail-in checkout, September 23 Pacific / September 24 UTC, 2026
 
 ATLAS has two customer submission channels with one shared mobile workflow: mail-in at $40 per card plus shipping with an advertised two-week turnaround, and authorized-dealer kiosk drop-off at $50 per card with an advertised one-week turnaround and no additional customer shipping fee. An ATLAS team member collects and returns kiosk cards. A dealer is a location/referral partner earning10% of grading fees, confirmed as $5 per full-price $50 card with taxes/shipping excluded, with zero required submission, payment or card-handling work. Dealer quotes are not part of grading submission. This supersedes the lead's interim contact/quote-only interpretation for that service; separate actual graded-card buying offers remain separate market contracts.

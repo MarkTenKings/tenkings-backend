@@ -1,0 +1,2137 @@
+TAP version 13
+# Subtest: queue admission requires ordinary gateway, exact Origin and CSRF before service work
+ok 1 - queue admission requires ordinary gateway, exact Origin and CSRF before service work
+  ---
+  duration_ms: 8.38025
+  ...
+# Subtest: cross-origin writes, missing CSRF, query parameters and oversized admission are refused
+ok 2 - cross-origin writes, missing CSRF, query parameters and oversized admission are refused
+  ---
+  duration_ms: 4.185833
+  ...
+# Subtest: read and exact resume use their own methods; unrelated manual routes are not intercepted
+ok 3 - read and exact resume use their own methods; unrelated manual routes are not intercepted
+  ---
+  duration_ms: 0.448208
+  ...
+# Subtest: review reads cannot mutate and approval requires exact POST, current CSRF and bound job route
+ok 4 - review reads cannot mutate and approval requires exact POST, current CSRF and bound job route
+  ---
+  duration_ms: 4.2895
+  ...
+# Subtest: unknown analysis resumes only its original job, source and analysis action
+ok 5 - unknown analysis resumes only its original job, source and analysis action
+  ---
+  duration_ms: 19.734791
+  ...
+# Subtest: resume cannot process an approved report, changed draft, human work, foreign owner or changed photos
+ok 6 - resume cannot process an approved report, changed draft, human work, foreign owner or changed photos
+  ---
+  duration_ms: 6.527542
+  ...
+# Subtest: current access may resume preparation after corrections, or preserve a partial human review
+ok 7 - current access may resume preparation after corrections, or preserve a partial human review
+  ---
+  duration_ms: 2.4175
+  ...
+# Subtest: queue projection exposes no resume for superseded, approved or edited machine reports
+ok 8 - queue projection exposes no resume for superseded, approved or edited machine reports
+  ---
+  duration_ms: 1.355584
+  ...
+# Subtest: accepts a 50-card batch, rejects duplicates, unbound fields and 51 cards
+ok 9 - accepts a 50-card batch, rejects duplicates, unbound fields and 51 cards
+  ---
+  duration_ms: 14.272625
+  ...
+# Subtest: 50 independent cards progress with bounded actual concurrency and one failure does not block the others
+ok 10 - 50 independent cards progress with bounded actual concurrency and one failure does not block the others
+  ---
+  duration_ms: 241.656542
+  ...
+# Subtest: resume uses the same analysis identity after an uncertain request and process replacement
+ok 11 - resume uses the same analysis identity after an uncertain request and process replacement
+  ---
+  duration_ms: 15.229625
+  ...
+# Subtest: cannot label a partial stage or a human-authority payload review-ready
+ok 12 - cannot label a partial stage or a human-authority payload review-ready
+  ---
+  duration_ms: 13.537167
+  ...
+# Subtest: lost lease aborts the stage and cannot publish a ready result
+ok 13 - lost lease aborts the stage and cannot publish a ready result
+  ---
+  duration_ms: 29.856
+  ...
+# Subtest: stop is permanent and creates no later claims
+ok 14 - stop is permanent and creates no later claims
+  ---
+  duration_ms: 0.399042
+  ...
+# Subtest: shutdown waits for the running stage and durable finish without claiming the next card
+ok 15 - shutdown waits for the running stage and durable finish without claiming the next card
+  ---
+  duration_ms: 20.122125
+  ...
+# Subtest: shutdown returns a concurrently committed claim without dispatching its stage
+ok 16 - shutdown returns a concurrently committed claim without dispatching its stage
+  ---
+  duration_ms: 14.102
+  ...
+# Subtest: shutdown also waits for a lease renewal already in flight before releasing database custody
+ok 17 - shutdown also waits for a lease renewal already in flight before releasing database custody
+  ---
+  duration_ms: 20.524959
+  ...
+# Subtest: temporary native capacity waits on the same job instead of requiring human recovery
+ok 18 - temporary native capacity waits on the same job instead of requiring human recovery
+  ---
+  duration_ms: 7.273417
+  ...
+# Subtest: exact kiosk unit prices and commissions exclude actual tax; shipping never called
+ok 19 - exact kiosk unit prices and commissions exclude actual tax; shipping never called
+  ---
+  duration_ms: 27.221167
+  ...
+# Subtest: mail rates use measured preset and actual confirmed customer address, $40 each
+ok 20 - mail rates use measured preset and actual confirmed customer address, $40 each
+  ---
+  duration_ms: 99.575292
+  ...
+# Subtest: both legs obtain independent quotes and package inputs
+ok 21 - both legs obtain independent quotes and package inputs
+  ---
+  duration_ms: 5.32225
+  ...
+# Subtest: shipping controls need no invented customer party: both directions use the confirmed profile
+ok 22 - shipping controls need no invented customer party: both directions use the confirmed profile
+  ---
+  duration_ms: 4.500542
+  ...
+# Subtest: mail package options and quotes require the exact measured card count before any provider request
+ok 23 - mail package options and quotes require the exact measured card count before any provider request
+  ---
+  duration_ms: 3.993501
+  ...
+# Subtest: unmeasured, stale, future-admission and malformed shipment plans cannot dispatch a quote
+ok 24 - unmeasured, stale, future-admission and malformed shipment plans cannot dispatch a quote
+  ---
+  duration_ms: 25.526958
+  ...
+# Subtest: both-leg plans validate return measurements and date before the first carrier quote
+ok 25 - both-leg plans validate return measurements and date before the first carrier quote
+  ---
+  duration_ms: 1.580917
+  ...
+# Subtest: a duplicate preset/count/service is refused rather than silently selecting one measurement
+ok 26 - a duplicate preset/count/service is refused rather than silently selecting one measurement
+  ---
+  duration_ms: 4.925875
+  ...
+# Subtest: quote persists exact private measured plan and cannot outlive its configured admission window
+ok 27 - quote persists exact private measured plan and cannot outlive its configured admission window
+  ---
+  duration_ms: 5.445625
+  ...
+# Subtest: shipment dates use configured origin timezone and are never rewritten
+ok 28 - shipment dates use configured origin timezone and are never rewritten
+  ---
+  duration_ms: 2.926208
+  ...
+# Subtest: mail unknown terms fail closed {}
+ok 29 - mail unknown terms fail closed {}
+  ---
+  duration_ms: 0.65075
+  ...
+# Subtest: mail unknown terms fail closed {"mailClockStart":"ATLAS_RECEIPT"}
+ok 30 - mail unknown terms fail closed {"mailClockStart":"ATLAS_RECEIPT"}
+  ---
+  duration_ms: 0.274084
+  ...
+# Subtest: mail unknown terms fail closed {"mailChargedLegs":"INBOUND_ONLY"}
+ok 31 - mail unknown terms fail closed {"mailChargedLegs":"INBOUND_ONLY"}
+  ---
+  duration_ms: 0.710209
+  ...
+# Subtest: missing tax is never zero tax
+ok 32 - missing tax is never zero tax
+  ---
+  duration_ms: 3.573417
+  ...
+# Subtest: real zero tax calculation is valid with source
+ok 33 - real zero tax calculation is valid with source
+  ---
+  duration_ms: 1.315875
+  ...
+# Subtest: mismatched tax, amount, currency and source binding fail
+ok 34 - mismatched tax, amount, currency and source binding fail
+  ---
+  duration_ms: 1.320709
+  ...
+# Subtest: caller amounts cannot override server pricing; stale revision denied
+ok 35 - caller amounts cannot override server pricing; stale revision denied
+  ---
+  duration_ms: 6.287541
+  ...
+# Subtest: unverified or duplicate photo roster cannot quote
+ok 36 - unverified or duplicate photo roster cannot quote
+  ---
+  duration_ms: 0.982166
+  ...
+# Subtest: concurrent payment requests produce one provider intent; ACK is not paid
+ok 37 - concurrent payment requests produce one provider intent; ACK is not paid
+  ---
+  duration_ms: 2.28475
+  ...
+# Subtest: lost create reply stays unknown, repeated Pay does not create another intent
+ok 38 - lost create reply stays unknown, repeated Pay does not create another intent
+  ---
+  duration_ms: 3.574166
+  ...
+# Subtest: confirmed payment atomically creates one order and durable receipt effects on retries
+ok 39 - confirmed payment atomically creates one order and durable receipt effects on retries
+  ---
+  duration_ms: 2.248417
+  ...
+# Subtest: provider amount/merchant/mode/hash mismatches cannot mark paid
+ok 40 - provider amount/merchant/mode/hash mismatches cannot mark paid
+  ---
+  duration_ms: 6.311292
+  ...
+# Subtest: unknown notification effect is durable and never automatically redispatched
+ok 41 - unknown notification effect is durable and never automatically redispatched
+  ---
+  duration_ms: 2.613625
+  ...
+# Subtest: FedEx label async acknowledgement never counts as a saved label
+ok 42 - FedEx label async acknowledgement never counts as a saved label
+  ---
+  duration_ms: 4.6325
+  ...
+# Subtest: configuration defaults disabled, exposes presence only and ignores legacy keys
+ok 43 - configuration defaults disabled, exposes presence only and ignores legacy keys
+  ---
+  duration_ms: 0.796666
+  ...
+# Subtest: explicit enabled with missing actual tax or merchant fails
+ok 44 - explicit enabled with missing actual tax or merchant fails
+  ---
+  duration_ms: 0.270542
+  ...
+# Subtest: missing delivery adapter leaves outbox pending without claiming
+ok 45 - missing delivery adapter leaves outbox pending without claiming
+  ---
+  duration_ms: 1.550542
+  ...
+# Subtest: historical paid order survives disabled kiosk and absent payment configuration
+ok 46 - historical paid order survives disabled kiosk and absent payment configuration
+  ---
+  duration_ms: 0.938666
+  ...
+# Subtest: known async FedEx reconciliation retrieves original job and never creates another shipment
+ok 47 - known async FedEx reconciliation retrieves original job and never creates another shipment
+  ---
+  duration_ms: 3.97525
+  ...
+# Subtest: delayed label creation with an expired ship date stays pending before dispatch and never changes the saved request
+ok 48 - delayed label creation with an expired ship date stays pending before dispatch and never changes the saved request
+  ---
+  duration_ms: 3.669041
+  ...
+# Subtest: customer quote and checkout allowlists preserve display fields while internal immutable evidence stays complete
+ok 49 - customer quote and checkout allowlists preserve display fields while internal immutable evidence stays complete
+  ---
+  duration_ms: 29.00775
+  ...
+# Subtest: mail quote exposes leg amounts without FedEx parties, accounts, requests or tax provider IDs
+ok 50 - mail quote exposes leg amounts without FedEx parties, accounts, requests or tax provider IDs
+  ---
+  duration_ms: 61.865083
+  ...
+# Subtest: pay, repeated pay and reconcile project paid receipts and never expose provider/payment evidence
+ok 51 - pay, repeated pay and reconcile project paid receipts and never expose provider/payment evidence
+  ---
+  duration_ms: 5.350667
+  ...
+# Subtest: historical receipt recovery projects both raw private source and safe SQL DTO when providers/kiosk are disabled
+ok 52 - historical receipt recovery projects both raw private source and safe SQL DTO when providers/kiosk are disabled
+  ---
+  duration_ms: 3.179834
+  ...
+# Subtest: disabled safe checkout remains readable; only the active online awaiting-payment response gets its form secret
+ok 53 - disabled safe checkout remains readable; only the active online awaiting-payment response gets its form secret
+  ---
+  duration_ms: 0.712
+  ...
+# Subtest: Stripe transport validates ATLAS merchant before dispatch and sends pinned version/idempotency
+ok 54 - Stripe transport validates ATLAS merchant before dispatch and sends pinned version/idempotency
+  ---
+  duration_ms: 74.382042
+  ...
+# Subtest: wrong merchant or disabled account prevents payment dispatch
+ok 55 - wrong merchant or disabled account prevents payment dispatch
+  ---
+  duration_ms: 2.302959
+  ...
+# Subtest: Stripe live/test mismatch fails before network
+ok 56 - Stripe live/test mismatch fails before network
+  ---
+  duration_ms: 0.123416
+  ...
+# Subtest: terminal uses only configured reader/location and one PaymentIntent identity
+ok 57 - terminal uses only configured reader/location and one PaymentIntent identity
+  ---
+  duration_ms: 5.33825
+  ...
+# Subtest: offline, other-location and busy readers fail before PaymentIntent creation
+ok 58 - offline, other-location and busy readers fail before PaymentIntent creation
+  ---
+  duration_ms: 1.252042
+  ...
+# Subtest: lost terminal command reply retains provider intent, does not infer failure
+ok 59 - lost terminal command reply retains provider intent, does not infer failure
+  ---
+  duration_ms: 1.267208
+  ...
+# Subtest: unknown intent uses metadata read search only; empty result stays unknown
+ok 60 - unknown intent uses metadata read search only; empty result stays unknown
+  ---
+  duration_ms: 0.653875
+  ...
+# Subtest: online card flow returns private client secret, no reader action
+ok 61 - online card flow returns private client secret, no reader action
+  ---
+  duration_ms: 0.94375
+  ...
+# Subtest: tax requires explicitly configured classification and sourcing; no implicit zero
+ok 62 - tax requires explicitly configured classification and sourcing; no implicit zero
+  ---
+  duration_ms: 1.507958
+  ...
+# Subtest: tax uses configured kiosk address and returns real amount/reference
+ok 63 - tax uses configured kiosk address and returns real amount/reference
+  ---
+  duration_ms: 9.243959
+  ...
+# Subtest: kiosk tax requires the registry address and mail tax preserves the customer return address
+ok 64 - kiosk tax requires the registry address and mail tax preserves the customer return address
+  ---
+  duration_ms: 1.14025
+  ...
+# Subtest: FedEx authenticates then quotes actual account rate with measured package and selected service
+ok 65 - FedEx authenticates then quotes actual account rate with measured package and selected service
+  ---
+  duration_ms: 5.681
+  ...
+# Subtest: FedEx list rate, other service, unsupported currency or missing total do not become quotes
+ok 66 - FedEx list rate, other service, unsupported currency or missing total do not become quotes
+  ---
+  duration_ms: 8.379417
+  ...
+# Subtest: missing package measurements or explicit billing stops before network
+ok 67 - missing package measurements or explicit billing stops before network
+  ---
+  duration_ms: 3.356625
+  ...
+# Subtest: FedEx creates and saves exact PDF label and tracking without refetching external URLs
+ok 68 - FedEx creates and saves exact PDF label and tracking without refetching external URLs
+  ---
+  duration_ms: 5.701333
+  ...
+# Subtest: FedEx lost shipment reply is not retried inside adapter
+ok 69 - FedEx lost shipment reply is not retried inside adapter
+  ---
+  duration_ms: 1.426958
+  ...
+# Subtest: package label is exact order/card count PDF without print completion
+ok 70 - package label is exact order/card count PDF without print completion
+  ---
+  duration_ms: 1.557958
+  ...
+# Subtest: webhook requires unchanged raw bytes, matching signature and fresh timestamp
+ok 71 - webhook requires unchanged raw bytes, matching signature and fresh timestamp
+  ---
+  duration_ms: 4.768625
+  ...
+# Subtest: webhook ignores irrelevant events without payment effects
+ok 72 - webhook ignores irrelevant events without payment effects
+  ---
+  duration_ms: 1.015791
+  ...
+# Subtest: notification adapter records acceptance separately from delivery and uses ATLAS senders
+ok 73 - notification adapter records acceptance separately from delivery and uses ATLAS senders
+  ---
+  duration_ms: 32.991209
+  ...
+# Subtest: absent settings remain cold and report only key names
+ok 74 - absent settings remain cold and report only key names
+  ---
+  duration_ms: 5.963875
+  ...
+# Subtest: complete static configuration never claims live readiness or exposes values
+ok 75 - complete static configuration never claims live readiness or exposes values
+  ---
+  duration_ms: 6.107375
+  ...
+# Subtest: missing webhook and mismatched provider modes refuse qualification
+ok 76 - missing webhook and mismatched provider modes refuse qualification
+  ---
+  duration_ms: 1.094417
+  ...
+# Subtest: unsettled mail terms and malformed activation switches are explicit
+ok 77 - unsettled mail terms and malformed activation switches are explicit
+  ---
+  duration_ms: 0.616041
+  ...
+# (node:894) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: worker starts with a durable scan, serializes GET reconciliation, and pages fairly without dispatch capability
+ok 78 - worker starts with a durable scan, serializes GET reconciliation, and pages fairly without dispatch capability
+  ---
+  duration_ms: 25.134625
+  ...
+# Subtest: a new process worker recovers the same accepted ID without a browser principal or automatic POST
+ok 79 - a new process worker recovers the same accepted ID without a browser principal or automatic POST
+  ---
+  duration_ms: 5.352792
+  ...
+# Subtest: transient scan and per-ID retrieval failures keep polling and never log raw exception text
+ok 80 - transient scan and per-ID retrieval failures keep polling and never log raw exception text
+  ---
+  duration_ms: 4.198625
+  ...
+# Subtest: shutdown aborts only the current GET and prevents later IDs or scheduled scans
+ok 81 - shutdown aborts only the current GET and prevents later IDs or scheduled scans
+  ---
+  duration_ms: 5.581792
+  ...
+# Subtest: invalid and duplicate accepted IDs cannot reach provider reconciliation
+ok 82 - invalid and duplicate accepted IDs cannot reach provider reconciliation
+  ---
+  duration_ms: 1.500208
+  ...
+# Subtest: machine draft uses measured contours and current deterministic score without manufacturing human review
+ok 83 - machine draft uses measured contours and current deterministic score without manufacturing human review
+  ---
+  duration_ms: 1616.259376
+  ...
+# Subtest: a clean machine proposal still remains uncertified and uninspected
+ok 84 - a clean machine proposal still remains uncertified and uninspected
+  ---
+  duration_ms: 1.63775
+  ...
+# Subtest: manual findings, existing inspection and nonready analysis cannot be replaced by machine drafting
+ok 85 - manual findings, existing inspection and nonready analysis cannot be replaced by machine drafting
+  ---
+  duration_ms: 3.170375
+  ...
+# Subtest: missing CPU receipt and cancellation refuse review readiness
+ok 86 - missing CPU receipt and cancellation refuse review readiness
+  ---
+  duration_ms: 744.684209
+  ...
+# Subtest: preparation pauses safely for missing identity without calling human actions
+ok 87 - preparation pauses safely for missing identity without calling human actions
+  ---
+  duration_ms: 1.078875
+  ...
+# Subtest: shutdown during real PREPARE preparation reads prevents provider admission and retains the same stage
+ok 88 - shutdown during real PREPARE preparation reads prevents provider admission and retains the same stage
+  ---
+  duration_ms: 3.355625
+  ...
+# Subtest: shutdown during real ANALYZE preparation reads prevents provider admission and retains the same stage
+ok 89 - shutdown during real ANALYZE preparation reads prevents provider admission and retains the same stage
+  ---
+  duration_ms: 0.592958
+  ...
+# Subtest: reading exact machine evidence does not attest; one explicit human command adopts displayed traces, grades and approves
+ok 90 - reading exact machine evidence does not attest; one explicit human command adopts displayed traces, grades and approves
+  ---
+  duration_ms: 3767.811084
+  ...
+# Subtest: lost committed findings response resumes identical receipts without duplicate adoption or approval
+ok 91 - lost committed findings response resumes identical receipts without duplicate adoption or approval
+  ---
+  duration_ms: 3793.595502
+  ...
+# Subtest: zero findings still require the same actual human inspection and approval
+ok 92 - zero findings still require the same actual human inspection and approval
+  ---
+  duration_ms: 34.676708
+  ...
+# Subtest: different photo/report authority, missing deliberate decision and untrained staff never begin review
+ok 93 - different photo/report authority, missing deliberate decision and untrained staff never begin review
+  ---
+  duration_ms: 6244.962337
+  ...
+# Subtest: intervening manual edits or replaced source after partial review cannot be silently adopted
+ok 94 - intervening manual edits or replaced source after partial review cannot be silently adopted
+  ---
+  duration_ms: 3224.619002
+  ...
+# Subtest: a reclassified or differently measured final finding refuses approval even when final rounded grade is unchanged
+ok 95 - a reclassified or differently measured final finding refuses approval even when final rounded grade is unchanged
+  ---
+  duration_ms: 3855.24296
+  ...
+# Subtest: checked native CPU yields exactly the same proposal and approved traces, overlap ownership and score
+ok 96 - checked native CPU yields exactly the same proposal and approved traces, overlap ownership and score # SKIP
+  ---
+  duration_ms: 0.873042
+  ...
+# Subtest: confirmation fence locks the run before a separate fresh receipt read and refuses a receipt that arrived while waiting
+ok 97 - confirmation fence locks the run before a separate fresh receipt read and refuses a receipt that arrived while waiting
+  ---
+  duration_ms: 9.5255
+  ...
+# Subtest: report approval uses the same fence; expired or absent guards cannot reach metadata writes
+ok 98 - report approval uses the same fence; expired or absent guards cannot reach metadata writes
+  ---
+  duration_ms: 0.74075
+  ...
+# Subtest: cold connected composition accepts explicit resource configuration without dispatch or database work
+ok 99 - cold connected composition accepts explicit resource configuration without dispatch or database work
+  ---
+  duration_ms: 6.252208
+  ...
+# Subtest: disabled private customer service constructs no database or provider client
+ok 100 - disabled private customer service constructs no database or provider client
+  ---
+  duration_ms: 2.226167
+  ...
+# Subtest: production customer service rejects hosted execution, weak binding and reused credentials
+ok 101 - production customer service rejects hosted execution, weak binding and reused credentials
+  ---
+  duration_ms: 9.348458
+  ...
+# Subtest: photo storage requires its own complete canonical configuration
+ok 102 - photo storage requires its own complete canonical configuration
+  ---
+  duration_ms: 1.708083
+  ...
+# Subtest: cold runtime serves only signed directory reads through its restricted role and drains on close
+ok 103 - cold runtime serves only signed directory reads through its restricted role and drains on close
+  ---
+  duration_ms: 308.245125
+  ...
+# Subtest: dealer reads and selections require ordinary authenticated card scope and return no-store
+ok 104 - dealer reads and selections require ordinary authenticated card scope and return no-store
+  ---
+  duration_ms: 13.867709
+  ...
+# Subtest: cross-origin, missing CSRF, wrong method, query overrides and excess bodies cannot reach dealer selection
+ok 105 - cross-origin, missing CSRF, wrong method, query overrides and excess bodies cannot reach dealer selection
+  ---
+  duration_ms: 3.435792
+  ...
+# Subtest: actual client/HTTP/service/repository/public reader publish only sourced configured offers and retain exact grade bytes
+ok 106 - actual client/HTTP/service/repository/public reader publish only sourced configured offers and retain exact grade bytes
+  ---
+  duration_ms: 151.3485
+  ...
+# Subtest: contact-only, non-buying, removed, future and expired dealers cannot supply an offer
+ok 107 - contact-only, non-buying, removed, future and expired dealers cannot supply an offer
+  ---
+  duration_ms: 114.318708
+  ...
+# Subtest: offer configuration binds every report identity, source date, disclosed terms, amount and currency
+ok 108 - offer configuration binds every report identity, source date, disclosed terms, amount and currency
+  ---
+  duration_ms: 176.444959
+  ...
+# Subtest: expiry, revocation, removal, changed terms and broken configuration suppress published offers while grade stays readable
+ok 109 - expiry, revocation, removal, changed terms and broken configuration suppress published offers while grade stays readable
+  ---
+  duration_ms: 113.139375
+  ...
+# Subtest: changed offer terms require new review, exact committed replay survives expiry, request tampering and other card authority fail
+ok 110 - changed offer terms require new review, exact committed replay survives expiry, request tampering and other card authority fail
+  ---
+  duration_ms: 17.631708
+  ...
+# Subtest: legacy sold references, photo evidence and committed retries survive offer publication, removal and later comps updates
+ok 111 - legacy sold references, photo evidence and committed retries survive offer publication, removal and later comps updates
+  ---
+  duration_ms: 47.262875
+  ...
+# Subtest: market browser selection traverses real HTTP/service/repository and public projection without an automatic search
+ok 112 - market browser selection traverses real HTTP/service/repository and public projection without an automatic search
+  ---
+  duration_ms: 21.368334
+  ...
+# Subtest: dealer staff service binds original unforgeable staff handle and propagates SQL denial
+ok 113 - dealer staff service binds original unforgeable staff handle and propagates SQL denial
+  ---
+  duration_ms: 7.213291
+  ...
+# Subtest: dealer custody HTTP requires private admission, original cookie and CSRF before dispatch
+ok 114 - dealer custody HTTP requires private admission, original cookie and CSRF before dispatch
+  ---
+  duration_ms: 5.841541
+  ...
+# Subtest: discarding a later trace edit retains the already committed Astra proposal review and measured finding
+ok 115 - discarding a later trace edit retains the already committed Astra proposal review and measured finding
+  ---
+  duration_ms: 3432.36771
+  ...
+# Subtest: a later corrected Astra outline publishes a CORRECTED lesson with its original proposal provenance
+ok 116 - a later corrected Astra outline publishes a CORRECTED lesson with its original proposal provenance
+  ---
+  duration_ms: 3515.066544
+  ...
+# Subtest: legacy V1/V2 and context V2 saved suggestions remain reviewable without new images, memory or provider dispatch
+ok 117 - legacy V1/V2 and context V2 saved suggestions remain reviewable without new images, memory or provider dispatch
+  ---
+  duration_ms: 151.338167
+  ...
+# Subtest: a new explicit connected analysis selects context image effects and stores exact context V2 request before provider work
+ok 118 - a new explicit connected analysis selects context image effects and stores exact context V2 request before provider work
+  ---
+  duration_ms: 27.300125
+  ...
+# Subtest: identity correction invalidates proposals informed by the old design memory while preserving raw receipts
+ok 119 - identity correction invalidates proposals informed by the old design memory while preserving raw receipts
+  ---
+  duration_ms: 27.402125
+  ...
+# Subtest: expired never-dispatched PREPARED requests remain exactly resumable for terminal refusal
+ok 120 - expired never-dispatched PREPARED requests remain exactly resumable for terminal refusal
+  ---
+  duration_ms: 11.03025
+  ...
+# Subtest: durable background acceptance projects RUNNING after admission expiry without borrowing a browser session for polling
+ok 121 - durable background acceptance projects RUNNING after admission expiry without borrowing a browser session for polling
+  ---
+  duration_ms: 14.333125
+  ...
+# Subtest: verified accepted collection expiry projects a stopped UNKNOWN before or after its durable exhaustion receipt
+ok 122 - verified accepted collection expiry projects a stopped UNKNOWN before or after its durable exhaustion receipt
+  ---
+  duration_ms: 26.230875
+  ...
+# Subtest: only the verified no-ID legacy UNKNOWN outcome exposes an explicit replacement token
+ok 123 - only the verified no-ID legacy UNKNOWN outcome exposes an explicit replacement token
+  ---
+  duration_ms: 13.370167
+  ...
+# Subtest: a different ordinary action while UNKNOWN is durably refused before image or paid work and cannot resume later
+ok 124 - a different ordinary action while UNKNOWN is durably refused before image or paid work and cannot resume later
+  ---
+  duration_ms: 17.744042
+  ...
+# Subtest: a stale replacement outcome is durably refused without hiding or modifying the old UNKNOWN run
+ok 125 - a stale replacement outcome is durably refused without hiding or modifying the old UNKNOWN run
+  ---
+  duration_ms: 16.79925
+  ...
+# Subtest: an ordinary verified retirement does not request a latest-analysis handoff
+ok 126 - an ordinary verified retirement does not request a latest-analysis handoff
+  ---
+  duration_ms: 10.056375
+  ...
+# Subtest: known provider acceptance never exposes or accepts a no-ID replacement even with an earlier UNKNOWN receipt
+ok 127 - known provider acceptance never exposes or accepts a no-ID replacement even with an earlier UNKNOWN receipt
+  ---
+  duration_ms: 16.037375
+  ...
+# Subtest: one explicit collective confirmation commits seven saved suggestions and a manual Back mark once; replay and reload preserve all eight
+ok 128 - one explicit collective confirmation commits seven saved suggestions and a manual Back mark once; replay and reload preserve all eight
+  ---
+  duration_ms: 9688.039338
+  ...
+# Subtest: collective confirmation preserves individually corrected and rejected suggestions and accepts only the remaining five
+ok 129 - collective confirmation preserves individually corrected and rejected suggestions and accepts only the remaining five
+  ---
+  duration_ms: 9496.048462
+  ...
+# Subtest: a partial collective CPU failure commits nothing and the exact same command can safely retry
+ok 130 - a partial collective CPU failure commits nothing and the exact same command can safely retry
+  ---
+  duration_ms: 11748.191881
+  ...
+# Subtest: collective measurement has one total deadline, aborts slow CPU and never commits a late candidate
+ok 131 - collective measurement has one total deadline, aborts slow CPU and never commits a late candidate
+  ---
+  duration_ms: 6635.29217
+  ...
+# Subtest: ordinary confirmation, old confirmed report previews and approvals cannot omit unresolved saved suggestions
+ok 132 - ordinary confirmation, old confirmed report previews and approvals cannot omit unresolved saved suggestions
+  ---
+  duration_ms: 9799.553505
+  ...
+# Subtest: collective scope rejects partial, duplicate, forged, stale-analysis and stale-frame selections before measurement
+ok 133 - collective scope rejects partial, duplicate, forged, stale-analysis and stale-frame selections before measurement
+  ---
+  duration_ms: 67.659834
+  ...
+# Subtest: new pending analysis blocks confirmation, while no analysis ever started still permits manual confirmation
+ok 134 - new pending analysis blocks confirmation, while no analysis ever started still permits manual confirmation
+  ---
+  duration_ms: 21.460709
+  ...
+# Subtest: a newer analysis at the final locked commit fence refuses the whole candidate without losing the original review
+ok 135 - a newer analysis at the final locked commit fence refuses the whole candidate without losing the original review
+  ---
+  duration_ms: 7693.68292
+  ...
+# Subtest: collective confirmation still requires both current human inspection attestations before any CPU adoption
+ok 136 - collective confirmation still requires both current human inspection attestations before any CPU adoption
+  ---
+  duration_ms: 35.869458
+  ...
+# Subtest: a saved-proposal read failure cannot turn READY suggestions into an ordinary confirmation
+ok 137 - a saved-proposal read failure cannot turn READY suggestions into an ordinary confirmation
+  ---
+  duration_ms: 18.058375
+  ...
+# Subtest: new report approval binds the half-point final grade and refuses a previous-policy preview hash
+ok 138 - new report approval binds the half-point final grade and refuses a previous-policy preview hash
+  ---
+  duration_ms: 54.995583
+  ...
+# Subtest: a retired undispatched attempt keeps exact refusal status but cannot hide the active READY collective scope from workspace
+ok 139 - a retired undispatched attempt keeps exact refusal status but cannot hide the active READY collective scope from workspace
+  ---
+  duration_ms: 16.945042
+  ...
+# Subtest: disabling new inference keeps saved READY proposal verification and collective confirmation required
+ok 140 - disabling new inference keeps saved READY proposal verification and collective confirmation required
+  ---
+  duration_ms: 6493.506128
+  ...
+# Subtest: late provider acceptance turns UNKNOWN into pending and invalidates the locked confirmation fence
+ok 141 - late provider acceptance turns UNKNOWN into pending and invalidates the locked confirmation fence
+  ---
+  duration_ms: 21.45025
+  ...
+# Subtest: actual PNG crops preserve every source pixel and separately bind prepared WebP bytes
+ok 142 - actual PNG crops preserve every source pixel and separately bind prepared WebP bytes
+  ---
+  duration_ms: 2959.467668
+  ...
+# Subtest: explicit context crops preserve every independently expected source pixel, including all outside-edge strips
+ok 143 - explicit context crops preserve every independently expected source pixel, including all outside-edge strips
+  ---
+  duration_ms: 3985.775293
+  ...
+# Subtest: unsupported image layout refuses before reading any source or storing any artifact
+ok 144 - unsupported image layout refuses before reading any source or storing any artifact
+  ---
+  duration_ms: 1.861583
+  ...
+# Subtest: reviewed crop and exact disconnected mask survive immutable storage; overlay marks only selected pixels
+ok 145 - reviewed crop and exact disconnected mask survive immutable storage; overlay marks only selected pixels
+  ---
+  duration_ms: 1671.517834
+  ...
+# Subtest: a single Back photo is processed without profile, identity or Front, and duplicate starts reuse the durable result
+ok 146 - a single Back photo is processed without profile, identity or Front, and duplicate starts reuse the durable result
+  ---
+  duration_ms: 1011.212168
+  ...
+# Subtest: persisted source intent recovers in a new worker without a browser ensure call
+ok 147 - persisted source intent recovers in a new worker without a browser ensure call
+  ---
+  duration_ms: 937.632625
+  ...
+# Subtest: explicit retry repeats the exact reviewed input once; routine polling never retries a rejection
+ok 148 - explicit retry repeats the exact reviewed input once; routine polling never retries a rejection
+  ---
+  duration_ms: 940.449416
+  ...
+# Subtest: a native preparation refusal retains its valid physical proposal and exposes a recoverable per-side result
+ok 149 - a native preparation refusal retains its valid physical proposal and exposes a recoverable per-side result
+  ---
+  duration_ms: 960.803
+  ...
+# Subtest: failed source discovery does not starve another side or already queued work
+ok 150 - failed source discovery does not starve another side or already queued work
+  ---
+  duration_ms: 1847.841834
+  ...
+# Subtest: Front and Back native work can overlap but never exceed two reserved slots
+ok 151 - Front and Back native work can overlap but never exceed two reserved slots
+  ---
+  duration_ms: 1952.029626
+  ...
+# Subtest: a Back that arrives during slow Front processing uses the free slot and finishes first
+ok 152 - a Back that arrives during slow Front processing uses the free slot and finishes first
+  ---
+  duration_ms: 1918.166668
+  ...
+# Subtest: shutdown cannot be undone by a late upload-completion callback
+ok 153 - shutdown cannot be undone by a late upload-completion callback
+  ---
+  duration_ms: 939.736626
+  ...
+# Subtest: identity text/profile do not rerun unchanged pixels; changed mat has a new cache key
+ok 154 - identity text/profile do not rerun unchanged pixels; changed mat has a new cache key
+  ---
+  duration_ms: 927.716376
+  ...
+# Subtest: a late old-photo completion cannot become current; retry refuses a superseded key
+ok 155 - a late old-photo completion cannot become current; retry refuses a superseded key
+  ---
+  duration_ms: 1942.285918
+  ...
+# Subtest: cache adoption uses the real profile and refuses later human geometry without touching Back
+ok 156 - cache adoption uses the real profile and refuses later human geometry without touching Back
+  ---
+  duration_ms: 1063.267459
+  ...
+# Subtest: finishing station endpoints authenticate ordinary staff and CSRF before any service mutation
+ok 157 - finishing station endpoints authenticate ordinary staff and CSRF before any service mutation
+  ---
+  duration_ms: 10.753541
+  ...
+# Subtest: station endpoint refuses cross-origin/query/method/body misuse before the service
+ok 158 - station endpoint refuses cross-origin/query/method/body misuse before the service
+  ---
+  duration_ms: 3.6855
+  ...
+# Subtest: disabled station read remains cold and write cannot invoke missing capability
+ok 159 - disabled station read remains cold and write cannot invoke missing capability
+  ---
+  duration_ms: 0.55875
+  ...
+# Subtest: enrollment signs possession evidence without trusting self-enrollment or accepting forged proof
+ok 160 - enrollment signs possession evidence without trusting self-enrollment or accepting forged proof
+  ---
+  duration_ms: 60.79025
+  ...
+# Subtest: active trust is bound to one exact protected enrollment and one operator; local sessions cannot arm production
+ok 161 - active trust is bound to one exact protected enrollment and one operator; local sessions cannot arm production
+  ---
+  duration_ms: 19.48525
+  ...
+# Subtest: arm carries exact published bytes/version, a bounded deadline and durable retry; physical association is explicit
+ok 162 - arm carries exact published bytes/version, a bounded deadline and durable retry; physical association is explicit
+  ---
+  duration_ms: 14.777166
+  ...
+# Subtest: unpublished/fixture plan and foreign card cannot acquire a physical intent
+ok 163 - unpublished/fixture plan and foreign card cannot acquire a physical intent
+  ---
+  duration_ms: 8.011583
+  ...
+# Subtest: verified write is committed before signed ack; lost host signature retries exactly after expiry without another write
+ok 164 - verified write is committed before signed ack; lost host signature retries exactly after expiry without another write
+  ---
+  duration_ms: 11.22525
+  ...
+# Subtest: forged, cross-card, incomplete or expired new write receipts never commit
+ok 165 - forged, cross-card, incomplete or expired new write receipts never commit
+  ---
+  duration_ms: 12.37425
+  ...
+# Subtest: only signed removal referencing committed write releases station; delayed signed custody relays safely
+ok 166 - only signed removal referencing committed write releases station; delayed signed custody relays safely
+  ---
+  duration_ms: 10.202792
+  ...
+# Subtest: authenticated immutable approval becomes exact repeatable label and paired intents
+ok 167 - authenticated immutable approval becomes exact repeatable label and paired intents
+  ---
+  duration_ms: 84.480084
+  ...
+# Subtest: private packet loader retains the same immutable source and reauthenticates without preparing output
+ok 168 - private packet loader retains the same immutable source and reauthenticates without preparing output
+  ---
+  duration_ms: 25.443167
+  ...
+# Subtest: unpublished, changed manifest or approval source refuses finishing before output
+ok 169 - unpublished, changed manifest or approval source refuses finishing before output
+  ---
+  duration_ms: 92.726666
+  ...
+# Subtest: packet must remain bound to the actual approval even if a new object hash is supplied
+ok 170 - packet must remain bound to the actual approval even if a new object hash is supplied
+  ---
+  duration_ms: 19.155542
+  ...
+# Subtest: revoked access or changed published authority during artifact read prevents label output
+ok 171 - revoked access or changed published authority during artifact read prevents label output
+  ---
+  duration_ms: 55.426541
+  ...
+# Subtest: shutdown during identification request persistence prevents a new model dispatch and retains completed OCR evidence
+ok 172 - shutdown during identification request persistence prevents a new model dispatch and retains completed OCR evidence
+  ---
+  duration_ms: 131.142083
+  ...
+# Subtest: shutdown admission does not cancel an identification model already dispatched or discard its response
+ok 173 - shutdown admission does not cancel an identification model already dispatched or discard its response
+  ---
+  duration_ms: 68.911125
+  ...
+# Subtest: new sports attempt transports V2 OCR envelopes and retains exact request, response and original-frame evidence
+ok 174 - new sports attempt transports V2 OCR envelopes and retains exact request, response and original-frame evidence
+  ---
+  duration_ms: 42.17425
+  ...
+# Subtest: Pokémon V2 uses one model call with dependent Front detail; publisher and finish remain descriptive
+ok 175 - Pokémon V2 uses one model call with dependent Front detail; publisher and finish remain descriptive
+  ---
+  duration_ms: 47.076083
+  ...
+# Subtest: in-flight staff edits and explicit clears survive V2 result adoption and recovered COMPLETE replay
+ok 176 - in-flight staff edits and explicit clears survive V2 result adoption and recovered COMPLETE replay
+  ---
+  duration_ms: 17.149167
+  ...
+# Subtest: in-flight category, profile and layout edits keep grading identity category-safe
+ok 177 - in-flight category, profile and layout edits keep grading identity category-safe
+  ---
+  duration_ms: 12.447208
+  ...
+# Subtest: cleared category and profile are not inferred back from a late suggestion
+ok 178 - cleared category and profile are not inferred back from a late suggestion
+  ---
+  duration_ms: 21.058208
+  ...
+# Subtest: retake while V2 model is in flight saves stale evidence, fences adoption, and permits only one new pair attempt
+ok 179 - retake while V2 model is in flight saves stale evidence, fences adoption, and permits only one new pair attempt
+  ---
+  duration_ms: 24.762834
+  ...
+# Subtest: concurrent V2 starts and in-flight replay share one claimed attempt without duplicate provider work
+ok 180 - concurrent V2 starts and in-flight replay share one claimed attempt without duplicate provider work
+  ---
+  duration_ms: 18.7165
+  ...
+# Subtest: historical bare V1 COMPLETE rows load, recover missing adoption and replay without reinterpretation or providers
+ok 181 - historical bare V1 COMPLETE rows load, recover missing adoption and replay without reinterpretation or providers
+  ---
+  duration_ms: 12.43225
+  ...
+# Subtest: historical already-dispatched V1 RUNNING/UNKNOWN attempts remain V1 and never dispatch V2 on recovery
+ok 182 - historical already-dispatched V1 RUNNING/UNKNOWN attempts remain V1 and never dispatch V2 on recovery
+  ---
+  duration_ms: 10.022125
+  ...
+# Subtest: unknown stored input or result versions and V1/V2 mismatches fail without fallback, adoption or paid work
+    # Subtest: unknown-running-input
+    ok 1 - unknown-running-input
+      ---
+      duration_ms: 7.74025
+      ...
+    # Subtest: unknown-complete-input
+    ok 2 - unknown-complete-input
+      ---
+      duration_ms: 7.283833
+      ...
+    # Subtest: unknown-result
+    ok 3 - unknown-result
+      ---
+      duration_ms: 8.853833
+      ...
+    # Subtest: v2-input-v1-result
+    ok 4 - v2-input-v1-result
+      ---
+      duration_ms: 5.776666
+      ...
+    # Subtest: v1-input-v2-result
+    ok 5 - v1-input-v2-result
+      ---
+      duration_ms: 8.136917
+      ...
+    1..5
+ok 183 - unknown stored input or result versions and V1/V2 mismatches fail without fallback, adoption or paid work
+  ---
+  duration_ms: 39.07125
+  ...
+# Subtest: real V2 HTTP failure retains status/accounting and UNKNOWN replay never retries the model
+ok 184 - real V2 HTTP failure retains status/accounting and UNKNOWN replay never retries the model
+  ---
+  duration_ms: 11.315541
+  ...
+# (node:1393) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: core model timeout while request-artifact save is pending fences late MODEL dispatch and replay
+ok 185 - core model timeout while request-artifact save is pending fences late MODEL dispatch and replay
+  ---
+  duration_ms: 14.955875
+  ...
+# Subtest: core timeout after MODEL dispatch retains its late raw response receipt without adoption or paid retry
+ok 186 - core timeout after MODEL dispatch retains its late raw response receipt without adoption or paid retry
+  ---
+  duration_ms: 12.458959
+  ...
+# Subtest: HTTP effects preserve historical V1 body, V2 fields transport, response limit and caller cancellation
+ok 187 - HTTP effects preserve historical V1 body, V2 fields transport, response limit and caller cancellation
+  ---
+  duration_ms: 1.839583
+  ...
+# Subtest: verified API credit rejection exposes a manual retry that reuses the exact saved pair/OCR/model request
+ok 188 - verified API credit rejection exposes a manual retry that reuses the exact saved pair/OCR/model request
+  ---
+  duration_ms: 17.89175
+  ...
+# Subtest: repeated explicit quota retries form one immutable chain using the original evidence, including Pokémon crop bytes
+ok 189 - repeated explicit quota retries form one immutable chain using the original evidence, including Pokémon crop bytes
+  ---
+  duration_ms: 31.459083
+  ...
+# Subtest: concurrent same-action retries claim one child and losing replay never settles the running child
+ok 190 - concurrent same-action retries claim one child and losing replay never settles the running child
+  ---
+  duration_ms: 14.295708
+  ...
+# Subtest: concurrent different-action retries refuse the stale parent and retain human edits during the winning request
+ok 191 - concurrent different-action retries refuse the stale parent and retain human edits during the winning request
+  ---
+  duration_ms: 29.511792
+  ...
+# Subtest: a timed-out child claim retains same-action recovery and cannot dispatch after its deadline
+ok 192 - a timed-out child claim retains same-action recovery and cannot dispatch after its deadline
+  ---
+  duration_ms: 15.211791
+  ...
+# Subtest: only the exact retained credit-balance rejection enables a successor
+    # Subtest: rate limit
+    ok 1 - rate limit
+      ---
+      duration_ms: 9.47925
+      ...
+    # Subtest: other quota code
+    ok 2 - other quota code
+      ---
+      duration_ms: 9.379792
+      ...
+    # Subtest: wrong type
+    ok 3 - wrong type
+      ---
+      duration_ms: 9.825625
+      ...
+    # Subtest: wrong HTTP status
+    ok 4 - wrong HTTP status
+      ---
+      duration_ms: 11.843291
+      ...
+    # Subtest: wrong parameter
+    ok 5 - wrong parameter
+      ---
+      duration_ms: 8.411084
+      ...
+    1..5
+ok 193 - only the exact retained credit-balance rejection enables a successor
+  ---
+  duration_ms: 50.174625
+  ...
+# Subtest: missing responses, mismatched receipts, failed OCR, and corrupted retained bytes never enable retries
+    # Subtest: missing-model-response
+    ok 1 - missing-model-response
+      ---
+      duration_ms: 9.614375
+      ...
+    # Subtest: mismatched-model-hash
+    ok 2 - mismatched-model-hash
+      ---
+      duration_ms: 9.694292
+      ...
+    # Subtest: missing-ocr-response
+    ok 3 - missing-ocr-response
+      ---
+      duration_ms: 12.222167
+      ...
+    # Subtest: corrupt-artifact
+    ok 4 - corrupt-artifact
+      ---
+      duration_ms: 12.959584
+      ...
+    # Subtest: failed-ocr
+    ok 5 - failed-ocr
+      ---
+      duration_ms: 10.209333
+      ...
+    1..5
+ok 194 - missing responses, mismatched receipts, failed OCR, and corrupted retained bytes never enable retries
+  ---
+  duration_ms: 55.773291
+  ...
+# Subtest: reconstructed request mismatch is refused before successor claim or provider dispatch
+ok 195 - reconstructed request mismatch is refused before successor claim or provider dispatch
+  ---
+  duration_ms: 12.16425
+  ...
+# Subtest: a changed OCR request cannot be hidden by the shared engines empty-text fallback
+ok 196 - a changed OCR request cannot be hidden by the shared engines empty-text fallback
+  ---
+  duration_ms: 10.5305
+  ...
+# Subtest: changed photos and initialized workspaces fence new retry work; late initialization fences adoption
+ok 197 - changed photos and initialized workspaces fence new retry work; late initialization fences adoption
+  ---
+  duration_ms: 21.3845
+  ...
+# Subtest: existing identify endpoint dispatches only a closed explicit retry body after ordinary auth and CSRF
+ok 198 - existing identify endpoint dispatches only a closed explicit retry body after ordinary auth and CSRF
+  ---
+  duration_ms: 9.150084
+  ...
+# Subtest: fresh POKEMON pair identifies layout and automatically proceeds through batch preparation to Astra without human preparation
+ok 199 - fresh POKEMON pair identifies layout and automatically proceeds through batch preparation to Astra without human preparation
+  ---
+  duration_ms: 31.311626
+  ...
+# Subtest: fresh TRAINER pair identifies layout and automatically proceeds through batch preparation to Astra without human preparation
+ok 200 - fresh TRAINER pair identifies layout and automatically proceeds through batch preparation to Astra without human preparation
+  ---
+  duration_ms: 21.093209
+  ...
+# Subtest: fresh ENERGY pair identifies layout and automatically proceeds through batch preparation to Astra without human preparation
+ok 201 - fresh ENERGY pair identifies layout and automatically proceeds through batch preparation to Astra without human preparation
+  ---
+  duration_ms: 23.291625
+  ...
+# Subtest: ambiguous or medium-confidence Pokémon layout stays unresolved without a category default or Astra dispatch
+ok 202 - ambiguous or medium-confidence Pokémon layout stays unresolved without a category default or Astra dispatch
+  ---
+  duration_ms: 35.494666
+  ...
+# Subtest: explicit human layout choice or clear survives a late ATLAS machine layout proposal
+ok 203 - explicit human layout choice or clear survives a late ATLAS machine layout proposal
+  ---
+  duration_ms: 28.491292
+  ...
+# Subtest: ATLAS layout attempt credit recovery reuses the exact augmented request and verified OCR without another OCR call
+ok 204 - ATLAS layout attempt credit recovery reuses the exact augmented request and verified OCR without another OCR call
+  ---
+  duration_ms: 22.131125
+  ...
+# Subtest: production default selects the ATLAS layout version while a completed historical V2 result replays unchanged
+ok 205 - production default selects the ATLAS layout version while a completed historical V2 result replays unchanged
+  ---
+  duration_ms: 22.261417
+  ...
+# Subtest: production default reconstructs historical V2 credit recovery without adding a layout field or changing paid request bytes
+ok 206 - production default reconstructs historical V2 credit recovery without adding a layout field or changing paid request bytes
+  ---
+  duration_ms: 19.6735
+  ...
+# Subtest: one verified source per side returns all12 descriptors with at most2 raster reads and final freshness
+ok 207 - one verified source per side returns all12 descriptors with at most2 raster reads and final freshness
+  ---
+  duration_ms: 24.789584
+  ...
+# Subtest: the response waits for both sides and performs its fresh authorization after the final image
+ok 208 - the response waits for both sides and performs its fresh authorization after the final image
+  ---
+  duration_ms: 1.228084
+  ...
+# Subtest: late MANUAL_PHOTOS_CHANGED refuses the entire batch without returning any cached grants
+ok 209 - late MANUAL_PHOTOS_CHANGED refuses the entire batch without returning any cached grants
+  ---
+  duration_ms: 6.913542
+  ...
+# Subtest: late SIGN_IN_REQUIRED refuses the entire batch without returning any cached grants
+ok 210 - late SIGN_IN_REQUIRED refuses the entire batch without returning any cached grants
+  ---
+  duration_ms: 2.92975
+  ...
+# Subtest: initial authorization and prepared-frame mismatches remain fail closed
+ok 211 - initial authorization and prepared-frame mismatches remain fail closed
+  ---
+  duration_ms: 1.996334
+  ...
+# Subtest: private-route fallback preserves exact hashes and does not mint external grants
+ok 212 - private-route fallback preserves exact hashes and does not mint external grants
+  ---
+  duration_ms: 0.358625
+  ...
+# Subtest: machine analysis binds complete proposed geometry without asserting human confirmation
+ok 213 - machine analysis binds complete proposed geometry without asserting human confirmation
+  ---
+  duration_ms: 54.674541
+  ...
+# Subtest: untrusted authority text cannot enter the private machine path
+ok 214 - untrusted authority text cannot enter the private machine path
+  ---
+  duration_ms: 14.24025
+  ...
+# Subtest: ambiguous geometry and pending edits refuse even machine analysis
+ok 215 - ambiguous geometry and pending edits refuse even machine analysis
+  ---
+  duration_ms: 26.352708
+  ...
+# Subtest: only exact approved intake details enrich identity and packet/report remain unchanged
+ok 216 - only exact approved intake details enrich identity and packet/report remain unchanged
+  ---
+  duration_ms: 46.34125
+  ...
+# Subtest: later details, changed identity, changed source and wrong approval omit enrichment
+ok 217 - later details, changed identity, changed source and wrong approval omit enrichment
+  ---
+  duration_ms: 116.332
+  ...
+# Subtest: unverifiable approval action or detail bytes never leak current identity fields
+ok 218 - unverifiable approval action or detail bytes never leak current identity fields
+  ---
+  duration_ms: 39.407
+  ...
+# Subtest: read helper only selects exact card/action and missing or unavailable optional history leaves report alone
+ok 219 - read helper only selects exact card/action and missing or unavailable optional history leaves report alone
+  ---
+  duration_ms: 10.773583
+  ...
+# Subtest: ATLAS provider uses one no-cookie sold page with the dedicated server credential
+ok 220 - ATLAS provider uses one no-cookie sold page with the dedicated server credential
+  ---
+  duration_ms: 20.97625
+  ...
+# Subtest: ATLAS redirect refusal stays unknown and never makes a second request
+ok 221 - ATLAS redirect refusal stays unknown and never makes a second request
+  ---
+  duration_ms: 3.78775
+  ...
+# Subtest: market search persists its source before returning and exact replay does not purchase another lookup
+ok 222 - market search persists its source before returning and exact replay does not purchase another lookup
+  ---
+  duration_ms: 92.456959
+  ...
+# Subtest: provider completion uncertainty leaves a durable no-repeat fence
+ok 223 - provider completion uncertainty leaves a durable no-repeat fence
+  ---
+  duration_ms: 25.50225
+  ...
+# Subtest: lost provider response saves UNKNOWN and replay never dispatches another paid lookup
+ok 224 - lost provider response saves UNKNOWN and replay never dispatches another paid lookup
+  ---
+  duration_ms: 21.783459
+  ...
+# Subtest: client-supplied preview is not accepted and saved source corruption cannot become public references
+ok 225 - client-supplied preview is not accepted and saved source corruption cannot become public references
+  ---
+  duration_ms: 19.332875
+  ...
+# Subtest: unconfigured market service is cold and never creates a paid intent
+ok 226 - unconfigured market service is cold and never creates a paid intent
+  ---
+  duration_ms: 0.219834
+  ...
+# Subtest: saved terminal refusal preserves only its allowlisted reason and never repeats the lookup
+ok 227 - saved terminal refusal preserves only its allowlisted reason and never repeats the lookup
+  ---
+  duration_ms: 14.984542
+  ...
+# Subtest: published identity drives query; ATLAS award is context without a PSA grade translation or raw packet mutation
+ok 228 - published identity drives query; ATLAS award is context without a PSA grade translation or raw packet mutation
+  ---
+  duration_ms: 99.014625
+  ...
+# Subtest: provider absence is unavailable while a transport failure retains an unknown paid outcome
+ok 229 - provider absence is unavailable while a transport failure retains an unknown paid outcome
+  ---
+  duration_ms: 21.225458
+  ...
+# Subtest: malformed provider source, wrong query, duplicate ids and future observations fail closed
+ok 230 - malformed provider source, wrong query, duplicate ids and future observations fail closed
+  ---
+  duration_ms: 26.327208
+  ...
+# Subtest: selection requires retained source hash, same exact publication, unexpired observation and explicit eligible ids
+ok 231 - selection requires retained source hash, same exact publication, unexpired observation and explicit eligible ids
+  ---
+  duration_ms: 24.639584
+  ...
+# Subtest: unknown identity match requires explicit review and contradictory variant cannot become a reference
+ok 232 - unknown identity match requires explicit review and contradictory variant cannot become a reference
+  ---
+  duration_ms: 22.365458
+  ...
+# Subtest: only definitive typed provider refusals become recoverable unavailable results
+ok 233 - only definitive typed provider refusals become recoverable unavailable results
+  ---
+  duration_ms: 49.192791
+  ...
+# Subtest: slab photo retains original bytes and full frame while making bounded separate WebP; repeat uses same immutable objects
+ok 234 - slab photo retains original bytes and full frame while making bounded separate WebP; repeat uses same immutable objects
+  ---
+  duration_ms: 2510.215626
+  ...
+# Subtest: completed lost response is replayed without new signer, decode, storage or commit; missing original has recoverable code
+ok 235 - completed lost response is replayed without new signer, decode, storage or commit; missing original has recoverable code
+  ---
+  duration_ms: 1.559125
+  ...
+# Subtest: optional presentation is separately versioned and public image matches bound descriptor; grade packet remains identical
+ok 236 - optional presentation is separately versioned and public image matches bound descriptor; grade packet remains identical
+  ---
+  duration_ms: 72.005541
+  ...
+# Subtest: presentation photo checks public-reader authorization again after storage read
+ok 237 - presentation photo checks public-reader authorization again after storage read
+  ---
+  duration_ms: 26.085583
+  ...
+# Subtest: unavailable optional metadata leaves the exact approved grading packet readable
+ok 238 - unavailable optional metadata leaves the exact approved grading packet readable
+  ---
+  duration_ms: 20.932958
+  ...
+# Subtest: real service and repository atomically commit approval action and pending publication once; exact replay is inert
+ok 239 - real service and repository atomically commit approval action and pending publication once; exact replay is inert
+  ---
+  duration_ms: 68.845083
+  ...
+# Subtest: intent failure rolls back card revision, action, approval and assigned public identity together
+ok 240 - intent failure rolls back card revision, action, approval and assigned public identity together
+  ---
+  duration_ms: 14.383875
+  ...
+# Subtest: late certification revocation rolls back publication intent with approval, and stale CAS creates nothing
+ok 241 - late certification revocation rolls back publication intent with approval, and stale CAS creates nothing
+  ---
+  duration_ms: 28.46725
+  ...
+# Subtest: grant generator has only insert/read and completion columns plus the native read function
+ok 242 - grant generator has only insert/read and completion columns plus the native read function
+  ---
+  duration_ms: 1.048417
+  ...
+# Subtest: native reader returns only approved packet/media/trace and rechecks control after every successful read
+ok 243 - native reader returns only approved packet/media/trace and rechecks control after every successful read
+  ---
+  duration_ms: 265.587375
+  ...
+# Subtest: reader rejects byte corruption and control revocation during slow media hydration
+ok 244 - reader rejects byte corruption and control revocation during slow media hydration
+  ---
+  duration_ms: 40.10325
+  ...
+# Subtest: real HTTP bridge authenticates once, refuses replay and isolates malformed or oversized bodies
+ok 245 - real HTTP bridge authenticates once, refuses replay and isolates malformed or oversized bodies
+  ---
+  duration_ms: 64.152958
+  ...
+# Subtest: private host mounts the dedicated public reader without staff authentication; unexpected rejection is isolated
+ok 246 - private host mounts the dedicated public reader without staff authentication; unexpected rejection is isolated
+  ---
+  duration_ms: 20.07875
+  ...
+# Subtest: publication delivers exact approved grades, traces, geometry and two media hashes with a versioned stable link
+ok 247 - publication delivers exact approved grades, traces, geometry and two media hashes with a versioned stable link
+  ---
+  duration_ms: 91.314917
+  ...
+# Subtest: public allowlist excludes removed findings and strips staff and private proposal provenance
+ok 248 - public allowlist excludes removed findings and strips staff and private proposal provenance
+  ---
+  duration_ms: 24.98075
+  ...
+# Subtest: storage failure leaves durable approval and pending intent; same action later publishes without reapproval
+ok 249 - storage failure leaves durable approval and pending intent; same action later publishes without reapproval
+  ---
+  duration_ms: 23.012167
+  ...
+# Subtest: lost artifact reply reconciles bytes and lost publication response replays the one saved version
+ok 250 - lost artifact reply reconciles bytes and lost publication response replays the one saved version
+  ---
+  duration_ms: 16.731041
+  ...
+# Subtest: changed bytes, saved source, approval hash or source receipt fail before public commit
+ok 251 - changed bytes, saved source, approval hash or source receipt fail before public commit
+  ---
+  duration_ms: 51.274167
+  ...
+# Subtest: public schema rejects staff fields, altered half-point award and wrong image hashes
+ok 252 - public schema rejects staff fields, altered half-point award and wrong image hashes
+  ---
+  duration_ms: 25.098625
+  ...
+# Subtest: approval hydration is solely the immutable approval action; report evidence mismatch is refused
+ok 253 - approval hydration is solely the immutable approval action; report evidence mismatch is refused
+  ---
+  duration_ms: 13.850209
+  ...
+# Subtest: ATLAS catalog facade pins host-reviewed source and media, rechecks currentness, and never exposes media storage
+ok 254 - ATLAS catalog facade pins host-reviewed source and media, rechecks currentness, and never exposes media storage
+  ---
+  duration_ms: 98.018416
+  ...
+# Subtest: catalog discovery rejects mixed or duplicate publication claims instead of inventing current authority
+ok 255 - catalog discovery rejects mixed or duplicate publication claims instead of inventing current authority
+  ---
+  duration_ms: 2.612709
+  ...
+# Subtest: only exact atlas metadata proposals can produce an unreviewed host receipt
+ok 256 - only exact atlas metadata proposals can produce an unreviewed host receipt
+  ---
+  duration_ms: 5.901875
+  ...
+# Subtest: response arriving after caller abort is durably retained and recovered without repeating the network effect
+ok 257 - response arriving after caller abort is durably retained and recovered without repeating the network effect
+  ---
+  duration_ms: 226.222792
+  ...
+# Subtest: an unobserved HTTP response does not cancel a running research operation; retry observes pending then saved result
+ok 258 - an unobserved HTTP response does not cancel a running research operation; retry observes pending then saved result
+  ---
+  duration_ms: 194.619334
+  ...
+# Subtest: large model requests retain their exact bytes without weakening small public-envelope limits
+ok 259 - large model requests retain their exact bytes without weakening small public-envelope limits
+  ---
+  duration_ms: 27.00525
+  ...
+# Subtest: concurrent original and explicit proposal reconciliation preserve the first durable receipt despite recorded/replay response differences
+ok 260 - concurrent original and explicit proposal reconciliation preserve the first durable receipt despite recorded/replay response differences
+  ---
+  duration_ms: 28.412333
+  ...
+# Subtest: research and catalog contributions authenticate before effects and disable caching
+ok 261 - research and catalog contributions authenticate before effects and disable caching
+  ---
+  duration_ms: 15.40575
+  ...
+# Subtest: research rejects foreign origin, missing CSRF, queries, methods and oversized input before invocation
+ok 262 - research rejects foreign origin, missing CSRF, queries, methods and oversized input before invocation
+  ---
+  duration_ms: 4.601791
+  ...
+# Subtest: actual research core, acknowledged providers and current market selection preserve report and cross-grader facts
+ok 263 - actual research core, acknowledged providers and current market selection preserve report and cross-grader facts
+  ---
+  duration_ms: 359.088
+  ...
+# Subtest: unknown sold dispatch is fenced across process recreation and changed request binding
+ok 264 - unknown sold dispatch is fenced across process recreation and changed request binding
+  ---
+  duration_ms: 62.012667
+  ...
+# Subtest: a retained source plus unknown model remains useful evidence without a second dispatch or invented comparison
+ok 265 - a retained source plus unknown model remains useful evidence without a second dispatch or invented comparison
+  ---
+  duration_ms: 46.020541
+  ...
+# Subtest: durable completion recovers a lost final result write without any provider repeat
+ok 266 - durable completion recovers a lost final result write without any provider repeat
+  ---
+  duration_ms: 42.068417
+  ...
+# Subtest: atomic reservation initialization rolls back without effects and basic research request kinds stay distinct
+ok 267 - atomic reservation initialization rolls back without effects and basic research request kinds stay distinct
+  ---
+  duration_ms: 49.626334
+  ...
+# Subtest: foreign staff and superseded report cannot replay private research or buy effects
+ok 268 - foreign staff and superseded report cannot replay private research or buy effects
+  ---
+  duration_ms: 44.457208
+  ...
+# Subtest: catalog absence is truthful; explicit metadata proposal shares advisory learning but no images, keys or human review
+ok 269 - catalog absence is truthful; explicit metadata proposal shares advisory learning but no images, keys or human review
+  ---
+  duration_ms: 55.077709
+  ...
+# Subtest: explicit lost contribution receipt reconciliation repeats only the host-idempotent proposal and never claims publication
+ok 270 - explicit lost contribution receipt reconciliation repeats only the host-idempotent proposal and never claims publication
+  ---
+  duration_ms: 46.850875
+  ...
+# Subtest: proposal initialization rollback and lost receipt recover with the same intent after unrelated presentation edits
+ok 271 - proposal initialization rollback and lost receipt recover with the same intent after unrelated presentation edits
+  ---
+  duration_ms: 47.475583
+  ...
+# Subtest: explicit proposal reconciliation retains an acknowledged unavailable host reply and recovers only that exact idempotent payload
+ok 272 - explicit proposal reconciliation retains an acknowledged unavailable host reply and recovers only that exact idempotent payload
+  ---
+  duration_ms: 51.586375
+  ...
+# Subtest: slow success and refusals produce liveness before final JSON, retain exact terminal status and dispatch once
+ok 273 - slow success and refusals produce liveness before final JSON, retain exact terminal status and dispatch once
+  ---
+  duration_ms: 143.075958
+  ...
+# Subtest: a slow timeout is terminal504, while disconnect clears liveness and aborts only its single transport
+ok 274 - a slow timeout is terminal504, while disconnect clears liveness and aborts only its single transport
+  ---
+  duration_ms: 63.760583
+  ...
+# Subtest: request refusal stays before heartbeat and invalid upstream JSON cannot become streamed success
+ok 275 - request refusal stays before heartbeat and invalid upstream JSON cannot become streamed success
+  ---
+  duration_ms: 13.562334
+  ...
+# Subtest: actual HTTP response sends a heartbeat before upstream completion and carries one parseable terminal refusal
+ok 276 - actual HTTP response sends a heartbeat before upstream completion and carries one parseable terminal refusal
+  ---
+  duration_ms: 72.443584
+  ...
+# Subtest: station and customer-operations transport admits only explicit service routes
+ok 277 - station and customer-operations transport admits only explicit service routes
+  ---
+  duration_ms: 6.591083
+  ...
+# Subtest: proxy signs only fixed HTTPS routes and exact bytes, strips browser actor/signature headers
+ok 278 - proxy signs only fixed HTTPS routes and exact bytes, strips browser actor/signature headers
+  ---
+  duration_ms: 67.473833
+  ...
+# Subtest: private signature binds method/path/query/body/cookie/CSRF/content-type/origin, and rejects missing headers
+ok 279 - private signature binds method/path/query/body/cookie/CSRF/content-type/origin, and rejects missing headers
+  ---
+  duration_ms: 6.402708
+  ...
+# Subtest: nonce admission is atomic, bounded, timestamp-limited and reusable only after full expiry
+ok 280 - nonce admission is atomic, bounded, timestamp-limited and reusable only after full expiry
+  ---
+  duration_ms: 2.557
+  ...
+# Subtest: request limits and JSON/CSRF/method checks reject before network dispatch
+ok 281 - request limits and JSON/CSRF/method checks reject before network dispatch
+  ---
+  duration_ms: 9.445209
+  ...
+# Subtest: responses are bounded before sending, redirects refused and large images explicitly require direct access
+ok 282 - responses are bounded before sending, redirects refused and large images explicitly require direct access
+  ---
+  duration_ms: 14.057333
+  ...
+# Subtest: timeout bounds fetch and body streaming even when injected fetch ignores abort
+ok 283 - timeout bounds fetch and body streaming even when injected fetch ignores abort
+  ---
+  duration_ms: 45.252917
+  ...
+# Subtest: uncertain replies are never automatically retried; explicit replay preserves exact action bytes with a fresh transport nonce
+ok 284 - uncertain replies are never automatically retried; explicit replay preserves exact action bytes with a fresh transport nonce
+  ---
+  duration_ms: 3.679167
+  ...
+# Subtest: actual private HTTP host requires transport admission then independently authenticates cookie and CSRF
+ok 285 - actual private HTTP host requires transport admission then independently authenticates cookie and CSRF
+  ---
+  duration_ms: 235.935041
+  ...
+# Subtest: customer cannot select account, price, arbitrary terminal or staff role
+ok 286 - customer cannot select account, price, arbitrary terminal or staff role
+  ---
+  duration_ms: 11.677459
+  ...
+# Subtest: closed pair contracts bind unique side IDs and hashes; camera filenames are display only
+ok 287 - closed pair contracts bind unique side IDs and hashes; camera filenames are display only
+  ---
+  duration_ms: 3.326792
+  ...
+# Subtest: customer details admit identity corrections, never grading/report fields
+ok 288 - customer details admit identity corrections, never grading/report fields
+  ---
+  duration_ms: 2.232792
+  ...
+# Subtest: owned upload refuses staff storage or mismatched account/side binding
+ok 289 - owned upload refuses staff storage or mismatched account/side binding
+  ---
+  duration_ms: 0.799375
+  ...
+# Subtest: verified upload completion returns the existing server receipt without reading a later object
+ok 290 - verified upload completion returns the existing server receipt without reading a later object
+  ---
+  duration_ms: 21.629041
+  ...
+# Subtest: upload sign rechecks customer ownership after asynchronous storage signing
+ok 291 - upload sign rechecks customer ownership after asynchronous storage signing
+  ---
+  duration_ms: 3.066625
+  ...
+# Subtest: worker reserves a model effect before provider I/O, saves response before adoption, and reuses saved bytes on replay
+ok 292 - worker reserves a model effect before provider I/O, saves response before adoption, and reuses saved bytes on replay
+  ---
+  duration_ms: 15.917792
+  ...
+# Subtest: unknown paid dispatch stops before another provider call and stays visible
+ok 293 - unknown paid dispatch stops before another provider call and stays visible
+  ---
+  duration_ms: 3.931958
+  ...
+# Subtest: unbound prepared photo cannot reach identification even from a private decoder callback
+ok 294 - unbound prepared photo cannot reach identification even from a private decoder callback
+  ---
+  duration_ms: 2.6485
+  ...
+# Subtest: directory search uses real address and optional coordinates; denied location can use text
+ok 295 - directory search uses real address and optional coordinates; denied location can use text
+  ---
+  duration_ms: 27.271583
+  ...
+# Subtest: dealer session is independently issued and never passes a caller account to reads
+ok 296 - dealer session is independently issued and never passes a caller account to reads
+  ---
+  duration_ms: 10.565125
+  ...
+# Subtest: dealer read rejects customer hash in place of opaque dealer session before SQL
+ok 297 - dealer read rejects customer hash in place of opaque dealer session before SQL
+  ---
+  duration_ms: 0.643416
+  ...
+# Subtest: directory entry is passed as server resolution input, with local search applied afterward
+ok 298 - directory entry is passed as server resolution input, with local search applied afterward
+  ---
+  duration_ms: 1.165292
+  ...
+# Subtest: schedule display identifies timezone and strict cutoff instead of fabricating dates
+ok 299 - schedule display identifies timezone and strict cutoff instead of fabricating dates
+  ---
+  duration_ms: 42.838
+  ...
+# Subtest: private customer transport preserves original session authority and server denial
+ok 300 - private customer transport preserves original session authority and server denial
+  ---
+  duration_ms: 301.922292
+  ...
+# Subtest: directory key cannot admit customer mutations and unconfigured operations fail closed
+ok 301 - directory key cannot admit customer mutations and unconfigured operations fail closed
+  ---
+  duration_ms: 30.059583
+  ...
+# Subtest: replay, changed body and stale signatures cannot dispatch an effect
+ok 302 - replay, changed body and stale signatures cannot dispatch an effect
+  ---
+  duration_ms: 27.652209
+  ...
+# Subtest: transport rejects arbitrary destinations, fields and redirects
+ok 303 - transport rejects arbitrary destinations, fields and redirects
+  ---
+  duration_ms: 5.776125
+  ...
+# Subtest: intake receipt preserves both sides and originals without releasing private descriptors
+ok 304 - intake receipt preserves both sides and originals without releasing private descriptors
+  ---
+  duration_ms: 29.942875
+  ...
+# Subtest: same nonce is immutable idempotent and rejects changed source or scope
+ok 305 - same nonce is immutable idempotent and rejects changed source or scope
+  ---
+  duration_ms: 10.252
+  ...
+# Subtest: separate nonces produce stable evidence and admission hashes
+ok 306 - separate nonces produce stable evidence and admission hashes
+  ---
+  duration_ms: 5.18475
+  ...
+# Subtest: signature purpose, audience, expiration and exact source are enforced
+ok 307 - signature purpose, audience, expiration and exact source are enforced
+  ---
+  duration_ms: 1.342375
+  ...
+# Subtest: disabled intake/staff and policy/control drift fail before source reads
+ok 308 - disabled intake/staff and policy/control drift fail before source reads
+  ---
+  duration_ms: 4.929417
+  ...
+# Subtest: expired, revoked, unbound or stale human authority fails
+ok 309 - expired, revoked, unbound or stale human authority fails
+  ---
+  duration_ms: 3.936791
+  ...
+# Subtest: final DB clock expiry and deferred failures roll back receipt
+ok 310 - final DB clock expiry and deferred failures roll back receipt
+  ---
+  duration_ms: 4.411959
+  ...
+# Subtest: owner, captured state, absent release and missing originals fail closed
+ok 311 - owner, captured state, absent release and missing originals fail closed
+  ---
+  duration_ms: 2.203584
+  ...
+# Subtest: asynchronous preparation admission rejection is awaited
+ok 312 - asynchronous preparation admission rejection is awaited
+  ---
+  duration_ms: 1.296916
+  ...
+# Subtest: key reuse with another authority is rejected
+ok 313 - key reuse with another authority is rejected
+  ---
+  duration_ms: 0.890583
+  ...
+# Subtest: fixed destination transport returns safe summary and rejects redirect/error or huge body
+ok 314 - fixed destination transport returns safe summary and rejects redirect/error or huge body
+  ---
+  duration_ms: 66.985458
+  ...
+# Subtest: staff validator checks definer receipt actor, grant, time and canonical scope
+ok 315 - staff validator checks definer receipt actor, grant, time and canonical scope
+  ---
+  duration_ms: 3.395542
+  ...
+# Subtest: staff facade ends authority transaction before external preflight and reruns service authority
+ok 316 - staff facade ends authority transaction before external preflight and reruns service authority
+  ---
+  duration_ms: 1.628375
+  ...
+# Subtest: staff facade ten-card preflight resolves exact persisted source identities
+ok 317 - staff facade ten-card preflight resolves exact persisted source identities
+  ---
+  duration_ms: 1.73075
+  ...
+# Subtest: production intake rejects absent preparation release independently of an empty assert port
+ok 318 - production intake rejects absent preparation release independently of an empty assert port
+  ---
+  duration_ms: 1.851875
+  ...
+# Subtest: self-consistent rehashed receipt cannot substitute another source or preparation binding
+ok 319 - self-consistent rehashed receipt cannot substitute another source or preparation binding
+  ---
+  duration_ms: 1.079958
+  ...
+# Subtest: lost intake reply recovers the actual service audit before any external source call
+ok 320 - lost intake reply recovers the actual service audit before any external source call
+  ---
+  duration_ms: 1.920917
+  ...
+# Subtest: lost pilot preparation reply recovers actual service audit without reloading source metadata
+ok 321 - lost pilot preparation reply recovers actual service audit without reloading source metadata
+  ---
+  duration_ms: 1.416666
+  ...
+# Subtest: phone allowlist changes require a different activated intake config hash
+ok 322 - phone allowlist changes require a different activated intake config hash
+  ---
+  duration_ms: 0.773958
+  ...
+# Subtest: only explicit local fixture mode admits the exact loopback staff origin
+ok 323 - only explicit local fixture mode admits the exact loopback staff origin
+  ---
+  duration_ms: 0.875333
+  ...
+# Subtest: staff and runner purpose clients retain only their own key and cannot cross the admission boundary
+ok 324 - staff and runner purpose clients retain only their own key and cannot cross the admission boundary
+  ---
+  duration_ms: 98.355792
+  ...
+# Subtest: dedicated config binds explicit HTTPS origin/runtime and rejects key reuse and unsafe destinations
+ok 325 - dedicated config binds explicit HTTPS origin/runtime and rejects key reuse and unsafe destinations
+  ---
+  duration_ms: 1.314
+  ...
+# Subtest: admission HMAC binds exact human scope/input/path/purpose/runtime and a 30-second packet
+ok 326 - admission HMAC binds exact human scope/input/path/purpose/runtime and a 30-second packet
+  ---
+  duration_ms: 2.6705
+  ...
+# Subtest: execution uses a different key/purpose and cannot borrow human admission authority
+ok 327 - execution uses a different key/purpose and cannot borrow human admission authority
+  ---
+  duration_ms: 1.401208
+  ...
+# Subtest: even valid MACs cannot bypass exact shape, source IDs, authority or runtime validation
+ok 328 - even valid MACs cannot bypass exact shape, source IDs, authority or runtime validation
+  ---
+  duration_ms: 2.74575
+  ...
+# Subtest: canonical JSON and byte bounds are enforced before returning authenticated claims
+ok 329 - canonical JSON and byte bounds are enforced before returning authenticated claims
+  ---
+  duration_ms: 3.59525
+  ...
+# Subtest: fixed client sends one exact request without cookies/redirects and honors 20s/220s bounds
+ok 330 - fixed client sends one exact request without cookies/redirects and honors 20s/220s bounds
+  ---
+  duration_ms: 5.261959
+  ...
+# Subtest: operatorRunId is accepted only on actual SUCCEEDED response and is never inferred
+ok 331 - operatorRunId is accepted only on actual SUCCEEDED response and is never inferred
+  ---
+  duration_ms: 10.023542
+  ...
+# Subtest: a replayed admission may report its existing job state without inventing a new worker or run
+ok 332 - a replayed admission may report its existing job state without inventing a new worker or run
+  ---
+  duration_ms: 5.878375
+  ...
+# Subtest: wrong job/runtime/source binding and all HTTP/transport errors remain generic uncertainty without retry
+ok 333 - wrong job/runtime/source binding and all HTTP/transport errors remain generic uncertainty without retry
+  ---
+  duration_ms: 6.709375
+  ...
+# Subtest: noncanonical, invalid UTF8, malformed/oversized response bodies and wrong media type are rejected
+ok 334 - noncanonical, invalid UTF8, malformed/oversized response bodies and wrong media type are rejected
+  ---
+  duration_ms: 3.355583
+  ...
+# Subtest: parent abort prevents an initial call and bounds a noncooperative in-flight fetch
+ok 335 - parent abort prevents an initial call and bounds a noncooperative in-flight fetch
+  ---
+  duration_ms: 2.315917
+  ...
+# Subtest: fixed deadline bounds uncooperative fetch with no retry and clears its timer
+ok 336 - fixed deadline bounds uncooperative fetch with no retry and clears its timer
+  ---
+  duration_ms: 0.64275
+  ...
+# Subtest: abort cancels a streaming body instead of retaining the response reader
+ok 337 - abort cancels a streaming body instead of retaining the response reader
+  ---
+  duration_ms: 1.445583
+  ...
+# Subtest: bad input/configuration cannot reach fetch or supply a caller-selected URL, cookie or retry
+ok 338 - bad input/configuration cannot reach fetch or supply a caller-selected URL, cookie or retry
+  ---
+  duration_ms: 0.549042
+  ...
+# Subtest: elevated admission and fresh execution atomically create the first analysis without human authority
+ok 339 - elevated admission and fresh execution atomically create the first analysis without human authority
+  ---
+  duration_ms: 38.808833
+  ...
+# Subtest: machine or stale operations context cannot admit a job
+ok 340 - machine or stale operations context cannot admit a job
+  ---
+  duration_ms: 5.417125
+  ...
+# Subtest: fresh detection preflight and the explicit original-service fresh flag are mandatory
+ok 341 - fresh detection preflight and the explicit original-service fresh flag are mandatory
+  ---
+  duration_ms: 2.469417
+  ...
+# Subtest: existing measured content cannot be used as an initial machine grade
+ok 342 - existing measured content cannot be used as an initial machine grade
+  ---
+  duration_ms: 2.197792
+  ...
+# Subtest: changed control, runtime, policy, source or review revision denies execution before a worker claim
+ok 343 - changed control, runtime, policy, source or review revision denies execution before a worker claim
+  ---
+  duration_ms: 6.544541
+  ...
+# Subtest: exact ten-card presence, other work and shared budget are checked before external work
+ok 344 - exact ten-card presence, other work and shared budget are checked before external work
+  ---
+  duration_ms: 5.332042
+  ...
+# Subtest: worker failure and missing fresh pair preserve held uncertainty with no automatic retry
+ok 345 - worker failure and missing fresh pair preserve held uncertainty with no automatic retry
+  ---
+  duration_ms: 7.062666
+  ...
+# Subtest: revocation during external work prevents commit and preserves uncertainty
+ok 346 - revocation during external work prevents commit and preserves uncertainty
+  ---
+  duration_ms: 1.76025
+  ...
+# Subtest: failed commit rolls back source, analysis and checklist together
+ok 347 - failed commit rolls back source, analysis and checklist together
+  ---
+  duration_ms: 3.724292
+  ...
+# Subtest: a lost post-commit reply reads durable success and does not replay the worker
+ok 348 - a lost post-commit reply reads durable success and does not replay the worker
+  ---
+  duration_ms: 4.317458
+  ...
+# Subtest: a lost durable claim reply cannot authorize a new worker dispatch
+ok 349 - a lost durable claim reply cannot authorize a new worker dispatch
+  ---
+  duration_ms: 1.546875
+  ...
+# Subtest: abort stops a noncooperative perform and late hooks cannot commit or retry
+ok 350 - abort stops a noncooperative perform and late hooks cannot commit or retry
+  ---
+  duration_ms: 3.744334
+  ...
+# Subtest: a fake success result or suppressed transaction hooks cannot attest an analysis
+ok 351 - a fake success result or suppressed transaction hooks cannot attest an analysis
+  ---
+  duration_ms: 4.138375
+  ...
+# Subtest: the exact job deadline includes time spent durably claiming and never starts an expired worker
+ok 352 - the exact job deadline includes time spent durably claiming and never starts an expired worker
+  ---
+  duration_ms: 1.407333
+  ...
+# Subtest: the bounded deadline stops a noncooperative worker and permanently fences its late hooks
+ok 353 - the bounded deadline stops a noncooperative worker and permanently fences its late hooks
+  ---
+  duration_ms: 2.1325
+  ...
+# Subtest: asynchronous source-admission denial is awaited before admission or dispatch
+ok 354 - asynchronous source-admission denial is awaited before admission or dispatch
+  ---
+  duration_ms: 1.408833
+  ...
+# Subtest: admission requires strict human reason/evidence and current grant/session references before any creation
+ok 355 - admission requires strict human reason/evidence and current grant/session references before any creation
+  ---
+  duration_ms: 1.264833
+  ...
+# Subtest: original public Prisma raw-only transaction can admit and retains exact immutable human audit evidence
+ok 356 - original public Prisma raw-only transaction can admit and retains exact immutable human audit evidence
+  ---
+  duration_ms: 4.095375
+  ...
+# Subtest: admission itself rejects retained checkpoints and active runs before creating a reservation
+ok 357 - admission itself rejects retained checkpoints and active runs before creating a reservation
+  ---
+  duration_ms: 2.581333
+  ...
+# Subtest: same-human replay retains exact original admission evidence and conflicts on reason/evidence/actor
+ok 358 - same-human replay retains exact original admission evidence and conflicts on reason/evidence/actor
+  ---
+  duration_ms: 1.938875
+  ...
+# Subtest: explicit accounting-only initialization keeps its exact reservation and operation limit
+ok 359 - explicit accounting-only initialization keeps its exact reservation and operation limit
+  ---
+  duration_ms: 2.953416
+  ...
+# Subtest: dedicated signed request binds exact path, canonical selector, deployment and short TTL
+ok 360 - dedicated signed request binds exact path, canonical selector, deployment and short TTL
+  ---
+  duration_ms: 17.20425
+  ...
+# Subtest: selectors refuse arbitrary fetch URLs, extra authority, unversioned media and wrong origin
+ok 361 - selectors refuse arbitrary fetch URLs, extra authority, unversioned media and wrong origin
+  ---
+  duration_ms: 0.349583
+  ...
+# Subtest: client makes one fixed HTTPS POST with no redirect or retry; checks type and response bounds
+ok 362 - client makes one fixed HTTPS POST with no redirect or retry; checks type and response bounds
+  ---
+  duration_ms: 74.376875
+  ...
+# Subtest: presentation image binds an exact revision without broadening ordinary report selectors
+ok 363 - presentation image binds an exact revision without broadening ordinary report selectors
+  ---
+  duration_ms: 3.758541
+  ...
+# Subtest: verified count must equal the exact admitted workspace roster, while legacy still requires ten
+ok 364 - verified count must equal the exact admitted workspace roster, while legacy still requires ten
+  ---
+  duration_ms: 19.517083
+  ...
+# Subtest: historical policies retain their exact bytes and original dollar refusal
+ok 365 - historical policies retain their exact bytes and original dollar refusal
+  ---
+  duration_ms: 21.197958
+  ...
+# Subtest: explicit accounting mode preserves usage and admits dollars above every historical cap
+ok 366 - explicit accounting mode preserves usage and admits dollars above every historical cap
+  ---
+  duration_ms: 5.002125
+  ...
+# Subtest: null, misspelled or coercible modes never disable dollar enforcement
+ok 367 - null, misspelled or coercible modes never disable dollar enforcement
+  ---
+  duration_ms: 1.518792
+  ...
+# Subtest: accounting mode retains scope, expiry shape, count, worker and representation bounds
+ok 368 - accounting mode retains scope, expiry shape, count, worker and representation bounds
+  ---
+  duration_ms: 2.028667
+  ...
+# Subtest: accounting mode cannot turn malformed accounting into zero exposure
+ok 369 - accounting mode cannot turn malformed accounting into zero exposure
+  ---
+  duration_ms: 3.987666
+  ...
+# Subtest: MAC binds exact purpose, destination, actor, case, payload, lifetime and canonical bytes
+ok 370 - MAC binds exact purpose, destination, actor, case, payload, lifetime and canonical bytes
+  ---
+  duration_ms: 18.127709
+  ...
+# Subtest: legacy specimen policy requires exactly ten distinct cards and bounded nonzero reservations
+ok 371 - legacy specimen policy requires exactly ten distinct cards and bounded nonzero reservations
+  ---
+  duration_ms: 6.05525
+  ...
+# Subtest: workspace policy admits one through ten distinct UUIDs without changing budget or expiry validation
+ok 372 - workspace policy admits one through ten distinct UUIDs without changing budget or expiry validation
+  ---
+  duration_ms: 1.249584
+  ...
+# Subtest: private client has one destination, one call and no redirect/retry on uncertainty
+ok 373 - private client has one destination, one call and no redirect/retry on uncertainty
+  ---
+  duration_ms: 4.259791
+  ...
+# Subtest: bounded readers cancel excess streams and reject invalid declared sizes
+ok 374 - bounded readers cancel excess streams and reject invalid declared sizes
+  ---
+  duration_ms: 62.179958
+  ...
+# Subtest: worker wrapper retains source body and rejects destinations or calls beyond reservation
+ok 375 - worker wrapper retains source body and rejects destinations or calls beyond reservation
+  ---
+  duration_ms: 2.7005
+  ...
+# Subtest: public media MAC grants only the exact approved image and cannot borrow another purpose
+ok 376 - public media MAC grants only the exact approved image and cannot borrow another purpose
+  ---
+  duration_ms: 20.899875
+  ...
+# Subtest: production image descriptors reject SVG, extra keys and unbounded or malformed image metadata
+ok 377 - production image descriptors reject SVG, extra keys and unbounded or malformed image metadata
+  ---
+  duration_ms: 5.188167
+  ...
+# Subtest: public media transport sends no private descriptor, uses one fixed destination and verifies bounded bytes
+ok 378 - public media transport sends no private descriptor, uses one fixed destination and verifies bounded bytes
+  ---
+  duration_ms: 77.743583
+  ...
+# Subtest: media service checks activation after the storage read and never emits changed bytes
+ok 379 - media service checks activation after the storage read and never emits changed bytes
+  ---
+  duration_ms: 5.02025
+  ...
+# Subtest: candidate bridge uses exact approved source, independent learning human and no private vectors on wire
+ok 380 - candidate bridge uses exact approved source, independent learning human and no private vectors on wire
+  ---
+  duration_ms: 37.146459
+  ...
+# Subtest: same nonce returns one receipt and changed raw source fails before generator
+ok 381 - same nonce returns one receipt and changed raw source fails before generator
+  ---
+  duration_ms: 8.098667
+  ...
+# Subtest: certification or operations is never a substitute for fresh learning training and assignment
+ok 382 - certification or operations is never a substitute for fresh learning training and assignment
+  ---
+  duration_ms: 11.525209
+  ...
+# Subtest: changed approval, raw analysis, source owner or bridge control fails closed
+ok 383 - changed approval, raw analysis, source owner or bridge control fails closed
+  ---
+  duration_ms: 6.809708
+  ...
+# Subtest: final freshness and deferred constraint failure roll back immutable candidate INSERT
+ok 384 - final freshness and deferred constraint failure roll back immutable candidate INSERT
+  ---
+  duration_ms: 3.923583
+  ...
+# Subtest: candidate request rejects substituted purpose, extra source locator, bad key and expired time
+ok 385 - candidate request rejects substituted purpose, extra source locator, bad key and expired time
+  ---
+  duration_ms: 1.510708
+  ...
+# Subtest: candidate client uses fixed origin without redirects and drops server candidate wire data
+ok 386 - candidate client uses fixed origin without redirects and drops server candidate wire data
+  ---
+  duration_ms: 63.09525
+  ...
+# Subtest: candidate transport bounds uncooperative fetch, body reads and cancellation without another request
+ok 387 - candidate transport bounds uncooperative fetch, body reads and cancellation without another request
+  ---
+  duration_ms: 29.744375
+  ...
+# Subtest: candidate transport rejects oversized and noncanonical responses; late fetch is cancelled
+ok 388 - candidate transport rejects oversized and noncanonical responses; late fetch is cancelled
+  ---
+  duration_ms: 15.421375
+  ...
+# Subtest: generator receives a detached raw array and invalid lesson references cannot create receipts
+ok 389 - generator receives a detached raw array and invalid lesson references cannot create receipts
+  ---
+  duration_ms: 9.879625
+  ...
+# Subtest: signed workspace dispatch binds one saved command and run; browser authority or source selectors are refused
+ok 390 - signed workspace dispatch binds one saved command and run; browser authority or source selectors are refused
+  ---
+  duration_ms: 18.562042
+  ...
+# Subtest: one verified admitted workspace can initialize with existing cost and capacity checks intact
+ok 391 - one verified admitted workspace can initialize with existing cost and capacity checks intact
+  ---
+  duration_ms: 37.1975
+  ...
+# Subtest: workspace initialization retains the original operation bytes and real admission actor without a human session or grant
+ok 392 - workspace initialization retains the original operation bytes and real admission actor without a human session or grant
+  ---
+  duration_ms: 4.818125
+  ...
+# Subtest: lost enqueue reply recovers the one retained UNKNOWN job without reading or dispatching another source
+ok 393 - lost enqueue reply recovers the one retained UNKNOWN job without reading or dispatching another source
+  ---
+  duration_ms: 10.093125
+  ...
+# Subtest: a human request, fake session, changed current actor or a foreign recorded intent cannot admit a machine job
+ok 394 - a human request, fake session, changed current actor or a foreign recorded intent cannot admit a machine job
+  ---
+  duration_ms: 18.568959
+  ...
+# Subtest: workspace source controls, cohort membership and current claim are rechecked before any original source read
+ok 395 - workspace source controls, cohort membership and current claim are rechecked before any original source read
+  ---
+  duration_ms: 22.736125
+  ...
+# Subtest: active consumed STEP permits and requested pauses settle their one action while unknown or paused authority is held
+ok 396 - active consumed STEP permits and requested pauses settle their one action while unknown or paused authority is held
+  ---
+  duration_ms: 23.797375
+  ...
+# Subtest: source admission and selected step hashes cannot be relabeled as human or already prepared evidence
+ok 397 - source admission and selected step hashes cannot be relabeled as human or already prepared evidence
+  ---
+  duration_ms: 13.553209
+  ...
+# Subtest: changed original bytes or source revision, an old report, and prior detection checkpoints all reject fresh initialization
+ok 398 - changed original bytes or source revision, an old report, and prior detection checkpoints all reject fresh initialization
+  ---
+  duration_ms: 22.318416
+  ...
+# Subtest: capture, source and infrastructure charges use the original per-workspace pilot usage without a new budget
+ok 399 - capture, source and infrastructure charges use the original per-workspace pilot usage without a new budget
+  ---
+  duration_ms: 16.492542
+  ...
+# Subtest: other unresolved grading or report work blocks admission while the settled capture remains linked
+ok 400 - other unresolved grading or report work blocks admission while the settled capture remains linked
+  ---
+  duration_ms: 7.715208
+  ...
+# Subtest: the job deadline cannot extend capture or source authority and expired authority never enqueues
+ok 401 - the job deadline cannot extend capture or source authority and expired authority never enqueues
+  ---
+  duration_ms: 15.901042
+  ...
+# Subtest: caller transaction rollback prevents a job without its immutable audit and source bookkeeping can finish before commit
+ok 402 - caller transaction rollback prevents a job without its immutable audit and source bookkeeping can finish before commit
+  ---
+  duration_ms: 8.374042
+  ...
+# Subtest: enqueue input accepts only the retained request ID and cannot select an actor, source, grant or job ID
+ok 403 - enqueue input accepts only the retained request ID and cannot select an actor, source, grant or job ID
+  ---
+  duration_ms: 1.6445
+  ...
+# Subtest: accounting-only workspace enqueue preserves work counts and expiry with over-budget accounting
+ok 404 - accounting-only workspace enqueue preserves work counts and expiry with over-budget accounting
+  ---
+  duration_ms: 11.147875
+  ...
+# Subtest: named map actions preserve exact retained human intent and cannot carry a caller-selected map binding
+ok 405 - named map actions preserve exact retained human intent and cannot carry a caller-selected map binding
+  ---
+  duration_ms: 20.148333
+  ...
+# Subtest: private role grants reject SQL injection and cannot combine source authority with coordinator mutations
+ok 406 - private role grants reject SQL injection and cannot combine source authority with coordinator mutations
+  ---
+  duration_ms: 11.408084
+  ...
+# Subtest: the exact source and coordinator effective catalogs pass with required current memory catch-up rights
+ok 407 - the exact source and coordinator effective catalogs pass with required current memory catch-up rights
+  ---
+  duration_ms: 15.429792
+  ...
+# Subtest: extra effective writes, certificate reads, invoice settlement and missing memory rights fail closed
+ok 408 - extra effective writes, certificate reads, invoice settlement and missing memory rights fail closed
+  ---
+  duration_ms: 33.925625
+  ...
+# Subtest: ownership, ambient schemas, missing columns, grant options, sequences and extra definers are rejected
+ok 409 - ownership, ambient schemas, missing columns, grant options, sequences and extra definers are rejected
+  ---
+  duration_ms: 31.711709
+  ...
+1..409
+# tests 424
+# suites 0
+# pass 423
+# fail 0
+# cancelled 0
+# skipped 1
+# todo 0
+# duration_ms 78735.975826

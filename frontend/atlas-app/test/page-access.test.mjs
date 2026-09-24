@@ -78,8 +78,20 @@ test('normal sign-in, signed-out redirect and verified staff paths preserve exis
   const signedOut = fixture({ signedIn: false }); assert.deepEqual(await signedOut.access(signedOut.ctx), { redirect: { destination: '/', permanent: false } });
   assert.equal(signedOut.calls.database, 1); assert.equal(signedOut.calls.session, 1);
   const verified = fixture({ manual: { uploadOrigin: 'https://storage.example' } }); verified.ctx.req.method = 'HEAD';
-  assert.deepEqual(await verified.access(verified.ctx), { props: { staff: verified.staff, manualEnabled: true } });
+  assert.deepEqual(await verified.access(verified.ctx), { props: { staff: { ...verified.staff, customerOperationsEnabled: false }, manualEnabled: true, customerOperationsEnabled: false } });
   assert.match(verified.headers['Content-Security-Policy'], /https:\/\/storage.example/); assert.equal(verified.logs.length, 0);
+});
+test('customer operations display capability requires explicit enablement and an available private manual service', async () => {
+  for (const flag of [undefined, 'false', '1', 'true']) {
+    for (const manual of [undefined, { uploadOrigin: 'https://storage.example' }]) {
+      const f = fixture({ env: { ...production, ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED: flag }, manual });
+      const result = await f.access(f.ctx), enabled = flag === 'true' && Boolean(manual);
+      assert.equal(result.props.customerOperationsEnabled, enabled);
+      assert.equal(result.props.staff.customerOperationsEnabled, enabled);
+      assert.equal(f.calls.database, 1); assert.equal(f.calls.session, 1);
+      assert.equal(f.staff.customerOperationsEnabled, undefined);
+    }
+  }
 });
 test('non-read methods never invoke runtime, database, session, or a replay', async () => {
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {

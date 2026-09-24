@@ -45,7 +45,9 @@ export function isManualServicePath(value) {
   let url;
   try { url = new URL(value, PUBLIC_BASE); } catch { return false; }
   return url.origin === PUBLIC_BASE && url.pathname + url.search === value && !url.pathname.includes('%')
-    && /^\/api\/staff\/(?:manual|manual-intake|manual-connected)\/cards(?:\/[A-Za-z0-9-]+)*$/.test(url.pathname);
+    && (/^\/api\/staff\/(?:manual|manual-intake|manual-connected)\/cards(?:\/[A-Za-z0-9-]+)*$/.test(url.pathname)
+      || /^\/api\/staff\/manual-connected\/stations(?:\/(?:challenge|enroll|arm|acknowledge|complete))?$/.test(url.pathname)
+      || /^\/api\/staff\/manual-connected\/dealer-operations(?:\/(?:location-configure|membership-configure|custody|bind-manual))?$/.test(url.pathname));
 }
 function requestParts(req, bytes, timestamp, nonce) {
   requireTransport(isManualServicePath(req.url), 404, 'NOT_FOUND');

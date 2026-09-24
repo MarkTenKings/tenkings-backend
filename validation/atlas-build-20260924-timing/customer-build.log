@@ -1,0 +1,63 @@
+
+> @atlas/customer-app@0.1.0 build /build/frontend/atlas-customer
+> node scripts/generate-database.mjs && next build && node scripts/check-boundary.mjs
+
+Prisma schema loaded from prisma/schema.prisma
+
+✔ Generated Prisma Client (v5.22.0) to ./.generated/customer-database in 66ms
+
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+
+Tip: Want real-time updates to your database without manual polling? Discover how with Pulse: https://pris.ly/tip-0-pulse
+
+⚠ No build cache found. Please configure build caching for faster rebuilds. Read more: https://nextjs.org/docs/messages/no-cache
+   ▲ Next.js 15.5.25
+   - Experiments (use with caution):
+     · cpus: 2
+
+   Linting and checking validity of types ...
+
+./components/AccountWorkspace.jsx
+135:109  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+   Creating an optimized production build ...
+<w> [webpack.cache.PackFileCacheStrategy] Skipped not serializable cache item 'Compilation/modules|/build/node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[1]!/build/node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[2]!/build/frontend/atlas-customer/styles/customer.css': No serializer registered for Warning
+<w> while serializing webpack/lib/cache/PackFileCacheStrategy.PackContentItems -> webpack/lib/NormalModule -> Array { 1 items } -> webpack/lib/ModuleWarning -> Warning
+ ⚠ Compiled with warnings in 2.4s
+
+./styles/customer.css.webpack[javascript/auto]!=!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[1]!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[2]!./styles/customer.css
+Warning
+
+(3:375) autoprefixer: end value has mixed support, consider using flex-end instead
+
+Import trace for requested module:
+./styles/customer.css.webpack[javascript/auto]!=!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[1]!../../node_modules/.pnpm/next@15.5.25_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[8].oneOf[13].use[2]!./styles/customer.css
+./styles/customer.css
+
+ ✓ Compiled successfully in 5.5s
+   Collecting page data ...
+   Generating static pages (0/2) ...
+ ✓ Generating static pages (2/2)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (pages)                                Size  First Load JS
+┌ ƒ /                                       247 B         103 kB
+├   /_app                                     0 B        81.9 kB
+├ ○ /404                                    330 B        82.2 kB
+├ ƒ /api/customer/[...path]                   0 B        81.9 kB
+├ ƒ /dealer                               3.82 kB        85.7 kB
+├ ƒ /orders/[id]                          4.08 kB          86 kB
+├ ƒ /profile                                252 B         103 kB
+├ ƒ /submissions/[id]                       262 B         103 kB
+└ ƒ /submit                                 254 B         103 kB
++ First Load JS shared by all             87.2 kB
+  ├ chunks/framework-1c02a2e60068b586.js  44.8 kB
+  ├ chunks/main-ee9c0e02c81dfbd6.js         36 kB
+  └ other shared chunks (total)           6.41 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+PASS customer build: isolated /account routes, packaged database engine, dedicated assets and no server credentials in browser chunks

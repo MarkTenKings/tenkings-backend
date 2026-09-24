@@ -429,6 +429,15 @@ importers:
 
   frontend/atlas-customer:
     dependencies:
+      '@atlas/customer-intake':
+        specifier: workspace:*
+        version: link:../../packages/atlas-customer-intake
+      '@atlas/dealer-operations':
+        specifier: workspace:*
+        version: link:../../packages/atlas-dealer-operations
+      '@atlas/service-bridge':
+        specifier: workspace:*
+        version: link:../../packages/atlas-service-bridge
       '@atlas/site-router':
         specifier: workspace:*
         version: link:../../packages/atlas-site-router
@@ -692,11 +701,19 @@ importers:
         specifier: workspace:*
         version: link:../atlas-manual-service
 
+  packages/atlas-commerce: {}
+
   packages/atlas-connected-manual:
     dependencies:
       '@atlas/batch-grading':
         specifier: workspace:*
         version: link:../atlas-batch-grading
+      '@atlas/commerce':
+        specifier: workspace:*
+        version: link:../atlas-commerce
+      '@atlas/customer-intake':
+        specifier: workspace:*
+        version: link:../atlas-customer-intake
       '@atlas/defect-analysis':
         specifier: workspace:*
         version: link:../atlas-defect-analysis
@@ -762,6 +779,23 @@ importers:
         version: 0.33.5
 
   packages/atlas-contracts: {}
+
+  packages/atlas-customer-intake:
+    dependencies:
+      '@atlas/manual-intake':
+        specifier: workspace:*
+        version: link:../atlas-manual-intake
+      '@atlas/photo-core':
+        specifier: workspace:*
+        version: link:../atlas-photo-core
+      '@tenkings/card-identification-core':
+        specifier: workspace:*
+        version: link:../card-identification-core
+      sharp:
+        specifier: 0.33.5
+        version: 0.33.5
+
+  packages/atlas-dealer-operations: {}
 
   packages/atlas-defect-analysis:
     dependencies:

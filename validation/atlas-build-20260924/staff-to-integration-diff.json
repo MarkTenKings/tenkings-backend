@@ -1,0 +1,29 @@
+{
+  "changed": [
+    "frontend/atlas-app/prisma/migrations/20260924061000_customer_commerce/migration.sql",
+    "frontend/atlas-app/prisma/migrations/20260924062000_dealer_custody_tracking/migration.sql",
+    "frontend/atlas-customer/scripts/validate-dealer-postgres.mjs",
+    "frontend/atlas-customer/scripts/validate-private-commerce-postgres.mjs",
+    "packages/atlas-commerce/sql/proposal.sql",
+    "packages/atlas-commerce/src/service.mjs",
+    "packages/atlas-commerce/test/commerce.test.mjs",
+    "packages/atlas-dealer-operations/sql/proposal.sql"
+  ],
+  "added": [
+    "backend/ai-grader-speedster-service/atlas_photo_geometry.py",
+    "backend/ai-grader-speedster-service/card_geometry.py",
+    "backend/ai-grader-speedster-service/color_geometry.py",
+    "backend/ai-grader-speedster-service/defect_math.py",
+    "backend/ai-grader-speedster-service/manual_measurement.py",
+    "backend/ai-grader-speedster-service/manual_measurement_worker.py",
+    "backend/ai-grader-speedster-service/manual_preparation_worker.py",
+    "backend/ai-grader-speedster-service/preparation_pixels.py",
+    "backend/ai-grader-speedster-service/test_atlas_photo_geometry.py",
+    "backend/ai-grader-speedster-service/trace_rle.py",
+    "packages/atlas-commerce/src/projections.mjs",
+    "packages/atlas-commerce/test/privacy.test.mjs",
+    "packages/atlas-connected-manual/test/customer-runtime.test.mjs",
+    "packages/database/prisma/schema.prisma"
+  ],
+  "removed": []
+}

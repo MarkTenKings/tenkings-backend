@@ -1,0 +1,80 @@
+{
+  "name": "private-commerce",
+  "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-gEQmkO",
+  "sourceCommit": "4cbb40a35d9d4a858bd3fa0fb7ec4041c5769051",
+  "result": {
+    "pass": true,
+    "syntheticOnly": true,
+    "networkProviders": false,
+    "checks": [
+      "dealer schedule SQL: owner example, cutoff, closures, extra route, DST and malformed schedules",
+      "private service cold by default; identification separately disabled; action allowlist enforced",
+      "private role has only exact service function; customer role cannot enter private gateway",
+      "real synthetic customer session required for private upload verification; foreign owner refused",
+      "measured shipping plan binds exact card count, original weight/ship date and sourced measurement; SQL filters invalid/expired plans and refuses forged requests",
+      "server price, photo/identity snapshot, tax and shipping total bound; foreign cart and forged total refused",
+      "customer SQL checkout and service quote use safe DTOs; original provider, photo, account and profile evidence remains stored internally",
+      "unknown payment retains exact attempt; both same and changed browser request cannot charge again or edit locked cart",
+      "one immutable paid order, four durable receipt/tax/postage effects, one custody card and no mail-in commission",
+      "customer paid order exposes safe totals/identity/delivery effects; immutable stored receipt retains money/photo/provider proof",
+      "saved paid checkout remains readable with commerce providers disabled and no provider call"
+    ],
+    "publicMigrations": 95,
+    "staffMigrations": 52,
+    "evidenceDirectory": "/private/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/atlas-staff-db-gEQmkO"
+  },
+  "assertionGroups": 11,
+  "cleanup": {
+    "stoppedVerified": true,
+    "removed": "owned tmpfs container",
+    "evidenceRetained": true
+  },
+  "container": {
+    "id": "e05da12045b543a3280c2ac6543888e7a75ec1bd0839c7bbf8991ca0ff612c34",
+    "nonce": "6dd66bd9e2706ad16fefea082c500c84",
+    "port": 50109,
+    "remote": true,
+    "image": "sha256:a2ea0e68c465e0acf4c3672471b22b6b62972bb341e6f31544c855d85ba43745"
+  },
+  "transport": {
+    "host": "root@104.131.27.245",
+    "image": "sha256:a2ea0e68c465e0acf4c3672471b22b6b62972bb341e6f31544c855d85ba43745",
+    "architecture": "amd64",
+    "encryptedSshLoopbackTunnel": true,
+    "port": 50109,
+    "containerId": "e05da12045b543a3280c2ac6543888e7a75ec1bd0839c7bbf8991ca0ff612c34",
+    "nonce": "6dd66bd9e2706ad16fefea082c500c84"
+  },
+  "migration49Through52": [
+    {
+      "name": "20260924060000_customer_photo_intake",
+      "sha256": "41382fa3725251c92e461f5e7fd344d17e6e313a66ffe2e2ca625d834c0d58aa",
+      "byteCount": 33072
+    },
+    {
+      "name": "20260924061000_customer_commerce",
+      "sha256": "9c1363b8b02d1188d5e9c2340be6624a58ee8137ebed9e9a9f5d07ff648aa47e",
+      "byteCount": 46011
+    },
+    {
+      "name": "20260924062000_dealer_custody_tracking",
+      "sha256": "f1286c7634594103a216a749448507d1c5d79dd280706e9f6b8d80edee6b136d",
+      "byteCount": 43183
+    },
+    {
+      "name": "20260924063000_customer_private_service",
+      "sha256": "152ca79fd3a1d1ac1b7f8bbfdae14e01c77f7f6133feb4ca120694f2529e1b85",
+      "byteCount": 4064
+    }
+  ],
+  "evidenceFileSha256": {
+    "source.json": "d0d853ccd098160b1b1c4448d5e832887787384d92cb1d09d48d08b1c3777c8a",
+    "ledgers.json": "a4b031b27127a76510991a48f02318d110ef37ae0bf2fae773f692c11d82da0a",
+    "private-commerce-result.json": "b099714be55b56e9da126adfb71d59518d23eaf6d84e56656e9004e9e049af51",
+    "cleanup.json": "bad8075f83dabce5dacbcddc6be803a49a1c1522b8746660401bdf3d927fb543",
+    "container.json": "78cdd487f9b64415d67a5636edb528d368a7abd258006464c25eb752cd191cec",
+    "transport.json": "378154df9cb1120a5fac51519a3690332f526a9c05146bdc5b78d04f3f8e90c9",
+    "validation.log": "30eb8a626a996561283a50dc0a824aa33aa17c8096c22b102642bfe2146c1aad",
+    "postgres.log": "7910daabb1db94030ba97d4ae2773f94a0ea2b9fbe8cb876af6114f7c051974e"
+  }
+}

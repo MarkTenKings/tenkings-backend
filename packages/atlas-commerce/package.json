@@ -1,0 +1,8 @@
+{
+  "name": "@atlas/commerce",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/service.mjs", "./contract": "./src/contract.mjs", "./providers": "./src/providers.mjs", "./repository": "./src/repository.mjs", "./config": "./src/config.mjs", "./notifications": "./src/notifications.mjs", "./webhook": "./src/webhook.mjs", "./package-label": "./src/package-label.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}

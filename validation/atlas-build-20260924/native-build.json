@@ -1,0 +1,27 @@
+{
+  "libheif": "1.23.2",
+  "napi": 8,
+  "platform": "linux",
+  "arch": "x64",
+  "compiler": "c++",
+  "flags": [
+    "-std=c++17",
+    "-O2",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-fPIC",
+    "-shared",
+    "-DNAPI_VERSION=8",
+    "-I/opt/atlas-native/include",
+    "-I/usr/local/include/node",
+    "/build/packages/atlas-photo-runtime/native/heif.cc",
+    "-L/opt/atlas-native/lib",
+    "-lheif",
+    "-Wl,-rpath,/opt/atlas-native/lib",
+    "-o",
+    "/build/packages/atlas-photo-runtime/native/build/heif.node"
+  ],
+  "sourceSha256": "45a911f825f94d29119689ea9ede28c37557099c040d46a71aaf58aa378dcb78",
+  "binarySha256": "ee8032262b87b3fbb32cc8dcf24bd3618d63aaa63dcacebda00a0210b6941845"
+}

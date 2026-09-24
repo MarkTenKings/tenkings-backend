@@ -1,0 +1,27 @@
+{
+  "app": "atlas-public",
+  "node": "v20.20.2",
+  "platform": "linux",
+  "architecture": "x64",
+  "sourceManifestSha256": "d91344d1b699eb3677c7247b0e5249dce835c48a0aa77848c76d2dff55730296",
+  "artifactSha256": "0e40c633707a9fbfc6472c2782833a456a659585128f9de9e6e5ab2de87b0cd8",
+  "artifactFileCount": 95,
+  "artifactBytes": 19937839,
+  "buildId": "GfV7EyT_qMJW8IMkO_EZu",
+  "pages": {
+    "/_app": "pages/_app.js",
+    "/_error": "pages/_error.js",
+    "/404": "pages/404.html",
+    "/api/reports/[token]/images/[side]": "pages/api/reports/[token]/images/[side].js",
+    "/api/reports/[token]/presentation/image": "pages/api/reports/[token]/presentation/image.js",
+    "/": "pages/index.js",
+    "/api/reports/[token]/traces/[findingId]": "pages/api/reports/[token]/traces/[findingId].js",
+    "/reports/[token]": "pages/reports/[token].js",
+    "/dealers": "pages/dealers.js",
+    "/_document": "pages/_document.js"
+  },
+  "basePath": "",
+  "serverTraces": 12,
+  "tracedFiles": 1476,
+  "externalTracePaths": 0
+}
