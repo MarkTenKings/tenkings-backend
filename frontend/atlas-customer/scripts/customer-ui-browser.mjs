@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CommerceService } from '../../../packages/atlas-commerce/src/service.mjs';
 
 // Actual customer JSX/CSS and browser IndexedDB/File behavior. Authentication,
 // uploaded subjects, provider replies and database records are synthetic only.
@@ -35,7 +36,12 @@ const bundle = `const factories={${[...modules].map(([name, source]) => `${JSON.
 const cache={};function load(name){if(cache[name])return cache[name].exports;const factory=factories[name];if(!factory)throw Error('Unknown fixture module '+name);const module={exports:{}};cache[name]=module;factory(dependency=>{
 if(!dependency.startsWith('.'))return load(dependency);const parts=name.split('/');parts.pop();for(const part of dependency.split('/')){if(part==='..')parts.pop();else if(part!=='.')parts.push(part)}const key=parts.join('/');return load([key,key+'.jsx',key+'.mjs'].find(value=>factories[value])??key);
 },module,module.exports);return module.exports}window.__load=load;`;
+// Exercise the actual disabled-provider service projection, not an invented error.
+const coldDraftId='00000003-1111-4111-8111-111111111111';
+const coldCheckout = await new CommerceService({repository:{loadCheckout:async()=>({version:'atlas-commerce-checkout-v1',draftId:coldDraftId,revision:1,channel:'MAIL_IN',cards:[],location:null,activePayment:null,shippingOptions:[]})},terms:{mailClockStart:'UNCONFIGURED',mailChargedLegs:'UNCONFIGURED'}}).checkout(coldDraftId);
+assert(coldCheckout.blockers.includes('PAYMENT_NOT_CONFIGURED')&&!coldCheckout.blockers.includes('COMMERCE_NOT_CONFIGURED'));
 const fixture = `
+const actualColdCheckout=${JSON.stringify(coldCheckout)};
 const copy=value=>structuredClone(value),id=n=>String(n).padStart(8,'0')+'-1111-4111-8111-111111111111';
 const kioskLocation={id:id(2),name:'Synthetic Harbor Kiosk',address:{line1:'1 Fixture Street',city:'Testville',region:'CA',postalCode:'90210',country:'US'},timeZone:'America/Los_Angeles',nextCollection:'2026-09-30T17:00:00Z',projectedReturn:'2026-10-07T17:00:00Z',schedule:{timeZone:'America/Los_Angeles',nextCollectionAt:'2026-09-30T17:00:00Z',projectedReturnAt:'2026-10-07T17:00:00Z',cutoffAt:'2026-09-30T16:00:00Z',pickups:[{weekday:3,time:'10:00',cutoff:'09:00'}],returns:[{weekday:3,time:'10:00'}],exceptions:[]}};
 const fresh=()=>({signedIn:false,customer:{id:id(1),phone:'+12025550141',profile:{}},calls:[],draft:null,payment:null,quote:null,order:null,uploads:{},settled:false,paymentCreates:0,dealer:false,deposited:false});
@@ -71,7 +77,10 @@ else throw Error('Unexpected synthetic API '+path);save();return copy(result);};
 const journal=__load('lib/intake-journal.mjs'),uploader=journal.createCustomerUploader;
 journal.createCustomerUploader=options=>uploader({...options,put:async(signed,file)=>{state.uploads[signed.url.split('/').at(-1)]={name:file.name,size:file.size,bytes:Array.from(new Uint8Array(await file.arrayBuffer()))};save();}});
 window.Stripe=()=>({elements:()=>({create:()=>({mount:node=>{node.textContent='Synthetic secure payment form. No card is collected.';},on:(name,callback)=>{if(name==='ready')queueMicrotask(callback);},destroy(){}})}),confirmPayment:async()=>{state.settled=true;save();return {};}});
-let app;window.__render=(mode='account')=>{app?.unmount();app=ReactDOM.createRoot(document.getElementById('app'));const component=mode==='cold-checkout'?'components/commerce/CommerceCheckout.jsx':mode==='dealer'?'components/dealer/DealerWorkspace.jsx':mode==='receipt'?'components/commerce/OrderReceipt.jsx':'components/AccountWorkspace.jsx';app.render(React.createElement(__load(component).default,mode==='cold-checkout'?{draft:{...state.draft,state:'REVIEW'},onBack:()=>{},request:async()=>{throw Object.assign(Error('COMMERCE_NOT_CONFIGURED'),{code:'COMMERCE_NOT_CONFIGURED'});}}:mode==='receipt'?{orderId:state.order.id}:mode==='dealer'?{}:{initialView:mode==='dashboard'?'dashboard':'submit'}));};window.__render();`;
+let app;window.__render=(mode='account')=>{app?.unmount();app=ReactDOM.createRoot(document.getElementById('app'));const cold=mode.startsWith('cold-checkout'),component=cold?'components/commerce/CommerceCheckout.jsx':mode==='dealer'?'components/dealer/DealerWorkspace.jsx':mode==='receipt'?'components/commerce/OrderReceipt.jsx':'components/AccountWorkspace.jsx';app.render(React.createElement(__load(component).default,cold?{draft:{...state.draft,state:'REVIEW'},onBack:()=>{},request:async()=>{
+ if(mode==='cold-checkout')throw Object.assign(Error('COMMERCE_NOT_CONFIGURED'),{code:'COMMERCE_NOT_CONFIGURED'});
+ return {...copy(actualColdCheckout),draftId:state.draft.id,cards:copy(state.draft.cards),activePayment:mode==='cold-checkout-unknown'?{attemptId:id(5),state:'UNKNOWN'}:mode==='cold-checkout-paid'?copy(state.payment):null};
+}}:mode==='receipt'?{orderId:state.order.id}:mode==='dealer'?{}:{initialView:mode==='dashboard'?'dashboard':'submit'}));};window.__render();`;
 const assets = new Map([
     ['/react.js', readFileSync(join(dirname(require.resolve('react/package.json')), 'umd/react.production.min.js'))],
     ['/react-dom.js', readFileSync(join(dirname(require.resolve('react-dom/package.json')), 'umd/react-dom.production.min.js'))],
@@ -176,6 +185,9 @@ try {
     await page.addStyleTag({content:'.fixture-banner,body>p{display:none!important}'}); const mobileCTA=await page.locator('.hero-slab-button').boundingBox(); assert(mobileCTA.y+mobileCTA.height<844,'The grade-your-cards button must be visible without scrolling at390×844'); await shot('10-hero-mobile-production-layout');
     await page.setViewportSize({width:1280,height:900}); await shot('11-hero-desktop');
     await page.evaluate(() => window.__render('cold-checkout')); await page.getByRole('heading',{name:'Your draft is saved.'}).waitFor(); assert.equal(await page.getByRole('button',{name:'Get exact total'}).count(),0); await page.getByRole('link',{name:'Back to your account →'}).waitFor(); await shot('13-saved-draft-checkout-cold');
+    await page.evaluate(() => window.__render('cold-checkout-200')); await page.getByRole('heading',{name:'Your draft is saved.'}).waitFor(); assert.equal(await page.getByRole('button',{name:'Get exact total'}).count(),0); await page.getByRole('link',{name:'Back to your account →'}).waitFor(); await shot('14-saved-draft-real-cold-dto');
+    await page.evaluate(() => window.__render('cold-checkout-unknown')); await page.getByRole('button',{name:'Check payment status'}).waitFor(); assert.equal(await page.getByRole('heading',{name:'Your draft is saved.'}).count(),0,'Cold blockers must not hide an unresolved original payment');
+    await page.evaluate(() => window.__render('cold-checkout-paid')); await page.getByRole('heading',{name:'Your cards have a place.'}).waitFor(); assert.equal(await page.getByRole('heading',{name:'Your draft is saved.'}).count(),0,'Cold blockers must not hide a paid receipt');
     const rapidContext = await browser.newContext({viewport:{width:390,height:844}}), rapid = await rapidContext.newPage();
     await rapid.goto(origin); await rapid.evaluate(() => {
       window.__fixture.signedIn=true; window.__fixture.customer.profile={}; window.__fixture.calls=[]; window.__save();
@@ -196,7 +208,7 @@ try {
     await rapid.getByRole('button',{name:'Keep capturing'}).click(); await rapid.getByRole('button',{name:'Capture Front'}).click(); await rapid.getByRole('button',{name:'Capture Back'}).waitFor();
     await rapid.reload(); await rapid.getByRole('button',{name:'Continue with the back'}).waitFor();
     await rapidContext.close();
-    writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'PASS', syntheticOnly: true, browserErrors: errors, kiosk: evidence, mail, rapid: rapidEvidence }, null, 2) + '\n');
+    writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'PASS', syntheticOnly: true, browserErrors: errors, kiosk: evidence, mail, coldCheckout: {actualServiceBlockers:coldCheckout.blockers,savedCompletion:true,unknownPaymentPreserved:true,paidReceiptPreserved:true}, rapid: rapidEvidence }, null, 2) + '\n');
     process.stdout.write(JSON.stringify({ status: 'PASS', output, kiosk: evidence, mail }) + '\n');
 } catch (error) {
     await shot('failure'); writeFileSync(join(output, 'failure.json'), JSON.stringify({ error: error.message, browserErrors: errors, text: await page.locator('body').innerText() }, null, 2)); throw error;

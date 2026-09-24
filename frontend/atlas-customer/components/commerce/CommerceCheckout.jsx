@@ -67,7 +67,7 @@ export default function CommerceCheckout({ draft, request, onPaid, onBack }) {
     },[]);
     useEffect(() => { let disposed=false;
         requestRef.current(`/api/customer/commerce/checkout?draftId=${encodeURIComponent(draftId)}`,{method:'GET'}).then(value => {
-            if(disposed)return; setView(value); setCheckoutUnavailable(value.blockers?.includes('COMMERCE_NOT_CONFIGURED')??false); if(value.activePayment)accept(value.activePayment);
+            if(disposed)return; setView(value); setCheckoutUnavailable(value.blockers?.some(code=>['COMMERCE_NOT_CONFIGURED','PAYMENT_NOT_CONFIGURED'].includes(code))??false); if(value.activePayment)accept(value.activePayment);
         }).catch(err => {if(!disposed) { if((err.code??err.message)==='COMMERCE_NOT_CONFIGURED')setCheckoutUnavailable(true); else setError(friendly(err.code??err.message)); }});
         return () => {disposed=true;};
     },[draftId,accept]);
