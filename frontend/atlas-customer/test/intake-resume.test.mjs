@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import * as captureState from '../lib/capture-state.mjs';
 const require = createRequire(new URL('../package.json', import.meta.url));
 const nextRequire = createRequire(require.resolve('next/package.json'));
 const code = require('next/dist/compiled/babel/core').transformSync(readFileSync(new URL('../components/intake/CustomerIntake.jsx', import.meta.url), 'utf8'), {
@@ -30,6 +31,7 @@ test('resuming a reviewed cart opens payment reconciliation without attempting a
       if (name === 'react') return react;
       if (name.endsWith('/client.mjs')) return { request: async (path, options) => { calls.push({ path, options }); assert.equal(path, '/intake/drafts'); return { drafts: [draft] }; } };
       if (name.endsWith('/intake-journal.mjs')) return { createBrowserIntakeJournal: () => ({ close() {} }), createCustomerUploader: () => ({ resume: async () => {}, dispose() {}, whenIdle: async () => {} }) };
+      if (name.endsWith('/capture-state.mjs')) return captureState;
       if (name.endsWith('/capture-buffer.mjs')) return { createCaptureBuffer: () => ({ snapshot: async () => ({ pairIds: [], pairs: [] }), setService: async () => {}, attachDraft: async () => ({ pairIds: [], pairs: [], draftId: draft.id }), close: async () => {} }) };
       if (name.endsWith('/ProfileFields.jsx')) return { default: Stub, completeProfile: () => true, emptyProfile: {}, __esModule: true };
       if (name.endsWith('/CommerceCheckout.jsx')) return { default: CommerceCheckout, __esModule: true };

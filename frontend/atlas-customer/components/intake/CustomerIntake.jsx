@@ -7,6 +7,7 @@ import CommerceCheckout from '../commerce/CommerceCheckout.jsx';
 import CustomerOrderTracking from '../orders/CustomerOrderTracking.jsx';
 import RapidCardCamera from '../../../atlas-shared/RapidCardCamera.jsx';
 import { createCaptureBuffer } from '../../lib/capture-buffer.mjs';
+import { captureCounts, connectCapturedDraft } from '../../lib/capture-state.mjs';
 import SubmissionProgress from './SubmissionProgress.jsx';
 
 const blankIdentity = { category: 'SPORTS', title: '', playerName: '', year: '', manufacturer: '', setName: '', cardNumber: '', parallel: '', insert: '' };
@@ -48,7 +49,6 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
         setLocal(value); setOwnsCapture(true);
         if (value.service) setService(value.service);
         if (value.pairIds.length || value.front) setStep('CAPTURE');
-        if (value.draftId) api(`/intake/drafts/${value.draftId}`).then(result => { if (alive) { acceptDraft(result.draft); if (['REVIEW', 'ORDERED'].includes(result.draft.state)) setStep('CHECKOUT'); } }).catch(() => {});
         await new Promise(resolve => { release = resolve; });
       } catch { if (alive) setError('Device storage is unavailable. Free some space before capturing photos.'); }
       finally { await journal?.close(); }
@@ -96,12 +96,12 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
   async function connectDraft() {
     if (!buffer.current || draft || intakeAvailable !== true) return;
     if (creating.current) return creating.current;
-    creating.current = (async () => {
-    const creation = await buffer.current.creation();
-    if (creation.intakeMethod === 'DEALER_DROP_OFF' && !creation.kioskId) return;
-    const result = await api('/intake/drafts', { body: creation });
-    await buffer.current.attachDraft(result.draft.id); acceptDraft(result.draft);
-    })().finally(() => { creating.current = null; });
+    const owner = buffer.current;
+    creating.current = connectCapturedDraft({ buffer: owner, request: api }).then(next => {
+      if (!next || !active.current || buffer.current !== owner) return;
+      acceptDraft(next);
+      if (['REVIEW', 'ORDERED'].includes(next.state)) setStep('CHECKOUT');
+    }).finally(() => { creating.current = null; });
     return creating.current;
   }
   async function begin(chosen = service) {
@@ -121,11 +121,9 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
   }
   useEffect(() => { if (local?.service && intakeAvailable === true && !draft) connectDraft().catch(() => setIntakeAvailable(false)); }, [local?.service, intakeAvailable, draft?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const pending = saved?.items.filter(item => !item.done) ?? [];
-  const count = Math.max(draft?.cards.length ?? 0, local?.pairIds.length ?? 0);
-  const uploadedCount = draft?.cards.filter(card => ['FRONT','BACK'].every(side => card.uploads?.[side]?.state === 'VERIFIED')).length ?? 0;
-  const waitingCount = Math.max(0, count - uploadedCount);
+  const { count, waitingCount, ready } = captureCounts(draft, local);
   const reviewLocked = ['REVIEW', 'ORDERED'].includes(draft?.state);
-  const readyForCheckout = draft?.cards.length > 0 && count === draft.cards.length && pending.length === 0 && draft.cards.every(card => card.identity && ['FRONT','BACK'].every(side => card.uploads?.[side]?.state === 'VERIFIED'));
+  const readyForCheckout = ready && pending.length === 0;
   const stageNumber = step === 'START' ? 1 : step === 'CAPTURE' ? 2 : step === 'PROFILE' ? 3 : 4;
   const selected = Boolean(service && (service.intakeMethod === 'MAIL_IN' || service.kioskId));
   const localOnly = !draft;
@@ -151,7 +149,7 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
       </>}
       {step === 'REVIEW' && <><div className="review-service-summary"><strong>{service?.intakeMethod === 'MAIL_IN' ? 'Mail-in · $40 per card' : 'Kiosk drop-off · $50 per card'}</strong><span>{service?.intakeMethod === 'MAIL_IN' ? 'Two-week service · FedEx quoted before payment' : 'One week from ATLAS collection · transport included'}</span></div>
         <div className="intake-review-list">{draft?.cards.map(card => <ReviewCard key={card.id} card={card} busy={busy} editable={!reviewLocked} onCorrect={(card, identity) => work(async () => { const result = await api(`/intake/drafts/${draft.id}/cards/${card.id}/correct`, { body: { expectedRevision: card.revision, identity } }); acceptDraft(result.draft); })}/>)}</div>
-        {localOnly && <section className="panel local-draft-notice"><h2>Your {count} {count === 1 ? 'card is' : 'cards are'} saved on this device.</h2><p>Online photo submission is not available yet. Automatic identification and checkout will become available when ATLAS opens this service. You have not placed an order or been charged.</p><button className="secondary" onClick={() => work(async () => { const result = await api('/intake/drafts'); setDrafts(result.drafts); setIntakeAvailable(true); const body = await buffer.current.creation(); const created = await api('/intake/drafts', { body }); await buffer.current.attachDraft(created.draft.id); acceptDraft(created.draft); })}>Check availability</button></section>}
+        {localOnly && <section className="panel local-draft-notice"><h2>Your {count} {count === 1 ? 'card is' : 'cards are'} saved on this device.</h2><p>Online photo submission is not available yet. Automatic identification and checkout will become available when ATLAS opens this service. You have not placed an order or been charged.</p><button className="secondary" onClick={() => work(async () => { const result = await api('/intake/drafts'); setDrafts(result.drafts); setIntakeAvailable(true); })}>Check availability</button></section>}
         {pending.length > 0 && <p role="status">{pending.length} pairs are still uploading. You can keep adding cards while they finish.</p>}
         <div className="intake-actions">{!reviewLocked && <><button className="secondary" onClick={() => setStep('CAPTURE')}>Add more cards</button><button className="text-link" onClick={() => setStep('PROFILE')}>Edit return details</button></>}<button className="primary" disabled={busy || !readyForCheckout} onClick={() => work(async () => { if (reviewLocked) { setStep('CHECKOUT'); return; } const result = await api(`/intake/drafts/${draft.id}/review`, { body: { expectedRevision: draft.revision, profile } }); acceptDraft(result.draft); setStep('CHECKOUT'); })}>Continue to checkout →</button></div>
       </>}
