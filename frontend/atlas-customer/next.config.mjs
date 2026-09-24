@@ -4,7 +4,7 @@ export default {
     basePath: '/account',
     poweredByHeader: false,
     reactStrictMode: true,
-    experimental: { cpus: 2 },
+    experimental: { cpus: 2, externalDir: true },
     outputFileTracingIncludes: { '/*': ['./.generated/customer-database/**/*'] },
     webpack(config) {
         config.resolve.modules.push(fileURLToPath(new URL('./node_modules', import.meta.url)));
