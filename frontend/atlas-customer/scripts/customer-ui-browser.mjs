@@ -13,13 +13,17 @@ const toolModules = process.argv[2], output = resolve(process.argv[3] ?? '/priva
 if (!toolModules) throw Error('Pass the bundled node_modules path for Playwright.');
 const { chromium } = createRequire(join(resolve(toolModules), '__atlas_customer__.cjs'))('playwright');
 const babel = require('next/dist/compiled/babel/core'), modules = new Map();
-for (const file of ['components/AccountWorkspace.jsx', 'components/intake/CustomerIntake.jsx', 'components/intake/ProfileFields.jsx', 'components/intake/ServiceChoice.jsx',
+for (const file of ['components/AccountWorkspace.jsx', 'components/intake/SubmissionHero.jsx', 'components/intake/SubmissionProgress.jsx', 'components/intake/CustomerIntake.jsx', 'components/intake/ProfileFields.jsx', 'components/intake/ServiceChoice.jsx',
     'components/commerce/CommerceCheckout.jsx', 'components/commerce/OrderReceipt.jsx', 'components/orders/CustomerOrderHistory.jsx', 'components/orders/CustomerOrderTracking.jsx',
-    'components/dealer/DealerWorkspace.jsx', 'components/dealer/DealerPortal.jsx', 'lib/progress.mjs', 'lib/pending-submission.mjs', 'lib/intake-journal.mjs']) {
+    'components/dealer/DealerWorkspace.jsx', 'components/dealer/DealerPortal.jsx', 'lib/progress.mjs', 'lib/pending-submission.mjs', 'lib/intake-journal.mjs', 'lib/capture-buffer.mjs']) {
     modules.set(file, babel.transformSync(readFileSync(join(root, file), 'utf8'), { filename: file, presets: [[require.resolve('next/babel'), {
         'preset-env': { targets: { chrome: '120' } }, 'transform-runtime': { helpers: false }
     }]], babelrc: false, configFile: false }).code);
 }
+for (const file of ['RapidCardCamera.jsx', 'rapid-camera.mjs']) modules.set(`atlas-shared/${file}`, babel.transformSync(readFileSync(join(root, '../atlas-shared', file), 'utf8'), {filename:file,presets:[[require.resolve('next/babel'),{'preset-env':{targets:{chrome:'120'}},'transform-runtime':{helpers:false}}]],babelrc:false,configFile:false}).code);
+const cameraClasses = {};
+const cameraCss = readFileSync(join(root, '../atlas-shared/RapidCardCamera.module.css'), 'utf8').replace(/\.([a-zA-Z_][\w-]*)/g, (_, name) => { cameraClasses[name] = `camera_${name}`; return `.camera_${name}`; });
+modules.set('atlas-shared/RapidCardCamera.module.css', `module.exports=${JSON.stringify(cameraClasses)};`);
 const classes = {};
 const css = readFileSync(join(root, 'components/commerce/commerce.module.css'), 'utf8').replace(/\.([a-zA-Z_][\w-]*)/g, (_, name) => { classes[name] = `commerce_${name}`; return `.commerce_${name}`; });
 modules.set('components/commerce/commerce.module.css', `module.exports=${JSON.stringify(classes)};`);
@@ -67,11 +71,11 @@ else throw Error('Unexpected synthetic API '+path);save();return copy(result);};
 const journal=__load('lib/intake-journal.mjs'),uploader=journal.createCustomerUploader;
 journal.createCustomerUploader=options=>uploader({...options,put:async(signed,file)=>{state.uploads[signed.url.split('/').at(-1)]={name:file.name,size:file.size,bytes:Array.from(new Uint8Array(await file.arrayBuffer()))};save();}});
 window.Stripe=()=>({elements:()=>({create:()=>({mount:node=>{node.textContent='Synthetic secure payment form. No card is collected.';},on:(name,callback)=>{if(name==='ready')queueMicrotask(callback);},destroy(){}})}),confirmPayment:async()=>{state.settled=true;save();return {};}});
-let app;window.__render=(mode='account')=>{app?.unmount();app=ReactDOM.createRoot(document.getElementById('app'));const component=mode==='dealer'?'components/dealer/DealerWorkspace.jsx':mode==='receipt'?'components/commerce/OrderReceipt.jsx':'components/AccountWorkspace.jsx';app.render(React.createElement(__load(component).default,mode==='receipt'?{orderId:state.order.id}:mode==='dealer'?{}:{initialView:'submit'}));};window.__render();`;
+let app;window.__render=(mode='account')=>{app?.unmount();app=ReactDOM.createRoot(document.getElementById('app'));const component=mode==='cold-checkout'?'components/commerce/CommerceCheckout.jsx':mode==='dealer'?'components/dealer/DealerWorkspace.jsx':mode==='receipt'?'components/commerce/OrderReceipt.jsx':'components/AccountWorkspace.jsx';app.render(React.createElement(__load(component).default,mode==='cold-checkout'?{draft:{...state.draft,state:'REVIEW'},onBack:()=>{},request:async()=>{throw Object.assign(Error('COMMERCE_NOT_CONFIGURED'),{code:'COMMERCE_NOT_CONFIGURED'});}}:mode==='receipt'?{orderId:state.order.id}:mode==='dealer'?{}:{initialView:mode==='dashboard'?'dashboard':'submit'}));};window.__render();`;
 const assets = new Map([
     ['/react.js', readFileSync(join(dirname(require.resolve('react/package.json')), 'umd/react.production.min.js'))],
     ['/react-dom.js', readFileSync(join(dirname(require.resolve('react-dom/package.json')), 'umd/react-dom.production.min.js'))],
-    ['/bundle.js', Buffer.from(bundle + '\n' + fixture)], ['/style.css', Buffer.from(['customer.css', 'atlas-brand.css', 'atlas-theme.css'].map(file => readFileSync(join(root, 'styles', file), 'utf8')).join('\n') + '\n' + css)],
+    ['/bundle.js', Buffer.from(bundle + '\n' + fixture)], ['/style.css', Buffer.from(['customer.css', 'atlas-brand.css', 'atlas-theme.css', 'submission.css'].map(file => readFileSync(join(root, 'styles', file), 'utf8')).join('\n') + '\n' + css + '\n' + cameraCss)],
     ['/account/brand/atlas-brand.png', readFileSync(join(root, 'public/brand/atlas-brand.png'))]
 ]);
 for (const file of ['original-1.woff2', 'original-2.woff2', 'original-3.woff2', 'original-4.woff2']) assets.set(`/account/brand/fonts/${file}`, readFileSync(join(root, 'public/brand/fonts', file)));
@@ -79,36 +83,37 @@ mkdirSync(output, { recursive: true });
 const server = createServer((request, response) => {
     const path = new URL(request.url, 'http://127.0.0.1').pathname;
     if (path === '/') { response.setHeader('Content-Type', 'text/html'); response.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ATLAS synthetic customer verification</title><link rel="stylesheet" href="/style.css"></head><body><p style="text-align:center">SYNTHETIC LOCAL VERIFICATION · NO REAL EFFECTS</p><div id="app"></div><script src="/react.js"></script><script src="/react-dom.js"></script><script src="/bundle.js"></script></body></html>'); return; }
-    const value = assets.get(path); response.writeHead(value ? 200 : 404, { 'Content-Type': path.endsWith('.png') ? 'image/png' : path.endsWith('.woff2') ? 'font/woff2' : path.endsWith('.css') ? 'text/css' : 'text/javascript' }); response.end(value);
+    let value = assets.get(path); if (!value && /^\/account\/(?:brand\/cards|atlas)\/[a-z-]+\.(?:jpg|mp4)$/.test(path)) { try { value = readFileSync(join(root, 'public', path.slice('/account/'.length))); } catch {} } response.writeHead(value ? 200 : 404, { 'Content-Type': path.endsWith('.jpg') ? 'image/jpeg' : path.endsWith('.mp4') ? 'video/mp4' : path.endsWith('.png') ? 'image/png' : path.endsWith('.woff2') ? 'font/woff2' : path.endsWith('.css') ? 'text/css' : 'text/javascript' }); response.end(value);
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-const origin = `http://127.0.0.1:${server.address().port}`, browser = await chromium.launch({ channel: 'chrome', headless: true });
+const origin = `http://127.0.0.1:${server.address().port}`, browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 } }), page = await context.newPage(), errors = [];
 page.on('pageerror', error => errors.push(error.message));
 await context.route(/^https?:\/\//, route => { assert.equal(new URL(route.request().url()).origin, origin, 'External requests are prohibited'); return route.continue(); });
 const shot = name => page.screenshot({ path: join(output, `${name}.png`), fullPage: true });
 try {
     await page.goto(`${origin}/?kiosk=synthetic-entry`);
+    await page.getByRole('heading',{name:'Kiosk drop-off'}).waitFor(); await shot('00-service-mobile'); await page.setViewportSize({width:1280,height:900}); await shot('00-service-desktop'); await page.setViewportSize({width:390,height:844});
     await page.getByRole('button', { name: 'Continue with your phone' }).click();
     await page.getByRole('textbox', { name: 'Mobile number' }).fill('2025550141');
     await page.getByRole('button', { name: 'Send verification code' }).click();
     await page.getByRole('textbox', { name: 'Verification code' }).fill('424242');
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
-    await page.getByRole('heading', { name: 'Complete your details.' }).waitFor(); await shot('01-profile-mobile');
-    for (const [name, value] of [['Full name', 'Synthetic Customer'], ['Email for your receipt', 'synthetic@example.invalid'], ['Street address', '2 Fixture Way'], ['City', 'Testville'], ['State / province / region', 'CA'], ['Postal code', '90210']]) await page.getByRole('textbox', { name, exact: true }).fill(value);
-    await page.getByRole('button', { name: 'Save and add cards' }).click();
-    await page.getByRole('heading', { name: 'One card. Two photos.' }).waitFor();
+    await page.getByRole('heading', { name: 'Front. Back. Next.' }).waitFor();
+    await page.getByRole('button', {name:'Close camera'}).click();
+    assert.equal(await page.getByRole('textbox', {name:'Card description'}).count(), 0);
     for (let i = 1; i <= 2; i++) {
-        await page.getByLabel('Front photo', { exact: true }).setInputFiles({ name: `IMG_${i}F.jpg`, mimeType: 'image/jpeg', buffer: Buffer.from(`synthetic-front-${i}`) });
-        await page.getByRole('button', { name: 'Take back photo' }).waitFor();
-        await page.getByLabel('Back photo', { exact: true }).setInputFiles({ name: `IMG_${i}B.jpg`, mimeType: 'image/jpeg', buffer: Buffer.from(`synthetic-back-${i}`) });
-        await page.getByRole('button', { name: '＋ Add card', exact: true }).waitFor();
+        await page.getByLabel('Front photo', { exact: true }).setInputFiles({ name: `IMG_${i}F.jpg`, mimeType: 'image/jpeg', buffer: Buffer.concat([readFileSync(join(root,'public/brand/cards/kobe.jpg')),Buffer.from(String(i))]) });
+        await page.getByLabel('Back photo', { exact: true }).setInputFiles({ name: `IMG_${i}B.jpg`, mimeType: 'image/jpeg', buffer: Buffer.concat([readFileSync(join(root,'public/brand/cards/brady.jpg')),Buffer.from(String(i))]) });
         await page.waitForFunction(n => window.__fixture.draft.cards.length === n && window.__fixture.draft.cards.every(c => c.identityState === 'READY'), i);
     }
     await shot('02-capture-mobile');
-    await page.getByRole('button', { name: 'Done · Review cards' }).click();
+    await page.getByRole('button', { name: 'Done adding cards →' }).click();
+    await page.getByRole('heading', { name: 'Where should they return?' }).waitFor(); await shot('01-profile-mobile');
+    for (const [name, value] of [['Full name', 'Synthetic Customer'], ['Email for your receipt', 'synthetic@example.invalid'], ['Street address', '2 Fixture Way'], ['City', 'Testville'], ['State / province / region', 'CA'], ['Postal code', '90210']]) await page.getByRole('textbox', { name, exact: true }).fill(value);
+    await page.getByRole('button', { name: 'Review submission →' }).click();
     await page.getByRole('heading', { name: 'Synthetic card 2' }).waitFor(); await shot('03-review-mobile');
-    await page.getByRole('button', { name: 'Continue to checkout' }).click();
+    await page.getByRole('button', { name: 'Continue to checkout →' }).click();
     await page.getByRole('button', { name: 'Get exact total' }).click();
     await page.getByRole('button', { name: 'Pay $109.00', exact: true }).waitFor(); await shot('04-checkout-mobile');
     await page.getByRole('button', { name: 'Pay $109.00', exact: true }).click();
@@ -143,17 +148,18 @@ try {
     const evidence = await page.evaluate(() => ({ cards: window.__fixture.draft.cards.length, originals: Object.values(window.__fixture.uploads).map(({ name, size }) => ({ name, size })), paymentCreates: window.__fixture.paymentCreates, reviewWrites: window.__fixture.calls.filter(c => c.path.endsWith('/review')).length, profileWrites: window.__fixture.calls.filter(c => c.path === '/profile').length, dealerEntries: window.__fixture.calls.filter(c => c.path === '/dealer/session' && c.body).length }));
     assert.equal(evidence.reviewWrites, 1); assert.equal(evidence.originals.length, 4);
     await page.evaluate(() => { Object.assign(window.__fixture, { draft: null, quote: null, payment: null, order: null, settled: false, deposited: false }); history.replaceState(null, '', '/'); window.__save(); window.__render('account'); });
-    await page.getByRole('button', { name: /^MAIL YOUR CARDS/ }).click();
-    await page.getByRole('button', { name: 'Continue', exact: true }).click();
-    await page.getByRole('heading', { name: 'One card. Two photos.' }).waitFor();
+    await page.getByRole('button', { name: 'Choose mail-in →' }).click();
+    await page.getByRole('button', { name: /^Continue to camera/ }).click();
+    await page.getByRole('heading', { name: 'Front. Back. Next.' }).waitFor();
+    await page.getByRole('button', {name:'Close camera'}).click();
     assert.equal(await page.getByRole('heading', { name: 'Complete your details.' }).count(), 0, 'Returning complete profile skips entry');
-    await page.getByLabel('Front photo', { exact: true }).setInputFiles({ name: 'mail-front.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('synthetic-mail-front') });
-    await page.getByRole('button', { name: 'Take back photo' }).waitFor();
-    await page.getByLabel('Back photo', { exact: true }).setInputFiles({ name: 'mail-back.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('synthetic-mail-back') });
-    await page.getByRole('button', { name: '＋ Add card', exact: true }).waitFor();
+    await page.getByLabel('Front photo', { exact: true }).setInputFiles({ name: 'mail-front.jpg', mimeType: 'image/jpeg', buffer: readFileSync(join(root,'public/brand/cards/kobe.jpg')) });
+    await page.getByLabel('Back photo', {exact:true}).waitFor({state:'attached'});
+    await page.getByLabel('Back photo', { exact: true }).setInputFiles({ name: 'mail-back.jpg', mimeType: 'image/jpeg', buffer: readFileSync(join(root,'public/brand/cards/brady.jpg')) });
+    await page.getByLabel('Front photo', {exact:true}).waitFor({state:'attached'});
     await page.waitForFunction(() => window.__fixture.draft.cards[0]?.identityState === 'READY');
-    await page.getByRole('button', { name: 'Done · Review cards' }).click();
-    await page.getByRole('button', { name: 'Continue to checkout' }).click();
+    await page.getByRole('button', { name: 'Done adding cards →' }).click();
+    await page.getByRole('button', { name: 'Continue to checkout →' }).click();
     await page.getByRole('combobox', { name: 'Your package and FedEx service' }).selectOption('0');
     await page.getByRole('button', { name: 'Get exact total' }).click();
     await page.getByText('Two weeks from physical receipt at ATLAS.', { exact: false }).waitFor();
@@ -166,7 +172,31 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     assert.deepEqual(errors, []);
     const mail = await page.evaluate(() => ({ cards: window.__fixture.draft.cards.length, paymentState: window.__fixture.payment.state, totalDistinctPaymentCreates: window.__fixture.paymentCreates, profileWrites: window.__fixture.calls.filter(c => c.path === '/profile').length }));
-    writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'PASS', syntheticOnly: true, browserErrors: errors, kiosk: evidence, mail }, null, 2) + '\n');
+    await page.evaluate(() => window.__render('dashboard')); await page.getByRole('link', {name:/GRADE YOUR CARDS/}).waitFor(); await shot('10-hero-mobile');
+    await page.addStyleTag({content:'.fixture-banner,body>p{display:none!important}'}); const mobileCTA=await page.locator('.hero-slab-button').boundingBox(); assert(mobileCTA.y+mobileCTA.height<844,'The grade-your-cards button must be visible without scrolling at390×844'); await shot('10-hero-mobile-production-layout');
+    await page.setViewportSize({width:1280,height:900}); await shot('11-hero-desktop');
+    await page.evaluate(() => window.__render('cold-checkout')); await page.getByRole('heading',{name:'Your draft is saved.'}).waitFor(); assert.equal(await page.getByRole('button',{name:'Get exact total'}).count(),0); await page.getByRole('link',{name:'Back to your account →'}).waitFor(); await shot('13-saved-draft-checkout-cold');
+    const rapidContext = await browser.newContext({viewport:{width:390,height:844}}), rapid = await rapidContext.newPage();
+    await rapid.goto(origin); await rapid.evaluate(() => {
+      window.__fixture.signedIn=true; window.__fixture.customer.profile={}; window.__fixture.calls=[]; window.__save();
+      const api=window.__request; window.__request=async(path,options)=>{if(path==='/intake/drafts'&&options?.body){window.__blockedDraft=true;return new Promise(()=>{});}return api(path,options);};
+      window.__render();
+    });
+    await rapid.getByRole('button',{name:'Choose mail-in →'}).click(); await rapid.getByRole('button',{name:/^Continue to camera/}).click();
+    await rapid.getByRole('button',{name:'Capture Front'}).waitFor(); const startedAt=Date.now();
+    for(let i=0;i<10;i++){await rapid.getByRole('button',{name:'Capture Front'}).click();await rapid.getByRole('button',{name:'Capture Back'}).click();}
+    await rapid.getByRole('button',{name:'Capture Front'}).waitFor();
+    const rapidEvidence={cards:10,elapsedMs:Date.now()-startedAt,serverCreateStillBlocked:await rapid.evaluate(()=>window.__blockedDraft===true)};
+    assert(rapidEvidence.elapsedMs<60000,'Twenty captures must be locally accepted within a minute even while server creation remains blocked');
+    await rapid.screenshot({path:join(output,'12-continuous-camera-mobile.png')});
+    await rapid.getByRole('button',{name:'Close camera'}).click(); await rapid.getByRole('button',{name:'Done adding cards →'}).click();
+    await rapid.getByRole('heading',{name:'Where should they return?'}).waitFor();
+    await rapid.reload(); await rapid.getByRole('heading',{name:'Front. Back. Next.'}).waitFor();
+    assert.equal(await rapid.locator('.captured-pair').count(),10,'All ten pairs survive reload before any server acknowledgement');
+    await rapid.getByRole('button',{name:'Keep capturing'}).click(); await rapid.getByRole('button',{name:'Capture Front'}).click(); await rapid.getByRole('button',{name:'Capture Back'}).waitFor();
+    await rapid.reload(); await rapid.getByRole('button',{name:'Continue with the back'}).waitFor();
+    await rapidContext.close();
+    writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'PASS', syntheticOnly: true, browserErrors: errors, kiosk: evidence, mail, rapid: rapidEvidence }, null, 2) + '\n');
     process.stdout.write(JSON.stringify({ status: 'PASS', output, kiosk: evidence, mail }) + '\n');
 } catch (error) {
     await shot('failure'); writeFileSync(join(output, 'failure.json'), JSON.stringify({ error: error.message, browserErrors: errors, text: await page.locator('body').innerText() }, null, 2)); throw error;

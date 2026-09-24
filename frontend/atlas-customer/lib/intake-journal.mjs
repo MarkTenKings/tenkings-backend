@@ -84,12 +84,19 @@ export function createCustomerUploader({ draftId, journal, request, put = putOri
     running.catch(() => {}); return running;
   }
   return {
-    async appendPair(front, back) {
+    async appendPair(front, back, retained = null) {
       check(!disposed, 'UPLOAD_INTERRUPTED');
       for (const file of [front, back]) check(file instanceof Blob && file.size > 0 && file.size <= 64 * 1024 * 1024, 'PHOTO_SIZE_INVALID');
       const result = await serial(async () => {
-        const value = await journal.get() ?? { version: 1, items: [] }; check(value.version === 1 && value.items.filter(item => !item.cancelled).length < 100, 'INTAKE_CARD_LIMIT');
+        const value = await journal.get() ?? { version: 1, items: [] }; check(value.version === 1, 'BROWSER_SAVE_UNAVAILABLE');
+        if (retained) {
+          check([retained.requestId, retained.cardId, retained.pairId, retained.uploadIds?.FRONT, retained.uploadIds?.BACK].every(uuid), 'INVALID_CAPTURE_IDENTITY');
+          const previous = value.items.find(item => item.requestId === retained.requestId);
+          if (previous) { check(previous.cardId === retained.cardId && previous.pairId === retained.pairId && previous.uploadIds.FRONT === retained.uploadIds.FRONT && previous.uploadIds.BACK === retained.uploadIds.BACK, 'CAPTURE_IDENTITY_CONFLICT'); return value; }
+        }
+        check(value.items.filter(item => !item.cancelled).length < 100, 'INTAKE_CARD_LIMIT');
         value.items.push({ requestId: cryptoImpl.randomUUID(), cardId: cryptoImpl.randomUUID(), pairId: cryptoImpl.randomUUID(), uploadIds: { FRONT: cryptoImpl.randomUUID(), BACK: cryptoImpl.randomUUID() },
+          ...(retained ? { requestId: retained.requestId, cardId: retained.cardId, pairId: retained.pairId, uploadIds: { ...retained.uploadIds } } : {}),
           files: { FRONT: front, BACK: back }, verified: { FRONT: false, BACK: false }, input: null, done: false, error: null });
         await journal.put(value); publish(value); return value;
       });

@@ -28,7 +28,7 @@ test('photo and payment sources are narrowly scoped and payment origins are disa
     const read = () => { const response = { setHeader(key, value) { this[key] = value; } }; documentPolicy(response); return response['Content-Security-Policy']; };
     try {
         delete process.env.ATLAS_COMMERCE_ENABLED; process.env.ATLAS_CUSTOMER_UPLOAD_ORIGIN = 'https://private-photos.example';
-        const basic = read(); assert.match(basic, /img-src 'self' data: blob:/); assert.match(basic, /connect-src 'self' https:\/\/private-photos.example;/); assert.doesNotMatch(basic, /stripe/);
+        const basic = read(); assert.match(basic, /img-src 'self' data: blob:/); assert.match(basic, /media-src 'self' blob:;/); assert.doesNotMatch(basic.split('media-src ')[1].split(';')[0], /https:|\*/); assert.match(basic, /connect-src 'self' https:\/\/private-photos.example;/); assert.doesNotMatch(basic, /stripe/);
         process.env.ATLAS_COMMERCE_ENABLED = 'true'; assert.match(read(), /https:\/\/api\.stripe\.com/); assert.match(read(), /https:\/\/hooks\.stripe\.com/);
         for (const value of ['https://evil.example; connect-src *', 'http://photos.example', 'https://photos.example/path', 'https://name:secret@photos.example']) {
             process.env.ATLAS_CUSTOMER_UPLOAD_ORIGIN = value; assert.doesNotMatch(read(), /(?:evil|photos)\.example/);

@@ -1,6 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { request } from '../../lib/client.mjs';
 
+function ServiceFilm({ kind, label }) {
+  const video = useRef(null), [playing, setPlaying] = useState(false), [available, setAvailable] = useState(false);
+  useEffect(() => { const reduced = window.matchMedia('(prefers-reduced-motion: reduce)'); if (!reduced.matches && available) video.current?.play().then(() => setPlaying(true)).catch(() => {}); }, [available]);
+  return <div className={`service-film service-film-${kind}`}><video ref={video} muted loop playsInline preload="metadata" poster={`/account/atlas/submission-${kind}.jpg`} onCanPlay={() => setAvailable(true)} aria-label={label}><source src={`/account/atlas/submission-${kind}.mp4`} type="video/mp4"/></video><span className="service-film-caption">{kind === 'kiosk' ? 'DROP IT. WE’VE GOT IT.' : 'FROM ANYWHERE. TO ATLAS.'}</span>{available && <button type="button" className="film-control" aria-label={playing ? `Pause ${label}` : `Play ${label}`} onClick={event => { event.stopPropagation(); if (playing) video.current.pause(); else video.current.play().catch(() => {}); setPlaying(!playing); }}>{playing ? 'Ⅱ' : '▶'}</button>}</div>;
+}
 export default function ServiceChoice({ value, onChange }) {
   const [locations, setLocations] = useState([]), [query, setQuery] = useState(''), [error, setError] = useState(''), [loading, setLoading] = useState(false), [mapId, setMapId] = useState(null);
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -21,15 +26,17 @@ export default function ServiceChoice({ value, onChange }) {
     navigator.geolocation.getCurrentPosition(position => search({ lat: position.coords.latitude.toFixed(5), lng: position.coords.longitude.toFixed(5) }),
       () => setError('You can search by ZIP code or city without sharing your location.'), { timeout: 10000, maximumAge: 60000 });
   }
-  return <section className="service-choice"><div className="section-heading"><div><span className="eyebrow">Choose your service</span><h1>Your cards. Your way.</h1><p>Choose how your cards reach ATLAS before adding them.</p></div></div>
-    <div className="intake-options">
-      <button className={`panel service-card ${value?.intakeMethod === 'MAIL_IN' ? 'selected' : ''}`} onClick={() => onChange({ intakeMethod: 'MAIL_IN', kioskId: null })}>
-        <span className="eyebrow">MAIL YOUR CARDS</span><h2>$40 <small>/ card + shipping</small></h2><strong>Two-week service</strong><p>See your FedEx shipping quote before payment, then print your label and send your cards.</p><span className="text-link">Start mail-in →</span>
-      </button>
-      <button className={`panel service-card ${value?.intakeMethod === 'DEALER_DROP_OFF' ? 'selected' : ''}`} onClick={() => onChange({ intakeMethod: 'DEALER_DROP_OFF', kioskId: null })}>
-        <span className="eyebrow">DROP OFF NEARBY</span><h2>$50 <small>/ card</small></h2><strong>One week from ATLAS pickup</strong><p>ATLAS pickup and return included. Submit from your phone and use your location’s kiosk dropbox.</p><span className="text-link">Find a dealer →</span>
-      </button>
-    </div><p className="fine">Applicable taxes appear at checkout. Your photos identify your cards; grading starts after physical intake.</p>
+  return <section className="service-choice"><div className="section-heading"><div><span className="eyebrow">01 / Choose your move</span><h1>Two ways in.<br/><em>One incredible finish.</em></h1><p>Local drop-off or FedEx. Your cards get the full ATLAS treatment.</p></div></div>
+    <div className="intake-options service-comparison">
+      <article className={`service-card ${value?.intakeMethod === 'DEALER_DROP_OFF' ? 'selected' : ''}`}>
+        <ServiceFilm kind="kiosk" label="ATLAS kiosk drop-off preview"/>
+        <div className="service-card-body"><div className="service-card-title"><span className="eyebrow">YOUR LOCAL CARD SPOT</span><span className="service-speed">THE FAST ONE</span></div><h2>Kiosk drop-off</h2><p>Drop your cards at an authorized ATLAS kiosk. We take it from there.</p><div className="service-price">$50 <small>/ card</small></div><dl><div><dt>Turnaround</dt><dd>1 week <small>from ATLAS collection</small></dd></div><div><dt>Transport</dt><dd>Pickup + return included</dd></div><div><dt>Your next step</dt><dd>Capture cards. Choose your kiosk.</dd></div></dl><button type="button" className={value?.intakeMethod === 'DEALER_DROP_OFF' ? 'primary' : 'secondary'} aria-pressed={value?.intakeMethod === 'DEALER_DROP_OFF'} onClick={() => onChange({ intakeMethod: 'DEALER_DROP_OFF', kioskId: value?.intakeMethod === 'DEALER_DROP_OFF' ? value.kioskId : null })}>{value?.intakeMethod === 'DEALER_DROP_OFF' ? 'Kiosk selected ✓' : 'Find my kiosk →'}</button></div>
+      </article>
+      <article className={`service-card ${value?.intakeMethod === 'MAIL_IN' ? 'selected' : ''}`}>
+        <ServiceFilm kind="fedex" label="FedEx mail-in drop-off preview"/>
+        <div className="service-card-body"><div className="service-card-title"><span className="eyebrow">WHEREVER YOU COLLECT</span><span className="service-speed">TO YOUR DOOR</span></div><h2>Mail it in</h2><p>Pack your cards, print your FedEx label, and send them our way.</p><div className="service-price">$40 <small>/ card + shipping</small></div><dl><div><dt>Turnaround</dt><dd>2-week service</dd></div><div><dt>Shipping</dt><dd>Actual FedEx quote at checkout</dd></div><div><dt>Your next step</dt><dd>Capture cards. We prepare your label.</dd></div></dl><button type="button" className={value?.intakeMethod === 'MAIL_IN' ? 'primary' : 'secondary'} aria-pressed={value?.intakeMethod === 'MAIL_IN'} onClick={() => onChange({ intakeMethod: 'MAIL_IN', kioskId: null })}>{value?.intakeMethod === 'MAIL_IN' ? 'Mail-in selected ✓' : 'Choose mail-in →'}</button></div>
+      </article>
+    </div><p className="fine">Applicable taxes and the full total appear before payment. Grading begins after your cards physically reach ATLAS.</p>
     {value?.intakeMethod === 'DEALER_DROP_OFF' && <div className="panel location-picker"><h2>Find an authorized kiosk</h2><form onSubmit={event => { event.preventDefault(); search(); }} className="location-search"><label><span>ZIP code or city</span><input value={query} onChange={event => setQuery(event.target.value)} maxLength={100}/></label><button className="secondary" disabled={loading}>Search</button><button className="text-link" type="button" onClick={locate}>Use my location</button></form>
       {error && <p role="status">{error}</p>}{loading ? <p role="status">Finding locations…</p> : !locations.length ? <p>No enabled kiosk locations are available for this search.</p> : <div className="location-list">{locations.map(location => <article key={location.id} className={`location-option ${value.kioskId === location.id ? 'selected' : ''}`}>
         <h3>{location.name}</h3><p>{typeof location.address === 'string' ? location.address : Object.values(location.address ?? {}).filter(Boolean).join(', ')}</p><p>Pickup: {schedule(location.schedule?.pickups)}<br/>Return: {schedule(location.schedule?.returns)}<br/>{location.timeZone ?? location.schedule?.timeZone}</p>

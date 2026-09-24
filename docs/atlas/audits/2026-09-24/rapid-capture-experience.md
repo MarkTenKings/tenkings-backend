@@ -1,0 +1,19 @@
+# Rapid capture and optional bulk pairing — September 24, 2026
+
+Implementation follows Mark's continuous capture correction: no filenames, name search, category entry, network upload or identification completion belongs between ordinary Front, Back and the next Front.
+
+The shared `frontend/atlas-shared/RapidCardCamera.jsx` keeps one rear-camera stream mounted across side and card changes. Its full-screen interface has a large card-shaped guide and one shutter. Native ImageCapture requests the camera's available maximum still dimensions and retains those returned bytes. Browsers without still capture retain every delivered video-frame pixel in a lossless PNG; the guide and preview do not crop or downscale the saved photo. The camera does not promise sensor resolution beyond what the browser actually returns. Permission failures and suspension offer explicit recovery. Its `onCapture(file, acquisition)` callback awaits local durability only.
+
+Staff batch intake now journals each original side immediately. A partial Front survives reload; the Back atomically completes that same draft and creates the existing stable card/enqueue intents. Duplicate side events cannot overwrite the saved side. Local intake works while session refresh and uploads are stalled; the network worker independently checks the exact staff identity and preserves the existing upload/checksum, request and enqueue recovery boundaries. Authentication errors pause uploading without losing originals. Web Locks allow only one tab to own the staff journal. Browser quota failure leaves the preceding durable side intact and keeps the camera on the failed side.
+
+The primary staff entry is rapid capture. Original-library side slots remain available. Multiple arbitrary filenames now enter a visible pairing preview with individual earlier/later controls and a deliberate confirmation of physical Front/Back pairs. The prior named-stem import remains optional. Neither browser file order nor filenames alone become unreviewed authority on the new ordered path.
+
+Validation:
+
+- 20 focused Node tests pass, including existing 100-card concurrency, original-byte and exact-request recovery; partial-side reload; quota refusal; independent 10-pair admission while all network calls stall; and explicit ordered pairing.
+- Actual Chrome rendered the changed JSX and shared camera with a synthetic canvas subject, actual browser IndexedDB and Web Locks. Twenty shutter actions saved ten unique pairs in 1,333 ms while the first session request remained unresolved. One camera stream was used for all twenty captures. No upload completed.
+- A separate actual browser journal exercise saved ten 4 MiB Front/Back pairs (80 MiB) in 416.5 ms with one stalled request, then closed/reopened IndexedDB and checked the distinguishing bytes of every retained original.
+- Browser reload retained the partial Front and its draft identity; injected quota refusal retained that Front and stayed on Back; a second tab could not own or capture into the same journal. Browser errors: zero.
+- Screenshots at 390×844 and 1360×1000 were inspected. Evidence is `/private/tmp/atlas-batch-rapid-browser-20260924-final/`; the safe numeric receipt is `validation/atlas-rapid-capture-20260924/browser-result.json`. The runnable harness is `frontend/atlas-app/scripts/batch-rapid-browser.mjs` and requires the existing bundled Playwright node_modules path.
+
+These are synthetic capture-admission and durability measurements, not a claim that a human can photograph ten physical cards per minute, that optics or focus are qualified, or that identification/grading finishes at that speed. No production deployment, provider request, database change or physical hardware action was performed by this implementation assignment. Production build/release is owned by the lead.

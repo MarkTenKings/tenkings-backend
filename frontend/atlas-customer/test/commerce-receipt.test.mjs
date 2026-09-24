@@ -44,3 +44,11 @@ test('resumed paid checkout renders receipt from the original paid order even wh
     assert.equal(tree.type, receipt.default); assert.equal(tree.props.initialOrder, order); assert.equal(notifications.length, 1);
     render(); assert.equal(notifications.length, 1);
 });
+
+test('cold commerce offers a saved-draft destination without quoting, collecting payment or inventing order status', () => {
+    const exports = {};
+    vm.runInNewContext(compile('../components/commerce/CommerceCheckout.jsx'), { exports, Intl, require: name => name === 'react' ? React : name.endsWith('OrderReceipt.jsx') ? { ...receipt, __esModule: true } : name.endsWith('.css') ? {} : require(name) });
+    const html = renderToStaticMarkup(React.createElement(exports.SavedDraftConfirmation, { draft: { cards: [{id:'saved-card',identity:{title:'Saved card identity'}}] } }));
+    assert.match(html, /Your draft is saved/); assert.match(html, /Saved card identity/); assert.match(html, /href="\/account"/);
+    assert.match(html, /does not take a payment or confirm an order/); assert.doesNotMatch(html, /Get exact total|Pay securely|have not been charged|Order confirmed/);
+});

@@ -143,3 +143,62 @@ test('dispose retains unfinished originals and replacement importer resumes auto
   const second = f.importer(); await second.run();
   assert.equal((await second.read()).items[0].done, true); assert.equal(f.creates.size, 1); assert.equal(f.queued.size, 1);
 });
+
+test('camera saves the Front before any network request and reload resumes the same physical pair', async () => {
+  const f = fixture(), first = f.importer();
+  const front = file('IMG_0001.jpg', 'exact front original');
+  const staged = await first.saveSide('FRONT', front, { source: 'camera' });
+  assert.equal(f.creates.size, 0); assert.equal(staged.items.length, 0);
+  assert.equal(await staged.draft.files.FRONT.text(), 'exact front original');
+  await assert.rejects(first.saveSide('FRONT', file('duplicate.jpg')), /BATCH_IMPORT_SIDE_SAVED/);
+  await first.dispose();
+  const next = f.importer(), recovered = await next.read();
+  assert.equal(recovered.draft.id, staged.draft.id);
+  await next.saveSide('BACK', file('IMG_0002.jpg', 'exact back original')); await next.whenIdle();
+  const completed = await next.read();
+  assert.equal(completed.draft, null); assert.equal(completed.items.length, 1);
+  assert.equal(completed.items[0].key, staged.draft.id); assert.equal(f.creates.size, 1); assert.equal(f.uploads.length, 2);
+});
+
+test('failed Back durability keeps the Front and does not advance, create or overwrite a side', async () => {
+  const f = fixture(), owner = f.importer(); await owner.saveSide('FRONT', file('front.jpg', 'front'));
+  const originalPut = f.journal.put; f.journal.put = async () => { throw Object.assign(new Error('storage full'), { code: 'BATCH_IMPORT_STORAGE' }); };
+  await assert.rejects(owner.saveSide('BACK', file('back.jpg')), /storage full/);
+  assert.equal((await owner.read()).items.length, 0); assert.equal((await owner.read()).draft.files.BACK, undefined); assert.equal(f.creates.size, 0);
+  f.journal.put = originalPut; await owner.saveSide('BACK', file('back.jpg')); await owner.whenIdle();
+  assert.equal(f.creates.size, 1); assert.equal(f.queued.size, 1);
+});
+
+test('ten original Front/Back pairs admit durably while every network request is stalled', async () => {
+  let saved = null, release, calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const journal = { get: async () => structuredClone(saved), put: async value => { saved = structuredClone(value); } };
+  const owner = createBatchImporter({ journal, cryptoImpl: webcrypto, intake: {}, request: async () => { calls++; await gate; throw Object.assign(new Error('signed out'), { status: 401, code: 'SIGN_IN_REQUIRED' }); } });
+  const payload = new Uint8Array(4 * 1024 * 1024), began = performance.now();
+  for (let index = 0; index < 10; index++) {
+    payload[0] = index; await owner.saveSide('FRONT', file('camera.png', payload));
+    payload[0] = 100 + index; await owner.saveSide('BACK', file('camera.png', payload));
+  }
+  const elapsed = performance.now() - began, queued = await owner.read();
+  assert.equal(calls, 1); assert.equal(queued.items.length, 10); assert.equal(queued.draft, null);
+  assert.equal(new Set(queued.items.map(item => item.createId)).size, 10);
+  assert.ok(elapsed < 60_000, `Local admission took ${elapsed} ms`);
+  for (let index = 0; index < 10; index++) {
+    assert.equal(new Uint8Array(await queued.items[index].files.FRONT.arrayBuffer())[0], index);
+    assert.equal(new Uint8Array(await queued.items[index].files.BACK.arrayBuffer())[0], 100 + index);
+  }
+  release(); await owner.whenIdle(); assert.equal(calls, 1); // Auth pauses the worker, not capture.
+  await owner.saveSide('FRONT', file('next-front.jpg')); await owner.saveSide('BACK', file('next-back.jpg'));
+  assert.equal((await owner.read()).items.length, 11); assert.equal(calls, 1); await owner.dispose();
+});
+
+test('ordered import requires even originals and explicitly reviewed pairs preserve the chosen order', async () => {
+  const { previewOrderedBatchPhotos } = await import('../lib/batch-import.mjs');
+  const values = [file('IMG_4.jpg', 'back2'), file('IMG_1.jpg', 'front1'), file('IMG_2.jpg', 'back1'), file('IMG_3.jpg', 'front2')];
+  assert.throws(() => previewOrderedBatchPhotos(values.slice(0, 3)), /BATCH_IMPORT_ORDER_COUNT/);
+  const reviewed = previewOrderedBatchPhotos([values[1], values[2], values[3], values[0]]);
+  assert.equal(await reviewed[0].files.FRONT.text(), 'front1'); assert.equal(await reviewed[1].files.BACK.text(), 'back2');
+  const f = fixture(), owner = f.importer(), saved = await owner.appendReviewedPairs(reviewed);
+  assert.equal(await saved.items[0].files.FRONT.text(), 'front1'); assert.equal(await saved.items[1].files.BACK.text(), 'back2');
+  await owner.whenIdle(); assert.equal(f.queued.size, 2); assert.equal(f.uploads.length, 4);
+});

@@ -1,0 +1,23 @@
+{
+  "status": "PASS",
+  "scope": "Synthetic camera + actual browser IndexedDB/Web Locks, network stalled; no hardware or human throughput acceptance",
+  "twentyCapturesElapsedMs": 1333,
+  "pairs": {
+    "count": 10,
+    "allOriginals": true,
+    "requests": 1,
+    "streams": 1,
+    "ids": 10
+  },
+  "durable80MiB": {
+    "durationMs": 416.5,
+    "calls": 1,
+    "count": 10,
+    "allExact": true,
+    "bytes": 83886080
+  },
+  "partialFrontReload": true,
+  "quotaRetainedFront": true,
+  "secondTabBlocked": true,
+  "errors": []
+}

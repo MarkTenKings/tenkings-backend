@@ -57,3 +57,14 @@ test('identical sides are retained as a correctable local error and never dispat
 test('browser journal refuses missing account, draft or IndexedDB before opening any store', () => {
   for (const options of [{}, { accountId: randomUUID(), draftId: randomUUID(), indexedDB: null }]) assert.throws(() => createBrowserIntakeJournal(options), /BROWSER_SAVE_UNAVAILABLE/);
 });
+test('a locally captured pair adopts stable identities once, even after its upload finishes', async () => {
+  const f = fixture(), queue = createCustomerUploader({ ...f, cryptoImpl: webcrypto, put: async () => {} });
+  const retained = { requestId: randomUUID(), cardId: randomUUID(), pairId: randomUUID(), uploadIds: { FRONT: randomUUID(), BACK: randomUUID() } };
+  const front = new Blob(['preserved front']), back = new Blob(['preserved back']);
+  await queue.appendPair(front, back, retained); await queue.whenIdle();
+  await queue.appendPair(front, back, retained); await queue.whenIdle();
+  assert.equal(f.saved().items.length, 1); assert.equal(f.cards.length, 1);
+  assert.equal(f.cards[0].id, retained.cardId); assert.equal(f.saved().items[0].requestId, retained.requestId);
+  assert.deepEqual(f.saved().items[0].uploadIds, retained.uploadIds);
+  await assert.rejects(queue.appendPair(front, back, { ...retained, pairId: randomUUID() }), /CAPTURE_IDENTITY_CONFLICT/);
+});

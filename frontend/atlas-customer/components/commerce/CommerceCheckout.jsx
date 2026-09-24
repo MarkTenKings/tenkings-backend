@@ -53,9 +53,13 @@ function PaymentFields({ payment, onComplete }) {
         <button className={styles.primary} disabled={!ready||busy} type="submit">{busy?'Checking payment…':'Pay securely'}</button></form>;
 }
 
+export function SavedDraftConfirmation({ draft, onBack }) {
+    return <section className={`${styles.panel} ${styles.savedDraft}`} aria-label="Saved submission draft"><span className={styles.savedMark} aria-hidden="true">✓</span><p className={styles.eyebrow}>YOUR LINEUP IS SAFE</p><h2>Your draft is saved.</h2><p>Your {draft.cards.length} {draft.cards.length === 1 ? 'card and its photos are' : 'cards and their photos are'} saved with ATLAS. Checkout is not open yet. You can return to this submission from your account when you’re ready.</p><ol className={styles.cards}>{draft.cards.map((card,index)=><li key={card.id??card.cardId}><span>{String(index+1).padStart(2,'0')}</span><strong>{card.identity?.title??'Card details saved'}</strong></li>)}</ol><p className={styles.note}>This page does not take a payment or confirm an order. Keep your cards until your order and delivery instructions are confirmed.</p><div className={styles.actions}><button type="button" className={styles.secondary} onClick={onBack}>View saved cards</button><a href="/account" className={styles.primary}>Back to your account →</a></div></section>;
+}
+
 export default function CommerceCheckout({ draft, request, onPaid, onBack }) {
     const draftId=draft?.id??draft?.draftId, [view,setView]=useState(null), [quote,setQuote]=useState(null), [payment,setPayment]=useState(null),
-        [order,setOrder]=useState(null), [busy,setBusy]=useState(false), [error,setError]=useState(''), [option,setOption]=useState('');
+        [order,setOrder]=useState(null), [checkoutUnavailable,setCheckoutUnavailable]=useState(false), [busy,setBusy]=useState(false), [error,setError]=useState(''), [option,setOption]=useState('');
     const notified=useRef(null),callback=useRef(onPaid),requestRef=useRef(request);callback.current=onPaid;requestRef.current=request;
     const accept = useCallback(value => {
         setPayment(value);
@@ -63,8 +67,8 @@ export default function CommerceCheckout({ draft, request, onPaid, onBack }) {
     },[]);
     useEffect(() => { let disposed=false;
         requestRef.current(`/api/customer/commerce/checkout?draftId=${encodeURIComponent(draftId)}`,{method:'GET'}).then(value => {
-            if(disposed)return; setView(value); if(value.activePayment)accept(value.activePayment);
-        }).catch(err => {if(!disposed)setError(friendly(err.code??err.message));});
+            if(disposed)return; setView(value); setCheckoutUnavailable(value.blockers?.includes('COMMERCE_NOT_CONFIGURED')??false); if(value.activePayment)accept(value.activePayment);
+        }).catch(err => {if(!disposed) { if((err.code??err.message)==='COMMERCE_NOT_CONFIGURED')setCheckoutUnavailable(true); else setError(friendly(err.code??err.message)); }});
         return () => {disposed=true;};
     },[draftId,accept]);
     async function run(fn) { if(busy)return; setBusy(true);setError('');try{await fn();}catch(err){setError(friendly(err.code??err.message));}finally{setBusy(false);} }
@@ -79,6 +83,7 @@ export default function CommerceCheckout({ draft, request, onPaid, onBack }) {
     async function reconcile() { if(!payment)return; await run(async()=>accept(await request(`/api/customer/commerce/payments/${payment.attemptId}/reconcile`,{method:'POST',body:{}}))); }
     const kiosk=(quote?.channel??view?.channel??draft?.channel??(draft?.intakeMethod==='DEALER_DROP_OFF'?'KIOSK':'MAIL_IN'))==='KIOSK';
     const quoteExpired=quote&&Date.parse(quote.expiresAt)<=Date.now();
+    if(checkoutUnavailable&&!payment&&!order) return <SavedDraftConfirmation draft={draft} onBack={onBack}/>;
     if(order) return <OrderReceipt initialOrder={order} request={request}/>;
     return <section className={styles.panel} aria-label="Review and checkout"><p className={styles.eyebrow}>REVIEW & CHECKOUT</p><h2>Ready for the next chapter.</h2>
         <ServiceSummary snapshot={quote??{channel:kiosk?'KIOSK':'MAIL_IN',location:view?.location,unitCents:view?.unitCents??(kiosk?5000:4000)}}/>

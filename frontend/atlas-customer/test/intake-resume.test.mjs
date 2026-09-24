@@ -23,13 +23,14 @@ test('resuming a reviewed cart opens payment reconciliation without attempting a
   const draft = { id: 'saved-draft', revision: 5, state: 'REVIEW', intakeMethod: 'MAIL_IN', kioskId: null, cards: [{ id: 'saved-card' }] };
   function CommerceCheckout() {} function Stub() {}
   const exports = {};
-  vm.runInNewContext(code, { exports, setInterval: () => 1, clearInterval() {}, document: { visibilityState: 'visible' }, window: { sessionStorage: {} },
+  vm.runInNewContext(code, { exports, AbortController, setInterval: () => 1, clearInterval() {}, document: { visibilityState: 'visible' }, window: { sessionStorage: {} }, navigator: { locks: { request: async (_name, _options, fn) => fn({}) } },
     require(name) {
       if (name.startsWith('next/dist/compiled/@babel/runtime/')) return nextRequire(name);
       if (name.startsWith('@babel/runtime/')) return nextRequire(`next/dist/compiled/${name}`);
       if (name === 'react') return react;
       if (name.endsWith('/client.mjs')) return { request: async (path, options) => { calls.push({ path, options }); assert.equal(path, '/intake/drafts'); return { drafts: [draft] }; } };
       if (name.endsWith('/intake-journal.mjs')) return { createBrowserIntakeJournal: () => ({ close() {} }), createCustomerUploader: () => ({ resume: async () => {}, dispose() {}, whenIdle: async () => {} }) };
+      if (name.endsWith('/capture-buffer.mjs')) return { createCaptureBuffer: () => ({ snapshot: async () => ({ pairIds: [], pairs: [] }), setService: async () => {}, attachDraft: async () => ({ pairIds: [], pairs: [], draftId: draft.id }), close: async () => {} }) };
       if (name.endsWith('/ProfileFields.jsx')) return { default: Stub, completeProfile: () => true, emptyProfile: {}, __esModule: true };
       if (name.endsWith('/CommerceCheckout.jsx')) return { default: CommerceCheckout, __esModule: true };
       return { default: Stub, __esModule: true };
@@ -37,7 +38,7 @@ test('resuming a reviewed cart opens payment reconciliation without attempting a
   const render = () => { cursor = 0; tree = exports.default({ customer: { id: 'customer', profile: {} }, csrf: 'csrf' }); while (pending.length) pending.shift()(); };
   render(); await new Promise(resolve => setImmediate(resolve)); render();
   const button = all(tree, node => node.type === 'button' && text(node).startsWith('Resume '))[0]; assert.ok(button);
-  button.props.onClick(); render();
+  button.props.onClick(); await new Promise(resolve => setImmediate(resolve)); render();
   const checkout = all(tree, node => node.type === CommerceCheckout)[0]; assert.equal(checkout.props.draft.id, draft.id);
   assert.equal(calls.length, 1); assert.equal(calls[0].options.body, undefined);
 });

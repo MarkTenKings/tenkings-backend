@@ -3,8 +3,7 @@ const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
 const hex = bytes => [...new Uint8Array(bytes)].map(value => value.toString(16).padStart(2, '0')).join('');
 
-/** File order is never card-pair authority. Explicit matching stems and side
- * suffixes are required; explicit slots are the other supported pairing authority. */
+/** Named import is optional. This path still requires explicit matching stems. */
 export function pairBatchPhotos(files) {
   check(files?.length > 0 && files.length <= 200, 'BATCH_IMPORT_COUNT');
   const pairs = new Map();
@@ -20,6 +19,14 @@ export function pairBatchPhotos(files) {
   return [...pairs.values()];
 }
 
+/** The UI shows and permits reordering these pairs before the human confirms
+ * them. Browser file order alone is never silently accepted as card authority. */
+export function previewOrderedBatchPhotos(files) {
+  check(files?.length > 0 && files.length <= 200 && files.length % 2 === 0, 'BATCH_IMPORT_ORDER_COUNT');
+  files.forEach(value => check(value instanceof Blob && value.size > 0 && value.size <= 64 * 1024 * 1024, 'BATCH_IMPORT_PAIR_FILES'));
+  return Array.from({ length: files.length / 2 }, (_, index) => ({ label: `Card ${index + 1}`, files: { FRONT: files[index * 2], BACK: files[index * 2 + 1] } }));
+}
+
 export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThis.indexedDB }) {
   check(typeof staffId === 'string' && /^[a-f0-9-]{36}$/.test(staffId) && indexedDB, 'BATCH_IMPORT_STORAGE');
   const opened = new Promise((resolve, reject) => {
@@ -32,7 +39,8 @@ export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThi
     return new Promise((resolve, reject) => {
       const tx = db.transaction('imports', mode), store = tx.objectStore('imports'); let value;
       tx.oncomplete = () => resolve(value); tx.onerror = tx.onabort = () => reject(Object.assign(new Error('BATCH_IMPORT_STORAGE'), { code: 'BATCH_IMPORT_STORAGE' }));
-      operation(store, result => { value = result; });
+      try { operation(store, result => { value = result; }); }
+      catch { tx.abort(); reject(Object.assign(new Error('BATCH_IMPORT_STORAGE'), { code: 'BATCH_IMPORT_STORAGE' })); }
     });
   }
   return {
@@ -156,6 +164,34 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
   }
   return Object.freeze({
     async append(files) { return appendPairs(pairBatchPhotos(files)); },
+    async appendReviewedPairs(pairs) {
+      check(Array.isArray(pairs) && pairs.length > 0 && pairs.length <= 100, 'BATCH_IMPORT_COUNT');
+      return appendPairs(pairs.map((pair, index) => {
+        for (const side of ['FRONT', 'BACK']) check(pair?.files?.[side] instanceof Blob && pair.files[side].size > 0 && pair.files[side].size <= 64 * 1024 * 1024, 'BATCH_IMPORT_PAIR_FILES');
+        return { key: cryptoImpl.randomUUID(), label: `Card ${index + 1}`, files: { FRONT: pair.files.FRONT, BACK: pair.files.BACK } };
+      }));
+    },
+    async saveSide(side, file, acquisition = null) {
+      check(['FRONT', 'BACK'].includes(side), 'BATCH_IMPORT_PAIR_FILES');
+      check(file instanceof Blob && file.size > 0 && file.size <= 64 * 1024 * 1024, 'BATCH_IMPORT_PAIR_FILES');
+      const value = await serial(async () => {
+        check(!disposed, 'BATCH_IMPORT_BUSY');
+        const old = await journal.get(); check(!old || old.version === 1, 'BATCH_IMPORT_STORAGE');
+        const batch = old ?? { version: 1, id: cryptoImpl.randomUUID(), items: [] };
+        const draft = batch.draft ?? { id: cryptoImpl.randomUUID(), files: {}, acquisition: {} };
+        // A second shutter event cannot replace an already assigned side.
+        check(!draft.files[side], 'BATCH_IMPORT_SIDE_SAVED');
+        draft.files[side] = file; draft.acquisition[side] = acquisition;
+        if (draft.files.FRONT && draft.files.BACK) {
+          batch.items.push(makeItem({ key: draft.id, label: `Card ${batch.items.length + 1}`, files: draft.files, acquisition: draft.acquisition }));
+          batch.draft = null;
+        } else batch.draft = draft;
+        // Complete pair insertion and removal of the partial pair are atomic.
+        return write(batch);
+      });
+      if (!value.draft) kick();
+      return value;
+    },
     async appendPair(front, back) {
       for (const value of [front, back]) check(value instanceof Blob && value.size > 0 && value.size <= 64 * 1024 * 1024, 'BATCH_IMPORT_PAIR_FILES');
       const label = typeof front.name === 'string' && front.name.trim() ? front.name.trim().slice(0, 120) : 'Card';
@@ -165,7 +201,7 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
       const pairs = pairBatchPhotos(files);
       return serial(async () => {
         check(!running && !disposed, 'BATCH_IMPORT_BUSY');
-        const old = await journal.get(); check(!old || old.items.every(item => item.done), 'BATCH_IMPORT_PENDING');
+        const old = await journal.get(); check(!old || (!old.draft && old.items.every(item => item.done)), 'BATCH_IMPORT_PENDING');
         return write({ version: 1, id: cryptoImpl.randomUUID(), items: pairs.map(makeItem) });
       });
     },
