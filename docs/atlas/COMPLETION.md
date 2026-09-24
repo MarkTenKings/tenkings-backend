@@ -1,5 +1,7 @@
 # ATLAS implementation and operational acceptance
 
+> Historical checkpoint: this file retains earlier release/pilot evidence. Current deployed source is e29567c2, and the new customer kiosk/mail-in requirements are recorded in the [fresh Ultra lead handoff](handoffs/2026-09-24-fresh-ultra-lead.md). Older release identities, caps, manual Start instructions and missing-research claims are superseded where that handoff says so. Do not replay completed activation instructions.
+
 Current implementation checkpoint — September22,2026: source `79483f13` implements independent durable per-side geometry, the branded interactive report and exact-approval immutable versioned publication with delivery retry. Native/PG44/CI/browser qualification passed; migrations43/44 and native startup are complete. Caddy activation, all five control bindings, public promotion and final hosted verification are complete; the release is live. See the [current audit](audits/2026-09-22/report-early-geometry-release.md).
 
 Software qualification is separate from Mark's signed-in real-card/optical acceptance. Browser print/save PDF and stable report numbering do not issue physical certificates, slab labels or NFC credentials. Manual finishing integration, qualified Mac writing/permanent locking, signing/pairing and hosted recovery remain unfinished; no production card approval or physical finishing is claimed. The I/H/G observations below remain historical.

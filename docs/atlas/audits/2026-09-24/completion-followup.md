@@ -1,5 +1,7 @@
 # ATLAS completion follow-up — September 24 UTC / September 23 Pacific
 
+> Historical checkpoint: this file retains earlier release/pilot evidence. Current deployed source is e29567c2, and the new customer kiosk/mail-in requirements are recorded in the [fresh Ultra lead handoff](../../handoffs/2026-09-24-fresh-ultra-lead.md). Older release identities, caps, manual Start instructions and missing-research claims are superseded where that handoff says so. Do not replay completed activation instructions.
+
 The successor software release is **live at application source `1b880d0690dd0b3a64a76103557815cf40675029`** on staff/public and the private native service. Batch, presentation and SoldComps are enabled; the physical station remains disabled. Mark’s owner-authorized internal reviewer permission is active for 90 days. This supersedes the [September 23 release](../2026-09-23/workflow-completion.md). Real-card human acceptance, printing and permanent NFC locking are still incomplete. All deployment/control/promotion/reviewer intents described here are consumed and must not be replayed.
 
 Mark requested four fresh Astra Extra High specialists, one for each remaining workstream. All four completed their assigned local implementation pass; a fifth fresh specialist researched printers at his request. Root integrated and reviewed the changes. The approved blueprint and label artwork remain unchanged.
