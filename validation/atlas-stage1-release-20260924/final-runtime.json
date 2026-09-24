@@ -1,0 +1,136 @@
+{
+  "status": "FINAL_RUNTIME_READBACK_PASS",
+  "at": "2026-09-24T10:03:09.777758+00:00",
+  "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "sourceManifestSha256": "3d049d3f05904ca52183ce669d66a06fb784e4cdc8a76aa52819e9a767b50981",
+  "imageId": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+  "checks": {
+    "exactNewIdentity": true,
+    "exactNewImage": true,
+    "exactSourceEnvironment": true,
+    "exactImageSourceLabels": true,
+    "newHealthyState": true,
+    "coldGatesFalse": true,
+    "existingFeaturesTrue": true,
+    "nonRootReadonlyInit": true,
+    "limitsPreserved": true,
+    "noAutomaticRestart": true,
+    "noHostPorts": true,
+    "noWritableHostMounts": true,
+    "expectedNetworks": true,
+    "hardeningPreserved": true,
+    "oldRetainedStopped": true,
+    "caddyUnchanged": true
+  },
+  "new": {
+    "id": "a30c6930bbb91680bc52529d65b3e078a8bad0a1edad40639f2424be4a8e7557",
+    "name": "/atlas-manual-connected-20260917",
+    "imageId": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+    "running": true,
+    "startedAt": "2026-09-24T09:51:15.030172909Z",
+    "finishedAt": "0001-01-01T00:00:00Z",
+    "exitCode": 0,
+    "oomKilled": false,
+    "restartCount": 0
+  },
+  "oldRetained": {
+    "id": "c302eeb7c4036c42049b3ed96f8d88d30afa6f058d7156e69b03fe60ae866b63",
+    "name": "/atlas-manual-connected-20260917-retained-e29567c2-stage1",
+    "imageId": "sha256:857ec5612661921cb235013d81a1b2793615ebb2c2f987b661275efdd646f94a",
+    "running": false,
+    "startedAt": "2026-09-24T03:44:03.657738463Z",
+    "finishedAt": "2026-09-24T09:50:36.935365975Z",
+    "exitCode": 0,
+    "oomKilled": false,
+    "restartCount": 0
+  },
+  "safeFeatureGates": {
+    "ATLAS_CUSTOMER_SERVICE_ENABLED": "false",
+    "ATLAS_CUSTOMER_INTAKE_ENABLED": "false",
+    "ATLAS_CUSTOMER_IDENTIFICATION_ENABLED": "false",
+    "ATLAS_COMMERCE_ENABLED": "false",
+    "ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED": "false",
+    "ATLAS_MANUAL_STATION_ENABLED": "false",
+    "ATLAS_MANUAL_BATCH_ENABLED": "true",
+    "ATLAS_MANUAL_PRESENTATION_ENABLED": "true",
+    "ATLAS_MANUAL_MARKET_ENABLED": "true",
+    "ATLAS_MANUAL_RESEARCH_ENABLED": "true",
+    "ATLAS_MANUAL_CATALOG_ENABLED": "true"
+  },
+  "isolation": {
+    "user": "node",
+    "readOnlyRootfs": true,
+    "init": true,
+    "memoryBytes": 3221225472,
+    "memorySwapBytes": 3221225472,
+    "nanoCpus": 1000000000,
+    "pidsLimit": 256,
+    "restartPolicy": {
+      "Name": "no",
+      "MaximumRetryCount": 0
+    },
+    "hostPortBindingCount": 0,
+    "mounts": [],
+    "tmpfs": {
+      "/tmp": "rw,nosuid,nodev,size=1073741824,mode=1777"
+    },
+    "capDrop": [
+      "ALL"
+    ],
+    "securityOpt": [
+      "no-new-privileges:true"
+    ],
+    "privileged": false,
+    "networkNames": [
+      "atlas-manual-egress-20260917",
+      "atlas-manual-ingress-20260917"
+    ],
+    "networkGatewayPriorities": {
+      "atlas-manual-egress-20260917": 0,
+      "atlas-manual-ingress-20260917": -1
+    },
+    "portReadback": {
+      "at": "2026-09-24T10:03:40.013012+00:00",
+      "containerId": "a30c6930bbb91680bc52529d65b3e078a8bad0a1edad40639f2424be4a8e7557",
+      "hostPortBindings": {},
+      "networkPorts": {
+        "4319/tcp": null
+      },
+      "declaredExposedPorts": {
+        "4319/tcp": {}
+      }
+    }
+  },
+  "caddy": {
+    "id": "1e6c2782e178480f5fcffcb4e009186fbab9e5b4350c394f5b175bd19d9b4ba1",
+    "running": true,
+    "fileSha256": "c1fa526768b36985c7f955caf8624520ccea3ab675af6c2a94bdd958f0a1fbda",
+    "inode": 282983
+  },
+  "inspectionCommands": [
+    [
+      "docker",
+      "inspect",
+      "a30c6930bbb91680bc52529d65b3e078a8bad0a1edad40639f2424be4a8e7557",
+      "c302eeb7c4036c42049b3ed96f8d88d30afa6f058d7156e69b03fe60ae866b63",
+      "1e6c2782e178480f5fcffcb4e009186fbab9e5b4350c394f5b175bd19d9b4ba1"
+    ]
+  ],
+  "databaseCalls": 0,
+  "providerCalls": 0,
+  "lifecycleMutations": 0,
+  "credentialsPrinted": false,
+  "ongoingIdleRequirement": false,
+  "inspectionScriptSha256": "37dbf6e2867a7646515a8b5411d0e5f118ad5f7fc5fb03812120fd24511f07f2",
+  "reviewerScope": "ONE_READ_ONLY_FINAL_RUNTIME_SNAPSHOT_NO_DB_PROVIDER_OR_LIFECYCLE_ACTION",
+  "inspectionCorrection": {
+    "initialReceiptSha256": "227b65c86c9de06c8251c8709a1f77af128cd78ab8dea4dd9ba7997c308bbb80",
+    "reason": "Initial reviewer predicate treated a declared exposed port mapped to null as a host binding. Read-only follow-up confirms zero host bindings; null exposure is not publication.",
+    "initialReceiptPath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-review-7b42f51c/final-runtime-readback-initial.json",
+    "additionalCommand": [
+      "docker",
+      "inspect",
+      "a30c6930bbb91680bc52529d65b3e078a8bad0a1edad40639f2424be4a8e7557"
+    ]
+  }
+}

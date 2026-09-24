@@ -1,0 +1,28 @@
+{
+  "id": "dpl_B51MAjXCRr9nLZPgs1asgpPJWe5q",
+  "url": "atlas-grading-staff-rkq7cs1uk-ten-kings.vercel.app",
+  "projectId": "prj_s21BObRmeZfvljnx7gLceXFBFlCG",
+  "readyState": "READY",
+  "readySubstate": "STAGED",
+  "target": "production",
+  "source": "cli",
+  "createdAt": 1790242144084,
+  "ready": 1790242194655,
+  "aliasAssigned": true,
+  "aliasAssignedAt": 1790242194857,
+  "autoAssignCustomDomains": false,
+  "meta": {
+    "githubCommitSha": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+    "githubCommitOrg": "MarkTenKings",
+    "githubCommitRepo": "tenkings-backend",
+    "githubOrg": "MarkTenKings",
+    "githubRepo": "tenkings-backend",
+    "gitRootDirectory": "frontend/atlas-app"
+  },
+  "projectSettings": {
+    "rootDirectory": null,
+    "autoExposeSystemEnvs": null,
+    "framework": "nextjs",
+    "nodeVersion": "20.x"
+  }
+}

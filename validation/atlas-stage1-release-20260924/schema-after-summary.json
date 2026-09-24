@@ -1,0 +1,235 @@
+{
+  "status": "DERIVED_PRODUCTION_READBACK_SUMMARY",
+  "sourceReceipt": {
+    "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/root-prep/controls-evidence-7b42f51c-1/schema.after.json",
+    "sha256": "74f33031b23993861c0e569153e9e99cab0ec196713120e2e78c455ec720d0ca",
+    "byteCount": 2890483
+  },
+  "at": "2026-09-24T09:52:51.53633+00:00",
+  "readOnly": "on",
+  "identity": {
+    "database": "defaultdb",
+    "serverAddress": "159.89.176.179/32",
+    "serverPort": 25060,
+    "tls": true,
+    "user": "doadmin",
+    "version": "17.11"
+  },
+  "staffMigrations": 48,
+  "staffMigrationChecksums": {
+    "20260908020000_staff_access_and_review": "de0973c1ca8562fd0b47fdaa052e4f728c1531933c2ccbcf783456168990fe44",
+    "20260908030000_graded_reports_and_approval": "fcd24b1e1d090b33ad6c1659806414f7f0458eacd648d7cb88fd023dfcc0dec2",
+    "20260908040000_public_report_reader": "1319a102aa2f5ff454e16feaa3fe661841da6f7b51ac25bf35981757b99d5fa5",
+    "20260908050000_scoped_grading_bridge": "a28c0674988918b3382e1d72df5b2dcdcf1bf78af60ad6a6c6ee7d94a2f956bd",
+    "20260908060000_approved_report_images": "a51dfef704145e84cc3255e411a2ae88532a429c48551423a7a31bd66b3b05a9",
+    "20260908070000_operator_ledger": "d45cab96eb19a2d48e0efaf6a5cfdbcba04ccb71584f42d461ffa11e8ca00554",
+    "20260908080000_operator_images_and_proposals": "e3f1ae2d98ed8438b01d73374dd496a5eb715aa90582259797e747c34cb0dacb",
+    "20260908090000_operations_authority": "fcf5421c344f29b3fa26dd0552264dd2df56ee587edac418f335230a9d8ade7b",
+    "20260908100000_machine_initialization": "c03892f317dd4c85c0f7d5ef3f2a9cd3fdca9cb3a9cbeb3a4d30ff316386fb58",
+    "20260908110000_finishing": "0da83b85b7bf996a4b8ba99371a4cc6614f03f7793765ba166c1ac528c150136",
+    "20260908120000_operational_resolution": "428e4bfd5ffd959b4f189c4efae9ac96f54d0fa71524de23b5c30780b57a3c1b",
+    "20260908130000_trusted_learning": "5107a17c95c7c2073a3b7b861c89ea4d0c676a2d4c58e038f070078037210a95",
+    "20260908140000_identity_correction": "8f5db7b1516dffedf340de6366699e57156a632fa8518985bf05d1483f931620",
+    "20260909010000_admin_path": "b2e07655d3639af5e76e175b3d3d2bb18d2529b1836772fd0acfdeb1eeae5275",
+    "20260909020000_customer_accounts": "1a12bba52f75b7dfe83244a29eb6bc30a4cc6848c95ecdd9bbd9f47e3e1ca315",
+    "20260909030000_sms_pilot_budget": "568dae99205abba0635c6309e9bd0264c911afbc203a7c7a225de2d7d7a00e9f",
+    "20260910010000_workspace_intake": "363a16ee752e5fd96fefd74f3a548f12ee1716351b93f9199df4b61ec0d3dd4c",
+    "20260910020000_workspace_operator": "98e7f0df7bcaa686344f387550544bd8ecd46a74ae831261b90ab3525883ca93",
+    "20260910030000_workspace_capture_operator": "87ad75ab22c3e8aa8ca15d7962e55e8f1d8185354a7f37dd2c3c847fd086be50",
+    "20260910040000_workspace_source_ledger": "d045abe2a4dfd8dddcd5192e64fd8fb264121dd397c9e6d37baf576fe6814ea3",
+    "20260910050000_workspace_report_admission": "faa113da2fee768e3c545dceb33c26ff4b0ce470c40b678f03b7a40633e731b9",
+    "20260910060000_workspace_capture_claim": "5875cdf7896193f3b67e9f8d76b309e4118111793b9e4234199d518917d2a1e9",
+    "20260910070000_workspace_first_card_admission": "2afe7953522420d37cb3970fee71090dd137a91a143eff67361e2be0824bd57b",
+    "20260910080000_workspace_live_timing": "4966bff16d4fc953793ce2d0822f84d87774789b5aa467a56e394aa5e27ae31a",
+    "20260910090000_workspace_receipt_recovery": "5315718547991d3bfb949e4cc967a13679386185c1cee7f598f78c330197da8b",
+    "20260911010000_workspace_identification": "25640b24bc4002b39b4ed559b538fef59b56114205e3029b6137dc6e3825af94",
+    "20260911020000_workspace_automatic_pickup": "ade2b9238fbf045bd7244ab61e9afab51b5f0ecb6b3b6eaf7ee4cd7eaa1fd9d4",
+    "20260911030000_workspace_corner_shape_default": "c1a1617a1bf6e70a94cadb51051ba27cec03157ee9ae1ea9206c9911eaa45396",
+    "20260911040000_sms_test_limits_removed": "a74a27b2c32742598408730cef1025387bf06a5c5e7fc7bb51bd31209476d22b",
+    "20260911050000_capture_attempt_abandonment": "42973252fec46b763e8acec05979b7870257a38a1973711fc50a603145d65690",
+    "20260911060000_processing_dollar_limits_removed": "4788d62c31075fe6fe684b45b5ab2e822ecbd6449f14a545c19b441a7babd982",
+    "20260911070000_workspace_capture_readiness": "7b04f15e5057722c5af9eb4838d0015e7892667ba01ca21ad52564a04630eca6",
+    "20260911080000_workspace_operator_release_adoption": "7bfd089b6227bed2d2bf6dfde8c6f3ca57c575a2eae6d810a3e899432d2ba1f0",
+    "20260911090000_workspace_first_pair_enrollment": "1fc48ffa3d14fe950eaee462d10ecd688639bc91196f9edd01831060c5cd8d98",
+    "20260911100000_operator_request_validation_cost": "92dc16f07d6209bbb1990cb97d859306d9fd7af88881b171bc8bf647a71809b9",
+    "20260912190000_manual_workspace": "d3109c9196b80d8a847f82869d81a128e363a1137bf6ff22948169115d55683a",
+    "20260912190100_manual_native_intake": "ddb716395aa40301c6419462e27b666d0464dcb9d84e144d7cd260f43ad72273",
+    "20260912190200_manual_connected": "932b73c0275e7e4d48a6a80cf48bb386203372df8e9d16d70d28c736ed4b3835",
+    "20260912200000_defect_memory": "82058faef3e78516edf126951476cc729d6b78a8371fbbc16779804f2e4bd919",
+    "20260912200100_defect_analysis": "982cdec503329094647974e417a3495a6d080bcada86e7b85c1f7663af8e40bb",
+    "20260921000000_manual_identification_retry": "e88d0cb35673ef17bb2223698d020d903b8220e0be45498b33a68c5f5983392d",
+    "20260921000100_defect_analysis_background": "f20766a058d888b28dba519d751a2d0ad6c659bc213257344c0d914d03635380",
+    "20260922010000_manual_early_geometry": "e9ee058ab782adb5019c817f64901596ded37dd1b66fcccee3c9372ac4a46cd6",
+    "20260922020000_manual_publication": "907459adea8d2974235ed8c49a1f9b1efaa1e0da7a37cacd3a753223be54e637",
+    "20260922210000_manual_presentation": "2882ab47bde313d8d7f7b4a676cdc20f52b82c246ddb45a59e7c5b9479dd2a6e",
+    "20260922210100_batch_grading": "b33ede17a9d674a3fef2cfaa4be0f2a9a80465b485bb955644c8b0d953eb2091",
+    "20260922210200_finishing_station": "276732a5bb9d549823b1f41e8b4aa000031a9b5db94ff2fc32235e76173b3317",
+    "20260924030000_manual_research_effects": "93678e72de5853498cd816732a05ede6dfc3f7bd1d076e7a4abd61f0de68ec06"
+  },
+  "publicLedgerRows": 112,
+  "publicSuccessful": 99,
+  "publicRolledBack": 13,
+  "historicalTables": 30,
+  "historyFingerprints": {
+    "atlas_defect_analysis.provider_event": {
+      "count": 3,
+      "sha256": "28658425173a806aa04a8e397cc81a7027d7d2819a3bb1c18a64df0aab4bee9b"
+    },
+    "atlas_defect_analysis.receipt": {
+      "count": 4,
+      "sha256": "d16717c3d26f316e47270556ebcedf15ef02ec39c4b72977e72cad233f5d9770"
+    },
+    "atlas_defect_analysis.request_refusal": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_defect_analysis.run": {
+      "count": 4,
+      "sha256": "a7572fed12a081651b8193727ba5366fa3dd3bb96de34d63c0f9aab24ed91390"
+    },
+    "atlas_manual.action": {
+      "count": 35,
+      "sha256": "bfcd0ddacfb07b2925217f79484e0d214f51333381457b41f856833b2dfd0476"
+    },
+    "atlas_manual.approval": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual.card": {
+      "count": 7,
+      "sha256": "9fa214f4315c9c98356d5446e35f8e130934979d30cf842f4967585030c1de39"
+    },
+    "atlas_manual.defect_memory_publication": {
+      "count": 4,
+      "sha256": "650475bcb7d7ca8897a5184cdce8e141852d1f62199411bf1439577aabe97a7f"
+    },
+    "atlas_manual.presentation": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual.presentation_market": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual.presentation_upload": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual.public_report_identity": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual.publication": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual_connected.batch_grading": {
+      "count": 1,
+      "sha256": "d12225d54f7b94995a50e2b78f12099f924eb8ef5a5ffa60e1319da8ece3ce30"
+    },
+    "atlas_manual_connected.batch_request": {
+      "count": 1,
+      "sha256": "022f3666f4b56b960338072442fc3ee4566c795a75e95656a01a5d85d6fcc5b1"
+    },
+    "atlas_manual_connected.batch_review": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual_connected.details": {
+      "count": 10,
+      "sha256": "fd926812c3ee4bb6d8f6fddb57cc9f1109728ad54dee1477bd94f49bdad0df4c"
+    },
+    "atlas_manual_connected.details_action": {
+      "count": 7,
+      "sha256": "9d43192ba3b8347fd4e6bd13f553e0212a81163f695f8da6049219c852be4614"
+    },
+    "atlas_manual_connected.early_geometry": {
+      "count": 4,
+      "sha256": "2c9444160d0d7d707672d067cd43ea8e7d8ad341f62058e341d818567c51f138"
+    },
+    "atlas_manual_connected.early_geometry_intent": {
+      "count": 4,
+      "sha256": "3cfa36bc9742909ba5c74ddc39381ad9f377b2bc8d32cc97d31677c494431249"
+    },
+    "atlas_manual_connected.effect": {
+      "count": 49,
+      "sha256": "00fdaefc5a7f7b2f8c9f04dff60aea9d2f5073fca9b8fb35eb2f419d5ab9bf16"
+    },
+    "atlas_manual_connected.identification": {
+      "count": 8,
+      "sha256": "1d54cdcd36aef3ad28676bf4ee7e53a7a86121c418039205bfcb8b3ee361c809"
+    },
+    "atlas_manual_connected.station_active": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual_connected.station_arm": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual_connected.station_challenge": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual_connected.station_enrollment": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual_connected.station_pairing": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual_connected.station_receipt": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "atlas_manual_intake.card": {
+      "count": 10,
+      "sha256": "025a223a75787fc505603d21053d64549b082e37e53e1a31c0f7c265259db73d"
+    },
+    "atlas_manual_intake.upload": {
+      "count": 19,
+      "sha256": "d37d46d9cf03be55f8e02ffc8a667258b30fa360090cc9f832e5758dfad7695d"
+    }
+  },
+  "staffAuthority": {
+    "count": 1,
+    "sha256": "8b334cd277f926ac757d8c334b5548819f1e6d11ce13cab71ba93789c247b7e1"
+  },
+  "researchHistory": {
+    "count": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "activity": {
+    "activeBatch": 0,
+    "activeEarlyGeometry": 0,
+    "activeMarket": 0,
+    "activePublication": 0,
+    "activeStation": 0,
+    "manualActiveTransactions": 0,
+    "manualConnections": 2,
+    "pendingAcceptedBackground": 0,
+    "runningIdentification": 0,
+    "unsettledResearch": 0,
+    "unsettledUnexpiredAnalysis": 0
+  },
+  "fieldCanonicalSha256": {
+    "catalog": "539ac3edba76de43923dd6307b941c2fa795faf70fa0f0e6fcaba9ad084a9f16",
+    "controls": "95c98f798e459e2fc473c25693d57af541372921224caafac4937847b72b0b6b",
+    "history": "26c7942c9f0bf076a71f78e4b636b305df1cacd832ef35083587b9d1bce27045",
+    "identity": "3a50ed27e4f5cb85cbdf5e21d1b9176eed15c01685d8b033c6a3fd7bf613f78a",
+    "kind": "7be948e7eefa319bd173c5f303a77a1fb4b479b682a19c8e07ab82bede9ab1da",
+    "manualRole": "5511bd6db774ee22350441fbf1ef111f759b35742c16afa7edfe544ef5d384e2",
+    "newGrants": "478081ba44cf75177be61beeaa0f8c54e61617ca48f453ee484067a83926ee34",
+    "newRows": "a0340e6ada288d2e9f70b900a63043a02ede3c4eb241079d3af9744f7a00833e",
+    "privileges": "ac9fa88b0ca0d997d6cc1e9710bde19eb5bea676e155e1d47ee3f4f5a22b0850",
+    "publicLedger": "2ac3df90be681d20d3fd62235efd146d602c228ebfed2749fe598e477a1e0f2f",
+    "researchACL": "92bfc9f279e7bc3e4380d6a2dcfb166a2b2d0a26c875412a770ee9045665fd5f",
+    "researchHistory": "a4d78b799c1ae62f0a18616c5d49991033c23e35e2a5e0429a6c6c271a95d878",
+    "researchRows": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+    "staffAuthority": "75c8496b4e1d28e47b79f004f3b2c0acf3a7dcf544e5212514a1bd5cff3202b1",
+    "staffLedger": "1434ca46ec475415a29386c66bfa5149561b90ba7b2e7bf8a482f48a184d5843",
+    "version": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+  },
+  "scope": "Summary only. Full unchanged source readback remains protected at sourceReceipt.path; no raw catalog, privileges or historical migration logs copied."
+}

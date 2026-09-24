@@ -1,0 +1,231 @@
+{
+  "at": "2026-09-24T09:57:14.779641+00:00",
+  "controls": {
+    "CustomerControl": [
+      {
+        "fullRowMd5": "8ab1c9b10f57669ca58b7beae2796bb9",
+        "row": {
+          "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563",
+          "deploymentId": "atlas-grading-customer-bpx50s9i7-ten-kings.vercel.app",
+          "enabled": true,
+          "id": "active",
+          "mode": "PRODUCTION",
+          "origin": "https://atlasgrading.com",
+          "releaseSha": "79483f13000c23dfed62c0c03f1239beb8f74dfb",
+          "revision": 7,
+          "updatedAt": "2026-09-22T16:52:46.035497+00:00"
+        }
+      }
+    ],
+    "PublicMediaControl": [],
+    "PublicReaderControl": [
+      {
+        "fullRowMd5": "fed0e1810395ec46373cc36f2cdd68e5",
+        "row": {
+          "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8",
+          "deploymentId": "atlas-grading-public-qlt8myz6c-ten-kings.vercel.app",
+          "enabled": true,
+          "id": "active",
+          "mode": "PRODUCTION",
+          "origin": "https://atlasgrading.com",
+          "releaseSha": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+          "revision": 5,
+          "updatedAt": "2026-09-22T16:52:45.969"
+        }
+      }
+    ],
+    "SmsPilotControl": [
+      {
+        "fullRowMd5": "e0b62ecd18159fb5087eb0a78347d3ef",
+        "row": {
+          "activatedAt": "2026-09-09T20:41:57.762957+00:00",
+          "application": "STAFF",
+          "binding": {
+            "configHash": "06f47cd45707d4e2641d3496e8339048e224e290f2611e522859f7f75d92611f",
+            "deploymentId": "atlas-grading-staff-rkq7cs1uk-ten-kings.vercel.app",
+            "mode": "PRODUCTION",
+            "origin": "https://atlasgrading.com",
+            "releaseSha": "7b42f51c418b815f838bb910cf7599a0dcd5313c"
+          },
+          "createdAt": "2026-09-09T18:09:37.1192+00:00",
+          "enabled": true,
+          "expiresAt": "2026-09-16T20:41:57.762957+00:00",
+          "feeEvidenceHash": "d7d6832d7e3d2918fea7a924c1397aa84d890ae5d3ea51bc92fd1f0ed92af196",
+          "maxClaims": 10,
+          "maxReservedMicroUsd": 5000000,
+          "pilotId": "c27bf77c-0669-4807-948c-abf143f2faaa",
+          "reservationMicroUsd": 500000,
+          "revision": 25,
+          "updatedAt": "2026-09-24T09:52:51.059406+00:00"
+        }
+      },
+      {
+        "fullRowMd5": "419ae947d9591ee8094820dfc2b7120b",
+        "row": {
+          "activatedAt": "2026-09-09T20:41:57.768407+00:00",
+          "application": "CUSTOMER",
+          "binding": {
+            "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563",
+            "deploymentId": "atlas-grading-customer-bpx50s9i7-ten-kings.vercel.app",
+            "mode": "PRODUCTION",
+            "origin": "https://atlasgrading.com",
+            "releaseSha": "79483f13000c23dfed62c0c03f1239beb8f74dfb"
+          },
+          "createdAt": "2026-09-09T18:09:37.119914+00:00",
+          "enabled": true,
+          "expiresAt": "2026-09-16T20:41:57.768407+00:00",
+          "feeEvidenceHash": "d7d6832d7e3d2918fea7a924c1397aa84d890ae5d3ea51bc92fd1f0ed92af196",
+          "maxClaims": 10,
+          "maxReservedMicroUsd": 5000000,
+          "pilotId": "c27bf77c-0669-4807-948c-abf143f2faaa",
+          "reservationMicroUsd": 500000,
+          "revision": 5,
+          "updatedAt": "2026-09-22T16:52:46.036369+00:00"
+        }
+      }
+    ],
+    "StaffControl": [
+      {
+        "fullRowMd5": "8f7aa7b6eb5f1aa0a740cd67116a42b2",
+        "row": {
+          "configHash": "06f47cd45707d4e2641d3496e8339048e224e290f2611e522859f7f75d92611f",
+          "deploymentId": "atlas-grading-staff-rkq7cs1uk-ten-kings.vercel.app",
+          "enabled": true,
+          "gradingPolicyHash": "8aaeef94a527e0a2aabf10805e74f61d62abaed3065d06129a887bda37bf7d06",
+          "id": "active",
+          "mode": "PRODUCTION",
+          "origin": "https://atlasgrading.com",
+          "releaseSha": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+          "revision": 27,
+          "updatedAt": "2026-09-11T14:30:06.081"
+        }
+      }
+    ],
+    "StaffGradingBridgeControl": [
+      {
+        "fullRowMd5": "749260ef7c7fad193df28a11a5f8a36c",
+        "row": {
+          "clientKeyHash": "22eb5118fb3fa5f421e4aa49eb609882f977dbf44ef90d8b6f1c2c2bfc318213",
+          "configHash": "52a0a449c9fb7b18492d614d917d6cfb6d59a57a87785e27a76f8539cd310bae",
+          "deploymentId": "atlas-workspace-private-20260910",
+          "enabled": false,
+          "gradingPolicyHash": "8aaeef94a527e0a2aabf10805e74f61d62abaed3065d06129a887bda37bf7d06",
+          "id": "active",
+          "mode": "PRODUCTION",
+          "origin": "https://private.atlasgrading.com",
+          "policyCanonical": "{\"budgetEnforcement\":\"ACCOUNTING_ONLY\",\"deadlineMs\":200000,\"expiresAt\":\"2026-09-16T20:41:57.762Z\",\"maxCardMicroUsd\":90000000,\"maxOperationsPerCard\":10,\"maxTotalMicroUsd\":90000000,\"maxWorkerCalls\":4,\"pilotId\":\"c27bf77c-0669-4807-948c-abf143f2faaa\",\"reservationPerOperationMicroUsd\":5000000,\"version\":\"atlas-workspace-bridge-policy-v1\",\"workspaceCardIds\":[\"b56f75a9-0483-433e-801f-d139f7716fe9\"]}",
+          "policyHash": "6c53605be6ebca064096b0462a19da992cb1277a22ddaa4c1be9b592b129fd58",
+          "releaseSha": "89c55d916130d914f6a989197538c8bbd31c9594",
+          "revision": 9,
+          "updatedAt": "2026-09-11T15:34:17.271"
+        }
+      }
+    ],
+    "StaffIdentityCorrectionControl": [],
+    "StaffIntakeControl": [],
+    "StaffLearningControl": [],
+    "StaffNfcControl": [],
+    "StaffOperatorControl": [
+      {
+        "fullRowMd5": "722908b911e45aeb7357a5059cb6edfe",
+        "row": {
+          "buildHash": "7527ea6b2dbab175599939cf1c6b9ac145ef412088dfdac0ebfdf30dc2dc8999",
+          "configHash": "3845051cee70b86c2f1c55fa90f6db7c2818b32250a4659a254816f02588f290",
+          "enabled": false,
+          "id": "active",
+          "mode": "PRODUCTION",
+          "policyCanonical": "{\"astra\":{\"effort\":\"max\",\"inputNanoUsdPerToken\":25000,\"maxOutputTokens\":8000,\"model\":\"gpt-6-astra\",\"outputNanoUsdPerToken\":75000,\"pricingVersion\":\"astra-standard-ceiling-2026-09-08\",\"requestTimeoutMs\":180000,\"returnedModel\":\"gpt-6-astra\",\"serviceTier\":\"default\",\"version\":\"atlas-astra-policy-v1\"},\"captureTools\":[\"read_original_photos\",\"inspect_region\",\"propose_capture_identity\",\"propose_physical_boundary\",\"submit_capture_preparation\"],\"concurrency\":1,\"expiresAt\":\"2026-09-16T20:41:57.762Z\",\"leaseMs\":30000,\"maxAttemptsPerCard\":50,\"maxRunMs\":3600000,\"maxStepsPerRun\":64,\"pilotId\":\"c27bf77c-0669-4807-948c-abf143f2faaa\",\"prompt\":\"Work only on the one currently claimed physical card in the original supervised pilot. Preserve both original photographs and all recorded findings. Inspect both sides and the source-bound evidence, propose only supported corrections, and stop for recapture or expert review when evidence is insufficient. Use the existing deterministic geometry, detection, measurement and grading tools. Submit the draft for the owner\u2019s final human review; do not approve, publish, train, alter maps, finish NFC, or change budgets.\",\"tools\":[\"read_card_report\",\"inspect_region\",\"inspect_card_geometry\",\"measure_centering\",\"inspect_finding\",\"propose_identity\",\"propose_finding_change\",\"submit_for_human_review\"],\"version\":\"atlas-operator-control-policy-v1\"}",
+          "policyHash": "9a85a97b0d16643bf0b1084231595ef105c95eb7bcb1f26546852a13752c5e1d",
+          "providerBindingHash": "8a5ce21be05b3ff8811cb6f485863131799fa108395baf31a897bb79404696bd",
+          "releaseSha": "89c55d916130d914f6a989197538c8bbd31c9594",
+          "revision": 7,
+          "updatedAt": "2026-09-11T14:30:06.087"
+        }
+      }
+    ],
+    "StaffOperatorImageControl": [
+      {
+        "fullRowMd5": "04d3e38dccdc38c27c432809b3e805c5",
+        "row": {
+          "clientKeyHash": "6302462c6dd3dd4f316364102d832ac61ae38d3778095518d557f42de4faccde",
+          "configHash": "4d7c026de8d87642e2b1fc75155f1680ee2b6afbb88d6e72e78dbc766c7c04aa",
+          "deploymentId": "atlas-workspace-private-20260910",
+          "enabled": false,
+          "id": "active",
+          "mode": "PRODUCTION",
+          "origin": "https://private.atlasgrading.com",
+          "releaseSha": "89c55d916130d914f6a989197538c8bbd31c9594",
+          "revision": 7,
+          "updatedAt": "2026-09-11T14:30:06.086"
+        }
+      }
+    ],
+    "StaffWorkspaceControl": [
+      {
+        "fullRowMd5": "7c96eb038274a023c8354d6c36d6b3f0",
+        "row": {
+          "astraEnabled": true,
+          "claimsEnabled": true,
+          "cohortId": "ee83f95e-b3c5-47a9-8ccf-059612b97919",
+          "configHash": "fef3f9aab974b827bace726f5775d71c7aed8455d0c3a220d9b88cee6acad077",
+          "enabled": false,
+          "expiresAt": "2026-09-16T20:41:57.762",
+          "id": "active",
+          "intakeEnabled": true,
+          "maxCards": 10,
+          "mode": "PRODUCTION",
+          "preparationEnabled": true,
+          "processingLimit": 1,
+          "releaseSha": "89c55d916130d914f6a989197538c8bbd31c9594",
+          "revision": 13,
+          "updatedAt": "2026-09-11T14:30:06.082"
+        }
+      }
+    ],
+    "StaffWorkspaceIdentificationControl": [
+      {
+        "fullRowMd5": "4a04a58f9be231c9195f10f298e3edf1",
+        "row": {
+          "cohortId": "ee83f95e-b3c5-47a9-8ccf-059612b97919",
+          "configHash": "0bdf8ad2a17152da7fe2e2f91f98b77b0647acf653f9fb7b4db67685be0196ae",
+          "enabled": false,
+          "expiresAt": "2026-09-16T20:41:57.762",
+          "id": "active",
+          "mode": "PRODUCTION",
+          "pilotId": "c27bf77c-0669-4807-948c-abf143f2faaa",
+          "policyCanonical": "{\"costEvidenceHash\":\"bea76d4201fb90e09b1d2f4e5c408d63034e6d42c588cb5033fdf6d92db35d71\",\"expiresAt\":\"2026-09-16T20:41:57.762Z\",\"modelReserveMicroUsd\":1000000,\"ocrReserveMicroUsd\":10000,\"pilotId\":\"c27bf77c-0669-4807-948c-abf143f2faaa\",\"version\":\"atlas-intake-identification-policy-v1\"}",
+          "policyHash": "90b0d924a78ac23826d82d1e472c93bcf7bc632ca6e39260d62fb0199acc5210",
+          "releaseSha": "89c55d916130d914f6a989197538c8bbd31c9594",
+          "revision": 7,
+          "updatedAt": "2026-09-11T14:30:06.087"
+        }
+      }
+    ],
+    "StaffWorkspaceSourceControl": [
+      {
+        "fullRowMd5": "49e32c94b689b4f598520a4f8a821ac4",
+        "row": {
+          "cohortId": "ee83f95e-b3c5-47a9-8ccf-059612b97919",
+          "configHash": "fef3f9aab974b827bace726f5775d71c7aed8455d0c3a220d9b88cee6acad077",
+          "enabled": false,
+          "expiresAt": "2026-09-16T20:41:57.762",
+          "id": "active",
+          "infrastructureReserveMicroUsd": 10000000,
+          "mode": "PRODUCTION",
+          "physicalReserveMicroUsd": 1000000,
+          "pilotId": "c27bf77c-0669-4807-948c-abf143f2faaa",
+          "preparationReserveMicroUsd": 100000,
+          "registrationReserveMicroUsd": 1000000,
+          "releaseSha": "89c55d916130d914f6a989197538c8bbd31c9594",
+          "revision": 12,
+          "sourceConfigHash": "4402644adb62393dc03249f1f04c94c3007bfe5a3a74799212620d5ff0e94548",
+          "sourceDeploymentId": "atlas-workspace-private-20260910",
+          "sourceReleaseSha": "89c55d916130d914f6a989197538c8bbd31c9594",
+          "updatedAt": "2026-09-11T14:30:06.082"
+        }
+      }
+    ]
+  },
+  "readOnly": "on",
+  "tls": true
+}

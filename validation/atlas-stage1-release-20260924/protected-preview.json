@@ -1,0 +1,97 @@
+{
+  "status": "PREPROMOTION_CANDIDATE_PROTECTED_UNVERIFIED",
+  "publicPagesObserved": false,
+  "publicColdPageContentProven": false,
+  "candidateProtectionObserved": true,
+  "postpromotionCanonicalChecksRequired": true,
+  "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "phase": "PREPROMOTION",
+  "at": "2026-09-24T09:59:19.040Z",
+  "publicHost": "atlas-grading-public-qlt8myz6c-ten-kings.vercel.app",
+  "staffHost": "atlas-grading-staff-rkq7cs1uk-ten-kings.vercel.app",
+  "retainedCustomerDeploymentId": "dpl_7GzDxKz2MP36vESc8YkZq87Xht44",
+  "checks": [
+    {
+      "host": "atlas-grading-public-qlt8myz6c-ten-kings.vercel.app",
+      "path": "/",
+      "method": "GET",
+      "status": 302,
+      "location": null,
+      "responseBytes": 292,
+      "responseSha256": "fdaac95b33f840e2db2242b457653f26bd6e6e547b67e03ba288db8e5df5e976",
+      "tlsAuthorized": true,
+      "tlsProtocol": "TLSv1.3",
+      "protectionRedirect": {
+        "origin": "https://vercel.com",
+        "path": "/sso-api",
+        "targetUrl": "https://atlas-grading-public-qlt8myz6c-ten-kings.vercel.app/",
+        "nonceSha256": "bc59513acaed3ef14e4a38311028f65be9672a47734b92dbdbd30e15fc9bacac"
+      }
+    },
+    {
+      "host": "atlas-grading-public-qlt8myz6c-ten-kings.vercel.app",
+      "path": "/dealers?service=submit",
+      "method": "GET",
+      "status": 302,
+      "location": null,
+      "responseBytes": 322,
+      "responseSha256": "804061a0677d5edc438db48f68680bb92a840682742fc8b6fca6f6bd82ba3d8b",
+      "tlsAuthorized": true,
+      "tlsProtocol": "TLSv1.3",
+      "protectionRedirect": {
+        "origin": "https://vercel.com",
+        "path": "/sso-api",
+        "targetUrl": "https://atlas-grading-public-qlt8myz6c-ten-kings.vercel.app/dealers?service=submit",
+        "nonceSha256": "40dfd5e6d8b2fbf41623b45091a41141ef882250aff7a0a136b9378baf427b28"
+      }
+    }
+  ],
+  "requestCount": 2,
+  "publicCustomerFunnelEnabled": null,
+  "staffCustomerOperationsEnabled": null,
+  "staffColdCapabilityEvidence": "EXACT_PRIVATE_CONSTRUCTOR_AND_PROVIDER_ENVIRONMENT_RECEIPTS",
+  "staffCandidateRoutingProven": false,
+  "canonicalRoutingPending": true,
+  "staffSignInFormObserved": false,
+  "customerNeutralShellObserved": false,
+  "customerHumanSignInRun": false,
+  "humanSignInRun": false,
+  "sessionMutations": 0,
+  "smsRequests": 0,
+  "paidRequests": 0,
+  "cardWrites": 0,
+  "cookiesSent": false,
+  "credentialsUsed": false,
+  "responseBodiesPersisted": false,
+  "automaticRetry": false,
+  "chain": {
+    "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+    "imageId": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+    "sourceManifestSha256": "3d049d3f05904ca52183ce669d66a06fb784e4cdc8a76aa52819e9a767b50981",
+    "cutoverActionSha256": "9629a27f683075fcea3ad7ab1075e703e6e3835f9df5b5920f539d354d0b7938",
+    "schemaBeforeStartSha256": "26748fbd5d3181aff9cd240894c1686b6aeaf7255dc90cb8190e96521f2af6c9",
+    "nativeContainerId": "a30c6930bbb91680bc52529d65b3e078a8bad0a1edad40639f2424be4a8e7557",
+    "nativeStartReceiptSha256": "2a831f74f98816bbc767abac7e34a5819385d19bff9178c477b61ddd73d02978",
+    "publicBinding": {
+      "mode": "PRODUCTION",
+      "origin": "https://atlasgrading.com",
+      "deploymentId": "atlas-grading-public-qlt8myz6c-ten-kings.vercel.app",
+      "releaseSha": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+      "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8"
+    },
+    "bindingsReceiptSha256": "d7c68660432e637eded6401026b76ef28d6b371cda591f7771150ba6d51f2cba",
+    "offlineConfigurationProofSha256": "7e0705e7417e5d52b4986d64c65a201160cd3f738bfef79879ed9f950b216969",
+    "controlsReadbackSha256": "a2a1fb2a69438d60c4da988aca24672832ea6fb2aef3c9df04ed92cc4f4174b2",
+    "controlsProofSha256": "b5d0766ebb0066dafb63788c63ae00ef1d0df540d1cbc3fd783855bb77489aee",
+    "privateEnvSha256": "e4a82d478540454f3561a94d72858a5eafe4c5c1a7151ca3f8b83802cc8dc91b",
+    "schemaChanges": false,
+    "coldGates": {
+      "ATLAS_CUSTOMER_SERVICE_ENABLED": "false",
+      "ATLAS_CUSTOMER_INTAKE_ENABLED": "false",
+      "ATLAS_CUSTOMER_IDENTIFICATION_ENABLED": "false",
+      "ATLAS_COMMERCE_ENABLED": "false",
+      "ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED": "false",
+      "ATLAS_MANUAL_STATION_ENABLED": "false"
+    }
+  }
+}

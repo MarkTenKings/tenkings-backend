@@ -1,0 +1,61 @@
+{
+  "status": "INDEPENDENT_PROTECTED_PREVIEW_AND_SAFE_URL_CORRECTIONS_ACCEPTED",
+  "at": "2026-09-24T10:00:14.191841+00:00",
+  "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "frozenHelperManifestSha256": "d0a2b83042f1e38ea334758d02d4e144826359f64645c8f7bb31bb385ad8d06e",
+  "frozenQualificationSha256": "d2edd44459fa7d8d3117d9176260479f73fdb98172b921c1a90e05547f30fd1a",
+  "frozenTestLogSha256": "d4438f7a7d9342d0cc2600ecdbbb26f606927ccee00931c27f397e3bae0ed14e",
+  "manifestFilesVerified": 25,
+  "independentTests": {
+    "command": [
+      "/opt/homebrew/opt/node@20/bin/node",
+      "--test",
+      "final-web.test.mjs",
+      "anonymous-routing.test.mjs",
+      "provider-readback.test.mjs"
+    ],
+    "tests": 93,
+    "passed": 93,
+    "failed": 0,
+    "skipped": 0,
+    "exitCode": 0,
+    "log": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-review-7b42f51c/protected-preview-tests.tap",
+      "sha256": "4eda6204df44a38eb5a53385319d3729089bdad268a09ebd65775c242c7d2e66"
+    }
+  },
+  "protectedPreviewReview": {
+    "status": "NO_BLOCKER",
+    "prepromotionStatus": "PREPROMOTION_CANDIDATE_PROTECTED_UNVERIFIED",
+    "bothCandidatePathsRequired": true,
+    "exactVercelSSORedirectAndTargetURL": true,
+    "tlsCertificateHostnameAndProtocolRequired": true,
+    "rawNoncePersisted": false,
+    "pageProofClaims": false,
+    "observedPublicAndStaffGateValues": null,
+    "existingRuntimeProviderColdGateProofsPreserved": true,
+    "canonicalPostpromotionRemainsMandatoryAndStrict": true,
+    "bypassOrProtectionDisableAdded": false
+  },
+  "safeURLProjectionReview": {
+    "status": "EXACT_TWO_STRING_ADDITION_ONLY",
+    "existingPlainKeys": [
+      "ATLAS_WORKSPACE_SERVICE_ORIGIN",
+      "ATLAS_WORKSPACE_UPLOAD_ORIGIN"
+    ],
+    "originalReaderSha256": "1852e9cdc40924d5003772e7d78dc85681deca86f55f5c23a23cf132954378cf",
+    "newReaderSha256": "b8c35b5d168cadbd70d1ee90cfe37530e8de3de7c412673ba3e857b8c291c664",
+    "removingExactlyTwoAddedStringsReproducesOriginalHash": true,
+    "pinnedBaselineSha256": "92895bb021be0732eacbb341026f879265e0c608027e934e1e2dba4854e31fda",
+    "sensitiveAndUnknownValuesRemainRedacted": true,
+    "exactEnvironmentComparisonsPreserved": true
+  },
+  "remainingBlockers": [],
+  "reviewerProviderCalls": 0,
+  "reviewerNetworkCalls": 0,
+  "reviewerCredentialReads": 0,
+  "reviewerDatabaseActions": 0,
+  "reviewerContainerActions": 0,
+  "repositoryEdits": 0,
+  "actualDeploymentAndCanonicalAcceptance": "ROOT_OWNS_SEPARATE_DISPATCH_AND_RESULTS"
+}

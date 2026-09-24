@@ -1,0 +1,156 @@
+{
+  "version": "atlas-stage1-release-evidence-v1",
+  "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "status": "STAGE1_LIVE_CUSTOMER_AND_STATION_COLD",
+  "observedHostedAt": "2026-09-24T10:00:59.976Z",
+  "productionStaffMigrations": 48,
+  "publicLedgerRows": 112,
+  "historicalTablesPreserved": 30,
+  "migrationsApplied": [],
+  "grantsApplied": [],
+  "controls": {
+    "staff": 27,
+    "staffSms": 25,
+    "publicReader": 5,
+    "customer": 7,
+    "customerSms": 5
+  },
+  "retainedCustomerDeploymentId": "dpl_7GzDxKz2MP36vESc8YkZq87Xht44",
+  "humanSignInAcceptance": false,
+  "realPaidCheckoutAcceptance": false,
+  "physicalAcceptance": false,
+  "secretValuesIncluded": false,
+  "files": [
+    {
+      "path": "staff-ready.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/web-release-prep/staff-ready-7b42f51c.json",
+      "sha256": "f96741f50a53fcbc887533c09c2bcd1fd9092479029fdf8196bf59ec68c374f1",
+      "byteCount": 838
+    },
+    {
+      "path": "public-ready.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/web-release-prep/public-ready-7b42f51c.json",
+      "sha256": "951bce0e921fcc6d5f5a9a6ce0a5f6c4ad4669b1613491d76db2e85eef57f49f",
+      "byteCount": 842
+    },
+    {
+      "path": "native-qualification.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-qualified-7b42f51c.json",
+      "sha256": "9931ad6500972be7f87658b18c39415a4dbfe22171ac3541cfbd580608bf90b5",
+      "byteCount": 12967
+    },
+    {
+      "path": "source-checks.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/source-checks-7b42f51c.json",
+      "sha256": "09f68dd3d83b7d2e1a852d816c2afa75db5e3f282beff814aabe3cd007165b9e",
+      "byteCount": 4298
+    },
+    {
+      "path": "cold-runtime.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/cold-runtime-prep/observed-result.json",
+      "sha256": "00bd3235a8afae3fb0a687f3c0f8e233a86b79e6231bc7d0a5c589ae8a375840",
+      "byteCount": 1746
+    },
+    {
+      "path": "offline-configuration.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/root-prep/offline-configuration.json",
+      "sha256": "7e0705e7417e5d52b4986d64c65a201160cd3f738bfef79879ed9f950b216969",
+      "byteCount": 2666
+    },
+    {
+      "path": "offline-configuration-receipt.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/root-prep/offline-configuration-receipt.json",
+      "sha256": "3829f4339905b12ac1b29ef90ae4cb1fd5544d93430155a8ff48bd9c9108e41b",
+      "byteCount": 923
+    },
+    {
+      "path": "stop.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/root-prep/stop.result.json",
+      "sha256": "da01ea5a28c67d70a16c52b172021ffb4fac6084ef7a5504066e1fc818e4f4e4",
+      "byteCount": 2004
+    },
+    {
+      "path": "start.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/root-prep/start.result.json",
+      "sha256": "2a831f74f98816bbc767abac7e34a5819385d19bff9178c477b61ddd73d02978",
+      "byteCount": 2572
+    },
+    {
+      "path": "controls-result.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/root-prep/controls-evidence-7b42f51c-1/result.json",
+      "sha256": "b5d0766ebb0066dafb63788c63ae00ef1d0df540d1cbc3fd783855bb77489aee",
+      "byteCount": 2909
+    },
+    {
+      "path": "controls-after.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/root-prep/controls-evidence-7b42f51c-1/controls.after.json",
+      "sha256": "25a80cd2919eb0259a8efc02f370a847bf5d703293fdd94e55a9c1ceac1a5520",
+      "byteCount": 11429
+    },
+    {
+      "path": "schema-after-summary.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/root-prep/controls-evidence-7b42f51c-1/schema.after.json",
+      "sha256": "1721ee4a22d4ea00d26a07d9a92906c5fe92ae484b58edcc4e16af1b1916712f",
+      "byteCount": 12846,
+      "derived": true,
+      "originalSourceSha256": "74f33031b23993861c0e569153e9e99cab0ec196713120e2e78c455ec720d0ca"
+    },
+    {
+      "path": "fresh-final-controls.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/root-prep/readback-final-1/controls.json",
+      "sha256": "a2a1fb2a69438d60c4da988aca24672832ea6fb2aef3c9df04ed92cc4f4174b2",
+      "byteCount": 11429
+    },
+    {
+      "path": "fresh-final-schema-summary.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/root-prep/readback-final-1/schema.json",
+      "sha256": "962ffc90d79227e460aee21a6c09bf8c371987ba81bb0e2f0d65f1f9212d4dfe",
+      "byteCount": 12829,
+      "derived": true,
+      "originalSourceSha256": "aa0f2afa0746447250eefbbf45531bad60e27f9bcc696af706877411ae6481df"
+    },
+    {
+      "path": "tls-proof.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/tls-postcontrol-7b42f51c-2/proof.json",
+      "sha256": "9fe1c84a9fa7618c1b836ab5932b94e166c5188fca6e045b02ef43de9295ca9e",
+      "byteCount": 6065
+    },
+    {
+      "path": "protected-preview.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/hosted-prepromotion-7b42f51c-2/result.json",
+      "sha256": "04428a528cbbf843797c26c54c95c34196c8222a39be3768086727c51a4a9c88",
+      "byteCount": 4316
+    },
+    {
+      "path": "promotion.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/promotion-execution-7b42f51c-1/result.json",
+      "sha256": "1db6e76a2b9ac225f758d3f2e52053488dbc922de78d0a9cc30d7fdef345342d",
+      "byteCount": 1271
+    },
+    {
+      "path": "hosted-routing.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/hosted-postpromotion-7b42f51c-1/result.json",
+      "sha256": "35cc6ada0c8adea98843c577288ee3661b3e47a861d624a21590131c32bfffd7",
+      "byteCount": 5642
+    },
+    {
+      "path": "native-independent-review.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-review-7b42f51c/qualification-review/review.json",
+      "sha256": "9f85fa284cf56297793e7a8f3d0d6d9cbe5e9d57edfe031e20d0df968352709e",
+      "byteCount": 3721
+    },
+    {
+      "path": "final-web-independent-review.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-review-7b42f51c/protected-preview-final-review.json",
+      "sha256": "400768ca9b05533c12ccbdc65d50ef28629e3ef429da714a1c37fb3a9f46c5e8",
+      "byteCount": 2537
+    },
+    {
+      "path": "final-runtime.json",
+      "sourcePath": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-review-7b42f51c/final-runtime-readback.json",
+      "sha256": "8b5146475d37cfeaae537a0f683fb393e7327d0fa47ccc8716b89f805d999a57",
+      "byteCount": 4785
+    }
+  ],
+  "rawDatabaseCatalogAndPrivilegePayloadsIncluded": false
+}

@@ -1,0 +1,47 @@
+{
+  "actionSha256": "9629a27f683075fcea3ad7ab1075e703e6e3835f9df5b5920f539d354d0b7938",
+  "at": "2026-09-24T09:50:38.217630+00:00",
+  "automaticRetry": false,
+  "caddyUnchanged": true,
+  "databaseBeforeStop": {
+    "path": "/opt/atlas/manual-stage1-7b42f51c418b/readback-before-stop-1/schema.json",
+    "sha256": "883f93e044f5ba0844f271cd88b1177b7b1547fe4aefe5306b1a8ab18d9d14fb"
+  },
+  "databaseDrainAfterStop": "FRESH_UNCHANGED_SCHEMA48_ZERO_CONNECTIONS_REQUIRED_BEFORE_START",
+  "features": {
+    "batch": true,
+    "catalog": true,
+    "market": true,
+    "presentation": true,
+    "research": true,
+    "station": false
+  },
+  "imageId": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+  "old": {
+    "finishedAt": "2026-09-24T09:50:36.935365975Z",
+    "id": "c302eeb7c4036c42049b3ed96f8d88d30afa6f058d7156e69b03fe60ae866b63",
+    "image": "sha256:857ec5612661921cb235013d81a1b2793615ebb2c2f987b661275efdd646f94a",
+    "name": "atlas-manual-connected-20260917-retained-e29567c2-stage1",
+    "oomKilled": false,
+    "restartCount": 0,
+    "running": false,
+    "startedAt": "2026-09-24T03:44:03.657738463Z"
+  },
+  "oldConfigurationPreserved": true,
+  "privateAliasOwners": 0,
+  "privateEnvSha256": "e4a82d478540454f3561a94d72858a5eafe4c5c1a7151ca3f8b83802cc8dc91b",
+  "rollbackPolicy": "NO_AUTOMATIC_RESTART_OR_ROLLBACK_RECONCILE_READONLY",
+  "schemaChanges": false,
+  "schemaWindowRequired": false,
+  "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "sourceManifestSha256": "3d049d3f05904ca52183ce669d66a06fb784e4cdc8a76aa52819e9a767b50981",
+  "staffBinding": {
+    "configHash": "06f47cd45707d4e2641d3496e8339048e224e290f2611e522859f7f75d92611f",
+    "deploymentId": "atlas-grading-staff-rkq7cs1uk-ten-kings.vercel.app",
+    "mode": "PRODUCTION",
+    "origin": "https://atlasgrading.com",
+    "releaseSha": "7b42f51c418b815f838bb910cf7599a0dcd5313c"
+  },
+  "status": "OLD_STOPPED_DETACHED_RETAINED_NO_SCHEMA_CHANGE",
+  "unrelatedContainersUnchanged": true
+}

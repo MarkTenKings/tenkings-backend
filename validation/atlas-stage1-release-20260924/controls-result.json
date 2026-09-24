@@ -1,0 +1,77 @@
+{
+  "at": "2026-09-24T09:52:53.297280+00:00",
+  "automaticRetry": false,
+  "cardWrites": 0,
+  "changes": [
+    {
+      "afterMd5": "8f7aa7b6eb5f1aa0a740cd67116a42b2",
+      "beforeMd5": "295321d7bfa693e1967876834c95c72d",
+      "id": "active",
+      "revision": 27,
+      "table": "StaffControl"
+    },
+    {
+      "afterMd5": "e0b62ecd18159fb5087eb0a78347d3ef",
+      "beforeMd5": "8c26ba0d62ca86719f91b1c64265d985",
+      "id": "STAFF",
+      "revision": 25,
+      "table": "SmsPilotControl"
+    },
+    {
+      "afterMd5": "fed0e1810395ec46373cc36f2cdd68e5",
+      "beforeMd5": "16b082c2d3c708d4c706bcbeb1c040b8",
+      "id": "active",
+      "revision": 5,
+      "table": "PublicReaderControl"
+    }
+  ],
+  "containersUnchanged": true,
+  "controlsAfter": {
+    "path": "/opt/atlas/manual-stage1-7b42f51c418b/controls-evidence-7b42f51c-1/controls.after.json",
+    "sha256": "25a80cd2919eb0259a8efc02f370a847bf5d703293fdd94e55a9c1ceac1a5520"
+  },
+  "customer7Sms5Retained": true,
+  "imageId": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+  "intent": {
+    "path": "/opt/atlas/manual-stage1-7b42f51c418b/three-controls-7b42f51c.intent.json",
+    "sha256": "180fa7851d456256b39d2ff80ced1c684fd26b8646b75eb8bd9a757b51d3f752"
+  },
+  "nativeContainerId": "a30c6930bbb91680bc52529d65b3e078a8bad0a1edad40639f2424be4a8e7557",
+  "original30HistoriesUnchanged": true,
+  "otherControlsUnchanged": true,
+  "paidRequests": 0,
+  "planSha256": "1c0b974dddfe8a07518a203d11915be5c2fa8e6f271a49394db4005ffb2de3fd",
+  "publicLedger112Unchanged": true,
+  "publicTLSProofPending": true,
+  "runtime": {
+    "at": "2026-09-24T09:52:52.866170+00:00",
+    "cardWrites": 0,
+    "containerId": "a30c6930bbb91680bc52529d65b3e078a8bad0a1edad40639f2424be4a8e7557",
+    "imageId": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+    "listener": {
+      "arch": "x64",
+      "event": "MANUAL_PRIVATE_LISTENING",
+      "node": "v20.20.2",
+      "platform": "linux",
+      "port": 4319,
+      "webDeployment": "atlas-grading-staff-rkq7cs1uk-ten-kings.vercel.app",
+      "webReleaseSha": "7b42f51c418b815f838bb910cf7599a0dcd5313c"
+    },
+    "paidRequests": 0,
+    "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+    "status": "PRIVATE_NATIVE_UNSIGNED_TRANSPORT_HEALTH_PASS",
+    "unsignedCards": {
+      "responseBytes": 45,
+      "responseSha256": "bd14785959eacbcbbb800ec42d81bdaab8fe104bd58a4a8631880ecb2a294377",
+      "status": 401
+    }
+  },
+  "schema48Unchanged": true,
+  "schemaAfter": {
+    "path": "/opt/atlas/manual-stage1-7b42f51c418b/controls-evidence-7b42f51c-1/schema.after.json",
+    "sha256": "74f33031b23993861c0e569153e9e99cab0ec196713120e2e78c455ec720d0ca"
+  },
+  "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "sqlSha256": "3988044c7cc02755cd1b247e83327d1622817c61c49b9515cd8ee0e6b6dd9357",
+  "status": "THREE_CONTROL_EXACT_DELTA_PASS"
+}

@@ -1,0 +1,20 @@
+{
+  "status": "STAGE1_PRIVATE_CONFIG_CONSTRUCTORS_PASS",
+  "at": "2026-09-24T09:49:05.014694+00:00",
+  "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "imageId": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+  "containerId": "d59e10d02764e59b37ab28b5bd5258f72a0179d19115ed7cefefab4360d55d27",
+  "scriptSha256": "e5d6c30781922efb2f56a8626031aea646cde14cf4b29e8aad2c8d8e645f7e78",
+  "privateEnvironmentSha256": "e4a82d478540454f3561a94d72858a5eafe4c5c1a7151ca3f8b83802cc8dc91b",
+  "stdoutSha256": "7e0705e7417e5d52b4986d64c65a201160cd3f738bfef79879ed9f950b216969",
+  "exitCode": 0,
+  "network": "none",
+  "readOnly": true,
+  "user": "node",
+  "secretsOnStdinOnly": true,
+  "oldServiceUnchanged": true,
+  "proof": {
+    "path": "/opt/atlas/manual-stage1-7b42f51c418b/offline-configuration.json",
+    "sha256": "7e0705e7417e5d52b4986d64c65a201160cd3f738bfef79879ed9f950b216969"
+  }
+}

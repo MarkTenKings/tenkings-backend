@@ -1,0 +1,41 @@
+{
+  "status": "PUBLIC_ALIAS_PROMOTION_VERIFIED",
+  "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "projectId": "prj_YUR9vwqRjIqm91QOmum08r0GgV9S",
+  "publicDeploymentId": "dpl_3BK1tjhMAF7LgW6J2wNw386hR1xi",
+  "aliases": [
+    {
+      "alias": "atlas-grading-public-ten-kings.vercel.app",
+      "deploymentId": "dpl_3BK1tjhMAF7LgW6J2wNw386hR1xi",
+      "redirect": null,
+      "redirectStatusCode": null
+    },
+    {
+      "alias": "atlas-grading-public.vercel.app",
+      "deploymentId": "dpl_3BK1tjhMAF7LgW6J2wNw386hR1xi",
+      "redirect": null,
+      "redirectStatusCode": null
+    },
+    {
+      "alias": "atlasgrading.com",
+      "deploymentId": "dpl_3BK1tjhMAF7LgW6J2wNw386hR1xi",
+      "redirect": null,
+      "redirectStatusCode": null
+    },
+    {
+      "alias": "www.atlasgrading.com",
+      "deploymentId": "dpl_3BK1tjhMAF7LgW6J2wNw386hR1xi",
+      "redirect": "atlasgrading.com",
+      "redirectStatusCode": 308
+    }
+  ],
+  "customerUnchanged": true,
+  "staffUnchanged": true,
+  "allowedPublicDeploymentMetadataChanges": [
+    "readySubstate:STAGED→PROMOTED",
+    "aliasAssignedAt:monotonic"
+  ],
+  "automaticRetry": false,
+  "planSha256": "a4ca590777e97e65bec29ca3c97401a2199f71181e597e41cb4de09c3912e7bb",
+  "providerWritesAttempted": 1
+}

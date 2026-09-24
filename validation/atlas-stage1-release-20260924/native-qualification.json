@@ -1,0 +1,300 @@
+{
+  "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "imageId": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+  "sourceManifestSha256": "3d049d3f05904ca52183ce669d66a06fb784e4cdc8a76aa52819e9a767b50981",
+  "planSha256": "a313e8bc319fe4ab14881d5956c77d9baae9ca9bef6b2dd7de03149d28c58830",
+  "inputsSha256": "61a087477c0db7aa33698d10c91316942d86751e9fc49738e268a29959c663eb",
+  "nativeArtifacts": 16,
+  "runtimeStaffMigrationSetSha256": "47a2f5a3addd1039ebc2fd5dc23cb688906da99a5ce224c0d69d650bba9f1798",
+  "packagedNewStaffMigrations": {
+    "20260924060000_customer_photo_intake": "41382fa3725251c92e461f5e7fd344d17e6e313a66ffe2e2ca625d834c0d58aa",
+    "20260924061000_customer_commerce": "9c1363b8b02d1188d5e9c2340be6624a58ee8137ebed9e9a9f5d07ff648aa47e",
+    "20260924062000_dealer_custody_tracking": "f1286c7634594103a216a749448507d1c5d79dd280706e9f6b8d80edee6b136d",
+    "20260924063000_customer_private_service": "152ca79fd3a1d1ac1b7f8bbfdae14e01c77f7f6133feb4ca120694f2529e1b85"
+  },
+  "packageTestFiles": 130,
+  "staffTestFiles": 63,
+  "excludedStaff": {
+    "frontend/atlas-app/test/workspace-operator.test.mjs": "Operator service is outside this manual-runtime closure; qualify in full-source operator fixture.",
+    "frontend/atlas-app/test/disposable-postgres.test.mjs": "Imports public/customer/operator grants outside the native closure; exact-source Node20 guard receipt required by combine.",
+    "frontend/atlas-app/test/remote-disposable-postgres.test.mjs": "Imports the same cross-app disposable harness; exact-source Node20 guard receipt required by combine."
+  },
+  "testOnlyMountedFiles": [
+    "packages/database/prisma/schema.prisma",
+    "frontend/nextjs-app/lib/ai-grader-v2/gradient-snap.ts",
+    "backend/ai-grader-speedster-service/preparation_core.py",
+    "backend/ai-grader-speedster-service/preparation-pixels-extraction.json",
+    "packages/ai-grader-nfc-helper/src/TenKings.AiGrader.NfcHelper/NfcContracts.cs",
+    "packages/ai-grader-nfc-helper/src/TenKings.AiGrader.NfcHelper/AtlasNfcProtocol.cs"
+  ],
+  "schemaActivation": "STAGE1_NO_MIGRATION_RUNTIME48_UNCHANGED",
+  "productionCutover": "HOLD_FRESH_IDLE_STATE_AND_ROOT_ACCEPTANCE_REQUIRED",
+  "releaseStage": "STAGE1_SCHEMA48_CUSTOMER_COLD",
+  "packagedStaffMigrations": 52,
+  "runtimeStaffMigrationsRequired": 48,
+  "priorStaffMigrationsPreserved": 48,
+  "migrationsToApply": [],
+  "grantsToApply": [],
+  "grantActivation": "STAGE1_NO_GRANTS_EXISTING_AUTHORITY_UNCHANGED",
+  "retainedCustomerDeploymentId": "dpl_7GzDxKz2MP36vESc8YkZq87Xht44",
+  "requiredColdGates": {
+    "ATLAS_CUSTOMER_SERVICE_ENABLED": "false",
+    "ATLAS_CUSTOMER_INTAKE_ENABLED": "false",
+    "ATLAS_CUSTOMER_IDENTIFICATION_ENABLED": "false",
+    "ATLAS_COMMERCE_ENABLED": "false",
+    "ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED": "false",
+    "ATLAS_PUBLIC_CUSTOMER_FUNNEL_ENABLED": "false",
+    "ATLAS_MANUAL_STATION_ENABLED": "false"
+  },
+  "status": "OFFLINE_REGRESSION_GROUPS_PASS",
+  "groups": [
+    "source",
+    "boundary",
+    "tests",
+    "staff",
+    "detector"
+  ],
+  "executedGroups": [
+    "source",
+    "boundary",
+    "tests",
+    "staff",
+    "detector"
+  ],
+  "completeOfflineSuite": true,
+  "qualificationMethod": "EXACT_IMAGE_LINUX_PLUS_EXACT_SOURCE_DARWIN_AND_CROSS_APP_GUARDS",
+  "groupEvidence": {
+    "source": {
+      "result": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-regression-7b42f51c/qualification-main/source.result.json",
+        "sha256": "c4ab331c72f42a9b24379e6ea759f61043ce44356797e776bbf6a604a2bdb5ff"
+      },
+      "log": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-regression-7b42f51c/qualification-main/source.log",
+        "sha256": "5b94e88cdd2be599e7472cb1946eec394d0634ece4e05a6cbc67c29cfe9f86df"
+      }
+    },
+    "boundary": {
+      "result": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-regression-7b42f51c/qualification-main/boundary.result.json",
+        "sha256": "e8ee2f15331ede876426d234216fa237a577d5848570c5568111fdb55bb59937"
+      },
+      "log": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-regression-7b42f51c/qualification-main/boundary.log",
+        "sha256": "000bfa8aa2203fb25b283b126d35dd4d7bde37cd36aa3b112f2191d393129a4c"
+      }
+    },
+    "tests": {
+      "result": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-regression-7b42f51c/qualification-packages/tests.result.json",
+        "sha256": "d545dca78bda905cb56fa911acaa2c7dc5bb178a616e5e8aea4f9de8bdabf5d3"
+      },
+      "log": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-regression-7b42f51c/qualification-packages/tests.log",
+        "sha256": "7cb96420429c855c7a57661220568d5025983c123a7c07e33df06af236d03d08"
+      }
+    },
+    "staff": {
+      "result": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-regression-7b42f51c/qualification-main/staff.result.json",
+        "sha256": "1fbcf0282ecfae1cb386b492c2ee3f7200510db720d25c29f0aea263f5a64a3e"
+      },
+      "log": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-regression-7b42f51c/qualification-main/staff.log",
+        "sha256": "67b9dec9d762203b8616aba955a1c9afa6f1430c853d0e99eeff232f2a36a958"
+      }
+    },
+    "detector": {
+      "result": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-regression-7b42f51c/qualification-main/detector.result.json",
+        "sha256": "c2d5a6976b14835676ea46a8cb0141fcbf76dc061fd13ba73a3a2151cc0be248"
+      },
+      "log": {
+        "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-regression-7b42f51c/qualification-main/detector.log",
+        "sha256": "805050978ad63a182b268b30887f4f2f5ff5c02e8c2db30664ac52acda6a9798"
+      }
+    }
+  },
+  "linuxPackageCounts": {
+    "tests": 1226,
+    "pass": 1220,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 6,
+    "todo": 0
+  },
+  "linuxStaffCounts": {
+    "tests": 604,
+    "pass": 604,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "macDistribution": {
+    "sourceFile": "packages/atlas-finishing-station/test/distribution.test.mjs",
+    "sourceSha256": "5fce7f26541b3bc2dd9256a3df7f4f87c3baeda75b970206fd06999fc5c21d5e",
+    "log": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/mac-7b42f51c/distribution.tap",
+      "sha256": "cdfc85cb32f0f93498e0c72b79f96414664e91c045072b3b4e0d2b96702ce801"
+    },
+    "receipt": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/mac-7b42f51c/receipt.json",
+      "sha256": "996089ab282cb65a727c54ccf1487d85ce04469fd48ab27df0f3fc836e39a1dd"
+    },
+    "counts": {
+      "tests": 10,
+      "pass": 10,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "coveredLinuxPlatformSkips": [
+      "build requires a real selected identity before creating any release directory",
+      "signed final native bytes replace review hashes; notarization keeps hardware pending and retry has no new upload",
+      "lost upload reply is retained and only a matching Apple archive log can reconcile it",
+      "pending/rejected Apple results cannot staple or claim readiness",
+      "post-build payload drift and another signed archive cannot be accepted",
+      "failed Gatekeeper assessment retains stapled bytes for evidence-only finalization"
+    ]
+  },
+  "originalStrictLinuxFailurePreserved": true,
+  "physicalAcceptance": "NOT_RUN",
+  "actualAppleSigningNotarization": "NOT_RUN_MOCKED_TOOL_CONTRACTS_ONLY",
+  "postgresQualification": "SEPARATE_SCHEMA48_COLD_RUNTIME_ACCEPTANCE_REQUIRED_NO_MIGRATION",
+  "realCardsAccepted": 0,
+  "fullSourceDisposableGuards": {
+    "testFiles": [
+      "frontend/atlas-app/test/disposable-postgres.test.mjs",
+      "frontend/atlas-app/test/remote-disposable-postgres.test.mjs"
+    ],
+    "log": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/guards-7b42f51c/guards.tap",
+      "sha256": "7c6f4a589ab6118e4f48ffeb6f33b961b8d89088402748dc4354a2f502266344"
+    },
+    "modules": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/guards-7b42f51c/loaded-modules.jsonl",
+      "sha256": "80dfbf0b9e704c6630ac8e24aae5a7f32582dfbcca5c305dac5610572afb766d"
+    },
+    "receipt": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/guards-7b42f51c/receipt.json",
+      "sha256": "6c322b191f7b62fd1b76a435b2c48333818499357e53bc74fd8c932d07fb9abd"
+    },
+    "counts": {
+      "tests": 8,
+      "pass": 8,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "loadedSourceFiles": [
+      {
+        "path": "frontend/atlas-app/lib/phone.mjs",
+        "byteCount": 526,
+        "sha256": "c1046452124fd987c1077fb1eb0af3dba4b3b3674a291d81505da552e632e553"
+      },
+      {
+        "path": "frontend/atlas-app/lib/routes.mjs",
+        "byteCount": 711,
+        "sha256": "3e1f5667601fa27a7f73c29ef6eeace13f40ee205623594c645ebb108e21ec7b"
+      },
+      {
+        "path": "frontend/atlas-app/lib/server/access/auth.mjs",
+        "byteCount": 17663,
+        "sha256": "34d98413e6118807e5a30038c9896b68b62a5596284b53e49cf1df2412404f20"
+      },
+      {
+        "path": "frontend/atlas-app/lib/server/access/config.mjs",
+        "byteCount": 5924,
+        "sha256": "71420bd627ce6acef855f016ef1a37637e467491a781861056fde36aae8bf6bf"
+      },
+      {
+        "path": "frontend/atlas-app/lib/server/access/operations-authority.mjs",
+        "byteCount": 15315,
+        "sha256": "94a1d6082cc9da5a2fd76ccc67faf8e9d141cdf0b63e21e0778937fd1ec6da2a"
+      },
+      {
+        "path": "frontend/atlas-app/lib/server/access/privileges.mjs",
+        "byteCount": 6908,
+        "sha256": "9ef88b66f3667f3e911ecb21e681acad29f180b874437fbaf43600909cd03706"
+      },
+      {
+        "path": "frontend/atlas-app/lib/server/policy.mjs",
+        "byteCount": 4166,
+        "sha256": "f686bc9e4e074c0effd0db587fcff5011dc1645541c10c663b0e877123a96d84"
+      },
+      {
+        "path": "frontend/atlas-app/scripts/disposable-postgres.mjs",
+        "byteCount": 27152,
+        "sha256": "9fb318532d9a32acb744ac9323d369244681080af71e4bdb0dd94733a7bd267b"
+      },
+      {
+        "path": "frontend/atlas-app/scripts/remote-disposable-postgres.mjs",
+        "byteCount": 6278,
+        "sha256": "3614102a36d300982d453732fc1f9386db405b638ec7de29eeb8fa5bf4bb47ce"
+      },
+      {
+        "path": "frontend/atlas-app/test/disposable-postgres.test.mjs",
+        "byteCount": 4404,
+        "sha256": "50478b281247345f3ee936f3137ef1ee28900c68d8be5f1f2faeeffa2d36be67"
+      },
+      {
+        "path": "frontend/atlas-app/test/remote-disposable-postgres.test.mjs",
+        "byteCount": 3655,
+        "sha256": "570a606e9b5bf7d539aa4e1e9223f9db5cbbc5034f57ffcd4ebcc5df751dc721"
+      },
+      {
+        "path": "frontend/atlas-customer/lib/server/database.mjs",
+        "byteCount": 3828,
+        "sha256": "7c6418bad236cad279ae92a79b01e2356234bebf2f8df042c6c3f022dd731672"
+      },
+      {
+        "path": "frontend/atlas-customer/lib/server/policy.mjs",
+        "byteCount": 4621,
+        "sha256": "eb68d2989f6cf58826afca1c8edbff2d69347fcc8bd6397c10f8f5b71b9adf7b"
+      },
+      {
+        "path": "frontend/atlas-public/lib/server/policy.mjs",
+        "byteCount": 4677,
+        "sha256": "3efdfcbaef2eaa33671295935f1791b1747baa69f359d16815daff26baf5db9d"
+      },
+      {
+        "path": "frontend/atlas-public/lib/server/privileges.mjs",
+        "byteCount": 2857,
+        "sha256": "8cc24f3b869fe200a75b16c4d6af4398493da1e2c1896bfd04dc96cdbb53eca7"
+      },
+      {
+        "path": "packages/atlas-operator/src/privileges.mjs",
+        "byteCount": 5373,
+        "sha256": "11a54482f04d4c41fb894eb8d4748294a1fc1cbb0c9b75e92f9768786f5ef971"
+      },
+      {
+        "path": "packages/atlas-service-bridge/src/manual-public.mjs",
+        "byteCount": 4728,
+        "sha256": "e18b838a0f03d85913a9cae311c92353e4173523083ad6721bafb7600a86ea0e"
+      },
+      {
+        "path": "packages/atlas-service-bridge/src/protocol.mjs",
+        "byteCount": 7802,
+        "sha256": "e11fe4a54a6ad7c79932117e21a098a0df35715b43d682e60c35b2a5df53486d"
+      },
+      {
+        "path": "packages/atlas-service-bridge/src/transport.mjs",
+        "byteCount": 2998,
+        "sha256": "c2c27dd6953e764487d551504450e25affee25ce89d7b5f63ac4674689c42399"
+      },
+      {
+        "path": "packages/atlas-site-router/routes.mjs",
+        "byteCount": 2180,
+        "sha256": "20a8334c4702c730d1648c302933bc38aad4d7d0aae8e45670197cef2fa03649"
+      },
+      {
+        "path": "packages/atlas-site-router/server.mjs",
+        "byteCount": 2299,
+        "sha256": "bedf202c2584fef05eb73da839062a759ae9ce4051a5816b56ce7ba1fc31fb8b"
+      }
+    ]
+  }
+}

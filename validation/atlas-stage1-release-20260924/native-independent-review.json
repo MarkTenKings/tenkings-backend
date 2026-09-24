@@ -1,0 +1,87 @@
+{
+  "status": "INDEPENDENT_FINAL_IMAGE_PLATFORM_AND_GUARD_COVERAGE_ACCEPTED",
+  "at": "2026-09-24T09:45:11.944683+00:00",
+  "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "imageId": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+  "sourceManifestSha256": "3d049d3f05904ca52183ce669d66a06fb784e4cdc8a76aa52819e9a767b50981",
+  "planSha256": "a313e8bc319fe4ab14881d5956c77d9baae9ca9bef6b2dd7de03149d28c58830",
+  "remoteEvidence": "root@104.131.27.245:/opt/atlas-stage1-release-7b42f51c/qualification-packages",
+  "copiedEvidence": {
+    "selection.json": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-review-7b42f51c/qualification-review/selection.json",
+      "sha256": "84e609927463f83510b24968f2292d04ffe98d49319960aa8ca5ff80551e71ea"
+    },
+    "tests.result.json": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-review-7b42f51c/qualification-review/tests.result.json",
+      "sha256": "d545dca78bda905cb56fa911acaa2c7dc5bb178a616e5e8aea4f9de8bdabf5d3"
+    },
+    "tests.inspect.json": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-review-7b42f51c/qualification-review/tests.inspect.json",
+      "sha256": "60575b7b5aec936e72a8fb3676f7528a5d5f209fbe14e566c277fc3d2bf12c0c"
+    },
+    "tests.log": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/native-review-7b42f51c/qualification-review/tests.log",
+      "sha256": "7cb96420429c855c7a57661220568d5025983c123a7c07e33df06af236d03d08"
+    }
+  },
+  "linuxPackageCounts": {
+    "tests": 1226,
+    "pass": 1220,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 6,
+    "todo": 0
+  },
+  "linuxStaffCounts": {
+    "tests": 604,
+    "pass": 604,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "macCounts": {
+    "tests": 10,
+    "pass": 10,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "coveredDarwinSkips": [
+    "build requires a real selected identity before creating any release directory",
+    "signed final native bytes replace review hashes; notarization keeps hardware pending and retry has no new upload",
+    "lost upload reply is retained and only a matching Apple archive log can reconcile it",
+    "pending/rejected Apple results cannot staple or claim readiness",
+    "post-build payload drift and another signed archive cannot be accepted",
+    "failed Gatekeeper assessment retains stapled bytes for evidence-only finalization"
+  ],
+  "macReceipt": {
+    "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/mac-7b42f51c/receipt.json",
+    "sha256": "996089ab282cb65a727c54ccf1487d85ce04469fd48ab27df0f3fc836e39a1dd"
+  },
+  "guardCounts": {
+    "tests": 8,
+    "pass": 8,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "guardLoadedSourceFilesVerified": 21,
+  "guardReceipt": {
+    "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-stage1-20260924/guards-7b42f51c/receipt.json",
+    "sha256": "6c322b191f7b62fd1b76a435b2c48333818499357e53bc74fd8c932d07fb9abd"
+  },
+  "strictLinuxFailurePreserved": true,
+  "interpretation": "Linux strict FAIL reflects six declared platform skips only; zero actual test failures. Combined final-source Mac and cross-app guard evidence covers the declared exclusions. Root owns final five-group combined receipt.",
+  "packagedStaffMigrations": 52,
+  "runtimeStaffMigrationsRequired": 48,
+  "migrationsToApply": [],
+  "grantsToApply": [],
+  "readOnlyRemoteInspection": true,
+  "containerActions": 0,
+  "providerCalls": 0,
+  "physicalAcceptance": "NOT_RUN",
+  "actualAppleSigningNotarization": "NOT_RUN_MOCKED_TOOL_CONTRACTS_ONLY"
+}

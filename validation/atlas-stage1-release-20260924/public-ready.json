@@ -1,0 +1,28 @@
+{
+  "id": "dpl_3BK1tjhMAF7LgW6J2wNw386hR1xi",
+  "url": "atlas-grading-public-qlt8myz6c-ten-kings.vercel.app",
+  "projectId": "prj_YUR9vwqRjIqm91QOmum08r0GgV9S",
+  "readyState": "READY",
+  "readySubstate": "STAGED",
+  "target": "production",
+  "source": "cli",
+  "createdAt": 1790242376657,
+  "ready": 1790242424204,
+  "aliasAssigned": true,
+  "aliasAssignedAt": 1790242424434,
+  "autoAssignCustomDomains": false,
+  "meta": {
+    "githubCommitSha": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+    "githubCommitOrg": "MarkTenKings",
+    "githubCommitRepo": "tenkings-backend",
+    "githubOrg": "MarkTenKings",
+    "githubRepo": "tenkings-backend",
+    "gitRootDirectory": "frontend/atlas-public"
+  },
+  "projectSettings": {
+    "rootDirectory": null,
+    "autoExposeSystemEnvs": null,
+    "framework": "nextjs",
+    "nodeVersion": "20.x"
+  }
+}

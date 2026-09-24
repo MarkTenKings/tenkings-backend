@@ -1,0 +1,74 @@
+{
+  "status": "STAGE1_EXACT_SOURCE_CHECKS_PASS",
+  "sourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "sourceTree": "1a4d72f24b9af2393dcf1889542e57dd25e33641",
+  "providerCalls": 0,
+  "sourceManifestSha256": "bba67e1ced915580936c604007ac1c75016f0d9a3244d3a9e07bc6b2962aff23",
+  "verifiedSourceFiles": 1020,
+  "evidence": [
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/customer-result.json",
+      "sha256": "d9a40cbbc983eadb69cf93d50e681aeaff1dc289bac93ed13da75fa907d89627"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/public-result.json",
+      "sha256": "a72b1b20ffe68ca8241ab7d8074aa54d237143b1734a555541f767952024f512"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/staff-result.json",
+      "sha256": "a9af2337e955d56dbe54d73a56420329f12b6d052a08c402066b4ddecd0aeab4"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/integration-result.json",
+      "sha256": "37d68b2979a65bd99b727439d4544de6c77f3470948de105858dab12f51defa8"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/integration-native-result.json",
+      "sha256": "232362d7acb815927fc1b0ec41989148e0986a12d0be5c983270ce395954ae11"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/frontend-result.json",
+      "sha256": "1fe41305260a75dae778ffcfa0d495221627423d82d79b8c36e004f785ff4e60"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/source-manifest.json",
+      "sha256": "bba67e1ced915580936c604007ac1c75016f0d9a3244d3a9e07bc6b2962aff23"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/source-manifest.customer.json",
+      "sha256": "5fd35cd99528e8a6dba817a8bf115c1772e92781fe755ee7129ad165141fed50"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/customer-to-final-source-diff.json",
+      "sha256": "67ce33fc52bed29624aacb459634096e647fc709387d73175aa339a52bf57ece"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/customer-function-budget.json",
+      "sha256": "3b821b92442e311fd2de82e5b3d415488c71fe65443c5c8e63091a00b99326ad"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/customer-artifacts.json",
+      "sha256": "bbff51bac617cc1d541e534c286a0e030f52758770a8c3d47917bba875e68583"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/public-artifacts.json",
+      "sha256": "41a7756b941f74251888cc22940bad50c7c93e7977a72974426437e340511190"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/staff-artifacts.json",
+      "sha256": "7da88e21ff5ffc466a3fb593ff0c7068a65927823440b224878067dcb6bceb56"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/post-test-source-diff.json",
+      "sha256": "b3c02826e57d40d11359f3c057a80394e018ee7054fa1e4483c5994b9eee1749"
+    },
+    {
+      "path": "/Users/markthomas/.codex/worktrees/1e86/ten-kings-mystery-packs-clean/validation/atlas-build-final-20260924/cleanup.json",
+      "sha256": "53f226e6954e1ca110a33ccf665ccf8ee7115e0ddab34e0007201b2a884cbdd4"
+    }
+  ],
+  "qualification": "FINAL_LOCAL_BUILD_AND_TEST_RECEIPTS_BOUND_TO_CLEAN_COMMIT",
+  "githubActionsRun": "NOT_RUN",
+  "productionQualification": "SEPARATE_EXACT_NATIVE_AND_RUNTIME_READBACK_REQUIRED",
+  "customerBuildDifference": "ONE_DOCUMENTATION_ONLY_CHANGE_RECORDED_IN_REFERENCED_DIFF"
+}
