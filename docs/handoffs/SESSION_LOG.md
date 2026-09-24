@@ -36357,3 +36357,8 @@ Root also clarified the grading identity parser comment: an explicit layout disc
 
 
 Independent final layout review found no remaining P1/P2 for fresh Pokémon/Trainer/Energy pairs reaching PREPARE→ANALYZE;57 focused tests passed independently. Historical V2 results remain byte-unchanged. The release retains currently authorized dealer contact information; actual prices/service promises await supplied terms. The root clarified the customer-facing distinction for Mark without making up a firm offer or blocking independent software work. Final source is ready for exact-commit candidate qualification.
+
+
+### 2026-09-24 UTC — source freeze reconciliation before activation
+
+Source355b6b2e was committed/pushed, and its isolated native build plus read-only web qualification were started without changing production. Three late access-diagnostic edits were found after that freeze: allowlisted Prisma initialization `errorCode`, clearer method-rejection copy and the matching diagnostic test. Root reviewed and retained them in a successor source commit before any deployment. The superseded355 candidate is isolated evidence, not a deployable final choice. A focused14-test access suite passes. New exact-source materialization/qualification uses the successor commit; no earlier activation receipt may be reused. All agents have been directed to stop repository edits while preparing external release helpers.

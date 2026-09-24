@@ -14,7 +14,7 @@ export function Unavailable({ accessFailure } = {}) {
     const reference = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(accessFailure?.reference ?? '') ? accessFailure.reference : null;
     return <main className="unavailable"><Head><title>ATLAS · Access unavailable</title></Head><div className="brand">ATLAS<span>STAFF</span></div>
       <h1>{disabled ? 'Staff access is not enabled here.' : configuration ? 'Staff access needs configuration.' : feature ? 'This workspace is not enabled here.' : kind === 'METHOD_NOT_ALLOWED' ? 'Open this page again to continue.' : 'We couldn’t check your staff access.'}</h1>
-      <p>{disabled ? 'Open the active ATLAS staff workspace to sign in.' : configuration || feature ? 'An administrator needs to check this workspace’s configuration.' : 'The access check did not complete. Try opening this page again, or sign in again. If this keeps happening, share the reference below with the workspace administrator.'}</p>
+      <p>{disabled ? 'Open the active ATLAS staff workspace to sign in.' : configuration || feature ? 'An administrator needs to check this workspace’s configuration.' : kind === 'METHOD_NOT_ALLOWED' ? 'Choose Try again to open this page.' : 'The access check did not complete. Try opening this page again, or sign in again. If this keeps happening, contact the workspace administrator.'}</p>
       <p><button type="button" className="primary" onClick={() => window.location.assign(window.location.href)}>Try again</button>{' '}
         <a href={disabled ? `https://atlasgrading.com${STAFF_REAUTHENTICATE_PATH}` : STAFF_REAUTHENTICATE_PATH}>{disabled ? 'Open staff sign-in' : 'Sign in again'}</a></p>
       {reference && <p>Reference: <code>{reference}</code></p>}

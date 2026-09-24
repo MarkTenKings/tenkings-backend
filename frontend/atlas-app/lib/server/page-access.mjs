@@ -7,7 +7,8 @@ const boundaryCodes = new Set(['STAFF_ACCESS_NOT_ENABLED', 'ACCESS_CONFIGURATION
 const databaseCodes = new Set(['P1000', 'P1001', 'P1002', 'P1003', 'P1008', 'P1010', 'P1011', 'P1017', 'P2010', 'P2024', 'P2028', 'P2037']);
 function diagnosis(error, stage, env) {
   const code = isBoundaryError(error) && boundaryCodes.has(error.code) ? error.code
-    : databaseCodes.has(error?.code) ? error.code : stage === 'CONTENT_SECURITY_POLICY' ? 'CONTENT_SECURITY_POLICY_INVALID' : 'UNCLASSIFIED';
+    : databaseCodes.has(error?.code) ? error.code : databaseCodes.has(error?.errorCode) ? error.errorCode
+      : stage === 'CONTENT_SECURITY_POLICY' ? 'CONTENT_SECURITY_POLICY_INVALID' : 'UNCLASSIFIED';
   const local = ['ATLAS_CONNECTED_LOCAL_FIXTURE', 'ATLAS_LOCAL_SYNTHETIC', 'ATLAS_LOCAL_POSTGRES'].some(key => env[key] === '1');
   // STAFF_ACCESS_NOT_ENABLED also covers a changed database control binding.
   // That code alone cannot establish that this deployment was disabled.

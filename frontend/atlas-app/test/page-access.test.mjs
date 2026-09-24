@@ -43,10 +43,10 @@ test('configuration errors get their own safe category while ingress remains den
   }
 });
 test('Prisma and unknown failures retain only allowlisted diagnostics, never raw errors or context', async () => {
-  for (const code of ['P2024', sensitive, undefined]) {
-    const failure = Object.assign(new Error(sensitive), { code, meta: { query: sensitive }, cause: new Error(sensitive) });
+  for (const [property, code] of [['code', 'P2024'], ['errorCode', 'P1001'], ['code', sensitive], ['code', undefined]]) {
+    const failure = Object.assign(new Error(sensitive), { [property]: code, meta: { query: sensitive }, cause: new Error(sensitive) });
     const f = fixture({ databaseError: failure }); const result = await f.access(f.ctx);
-    assert.equal(f.logs[0].code, code === 'P2024' ? 'P2024' : 'UNCLASSIFIED');
+    assert.equal(f.logs[0].code, ['P2024', 'P1001'].includes(code) ? code : 'UNCLASSIFIED');
     assert.deepEqual(Object.keys(f.logs[0]).sort(), ['event', 'reference', 'kind', 'stage', 'code', 'status'].sort());
     assert.equal(f.logs[0].reference, result.props.accessFailure.reference);
     assert.match(result.props.accessFailure.reference, /^[a-f0-9-]{36}$/);
