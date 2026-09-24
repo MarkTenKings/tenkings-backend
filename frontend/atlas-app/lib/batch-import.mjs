@@ -2,6 +2,26 @@ const BASE = '/api/staff/manual-intake/cards';
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
 const hex = bytes => [...new Uint8Array(bytes)].map(value => value.toString(16).padStart(2, '0')).join('');
+const phases = new Set(['SAVE_CARD_INTENT','CREATE_CARD','SAVE_CARD_ID','READ_FRONT_BYTES','READ_BACK_BYTES','HASH_FRONT_BYTES','HASH_BACK_BYTES','SAVE_HASHES','READ_FRONT_JOURNAL','READ_BACK_JOURNAL','READ_FRONT_CARD','READ_BACK_CARD','RESUME_FRONT_UPLOAD','RESUME_BACK_UPLOAD','PREPARE_FRONT_UPLOAD','PREPARE_BACK_UPLOAD','UPLOAD_FRONT','UPLOAD_BACK','VERIFY_PAIR','ENQUEUE_CARD','SAVE_QUEUE']);
+const exceptionNames = new Set(['Error','TypeError','RangeError','AbortError','DataCloneError','InvalidStateError','NotReadableError','NotSupportedError','OperationError','QuotaExceededError','SecurityError','TimeoutError','TransactionInactiveError','UnknownError']);
+const safeCode = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,100}$/.test(value) ? value : 'BATCH_IMPORT_INTERRUPTED';
+const safeId = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value) ? value : null;
+const storageFailure = cause => Object.assign(new Error('BATCH_IMPORT_STORAGE'), { code: 'BATCH_IMPORT_STORAGE', name: exceptionNames.has(cause?.name) ? cause.name : 'Error' });
+export function batchImportFailureDetails(item) {
+  if (!item?.code) return null;
+  return { code: safeCode(item.code), phase: phases.has(item.failure?.phase) ? item.failure.phase : 'UNKNOWN',
+    exceptionName: exceptionNames.has(item.failure?.exceptionName) ? item.failure.exceptionName : 'Error' };
+}
+/** Deliberately excludes photo bytes, filenames, hashes, labels, staff/session
+ * authority and raw exception messages. IDs are exact operation correlation. */
+export function batchImportDiagnostics(batch) {
+  const side = (item, name) => ({ saved: item.files?.[name] instanceof Blob,
+    bytes: item.files?.[name] instanceof Blob ? item.files[name].size : null, hashSaved: /^[a-f0-9]{64}$/.test(item.hashes?.[name] ?? '') });
+  return { version: 1, items: (batch?.items ?? []).map((item, index) => ({ ordinal: index + 1,
+    createId: safeId(item.createId), enqueueId: safeId(item.enqueueId), cardId: safeId(item.cardId), done: item.done === true,
+    failure: batchImportFailureDetails(item), sides: { FRONT: side(item, 'FRONT'), BACK: side(item, 'BACK') } })),
+    partialPair: { FRONT: batch?.draft?.files?.FRONT instanceof Blob, BACK: batch?.draft?.files?.BACK instanceof Blob } };
+}
 
 /** Named import is optional. This path still requires explicit matching stems. */
 export function pairBatchPhotos(files) {
@@ -32,15 +52,15 @@ export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThi
   const opened = new Promise((resolve, reject) => {
     const request = indexedDB.open('atlas-batch-originals-v1', 1);
     request.onupgradeneeded = () => request.result.createObjectStore('imports');
-    request.onsuccess = () => resolve(request.result); request.onerror = () => reject(Object.assign(new Error('BATCH_IMPORT_STORAGE'), { code: 'BATCH_IMPORT_STORAGE' }));
+    request.onsuccess = () => resolve(request.result); request.onerror = () => reject(storageFailure(request.error));
   });
   async function transaction(mode, operation) {
     const db = await opened;
     return new Promise((resolve, reject) => {
       const tx = db.transaction('imports', mode), store = tx.objectStore('imports'); let value;
-      tx.oncomplete = () => resolve(value); tx.onerror = tx.onabort = () => reject(Object.assign(new Error('BATCH_IMPORT_STORAGE'), { code: 'BATCH_IMPORT_STORAGE' }));
+      tx.oncomplete = () => resolve(value); tx.onerror = tx.onabort = event => reject(storageFailure(event.target.error ?? tx.error));
       try { operation(store, result => { value = result; }); }
-      catch { tx.abort(); reject(Object.assign(new Error('BATCH_IMPORT_STORAGE'), { code: 'BATCH_IMPORT_STORAGE' })); }
+      catch (error) { tx.abort(); reject(storageFailure(error)); }
     });
   }
   return {
@@ -73,33 +93,41 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
     check(index >= 0, 'BATCH_IMPORT_MISSING'); batch.items[index] = structuredClone(item); await write(batch);
   });
   async function processItem(item) {
-    item.code = null;
+    item.code = null; item.failure = null;
+    const step = async (phase, operation) => {
+      try { return await operation(); }
+      catch (error) { throw Object.assign(new Error('Saved upload step did not finish'), { code: safeCode(error?.code), status: error?.status,
+        diagnostic: { phase, exceptionName: exceptionNames.has(error?.name) ? error.name : 'Error' } }); }
+    };
     try {
       if (!item.cardId) {
-        item.started = true; await saveItem(item);
+        item.started = true; await step('SAVE_CARD_INTENT', () => saveItem(item));
         if (disposed) return;
-        const created = await post(BASE, { requestId: item.createId, label: item.label });
-        check(created.card?.cardId, 'BATCH_IMPORT_CREATE_UNCERTAIN'); item.cardId = created.card.cardId; await saveItem(item);
+        const created = await step('CREATE_CARD', async () => { const result = await post(BASE, { requestId: item.createId, label: item.label }); check(result.card?.cardId, 'BATCH_IMPORT_CREATE_UNCERTAIN'); return result; });
+        item.cardId = created.card.cardId; await step('SAVE_CARD_ID', () => saveItem(item));
       }
       for (const side of ['FRONT', 'BACK']) {
-        if (!item.hashes[side]) item.hashes[side] = hex(await cryptoImpl.subtle.digest('SHA-256', await item.files[side].arrayBuffer()));
+        if (!item.hashes[side]) {
+          const bytes = await step(`READ_${side}_BYTES`, () => item.files[side].arrayBuffer());
+          item.hashes[side] = await step(`HASH_${side}_BYTES`, async () => hex(await cryptoImpl.subtle.digest('SHA-256', bytes)));
+        }
       }
-      await saveItem(item);
+      await step('SAVE_HASHES', () => saveItem(item));
       const prepareSide = async side => {
         if (disposed) return;
-        const pending = (await intake.pending()).filter(entry => entry.value.kind === 'upload' && entry.value.cardId === item.cardId && entry.value.input.side === side);
+        const pending = await step(`READ_${side}_JOURNAL`, async () => (await intake.pending()).filter(entry => entry.value.kind === 'upload' && entry.value.cardId === item.cardId && entry.value.input.side === side));
         check(pending.length <= 1, 'BATCH_IMPORT_UPLOAD_CONFLICT');
         if (pending.length) {
           check(pending[0].value.input.sha256 === item.hashes[side], 'BATCH_IMPORT_UPLOAD_CONFLICT');
-          await intake.resume(pending[0].id); return;
+          await step(`RESUME_${side}_UPLOAD`, () => intake.resume(pending[0].id)); return;
         }
-        const current = await intake.read(item.cardId), slot = current.card.sides[side];
+        const slot = await step(`READ_${side}_CARD`, async () => (await intake.read(item.cardId)).card.sides[side]);
         if (slot.upload) {
           check(slot.upload.plan.expected.sha256 === item.hashes[side], 'BATCH_IMPORT_UPLOAD_CONFLICT');
           if (slot.upload.source) return;
-          await intake.prepareSaved(item.cardId, slot.upload.uploadId); return;
+          await step(`PREPARE_${side}_UPLOAD`, () => intake.prepareSaved(item.cardId, slot.upload.uploadId)); return;
         }
-        await intake.upload(item.cardId, side, slot.version, item.files[side]);
+        await step(`UPLOAD_${side}`, () => intake.upload(item.cardId, side, slot.version, item.files[side]));
       };
       const outcomes = await Promise.allSettled(['FRONT', 'BACK'].map(async side => {
         for (let attempt = 0; attempt < 30; attempt++) {
@@ -115,13 +143,12 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
       }));
       const failed = outcomes.find(outcome => outcome.status === 'rejected'); if (failed) throw failed.reason;
       if (disposed) return;
-      const { card } = await intake.read(item.cardId);
-      check(card.ready && ['FRONT', 'BACK'].every(side => card.sides[side].upload?.plan.expected.sha256 === item.hashes[side]), 'BATCH_IMPORT_UPLOAD_CONFLICT');
-      await post('/api/staff/manual-connected/cards/batch', { actionId: item.enqueueId, cards: [{ cardId: item.cardId, sourceHash: card.sourceHash }] });
-      item.done = true; item.files = null; item.code = null; await saveItem(item);
+      const { card } = await step('VERIFY_PAIR', async () => { const result = await intake.read(item.cardId); check(result.card.ready && ['FRONT', 'BACK'].every(side => result.card.sides[side].upload?.plan.expected.sha256 === item.hashes[side]), 'BATCH_IMPORT_UPLOAD_CONFLICT'); return result; });
+      await step('ENQUEUE_CARD', () => post('/api/staff/manual-connected/cards/batch', { actionId: item.enqueueId, cards: [{ cardId: item.cardId, sourceHash: card.sourceHash }] }));
+      item.done = true; item.files = null; item.code = null; item.failure = null; await step('SAVE_QUEUE', () => saveItem(item));
       if (!disposed) { try { onQueued({ cardId: item.cardId, createId: item.createId, enqueueId: item.enqueueId, label: item.label }); } catch { /* Queue confirmation is already durable. */ } }
     } catch (error) {
-      item.code = /^[A-Z][A-Z0-9_]{1,100}$/.test(error?.code ?? '') ? error.code : 'BATCH_IMPORT_INTERRUPTED';
+      item.code = safeCode(error?.code); item.failure = error?.diagnostic ?? { phase: 'UNKNOWN', exceptionName: exceptionNames.has(error?.name) ? error.name : 'Error' };
       await saveItem(item);
       if ([401, 403].includes(error?.status)) authBlocked = true;
     }

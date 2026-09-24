@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createBrowserIntakeJournal, createIntakeClient } from '@atlas/manual-intake/client';
 import RapidCardCamera from '../../atlas-shared/RapidCardCamera.jsx';
-import { createBatchImporter, createBrowserBatchImportJournal, previewOrderedBatchPhotos } from '../lib/batch-import.mjs';
+import { batchImportDiagnostics, batchImportFailureDetails, createBatchImporter, createBrowserBatchImportJournal, previewOrderedBatchPhotos } from '../lib/batch-import.mjs';
 import { manualRequest, manualMessage } from '../lib/manual-client.mjs';
 import styles from './BatchGrading.module.css';
 const copy={BATCH_IMPORT_COUNT:'Choose Front and Back photos for up to 100 cards at a time.',BATCH_IMPORT_PAIR_NAMES:'For bulk import, name each pair card-name_front.jpg and card-name_back.jpg. Use the two photo slots for any filenames.',BATCH_IMPORT_MISSING_SIDE:'Each bulk card needs a matching Front and Back file.',BATCH_IMPORT_DUPLICATE_SIDE:'Two files claim the same side. Give every physical card its own name.',BATCH_IMPORT_PENDING:'Resume the saved upload first.',BATCH_IMPORT_BUSY:'Batch intake is open in another tab. Use that tab or close it and reload this page.',BATCH_IMPORT_STORAGE:'This device could not save the photo. Free some browser storage, then try again. Your saved photos are kept.',BATCH_IMPORT_SIDE_SAVED:'This side is already saved. Capture the other side of the same card.',BATCH_IMPORT_PAIR_FILES:'Choose an original photo under 64 MiB.',BATCH_IMPORT_ORDER_COUNT:'Choose an even number of photos, up to 100 Front/Back pairs. Review their order before adding them.'};
 const emptyPair=()=>({FRONT:null,BACK:null});
+const uploadMessage=item=>copy[item.code]??({BATCH_IMPORT_INTERRUPTED:'This saved photo could not continue. Resume saved uploads to retry the same card.',INTAKE_JOURNAL_UNAVAILABLE:'This browser could not open its saved upload records. Keep your photos here and resume the saved uploads.',BATCH_IMPORT_CREATE_UNCERTAIN:'The card creation reply was interrupted. Resume saved uploads to recover the same card.'})[item.code]??manualMessage({code:item.code});
 export default function BatchImport({staff,onImported,enabled}){
   const importer=useRef(null),notify=useRef(onImported),lifetime=useRef(null),selection=useRef(emptyPair()),staging=useRef(false),recovered=useRef(false);
   notify.current=onImported;
@@ -77,6 +78,13 @@ export default function BatchImport({staff,onImported,enabled}){
     try{refreshSession.current?.();await owner.whenIdle();await owner.run();await notify.current?.();}catch(failure){if(lifetime.current===token)setError(copy[failure.code]??manualMessage(failure));}
     finally{if(lifetime.current===token)setResuming(false);}
   }
+  async function downloadDiagnostics(){
+    try{
+      const saved=await importer.current?.read();if(!saved)return;
+      const url=URL.createObjectURL(new Blob([JSON.stringify(batchImportDiagnostics(saved),null,2)+'\n'],{type:'application/json'}));
+      const link=document.createElement('a');link.href=url;link.download='atlas-upload-diagnostics.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }catch(failure){setError(copy[failure.code]??manualMessage(failure));}
+  }
   const done=batch?.items.filter(item=>item.done).length??0,total=batch?.items.length??0;
   const disabled=!ready||!enabled||saving||staff.role!=='REVIEWER',attention=batch?.items.some(item=>!item.done&&item.code);
   return <section className={styles.importer} aria-label="Automatic batch photo intake">
@@ -101,7 +109,8 @@ export default function BatchImport({staff,onImported,enabled}){
     {error&&<p className={styles.error} role="alert">{error}</p>}
     {batch&&<><div className={styles.intakeBar}><span aria-live="polite">{done} queued · {total-done} saved for upload</span>
       {attention&&<button type="button" disabled={resuming||!ready||!enabled||staff.role!=='REVIEWER'} onClick={()=>void resume()}>{resuming?'Checking saved uploads…':'Resume saved uploads'}</button>}</div>
-      <div className={styles.pairRoster}>{batch.items.slice(-100).map(item=><div key={item.createId}><span>{item.done?'✓':item.code?'!':'·'}</span><strong>{item.label}</strong><small>{item.done?'Queued for Astra':item.code?'Upload needs attention':item.started?'Uploading originals…':'Saved for upload'}</small></div>)}</div></>}
+      <div className={styles.pairRoster}>{batch.items.slice(-100).map(item=>{const failure=batchImportFailureDetails(item);return <div key={item.createId}><span>{item.done?'✓':item.code?'!':'·'}</span><strong>{item.label}</strong><small className={failure?styles.pairFailure:undefined}>{item.done?'Queued for Astra':failure?uploadMessage(item):item.started?'Uploading originals…':'Saved for upload'}{failure&&<code>{failure.code}{failure.phase!=='UNKNOWN'?` · ${failure.phase}`:''}{failure.exceptionName!=='Error'?` · ${failure.exceptionName}`:''}</code>}</small></div>;})}</div>
+      <details className={styles.uploadDiagnostics}><summary>Upload diagnostics</summary><p>Download saved progress and error details for troubleshooting. No photos, filenames, or sign-in credentials are included.</p><button type="button" disabled={!ready} onClick={()=>void downloadDiagnostics()}>Download upload diagnostics</button></details></>}
   </section>;
 }
 

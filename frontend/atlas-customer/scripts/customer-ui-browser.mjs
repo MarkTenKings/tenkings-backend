@@ -100,9 +100,31 @@ const context = await browser.newContext({ viewport: { width: 390, height: 844 }
 page.on('pageerror', error => errors.push(error.message));
 await context.route(/^https?:\/\//, route => { assert.equal(new URL(route.request().url()).origin, origin, 'External requests are prohibited'); return route.continue(); });
 const shot = name => page.screenshot({ path: join(output, `${name}.png`), fullPage: true });
+async function serviceLayout(width) {
+    await page.setViewportSize({ width, height: 900 });
+    const layout = await page.evaluate(() => {
+        const heading = document.querySelector('.service-choice-title'), spans = [...heading.children].map(element => { const rect = element.getBoundingClientRect(); return { y: rect.y, bottom: rect.bottom }; });
+        return { title: heading.textContent, spans, overflow: document.documentElement.scrollWidth > innerWidth,
+            films: [...document.querySelectorAll('.service-film video')].map(element => { const rect = element.getBoundingClientRect(); return { ratio: rect.width / rect.height, fit: getComputedStyle(element).objectFit }; }),
+            labels: [...document.querySelectorAll('.service-card')].map(card => ({ text: card.querySelector('.service-speed-label h2').textContent, bottom: card.querySelector('.service-speed-label').getBoundingClientRect().bottom, filmTop: card.querySelector('.service-film').getBoundingClientRect().top })),
+            metrics: [...document.querySelectorAll('.service-metrics')].map(element => [...element.querySelectorAll('dd strong')].map(value => parseFloat(getComputedStyle(value).fontSize))) };
+    });
+    assert.equal(layout.title, 'Two Speeds. Same Finish.'); assert.equal(layout.overflow, false, `No horizontal overflow at ${width}px`);
+    if (width > 700) assert.equal(layout.spans[0].y, layout.spans[1].y, 'Desktop heading stays on one line');
+    else assert(layout.spans[1].y >= layout.spans[0].bottom - 1, 'Mobile heading stacks the two phrases');
+    for (const film of layout.films) { assert(Math.abs(film.ratio - 16 / 9) < .01, 'Film keeps its entire 16:9 frame'); assert.equal(film.fit, 'contain'); }
+    assert.deepEqual(layout.labels.map(label => label.text), ['Super Fast', 'Fast']);
+    for (const label of layout.labels) assert(label.bottom <= label.filmTop + 1, 'Speed labels appear above their films');
+    for (const [price, speed] of layout.metrics) { assert.equal(price, speed, 'Price and speed have equal type size'); assert(price >= 34); }
+    return { width, ...layout };
+}
 try {
     await page.goto(`${origin}/?kiosk=synthetic-entry`);
-    await page.getByRole('heading',{name:'Kiosk drop-off'}).waitFor(); await shot('00-service-mobile'); await page.setViewportSize({width:1280,height:900}); await shot('00-service-desktop'); await page.setViewportSize({width:390,height:844});
+    await page.getByRole('heading',{name:'Super Fast', exact:true}).waitFor();
+    assert.equal(await page.getByRole('navigation', {name:'Submission progress'}).count(), 0, 'Initial anonymous service comparison has no progress tracker');
+    const serviceLayouts = [];
+    for (const width of [320, 390, 820, 1280]) { serviceLayouts.push(await serviceLayout(width)); if(width===390)await shot('00-service-mobile'); if(width===1280)await shot('00-service-desktop'); }
+    await page.setViewportSize({width:390,height:844});
     await page.getByRole('button', { name: 'Continue with your phone' }).click();
     await page.getByRole('textbox', { name: 'Mobile number' }).fill('2025550141');
     await page.getByRole('button', { name: 'Send verification code' }).click();
@@ -110,6 +132,7 @@ try {
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.getByRole('heading', { name: 'Front. Back. Next.' }).waitFor();
     await page.getByRole('button', {name:'Close camera'}).click();
+    await page.getByRole('navigation', {name:'Submission progress'}).waitFor();
     assert.equal(await page.getByRole('textbox', {name:'Card description'}).count(), 0);
     for (let i = 1; i <= 2; i++) {
         await page.getByLabel('Front photo', { exact: true }).setInputFiles({ name: `IMG_${i}F.jpg`, mimeType: 'image/jpeg', buffer: Buffer.concat([readFileSync(join(root,'public/brand/cards/kobe.jpg')),Buffer.from(String(i))]) });
@@ -188,12 +211,54 @@ try {
     await page.evaluate(() => window.__render('cold-checkout-200')); await page.getByRole('heading',{name:'Your draft is saved.'}).waitFor(); assert.equal(await page.getByRole('button',{name:'Get exact total'}).count(),0); await page.getByRole('link',{name:'Back to your account →'}).waitFor(); await shot('14-saved-draft-real-cold-dto');
     await page.evaluate(() => window.__render('cold-checkout-unknown')); await page.getByRole('button',{name:'Check payment status'}).waitFor(); assert.equal(await page.getByRole('heading',{name:'Your draft is saved.'}).count(),0,'Cold blockers must not hide an unresolved original payment');
     await page.evaluate(() => window.__render('cold-checkout-paid')); await page.getByRole('heading',{name:'Your cards have a place.'}).waitFor(); assert.equal(await page.getByRole('heading',{name:'Your draft is saved.'}).count(),0,'Cold blockers must not hide a paid receipt');
+    const directoryContext = await browser.newContext({viewport:{width:390,height:844},geolocation:{latitude:34.09,longitude:-118.4},permissions:['geolocation']}), directory = await directoryContext.newPage();
+    await directoryContext.route(/^https?:\/\//, route => { assert.equal(new URL(route.request().url()).origin, origin, 'External requests are prohibited'); return route.continue(); });
+    await directory.goto(origin);
+    await directory.evaluate(() => {
+      const api=window.__request; window.__directoryMode='empty'; window.__directoryPaths=[];
+      window.__request=async(path,...args)=>{if(path.startsWith('/intake/locations')){window.__directoryPaths.push(path);if(window.__directoryMode==='empty')return {locations:[]};if(window.__directoryMode==='contact')return {locations:[],dealerContacts:[window.__dealerContact]};if(window.__directoryMode==='error')throw Error('Synthetic directory outage');if(window.__directoryMode==='slow')return new Promise(resolve=>{window.__finishDirectory=()=>api(path,...args).then(resolve);});}return api(path,...args);};
+      window.__render();
+    });
+    await directory.getByRole('button',{name:'Find an Authorized Dealer →'}).click();
+    await directory.getByRole('heading',{name:'Find a Atlas Submission Station at an Authorized Dealer near you'}).waitFor();
+    await directory.getByText('No ATLAS Submission Stations found yet.',{exact:true}).waitFor();
+    assert(await directory.getByRole('button',{name:'Continue with your phone'}).isDisabled(), 'An empty directory cannot enable kiosk continuation');
+    await directory.getByRole('textbox',{name:'ZIP code or city'}).fill('90210'); await directory.getByRole('button',{name:'Search',exact:true}).click();
+    await directory.getByText('No ATLAS Submission Stations found for this search.',{exact:true}).waitFor();
+    await directory.getByRole('button',{name:'Use my location'}).click();
+    await directory.waitForFunction(()=>window.__directoryPaths.at(-1).includes('lat='));
+    assert.equal(await directory.getByRole('textbox',{name:'ZIP code or city'}).inputValue(),'');
+    assert.equal(new URL(await directory.evaluate(()=>window.__directoryPaths.at(-1)),origin).searchParams.has('query'),false,'Nearby search clears the previous text filter');
+    await directory.evaluate(()=>{window.__directoryMode='full';}); await directory.getByRole('button',{name:'Search',exact:true}).click();
+    await directory.getByRole('heading',{name:'Synthetic Harbor Kiosk'}).waitFor();
+    await directory.evaluate(()=>{window.__directoryMode='error';}); await directory.getByRole('button',{name:'Search',exact:true}).click();
+    await directory.getByText('We couldn’t load ATLAS Submission Stations. Please try again.').waitFor();
+    assert.equal(await directory.locator('.location-option,.location-empty').count(),0,'A failed search shows neither stale locations nor a false empty-result message');
+    await directory.evaluate(()=>{window.__directoryMode='slow';}); await directory.getByRole('button',{name:'Search',exact:true}).click();
+    await directory.waitForFunction(()=>Boolean(window.__finishDirectory));
+    await directory.evaluate(()=>{window.__directoryMode='empty';}); await directory.getByRole('button',{name:'Use my location'}).click();
+    await directory.getByText('No ATLAS Submission Stations found yet.',{exact:true}).waitFor();
+    await directory.evaluate(async()=>{await window.__finishDirectory();});
+    assert.equal(await directory.locator('.location-option').count(),0,'An older search cannot overwrite the newer location result');
+    await directory.screenshot({path:join(output,'00-service-empty-directory-mobile.png'),fullPage:true});
+    const approvedContact = JSON.parse(readFileSync(join(root, '../atlas-public/config/authorized-dealers-20260923.json'), 'utf8')).dealers[0];
+    await directory.evaluate(contact => { window.__dealerContact = contact; window.__directoryMode = 'contact'; }, { id: approvedContact.id, name: approvedContact.name, address: approvedContact.address, website: approvedContact.website, directionsUrl: `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(Object.values(approvedContact.address).join(', '))}` });
+    await directory.getByRole('textbox',{name:'ZIP code or city'}).fill('95678'); await directory.getByRole('button',{name:'Search',exact:true}).click();
+    await directory.getByRole('heading',{name:'CenterCourt Cards',exact:true}).waitFor();
+    await directory.getByText('Submission station setup in progress',{exact:true}).waitFor();
+    assert.equal(await directory.locator('.dealer-contact button,.location-empty').count(),0,'An approved contact neither pretends to be selectable nor shows an empty-directory message');
+    assert(await directory.getByRole('button',{name:'Continue with your phone'}).isDisabled(),'A contact-only dealer cannot enable kiosk continuation');
+    assert.equal(await directory.getByRole('link',{name:'Visit dealer website ↗'}).getAttribute('href'),approvedContact.website);
+    await directory.screenshot({path:join(output,'00-authorized-dealer-contact-mobile.png'),fullPage:true});
+    await directoryContext.close();
     const rapidContext = await browser.newContext({viewport:{width:390,height:844}}), rapid = await rapidContext.newPage();
     await rapid.goto(origin); await rapid.evaluate(() => {
       window.__fixture.signedIn=true; window.__fixture.customer.profile={}; window.__fixture.calls=[]; window.__save();
       const api=window.__request; window.__request=async(path,options)=>{if(path==='/intake/drafts'&&options?.body){window.__blockedDraft=true;return new Promise(()=>{});}return api(path,options);};
       window.__render();
     });
+    await rapid.getByRole('heading',{name:'Super Fast',exact:true}).waitFor();
+    assert.equal(await rapid.getByRole('navigation',{name:'Submission progress'}).count(),0,'Initial signed-in service comparison has no progress tracker');
     await rapid.getByRole('button',{name:'Choose mail-in →'}).click(); await rapid.getByRole('button',{name:/^Continue to camera/}).click();
     await rapid.getByRole('button',{name:'Capture Front'}).waitFor(); const startedAt=Date.now();
     for(let i=0;i<10;i++){await rapid.getByRole('button',{name:'Capture Front'}).click();await rapid.getByRole('button',{name:'Capture Back'}).click();}
@@ -208,7 +273,7 @@ try {
     await rapid.getByRole('button',{name:'Keep capturing'}).click(); await rapid.getByRole('button',{name:'Capture Front'}).click(); await rapid.getByRole('button',{name:'Capture Back'}).waitFor();
     await rapid.reload(); await rapid.getByRole('button',{name:'Continue with the back'}).waitFor();
     await rapidContext.close();
-    writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'PASS', syntheticOnly: true, browserErrors: errors, kiosk: evidence, mail, coldCheckout: {actualServiceBlockers:coldCheckout.blockers,savedCompletion:true,unknownPaymentPreserved:true,paidReceiptPreserved:true}, rapid: rapidEvidence }, null, 2) + '\n');
+    writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'PASS', syntheticOnly: true, browserErrors: errors, serviceLayouts, directory: {emptySelectionBlocked:true,nearbyClearsQuery:true,errorDistinctFromEmpty:true,staleResultIgnored:true,approvedDealerVisible:true,contactSelectionBlocked:true}, kiosk: evidence, mail, coldCheckout: {actualServiceBlockers:coldCheckout.blockers,savedCompletion:true,unknownPaymentPreserved:true,paidReceiptPreserved:true}, rapid: rapidEvidence }, null, 2) + '\n');
     process.stdout.write(JSON.stringify({ status: 'PASS', output, kiosk: evidence, mail }) + '\n');
 } catch (error) {
     await shot('failure'); writeFileSync(join(output, 'failure.json'), JSON.stringify({ error: error.message, browserErrors: errors, text: await page.locator('body').innerText() }, null, 2)); throw error;

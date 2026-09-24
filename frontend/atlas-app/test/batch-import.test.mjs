@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { pairBatchPhotos, createBatchImporter } from '../lib/batch-import.mjs';
+import { batchImportDiagnostics, batchImportFailureDetails, pairBatchPhotos, createBatchImporter } from '../lib/batch-import.mjs';
 const file = (name, content = name) => Object.assign(new Blob([content]), { name });
 function fixture(options = {}) {
   let saved = null, active = 0, peak = 0, loseCreate = false, loseEnqueue = false, busyFront = false, pauses=0;
@@ -201,4 +201,30 @@ test('ordered import requires even originals and explicitly reviewed pairs prese
   const f = fixture(), owner = f.importer(), saved = await owner.appendReviewedPairs(reviewed);
   assert.equal(await saved.items[0].files.FRONT.text(), 'front1'); assert.equal(await saved.items[1].files.BACK.text(), 'back2');
   await owner.whenIdle(); assert.equal(f.queued.size, 2); assert.equal(f.uploads.length, 4);
+});
+
+test('local hash failure retains exact card intent and safe stage/native name; resume creates no replacement', async () => {
+  let failing = true;
+  const f = fixture({ cryptoImpl: { randomUUID, subtle: { digest: (...args) => {
+    if (failing) throw new DOMException('PRIVATE RAW ERROR MUST NOT BE RETAINED', 'OperationError');
+    return webcrypto.subtle.digest(...args);
+  } } } }), owner = f.importer();
+  await owner.appendPair(file('private-front.jpg'), file('private-back.jpg')); await owner.whenIdle();
+  const before = (await owner.read()).items[0];
+  assert.deepEqual(batchImportFailureDetails(before), { code: 'BATCH_IMPORT_INTERRUPTED', phase: 'HASH_FRONT_BYTES', exceptionName: 'OperationError' });
+  assert(before.files.FRONT instanceof Blob); assert.equal(f.creates.size, 1); assert.equal(f.uploads.length, 0);
+  assert.equal(JSON.stringify(before).includes('PRIVATE RAW ERROR'), false);
+  failing = false; await owner.run(); const after = (await owner.read()).items[0];
+  assert.equal(after.cardId, before.cardId); assert.equal(after.createId, before.createId); assert.equal(after.enqueueId, before.enqueueId);
+  assert.equal(f.creates.size, 1); assert.equal(after.done, true); assert.equal(after.failure, null);
+});
+
+test('diagnostic export allowlists metadata and strips photo/name/hash/authority and raw failure text', () => {
+  const id=randomUUID(), source={items:[{createId:id,enqueueId:id,cardId:id,label:'PRIVATE CARD NAME',files:{FRONT:file('PRIVATE FILE','PRIVATE PHOTO BYTES')},hashes:{FRONT:'a'.repeat(64)},code:'PHOTO_HDR_UNSUPPORTED',failure:{phase:'UPLOAD_FRONT',exceptionName:'TypeError',message:'PRIVATE ERROR'},cookie:'PRIVATE COOKIE'}],draft:{files:{BACK:file('PRIVATE BACK')}}};
+  const exported=batchImportDiagnostics(source), encoded=JSON.stringify(exported);
+  assert.equal(exported.items[0].sides.FRONT.hashSaved,true);assert.equal(exported.items[0].sides.FRONT.saved,true);assert.equal(exported.items[0].cardId,id);
+  assert.equal(exported.partialPair.BACK,true);assert(!encoded.includes('PRIVATE'));assert(!encoded.includes('a'.repeat(64)));assert(!encoded.includes('cookie'));assert(!encoded.includes('files'));
+  assert.deepEqual(batchImportFailureDetails({code:'PRIVATE EXCEPTION MESSAGE',failure:{phase:'PRIVATE PHASE',exceptionName:'PRIVATE NATIVE MESSAGE'}}),{code:'BATCH_IMPORT_INTERRUPTED',phase:'UNKNOWN',exceptionName:'Error'});
+  assert.deepEqual(batchImportFailureDetails({code:'PHOTO_HDR_UNSUPPORTED'}),{code:'PHOTO_HDR_UNSUPPORTED',phase:'UNKNOWN',exceptionName:'Error'});
+  assert.equal(batchImportFailureDetails({code:{toString:()=> 'PHOTO_HDR_UNSUPPORTED',private:'secret'}}).code,'BATCH_IMPORT_INTERRUPTED');
 });

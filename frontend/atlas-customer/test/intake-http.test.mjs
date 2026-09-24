@@ -39,6 +39,9 @@ test('checkout refuses browser prices, account selectors and arbitrary reader ID
 test('public location listing does not fabricate a customer and bounds location input', async () => {
   const f = fixture(); assert.equal((await f.run('/api/customer/intake/locations?query=90210')).statusCode, 200);
   assert.deepEqual(f.calls, [{ directory: { query: '90210' } }]);
+  assert.equal((await f.run('/api/customer/intake/locations?query=Roseville&lat=38.7521&lng=-121.288&entry=authorized-entry')).statusCode, 200);
+  assert.deepEqual(f.calls[1], { directory: { query: 'Roseville', lat: '38.7521', lng: '-121.288', entry: 'authorized-entry' } });
+  assert.equal((await f.run('/api/customer/intake/locations?lat=1&lat=2&lng=0')).statusCode, 400);
   assert.equal((await f.run('/api/customer/intake/locations?lat=95&lng=0')).statusCode, 400);
   assert.equal((await f.run('/api/customer/intake/locations?lat=1')).statusCode, 400);
   assert.equal((await f.run('/api/customer/intake/locations?accountId=forged')).statusCode, 400);
@@ -65,4 +68,47 @@ test('paid order tracking and deposit declaration retain ownership gateway and e
  assert.equal((await f.run(`/api/customer/orders/${orderId}/deposit`,{cardId,requestId},'bad')).statusCode,403);
  assert.equal((await f.run('/api/customer/orders?accountId=forged')).statusCode,400);
  assert.equal((await f.run(`/api/customer/orders?cursor=${orderId}&cursor=${orderId}`)).statusCode,400);
+});
+
+
+test('private directory filters ZIP and city, sorts by location, and preserves only returned registry entries', async t => {
+  const locations = [
+    { id: 'north-fixture', name: 'Northern fixture kiosk', address: { line1: '1 Fixture St', city: 'Roseville', region: 'CA', postalCode: '95678', country: 'US' }, position: { lat: 38.75, lng: -121.28 } },
+    { id: 'south-fixture', name: 'Southern fixture kiosk', address: { line1: '2 Fixture St', city: 'Los Angeles', region: 'CA', postalCode: '90001', country: 'US' }, position: { lat: 34.05, lng: -118.24 } },
+  ];
+  const calls = []; let returned = locations;
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, 'https://private.example/internal/customer-service/v1/dealer-locations');
+    assert.equal(options.method, 'POST');
+    calls.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ locations: returned, resolvedLocationId: 'north-fixture' }), { status: 200 });
+  });
+  const services = privateCustomerServices({ ATLAS_CUSTOMER_SERVICE_URL: 'https://private.example', ATLAS_CUSTOMER_SERVICE_KEY: Buffer.alloc(32, 7).toString('base64') });
+  const zip = await services.directory({ query: ' 95678 ' });
+  assert.deepEqual(zip.locations.map(row => row.id), ['north-fixture']);
+  assert.deepEqual(zip.dealerContacts.map(row => row.name), ['CenterCourt Cards']);
+  assert.equal(zip.dealerContacts[0].address.line1, '307 Lincoln St');
+  assert.equal(zip.dealerContacts[0].address.postalCode, '95678');
+  assert.equal(zip.dealerContacts[0].website, 'https://www.centercourtcardsroseville.com/');
+  assert.equal(zip.dealerContacts[0].position, null);
+  assert.equal(zip.dealerContacts[0].distanceMiles, null);
+  for (const field of ['schedule', 'nextCollection', 'projectedReturn', 'entryUrl', 'terminalId', 'packagePrinterId', 'authorizationExpiresAt']) assert.equal(Object.hasOwn(zip.dealerContacts[0], field), false);
+  assert.equal(zip.resolvedLocationId, 'north-fixture');
+  const city = await services.directory({ query: 'los angeles' });
+  assert.deepEqual(city.locations.map(row => row.id), ['south-fixture']);
+  assert.deepEqual(city.dealerContacts, []);
+  const nearby = await services.directory({ lat: '34.05', lng: '-118.24', entry: 'authorized-entry' });
+  assert.deepEqual(nearby.locations.map(row => row.id), ['south-fixture', 'north-fixture']);
+  assert.equal(nearby.locations[0].distanceMiles, 0);
+  assert.ok(nearby.locations[1].distanceMiles > 300);
+  assert.deepEqual((await services.directory({ query: 'unconfigured place' })).locations, []);
+  assert.deepEqual(calls[0], { input: { query: ' 95678 ' } });
+  assert.deepEqual(calls[2], { input: { lat: '34.05', lng: '-118.24', entry: 'authorized-entry' } });
+  returned = [];
+  const emptyRegistry = await services.directory({ lat: '34.05', lng: '-118.24' });
+  assert.deepEqual(emptyRegistry.locations, []);
+  assert.equal(emptyRegistry.dealerContacts.length, 1, 'An empty operational directory must not hide an approved dealer contact');
+  assert.equal(emptyRegistry.dealerContacts[0].distanceMiles, null, 'Unverified coordinates must not become a fabricated distance');
+  assert.equal((await services.directory({ query: 'roseville' })).dealerContacts.length, 1);
+  assert.deepEqual(locations.map(row => row.id), ['north-fixture', 'south-fixture']);
 });

@@ -6,6 +6,18 @@ import { productionConfig, cookie } from './config.mjs';
 import { deny } from './policy.mjs';
 import { twilioVerifyTransport } from './twilio.mjs';
 import { createCustomerServiceClient } from '@atlas/service-bridge/customer-service';
+import { selectLocations } from '@atlas/dealer-operations/directory';
+import approvedDealerDirectory from '../../../atlas-public/config/authorized-dealers-20260923.json' with { type: 'json' };
+
+// Owner-approved dealer contacts remain distinct from operational kiosk records.
+function dealerContacts(input) {
+    const now = Date.now();
+    return selectLocations(approvedDealerDirectory.dealers.filter(dealer => dealer.contactOnly
+        && Date.parse(dealer.authorizedAt) <= now
+        && (!dealer.authorizationExpiresAt || Date.parse(dealer.authorizationExpiresAt) > now))
+        .map(({ id, name, address, position, website }) => ({ id, name, address, position, website,
+            directionsUrl: `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(Object.values(address).join(', '))}` })), input);
+}
 
 export function privateCustomerServices(env) {
     const url = env.ATLAS_CUSTOMER_SERVICE_URL, encoded = env.ATLAS_CUSTOMER_SERVICE_KEY;
@@ -17,7 +29,10 @@ export function privateCustomerServices(env) {
     return {
         intake: { sign: call('intake-sign'), complete: call('intake-complete') },
         commerce: { checkout: call('commerce-checkout'), quote: call('commerce-quote'), pay: call('commerce-pay'), reconcile: call('commerce-reconcile') },
-        directory: input => client.call('dealer-locations', { input }),
+        async directory(input) {
+            const result = await client.call('dealer-locations', { input });
+            return { ...result, locations: selectLocations(result.locations, input), dealerContacts: dealerContacts(input) };
+        },
     };
 }
 let current;

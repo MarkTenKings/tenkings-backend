@@ -39,7 +39,7 @@ export async function fixture({ change = () => {}, little = false } = {}) {
   u16(22, 0xb001); u16(24, 4); u32(26, 1); u32(30, 2);
   u16(34, 0xb002); u16(36, 7); u32(38, 32); u32(42, 50);
   const tail = Buffer.concat([segment(226, Buffer.concat([ISO, spec.primaryIso])),
-    segment(226, Buffer.concat([ICC, Buffer.from([1, 1]), spec.icc])), ...spec.primaryExtra, spec.primary.subarray(2)]);
+    ...(spec.icc === null ? [] : [segment(226, Buffer.concat([ICC, Buffer.from([1, 1]), spec.icc]))]), ...spec.primaryExtra, spec.primary.subarray(2)]);
   const size = 2 + 4 + 4 + tiff.length + tail.length;
   u32(50, 0x00030000); u32(54, size); u32(70, secondary.length); u32(74, size - 10);
   spec.patchIndex({ tiff, u16, u32 });

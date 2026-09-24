@@ -62,7 +62,7 @@ export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card
     <header className={styles.header}><div><span className={styles.brand}>ATLAS <b>CAPTURE</b></span><p>{cardLabel}</p></div><button type="button" className={styles.close} onClick={onClose} disabled={busy} aria-label="Close camera">✕</button></header>
     <div className={styles.viewfinder} data-flash={flash}>
       <video ref={video} autoPlay muted playsInline aria-label="Live rear camera" onLoadedData={() => { if (stream.current && video.current?.videoWidth && !video.current?.paused) { starting.current = false; setState('ready'); } }} />
-      <div className={styles.guide} aria-hidden="true"><i/><i/><i/><i/><span>{side}</span></div>
+      <div className={styles.guide} aria-hidden="true"><i/><i/><i/><i/><span key={side} className={styles.sideCue}>{side}</span></div>
       <div className={styles.instruction} aria-live="polite"><strong>{side === 'FRONT' ? 'Front. Frame it. Capture.' : 'Flip it. Capture the back.'}</strong><span>Fill the guide. Keep every corner in view.</span></div>
       {state !== 'ready' && <div className={styles.paused}>{state === 'starting' ? 'Opening your camera…' : 'Your next card is waiting.'}</div>}
     </div>

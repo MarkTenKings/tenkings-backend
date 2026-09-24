@@ -40,3 +40,25 @@ test('JPEG HDR provenance binds full original, gain map, metadata, SDR base trea
   for (const mime of ['image/png', 'image/webp', 'image/heic']) assert.throws(() => parseOriginal({
     ...original, content: { ...original.content, mime } }));
 });
+
+test('EXIF-qualified sRGB JPEG provenance uses a distinct policy without weakening P3 or HEIC admission', () => {
+  const old = fixture(), original = structuredClone(old.original);
+  original.metadata.iccSha256 = null; original.metadata.colorSpace = 'sRGB';
+  const plan = planDecode(original, original.metadata, limits), frame = { ...old.frame,
+    originalDescriptorSha256: descriptorSha256(original), decodePlanSha256: descriptorSha256(plan),
+    treatment: { ...old.frame.treatment, policyVersion: 'atlas-jpeg-apple-exif-srgb-base-v1' } };
+  assert.deepEqual(parseDecodedFrame(frame, original, plan), frame);
+  for (const colorSpace of [null, 'srgb', 'Display P3', 'unknown']) {
+    const changed = structuredClone(original); changed.metadata.colorSpace = colorSpace;
+    assert.throws(() => parseOriginal(changed));
+  }
+  for (const policy of ['atlas-jpeg-apple-sdr-base-srgb-v1', 'atlas-heif-apple-sdr-base-v1', 'unmanaged'])
+    assert.throws(() => parseDecodedFrame({ ...frame, treatment: { ...frame.treatment, policyVersion: policy } }, original, plan));
+  assert.throws(() => parseDecodedFrame({ ...old.frame, treatment: frame.treatment }, old.original, old.plan));
+  const heic = structuredClone(original); heic.content.mime = 'image/heic'; heic.metadata.selection = { kind: 'primary-still-image', itemId: '1' };
+  heic.metadata.orientation = 1; heic.metadata.orientationSource = 'identity';
+  const heicPlan = planDecode(heic, heic.metadata, limits);
+  assert.throws(() => parseDecodedFrame({ ...frame, originalDescriptorSha256: descriptorSha256(heic),
+    decodePlanSha256: descriptorSha256(heicPlan), sourceToFrame: heicPlan.geometry.matrix,
+    raster: { ...frame.raster, dimensions: { width: 4, height: 3 } } }, heic, heicPlan));
+});

@@ -8,6 +8,7 @@ const MPF = Buffer.from('MPF\0');
 const ISO = Buffer.from('urn:iso:std:iso:ts:21496:-1\0');
 const XMP = Buffer.from('http://ns.adobe.com/xap/1.0/\0');
 const ICC = Buffer.from('ICC_PROFILE\0');
+const EXIF = Buffer.from('Exif\0\0');
 export const APPLE_P3_SHA256 = '20789fdbea9835251a4f0796c8bf45cbd964896044886540da21ffc7457af0ab';
 
 // Walk entropy-coded scans as well as metadata. Each returned end is the real
@@ -96,19 +97,61 @@ function appleGainMap(auxiliary, headroom) {
   const data = one(auxiliary, 225, XMP).data.subarray(XMP.length);
   hdr(data.length <= 4096);
   let xml; try { xml = new TextDecoder('utf-8', { fatal: true }).decode(data); } catch { hdr(false); }
-  const number = '([0-9]+(?:\\.[0-9]+)?)';
+  const namespaces = '(?:xmlns:HDRGainMap="http://ns.apple.com/HDRGainMap/1.0/"\\s+'
+    + 'xmlns:apdi="http://ns.apple.com/pixeldatainfo/1.0/"|'
+    + 'xmlns:apdi="http://ns.apple.com/pixeldatainfo/1.0/"\\s+'
+    + 'xmlns:HDRGainMap="http://ns.apple.com/HDRGainMap/1.0/")';
   const pattern = new RegExp('^\\s*<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core [0-9.]+">\\s*'
     + '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\\s*'
-    + '<rdf:Description rdf:about=""\\s+xmlns:HDRGainMap="http://ns.apple.com/HDRGainMap/1.0/"\\s+'
-    + 'xmlns:apdi="http://ns.apple.com/pixeldatainfo/1.0/">\\s*'
-    + '<HDRGainMap:HDRGainMapVersion>131072</HDRGainMap:HDRGainMapVersion>\\s*'
-    + '<HDRGainMap:HDRGainMapHeadroom>' + number + '</HDRGainMap:HDRGainMapHeadroom>\\s*'
-    + '<apdi:AuxiliaryImageType>urn:com:apple:photo:2020:aux:hdrgainmap</apdi:AuxiliaryImageType>\\s*'
+    + '<rdf:Description rdf:about=""\\s+' + namespaces + '>\\s*([\\s\\S]*?)'
     + '</rdf:Description>\\s*</rdf:RDF>\\s*</x:xmpmeta>\\s*$');
-  const match = pattern.exec(xml);
-  hdr(match && Number.isFinite(Number(match[1])) && Number(match[1]) > 1
-    && Math.abs(Number(match[1]) - headroom) / headroom < 0.0001);
+  const match = pattern.exec(xml); hdr(match);
+  const body = match[1], values = new Map();
+  const property = /<(HDRGainMap:HDRGainMapVersion|HDRGainMap:HDRGainMapHeadroom|apdi:AuxiliaryImageType|apdi:NativeFormat|apdi:StoredFormat)>([^<>]*)<\/\1>\s*/y;
+  let offset = 0;
+  while (offset < body.length) {
+    property.lastIndex = offset; const entry = property.exec(body);
+    hdr(entry && !values.has(entry[1])); values.set(entry[1], entry[2]); offset = property.lastIndex;
+  }
+  const declaredHeadroom = values.get('HDRGainMap:HDRGainMapHeadroom');
+  hdr([3, 5].includes(values.size) && values.get('HDRGainMap:HDRGainMapVersion') === '131072'
+    && values.get('apdi:AuxiliaryImageType') === 'urn:com:apple:photo:2020:aux:hdrgainmap'
+    && /^[0-9]+(?:\.[0-9]+)?$/.test(declaredHeadroom ?? '')
+    && Number.isFinite(Number(declaredHeadroom)) && Number(declaredHeadroom) > 1
+    && Math.abs(Number(declaredHeadroom) - headroom) / headroom < 0.0001);
+  // Apple's L008 auxiliary declaration is a single 8-bit component, matching
+  // the separately checked grayscale JPEG. Neither half may be omitted.
+  hdr(values.size === 3 || values.get('apdi:NativeFormat') === '1278226488'
+    && values.get('apdi:StoredFormat') === '1278226488');
   return data;
+}
+
+// A missing ICC is not color evidence. The additional iPhone JPEG variant must
+// explicitly declare Exif ColorSpace=1 (sRGB) in exactly one bounded Exif IFD.
+// Other metadata is never surfaced or interpreted as a profile.
+function exifSrgb(primary) {
+  const segments = matching(primary, 225, EXIF); hdr(segments.length === 1);
+  const data = segments[0].data.subarray(EXIF.length);
+  hdr(data.length >= 8); const order = data.toString('ascii', 0, 2); hdr(order === 'II' || order === 'MM');
+  const u16 = at => { hdr(at >= 0 && at + 2 <= data.length); return order === 'II' ? data.readUInt16LE(at) : data.readUInt16BE(at); };
+  const u32 = at => { hdr(at >= 0 && at + 4 <= data.length); return order === 'II' ? data.readUInt32LE(at) : data.readUInt32BE(at); };
+  hdr(u16(2) === 42);
+  const ranges = [];
+  const ifd = offset => {
+    hdr(offset >= 8); const count = u16(offset), end = offset + 2 + count * 12 + 4;
+    hdr(count > 0 && count <= 512 && end <= data.length && ranges.every(([a, b]) => end <= a || offset >= b));
+    ranges.push([offset, end]); const tags = new Map();
+    for (let i = 0; i < count; i++) {
+      const at = offset + 2 + i * 12, tag = u16(at); hdr(!tags.has(tag));
+      tags.set(tag, { type: u16(at + 2), count: u32(at + 4), valueAt: at + 8 });
+    }
+    return tags;
+  };
+  const root = ifd(u32(4)), pointer = root.get(0x8769);
+  hdr(pointer?.type === 4 && pointer.count === 1);
+  const tags = ifd(u32(pointer.valueAt)), color = tags.get(0xa001);
+  hdr(color?.type === 3 && color.count === 1 && u16(color.valueAt) === 1);
+  return segments[0].data;
 }
 
 export function inspectJpeg(bytes, { allowAppleJpegSdrBase = false } = {}) {
@@ -125,13 +168,18 @@ export function inspectJpeg(bytes, { allowAppleJpegSdrBase = false } = {}) {
     && !matching(auxiliary, 226, MPF).length && !matching(primary, 225, XMP).length);
   mpIndex(mpf[0], primary, auxiliary, bytes.length);
   const iso = isoMetadata(primary, auxiliary), xmp = appleGainMap(auxiliary, iso.headroom);
-  const icc = one(primary, 226, ICC).data;
-  hdr(icc.length > ICC.length + 2 && icc[ICC.length] === 1 && icc[ICC.length + 1] === 1);
+  const profiles = matching(primary, 226, ICC); hdr(profiles.length <= 1);
+  let iccSha256 = null, colorEvidence = Buffer.alloc(0);
+  if (profiles.length) {
+    const icc = profiles[0].data;
+    hdr(icc.length > ICC.length + 2 && icc[ICC.length] === 1 && icc[ICC.length + 1] === 1);
+    iccSha256 = sha(icc.subarray(ICC.length + 2));
+  } else colorEvidence = exifSrgb(primary);
   return { mime: 'image/jpeg', format: 'jpeg', bitDepth: primary.bitDepth,
-    jpegHdr: { iccSha256: sha(icc.subarray(ICC.length + 2)), primaryWidth: primary.width, primaryHeight: primary.height,
+    jpegHdr: { iccSha256, colorSpace: profiles.length ? 'Display P3' : 'sRGB', primaryWidth: primary.width, primaryHeight: primary.height,
       gainMapWidth: auxiliary.width, gainMapHeight: auxiliary.height,
       selection: { kind: 'primary-jpeg-sdr-base', primaryByteCount: primary.end,
         gainMapByteCount: auxiliary.end - auxiliary.start,
         gainMapSha256: sha(bytes.subarray(auxiliary.start, auxiliary.end)),
-        metadataSha256: sha(Buffer.concat([mpf[0].data, iso.bytes, xmp])) } } };
+        metadataSha256: sha(Buffer.concat([mpf[0].data, iso.bytes, xmp, colorEvidence])) } } };
 }

@@ -55,9 +55,14 @@ async function decode(request) {
     || meta.width < 2 || meta.height < 2) reject('PHOTO_DECODE_INVALID');
   if (![1, 2, 4, 8, 16].includes(container.bitDepth)) reject('PHOTO_BIT_DEPTH_UNSUPPORTED');
   if (jpegHdr) {
-    if (meta.channels !== 3 || meta.width !== jpegHdr.primaryWidth || meta.height !== jpegHdr.primaryHeight
-      || !meta.icc || sha256(meta.icc) !== jpegHdr.iccSha256) reject('PHOTO_SOURCE_MISMATCH');
-    if (jpegHdr.iccSha256 !== APPLE_P3_SHA256) reject('PHOTO_COLOR_UNSUPPORTED');
+    if (meta.channels !== 3 || meta.width !== jpegHdr.primaryWidth || meta.height !== jpegHdr.primaryHeight)
+      reject('PHOTO_SOURCE_MISMATCH');
+    if (jpegHdr.colorSpace === 'sRGB') {
+      if (meta.icc || jpegHdr.iccSha256 !== null || meta.space !== 'srgb') reject('PHOTO_SOURCE_MISMATCH');
+    } else {
+      if (!meta.icc || sha256(meta.icc) !== jpegHdr.iccSha256) reject('PHOTO_SOURCE_MISMATCH');
+      if (jpegHdr.iccSha256 !== APPLE_P3_SHA256) reject('PHOTO_COLOR_UNSUPPORTED');
+    }
     if (meta.width * meta.height > limits.maxPixels
       || meta.width * meta.height * 8 > limits.maxRasterBytes) reject('PHOTO_DECODE_LIMIT');
     const auxiliary = bytes.subarray(jpegHdr.selection.primaryByteCount);
@@ -76,7 +81,7 @@ async function decode(request) {
     orientationSource: meta.orientation === undefined ? 'identity' : 'exif',
     crop: null, selection: jpegHdr ? jpegHdr.selection : { kind: 'single-frame' }, bitDepth: container.bitDepth,
     iccSha256: meta.icc ? sha256(meta.icc) : null,
-    colorSpace: meta.space ?? null,
+    colorSpace: jpegHdr?.colorSpace === 'sRGB' ? 'sRGB' : meta.space ?? null,
     // An 8-bit header or ordinary ICC profile does not prove absence of HDR.
     // Preserve an independently verified prior observation on the exact same
     // bytes; absence of a new observation is not contradictory source evidence.
@@ -124,7 +129,8 @@ async function decode(request) {
     },
     treatment: {
       decoder: 'sharp/libvips', version: `${sharp.versions.sharp}/${sharp.versions.vips}`,
-      policyVersion: jpegHdr ? 'atlas-jpeg-apple-sdr-base-srgb-v1' : 'atlas-native-raster-srgb-v1', channels: outputMeta.channels,
+      policyVersion: jpegHdr?.colorSpace === 'sRGB' ? 'atlas-jpeg-apple-exif-srgb-base-v1'
+        : jpegHdr ? 'atlas-jpeg-apple-sdr-base-srgb-v1' : 'atlas-native-raster-srgb-v1', channels: outputMeta.channels,
       bitDepth, colorSpace: 'sRGB', colorTreatment: 'converted', hdrTreatment: jpegHdr ? 'sdr-base' : 'unknown',
     },
   };

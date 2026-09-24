@@ -78,7 +78,8 @@ function metadata(value, mime) {
       integer(value.selection.primaryByteCount); integer(value.selection.gainMapByteCount);
       sha(value.selection.gainMapSha256); sha(value.selection.metadataSha256);
       requireThat(value.dynamicRange === 'HDR' && value.bitDepth === 8
-        && value.iccSha256 === '20789fdbea9835251a4f0796c8bf45cbd964896044886540da21ffc7457af0ab');
+        && (value.iccSha256 === '20789fdbea9835251a4f0796c8bf45cbd964896044886540da21ffc7457af0ab'
+          || value.iccSha256 === null && value.colorSpace === 'sRGB'));
     } else {
       object(value.selection, ['kind']); requireThat(value.selection.kind === 'single-frame');
     }
@@ -251,12 +252,14 @@ export function parseDecodedFrame(value, originalValue, decodePlan) {
   if (value.treatment.hdrTreatment === 'sdr-base') requireThat((original.content.mime === 'image/heic'
     || original.content.mime === 'image/jpeg' && decodePlan.metadata.selection.kind === 'primary-jpeg-sdr-base')
     && decodePlan.metadata.dynamicRange === 'HDR' && decodePlan.metadata.bitDepth === 8
-    && decodePlan.metadata.iccSha256 === '20789fdbea9835251a4f0796c8bf45cbd964896044886540da21ffc7457af0ab'
+    && (decodePlan.metadata.iccSha256 === '20789fdbea9835251a4f0796c8bf45cbd964896044886540da21ffc7457af0ab'
+      || original.content.mime === 'image/jpeg' && decodePlan.metadata.iccSha256 === null && decodePlan.metadata.colorSpace === 'sRGB')
     && value.treatment.bitDepth === 8 && value.treatment.channels === 3);
   if (value.schemaVersion === 1 && value.treatment.hdrTreatment === 'sdr-base') requireThat(
     original.content.mime === 'image/heic' ? ['atlas-heif-apple-sdr-base-v1', 'atlas-heif-apple-sdr-base-clli-v1'].includes(value.treatment.policyVersion)
       && value.treatment.colorSpace === 'Display P3' && value.treatment.colorTreatment === 'preserved'
-      : value.treatment.policyVersion === 'atlas-jpeg-apple-sdr-base-srgb-v1'
+      : value.treatment.policyVersion === (decodePlan.metadata.iccSha256 === null
+          ? 'atlas-jpeg-apple-exif-srgb-base-v1' : 'atlas-jpeg-apple-sdr-base-srgb-v1')
         && value.treatment.colorSpace === 'sRGB' && value.treatment.colorTreatment === 'converted');
   if (value.schemaVersion === 2) {
     const working = value.workingImage;
