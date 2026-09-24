@@ -55,7 +55,16 @@ export function createReportMarketClient({ cardId, staffId, approvalActionId, re
         saved = { version: 1, cardId, staffId, search: { requestId: cryptoImpl.randomUUID(), approvalActionId, expectedRevision: status.revision } };
         save(saved); sawReady = false;
       }
-      const result = await post(`${path}/market/search`, saved.search);
+      let result;
+      try { result = await post(`${path}/market/search`, saved.search); }
+      catch (error) {
+        // Reservation returns an existing exact request before checking its
+        // revision. This refusal therefore proves no provider request began.
+        if (error?.status === 409 && error.code === 'PRESENTATION_REVISION_STALE') {
+          clear(saved); sawReady = false; throw fail('MARKET_SEARCH_REVIEW_REQUIRED');
+        }
+        throw error;
+      }
       if (result?.state === 'UNAVAILABLE') { clear(saved); return result; }
       check(result?.previewId === saved.search.requestId, 'MARKET_PREVIEW_MISMATCH');
       if (result.state === 'PENDING' || result.state === 'UNKNOWN') throw fail(`MARKET_SEARCH_${result.state}`);

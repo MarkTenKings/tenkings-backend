@@ -14,18 +14,45 @@ public protocol CompanionDriver {
     func perform(_ op: String, input: [String: Any], arm: CompanionArm) throws -> [String: Any]
     func close()
 }
-/** Actual PC/SC transport. The production qualification registry is deliberately
- * empty: no runtime JSON field can activate an undocumented F8215 lock method. */
+/** Actual PC/SC transport and native lock state machine. The compiled production
+ * qualification registry stays empty until stock-specific evidence is available. */
 public final class NativeCompanionDriver: CompanionDriver {
-    public init() {}
+    private let configuration: CompanionConfiguration
+    public init(configuration: CompanionConfiguration) { self.configuration = configuration }
     private var session: OpaquePointer?
-    private var verifiedSnapshot = false
-    public var qualifiedProfileAvailable: Bool { false }
+    private var verifiedSnapshot = false, lockedSnapshot = false, openConsumed = false
+    public var qualifiedProfileAvailable: Bool {
+        let profile = configuration.profile
+        return atlas_companion_profile_qualified(profile["profileHash"] as! String, profile["qualificationHash"] as! String,
+            UInt32(integer(profile["firstUserPage"])!), UInt32(integer(profile["lastUserPage"])!)) != 0
+    }
     public var readbackVerified: Bool { verifiedSnapshot || session != nil && atlas_companion_readback_verified(session) != 0 }
-    public var lockVerified: Bool { false }
+    public var lockVerified: Bool { lockedSnapshot || session != nil && atlas_companion_lock_verified(session) != 0 }
     public private(set) var removalObserved = false
-    private func checked(_ value: Int32) throws { try require(value == 0, "COMPANION_NATIVE_OPERATION_FAILED") }
-    public func close() { if let session { verifiedSnapshot = atlas_companion_readback_verified(session) != 0; _ = atlas_companion_close(session); self.session = nil } }
+    private func checked(_ value: Int32) throws {
+        if value == 0 { return }
+        let code: String
+        switch value {
+        case ATLAS_COMPANION_REPLY_LENGTH: code = "COMPANION_NATIVE_REPLY_MALFORMED"
+        case ATLAS_COMPANION_APDU_STATUS: code = "COMPANION_NATIVE_READER_REJECTED"
+        case ATLAS_COMPANION_CHANGED: code = "COMPANION_NATIVE_TAG_CHANGED"
+        case ATLAS_COMPANION_READBACK: code = "COMPANION_NATIVE_READBACK_MISMATCH"
+        case ATLAS_COMPANION_NOT_EMPTY: code = "COMPANION_NATIVE_TAG_NOT_EMPTY"
+        case ATLAS_COMPANION_ORDER: code = "COMPANION_NATIVE_SEQUENCE_REFUSED"
+        case ATLAS_COMPANION_PROFILE_UNQUALIFIED: code = "COMPANION_PROFILE_UNQUALIFIED"
+        case ATLAS_COMPANION_EXPIRED: code = "COMPANION_AUTHORIZATION_EXPIRED"
+        case ATLAS_COMPANION_REJECTED: code = "COMPANION_NATIVE_OPERATION_REFUSED"
+        default: code = "COMPANION_NATIVE_TRANSPORT_FAILED"
+        }
+        throw CompanionFailure(code)
+    }
+    public func close() {
+        if let session {
+            verifiedSnapshot = atlas_companion_readback_verified(session) != 0
+            lockedSnapshot = atlas_companion_lock_verified(session) != 0
+            _ = atlas_companion_close(session); self.session = nil
+        }
+    }
     deinit { close() }
     public func perform(_ op: String, input: [String: Any], arm: CompanionArm) throws -> [String: Any] {
         if op == "close" { close(); return ["closed": true] }
@@ -35,21 +62,27 @@ public final class NativeCompanionDriver: CompanionDriver {
             if op == "observe-empty" { if state == 0 { removalObserved = true }; return ["empty": state == 0] }
             return ["state": state == 0 ? "EMPTY" : "PRESENT", "selected": state == 0 ? NSNull() : NSNumber(value: selected)]
         }
-        if op == "identify-qualified" { return ["qualified": qualifiedProfileAvailable] }
-        if op == "lock-qualified" || op == "verify-lock" { throw CompanionFailure("COMPANION_LOCK_IMPLEMENTATION_UNAVAILABLE") }
-        // This branch is reachable only after a reviewed native qualification
-        // implementation is added to this driver, not a configuration boolean.
+        if op == "identify-qualified" { return ["qualified": qualifiedProfileAvailable && session != nil] }
+        // The native registry binds hashes, silicon/header facts, full memory
+        // interval, masks and exact coverage. JSON cannot create a profile.
         try require(qualifiedProfileAvailable, "COMPANION_PROFILE_UNQUALIFIED")
         if op == "open" {
-            try require(session == nil, "COMPANION_SESSION_ALREADY_OPEN")
+            try require(session == nil && !openConsumed, "COMPANION_SESSION_ALREADY_CONSUMED")
+            openConsumed = true
             var state: UInt32 = 0, selected: UInt32 = 0
             try checked(atlas_companion_presence(0, &state, &selected)); try require(state == 1 && selected <= 1, "COMPANION_TAG_NOT_PRESENT")
             let name = "ACS ACR1552 1S CL Reader(\(selected + 1))"
-            let status = arm.ndef.withUnsafeBytes { bytes in atlas_companion_open(name, UInt8(integer(arm.claims["firstUserPage"])!),
-                UInt8(integer(arm.claims["lastUserPage"])!), bytes.bindMemory(to: UInt8.self).baseAddress, UInt32(bytes.count), &session) }
+            let status = arm.ndef.withUnsafeBytes { bytes in atlas_companion_open_qualified(name,
+                arm.claims["profileHash"] as! String, arm.claims["qualificationHash"] as! String,
+                UInt32(integer(arm.claims["firstUserPage"])!), UInt32(integer(arm.claims["lastUserPage"])!),
+                bytes.bindMemory(to: UInt8.self).baseAddress, UInt32(bytes.count), &session) }
             try checked(status); return ["opened": true]
         }
         guard let session else { throw CompanionFailure("COMPANION_SESSION_REQUIRED") }
+        if op == "lock-qualified" {
+            try checked(atlas_companion_lock_qualified(session, integer(arm.claims["expiresAt"])!)); return ["locked": true]
+        }
+        if op == "verify-lock" { try checked(atlas_companion_verify_lock(session)); return ["lockVerified": lockVerified] }
         if op == "same-tag" { try checked(atlas_companion_same_tag(session)); return ["sameTag": true] }
         if op == "read16" {
             var bytes = [UInt8](repeating: 0, count: 16); try checked(atlas_companion_read16(session, UInt32(integer(input["page"])!), &bytes))
@@ -72,8 +105,8 @@ public final class CompanionRuntime {
     let configuration: CompanionConfiguration, driver: CompanionDriver, keyStore: CompanionKeyStore
     let clock: () -> Int64
     var arm: CompanionArm?, receiptHash: String?, acknowledged = false, restoredReceipt = false
-    public init(configuration: CompanionConfiguration, driver: CompanionDriver = NativeCompanionDriver(), keyStore: CompanionKeyStore = ProtectedCompanionKeyStore(), clock: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }) {
-        self.configuration = configuration; self.driver = driver; self.keyStore = keyStore; self.clock = clock
+    public init(configuration: CompanionConfiguration, driver: CompanionDriver? = nil, keyStore: CompanionKeyStore = ProtectedCompanionKeyStore(), clock: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }) {
+        self.configuration = configuration; self.driver = driver ?? NativeCompanionDriver(configuration: configuration); self.keyStore = keyStore; self.clock = clock
     }
     public func close() { driver.close() }
     deinit { close() }

@@ -14,6 +14,8 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
   const finishingRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/finishing/(${id})$`);
   const presentationRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation(?:/(uploads|remove)(?:/(${id})/(sign|complete))?)?$`);
   const marketRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/market/(search|select)$`);
+  const researchRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/research/(search|contribute)$`);
+  const dealerRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/dealer-offers$`);
   const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|geometry|preview-image)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
   return async(req,res)=>{
     const url=new URL(req.url,origin);
@@ -38,6 +40,27 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
       }
       if(await intake(req,res))return true;
       if(await workflow(req,res))return true;
+      const researchFound=researchRoute.exec(url.pathname);
+      if(researchFound){
+        requireThat(!url.search && req.method==='POST',405,'METHOD_NOT_ALLOWED');
+        requireThat(connected.research,503,'RESEARCH_DISABLED');
+        requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
+          && typeof req.headers['x-atlas-csrf']==='string' && req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
+        const staff=await boundary.authenticate(req.headers.cookie??'',req.headers['x-atlas-csrf']);
+        const result=researchFound[2]==='search'?await connected.research.preview(staff,researchFound[1],req.body):await connected.research.contribute(staff,researchFound[1],req.body);
+        res.setHeader('Cache-Control','private, no-store');res.status(200).json(result);return true;
+      }
+      const dealerFound=dealerRoute.exec(url.pathname);
+      if(dealerFound){
+        const write=req.method==='POST';
+        requireThat(!url.search && (write || req.method==='GET'),405,'METHOD_NOT_ALLOWED');
+        requireThat(connected.dealerOffers,503,'DEALER_OFFERS_DISABLED');
+        if(write)requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
+          && typeof req.headers['x-atlas-csrf']==='string' && req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
+        const staff=await boundary.authenticate(req.headers.cookie??'',write?req.headers['x-atlas-csrf']:undefined);
+        const result=write?await connected.dealerOffers.select(staff,dealerFound[1],req.body):await connected.dealerOffers.status(staff,dealerFound[1]);
+        res.setHeader('Cache-Control','private, no-store');res.status(200).json(result);return true;
+      }
       const marketFound=marketRoute.exec(url.pathname);
       if(marketFound){
         requireThat(!url.search && req.method==='POST',405,'METHOD_NOT_ALLOWED');

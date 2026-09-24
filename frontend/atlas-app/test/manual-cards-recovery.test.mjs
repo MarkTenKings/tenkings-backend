@@ -42,6 +42,8 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
       if (name === './ReportPhotoUploader') return {__esModule:true,default:'ReportPhotoUploader'};
       if (name === './ReportMarketPicker') return {__esModule:true,default:'ReportMarketPicker'};
+      if (name === './ReportResearchPicker') return {__esModule:true,default:'ReportResearchPicker'};
+      if (name === './DealerOfferPicker') return {__esModule:true,default:'DealerOfferPicker'};
       if (name === './ManualFinishing') return {__esModule:true,default:'ManualFinishing',openManualLabelPrintWindow:()=>null};
       if (name === '@atlas/manual-intake/client') return { createBrowserIntakeJournal: () => ({ close() {} }), createIntakeClient: () => ({ pending: async () => [], ...intake }) };
       if (name === '@atlas/grading-core/identity') return identity;

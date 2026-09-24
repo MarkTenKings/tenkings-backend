@@ -6,16 +6,17 @@ import styles from './MarketReferencePicker.module.css';
 
 /** Published approvals only. Reading status is free; provider search requires
  * the explicit picker button and a durably saved idempotent request. */
-export default function ReportMarketPicker({ cardId, staffId, approvalActionId, csrf, available = false, disabled = false, onChange }) {
+export default function ReportMarketPicker({ cardId, staffId, approvalActionId, csrf, available = false, disabled = false, onChange, createClient = createReportMarketClient, pickerOptions = {}, renderDetails = null }) {
   const client = useRef(null), generation = useRef(0), lock = useRef(false), changed = useRef(onChange);
   changed.current = onChange;
   const [ready, setReady] = useState(false), [recovery, setRecovery] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [status, setStatus] = useState('');
+  const [preview, setPreview] = useState(null);
   useEffect(() => {
     const owner = generation, version = ++owner.current; client.current = null; lock.current = false;
-    setReady(false); setRecovery(null); setError(''); setBusy(false); setStatus('');
+    setReady(false); setRecovery(null); setError(''); setBusy(false); setStatus(''); setPreview(null);
     if (!available) return;
     Promise.resolve().then(async () => {
-      const value = createReportMarketClient({ cardId, staffId, approvalActionId, storage: window.sessionStorage,
+      const value = createClient({ cardId, staffId, approvalActionId, storage: window.sessionStorage,
         request: (path, options = {}) => manualRequest(path, { ...options, csrf }) });
       if (generation.current !== version) return;
       client.current = value; const saved = value.pending();
@@ -23,7 +24,7 @@ export default function ReportMarketPicker({ cardId, staffId, approvalActionId, 
       if (generation.current === version) { setReady(true); setRecovery(saved && (saved.selection || saved.search.approvalActionId !== approvalActionId) ? saved : null); }
     }).catch(failure => { if (generation.current === version) setError(manualMessage(failure)); });
     return () => { if (owner.current === version) owner.current++; };
-  }, [cardId, staffId, approvalActionId, csrf, available]);
+  }, [cardId, staffId, approvalActionId, csrf, available, createClient]);
   async function recover(replace = false) {
     const value = client.current, version = generation.current;
     if (!value || lock.current || disabled) return;
@@ -48,9 +49,10 @@ export default function ReportMarketPicker({ cardId, staffId, approvalActionId, 
     {!ready && error && <button type="button" disabled={disabled || busy} onClick={() => void recover()}>Check report status</button>}
     {error && <p role="alert" className={styles.error}>{error}</p>}
   </section>;
-  return <>{status && <p role="status">{status}</p>}<MarketReferencePicker scopeKey={`${staffId}:${cardId}:${approvalActionId}`} available={available} disabled={disabled}
-    onPreview={() => client.current.preview()} onSave={async input => {
+  return <>{status && <p role="status">{status}</p>}<MarketReferencePicker {...pickerOptions} scopeKey={`${staffId}:${cardId}:${approvalActionId}`} available={available} disabled={disabled}
+    onPreview={async () => { const value = client.current, version = generation.current, result = await value.preview();
+      if(version === generation.current) setPreview(result); return result; }} onSave={async input => {
       const value = client.current, version = generation.current, result = await value.select(input);
       if (version === generation.current) changed.current?.(result); return result;
-    }}/></>;
+    }}/>{renderDetails?.(preview, client.current)}</>;
 }

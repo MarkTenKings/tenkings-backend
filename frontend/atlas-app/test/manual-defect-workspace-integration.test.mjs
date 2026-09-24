@@ -45,6 +45,8 @@ function harness({ journal } = {}) {
       if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
       if (name === './ReportPhotoUploader') return {__esModule:true,default:'ReportPhotoUploader'};
       if (name === './ReportMarketPicker') return {__esModule:true,default:'ReportMarketPicker'};
+      if (name === './ReportResearchPicker') return {__esModule:true,default:'ReportResearchPicker'};
+      if (name === './DealerOfferPicker') return {__esModule:true,default:'DealerOfferPicker'};
       if (name === './ManualFinishing') return {__esModule:true,default:'ManualFinishing',openManualLabelPrintWindow:()=>{const popup={close(){f.closedPopups++;}};f.popups.push(popup);return popup;}};
       if (name === '../lib/early-geometry-client.mjs') return earlyGeometryClient;
       if (name === '@atlas/manual-workflow/client') return { createManualClient: options => { viewCallback = options.onView; return client; } };

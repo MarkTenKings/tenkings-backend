@@ -17,14 +17,16 @@ function message(error) {
  * the server. The browser supplies only the saved preview id and selected ids.
  * scopeKey must identify the exact card/approval; no paid lookup runs on mount.
  */
-export default function MarketReferencePicker({ scopeKey, available = false, disabled = false, onPreview, onSave }) {
+export default function MarketReferencePicker({ scopeKey, available = false, disabled = false, onPreview, onSave,
+  title = 'Show the sales behind the conversation.', searchLabel = 'Find sold cards', refreshLabel = 'Refresh sales',
+  note = 'Choose matching cards. Each search checks one page of up to 40 provider results; fewer may qualify for review. Each keeps its original grader and grade; these sales do not set the value of this ATLAS card.' }) {
   const [source, setSource] = useState(null), [selected, setSelected] = useState([]), [busy, setBusy] = useState(''),
-    [error, setError] = useState(''), [status, setStatus] = useState(''), [pending, setPending] = useState(false);
+    [error, setError] = useState(''), [status, setStatus] = useState(''), [pending, setPending] = useState(false), [searchPending, setSearchPending] = useState(false);
   const generation = useRef(0), lock = useRef(false), savedRequest = useRef(null), callbacks = useRef({ onPreview, onSave });
   callbacks.current = { onPreview, onSave };
   useEffect(() => {
     const owner = generation, version = ++owner.current;
-    lock.current = false; savedRequest.current = null; setSource(null); setSelected([]); setBusy(''); setError(''); setStatus(''); setPending(false);
+    lock.current = false; savedRequest.current = null; setSource(null); setSelected([]); setBusy(''); setError(''); setStatus(''); setPending(false); setSearchPending(false);
     return () => { if (owner.current === version) owner.current++; };
   }, [scopeKey, available]);
   async function search() {
@@ -33,12 +35,15 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
     try {
       const value = await callbacks.current.onPreview();
       if (version !== generation.current) return;
-      if (value?.state === 'UNAVAILABLE') { setSource(null); setSelected([]); setStatus(({ PROVIDER_QUOTA_REACHED: 'The sold-sales provider quota is exhausted. Ask an administrator to check the account before searching again.', PROVIDER_REQUEST_LIMITED: 'The sold-sales provider has limited requests. Check the account limit or wait before starting another search.', PROVIDER_CONFIGURATION_ERROR: 'The sold-sales provider credential needs attention from an administrator.' })[value.reason] ?? 'Sold-card search is currently unavailable.'); return; }
+      if (value?.state === 'UNAVAILABLE') { setSearchPending(false); setSource(null); setSelected([]); setStatus(({ PROVIDER_QUOTA_REACHED: 'The sold-sales provider quota is exhausted. Ask an administrator to check the account before searching again.', PROVIDER_REQUEST_LIMITED: 'The sold-sales provider has limited requests. Check the account limit or wait before starting another search.', PROVIDER_CONFIGURATION_ERROR: 'The sold-sales provider credential needs attention from an administrator.' })[value.reason] ?? 'Sold-card search is currently unavailable.'); return; }
       if (!validSource(value)) throw new Error('MARKET_PREVIEW_INVALID');
-      setSource(value); setSelected([]);
+      setSearchPending(false); setSource(value); setSelected([]);
       if (!value.preview.candidates.length) setStatus('No disclosed graded sales were found for review.');
-    } catch (failure) { if (version === generation.current) setError(['MARKET_SEARCH_PENDING', 'MARKET_SEARCH_UNKNOWN'].includes(failure?.code)
-      ? 'This saved search is not confirmed. Check it again to recover the same request.' : 'Could not load sold cards. Try the search again.'); }
+    } catch (failure) { if (version === generation.current) {
+      const refused = failure?.code === 'MARKET_SEARCH_REVIEW_REQUIRED'; setSearchPending(!refused);
+      setError(refused ? 'The report presentation changed before this search began. Find sold cards again using its current version.'
+        : 'This saved search is not confirmed. Check it again to recover the same request; no new lookup will be purchased.');
+    } }
     finally { if (version === generation.current) { lock.current = false; setBusy(''); } }
   }
   async function save() {
@@ -60,14 +65,14 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
   if (!available) return null;
   const blocked = disabled || Boolean(busy) || pending;
   return <section className={styles.panel} aria-label="Grade report sales references">
-    <div className={styles.heading}><div><p className={styles.eyebrow}>REPORT · MARKET REFERENCES</p><h3>Show the sales behind the conversation.</h3></div>
-      <button type="button" disabled={blocked} onClick={() => void search()}>{source ? 'Refresh sales' : 'Find sold cards'}</button></div>
-    <p className={styles.note}>Choose matching cards. Each search checks one page of up to 40 provider results; fewer may qualify for review. Each keeps its original grader and grade; these sales do not set the value of this ATLAS card.</p>
+    <div className={styles.heading}><div><p className={styles.eyebrow}>REPORT · MARKET REFERENCES</p><h3>{title}</h3></div>
+      <button type="button" disabled={blocked} onClick={() => void search()}>{searchPending ? 'Check saved search' : source ? refreshLabel : searchLabel}</button></div>
+    <p className={styles.note}>{note}</p>
     {source && <><div className={styles.query}><span>Search: {source.preview.query}</span><span>ATLAS {source.preview.atlasGrade} · {date(source.preview.retrievedAt)}</span></div>
       {source.preview.candidates.length > 0 && <div className={styles.tableWrap}><table><thead><tr><th scope="col">Use</th><th scope="col">Sold card</th><th scope="col">Grader / grade</th><th scope="col">Sold</th><th scope="col">Price</th></tr></thead><tbody>
         {source.preview.candidates.map(({ sale, match }) => <tr key={sale.id}><td><input type="checkbox" aria-label={`Use sale ${sale.title}`} checked={selected.includes(sale.id)} disabled={blocked}
           onChange={event => { if (blocked || lock.current) return; setSelected(event.target.checked ? [...selected, sale.id] : selected.filter(id => id !== sale.id)); }}/></td>
-          <td><span>{sale.title}</span><small>{match === 'UNKNOWN' ? 'Variant needs review' : 'Verify card identity'}</small></td><td>{sale.grader} {sale.grade}</td><td>{date(sale.soldAt)}</td><td className={styles.money}>{amount(sale)}</td></tr>)}
+          <td><a href={sale.listingUrl} target="_blank" rel="noopener noreferrer">{sale.title} ↗</a><small>{match === 'UNKNOWN' ? 'Variant needs review' : 'Verify card identity'}</small></td><td>{sale.grader} {sale.grade}</td><td>{date(sale.soldAt)}</td><td className={styles.money}>{amount(sale)}</td></tr>)}
       </tbody></table></div>}
       <div className={styles.actions}><span>{selected.length} selected</span><button type="button" disabled={disabled || Boolean(busy) || !selected.length} onClick={() => void save()}>{pending ? 'Retry saved selection' : 'Publish references'}</button></div>
       {(source.preview.excluded?.undisclosedOrUnsupported > 0 || source.preview.excluded?.contradictory > 0) && <p className={styles.note}>Undisclosed prices, unsupported sales and conflicting variants are excluded.</p>}

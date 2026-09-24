@@ -46,6 +46,20 @@ try {
   const results=run([{id:'arm',op:'arm',envelope},{id:'open',op:'open'},{id:'sign',op:'sign-receipt',receipt:{}},{id:'arbitrary',op:'transmit',apdu:'ff000000'}]);
   assert.equal(results[0].ok,true,JSON.stringify(results[0])); assert.equal(results[0].result.state,'VERIFIED_UNQUALIFIED'); assert.equal(results[0].result.authorizationHash,stationHash(stationCanonical(claims)));
   assert.equal(results[1].error,'COMPANION_PROFILE_UNQUALIFIED'); assert.equal(results[2].ok,false); assert.equal(results[3].ok,false);
+  // The new lock engine cannot be enabled by a valid signed arm or by supplying
+  // a fixture profile/mask. These requests fail before PC/SC or Keychain access.
+  const lockDenials=run([{id:'arm',op:'arm',envelope},{id:'identify',op:'identify-qualified'},
+    {id:'lock',op:'lock-qualified'},{id:'verify',op:'verify-lock'},
+    {id:'mask',op:'lock-qualified',page:2,hex:'ffffffff'},
+    {id:'profile',op:'install-profile',profileHash:profile.profileHash},
+    {id:'data',op:'write4',page:4,hex:'0300fe00'}]);
+  assert.equal(lockDenials[0].result.profileQualified,false);
+  assert.deepEqual(lockDenials[1].result,{qualified:false});
+  assert.equal(lockDenials[2].error,'COMPANION_PROFILE_UNQUALIFIED');
+  assert.equal(lockDenials[3].error,'COMPANION_PROFILE_UNQUALIFIED');
+  assert.equal(lockDenials[4].error,'COMPANION_INPUT_INVALID');
+  assert.equal(lockDenials[5].error,'COMPANION_OPERATION_INVALID');
+  assert.equal(lockDenials[6].error,'COMPANION_PROFILE_UNQUALIFIED');
   for(const mutation of [{url:'https://example.com/'},{ndefHash:'0'.repeat(64)},{expiresAt:now-500},{profileHash:'0'.repeat(64)}]) {
     assert.equal(run([{id:'invalid',op:'arm',envelope:await host.signClaims({...claims,...mutation})}])[0].ok,false);
   }
@@ -77,5 +91,5 @@ try {
   assert.equal(restoredReplies[0].result.restored,true); assert.equal(restoredReplies[1].error,'COMPANION_RECOVERY_READ_ONLY');
   assert.equal(restoredReplies[2].error,'COMPANION_REMOVAL_ACK_REQUIRED'); assert.equal(restoredReplies[3].result.acknowledged,true);
   verifyStationSignature(stationKey.publicKey.export({format:'der',type:'spki'}).toString('base64'),removal,restoredReplies[5].result.signature);
-  console.log(JSON.stringify({test:'node_native_signed_protocol_interop',ok:true,scenarios:19,hardwareCalls:0,keychainCalls:0}));
+  console.log(JSON.stringify({test:'node_native_signed_protocol_interop',ok:true,scenarios:26,hardwareCalls:0,keychainCalls:0}));
 } finally { await rm(temp,{recursive:true,force:true}); }

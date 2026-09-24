@@ -10,6 +10,7 @@
     "./manual-public-contract": "./src/manual-public-contract.mjs",
     "./presentation-contract": "./src/presentation-contract.mjs",
     "./sold-reference-projection": "./src/sold-reference-projection.mjs",
+    "./dealer-directory": "./src/dealer-directory.mjs",
     "./fixture-artwork": "./src/fixture-artwork.mjs"
   },
   "dependencies": {

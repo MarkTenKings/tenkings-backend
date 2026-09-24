@@ -745,9 +745,15 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 3.914.0
         version: 3.914.0
+      '@tenkings/card-catalog-evidence':
+        specifier: workspace:*
+        version: link:../card-catalog-evidence
       '@tenkings/card-identification-core':
         specifier: workspace:*
         version: link:../card-identification-core
+      '@tenkings/card-research-core':
+        specifier: workspace:*
+        version: link:../card-research-core
       '@tenkings/ebay-sold-comps-v2':
         specifier: workspace:*
         version: link:../ebay-sold-comps-v2
@@ -963,6 +969,8 @@ importers:
         specifier: ^5.5.4
         version: 5.5.4
 
+  packages/card-catalog-evidence: {}
+
   packages/card-identification-core:
     dependencies:
       sharp:
@@ -970,6 +978,21 @@ importers:
         version: 0.33.5
       zod:
         specifier: 4.1.11
+        version: 4.1.11
+
+  packages/card-research-core:
+    dependencies:
+      '@tenkings/card-catalog-evidence':
+        specifier: workspace:*
+        version: link:../card-catalog-evidence
+      '@tenkings/ebay-sold-comps-v2':
+        specifier: workspace:*
+        version: link:../ebay-sold-comps-v2
+      sharp:
+        specifier: 0.33.5
+        version: 0.33.5
+      zod:
+        specifier: ^4.1.11
         version: 4.1.11
 
   packages/database:

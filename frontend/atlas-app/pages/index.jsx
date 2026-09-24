@@ -9,7 +9,7 @@ export async function getServerSideProps(ctx) {
     const result = await pageAccess(ctx, { authenticated: false });
     return result.props ? { ...result, props: { ...result.props, reauthenticate: ctx.query.reauthenticate === '1' } } : result;
 }
-export default function SignIn({ unavailable, mode, reauthenticate = false }) { return unavailable ? <Unavailable /> : <SignInForm mode={mode} reauthenticate={reauthenticate}/>; }
+export default function SignIn({ unavailable, accessFailure, mode, reauthenticate = false }) { return unavailable ? <Unavailable accessFailure={accessFailure} /> : <SignInForm mode={mode} reauthenticate={reauthenticate}/>; }
 function SignInForm({ mode, reauthenticate }) {
     const local = mode !== 'PRODUCTION';
     const [phone, setPhone] = useState('');

@@ -52,3 +52,18 @@ test('late selection completion cannot publish callback into another card', asyn
   f.props.cardId = 'two'; f.render(); await flush(); f.render(); finish({ revision: 1 }); await promise;
   assert.equal(f.changes.length, 0);
 });
+test('research reuse passes the saved result to evidence details without changing selection recovery',async()=>{
+  const f=fixture();f.props.pickerOptions={title:'Research card',searchLabel:'Research card'};
+  f.props.renderDetails=(result,client)=>({type:'details',props:{result,client}});await flush();f.render();
+  const result={state:'READY',previewId:'saved',research:{knowledge:{canContribute:true}}};f.clients[0].preview=async()=>result;
+  assert.equal(f.find(node=>node.type==='picker')[0].props.title,'Research card');
+  await f.find(node=>node.type==='picker')[0].props.onPreview();f.render();
+  assert.equal(f.find(node=>node.type==='details')[0].props.result,result);
+  assert.equal(f.find(node=>node.type==='details')[0].props.client,f.clients[0]);
+});
+test('late research preview cannot populate evidence for the next card',async()=>{
+  const f=fixture();f.props.renderDetails=result=>({type:'details',props:{result}});await flush();f.render();let finish;
+  f.clients[0].preview=()=>new Promise(resolve=>{finish=resolve;});
+  const pending=f.find(node=>node.type==='picker')[0].props.onPreview();f.props.cardId='another';f.render();await flush();f.render();
+  finish({state:'READY',research:{privateEvidence:'prior-card'}});await pending;f.render();assert.equal(f.find(node=>node.type==='details')[0].props.result,null);
+});

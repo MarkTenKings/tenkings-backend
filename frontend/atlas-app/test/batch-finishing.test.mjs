@@ -12,7 +12,7 @@ const code = babel.transformSync(readFileSync(new URL('../components/BatchGradin
 }).code;
 const all = (value, match, out = []) => { if (Array.isArray(value)) value.forEach(item => all(item, match, out)); else if (value && typeof value === 'object') { if (match(value)) out.push(value); all(value.props?.children, match, out); } return out; };
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
-async function fixture({ pending = false, mismatch = false, deferred = false, deferredCards = false } = {}) {
+async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false } = {}) {
   const plan = samplePlan(), key = 'a'.repeat(64); let staff = { id: 'fixture-reviewer', role: 'REVIEWER' };
   const packet = { key, cardId: plan.binding.cardId, canCertify: true, reportHash: 'c'.repeat(64), report: {
     geometry: { FRONT: { frame: { inspectionImageSha256: 'd'.repeat(64) } }, BACK: { frame: { inspectionImageSha256: 'e'.repeat(64) } } },
@@ -22,10 +22,10 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
     reportHash: plan.binding.reportHash, publicHash: plan.binding.publicHash, version: plan.binding.approvalVersion, reportNumber: plan.binding.reportNumber,
   } };
   const f = { calls: [], popups: [], events: [], approved: false, disposed: false, plan, result, packet };
-  let resolveApproval, resolveCards; const response = deferred ? new Promise(resolve => { resolveApproval = resolve; }) : Promise.resolve(result);
+  let resolveApproval, resolveJobs; const response = deferred ? new Promise(resolve => { resolveApproval = resolve; }) : Promise.resolve(result);
   f.release = () => resolveApproval?.(result);
-  f.releaseCards = cards => resolveCards?.({ cards });
-  f.cards = [];
+  f.releaseJobs = jobs => resolveJobs?.({ jobs });
+  f.jobs = [{ key, cardId: packet.cardId, state: 'REVIEW', evidence: { proposedGrade: 9.5 } }];
   const slots = [], effects = []; let cursor = 0, dirty = false, tree;
   const changed = (old, deps) => !old || deps.some((value, index) => value !== old[index]);
   const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
@@ -34,28 +34,28 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
     useCallback(callback, deps) { const id = cursor++; if (changed(slots[id]?.deps, deps)) slots[id] = { deps, value: callback }; return slots[id].value; },
     useEffect(callback, deps) { const id = cursor++; if (changed(slots[id]?.deps, deps)) { const previous = slots[id]; slots[id] = { deps, cleanup: previous?.cleanup }; effects.push(() => { previous?.cleanup?.(); slots[id].cleanup = callback(); }); } },
   };
-  function MachineReportReview() {} function ManualFinishing() {}
+  function MachineReportReview() {} function ManualFinishing() {} function BatchImport() {}
   const request = async (url, options = {}) => {
     f.calls.push({ url, options }); f.events.push(options.method === 'POST' ? 'POST' : url.includes('/finishing/') ? 'LABEL' : 'READ');
     if (url === '/api/staff/session') return { staff, csrf: 'fixture-csrf' };
-    if (url === '/api/staff/manual-intake/cards') {
-      if (deferredCards && !resolveCards) return new Promise(resolve => { resolveCards = resolve; });
-      return { cards: f.cards };
+    if (url === '/api/staff/manual-connected/cards/batch') {
+      if (deferredJobs && !resolveJobs) return new Promise(resolve => { resolveJobs = resolve; });
+      return { jobs: f.approved ? [] : f.jobs };
     }
-    if (url === '/api/staff/manual-connected/cards/batch') return { jobs: f.approved ? [] : [{ key, cardId: packet.cardId, state: 'REVIEW', evidence: { proposedGrade: 9.5 } }] };
     if (url.endsWith(`/${key}`)) return packet;
     if (url.endsWith(`/${key}/review`)) { f.approved = true; return response; }
     if (url.includes('/finishing/')) return mismatch ? { ...plan, binding: { ...plan.binding, cardId: randomUUID() } } : plan;
     throw new Error(`Unexpected fixture request ${url}`);
   };
-  const exports = {}, local = new Map(), router = { push() {} };
+  const exports = {}, local = new Map(), router = { query: { tab: intake ? 'INTAKE' : 'REVIEW' }, pathname: '/batch', push() {}, replace() {} };
   vm.runInNewContext(code, { exports, crypto: { randomUUID }, setInterval: () => 1, clearInterval() {},
     window: { addEventListener() {}, removeEventListener() {} }, document: { visibilityState: 'visible' },
     localStorage: { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value), removeItem: key => local.delete(key) },
     require(name) {
       if (name === 'react') return react;
       if (name === 'next/router') return { useRouter: () => router };
-      if (['next/link', './Shell', './BatchImport'].includes(name)) return () => null;
+      if (name === './BatchImport') return BatchImport;
+      if (['next/link', './Shell'].includes(name)) return () => null;
       if (name.endsWith('.css')) return new Proxy({}, { get: (_, key) => key });
       if (name.endsWith('/manual-client.mjs')) return { manualRequest: request, manualMessage: failure => failure.code ?? 'Label unavailable.' };
       if (name.endsWith('/routes.mjs')) return { STAFF_BASE_PATH: '/app' };
@@ -72,6 +72,8 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
   f.switchStaff = id => { staff = { ...staff, id }; f.render(); };
   f.ready = () => { f.find(node => node.type === MachineReportReview)[0].props.onReadyChange(true); f.render(); };
   f.approve = () => f.find(node => node.type === 'button' && /Approve & print next/.test(text(node)))[0].props.onClick();
+  f.reviews = () => f.find(node => node.type === MachineReportReview);
+  f.importer = () => f.find(node => node.type === BatchImport);
   f.finishing = () => f.find(node => node.type === ManualFinishing);
   f.dispose = () => { f.disposed = true; slots.forEach(slot => slot?.cleanup?.()); };
   f.render(); await f.flush(); return f;
@@ -100,14 +102,23 @@ test('unmount during approval closes its popup and discards late label effects',
   f.dispose(); f.release(); await pending; await f.flush();
   assert.equal(f.popups[0].closed, true); assert.equal(f.calls.some(call => call.url.includes('/finishing/')), false);
 });
-test('a delayed intake response cannot display a prior staff account\'s cards after account change', async () => {
-  const f = await fixture({ deferredCards: true });
-  f.cards = [{ cardId: 'second-card', ready: true, sourceHash: '2'.repeat(64), label: 'Second account card' }];
+test('a delayed queue response cannot display a prior staff account after account change', async () => {
+  const f = await fixture({ deferredJobs: true });
+  f.jobs = [{ key: 'second-job', cardId: 'second-card', state: 'QUEUED', label: 'Second account card' }];
   f.switchStaff('second-reviewer'); await f.flush();
-  f.find(node => node.type === 'button' && /^Ready to queue/.test(text(node)))[0].props.onClick(); await f.flush();
+  f.find(node => node.type === 'button' && /^Grading/.test(text(node)))[0].props.onClick(); await f.flush();
   assert.match(f.text(), /Second account card/);
-  f.releaseCards([{ cardId: 'first-card', ready: true, sourceHash: '1'.repeat(64), label: 'Prior account card' }]);
+  f.releaseJobs([{ key: 'first-job', cardId: 'first-card', state: 'QUEUED', label: 'Prior account card' }]);
   await f.flush();
   assert.match(f.text(), /Second account card/); assert.doesNotMatch(f.text(), /Prior account card/);
+  assert.equal(f.calls.some(call => call.options.method === 'POST'), false); f.dispose();
+});
+test('photo intake stays mounted while switching to review so saved uploads keep running', async () => {
+  const f = await fixture({ intake: true });
+  assert.equal(f.importer().length, 1); assert.equal(f.importer()[0].props.enabled, true);
+  assert.equal(f.reviews().length, 0);
+  f.find(node => node.type === 'button' && /^Review/.test(text(node)))[0].props.onClick(); await f.flush();
+  assert.equal(f.importer().length, 1); assert.equal(f.importer()[0].props.enabled, true);
+  assert.equal(f.reviews().length, 1);
   assert.equal(f.calls.some(call => call.options.method === 'POST'), false); f.dispose();
 });

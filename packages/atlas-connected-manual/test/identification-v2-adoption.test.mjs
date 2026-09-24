@@ -6,6 +6,8 @@ import sharp from 'sharp';
 import { identifyCard, parseCardIdentificationInput } from '@tenkings/card-identification-core';
 import { createManualArtifactStore } from '@atlas/manual-service/artifacts';
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
+import {ATLAS_IDENTIFICATION_LAYOUT_VERSION} from '../src/identification-layout.mjs';
+import { createBatchPreparation } from '../src/batch-preparation.mjs';
 import { createIdentification, identificationEffects } from '../src/identification.mjs';
 import { createDetailsStore, FIELDS, gradingIdentity } from '../src/details.mjs';
 import { createConnectedHandler } from '../src/http.mjs';
@@ -38,7 +40,7 @@ function deferred() {
 // stores. Transactions serialize, roll back on errors, and enforce row CAS and
 // unique effect claims. They do not establish PostgreSQL or staff-session proof.
 async function fixture({ category = 'Sports cards', values = {}, pauseModel = false,
-  pauseRequestArtifact = false, httpStatus = 200, modelError = null, ocrText = null, pauseClaim = false } = {}) {
+  engineVersion=V2,layoutProposal={value:null,confidence:'unknown',evidence:null},pauseRequestArtifact = false, httpStatus = 200, modelError = null, ocrText = null, pauseClaim = false } = {}) {
   const cardId = randomUUID(), staff = { id: randomUUID(), edit: true };
   const sourceHash = digest('original synthetic pair'), objects = new Map();
   const db = { attempts: new Map(), details: new Map(), actions: new Map(), events: new Map() };
@@ -192,17 +194,18 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
       }] });
       assert.equal(parsed.href, 'https://api.openai.com/v1/responses');
       modelEntered.resolve(); if (pauseModel) await modelRelease.promise;
-      return Response.json(modelError?{error:modelError}:modelReply(proposed), { status: httpStatus });
+      return Response.json(modelError?{error:modelError}:modelReply(body.text?.format?.schema?.required?.includes('layout_type')?{...proposed,layout_type:layoutProposal}:proposed), { status: httpStatus });
     },
   });
   const details = createDetailsStore({ boundary, intakeRepository });
-  const config = { boundary, intake, intakeRepository, storage, artifacts, details, effects, receiptClient };
+  const config = { boundary, intake, intakeRepository, storage, artifacts, details, effects, receiptClient, ...(engineVersion?{engineVersion}:{}) };
   const identification = createIdentification(config);
   return { cardId, staff, sourceHash, originalPair, workingBytes, objects, db, calls, artifacts, details,
     identification, proposed, modelEntered, modelRelease,
     claimEntered, claimRelease,
     requestArtifactEntered, requestArtifactRelease, requestArtifactFinished, modelReceiptSaved,
     restart: () => createIdentification(config),
+    restartWithDefault: () => {const {engineVersion:ignored,...current}=config;return createIdentification(current);},
     currentRow: () => latest(pair.sourceHash),
     setModel(status,error=null,{pause=false}={}){httpStatus=status;modelError=error;pauseModel=pause;},
     setWorkspace(value=true){workspaceExists=value;},
@@ -743,4 +746,66 @@ test('existing identify endpoint dispatches only a closed explicit retry body af
   assert.deepEqual(calls.map(value=>value[0]),['run','retry']);assert.deepEqual(calls[1][1][2],body);
   assert.equal((await request({...body,retry:true})).code,400);assert.equal((await request(body,'bad')).code,403);
   assert.equal(calls.length,2);
+});
+
+for(const [layoutType,evidence] of [['POKEMON','Front: BASIC Pikachu, HP 60 and Thunder Shock attack.'],['TRAINER','Front: TRAINER — Supporter header and trainer rules text.'],['ENERGY','Front: ENERGY header and Basic Lightning Energy symbol.']])test(`fresh ${layoutType} pair identifies layout and automatically proceeds through batch preparation to Astra without human preparation`,async()=>{
+ const f=await fixture({engineVersion:ATLAS_IDENTIFICATION_LAYOUT_VERSION,category:'Pokémon',layoutProposal:{value:layoutType,confidence:'high',evidence}});
+ let initialized=false,analyses=0;const uploads={FRONT:'fixture-front',BACK:'fixture-back'},defects=(await import('../../atlas-manual-workspace/test/defect-fixtures.mjs')).workspace(false);
+ const state={geometry:{sides:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{printed:{},prepared:{}}]))},defects};
+ const card={cardId:f.cardId,revision:1,contentHash:'a'.repeat(64)};
+ const connected={
+  async open(){const details=await f.details.read(f.staff,f.cardId);return {...details,card:{ready:true,sourceHash:f.sourceHash,sides:Object.fromEntries(Object.entries(uploads).map(([side,uploadId])=>[side,{upload:{uploadId}}]))},manual:initialized?{}:null,identification:await f.identification.status(f.staff,f.cardId)};},
+  identification:f.identification,earlyGeometry:{ensure:async()=>{},status:async()=>({FRONT:{state:'READY'},BACK:{state:'READY'}})},
+  async initialize(){const {details}=await f.details.read(f.staff,f.cardId);assert.equal(gradingIdentity(details).layoutType,layoutType);assert.deepEqual(details.touched,[]);initialized=true;f.setWorkspace();},
+  workflow:{service:{read:async()=>card},hydrate:async()=>state},
+  assistance:{async analyzeMachine(){analyses++;return {astra:{status:'READY',analysisId:'synthetic-astra'}};}},
+ };
+ const prepare=createBatchPreparation({connected}),job={cardId:f.cardId,sourceHash:f.sourceHash,uploads,stage:'PREPARE'};
+ const ready=await prepare.run(f.staff,job);assert.equal(ready.kind,'CONTINUE');assert.equal(initialized,true);assert.equal(analyses,0);
+ assert.equal((await prepare.run(f.staff,{...job,stage:'ANALYZE',evidence:ready.evidence,analysisActionId:randomUUID()})).kind,'CONTINUE');assert.equal(analyses,1);
+ const result=(await f.identification.status(f.staff,f.cardId)).result;
+ assert.equal(result.layout.authority,'MACHINE_PROPOSAL');assert.equal(result.layout.value,layoutType);assert.equal(result.provenance.engine_version,ATLAS_IDENTIFICATION_LAYOUT_VERSION);
+ const request=f.artifactsOf('IDENTIFICATION_REQUEST').find(r=>r.stage==='MODEL'),response=f.artifactsOf('IDENTIFICATION_RESPONSE').find(r=>r.stage==='MODEL');
+ assert.equal(result.provenance.request_sha256,digest(request.requestJson));assert.equal(result.provenance.response_sha256,response.sha256);
+ assert(JSON.parse(request.requestJson).text.format.schema.required.includes('layout_type'));assert.equal(f.calls.http.length,3,'two OCR effects and the one existing model effect');
+ assert.equal(result.layout.front_sha256,result.provenance.photos.front.sha256);assert.equal(defects.confirmation,null);assert(Object.values(defects.sides).every(s=>s.inspection===null&&s.humanEditedIds.length===0));
+});
+
+test('ambiguous or medium-confidence Pokémon layout stays unresolved without a category default or Astra dispatch',async()=>{
+ for(const layoutProposal of [{value:null,confidence:'unknown',evidence:null},{value:'POKEMON',confidence:'medium',evidence:'Front: partially visible HP text.'}]){
+  const f=await fixture({engineVersion:ATLAS_IDENTIFICATION_LAYOUT_VERSION,category:'Pokémon',layoutProposal});let initialized=0;
+  const connected={async open(){return {...await f.details.read(f.staff,f.cardId),card:{ready:true,sourceHash:f.sourceHash,sides:{FRONT:{upload:{uploadId:'front'}},BACK:{upload:{uploadId:'back'}}}},manual:null,identification:await f.identification.status(f.staff,f.cardId)};},identification:f.identification,initialize:async()=>{initialized++;}};
+  const result=await createBatchPreparation({connected}).run(f.staff,{cardId:f.cardId,sourceHash:f.sourceHash,uploads:{FRONT:'front',BACK:'back'},stage:'PREPARE'});
+  assert.equal(result.code,'BATCH_IDENTITY_NEEDS_REVIEW');assert.equal(initialized,0);assert.equal((await f.details.read(f.staff,f.cardId)).details.layoutType,null);assert.equal(f.calls.http.length,3);
+ }
+});
+
+test('explicit human layout choice or clear survives a late ATLAS machine layout proposal',async()=>{
+ for(const chosen of ['TRAINER',null]){
+  const f=await fixture({engineVersion:ATLAS_IDENTIFICATION_LAYOUT_VERSION,category:'Pokémon',pauseModel:true,layoutProposal:{value:'POKEMON',confidence:'high',evidence:'Front: BASIC and HP 60 beside attacks.'}});
+  const run=f.identification.run(f.staff,f.cardId);await f.modelEntered.promise;await f.save({layoutType:chosen});f.modelRelease.resolve();assert.equal((await run).state,'COMPLETE');
+  const details=(await f.details.read(f.staff,f.cardId)).details;assert.equal(details.layoutType,chosen);assert.deepEqual(details.touched,['layoutType']);
+ }
+});
+
+test('ATLAS layout attempt credit recovery reuses the exact augmented request and verified OCR without another OCR call',async()=>{
+ const f=await fixture({engineVersion:ATLAS_IDENTIFICATION_LAYOUT_VERSION,category:'Pokémon',layoutProposal:{value:'ENERGY',confidence:'high',evidence:'Front: ENERGY and Special Energy rules.'},httpStatus:429,modelError:{type:'insufficient_quota',code:'credit_balance_exhausted',param:null}});
+ const first=await f.identification.run(f.staff,f.cardId);assert.equal(first.state,'UNKNOWN');assert.equal(first.rejection.canRetry,true);
+ const command={actionId:randomUUID(),expectedAttemptId:first.attemptId,sourceHash:f.sourceHash};f.setModel(200);
+ const resumed=await f.restart().retry(f.staff,f.cardId,command);assert.equal(resumed.state,'COMPLETE');assert.equal(resumed.result.layout.value,'ENERGY');assert.equal(f.calls.http.length,4);
+ const models=f.calls.http.filter(c=>c.url.hostname==='api.openai.com');assert.equal(models[0].init.body,models[1].init.body);
+ assert.equal((await f.details.read(f.staff,f.cardId)).details.layoutType,'ENERGY');
+ await f.restart().retry(f.staff,f.cardId,command);assert.equal(f.calls.http.length,4);
+});
+
+test('production default selects the ATLAS layout version while a completed historical V2 result replays unchanged',async()=>{
+ const fresh=await fixture({engineVersion:null});const current=await fresh.identification.run(fresh.staff,fresh.cardId);assert.equal(current.state,'COMPLETE');assert.equal(current.result.provenance.engine_version,ATLAS_IDENTIFICATION_LAYOUT_VERSION);assert.equal(current.result.layout.value,null);
+ const historical=await fixture(),prior=await historical.identification.run(historical.staff,historical.cardId);assert.equal(prior.result.provenance.engine_version,V2);
+ assert.deepEqual((await historical.restartWithDefault().run(historical.staff,historical.cardId)).result,prior.result);assert.equal(historical.calls.http.length,3);
+});
+
+test('production default reconstructs historical V2 credit recovery without adding a layout field or changing paid request bytes',async()=>{
+ const f=await fixture({httpStatus:429,modelError:{type:'insufficient_quota',code:'credit_balance_exhausted',param:null}});const first=await f.identification.run(f.staff,f.cardId);f.setModel(200);
+ const result=await f.restartWithDefault().retry(f.staff,f.cardId,{actionId:randomUUID(),expectedAttemptId:first.attemptId,sourceHash:f.sourceHash});assert.equal(result.state,'COMPLETE');assert.equal(result.result.provenance.engine_version,V2);assert.equal(result.result.layout,undefined);
+ const requests=f.calls.http.filter(c=>c.url.hostname==='api.openai.com');assert.equal(requests.length,2);assert.equal(requests[0].init.body,requests[1].init.body);assert(!requests[1].body.text.format.schema.required.includes('layout_type'));
 });

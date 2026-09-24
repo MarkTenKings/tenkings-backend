@@ -76,7 +76,9 @@ export function canonicalizeSpeedsterSessionIdentity(
 }
 
 /**
- * New Pokémon sessions must carry the human-authoritative layout discriminator.
+ * New Pokémon sessions must carry an explicit layout discriminator.
+ * Workflow code preserves whether it is a machine proposal or a human choice;
+ * this shape check does not grant final report-approval authority.
  * The compatibility parser above deliberately continues to accept historical
  * identities that predate the field; callers must never use it to create a new
  * Pokémon session.

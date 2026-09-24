@@ -11,7 +11,7 @@ const all = (value, match, out = []) => { if (Array.isArray(value)) value.forEac
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const ready = () => ({ state: 'READY', previewId: 'retained-source-one', preview: { query: 'Fixture card identity', atlasGrade: 9.5, retrievedAt: '2026-09-22T00:00:00Z',
-  candidates: [{ sale: { id: 'ebay:123456789012', title: 'Fixture sold card', grader: 'PSA', grade: '9', soldAt: '2026-09-21T00:00:00Z', priceMinor: 4000, currency: 'USD', priceBasis: 'sold' }, match: 'UNKNOWN', requiresReview: true }], excluded: {} } });
+  candidates: [{ sale: { id: 'ebay:123456789012', title: 'Fixture sold card', listingUrl: 'https://www.ebay.com/itm/123456789012', grader: 'PSA', grade: '9', soldAt: '2026-09-21T00:00:00Z', priceMinor: 4000, currency: 'USD', priceBasis: 'sold' }, match: 'UNKNOWN', requiresReview: true }], excluded: {} } });
 function fixture() {
   const slots = [], effects = []; let cursor = 0, dirty, tree;
   const f = { searches: 0, saves: [], props: { scopeKey: 'card:approval-one', available: true } };
@@ -37,7 +37,18 @@ test('optional picker performs no lookup on mount and never preselects even a pr
   f.button('Find sold cards').props.onClick(); f.render(); await flush(); f.render();
   assert.equal(f.searches, 1); assert.equal(f.find(node => node.type === 'input')[0].props.checked, false);
   assert.match(f.text(), /Variant needs review/); assert.match(f.text(), /ATLAS 9.5/); assert.match(f.text(), /PSA 9/); assert.match(f.text(), /\$40.00/);
+  const listing = f.find(node => node.type === 'a')[0]; assert.equal(listing.props.href, ready().preview.candidates[0].sale.listingUrl);
+  assert.equal(listing.props.target, '_blank'); assert.equal(listing.props.rel, 'noopener noreferrer');
   f.props.available = false; assert.equal(f.render(), null); assert.equal(f.searches, 1);
+});
+
+test('uncertain search offers exact saved recovery, while definite pre-dispatch refusal permits a new search', async () => {
+  const f = fixture(); f.search = async () => { throw Object.assign(new Error(), { code: 'MARKET_SEARCH_UNKNOWN' }); };
+  f.button('Find sold cards').props.onClick(); await flush(); f.render();
+  assert.match(f.text(), /no new lookup will be purchased/); assert.ok(f.button('Check saved search'));
+  f.search = async () => { throw Object.assign(new Error(), { code: 'MARKET_SEARCH_REVIEW_REQUIRED' }); };
+  f.button('Check saved search').props.onClick(); await flush(); f.render();
+  assert.match(f.text(), /before this search began/); assert.ok(f.button('Find sold cards'));
 });
 test('uncertain save keeps the exact selection locked and retries only its saved ids', async () => {
   const f = fixture(); f.button('Find sold cards').props.onClick(); await flush(); f.render();

@@ -1,5 +1,5 @@
 import { clearStationBrowserCredential } from '@atlas/finishing-station/browser';
-import { STAFF_SIGN_IN_PATH } from '../lib/routes.mjs';
+import { STAFF_SIGN_IN_PATH, STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import Link from 'next/link';
 import Head from 'next/head';
 import { useState } from 'react';
@@ -8,8 +8,17 @@ import { api } from '../lib/client';
 import { stateNames } from '../lib/workspace-client.mjs';
 import styles from './WorkspaceUi.module.css';
 import AtlasBrand from './AtlasBrand';
-export function Unavailable() {
-    return <main className="unavailable"><Head><title>ATLAS · Access unavailable</title></Head><div className="brand">ATLAS<span>STAFF</span></div><h1>Staff access is not enabled here.</h1><p>Open the active ATLAS staff workspace to sign in.</p></main>;
+export function Unavailable({ accessFailure } = {}) {
+    const kind = accessFailure?.kind;
+    const disabled = kind === 'DISABLED', configuration = kind === 'CONFIGURATION', feature = kind === 'FEATURE_DISABLED';
+    const reference = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(accessFailure?.reference ?? '') ? accessFailure.reference : null;
+    return <main className="unavailable"><Head><title>ATLAS · Access unavailable</title></Head><div className="brand">ATLAS<span>STAFF</span></div>
+      <h1>{disabled ? 'Staff access is not enabled here.' : configuration ? 'Staff access needs configuration.' : feature ? 'This workspace is not enabled here.' : kind === 'METHOD_NOT_ALLOWED' ? 'Open this page again to continue.' : 'We couldn’t check your staff access.'}</h1>
+      <p>{disabled ? 'Open the active ATLAS staff workspace to sign in.' : configuration || feature ? 'An administrator needs to check this workspace’s configuration.' : 'The access check did not complete. Try opening this page again, or sign in again. If this keeps happening, share the reference below with the workspace administrator.'}</p>
+      <p><button type="button" className="primary" onClick={() => window.location.assign(window.location.href)}>Try again</button>{' '}
+        <a href={disabled ? `https://atlasgrading.com${STAFF_REAUTHENTICATE_PATH}` : STAFF_REAUTHENTICATE_PATH}>{disabled ? 'Open staff sign-in' : 'Sign in again'}</a></p>
+      {reference && <p>Reference: <code>{reference}</code></p>}
+    </main>;
 }
 export function Notice({ children, error = false }) {
     return <div className={`notice ${error ? 'error' : ''}`} role={error ? 'alert' : 'status'}>{children}</div>;
@@ -33,7 +42,7 @@ export default function Shell({ children, staff, title = 'Grading workspace', wo
             setBusy(false);
         }
     }
-    if(manual)return <div className="mc-shell"><Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head><header className="mc-shell-header"><Link href="/manual" className="atlas-brand" aria-label="ATLAS grading studio"><AtlasBrand/></Link><nav aria-label="Staff workspace"><Link href="/manual" className={router.pathname.startsWith('/manual')?'mc-nav-current':undefined}>Your cards</Link><Link href="/batch" className={router.pathname==='/batch'?'mc-nav-current':undefined}>Batch grading</Link><Link href="/station" className={router.pathname==='/station'?'mc-nav-current':undefined}>Station</Link><span className="mc-staff-name"><i aria-hidden="true"/>{staff?.name}</span><button disabled={busy} onClick={logout}>Sign out</button></nav></header>{staff?.mode!=='PRODUCTION'&&<div className="fixture-strip">Local verification environment · ordinary staff authentication · private test storage</div>}{error&&<Notice error>{error}</Notice>}{children}</div>;
+    if(manual)return <div className="mc-shell"><Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head><header className="mc-shell-header"><Link href="/manual" className="atlas-brand" aria-label="ATLAS grading studio"><AtlasBrand/></Link><nav aria-label="Staff workspace"><Link href="/manual" className={router.pathname.startsWith('/manual')?'mc-nav-current':undefined}>Your cards</Link><Link href="/batch?tab=INTAKE" className={(router.pathname==='/add-cards'||router.pathname==='/batch'&&(!router.query.tab||router.query.tab==='INTAKE'))?'mc-nav-current':undefined}>+ Add cards</Link><Link href="/batch?tab=REVIEW" className={router.pathname==='/batch'&&router.query.tab==='REVIEW'?'mc-nav-current':undefined}>Review queue</Link><Link href="/station" className={router.pathname==='/station'?'mc-nav-current':undefined}>Station</Link><span className="mc-staff-name"><i aria-hidden="true"/>{staff?.name}</span><button disabled={busy} onClick={logout}>Sign out</button></nav></header>{staff?.mode!=='PRODUCTION'&&<div className="fixture-strip">Local verification environment · ordinary staff authentication · private test storage</div>}{error&&<Notice error>{error}</Notice>}{children}</div>;
     return <div className="app-shell">
     <Head><title>{`${title} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head>
     <aside className="rail">

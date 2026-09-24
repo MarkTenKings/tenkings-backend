@@ -67,3 +67,11 @@ test('only definitive post-receipt stale refusals release a selection for fresh 
     assert.equal(f.client.pending(), null);
   }
 });
+
+test('proven pre-dispatch revision refusal cannot strand a saved search or automatically spend on a replacement', async () => {
+  const f = fixture(); f.search = () => { throw Object.assign(new Error(), { code: 'PRESENTATION_REVISION_STALE', status: 409 }); };
+  await assert.rejects(f.client.preview(), { code: 'MARKET_SEARCH_REVIEW_REQUIRED' }); assert.equal(f.client.pending(), null); assert.equal(f.searches, 1);
+  const refused = f.calls.at(-1).options.body.requestId; f.search = undefined; f.revision = 1;
+  await f.client.preview(); assert.equal(f.searches, 2); assert.notEqual(f.client.pending().search.requestId, refused);
+  assert.equal(f.client.pending().search.expectedRevision, 1);
+});

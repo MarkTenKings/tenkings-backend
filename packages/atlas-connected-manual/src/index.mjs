@@ -25,6 +25,8 @@ import { createManualFinishing } from './finishing.mjs';
 import { createPresentationRepository } from './presentation-repository.mjs';
 import { createPresentationService } from './presentation.mjs';
 import { createPresentationMarketService } from './presentation-market-service.mjs';
+import { createDealerOfferService } from './dealer-offers.mjs';
+import { createAtlasResearchService } from './research-service.mjs';
 import { createFinishingStationRepository } from './finishing-station-repository.mjs';
 import { createFinishingStationService } from './finishing-station-service.mjs';
 
@@ -38,7 +40,7 @@ const SIDES=['FRONT','BACK'];
 export function createWorkLimiter(maximum=2){let active=0;return async work=>{
   requireThat(active<maximum,503,'MANUAL_PROCESSING_BUSY');active++;try{return await work();}finally{active--;}
 };}
-export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,stationConfig=null}) {
+export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,dealerConfiguration=null,researchConfig=null,stationConfig=null}) {
   let earlyGeometry,batch=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
   const intakeRepository=createIntakeRepository({boundary,keyPrefix,maxOriginalBytes:64*1024*1024,sourceCommitted:recordEarlyGeometryIntent});
@@ -60,6 +62,9 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const presentationRepository=presentationEnabled?createPresentationRepository({boundary,keyPrefix}):null;
   const presentation=presentationEnabled?createPresentationService({repository:presentationRepository,storage,processPhoto:photoProcessor,keyPrefix,run:limited}):null;
   const market=presentationEnabled?createPresentationMarketService({repository:presentationRepository,approved:finishing,artifacts,provider:marketProvider,run:limited}):null;
+  requireThat(!researchConfig || presentationEnabled && marketProvider,503,'RESEARCH_PRESENTATION_REQUIRED');
+  const dealerOffers=presentationEnabled?createDealerOfferService({repository:presentationRepository,approved:finishing,loadConfiguration:dealerConfiguration}):null;
+  const research=researchConfig?createAtlasResearchService({boundary,repository:presentationRepository,approved:finishing,intake,storage,artifacts,receiptClient,config:researchConfig,run:limited}):null;
   async function current(staff,card){
     const actual=(await intake.read(staff,card.cardId)).card;
     requireThat(actual.ready && actual.sourceHash===card.draft.source?.sourceHash,409,'MANUAL_PHOTOS_CHANGED');return actual;
@@ -148,10 +153,10 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   }
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
   assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,provider:defectProvider,receiptClient});
-  const connected={boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,earlyGeometry,publication,finishing,presentation,market,station,
+  const connected={boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
     workspaceExtras: async input => {
       const [extras,status]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId)]);
-      return {...extras,publication:status,presentationEnabled,marketEnabled:Boolean(marketProvider)};
+      return {...extras,publication:status,presentationEnabled,marketEnabled:Boolean(marketProvider),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};
     },
     async open(staff,cardId){
       const [{card},saved]=await Promise.all([intake.read(staff,cardId),details.read(staff,cardId)]);

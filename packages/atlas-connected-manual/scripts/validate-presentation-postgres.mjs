@@ -11,6 +11,7 @@ import { createManualPublication } from '../src/publication.mjs';
 import { createApprovedManualReader } from '../src/publication-reader.mjs';
 import { createPresentationRepository, presentationGrantSQL } from '../src/presentation-repository.mjs';
 import { createManualFinishing } from '../src/finishing.mjs';
+import { createDealerOfferService } from '../src/dealer-offers.mjs';
 import { publicationFixture } from '../test/publication-fixture.mjs';
 
 const output = process.env.ATLAS_PRESENTATION_EVIDENCE;
@@ -135,6 +136,58 @@ try {
   assert.equal(await reader.read(imageClaims), null); assert.deepEqual(await repository.readApproval(staff, f.cardId, f.actionId), unchangedApproval);
   checks.push('two competing photo removals serialize with one CAS winner; old photo URL is withdrawn without modifying grade');
 
+  let offerClock = new Date();
+  const offerConfiguration = { directory: { version: 'atlas-dealer-directory-v1', updatedAt: offerClock.toISOString(), dealers: [{
+    id: 'owned-fixture-shop', name: 'OWNED FIXTURE ONLY — dealer', authorizedAt: new Date(offerClock.getTime() - 60000).toISOString(), authorizationExpiresAt: null,
+    services: ['BUY'], address: { line1: '1 Synthetic Street', city: 'Fixture', region: 'CA', postalCode: '90000', country: 'US' }, position: null,
+    website: 'https://example.com/', phone: null, programs: [],
+  }] }, offers: { version: 'atlas-dealer-offers-v1', offers: [{ id: 'fixture-offer', dealerId: 'owned-fixture-shop',
+    binding: { publicToken: plan.binding.publicToken, approvalVersion: plan.binding.approvalVersion, publicHash: plan.binding.publicHash },
+    amountMinor: 3000, currency: 'USD', kind: 'indicative', terms: 'Synthetic dealer terms only. No real commercial commitment.',
+    expiresAt: new Date(offerClock.getTime() + 3600000).toISOString(), source: { reference: 'OWNED FIXTURE ONLY — written terms', receivedAt: offerClock.toISOString() },
+  }] } };
+  const offers = createDealerOfferService({ repository: presentation, approved: finishing,
+    loadConfiguration: async () => structuredClone(offerConfiguration), now: () => offerClock });
+  const availableOffers = await offers.status(staff, f.cardId);
+  assert.equal(availableOffers.offers.length, 1); assert.equal(availableOffers.revision, 4);
+  const offerSelection = { requestId: randomUUID(), approvalActionId: f.actionId, expectedRevision: 4,
+    sourceHash: availableOffers.sourceHash, selectedIds: ['fixture-offer'] };
+  const concurrentOffers = await Promise.all([1, 2].map(() => offers.select(staff, f.cardId, offerSelection)));
+  assert.deepEqual(concurrentOffers[0], concurrentOffers[1]); assert.equal(concurrentOffers[0].revision, 5);
+  const [offerRow] = await fixture.admin.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation WHERE card_id=$1::uuid AND revision=5', f.cardId);
+  const offerSources = JSON.parse(offerRow.market_source);
+  assert.deepEqual(offerSources.soldReferences, marketSource); assert.equal(offerSources.dealerOffers.sources[0].reference, 'OWNED FIXTURE ONLY — written terms');
+  assert.equal(offerRow.market_source_hash, digest(offerRow.market_source));
+  await assert.rejects(offers.select(other, f.cardId, offerSelection));
+  await assert.rejects(offers.select(staff, f.cardId, { ...offerSelection, selectedIds: [] }));
+  assert.deepEqual(await presentation.marketCommitStatus(staff, f.cardId, selection), withMarket);
+  assert.deepEqual(await repository.readApproval(staff, f.cardId, f.actionId), unchangedApproval);
+  checks.push('concurrent exact sourced offer publication creates one revision through real reviewer/card authorization; legacy comps source and grade stay immutable');
+
+  const offerReader = createApprovedManualReader({ client: manualClient, artifacts: f.artifacts, storage: f.storage, presentationEnabled: true, dealerOffers: offers });
+  const withOffers = JSON.parse((await offerReader.read(claims)).bytes);
+  assert.equal(withOffers.presentation.dealerOffers[0].amountMinor, 3000); assert.deepEqual(withOffers.presentation.market, market);
+  assert.equal(withOffers.presentation.dealerOffers[0].source, undefined);
+  const unchangedPublicHash = digest(JSON.stringify(withOffers.packet)); assert.equal(unchangedPublicHash, plan.binding.publicHash);
+  offerConfiguration.offers.offers[0].terms += ' Changed.';
+  assert.deepEqual(JSON.parse((await offerReader.read(claims)).bytes).presentation.dealerOffers, []);
+  await assert.rejects(offers.select(staff, f.cardId, { ...offerSelection, requestId: randomUUID(), expectedRevision: 5 }), { code: 'DEALER_OFFER_SOURCE_CHANGED' });
+  offerConfiguration.offers.offers[0].terms = 'Synthetic dealer terms only. No real commercial commitment.';
+  offerConfiguration.directory.dealers[0].contactOnly = true; offerConfiguration.directory.dealers[0].services = [];
+  assert.deepEqual((await offers.status(staff, f.cardId)).offers, []);
+  assert.deepEqual(JSON.parse((await offerReader.read(claims)).bytes).presentation.dealerOffers, []);
+  delete offerConfiguration.directory.dealers[0].contactOnly; offerConfiguration.directory.dealers[0].services = ['BUY'];
+  offerClock = new Date(offerClock.getTime() + 3600001);
+  const expired = JSON.parse((await offerReader.read(claims)).bytes);
+  assert.deepEqual(expired.presentation.dealerOffers, []); assert.equal(digest(JSON.stringify(expired.packet)), unchangedPublicHash);
+  assert.deepEqual(await offers.select(staff, f.cardId, offerSelection), concurrentOffers[0]);
+  const expiredStatus = await offers.status(staff, f.cardId);
+  const removeOffers = { requestId: randomUUID(), approvalActionId: f.actionId, expectedRevision: 5, sourceHash: expiredStatus.sourceHash, selectedIds: [] };
+  const removedOffers = await offers.select(staff, f.cardId, removeOffers);
+  assert.equal(removedOffers.revision, 6); assert.deepEqual(removedOffers.presentation.dealerOffers, []); assert.deepEqual(removedOffers.presentation.market, market);
+  assert.deepEqual(await offers.select(staff, f.cardId, removeOffers), removedOffers);
+  checks.push('public reader removes changed/revoked/expired offers without changing report bytes; exact committed replay and explicit removal remain idempotent after expiry');
+
   for (const table of ['presentation', 'presentation_upload', 'presentation_market']) {
     await assert.rejects(fixture.admin.$executeRawUnsafe(`UPDATE atlas_manual.${table} SET actor_id=$1::uuid WHERE card_id=$2::uuid`, randomUUID(), f.cardId));
     await assert.rejects(fixture.admin.$executeRawUnsafe(`DELETE FROM atlas_manual.${table} WHERE card_id=$1::uuid`, f.cardId));
@@ -143,8 +196,8 @@ try {
   }
   checks.push('SQL rejects update/delete of photo history and the public web database role has no table access');
 
-  const nextUpload = await presentation.plan(staff, f.cardId, { ...input, requestId: randomUUID(), expectedRevision: 4 });
-  const staleMarket = { ...marketInput, requestId: randomUUID(), expectedRevision: 4 };
+  const nextUpload = await presentation.plan(staff, f.cardId, { ...input, requestId: randomUUID(), expectedRevision: 6 });
+  const staleMarket = { ...marketInput, requestId: randomUUID(), expectedRevision: 6 };
   await presentation.reserveMarket(staff, f.cardId, staleMarket);
   const nextAction = randomUUID(); await service.execute(staff, f.cardId, { ...approve, actionId: nextAction, expectedRevision: (await service.read(staff, f.cardId)).revision });
   await assert.rejects(presentation.loadUpload(staff, f.cardId, nextUpload.uploadId));

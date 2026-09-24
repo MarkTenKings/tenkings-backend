@@ -7,7 +7,7 @@ import { presentationRow } from './presentation-repository.mjs';
 import { parseReportPresentation } from '@atlas/report-view/presentation-contract';
 import { readApprovedIdentityDetails } from './presentation-identity.mjs';
 
-export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false }) {
+export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false, dealerOffers = null }) {
   async function presentation(row, token) {
     if (!presentationEnabled) return null;
     const rows = await client.$transaction(tx => tx.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation WHERE card_id=$1::uuid AND approval_action_id=$2::uuid ORDER BY revision DESC LIMIT 1', row.card_id, row.action_id), { maxWait: 1500, timeout: 3000 });
@@ -50,6 +50,10 @@ export function createApprovedManualReader({ client, artifacts, storage, present
           binding: { publicToken: packet.publicToken, approvalVersion: packet.approvalVersion, publicHash: row.public_hash },
           revision: 1, updatedAt: packet.approvedAt, dealerDirectory: { url: '/dealers?service=buy' } }),
           ...(identityDetails ? { identityDetails } : {}) });
+      }
+      if (additional?.dealerOffers?.length) {
+        try { additional = dealerOffers ? await dealerOffers.filterPublished(additional) : { ...additional, dealerOffers: [] }; }
+        catch { additional = { ...additional, dealerOffers: [] }; }
       }
       result = { contentType: 'application/json', bytes: Buffer.from(JSON.stringify({ packet, publicHash: row.public_hash, ...(additional ? { presentation: additional } : {}) })) };
     }

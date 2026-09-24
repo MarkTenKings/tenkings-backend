@@ -1,0 +1,25 @@
+{
+  "name": "@tenkings/card-research-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./contract": "./src/contract.mjs",
+    "./decisions": "./src/decisions.mjs",
+    "./catalog": "./src/catalog.mjs",
+    "./inventory": "./src/inventory.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@tenkings/ebay-sold-comps-v2": "workspace:*",
+    "@tenkings/card-catalog-evidence": "workspace:*",
+    "sharp": "0.33.5",
+    "zod": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

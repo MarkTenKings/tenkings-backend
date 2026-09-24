@@ -1,7 +1,7 @@
 import { PrismaClient } from '../../.generated/staff-database/index.js';
 import { LocalStaffAuth } from './auth.mjs';
 import { LocalReviewStore } from './review.mjs';
-import { assertLocalRequest, privateHeaders, deny } from './policy.mjs';
+import { assertLocalRequest, deny } from './policy.mjs';
 import { productionAccessConfig, assertProductionStaffRequest, secureStaffCookie } from './access/config.mjs';
 import { readLocalPostgresConfig } from './access/local-config.mjs';
 import { StaffDatabase } from './access/database.mjs';
@@ -24,7 +24,7 @@ import { StaffCustomerIntake } from './access/customer-intake.mjs';
 import { createWorkspaceRuntime, workspaceRuntimeSettings } from './access/workspace-runtime.mjs';
 import { localWorkspaceFixture } from './access/workspace-fixture.mjs';
 import { createFrontendManualRuntime } from './manual-frontend-runtime.mjs';
-import { staffContentSecurityPolicy } from '../content-security.mjs';
+import { createPageAccess } from './page-access.mjs';
 
 export function runtime(req, env = process.env) {
     if (env.ATLAS_CONNECTED_LOCAL_FIXTURE === '1') {
@@ -95,25 +95,4 @@ export function runtime(req, env = process.env) {
         clientAddress: local ? request => request.socket.remoteAddress : () => 'production-ingress' };
 }
 
-export async function pageAccess(ctx, { authenticated = true } = {}) {
-    privateHeaders(ctx.res);
-    if (!['GET', 'HEAD'].includes(ctx.req.method)) {
-        ctx.res.setHeader('Allow', 'GET, HEAD'); ctx.res.statusCode = 405;
-        return { props: { unavailable: true } };
-    }
-    try {
-        const state = runtime(ctx.req);
-        // Next's build-time headers cannot know a later private storage binding.
-        // The authenticated staff runtime supplies its validated origin
-        // on every HTML response, including the initial sign-in document.
-        if(state.connectedManual) ctx.res.setHeader('Content-Security-Policy',staffContentSecurityPolicy({development:process.env.NODE_ENV==='development',
-            uploadOrigins:[process.env.ATLAS_WORKSPACE_UPLOAD_ORIGIN,state.connectedManual.uploadOrigin]}));
-        if (state.auth.database) await state.auth.database.transaction(() => undefined);
-        if (!authenticated) return { props: { mode: state.mode ?? 'SYNTHETIC_LOCAL' } };
-        const staff = await state.auth.maybeAuthenticate(ctx.req.headers.cookie);
-        if (!staff) return { redirect: { destination: '/', permanent: false } };
-        return { props: { staff, manualEnabled: Boolean(state.connectedManual) } };
-    } catch {
-        ctx.res.statusCode = 503; return { props: { unavailable: true } };
-    }
-}
+export const pageAccess = createPageAccess({ resolveRuntime: runtime });

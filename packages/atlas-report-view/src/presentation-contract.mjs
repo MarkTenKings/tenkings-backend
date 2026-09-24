@@ -50,6 +50,15 @@ export const reportPresentationSchema = z.strictObject({ version: z.literal('atl
   dealerDirectory: z.strictObject({ url: z.literal('/dealers?service=buy') }).optional(),
 });
 
+// Server-only configuration contract. Source references are staff evidence and
+// are never copied into a public offer's allowlisted display fields.
+export const dealerOfferConfigurationSchema = z.strictObject({ version: z.literal('atlas-dealer-offers-v1'),
+  offers: z.array(reportPresentationSchema.shape.dealerOffers.unwrap().element.omit({ dealerName: true, dealerUrl: true }).extend({
+    dealerId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/), binding: bindingSchema,
+    source: z.strictObject({ reference: text.refine(value => !/[\x00-\x1f\x7f]/.test(value)), receivedAt: date }),
+  })).max(1000),
+});
+
 export function parseReportPresentation(value, expectedBinding) {
   const parsed = reportPresentationSchema.parse(value);
   if (expectedBinding && ['publicToken','approvalVersion','publicHash'].some(key => parsed.binding[key] !== expectedBinding[key])) {

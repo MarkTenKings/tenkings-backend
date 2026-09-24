@@ -6,6 +6,10 @@ import { parseReportPresentation } from '@atlas/report-view/presentation-contrac
 const integer = value => requireThat(Number.isSafeInteger(value) && value >= 0 && value < 2147483647);
 const document = value => ({ text: canonical(value), hash: digest(canonical(value)) });
 function stored(text, hash) { requireThat(typeof text === 'string' && digest(text) === hash, 503, 'PRESENTATION_CORRUPT'); return JSON.parse(text); }
+function sources(row) {
+  const value = row?.market_source ? stored(row.market_source, row.market_source_hash) : null;
+  return value?.version === 'atlas-market-sources-v2' ? value : { version: 'atlas-market-sources-v2', soldReferences: value, dealerOffers: null };
+}
 export function presentationBinding(row) { return { publicToken: row.public_token, approvalVersion: row.version, publicHash: row.public_hash }; }
 export function presentationRow(row, binding) {
   if (!row) return null;
@@ -67,9 +71,10 @@ export function createPresentationRepository({ boundary, keyPrefix, maxOriginalB
       if (!done) requireThat(state.revision === saved.request.expectedRevision, 409, 'PRESENTATION_REVISION_STALE');
       return { upload: saved, done: done ? { presentation: presentationRow(done, state.binding), revision: done.revision, approvalActionId: saved.approval_action_id } : null };
     }),
-    async commit(staff, cardId, input, photo = null, marketUpdate = null) {
+    async commit(staff, cardId, input, photo = null, marketUpdate = null, dealerUpdate = null) {
       object(input, ['requestId','approvalActionId','expectedRevision']); uuid(input.requestId); uuid(input.approvalActionId); integer(input.expectedRevision);
-      const request = document({ ...input, photo, ...(marketUpdate ? { marketUpdate } : {}) });
+      requireThat(!dealerUpdate || !marketUpdate && !photo, 400, 'PRESENTATION_REQUEST_INVALID');
+      const request = document({ ...input, photo, ...(marketUpdate ? { marketUpdate } : {}), ...(dealerUpdate ? { dealerUpdate } : {}) });
       return boundary.transaction(staff, async ({ tx, principal, refresh }) => {
         const state = await scope(tx, principal, cardId, input.approvalActionId, true);
         const [existing] = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation WHERE card_id=$1::uuid AND request_id=$2::uuid', cardId, input.requestId);
@@ -80,20 +85,24 @@ export function createPresentationRepository({ boundary, keyPrefix, maxOriginalB
         requireThat(state.revision === input.expectedRevision, 409, 'PRESENTATION_REVISION_STALE');
         const revision = state.revision + 1, previous = presentationRow(state.previous, state.binding);
         const { slabPhoto: ignored, ...retained } = previous ?? {};
-        const selectedPhoto = marketUpdate ? previous?.slabPhoto : photo?.descriptor;
+        const selectedPhoto = marketUpdate || dealerUpdate ? previous?.slabPhoto : photo?.descriptor;
         const value = parseReportPresentation({ ...retained, version: 'atlas-report-presentation-v1', binding: state.binding, revision,
           updatedAt: new Date().toISOString(), dealerDirectory: { url: '/dealers?service=buy' },
           ...(selectedPhoto ? { slabPhoto: { ...selectedPhoto, url: `/api/reports/${state.binding.publicToken}/presentation/image?v=${state.binding.approvalVersion}&revision=${revision}` } } : {}),
-          ...(marketUpdate ? { market: marketUpdate.market } : {}) }, state.binding);
-        const saved = document(value), media = marketUpdate && state.previous?.media ? { text: state.previous.media, hash: state.previous.media_hash } : photo ? document(photo.media) : null;
-        const marketSource = marketUpdate ? document(marketUpdate.source) : state.previous?.market_source ? { text: state.previous.market_source, hash: state.previous.market_source_hash } : null;
+          ...(marketUpdate ? { market: marketUpdate.market } : {}), ...(dealerUpdate ? { dealerOffers: dealerUpdate.dealerOffers } : {}) }, state.binding);
+        const saved = document(value), media = (marketUpdate || dealerUpdate) && state.previous?.media ? { text: state.previous.media, hash: state.previous.media_hash } : photo ? document(photo.media) : null;
+        const previousSources = sources(state.previous);
+        const marketSource = dealerUpdate ? document({ ...previousSources, dealerOffers: dealerUpdate.source })
+          : marketUpdate ? document(previousSources.dealerOffers ? { ...previousSources, soldReferences: marketUpdate.source } : marketUpdate.source)
+          : state.previous?.market_source ? { text: state.previous.market_source, hash: state.previous.market_source_hash } : null;
+        requireThat(!marketSource || Buffer.byteLength(marketSource.text) <= 32768, 413, 'PRESENTATION_SOURCE_TOO_LARGE');
         await scope(tx, (await refresh()).principal, cardId, input.approvalActionId, true);
         await tx.$executeRawUnsafe(`INSERT INTO atlas_manual.presentation(card_id,approval_action_id,revision,request_id,request_hash,actor_id,presentation,presentation_hash,media,media_hash,market_source,market_source_hash)
           VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,$6::uuid,$7,$8,$9,$10,$11,$12)`, cardId, input.approvalActionId, revision, input.requestId, request.hash, principal.id, saved.text, saved.hash, media?.text ?? null, media?.hash ?? null, marketSource?.text ?? null, marketSource?.hash ?? null);
         return { presentation: value, revision, approvalActionId: input.approvalActionId };
       });
     },
-    async reserveMarket(staff, cardId, input) {
+    async reserveMarket(staff, cardId, input, onCreated = null) {
       object(input, ['requestId','approvalActionId','expectedRevision']); uuid(input.requestId); uuid(input.approvalActionId); integer(input.expectedRevision);
       const request = document(input);
       return boundary.transaction(staff, async ({ tx, principal }) => {
@@ -103,6 +112,8 @@ export function createPresentationRepository({ boundary, keyPrefix, maxOriginalB
         requireThat(state.revision === input.expectedRevision, 409, 'PRESENTATION_REVISION_STALE');
         await tx.$executeRawUnsafe(`INSERT INTO atlas_manual.presentation_market(card_id,approval_action_id,request_id,actor_id,request,request_hash)
           VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6)`, cardId, input.approvalActionId, input.requestId, principal.id, request.text, request.hash);
+        // Server-owned initialization shares this transaction; callback failure rolls back the reservation.
+        if (onCreated) await onCreated(tx);
         return { created: true, state: 'STARTED', request: request.text, request_id: input.requestId, approval_action_id: input.approvalActionId };
       });
     },
@@ -131,13 +142,27 @@ export function createPresentationRepository({ boundary, keyPrefix, maxOriginalB
         const state = await scope(tx, principal, cardId, input.approvalActionId, true);
         const [row] = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation WHERE card_id=$1::uuid AND request_id=$2::uuid', cardId, input.requestId);
         if (!row) return null;
-        const source = row.market_source ? stored(row.market_source, row.market_source_hash) : null;
+        const source = sources(row).soldReferences;
         const presentation = presentationRow(row, state.binding);
         const expected = source && presentation.market ? document({ requestId: input.requestId, approvalActionId: input.approvalActionId,
           expectedRevision: input.expectedRevision, photo: null, marketUpdate: { market: presentation.market, source } }).hash : null;
         requireThat(row.actor_id === principal.id && row.approval_action_id === input.approvalActionId && row.revision === input.expectedRevision + 1
           && row.request_hash === expected
           && source?.version === 'atlas-selected-market-source-v1' && source.previewId === input.previewId
+          && canonical(source.selectedIds) === canonical(input.selectedIds), 409, 'PRESENTATION_REQUEST_CONFLICT');
+        return { presentation, revision: row.revision, approvalActionId: input.approvalActionId };
+      });
+    },
+    async dealerOfferCommitStatus(staff, cardId, input) {
+      return boundary.transaction(staff, async ({ tx, principal }) => {
+        const state = await scope(tx, principal, cardId, input.approvalActionId, true);
+        const [row] = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation WHERE card_id=$1::uuid AND request_id=$2::uuid', cardId, input.requestId);
+        if (!row) return null;
+        const source = sources(row).dealerOffers, presentation = presentationRow(row, state.binding);
+        const expected = source && presentation.dealerOffers ? document({ requestId: input.requestId, approvalActionId: input.approvalActionId,
+          expectedRevision: input.expectedRevision, photo: null, dealerUpdate: { dealerOffers: presentation.dealerOffers, source } }).hash : null;
+        requireThat(row.actor_id === principal.id && row.approval_action_id === input.approvalActionId && row.revision === input.expectedRevision + 1
+          && row.request_hash === expected && source?.version === 'atlas-selected-dealer-offers-v1' && source.sourceHash === input.sourceHash
           && canonical(source.selectedIds) === canonical(input.selectedIds), 409, 'PRESENTATION_REQUEST_CONFLICT');
         return { presentation, revision: row.revision, approvalActionId: input.approvalActionId };
       });

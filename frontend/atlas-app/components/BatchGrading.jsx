@@ -11,6 +11,7 @@ import ManualFinishing, { openManualLabelPrintWindow } from './ManualFinishing';
 
 const path = '/api/staff/manual-connected/cards/batch';
 const status = { QUEUED: 'Queued', RUNNING: 'Grading', REVIEW: 'Review', NEEDS_ATTENTION: 'Check card', SUPERSEDED: 'Photos changed', APPROVED: 'Approved' };
+const queueTabs = ['INTAKE', 'PROCESSING', 'REVIEW', 'NEEDS_ATTENTION'];
 const stages = { PREPARE: 'Preparing', ANALYZE: 'Astra analysis', REPORT: 'Measuring' };
 const messages = {
   BATCH_IDENTITY_NEEDS_REVIEW: 'Check card details', BATCH_GEOMETRY_NEEDS_REVIEW: 'Check edges',
@@ -21,15 +22,20 @@ const messages = {
 };
 export default function BatchGrading({ staff }) {
   const router = useRouter(), session = useRef(null), current = useRef(0), mutation = useRef(false);
-  const [jobs, setJobs] = useState([]), [cards, setCards] = useState([]), [selected, setSelected] = useState([]);
-  const [tab, setTab] = useState('REVIEW'), [active, setActive] = useState(null), [error, setError] = useState('');
-  const [busy, setBusy] = useState(false), [loaded, setLoaded] = useState(false), [hasMore, setHasMore] = useState(null);
+  const [jobs, setJobs] = useState([]);
+  const [tab, setTab] = useState(queueTabs.includes(router.query?.tab) ? router.query.tab : 'INTAKE'), [active, setActive] = useState(null), [error, setError] = useState('');
+  const [busy, setBusy] = useState(false), [loaded, setLoaded] = useState(false);
   const [packet, setPacket] = useState(null), [imagesReady, setImagesReady] = useState(false), [reviewError, setReviewError] = useState('');
   const reviewing = useRef(null);
   const lifetime = useRef(null), approvalPopup = useRef(null), labelRead = useRef(0);
   const [lastApproved, setLastApproved] = useState(null), [finishing, setFinishing] = useState(null);
   const [autoPrintWindow, setAutoPrintWindow] = useState(null), [finishingError, setFinishingError] = useState('');
   const [preparingLabel, setPreparingLabel] = useState(false);
+  useEffect(() => { setTab(queueTabs.includes(router.query?.tab) ? router.query.tab : 'INTAKE'); setActive(null); }, [router.query?.tab]);
+  function selectTab(value) {
+    setTab(value); setActive(null);
+    void router.replace({ pathname: router.pathname, query: { ...router.query, tab: value } }, undefined, { shallow: true });
+  }
   const pendingKey = `atlas-batch-enqueue:${staff.id}`;
   const request = useCallback((url, options = {}) => manualRequest(url, { ...options, csrf: session.current?.csrf }), []);
   const refresh = useCallback(async () => {
@@ -37,17 +43,10 @@ export default function BatchGrading({ staff }) {
     const result = await request(path);
     if (sequence === current.current && !reviewing.current) { setJobs(result.jobs ?? []); setLoaded(true); }
   }, [request]);
-  const loadCards = useCallback(async (cursor = null) => {
-    const owner = lifetime.current;
-    const result = await request(`/api/staff/manual-intake/cards${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
-    if (lifetime.current !== owner) return;
-    setCards(previous => cursor ? [...previous, ...(result.cards ?? [])].filter((card, index, all) => all.findIndex(item => item.cardId === card.cardId) === index) : result.cards ?? []);
-    setHasMore(result.nextCursor ?? null);
-  }, [request]);
   useEffect(() => {
     let stopped = false; const owner = {}; lifetime.current = owner; session.current = null;
     mutation.current = false; reviewing.current = null;
-    setJobs([]); setCards([]); setSelected([]); setActive(null); setPacket(null); setImagesReady(false); setLoaded(false); setBusy(false);
+    setJobs([]); setActive(null); setPacket(null); setImagesReady(false); setLoaded(false); setBusy(false);
     setLastApproved(null); setFinishing(null); setAutoPrintWindow(null); setFinishingError(''); setPreparingLabel(false);
     (async () => {
       const result = await request('/api/staff/session');
@@ -66,17 +65,16 @@ export default function BatchGrading({ staff }) {
           throw failure;
         }
       }
-      if (!stopped) await Promise.all([refresh(), loadCards()]);
+      if (!stopped) await refresh();
     })().catch(failure => { if (!stopped) setError(messages[failure.code] ?? manualMessage(failure)); });
     const timer = setInterval(() => { if (session.current && document.visibilityState !== 'hidden') void refresh().catch(failure => setError(messages[failure.code] ?? manualMessage(failure))); }, 3000);
     return () => { stopped = true; current.current++; labelRead.current++; clearInterval(timer);
       if (lifetime.current === owner) { lifetime.current = null; session.current = null; }
       approvalPopup.current?.close(); approvalPopup.current = null;
     };
-  }, [staff.id, pendingKey, request, refresh, loadCards]);
+  }, [staff.id, pendingKey, request, refresh]);
   const shown = jobs.filter(job => tab === 'PROCESSING' ? ['QUEUED', 'RUNNING'].includes(job.state) : job.state === tab);
   const focused = shown.find(job => job.key === active) ?? shown[0] ?? null;
-  const eligible = cards.filter(card => card.ready && !jobs.some(job => job.cardId === card.cardId && job.sourceHash === card.sourceHash));
   const open = useCallback(job => { if (job) void router.push(`/manual/${job.cardId}?from=batch`); }, [router]);
   useEffect(() => {
     let stopped = false; setPacket(null); setImagesReady(false); setReviewError('');
@@ -95,26 +93,6 @@ export default function BatchGrading({ staff }) {
     };
     window.addEventListener('keydown', keydown); return () => window.removeEventListener('keydown', keydown);
   }, [shown, focused, open]);
-  async function enqueue() {
-    if (mutation.current || !selected.length) return;
-    mutation.current = true; setBusy(true); setError(''); let saved = null;
-    try {
-      const old = localStorage.getItem(pendingKey);
-      const body = old ? JSON.parse(old) : { actionId: crypto.randomUUID(), cards: selected.map(id => {
-        const card = eligible.find(item => item.cardId === id); if (!card) throw { code: 'BATCH_PHOTOS_CHANGED' };
-        return { cardId: id, sourceHash: card.sourceHash };
-      }) };
-      saved = JSON.stringify(body); localStorage.setItem(pendingKey, saved);
-      await request(path, { method: 'POST', body });
-      if (localStorage.getItem(pendingKey) === saved) localStorage.removeItem(pendingKey);
-      setSelected([]); setTab('PROCESSING'); await refresh();
-    } catch (failure) {
-      // Closed refusals prove no admission; uncertain responses keep the exact
-      // request for recovery. A new action is never silently substituted.
-      if ([400, 403, 404, 409, 413, 422].includes(failure.status) && localStorage.getItem(pendingKey) === saved) localStorage.removeItem(pendingKey);
-      setError(messages[failure.code] ?? manualMessage(failure));
-    } finally { mutation.current = false; setBusy(false); }
-  }
   async function loadApprovedLabel(result, popup = null) {
     const owner = lifetime.current, sequence = ++labelRead.current;
     setFinishing(null); setAutoPrintWindow(null); setFinishingError(''); setPreparingLabel(true);
@@ -166,12 +144,12 @@ export default function BatchGrading({ staff }) {
   }
   return <Shell staff={staff} manual title="Batch grading">
     <main className={styles.studio}>
-      <header className={styles.heading}><div><p>ATLAS STUDIO</p><h1>Grading queue</h1></div><Link className={styles.add} href="/manual">+ Add cards</Link></header>
+      <header className={styles.heading}><div><p>ATLAS STUDIO</p><h1>Grading queue</h1></div><button type="button" className={styles.add} onClick={() => selectTab('INTAKE')}>+ Add cards</button></header>
       {error && <p className={styles.error} role="alert">{error}</p>}
       <nav className={styles.tabs} aria-label="Grading queues">
-        {[['REVIEW', 'Review'], ['PROCESSING', 'Grading'], ['NEEDS_ATTENTION', 'Needs attention'], ['INTAKE', 'Ready to queue']].map(([value, label]) => {
-          const count = value === 'INTAKE' ? eligible.length : jobs.filter(job => value === 'PROCESSING' ? ['QUEUED', 'RUNNING'].includes(job.state) : job.state === value).length;
-          return <button key={value} disabled={busy} aria-current={tab === value ? 'page' : undefined} onClick={() => { setTab(value); setActive(null); }}>{label}<span>{count}</span></button>;
+        {[['INTAKE', 'Add cards'], ['PROCESSING', 'Grading'], ['REVIEW', 'Review'], ['NEEDS_ATTENTION', 'Needs attention']].map(([value, label]) => {
+          const count = value === 'INTAKE' ? null : jobs.filter(job => value === 'PROCESSING' ? ['QUEUED', 'RUNNING'].includes(job.state) : job.state === value).length;
+          return <button key={value} disabled={busy} aria-current={tab === value ? 'page' : undefined} onClick={() => selectTab(value)}>{label}{count !== null && <span>{count}</span>}</button>;
         })}
       </nav>
       {lastApproved && <section className={styles.finishingDock} aria-label="Last approved card finishing">
@@ -182,13 +160,10 @@ export default function BatchGrading({ staff }) {
         {finishing && <ManualFinishing key={finishing.id} plan={finishing} autoPrintWindow={autoPrintWindow} staffId={staff.id} csrf={session.current?.csrf}
           onPrintDialog={() => setAutoPrintWindow(null)} printDisabled={busy} />}
       </section>}
-      {tab === 'INTAKE' ? <section className={styles.intake}>
-        <BatchImport staff={staff} enabled={loaded} onImported={async()=>{await Promise.all([refresh(),loadCards()]);}}/>
-        <div className={styles.intakeBar}><button onClick={() => setSelected(eligible.slice(0, 50).map(card => card.cardId))} disabled={!eligible.length}>Select up to 50</button><button className={styles.primary} onClick={enqueue} disabled={!selected.length || busy}>{busy ? 'Queueing…' : `Grade ${selected.length || ''} cards`}</button></div>
-        <div className={styles.cards}>{eligible.map(card => <label className={styles.selectCard} key={card.cardId}><input type="checkbox" checked={selected.includes(card.cardId)} disabled={!selected.includes(card.cardId) && selected.length >= 50} onChange={event => setSelected(ids => event.target.checked ? [...ids, card.cardId] : ids.filter(id => id !== card.cardId))}/><img src={`${STAFF_BASE_PATH}/api/staff/manual-connected/cards/${card.cardId}/preview-image/FRONT`} alt="Front" loading="lazy"/><span>{card.label || 'Ready card'}</span></label>)}</div>
-        {hasMore && <button onClick={() => void loadCards(hasMore).catch(failure => setError(manualMessage(failure)))}>Load more cards</button>}
-        {!eligible.length && <p className={styles.empty}>Add a Front and Back photo to get started.</p>}
-      </section> : <div className={styles.review}>
+      <section className={styles.intake} hidden={tab !== 'INTAKE'}>
+        <BatchImport staff={staff} enabled={loaded} onImported={refresh}/>
+      </section>
+      {tab !== 'INTAKE' && <div className={styles.review}>
         <aside className={styles.rail} aria-label="Cards">{shown.map(job => <button disabled={busy} className={styles.cardRow} aria-current={focused?.key === job.key ? 'true' : undefined} key={job.key} onClick={() => setActive(job.key)}><img src={`${STAFF_BASE_PATH}/api/staff/manual-connected/cards/${job.cardId}/preview-image/FRONT`} alt="" loading="lazy"/><span><strong>{job.evidence?.name || job.label || 'Card'}</strong><small>{job.state === 'RUNNING' ? stages[job.stage] : status[job.state]}</small></span><b>{job.evidence?.proposedGrade ?? '·'}</b></button>)}</aside>
         {focused?.state === 'REVIEW' ? <section className={styles.machineReview} aria-label="Review proposed grade">
           {reviewError && <p className={styles.error} role="alert">{reviewError}</p>}
