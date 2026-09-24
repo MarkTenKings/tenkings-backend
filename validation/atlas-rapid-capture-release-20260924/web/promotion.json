@@ -1,0 +1,49 @@
+{
+  "status": "PUBLIC_PROMOTION_READBACK_PASS",
+  "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+  "deploymentId": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV",
+  "providerWrites": 1,
+  "productionTarget": {
+    "id": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV",
+    "url": "atlas-grading-public-9vhvxzfyk-ten-kings.vercel.app",
+    "readyState": "READY",
+    "target": "production"
+  },
+  "aliases": [
+    {
+      "uid": "4b02ff29ecfcd5e0991c0e4646194d371b2685ea98d8ead32374c81595f1e12e550743965d1ad662e7558bf4bebd229017002d38c085a5aff3aeed9f71b4a04c",
+      "alias": "atlas-grading-public-ten-kings.vercel.app",
+      "redirect": null,
+      "redirectStatusCode": null,
+      "deploymentId": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV"
+    },
+    {
+      "uid": "59a50240ec38a8fff3e589d80ccfb321a8ca68ad42b8dd12bce497d1de622a7010b87db18e69a2f016e6cb413a749c01b3be08867f7ef472c58ef2b30cee64a2",
+      "alias": "atlas-grading-public.vercel.app",
+      "redirect": null,
+      "redirectStatusCode": null,
+      "deploymentId": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV"
+    },
+    {
+      "uid": "a3e80ee4f732fe19355bf2f970f1173ac2055489be4a82ddb74c7437d14e7d0baee21a90798c6e6bfdd8521d851cebb24cc988e0265952195db9fdb2e53942c0",
+      "alias": "atlasgrading.com",
+      "redirect": null,
+      "redirectStatusCode": null,
+      "deploymentId": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV"
+    },
+    {
+      "uid": "cffc54527b74dcd02e1c676e9080737d670e9bf19a5d0a957a8046371aa4014f06fba980ed43ebc23185be7a8b3bacdaf7a62144a537210f87b89b0becbf8451",
+      "alias": "www.atlasgrading.com",
+      "redirect": "atlasgrading.com",
+      "redirectStatusCode": 308,
+      "deploymentId": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV"
+    }
+  ],
+  "readbackReceiptSha256": "9f33217f5a4f700423835b8f1a00a43a9e6537db3d22b84e406a40dee1460e88",
+  "canonicalChecks": "PASS_27_OF_27",
+  "secretsIncluded": false,
+  "canonicalReceipt": {
+    "path": "root-release/customer-final-safe/customer-canonical-result.json",
+    "sha256": "6513de0ce685bea4d06324a45317e29ec75a0f4778e5a1cedf3ade236eb88f18"
+  }
+}

@@ -1,0 +1,375 @@
+{
+  "status": "PRIVATE_INGRESS_SCOPE_PASS",
+  "observedAt": "2026-09-24T17:28:33.083Z",
+  "checks": [
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/intake-sign",
+      "status": 401,
+      "contentType": "application/json; charset=utf-8",
+      "bytes": 47,
+      "bodySha256": "990ac2b0a1eb0b9d6eab3a119451eaec14ab64fa4e3a70bff28cea73638c2593",
+      "error": "CUSTOMER_SERVICE_SIGNATURE_REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/internal/customer-service/v1/intake-sign",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "HEAD",
+      "path": "/internal/customer-service/v1/intake-sign",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/intake-sign?probe=1",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/intake-sign/",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/intake-complete",
+      "status": 401,
+      "contentType": "application/json; charset=utf-8",
+      "bytes": 47,
+      "bodySha256": "990ac2b0a1eb0b9d6eab3a119451eaec14ab64fa4e3a70bff28cea73638c2593",
+      "error": "CUSTOMER_SERVICE_SIGNATURE_REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/internal/customer-service/v1/intake-complete",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "HEAD",
+      "path": "/internal/customer-service/v1/intake-complete",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/intake-complete?probe=1",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/intake-complete/",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-checkout",
+      "status": 401,
+      "contentType": "application/json; charset=utf-8",
+      "bytes": 47,
+      "bodySha256": "990ac2b0a1eb0b9d6eab3a119451eaec14ab64fa4e3a70bff28cea73638c2593",
+      "error": "CUSTOMER_SERVICE_SIGNATURE_REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/internal/customer-service/v1/commerce-checkout",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "HEAD",
+      "path": "/internal/customer-service/v1/commerce-checkout",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-checkout?probe=1",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-checkout/",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-quote",
+      "status": 401,
+      "contentType": "application/json; charset=utf-8",
+      "bytes": 47,
+      "bodySha256": "990ac2b0a1eb0b9d6eab3a119451eaec14ab64fa4e3a70bff28cea73638c2593",
+      "error": "CUSTOMER_SERVICE_SIGNATURE_REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/internal/customer-service/v1/commerce-quote",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "HEAD",
+      "path": "/internal/customer-service/v1/commerce-quote",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-quote?probe=1",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-quote/",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-pay",
+      "status": 401,
+      "contentType": "application/json; charset=utf-8",
+      "bytes": 47,
+      "bodySha256": "990ac2b0a1eb0b9d6eab3a119451eaec14ab64fa4e3a70bff28cea73638c2593",
+      "error": "CUSTOMER_SERVICE_SIGNATURE_REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/internal/customer-service/v1/commerce-pay",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "HEAD",
+      "path": "/internal/customer-service/v1/commerce-pay",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-pay?probe=1",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-pay/",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-reconcile",
+      "status": 401,
+      "contentType": "application/json; charset=utf-8",
+      "bytes": 47,
+      "bodySha256": "990ac2b0a1eb0b9d6eab3a119451eaec14ab64fa4e3a70bff28cea73638c2593",
+      "error": "CUSTOMER_SERVICE_SIGNATURE_REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/internal/customer-service/v1/commerce-reconcile",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "HEAD",
+      "path": "/internal/customer-service/v1/commerce-reconcile",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-reconcile?probe=1",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/commerce-reconcile/",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/dealer-locations",
+      "status": 401,
+      "contentType": "application/json; charset=utf-8",
+      "bytes": 47,
+      "bodySha256": "990ac2b0a1eb0b9d6eab3a119451eaec14ab64fa4e3a70bff28cea73638c2593",
+      "error": "CUSTOMER_SERVICE_SIGNATURE_REQUIRED"
+    },
+    {
+      "method": "GET",
+      "path": "/internal/customer-service/v1/dealer-locations",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "HEAD",
+      "path": "/internal/customer-service/v1/dealer-locations",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/dealer-locations?probe=1",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/dealer-locations/",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/not-an-operation",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/dealer%2Dlocations",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1//dealer-locations",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/dealer-locations/extra",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/customer-service/v1/dealer-locations%3Fprobe=1",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/commerce/stripe-webhook",
+      "status": 503,
+      "contentType": "application/json",
+      "bytes": 35,
+      "bodySha256": "8db5e0ab2c1f32e2132a368b84732c74a0e3192a6195a6404756f4466c50d84b",
+      "error": "COMMERCE_NOT_CONFIGURED"
+    },
+    {
+      "method": "GET",
+      "path": "/internal/commerce/stripe-webhook",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "HEAD",
+      "path": "/internal/commerce/stripe-webhook",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/commerce/stripe-webhook?probe=1",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/commerce/stripe-webhook/",
+      "status": 404,
+      "contentType": null,
+      "bytes": 0,
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "scope": "Only unsigned invalid requests and cold webhook denial; no signature keys, session bootstrap, customer data, uploads or provider effects"
+}

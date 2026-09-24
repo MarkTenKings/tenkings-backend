@@ -1,0 +1,72 @@
+{
+  "actualIdentificationJobClaimed": false,
+  "at": "2026-09-24T17:28:11.769757+00:00",
+  "automaticRetry": false,
+  "binding": {
+    "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563",
+    "deploymentId": "atlas-grading-customer-kh9z6goex-ten-kings.vercel.app",
+    "mode": "PRODUCTION",
+    "origin": "https://atlasgrading.com",
+    "releaseSha": "4d3de84419242bfa245dbd652a8c28d812e2ea6b"
+  },
+  "checkerSha256": "dc17c9a552b01e77ccd16f3244cb44fec898f6b75fe1d2052a526f4d05357e85",
+  "checks": [
+    {
+      "check": "actual_restricted_role",
+      "readonly": "on",
+      "role": "atlas_customer_private_20260924",
+      "tls": true
+    },
+    {
+      "check": "revoked_original_service_key_rejected",
+      "error": "CUSTOMER_SERVICE_SIGNATURE_REQUIRED",
+      "status": 401
+    },
+    {
+      "check": "signed_actual_directory",
+      "customerSessionUsed": false,
+      "locationCount": 0,
+      "responseSha256": "b676d931044407b426a943c5f79a9fabe070ea68845c9d79eed6fc2dff40e61e"
+    },
+    {
+      "check": "signed_intake-sign",
+      "error": "SIGN_IN_REQUIRED",
+      "scope": "Transport, enabled handler, exact service binding and auth denial only; impossible authority, no real customer session",
+      "status": 401
+    },
+    {
+      "check": "signed_intake-complete",
+      "error": "SIGN_IN_REQUIRED",
+      "scope": "Transport, enabled handler, exact service binding and auth denial only; impossible authority, no real customer session",
+      "status": 401
+    },
+    {
+      "check": "/internal/customer-service/v1/intake-sign",
+      "error": "CUSTOMER_SERVICE_SIGNATURE_REQUIRED",
+      "status": 401
+    },
+    {
+      "check": "/internal/commerce/stripe-webhook",
+      "error": "COMMERCE_NOT_CONFIGURED",
+      "status": 503
+    }
+  ],
+  "commerceEnabled": false,
+  "containerId": "f06442b1dc5ce61f4e207a61e135c2e2f2b8a474a635aa65e7caed6403656065",
+  "customerHistoryUnchanged": true,
+  "customerIdentificationConfigured": true,
+  "customerIntakeEnabled": true,
+  "customerMutationCalls": 0,
+  "humanThroughputTested": false,
+  "identificationProviderCalls": 0,
+  "oldServiceKeyRejected": true,
+  "paymentProviderCalls": 0,
+  "privateImage": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+  "realCustomerSessionTested": false,
+  "serviceKeyRotated": true,
+  "status": "CUSTOMER_PRIVATE_READONLY_PASS",
+  "storageProviderCalls": 0,
+  "unrelatedStateUnchanged": true,
+  "webSourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+  "workerConfiguredAndNoPauseObserved": true
+}

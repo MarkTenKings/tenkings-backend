@@ -1,0 +1,35 @@
+{
+  "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+  "operations": {
+    "customerAdditions": {
+      "providerWrites": 4,
+      "receipt": {
+        "path": "web-release/customer-env-apply-2/result.json",
+        "sha256": "57e9d45046f00725ab2c1361f79a7de515b169022f8353a7614baacaf6f0ccf7"
+      }
+    },
+    "unusedNewKeyReplacement": {
+      "providerWrites": 1,
+      "receipt": {
+        "path": "web-release/customer-key-replacement-1/result.json",
+        "sha256": "c284358d5c03ebcbc667d29548a7e1d4cce98eb40950354ce4b8e4325d6af425"
+      },
+      "reason": "Pre-activation diagnostic assertion exposed original unused new key; scoped replacement installed before customer deployment. Runtime old-key rejection remains required."
+    },
+    "publicOriginPatches": {
+      "providerWrites": 2,
+      "receipt": {
+        "path": "web-release/public-env-apply-4d3de844-1/result.json",
+        "sha256": "4154734c470fa5970fa1ac55a8ddc9b04dde624a3c385b51a4065e62bf821443"
+      }
+    }
+  },
+  "keyValuesIncluded": false,
+  "fullEnvironmentRowsIncluded": false,
+  "runtimeOldKeyRejectionStatus": "ACTUAL_PRIVATE_PROBE_PASS",
+  "canonicalPromotionStatus": "PUBLIC_PROMOTION_READBACK_PASS",
+  "runtimeKeyProof": {
+    "path": "root-release/customer-final-safe/customer-private-result.json",
+    "sha256": "8f17d844c3b523e4ba89dd5a0e45fe0dd1f41696da2c5c9ab90247948e8a037b"
+  }
+}

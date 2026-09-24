@@ -1,0 +1,51 @@
+{
+  "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "ba619cf6d8baecfeea2ec422b9b5aa378c9230863975e13a09f309c6ecdd760c",
+      "bytes": 895
+    },
+    {
+      "path": "completion.json",
+      "sha256": "da89ff1d77019f11675ef86cc6c25449b1fb2091da1eaf4c6d4c84d9cf88c556",
+      "bytes": 1653
+    },
+    {
+      "path": "environment-effects.json",
+      "sha256": "7f304bfc7dec50ece1b5e6438cc02716c7913ef6997400e832e49f142626fa6e",
+      "bytes": 1391
+    },
+    {
+      "path": "media.json",
+      "sha256": "ded02dec7823cee18ce792e58883b3cf76d7c37cab8e758b328295da747cf5c3",
+      "bytes": 2720
+    },
+    {
+      "path": "native-compatibility.json",
+      "sha256": "0a670755049e2579dd8441346a912e5cd5c1230df7e289d0997b0d8a194e43ef",
+      "bytes": 2864
+    },
+    {
+      "path": "promotion.json",
+      "sha256": "06b8590e1337a66384658f1b2f81aebd8a890fef1a1afcef2dc8532e5ec63e7e",
+      "bytes": 2041
+    },
+    {
+      "path": "qualification.json",
+      "sha256": "7081aa6ee28abc1a1b142de878b6d305886f8b5b9e19512dbd5bc282e94eec81",
+      "bytes": 4052
+    },
+    {
+      "path": "signed-staff-public-tls.json",
+      "sha256": "3e42a29704a12744b6b2e8831ba628bf54e42de34d2402933d6054556021c764",
+      "bytes": 1828
+    },
+    {
+      "path": "web-deployments.json",
+      "sha256": "be5982a8d8fbf97bb076427c3088986b16d28d05ed9d6a31ca4552eff7746822",
+      "bytes": 3580
+    }
+  ],
+  "totalBytes": 21024
+}

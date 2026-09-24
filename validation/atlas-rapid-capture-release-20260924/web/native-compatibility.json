@@ -1,0 +1,57 @@
+{
+  "status": "RETAINED_NATIVE_CODE_BYTE_COMPATIBLE",
+  "privateSourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "privateImage": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+  "webSourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+  "webWorkingTree": false,
+  "qualifiedManifestSha256": "3d049d3f05904ca52183ce669d66a06fb784e4cdc8a76aa52819e9a767b50981",
+  "qualifiedPackagedFiles": 883,
+  "unchangedPackagedFiles": 876,
+  "unchangedManifestSha256": "ec12f5cbd5ac77ebb5cda586fa3576547d2e27dadf2fb3e7a435fe577d7cd267",
+  "changedUnusedWebFiles": [
+    {
+      "path": "frontend/atlas-app/components/BatchGrading.module.css",
+      "retainedImageSha256": "f0b1e0e8cf048bc2e06f09936cac748129b6273a82ff0eda16afb2254669359f",
+      "webSha256": "f9e4b80c003d0eaf2c4fc5478264a9c76e98bae1d0ebe58e9677ed855b4ff1f2"
+    },
+    {
+      "path": "frontend/atlas-app/components/BatchImport.jsx",
+      "retainedImageSha256": "5868f67f34eb804f9fb17ef5d20d91de7b43a5106018de179de847ac78ee990e",
+      "webSha256": "021a71768a77fe583ac228511ee7f367af6537263e7fbd8886e3fe76f6ee8149"
+    },
+    {
+      "path": "frontend/atlas-app/lib/batch-import.mjs",
+      "retainedImageSha256": "ae43b97451c78b31a8c1bbb2c10137f06dea2a2d3f74ec2a9892d8f4e7ea49ad",
+      "webSha256": "d8becf4cfb912f63ada7c35d9eff9024fd35d1c0931a9f236ad15cc0ae5c7989"
+    },
+    {
+      "path": "frontend/atlas-app/next.config.mjs",
+      "retainedImageSha256": "2b7937459d516953f69bbd828feeb2269718746d51d715c4d004c42a4c7841c4",
+      "webSha256": "d4b73c8520e375e2aa9e587ed9c56847a4ea5c979f744aee2125bac2d81baeea"
+    },
+    {
+      "path": "frontend/atlas-app/scripts/check-boundary.mjs",
+      "retainedImageSha256": "9c9ff8d667f38c73f10768c42e571b779a499a76ef988826b196326fe5c895c3",
+      "webSha256": "e45c0111b65c2133ef3358d2554dc9ffc5d28a43a6465d20441b2416e3b2d4ed"
+    },
+    {
+      "path": "frontend/atlas-app/test/batch-import.test.mjs",
+      "retainedImageSha256": "ae5bd2c2e4b9c3a7238bc3fcc938f1caaf16d6f758e2164f404339b63cbfff17",
+      "webSha256": "e02da9b7f7a8e4c7efef32210add3ee9af0850132712aae927cf44e4df764f4e"
+    },
+    {
+      "path": "frontend/atlas-app/test/batch-intake-ui.test.mjs",
+      "retainedImageSha256": "139a6bb1143b9d8bff13c82e32fd6a573139b9a4c115324efad00e21be81a2ee",
+      "webSha256": "b968fe75fcc1867cebb40cfe9cb7a38579bc6a60c7dda846ce758105225ab941"
+    }
+  ],
+  "allRuntimeDirectoriesUnchanged": true,
+  "sameCommitClaim": false,
+  "requiredConfiguration": [
+    "fresh staff web deployment and SHA",
+    "customer service intake and identification activation bindings",
+    "schema/grants qualification by activation owner"
+  ],
+  "runtimeQualificationReuse": "Retained original 7b42 image regression and native receipts; new configuration still requires constructor and live verification",
+  "providerWrites": 0
+}

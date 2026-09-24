@@ -1,0 +1,417 @@
+{
+  "status": "PASS",
+  "observedAt": "2026-09-24T17:29:37.336Z",
+  "scope": "Anonymous raw GET shells/static assets/media and unauthenticated access denials only. No session bootstrap, JavaScript execution, SMS, customer writes, provider calls or human throughput claim.",
+  "checks": [
+    {
+      "path": "/",
+      "status": 200,
+      "bytes": 38188,
+      "sha256": "48228094fcf0d715b1ef31daf57a8b7cc87fc93ca38c9419092ef95f36987db8",
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store, max-age=0",
+        "cdn-cache-control": "no-store",
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(), microphone=(), geolocation=()",
+        "location": null
+      }
+    },
+    {
+      "path": "/reports/ar_RapidCaptureReadOnly2026?v=1",
+      "status": 404,
+      "bytes": 1915,
+      "sha256": "9d4da03799fd29d6ce5ffc1d733aa4e09b6f2b7572bffdf5d8efc51e1dbc5bda",
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store, max-age=0",
+        "cdn-cache-control": "no-store",
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(), microphone=(), geolocation=()",
+        "location": null
+      }
+    },
+    {
+      "path": "/api/reports/ar_RapidCaptureReadOnly2026/images/FRONT?v=1",
+      "status": 404,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "headers": {
+        "content-type": null,
+        "cache-control": "no-store, max-age=0",
+        "cdn-cache-control": "no-store",
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(), microphone=(), geolocation=()",
+        "location": null
+      }
+    },
+    {
+      "path": "/account",
+      "status": 200,
+      "bytes": 3631,
+      "sha256": "9337fdf2ce162b58c410cbf3abfa9d50b3b97570fb9d97d9eeadaf619022e80e",
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "private, no-store, max-age=0",
+        "cdn-cache-control": "no-store",
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/submit",
+      "status": 200,
+      "bytes": 3660,
+      "sha256": "6e69a524b91b866fad37f62c6a7fffe741109afdebeb97f455ed18c25652dd5c",
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "private, no-store, max-age=0",
+        "cdn-cache-control": "no-store",
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/admin",
+      "status": 200,
+      "bytes": 3647,
+      "sha256": "ceef3d928534feee39dba513b4ece214e294865f617584d535e30777d8ca6ca3",
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "private, no-store, max-age=0",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=()",
+        "location": null
+      }
+    },
+    {
+      "path": "/admin/batch?tab=INTAKE",
+      "status": 307,
+      "bytes": 7,
+      "sha256": "79952c96c295dee2566cc94fcddfbd5735a0dfed2e5031cb68f9cbec1d92737b",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "private, no-store, max-age=0",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=()",
+        "location": "/admin/"
+      }
+    },
+    {
+      "path": "/account/api/customer/intake/locations",
+      "status": 200,
+      "bytes": 42,
+      "sha256": "b676d931044407b426a943c5f79a9fabe070ea68845c9d79eed6fc2dff40e61e",
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "private, no-store, max-age=0",
+        "cdn-cache-control": "no-store",
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      },
+      "directory": {
+        "locationCount": 0,
+        "resolvedLocationId": null,
+        "scope": "Deployed customer key to private signed directory; no session bootstrap or customer write"
+      }
+    },
+    {
+      "path": "/account/api/customer/intake/drafts",
+      "status": 401,
+      "bytes": 28,
+      "sha256": "43dba30e9fc1f57a5b45ca24b2ecb53881add7f5e28f084e41b30e24d9a52580",
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "private, no-store, max-age=0",
+        "cdn-cache-control": "no-store",
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/api/customer/orders",
+      "status": 401,
+      "bytes": 28,
+      "sha256": "43dba30e9fc1f57a5b45ca24b2ecb53881add7f5e28f084e41b30e24d9a52580",
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "private, no-store, max-age=0",
+        "cdn-cache-control": "no-store",
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/api/customer/commerce/checkout?draftId=00000000-0000-4000-8000-000000000001",
+      "status": 401,
+      "bytes": 28,
+      "sha256": "43dba30e9fc1f57a5b45ca24b2ecb53881add7f5e28f084e41b30e24d9a52580",
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "private, no-store, max-age=0",
+        "cdn-cache-control": "no-store",
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/chunks/polyfills-42372ed130431b0a.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 112594,
+      "sha256": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/chunks/webpack-3ef4160327aa9bf3.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 1744,
+      "sha256": "cc54c412ea4214176fdd9c563146590fe3b7c331c1c10f96d4e84d9492715396",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/chunks/framework-1c02a2e60068b586.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 139833,
+      "sha256": "0952a49aaea74c234ecc2448bd155978c07926efe484445d2e5e0c415c85a4e5",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/chunks/main-7b3878014e6f742b.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 126856,
+      "sha256": "e47231d30ac93ed896c0b504047a6ca266eef5df63c7d003e1542d33f267dae7",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/chunks/pages/_app-8a581f4d7af297bd.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 477,
+      "sha256": "177576b19e2e0479e6ba2fb38417012158d172fd8a60acbce7c9a9cb422ca743",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/chunks/591-4f7ad3039a0c0dbd.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 6374,
+      "sha256": "20bc26e211b1f3c0a63d43f91bc2e15e5e4117c2793e699be1eb25ca90c39b73",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/chunks/426-6081939292874b2b.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 17191,
+      "sha256": "6964843bcd577cfb95e073f8a5f4c2b6d3c264296d29b46e4aba36eb91d02944",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/chunks/775-16c5c8b0ea10cbf9.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 74507,
+      "sha256": "b8ba1ac1b99867d34f7e40f58bf004c79c9389d5c06f8c0b4b88b94fccf8ac98",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/chunks/pages/index-f61fb1e6671ab5db.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 325,
+      "sha256": "140ba3c8ce81d1b89f9d2dea077e3e244afa3b87a9878d17d15cb342d21aad3b",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/G694OZP0liGvAq_VVvRdj/_buildManifest.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 1179,
+      "sha256": "50602ecbc622e51b39a322a71d82bc791e0cafc9d3662795dcf988dcf449d1ab",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/G694OZP0liGvAq_VVvRdj/_ssgManifest.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 77,
+      "sha256": "6f5b4aa00d2f8d6aed9935b471806bf7acef464d0c1d390260e5fe27f800c67e",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/_next/static/chunks/pages/submit-9cdd2f5032e6aa13.js?dpl=dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "status": 200,
+      "bytes": 331,
+      "sha256": "80940295422c0adfeda7afcdd59d96187d36c23849bdd069e4d52ecd37f628be",
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "public,max-age=31536000,immutable",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/atlas/submission-kiosk.jpg",
+      "status": 200,
+      "bytes": 390107,
+      "sha256": "3fe615f48bf1b2f7fe33f621994f763e13ce798020bebd8a7efe14aaca90fec3",
+      "headers": {
+        "content-type": "image/jpeg",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/atlas/submission-fedex.jpg",
+      "status": 200,
+      "bytes": 377842,
+      "sha256": "d6bed19f0069a21d30b433a8ba5ca565c4313b21ebd170af0bfee55719cf7bc3",
+      "headers": {
+        "content-type": "image/jpeg",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/atlas/submission-kiosk.mp4",
+      "status": 200,
+      "bytes": 2855577,
+      "sha256": "ec0b83c6cb8b13e7e921c7bb252fe8271b67b2db44130c4ce1de02f02e65d0b0",
+      "headers": {
+        "content-type": "video/mp4",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    },
+    {
+      "path": "/account/atlas/submission-fedex.mp4",
+      "status": 200,
+      "bytes": 3159104,
+      "sha256": "db008be567dae2e34499cc8a7cd6fa90f2411eb35513296fe3fef7c7a10f5f53",
+      "headers": {
+        "content-type": "video/mp4",
+        "cache-control": "public, max-age=0, must-revalidate",
+        "cdn-cache-control": null,
+        "vercel-cdn-cache-control": null,
+        "x-robots-tag": "noindex, nofollow, noarchive",
+        "permissions-policy": "camera=(self), microphone=(), geolocation=(self)",
+        "location": null
+      }
+    }
+  ]
+}

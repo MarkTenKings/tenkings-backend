@@ -1,0 +1,51 @@
+{
+  "status": "SIGNED_STAFF_PUBLIC_TLS_READS_PASS",
+  "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+  "privateSourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "at": "2026-09-24T17:29:58.669Z",
+  "staffBinding": {
+    "mode": "PRODUCTION",
+    "origin": "https://atlasgrading.com",
+    "deploymentId": "atlas-grading-staff-frrx74ah9-ten-kings.vercel.app",
+    "releaseSha": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+    "configHash": "38b217c5a22ef82070b185bfa864b12f414225bb2f944c3ba3d08eacf22ede09"
+  },
+  "publicBinding": {
+    "mode": "PRODUCTION",
+    "origin": "https://atlasgrading.com",
+    "deploymentId": "atlas-grading-public-9vhvxzfyk-ten-kings.vercel.app",
+    "releaseSha": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+    "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8"
+  },
+  "checks": [
+    {
+      "name": "signed-staff-no-session-denied",
+      "status": 401,
+      "responseBytes": 28,
+      "responseSha256": "43dba30e9fc1f57a5b45ca24b2ecb53881add7f5e28f084e41b30e24d9a52580",
+      "tlsAuthorized": true,
+      "tlsProtocol": "TLSv1.3",
+      "noStore": true,
+      "nosniff": true
+    },
+    {
+      "name": "signed-unknown-public-report",
+      "status": 404,
+      "responseBytes": 0,
+      "responseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tlsAuthorized": true,
+      "tlsProtocol": "TLSv1.3",
+      "noStore": true,
+      "nosniff": true
+    }
+  ],
+  "syntheticTokenSha256": "f64662c5b6e0355130625b77aa4a052c680deddcab16c96e7cd075ed6643c334",
+  "requestCount": 2,
+  "automaticRetry": false,
+  "realSessionsUsed": 0,
+  "cardWrites": 0,
+  "approvalActions": 0,
+  "paidRequests": 0,
+  "secretValuesPrinted": false,
+  "helperSha256": "b1bdd9dc593aa9497534b9d99125251ceffae688898c53cabdc4c37fe841b986"
+}

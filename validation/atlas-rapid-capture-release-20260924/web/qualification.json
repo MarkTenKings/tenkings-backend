@@ -1,0 +1,114 @@
+{
+  "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+  "buildSourceProof": {
+    "status": "FINAL_SOURCE_ALL_BUILDS_BYTE_EQUIVALENT",
+    "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+    "files": 1038,
+    "sourceManifestSha256": "09fbbe942f5564b4333c2ca82bb035ac7e9438dbc6d5e08db5329c7e05386252",
+    "sourceMaterialization": "COMMITTED_GIT_BYTES_ONLY",
+    "priorStaffPublicBuildChangedPaths": [
+      "frontend/atlas-customer/components/commerce/CommerceCheckout.jsx",
+      "frontend/atlas-customer/components/intake/CustomerIntake.jsx",
+      "frontend/atlas-customer/lib/capture-state.mjs",
+      "frontend/atlas-customer/next.config.mjs",
+      "frontend/atlas-customer/scripts/customer-ui-browser.mjs",
+      "frontend/atlas-customer/test/capture-state.test.mjs",
+      "frontend/atlas-customer/test/intake-resume.test.mjs"
+    ],
+    "staffPublicInputsUnchanged": true,
+    "allFinalInputBytesMatchCommit": true,
+    "testSupplementFiles": 38,
+    "testSupplementBytesMatchCommit": true,
+    "retainedStaffTestsPassed": 643,
+    "customerBuildResultSha256": "e51ab346e18d10c9a3a0e98b7c7e670b2eed8363cb581c63382d3a78743a5dd3",
+    "customerPublicTestsPassed": 77
+  },
+  "postBuildSourceProof": {
+    "status": "POST_BUILD_SOURCE_BYTES_UNCHANGED",
+    "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+    "files": 1038,
+    "changedFiles": [],
+    "sourceManifestSha256": "09fbbe942f5564b4333c2ca82bb035ac7e9438dbc6d5e08db5329c7e05386252"
+  },
+  "tests": {
+    "staffTests": {
+      "passed": 643,
+      "failed": 0,
+      "inputsUnchanged": true
+    },
+    "customerPublicTests": {
+      "passed": 77,
+      "failed": 0
+    },
+    "sourceProof": {
+      "path": "web-release/build/final-source-proof-4d3de844.json",
+      "sha256": "b6f8f0aaddf71237435a9535eab5ed1326ccd4ca64b201722c2b0538b06057c7"
+    },
+    "postBuildProof": {
+      "path": "web-release/build/post-build-source-proof-4d3de844.json",
+      "sha256": "6ce75c979d4ea161cec571b108e035710003e2ab6e672824951f0d001285d9a5"
+    },
+    "cliDryPreflight": {
+      "path": "web-release/cli-qualification-4d3de844.json",
+      "sha256": "d18a871c0471bc8ce2c3de5afeca3148c78487b1395b930c072ab5c3c926bd36"
+    },
+    "customerBuild": {
+      "path": "web-release/build/customer-result.json",
+      "sha256": "e51ab346e18d10c9a3a0e98b7c7e670b2eed8363cb581c63382d3a78743a5dd3"
+    }
+  },
+  "cli": {
+    "status": "ALL_THREE_DRY_PREFLIGHT_PASS",
+    "providerWrites": 0,
+    "checks": [
+      {
+        "zone": "staff",
+        "mode": "dry",
+        "status": "READONLY_CLI_DRY_VERIFIED",
+        "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+        "sourceUnchanged": true,
+        "providerWriteAttempted": false
+      },
+      {
+        "zone": "staff",
+        "mode": "preflight",
+        "status": "READONLY_CLI_PAYLOAD_VERIFIED",
+        "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+        "sourceUnchanged": true,
+        "providerWriteAttempted": false
+      },
+      {
+        "zone": "customer",
+        "mode": "dry",
+        "status": "READONLY_CLI_DRY_VERIFIED",
+        "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+        "sourceUnchanged": true,
+        "providerWriteAttempted": false
+      },
+      {
+        "zone": "customer",
+        "mode": "preflight",
+        "status": "READONLY_CLI_PAYLOAD_VERIFIED",
+        "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+        "sourceUnchanged": true,
+        "providerWriteAttempted": false
+      },
+      {
+        "zone": "public",
+        "mode": "dry",
+        "status": "READONLY_CLI_DRY_VERIFIED",
+        "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+        "sourceUnchanged": true,
+        "providerWriteAttempted": false
+      },
+      {
+        "zone": "public",
+        "mode": "preflight",
+        "status": "READONLY_CLI_PAYLOAD_VERIFIED",
+        "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+        "sourceUnchanged": true,
+        "providerWriteAttempted": false
+      }
+    ]
+  }
+}

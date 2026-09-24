@@ -1,0 +1,36 @@
+{
+  "status": "FINAL_WEB_RELEASE_VERIFIED",
+  "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+  "staffDeploymentId": "dpl_7nVEg9HaCAbLtvgP8yep98xm7iKG",
+  "customerDeploymentId": "dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+  "publicDeploymentId": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV",
+  "publicAliasesVerified": 4,
+  "canonicalChecksPassed": 27,
+  "committedMediaHashesVerified": 4,
+  "signedPrivateStaffPublicReadsPassed": 2,
+  "customerPrivateKeyRotationVerified": true,
+  "privateSourceCommit": "7b42f51c418b815f838bb910cf7599a0dcd5313c",
+  "sameCommitClaim": false,
+  "canonicalReceipt": {
+    "path": "root-release/customer-final-safe/customer-canonical-result.json",
+    "sha256": "6513de0ce685bea4d06324a45317e29ec75a0f4778e5a1cedf3ade236eb88f18"
+  },
+  "privateCustomerReceipt": {
+    "path": "root-release/customer-final-safe/customer-private-result.json",
+    "sha256": "8f17d844c3b523e4ba89dd5a0e45fe0dd1f41696da2c5c9ab90247948e8a037b"
+  },
+  "signedStaffPublicReceipt": {
+    "path": "web-release/signed-staff-public-4d3de844-1/result.json",
+    "sha256": "3e42a29704a12744b6b2e8831ba628bf54e42de34d2402933d6054556021c764"
+  },
+  "productionPromotionReceipt": {
+    "path": "web-release/public-promotion-4d3de844-1/result.json",
+    "sha256": "9f33217f5a4f700423835b8f1a00a43a9e6537db3d22b84e406a40dee1460e88"
+  },
+  "noFurtherRuntimeActionsRequired": true,
+  "limits": [
+    "No real user session, physical phone optical/throughput, upload/identification provider, payment/shipping/receipt or hardware acceptance is claimed.",
+    "Commerce, dealer operations and physical station remain disabled."
+  ],
+  "secretValuesIncluded": false
+}

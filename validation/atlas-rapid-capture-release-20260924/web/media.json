@@ -1,0 +1,54 @@
+{
+  "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+  "files": [
+    {
+      "path": "frontend/atlas-customer/public/atlas/submission-kiosk.mp4",
+      "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+      "sha256": "ec0b83c6cb8b13e7e921c7bb252fe8271b67b2db44130c4ce1de02f02e65d0b0",
+      "bytes": 2855577,
+      "canonicalUrl": "https://atlasgrading.com/account/atlas/submission-kiosk.mp4",
+      "canonicalHashVerification": "ACTUAL_200_BYTES_AND_SHA256_MATCH",
+      "canonicalReceipt": {
+        "path": "root-release/customer-final-safe/customer-canonical-result.json",
+        "sha256": "6513de0ce685bea4d06324a45317e29ec75a0f4778e5a1cedf3ade236eb88f18"
+      }
+    },
+    {
+      "path": "frontend/atlas-customer/public/atlas/submission-fedex.mp4",
+      "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+      "sha256": "db008be567dae2e34499cc8a7cd6fa90f2411eb35513296fe3fef7c7a10f5f53",
+      "bytes": 3159104,
+      "canonicalUrl": "https://atlasgrading.com/account/atlas/submission-fedex.mp4",
+      "canonicalHashVerification": "ACTUAL_200_BYTES_AND_SHA256_MATCH",
+      "canonicalReceipt": {
+        "path": "root-release/customer-final-safe/customer-canonical-result.json",
+        "sha256": "6513de0ce685bea4d06324a45317e29ec75a0f4778e5a1cedf3ade236eb88f18"
+      }
+    },
+    {
+      "path": "frontend/atlas-customer/public/atlas/submission-kiosk.jpg",
+      "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+      "sha256": "3fe615f48bf1b2f7fe33f621994f763e13ce798020bebd8a7efe14aaca90fec3",
+      "bytes": 390107,
+      "canonicalUrl": "https://atlasgrading.com/account/atlas/submission-kiosk.jpg",
+      "canonicalHashVerification": "ACTUAL_200_BYTES_AND_SHA256_MATCH",
+      "canonicalReceipt": {
+        "path": "root-release/customer-final-safe/customer-canonical-result.json",
+        "sha256": "6513de0ce685bea4d06324a45317e29ec75a0f4778e5a1cedf3ade236eb88f18"
+      }
+    },
+    {
+      "path": "frontend/atlas-customer/public/atlas/submission-fedex.jpg",
+      "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+      "sha256": "d6bed19f0069a21d30b433a8ba5ca565c4313b21ebd170af0bfee55719cf7bc3",
+      "bytes": 377842,
+      "canonicalUrl": "https://atlasgrading.com/account/atlas/submission-fedex.jpg",
+      "canonicalHashVerification": "ACTUAL_200_BYTES_AND_SHA256_MATCH",
+      "canonicalReceipt": {
+        "path": "root-release/customer-final-safe/customer-canonical-result.json",
+        "sha256": "6513de0ce685bea4d06324a45317e29ec75a0f4778e5a1cedf3ade236eb88f18"
+      }
+    }
+  ],
+  "reviewEvidence": "Root/customer specialist recorded sampled-timeline and browser review; this file records committed media byte identity only."
+}

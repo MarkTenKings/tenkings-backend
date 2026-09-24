@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "kind": "ATLAS_CUSTOMER_RELEASE_SAFE_RECEIPTS",
+  "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+  "scope": "Only sanitized actual status/header/hash/count receipts; no bodies, sessions, browser/customer data, environment or secrets.",
+  "files": [
+    {
+      "file": "customer-private-result.json",
+      "sha256": "8f17d844c3b523e4ba89dd5a0e45fe0dd1f41696da2c5c9ab90247948e8a037b",
+      "bytes": 2561,
+      "status": "CUSTOMER_PRIVATE_READONLY_PASS"
+    },
+    {
+      "file": "customer-ingress-denials.json",
+      "sha256": "af7f293f17ea2eba134bcc82fe1581714e462423d94c5c096ef52588fd7d9508",
+      "bytes": 12306,
+      "status": "PRIVATE_INGRESS_SCOPE_PASS"
+    },
+    {
+      "file": "customer-canonical-result.json",
+      "sha256": "6513de0ce685bea4d06324a45317e29ec75a0f4778e5a1cedf3ade236eb88f18",
+      "bytes": 16676,
+      "status": "PASS"
+    }
+  ]
+}

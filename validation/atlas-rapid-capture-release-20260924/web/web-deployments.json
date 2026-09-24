@@ -1,0 +1,87 @@
+{
+  "version": "atlas-rapid-web-ready-evidence-v1",
+  "status": "ALL_THREE_READY_PUBLIC_PROMOTED_CANONICAL_VERIFIED",
+  "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+  "sourceTree": "ede8400ec47813f5ae182b8013b908548d59024f",
+  "deployments": {
+    "staff": {
+      "providerDeploymentId": "dpl_7nVEg9HaCAbLtvgP8yep98xm7iKG",
+      "hostname": "atlas-grading-staff-frrx74ah9-ten-kings.vercel.app",
+      "projectId": "prj_s21BObRmeZfvljnx7gLceXFBFlCG",
+      "readyState": "READY",
+      "source": "cli",
+      "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+      "rootDirectory": "frontend/atlas-app",
+      "nodeVersion": "20.x",
+      "readyReceipt": {
+        "path": "web-release/staff-ready-4d3de844.json",
+        "sha256": "a2722c04b0c1e89f2b118593efa469accf8ef726b804ae1d943a8a9f73ca1e08"
+      },
+      "uploadReceipt": {
+        "path": "web-release/staff-upload-4d3de844-1/result.json",
+        "sha256": "0c6f3933b817290873ea4a4343c42411ee80d1454ce02fcb485ff68298ab0527"
+      }
+    },
+    "customer": {
+      "providerDeploymentId": "dpl_9s2et59CgUET9aRs42PdzbRND4Zt",
+      "hostname": "atlas-grading-customer-kh9z6goex-ten-kings.vercel.app",
+      "projectId": "prj_7nLO2ZaekTNdXIsJsaSmEkI5qZud",
+      "readyState": "READY",
+      "source": "cli",
+      "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+      "rootDirectory": "frontend/atlas-customer",
+      "nodeVersion": "20.x",
+      "readyReceipt": {
+        "path": "web-release/customer-ready-4d3de844.json",
+        "sha256": "60c060f973fd8de9aa5c9ad5f4421eefa4d5fd2cf57b18514f36b2db6336f4d7"
+      },
+      "uploadReceipt": {
+        "path": "web-release/customer-upload-4d3de844-1/result.json",
+        "sha256": "317728ab65d49d646cf6d784145fbe79d1f7cb83e554d2c07b9bee82301aa127"
+      }
+    },
+    "public": {
+      "providerDeploymentId": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV",
+      "hostname": "atlas-grading-public-9vhvxzfyk-ten-kings.vercel.app",
+      "projectId": "prj_YUR9vwqRjIqm91QOmum08r0GgV9S",
+      "readyState": "READY",
+      "source": "cli",
+      "sourceCommit": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+      "rootDirectory": "frontend/atlas-public",
+      "nodeVersion": "20.x",
+      "readyReceipt": {
+        "path": "web-release/public-ready-4d3de844.json",
+        "sha256": "bc5259275d9ee6afe36a770d4ed4f922ce86a04594a1acebf8082be8b918f87f"
+      },
+      "uploadReceipt": {
+        "path": "web-release/public-upload-4d3de844-1/result.json",
+        "sha256": "ff82e5ae723937fd5a20ad80ce9e0e9dd3f959b0dc0ab84a0789d76e531e841e"
+      }
+    }
+  },
+  "publicBinding": {
+    "mode": "PRODUCTION",
+    "origin": "https://atlasgrading.com",
+    "deploymentId": "atlas-grading-public-9vhvxzfyk-ten-kings.vercel.app",
+    "releaseSha": "4d3de84419242bfa245dbd652a8c28d812e2ea6b",
+    "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8"
+  },
+  "publicBindingReceipt": {
+    "path": "web-release/public-binding-4d3de844.json",
+    "sha256": "624e1822e56278ce84f057be9c593bb2bd10dc7372e61d796d573a2352cde633"
+  },
+  "publicPromotion": {
+    "status": "PUBLIC_PROMOTION_READBACK_PASS",
+    "receipt": {
+      "path": "web-release/public-promotion-4d3de844-1/result.json",
+      "sha256": "9f33217f5a4f700423835b8f1a00a43a9e6537db3d22b84e406a40dee1460e88"
+    },
+    "canonicalCheckCount": 27
+  },
+  "supersededUnusedStaffCandidate": {
+    "deploymentId": "dpl_2kk4C9MjKnyhtaKx27i5kogzkLLe",
+    "sourceCommit": "e397f1f2ee40240897eeeb6aca35a0527d2e73b8",
+    "neverCanonical": true
+  },
+  "secretValuesIncluded": false
+}
