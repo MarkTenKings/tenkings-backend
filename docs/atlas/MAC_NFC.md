@@ -4,6 +4,12 @@ Owner direction and research checkpoint: September 8, 2026. Mark selected the Ma
 
 **Verified baseline, re-audited September 23:** this Mac reader/tag combination already completed a real native write and full readback on September 8 at 22:32:53 PDT (September 9 at 05:32:53 UTC), followed by Mark's September 9 confirmation that the requested phone scan worked. The fixed URI was `https://atlasgrading.com/#nfc-mac-validation-20260909`; 14 writes and 38 reads completed in 0.38 seconds with a finalized journal. The four retained preparation/result/journal/review hashes still match their immutable checkpoint, and all four diagnostic implementation files still match the source hashes used for that successful write. Reader operation and basic native encoding do not need rebuilding. The outstanding work concerns the approved-report workflow, protected station activation, permanent-lock qualification and integrated acceptance; the historical test did not attempt a lock or verify a live grading report.
 
+## Current owner direction and hardware checkpoint — September24UTC
+
+Mark explicitly requires all encoding, readback and permanent locking directly in ATLAS on the Mac, without a phone or GoToTags operational step. The legacy PC project is reference-only. Historical phone observations below remain history, not a current operator requirement.
+
+The connected ACR1552U now reads the designated tag: manufacturer53, CC E1103E00,496 advertised bytes. A documented pages0–47 prefix census on September24 at01:30:28UTC read176 data bytes, finding empty NDEF atbyte16 and no lock/memory descriptors. It issued34 read APDUs, no writes/locks, and retained no raw UID/payload. The remaining320 data bytes and dynamic lock region were not inspected. This sample is not assumed identical to the historical manufacturer1D sample. Product history identifies OKAVAD FPC-215-126 / Amazon ASIN B0GX1LSPJ2. Exact irreversible lock behavior remains unqualified; generic NFC Forum default mapping is a candidate, not a silicon guarantee. See the [current completion evidence](audits/2026-09-24/completion-followup.md).
+
 ## Intended operator experience
 
 1. Open ATLAS on the MacBook and connect the ATLAS reader bridge once for the finishing session.
@@ -30,9 +36,11 @@ The model cannot approve the report, supply arbitrary URLs/APDUs/lock masks, inf
 
 Accessible reseller descriptions conflict on memory and lock granularity. Earlier same-lot app reports also classified the tag differently before GoToTags identified F8215. Neither a product name containing “215” nor a reported 496-byte NDEF capacity establishes the NXP NTAG215 memory map. No NXP lock addresses/masks are adopted for F8215. The direct Mac writer needs documented identification and lock semantics, actual same-lot read-only observations and controlled hardware verification. Raw tag UID must remain transient, with no UID or UID digest in hosted records or diagnostic output.
 
-## Implementation changes
+## Historical implementation design — September 8
 
-The existing immutable report, label, approval, job and verification records are reusable. The current browser/Node/C#/SQL contract specifically identifies GoToTags 4.37.0.1 and Windows CNG enrollment. A native result must have its own truthful profile; it cannot claim the old adapter identity merely to pass existing checks.
+The following records the original design requirements. The Mac protocol, native companion and additive `20260922210200_finishing_station` migration now exist; the migration is already applied. The September22 implementation checkpoint below and September24 current status supersede these earlier pending tasks. No new migration is directed here.
+
+The existing immutable report, label, approval, job and verification records are reusable. The legacy Windows browser/Node/C#/SQL contract specifically identifies GoToTags 4.37.0.1 and Windows CNG enrollment. The selected native Mac path has its own truthful profile and does not claim that legacy adapter identity.
 
 - **Native Mac bridge:** system reader access, one selected PICC interface, fixed command allowlist, exclusive transaction ownership, bounded calls, signed job verification and durable recovery. No arbitrary-command endpoint, shell tool or model-supplied device address. One-time installation/pairing replaces per-card setup. Native signing must use reviewed Mac key protection, not a copied Windows private key.
 - **Qualified F8215 profile:** exact identification, safe page ranges, NDEF capacity, reserved/configuration bytes, CC behavior, static/dynamic lock coverage and order, ACK/NAK behavior and readback proof. Write protection covers every report/metadata byte that can affect the URL, not just the first pages or an application read-only flag. Unsupported or ambiguous tags stop before mutation.
@@ -41,7 +49,7 @@ The existing immutable report, label, approval, job and verification records are
 - **Integrated finishing queue:** arm once, explicitly associate one approved physical card, automatically run on fresh-tag placement, show write/readback/lock/hosted-save progress and observe removal before advancing. A label's current public QR identifies the report/version, not its label-copy issue ID; the UI must resolve and bind the intended issue rather than infer it from that QR alone.
 - **Recovery:** preserve success until the host acknowledges it; no automatic mutating retries. Disconnect/sleep/expiry/power loss before confirmed completion retain an uncertain outcome. Restart does not resume a partly written tag automatically. An expired unrecorded result stays unresolved under current policy; no silent extension of authority.
 
-## Current implementation status
+## Historical probe development
 
 The first native deliverable is [the Mac reader probe](../../packages/atlas-mac-nfc/README.md), a zero-dependency read-only PC/SC executable. It provides local reader discovery and limited nonidentifying tag-header diagnostics. It has no write, lock, generic APDU, web-server, installation or key-enrollment capability. Its results are qualification inputs, never an F8215 compatibility or permanent-lock certificate.
 

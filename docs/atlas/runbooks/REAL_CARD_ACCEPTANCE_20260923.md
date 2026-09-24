@@ -2,9 +2,11 @@
 
 Prepared September 23, 2026. **No real-card trial is recorded as complete here.**
 Mark's approved label artwork is separate from grading, printing and NFC acceptance.
-The software release is now verified at source `c0a42a24`, staff schema47,
-private image `3babc854…`, with batch/presentation enabled. See
-[actual workflow release evidence](../audits/2026-09-23/workflow-completion.md).
+The software release is verified at source `1b880d06`, staff schema47,
+private image `2039ae10…`, with batch/presentation/market enabled. Mark’s owner-authorized
+reviewer permission runs from 2026-09-24T01:32:51.855Z through 2026-12-23T01:32:51.855Z;
+ordinary sign-in must refresh accessVersion2. See
+[actual workflow release evidence](../audits/2026-09-24/completion-followup.md).
 This establishes deployment only; the real-card checkpoints below remain open. Do not reuse the September17
 record's historical NULL-certification or private-only-publication statements as
 current facts.
@@ -13,10 +15,10 @@ current facts.
 
 | Checkpoint | Result | Evidence needed |
 | --- | --- | --- |
-| Exact new release / batch activation | PASS — software release only | [Current release evidence](../audits/2026-09-23/workflow-completion.md): c0a42a24, staff47, current runtime/bindings, batch=true |
+| Exact new release / batch activation | PASS — software release only | [Current release evidence](../audits/2026-09-24/completion-followup.md): 1b880d06, staff47, current runtime/bindings, batch=true |
 | Fresh physical cohort and operator access | NOT RUN | Mark's new specimen selection, native Front/Back originals, ordinary staff access and actual current certification at approval |
 | First real card through public report | NOT RUN | Native-photo lineage, actual Astra request/result, human review/approval and exact public version |
-| First card physical finishing | NOT RUN | Actual printer/media fit, approved-report NFC write/readback/qualified lock/phone scan, separate assembly/welding observations |
+| First card physical finishing | NOT RUN | Actual printer/media fit, approved-report NFC write/readback/qualified lock/native re-presentation, separate assembly/welding observations |
 | Ten distinct physical cards | NOT RUN | First checkpoint decision, same first specimen plus nine fresh pairs, individual results and measured elapsed times |
 | Expansion to fifty | NOT RUN | Ten-card evidence review and explicit recorded owner decision before further admission |
 
@@ -28,8 +30,8 @@ overlap. No fixed latency, accuracy percentage or fifty-way concurrency is promi
 
 1. Coordinator verifies the new software release, enabled batch configuration,
    actual provider access and reviewed migrations/grants. Mark signs in through
-   ordinary staff access if needed. Do not seed reviewer certification, reuse a
-   fixture identity, fabricate a session or make an approval click on his behalf.
+   ordinary staff access if needed. Use his actual owner-authorized reviewer record;
+   do not reuse a fixture identity, fabricate a session or make an approval click on his behalf.
 2. Mark selects one standard-size sports or Pokémon specimen, labels it physically
    and supplies new native Camera Front/Back originals. He confirms the same card,
    sides and orientation. Prefer a bordered specimen with visible real wear.
@@ -48,8 +50,9 @@ overlap. No fixed latency, accuracy percentage or fifty-way concurrency is promi
 5. The finishing specialist qualifies actual equipment. Save the exact plan and
    separate PRINT, NFC, ASSEMBLY and WELDING observations. CUPS submission or a
    browser dialog is not paper output. A tag write/readback is not qualified lock,
-   phone opening, removal, assembly or welding. No diagnostic URL substitutes for
-   the exact approved report. Hardware qualification remains its own runbook.
+   removal, assembly or welding. NFC finishing must work directly on the Mac; no
+   phone or GoToTags step is required. Consumer-device compatibility is separate.
+   No diagnostic URL substitutes for the exact approved report. Hardware qualification remains its own runbook.
 6. Review the first checkpoint, including failures and unresolved work. Record
    Mark's decision before admitting nine more new physical cards. Retain the first
    card and unchanged original/source bindings, giving ten total. Include both
@@ -143,8 +146,9 @@ Each card contains its actual `cardId`, safe physical `specimenId`, and referenc
 The finishing source receipts should include actual CUPS reconciliation and the
 human's scale/stock/output check; for NFC, the exact signed host arm, enrolled
 station identity, signed write/lock/readback and removal receipts, host committed
-acknowledgements, qualification receipt and Mark's phone-scan observation. Reuse
-the station verifier and specialist's qualification proof. This reader only
+acknowledgements and qualification receipt, including native re-presentation, exact
+URL readback and attributable hardware overwrite rejection. No phone or GoToTags
+operation is required. Reuse the station verifier and specialist's qualification proof. This reader only
 rehashes those supplied records; a self-reported PASS is not a new hardware proof.
 
 For target10/50, supply `previousCheckpoint` referencing `{summary:ref,decision}`.

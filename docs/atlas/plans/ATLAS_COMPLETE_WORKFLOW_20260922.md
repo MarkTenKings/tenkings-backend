@@ -1,6 +1,10 @@
 # ATLAS complete workflow — September 22, 2026
 
-Status updated September 23: the scoped web/batch/report release and authorized contact-only dealer directory are live at source `c0a42a24`. See [actual release evidence](../audits/2026-09-23/workflow-completion.md). Physical finishing, real-card acceptance and live market-provider activation remain incomplete pending genuine inputs. The design and intended flow below preserve the September 22 owner request and canonical blueprint scope.
+Status updated September 24 UTC / September 23 Pacific: software release `1b880d0690dd0b3a64a76103557815cf40675029` is live on staff `27Dj9…` / public `DjGX2…` and native container `f7949…` / image `2039…`, with controls 25/23/3. Batch, presentation and market are enabled; the recovered original SoldComps key passed one bounded HTTP200/13-candidate check. Station remains disabled. No new migration or grant was applied; staff 47/public 112 and the stopped c0a42a24 predecessor are preserved. The authorized dealer directory remains contact-only. See [current release evidence](../audits/2026-09-24/completion-followup.md).
+
+Mark's 90-day reviewer authorization is active from `2026-09-24T01:32:51.855Z` through `2026-12-23T01:32:51.855Z`, accessVersion2, requiring ordinary reauthentication. Actual fresh-card processing and human approval, approved-report market search/selection and physical finishing acceptance remain open. The design, original requested inputs and intended flow below preserve the September 22 owner request; the superseded status records its earlier state.
+
+Superseded September 23 status: the scoped web/batch/report release and authorized contact-only dealer directory are live at source `c0a42a24`. See [actual release evidence](../audits/2026-09-23/workflow-completion.md). Physical finishing, real-card acceptance and live market-provider activation remain incomplete pending genuine inputs. The design and intended flow below preserve the September 22 owner request and canonical blueprint scope.
 
 ## Intended operator flow
 
