@@ -1,0 +1,9 @@
+{
+  "name": "@atlas/manual-intake",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/service.mjs", "./repository": "./src/repository.mjs", "./http": "./src/http.mjs", "./client": "./src/client.mjs", "./photo-processing": "./src/photo-processing.mjs", "./contract": "./src/contract.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs", "test:postgres": "node scripts/validate-postgres.mjs" },
+  "dependencies": { "@atlas/manual-service": "workspace:*", "@atlas/photo-core": "workspace:*", "@atlas/photo-runtime": "workspace:*", "@atlas/photo-storage": "workspace:*" }
+}

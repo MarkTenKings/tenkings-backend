@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 
 const REPORT_URL = "#atlas-record";
 
@@ -1421,6 +1422,7 @@ export default function AtlasSite() {
             The chain of custody never breaks — from your hand, to ours, to yours.
           </ChainStep>
         </div>
+        <Link className="button button--outline" href="/dealers?service=submit">Find an authorized dealer <span aria-hidden="true">↗</span></Link>
         <p className="large-body selective-copy">
           ATLAS is selective. Not every card needs certification, and not every submission gets one. A grade only means something if it can’t be handed out carelessly. Scarcity isn’t a marketing trick here — it’s quality control.
         </p>
@@ -1483,7 +1485,7 @@ export default function AtlasSite() {
 
       <footer>
         <Wordmark />
-        <p>ATLAS — Measured. Transparent. Built to be inspected.<br /><a href="/admin">Staff sign in</a></p>
+        <p>ATLAS — Measured. Transparent. Built to be inspected.<br /><Link href="/dealers">Authorized dealers</Link> · <a href="/admin">Staff sign in</a></p>
         <span>© 2026 ATLAS</span>
       </footer>
     </main>

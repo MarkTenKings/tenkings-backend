@@ -1,0 +1,156 @@
+{
+  "atlas_base_commit": "f16bbb7e49ebf46c09e32d30a9a441a947e75df3",
+  "inventory_base_commit": "60572cec895ad63d4ab826cd366f6475b04e725a",
+  "baseline_files": [
+    {
+      "path": "packages/card-identification-core/README.md",
+      "sha256": "8193dd07d03c862978b12543d1a3009b66c5e5e7344b2e2f5eb8c684787e956a",
+      "git_blob": "2c91c60ed4744425f5715471a1b624b7e1fa2008"
+    },
+    {
+      "path": "packages/card-identification-core/package.json",
+      "sha256": "dc9621543308a9000a2c53df8fe401709a0414de7a42c64f681463d3be4d3404",
+      "git_blob": "99dd99bbb5880965389c912640659fea68916397"
+    },
+    {
+      "path": "packages/card-identification-core/scripts/generate-source-fixtures.mjs",
+      "sha256": "59a0391a3699984509e57bd558937369a25112fe9ad176a10b56387e7b359088",
+      "git_blob": "c49c0cd0aa15e7645ab005bc7d84b981370f4d6b"
+    },
+    {
+      "path": "packages/card-identification-core/source-manifest.json",
+      "sha256": "f46ea68cd4b02b5f3ebb55abcd3c52e5448a2c7e989221c84c4549001765a880",
+      "git_blob": "4a213beedb37fc43298b8bf0c11c2642e36df669"
+    },
+    {
+      "path": "packages/card-identification-core/src/contracts.mjs",
+      "sha256": "57235c1f5bef7fface55490c5dc11bbb9c5e350b6027e508c6163c2532ddd21c",
+      "git_blob": "4ab6885efd5e21571a7ef8b4a90cae19b361d2f0"
+    },
+    {
+      "path": "packages/card-identification-core/src/index.d.ts",
+      "sha256": "1a215e0a04b06ce1720688e95ec53f998849970a9967e477a5b0877d28958ddc",
+      "git_blob": "de49845fbfda52fc132472b8a9e197ee4af472a7"
+    },
+    {
+      "path": "packages/card-identification-core/src/index.mjs",
+      "sha256": "71e16fe8b5a2774663562327a71b129e6ba0089c75717baa8a6245667cb58903",
+      "git_blob": "9a531e74bdcf7fc0fdf36ea2bb6b63e004645675"
+    },
+    {
+      "path": "packages/card-identification-core/src/request.mjs",
+      "sha256": "0608c2305b92f9c5e0f75743e02932dda10d78e2785c2c3a38d758770bdd474c",
+      "git_blob": "19714164a8e0af8f117314a344bd0d187e11b498"
+    },
+    {
+      "path": "packages/card-identification-core/test/fixtures/source-parity.json",
+      "sha256": "188cf0db33489580119cc8700c3f7bf60aaee358ed3e48b65c0f8192123918a3",
+      "git_blob": "6a7ec8dea2a6a20186c1f8040d49d32a0f4e7907"
+    },
+    {
+      "path": "packages/card-identification-core/test/identification.test.mjs",
+      "sha256": "e255e3bd0998003961c6690db291a6587b20ca3454f410bfd3df4b83e4ac4395",
+      "git_blob": "2369c3c72ed2a689a1c9784fa7034bd8053b39f5"
+    }
+  ],
+  "result_commit": null,
+  "result_status": "Uncommitted opt-in handoff candidate. Coordinator must record the final result commit before application adoption.",
+  "result_files": [
+    {
+      "path": "packages/card-identification-core/README.md",
+      "sha256": "37ea2a3970562c6a68b5039901810190ecfe4d8c088fb105a1680e47fadfc918",
+      "byte_count": 10324
+    },
+    {
+      "path": "packages/card-identification-core/package.json",
+      "sha256": "9ccfe9bd376a9c1e716c8c3fcab0cfe3b847456a85bd910b321c948501288bd8",
+      "byte_count": 386
+    },
+    {
+      "path": "packages/card-identification-core/scripts/generate-source-fixtures-v2.mjs",
+      "sha256": "cb7cbcec7128e4001025d52589d03524810a3bbf1f6beb96b83e070efb103fa8",
+      "byte_count": 3197
+    },
+    {
+      "path": "packages/card-identification-core/scripts/generate-source-fixtures.mjs",
+      "sha256": "59a0391a3699984509e57bd558937369a25112fe9ad176a10b56387e7b359088",
+      "byte_count": 4810
+    },
+    {
+      "path": "packages/card-identification-core/scripts/verify-handoff.mjs",
+      "sha256": "066b4b7e5f670df8dd9d1affc721fcab0a314a19bab45477867fffe31e7e9a67",
+      "byte_count": 2001
+    },
+    {
+      "path": "packages/card-identification-core/source-manifest-v2.json",
+      "sha256": "1c11271115a3ec64c80555f78507085e5a49df8f05cda12e0e7b87863a4db63d",
+      "byte_count": 938
+    },
+    {
+      "path": "packages/card-identification-core/source-manifest.json",
+      "sha256": "f46ea68cd4b02b5f3ebb55abcd3c52e5448a2c7e989221c84c4549001765a880",
+      "byte_count": 873
+    },
+    {
+      "path": "packages/card-identification-core/src/contracts.mjs",
+      "sha256": "57235c1f5bef7fface55490c5dc11bbb9c5e350b6027e508c6163c2532ddd21c",
+      "byte_count": 6530
+    },
+    {
+      "path": "packages/card-identification-core/src/index.d.ts",
+      "sha256": "1a215e0a04b06ce1720688e95ec53f998849970a9967e477a5b0877d28958ddc",
+      "byte_count": 4561
+    },
+    {
+      "path": "packages/card-identification-core/src/index.mjs",
+      "sha256": "71e16fe8b5a2774663562327a71b129e6ba0089c75717baa8a6245667cb58903",
+      "byte_count": 10862
+    },
+    {
+      "path": "packages/card-identification-core/src/pokemon-request-v2.mjs",
+      "sha256": "10dc26e8ec5a126801b4802a38df8f231287c9100bd40b26b158ee86ad84ee54",
+      "byte_count": 2910
+    },
+    {
+      "path": "packages/card-identification-core/src/request.mjs",
+      "sha256": "0608c2305b92f9c5e0f75743e02932dda10d78e2785c2c3a38d758770bdd474c",
+      "byte_count": 6261
+    },
+    {
+      "path": "packages/card-identification-core/src/v2.d.ts",
+      "sha256": "d5982c8d6173054cb692d986cd468e551cf13907d9df3341aafb91c51e211d92",
+      "byte_count": 2746
+    },
+    {
+      "path": "packages/card-identification-core/src/v2.mjs",
+      "sha256": "4f2b37119f4301128c7dde6959b73b301c8b918c7681e53f950aa7056304e85d",
+      "byte_count": 9115
+    },
+    {
+      "path": "packages/card-identification-core/test/consumer-types.mts",
+      "sha256": "75f8c83ddec74ff8c9605811715a316672eb68235db7cb0efa931bff00584314",
+      "byte_count": 1582
+    },
+    {
+      "path": "packages/card-identification-core/test/fixtures/source-parity-v2.json",
+      "sha256": "edbc62344afc41c8e23b015199af90064bf6c45d9c6aba7f011cdbcf814d3888",
+      "byte_count": 47782
+    },
+    {
+      "path": "packages/card-identification-core/test/fixtures/source-parity.json",
+      "sha256": "188cf0db33489580119cc8700c3f7bf60aaee358ed3e48b65c0f8192123918a3",
+      "byte_count": 14579
+    },
+    {
+      "path": "packages/card-identification-core/test/identification-v2.test.mjs",
+      "sha256": "e9ae8633f1a6444e6b2878aadf5585bad6863cfaf5302cbb0521527c6590a176",
+      "byte_count": 16445
+    },
+    {
+      "path": "packages/card-identification-core/test/identification.test.mjs",
+      "sha256": "e255e3bd0998003961c6690db291a6587b20ca3454f410bfd3df4b83e4ac4395",
+      "byte_count": 18464
+    }
+  ],
+  "result_tree_sha256": "d067ee4b62a3fd1b4c84f79eeda4082b3c1089bd5372be67f87303995a2e8ee4"
+}

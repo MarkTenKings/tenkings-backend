@@ -1,0 +1,9 @@
+{
+  "source": "preparation_core.py",
+  "sourceSha256": "341803ecd1fdd06d86a2e20a022eb751a51d4134c742b76a6a0f5a7139680abe",
+  "functions": [
+    "reveal_views",
+    "encode_webp"
+  ],
+  "change": "Function bodies unchanged; isolated OpenCV and NumPy imports only."
+}

@@ -1,7 +1,7 @@
 import { PrismaClient } from '../../.generated/staff-database/index.js';
 import { LocalStaffAuth } from './auth.mjs';
 import { LocalReviewStore } from './review.mjs';
-import { assertLocalRequest, privateHeaders, deny } from './policy.mjs';
+import { assertLocalRequest, deny } from './policy.mjs';
 import { productionAccessConfig, assertProductionStaffRequest, secureStaffCookie } from './access/config.mjs';
 import { readLocalPostgresConfig } from './access/local-config.mjs';
 import { StaffDatabase } from './access/database.mjs';
@@ -23,8 +23,16 @@ import { createIdentityCorrectionRuntime } from './access/identity-correction-ru
 import { StaffCustomerIntake } from './access/customer-intake.mjs';
 import { createWorkspaceRuntime, workspaceRuntimeSettings } from './access/workspace-runtime.mjs';
 import { localWorkspaceFixture } from './access/workspace-fixture.mjs';
+import { createFrontendManualRuntime } from './manual-frontend-runtime.mjs';
+import { createPageAccess } from './page-access.mjs';
 
 export function runtime(req, env = process.env) {
+    if (env.ATLAS_CONNECTED_LOCAL_FIXTURE === '1') {
+        assertLocalRequest(req, { ...env, ATLAS_LOCAL_SYNTHETIC: '1' });
+        const fixture = globalThis[Symbol.for('atlas.staff.connected.local-fixture')];
+        if (!fixture) deny(503, 'STAFF_ACCESS_NOT_ENABLED');
+        return fixture;
+    }
     if (env.ATLAS_LOCAL_SYNTHETIC === '1') {
         assertLocalRequest(req, env);
         const key = Symbol.for('atlas.staff.local.v1');
@@ -58,6 +66,7 @@ export function runtime(req, env = process.env) {
             operations: createOperationsRuntime({ settings: operationsSettings, auth, Client: PrismaClient }) };
     }
     const state = globalThis[key];
+    if (env.ATLAS_MANUAL_ENABLED === 'true' && !state.connectedManual) state.connectedManual = createFrontendManualRuntime({env,auth:state.auth,staffConfig:config,assertRequest});
     Object.setPrototypeOf(state.auth, DurableStaffAuth.prototype);
     Object.setPrototypeOf(state.auth.database, StaffDatabase.prototype);
     Object.setPrototypeOf(state.review, DurableReviewStore.prototype);
@@ -86,20 +95,4 @@ export function runtime(req, env = process.env) {
         clientAddress: local ? request => request.socket.remoteAddress : () => 'production-ingress' };
 }
 
-export async function pageAccess(ctx, { authenticated = true } = {}) {
-    privateHeaders(ctx.res);
-    if (!['GET', 'HEAD'].includes(ctx.req.method)) {
-        ctx.res.setHeader('Allow', 'GET, HEAD'); ctx.res.statusCode = 405;
-        return { props: { unavailable: true } };
-    }
-    try {
-        const state = runtime(ctx.req);
-        if (state.auth.database) await state.auth.database.transaction(() => undefined);
-        if (!authenticated) return { props: { mode: state.mode ?? 'SYNTHETIC_LOCAL' } };
-        const staff = await state.auth.maybeAuthenticate(ctx.req.headers.cookie);
-        if (!staff) return { redirect: { destination: '/', permanent: false } };
-        return { props: { staff } };
-    } catch {
-        ctx.res.statusCode = 503; return { props: { unavailable: true } };
-    }
-}
+export const pageAccess = createPageAccess({ resolveRuntime: runtime });

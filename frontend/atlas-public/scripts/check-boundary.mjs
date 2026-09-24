@@ -4,8 +4,8 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..'), repo = resolve(app, '../..');
 const pages = JSON.parse(readFileSync(resolve(app, '.next/server/pages-manifest.json'), 'utf8'));
-assert.deepEqual(Object.keys(pages).sort(), ['/', '/404', '/_app', '/_document', '/_error', '/reports/[token]',
-    '/api/reports/[token]/images/[side]', '/api/reports/[token]/traces/[findingId]'].sort());
+assert.deepEqual(Object.keys(pages).sort(), ['/', '/404', '/_app', '/_document', '/_error', '/dealers', '/reports/[token]',
+    '/api/reports/[token]/images/[side]', '/api/reports/[token]/traces/[findingId]', '/api/reports/[token]/presentation/image'].sort());
 const files = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? files(resolve(dir, e.name)) : [resolve(dir, e.name)]);
 const chunks = files(resolve(app, '.next/static')).filter(p => p.endsWith('.js'));
 for (const file of chunks) assert(!/StaffSession|StaffIdentity|StaffAssignment|staffReportApproval|__Host-atlas|twilio|@tenkings\/|reviewedDefects|admissionCanonical|sessionHash|sourceCanonical/.test(readFileSync(file, 'utf8')),
@@ -14,7 +14,7 @@ const traces = files(resolve(app, '.next/server')).filter(p => p.endsWith('.nft.
 const database = resolve(app, '.generated/public-database');
 const engines = readdirSync(database).filter(file => /^(?:libquery_engine-|query_engine-).+\.node$/.test(file));
 assert(engines.length, 'Generated public database engine is missing');
-for (const route of ['/reports/[token]', '/api/reports/[token]/images/[side]', '/api/reports/[token]/traces/[findingId]']) {
+for (const route of ['/reports/[token]', '/api/reports/[token]/images/[side]', '/api/reports/[token]/traces/[findingId]', '/api/reports/[token]/presentation/image']) {
     const trace = resolve(app, '.next/server', pages[route]) + '.nft.json';
     const traced = new Set(JSON.parse(readFileSync(trace, 'utf8')).files.map(file => resolve(dirname(trace), file)));
     for (const file of ['schema.prisma', ...engines])
@@ -25,6 +25,7 @@ for (const trace of traces) for (const file of JSON.parse(readFileSync(trace, 'u
     const rel = relative(repo, resolve(dirname(trace), file));
     assert(!rel.startsWith('..'));
     assert(rel.startsWith('frontend/atlas-public/') || rel.startsWith('packages/atlas-report-view/') || rel.startsWith('packages/atlas-site-router/')
+        || rel.startsWith('packages/atlas-manual-workspace/dist/') || rel === 'packages/atlas-manual-workspace/package.json' || rel === 'packages/atlas-manual-workspace/src/report-review.css'
         || rel.startsWith('packages/atlas-grading-core/dist/') || rel === 'packages/atlas-grading-core/package.json'
         || rel.startsWith('packages/atlas-service-bridge/src/') || rel === 'packages/atlas-service-bridge/package.json'
         || rel.startsWith('node_modules/') || rel === 'package.json', `Unreviewed public server dependency: ${rel}`);

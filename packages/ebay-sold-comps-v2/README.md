@@ -5,6 +5,8 @@ Pure, server-only comparison-card engine for Ten Kings V2. It does not know abou
 ## Locked behavior
 
 - Makes exactly one synchronous SoldComps request to `/v1/scrape` with the visible authoritative `keyword`, `ebaySite=ebay.com`, `count=240`, and `page=1`, authenticated only by a server-side Bearer header.
+- The legacy Ten Kings request default remains 240 for caller compatibility. ATLAS explicitly sets the runtime `requestCount` to 40: the [current provider contract](https://sold-comps.com/docs) caps a no-cookie sold page at 40 and can return fewer. The retained-result ceiling is not a promised provider result count. No cookies, pagination, or Best Offer hydration are added.
+- A 429 with the documented `quota_exceeded` body code maps to nonretryable `SOLDCOMPS_QUOTA_REACHED`; other 429 responses keep the existing temporary-unavailable code. Error bodies remain bounded and are never included in errors.
 - Applies one 45-second deadline, never retries or polls, and retains at most 60 safe candidates. The UI shows 30 first and reveals the remaining retained rows locally without another provider request.
 - Maps the Ten Kings decimal grade to the nearest whole PSA grade, with exact `.5` ties down, then orders candidates as PSA at that mapped grade, other PSA grades, BGS/SGC/CGC, then raw.
 - Keeps uncertain and contradictory matches visible for human review; it never auto-selects a comp.

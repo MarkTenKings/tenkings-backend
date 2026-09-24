@@ -48,6 +48,8 @@ jobs:
       - run: pnpm --filter @tenkings/shared build
       - name: Build the pure grading core used by the ATLAS database fixtures
         run: pnpm --filter @atlas/grading-core build
+      - name: Build the sold-reference parser used by the research fixture
+        run: pnpm --filter @tenkings/ebay-sold-comps-v2 build
       - name: Generate the canonical staff database client
         run: pnpm --filter @atlas/staff-app db:generate
       - name: Generate private source client for restricted PostgreSQL fixtures
@@ -110,6 +112,49 @@ jobs:
           assert.equal(cleanup.stoppedVerified, true); assert.equal(cleanup.evidenceRetained, true);
           console.log(JSON.stringify({ status: 'ATLAS_COMPLETE_POSTGRES_PASS', passed: summary.passed,
               ownedByCurrentUser: true, stoppedVerified: true, evidenceDirectory: directory }));
+          JS
+
+      - name: Verify ten-card batch access renewal and interruption recovery
+        shell: bash
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" LANG=C CI=true NEXT_TELEMETRY_DISABLED=1 \
+            node packages/atlas-batch-grading/scripts/validate-lifecycle-postgres.mjs \
+              --ack-disposable-local-postgres \
+              --postgres-bin "$ATLAS_POSTGRES_BIN" \
+              --pg-module "$RUNNER_TEMP/atlas-postgres-tools/node_modules/pg"
+
+      - name: Verify sourced dealer offers and shared research in owned PostgreSQL
+        shell: bash
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" LANG=C CI=true NEXT_TELEMETRY_DISABLED=1 \
+            ATLAS_PRESENTATION_EVIDENCE="$RUNNER_TEMP/atlas-presentation-postgres" \
+            node packages/atlas-connected-manual/scripts/validate-presentation-postgres.mjs \
+              --ack-disposable-local-postgres \
+              --postgres-bin "$ATLAS_POSTGRES_BIN" \
+              --pg-module "$RUNNER_TEMP/atlas-postgres-tools/node_modules/pg"
+          env -i PATH="$PATH" HOME="$HOME" LANG=C CI=true NEXT_TELEMETRY_DISABLED=1 \
+            ATLAS_RESEARCH_EVIDENCE="$RUNNER_TEMP/atlas-research-postgres" \
+            node packages/atlas-connected-manual/scripts/validate-research-postgres.mjs \
+              --ack-disposable-local-postgres \
+              --postgres-bin "$ATLAS_POSTGRES_BIN" \
+              --pg-module "$RUNNER_TEMP/atlas-postgres-tools/node_modules/pg"
+          node - <<'JS'
+          const assert = require('node:assert/strict');
+          const { readFileSync, statSync } = require('node:fs');
+          const { join } = require('node:path');
+          for (const name of ['atlas-presentation-postgres', 'atlas-research-postgres']) {
+            const directory = join(process.env.RUNNER_TEMP, name);
+            assert.equal(statSync(directory).uid, process.getuid());
+            const result = JSON.parse(readFileSync(join(directory, 'result.json'), 'utf8'));
+            const cleanup = JSON.parse(readFileSync(join(directory, 'cleanup.json'), 'utf8'));
+            assert.equal(result.status, 'PASS');
+            assert.match(result.schema, /^tracked staff migration chain/);
+            assert(result.checks.length >= 6);
+            for (const effect of ['paidEffects', 'remoteEffects', 'hardwareEffects']) assert.equal(result[effect], 0);
+            assert.equal(cleanup.stoppedVerified, true); assert.equal(cleanup.evidenceRetained, true);
+            console.log(JSON.stringify({ status: 'ATLAS_PRESENTATION_RESEARCH_POSTGRES_PASS', name,
+              checks: result.checks.length, stoppedVerified: true, evidenceDirectory: directory }));
+          }
           JS
 
   speedster-frontend-tests:

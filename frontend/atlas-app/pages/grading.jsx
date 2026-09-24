@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Shell, { Notice, Unavailable } from '../components/Shell';
+import ManualCards from '../components/ManualCards';
 import { PhotoPreview, Readiness, RecoveryNotice, StateBadge } from '../components/WorkspaceShared';
 import WorkspaceIcon from '../components/WorkspaceIcon';
 import { useGradingQueue } from '../lib/useGradingQueue';
@@ -11,7 +12,7 @@ import { pageAccess } from '../lib/server/runtime.mjs';
 import styles from '../components/WorkspaceUi.module.css';
 export { stateNames } from '../lib/workspace-client.mjs';
 export function getServerSideProps(ctx) { return pageAccess(ctx); }
-export default function Grading({ unavailable, staff }) { return unavailable ? <Unavailable /> : <Queue staff={staff} />; }
+export default function Grading({ unavailable, accessFailure, staff, manualEnabled }) { return unavailable ? <Unavailable accessFailure={accessFailure} /> : manualEnabled ? <ManualCards staff={staff}/> : <Queue staff={staff} />; }
 function Queue({ staff }) {
     const router = useRouter(), { resource, assigned, suspend, resume } = useGradingQueue(staff.id);
     const [query, setQuery] = useState(''), [cards, setCards] = useState([]);

@@ -1,0 +1,9 @@
+{
+  "name": "@atlas/batch-grading",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {".": "./src/index.mjs", "./repository": "./src/repository.mjs", "./http": "./src/http.mjs"},
+  "scripts": {"test": "node --test test/*.test.mjs"},
+  "dependencies": {"@atlas/manual-service": "workspace:*"}
+}

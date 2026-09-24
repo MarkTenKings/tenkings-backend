@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node ../../packages/atlas-grading-core/scripts/build.mjs && node scripts/local.mjs",
-    "build": "node ../../packages/atlas-grading-core/scripts/build.mjs && node scripts/generate-database.mjs && next build && node scripts/check-boundary.mjs",
+    "dev": "pnpm --filter @tenkings/ebay-sold-comps-v2 build && node ../../packages/atlas-grading-core/scripts/build.mjs && node ../../packages/atlas-manual-workspace/scripts/build.mjs && node scripts/local.mjs",
+    "build": "pnpm --filter @tenkings/ebay-sold-comps-v2 build && node ../../packages/atlas-grading-core/scripts/build.mjs && node ../../packages/atlas-manual-workspace/scripts/build.mjs && node scripts/generate-database.mjs && next build && node scripts/check-boundary.mjs",
     "start": "next start -H 127.0.0.1 -p 4318",
-    "test": "node ../../packages/atlas-grading-core/scripts/build.mjs && node scripts/generate-database.mjs && node --test test/*.test.mjs",
+    "test": "pnpm --filter @tenkings/ebay-sold-comps-v2 build && node ../../packages/atlas-grading-core/scripts/build.mjs && node ../../packages/atlas-manual-workspace/scripts/build.mjs && node scripts/generate-database.mjs && node --test test/*.test.mjs",
     "db:generate": "node scripts/generate-database.mjs"
   },
   "dependencies": {
@@ -21,7 +21,17 @@
     "@atlas/report-view": "workspace:*",
     "@atlas/service-bridge": "workspace:*",
     "libheif-js": "1.23.2",
-    "sharp": "0.33.5"
+    "sharp": "0.33.5",
+    "@atlas/connected-manual": "workspace:*",
+    "@atlas/manual-intake": "workspace:*",
+    "@atlas/manual-service": "workspace:*",
+    "@atlas/manual-workflow": "workspace:*",
+    "@atlas/manual-workspace": "workspace:*",
+    "@atlas/photo-storage": "workspace:*",
+    "@aws-sdk/client-s3": "3.914.0",
+    "@atlas/photo-core": "workspace:*",
+    "@atlas/defect-analysis": "workspace:*",
+    "@atlas/finishing-station": "workspace:*"
   },
   "devDependencies": {
     "eslint": "8.57.0",

@@ -1,0 +1,46 @@
+{
+  "upstreamCommit": "4bcbd31c142c6326ddb32bfdbc2172fc28cccb10",
+  "applicationCommit": "20643deae9b9b341fc7dfcd7fb703c53d0b73d0b",
+  "files": [
+    {
+      "source": "frontend/nextjs-app/lib/server/staffInventoryResearch.ts",
+      "sha256": "a2e6f71c609b340c05f8bd7146106c667d5a3abd42fcdd5aee019dece30f33ce",
+      "target": "packages/card-research-core/src/engine.mjs"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/server/staffInventoryResearchDecisions.ts",
+      "sha256": "47862b8b95de61876fada26ad789ce61d6825f7b4a679326def65f3929f6bf01",
+      "target": "packages/card-research-core/src/decisions.mjs"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/server/staffInventoryResearchEvidence.ts",
+      "sha256": "89873da853dac70acf07a3b42c22c9edaf739139db90994aab8615ef22d7ede9",
+      "target": "packages/card-research-core/src/evidence.mjs"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/server/staffInventoryResearchPrice.ts",
+      "sha256": "94d1dcffdf10b8edddb1f9a182998900850c5d26caf4600283a18c613edea512",
+      "target": "packages/card-research-core/src/price.mjs"
+    },
+    {
+      "source": "packages/shared/src/staffInventoryResearch.ts",
+      "sha256": "348bdf92a4e37cd3fda0b937d7b45b7c698379d6aa2e3d99168c20f74ae903a6",
+      "target": "packages/card-research-core/src/contract.mjs"
+    },
+    {
+      "source": "packages/shared/src/staffInventoryResearchSaleDetails.ts",
+      "sha256": "3e729dc2b88323d2d886f920650f2a5e3f4c022f96d0a66530243eac836578f8",
+      "target": "packages/card-research-core/src/sale-details.mjs"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/server/staffInventoryResearchCatalog.ts",
+      "sha256": "57c7648114d276a5f596a56ca74bf55ecd265a24ed92b6f046cd38393d2c3b5d",
+      "target": "packages/card-research-core/src/catalog.mjs"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/server/cardCatalogScopeEffect.ts",
+      "sha256": "cc641e4ac09caca408dd01a280b2add3df7725901a5bda7383f7413b67c07d90",
+      "target": "packages/card-research-core/src/scope-effect.mjs"
+    }
+  ]
+}

@@ -19,8 +19,8 @@ export async function getServerSideProps(ctx) {
     }
 }
 
-export default function OperationsPage({ unavailable, operationsUnavailable, staff }) {
-    if (unavailable) return <Unavailable />;
+export default function OperationsPage({ unavailable, accessFailure, operationsUnavailable, staff }) {
+    if (unavailable) return <Unavailable accessFailure={accessFailure} />;
     return <Shell staff={staff} title="Operations"><main className="main-content">
         <div className="page-heading"><div><p className="eyebrow">STAFF ADMINISTRATION</p><h1>Operations</h1>
             <p className="muted">Manage customer submissions, staff assignments and the ten-card pilot.</p></div>

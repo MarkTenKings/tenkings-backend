@@ -26,7 +26,7 @@ export async function getServerSideProps(ctx) {
     }
     return { props: { ...access.props, cardId: ctx.params.cardId } };
 }
-export default function CardPage({ unavailable, staff, cardId }) { return unavailable ? <Unavailable /> : <CardLoader key={cardId} staff={staff} cardId={cardId}/>; }
+export default function CardPage({ unavailable, accessFailure, staff, cardId }) { return unavailable ? <Unavailable accessFailure={accessFailure} /> : <CardLoader key={cardId} staff={staff} cardId={cardId}/>; }
 function CardLoader({ staff, cardId }) {
     const resource = useStaffResource(`cards/${cardId}`);
     return <Shell staff={staff} workspace title="Card review"><main className="workspace-content">{resource.loading ? <div className="empty-state" role="status">Loading card evidence…</div> : resource.error ? <div className="empty-state"><Notice error>{resource.error}</Notice>{resource.signedOut ? <Link href="/?reauthenticate=1">Sign in again</Link> : <button onClick={resource.reload}>Retry</button>}</div> : <Workspace initial={resource.data.card} csrf={resource.session.csrf} mode={resource.session.mode}/>}</main></Shell>;

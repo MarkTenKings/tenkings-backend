@@ -1,0 +1,19 @@
+{
+  "name": "@atlas/defect-memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./repository": "./src/repository.mjs",
+    "./lessons": "./src/lessons.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:postgres": "node scripts/validate-postgres.mjs"
+  },
+  "dependencies": {
+    "@atlas/grading-core": "workspace:*",
+    "@atlas/manual-workspace": "workspace:*"
+  }
+}

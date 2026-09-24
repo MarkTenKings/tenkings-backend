@@ -1,0 +1,19 @@
+{
+  "name": "@atlas/manual-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/service.mjs",
+    "./repository": "./src/repository.mjs",
+    "./staff-auth": "./src/staff-auth.mjs",
+    "./http": "./src/http.mjs",
+    "./contract": "./src/contract.mjs",
+    "./artifacts": "./src/artifacts.mjs",
+    "./response": "./src/response.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:postgres": "node scripts/validate-postgres.mjs"
+  }
+}

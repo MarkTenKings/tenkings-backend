@@ -1,5 +1,34 @@
 {
-  "name": "@atlas/finishing", "version": "0.1.0", "private": true, "type": "module",
-  "exports": { "./nfc": { "types": "./src/nfc.d.mts", "default": "./src/nfc.mjs" }, "./browser": "./browser.mjs" },
-  "scripts": { "test": "node --test test/*.test.mjs" }
+  "name": "@atlas/finishing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./nfc": {
+      "types": "./src/nfc.d.mts",
+      "default": "./src/nfc.mjs"
+    },
+    "./browser": "./browser.mjs",
+    "./manual": "./src/manual.mjs",
+    "./label": "./src/label.mjs",
+    "./label-design": "./src/label-design.mjs",
+    "./label-pdf": "./src/label-pdf.mjs",
+    "./dispatch": "./src/dispatch.mjs",
+    "./cups": "./src/cups.mjs",
+    "./mac-nfc": "./src/mac-nfc.mjs",
+    "./mac-nfc-journal": "./src/mac-nfc-journal.mjs",
+    "./station-protocol": "./src/station-protocol.mjs",
+    "./station-wire": "./src/station-wire.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "pdfkit": "0.17.2",
+    "qrcode": "1.5.4",
+    "svg-to-pdfkit": "0.1.8"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.7"
+  }
 }

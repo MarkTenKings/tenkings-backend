@@ -1,0 +1,15 @@
+{
+  "name": "@atlas/finishing-station",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./browser": "./src/browser.mjs",
+    "./http": "./src/http.mjs",
+    "./native": "./src/native.mjs",
+    "./runtime": "./src/runtime.mjs"
+  },
+  "bin": { "atlas-finishing-station": "./src/cli.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": { "@atlas/finishing": "workspace:*" }
+}
