@@ -1,5 +1,6 @@
 import { STAFF_BASE_PATH } from './lib/routes.mjs';
 import { staffContentSecurityPolicy } from './lib/content-security.mjs';
+import { fileURLToPath } from 'node:url';
 /** Dedicated staff build; the public path router preserves this complete mount. */
 const config = {
     basePath: STAFF_BASE_PATH,
@@ -8,6 +9,7 @@ const config = {
   transpilePackages: ['@atlas/report-view','@atlas/manual-workspace'],
     serverExternalPackages: ['@atlas/connected-manual','@atlas/manual-service','@atlas/manual-workflow','@atlas/manual-intake','@atlas/photo-storage','@atlas/photo-runtime','@atlas/preparation-runtime','@atlas/measurement-runtime'],
     webpack(config,{isServer}) {
+        config.resolve.modules.push(fileURLToPath(new URL('./node_modules', import.meta.url)));
         if(isServer) config.externals.unshift(({request},callback)=>{
             if(/^@atlas\/(?:connected-manual|manual-service|manual-workflow|manual-intake|photo-storage|photo-runtime|preparation-runtime|measurement-runtime)(?:\/|$)/.test(request??''))
                 return callback(null,`import ${request}`);

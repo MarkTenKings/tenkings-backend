@@ -1,9 +1,15 @@
+import { fileURLToPath } from 'node:url';
+
 export default {
     basePath: '/account',
     poweredByHeader: false,
     reactStrictMode: true,
     experimental: { cpus: 2 },
     outputFileTracingIncludes: { '/*': ['./.generated/customer-database/**/*'] },
+    webpack(config) {
+        config.resolve.modules.push(fileURLToPath(new URL('./node_modules', import.meta.url)));
+        return config;
+    },
     async headers() {
         return [{ source: '/:path*', headers: [
             { key: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' },
