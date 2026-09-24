@@ -1,0 +1,59 @@
+{
+  "status": "QUALIFIED_EXACT_WEB_SOURCE",
+  "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "builtAtSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "productionSourceChanges": 0,
+  "sourceManifestSha256": "01d54e6e225f0ea1bd7237974f8872b4b986eb7051380cf1eb06b69675af8af0",
+  "sourceFiles": 1078,
+  "frontendTests": {
+    "total": 723,
+    "passed": 723,
+    "failed": 0,
+    "testFiles": 83
+  },
+  "apps": {
+    "staff": {
+      "productionBuild": "PASS",
+      "seconds": 42.65,
+      "artifactSha256": "28ffaddb90bb9a7a142daabc223f43e41b3234710cb3e1c9f7b55b38460e01ec",
+      "artifactFiles": 134,
+      "serverTraces": 17,
+      "externalTracePaths": 0
+    },
+    "customer": {
+      "productionBuild": "PASS",
+      "seconds": 24.42,
+      "artifactSha256": "60ce8c26bb13528ba51e6ad911b73627f58e2bf10bba9eced1a0719078464e6e",
+      "artifactFiles": 100,
+      "serverTraces": 13,
+      "externalTracePaths": 0
+    },
+    "public": {
+      "productionBuild": "PASS",
+      "seconds": 31.28,
+      "artifactSha256": "b8bac142d39f879f99e98c640dd9555952d326b2fc7b3792c97c839b11037d3d",
+      "artifactFiles": 95,
+      "serverTraces": 12,
+      "externalTracePaths": 0
+    }
+  },
+  "cli": {
+    "status": "ALL_THREE_DRY_PREFLIGHT_PASS",
+    "checks": 6,
+    "providerWrites": 0
+  },
+  "privateCandidate": {
+    "sourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+    "imageId": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+    "qualification": "OWNED_BY_ROOT_SEPARATE_EVIDENCE",
+    "retainedPreviousNativeImage": false
+  },
+  "sourceProofs": {
+    "build/source-rebind-9c06c2b86487.json": "00b30a8c8bd343aee0ae1c88607a4b10f0d4b9d4dde47b14f1576266d2164595",
+    "build/source-proof-9c06c2b8.json": "ae1f7640b5c60acfcc91f94549b2374f637ac6fc8e879c22bf89cb6d5fc426bd",
+    "build/post-test-artifact-parity.json": "08d0214adf4f1b3a3a7f9ccaf6fc9a02f617f31909faa64566178fef041a45ea",
+    "build/frontend-result.json": "2b842a0561536acd4dd95fab65cbf8faabf8c4c6dc3558024e9c43e69de7ffa0",
+    "cli-qualification-9c06c2b8.json": "882c630f623c3efef955bfe55805a56445b86bee37e9abfb24d2581ba0a44625",
+    "build/cleanup.json": "31512fdf62b8241f5433caefe68b5049fa46177c35058f658a34b0322b16ff62"
+  }
+}

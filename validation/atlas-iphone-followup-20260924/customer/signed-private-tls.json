@@ -1,0 +1,72 @@
+{
+  "status": "SIGNED_PRIVATE_TLS_READS_PASS",
+  "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "at": "2026-09-24T20:15:02.770Z",
+  "staffBinding": {
+    "mode": "PRODUCTION",
+    "origin": "https://atlasgrading.com",
+    "deploymentId": "atlas-grading-staff-ecrgkwdn5-ten-kings.vercel.app",
+    "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+    "configHash": "d6e7e2fab41fc1a1e9d80152c2ba2a8045138be0032c72d400ebb2328634f033"
+  },
+  "publicBinding": {
+    "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8",
+    "deploymentId": "atlas-grading-public-1dnw1tsd5-ten-kings.vercel.app",
+    "mode": "PRODUCTION",
+    "origin": "https://atlasgrading.com",
+    "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2"
+  },
+  "customerBinding": {
+    "mode": "PRODUCTION",
+    "origin": "https://atlasgrading.com",
+    "deploymentId": "atlas-grading-customer-g9d9gnm09-ten-kings.vercel.app",
+    "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+    "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563"
+  },
+  "directoryLocationCount": 0,
+  "checks": [
+    {
+      "name": "signed-staff-no-session-denied",
+      "status": 401,
+      "responseBytes": 28,
+      "responseSha256": "43dba30e9fc1f57a5b45ca24b2ecb53881add7f5e28f084e41b30e24d9a52580",
+      "tlsAuthorized": true,
+      "tlsProtocol": "TLSv1.3",
+      "noStore": true,
+      "nosniff": true
+    },
+    {
+      "name": "signed-unknown-public-report",
+      "status": 404,
+      "responseBytes": 0,
+      "responseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tlsAuthorized": true,
+      "tlsProtocol": "TLSv1.3",
+      "noStore": true,
+      "nosniff": true
+    },
+    {
+      "name": "signed-current-customer-directory",
+      "status": 200,
+      "responseBytes": 42,
+      "responseSha256": "b676d931044407b426a943c5f79a9fabe070ea68845c9d79eed6fc2dff40e61e",
+      "tlsAuthorized": true,
+      "tlsProtocol": "TLSv1.3",
+      "noStore": true,
+      "nosniff": true
+    }
+  ],
+  "syntheticTokenSha256": "29f225ac166115e22629b89e92930b87c58d6f59c35f6ce9309969810e309080",
+  "requestCount": 3,
+  "automaticRetry": false,
+  "realSessionsUsed": 0,
+  "cardWrites": 0,
+  "approvalActions": 0,
+  "paidRequests": 0,
+  "secretValuesPrinted": false,
+  "containerId": "49bd38bf10b3a9f81bb14c902272b846133300f5c300f51b86b941d82d46b71d",
+  "imageId": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+  "runtimeUnchanged": true,
+  "helperSha256": "e89bbe07131b88f2aded346acb0b77f260edce2c6cd4c3431d40777d35c0bae7"
+}

@@ -1,0 +1,35 @@
+{
+  "at": "2026-09-24T20:13:14.238381+00:00",
+  "automaticRetry": false,
+  "checkerSha256": "d5d3f1195ef83a2dd3e876af44d36a765972d59ad9edd1c29fe3985c6c8955bd",
+  "closedClients": 2,
+  "commerceEnabled": false,
+  "constructedClients": 2,
+  "customerBinding": {
+    "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563",
+    "deploymentId": "atlas-grading-customer-g9d9gnm09-ten-kings.vercel.app",
+    "mode": "PRODUCTION",
+    "origin": "https://atlasgrading.com",
+    "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2"
+  },
+  "customerIdentificationEnabled": true,
+  "customerIntakeEnabled": true,
+  "databaseCalls": 0,
+  "dealerEnabled": false,
+  "envSha256": "14fffcd2980b1a0a4bd8ad93c73e72b6c27e72f1e18ff4b8c01619e70e12d86e",
+  "network": "none",
+  "privateImage": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "providerCalls": 0,
+  "staffBinding": {
+    "configHash": "d6e7e2fab41fc1a1e9d80152c2ba2a8045138be0032c72d400ebb2328634f033",
+    "deploymentId": "atlas-grading-staff-ecrgkwdn5-ten-kings.vercel.app",
+    "mode": "PRODUCTION",
+    "origin": "https://atlasgrading.com",
+    "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2"
+  },
+  "stationEnabled": false,
+  "status": "RAPID_PRIVATE_CONFIGURATION_PASS",
+  "webSourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "workerStarts": 0
+}

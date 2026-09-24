@@ -1,0 +1,47 @@
+{
+  "status": "SANITIZED_CUSTOMER_RELEASE_EVIDENCE_PASS",
+  "observedAt": "2026-09-24T20:17:30.494355+00:00",
+  "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "files": [
+    {
+      "file": "canonical-readonly.json",
+      "sha256": "925ad9d5db0c8307e09df306467caf20ef30f0ebf8b95d2a18ac1986555f67b7",
+      "bytes": 20752,
+      "status": "PASS"
+    },
+    {
+      "file": "independent-runtime-review.json",
+      "sha256": "c1ad39a16e4ff24fc37b78d4f6c7001ca3489575b1ce7d853e0a525a1d1bedfb",
+      "bytes": 2084,
+      "status": "INDEPENDENT_RUNTIME_HELPERS_REVIEW_PASS"
+    },
+    {
+      "file": "signed-private-tls.json",
+      "sha256": "912f3c81e90ccfb8cc0e1158bc2c6c0426f473d7b9b08cdb9ee9352e5fcec31e",
+      "bytes": 2685,
+      "status": "SIGNED_PRIVATE_TLS_READS_PASS"
+    }
+  ],
+  "coverage": {
+    "signedPrivateTlsChecks": 3,
+    "canonicalAnonymousGetChecks": 31,
+    "exactMediaHashes": 4,
+    "directoryVariants": 5,
+    "operationalKiosks": 0,
+    "approvedDealerContactSelectable": false
+  },
+  "limitations": [
+    "No real owner sign-in, SMS, card upload, identification, grading or paid order executed.",
+    "No human ten-pairs-per-minute result claimed.",
+    "ZIP and city search match address text; geolocation cannot compute CenterCourt distance because verified coordinates are absent.",
+    "The remaining eight iPhone pre-upload failures require the original device retry and new diagnostics."
+  ],
+  "privacy": {
+    "responseBodiesIncluded": false,
+    "cookiesIncluded": false,
+    "customerAddressesIncluded": false,
+    "credentialValuesIncluded": false,
+    "metadataAndHashesOnly": true
+  }
+}

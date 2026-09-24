@@ -1,0 +1,46 @@
+{
+  "status": "SANITIZED_BACKEND_INCIDENT_AND_QUALIFICATION_EVIDENCE",
+  "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "files": [
+    {
+      "file": "backend-incident.json",
+      "sha256": "236c6deebe3e7822fcd6184874ac47c9da8942574899f67bde2648bcf560c907",
+      "bytes": 5364
+    },
+    {
+      "file": "native-qualification.json",
+      "sha256": "8a6eec0f744078064d28f10cf728acb731818fe9ff3c767ac98c0cc0c153e429",
+      "bytes": 2073
+    },
+    {
+      "file": "runtime-observed.json",
+      "sha256": "6138bb8c61b1272ec590d5b1703a1abffc9f575e7e702cdfd04d90f347c45702",
+      "bytes": 7065
+    }
+  ],
+  "coverage": {
+    "incidentCards": 9,
+    "confirmedJpegAffectedCards": 1,
+    "confirmedJpegOriginals": 2,
+    "preUploadCardsWithUnprovedDeviceCause": 8,
+    "nativeUniqueTestsPassed": 304,
+    "nativeTestsFailed": 0,
+    "gradingRetriesPerformed": 0
+  },
+  "limits": [
+    "The JPEG decoder fix is directly verified against two retained originals from one card.",
+    "The8 pre-upload exceptions were not captured from the original iPhone; the new diagnostics do not prove their cause or recovery.",
+    "Native qualification was offline and performed no live grading.",
+    "Runtime cutover receipt remains immutable; final preservation/promotion are recorded separately in sibling runtime/customer evidence."
+  ],
+  "privacy": {
+    "originalPixelsIncluded": false,
+    "originalPixelHashesIncluded": false,
+    "cardOrUploadIdsIncluded": false,
+    "rawRequestLogsIncluded": false,
+    "credentialsIncluded": false,
+    "rawEnvironmentIncluded": false,
+    "protectedOriginalReceiptsRetainedOutsideRepository": true
+  }
+}

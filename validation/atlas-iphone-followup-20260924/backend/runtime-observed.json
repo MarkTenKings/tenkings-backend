@@ -1,0 +1,160 @@
+{
+  "derive-result.json": {
+    "sha256": "39fd659fc61ff5e07739fd9d1393b0b2eff1a6e1c9abc6f9bdcdf2d6de755125",
+    "value": {
+      "at": "2026-09-24T20:12:45.952274+00:00",
+      "bindings": {
+        "customer": {
+          "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563",
+          "deploymentId": "atlas-grading-customer-g9d9gnm09-ten-kings.vercel.app",
+          "mode": "PRODUCTION",
+          "origin": "https://atlasgrading.com",
+          "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2"
+        },
+        "public": {
+          "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8",
+          "deploymentId": "atlas-grading-public-1dnw1tsd5-ten-kings.vercel.app",
+          "mode": "PRODUCTION",
+          "origin": "https://atlasgrading.com",
+          "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2"
+        },
+        "staff": {
+          "configHash": "d6e7e2fab41fc1a1e9d80152c2ba2a8045138be0032c72d400ebb2328634f033",
+          "deploymentId": "atlas-grading-staff-ecrgkwdn5-ten-kings.vercel.app",
+          "mode": "PRODUCTION",
+          "origin": "https://atlasgrading.com",
+          "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2"
+        }
+      },
+      "changedKeys": [
+        "ATLAS_CUSTOMER_SERVICE_BINDING_JSON",
+        "ATLAS_MANUAL_WEB_DEPLOYMENT",
+        "ATLAS_MANUAL_WEB_RELEASE_SHA"
+      ],
+      "databaseWrites": 0,
+      "environment": {
+        "path": "/opt/atlas/iphone-followup-47cb501adfd6/private.env",
+        "sha256": "14fffcd2980b1a0a4bd8ad93c73e72b6c27e72f1e18ff4b8c01619e70e12d86e"
+      },
+      "imageId": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+      "previousEnvironmentSha256": "66f1a9882f707bd695df17c80a5500839aab85548f087cbfba8456f47fabfaa5",
+      "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+      "providerCalls": 0,
+      "secretsPreserved": true,
+      "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+      "status": "FOLLOWUP_ENV_DERIVED"
+    }
+  },
+  "constructor-result.json": {
+    "sha256": "250e809b7b82a34540723da7981e103681e07493bf7d2cc70849ef04e9334409",
+    "value": {
+      "at": "2026-09-24T20:13:14.238381+00:00",
+      "automaticRetry": false,
+      "checkerSha256": "d5d3f1195ef83a2dd3e876af44d36a765972d59ad9edd1c29fe3985c6c8955bd",
+      "closedClients": 2,
+      "commerceEnabled": false,
+      "constructedClients": 2,
+      "customerBinding": {
+        "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563",
+        "deploymentId": "atlas-grading-customer-g9d9gnm09-ten-kings.vercel.app",
+        "mode": "PRODUCTION",
+        "origin": "https://atlasgrading.com",
+        "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2"
+      },
+      "customerIdentificationEnabled": true,
+      "customerIntakeEnabled": true,
+      "databaseCalls": 0,
+      "dealerEnabled": false,
+      "envSha256": "14fffcd2980b1a0a4bd8ad93c73e72b6c27e72f1e18ff4b8c01619e70e12d86e",
+      "network": "none",
+      "privateImage": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+      "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+      "providerCalls": 0,
+      "staffBinding": {
+        "configHash": "d6e7e2fab41fc1a1e9d80152c2ba2a8045138be0032c72d400ebb2328634f033",
+        "deploymentId": "atlas-grading-staff-ecrgkwdn5-ten-kings.vercel.app",
+        "mode": "PRODUCTION",
+        "origin": "https://atlasgrading.com",
+        "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2"
+      },
+      "stationEnabled": false,
+      "status": "RAPID_PRIVATE_CONFIGURATION_PASS",
+      "webSourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+      "workerStarts": 0
+    }
+  },
+  "controls-result.json": {
+    "sha256": "dfecb2a902a90811f62e5c4bed137806bccc60655168ef1414f17a05ecb5977e",
+    "value": {
+      "at": "2026-09-24T20:14:26.521305+00:00",
+      "automaticRetry": false,
+      "bindings": {
+        "customer": {
+          "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563",
+          "deploymentId": "atlas-grading-customer-g9d9gnm09-ten-kings.vercel.app",
+          "mode": "PRODUCTION",
+          "origin": "https://atlasgrading.com",
+          "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2"
+        },
+        "public": {
+          "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8",
+          "deploymentId": "atlas-grading-public-1dnw1tsd5-ten-kings.vercel.app",
+          "mode": "PRODUCTION",
+          "origin": "https://atlasgrading.com",
+          "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2"
+        },
+        "staff": {
+          "configHash": "d6e7e2fab41fc1a1e9d80152c2ba2a8045138be0032c72d400ebb2328634f033",
+          "deploymentId": "atlas-grading-staff-ecrgkwdn5-ten-kings.vercel.app",
+          "mode": "PRODUCTION",
+          "origin": "https://atlasgrading.com",
+          "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2"
+        }
+      },
+      "commerceEnabled": false,
+      "customerRevision": 9,
+      "customerServiceEnabled": true,
+      "customerSmsRevision": 7,
+      "envSha256": "14fffcd2980b1a0a4bd8ad93c73e72b6c27e72f1e18ff4b8c01619e70e12d86e",
+      "identificationEnabled": true,
+      "imageId": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+      "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+      "publicRevision": 7,
+      "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+      "staffRevision": 29,
+      "staffSmsRevision": 27,
+      "status": "SIX_CONTROL_DELTA_AND_HISTORY_PASS"
+    }
+  },
+  "cutover-result.json": {
+    "sha256": "3da615be77ab5d1e2c9279d6e1c33a1557b225f286f06a73f532e6d77d6ed0d5",
+    "value": {
+      "at": "2026-09-24T20:14:45.002505+00:00",
+      "automaticRetry": false,
+      "caddyUnchanged": true,
+      "envSha256": "14fffcd2980b1a0a4bd8ad93c73e72b6c27e72f1e18ff4b8c01619e70e12d86e",
+      "new": {
+        "id": "49bd38bf10b3a9f81bb14c902272b846133300f5c300f51b86b941d82d46b71d",
+        "image": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+        "name": "/atlas-manual-connected-20260917",
+        "oom": false,
+        "restartCount": 0,
+        "running": true,
+        "startedAt": "2026-09-24T20:14:38.424599806Z"
+      },
+      "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+      "retained": {
+        "id": "f06442b1dc5ce61f4e207a61e135c2e2f2b8a474a635aa65e7caed6403656065",
+        "image": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+        "name": "/atlas-manual-connected-20260917-retained-4d3-iphone-9c06c2b8",
+        "oom": false,
+        "restartCount": 0,
+        "running": false,
+        "startedAt": "2026-09-24T17:13:55.372035618Z"
+      },
+      "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+      "status": "FOLLOWUP_PRIVATE_REBOUND_PROBES_PENDING",
+      "unrelatedContainersUnchanged": true
+    }
+  }
+}

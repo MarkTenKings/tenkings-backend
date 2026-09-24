@@ -1,0 +1,122 @@
+{
+  "kind": "SANITIZED_IPHONE_CAPTURE_INCIDENT_EVIDENCE",
+  "observedAt": "2026-09-24T19:32:34.95028+00:00",
+  "scope": "Nine recent production intake cards created2026-09-24T19:10:32Z\u201319:13:32Z, consistent with owner report of approximately9\u201310 captures; no device journal was accessed.",
+  "counts": {
+    "intakeCards": 9,
+    "cardsWithoutUploadPlan": 8,
+    "cardsWithVerifiedPair": 1,
+    "verifiedOriginals": 2,
+    "preparedOriginals": 0,
+    "batchRows": 0,
+    "identificationRows": 0,
+    "geometryRows": 0,
+    "analysisRows": 0,
+    "analysisRefusals": 0
+  },
+  "confirmedFailure": {
+    "code": "PHOTO_HDR_UNSUPPORTED",
+    "stage": "native photo preparation, before pair readiness and batch enqueue",
+    "affectedCards": 1,
+    "affectedOriginals": 2,
+    "prepare422Responses": 4,
+    "workerStall": false,
+    "format": "Apple JPEG with MPF gain map",
+    "metadata": {
+      "primaryWidth": 4032,
+      "primaryHeight": 3024,
+      "orientation": 6,
+      "channels": 3,
+      "bitDepth": 8,
+      "iccPresent": false,
+      "explicitExifColorSpace": "sRGB",
+      "additionalAppleXmpFields": [
+        "apdi:NativeFormat",
+        "apdi:StoredFormat"
+      ]
+    }
+  },
+  "unresolvedFailures": {
+    "cards": 8,
+    "observed": "Intake create returned200; no subsequent per-card intake GET or upload plan was observed for these8 cards.",
+    "inference": "The client stopped before the first intake.read call; Blob byte reads, hashing, batch journal persistence or intake journal reads remain possible stages.",
+    "exactDeviceCauseConfirmed": false,
+    "notClaimed": [
+      "all8 failures fixed",
+      "Safari or iOS defect proven",
+      "storage quota exceeded",
+      "camera PNG color rejected",
+      "lost photos recovered"
+    ]
+  },
+  "backendFix": {
+    "nativeSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+    "webSourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+    "scope": "Strict Apple XMP gain-map allowlist accepts the observed optional native/stored-format fields and field ordering. Qualified no-ICC JPEG primary bases require explicit bounded EXIF sRGB proof. Existing ICC/P3 and HEIC checks remain.",
+    "sourcePolicy": "atlas-jpeg-apple-exif-srgb-base-v1",
+    "workingPolicy": "atlas-sdr-working-srgb8-v1",
+    "pixelOperations": "Decode untouched primary JPEG; apply exact EXIF orientation. No gain-map application, tone mapping, resize, JPEG re-encoding or color-space guessing.",
+    "gainMapAndOriginalRetained": true
+  },
+  "actualOriginalVerification": {
+    "status": "CANDIDATE_REAL_ORIGINALS_PASS",
+    "at": "2026-09-24T19:48:47.598Z",
+    "originalCount": 2,
+    "verifiedChecksums": true,
+    "completeOriginalsRetained": true,
+    "decodedAndWorkingPixelsEqualIndependentOrientedPrimaryJpegPixels": true,
+    "orientedWidth": 3024,
+    "orientedHeight": 4032,
+    "proofEnvironment": "Candidate source overlay in disposable temporary directory using retained Linux native dependencies; did not overwrite serving code or commit prepared sources."
+  },
+  "clientDiagnosticChange": {
+    "scope": "Persist allowlisted phase/native exception names and actionable per-card error codes; add sanitized support export.",
+    "filesAndOperationIdsPreserved": true,
+    "newRetryPolicy": false,
+    "imageConversionAdded": false,
+    "exportExcludes": [
+      "photo bytes",
+      "filenames",
+      "labels",
+      "hash values",
+      "sessions",
+      "cookies",
+      "credentials",
+      "raw exception messages"
+    ]
+  },
+  "investigationEffects": {
+    "databaseWrites": 0,
+    "storageWrites": 0,
+    "modelRequests": 0,
+    "originalPixelsReturned": false,
+    "gradingRetries": 0,
+    "oldCardRecovery": false
+  },
+  "protectedReferences": {
+    "recent-1933.json": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-rapid-capture-20260924/incident-grading-20260924/recent-1933.json",
+      "sha256": "41dc4ee07ac6f4dd3a80e715645b9d8c37d634937048904e0fc6db87741dab26"
+    },
+    "decode-probe-result.json": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-rapid-capture-20260924/incident-grading-20260924/decode-probe-result.json",
+      "sha256": "2c3a385cb227c86555ff410f1c53997fabe8e15d6a30de5a4599a01b827854f5"
+    },
+    "jpeg-color-metadata-result.json": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-rapid-capture-20260924/incident-grading-20260924/jpeg-color-metadata-result.json",
+      "sha256": "2f243f9542ff42cd36ba0083b34aa46dc275e413101dc2744bb988528b415513"
+    },
+    "candidate-real-originals-result.json": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-rapid-capture-20260924/incident-grading-20260924/candidate-real-originals-result.json",
+      "sha256": "2f74b72198d002efc9014d6729c3dee4b5de6a911377fb96a8f997f1b9a8b1ac"
+    },
+    "staff-intake-request-summary.json": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-rapid-capture-20260924/incident-grading-20260924/staff-intake-request-summary.json",
+      "sha256": "4c5d37a8869c42c05c15bce59ceea8dcedeaf41ea05802e41a197a1befd6c533"
+    },
+    "staff-intake-first3-summary.json": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-rapid-capture-20260924/incident-grading-20260924/staff-intake-first3-summary.json",
+      "sha256": "7a7376d91496273627eedd944229a728749b8b9c0bc5aa2504dfcded4bcb853e"
+    }
+  }
+}

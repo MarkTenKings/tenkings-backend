@@ -1,0 +1,59 @@
+{
+  "status": "FRESH_PROMOTION_READONLY_REVIEW_PASS",
+  "at": "2026-09-24T20:13:01.008Z",
+  "planSha256": "f18fde8561b751d64c3fbf4fba94b0b16a7ad3e6dea9d6981f291620f2a5c32c",
+  "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "ready": {
+    "staff": {
+      "id": "dpl_GHgM5PM4zjBeBs4RcktHMFmgw5oh",
+      "hostname": "atlas-grading-staff-ecrgkwdn5-ten-kings.vercel.app",
+      "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+      "readyState": "READY"
+    },
+    "customer": {
+      "id": "dpl_4QQTx1csp4foMUATLCb6pphFBras",
+      "hostname": "atlas-grading-customer-g9d9gnm09-ten-kings.vercel.app",
+      "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+      "readyState": "READY"
+    },
+    "public": {
+      "id": "dpl_BSBEnKxqbALGZmpn3vfMziXiguS2",
+      "hostname": "atlas-grading-public-1dnw1tsd5-ten-kings.vercel.app",
+      "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+      "readyState": "READY"
+    }
+  },
+  "canonicalPredecessor": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV",
+  "publicAliases": [
+    {
+      "alias": "atlas-grading-public-ten-kings.vercel.app",
+      "deploymentId": "dpl_BSBEnKxqbALGZmpn3vfMziXiguS2"
+    },
+    {
+      "alias": "atlas-grading-public.vercel.app",
+      "deploymentId": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV"
+    },
+    {
+      "alias": "atlasgrading.com",
+      "deploymentId": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV"
+    },
+    {
+      "alias": "www.atlasgrading.com",
+      "deploymentId": "dpl_EXR4NcZo1uKxS3ULmvwp8SRm7EMV"
+    }
+  ],
+  "currentStateExactlyMatchesPreparedFence": true,
+  "publicUpstreamsMatchActualReady": true,
+  "promotionIntentAbsent": true,
+  "providerWrites": 0,
+  "guardReview": {
+    "actualPublicReadyRecheckedAtExecution": true,
+    "entireProviderStateRecheckedAtExecution": true,
+    "exactlyOnePromotionPost": true,
+    "postPromotionReadbackRequired": true,
+    "noAutomaticRetry": true,
+    "otherProjectsAndPublicEnvironmentPreserved": true
+  },
+  "helperSha256": "c3c0cec6c4d26e14593887d72e7c4d6174580d75e4c39716b5363255abefb324",
+  "originalReceiptSha256": "eb41d95b9860f1fca18a8348c9856fee032c2687145153668cec446d611eeeb0"
+}

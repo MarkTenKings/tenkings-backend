@@ -1,0 +1,41 @@
+{
+  "status": "PUBLIC_PROMOTION_READBACK_PASS",
+  "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "deploymentId": "dpl_BSBEnKxqbALGZmpn3vfMziXiguS2",
+  "providerWrites": 1,
+  "canonicalChecksRequired": true,
+  "productionTarget": {
+    "id": "dpl_BSBEnKxqbALGZmpn3vfMziXiguS2",
+    "url": "atlas-grading-public-1dnw1tsd5-ten-kings.vercel.app",
+    "readyState": "READY",
+    "target": "production"
+  },
+  "aliases": [
+    {
+      "alias": "atlas-grading-public-ten-kings.vercel.app",
+      "deploymentId": "dpl_BSBEnKxqbALGZmpn3vfMziXiguS2",
+      "redirect": null,
+      "redirectStatusCode": null
+    },
+    {
+      "alias": "atlas-grading-public.vercel.app",
+      "deploymentId": "dpl_BSBEnKxqbALGZmpn3vfMziXiguS2",
+      "redirect": null,
+      "redirectStatusCode": null
+    },
+    {
+      "alias": "atlasgrading.com",
+      "deploymentId": "dpl_BSBEnKxqbALGZmpn3vfMziXiguS2",
+      "redirect": null,
+      "redirectStatusCode": null
+    },
+    {
+      "alias": "www.atlasgrading.com",
+      "deploymentId": "dpl_BSBEnKxqbALGZmpn3vfMziXiguS2",
+      "redirect": "atlasgrading.com",
+      "redirectStatusCode": 308
+    }
+  ],
+  "receiptSha256": "9cf3fffd7efc1650277cf17b2281302fad94f41aab601ab3abdf4a51f0254a0b",
+  "automaticRetry": false
+}

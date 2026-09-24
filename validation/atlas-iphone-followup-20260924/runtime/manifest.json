@@ -1,0 +1,16 @@
+{
+  "status": "ACTUAL_RUNTIME_RELEASE_VERIFIED",
+  "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "files": {
+    "constructor-result.json": "250e809b7b82a34540723da7981e103681e07493bf7d2cc70849ef04e9334409",
+    "controls-result.json": "dfecb2a902a90811f62e5c4bed137806bccc60655168ef1414f17a05ecb5977e",
+    "cutover-result.json": "3da615be77ab5d1e2c9279d6e1c33a1557b225f286f06a73f532e6d77d6ed0d5",
+    "derive-result.json": "39fd659fc61ff5e07739fd9d1393b0b2eff1a6e1c9abc6f9bdcdf2d6de755125",
+    "post-cutover-result.json": "84dc3ce82606d7e3831e181f4939e6f33ab6342603e5532e511814cf5d821218",
+    "post-promotion-result.json": "43b82ad06c1cc8213db5c4acc17123746dad07b8f8396f0df7ef4ef18df9cf19"
+  },
+  "secretsIncluded": false,
+  "historyAndPolicyPreserved": true,
+  "realIphoneRecovery": "PENDING_OWNER_RESUME"
+}

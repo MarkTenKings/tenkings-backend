@@ -1,0 +1,28 @@
+{
+  "at": "2026-09-24T20:14:45.002505+00:00",
+  "automaticRetry": false,
+  "caddyUnchanged": true,
+  "envSha256": "14fffcd2980b1a0a4bd8ad93c73e72b6c27e72f1e18ff4b8c01619e70e12d86e",
+  "new": {
+    "id": "49bd38bf10b3a9f81bb14c902272b846133300f5c300f51b86b941d82d46b71d",
+    "image": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+    "name": "/atlas-manual-connected-20260917",
+    "oom": false,
+    "restartCount": 0,
+    "running": true,
+    "startedAt": "2026-09-24T20:14:38.424599806Z"
+  },
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "retained": {
+    "id": "f06442b1dc5ce61f4e207a61e135c2e2f2b8a474a635aa65e7caed6403656065",
+    "image": "sha256:fefc50f83e2e15ce1685c138f0ca69a618931e3972e9e8924a4b219b625b340e",
+    "name": "/atlas-manual-connected-20260917-retained-4d3-iphone-9c06c2b8",
+    "oom": false,
+    "restartCount": 0,
+    "running": false,
+    "startedAt": "2026-09-24T17:13:55.372035618Z"
+  },
+  "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "status": "FOLLOWUP_PRIVATE_REBOUND_PROBES_PENDING",
+  "unrelatedContainersUnchanged": true
+}

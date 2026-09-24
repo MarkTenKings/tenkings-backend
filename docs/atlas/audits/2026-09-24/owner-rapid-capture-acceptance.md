@@ -1,9 +1,11 @@
 # ATLAS owner acceptance after release
 
-Use the approved owner phone, refresh the page and sign in again after the deployment.
+Use the same approved iPhone/browser from the September24 test, refresh and sign in again. Keep site data intact. Saved uploads resume automatically after sign-in. If failures remain in staff intake, choose **Resume saved uploads**; record how many of the nine existing cards reach Grading/Review and the exact message on failures. Expand **Upload diagnostics** to reveal **Download upload diagnostics** if needed. The decoder correction was verified against the one uploaded pair; the eight pre-upload failures still need phone evidence. Do not start replacement cards merely to hide those failures.
+
+The checks below remain separate customer-flow acceptance.
 
 1. Open https://atlasgrading.com/account on the phone. The moving slab backdrop and large GRADE YOUR CARDS slab action should be visible without scrolling on a typical phone.
-2. Open the submission wizard. Watch the kiosk and FedEx clips. Prices and service differences should be clear. There are currently no configured operating kiosk locations, so test mail-in capture.
+2. Open the submission wizard. Watch the kiosk and FedEx clips. Prices and service differences should be clear. Tap **Find an Authorized Dealer →**. CenterCourt Cards should appear at **307 Lincoln St, Roseville, CA 95678**, with station setup pending. It appears in the initial list, Roseville/95678 searches and Use my location; other ZIP searches currently match address text rather than geographic radius. No operating kiosk is configured, so test mail-in capture.
 3. Select Choose mail-in, then Continue to camera. Allow camera access. Fit the card inside the large guide, capture Front, turn it over, capture Back. The same camera should immediately ask for the next Front while the earlier pair uploads.
 4. Capture ten pairs without waiting for identification. Check that the count rises after each Back and the first pairs upload/identify in the background. Record elapsed human time and check photo sharpness; the synthetic software benchmark is not a phone optics or human-speed acceptance result.
 5. Close and reopen the page with a partially captured Front or an unfinished upload. Confirm saved pairs and the partial Front remain recoverable. Keep browser storage intact during testing.

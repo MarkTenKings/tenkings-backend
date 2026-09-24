@@ -1,0 +1,37 @@
+{
+  "status": "ACTUAL_PUBLIC_BINDING_DERIVED",
+  "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "providerDeploymentId": "dpl_BSBEnKxqbALGZmpn3vfMziXiguS2",
+  "binding": {
+    "mode": "PRODUCTION",
+    "origin": "https://atlasgrading.com",
+    "deploymentId": "atlas-grading-public-1dnw1tsd5-ten-kings.vercel.app",
+    "releaseSha": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+    "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8"
+  },
+  "constructorSource": [
+    {
+      "path": "frontend/atlas-public/lib/server/policy.mjs",
+      "sourceSha256": "3efdfcbaef2eaa33671295935f1791b1747baa69f359d16815daff26baf5db9d",
+      "importRebasedSha256": "c11dc1490bb8bd970e49f922a46db7cd3de82e6bacf834341fd6728755728256"
+    },
+    {
+      "path": "packages/atlas-service-bridge/src/protocol.mjs",
+      "sourceSha256": "e11fe4a54a6ad7c79932117e21a098a0df35715b43d682e60c35b2a5df53486d",
+      "importRebasedSha256": "e11fe4a54a6ad7c79932117e21a098a0df35715b43d682e60c35b2a5df53486d"
+    },
+    {
+      "path": "packages/atlas-service-bridge/src/manual-public.mjs",
+      "sourceSha256": "e18b838a0f03d85913a9cae311c92353e4173523083ad6721bafb7600a86ea0e",
+      "importRebasedSha256": "e18b838a0f03d85913a9cae311c92353e4173523083ad6721bafb7600a86ea0e"
+    },
+    {
+      "path": "packages/atlas-service-bridge/src/transport.mjs",
+      "sourceSha256": "c2c27dd6953e764487d551504450e25affee25ce89d7b5f63ac4674689c42399",
+      "importRebasedSha256": "c2c27dd6953e764487d551504450e25affee25ce89d7b5f63ac4674689c42399"
+    }
+  ],
+  "existingPublicReaderConfigHashMatched": true,
+  "providerWrites": 0,
+  "secretValuesPrinted": false
+}

@@ -1,0 +1,46 @@
+{
+  "kind": "SANITIZED_NATIVE_QUALIFICATION",
+  "imageId": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+  "nativeSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "sourceManifestSha256": "e4b1ea898f384a7b10f9d4c4a1badd4e3631fde9a3162433aaf6f853987b9f2e",
+  "webSourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "nativeWebSourceDifference": [
+    "docs/handoffs/SESSION_LOG.md",
+    "frontend/atlas-app/test/batch-intake-ui.test.mjs"
+  ],
+  "applicationBytesChangedBetweenNativeAndWeb": false,
+  "main": {
+    "testFiles": 24,
+    "tests": 304,
+    "passed": 303,
+    "failed": 0,
+    "skipped": 1,
+    "receipt": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20260924/native/qualification/result.json",
+      "sha256": "ce16d8cb01483671257c00bdae5d39f9c3fb183e0eb42410def236d3a4fc45cd"
+    },
+    "logSha256": "c8188a0d9dc320f965fac7ded95b1cfa6041d37b86bd34ba7095f14361717575"
+  },
+  "supplement": {
+    "selectedTest": "checked native CPU yields exactly the same proposal and approved traces, overlap ownership and score",
+    "passed": 1,
+    "failed": 0,
+    "excludedByName": 6,
+    "qualifiedPython": "/opt/atlas-python/bin/python",
+    "receipt": {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-followup-20260924/native/qualification/native-cpu-result.json",
+      "sha256": "7b740ff90e43307a615176864d00e8e551d88ab265797029b9b70fd0aa43fd82"
+    },
+    "logSha256": "2fdb38f3ce2989206640df42f9b87de269106cd52b781662a1e7d6aa39a3ef45",
+    "receiptReconciliation": "Original test and unchanged-serving assertions passed; receipt assertion used TAP index1 instead of observed index7. Raw log retained; no test rerun."
+  },
+  "uniqueTestsPassed": 304,
+  "network": "none",
+  "productionCredentials": false,
+  "databaseWrites": 0,
+  "storageWrites": 0,
+  "modelRequests": 0,
+  "servingContainerUnchangedDuringQualification": true,
+  "backendTargetedLocalTests": 117,
+  "deploymentStatus": "Qualification only; consult separate root cutover/promotion receipts for live status."
+}

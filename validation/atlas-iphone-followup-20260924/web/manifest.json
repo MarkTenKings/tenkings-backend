@@ -1,0 +1,13 @@
+{
+  "files": {
+    "README.md": "4aad3ae3f6b85eaaa005b43cfeaf3ec849a58c98c62c69b070815187b5a289b3",
+    "independent-staff-binding.json": "7b732a2d3b78e1a2e3f113d03413a95ad3573f5e4a12bbdb88c28bb9cdf5233e",
+    "private-signed-reads.json": "9b61551ef93bd3dcf5e92545dfbf78236e6aec227c852acd827b5cb608602eb0",
+    "promotion-review.json": "31906f455822e58732eadb67e1e83c3e1daefaaacd054ef287a0a1f5920097b7",
+    "public-binding.json": "2065d66cbe35df4eb4a40468e85077ee20b9bc5aceb1249430763be5080ac4b2",
+    "public-promotion.json": "7e2ce9908252c92211dc5652513ca41a9878d5baf155948185e818f4071aed6c",
+    "public-upstream-install.json": "4e1eb6fa5b60e29d6a474553e4674cf320c785212890bd4f8cb53fc312e2d99a",
+    "qualification.json": "56e5ce8b79909cd7e93c147f3616cfd105300bdbc7eb8d0f479811457b74ab3b",
+    "ready-deployments.json": "f2870c58ac0df448a5fbf5e32dd543050fa27cc0727a03a03ac2cbb4a2fc3574"
+  }
+}

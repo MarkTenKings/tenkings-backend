@@ -1,0 +1,20 @@
+{
+  "status": "ENVIRONMENT_INSTALLED_READBACK_PASS",
+  "sourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "providerWrites": 2,
+  "operations": [
+    {
+      "key": "ATLAS_STAFF_DEPLOYMENT_ORIGIN",
+      "method": "PATCH",
+      "value": "https://atlas-grading-staff-ecrgkwdn5-ten-kings.vercel.app"
+    },
+    {
+      "key": "ATLAS_CUSTOMER_DEPLOYMENT_ORIGIN",
+      "method": "PATCH",
+      "value": "https://atlas-grading-customer-g9d9gnm09-ten-kings.vercel.app"
+    }
+  ],
+  "preserved": "Every other project, setting, alias and environment row preserved by exact readback checks",
+  "customerEnvironment": "All existing rows retained, including rotation1 customer service key",
+  "receiptSha256": "3b1a56230209afd6652dbc7ce593d90feebf1f0837a0eae71063cba5b3b2b23b"
+}

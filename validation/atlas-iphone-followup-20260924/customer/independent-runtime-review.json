@@ -1,0 +1,41 @@
+{
+  "status": "INDEPENDENT_RUNTIME_HELPERS_REVIEW_PASS",
+  "at": "2026-09-24T20:08:16.318046+00:00",
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "webSourceCommit": "9c06c2b8648717a9b8efc3caeacf96435ef299a2",
+  "helperHashes": {
+    "common.py": "0b50c3f1fb499c1bc5c6d9ba347162b93d1335c6d184961fb873388cde62ede1",
+    "derive.py": "53be4226062e1913d5c219b674699ad18a7d7b15938661cc29a686d3b1ce79ae",
+    "constructor.py": "4e143f0c457977ffa84d3cea4acead2e02647bdf4155d559a63c2dfe20fdf163",
+    "constructor-check.mjs": "d5d3f1195ef83a2dd3e876af44d36a765972d59ad9edd1c29fe3985c6c8955bd",
+    "prepare-controls.mjs": "e1bd6f50d64503262f4a875119781beb0ce260b1e7a442553f9dde1a2a0340b8",
+    "host-controls.py": "bd59b37b1858521e34d71d44f479f1a43a9f3c2251ed0f38e28cbb835059cb71",
+    "private-rebind.py": "5cde637ee69fffd6b5a1a2f4fec84f4d30ed703ffa2d8e82e3065c5ac0525b42",
+    "post-cutover-readonly.py": "4594d38a6c57bb51869b47e38531d7c5fe9d15718f650457b9062b63bfec9806",
+    "read-customer-baseline.py": "110a3ece4ecb3bb17d7ec71668d41c5452769a2804b1a2b958cb682777e42c9a",
+    "schema-readonly.sql": "8d19480663ed49f798fca066b9021d6e18721b96b51c791979a9bbb3fc050bb8",
+    "controls-readonly.sql": "a8bdd8a22e50cf4299ab715d4e9f175be9060d7206d96a5a719bac43292ca015"
+  },
+  "checks": {
+    "exactSchema52AndPublic112": true,
+    "existingRotation1CredentialsPreserved": true,
+    "derivedEnvChangesExactlyThreeBindings": true,
+    "sixAtomicFullRowCasUpdates": true,
+    "hiddenSmsPolicyFingerprintPreserved": true,
+    "oldRuntimeIsolationShadowFixVerified": true,
+    "postCutoverAdaptsOnlyExactImageSourceContainer": true,
+    "historyAndPrivilegeReadbackPreserved": true
+  },
+  "localGuardTests": {
+    "validIsolation": 1,
+    "isolationDriftRejected": 10,
+    "validSixControlPreparation": 1,
+    "preparationDriftRejected": 11,
+    "validSixControlReadback": 1,
+    "readbackDriftRejected": 6
+  },
+  "runtimeActions": 0,
+  "databaseCalls": 0,
+  "productionRequests": 0,
+  "scope": "Independent source review and local fixtures only; actual cutover pending"
+}
