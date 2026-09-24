@@ -14,7 +14,9 @@ const args = process.argv.slice(2);
 assert(args.length === 2 && args[0] === '--directory' && isAbsolute(args[1]));
 const directory = await realpath(args[1]), hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const manifest = JSON.parse(await readFile(join(directory, 'manifest.json')));
-assert.equal(manifest.version, 'atlas-mac-station-review-bundle-v1');
+assert(['atlas-mac-station-review-bundle-v1', 'atlas-mac-station-signed-bundle-v1'].includes(manifest.version));
+assert.equal(manifest.distributionStatus, manifest.version === 'atlas-mac-station-review-bundle-v1'
+  ? 'UNSIGNED_REVIEW_ONLY' : 'SIGNED_PENDING_NOTARIZATION');
 for (const file of manifest.files) {
   assert(!isAbsolute(file.path) && !file.path.split('/').includes('..'));
   const bytes = await readFile(join(directory, file.path));

@@ -24,3 +24,8 @@ Activation requires the reviewed presentation schema/grants, `ATLAS_MANUAL_PRESE
 Dealer offers remain absent until exact authorized scope, amount/currency, expiry and terms are supplied. The existing presentation contract supports such evidence without a payment/trade execution path. No Ten Kings inventory, ownership, TKD buyback, credentials or locations are copied implicitly.
 
 Dealer publication is verified; market remains disabled. The signed-in provider account has one masked existing Ten Kings key, and the scoped legitimate configuration checks found no accessible original. Do not rotate/revoke it or invent a credential. A saved original must enter through protected local custody, or a separately issued/coordinated replacement is needed. The provider currently documents a40-result cap without cookies and429 for both rate/quota exhaustion; real bounded contract qualification remains necessary before activation. No paid market request or dealer communication was made. Exact receipts and remaining inputs are in the current release audit and shared session log.
+
+
+### September 24 UTC follow-up
+
+Mark recovered and securely entered the original key. Exactly one real transport check passed (HTTP200,13 candidates); no key rotation or Ten Kings configuration change was needed. Current ATLAS source also fixes explicit40-result requests, typed quota refusals/reconciliation and redirect rejection. Deployment/approved-report acceptance remain separate. See the [successor checkpoint](../audits/2026-09-24/completion-followup.md); the earlier missing-key observation above is historical.

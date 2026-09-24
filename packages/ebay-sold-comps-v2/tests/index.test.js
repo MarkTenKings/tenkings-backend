@@ -527,3 +527,32 @@ test("aborts a hung request at the configured timeout", async () => {
     }),
   }), "SOLDCOMPS_TIMEOUT");
 });
+
+
+test("current quota and rate refusals are distinct, bounded, redacted and never retried", async () => {
+  for (const [body, code, retryable] of [
+    [{ code: "quota_exceeded", message: "secret-response", reset_at: "2026-10-01" }, "SOLDCOMPS_QUOTA_REACHED", false],
+    [{ code: "rate_limited", retry_after: 60 }, "SOLDCOMPS_TEMPORARY_UNAVAILABLE", true],
+    ["invalid json", "SOLDCOMPS_TEMPORARY_UNAVAILABLE", true],
+  ]) {
+    let calls = 0;
+    await assert.rejects(searchEbaySoldCompsV2(sportsInput, { apiKey: "secret-key", fetch: async () => {
+      calls++; return jsonResponse(body, 429);
+    } }), error => {
+      assert.equal(error.code, code); assert.equal(error.statusCode, 429); assert.equal(error.retryable, retryable);
+      assert.doesNotMatch(String(error), /secret-response|secret-key/); return true;
+    });
+    assert.equal(calls, 1);
+  }
+});
+test("explicit no-cookie request ceiling is one page and does not widen or retry", async () => {
+  let calls = 0;
+  const result = await searchEbaySoldCompsV2(sportsInput, { apiKey: "key", requestCount: 40, fetch: async url => {
+    calls++; assert.equal(new URL(url).searchParams.get("count"), "40");
+    return jsonResponse(providerPayload(Array.from({ length: 40 }, (_, i) => item(String(123456780000 + i))), { hasNextPage: true }));
+  } });
+  assert.equal(calls, 1); assert.equal(result.candidates.length, 40); assert.equal(result.hasMore, false);
+  for (const requestCount of [0, 241, 1.5, NaN]) await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, {
+    apiKey: "key", requestCount, fetch: async () => { throw new Error("must not dispatch"); },
+  }), "INVALID_INPUT");
+});

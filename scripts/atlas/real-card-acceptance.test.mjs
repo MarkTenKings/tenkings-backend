@@ -84,6 +84,36 @@ test('synthetic consistent chain stays FIXTURE; missing finishing never becomes 
   assert.equal(result.cards[0].checks.find(x=>x.stage==='print').status,'NOT_RUN');
   const text=JSON.stringify(result);assert.equal(text.includes(f.root),false);assert.equal(text.includes('base64'),false);assert.equal(text.includes('Synthetic'),false);
 });
+test('unaltered PostgreSQL offset timestamps remain usable across the evidence chain', async t => {
+  const f = await fixture(t), postgres = value => value.replace('.000Z', '.000000+00:00');
+  f.item.job = await f.change(f.item.job, row => {
+    row.created_at = postgres(row.created_at); row.updated_at = postgres(row.updated_at);
+  });
+  f.item.provider = await f.change(f.item.provider, value => {
+    value.run.created_at = postgres(value.run.created_at);
+    value.run.dispatched_at = postgres(value.run.dispatched_at);
+    value.receipts[0].recorded_at = postgres(value.receipts[0].recorded_at);
+  });
+  f.item.human = await f.change(f.item.human, value => { value.approval.approved_at = postgres(value.approval.approved_at); });
+  f.item.publication = await f.change(f.item.publication, value => { value.publication.published_at = postgres(value.publication.published_at); });
+  const result = await f.run();
+  assert.equal(result.softwareEvidenceMatched, true, JSON.stringify(result.cards[0].checks));
+  assert.equal(result.cards[0].timings.providerDispatchToReceiptMs, 3000);
+  assert.equal(result.cards[0].timings.humanReviewWallMs, 10000);
+  assert.equal(result.realCardAcceptance, 'NOT_DETERMINED_BY_COLLECTOR');
+});
+test('explicit timezone offsets compare by instant while ambiguous or invalid times fail', async t => {
+  const f = await fixture(t);
+  f.item.job = await f.change(f.item.job, row => { row.created_at = '2026-09-23T05:00:05-07:00'; });
+  assert.equal((await f.run()).softwareEvidenceMatched, true);
+  for (const at of ['2026-02-30T00:00:00Z', '2026-09-23T24:00:00Z', '2026-09-23T12:00:05',
+    '2026-09-23T12:00:05-00:00', '2026-09-23T12:00:05+24:00']) {
+    f.item.job = await f.change(f.item.job, row => { row.created_at = at; });
+    const result = await f.run();
+    assert.equal(result.cards[0].checks.find(row => row.stage === 'batchJob').code, 'EVIDENCE_TIME_INVALID', at);
+    assert.equal(result.softwareEvidenceMatched, false);
+  }
+});
 for(const [name,key,mutate,stage] of [
   ['fixture release cannot certify real scope','release',v=>{v.scope='REAL_CARD';},'release'],
   ['capture before cohort is historical','capture',v=>{v.capturedAt.FRONT='2026-09-22T12:00:00.000Z';},'freshCaptureAttestation'],

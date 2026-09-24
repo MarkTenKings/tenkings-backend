@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, digest } from '@atlas/manual-service/contract';
-import { parseEbaySoldCompsV2Candidate, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
+import { parseEbaySoldCompsV2Candidate, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
 import { createPresentationMarket, publishedMarketQuery } from '../src/presentation-market.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 
@@ -62,4 +62,21 @@ test('unknown identity match requires explicit review and contradictory variant 
   const saved = await market.preview(f); assert.equal(saved.preview.candidates[0].requiresReview, true); assert.equal(saved.preview.candidates[0].match, 'UNKNOWN');
   result.candidates[0].parallelMatch = 'CONTRADICTORY'; const contradicted = await market.preview(f);
   assert.equal(contradicted.preview.candidates.length, 0); assert.equal(contradicted.preview.excluded.contradictory, 1);
+});
+
+
+test('only definitive typed provider refusals become recoverable unavailable results', async () => {
+  const f = await fixture();
+  for (const [code, statusCode, state, reason] of [
+    ['SOLDCOMPS_CONFIGURATION_ERROR', 401, 'UNAVAILABLE', 'PROVIDER_CONFIGURATION_ERROR'],
+    ['SOLDCOMPS_QUOTA_REACHED', 429, 'UNAVAILABLE', 'PROVIDER_QUOTA_REACHED'],
+    ['SOLDCOMPS_QUOTA_REACHED', 403, 'UNAVAILABLE', 'PROVIDER_QUOTA_REACHED'],
+    ['SOLDCOMPS_TEMPORARY_UNAVAILABLE', 429, 'UNAVAILABLE', 'PROVIDER_REQUEST_LIMITED'],
+    ['SOLDCOMPS_TEMPORARY_UNAVAILABLE', 502, 'UNKNOWN', 'PROVIDER_OUTCOME_UNKNOWN'],
+    ['SOLDCOMPS_TIMEOUT', null, 'UNKNOWN', 'PROVIDER_OUTCOME_UNKNOWN'],
+  ]) {
+    const result = await createPresentationMarket({ now, provider: async () => { throw new EbaySoldCompsV2Error(code, 'private provider text', { statusCode }); } }).preview(f);
+    assert.deepEqual(result, { state, reason }); assert.doesNotMatch(JSON.stringify(result), /private provider/);
+  }
+  assert.equal((await createPresentationMarket({ now, provider: async () => { throw { code: 'SOLDCOMPS_QUOTA_REACHED', statusCode: 429 }; } }).preview(f)).state, 'UNKNOWN');
 });

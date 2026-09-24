@@ -384,7 +384,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
   },[screen,approving,view?.publication?.actionId,view?.publication?.state,view?.publication?.publicHash,report?.reportHash]);
   async function approveAndPrepareLabel(){
     const owner=client.current,current=viewRef.current;
-    if(!owner||approvalInFlight.current||approving||owner.hasPending()||!reportImagesReady||report?.sourceHash!==current?.card.contentHash||report.sourceRevision!==current?.card.revision)return;
+    if(!owner||approvalInFlight.current||approving||loadingReport||owner.hasPending()||report?.canCertify!==true||!reportImagesReady||report?.sourceHash!==current?.card.contentHash||report.sourceRevision!==current?.card.revision)return;
     // One deliberate approval gesture owns this popup. Navigation and saved
     // report reads can prepare a preview, but cannot trigger printing.
     approvalInFlight.current=true;
@@ -397,19 +397,22 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
       if(client.current!==owner){ownedWindow?.close();return;}
       if(result?.publication?.reportHash===report.reportHash&&result.publication.state==='PUBLISHED')await loadFinishing(result.publication,ownedWindow);
       else ownedWindow?.close();
-    }catch(error){ownedWindow?.close();throw error;}
+    }catch(error){ownedWindow?.close();if(client.current===owner&&error?.code==='MANUAL_CERTIFICATION_REQUIRED')setReport(current=>current?.reportHash===report.reportHash?{...current,canCertify:false}:current);throw error;}
     finally{approvalInFlight.current=false;if(client.current===owner)setApproving(false);}
   }
   useEffect(()=>{if(!editing&&!identity)return;const warn=event=>{event.preventDefault();event.returnValue='';};const block=()=>{router.events.emit('routeChangeError');throw 'Save or discard the current edit before leaving';};window.addEventListener('beforeunload',warn);router.events.on('routeChangeStart',block);return()=>{window.removeEventListener('beforeunload',warn);router.events.off('routeChangeStart',block);};},[editing,identity,router]);
   const execute=action=>client.current.execute(action);
   async function openReport(){
     const owner=client.current;if(!owner||owner.hasPending())return;
-    setLoadingReport(true);setReportImagesReady(false);
+    setLoadingReport(true);
     try{
       const preview=await owner.previewReport();
       if(client.current!==owner)return;
       const current=viewRef.current;
       if(preview.sourceRevision!==current?.card.revision||preview.sourceHash!==current?.card.contentHash)throw {code:'MANUAL_REPORT_STALE'};
+      // An unchanged report keeps the same mounted, verified image viewer.
+      // Resetting readiness without remounting it would strand a refresh.
+      if(preview.reportHash!==report?.reportHash)setReportImagesReady(false);
       setReport(preview);setScreen('report');
     }finally{if(client.current===owner)setLoadingReport(false);}
   }
@@ -450,7 +453,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
           <ReportPhotoUploader key={view.publication.actionId} cardId={cardId} staffId={staff.id} csrf={csrf} available={view.presentationEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
           <ReportMarketPicker key={`market:${view.publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={view.publication.actionId} csrf={csrf} available={view.marketEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
         </>}
-      </div>:<><p>Approve this exact identity, evidence and grade to create the final report and prepare its label.</p>{view.approval&&<p>An earlier approved report is retained in history. This draft needs its own approval.</p>}<button className="primary" disabled={approving||savePending||!reportImagesReady} onClick={()=>attempt(approveAndPrepareLabel)}>{approving?'Approving…':'Approve & print label'}</button></>}
+      </div>:<><p>Approve this exact identity, evidence and grade to create the final report and prepare its label.</p>{view.approval&&<p>An earlier approved report is retained in history. This draft needs its own approval.</p>}{report.canCertify!==true&&<p role="status">Your account has no current report certification. A trained reviewer with current certification must approve this report. <button type="button" disabled={approving||savePending||loadingReport} onClick={()=>attempt(openReport)}>{loadingReport?'Refreshing…':'Refresh report'}</button></p>}<button className="primary" disabled={approving||savePending||loadingReport||report.canCertify!==true||!reportImagesReady} onClick={()=>attempt(approveAndPrepareLabel)}>{approving?'Approving…':'Approve & print label'}</button></>}
     </FinalReportReview>}
   </>;
 }

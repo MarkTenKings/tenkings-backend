@@ -30,7 +30,7 @@ function harness({ journal } = {}) {
     defects: { marker: 'saved-original-defects' }, images: { marker: 'original-grants' }, identity: {}, astra: { enabled: true, status: 'IDLE', proposals: [] }, reviewedMemory: { enabled: true, status: 'UNSAVED' } } };
   f.respond = async (path, options) => path.endsWith('/view') ? f.current : { astra: f.current.astra };
   f.preview = async () => ({ reportHash: 'exact-report-hash', sourceRevision: f.current.card.revision,
-    sourceHash: f.current.card.contentHash, report: {}, review: {} });
+    sourceHash: f.current.card.contentHash, canCertify: true, report: {}, review: {} });
   const client = { recover: async () => { viewCallback(f.current); return f.current; }, hasPending: () => f.pending,
     execute: async action => { f.actions.push(action); await f.onExecute?.(action); return f.current; },
     reviewProposal: async input => { f.actions.push({ type: 'REVIEW_PROPOSAL', input }); return f.current; },
@@ -216,6 +216,33 @@ test('opening the full draft is read-only and approval requires verified images 
   assert.equal(f.report().current, false);
   await f.button('Approve & print label').props.onClick(); assert.equal(f.actions.length, 1, 'a stale enabled callback cannot approve changed content');
   f.dispose();
+});
+
+test('manual review explains missing certification and prevents approval or print effects before a current preview', async () => {
+  const f = harness(); await flush(); f.render(); const preview = f.preview;
+  f.preview = async () => ({ ...await preview(), canCertify: false });
+  await f.defects().onContinue(); f.render(); f.report().onReadyChange(true); f.render();
+  assert.equal(f.button('Approve & print label').props.disabled, true);
+  assert.match(f.text(), /Your account has no current report certification/);
+  await f.button('Approve & print label').props.onClick();
+  assert.equal(f.actions.length, 0); assert.equal(f.popups.length, 0);
+  f.preview = preview;
+  await f.button('Refresh report').props.onClick(); f.render();
+  assert.equal(f.report().preview.canCertify, true);
+  assert.equal(f.button('Approve & print label').props.disabled, false, 'the unchanged report retains its verified images');
+  assert.equal(f.actions.length, 0); assert.equal(f.popups.length, 0); f.dispose();
+});
+
+test('certification refusal after a preview closes the popup and updates guidance without retrying approval', async () => {
+  const f = harness(); await flush(); f.render();
+  await f.defects().onContinue(); f.render(); f.report().onReadyChange(true); f.render();
+  f.onExecute = () => { throw { code: 'MANUAL_CERTIFICATION_REQUIRED' }; };
+  await f.button('Approve & print label').props.onClick(); f.render();
+  assert.equal(f.closedPopups, 1); assert.equal(f.actions.length, 1);
+  assert.equal(f.button('Approve & print label').props.disabled, true);
+  assert.match(f.text(), /Your account has no current report certification/);
+  await f.button('Approve & print label').props.onClick();
+  assert.equal(f.actions.length, 1); assert.equal(f.popups.length, 1); f.dispose();
 });
 
 test('a report response that arrives after a newer saved edit is refused before display', async () => {

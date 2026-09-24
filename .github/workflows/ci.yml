@@ -112,6 +112,15 @@ jobs:
               ownedByCurrentUser: true, stoppedVerified: true, evidenceDirectory: directory }));
           JS
 
+      - name: Verify ten-card batch access renewal and interruption recovery
+        shell: bash
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" LANG=C CI=true NEXT_TELEMETRY_DISABLED=1 \
+            node packages/atlas-batch-grading/scripts/validate-lifecycle-postgres.mjs \
+              --ack-disposable-local-postgres \
+              --postgres-bin "$ATLAS_POSTGRES_BIN" \
+              --pg-module "$RUNNER_TEMP/atlas-postgres-tools/node_modules/pg"
+
   speedster-frontend-tests:
     name: Protected Speedster Frontend & Adversarial Tests
     runs-on: ubuntu-latest

@@ -1,7 +1,9 @@
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { projectSelectedSoldReferences } from '@atlas/report-view/sold-reference-projection';
-import { buildEbaySoldCompsV2Query, EBAY_SOLD_COMPS_V2_ENGINE_VERSION, EBAY_SOLD_COMPS_V2_SOURCE } from '@tenkings/ebay-sold-comps-v2';
+import { buildEbaySoldCompsV2Query, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_ENGINE_VERSION, EBAY_SOLD_COMPS_V2_SOURCE } from '@tenkings/ebay-sold-comps-v2';
+
+export const MARKET_UNAVAILABLE_REASONS = Object.freeze(['PROVIDER_NOT_CONFIGURED', 'PROVIDER_CONFIGURATION_ERROR', 'PROVIDER_QUOTA_REACHED', 'PROVIDER_REQUEST_LIMITED']);
 
 const same = (a, b) => canonical(a) === canonical(b);
 const fail = code => requireThat(false, 409, code);
@@ -66,7 +68,17 @@ export function createPresentationMarket({ provider = null, now = () => new Date
       try { result = await provider(structuredClone(context.input)); }
       // A timeout/transport failure may follow a billed dispatch. It is not
       // proof of an unstarted lookup and must retain the caller's exact intent.
-      catch { return { state: 'UNKNOWN', reason: 'PROVIDER_OUTCOME_UNKNOWN' }; }
+      catch (error) {
+        // A typed authentication/quota/rate refusal proves the request did not
+        // produce sales. Transport failures and server failures stay unknown.
+        if (error instanceof EbaySoldCompsV2Error) {
+          if (error.code === 'SOLDCOMPS_CREDENTIAL_MISSING') return { state: 'UNAVAILABLE', reason: 'PROVIDER_NOT_CONFIGURED' };
+          if (error.statusCode === 401 && error.code === 'SOLDCOMPS_CONFIGURATION_ERROR') return { state: 'UNAVAILABLE', reason: 'PROVIDER_CONFIGURATION_ERROR' };
+          if ([403, 429].includes(error.statusCode) && error.code === 'SOLDCOMPS_QUOTA_REACHED') return { state: 'UNAVAILABLE', reason: 'PROVIDER_QUOTA_REACHED' };
+          if (error.statusCode === 429 && error.code === 'SOLDCOMPS_TEMPORARY_UNAVAILABLE') return { state: 'UNAVAILABLE', reason: 'PROVIDER_REQUEST_LIMITED' };
+        }
+        return { state: 'UNKNOWN', reason: 'PROVIDER_OUTCOME_UNKNOWN' };
+      }
       const preview = preparePreview(context, result); fresh(preview);
       return { state: 'READY', preview, sourceHash: digest(canonical(preview)) };
     },

@@ -21,7 +21,23 @@ export const HISTORICAL_ORIGINALS = Object.freeze([
   'f10c63eb077019f6155e2fd34960a46318fa67672a5b2393a9d011a74c66ab48',
 ]);
 function check(ok, code = 'EVIDENCE_BINDING_MISMATCH') { if (!ok) throw new Error(code); }
-function time(value) { check(typeof value === 'string' && /^\d{4}-\d\d-\d\dT.*Z$/.test(value) && Number.isFinite(Date.parse(value)), 'EVIDENCE_TIME_INVALID'); return Date.parse(value); }
+function time(value) {
+  // Raw PostgreSQL exports include explicit offsets and sub-millisecond digits.
+  // Preserve those evidence bytes; compare their instants without accepting the
+  // ambiguous or impossible dates that Date.parse sometimes normalizes.
+  const match = typeof value === 'string' && /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  check(match, 'EVIDENCE_TIME_INVALID');
+  const [, year, month, day, hour, minute, second, offset] = match;
+  const calendar = new Date(0);
+  calendar.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
+  check(Number(year) >= 1 && calendar.getUTCFullYear() === Number(year)
+    && calendar.getUTCMonth() === Number(month) - 1 && calendar.getUTCDate() === Number(day)
+    && Number(hour) <= 23 && Number(minute) <= 59 && Number(second) <= 59
+    && offset !== '-00:00' && (offset === 'Z' || (Number(offset.slice(1, 3)) <= 23 && Number(offset.slice(4)) <= 59)), 'EVIDENCE_TIME_INVALID');
+  const instant = Date.parse(value);
+  check(Number.isFinite(instant), 'EVIDENCE_TIME_INVALID');
+  return instant;
+}
 function stored(row, name, hashName = `${name}_hash`) { check(typeof row[name] === 'string' && digest(row[name]) === row[hashName]); return JSON.parse(row[name]); }
 function exact(a, b) { return canonical(a, { maxBytes: 4194304 }) === canonical(b, { maxBytes: 4194304 }); }
 function boundedArray(value, max) { check(Array.isArray(value) && value.length <= max, 'EVIDENCE_ARRAY_INVALID'); return value; }

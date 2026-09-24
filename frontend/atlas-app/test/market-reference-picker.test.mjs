@@ -55,3 +55,11 @@ test('a late search for a different approval cannot appear in the current report
   finish(ready()); await flush(); f.render(); assert.equal(f.find(node => node.type === 'table').length, 0);
   assert.equal(f.button('Find sold cards').props.disabled, false);
 });
+
+
+test('quota refusal explains the account action without suggesting unknown-search recovery', async () => {
+  const f = fixture(); f.search = async () => ({ state: 'UNAVAILABLE', reason: 'PROVIDER_QUOTA_REACHED' });
+  f.button('Find sold cards').props.onClick(); await flush(); f.render();
+  assert.match(f.text(), /quota is exhausted/); assert.match(f.text(), /up to 40/); assert.doesNotMatch(f.text(), /saved search is not confirmed/);
+  assert.equal(f.searches, 1); assert.equal(f.find(node => node.type === 'table').length, 0);
+});

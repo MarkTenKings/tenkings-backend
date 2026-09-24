@@ -1,5 +1,5 @@
 import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
-import { createPresentationMarket } from './presentation-market.mjs';
+import { createPresentationMarket, MARKET_UNAVAILABLE_REASONS } from './presentation-market.mjs';
 
 // Explicit staff searches only. A durable reservation precedes the provider
 // request; replay never purchases another lookup after an uncertain response.
@@ -9,7 +9,8 @@ export function createPresentationMarketService({ repository, approved, artifact
   async function saved(staff, cardId, requestId) {
     const row = await repository.market(staff, cardId, requestId);
     if (row.state === 'STARTED') return { state: 'PENDING', previewId: requestId };
-    if (row.state !== 'READY') return { state: row.state, previewId: requestId };
+    if (row.state !== 'READY') return { state: row.state, previewId: requestId,
+      ...(row.state === 'UNAVAILABLE' && MARKET_UNAVAILABLE_REASONS.includes(row.saved?.reason) ? { reason: row.saved.reason } : {}) };
     const record = row.saved;
     requireThat(record?.state === 'READY' && record.ref?.kind === 'MARKET_PREVIEW', 503, 'MARKET_PREVIEW_CORRUPT');
     const preview = await artifacts.read(record.ref, { cardId, kind: 'MARKET_PREVIEW', sourceHash: record.artifactHash });

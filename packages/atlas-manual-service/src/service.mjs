@@ -17,7 +17,10 @@ export function createManualService({ repository, reduce, buildReport = null, be
       requireThat(typeof buildReport === 'function', 503, 'MANUAL_REPORT_UNAVAILABLE');
       const { card, principal } = await repository.load(staff, cardId);
       const report = stateDocument(await buildReport({ card, principal }, staff));
-      return { report: report.draft, reportHash: report.hash, sourceRevision: card.revision, sourceHash: card.contentHash };
+      // Display availability separately from the immutable report. Approval
+      // still reauthenticates and checks certification when it is committed.
+      return { report: report.draft, reportHash: report.hash, sourceRevision: card.revision, sourceHash: card.contentHash,
+        canCertify: principal.canCertify === true };
     },
     async execute(staff, cardId, input) {
       const startedAt = Date.now();

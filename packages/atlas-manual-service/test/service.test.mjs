@@ -106,3 +106,22 @@ test('report approval uses the exact server preview and does not invoke ordinary
   await service.execute({}, randomUUID(), input); assert.equal(reduced, false); assert.deepEqual(committed.approval, report);
   await assert.rejects(service.execute({}, randomUUID(), { ...input, action: { ...input.action, reportHash: digest('stale') } }), { code: 'MANUAL_REPORT_STALE' });
 });
+test('report preview exposes certification availability without changing report bytes or granting approval', async () => {
+  const card = { revision: 4, contentHash: digest('draft'), draft: { refs: 'unchanged' } }, principal = { canCertify: true };
+  const report = { version: 1, grade: 8.5 }; let commits = 0;
+  const service = createManualService({ repository: {
+    async load() { return { card, principal }; }, async findAction() { return null; }, async commit() { commits++; },
+  }, reduce() { throw Error('Preview must not reduce'); }, buildReport: async () => report });
+  const approved = await service.previewReport({}, randomUUID());
+  assert.equal(approved.canCertify, true);
+  for (const value of [false, undefined]) {
+    principal.canCertify = value;
+    const preview = await service.previewReport({}, randomUUID());
+    assert.equal(preview.canCertify, false);
+    assert.equal(preview.reportHash, approved.reportHash);
+    assert.deepEqual(preview.report, approved.report);
+    await assert.rejects(service.execute({}, randomUUID(), { actionId: randomUUID(), expectedRevision: 4,
+      action: { type: 'APPROVE_REPORT', reviewed: true, reportHash: preview.reportHash } }), { code: 'MANUAL_CERTIFICATION_REQUIRED' });
+  }
+  assert.equal(commits, 0);
+});

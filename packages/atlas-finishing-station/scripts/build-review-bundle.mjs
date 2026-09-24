@@ -40,6 +40,7 @@ const result = await build({ absWorkingDir: root,
 // PDFKit's standard-font metrics are read relative to its runtime bundle.
 await cp(join(dirname(require.resolve('pdfkit')), 'data'), join(destination, 'data'), { recursive: true });
 await cp(join(root, 'packages/atlas-finishing-station/SETUP.md'), join(destination, 'SETUP.md'));
+await cp(join(root, 'packages/atlas-finishing-station/DISTRIBUTION.md'), join(destination, 'DISTRIBUTION.md'));
 await cp(join(root, 'packages/atlas-finishing-station/README.md'), join(destination, 'README.md'));
 await cp(join(root, 'packages/atlas-mac-nfc/COMPANION.md'), join(destination, 'COMPANION.md'));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');

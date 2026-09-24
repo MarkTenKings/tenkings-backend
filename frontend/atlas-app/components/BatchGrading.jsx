@@ -16,6 +16,7 @@ const messages = {
   BATCH_IDENTITY_NEEDS_REVIEW: 'Check card details', BATCH_GEOMETRY_NEEDS_REVIEW: 'Check edges',
   BATCH_HUMAN_WORK_PRESENT: 'Continue your review', BATCH_ANALYSIS_UNCERTAIN: 'Check saved analysis',
   BATCH_MANUAL_DRAFT_CHANGED: 'Review updated card', BATCH_PHOTOS_CHANGED: 'Review current photos',
+  BATCH_ACCESS_CHANGED: 'Resume with your current access',
   BATCH_UNAVAILABLE: 'Batch grading is unavailable. Your saved cards are retained.',
 };
 export default function BatchGrading({ staff }) {
@@ -37,7 +38,9 @@ export default function BatchGrading({ staff }) {
     if (sequence === current.current && !reviewing.current) { setJobs(result.jobs ?? []); setLoaded(true); }
   }, [request]);
   const loadCards = useCallback(async (cursor = null) => {
+    const owner = lifetime.current;
     const result = await request(`/api/staff/manual-intake/cards${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+    if (lifetime.current !== owner) return;
     setCards(previous => cursor ? [...previous, ...(result.cards ?? [])].filter((card, index, all) => all.findIndex(item => item.cardId === card.cardId) === index) : result.cards ?? []);
     setHasMore(result.nextCursor ?? null);
   }, [request]);

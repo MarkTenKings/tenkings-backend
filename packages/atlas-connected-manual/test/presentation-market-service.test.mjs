@@ -71,3 +71,14 @@ test('unconfigured market service is cold and never creates a paid intent', asyn
   const service = createPresentationMarketService({ repository: {}, approved: {}, artifacts: {} });
   assert.equal(service.enabled, false); assert.deepEqual(await service.preview({}, randomUUID(), {}), { state: 'UNAVAILABLE', reason: 'PROVIDER_NOT_CONFIGURED' });
 });
+
+
+test('saved terminal refusal preserves only its allowlisted reason and never repeats the lookup', async () => {
+  const f = await setup();
+  f.requests.set(f.input.requestId, { state: 'UNAVAILABLE', input: f.input,
+    saved: { state: 'UNAVAILABLE', reason: 'PROVIDER_QUOTA_REACHED', privateText: 'must not leak' } });
+  assert.deepEqual(await f.service.preview({}, f.cardId, f.input), { state: 'UNAVAILABLE', previewId: f.input.requestId, reason: 'PROVIDER_QUOTA_REACHED' });
+  f.requests.get(f.input.requestId).saved.reason = 'untrusted text';
+  assert.deepEqual(await f.service.preview({}, f.cardId, f.input), { state: 'UNAVAILABLE', previewId: f.input.requestId });
+  assert.equal(f.calls(), 0);
+});

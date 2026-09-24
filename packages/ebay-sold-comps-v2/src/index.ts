@@ -79,6 +79,8 @@ export type EbaySoldCompsV2Runtime = {
   apiKey: string;
   fetch?: EbaySoldCompsV2Fetch;
   timeoutMs?: number;
+  /** Explicit page ceiling for callers using the current no-cookie contract. */
+  requestCount?: number;
   now?: () => Date;
 };
 
@@ -627,9 +629,18 @@ async function fetchPayload(
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     if (!response.ok) {
+      // Only the documented machine code is retained; provider text may echo
+      // credentials or request data and must never enter an error or receipt.
+      let quotaExceeded = false;
+      if (response.status === 429) {
+        try {
+          const failure: unknown = JSON.parse(await readBoundedResponse(response));
+          quotaExceeded = isRecord(failure) && failure.code === "quota_exceeded";
+        } catch { /* The HTTP refusal is known even when its body is unusable. */ }
+      }
       const code: EbaySoldCompsV2ErrorCode = response.status === 401
         ? "SOLDCOMPS_CONFIGURATION_ERROR"
-        : response.status === 403
+        : response.status === 403 || quotaExceeded
           ? "SOLDCOMPS_QUOTA_REACHED"
           : response.status === 429 || response.status === 502 || response.status === 503
             ? "SOLDCOMPS_TEMPORARY_UNAVAILABLE"
@@ -686,12 +697,14 @@ export async function searchEbaySoldCompsV2(
   if (!apiKey) throw new EbaySoldCompsV2Error("SOLDCOMPS_CREDENTIAL_MISSING", "A SoldComps credential is required.");
   const timeoutMs = runtimeInput.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) invalidInput("Timeout must be between 1 and 60000 milliseconds.");
+  const requestCount = runtimeInput.requestCount ?? EBAY_SOLD_COMPS_V2_REQUEST_COUNT;
+  if (!Number.isSafeInteger(requestCount) || requestCount < 1 || requestCount > EBAY_SOLD_COMPS_V2_REQUEST_COUNT) invalidInput("Request count must be between 1 and 240.");
   const query = buildEbaySoldCompsV2Query(input);
   const candidates = new Map<string, EbaySoldCompV2Candidate>();
   const params = new URLSearchParams({
     keyword: query,
     ebaySite: "ebay.com",
-    count: String(EBAY_SOLD_COMPS_V2_REQUEST_COUNT),
+    count: String(requestCount),
     page: "1",
   });
   const payload = await fetchPayload(

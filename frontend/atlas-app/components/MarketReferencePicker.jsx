@@ -33,7 +33,7 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
     try {
       const value = await callbacks.current.onPreview();
       if (version !== generation.current) return;
-      if (value?.state === 'UNAVAILABLE') { setSource(null); setSelected([]); setStatus('Sold-card search is currently unavailable.'); return; }
+      if (value?.state === 'UNAVAILABLE') { setSource(null); setSelected([]); setStatus(({ PROVIDER_QUOTA_REACHED: 'The sold-sales provider quota is exhausted. Ask an administrator to check the account before searching again.', PROVIDER_REQUEST_LIMITED: 'The sold-sales provider has limited requests. Check the account limit or wait before starting another search.', PROVIDER_CONFIGURATION_ERROR: 'The sold-sales provider credential needs attention from an administrator.' })[value.reason] ?? 'Sold-card search is currently unavailable.'); return; }
       if (!validSource(value)) throw new Error('MARKET_PREVIEW_INVALID');
       setSource(value); setSelected([]);
       if (!value.preview.candidates.length) setStatus('No disclosed graded sales were found for review.');
@@ -62,7 +62,7 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
   return <section className={styles.panel} aria-label="Grade report sales references">
     <div className={styles.heading}><div><p className={styles.eyebrow}>REPORT · MARKET REFERENCES</p><h3>Show the sales behind the conversation.</h3></div>
       <button type="button" disabled={blocked} onClick={() => void search()}>{source ? 'Refresh sales' : 'Find sold cards'}</button></div>
-    <p className={styles.note}>Choose matching cards. Each keeps its original grader and grade; these sales do not set the value of this ATLAS card.</p>
+    <p className={styles.note}>Choose matching cards. Each search checks one page of up to 40 provider results; fewer may qualify for review. Each keeps its original grader and grade; these sales do not set the value of this ATLAS card.</p>
     {source && <><div className={styles.query}><span>Search: {source.preview.query}</span><span>ATLAS {source.preview.atlasGrade} · {date(source.preview.retrievedAt)}</span></div>
       {source.preview.candidates.length > 0 && <div className={styles.tableWrap}><table><thead><tr><th scope="col">Use</th><th scope="col">Sold card</th><th scope="col">Grader / grade</th><th scope="col">Sold</th><th scope="col">Price</th></tr></thead><tbody>
         {source.preview.candidates.map(({ sale, match }) => <tr key={sale.id}><td><input type="checkbox" aria-label={`Use sale ${sale.title}`} checked={selected.includes(sale.id)} disabled={blocked}
