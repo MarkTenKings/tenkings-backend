@@ -111,6 +111,16 @@ DECLARE selected_key text;
 BEGIN
  IF engine !~ '^[a-f0-9]{64}$' OR claim IS NULL THEN RAISE EXCEPTION 'Invalid geometry claim'; END IF;
  PERFORM pg_advisory_xact_lock(721930,43);
+ -- Discarded work cannot be claimed again. Retire both unstarted jobs and
+ -- expired claims left by a dead worker, regardless of the attempt count.
+ -- An unexpired claim still represents CPU work; its owner releases it in
+ -- finish_early_geometry, or this reaper releases it only after expiry.
+ UPDATE atlas_manual_connected.early_geometry j SET state='FAILED',claim_id=NULL,lease_until=NULL,
+ result=NULL,error='INTAKE_CARD_DELETED',updated_at=clock_timestamp()
+ WHERE (j.state='QUEUED' OR (j.state='RUNNING' AND j.lease_until<=clock_timestamp()))
+ AND EXISTS(SELECT 1 FROM atlas_manual_intake.card c
+   JOIN atlas_manual_intake.discarded_card x ON x.owner_id=c.owner_id AND x.create_request_id=c.create_request_id
+   WHERE c.id=j.card_id);
  UPDATE atlas_manual_connected.early_geometry SET state='FAILED',claim_id=NULL,lease_until=NULL,error='GEOMETRY_INTERRUPTED',updated_at=clock_timestamp()
  WHERE attempts>=3 AND (state='QUEUED' OR (state='RUNNING' AND lease_until<=clock_timestamp()));
  IF (SELECT count(*) FROM atlas_manual_connected.early_geometry WHERE state='RUNNING' AND lease_until>clock_timestamp())>=2 THEN RETURN; END IF;

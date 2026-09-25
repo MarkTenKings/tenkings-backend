@@ -89,6 +89,22 @@ try{
  const [finishedGeometry]=await fixture.admin.$queryRawUnsafe('SELECT state,claim_id,result,error FROM atlas_manual_connected.early_geometry WHERE key=$1',geometry.key);
  assert.deepEqual(finishedGeometry,{state:'FAILED',claim_id:null,result:null,error:'INTAKE_CARD_DELETED'});
  assert.equal((await connection.manualClient.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.claim_early_geometry($1,$2::uuid)',engine,randomUUID())).length,0);
+ // Deleted unstarted work and a crashed worker with attempts remaining must
+ // terminalize; neither may remain forever in the operational idle census.
+ for(const state of ['QUEUED','RUNNING']){
+  await fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.early_geometry SET state=$2,attempts=1,claim_id=CASE WHEN $2='RUNNING' THEN $3::uuid ELSE NULL END,lease_until=CASE WHEN $2='RUNNING' THEN clock_timestamp()-interval '1 second' ELSE NULL END,error=NULL WHERE key=$1",geometry.key,state,randomUUID());
+  assert.equal((await connection.manualClient.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.claim_early_geometry($1,$2::uuid)',engine,randomUUID())).length,0);
+  const [reaped]=await fixture.admin.$queryRawUnsafe('SELECT state,claim_id,lease_until,result,error,attempts FROM atlas_manual_connected.early_geometry WHERE key=$1',geometry.key);
+  assert.deepEqual(reaped,{state:'FAILED',claim_id:null,lease_until:null,result:null,error:'INTAKE_CARD_DELETED',attempts:1});
+ }
+ // Reaping must not free capacity while a live worker still holds its lease.
+ const liveClaim=randomUUID();
+ await fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.early_geometry SET state='RUNNING',attempts=1,claim_id=$2::uuid,lease_until=clock_timestamp()+interval '1 minute',error=NULL WHERE key=$1",geometry.key,liveClaim);
+ assert.equal((await connection.manualClient.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.claim_early_geometry($1,$2::uuid)',engine,randomUUID())).length,0);
+ const [stillLive]=await fixture.admin.$queryRawUnsafe('SELECT state,claim_id,error FROM atlas_manual_connected.early_geometry WHERE key=$1',geometry.key);
+ assert.deepEqual(stillLive,{state:'RUNNING',claim_id:liveClaim,error:null});
+ assert.equal((await connection.manualClient.$queryRawUnsafe('SELECT atlas_manual_connected.finish_early_geometry($1,$2::uuid,$3,$4,$5) finished',geometry.key,liveClaim,'READY','{}',null))[0].finished,false);
+ record('deleted queued and expired geometry claims terminalize below the retry cap; an unexpired CPU lease remains until its owner finishes');
  // Simulate a process dying after reserving ANALYZE but before a run exists.
  await fixture.admin.$executeRawUnsafe("UPDATE atlas_manual_connected.batch_grading SET state='RUNNING',stage='ANALYZE',analysis_reserved=true,claim_id=$2::uuid,lease_until=clock_timestamp()-interval '1 second' WHERE key=$1",claim.key,randomUUID());
  assert.equal(await batch.claim(owner,randomUUID(),2),null);
