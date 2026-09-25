@@ -1,0 +1,106 @@
+{
+  "status": "SANITIZED_READONLY_INCIDENT_CENSUS",
+  "at": "2026-09-25T02:12:53.096013+00:00",
+  "sourceReceiptSha256": "35fc2d6be0b61b501a239d8e56cd107351aa0125d40ffc8c5baead54392cefb9",
+  "cards": 12,
+  "uploads": 24,
+  "verifiedUploads": 24,
+  "preparedUploads": 21,
+  "unpreparedVerifiedSides": [
+    {
+      "ordinal": 6,
+      "side": "FRONT",
+      "version": 1
+    },
+    {
+      "ordinal": 7,
+      "side": "FRONT",
+      "version": 1
+    },
+    {
+      "ordinal": 12,
+      "side": "FRONT",
+      "version": 1
+    }
+  ],
+  "jobs": [
+    {
+      "ordinal": 4,
+      "state": "NEEDS_ATTENTION",
+      "stage": "PREPARE",
+      "code": "BATCH_GEOMETRY_NEEDS_REVIEW",
+      "attempts": 2,
+      "analysisReserved": false
+    },
+    {
+      "ordinal": 10,
+      "state": "NEEDS_ATTENTION",
+      "stage": "PREPARE",
+      "code": "BATCH_GEOMETRY_NEEDS_REVIEW",
+      "attempts": 1,
+      "analysisReserved": false
+    },
+    {
+      "ordinal": 1,
+      "state": "NEEDS_ATTENTION",
+      "stage": "PREPARE",
+      "code": "BATCH_IDENTITY_NEEDS_REVIEW",
+      "attempts": 1,
+      "analysisReserved": false
+    },
+    {
+      "ordinal": 2,
+      "state": "NEEDS_ATTENTION",
+      "stage": "PREPARE",
+      "code": "BATCH_GEOMETRY_NEEDS_REVIEW",
+      "attempts": 1,
+      "analysisReserved": false
+    },
+    {
+      "ordinal": 3,
+      "state": "NEEDS_ATTENTION",
+      "stage": "PREPARE",
+      "code": "BATCH_IDENTITY_NEEDS_REVIEW",
+      "attempts": 1,
+      "analysisReserved": false
+    },
+    {
+      "ordinal": 5,
+      "state": "NEEDS_ATTENTION",
+      "stage": "ANALYZE",
+      "code": "DEFECT_ANALYSIS_ACTION_CONFLICT",
+      "attempts": 3,
+      "analysisReserved": false
+    },
+    {
+      "ordinal": 8,
+      "state": "NEEDS_ATTENTION",
+      "stage": "PREPARE",
+      "code": "BATCH_GEOMETRY_NEEDS_REVIEW",
+      "attempts": 1,
+      "analysisReserved": false
+    },
+    {
+      "ordinal": 9,
+      "state": "NEEDS_ATTENTION",
+      "stage": "PREPARE",
+      "code": "BATCH_GEOMETRY_NEEDS_REVIEW",
+      "attempts": 1,
+      "analysisReserved": false
+    },
+    {
+      "ordinal": 11,
+      "state": "NEEDS_ATTENTION",
+      "stage": "PREPARE",
+      "code": "PHOTO_STORAGE_UNAVAILABLE",
+      "attempts": 1,
+      "analysisReserved": false
+    }
+  ],
+  "analysisRuns": 0,
+  "requestRefusals": 0,
+  "transactionReadOnly": true,
+  "databaseWrites": 0,
+  "providerEffects": 0,
+  "limitation": "Point-in-time census before this candidate release; no claim of recovered or graded cards"
+}

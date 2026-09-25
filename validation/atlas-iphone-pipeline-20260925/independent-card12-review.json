@@ -1,0 +1,19 @@
+{
+  "status": "THIRD_EXACT_ORIGINAL_BASELINE_REJECTS_CANDIDATE_PASS",
+  "baselineSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "baselineJpegSourceSha256": "8751519560719f7b313163c817e297eb5f631a82b4a3e8f62ddf3a1943c4d5a6",
+  "candidateSourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+  "originalSha256": "974ae9245c09dfc9b990bc117c46ff27f14e565b0ce1a9f5da7ee86adcd726a3",
+  "originalBytes": 6940594,
+  "baselineCode": "PHOTO_HDR_UNSUPPORTED",
+  "candidateStatus": "EXACT_ORIGINAL_OFFLINE_REPLAY_PASS",
+  "candidateReceiptSha256": "5391a71026d01346166f3bbeea5af1fed65645e00ee47c0442f256d60ed04991",
+  "dimensions": {
+    "width": 3024,
+    "height": 4032
+  },
+  "pixelsUnchangedAgainstIndependentOrientation": true,
+  "databaseWrites": 0,
+  "storageWrites": 0,
+  "modelRequests": 0
+}

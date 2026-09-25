@@ -1,0 +1,35 @@
+{
+  "status": "INDEPENDENT_ACTUAL_WEB_BUILD_AND_CLI_QUALIFICATION_PASS",
+  "sourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+  "tests": {
+    "tests": 730,
+    "pass": 730,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "actualContainerArtifactHashesRecomputed": true,
+  "actualContainerReadonlyRoot": true,
+  "actualContainerNetwork": "none",
+  "actualContainerBindMounts": 0,
+  "artifactHashes": {
+    "customer": "548c83252a0747f9780a6c6f982ed58ce8334e2a2dca75adb498584da6ad5328",
+    "staff": "04a89f77f9b1d22a1b1a761e15bef2102028aa0d2c095f7da52c5b57a23733fd",
+    "public": "6f578f7eaf36d82a9dac4733d24c02d8a5f7c98371a258ed39118ed7aba150e2"
+  },
+  "webQualificationSha256": "db68921088c88c7f1174e1085890c892bb2028adaa8686ce91053d47fe2704e2",
+  "cliQualificationSha256": "b7952d6aa572367aa93d6c15e868e55b8ea6f0d1d592c4ea248142109994d7e1",
+  "dryAndPreflightReceiptsAndOutputHashesVerified": 6,
+  "providerWrites": 0,
+  "actionableFindings": [],
+  "networkReceiptsVerified": {
+    "count": 6,
+    "onlyDispatchedMethods": [
+      "GET"
+    ],
+    "deploymentAttempts": 0,
+    "filePostAttempts": 0,
+    "threePreflightPayloadsExact": true,
+    "exactSourceFiles": 3182
+  }
+}

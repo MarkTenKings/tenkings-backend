@@ -1,0 +1,43 @@
+{
+  "status": "INDEPENDENT_NATIVE_TEST_REFERENCE_CORRECTION_REVIEW_PASS",
+  "sourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+  "imageId": "sha256:65f6d935c5147788ccc64e6faa1f406cbfb127c255b7beaa8ac6b159a1de036f",
+  "helperSha256": "250d15e575aec4145626210999dd47c9c6c54907c873bc0ecd2541f041a55008",
+  "planSha256": "e1fe0cfd9e19e73dfc4cd4b389d9bc900a1ccf666e842683effda49bea23fc1a",
+  "manifestSha256": "3f37a3fec5d8513f6acd18326235674fa6ba772935058ae9a68384aeba0c5f28",
+  "filesIndependentlyMatchFrozenAndBaselineCommits": [
+    {
+      "name": "preparation_core.py",
+      "sourcePath": "backend/ai-grader-speedster-service/preparation_core.py",
+      "sourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+      "baselineCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+      "matchesBaseline": true,
+      "sha256": "341803ecd1fdd06d86a2e20a022eb751a51d4134c742b76a6a0f5a7139680abe",
+      "bytes": 9784,
+      "containerPath": "/workspace/backend/ai-grader-speedster-service/preparation_core.py"
+    },
+    {
+      "name": "preparation-pixels-extraction.json",
+      "sourcePath": "backend/ai-grader-speedster-service/preparation-pixels-extraction.json",
+      "sourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+      "baselineCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+      "matchesBaseline": true,
+      "sha256": "9ee1a7648ce2adea51a120af5c24badd5a823205fb32cbd869d48b9b251cdcd0",
+      "bytes": 266,
+      "containerPath": "/workspace/backend/ai-grader-speedster-service/preparation-pixels-extraction.json"
+    }
+  ],
+  "reviewOnlyCommandValidated": true,
+  "testFiles": 55,
+  "requiredTestsPass": 585,
+  "requiredSkips": 0,
+  "network": "none",
+  "readonlyRoot": true,
+  "readonlyHostFileMounts": 2,
+  "hostDirectoryMounts": 0,
+  "productionCredentials": false,
+  "applicationEdits": 0,
+  "providerMutationsByReviewer": 0,
+  "scope": "Helper and source-provenance approval; actual rerun result must be checked separately",
+  "actionableFindings": []
+}

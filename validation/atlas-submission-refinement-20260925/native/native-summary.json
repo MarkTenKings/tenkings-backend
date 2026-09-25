@@ -1,0 +1,85 @@
+{
+  "status": "NATIVE_CANDIDATE_FULL_QUALIFICATION_PASS",
+  "sourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+  "imageId": "sha256:65f6d935c5147788ccc64e6faa1f406cbfb127c255b7beaa8ac6b159a1de036f",
+  "sourceManifestSha256": "8b22beaed6147f327d1f2d64c789f8f1973a8e339f09154a1ca22137bb86cc00",
+  "sourceFiles": 896,
+  "nativeArtifactsPreserved": 16,
+  "runtime": {
+    "node": "v20.20.2",
+    "platform": "linux",
+    "architecture": "x64",
+    "sharpVersions": {
+      "sharp": "0.33.5",
+      "vips": "8.15.3"
+    }
+  },
+  "regression": {
+    "testFiles": 55,
+    "tests": 585,
+    "pass": 585,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "originalReplay": {
+    "caseCount": 3,
+    "exactEncodedBytesRetained": true,
+    "fullDecodedDimensions": {
+      "width": 3024,
+      "height": 4032
+    },
+    "orientationAppliedExactlyOnce": true,
+    "decodedAndWorkingPixelsMatchIndependentReference": true,
+    "noResampling": true,
+    "originalGainMapRetained": true,
+    "qualifiedTreatment": "Explicitly evidenced sRGB SDR base; original HDR JPEG retained unchanged"
+  },
+  "scope": "Bounded Apple primary capture-date/region XMP metadata admission; unknown/HDR claims, malformed metadata, ambiguous color and invalid gain-map structure remain refused.",
+  "fixtureProvenance": {
+    "firstRun": {
+      "tests": 585,
+      "pass": 583,
+      "fail": 2,
+      "skipped": 0,
+      "cause": "Missing legacy preparation test-only reference files"
+    },
+    "correctedRun": {
+      "tests": 585,
+      "pass": 585,
+      "fail": 0,
+      "skipped": 0
+    },
+    "readOnlyReferencePaths": [
+      "backend/ai-grader-speedster-service/preparation_core.py",
+      "backend/ai-grader-speedster-service/preparation-pixels-extraction.json"
+    ],
+    "referencesMatchFrozenCommitAndQualifiedBaseline": true,
+    "candidateImageAndApplicationSourceUnchanged": true,
+    "preStartInspectionCorrection": "One intermediate fixture was created but never started; the assertion was corrected to inspect Docker HostConfig.Tmpfs separately from its two bind mounts."
+  },
+  "isolation": {
+    "network": "none",
+    "productionCredentials": false,
+    "productionDatabaseWrites": 0,
+    "productionStorageWrites": 0,
+    "modelRequests": 0,
+    "servingContainerUnchangedDuringQualification": true,
+    "productionCutoverPerformedByThisValidation": false
+  },
+  "auditReceiptDigests": {
+    "aggregate": "f2c34400ac4dae35c2d307fb646c783bbc8d0efa73216bea821f22f722430caa",
+    "correctedFullSuite": "92be85768fe6de6468293000195b68da71f91fd8a80a66eba29d6aaa2581bcbc",
+    "exactOriginalReplayTwoCases": "880fb6c5b268c788efda25691d406022946cdfbfc41eef0a7b8ca409199b2620",
+    "exactOriginalReplaySupplement": "6b0efc8f64ca4fcf803305eaecb39793da5842235f47def12310d8c58181c97b",
+    "firstFailedTestLog": "dc15cb0e6a12d3feb5c1f269a1ddbf2adfacd1245f42ab6bc3a7c915d0e09e08"
+  },
+  "exportExclusions": [
+    "Original or derived image bytes",
+    "Original content hashes and per-object byte counts",
+    "Card/upload/staff/customer identifiers",
+    "Object keys, signed URLs and provider credentials",
+    "Private metadata packets",
+    "Host inventories, image environment inspection and raw replay/dispatch logs"
+  ]
+}

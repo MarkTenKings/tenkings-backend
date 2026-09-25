@@ -1,0 +1,18 @@
+{
+  "status": "INDEPENDENT_PRESTART_INSPECT_CORRECTION_REVIEW_PASS",
+  "sourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+  "imageId": "sha256:65f6d935c5147788ccc64e6faa1f406cbfb127c255b7beaa8ac6b159a1de036f",
+  "helperSha256": "7fb705e12d767af4bf1d3bf711b7d04aeb9bc05e0cff3458850c60714defe147",
+  "planSha256": "317a79a9e1031c8da93b0af9b597040d3f119a83597c11862627dab16985cd3d",
+  "exactDiffOnly": [
+    "fresh container name ref2",
+    "fresh output qualification-full-v2",
+    "pre-start inspect exactly2bind mounts plus exact HostConfig.Tmpfs map"
+  ],
+  "isolationUnchanged": true,
+  "testFiles": 55,
+  "fullPassRequired": 585,
+  "providerMutationsByReviewer": 0,
+  "applicationChanges": 0,
+  "actionableFindings": []
+}

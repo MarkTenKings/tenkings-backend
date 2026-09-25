@@ -1,0 +1,39 @@
+{
+  "scope": "Offline Mac arm64 source benchmark; no network, model calls, original changes, or claim about deployed Linux/iPhone throughput.",
+  "at": "2026-09-25T02:20:03.837Z",
+  "node": "v25.6.1",
+  "platform": "darwin",
+  "arch": "arm64",
+  "results": [
+    {
+      "ordinal": 6,
+      "originalBytes": 6256391,
+      "decodedBytes": 23432825,
+      "workingBytes": 23432825,
+      "dimensions": {
+        "width": 3024,
+        "height": 4032
+      },
+      "decodeMs": 607.621583,
+      "workingMs": 545.9945000000001,
+      "totalMs": 1153.618708,
+      "decodedAndWorkingBytesEqual": true,
+      "originalHashPreserved": true
+    },
+    {
+      "ordinal": 7,
+      "originalBytes": 6670634,
+      "decodedBytes": 24763698,
+      "workingBytes": 24763698,
+      "dimensions": {
+        "width": 3024,
+        "height": 4032
+      },
+      "decodeMs": 623.067,
+      "workingMs": 617.6660420000001,
+      "totalMs": 1240.734625,
+      "decodedAndWorkingBytesEqual": true,
+      "originalHashPreserved": true
+    }
+  ]
+}

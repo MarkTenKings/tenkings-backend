@@ -1,0 +1,9 @@
+{
+  "status": "INDEPENDENT_NATIVE_SOURCE_MANIFEST_PASS",
+  "sourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+  "sourceManifestSha256": "8b22beaed6147f327d1f2d64c789f8f1973a8e339f09154a1ca22137bb86cc00",
+  "files": 896,
+  "sourceBytes": 13394432,
+  "allFilesComparedToGitBlobAndStagedFile": true,
+  "providerMutations": 0
+}

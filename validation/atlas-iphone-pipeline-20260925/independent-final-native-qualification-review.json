@@ -1,0 +1,40 @@
+{
+  "status": "INDEPENDENT_FINAL_NATIVE_QUALIFICATION_PASS",
+  "sourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+  "imageId": "sha256:65f6d935c5147788ccc64e6faa1f406cbfb127c255b7beaa8ac6b159a1de036f",
+  "qualificationSha256": "92be85768fe6de6468293000195b68da71f91fd8a80a66eba29d6aaa2581bcbc",
+  "logSha256": "609d1f86fe99a5d5213fbedb9fc66b86c0c6d4a2249d933c0cf54c2e84b064e5",
+  "sourceManifestSha256": "8b22beaed6147f327d1f2d64c789f8f1973a8e339f09154a1ca22137bb86cc00",
+  "sourceManifestFilesIndependentlyCompared": 896,
+  "summary": {
+    "tests": 585,
+    "pass": 585,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "testFiles": 55,
+  "originalFailedRunPreserved": {
+    "logSha256": "dc15cb0e6a12d3feb5c1f269a1ddbf2adfacd1245f42ab6bc3a7c915d0e09e08",
+    "failures": [
+      {
+        "number": 417,
+        "name": "five encoded outputs match legacy warp, reveal and encoder functions byte for byte"
+      },
+      {
+        "number": 425,
+        "name": "extracted pixel engines retain unchanged function bodies and no service/model imports"
+      }
+    ],
+    "pass": 583,
+    "fail": 2
+  },
+  "network": "none",
+  "readonlyRoot": true,
+  "testOnlyReadonlyFileMounts": 2,
+  "productionCredentials": false,
+  "servingContainerUnchanged": true,
+  "applicationEditsByReviewer": 0,
+  "providerMutationsByReviewer": 0,
+  "actionableFindings": []
+}

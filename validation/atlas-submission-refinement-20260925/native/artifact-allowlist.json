@@ -1,0 +1,21 @@
+{
+  "status": "EXPLICIT_SAFE_ARTIFACT_ALLOWLIST",
+  "allowedFiles": [
+    "native-summary.md",
+    "native-summary.json",
+    "artifact-allowlist.json"
+  ],
+  "contentDigests": {
+    "native-summary.md": "7c879faaaee886931bbeb0732a331b5ee5cfd9b43cfb4e97ac531cccc3181bd4",
+    "native-summary.json": "1709dc62aed05e8b8d98318589309cbfbf9593c673ecc2160e4523d66d92ad23"
+  },
+  "copyPolicy": "Copy only the exact named files. Do not copy parent directories, raw receipts or evidence recursively.",
+  "excludedClasses": [
+    "Original or derived image bytes",
+    "Original content hashes and per-object byte counts",
+    "Card/upload/staff/customer identifiers",
+    "Object keys, signed URLs and provider credentials",
+    "Private metadata packets",
+    "Host inventories, image environment inspection and raw replay/dispatch logs"
+  ]
+}

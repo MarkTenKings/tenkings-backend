@@ -1,0 +1,256 @@
+{
+  "status": "LIVE_SOFTWARE_VERIFIED_IPHONE_ACCEPTANCE_PENDING",
+  "sourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+  "imageId": "sha256:65f6d935c5147788ccc64e6faa1f406cbfb127c255b7beaa8ac6b159a1de036f",
+  "sourceManifestSha256": "8b22beaed6147f327d1f2d64c789f8f1973a8e339f09154a1ca22137bb86cc00",
+  "verifiedAt": "2026-09-25T03:17:29.244Z",
+  "preservationVerifiedAt": "2026-09-25T03:17:18.027109+00:00",
+  "canonicalOrigin": "https://atlasgrading.com",
+  "webDeployments": {
+    "staff": {
+      "deploymentId": "dpl_GP7dsyGzdX3anJq3jYBPJfyx4aYi",
+      "hostname": "atlas-grading-staff-edv9r7pw0-ten-kings.vercel.app",
+      "readyState": "READY",
+      "receiptSha256": "edbdc64e7a6ffe5ffceaabd7105e1d88d3fc84c838c519900edba9f01c854dc7"
+    },
+    "customer": {
+      "deploymentId": "dpl_HtGqts71JmBA8LKUquAidKuwbZXt",
+      "hostname": "atlas-grading-customer-pym3l1q2q-ten-kings.vercel.app",
+      "readyState": "READY",
+      "receiptSha256": "836ee08538bb2346405024f381a1a5f328f7e3d2bdb2db5ae3e581abd74b8489"
+    },
+    "public": {
+      "deploymentId": "dpl_BK6FzdB6YvRtziR27m6tKT2MhVWW",
+      "hostname": "atlas-grading-public-1b9kdylap-ten-kings.vercel.app",
+      "readyState": "READY",
+      "receiptSha256": "3483079ee6c83ad05965f15c2580bbf3336b49c86a0be46de41ec7dd6bdf88e5"
+    }
+  },
+  "runtime": {
+    "containerId": "9a21d430649a60d7bb16205f07085d9c157df222d0f481791571500bd50435da",
+    "cutoverAt": "2026-09-25T03:14:37.134249+00:00",
+    "retainedPredecessor": {
+      "id": "780b01eb99076d3ede3084a07ced5b3071f5cc07880a25aaf0707cfeeab2acdd",
+      "image": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+      "running": false
+    },
+    "caddyUnchanged": true,
+    "unrelatedContainersUnchangedAtCutover": true
+  },
+  "verification": {
+    "frontendTests": {
+      "tests": 730,
+      "pass": 730,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "nativeTests": {
+      "tests": 585,
+      "pass": 585,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "originalReplay": {
+      "caseCount": 3,
+      "exactEncodedBytesRetained": true,
+      "fullDecodedDimensions": {
+        "width": 3024,
+        "height": 4032
+      },
+      "orientationAppliedExactlyOnce": true,
+      "decodedAndWorkingPixelsMatchIndependentReference": true,
+      "noResampling": true,
+      "originalGainMapRetained": true,
+      "qualifiedTreatment": "Explicitly evidenced sRGB SDR base; original HDR JPEG retained unchanged"
+    },
+    "signedPrivateReads": 3,
+    "canonicalChecks": 34,
+    "browserStorage": "Chrome and desktop WebKit exact-byte/reload/quota/recovery PASS",
+    "physicalIPhoneTested": false,
+    "canonicalLiveMotionCaptureOrMapExecuted": false,
+    "subsequentLiveChromeVisual": {
+      "status": "ROOT_OBSERVED_PASS",
+      "evidenceSource": "Root live browser tool observation after strict preservation",
+      "serviceLayoutCorrected": true,
+      "search": "95678",
+      "actualGoogleIframeDisplayed": true,
+      "verifiedDealerPinAndAddressVisible": true,
+      "interactiveMapControlsVisible": true,
+      "contactOnlyStatusPreserved": true,
+      "normalSessionBootstrapPossible": true,
+      "cardRecoveryGradingSubmissionPaymentActions": 0,
+      "physicalIPhoneTested": false
+    }
+  },
+  "releaseChanges": {
+    "environmentFieldsChanged": [
+      "ATLAS_CUSTOMER_SERVICE_BINDING_JSON",
+      "ATLAS_MANUAL_WEB_DEPLOYMENT",
+      "ATLAS_MANUAL_WEB_RELEASE_SHA"
+    ],
+    "secretsPreserved": true,
+    "controlRowsChanged": 6,
+    "controlRevisions": {
+      "staffRevision": 31,
+      "staffSmsRevision": 29,
+      "publicRevision": 9,
+      "customerRevision": 11,
+      "customerSmsRevision": 9
+    },
+    "featureStatus": {
+      "customerIntakeEnabled": true,
+      "customerIdentificationEnabled": true,
+      "commerceEnabled": false,
+      "dealerEnabled": false,
+      "stationEnabled": false
+    },
+    "historyTablesPreserved": 30,
+    "customerTablesPreserved": 21
+  },
+  "queue": {
+    "historicalCensusAt": "2026-09-25T02:12:53.096013+00:00",
+    "historicalAttentionCounts": {
+      "geometryReview": 5,
+      "identityReview": 2,
+      "analysisActionConflict": 1,
+      "photoStorageUnavailable": 1
+    },
+    "batchWorkerConcurrency": 2,
+    "nativeOperationConcurrency": 2,
+    "maxServerBatchRequestCards": 50,
+    "maxBrowserPickerPairs": 100,
+    "currentQueueCompletionClaimed": false
+  },
+  "dealerMap": {
+    "name": "CenterCourt Cards",
+    "address": "307 Lincoln St, Roseville CA 95678 US",
+    "status": "CONTACT_ONLY_SETUP_IN_PROGRESS",
+    "operationalPrivateDirectoryCount": 0,
+    "selectedPinsAtOnce": 1,
+    "providerZoomVerifiedLocally": [
+      16,
+      17
+    ],
+    "exactEmbedUrlSha256": "471be58ae34503bc23715edc08e6b12967a224d529f2af89a5c49f7c8710505a",
+    "deviceCoordinatesSentToGoogle": false,
+    "mapLoadsBeforeUserAction": false
+  },
+  "ownerAcceptancePending": [
+    "Same original iPhone/browser profile reload and saved-upload resume",
+    "Existing saved-processing resume and review of attention cases",
+    "Original/preview orientation and status updates during Add cards",
+    "Dealer search/current-location map and contact-only selection restriction"
+  ],
+  "receipts": {
+    "plan": {
+      "releaseRelativePath": "runtime/plan.json",
+      "sha256": "08bf520ce2e02a3b66158f0261f37ea100b7e238dd8d39df02f1b495b5899e1e",
+      "status": "ROOT_REVIEWED_SUBMISSION_REFINEMENT"
+    },
+    "frontendQualification": {
+      "releaseRelativePath": "web-release/build/qualification.json",
+      "sha256": "db68921088c88c7f1174e1085890c892bb2028adaa8686ce91053d47fe2704e2",
+      "status": "ALL_THREE_PRODUCTION_BUILDS_AND_FRONTEND_TESTS_PASS"
+    },
+    "nativeQualification": {
+      "releaseRelativePath": "native-build/qualification-reference/qualification-full-v2/result.json",
+      "sha256": "92be85768fe6de6468293000195b68da71f91fd8a80a66eba29d6aaa2581bcbc",
+      "status": "CANDIDATE_OFFLINE_REGRESSION_PASS"
+    },
+    "nativeSafeSummary": {
+      "releaseRelativePath": "native-build/safe-export/native-summary.json",
+      "sha256": "1709dc62aed05e8b8d98318589309cbfbf9593c673ecc2160e4523d66d92ad23",
+      "status": "NATIVE_CANDIDATE_FULL_QUALIFICATION_PASS"
+    },
+    "nativeOriginalReplay": {
+      "releaseRelativePath": "native-build/context-e4a75df58d0f/original-qualification/result.json",
+      "sha256": "880fb6c5b268c788efda25691d406022946cdfbfc41eef0a7b8ca409199b2620",
+      "status": "CANDIDATE_EXACT_ORIGINALS_REPLAY_PASS"
+    },
+    "nativeOriginalSupplement": {
+      "releaseRelativePath": "native-build/card12-supplement/qualification/result.json",
+      "sha256": "6b0efc8f64ca4fcf803305eaecb39793da5842235f47def12310d8c58181c97b",
+      "status": "CANDIDATE_CARD12_ORIGINAL_REPLAY_PASS"
+    },
+    "derive": {
+      "releaseRelativePath": "runtime/derive-result.json",
+      "sha256": "f3987cb2908b291296114682240b336237d84399646e6d5c19d54f87bafcdaaf",
+      "status": "FOLLOWUP_ENV_DERIVED"
+    },
+    "constructor": {
+      "releaseRelativePath": "runtime/constructor-result.json",
+      "sha256": "4e3d14c28171b7593a2f331114a01048ba5e4d16f08a2d9afa11421262288fb9",
+      "status": "RAPID_PRIVATE_CONFIGURATION_PASS"
+    },
+    "controls": {
+      "releaseRelativePath": "runtime/controls-result.json",
+      "sha256": "3fcf9b36fb73a27859f5dac4f0e3410ab845acabd48c55fbd4afdbe7141e4c5d",
+      "status": "SIX_CONTROL_DELTA_AND_HISTORY_PASS"
+    },
+    "cutover": {
+      "releaseRelativePath": "runtime/cutover-result.json",
+      "sha256": "f02af5fdea396dffa518ec687360b6d26c3fbac5b20e28055ef09ca99b658c80",
+      "status": "FOLLOWUP_PRIVATE_REBOUND_PROBES_PENDING"
+    },
+    "postCutover": {
+      "releaseRelativePath": "runtime/post-cutover-result.json",
+      "sha256": "89aa706a219dfca819bff966359fb2d41edd5e962bb362c70130499b8c44ce7e",
+      "status": "FOLLOWUP_PRESERVATION_PASS"
+    },
+    "signedPrivate": {
+      "releaseRelativePath": "readonly-customer/signed-private-submission-1/result.json",
+      "sha256": "1198fe38face77ceeed1594a9bbb33998c12bcec39cdf6e9c0703dc519169fb9",
+      "status": "SIGNED_PRIVATE_TLS_READS_PASS"
+    },
+    "promotion": {
+      "releaseRelativePath": "web-release/public-promotion-e4a75df5/result.json",
+      "sha256": "30531a80cd9965aafc4a29fa8927cc302c642e2023690bb52c3297f5a048e457",
+      "status": "PUBLIC_PROMOTION_READBACK_PASS"
+    },
+    "postPromotion": {
+      "releaseRelativePath": "runtime/post-promotion-result.json",
+      "sha256": "06f413c5427008426a41ff066e5d81e2ed8467fb980582e6bc471ca692c2ed85",
+      "status": "FOLLOWUP_PRESERVATION_PASS"
+    },
+    "canonical": {
+      "releaseRelativePath": "readonly-customer/canonical-e4a75df5/result.json",
+      "sha256": "80c76c7c21a097fc3694f2d8b6d0fe8c7ecd36092688c41c7a33f9187ca4c8a0",
+      "status": "PASS"
+    },
+    "motion": {
+      "releaseRelativePath": "motion-evidence/manifest-e4a75df5.json",
+      "sha256": "87cdb86b3dbb3abfb1b3862d7d8b860751f7254f40f9b8986ebfa56e41a6f6d8",
+      "status": "MOTION_SOURCE_AND_SYNTHETIC_VISUAL_VERIFIED"
+    },
+    "map": {
+      "releaseRelativePath": "map-evidence/map-provider-verification.json",
+      "sha256": "846d4bdeb96e11c1939c7b227fe0403c6dd29970d3ae44409ea7cc5f47d3331b",
+      "status": "ACTUAL_GOOGLE_EMBED_VERIFIED_IN_CHROME"
+    },
+    "browserStorage": {
+      "releaseRelativePath": "upload-storage-verification/result.json",
+      "sha256": "746de5594c4ab315d409f99e075b5165dd7c21838a94bb7fcad18bd9c41a7538",
+      "status": "PASS"
+    },
+    "batchQuality": {
+      "releaseRelativePath": "upload-storage-verification/frozen-batch-quality.json",
+      "sha256": "64b1c4e4961be9e3920c596284bbf59378e000cdd6f6980194bdc519b4d90d80",
+      "status": "FROZEN_BATCH_QUALITY_PASS"
+    },
+    "queueCensus": {
+      "releaseRelativePath": "queue-incident/queue-census.json",
+      "sha256": "35fc2d6be0b61b501a239d8e56cd107351aa0125d40ffc8c5baead54392cefb9",
+      "status": "READ_ONLY_QUEUE_CENSUS"
+    }
+  },
+  "excluded": [
+    "Raw original/derived image bytes and their content hashes",
+    "Card/upload/customer/staff identifiers",
+    "Database snapshots",
+    "Environment inventories and values",
+    "Credentials and signed URLs",
+    "Raw provider responses"
+  ]
+}

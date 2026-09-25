@@ -1,0 +1,16 @@
+{
+  "status": "INDEPENDENT_NATIVE_ORIGINAL_12_REPLAY_PASS",
+  "sourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+  "imageId": "sha256:65f6d935c5147788ccc64e6faa1f406cbfb127c255b7beaa8ac6b159a1de036f",
+  "nativeReceiptSha256": "6b0efc8f64ca4fcf803305eaecb39793da5842235f47def12310d8c58181c97b",
+  "nativeLogSha256": "1aa3b03fa5f66ded37212b834398f925e2ff4776850c0587cd996ca92a8356e9",
+  "sourceHashesMatchFrozenManifest": true,
+  "linuxNativeReplayExactlyMatchesIndependentMacReplay": true,
+  "ordinal": 12,
+  "fullPixelBytes": 36578304,
+  "originalBytes": 6940594,
+  "originalSha256": "974ae9245c09dfc9b990bc117c46ff27f14e565b0ce1a9f5da7ee86adcd726a3",
+  "network": "none",
+  "productionCredentials": false,
+  "providerMutationsByReviewer": 0
+}

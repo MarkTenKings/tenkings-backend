@@ -1,0 +1,56 @@
+{
+  "status": "INDEPENDENT_NATIVE_REVIEW_PASS",
+  "at": "2026-09-25T02:27:00.520133+00:00",
+  "source": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+  "findings": [],
+  "reviewed": [
+    "Closed bounded primary-XMP grammar only; exact six namespaces with unique declarations, mandatory fixed properties, 1\u201332 bounded normalized Face regions, exact original dimensions, full consumption and fatal UTF-8.",
+    "Duplicate packets/properties, unknown claims, orientation/crop/HDR claims, entities/DTD/PI/comments/nested XML, malformed or oversized packets are refused; existing ISO SDR-base, MP-index, gain-map and color evidence guards remain.",
+    "Primary XMP remains inert, copied only into provenance hash. Its regions never crop and dates never orient. Native original bytes retained; no change to decoder/color/orientation pipeline.",
+    "No-XMP previously admitted inputs append an empty buffer to metadata hash and remain byte-compatible.",
+    "Independent exact-original replay passed for two retained 12.2MP originals, all36,578,304rawRGBbytes matched independently oriented SDR base for decoded and working image; original hashes preserved."
+  ],
+  "tests": {
+    "command": "node --test packages/atlas-photo-runtime/test/jpeg-srgb-gain-map.test.mjs",
+    "pass": 75,
+    "fail": 0,
+    "skipped": 0
+  },
+  "exactOriginalReceiptSha256": "c327d88aed91ba0ed47f487c5b910b11fc63d12c67b249651cbaf38d4740ed9e",
+  "files": [
+    {
+      "path": "packages/atlas-photo-runtime/src/jpeg.mjs",
+      "sha256": "7105ff828a29f6aa0a7307f14de22f35c823300c2325402f6fa57177795087e9",
+      "matchesFrozenSource": true
+    },
+    {
+      "path": "packages/atlas-photo-runtime/src/index.mjs",
+      "sha256": "c784361d25f4af467c77234a475928d4437022a9d6979a9769844d91a537948d",
+      "matchesFrozenSource": true
+    },
+    {
+      "path": "packages/atlas-photo-runtime/src/worker.mjs",
+      "sha256": "2dc7cc6fe061579febcffef40129b42f31316f27e4fb11bb4f4022bdf63e1262",
+      "matchesFrozenSource": true
+    },
+    {
+      "path": "packages/atlas-photo-runtime/src/working.mjs",
+      "sha256": "111ce90c70b021807394b8baaa48a4f9cc420c5a0782d7a6382af9983f98bebd",
+      "matchesFrozenSource": true
+    },
+    {
+      "path": "packages/atlas-photo-runtime/test/jpeg-srgb-gain-map.test.mjs",
+      "sha256": "46964a322db40792526f50f83a7c26cb1eea42989c5d361ba1c9eaea5028b9b4",
+      "matchesFrozenSource": true
+    },
+    {
+      "path": "packages/atlas-photo-runtime/test/jpeg-primary-xmp-fixture.mjs",
+      "sha256": "e617aa6adbef9ed80133438ef8343c9f639eecec124c2413156484fb248dcfb8",
+      "matchesFrozenSource": true
+    }
+  ],
+  "limits": [
+    "Local Mac arm64 source validation only; does not assert exact deployed Linux native result or physical iPhone acceptance.",
+    "Admission intentionally supports the observed Apple primary metadata shape, not all possible XMP/HDR formats."
+  ]
+}

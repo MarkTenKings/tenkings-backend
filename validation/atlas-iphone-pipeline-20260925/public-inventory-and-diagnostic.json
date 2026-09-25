@@ -1,0 +1,64 @@
+{
+  "at": "2026-09-25T02:23:51.556299+00:00",
+  "scope": "Read-only public HTML and JavaScript GET; no session bootstrap, credentials, writes or model calls. Public bundle proves behavior, not repository source SHA.",
+  "deploymentId": "dpl_22WDrKgWqNGV7PbfSvyD7QP5Ka7J",
+  "buildId": "PzU1OPscCzYnxSwfdm5RC",
+  "pages": [
+    "https://tenkings.co/staff/inventory",
+    "https://collect.tenkings.co/admin/physical-inventory"
+  ],
+  "assets": [
+    {
+      "url": "https://tenkings.co/_next/static/chunks/pages/staff/inventory-bb63e65f35a102c4.js",
+      "bytes": 1257,
+      "sha256": "f96c74a7a36d525035d3f35b498601ae4a055bff19e1725d062d5efe71e76b56",
+      "checks": {
+        "1400": false,
+        "2621440": false,
+        "[.9,.8,.68]": false,
+        "75e3": false,
+        "/api/v2/admin/inventory/photo": false
+      }
+    },
+    {
+      "url": "https://tenkings.co/_next/static/chunks/9283.a51e8453ccad87d0.js",
+      "bytes": 157506,
+      "sha256": "b997d0edb833b066912508abfecc86589b0898c8cf2866a634e73e061ad8bcdf",
+      "checks": {
+        "1400": true,
+        "2621440": true,
+        "[.9,.8,.68]": true,
+        "75e3": true,
+        "/api/v2/admin/inventory/photo": true
+      }
+    }
+  ],
+  "diagnosticSummary": {
+    "items": 12,
+    "uploadDone": 6,
+    "pending": 6,
+    "retainedBytes": 74370722,
+    "retainedPhotos": 12,
+    "errors": [
+      {
+        "ordinal": 6,
+        "code": "PHOTO_HDR_UNSUPPORTED",
+        "phase": "RESUME_FRONT_UPLOAD",
+        "exceptionName": "Error"
+      },
+      {
+        "ordinal": 8,
+        "code": "BATCH_IMPORT_INTERRUPTED",
+        "phase": "UNKNOWN",
+        "exceptionName": "Error"
+      },
+      {
+        "ordinal": 9,
+        "code": "BATCH_IMPORT_INTERRUPTED",
+        "phase": "UNKNOWN",
+        "exceptionName": "Error"
+      }
+    ],
+    "partialFront": true
+  }
+}

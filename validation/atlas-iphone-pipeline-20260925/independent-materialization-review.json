@@ -1,0 +1,17 @@
+{
+  "status": "INDEPENDENT_IMMUTABLE_MATERIALIZATION_PASS",
+  "sourceCommit": "e4a75df58d0f8c54423b845f1e5e4ffc4d8995bb",
+  "sourceTree": "6dbfe94c3be15ac7caa13c3811107f2dfe532721",
+  "files": 3182,
+  "bytes": 188878731,
+  "excludedPaths": 30,
+  "plans": {
+    "staff": "82af1982f1c07bb2cf42633ef7ecb88c5056d070567a65f1a118972892b30c13",
+    "customer": "8e32e78662b9e92cc72049ad62f54bc0a7250fff3af597415aab265b86d3bf7a",
+    "public": "d6e917c71e74b8a9f1f45aa7a58956756dec805b36be681f8d2ac374c8ca9cb6"
+  },
+  "manifestSha256": "25dac831485ff8f8fc3668d21685ac7591687c4b97e449bc3cb31d24e6931195",
+  "prepareSuccessorSha256": "ae64d1650c16c0bfb2943aec0c7d7c62c7277dd4b4db05892366e010d51b2205",
+  "qualificationExists": false,
+  "cliQualificationExists": true
+}
