@@ -1,5 +1,7 @@
 # Mac finishing qualification — September24,2026
 
+Historical checkpoint: the v2 artwork and review-bundle evidence below remain unchanged. September 25 source defaults move to the newly supplied logo in v3; see [current setup](SETUP.md) and [manual finishing version/recovery semantics](../atlas-finishing/MANUAL_FINISHING.md). This record does not physically qualify the later artwork or profile.
+
 The native lock engine exists; the production registry remains empty. This follow-up changes no approved label, tag specification, station enablement, hardware configuration or production service. The approved `atlas-signature-v2` insert remains69.342×21.082mm with the exact supplied logo and plain black reverse.
 
 ## Reader and firmware

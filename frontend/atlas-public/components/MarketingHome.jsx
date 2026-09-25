@@ -131,23 +131,14 @@ function clamp(value, min = 0, max = 1) {
 }
 
 function AtlasGlyph({ small = false }) {
-  return (
-    <svg
-      className={small ? "atlas-glyph atlas-glyph--small" : "atlas-glyph"}
-      viewBox="0 0 64 48"
-      aria-hidden="true"
-    >
-      <path d="M7 41 32 6l25 35" />
-      <path d="M2 43.5C17 40 47 40 62 43.5" />
-    </svg>
-  );
+  return <img className={small ? "atlas-glyph atlas-glyph--small" : "atlas-glyph"}
+    src="/brand/atlas-grading-logo.png" width="1098" height="984" alt="" aria-hidden="true" />;
 }
 
 function Wordmark() {
   return (
     <a className="wordmark" href="#top" aria-label="ATLAS — back to top">
       <AtlasGlyph small />
-      <span>ATLAS</span>
       <small>KNOW WHAT YOU HAVE</small>
     </a>
   );
@@ -1192,7 +1183,7 @@ function FinalScanner() {
           <GradedSlab />
         </div>
         <div className="final-unscanned">
-          <img src="/marketing/atlas-brand.png" alt="" />
+          <img src="/brand/atlas-grading-logo.png" alt="" />
           <span className="final-scan-grid" />
           <span className="final-lock-copy">CERTIFIED OBJECT · LOCKED</span>
         </div>

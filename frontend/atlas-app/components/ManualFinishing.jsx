@@ -91,7 +91,7 @@ export default function ManualFinishing({ plan, autoPrintWindow = null, onPrintD
       const context = document.createElement('canvas').getContext('2d');
       if (!context) throw new Error('Label measurement is unavailable.');
       const code = plan.label.layoutVersion === 'atlas-noir-gold-v1' ? QRCode.create(plan.label.url, { errorCorrectionLevel: 'M' }) : null;
-      setRendered({ ...renderManualLabel({ label: plan.label, palette: plan.label.layoutVersion === 'atlas-signature-v2' ? 'NOIR_GOLD' : palette, qr: code?.modules,
+      setRendered({ ...renderManualLabel({ label: plan.label, palette: plan.label.layoutVersion === 'atlas-noir-gold-v1' ? palette : 'NOIR_GOLD', qr: code?.modules,
         measureText: (value, size, weight, family = 'Arial') => { context.font = `${weight} ${size}px ${family}`; return context.measureText(value).width; } }), planId: plan.id });
     } catch (failure) {
       setError(failure.message === 'MANUAL_LABEL_IDENTITY_REQUIRES_LAYOUT' ? 'This identity needs a reviewed label layout to fit in full.' : 'The approved label could not be prepared.');

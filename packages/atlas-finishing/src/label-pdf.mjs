@@ -5,6 +5,7 @@ import QRCode from 'qrcode';
 import { validateManualFinishingPlan } from './manual.mjs';
 import { renderManualLabel, MANUAL_LABEL_GEOMETRY, CURRENT_LABEL_LAYOUT } from './label.mjs';
 import { LABEL_LOGO_DATA_URI, LABEL_LOGO_SHA256 } from './label-logo.mjs';
+import { LABEL_LOGO_DATA_URI as CURRENT_LOGO_DATA_URI, LABEL_LOGO_SHA256 as CURRENT_LOGO_SHA256 } from './label-logo-current.mjs';
 import { createManualLabelPdfRenderer as createLegacyRenderer } from './label-pdf-legacy.mjs';
 
 const assert = (value, code) => { if (!value) throw new Error(code); };
@@ -12,7 +13,6 @@ const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const stable = value => value && typeof value === 'object' ? Array.isArray(value) ? `[${value.map(stable).join(',')}]`
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}` : JSON.stringify(value);
 const exact = (value, keys) => assert(value && Object.keys(value).sort().join(',') === [...keys].sort().join(','), 'LABEL_PDF_LAYOUT_INVALID');
-const VERSION = 'atlas-label-vector-pdf-v2';
 const { width, height } = MANUAL_LABEL_GEOMETRY;
 
 function parseLayout(input) {
@@ -49,18 +49,22 @@ export function createManualLabelPdfRenderer({ layout, palette = 'NOIR_GOLD', la
   // Render profile and PDF bytes are part of durable CUPS custody. An existing
   // v1 station must retain the original generator, including its metadata.
   if (layoutVersion === 'atlas-noir-gold-v1') return createLegacyRenderer({ layout, palette });
-  assert(layoutVersion === CURRENT_LABEL_LAYOUT, 'LABEL_PDF_LAYOUT_VERSION_INVALID');
+  assert(['atlas-signature-v2', CURRENT_LABEL_LAYOUT].includes(layoutVersion), 'LABEL_PDF_LAYOUT_VERSION_INVALID');
+  const legacy = layoutVersion === 'atlas-signature-v2';
+  const version = legacy ? 'atlas-label-vector-pdf-v2' : 'atlas-label-vector-pdf-v3';
+  const logoDataUri = legacy ? LABEL_LOGO_DATA_URI : CURRENT_LOGO_DATA_URI;
+  const logoSha256 = legacy ? LABEL_LOGO_SHA256 : CURRENT_LOGO_SHA256;
   const selected = parseLayout(layout);
-  // V2 is the owner's exact supplied full-color logo/black-and-gold artwork.
+  // Signature profiles bind the exact supplied logo to each saved plan.
   // Refuse unsupported palettes during setup, before a station can look ready.
   assert(palette === 'NOIR_GOLD', 'MANUAL_LABEL_PALETTE_INVALID');
-  const profileHash = sha(stable({ version: VERSION, layout: selected, palette, fonts: ['Helvetica', 'Times-Roman'], logoSha256: LABEL_LOGO_SHA256, pdfkit: '0.17.2', svgToPdfkit: '0.1.8', qrcode: '1.5.4' }));
+  const profileHash = sha(stable({ version, layout: selected, palette, fonts: ['Helvetica', 'Times-Roman'], logoSha256, pdfkit: '0.17.2', svgToPdfkit: '0.1.8', qrcode: '1.5.4' }));
   const render = async plan => {
     plan = structuredClone(plan); validateManualFinishingPlan(plan);
-    assert(plan.label.layoutVersion === CURRENT_LABEL_LAYOUT, 'LABEL_PDF_LAYOUT_VERSION_MISMATCH');
+    assert(plan.label.layoutVersion === layoutVersion, 'LABEL_PDF_LAYOUT_VERSION_MISMATCH');
     const document = new PDFDocument({ autoFirstPage: false, compress: false, margin: 0,
       info: { Title: `ATLAS ${plan.label.reportNumber} v${plan.label.approvalVersion}`, Author: 'ATLAS Grading',
-        Creator: VERSION, Producer: VERSION, Subject: `${plan.planHash}:${profileHash}`,
+        Creator: version, Producer: version, Subject: `${plan.planHash}:${profileHash}`,
         CreationDate: new Date('2000-01-01T00:00:00Z'), ModDate: new Date('2000-01-01T00:00:00Z') } });
     const chunks = [], finished = new Promise((resolve, reject) => {
       document.on('data', chunk => chunks.push(chunk)); document.on('end', () => resolve(Buffer.concat(chunks))); document.on('error', reject);
@@ -89,7 +93,7 @@ export function createManualLabelPdfRenderer({ layout, palette = 'NOIR_GOLD', la
             width, height, assumePt: true,
             fontCallback: (family, bold, italic) => { assert(!italic, 'LABEL_PDF_FONT_UNSUPPORTED'); return family.includes('Times') ? bold ? 'Times-Bold' : 'Times-Roman' : bold ? 'Helvetica-Bold' : 'Helvetica'; },
             warningCallback: () => { throw new Error('LABEL_PDF_RENDER_WARNING'); },
-            imageCallback: source => { assert(source === LABEL_LOGO_DATA_URI, 'LABEL_PDF_EXTERNAL_RESOURCE_REJECTED'); return Buffer.from(LABEL_LOGO_DATA_URI.split(',')[1], 'base64'); },
+            imageCallback: source => { assert(source === logoDataUri, 'LABEL_PDF_EXTERNAL_RESOURCE_REJECTED'); return Buffer.from(logoDataUri.split(',')[1], 'base64'); },
             documentCallback: () => { throw new Error('LABEL_PDF_EXTERNAL_RESOURCE_REJECTED'); },
           });
           document.restore();

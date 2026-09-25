@@ -1,0 +1,90 @@
+{
+  "status": "LOCAL_DESIGN_VALIDATION_PASS_NOT_DEPLOYED",
+  "exactLogoSha256": "4b40262a23bb01decf504dfe740626924d252dd097f44a916f9d52457d3c6e56",
+  "frontendTests": {
+    "passed": 730,
+    "failed": 0,
+    "skipped": 0
+  },
+  "finishingAndStationTests": {
+    "passed": 93,
+    "failed": 0,
+    "skipped": 0
+  },
+  "productionBuilds": [
+    "staff",
+    "customer",
+    "public"
+  ],
+  "customerBrowser": {
+    "syntheticOnly": true,
+    "googleFramesIntercepted": true,
+    "widths": [
+      320,
+      390,
+      820,
+      1280
+    ],
+    "fullFlowWidth": 390,
+    "passed": true
+  },
+  "logoBrowserWidths": [
+    320,
+    390,
+    820,
+    1440
+  ],
+  "label": {
+    "newLayout": "atlas-signature-v3",
+    "savedV1V2BytesPreserved": true,
+    "physicalQualification": false
+  },
+  "homepage": "proposal only; current logo replaced",
+  "pending": [
+    "Google Maps JavaScript/Places configuration for custom branded pins and real photo gallery",
+    "deployment and live checks",
+    "original iPhone and actual graded-card acceptance"
+  ],
+  "receipts": [
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/customer-browser/result.json",
+      "sha256": "bde6db510887babf7de0fab46ccbd1366b036b9a2f40d179c9c02a0ce5bcb690"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/motion/motion-checks.json",
+      "sha256": "20d11f6d42160da945af568fd338f0fc46a9a4b05863727f0ebe39b08b5cd1ce"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/logo/visual-results.json",
+      "sha256": "38bff3e5540e9f55f10f30bba26710197dca3d59a692f0d7824cfd37a3400dbd"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/logo/label-proof.pdf",
+      "sha256": "fe46954adf52166c27c3735ad1da3f464c28de8ca376fb74c52e4fb88af67590"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/logo/label-sizes.json",
+      "sha256": "db77acec8f639319effea7084ac3ecaaffc2b866fe522adc156da32b923ec1ef"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/local-validation/staff-build.log",
+      "sha256": "2ac6ad867b5bc3b3399c1d4f8cd9906d7db451f32eb4154ff21a5cc0ac6046d9"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/local-validation/customer-build.log",
+      "sha256": "6cdda45297da63bc73e21573122a29e9ae3defc75ba2348124441c3483ec7eca"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/local-validation/public-build.log",
+      "sha256": "e36a4d6c008ecd36818a08cd595ea10758ae0bf644982fca797d6a9f5511beed"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/local-validation/frontend-tests.log",
+      "sha256": "411cc305d93e08a2d54fdd9683a21cf885a41c26a0bdd547fb0bcba0ad61657e"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/local-validation/finishing-tests.log",
+      "sha256": "248217b73bc49a5e81c40ce937d311219c6adfa1da8d50549c1dcfbd545b9977"
+    }
+  ]
+}

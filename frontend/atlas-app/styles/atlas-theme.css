@@ -15,7 +15,7 @@ input[type=checkbox],input[type=radio],input[type=range]{accent-color:var(--atla
 .notice{background:#242217;border-color:#50462c;color:#eadfbf}.notice.error{background:#2a1916;border-color:#754235;color:#ffc0b1}
 .local-badge,.fixture-strip{background:#242117;color:#e3c886;border-color:#51472e}.fixture-strip{font-size:11px;line-height:1.6}
 .local-badge i{background:var(--atlas-gold)}
-.rail{background:#090a08;border-right-color:var(--atlas-line)}.rail .atlas-brand{justify-content:center;width:100%;margin-bottom:28px}.rail .atlas-brand img{width:152px;height:87px}
+.rail{background:#090a08;border-right-color:var(--atlas-line)}.rail .atlas-brand{justify-content:center;width:100%;margin-bottom:28px}.rail .atlas-brand img{width:104px;max-width:100%;height:auto}
 .rail .nav-item{color:#b5b0a4;border-radius:8px}.rail .nav-item.active,.rail .nav-item:hover{background:#252116;color:#ead191;border-color:#5f4f2a}.rail .nav-icon{color:inherit}
 .rail-footer,.topbar,.mobile-navigation{border-color:var(--atlas-line);background:#10110e;color:var(--atlas-white)}
 .rail-footer small{color:var(--atlas-muted)}.rail-footer .avatar{background:#332c1b;color:var(--atlas-gold-light)}
@@ -37,3 +37,6 @@ input[type=checkbox],input[type=radio],input[type=range]{accent-color:var(--atla
 .workspace-heading h1{font-family:var(--atlas-serif)}.revision-label>span,.revision-label>strong{color:var(--atlas-muted)}
 @media(max-width:720px){.login-story{border-right:0;border-bottom:1px solid var(--atlas-line)}.login-story h1{font-size:52px}.login-form-wrap h2{font-size:34px}.login-form-section{padding-top:36px}.atlas-navigation-notice{left:12px;right:12px;margin:0}input:not([type=checkbox]):not([type=range]),textarea,select{font-size:16px}}
 @media print{.mc-shell-header,.mc-review-nav,.fixture-strip,.atlas-navigation-notice{display:none!important}.mc-shell,.mc-page{background:white!important;color:black!important;padding:0!important;max-width:none!important}body{background:white!important}}
+
+.mobile-atlas-brand{display:none}
+@media(max-width:460px){.topbar .mobile-atlas-brand{display:inline-flex}.topbar .mobile-atlas-brand img{width:54px;height:auto}.topbar{gap:10px}.topbar .breadcrumb,.topbar .crumb-slash{display:none}}

@@ -6,6 +6,13 @@ const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 const schedule = times => (times ?? []).map(item => `${days[item.weekday]} ${item.time}${item.cutoff ? ` (cutoff ${item.cutoff})` : ''}`).join('; ');
 const date = (value, zone) => value ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: zone }).format(new Date(value)) : 'Schedule unavailable';
 
+function DealerIdentity({ location, operational = false }) {
+  return <div className="dealer-identity">
+    <div className="dealer-brand-seal"><img src="/account/brand/atlas-grading-logo.png" alt="ATLAS Grading" width="1098" height="984"/><span>AUTHORIZED DEALER</span></div>
+    <div className="dealer-identity-copy"><span className="eyebrow">{operational ? 'ATLAS Submission Station' : 'Authorized ATLAS Dealer'}</span><h3>{location.name}</h3><p>{dealerAddress(location.address)}</p></div>
+  </div>;
+}
+
 function StationMap({ location, url }) {
   const [state, setState] = useState('loading');
   useEffect(() => { const timer = setTimeout(() => setState(value => value === 'loading' ? 'slow' : value), 15000); return () => clearTimeout(timer); }, []);
@@ -75,14 +82,14 @@ export default function SubmissionStationFinder({ value, onChange, visible }) {
       {showingAll && <p className="location-search-scope" role="status">No exact city or ZIP match for “{searchedQuery}”. Showing all listed ATLAS dealers.</p>}
       {shown && (mapEnabled ? <><StationMap key={shown.url} location={shown.location} url={shown.url}/>{mappable.length > 1 && <div className="location-map-results" aria-label="Choose a dealer pin">{mappable.map(({ location }) => <button key={location.id} className="location-map-result" type="button" aria-pressed={shown.location.id === location.id} onClick={() => showLocation(location.id)}>{location.name}</button>)}</div>}</> : <button type="button" className="location-map-activate" onClick={() => setMapEnabled(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg><span>Explore the dealer map<small>Load Google Maps</small></span><span aria-hidden="true">↗</span></button>)}
       <div className="location-list">{locations.map(location => { const directions = dealerDirectionsUrl(location.directionsUrl); return <article key={location.id} className={`location-option ${value?.kioskId === location.id ? 'selected' : ''}`}>
-        <h3>{location.name}</h3><p>{dealerAddress(location.address)}</p><p>Pickup: {schedule(location.schedule?.pickups)}<br/>Return: {schedule(location.schedule?.returns)}<br/>{location.timeZone ?? location.schedule?.timeZone}</p>
+        <DealerIdentity location={location} operational/><p>Pickup: {schedule(location.schedule?.pickups)}<br/>Return: {schedule(location.schedule?.returns)}<br/>{location.timeZone ?? location.schedule?.timeZone}</p>
         {location.nextCollection && <p>Next collection: {date(location.nextCollection, location.timeZone)}<br/>Projected return: {date(location.projectedReturn, location.timeZone)}</p>}
         {location.schedule?.exceptions?.map(exception => <p key={`${exception.date}-${exception.kind}`} className="fine">{exception.date}: {exception.kind} {exception.cancelled ? 'canceled' : exception.time}. {exception.reason}</p>)}
         <div className="location-links">{directions && <a href={directions} target="_blank" rel="noreferrer">Map & directions ↗</a>}{dealerMapUrl(location) && <button type="button" className="text-link" onClick={() => showLocation(location.id)}>Show on map</button>}</div>
         <button type="button" className="secondary" onClick={() => onChange({ intakeMethod: 'DEALER_DROP_OFF', kioskId: location.id })}>{value?.kioskId === location.id ? 'Selected' : 'Choose this kiosk'}</button>
       </article>; })}{dealerContacts.map(dealer => { const directions = dealerDirectionsUrl(dealer.directionsUrl); return <article key={dealer.id} className="location-option dealer-contact">
-        <span className="eyebrow">Authorized ATLAS Dealer</span><h3>{dealer.name}</h3><p>{dealerAddress(dealer.address)}</p>
-        <p><strong>Submission station setup in progress</strong></p><p>Contact this dealer for current arrangements. Kiosk selection will be available when station setup is complete. You can choose mail-in now.</p>
+        <DealerIdentity location={dealer}/>
+        <div className="dealer-setup-note"><p><strong>Submission station setup in progress</strong></p><p>Contact the shop for current arrangements. Choose mail-in while this station is being set up.</p></div>
         <div className="location-links"><a href={dealer.website} target="_blank" rel="noreferrer">Visit dealer website ↗</a>{directions && <a href={directions} target="_blank" rel="noreferrer">Map & directions ↗</a>}{dealerMapUrl(dealer) && <button type="button" className="text-link" onClick={() => showLocation(dealer.id)}>Show on map</button>}</div>
       </article>; })}</div>
     </>}

@@ -73,7 +73,7 @@ function explanationMatches(report, explanation) {
 }
 
 export function FinalReportReview({ preview, workspace, images, current = true, approved = false, rejectedSuggestions = 0,
-  onReadyChange, children, geometry, brandSrc = '/brand/atlas-brand.png', publication }) {
+  onReadyChange, children, geometry, brandSrc = '/brand/atlas-grading-logo.png', publication }) {
   const report = preview?.review?.report, explanation = preview?.review?.explanation;
   const available = Boolean(current && reportImagesMatch(report, workspace) && explanationMatches(report, explanation));
   return <ReportExperience report={report} explanation={explanation} available={available} images={images} approved={approved}
@@ -83,7 +83,7 @@ export function FinalReportReview({ preview, workspace, images, current = true, 
 
 /** Machine evidence is visibly provisional. No HUMAN inspection fields are
  * introduced: bitmap verification enables the explicit human decision below. */
-export function MachineReportReview({ packet, onReadyChange, children, brandSrc = '/brand/atlas-brand.png' }) {
+export function MachineReportReview({ packet, onReadyChange, children, brandSrc = '/brand/atlas-grading-logo.png' }) {
   const source = packet?.report;
   const report = useMemo(() => source ? { ...source,
     findingCounts: { total: source.findings.length, included: source.findings.length, removed: 0, unreviewed: source.findings.length },
@@ -102,7 +102,7 @@ export function MachineReportReview({ packet, onReadyChange, children, brandSrc 
 }
 
 /** Server-parsed approved projection only. No workspace, action callbacks or staff approval controls. */
-export function ApprovedReportView({ report, explanation, images, publication, geometry, brandSrc = '/brand/atlas-brand.png', children, presentation }) {
+export function ApprovedReportView({ report, explanation, images, publication, geometry, brandSrc = '/brand/atlas-grading-logo.png', children, presentation }) {
   const available = Boolean(explanationMatches(report, explanation) && Number.isSafeInteger(publication?.version)
     && publication.version > 0 && /^[a-f0-9]{64}$/.test(publication.reportHash ?? '')
     && SIDES.every(side => /^[a-f0-9]{64}$/.test(report?.inspection?.[side.toLowerCase()]?.imageSha256 ?? '')));

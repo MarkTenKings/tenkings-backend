@@ -1,5 +1,13 @@
 # Ten Kings V2 — Final Master Product and Architecture Blueprint
 
+### Owner design iteration — ATLAS submission motion and supplied logo, September 24 Pacific / September 25 UTC, 2026
+
+Mark requests the next ATLAS submission-page iteration using his annotated image: lightning should strike briefly and disappear, with both lightning and wind moving left to right; the service timelines should be about 40% shorter in height, have concise stage labels and run three times faster, with a brown parcel moving from the middle toward delivery, opening and revealing a miniature ATLAS slab. Retain readable pricing, full service videos and pause/reduced-motion behavior. Enlarge the dealer map toward a square or vertical presentation and improve authorized-dealer branding and real store imagery. Custom Google map markers and Google-sourced photos require the corresponding configured provider capability and authentic place/photo attribution; the direction does not invent an operating kiosk, dealer schedule or store photograph.
+
+The newly supplied gold fingerprint-A **ATLAS GRADING** image is the website and new-label artwork authority. Use that exact artwork, retaining the label dimensions, black reverse and human-approved report association. Preserve historical saved label plans and their exact renderer/profile identities through a new version where required; do not silently replace the artwork bound to existing jobs.
+
+Mark separately requests an Astra specialist's deep review and strongest design/copy proposal for the main landing page, including purposeful motion, actual interactive approved grade reports and a possible recent customer-card showcase. **The homepage redesign is proposal-only at this stage.** Likes, comments and offers are ideas to evaluate, not approved implementation or permission to publish customer cards. Actual public report evidence and appropriate owner/customer selection remain necessary. Submission and logo work may proceed while Mark tests the rapid grading flow; this direction changes no grading, original-photo or review policy and makes no claim of live deployment or completed acceptance.
+
 ### Owner correction — ATLAS rapid camera and customer experience, September 24, 2026
 
 This implementation request is exclusively for **ATLAS GRADING**, not the Ten Kings storefront. Mark rejects the retained manual card-name/category submission form and bland customer empty state. The customer entry should show a moving decorative ATLAS slab carousel behind a scrim and a prominent slab-shaped **GRADE YOUR CARDS** action. Continue the exact approved ATLAS artwork and black/gold identity with a bold, contemporary, mobile-first visual system.

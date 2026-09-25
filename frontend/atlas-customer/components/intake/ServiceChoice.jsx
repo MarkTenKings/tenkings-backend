@@ -16,27 +16,29 @@ function SpeedMark({ kind }) {
   const artId = useId();
   return <svg className={`service-speed-art speed-art-${kind}`} viewBox="0 0 600 150" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
     <defs>
-      <linearGradient id={`${artId}-gold`} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#fff5c9"/><stop offset=".4" stopColor="#f2c668"/><stop offset=".65" stopColor="#ba8536"/><stop offset="1" stopColor="#ffe5a0"/></linearGradient>
-      <linearGradient id={`${artId}-wind`}><stop stopColor="#d8f2ff" stopOpacity="0"/><stop offset=".28" stopColor="#b8d5e2" stopOpacity=".3"/><stop offset=".65" stopColor="#e8f8ff"/><stop offset="1" stopColor="#c4e4f2" stopOpacity="0"/></linearGradient>
+      <linearGradient id={`${artId}-wind`}><stop stopColor="#d8f2ff" stopOpacity="0"/><stop offset=".3" stopColor="#b8d5e2" stopOpacity=".24"/><stop offset=".78" stopColor="#e8f8ff"/><stop offset="1" stopColor="#c4e4f2" stopOpacity="0"/></linearGradient>
     </defs>
     {kind === 'kiosk' ? <>
-      <g className="speed-bolt bolt-main"><path fill={`url(#${artId}-gold)`} d="M449 -27 332 65 396 61 313 163 526 44 443 48 537 -27Z"/><path className="bolt-facet" d="M449 -27 332 65 416 47 313 163 441 57 443 48 537 -27"/></g>
-      <g className="lightning-arc arc-one"><path pathLength="1" d="M403 52 377 45 365 48 349 37 340 40 319 23 300 29 288 22 273 24 252 12 239 20 221 17 204 30 182 23 173 28 157 12 144 19 119 14 102 26 92 23 77 34 59 28 43 36 27 29 -20 44"/><path className="lightning-branch" pathLength="1" d="M319 23 311 10 317 4 307 -9M252 12 249 38 234 44 238 52 216 60 204 55 182 77M157 12 150 36 136 43 143 51 129 68 111 72M239 20 229 1 215 -3"/></g>
-      <g className="lightning-arc arc-two"><path pathLength="1" d="M421 62 442 69 449 64 463 80 477 76 486 92 506 89 519 107 536 103 543 115 561 109 576 122 590 116 605 131 627 124"/><path className="lightning-branch" pathLength="1" d="M486 92 481 107 490 113 487 128 500 133 495 154M536 103 548 81 542 75 560 62 558 50M449 64 456 47 450 38 461 24"/></g>
-      <g className="lightning-arc arc-three"><path pathLength="1" d="M391 89 366 99 350 92 338 108 326 106 309 121 292 112 280 116 263 105 249 120 236 116 218 132 197 125 183 138 171 133 157 145 135 138 124 152 102 144 80 161"/><path className="lightning-branch" pathLength="1" d="M350 92 335 77 321 81 309 67 295 70 284 57M263 105 257 135 244 142 249 156M197 125 188 105 176 111 160 95 149 97 137 84M124 152 112 130 102 135 91 119"/></g>
+      <g className="lightning-strike strike-one"><path className="lightning-channel" pathLength="1" d="M-12 38 28 46 45 34 72 52 91 48 112 64 135 53 153 71 181 67 196 83 225 71 247 84 262 77 290 95 319 79 339 91 358 76 381 90 399 72 426 79 442 65 469 76 496 59 519 69 541 51 566 60 587 40 617 48"/><path className="lightning-branch" pathLength="1" d="M91 48 107 29 122 34 139 15 151 19 174 -6M181 67 197 108 215 100 234 124 248 119 278 155M319 79 338 45 356 51 373 24 397 31 419 5M469 76 484 104 505 97 522 124 547 119 570 147"/></g>
+      <g className="lightning-strike strike-two"><path className="lightning-channel" pathLength="1" d="M-18 112 17 96 39 106 63 84 91 95 110 72 132 81 158 58 181 65 202 49 224 57 245 36 268 48 291 31 312 39 338 24 363 38 385 28 409 44 432 35 455 59 474 51 502 75 523 63 547 80 570 73 595 92 621 82"/><path className="lightning-branch" pathLength="1" d="M63 84 87 110 103 105 123 132 148 128 163 155M202 49 217 17 234 21 249 -8M312 39 328 67 351 62 364 89 384 82 404 113M455 59 479 34 492 42 511 12 532 20 550 -7"/></g>
+      <g className="lightning-strike strike-three"><path className="lightning-channel" pathLength="1" d="M-10 69 22 80 40 68 64 83 87 66 103 75 129 50 146 61 169 42 194 53 217 32 235 47 263 40 281 64 306 56 328 75 350 61 369 85 392 76 413 101 438 88 454 106 480 98 503 119 530 104 549 121 577 110 603 126"/><path className="lightning-branch" pathLength="1" d="M40 68 56 45 78 49 94 24 115 31 141 2M169 42 183 76 199 68 220 100 237 94 258 126M350 61 365 33 386 40 410 13 431 21 450 -4M480 98 497 66 517 76 535 51 558 57 579 26"/></g>
     </> : <>
-      <g className="wind-current wind-one" stroke={`url(#${artId}-wind)`}><path className="wind-soft" d="M-100 56C38 3 127 115 274 57S449 13 506 48 608 91 712 35"/><path d="M-100 50C41 -5 132 109 278 52S449 9 510 43 609 88 712 29"/><path d="M-95 63C50 12 129 120 278 63S451 21 508 55 610 99 717 42"/></g>
-      <g className="wind-current wind-two" stroke={`url(#${artId}-wind)`}><path className="wind-soft" d="M-110 126C27 68 121 163 298 112S426 23 392 45 407 104 484 97 592 36 710 61"/><path d="M-110 120C25 63 124 157 296 105S424 19 389 40 404 100 481 91 591 30 709 55"/><path d="M-105 133C35 80 125 170 303 118S435 30 401 51 413 111 490 104 598 43 714 67"/></g>
-      <g className="wind-current wind-three" stroke={`url(#${artId}-wind)`}><path d="M-80 18C98 71 187 -19 342 17S443 77 477 68 493 31 466 36 436 93 511 128 625 122 704 98"/><path d="M-75 24C99 79 190 -10 341 25S439 85 478 77 505 23 465 28 424 101 511 135 627 129 709 105"/></g>
+      <g className="wind-current wind-one" stroke={`url(#${artId}-wind)`}><path className="wind-soft" d="M-55 48C58 12 135 91 248 60S382 25 465 47 528 63 576 50"/><path d="M-55 43C60 6 135 85 246 54S384 19 466 41 533 56 576 45"/><path d="M-40 54C59 23 139 98 254 67S384 34 470 54 533 68 580 57"/></g>
+      <g className="wind-current wind-two" stroke={`url(#${artId}-wind)`}><path className="wind-soft" d="M-75 118C29 68 98 154 219 112S337 60 401 83 453 103 508 78"/><path d="M-75 113C29 62 100 148 217 106S338 53 403 77 454 96 508 72"/><path d="M-65 127C31 82 107 162 225 121S341 70 409 93 461 112 515 86"/></g>
+      <g className="wind-current wind-three" stroke={`url(#${artId}-wind)`}><path d="M-35 24C58 47 106 -2 195 20S273 83 336 69 395 31 465 55"/><path d="M-29 31C59 53 107 6 198 28S277 92 343 78 400 39 471 62"/></g>
     </>}
   </svg>;
 }
 function ServiceJourney({ kind }) {
-  const steps = kind === 'kiosk' ? ['Drop off at dealer', 'ATLAS collects & grades', 'Back at your dealer'] : ['Send via FedEx', 'ATLAS grades', 'Return shipment'];
+  const steps = kind === 'kiosk' ? ['Drop off', 'We grade', 'Pick up'] : ['FedEx in', 'We grade', 'Ships back'];
   return <div className={`service-timeline service-timeline-${kind}`}>
     <div className="service-timeline-track">
       <i className="service-timeline-fill" aria-hidden="true"/>
       <div className="service-timeline-heading" aria-hidden="true"><strong>{kind === 'kiosk' ? '7' : '14'} days</strong><div className="timeline-delivery"><span className="finish-caption">SERVICE SPEED</span><span className="finish-stamp"><svg viewBox="0 0 36 36" focusable="false"><path d="m7 18 7 7L30 9"/></svg><strong>Delivered</strong></span></div></div>
+      <div className="service-parcel-track" aria-hidden="true"><div className="service-parcel">
+        <div className="parcel-card"><div className="parcel-card-label"><img src="/account/brand/atlas-grading-logo.png" alt=""/></div><span className="parcel-card-window"/></div>
+        <div className="parcel-box"><i/><span/></div><i className="parcel-flap parcel-flap-left"/><i className="parcel-flap parcel-flap-right"/>
+      </div></div>
       <ol className="service-journey" aria-label={kind === 'kiosk' ? 'Kiosk service journey' : 'Mail-in service journey'}>{steps.map((step, index) => <li key={step}><span aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><strong>{step}</strong></li>)}</ol>
     </div>
   </div>;

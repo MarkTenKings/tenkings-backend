@@ -1,17 +1,20 @@
 import { renderManualLabel as renderLegacy, validateManualLabel as validateLegacy, MANUAL_LABEL_GEOMETRY } from './label-legacy.mjs';
 import { validateLabelDesign } from './label-design.mjs';
 import { LABEL_LOGO_DATA_URI } from './label-logo.mjs';
+import { LABEL_LOGO_DATA_URI as CURRENT_LOGO_DATA_URI } from './label-logo-current.mjs';
 export { MANUAL_LABEL_GEOMETRY } from './label-legacy.mjs';
 
-export const CURRENT_LABEL_LAYOUT = 'atlas-signature-v2';
+export const CURRENT_LABEL_LAYOUT = 'atlas-signature-v3';
 const fail = code => { throw new Error(code); };
 const esc = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[char]);
 const number = value => Number(value.toFixed(4));
 export function validateManualLabel(label) {
   if (label?.layoutVersion === 'atlas-noir-gold-v1') return validateLegacy(label);
-  if (label?.layoutVersion !== CURRENT_LABEL_LAYOUT) fail('MANUAL_LABEL_INVALID');
+  if (!['atlas-signature-v2', CURRENT_LABEL_LAYOUT].includes(label?.layoutVersion)) fail('MANUAL_LABEL_INVALID');
   validateLegacy({ ...label, layoutVersion: 'atlas-noir-gold-v1' });
-  validateLabelDesign(label.design); return label;
+  validateLabelDesign(label.design);
+  if (label.design.version !== (label.layoutVersion === 'atlas-signature-v2' ? 'atlas-label-design-v1' : 'atlas-label-design-v2')) fail('MANUAL_LABEL_DESIGN_INVALID');
+  return label;
 }
 const family = font => font === 'Times-Bold' ? 'Times New Roman,Times,serif' : 'Arial,Helvetica,sans-serif';
 
@@ -36,8 +39,8 @@ function fitLines(value, { maximum, minimum, tracking, font, maxLines, width, me
 
 export function renderManualLabel({ label, measureText, qr, palette = 'NOIR_GOLD' }) {
   validateManualLabel(label);
-  // Preserve saved v1 artwork and its QR; a v2 design never silently repaints
-  // an existing print intent. New labels intentionally have a plain black back.
+  // Preserve saved artwork and its QR; a new design never silently repaints
+  // an existing print intent. Signature labels have a plain black back.
   if (label.layoutVersion === 'atlas-noir-gold-v1') return renderLegacy({ label, measureText, qr, palette });
   if (palette !== 'NOIR_GOLD') fail('MANUAL_LABEL_PALETTE_INVALID');
   if (typeof measureText !== 'function') fail('MANUAL_LABEL_MEASUREMENT_REQUIRED');
@@ -59,10 +62,13 @@ export function renderManualLabel({ label, measureText, qr, palette = 'NOIR_GOLD
   const start = 7 + (39 - total) / 2, fixture = label.mode === 'LOCAL_FIXTURE';
   const title = `ATLAS ${name}, approved version ${label.approvalVersion}, grade ${label.finalGrade}${fixture ? ', example only' : ''}`;
   const svg = (content, accessibleTitle) => `<svg xmlns="http://www.w3.org/2000/svg" width="2.73in" height="0.83in" viewBox="0 0 ${g.width} ${g.height}" role="img"><title>${esc(accessibleTitle)}</title>${content}</svg>`;
+  const logo = label.layoutVersion === 'atlas-signature-v2'
+    ? `<svg x="4.5" y="9" width="35.5" height="36" viewBox="98 190 1058 866" preserveAspectRatio="xMidYMid meet"><image width="1254" height="1254" href="${LABEL_LOGO_DATA_URI}"/></svg>`
+    : `<svg x="4.5" y="9" width="35.5" height="36" viewBox="0 0 1098 984" preserveAspectRatio="xMidYMid meet"><image width="1098" height="984" href="${CURRENT_LOGO_DATA_URI}"/></svg>`;
   const front = svg(`<rect width="${g.width}" height="${g.height}" fill="#000000"/>
     <rect x=".25" y=".25" width="196.06" height="59.26" fill="none" stroke="${d.accentColor}" stroke-width=".5"/>
     <path d="M3 3H193.56M3 56.76H193.56M44 8V49M132.5 8V49" stroke="${d.accentColor}" stroke-width=".45"/>
-    <svg x="4.5" y="9" width="35.5" height="36" viewBox="98 190 1058 866" preserveAspectRatio="xMidYMid meet"><image width="1254" height="1254" href="${LABEL_LOGO_DATA_URI}"/></svg>
+    ${logo}
     <g text-anchor="middle" font-weight="700" font-family="${family(d.nameFont)}" fill="${d.nameColor}" letter-spacing="${d.nameTracking}">${fitted.lines.map((line, i) => `<text x="88.25" y="${number(start + fitted.size + i * fitted.leading)}" font-size="${fitted.size}">${esc(line)}</text>`).join('')}</g>
     ${variant ? `<g text-anchor="middle" font-weight="700" font-family="Arial,Helvetica,sans-serif" fill="${d.accentColor}" letter-spacing="${d.variantTracking}">${variant.lines.map((line, i) => `<text x="88.25" y="${number(start + fitted.lines.length * fitted.leading + 3 + variant.size + i * variant.leading)}" font-size="${variant.size}">${esc(line)}</text>`).join('')}</g>` : ''}
     <g font-family="Arial,Helvetica,sans-serif"><circle cx="149.84" cy="29.88" r="12.7559055" fill="none" stroke="${d.accentColor}" stroke-width=".4" stroke-dasharray="1.3 1.8"/>

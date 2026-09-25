@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { validateManualFinishingPlan } from '../src/manual.mjs';
 import { renderManualLabel, MANUAL_LABEL_GEOMETRY } from '../src/label.mjs';
 import { renderManualLabel as renderLegacy } from '../src/label-legacy.mjs';
-import { LABEL_LOGO_DATA_URI, LABEL_LOGO_SHA256 } from '../src/label-logo.mjs';
+import { LABEL_LOGO_DATA_URI, LABEL_LOGO_SHA256 } from '../src/label-logo-current.mjs';
+import { LEGACY_LABEL_DESIGN } from '../src/label-design.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dispatchApprovedFinishing } from '../src/dispatch.mjs';
@@ -32,11 +33,14 @@ test('label is exact-size escaped vector art and never truncates identity to fit
   label.identity.playerName = 'W'.repeat(180); assert.throws(() => renderManualLabel({ label, measureText, qr }), /REQUIRES_LAYOUT/);
 });
 test('supplied logo bytes are exact, optional base variant is absent, and old designs retain their original artwork', () => {
-  const bytes = readFileSync(new URL('../assets/atlas-grading-logo.png', import.meta.url));
+  const bytes = readFileSync(new URL('../assets/atlas-grading-logo-20260925.png', import.meta.url));
   assert.equal(createHash('sha256').update(bytes).digest('hex'), LABEL_LOGO_SHA256);
   assert.deepEqual(Buffer.from(LABEL_LOGO_DATA_URI.split(',')[1], 'base64'), bytes);
   const label = structuredClone(samplePlan().label); label.identity.parallel = 'Base';
   const current = renderManualLabel({ label, measureText }); assert.ok(current.front.includes(LABEL_LOGO_DATA_URI)); assert.doesNotMatch(current.front, />Base<\/text>/);
+  assert.match(current.front, /viewBox="0 0 1098 984" preserveAspectRatio="xMidYMid meet"><image width="1098" height="984"/);
+  const mismatched = { ...label, design: { ...LEGACY_LABEL_DESIGN } };
+  assert.throws(() => renderManualLabel({ label: mismatched, measureText }), /MANUAL_LABEL_DESIGN_INVALID/);
   label.layoutVersion = 'atlas-noir-gold-v1'; delete label.design;
   assert.deepEqual(renderManualLabel({ label, measureText, qr }), renderLegacy({ label, measureText, qr }));
   assert.match(renderManualLabel({ label, measureText, qr }).reverse, /<path/);

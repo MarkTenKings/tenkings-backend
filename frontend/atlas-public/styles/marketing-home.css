@@ -148,19 +148,20 @@
 }
 
 .atlas-homepage .atlas-glyph {
+  display: block;
   width: 64px;
-  overflow: visible;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 2;
+  height: auto;
+  aspect-ratio: 1098 / 984;
+  object-fit: contain;
 }
 
 .atlas-homepage .atlas-glyph--small {
   width: 25px;
   flex: 0 0 auto;
-  stroke-width: 2.8;
+}
+
+.atlas-homepage .wordmark .atlas-glyph {
+  width: 64px;
 }
 
 .atlas-homepage .journey-hud {
@@ -2798,7 +2799,7 @@
   border-radius: 50%;
   background:
     radial-gradient(circle at 35% 28%, rgba(255, 238, 181, 0.06), transparent 25%),
-    url('/marketing/atlas-brand.png') center / 62% auto no-repeat,
+    url('/brand/atlas-grading-logo.png') center / 62% auto no-repeat,
     repeating-radial-gradient(circle, transparent 0 27px, rgba(205, 169, 85, 0.04) 28px 29px),
     #11100c;
   box-shadow:
@@ -3150,10 +3151,11 @@
   position: absolute;
   top: 50%;
   right: 0;
-  width: min(76vw, 720px);
-  max-width: none;
+  width: min(62vw, 320px);
+  height: auto;
+  max-height: 80%;
+  object-fit: contain;
   opacity: 0.5;
-  filter: saturate(0.55) contrast(1.1);
   transform: translateY(-50%);
 }
 
@@ -3295,9 +3297,12 @@
   position: absolute;
   top: 50%;
   left: 50%;
-  color: rgba(205, 169, 85, 0.06);
-  transform: translate(-50%, -50%) scale(9);
+  width: min(80vw, 576px);
+  opacity: 0.06;
+  transform: translate(-50%, -50%);
 }
+
+.atlas-homepage .close-mark .atlas-glyph { width: 100%; }
 
 .atlas-homepage .close-inner {
   position: relative;
@@ -5083,7 +5088,7 @@
   }
 
   .atlas-homepage .wordmark .atlas-glyph {
-    width: 22px;
+    width: 58px;
   }
 
   .atlas-homepage .wordmark small {

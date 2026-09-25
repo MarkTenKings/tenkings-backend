@@ -90,7 +90,7 @@ const assets = new Map([
     ['/react.js', readFileSync(join(dirname(require.resolve('react/package.json')), 'umd/react.production.min.js'))],
     ['/react-dom.js', readFileSync(join(dirname(require.resolve('react-dom/package.json')), 'umd/react-dom.production.min.js'))],
     ['/bundle.js', Buffer.from(bundle + '\n' + fixture)], ['/style.css', Buffer.from(['customer.css', 'atlas-brand.css', 'atlas-theme.css', 'submission.css'].map(file => readFileSync(join(root, 'styles', file), 'utf8')).join('\n') + '\n' + css + '\n' + cameraCss)],
-    ['/account/brand/atlas-brand.png', readFileSync(join(root, 'public/brand/atlas-brand.png'))]
+    ['/account/brand/atlas-grading-logo.png', readFileSync(join(root, 'public/brand/atlas-grading-logo.png'))]
 ]);
 for (const file of ['original-1.woff2', 'original-2.woff2', 'original-3.woff2', 'original-4.woff2']) assets.set(`/account/brand/fonts/${file}`, readFileSync(join(root, 'public/brand/fonts', file)));
 mkdirSync(output, { recursive: true });
@@ -137,7 +137,7 @@ async function serviceLayout(width) {
         assert(label.titleRight <= label.labelRight && label.textRight + 3 < label.labelRight && label.paddingRight >= 10 && label.scrollWidth <= label.clientWidth + 1, `Italic ${label.text} has room for its final letter at ${width}px: ${JSON.stringify(label)}`);
     }
     assert.equal(layout.timelines[0].height, layout.timelines[1].height, 'Both timelines have equal height');
-    for (const timeline of layout.timelines) { assert.equal(timeline.count, 1); assert(timeline.height >= 100 && timeline.height <= 120, `Each service uses one thick compact timeline: ${JSON.stringify(timeline)}`); assert(timeline.firstInBody && timeline.stepsInsideTrack && timeline.deliveredInsideTrack && timeline.stepsFit, 'Journey and delivery fit inside the timeline immediately under the film'); assert(timeline.top >= timeline.filmBottom && timeline.top - timeline.filmBottom < 35 && timeline.metricsTop >= timeline.bottom, 'Timeline precedes pricing below the film'); }
+    for (const timeline of layout.timelines) { assert.equal(timeline.count, 1); assert(timeline.height === 67, `Each service uses one timeline reduced by forty percent: ${JSON.stringify(timeline)}`); assert(timeline.firstInBody && timeline.stepsInsideTrack && timeline.deliveredInsideTrack && timeline.stepsFit, 'Journey and delivery fit inside the timeline immediately under the film'); assert(timeline.top >= timeline.filmBottom && timeline.top - timeline.filmBottom < 35 && timeline.metricsTop >= timeline.bottom, 'Timeline precedes pricing below the film'); }
     for (const [price, speed] of layout.metrics) { assert.equal(price.size, speed.size, 'Price and speed have equal type size'); assert(price.size >= 34); assert.equal(price.font, speed.font); assert.equal(price.style, 'italic'); assert.equal(speed.style, 'italic'); }
     return { width, ...layout };
 }
@@ -147,7 +147,7 @@ async function serviceMotion() {
         const animations = [...document.querySelectorAll('.service-timeline-fill')].map(element => element.getAnimations()[0]);
         return { durations: animations.map(animation => animation.effect.getTiming().duration), startDelta: Math.abs(animations[0].startTime - animations[1].startTime) };
     });
-    assert.deepEqual(synchronization.durations, [16000,16000]); assert(synchronization.startDelta < 20, 'Both service timelines begin on the same animation clock');
+    assert(synchronization.durations.every(value => Math.abs(value - 16000 / 3) < .01), 'Both timelines play at three times the previous speed'); assert(synchronization.startDelta < 20, 'Both service timelines begin on the same animation clock');
     await page.getByRole('button',{name:'Pause motion',exact:true}).click();
     const frozen = await page.evaluate(async () => {
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -157,26 +157,34 @@ async function serviceMotion() {
     });
     assert(frozen.delta < 1 && frozen.pausedAnimations && frozen.videosPaused, 'Global pause freezes both films and all decorative motion: '+JSON.stringify(frozen));
     const headerMotion = [];
-    for (const time of [0, 1500, 3800]) {
+    for (const time of [0, 330, 520, 1800]) {
         headerMotion.push(await page.evaluate(time => {
             for (const element of document.querySelectorAll('.service-speed-art *')) for (const animation of element.getAnimations()) animation.currentTime = time;
-            return { time, elements: ['.bolt-main', '.arc-one', '.arc-one path', '.wind-one', '.wind-two'].map(selector => { const style = getComputedStyle(document.querySelector(selector)); return { selector, transform: style.transform, opacity: style.opacity, dashOffset: style.strokeDashoffset }; }) };
+            return { time, elements: ['.strike-one', '.strike-one .lightning-channel', '.strike-one .lightning-branch', '.wind-one', '.wind-two'].map(selector => { const style = getComputedStyle(document.querySelector(selector)); return { selector, transform: style.transform, opacity: style.opacity, dashOffset: style.strokeDashoffset }; }) };
         }, time));
         await shot(`00-motion-header-${time}ms`);
     }
-    for (const selector of ['.bolt-main', '.arc-one path', '.wind-one']) {
+    for (const selector of ['.strike-one', '.strike-one .lightning-channel', '.wind-one']) {
         assert(new Set(headerMotion.map(sample => JSON.stringify(sample.elements.find(element => element.selector === selector)))).size > 1, `${selector} actually changes over the animation cycle`);
     }
+    assert.equal(await page.locator('.bolt-main,.speed-bolt').count(),0,'No permanent giant lightning bolt');
+    const strikeOpacity = headerMotion.map(sample => Number(sample.elements.find(element => element.selector === '.strike-one').opacity));
+    assert(strikeOpacity[0] === 0 && strikeOpacity[1] > .5 && strikeOpacity[2] === 0 && strikeOpacity[3] === 0, 'A short strike disappears between flashes');
+    const windX = headerMotion.map(sample => Number(sample.elements.find(element => element.selector === '.wind-one').transform.split(',')[4]));
+    assert(windX.every((x,index) => index === 0 || x > windX[index-1]),'Wind flows continuously left to right');
     async function seek(time) {
         return page.evaluate(time => {
             for (const element of document.querySelectorAll('.service-timeline *')) for (const animation of element.getAnimations()) animation.currentTime = time;
             return [...document.querySelectorAll('.service-timeline')].map(timeline => ({ progress: new DOMMatrixReadOnly(getComputedStyle(timeline.querySelector('.service-timeline-fill')).transform).a, delivered: Number(getComputedStyle(timeline.querySelector('.finish-stamp')).opacity) }));
         }, time);
     }
-    const beforeSeven = await seek(6900); assert.equal(beforeSeven[0].delivered,0,'Gold cannot finish before day seven');
-    const daySeven = await seek(7000); assert.equal(daySeven[0].progress,1); assert.equal(daySeven[0].delivered,1); assert(daySeven[1].progress > .45 && daySeven[1].progress < .6); assert.equal(daySeven[1].delivered,0,'Silver must not celebrate with gold');
+    const beforeSeven = await seek(6900 / 3); assert.equal(beforeSeven[0].delivered,0,'Gold cannot finish before day seven');
+    const daySeven = await seek(7000 / 3 + 1); assert.equal(daySeven[0].progress,1); assert.equal(daySeven[0].delivered,1); assert(daySeven[1].progress > .45 && daySeven[1].progress < .6); assert.equal(daySeven[1].delivered,0,'Silver must not celebrate with gold');
     await shot('00-motion-seven-day-desktop');
-    const dayFourteen = await seek(14000); for (const service of dayFourteen) assert(service.progress === 1 && service.delivered === 1,'Both finish after the silver service reaches fourteen days');
+    const dayFourteen = await seek(14000 / 3 + 1); for (const service of dayFourteen) assert(service.progress === 1 && service.delivered === 1,'Both finish after the silver service reaches fourteen days');
+    await seek(5000);
+    const parcels = await page.evaluate(() => [...document.querySelectorAll('.service-parcel')].map(parcel => ({opacity:Number(getComputedStyle(parcel).opacity),cardOpacity:Number(getComputedStyle(parcel.querySelector('.parcel-card')).opacity),cardY:new DOMMatrixReadOnly(getComputedStyle(parcel.querySelector('.parcel-card')).transform).m42,flap:getComputedStyle(parcel.querySelector('.parcel-flap')).transform})));
+    assert(parcels.every(parcel => parcel.opacity === 1 && parcel.cardOpacity === 1 && parcel.cardY < -10 && parcel.flap !== 'none'),'Each arriving parcel opens and reveals its decorative ATLAS slab');
     await shot('00-motion-both-delivered-desktop');
     await page.setViewportSize({width:390,height:844}); await shot('00-motion-delivered-mobile');
     await page.getByRole('button',{name:'Play motion',exact:true}).click();
@@ -197,7 +205,7 @@ async function serviceMotion() {
     assert.equal(reduced.animations,0); assert.deepEqual(reduced.stamps,[1,1]); await shot('00-motion-reduced-mobile');
     await page.emulateMedia({reducedMotion:'no-preference'});
     await page.waitForFunction(() => document.querySelector('.service-choice').dataset.motion === 'running');
-    return { synchronization, frozen, headerMotion, daySeven, dayFourteen, perFilmPausePreserved:true, hidden, reduced };
+    return { synchronization, frozen, headerMotion, daySeven, dayFourteen, parcels, perFilmPausePreserved:true, hidden, reduced };
 }
 try {
     await page.goto(`${origin}/?kiosk=synthetic-entry`);

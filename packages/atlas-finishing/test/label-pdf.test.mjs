@@ -4,14 +4,18 @@ import { createHash } from 'node:crypto';
 import { createManualLabelPdfRenderer } from '../src/label-pdf.mjs';
 import { createCupsPrinter } from '../src/cups.mjs';
 import { samplePlan } from './manual-fixture.mjs';
+import { LEGACY_LABEL_DESIGN } from '../src/label-design.mjs';
+import { renderManualLabel } from '../src/label.mjs';
 const layout = { version: 'atlas-label-sheet-v1', widthPoints: 196.56, heightPoints: 59.76,
   pages: ['FRONT', 'REVERSE'].map(face => ({ placements: [{ face, x: 0, y: 0, rotation: 0 }] })) };
 const sha = value => createHash('sha256').update(value).digest('hex');
 const canonical = value => value && typeof value === 'object' ? Array.isArray(value) ? `[${value.map(canonical).join(',')}]`
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}` : JSON.stringify(value);
-function legacyPlan() {
+function legacyPlan(layoutVersion = 'atlas-noir-gold-v1') {
   const plan = structuredClone(samplePlan());
-  plan.label.layoutVersion = 'atlas-noir-gold-v1'; delete plan.label.design;
+  plan.label.layoutVersion = layoutVersion;
+  if (layoutVersion === 'atlas-noir-gold-v1') delete plan.label.design;
+  else plan.label.design = { ...LEGACY_LABEL_DESIGN };
   plan.planHash = sha(canonical({ version: plan.version, binding: plan.binding, label: plan.label }));
   plan.id = `afp_${plan.planHash}`; plan.print.intentId = `afprint_${plan.planHash}`;
   plan.print.layoutVersion = plan.label.layoutVersion; plan.nfc.intentId = `afnfc_${plan.planHash}`;
@@ -21,6 +25,18 @@ function legacyPlan() {
 // changes. These are not derived from the implementation under test.
 const legacyGold = { profile: '7002a99154a879c408d09fb68a13ea614cae9f732c4e8663a9c6ab625fdeed15',
   pdf: '8460806b9e54ea4121c2cffc9fef31387cd315c87b66505b1177ba9a84f03aac' };
+// Captured from the unchanged v2 generator before the supplied 2026-09-25 logo.
+test('saved v2 plans retain identical logo artwork, PDF bytes and render profile', async () => {
+  const plan = legacyPlan('atlas-signature-v2');
+  const render = createManualLabelPdfRenderer({ layout, layoutVersion: 'atlas-signature-v2' });
+  assert.equal(plan.planHash, '847acb2044f397af1958f68e45d9633d5d29cbabf8bcf9db8abedfd87e4d8d72');
+  assert.equal(render.profileHash, 'd868187a216e47fb08134a46eea87733cf0a2358a1d186e4b31720b8d660c2f0');
+  assert.equal(sha(renderManualLabel({ label: plan.label, measureText: (value, size) => value.length * size * .52 }).front),
+    '9577315fe6efb3b7d6b68a4ba232a0d984a56546a6eb6413f201134027193da7');
+  assert.equal((await render(plan)).sha256, '03d3f1eb84296f7e93efbabd5a36460df2a4c69117033bdcf32859477897efea');
+  await assert.rejects(render(samplePlan()), /LABEL_PDF_LAYOUT_VERSION_MISMATCH/);
+  await assert.rejects(createManualLabelPdfRenderer({ layout })(plan), /LABEL_PDF_LAYOUT_VERSION_MISMATCH/);
+});
 test('explicit v1 mode retains the original plan, PDF bytes and render profiles for both palettes', async () => {
   const plan = legacyPlan();
   assert.equal(plan.planHash, 'fb12f6f08e78d582eabeb415e7c6c9124133c15c9ba42de8d4452c19abb6cd97');
