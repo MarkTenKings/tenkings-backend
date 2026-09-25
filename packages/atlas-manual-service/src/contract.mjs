@@ -16,6 +16,38 @@ export function uuid(value) {
 }
 export function revision(value) { requireThat(Number.isSafeInteger(value) && value > 0 && value < 2147483647); return value; }
 export const digest = value => createHash('sha256').update(value).digest('hex');
+/** P2028 text may contain SQL, URLs or credentials. Only known failure kinds
+ * and bounded duration integers may cross a diagnostic boundary. This does not
+ * classify retryability or change transaction/authentication deadlines. */
+export function safeTransactionDiagnostic(error) {
+  try {
+    if (error?.code !== 'P2028') return {};
+    const categories = ['START_WAIT', 'ACTIVE_TIMEOUT', 'CLOSED', 'UNKNOWN'];
+    const duration = value => Number.isSafeInteger(value) && value >= 0 && value <= 86400000;
+    const texts = [error?.meta?.error, error.message].filter(value => typeof value === 'string' && value.length <= 8192);
+    let category;
+    for (const text of texts) {
+      if (/Unable to start a transaction in the given time\./i.test(text)) { category = 'START_WAIT'; break; }
+      if (/Transaction already closed:[^\r\n]{0,256}\bexpired transaction\b/i.test(text)) { category = 'ACTIVE_TIMEOUT'; break; }
+      if (/Transaction already closed/i.test(text)) category ??= 'CLOSED';
+    }
+    category ??= categories.includes(error.transactionFailureCategory) ? error.transactionFailureCategory : 'UNKNOWN';
+    const result = { transactionFailureCategory: category };
+    if (category === 'ACTIVE_TIMEOUT') {
+      const match = texts.map(text => /The timeout for this transaction was (\d{1,8}) ms, however (\d{1,8}) ms passed since the start of the transaction\b/i.exec(text)).find(Boolean);
+      if (match) {
+        if (duration(Number(match[1]))) result.transactionTimeoutMs = Number(match[1]);
+        if (duration(Number(match[2]))) result.transactionElapsedMs = Number(match[2]);
+      } else {
+        // A worker may already have removed the original exception text.
+        for (const key of ['transactionTimeoutMs', 'transactionElapsedMs']) {
+          if (duration(error[key])) result[key] = error[key];
+        }
+      }
+    }
+    return result;
+  } catch { return {}; } // Diagnostic getters cannot interrupt durable recovery.
+}
 const forbidden = /^(?:actor|actorId|actorKind|principal|sessionHash|authority)$/i;
 const binary = /^(?:bytes|pixels|bitmap|mask|rle|traceBitmap|traceWire|maskRle)$/i;
 

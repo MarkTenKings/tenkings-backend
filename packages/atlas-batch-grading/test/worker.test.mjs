@@ -297,3 +297,32 @@ test('stage diagnostics identify the failure without exposing exception messages
     } finally { await worker.stop(); }
   }
 });
+
+test('transaction diagnostics preserve safe timing and the existing exact-action retry even when the logger fails', async () => {
+  const f = fixture(1), observed = [], outcomes = [], actions = [];
+  f.rows[0].stage = 'ANALYZE';
+  const finish = f.repo.finish;
+  f.repo.finish = async (...args) => { outcomes.push(args[2]); return finish(...args); };
+  let failed = false;
+  const worker = createBatchWorker({ repository: f.repo, prepare: { async run(_staff, job) {
+    actions.push(job.analysisActionId);
+    if (!failed) {
+      failed = true;
+      throw Object.assign(new Error('postgresql://private-password@db/private'), { code: 'P2028', meta: {
+        error: 'Transaction already closed: A query cannot be executed on an expired transaction. The timeout for this transaction was 5000 ms, however 5278 ms passed since the start of the transaction.' } });
+    }
+    return job.stage === 'ANALYZE' ? { kind: 'CONTINUE' } : { kind: 'REVIEW', evidence: {
+      authority: 'MACHINE_PROPOSAL', sourceHash: job.sourceHash, reportHash: 'b'.repeat(64), manualRevision: 1 } };
+  } }, onError(error) { observed.push(error); throw Error('logger failed'); } });
+  try {
+    worker.wake(f.staff); await until(() => f.rows[0].state === 'REVIEW');
+    assert.equal(observed.length, 1);
+    const { location, ...safe } = JSON.parse(JSON.stringify(observed[0]));
+    assert.match(location, /^packages\/atlas-batch-grading\/src\/index\.mjs:\d+:\d+$/);
+    assert.deepEqual(safe, { code: 'P2028', stage: 'ANALYZE',
+      transactionFailureCategory: 'ACTIVE_TIMEOUT', transactionTimeoutMs: 5000, transactionElapsedMs: 5278, errorType: 'Error' });
+    assert.equal(observed[0].message, 'P2028'); assert.equal(observed[0].meta, undefined);
+    assert.deepEqual(outcomes[0], { kind: 'WAIT', retryAfterMs: 3000, evidence: { transportRetryCount: 1 } });
+    assert.equal(new Set(actions).size, 1);
+  } finally { await worker.stop(); }
+});

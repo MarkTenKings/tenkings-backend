@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildAstraDefectRequest, buildAstraBackgroundDefectRequest, restorePreparedRequest,
+  buildAstraDefectRequestAsync, buildAstraBackgroundDefectRequestAsync, restorePreparedRequestAsync,
   parseDefectProposals } from '../src/index.mjs';
 import { canonical, digest } from '../src/contract.mjs';
 import { inputFixture, withLessons, outputFixture } from './fixtures.mjs';
@@ -23,10 +24,13 @@ const goldens = [
     resultHash: 'cffa6224e241241347d65ca2a0884fe31d65c75d62a7d0fdd0c0e2dc475c6f07' },
 ];
 
-for (const golden of goldens) test(`checkpoint legacy ${golden.background ? 'V2' : 'V1'} bytes, evidence, restoration and proposals (${golden.memory ? 'reviewed' : 'empty'} memory)`, () => {
+for (const golden of goldens) test(`checkpoint legacy ${golden.background ? 'V2' : 'V1'} bytes, evidence, restoration and proposals (${golden.memory ? 'reviewed' : 'empty'} memory)`, async () => {
   const input = inputFixture();
   if (golden.memory) withLessons(input);
   const prepared = (golden.background ? buildAstraBackgroundDefectRequest : buildAstraDefectRequest)(input);
+  const asynchronous = await (golden.background ? buildAstraBackgroundDefectRequestAsync : buildAstraDefectRequestAsync)(input);
+  assert.deepEqual(asynchronous, prepared);
+  assert.deepEqual(await restorePreparedRequestAsync(asynchronous), prepared);
   assert.equal(prepared.requestHash, golden.requestHash);
   assert.equal(digest(prepared.requestText), golden.requestHash);
   assert.equal(Buffer.byteLength(prepared.requestText), golden.requestBytes);

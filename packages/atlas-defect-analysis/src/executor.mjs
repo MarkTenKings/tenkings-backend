@@ -1,6 +1,6 @@
 import { check, digest, canonical, uuid, sha } from './contract.mjs';
 import { webcrypto } from 'node:crypto';
-import { validatePreparedRequest, validateRequestEvidence, restorePreparedRequest, parseAstraResponse, normalizeUsage,
+import { validatePreparedRequest, validateRequestEvidence, restorePreparedRequestAsync, parseAstraResponse, normalizeUsage,
   LIMITS, MODEL, BACKGROUND_VERSION, BACKGROUND_POLICY } from './index.mjs';
 
 // These buffers are private snapshots made below; the exact request hashes
@@ -222,8 +222,9 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
         { cardId, sourceHash: run.requestEvidence.sourceBindingSha256 }, artifacts);
       check(manifest.requestHash === run.requestHash && digest(canonical({ ...manifest.evidence, providerBindingHash: provider.bindingHash })) === run.evidenceHash,
         'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
-      const prepared = restorePreparedRequest({ requestText: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
-        requestHash: manifest.requestHash, evidence: manifest.evidence, evidenceHash: manifest.evidenceHash });
+      const prepared = await restorePreparedRequestAsync({ requestText: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+        requestHash: manifest.requestHash, evidence: manifest.evidence, evidenceHash: manifest.evidenceHash },
+      { signal: signal && dispatchSignal ? AbortSignal.any([signal, dispatchSignal]) : signal ?? dispatchSignal });
       const replacement = run.replacesAnalysisId ? { analysisId: run.replacesAnalysisId, outcomeHash: run.replacesOutcomeHash } : null;
       return executor.run({ staff, actionId: run.actionId, prepared, expiresAt: run.expiresAt, signal, dispatchSignal, replacement, baseHash: run.baseHash });
     },
@@ -274,8 +275,8 @@ export function createAnalysisExecutor({ repository, provider, artifacts }) {
         check(manifest.requestHash === run.requestHash
           && digest(canonical({ ...manifest.evidence, providerBindingHash: provider.bindingHash })) === run.evidenceHash,
         'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
-        const prepared = restorePreparedRequest({ requestText: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
-          requestHash: manifest.requestHash, evidence: manifest.evidence, evidenceHash: manifest.evidenceHash });
+        const prepared = await restorePreparedRequestAsync({ requestText: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+          requestHash: manifest.requestHash, evidence: manifest.evidence, evidenceHash: manifest.evidenceHash }, { signal });
         const reply = await retainTerminal(response, prepared.evidence, run.requestHash);
         return { analysisId, state: 'SETTLED', outcome: reply.state };
       } catch {

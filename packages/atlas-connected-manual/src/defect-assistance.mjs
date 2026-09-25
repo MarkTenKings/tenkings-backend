@@ -3,7 +3,7 @@ import { geometryStatus } from '@atlas/manual-workspace/geometry-actions';
 import { defectBase } from '@atlas/manual-workspace/defect-actions';
 import { createDefectMemory, createDefectMemoryRepository } from '@atlas/defect-memory';
 import { authorizeManualCard } from '@atlas/defect-memory/repository';
-import { buildAstraContextBackgroundDefectRequest, INSPECTION_CONTEXT_CROP_LAYOUT } from '@atlas/defect-analysis';
+import { buildAstraContextBackgroundDefectRequestAsync, INSPECTION_CONTEXT_CROP_LAYOUT } from '@atlas/defect-analysis';
 import { createAnalysisRepository } from '@atlas/defect-analysis/repository';
 import { createAnalysisExecutor, createAnalysisResultReader } from '@atlas/defect-analysis/executor';
 import { proposalRle } from '../../atlas-manual-workflow/src/proposal-review.mjs';
@@ -223,9 +223,9 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       // This is a fresh database retrieval for every new request, after costly
       // image preparation. Pending reviewed publications refuse paid dispatch.
       const knowledge = await memory.retrieve(staff, { cardId, limit: 12 });
-      const prepared = buildAstraContextBackgroundDefectRequest({ analysisId: input.actionId, cardId, profile: state.geometry.profile,
+      const prepared = await buildAstraContextBackgroundDefectRequestAsync({ analysisId: input.actionId, cardId, profile: state.geometry.profile,
         cornerShapes: Object.fromEntries(SIDES.map(side => [side, state.defects.sides[side].cornerShape])),
-        binding, images, knowledge, lessonImages: await imageEffects.lessonImages(knowledge) });
+        binding, images, knowledge, lessonImages: await imageEffects.lessonImages(knowledge) }, { signal: dispatchSignal });
       await executor.prepareAndRun(staff, { cardId, actionId: input.actionId, prepared,
         expiresAt: new Date(Date.now() + 180000).toISOString(), baseHash, dispatchSignal,
         ...(input.replacement ? { replacement: input.replacement } : {}) });

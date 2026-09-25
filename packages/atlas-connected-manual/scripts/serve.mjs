@@ -7,6 +7,7 @@ import {createPrivateManualServer} from './private-server.mjs';
 import {createAnalysisWorker} from './analysis-worker.mjs';
 import {createManualPublicHandler} from '../src/publication-reader.mjs';
 import {createServingCustomerService} from './customer-runtime.mjs';
+import {safeTransactionDiagnostic} from '@atlas/manual-service/contract';
 
 const env=process.env,config=privateManualAccessConfig(env);
 const key=Buffer.from(env.ATLAS_MANUAL_SERVICE_KEY??'','base64');
@@ -18,6 +19,7 @@ const client=new PrismaClient({datasources:{db:{url:config.databaseUrl}},errorFo
 const auth=new DurableStaffAuth({database:new StaffDatabase(client,config),config,provider:{}});
 const runtime=createServingConnectedManual({env,auth,staffConfig:config,Client:PrismaClient,assertRequest(){throw new Error('Private signed transport required');},
   onWorkerError:error=>console.log(JSON.stringify({event:'MANUAL_BACKGROUND_RETRY',code:/^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code??'')?error.code:'MANUAL_BACKGROUND_INTERRUPTED',
+    ...safeTransactionDiagnostic(error),
     ...(['PREPARE','ANALYZE','REPORT'].includes(error?.stage)?{stage:error.stage}:{}),
     ...(['Error','TypeError','RangeError','SyntaxError','AbortError'].includes(error?.errorType)?{errorType:error.errorType}:{}),
     ...(/^packages\/atlas-[a-z-]+\/(?:src|scripts)\/[a-zA-Z0-9_./-]+\.mjs:\d+:\d+$/.test(error?.location??'')?{location:error.location}:{})}))});
