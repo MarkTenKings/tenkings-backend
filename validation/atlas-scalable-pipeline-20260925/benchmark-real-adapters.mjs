@@ -104,7 +104,10 @@ try {
     ATLAS_MANUAL_DEFECT_MEMORY_ENABLED: 'true', ATLAS_MANUAL_DEFECT_ANALYSIS_ENABLED: 'true', ATLAS_MANUAL_BATCH_ENABLED: 'true',
     ATLAS_MANUAL_NATIVE_CONCURRENCY: '2', ATLAS_MANUAL_VERIFY_CONCURRENCY: '4', ATLAS_MANUAL_BATCH_CONCURRENCY: '20', ATLAS_MANUAL_ANALYSIS_CONCURRENCY: '64' };
   runtime = createServingConnectedManual({ env, auth: connection.auth, staffConfig: fixture.config, Client: PrismaClient,
-    assertRequest() { throw new Error('No HTTP/browser entry point exists in this benchmark'); }, onWorkerError: error => errors.push({ at: new Date().toISOString(), code: safeCode(error) }) });
+    assertRequest() { throw new Error('No HTTP/browser entry point exists in this benchmark'); }, onWorkerError: error => errors.push({ at: new Date().toISOString(), code: safeCode(error),
+      ...(['PREPARE','ANALYZE','REPORT'].includes(error?.stage) ? { stage: error.stage } : {}),
+      ...(['Error','TypeError','RangeError','SyntaxError','AbortError'].includes(error?.errorType) ? { errorType: error.errorType } : {}),
+      ...(/^packages\/atlas-[a-z-]+\/(?:src|scripts)\/[a-zA-Z0-9_./-]+\.mjs:\d+:\d+$/.test(error?.location ?? '') ? { location: error.location } : {}) }) });
   const boot = await connection.auth.bootstrap(''), cookie = `${fixture.config.cookies.browser}=${boot.browserToken}`;
   const challenge = await connection.auth.send(cookie, boot.csrf, { phone: '+12025550141', requestId: randomUUID() }, 'isolated-paid-benchmark');
   const verified = await connection.auth.verify(cookie, boot.csrf, { challengeId: challenge.challengeId, code: '424242' }, 'isolated-paid-benchmark');

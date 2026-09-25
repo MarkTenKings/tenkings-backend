@@ -5,7 +5,7 @@ import { calculateSpeedsterReview } from '@atlas/grading-core/review';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
 import { SPEEDSTER_RULE_VERSION } from '@atlas/grading-core/contracts';
 import { calculateAtlasFinalGrade, ATLAS_FINAL_GRADE_POLICY } from '@atlas/grading-core/manual-report';
-import { proposalEdit } from '../../atlas-manual-workflow/src/proposal-review.mjs';
+import { proposalEdit, proposalTrace } from '../../atlas-manual-workflow/src/proposal-review.mjs';
 import { gradingIdentity } from './details.mjs';
 import { BATCH_RATE_LIMIT_RETRIES } from '@atlas/batch-grading';
 
@@ -27,10 +27,21 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
   requireThat(new Set(analysis.proposals.map(proposal => proposal.id)).size === analysis.proposals.length
     && analysis.proposals.every(proposal => SIDES.includes(proposal.side) && proposal.reviewStatus === 'UNREVIEWED'), 409, 'BATCH_ANALYSIS_STALE');
   let measured = structuredClone(state.defects);
-  const receipts = [];
+  const receipts = [], unmeasurableProposals = [];
   for (const proposal of analysis.proposals) {
     requireThat(!signal?.aborted, 409, 'BATCH_INTERRUPTED');
     const side = proposal.side, slot = measured.sides[side];
+    requireThat(Array.isArray(proposal.canonicalContour) && proposal.canonicalContour.length >= 3
+      && proposal.canonicalContour.every(point => point && Number.isFinite(point.x) && Number.isFinite(point.y)
+        && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1), 409, 'BATCH_ANALYSIS_INVALID_CONTOUR');
+    // A valid model contour can lie wholly outside a rounded physical corner,
+    // or cover less than one canonical pixel. Keep that proposal for a human;
+    // an empty clipped mask is neither a measurable finding nor a zero-area
+    // measurement. Malformed contours and other measurement errors still fail.
+    if (!proposalTrace({ proposal, cornerShape: slot.cornerShape }).some(pixel => pixel !== 0)) {
+      unmeasurableProposals.push({ ...structuredClone(proposal), reason: 'NO_IN_CARD_RASTER_PIXELS' });
+      continue;
+    }
     const trace = proposalEdit(proposal, side, slot.cornerShape);
     // ENGINE is an existing pending-work authority. No call to HUMAN-only
     // beginDefectEdit/confirmation and no humanEditedIds are manufactured.
@@ -61,7 +72,9 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
     identity: state.identity, cardProfile: state.geometry.profile, ruleVersion: SPEEDSTER_RULE_VERSION,
     grade: calculated.grade, proposedGrade: calculateAtlasFinalGrade(calculated.grade.overall.rawGrade),
     finalGradePolicy: ATLAS_FINAL_GRADE_POLICY, findings: calculated.defects,
-    limitations: analysis.limitations ?? [], measurementReceipts: receipts,
+    limitations: [...(analysis.limitations ?? []), ...(unmeasurableProposals.length
+      ? ['Some model proposals have no measurable pixels within the selected card outline. Review those proposals in the manual workspace before certification.'] : [])],
+    unmeasurableProposals, measurementReceipts: receipts,
     geometry: Object.fromEntries(SIDES.map(side => [side, { frame: state.defects.sides[side].frame,
       centeringQuad: state.geometry.sides[side].printed.quad }])),
   };

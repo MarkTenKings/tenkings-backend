@@ -10,7 +10,7 @@ import { defectBase, runDefectMeasurement } from '@atlas/manual-workspace/defect
 import { decodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
 import { measureDefectWorkspaceEdit } from '@atlas/measurement-runtime';
 const sides = ['FRONT', 'BACK'], clone = structuredClone;
-async function fixture({ count = 2, native = false } = {}) {
+async function fixture({ count = 2, native = false, unmeasurable = false } = {}) {
   const p = await publicationFixture(), staff = { id: p.actorId }, principal = { id: p.actorId, canCertify: true };
   const records = new Map(), approvals = new Map(), commits = [], lessons = [];
   const publishedLessons = new Set();
@@ -56,6 +56,9 @@ async function fixture({ count = 2, native = false } = {}) {
   const proposals = Array.from({ length: count }, (_, i) => { const x = .2 + Math.floor(i / 2) * .012;
     return { id: `proposal-${i}`, side: sides[i % 2], defectType: 'LIGHT_SCRATCH_SCUFF',
       reviewStatus: 'UNREVIEWED', canonicalContour: [{ x, y: .2 }, { x: x + .02, y: .2 }, { x: x + .02, y: .22 }, { x, y: .22 }] }; });
+  if (unmeasurable) proposals[0].canonicalContour = [
+    { x: .50001, y: .50001 }, { x: .50002, y: .50001 }, { x: .50002, y: .50002 },
+  ];
   const analysisId = randomUUID(), offer = { analysisId, resultHash: digest(canonical(proposals)), proposalIds: proposals.map(x => x.id).sort() };
   let initial;
   const workflow = createManualWorkflow({ repository, artifacts: p.artifacts, measure,
@@ -92,6 +95,15 @@ async function fixture({ count = 2, native = false } = {}) {
     loseReply(type) { lostReplyAt = type; }, mutate() { card.revision++; card.contentHash = 'f'.repeat(64); }, replace() { replaced = true; },
     deny() { principal.canCertify = false; }, tamper() { tamper = true; }, get command() { return review; }, get card() { return card; } };
 }
+test('unmeasurable machine proposals require manual review before any human action or approval intent is saved', async () => {
+  const f = await fixture({ unmeasurable: true });
+  const view = await f.review.detail(f.staff, f.job.key);
+  assert.equal(view.canCertify, false); assert.equal(view.reviewRequiredReason, 'BATCH_PROPOSAL_REVIEW_REQUIRED');
+  assert.equal(view.report.unmeasurableProposals.length, 1);
+  await assert.rejects(f.review.approve(f.staff, f.job.key, f.input), error => error.code === 'BATCH_PROPOSAL_REVIEW_REQUIRED');
+  assert.equal(f.command, null); assert.equal(f.commits.length, 0); assert.equal(f.approvals.size, 0);
+  assert.equal(f.lessons.length, 0); assert.equal(f.card.revision, 1);
+});
 test('reading exact machine evidence does not attest; one explicit human command adopts displayed traces, grades and approves', async () => {
   const f = await fixture(); const view = await f.review.detail(f.staff, f.job.key);
   assert.equal(view.report.authority, 'MACHINE_PROPOSAL'); assert.equal(f.command, null); assert.equal(f.commits.length, 0); assert.equal(f.lessons.length, 0);

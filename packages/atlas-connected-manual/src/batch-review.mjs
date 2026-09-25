@@ -66,14 +66,17 @@ export function createBatchReview({ connected, repository, artifacts }) {
       // presentation input creates neither a human report nor an attestation.
       const explanation = explainAtlasManualReport({ ...report, version: 'atlas-manual-draft-report-v2', finalGrade: report.proposedGrade });
       await repository.readReview(staff, key);
+      const reviewRequiredReason = report.unmeasurableProposals?.length ? 'BATCH_PROPOSAL_REVIEW_REQUIRED' : null;
       return { key, cardId: job.cardId, reportHash: job.evidence.reportHash, report, explanation, images,
-        canCertify, resumeAvailable: Boolean(review), approved: complete === STEPS.length };
+        canCertify: canCertify && !reviewRequiredReason, reviewRequiredReason,
+        resumeAvailable: Boolean(review), approved: complete === STEPS.length };
     },
     async approve(staff, key, input) {
       object(input, ['reportHash', 'reviewed', 'images']); object(input.images, SIDES);
       requireThat(input.reviewed === true, 400, 'BATCH_REVIEW_REQUIRED');
       const { job, report, canCertify, review } = await load(staff, key);
       requireThat(canCertify, 403, 'MANUAL_CERTIFICATION_REQUIRED');
+      requireThat(!report.unmeasurableProposals?.length, 409, 'BATCH_PROPOSAL_REVIEW_REQUIRED');
       requireThat(input.reportHash === job.evidence.reportHash && SIDES.every(side =>
         input.images[side] === report.geometry[side].frame.inspectionImageSha256), 409, 'BATCH_REVIEW_BINDING_CHANGED');
       await progress(staff, job, report);

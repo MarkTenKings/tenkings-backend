@@ -22,6 +22,7 @@ const messages = {
   BATCH_RESUME_STALE: 'This card changed. Its current progress has been refreshed.',
   BATCH_ALREADY_APPROVED: 'This report is already approved.',
   BATCH_CONTINUE_MANUAL_REVIEW: 'Continue your saved corrections in the card workspace.',
+  BATCH_PROPOSAL_REVIEW_REQUIRED: 'The report is ready. Some observations could not be measured; check them in the card workspace before approval.',
 };
 export default function BatchGrading({ staff }) {
   const router = useRouter(), session = useRef(null), current = useRef(0), mutation = useRef(false);
@@ -202,7 +203,9 @@ export default function BatchGrading({ staff }) {
           {packet?.key === focused.key ? <MachineReportReview key={packet.reportHash} packet={packet} onReadyChange={setImagesReady} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}>
             <div className={styles.reviewActions}><button disabled={busy} onClick={() => open(focused)}>Make corrections</button>
               <button className={styles.primary} onClick={approve} disabled={busy || !imagesReady || !packet.canCertify}>{busy ? 'Saving your review…' : packet.resumeAvailable ? 'Finish approval & print' : 'Approve & print next'}</button></div>
-            {!packet.canCertify && <p>A trained reviewer is required to approve this card.</p>}
+            {packet.reviewRequiredReason === 'BATCH_PROPOSAL_REVIEW_REQUIRED'
+              ? <p role="status">{messages.BATCH_PROPOSAL_REVIEW_REQUIRED}{' '}<button disabled={busy} onClick={() => open(focused)}>Review observations</button></p>
+              : !packet.canCertify && <p>A trained reviewer is required to approve this card.</p>}
           </MachineReportReview> : <div className={styles.empty}><p>{reviewError ? 'Open the current card to continue.' : 'Loading the exact grading evidence…'}</p><button onClick={() => open(focused)}>Open card workspace</button></div>}
         </section> : focused ? <section className={styles.focus} aria-label="Selected card">
           <div className={styles.focusHeader}><div><p>{focused.state === 'REVIEW' ? 'MACHINE DRAFT · HUMAN REVIEW' : status[focused.state]}</p><h2>{focused.evidence?.name || focused.label || 'Card review'}</h2></div>{focused.evidence?.proposedGrade !== undefined && <div className={styles.grade}><strong>{focused.evidence.proposedGrade}</strong><span>PROPOSED</span></div>}</div>

@@ -47,6 +47,42 @@ test('a clean machine proposal still remains uncertified and uninspected', async
   assert.equal(report.proposedGrade, 10); assert.equal(report.certification, null); assert.deepEqual(report.measurementReceipts, []);
   assert.equal(f.inputs.length, 0); assert.equal(report.findings.length, 0);
 });
+test('a proposal outside a rounded corner is retained for human review while real in-card defects are measured', async () => {
+  const f = fixture();
+  f.state.defects = structuredClone(f.state.defects);
+  f.state.defects.sides.FRONT.cornerShape = 'ROUNDED_3_18_MM';
+  const original = f.analysis.proposals[0];
+  const outside = { ...original, id: 'outside-rounded-corner', canonicalContour: [
+    { x: .987, y: .994 }, { x: .991, y: .994 }, { x: .991, y: .998 }, { x: .987, y: .998 },
+  ] };
+  const inside = { ...original, id: 'measurable-corner', canonicalContour: [
+    { x: .976, y: .978 }, { x: .981, y: .978 }, { x: .981, y: .983 }, { x: .976, y: .983 },
+  ] };
+  f.analysis.proposals.push(outside, inside);
+  const before = structuredClone({ analysis: f.analysis, state: f.state }), report = await buildMachineReport(f);
+  assert.equal(report.findings.length, 3); assert.equal(report.measurementReceipts.length, 3);
+  assert.deepEqual(report.unmeasurableProposals, [{ ...outside, reason: 'NO_IN_CARD_RASTER_PIXELS' }]);
+  assert.equal(report.measurementReceipts.some(receipt => receipt.proposalId === inside.id), true);
+  assert.equal(report.measurementReceipts.some(receipt => receipt.proposalId === outside.id), false);
+  assert.match(report.limitations.at(-1), /manual workspace before certification/);
+  assert.equal(report.certification, null); assert.deepEqual(f.analysis, before.analysis);
+  assert.deepEqual(f.state, before.state);
+});
+test('a valid subpixel contour remains unmeasurable evidence without fabricating a finding', async () => {
+  const f = fixture();
+  f.analysis.proposals = [{ ...f.analysis.proposals[0], canonicalContour: [
+    { x: .50001, y: .50001 }, { x: .50002, y: .50001 }, { x: .50002, y: .50002 },
+  ] }];
+  const report = await buildMachineReport(f);
+  assert.equal(report.findings.length, 0); assert.equal(f.inputs.length, 0);
+  assert.deepEqual(report.unmeasurableProposals, [{ ...f.analysis.proposals[0], reason: 'NO_IN_CARD_RASTER_PIXELS' }]);
+});
+for (const canonicalContour of [null, [], [{ x: 0, y: 0 }, { x: NaN, y: .2 }, { x: .2, y: .2 }],
+  [{ x: 2, y: 0 }, { x: 2, y: .2 }, { x: 2, y: .3 }]]) test('malformed contour cannot become an excluded machine proposal', async () => {
+  const f = fixture(); f.analysis.proposals[0].canonicalContour = canonicalContour;
+  await assert.rejects(buildMachineReport(f), error => error.code === 'BATCH_ANALYSIS_INVALID_CONTOUR');
+  assert.equal(f.inputs.length, 0);
+});
 test('manual findings, existing inspection and nonready analysis cannot be replaced by machine drafting', async () => {
   const f = fixture(); f.state.defects = workspace();
   await assert.rejects(buildMachineReport(f), error => error.code === 'BATCH_HUMAN_WORK_PRESENT');
