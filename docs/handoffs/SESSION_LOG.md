@@ -36966,3 +36966,10 @@ Root actual Chrome visual verification after sealedpreservationPASS: freshproduc
 - Final documentation validation passed: 16 evidence JSON files parse, all 23 release receipt hashes match external evidence, and all four local audit links resolve. Frontend 730/730, native 585/585, canonical 34/34 and signed private 3/3 checks passed, with three exact affected original replays retaining full resolution and encoded originals.
 - This closeout commit contains documentation and sanitized evidence only. It does not change the deployed application, redeploy, or push Git. Raw originals, credentials and private database snapshots remain outside the repository.
 - Owner acceptance remains pending on the original iPhone/browser profile: reload and resume saved uploads without clearing browser data, then use eligible saved-processing actions and review any geometry/identity attention items. Actual worker concurrency is two; the 50-card limit is a batch request limit. CenterCourt remains contact-only until station operations are configured; commerce, dealer and physical station operations remain disabled.
+
+
+### 2026-09-25 — Owner-requested fresh Astra Ultra lead handoff
+
+- Mark requested a new independent lead task with its own subagents while he tests on the original iPhone. Prepared `docs/atlas/handoffs/2026-09-25-FRESH-ASTRA-ULTRA-LEAD.md`, covering exact committed checkout, live deployment, fixes, preserved evidence, historical queue findings, remaining acceptance and operating configuration, and safe recovery instructions.
+- New task is to use `gpt-6-astra` with `ultra` reasoning; fresh Astra/xhigh specialists should independently cover capture recovery, grading-state diagnosis and submission/map acceptance when work is active. This is a lead transfer, not another child agent.
+- Packaging changes only documentation. The live application remains `e4a75df5`; no deployment, grading action, capture recovery, provider mutation or configuration change is part of the handoff.
