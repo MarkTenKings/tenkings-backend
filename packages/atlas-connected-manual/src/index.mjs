@@ -32,6 +32,7 @@ import { createAtlasResearchService } from './research-service.mjs';
 import { createFinishingStationRepository } from './finishing-station-repository.mjs';
 import { createFinishingStationService } from './finishing-station-service.mjs';
 import { createConnectedCardReader } from './card-reader.mjs';
+import { createMachineBatchSnapshot } from './batch-snapshot.mjs';
 
 export const DEFAULT_LIMITS = Object.freeze({
   decode:{maxInputBytes:256*1024*1024,maxPixels:52_000_000,maxRasterBytes:512*1024*1024,maxOutputBytes:256*1024*1024,timeoutMs:90000},
@@ -173,6 +174,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
       return {...extras,publication:status,presentationEnabled,marketEnabled:Boolean(marketProvider),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};
     },
     open:createConnectedCardReader({intake,details,workflow,identification,earlyGeometry,imageReadUrl}),
+    machineBatchSnapshot:createMachineBatchSnapshot({intakeRepository,workflow,details,identification}),
     async initialize(staff,cardId,input){
       requireThat(input && Object.keys(input).length===2 && /^[a-f0-9]{64}$/.test(input.sourceHash) && Number.isSafeInteger(input.detailsRevision));
       const pair=await intake.verifiedPair(staff,cardId),saved=await details.read(staff,cardId);

@@ -64,6 +64,23 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       await authorizeManualCard(tx, principal, cardId, { edit, lock: edit });
       await intakeRepository.assertActiveInTransaction(tx, cardId);
     },
+    assertMachinePending: async ({ tx, principal, cardId, run, expected }) => {
+      const card = await authorizeManualCard(tx, principal, cardId, { edit: true, lock: true });
+      requireThat(card.revision === expected.manualRevision && card.contentHash === expected.manualContentHash,
+        409, 'BATCH_MANUAL_DRAFT_CHANGED');
+      requireThat(card.draft.source?.sourceHash === expected.sourceHash && run.binding.sourceHash === expected.sourceHash,
+        409, 'BATCH_PHOTOS_CHANGED');
+      requireThat(card.revision === run.binding.manualRevision && card.contentHash === run.binding.manualContentHash
+        && card.draft.identityRevision === run.binding.identityRevision, 409, 'DEFECT_ANALYSIS_STALE');
+      let pair;
+      try { pair = await intakeRepository.assertCurrentPair(tx, principal, { cardId, sourceHash: expected.sourceHash }); }
+      catch (error) {
+        if (error?.code === 'INTAKE_PAIR_STALE') requireThat(false, 409, 'BATCH_PHOTOS_CHANGED');
+        throw error;
+      }
+      requireThat(SIDES.every(side => pair.sides[side].upload.uploadId === expected.uploads[side]),
+        409, 'BATCH_PHOTOS_CHANGED');
+    },
     assertCurrent: async ({ tx, principal, cardId, binding }) => {
       const card = await authorizeManualCard(tx, principal, cardId, { edit: true, lock: true,
         expectedContentHash: binding.manualContentHash });
@@ -245,6 +262,12 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     },
     analyzeMachine: (staff, cardId, input, { dispatchSignal } = {}) => api.analyze(staff, cardId, input, MACHINE_PREPARATION, dispatchSignal),
     status: (staff, cardId, analysisId = null) => project(staff, cardId, analysisId),
+    pendingMachineAnalysis: (staff, job) => repository ? repository.pendingMachine(staff, {
+      cardId: job.cardId, analysisId: job.analysisActionId, expected: {
+        sourceHash: job.sourceHash, uploads: { ...job.uploads },
+        manualRevision: job.evidence.manualRevision, manualContentHash: job.evidence.manualContentHash,
+      },
+    }) : Promise.resolve(false),
     async resolveProposal({ staff, card, analysisId, proposalId }) {
       requireThat(reader, 503, 'DEFECT_ANALYSIS_DISABLED'); uuid(analysisId);
       const loaded = await reader.readResult(staff, { cardId: card.cardId, analysisId });

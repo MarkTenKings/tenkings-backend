@@ -82,8 +82,10 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
 
 export function createBatchPreparation({ connected, artifacts, pythonExecutable, measurementLimits,
   measure = measureDefectWorkspaceEdit, reportBuilder = buildMachineReport }) {
-  async function current(staff, job) {
-    const value = await connected.open(staff, job.cardId, { includePreviews: false });
+  async function current(staff, job, options) {
+    const value = staff?.actorKind === 'MACHINE' && connected.machineBatchSnapshot
+      ? await connected.machineBatchSnapshot(staff, job, options)
+      : await connected.open(staff, job.cardId, { includePreviews: false });
     requireThat(value.card.ready && value.card.sourceHash === job.sourceHash
       && SIDES.every(side => value.card.sides[side].upload.uploadId === job.uploads[side]), 409, 'BATCH_PHOTOS_CHANGED');
     return value;
@@ -92,6 +94,15 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
     async run(staff, job, { signal, dispatchSignal } = {}) {
       requireThat(!signal?.aborted, 409, 'BATCH_INTERRUPTED');
       dispatchSignal?.throwIfAborted();
+      // Only an opaque machine handle can use the receipt-only wait path. The
+      // boundary reauthenticates it and checks the exact current pair/draft;
+      // terminal or unaccepted actions still use the complete existing path.
+      if (job.stage === 'ANALYZE' && staff?.actorKind === 'MACHINE'
+        && await connected.assistance?.pendingMachineAnalysis?.(staff, job)) {
+        requireThat(!signal?.aborted, 409, 'BATCH_INTERRUPTED');
+        dispatchSignal?.throwIfAborted();
+        return wait();
+      }
       let opened = await current(staff, job);
       if (job.stage === 'PREPARE') {
         if (!opened.manual) {
@@ -106,21 +117,20 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
           }
           try { gradingIdentity(opened.details); } catch { return attention('BATCH_IDENTITY_NEEDS_REVIEW'); }
           dispatchSignal?.throwIfAborted();
-          await connected.earlyGeometry.ensure(staff, job.cardId);
-          const geometry = await connected.earlyGeometry.status(staff, job.cardId);
+          const { earlyGeometry: geometry } = await connected.earlyGeometry.ensure(staff, job.cardId);
           if (SIDES.some(side => ['FAILED', 'NEEDS_REVIEW'].includes(geometry[side].state))) return attention('BATCH_GEOMETRY_NEEDS_REVIEW');
           if (!SIDES.every(side => geometry[side].state === 'READY')) return wait();
           dispatchSignal?.throwIfAborted();
           await connected.initialize(staff, job.cardId, { sourceHash: job.sourceHash, detailsRevision: opened.revision });
         }
-        const card = await connected.workflow.service.read(staff, job.cardId), state = await connected.workflow.hydrate(card);
+        const card = opened.manualCard ?? await connected.workflow.service.read(staff, job.cardId), state = await connected.workflow.hydrate(card);
         if (!state.defects || SIDES.some(side => !state.geometry.sides[side].printed || !state.geometry.sides[side].prepared)) return attention('BATCH_GEOMETRY_NEEDS_REVIEW');
         if (SIDES.some(side => state.defects.sides[side].findings.length || state.defects.sides[side].inspection)
           || state.defects.confirmation || state.assistance?.reviews.length) return attention('BATCH_HUMAN_WORK_PRESENT');
-        await current(staff, job);
+        await current(staff, job, { pairOnly: true });
         return { kind: 'CONTINUE', evidence: { manualRevision: card.revision, manualContentHash: card.contentHash } };
       }
-      const card = await connected.workflow.service.read(staff, job.cardId), state = await connected.workflow.hydrate(card);
+      const card = opened.manualCard ?? await connected.workflow.service.read(staff, job.cardId), state = await connected.workflow.hydrate(card);
       requireThat(card.revision === job.evidence.manualRevision && card.contentHash === job.evidence.manualContentHash, 409, 'BATCH_MANUAL_DRAFT_CHANGED');
       if (job.stage === 'ANALYZE') {
         dispatchSignal?.throwIfAborted();
@@ -143,7 +153,7 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
       requireThat(job.stage === 'REPORT', 400, 'BATCH_STAGE_INVALID');
       const response = await connected.assistance.status(staff, job.cardId, job.analysisActionId);
       const report = await reportBuilder({ card, state, analysis: response.astra, measure, pythonExecutable, measurementLimits, signal });
-      await current(staff, job);
+      await current(staff, job, { pairOnly: true });
       const latest = await connected.workflow.service.read(staff, job.cardId);
       requireThat(latest.contentHash === card.contentHash && latest.revision === card.revision, 409, 'BATCH_MANUAL_DRAFT_CHANGED');
       const reportHash = digest(JSON.stringify(report));
