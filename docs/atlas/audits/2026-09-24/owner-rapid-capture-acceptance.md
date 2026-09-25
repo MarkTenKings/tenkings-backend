@@ -1,6 +1,8 @@
 # ATLAS owner acceptance after release
 
-Use the same approved iPhone/browser from the September24 test, refresh and sign in again. Keep site data intact. Saved uploads resume automatically after sign-in. If failures remain in staff intake, choose **Resume saved uploads**; record how many of the nine existing cards reach Grading/Review and the exact message on failures. Expand **Upload diagnostics** to reveal **Download upload diagnostics** if needed. The decoder correction was verified against the one uploaded pair; the eight pre-upload failures still need phone evidence. Do not start replacement cards merely to hide those failures.
+Use the same approved iPhone/browser as the September24 test, refresh and sign in again. Keep site data intact. The latest screenshots showed **2 queued and 10 saved for upload**. The new web release preserves exact photo bytes and saved operation IDs, and saved uploads resume automatically after sign-in. If failures remain, choose **Resume saved uploads**; record the saved/queued counts and exact error. Expand **Upload diagnostics**, then **Download upload diagnostics** if needed. Do not create replacement cards to hide a retained failure. Recovery of this actual iPhone queue is still unverified.
+
+The two uploaded cards completed identification and need ordinary **Check edges** review before analysis. Physical edges were found on all four sides; printed borders need review on the first card’s Back and both sides of the second. Review/correct those borders through the normal workflow. No automatic approval or grading retry was performed during deployment.
 
 The checks below remain separate customer-flow acceptance.
 

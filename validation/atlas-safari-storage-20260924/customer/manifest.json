@@ -1,0 +1,26 @@
+{
+  "status": "SAFE_ACCEPTANCE_RECEIPTS_READY",
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "at": "2026-09-25T00:37:01.937364+00:00",
+  "files": [
+    {
+      "name": "signed-private-tls.json",
+      "sha256": "a79f41d79d511e021ca4cffc8118f45ff25801e0d34d185500e4f1876619f3a6"
+    },
+    {
+      "name": "canonical-readonly.json",
+      "sha256": "cb2064e9e8cecb10f6be5df2d6efce598e694d70c92924f4cc3222295a704797"
+    },
+    {
+      "name": "independent-runtime-review.json",
+      "sha256": "b658825e5fd2500a1a4c7f105ea20e3b92389f1e56c1bab47c5d61dbead1e2c5"
+    },
+    {
+      "name": "bootstrap-classification.json",
+      "sha256": "73e6e821c106d3564c807b705e2542770faff5144d667e00c2f10f982faeee60"
+    }
+  ],
+  "privacy": "Only source/binding identity, status, counts, hashes and approved response headers; no response bodies, cookies, auth tokens, customer addresses or credential values.",
+  "limits": "Signed no-session reads and canonical GET delivery checks do not establish real customer login, original iPhone recovery, grading completion, payment, or human capture throughput.",
+  "postPromotionRetention": "Original strict hold preserved; separately classified one browser bootstrap and two same-transaction rate updates; all30 grading tables,17 other customer tables and previous27 browser rows preserved."
+}

@@ -1,0 +1,55 @@
+{
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "acac0a115ef82e18f8358b33cfdf93981f6a98bae8c46a7b843a128dd805bcc2",
+      "bytes": 2031
+    },
+    {
+      "path": "auth-refresh.json",
+      "sha256": "17737d2ff774a0808dc698f915d98196ce1c1c10791e7061b9ebf1f1498833a4",
+      "bytes": 283
+    },
+    {
+      "path": "cli-qualification.json",
+      "sha256": "9c8c8ca0cf72c64b974d31ff80693cb0a16680a1e1f2bb50c354277a9cbb524e",
+      "bytes": 1375
+    },
+    {
+      "path": "fixture-cleanup.json",
+      "sha256": "1110fecae30d0521312e89df505b2068ea44b3ef77e71cf25836ae23f510f791",
+      "bytes": 261
+    },
+    {
+      "path": "native-source.json",
+      "sha256": "93dc95dbdf648205160da67773036577f0c34d1f2e76eecddc432bffa815ec68",
+      "bytes": 3831
+    },
+    {
+      "path": "public-binding.json",
+      "sha256": "8e4cf85382d79df1475292c793a50eb9962e7d80711e91f5b17e4ce8497f555e",
+      "bytes": 1672
+    },
+    {
+      "path": "public-promotion.json",
+      "sha256": "776377ea070db7fd0c6e008d570d16326ba1094e658290c5a662705422aee10f",
+      "bytes": 2217
+    },
+    {
+      "path": "public-upstreams.json",
+      "sha256": "16489f6c6bd898bcb8f60567e8853335a4fe7e924917fd31c2569b6b6f7da226",
+      "bytes": 643
+    },
+    {
+      "path": "qualification.json",
+      "sha256": "055b5ffa5663b1e2e4c2800ed58dbb82fab23ddee1664f562c95712fb58098dd",
+      "bytes": 2473
+    },
+    {
+      "path": "ready-deployments.json",
+      "sha256": "8576e4c15e8eb59def635b5eba6c0ab2585b1afc6362d983c0862b7f0cc5e016",
+      "bytes": 1609
+    }
+  ]
+}

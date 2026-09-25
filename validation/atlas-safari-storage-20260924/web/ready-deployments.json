@@ -1,0 +1,44 @@
+{
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "deployments": {
+    "staff": {
+      "id": "dpl_CUiKoRoGnUpuL55JgN8jCCHxe2hj",
+      "hostname": "atlas-grading-staff-oofhfmmkf-ten-kings.vercel.app",
+      "readyState": "READY",
+      "target": "production",
+      "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+      "createdAt": 1790295745033,
+      "readyAt": 1790295799717,
+      "evidence": {
+        "protectedReceipt": "staff-ready-fa966112.json",
+        "sha256": "243cd6fa6abe877dec958cdb903335eaa4329ba0250cc277bcfbbe1b9cd6528a"
+      }
+    },
+    "customer": {
+      "id": "dpl_3RxtdAqTJezPdjAy6a9aPTPL2rTU",
+      "hostname": "atlas-grading-customer-das9lbnzu-ten-kings.vercel.app",
+      "readyState": "READY",
+      "target": "production",
+      "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+      "createdAt": 1790295774144,
+      "readyAt": 1790295813238,
+      "evidence": {
+        "protectedReceipt": "customer-ready-fa966112.json",
+        "sha256": "31c01fa45001bef18beb1ff9f7dc84605cbf8c728cbe7a7e71ad7de1c6876375"
+      }
+    },
+    "public": {
+      "id": "dpl_HLcZruoqx1ygwngp9Xef9739s6uu",
+      "hostname": "atlas-grading-public-60q6slkai-ten-kings.vercel.app",
+      "readyState": "READY",
+      "target": "production",
+      "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+      "createdAt": 1790296087109,
+      "readyAt": 1790296128781,
+      "evidence": {
+        "protectedReceipt": "public-ready-fa966112.json",
+        "sha256": "3368cd949ebd58769ddc2150dfb0c4fc92f3ee60151272701df84af72a0ddada"
+      }
+    }
+  }
+}

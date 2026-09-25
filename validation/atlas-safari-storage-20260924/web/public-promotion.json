@@ -1,0 +1,57 @@
+{
+  "status": "PUBLIC_PROMOTION_READBACK_PASS",
+  "at": "2026-09-25T00:35:39.487Z",
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "deploymentId": "dpl_HLcZruoqx1ygwngp9Xef9739s6uu",
+  "providerWrites": 1,
+  "upstreams": {
+    "staff": {
+      "deploymentId": "dpl_CUiKoRoGnUpuL55JgN8jCCHxe2hj",
+      "hostname": "atlas-grading-staff-oofhfmmkf-ten-kings.vercel.app"
+    },
+    "customer": {
+      "deploymentId": "dpl_3RxtdAqTJezPdjAy6a9aPTPL2rTU",
+      "hostname": "atlas-grading-customer-das9lbnzu-ten-kings.vercel.app"
+    }
+  },
+  "production": {
+    "id": "dpl_HLcZruoqx1ygwngp9Xef9739s6uu",
+    "url": "atlas-grading-public-60q6slkai-ten-kings.vercel.app",
+    "readyState": "READY",
+    "target": "production"
+  },
+  "aliases": [
+    {
+      "uid": "4b02ff29ecfcd5e0991c0e4646194d371b2685ea98d8ead32374c81595f1e12e550743965d1ad662e7558bf4bebd229017002d38c085a5aff3aeed9f71b4a04c",
+      "alias": "atlas-grading-public-ten-kings.vercel.app",
+      "redirect": null,
+      "redirectStatusCode": null,
+      "deploymentId": "dpl_HLcZruoqx1ygwngp9Xef9739s6uu"
+    },
+    {
+      "uid": "59a50240ec38a8fff3e589d80ccfb321a8ca68ad42b8dd12bce497d1de622a7010b87db18e69a2f016e6cb413a749c01b3be08867f7ef472c58ef2b30cee64a2",
+      "alias": "atlas-grading-public.vercel.app",
+      "redirect": null,
+      "redirectStatusCode": null,
+      "deploymentId": "dpl_HLcZruoqx1ygwngp9Xef9739s6uu"
+    },
+    {
+      "uid": "a3e80ee4f732fe19355bf2f970f1173ac2055489be4a82ddb74c7437d14e7d0baee21a90798c6e6bfdd8521d851cebb24cc988e0265952195db9fdb2e53942c0",
+      "alias": "atlasgrading.com",
+      "redirect": null,
+      "redirectStatusCode": null,
+      "deploymentId": "dpl_HLcZruoqx1ygwngp9Xef9739s6uu"
+    },
+    {
+      "uid": "cffc54527b74dcd02e1c676e9080737d670e9bf19a5d0a957a8046371aa4014f06fba980ed43ebc23185be7a8b3bacdaf7a62144a537210f87b89b0becbf8451",
+      "alias": "www.atlasgrading.com",
+      "redirect": "atlasgrading.com",
+      "redirectStatusCode": 308,
+      "deploymentId": "dpl_HLcZruoqx1ygwngp9Xef9739s6uu"
+    }
+  ],
+  "evidence": {
+    "protectedReceipt": "public-promotion-fa966112/result.json",
+    "sha256": "14cdcca345a7f6285fb7d8d714de1b34f5cfd0872ee33296c804b2c11445e538"
+  }
+}

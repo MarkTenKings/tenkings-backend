@@ -1,0 +1,53 @@
+{
+  "status": "ALL_THREE_DRY_PREFLIGHT_PASS",
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "providerWrites": 0,
+  "checks": [
+    {
+      "zone": "staff",
+      "mode": "dry",
+      "status": "READONLY_CLI_DRY_VERIFIED",
+      "sourceUnchanged": true,
+      "providerWriteAttempted": false
+    },
+    {
+      "zone": "staff",
+      "mode": "preflight",
+      "status": "READONLY_CLI_PAYLOAD_VERIFIED",
+      "sourceUnchanged": true,
+      "providerWriteAttempted": false
+    },
+    {
+      "zone": "customer",
+      "mode": "dry",
+      "status": "READONLY_CLI_DRY_VERIFIED",
+      "sourceUnchanged": true,
+      "providerWriteAttempted": false
+    },
+    {
+      "zone": "customer",
+      "mode": "preflight",
+      "status": "READONLY_CLI_PAYLOAD_VERIFIED",
+      "sourceUnchanged": true,
+      "providerWriteAttempted": false
+    },
+    {
+      "zone": "public",
+      "mode": "dry",
+      "status": "READONLY_CLI_DRY_VERIFIED",
+      "sourceUnchanged": true,
+      "providerWriteAttempted": false
+    },
+    {
+      "zone": "public",
+      "mode": "preflight",
+      "status": "READONLY_CLI_PAYLOAD_VERIFIED",
+      "sourceUnchanged": true,
+      "providerWriteAttempted": false
+    }
+  ],
+  "evidence": {
+    "protectedReceipt": "cli-qualification-fa966112.json",
+    "sha256": "09880a8cb078e1d509d05268e2d20be055991a570fb0df2aa86673fa35e3e3e4"
+  }
+}

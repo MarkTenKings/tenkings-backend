@@ -1,0 +1,116 @@
+{
+  "status": "POST_PROMOTION_CUSTOMER_BOOTSTRAP_CLASSIFIED",
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "observedAt": "2026-09-25T00:42:11.023583+00:00",
+  "strictGuardResult": {
+    "status": "HELD_READONLY_DIFFERENCE",
+    "reason": "CUSTOMER_PHYSICAL_HISTORY_CHANGED:atlas_customer.CustomerBrowser",
+    "preservedWithoutModification": true
+  },
+  "snapshots": {
+    "beforeAt": "2026-09-25T00:33:03.440163+00:00",
+    "afterAt": "2026-09-25T00:36:23.502962+00:00",
+    "beforeSha256": "a8320174ffe19feb7c85759edd1322e423d83a61afb36d720eca5fd474eafe12",
+    "afterSha256": "770db5b22548bbffe6835bd464a07a2b44335b0659837b75dca26ca70466d0b7"
+  },
+  "actualDifferences": [
+    {
+      "table": "atlas_customer.CustomerBrowser",
+      "beforeCount": 27,
+      "afterCount": 28,
+      "classification": "normal customer browser bootstrap activity"
+    },
+    {
+      "table": "atlas_customer.CustomerControl",
+      "beforeCount": 1,
+      "afterCount": 1,
+      "classification": "authorized control binding change"
+    },
+    {
+      "table": "atlas_customer.CustomerRateBucket",
+      "beforeCount": 13,
+      "afterCount": 13,
+      "classification": "normal customer browser bootstrap activity"
+    },
+    {
+      "table": "atlas_customer.CustomerServiceControl",
+      "beforeCount": 1,
+      "afterCount": 1,
+      "classification": "authorized control binding change"
+    }
+  ],
+  "preservation": {
+    "gradingTablesUnchanged": 30,
+    "otherCustomerTablesLogicalAndPhysicalUnchanged": 17,
+    "schemaDifferences": [
+      "at",
+      "controls"
+    ],
+    "previousBrowserRows": {
+      "count": 27,
+      "sha256": "1db13cbcdb71e3a32121ef2e68f498092eb4e65bf5c9730654e685a66711486d",
+      "physicalSha256": "1420cbd2cf410dfb5763410ad9f3762fb6594bf2a06a5e7945528a92232dee51"
+    },
+    "previousBrowserRowsExactlyPreserved": true,
+    "noAccountSessionChallengeCardIntakeIdentificationOrderPaymentRowChanges": true
+  },
+  "bootstrapEvidence": {
+    "newBrowserCount": 1,
+    "newBrowserMetadata": [
+      {
+        "createdAt": "2026-09-25T00:36:05.521451+00:00",
+        "expiresAt": "2026-10-02T00:36:05.521451+00:00",
+        "controlRevision": 10
+      }
+    ],
+    "newBrowserTransactionCount": 1,
+    "rateRowsInSameTransaction": [
+      {
+        "kind": "browser-client",
+        "count": 1,
+        "expiresAt": "2026-09-25T00:51:05.525508+00:00"
+      },
+      {
+        "kind": "browser-global",
+        "count": 1,
+        "expiresAt": "2026-09-25T00:51:05.524155+00:00"
+      }
+    ],
+    "rateTableBeforeCount": 13,
+    "rateTableAfterCount": 13,
+    "browserAndRateFingerprintsStableSinceAfterSnapshot": true,
+    "metadataReceiptSha256": "77d053d253ca36bab5bc1ee53727f94822e26cb9286aea3004aa6b0e06bff551"
+  },
+  "sourceChain": [
+    {
+      "file": "frontend/atlas-customer/components/AccountWorkspace.jsx",
+      "line": 82,
+      "behavior": "Mount calls GET /session, including an anonymous service-comparison page."
+    },
+    {
+      "file": "frontend/atlas-customer/lib/server/http.mjs",
+      "line": 39,
+      "behavior": "Session GET calls auth.bootstrap and sets the browser cookie."
+    },
+    {
+      "file": "frontend/atlas-customer/lib/server/auth.mjs",
+      "line": 17,
+      "behavior": "Bootstrap sends existing and new browser hashes to the database."
+    },
+    {
+      "file": "frontend/atlas-app/prisma/migrations/20260909020000_customer_accounts/migration.sql",
+      "line": 258,
+      "behavior": "Missing/expired/prior-revision browser causes browser-global and browser-client rate operations and one new browser insertion; no account/session/card/order insertion."
+    }
+  ],
+  "classification": "The single revision10 browser row and its two same-transaction browser rate rows match the implemented bootstrap path and the root-reported live Chrome reload at this time. The prior27 browser rows are exactly preserved. This is not an unqualified zero-write UI observation or an unchanged-all-customer-history result.",
+  "attributionLimit": "No raw browser identifier, client hash, cookie, token or actor identity was queried or returned; timing and code-path evidence identify the operation, not a uniquely authenticated person.",
+  "readOnlyInvestigation": {
+    "tls": true,
+    "transactionReadOnly": true,
+    "databaseWrites": 0,
+    "runtimeUnchanged": true,
+    "noFurtherLiveQueries": true
+  },
+  "privacy": "Only aggregate fingerprints, counts, approved timestamps/revision and rate-kind labels; no IDs/tokens/customer addresses/credential values."
+}

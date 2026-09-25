@@ -1,0 +1,45 @@
+{
+  "at": "2026-09-25T00:33:48.615661+00:00",
+  "automaticRetry": false,
+  "bindings": {
+    "customer": {
+      "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563",
+      "deploymentId": "atlas-grading-customer-das9lbnzu-ten-kings.vercel.app",
+      "mode": "PRODUCTION",
+      "origin": "https://atlasgrading.com",
+      "releaseSha": "fa966112bd5028fbed61f086c15ad3a72f4fc16d"
+    },
+    "public": {
+      "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8",
+      "deploymentId": "atlas-grading-public-60q6slkai-ten-kings.vercel.app",
+      "mode": "PRODUCTION",
+      "origin": "https://atlasgrading.com",
+      "releaseSha": "fa966112bd5028fbed61f086c15ad3a72f4fc16d"
+    },
+    "staff": {
+      "configHash": "798aa04d62094e051df28f036a123e2892e16cd2191862a3c7ae962b792214ee",
+      "deploymentId": "atlas-grading-staff-oofhfmmkf-ten-kings.vercel.app",
+      "mode": "PRODUCTION",
+      "origin": "https://atlasgrading.com",
+      "releaseSha": "fa966112bd5028fbed61f086c15ad3a72f4fc16d"
+    }
+  },
+  "caddyUnchanged": true,
+  "commerceEnabled": false,
+  "containerId": "780b01eb99076d3ede3084a07ced5b3071f5cc07880a25aaf0707cfeeab2acdd",
+  "customerRevision": 10,
+  "customerServiceEnabled": true,
+  "customerSmsRevision": 8,
+  "customerTables": 21,
+  "databaseWrites": 0,
+  "historyTables": 30,
+  "identificationEnabled": true,
+  "imageId": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "providerEffects": 0,
+  "publicRevision": 8,
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "staffRevision": 30,
+  "staffSmsRevision": 28,
+  "status": "FOLLOWUP_PRESERVATION_PASS"
+}

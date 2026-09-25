@@ -1,0 +1,82 @@
+{
+  "status": "PRIVATE_SOURCE_UNCHANGED",
+  "webSourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "imageId": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+  "changedPrivateFiles": [],
+  "sameCommitClaim": false,
+  "qualifiedManifestSha256": "e4b1ea898f384a7b10f9d4c4a1badd4e3631fde9a3162433aaf6f853987b9f2e",
+  "qualifiedPackagedFiles": 890,
+  "unchangedPackagedFiles": 881,
+  "unchangedManifestSha256": "eeaf0f70048257513525d423c41fb148a881c841c8d259846edf3b1aaa73d427",
+  "changedUnusedPackagedFiles": [
+    {
+      "path": "frontend/atlas-app/components/BatchImport.jsx",
+      "retainedSha256": "9555df9b1f57561f936bdecb67ce02b3804a57a557b0cb85dc8eccc02a2992d1",
+      "webSha256": "34187efcfe446b067269deaf5ad666a4c26acd01e6735881f9622df6bd1cae39"
+    },
+    {
+      "path": "frontend/atlas-app/lib/batch-import.mjs",
+      "retainedSha256": "9b93493dc0dce8a2d397970b1eae44c00b81fbbe40b2a0bf301b0fd693bb9f3a",
+      "webSha256": "09702cece98a8058a5c7ad0b0f7b2149050f37bccb4f0f5b939d8b64d20f92cc"
+    },
+    {
+      "path": "frontend/atlas-app/scripts/batch-rapid-browser.mjs",
+      "retainedSha256": "a84cb8984116ecd22cf58eb708a16dfe83dd6fa44c6ee1f24181c556e9325de1",
+      "webSha256": "4cd79e02ac782f75eeca3368daf27037c9ea68f60d677cdfd7afe4b3b78a2097"
+    },
+    {
+      "path": "frontend/atlas-app/scripts/batch-upload-browser.mjs",
+      "retainedSha256": "a9448b0c35e81c7d28b41ab68c3e9e17176856eab4d192473c0b894d2ac4cf3f",
+      "webSha256": "9009212ef2bec91313e8f490c15e723ff4304f95aafb8b9310334032a95150ad"
+    },
+    {
+      "path": "frontend/atlas-app/scripts/check-boundary.mjs",
+      "retainedSha256": "e45c0111b65c2133ef3358d2554dc9ffc5d28a43a6465d20441b2416e3b2d4ed",
+      "webSha256": "35b08c3192a4713c76346ee8e106d1cd4ccfd9ed05fed2ef520322181b25c2c7"
+    },
+    {
+      "path": "frontend/atlas-app/test/batch-intake-ui.test.mjs",
+      "retainedSha256": "b968fe75fcc1867cebb40cfe9cb7a38579bc6a60c7dda846ce758105225ab941",
+      "webSha256": "2c68af053981af7086497e645906c02afb79459a42fee7e260ceb3325e3f9a7a"
+    },
+    {
+      "path": "frontend/atlas-shared/RapidCardCamera.jsx",
+      "retainedSha256": "5952d3126eb872123fd823163798709f3746fffec8be6a1c482b29db7e5fc68e",
+      "webSha256": "eb8c8cd60bd604a6a19de92417315639f4937be2b456d2603665ef7d5919e310"
+    },
+    {
+      "path": "frontend/atlas-shared/RapidCardCamera.module.css",
+      "retainedSha256": "4347897ff6348296804b655f784162e6e7e135c626235238452ca501144f0671",
+      "webSha256": "5e343914034521dad09a0e16ba741e651326107432ef18243106e3456b366344"
+    },
+    {
+      "path": "packages/atlas-manual-intake/src/client.mjs",
+      "retainedSha256": "bcec332b44261b17d242d6b3d57d7d38e324bf125b89869d34891da32c38b6e6",
+      "webSha256": "daa1d573ed66078bef86b8d8a7f4a97694de0de3611d61f44ac40fc6df7d4666"
+    }
+  ],
+  "reviewedRuntimeTreeDeltas": [
+    {
+      "path": "packages/atlas-manual-intake/src/client.mjs",
+      "webSha256": "daa1d573ed66078bef86b8d8a7f4a97694de0de3611d61f44ac40fc6df7d4666",
+      "kind": "UNREACHABLE_BROWSER_SOURCE"
+    },
+    {
+      "path": "packages/atlas-manual-intake/src/photo-bytes.mjs",
+      "webSha256": "e5a8d966eded4710f117da9f2048896981440c224749a6ae78a6e91c71c49ec2",
+      "kind": "UNREACHABLE_BROWSER_SOURCE"
+    },
+    {
+      "path": "packages/atlas-manual-intake/test/photo-bytes.test.mjs",
+      "webSha256": "95cf6ddf7b23540ffb99d5ba6cdc8c15ddc2d16ee070ffd813206d0f38973af2",
+      "kind": "TEST_ONLY"
+    }
+  ],
+  "unchangedTransitiveServingModules": 159,
+  "entry": "packages/atlas-connected-manual/scripts/serve.mjs",
+  "evidence": {
+    "protectedReceipt": "private-source-proof-fa966112.json",
+    "sha256": "2ad2539fd07da292e1a50cb6b7190d4e094a1ae3f01a9e55c662edca2b6534c2"
+  }
+}

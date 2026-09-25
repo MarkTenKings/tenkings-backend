@@ -1,0 +1,48 @@
+{
+  "status": "INDEPENDENT_RUNTIME_SOURCE_REVIEW_PASS",
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "reviewedAt": "2026-09-25T00:20:45.553407+00:00",
+  "retainedImage": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+  "oldContainerId": "49bd38bf10b3a9f81bb14c902272b846133300f5c300f51b86b941d82d46b71d",
+  "checks": {
+    "currentIdentityAndEnvironmentGuards": true,
+    "exactRetainedPrivateCompatibilityRequired": true,
+    "sixAtomicFullRowCasUpdates": true,
+    "expectedRevisions": {
+      "staff": 30,
+      "staffSms": 28,
+      "public": 8,
+      "customer": 10,
+      "customerSms": 8
+    },
+    "serviceUpdate": "binding and updatedAt only",
+    "environmentChanges": [
+      "ATLAS_MANUAL_WEB_DEPLOYMENT",
+      "ATLAS_MANUAL_WEB_RELEASE_SHA",
+      "ATLAS_CUSTOMER_SERVICE_BINDING_JSON"
+    ],
+    "hiddenPolicyHashesPreserved": true,
+    "schema52Public112AndHistoryGuards": true,
+    "containerIsolationAndCaddyGuards": true,
+    "snapshotSingleReplacementGuards": true,
+    "noAutomaticRetryOrIntentReuse": true,
+    "syntheticUnsafeIsolationDeltasRejected": 14,
+    "exactEnvironmentParserTest": true
+  },
+  "helperSha256": {
+    "common.py": "2dafa11a212228b6178b5120b992079a9e07d89b8e0159af22c3814f46828dc2",
+    "derive.py": "2f22f5316df393613e2e555103f95e676146f43361d0f8140618694c81c51fc4",
+    "constructor.py": "4e143f0c457977ffa84d3cea4acead2e02647bdf4155d559a63c2dfe20fdf163",
+    "constructor-check.mjs": "d5d3f1195ef83a2dd3e876af44d36a765972d59ad9edd1c29fe3985c6c8955bd",
+    "prepare-controls.mjs": "0487eacbbe4e0cd1bfcd35db642a9d5b51d05d0cdaa7719b5ee3805532d2c5ba",
+    "host-controls.py": "76ab29ec84e7e3d0ac0b38a9ef673f92c20482d5f8030e6540c6aefb622512b3",
+    "private-rebind.py": "733c4f15a96f832fb8c2bc5c3310b60bd85dc3d1f309ee2be5b7b38db0824d58",
+    "post-cutover-readonly.py": "4594d38a6c57bb51869b47e38531d7c5fe9d15718f650457b9062b63bfec9806",
+    "read-customer-baseline.py": "310c3abf956d59ac19825c473cc3add8956d9a2263a3f6b9379bd9d3dae08b57",
+    "schema-readonly.sql": "8d19480663ed49f798fca066b9021d6e18721b96b51c791979a9bbb3fc050bb8",
+    "controls-readonly.sql": "a8bdd8a22e50cf4299ab715d4e9f175be9060d7206d96a5a719bac43292ca015"
+  },
+  "scope": "Independent local source review and synthetic guard checks only. Actual cutover and retention remain separate evidence. No runtime/network/DB actions by this review.",
+  "finalSourceRebind": "Only exact SOURCE constant changed in common.py and prepare-controls.mjs after prior reviewed freeze; all other helper bytes unchanged."
+}

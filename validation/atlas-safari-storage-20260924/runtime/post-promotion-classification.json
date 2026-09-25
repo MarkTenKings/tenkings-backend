@@ -1,0 +1,55 @@
+{
+  "status": "PRESERVATION_CONFIRMED_WITH_BROWSER_BOOTSTRAP",
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "imageId": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+  "containerId": "780b01eb99076d3ede3084a07ced5b3071f5cc07880a25aaf0707cfeeab2acdd",
+  "strictGuardResult": {
+    "status": "HELD_READONLY_DIFFERENCE",
+    "reason": "CUSTOMER_PHYSICAL_HISTORY_CHANGED:atlas_customer.CustomerBrowser",
+    "preservedWithoutModification": true
+  },
+  "gradingTablesPhysicallyUnchanged": 30,
+  "otherCustomerTablesPhysicallyUnchanged": 17,
+  "previousBrowserRowsPhysicallyUnchanged": 27,
+  "normalBrowserActivity": {
+    "newBrowserCount": 1,
+    "newBrowserMetadata": [
+      {
+        "createdAt": "2026-09-25T00:36:05.521451+00:00",
+        "expiresAt": "2026-10-02T00:36:05.521451+00:00",
+        "controlRevision": 10
+      }
+    ],
+    "newBrowserTransactionCount": 1,
+    "rateRowsInSameTransaction": [
+      {
+        "kind": "browser-client",
+        "count": 1,
+        "expiresAt": "2026-09-25T00:51:05.525508+00:00"
+      },
+      {
+        "kind": "browser-global",
+        "count": 1,
+        "expiresAt": "2026-09-25T00:51:05.524155+00:00"
+      }
+    ],
+    "rateTableBeforeCount": 13,
+    "rateTableAfterCount": 13,
+    "browserAndRateFingerprintsStableSinceAfterSnapshot": true,
+    "metadataReceiptSha256": "77d053d253ca36bab5bc1ee53727f94822e26cb9286aea3004aa6b0e06bff551"
+  },
+  "sixControlOperationsExactlyMatched": true,
+  "schemaPoliciesCatalogRolesGrantsResearchUnchanged": true,
+  "evidence": [
+    {
+      "path": "../customer/bootstrap-classification.json",
+      "sha256": "73e6e821c106d3564c807b705e2542770faff5144d667e00c2f10f982faeee60"
+    },
+    {
+      "path": "post-promotion-independent-review.json",
+      "sha256": "a72b6048eb4894dfb73de9c4aef74e0d218cdc1f2ae5bc345b56af6d06ebc9be"
+    }
+  ],
+  "limits": "The live Chrome reload caused normal browser bootstrap writes. The original strict zero-drift hold is retained. No completed real-iPhone recovery or grading acceptance is claimed."
+}

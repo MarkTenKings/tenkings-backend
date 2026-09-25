@@ -1,0 +1,103 @@
+{
+  "status": "POST_PROMOTION_FINGERPRINT_SCOPE_AND_BINDINGS_VERIFIED",
+  "at": "2026-09-25T00:41:12.633924+00:00",
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "imageId": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+  "snapshotTimes": {
+    "before": "2026-09-25T00:33:03.440163+00:00",
+    "after": "2026-09-25T00:36:23.502962+00:00"
+  },
+  "evidence": {
+    "controls-before.json": "a8320174ffe19feb7c85759edd1322e423d83a61afb36d720eca5fd474eafe12",
+    "post-promotion-readonly.json": "770db5b22548bbffe6835bd464a07a2b44335b0659837b75dca26ca70466d0b7",
+    "plan.json": "5a6afe91a9016cb473086ba74f484f90bac9487f348f1fea50867ee93df6a012",
+    "derive-result.json": "35e17d61dbacc4381ad7c0554aff0fc739897156d5414fe1126cdaf2c1cb567b",
+    "controls-result.json": "f756b2d08f866bc3213e2c478131c398786baa5f5e1920a4a8acae7ed5bfc42b",
+    "cutover-result.json": "ce16eda2e14b45f490c394e1d043efbfd286c5c63030cd0ee0a2870f2558d20f"
+  },
+  "gradingHistoryTablesPhysicallyUnchanged": 30,
+  "customerTables": 21,
+  "customerTablesPhysicallyUnchanged": 17,
+  "changedCustomerTables": [
+    {
+      "table": "atlas_customer.CustomerBrowser",
+      "beforeCount": 27,
+      "afterCount": 28,
+      "changedFields": [
+        "count",
+        "physicalSha256",
+        "sha256"
+      ]
+    },
+    {
+      "table": "atlas_customer.CustomerControl",
+      "beforeCount": 1,
+      "afterCount": 1,
+      "changedFields": [
+        "physicalSha256",
+        "sha256"
+      ]
+    },
+    {
+      "table": "atlas_customer.CustomerRateBucket",
+      "beforeCount": 13,
+      "afterCount": 13,
+      "changedFields": [
+        "physicalSha256",
+        "sha256"
+      ]
+    },
+    {
+      "table": "atlas_customer.CustomerServiceControl",
+      "beforeCount": 1,
+      "afterCount": 1,
+      "changedFields": [
+        "physicalSha256",
+        "sha256"
+      ]
+    }
+  ],
+  "sixControlOperationsExactlyMatched": true,
+  "allStablePolicyHashesUnchanged": true,
+  "otherControlsUnchanged": true,
+  "schemaCatalogsLedgersRolesGrantsResearchUnchanged": true,
+  "schemaMigrations": {
+    "staff": 52,
+    "public": 112
+  },
+  "runtimeMatchesCutover": true,
+  "onlySafeConfigurationChanges": [
+    "ATLAS_MANUAL_WEB_DEPLOYMENT",
+    "ATLAS_MANUAL_WEB_RELEASE_SHA"
+  ],
+  "bindings": {
+    "customer": {
+      "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563",
+      "deploymentId": "atlas-grading-customer-das9lbnzu-ten-kings.vercel.app",
+      "mode": "PRODUCTION",
+      "origin": "https://atlasgrading.com",
+      "releaseSha": "fa966112bd5028fbed61f086c15ad3a72f4fc16d"
+    },
+    "public": {
+      "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8",
+      "deploymentId": "atlas-grading-public-60q6slkai-ten-kings.vercel.app",
+      "mode": "PRODUCTION",
+      "origin": "https://atlasgrading.com",
+      "releaseSha": "fa966112bd5028fbed61f086c15ad3a72f4fc16d"
+    },
+    "staff": {
+      "configHash": "798aa04d62094e051df28f036a123e2892e16cd2191862a3c7ae962b792214ee",
+      "deploymentId": "atlas-grading-staff-oofhfmmkf-ten-kings.vercel.app",
+      "mode": "PRODUCTION",
+      "origin": "https://atlasgrading.com",
+      "releaseSha": "fa966112bd5028fbed61f086c15ad3a72f4fc16d"
+    }
+  },
+  "strictGuardChanged": false,
+  "browserAndRateDeltaAttribution": "Fingerprint comparison establishes scope only; row metadata and customer GET/session code attribution are owned by root and the customer reviewer. This receipt does not claim all19 non-control customer tables were unchanged.",
+  "databaseWrites": 0,
+  "providerEffects": 0,
+  "originalStrictGuardOutcome": "HELD_READONLY_DIFFERENCE; retained unchanged. The first rejected customer fingerprint was CustomerBrowser. The complete independent diff additionally identifies CustomerRateBucket.",
+  "strictGuardReclassifiedAsPass": false
+}

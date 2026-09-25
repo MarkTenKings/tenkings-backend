@@ -1,0 +1,15 @@
+{
+  "status": "ENVIRONMENT_INSTALLED_READBACK_PASS",
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "providerWrites": 2,
+  "upstreams": {
+    "ATLAS_CUSTOMER_DEPLOYMENT_ORIGIN": "https://atlas-grading-customer-das9lbnzu-ten-kings.vercel.app",
+    "ATLAS_STAFF_DEPLOYMENT_ORIGIN": "https://atlas-grading-staff-oofhfmmkf-ten-kings.vercel.app"
+  },
+  "allOtherEnvironmentRowsPreserved": true,
+  "staffAndCustomerSettingsAndAliasesPreservedDuringPatch": true,
+  "evidence": {
+    "protectedReceipt": "public-env-apply-fa966112-2/result.json",
+    "sha256": "60f96c3c415da0d5bd34a6e543e71c4f3a4e77d232e32545ffc0aa19356fe8b6"
+  }
+}

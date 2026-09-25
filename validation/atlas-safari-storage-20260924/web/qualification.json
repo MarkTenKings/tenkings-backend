@@ -1,0 +1,75 @@
+{
+  "status": "ALL_THREE_PRODUCTION_ARTIFACTS_AND_FRONTEND_TESTS_PASS",
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "builtApplicationSourceCommit": "a5f4fb13b22f36f131b17b6982d95e55b48a8a0f",
+  "sourceQualification": "EXACT_CHECK_AND_LOG_ONLY_SUCCESSOR_WITH_BYTE_IDENTICAL_APPLICATION_AND_TEST_SOURCES",
+  "originalStaffBuildExitCode": 1,
+  "staffCompilationPassed": true,
+  "originalBoundaryRejectedNewBrowserHelper": true,
+  "correctedExactSourceBoundary": {
+    "status": "STAFF_BUILD_BOUNDARY_PASS",
+    "pages": [
+      "/_app",
+      "/_error",
+      "/api/staff/[...path]",
+      "/batch",
+      "/customer-operations",
+      "/add-cards",
+      "/",
+      "/grading",
+      "/manual/[cardId]",
+      "/station",
+      "/operations",
+      "/cards/[cardId]",
+      "/manual",
+      "/workspace/[cardId]",
+      "/_document",
+      "/404"
+    ],
+    "browserChunks": 32,
+    "serverTraces": 15,
+    "tracedFilesChecked": 3008,
+    "databaseEngines": [
+      "libquery_engine-debian-openssl-3.0.x.so.node"
+    ],
+    "basePath": "/admin",
+    "durableStore": "atlas_staff",
+    "providerAdapters": [
+      "explicitly activated ATLAS Verify"
+    ],
+    "certificationRoutes": 1
+  },
+  "tests": {
+    "tests": 723,
+    "pass": 723,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "testsRunSourceCommit": "a5f4fb13b22f36f131b17b6982d95e55b48a8a0f",
+  "testSourceBytesIdentical": true,
+  "productionSourceChanges": 0,
+  "sourceFileCount": 1082,
+  "changedCommittedFiles": [
+    "docs/handoffs/SESSION_LOG.md",
+    "frontend/atlas-app/scripts/check-boundary.mjs"
+  ],
+  "changedClosureFiles": [
+    "frontend/atlas-app/scripts/check-boundary.mjs"
+  ],
+  "sourceManifestSha256": "1d46ba7a9af0818d2d91b5dca6b516fa696ab2b3977d5ad47dd15f0512c0e2c6",
+  "compiledSourceManifestSha256": "d9bd002f089a47e33c51d1ddac4d78b520cd7418752ddfb49b80c240c9e45c63",
+  "artifactByteParity": {
+    "staff": "e2d0ce07571369631f506441f387b8f6e3a09ad428faf1163c11f18d278a3f57",
+    "customer": "a9bc58d8693aefc9429d8fc91840ed36dd06fc3df5cac628b040b5fb566e709d",
+    "public": "07291b7093412ded0a963fd99707e3f20f27087870536d2bf98ab8655b41f920"
+  },
+  "container": "015920a3fd8759fb40152ed40ec3d365bc84bc4e5bf2cf357a5462433a019f50",
+  "registryInstalls": 0,
+  "providerWrites": 0,
+  "sharedWorkspaceWrites": 0,
+  "evidence": {
+    "protectedReceipt": "build/qualification.json",
+    "sha256": "b7c546769945c27f752e22565f80c6a925343bb15fb0c6923ac64c22022c397f"
+  }
+}

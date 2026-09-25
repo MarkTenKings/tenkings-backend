@@ -2,24 +2,19 @@
 
 Prepared September 23, 2026. **No real-card trial is recorded as complete here.**
 Mark's approved label artwork is separate from grading, printing and NFC acceptance.
-The software release is verified at source `1b880d06`, staff schema47,
-private image `2039ae10…`, with batch/presentation/market enabled. Mark’s owner-authorized
-reviewer permission runs from 2026-09-24T01:32:51.855Z through 2026-12-23T01:32:51.855Z;
-ordinary sign-in must refresh accessVersion2. See
-[actual workflow release evidence](../audits/2026-09-24/completion-followup.md).
-This establishes deployment only; the real-card checkpoints below remain open. Do not reuse the September17
-record's historical NULL-certification or private-only-publication statements as
-current facts.
+Current software is web `fa966112bd5028fbed61f086c15ad3a72f4fc16d`, retained private `47cb501adfd609ff3ba863851b65580f0868ab53` / image `532cfa57…`, staff schema52. The current source/binding and preservation status is in the [release runbook](CONNECTED_MANUAL_RELEASE.md); [safe storage evidence](../../../validation/atlas-safari-storage-20260924/staff/manifest.json) distinguishes synthetic browser recovery from a completed phone trial. Mark’s owner-authorized reviewer permission runs through 2026-12-23T01:32:51.855Z; use ordinary current sign-in.
+
+The owner has attempted iPhone capture. The September24 read-only census found two queued cards with prepared originals and completed identification, awaiting printed-border review; remaining saved photos require original-device recovery. No real card has completed this acceptance sequence. Physical finishing and measured ten/fifty-card acceptance remain open. Do not reuse historical NULL-certification or private-only-publication statements as current facts.
 
 ## Current execution record
 
 | Checkpoint | Result | Evidence needed |
 | --- | --- | --- |
-| Exact new release / batch activation | PASS — software release only | [Current release evidence](../audits/2026-09-24/completion-followup.md): 1b880d06, staff47, current runtime/bindings, batch=true |
-| Fresh physical cohort and operator access | NOT RUN | Mark's new specimen selection, native Front/Back originals, ordinary staff access and actual current certification at approval |
-| First real card through public report | NOT RUN | Native-photo lineage, actual Astra request/result, human review/approval and exact public version |
+| Exact new release / batch activation | PASS — software release only | [Current release evidence](CONNECTED_MANUAL_RELEASE.md): webfa966/private47cb, staff52, current runtime/bindings, batch=true |
+| Fresh physical cohort and operator access | BLOCKED — capture attempts observed; saved-queue recovery and cohort confirmation pending | Mark's new specimen selection, native Front/Back originals, ordinary staff access and actual current certification at approval |
+| First real card through public report | BLOCKED — two queued cards need printed-border review | Native-photo lineage, actual Astra request/result, human review/approval and exact public version |
 | First card physical finishing | NOT RUN | Actual printer/media fit, approved-report NFC write/readback/qualified lock/native re-presentation, separate assembly/welding observations |
-| Ten distinct physical cards | NOT RUN | First checkpoint decision, same first specimen plus nine fresh pairs, individual results and measured elapsed times |
+| Ten distinct physical cards | BLOCKED — capture trial attempted; completed grading acceptance unverified | First checkpoint decision, same first specimen plus nine fresh pairs, individual results and measured elapsed times |
 | Expansion to fifty | NOT RUN | Ten-card evidence review and explicit recorded owner decision before further admission |
 
 These checkpoint sizes are acceptance sequencing, not product allowances. The

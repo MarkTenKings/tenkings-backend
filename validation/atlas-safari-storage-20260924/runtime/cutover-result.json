@@ -1,0 +1,28 @@
+{
+  "at": "2026-09-25T00:33:18.114544+00:00",
+  "automaticRetry": false,
+  "caddyUnchanged": true,
+  "envSha256": "c36efc5b05bbc7bc93d9c8f96973a8f1b2caa165c1e18ff31bcfae180ce7b07e",
+  "new": {
+    "id": "780b01eb99076d3ede3084a07ced5b3071f5cc07880a25aaf0707cfeeab2acdd",
+    "image": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+    "name": "/atlas-manual-connected-20260917",
+    "oom": false,
+    "restartCount": 0,
+    "running": true,
+    "startedAt": "2026-09-25T00:33:11.62263891Z"
+  },
+  "privateSourceCommit": "47cb501adfd609ff3ba863851b65580f0868ab53",
+  "retained": {
+    "id": "49bd38bf10b3a9f81bb14c902272b846133300f5c300f51b86b941d82d46b71d",
+    "image": "sha256:532cfa57c6f86404db62a378094fa4d7af9fada38877ff649fe8dbc4a6ec252a",
+    "name": "/atlas-manual-connected-20260917-retained-9c06-capture-fa966112",
+    "oom": false,
+    "restartCount": 0,
+    "running": false,
+    "startedAt": "2026-09-24T20:14:38.424599806Z"
+  },
+  "sourceCommit": "fa966112bd5028fbed61f086c15ad3a72f4fc16d",
+  "status": "FOLLOWUP_PRIVATE_REBOUND_PROBES_PENDING",
+  "unrelatedContainersUnchanged": true
+}

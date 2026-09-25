@@ -1,0 +1,9 @@
+{
+  "status": "EXISTING_ACCOUNT_CLI_REFRESH_PASS",
+  "credentialMode": "0600",
+  "expiresAt": "2026-09-25T08:26:47.000Z",
+  "priorExpiry": "2026-09-25T00:24:37.000Z",
+  "at": "2026-09-25T00:27:18.355Z",
+  "failedApplyWasBeforeIntent": true,
+  "publicPatchAttemptsBeforeRefresh": 0
+}
