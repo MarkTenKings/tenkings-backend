@@ -6,11 +6,11 @@ import styles from './WorkspaceUi.module.css';
 
 const stageCopy = {
     PHOTOS: ['The original evidence.', 'The verified Front and Back photographs are the starting point for this card.'],
-    IDENTITY: ['A name for every detail.', 'Astra can propose the printed card details from these photographs. Saved proposals appear in the activity feed.'],
+    IDENTITY: ['A name for every detail.', 'ATLAS can propose the printed card details from these photographs. Saved proposals appear in the activity feed.'],
     PREPARATION: ['A clear view of the card.', 'The physical boundary guides image preparation. Derived grading images remain linked to these originals.'],
     CENTERING: ['Precision, edge to edge.', 'The grading engine measures the saved printed frame against the physical card boundary.'],
     INSPECTION: ['Every corner. Every edge.', 'Recorded inspections bring the card’s corners, edges and surface into focus.'],
-    REPORT: ['The details come together.', 'The grading engine calculates the report. Astra’s completed draft then moves to a human reviewer.'],
+    REPORT: ['The details come together.', 'The grading engine calculates the report. ATLAS’s completed draft then moves to a human reviewer.'],
 };
 const safeQuad = value => Array.isArray(value) && value.length === 4 && value.every(point => point && Number.isFinite(point.x) && Number.isFinite(point.y) && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1);
 
@@ -24,7 +24,7 @@ export default function AstraStageView({ card, stage = card.stage, activityConne
     const currentStage = card.timing?.currentStage ?? card.stage, isCurrent = stage === currentStage;
     const state = card.observedOperator?.state;
     const status = !isCurrent ? 'Saved stage view' : ({ CONNECTING: 'Checking saved progress', INTERRUPTED: 'Progress unconfirmed', PAUSED: 'Activity updates paused' })[activityConnection]
-        ?? (state === 'NEEDS_ATTENTION' ? 'Needs attention' : state === 'RUNNING' ? 'Astra at work' : state === 'PAUSED' ? 'Astra paused' : state === 'QUEUED' ? 'Astra queued' : 'Recorded workspace');
+        ?? (state === 'NEEDS_ATTENTION' ? 'Needs attention' : state === 'RUNNING' ? 'ATLAS at work' : state === 'PAUSED' ? 'ATLAS paused' : state === 'QUEUED' ? 'ATLAS queued' : 'Recorded workspace');
     const identityFields = [['cardName', 'Card'], ['playerName', 'Player'], ['year', 'Year'], ['manufacturer', 'Manufacturer'], ['productSet', 'Set'], ['parallel', 'Parallel'], ['cardNumber', 'Number']].filter(([key]) => typeof identity[key] === 'string' && identity[key].trim());
     const grades = (card.workspace?.comparison ?? []).filter(entry => ['overall', 'centering', 'corners', 'edges', 'surface'].includes(entry.id)
         && ['string', 'number'].includes(typeof entry.humanValue));
@@ -40,7 +40,7 @@ export default function AstraStageView({ card, stage = card.stage, activityConne
             <div className={styles.workbenchViewerFooter}><span><i aria-hidden="true" />{verifiedSide(card, side) ? 'Verified source · original retained' : 'Awaiting a verified photograph'}</span><div>{sourceSize && <span>{sourceSize.width.toLocaleString()} × {sourceSize.height.toLocaleString()} px</span>}<button type="button" disabled={!verifiedSide(card, side)} onClick={() => setZoom(value => !value)}>{zoom ? 'Fit image' : 'Zoom image'}<WorkspaceIcon name="INSPECTION" /></button></div></div>
         </div>
         <div className={styles.workbenchFacts}>{['FRONT', 'BACK'].map(value => <div key={value}><WorkspaceIcon name={verifiedSide(card, value) ? 'CHECK' : 'PHOTOS'} /><span>{value === 'FRONT' ? 'Front photograph' : 'Back photograph'}<strong>{verifiedSide(card, value) ? 'Verified + saved' : 'Awaiting verification'}</strong></span></div>)}<div><WorkspaceIcon name="REVIEW" /><span>Final authority<strong>Human reviewer</strong></span></div></div>
-        {stage === 'IDENTITY' && <div className={styles.workbenchSaved}><div><WorkspaceIcon name="IDENTITY" /><h3>Saved card identity</h3></div>{identityFields.length ? <dl className={styles.workbenchIdentity}>{identityFields.map(([key, label]) => <div key={key}><dt>{label}</dt><dd>{identity[key]}</dd></div>)}</dl> : <p>Card details will appear here once they are saved. You can see Astra’s original proposals in the activity feed.</p>}</div>}
+        {stage === 'IDENTITY' && <div className={styles.workbenchSaved}><div><WorkspaceIcon name="IDENTITY" /><h3>Saved card identity</h3></div>{identityFields.length ? <dl className={styles.workbenchIdentity}>{identityFields.map(([key, label]) => <div key={key}><dt>{label}</dt><dd>{identity[key]}</dd></div>)}</dl> : <p>Card details will appear here once they are saved. You can see ATLAS’s original proposals in the activity feed.</p>}</div>}
         {stage === 'PREPARATION' && <div className={styles.workbenchSaved}><div><WorkspaceIcon name="PREPARATION" /><h3>Image preparation</h3></div><div className={styles.workbenchPreparation}>{['FRONT', 'BACK'].map(value => <p key={value}><span>{value === 'FRONT' ? 'Front' : 'Back'}</span><strong>{({ PREPARED: 'Prepared image saved', PENDING: 'Preparation requested', REQUESTED: 'Preparation requested', FAILED: 'Needs attention', UNKNOWN: 'Awaiting confirmed result' })[card.workspace?.preparation?.[value]?.status] ?? (safeQuad(card.workspace?.preparation?.[value]?.corners) ? 'Boundary saved' : 'No preparation recorded yet')}</strong></p>)}</div></div>}
         {stage === 'CENTERING' && ratios && <div className={styles.workbenchSaved}><div><WorkspaceIcon name="CENTERING" /><h3>Saved centering · {side === 'FRONT' ? 'Front' : 'Back'}</h3></div><dl className={styles.workbenchIdentity}>{Object.entries(ratios).filter(([, value]) => ['string', 'number'].includes(typeof value)).map(([label, value]) => <div key={label}><dt>{label.replace(/([a-z])([A-Z])/g, '$1 $2')}</dt><dd>{value}</dd></div>)}</dl></div>}
         {['INSPECTION', 'REPORT'].includes(stage) && grades.length > 0 && <div className={styles.workbenchSaved}><div><WorkspaceIcon name="REPORT" /><h3>Latest saved grades</h3></div><dl className={styles.workbenchGrades}>{grades.map(entry => <div key={entry.id}><dt>{entry.label}</dt><dd>{entry.humanValue}</dd></div>)}</dl></div>}

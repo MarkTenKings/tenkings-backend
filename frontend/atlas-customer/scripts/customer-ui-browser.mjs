@@ -9,12 +9,16 @@ import { CommerceService } from '../../../packages/atlas-commerce/src/service.mj
 // Actual customer JSX/CSS and browser IndexedDB/File behavior. Authentication,
 // uploaded subjects, provider replies and database records are synthetic only.
 // No production session or external network is available to this harness.
+// Google frames are explicitly intercepted; their live provider behavior is
+// qualified separately from these layout, search and selection checks.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..'), require = createRequire(join(root, 'package.json'));
 const toolModules = process.argv[2], output = resolve(process.argv[3] ?? '/private/tmp/atlas-customer-ui-browser');
+const flowWidth = Number(process.argv[4] ?? 390), flowViewport = { width: flowWidth, height: 900 };
+assert([320, 390, 820, 1280].includes(flowWidth), 'The optional full-flow viewport must be 320, 390, 820 or 1280.');
 if (!toolModules) throw Error('Pass the bundled node_modules path for Playwright.');
 const { chromium } = createRequire(join(resolve(toolModules), '__atlas_customer__.cjs'))('playwright');
 const babel = require('next/dist/compiled/babel/core'), modules = new Map();
-for (const file of ['components/AccountWorkspace.jsx', 'components/intake/SubmissionHero.jsx', 'components/intake/SubmissionProgress.jsx', 'components/intake/CustomerIntake.jsx', 'components/intake/ProfileFields.jsx', 'components/intake/ServiceChoice.jsx',
+for (const file of ['components/AccountWorkspace.jsx', 'components/intake/SubmissionHero.jsx', 'components/intake/SubmissionProgress.jsx', 'components/intake/CustomerIntake.jsx', 'components/intake/ProfileFields.jsx', 'components/intake/ServiceChoice.jsx', 'components/intake/SubmissionStationFinder.jsx', 'lib/dealer-map.mjs',
     'components/commerce/CommerceCheckout.jsx', 'components/commerce/OrderReceipt.jsx', 'components/orders/CustomerOrderHistory.jsx', 'components/orders/CustomerOrderTracking.jsx',
     'components/dealer/DealerWorkspace.jsx', 'components/dealer/DealerPortal.jsx', 'lib/progress.mjs', 'lib/pending-submission.mjs', 'lib/intake-journal.mjs', 'lib/capture-buffer.mjs', 'lib/capture-state.mjs']) {
     modules.set(file, babel.transformSync(readFileSync(join(root, file), 'utf8'), { filename: file, presets: [[require.resolve('next/babel'), {
@@ -44,7 +48,7 @@ assert(coldCheckout.blockers.includes('PAYMENT_NOT_CONFIGURED')&&!coldCheckout.b
 const fixture = `
 const actualColdCheckout=${JSON.stringify(coldCheckout)};
 const copy=value=>structuredClone(value),id=n=>String(n).padStart(8,'0')+'-1111-4111-8111-111111111111';
-const kioskLocation={id:id(2),name:'Synthetic Harbor Kiosk',address:{line1:'1 Fixture Street',city:'Testville',region:'CA',postalCode:'90210',country:'US'},timeZone:'America/Los_Angeles',nextCollection:'2026-09-30T17:00:00Z',projectedReturn:'2026-10-07T17:00:00Z',schedule:{timeZone:'America/Los_Angeles',nextCollectionAt:'2026-09-30T17:00:00Z',projectedReturnAt:'2026-10-07T17:00:00Z',cutoffAt:'2026-09-30T16:00:00Z',pickups:[{weekday:3,time:'10:00',cutoff:'09:00'}],returns:[{weekday:3,time:'10:00'}],exceptions:[]}};
+const kioskLocation={id:id(2),name:'Synthetic Harbor Kiosk',address:{line1:'1 Fixture Street',city:'Testville',region:'CA',postalCode:'90210',country:'US'},mapEmbedUrl:'https://maps.google.com/maps?q=34,-118&z=14&output=embed',directionsUrl:'https://www.google.com/maps/dir/?api=1&destination=34,-118',timeZone:'America/Los_Angeles',nextCollection:'2026-09-30T17:00:00Z',projectedReturn:'2026-10-07T17:00:00Z',schedule:{timeZone:'America/Los_Angeles',nextCollectionAt:'2026-09-30T17:00:00Z',projectedReturnAt:'2026-10-07T17:00:00Z',cutoffAt:'2026-09-30T16:00:00Z',pickups:[{weekday:3,time:'10:00',cutoff:'09:00'}],returns:[{weekday:3,time:'10:00'}],exceptions:[]}};
 const fresh=()=>({signedIn:false,customer:{id:id(1),phone:'+12025550141',profile:{}},calls:[],draft:null,payment:null,quote:null,order:null,uploads:{},settled:false,paymentCreates:0,dealer:false,deposited:false});
 const state=window.__fixture=JSON.parse(sessionStorage.getItem('synthetic-state')||'null')||fresh();
 const save=()=>sessionStorage.setItem('synthetic-state',JSON.stringify(state));window.__save=save;
@@ -97,26 +101,44 @@ const server = createServer((request, response) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`, browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
-const context = await browser.newContext({ viewport: { width: 390, height: 844 } }), page = await context.newPage(), errors = [];
+const context = await browser.newContext({ viewport: flowViewport }), page = await context.newPage(), errors = [];
 page.on('pageerror', error => errors.push(error.message));
 await context.route(/^https?:\/\//, route => { assert.equal(new URL(route.request().url()).origin, origin, 'External requests are prohibited'); return route.continue(); });
-const shot = name => page.screenshot({ path: join(output, `${name}.png`), fullPage: true });
+const shot = async name => {
+    if (name !== 'failure') assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `No horizontal overflow in ${name} at ${page.viewportSize().width}px`);
+    return page.screenshot({ path: join(output, `${name}.png`), fullPage: true });
+};
 async function serviceLayout(width) {
     await page.setViewportSize({ width, height: 900 });
     const layout = await page.evaluate(() => {
         const heading = document.querySelector('.service-choice-title'), spans = [...heading.children].map(element => { const rect = element.getBoundingClientRect(); return { y: rect.y, bottom: rect.bottom }; });
         return { title: heading.textContent, spans, overflow: document.documentElement.scrollWidth > innerWidth,
             films: [...document.querySelectorAll('.service-film video')].map(element => { const rect = element.getBoundingClientRect(); return { ratio: rect.width / rect.height, fit: getComputedStyle(element).objectFit }; }),
-            labels: [...document.querySelectorAll('.service-card')].map(card => ({ text: card.querySelector('.service-speed-label h2').textContent, bottom: card.querySelector('.service-speed-label').getBoundingClientRect().bottom, filmTop: card.querySelector('.service-film').getBoundingClientRect().top })),
-            metrics: [...document.querySelectorAll('.service-metrics')].map(element => [...element.querySelectorAll('dd strong')].map(value => parseFloat(getComputedStyle(value).fontSize))) };
+            decorationRemoved: !document.querySelector('.service-motion-toolbar,.service-comparison-heading .eyebrow,.service-comparison-heading p'),
+            labels: [...document.querySelectorAll('.service-card')].map(card => {
+                const label = card.querySelector('.service-speed-label'), title = label.querySelector('h2'), range = document.createRange(); range.selectNodeContents(title);
+                const titleRect = title.getBoundingClientRect(), labelRect = label.getBoundingClientRect(), textRect = range.getBoundingClientRect();
+                return { text: title.textContent, bottom: labelRect.bottom, filmTop: card.querySelector('.service-film').getBoundingClientRect().top, titleRight: titleRect.right, textRight: textRect.right, labelRight: labelRect.right, paddingRight: parseFloat(getComputedStyle(title).paddingRight), scrollWidth: title.scrollWidth, clientWidth: title.clientWidth };
+            }),
+            timelines: [...document.querySelectorAll('.service-card')].map(card => {
+                const timeline = card.querySelector('.service-timeline'), track = timeline.querySelector('.service-timeline-track'), metrics = card.querySelector('.service-metrics');
+                return { count: card.querySelectorAll('.service-timeline').length, height: track.getBoundingClientRect().height, top: timeline.getBoundingClientRect().top, filmBottom: card.querySelector('.service-film').getBoundingClientRect().bottom, metricsTop: metrics.getBoundingClientRect().top, bottom: timeline.getBoundingClientRect().bottom, firstInBody: card.querySelector('.service-card-body').firstElementChild === timeline, stepsInsideTrack: track.contains(timeline.querySelector('.service-journey')), deliveredInsideTrack: track.contains(timeline.querySelector('.finish-stamp')), stepsFit: [...timeline.querySelectorAll('.service-journey li')].every(step => step.getBoundingClientRect().bottom <= track.getBoundingClientRect().bottom - 2) };
+            }),
+            metrics: [...document.querySelectorAll('.service-metrics')].map(element => [...element.querySelectorAll('dd strong')].map(value => ({ size: parseFloat(getComputedStyle(value).fontSize), font: getComputedStyle(value).fontFamily, style: getComputedStyle(value).fontStyle }))) };
     });
     assert.equal(layout.title, 'Two Speeds. Same Finish.'); assert.equal(layout.overflow, false, `No horizontal overflow at ${width}px`);
     if (width > 700) assert.equal(layout.spans[0].y, layout.spans[1].y, 'Desktop heading stays on one line');
     else assert(layout.spans[1].y >= layout.spans[0].bottom - 1, 'Mobile heading stacks the two phrases');
     for (const film of layout.films) { assert(Math.abs(film.ratio - 16 / 9) < .01, 'Film keeps its entire 16:9 frame'); assert.equal(film.fit, 'contain'); }
     assert.deepEqual(layout.labels.map(label => label.text), ['Super Fast', 'Fast']);
-    for (const label of layout.labels) assert(label.bottom <= label.filmTop + 1, 'Speed labels appear above their films');
-    for (const [price, speed] of layout.metrics) { assert.equal(price, speed, 'Price and speed have equal type size'); assert(price >= 34); }
+    assert.equal(layout.decorationRemoved, true, 'The removed top decoration, eyebrow and subtitle stay removed');
+    for (const label of layout.labels) {
+        assert(label.bottom <= label.filmTop + 1, 'Speed labels appear above their films');
+        assert(label.titleRight <= label.labelRight && label.textRight + 3 < label.labelRight && label.paddingRight >= 10 && label.scrollWidth <= label.clientWidth + 1, `Italic ${label.text} has room for its final letter at ${width}px: ${JSON.stringify(label)}`);
+    }
+    assert.equal(layout.timelines[0].height, layout.timelines[1].height, 'Both timelines have equal height');
+    for (const timeline of layout.timelines) { assert.equal(timeline.count, 1); assert(timeline.height >= 100 && timeline.height <= 120, `Each service uses one thick compact timeline: ${JSON.stringify(timeline)}`); assert(timeline.firstInBody && timeline.stepsInsideTrack && timeline.deliveredInsideTrack && timeline.stepsFit, 'Journey and delivery fit inside the timeline immediately under the film'); assert(timeline.top >= timeline.filmBottom && timeline.top - timeline.filmBottom < 35 && timeline.metricsTop >= timeline.bottom, 'Timeline precedes pricing below the film'); }
+    for (const [price, speed] of layout.metrics) { assert.equal(price.size, speed.size, 'Price and speed have equal type size'); assert(price.size >= 34); assert.equal(price.font, speed.font); assert.equal(price.style, 'italic'); assert.equal(speed.style, 'italic'); }
     return { width, ...layout };
 }
 async function serviceMotion() {
@@ -134,6 +156,17 @@ async function serviceMotion() {
         return { delta: Math.abs(animation.currentTime - before), pausedAnimations: [...document.querySelectorAll('.service-speed-art *, .service-timeline *')].flatMap(element => element.getAnimations()).every(value => value.playState === 'paused'), videosPaused: [...document.querySelectorAll('.service-film video')].every(video => video.paused) };
     });
     assert(frozen.delta < 1 && frozen.pausedAnimations && frozen.videosPaused, 'Global pause freezes both films and all decorative motion: '+JSON.stringify(frozen));
+    const headerMotion = [];
+    for (const time of [0, 1500, 3800]) {
+        headerMotion.push(await page.evaluate(time => {
+            for (const element of document.querySelectorAll('.service-speed-art *')) for (const animation of element.getAnimations()) animation.currentTime = time;
+            return { time, elements: ['.bolt-main', '.arc-one', '.arc-one path', '.wind-one', '.wind-two'].map(selector => { const style = getComputedStyle(document.querySelector(selector)); return { selector, transform: style.transform, opacity: style.opacity, dashOffset: style.strokeDashoffset }; }) };
+        }, time));
+        await shot(`00-motion-header-${time}ms`);
+    }
+    for (const selector of ['.bolt-main', '.arc-one path', '.wind-one']) {
+        assert(new Set(headerMotion.map(sample => JSON.stringify(sample.elements.find(element => element.selector === selector)))).size > 1, `${selector} actually changes over the animation cycle`);
+    }
     async function seek(time) {
         return page.evaluate(time => {
             for (const element of document.querySelectorAll('.service-timeline *')) for (const animation of element.getAnimations()) animation.currentTime = time;
@@ -151,23 +184,31 @@ async function serviceMotion() {
     await page.getByRole('button',{name:'Pause ATLAS kiosk drop-off preview',exact:true}).click();
     await page.getByRole('button',{name:'Pause motion',exact:true}).click(); await page.getByRole('button',{name:'Play motion',exact:true}).click();
     await page.waitForFunction(() => document.querySelector('.service-film-kiosk video').paused && !document.querySelector('.service-film-fedex video').paused);
+    await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); });
+    await page.waitForFunction(() => document.querySelector('.service-choice').dataset.motion === 'paused' && [...document.querySelectorAll('.service-film video')].every(video => video.paused));
+    const hidden = await page.evaluate(() => ({ videosPaused: [...document.querySelectorAll('.service-film video')].every(video => video.paused), animationsPaused: [...document.querySelectorAll('.service-speed-art *, .service-timeline *')].flatMap(element => element.getAnimations()).every(animation => animation.playState === 'paused') }));
+    assert(hidden.videosPaused && hidden.animationsPaused, 'A hidden-document event pauses every service film and animation');
+    await page.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); });
+    await page.waitForFunction(() => document.querySelector('.service-choice').dataset.motion === 'running' && document.querySelector('.service-film-kiosk video').paused && !document.querySelector('.service-film-fedex video').paused);
     await page.emulateMedia({reducedMotion:'reduce'});
     await page.waitForFunction(() => document.querySelector('.service-choice').dataset.reducedMotion === 'true' && [...document.querySelectorAll('.service-film video')].every(video => video.paused));
-    assert(await page.getByRole('button',{name:'Reduced motion on',exact:true}).isDisabled());
+    assert(await page.getByRole('button',{name:'Reduced motion enabled',exact:true}).isDisabled());
     const reduced = await page.evaluate(() => ({ animations: [...document.querySelectorAll('.service-speed-art *, .service-timeline *')].flatMap(element => element.getAnimations()).length, stamps: [...document.querySelectorAll('.finish-stamp')].map(element => Number(getComputedStyle(element).opacity)) }));
     assert.equal(reduced.animations,0); assert.deepEqual(reduced.stamps,[1,1]); await shot('00-motion-reduced-mobile');
     await page.emulateMedia({reducedMotion:'no-preference'});
     await page.waitForFunction(() => document.querySelector('.service-choice').dataset.motion === 'running');
-    return { synchronization, frozen, daySeven, dayFourteen, perFilmPausePreserved:true, reduced };
+    return { synchronization, frozen, headerMotion, daySeven, dayFourteen, perFilmPausePreserved:true, hidden, reduced };
 }
 try {
     await page.goto(`${origin}/?kiosk=synthetic-entry`);
     await page.getByRole('heading',{name:'Super Fast', exact:true}).waitFor();
+    await page.locator('.location-map-activate').waitFor();
+    assert.equal(await page.locator('.location-map iframe').count(), 0, 'A configured kiosk entry does not contact Google before a map action');
     assert.equal(await page.getByRole('navigation', {name:'Submission progress'}).count(), 0, 'Initial anonymous service comparison has no progress tracker');
     const serviceLayouts = [];
-    for (const width of [320, 390, 820, 1280]) { serviceLayouts.push(await serviceLayout(width)); if(width===390)await shot('00-service-mobile'); if(width===1280)await shot('00-service-desktop'); }
+    for (const width of [320, 390, 820, 1280]) { serviceLayouts.push(await serviceLayout(width)); await shot(`00-service-${width}`); if(width===390)await shot('00-service-mobile'); if(width===1280)await shot('00-service-desktop'); }
     const motion = await serviceMotion();
-    await page.setViewportSize({width:390,height:844});
+    await page.setViewportSize(flowViewport);
     await page.getByRole('button', { name: 'Continue with your phone' }).click();
     await page.getByRole('textbox', { name: 'Mobile number' }).fill('2025550141');
     await page.getByRole('button', { name: 'Send verification code' }).click();
@@ -222,6 +263,7 @@ try {
     assert.deepEqual(errors, []);
     const evidence = await page.evaluate(() => ({ cards: window.__fixture.draft.cards.length, originals: Object.values(window.__fixture.uploads).map(({ name, size }) => ({ name, size })), paymentCreates: window.__fixture.paymentCreates, reviewWrites: window.__fixture.calls.filter(c => c.path.endsWith('/review')).length, profileWrites: window.__fixture.calls.filter(c => c.path === '/profile').length, dealerEntries: window.__fixture.calls.filter(c => c.path === '/dealer/session' && c.body).length }));
     assert.equal(evidence.reviewWrites, 1); assert.equal(evidence.originals.length, 4);
+    await page.setViewportSize(flowViewport);
     await page.evaluate(() => { Object.assign(window.__fixture, { draft: null, quote: null, payment: null, order: null, settled: false, deposited: false }); history.replaceState(null, '', '/'); window.__save(); window.__render('account'); });
     await page.getByRole('button', { name: 'Choose mail-in →' }).click();
     await page.getByRole('button', { name: /^Continue to camera/ }).click();
@@ -247,6 +289,7 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     assert.deepEqual(errors, []);
     const mail = await page.evaluate(() => ({ cards: window.__fixture.draft.cards.length, paymentState: window.__fixture.payment.state, totalDistinctPaymentCreates: window.__fixture.paymentCreates, profileWrites: window.__fixture.calls.filter(c => c.path === '/profile').length }));
+    await page.setViewportSize({width:390,height:844});
     await page.evaluate(() => window.__render('dashboard')); await page.getByRole('link', {name:/GRADE YOUR CARDS/}).waitFor(); await shot('10-hero-mobile');
     await page.addStyleTag({content:'.fixture-banner,body>p{display:none!important}'}); const mobileCTA=await page.locator('.hero-slab-button').boundingBox(); assert(mobileCTA.y+mobileCTA.height<844,'The grade-your-cards button must be visible without scrolling at390×844'); await shot('10-hero-mobile-production-layout');
     await page.setViewportSize({width:1280,height:900}); await shot('11-hero-desktop');
@@ -255,15 +298,24 @@ try {
     await page.evaluate(() => window.__render('cold-checkout-unknown')); await page.getByRole('button',{name:'Check payment status'}).waitFor(); assert.equal(await page.getByRole('heading',{name:'Your draft is saved.'}).count(),0,'Cold blockers must not hide an unresolved original payment');
     await page.evaluate(() => window.__render('cold-checkout-paid')); await page.getByRole('heading',{name:'Your cards have a place.'}).waitFor(); assert.equal(await page.getByRole('heading',{name:'Your draft is saved.'}).count(),0,'Cold blockers must not hide a paid receipt');
     const directoryContext = await browser.newContext({viewport:{width:390,height:844},geolocation:{latitude:34.09,longitude:-118.4},permissions:['geolocation']}), directory = await directoryContext.newPage();
-    await directoryContext.route(/^https?:\/\//, route => { assert.equal(new URL(route.request().url()).origin, origin, 'External requests are prohibited'); return route.continue(); });
+    directory.on('pageerror', error => errors.push(error.message));
+    const mapRequests = [];
+    await directoryContext.route(/^https?:\/\//, route => {
+      const url = new URL(route.request().url());
+      if ((url.origin === 'https://maps.google.com' && url.pathname === '/maps') || (url.origin === 'https://www.google.com' && url.pathname === '/maps/embed')) {
+        mapRequests.push(url.href);
+        return route.fulfill({status:200,contentType:'text/html',body:'<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:#263135;color:#f0d490;font:18px system-ui;display:grid;place-content:center;height:100vh"><p>INTERCEPTED GOOGLE MAP FRAME</p><p>Synthetic browser verification · no external request</p></body></html>'});
+      }
+      assert.equal(url.origin, origin, 'Other external requests are prohibited'); return route.continue();
+    });
     await directory.goto(origin);
     await directory.evaluate(() => {
       const api=window.__request; window.__directoryMode='empty'; window.__directoryPaths=[];
-      window.__request=async(path,...args)=>{if(path.startsWith('/intake/locations')){window.__directoryPaths.push(path);if(window.__directoryMode==='empty')return {locations:[]};if(window.__directoryMode==='contact')return {locations:[],dealerContacts:[window.__dealerContact]};if(window.__directoryMode==='error')throw Error('Synthetic directory outage');if(window.__directoryMode==='slow')return new Promise(resolve=>{window.__finishDirectory=()=>api(path,...args).then(resolve);});}return api(path,...args);};
+      window.__request=async(path,...args)=>{if(path.startsWith('/intake/locations')){window.__directoryPaths.push(path);if(window.__directoryMode==='empty')return {locations:[]};if(window.__directoryMode==='contact')return {locations:[],dealerContacts:[window.__dealerContact]};if(window.__directoryMode==='nearby-postal')return path.includes('query=')?{locations:[]}:{locations:[],dealerContacts:[window.__dealerContact]};if(window.__directoryMode==='error')throw Error('Synthetic directory outage');if(window.__directoryMode==='multi'){const result=await api(path,...args);return {...result,locations:[...result.locations,{...result.locations[0],id:'00000009-1111-4111-8111-111111111111',name:'Synthetic East Kiosk',mapEmbedUrl:'https://maps.google.com/maps?q=35,-119&z=14&output=embed'}]};}if(window.__directoryMode==='slow')return new Promise(resolve=>{window.__finishDirectory=()=>api(path,...args).then(resolve);});}return api(path,...args);};
       window.__render();
     });
     await directory.getByRole('button',{name:'Find an Authorized Dealer →'}).click();
-    await directory.getByRole('heading',{name:'Find a Atlas Submission Station at an Authorized Dealer near you'}).waitFor();
+    await directory.getByRole('heading',{name:'Find an ATLAS Submission Station at an Authorized Dealer near you'}).waitFor();
     await directory.getByText('No ATLAS Submission Stations found yet.',{exact:true}).waitFor();
     assert(await directory.getByRole('button',{name:'Continue with your phone'}).isDisabled(), 'An empty directory cannot enable kiosk continuation');
     await directory.getByRole('textbox',{name:'ZIP code or city'}).fill('90210'); await directory.getByRole('button',{name:'Search',exact:true}).click();
@@ -274,6 +326,9 @@ try {
     assert.equal(new URL(await directory.evaluate(()=>window.__directoryPaths.at(-1)),origin).searchParams.has('query'),false,'Nearby search clears the previous text filter');
     await directory.evaluate(()=>{window.__directoryMode='full';}); await directory.getByRole('button',{name:'Search',exact:true}).click();
     await directory.getByRole('heading',{name:'Synthetic Harbor Kiosk'}).waitFor();
+    await directory.locator('.location-map iframe').waitFor();
+    assert.equal(new URL(await directory.locator('.location-map iframe').getAttribute('src')).searchParams.get('q'), '34,-118', 'Search opens the approved station map, not device coordinates');
+    assert(await directory.getByRole('button',{name:'Continue with your phone'}).isDisabled(), 'Showing an operational station map does not silently choose it');
     await directory.evaluate(()=>{window.__directoryMode='error';}); await directory.getByRole('button',{name:'Search',exact:true}).click();
     await directory.getByText('We couldn’t load ATLAS Submission Stations. Please try again.').waitFor();
     assert.equal(await directory.locator('.location-option,.location-empty').count(),0,'A failed search shows neither stale locations nor a false empty-result message');
@@ -289,12 +344,52 @@ try {
     await directory.getByRole('textbox',{name:'ZIP code or city'}).fill('95678'); await directory.getByRole('button',{name:'Search',exact:true}).click();
     await directory.getByRole('heading',{name:'CenterCourt Cards',exact:true}).waitFor();
     await directory.getByText('Submission station setup in progress',{exact:true}).waitFor();
-    assert.equal(await directory.locator('.dealer-contact button,.location-empty').count(),0,'An approved contact neither pretends to be selectable nor shows an empty-directory message');
+    assert.equal(await directory.getByRole('button',{name:'Choose this kiosk',exact:true}).count(),0,'An approved contact never becomes a selectable kiosk');
+    assert.equal(await directory.locator('.location-empty').count(),0,'An approved contact does not show an empty-directory message');
     assert(await directory.getByRole('button',{name:'Continue with your phone'}).isDisabled(),'A contact-only dealer cannot enable kiosk continuation');
     assert.equal(await directory.getByRole('link',{name:'Visit dealer website ↗'}).getAttribute('href'),approvedContact.website);
+    assert((await directory.locator('.location-map iframe').getAttribute('src')).startsWith('https://www.google.com/maps/embed?pb='), 'The sourced CenterCourt Google embed opens after a matching ZIP search');
+    const finderLayouts = [];
+    for (const width of [320,390,820,1280]) {
+      await directory.setViewportSize({width,height:900});
+      const layout = await directory.evaluate(() => {
+        const heading=document.querySelector('.location-picker h2'), range=document.createRange(); range.selectNodeContents(heading);
+        const headingLines=range.getClientRects().length, text=heading.firstChild, headingRect=heading.getBoundingClientRect();
+        range.setStart(text,text.textContent.lastIndexOf('you')); range.setEnd(text,text.textContent.length); const last=range.getBoundingClientRect();
+        return {overflow:document.documentElement.scrollWidth>innerWidth,headingLines,iframeWidth:document.querySelector('.location-map iframe').getBoundingClientRect().width,finalWord:range.toString(),finalWordVisible:last.width>0 && last.right<=headingRect.right+1 && last.left>=headingRect.left-1 && last.bottom<=heading.closest('.location-picker').getBoundingClientRect().bottom && last.bottom<heading.nextElementSibling.getBoundingClientRect().top && (getComputedStyle(heading).overflowY==='visible' || last.bottom<=headingRect.bottom+1),headingOverflow:heading.scrollWidth>heading.clientWidth,headingRect:headingRect.toJSON(),lastWordRect:last.toJSON(),headingOverflowStyle:getComputedStyle(heading).overflow};
+      });
+      writeFileSync(join(output,`finder-layout-${width}.json`),JSON.stringify(layout,null,2)); await directory.screenshot({path:join(output,`00-dealer-map-${width}.png`),fullPage:true}); assert.equal(layout.overflow,false,`Dealer map fits ${width}px`); assert.equal(layout.finalWord,'you'); assert(layout.finalWordVisible && !layout.headingOverflow,`The final word in the finder heading remains visible at ${width}px`); if(width>=1100)assert.equal(layout.headingLines,1,'The desktop finder heading is one line');
+      assert(layout.iframeWidth>200 && layout.iframeWidth<width); finderLayouts.push({width,...layout});
+      await directory.screenshot({path:join(output,`00-dealer-map-${width}.png`),fullPage:true});
+    }
+    await directory.setViewportSize({width:390,height:844});
     await directory.screenshot({path:join(output,'00-authorized-dealer-contact-mobile.png'),fullPage:true});
+    await directory.evaluate(() => { window.__directoryMode='nearby-postal'; });
+    await directory.getByRole('textbox',{name:'ZIP code or city'}).fill('95661'); await directory.getByRole('button',{name:'Search',exact:true}).click();
+    await directory.locator('.location-search-scope').waitFor();
+    assert.match(await directory.locator('.location-search-scope').textContent(), /Showing all listed ATLAS dealers/);
+    await directory.getByRole('heading',{name:'CenterCourt Cards',exact:true}).waitFor();
+    assert.deepEqual(await directory.evaluate(() => window.__directoryPaths.slice(-2)), ['/intake/locations?query=95661','/intake/locations']);
+    assert(await directory.getByRole('button',{name:'Continue with your phone'}).isDisabled(),'A neighboring ZIP fallback does not invent an active station');
+    await directory.screenshot({path:join(output,'00-dealer-neighboring-zip-mobile.png'),fullPage:true});
+    await directory.evaluate(() => { window.__directoryMode='contact'; navigator.geolocation.getCurrentPosition = success => { window.__delayedLocation = success; }; });
+    await directory.getByRole('button',{name:'Use my location'}).click();
+    await directory.getByRole('textbox',{name:'ZIP code or city'}).fill('95678'); await directory.getByRole('button',{name:'Search',exact:true}).click();
+    await directory.getByRole('heading',{name:'CenterCourt Cards',exact:true}).waitFor();
+    const beforeLocationCallback = await directory.evaluate(() => window.__directoryPaths.length);
+    await directory.evaluate(() => window.__delayedLocation({coords:{latitude:1,longitude:2}}));
+    assert.equal(await directory.evaluate(() => window.__directoryPaths.length),beforeLocationCallback,'A delayed location callback cannot replace a newer ZIP search');
+    assert.equal(await directory.getByRole('textbox',{name:'ZIP code or city'}).inputValue(),'95678');
+    await directory.evaluate(() => { window.__directoryMode='multi'; }); await directory.getByRole('button',{name:'Search',exact:true}).click();
+    await directory.getByRole('button',{name:'Synthetic East Kiosk',exact:true}).click();
+    assert.equal(new URL(await directory.locator('.location-map iframe').getAttribute('src')).searchParams.get('q'),'35,-119');
+    assert.equal(await directory.getByRole('button',{name:'Synthetic East Kiosk',exact:true}).getAttribute('aria-pressed'),'true');
+    assert(await directory.getByRole('button',{name:'Continue with your phone'}).isDisabled(),'Choosing a map pin does not choose a submission station');
+    await directory.getByRole('button',{name:'Choose this kiosk',exact:true}).first().click();
+    assert(await directory.getByRole('button',{name:'Continue with your phone'}).isEnabled(),'Choosing a configured station enables continuation');
     await directoryContext.close();
     const rapidContext = await browser.newContext({viewport:{width:390,height:844}}), rapid = await rapidContext.newPage();
+    rapid.on('pageerror', error => errors.push(error.message));
     await rapid.goto(origin); await rapid.evaluate(() => {
       window.__fixture.signedIn=true; window.__fixture.customer.profile={}; window.__fixture.calls=[]; window.__save();
       const api=window.__request; window.__request=async(path,options)=>{if(path==='/intake/drafts'&&options?.body){window.__blockedDraft=true;return new Promise(()=>{});}return api(path,options);};
@@ -322,7 +417,8 @@ try {
     await rapid.getByRole('button',{name:'Keep capturing'}).click(); await rapid.getByRole('button',{name:'Capture Front'}).click(); await rapid.getByRole('button',{name:'Capture Back'}).waitFor();
     await rapid.reload(); await rapid.getByRole('button',{name:'Continue with the back'}).waitFor();
     await rapidContext.close();
-    writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'PASS', syntheticOnly: true, browserErrors: errors, serviceLayouts, motion, directory: {emptySelectionBlocked:true,nearbyClearsQuery:true,errorDistinctFromEmpty:true,staleResultIgnored:true,approvedDealerVisible:true,contactSelectionBlocked:true}, kiosk: evidence, mail, coldCheckout: {actualServiceBlockers:coldCheckout.blockers,savedCompletion:true,unknownPaymentPreserved:true,paidReceiptPreserved:true}, rapid: rapidEvidence }, null, 2) + '\n');
+    assert.deepEqual(errors, []);
+    writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'PASS', syntheticOnly: true, flowWidth, browserErrors: errors, serviceLayouts, motion, directory: {emptySelectionBlocked:true,nearbyClearsQuery:true,errorDistinctFromEmpty:true,staleResultIgnored:true,delayedLocationIgnored:true,approvedDealerVisible:true,contactSelectionBlocked:true,neighboringZipShowsAllWithDisclosure:true,mapPinAndStationSelectionSeparate:true,configuredSelectionEnabled:true,initialMapDeferred:true,googleFramesIntercepted:true,mapRequests,finderLayouts}, kiosk: evidence, mail, coldCheckout: {actualServiceBlockers:coldCheckout.blockers,savedCompletion:true,unknownPaymentPreserved:true,paidReceiptPreserved:true}, rapid: rapidEvidence }, null, 2) + '\n');
     process.stdout.write(JSON.stringify({ status: 'PASS', output, kiosk: evidence, mail }) + '\n');
 } catch (error) {
     await shot('failure'); writeFileSync(join(output, 'failure.json'), JSON.stringify({ error: error.message, browserErrors: errors, text: await page.locator('body').innerText() }, null, 2)); throw error;

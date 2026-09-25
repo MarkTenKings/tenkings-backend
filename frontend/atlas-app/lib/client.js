@@ -28,7 +28,7 @@ const messages = {
     INVALID_GRADING_ACTION: 'This correction is incomplete or exceeds the supported limits.',
     TRACE_NOT_FOUND: 'This finding has an outline rather than a saved pixel trace.',
     GRADING_WORK_UNRESOLVED: 'A grading operation still needs to finish or be resolved.',
-    MACHINE_PROPOSALS_UNRESOLVED: 'Review and resolve every Astra proposal before approving this report.',
+    MACHINE_PROPOSALS_UNRESOLVED: 'Review and resolve every ATLAS proposal before approving this report.',
     SAVE_PROPOSED_CORRECTION_FIRST: 'Save this correction using the grading controls before accepting its proposal.',
     PROPOSAL_ALREADY_RESOLVED: 'This proposal was already resolved. Reload the current report.',
     GRADING_POLICY_CHANGED: 'This analysis needs to be checked against the current grading release.',

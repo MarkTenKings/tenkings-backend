@@ -65,8 +65,18 @@ export function createBatchWorker({ repository, prepare, concurrency = 2, heartb
       // This precise native-capacity refusal occurs before the limited work
       // starts. Retain the same durable job/action; do not ask a reviewer to
       // resolve ordinary contention with an upload or another measurement.
-      const outcome=['MANUAL_PROCESSING_BUSY','BATCH_STOPPED'].includes(error?.code)&&!controller.signal.aborted
-        ?{kind:'WAIT',retryAfterMs:3000}
+      // Storage gets two retries on this same pre-analysis job. Keep the budget
+      // in durable evidence so ordinary WAIT polls do not consume it and a
+      // process replacement cannot reset it. Other stages never use this path.
+      const storageRetryCount = job.evidence?.storageRetryCount === undefined ? 0 : job.evidence.storageRetryCount;
+      const canRetry = !controller.signal.aborted && ![401, 403].includes(error?.status);
+      const retryStorage = error?.code === 'PHOTO_STORAGE_UNAVAILABLE' && job.stage === 'PREPARE'
+        && !dispatchAdmission.signal.aborted && error?.name !== 'AbortError'
+        && Number.isSafeInteger(storageRetryCount) && storageRetryCount >= 0 && storageRetryCount < 2;
+      const outcome=canRetry && retryStorage
+        ?{kind:'WAIT',retryAfterMs:3000,evidence:{storageRetryCount:storageRetryCount+1}}
+        :canRetry && ['MANUAL_PROCESSING_BUSY','BATCH_STOPPED'].includes(error?.code)
+          ?{kind:'WAIT',retryAfterMs:3000}
         :{kind:'ATTENTION',code:/^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code??'')?error.code:'BATCH_STAGE_INTERRUPTED'};
       try { await repository.finish(staff, job, outcome); }
       catch (saveError) { onError(saveError); }

@@ -87,18 +87,58 @@ try {
           legacyPreserved = legacyReads === 0 && next.items.length === 2 && next.items[0].createId === old.createId && await next.items[0].files.FRONT.text() === 'oldF' && await original.items[0].files.BACK.text() === 'oldB';
           await legacy.close(); db.close();
         }
+        // Recovery upgrades one exact pending original atomically; a different
+        // photo, changed intent or quota refusal must leave the old row intact.
+        const recoveryStaff = crypto.randomUUID(), recoveryId = crypto.randomUUID();
+        let recoveryJournal = intake.createBrowserIntakeJournal({ staffId: recoveryStaff });
+        const recoveryFile = new File(['exact retained original'], 'same-original.jpg', { type: 'image/jpeg', lastModified: 777 });
+        const recoveryInput = { requestId: recoveryId, side: 'FRONT', byteCount: recoveryFile.size, sha256: await digest(recoveryFile) };
+        const recoveryValue = { kind: 'upload', cardId: crypto.randomUUID(), uploadId: crypto.randomUUID(), file: recoveryFile, input: recoveryInput };
+        const recoveryDB = await new Promise((resolve,reject) => { const r=indexedDB.open('atlas-native-photo-intake-v1',1); r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error); });
+        const recoveryRow = key => new Promise((resolve,reject) => { const r=recoveryDB.transaction('pending','readonly').objectStore('pending').get(key); r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error); });
+        if (browserName === 'Chrome') {
+          await new Promise((resolve,reject) => { const tx=recoveryDB.transaction('pending','readwrite'); tx.objectStore('pending').put(recoveryValue,`${recoveryStaff}:${recoveryId}`); tx.oncomplete=resolve; tx.onabort=()=>reject(tx.error); });
+        } else await recoveryJournal.put(recoveryId,recoveryValue);
+        const recoveryBefore = await recoveryJournal.get(recoveryId), refusals = [];
+        for (const candidate of [{ ...recoveryBefore, file: new Blob(['x'.repeat(recoveryFile.size)]) }, { ...recoveryBefore, cardId: crypto.randomUUID() }]) {
+          try { await recoveryJournal.put(recoveryId,candidate,{recoverOriginal:true}); }
+          catch (error) { refusals.push(error.code); }
+        }
+        IDBObjectStore.prototype.put = function(value,key) {
+          if (key === `${recoveryStaff}:photo-bytes:${recoveryId}`) throw new DOMException('Injected recovery quota failure','QuotaExceededError');
+          return put.call(this,value,key);
+        };
+        let recoveryQuota;
+        try { await recoveryJournal.put(recoveryId,recoveryBefore,{recoverOriginal:true}); }
+        catch (error) { recoveryQuota=error.code; }
+        finally { IDBObjectStore.prototype.put=put; }
+        const retainedAfterRefusal = await recoveryJournal.get(recoveryId);
+        const recoveryPreserved = retainedAfterRefusal.cardId===recoveryValue.cardId && retainedAfterRefusal.uploadId===recoveryValue.uploadId
+          && JSON.stringify(retainedAfterRefusal.input)===JSON.stringify(recoveryInput) && await digest(retainedAfterRefusal.file)===recoveryInput.sha256
+          && (browserName!=='Chrome' || Boolean(await recoveryRow(`${recoveryStaff}:${recoveryId}`)));
+        await recoveryJournal.put(recoveryId,recoveryBefore,{recoverOriginal:true});
+        await recoveryJournal.close(); recoveryJournal=intake.createBrowserIntakeJournal({staffId:recoveryStaff});
+        const recoveredOriginal=await recoveryJournal.get(recoveryId);
+        const recoveryExact = await digest(recoveredOriginal.file)===recoveryInput.sha256 && recoveredOriginal.file.name===recoveryFile.name
+          && recoveredOriginal.file.lastModified===777 && recoveredOriginal.cardId===recoveryValue.cardId && recoveredOriginal.uploadId===recoveryValue.uploadId
+          && (await recoveryRow(`${recoveryStaff}:byte-metadata:${recoveryId}`)).photoRef==='bytes'
+          && !(await recoveryRow(`${recoveryStaff}:${recoveryId}`));
+        await recoveryJournal.close(); recoveryDB.close();
         return { pairs: saved.items.length, exactBytes: exact.every(Boolean), sameIds, namePreserved, cachedProgress, metadataOnly,
           quotaCode, quotaPreserved, uploadSame, removed, byteWriteCounts: [...writes].filter(([key])=>key.includes(':photo-bytes:')).map(([,n])=>n),
           completedOnly: completed.items[0].files === null && completed.items.slice(1).every(item=>item.files.FRONT instanceof Blob), legacyPreserved,
+          recoveryRefusals: refusals, recoveryQuota, recoveryPreserved, recoveryExact,
           bytesPerPair: front.size + back.size, elapsedMs: Math.round(performance.now()-started) };
       }, name);
       assert.equal(result.pairs,10); assert.equal(result.quotaCode,'PHOTO_STORAGE_QUOTA');
       for (const field of ['exactBytes','sameIds','namePreserved','cachedProgress','metadataOnly','quotaPreserved','uploadSame','removed','completedOnly']) assert.equal(result[field],true,`${name} ${field}`);
       assert.equal(result.byteWriteCounts.length,21); assert(result.byteWriteCounts.every(n=>n===1));
       if (name==='Chrome') assert.equal(result.legacyPreserved,true);
+      assert.deepEqual(result.recoveryRefusals,['INTAKE_PENDING_BYTES_CONFLICT','INTAKE_PENDING_BYTES_CONFLICT']);
+      assert.equal(result.recoveryQuota,'PHOTO_STORAGE_QUOTA'); assert.equal(result.recoveryPreserved,true); assert.equal(result.recoveryExact,true);
       results.push({browser:name,...result}); await context.close();
     } finally { await browser.close(); }
   }
-  const receipt = { status:'PASS', scope:'Actual desktop Chrome/WebKit; exact 10 synthetic 8 MiB pairs, blocked raw Blob writes, metadata-only progress, reload, quota atomicity, stable IDs and legacy preservation. No physical iPhone or production writes.', sourceHashes:Object.fromEntries([...sources].map(([key,path])=>[key,createHash('sha256').update(readFileSync(join(root,path))).digest('hex')])), results };
+  const receipt = { status:'PASS', scope:'Actual desktop Chrome/WebKit; exact 10 synthetic 8 MiB pairs, blocked raw Blob writes, metadata-only progress, reload, quota atomicity, stable IDs, legacy preservation and atomic exact-original recovery. Raw legacy intake upgrade exercised in Chrome; byte-backed recovery in WebKit. No physical iPhone or production writes.', sourceHashes:Object.fromEntries([...sources].map(([key,path])=>[key,createHash('sha256').update(readFileSync(join(root,path))).digest('hex')])), results };
   writeFileSync(join(output,'result.json'),JSON.stringify(receipt,null,2)+'\n'); console.log(JSON.stringify(receipt));
 } finally { await new Promise(done=>server.close(done)); }

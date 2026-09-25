@@ -337,7 +337,7 @@ test('machine packet exposes proposed evidence and one deliberate review slot on
     geometry:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{frame:{inspectionImageSha256:inspection[side.toLowerCase()].imageSha256},centeringQuad:[]}]))};
   const props={packet:{report,reportHash:source.preview.reportHash,explanation:source.preview.review.explanation,images:source.images},children:'EXPLICIT_HUMAN_APPROVAL'};
   const f=harness(props,{machine:true});
-  assert.equal(f.has('ASTRA PROPOSAL · HUMAN REVIEW'),true); assert.equal(f.has('PROPOSED GRADE'),true);
+  assert.equal(f.has('ATLAS PROPOSAL · HUMAN REVIEW'),true); assert.equal(f.has('PROPOSED GRADE'),true);
   assert.equal(f.has('Exact confirmed markings'),false); assert.equal(f.has('Proposed'),true);
   assert.equal(f.readyValues.at(-1),false); f.ready('Front'); assert.equal(f.readyValues.at(-1),false);
   f.ready('Back'); assert.equal(f.readyValues.at(-1),true);

@@ -117,7 +117,7 @@ export function createWorkspaceRuntime({ auth, review, staffConfig, env, setting
         preparation: { ready: sourceReady(context), message: sourceReady(context) ? 'Verified image preparation is available.' : 'Saved boundaries are retained while image preparation is unavailable.' },
         manualGrading: { ready: context.policy.claimsEnabled, message: context.policy.claimsEnabled ? 'A human grader can claim the first admitted card.' : 'New grading claims are not enabled.' },
         astra: { ready: Boolean(context.policy.astraEnabled && connected.claimSource),
-            message: context.policy.astraEnabled && connected.claimSource ? 'Astra can claim the admitted queue.' : 'Astra is not running.' },
+            message: context.policy.astraEnabled && connected.claimSource ? 'ATLAS can claim the admitted queue.' : 'ATLAS is not running.' },
     });
     const intake = new StaffWorkspaceIntake({ store, storage: connected.storage, readiness,
         source: { reserve: ({ cardId, creatorId }) => ({ sourceType: 'SPEEDSTER', sourceId: `atlas-${cardId}`, sourceOwnerId: `atlas-staff-${creatorId}` }),

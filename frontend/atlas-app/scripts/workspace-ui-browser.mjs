@@ -181,7 +181,7 @@ export async function verifyWorkspaceBrowser({ directory, toolModules, assets, r
         await page.goto(`${origin}/admin/workspace/${saved[1].id}`);
         await page.getByRole('button', { name: 'Grade this card', exact: true }).waitFor();
         assert.equal(await page.getByRole('button', { name: 'Grade this card', exact: true }).isDisabled(), true);
-        assert.equal(await page.getByRole('button', { name: /^Start Astra/ }).isDisabled(), true);
+        assert.equal(await page.getByRole('button', { name: /^Start ATLAS/ }).isDisabled(), true);
         assert.equal(await page.getByRole('button', { name: 'Step mode', exact: true }).isDisabled(), true);
         await screenshot('10-second-card-held');
         const second = (await get(`workspace/cards/${saved[1].id}`)).card;

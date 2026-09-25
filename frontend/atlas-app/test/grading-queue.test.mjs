@@ -89,7 +89,7 @@ test('pending assigned reports do not prevent an accurate waiting count or claim
 test('a waiting card explains the disabled Start admission inline without recovery or sign-in prompts', () => {
     const f = harness({ workspace: loaded([{ ...waitingCard, capabilities: { astraClaim: false, humanClaim: true,
         astraClaimUnavailableReason: 'WORKSPACE_ASTRA_NOT_ADMITTED' } }]) });
-    const start = f.nodes(node => node.type === 'button' && text(node).includes('Start Astra'));
+    const start = f.nodes(node => node.type === 'button' && text(node).includes('Start ATLAS'));
     assert.equal(start.length, 1); assert.equal(start[0].props.disabled, true);
     assert.match(f.text(), /waiting for test admission/); assert.doesNotMatch(f.text(), /Recover saved request|another tab/);
     assert.equal(f.mutations.length, 0);
@@ -107,8 +107,8 @@ test('a workspace load error cannot produce complete-looking queue counts', () =
     for (const state of Object.keys(workspaceClient.stateNames)) assert.equal(f.count(state), '—');
 });
 
-test('Start Astra runs continuously, with one-step operation kept as a separate explicit choice', async () => {
-    for (const [label, mode] of [['Start Astra', 'CONTINUOUS'], ['Start one step', 'STEP']]) {
+test('Start ATLAS runs continuously, with one-step operation kept as a separate explicit choice', async () => {
+    for (const [label, mode] of [['Start ATLAS', 'CONTINUOUS'], ['Start one step', 'STEP']]) {
         const f = harness({ workspace: loaded([{ ...waitingCard, capabilities: { astraClaim: true, humanClaim: true } }]) }); f.claimingEnabled = true;
         const start = f.nodes(node => node.type === 'button' && text(node) === label)[0]; assert.ok(start); assert.equal(start.props.disabled, false);
         await start.props.onClick();

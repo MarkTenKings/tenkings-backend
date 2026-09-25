@@ -113,7 +113,7 @@ test('suggestions are separate and unreviewed; adoption requires the loaded matc
   assert.equal(f.button('Accept suggestion').props.disabled, true); assert.equal(f.calls.length, 0);
   f.ready(); assert.equal(f.has('Unreviewed'), true); assert.equal(f.has('May be a printed line.'), true);
   assert.equal(f.nodes(node => node.type === 'polygon').length, 1);
-  assert.equal(f.nodes(node => node.type === 'section' && node.props['aria-label'] === 'Front Astra suggestions').length, 1);
+  assert.equal(f.nodes(node => node.type === 'section' && node.props['aria-label'] === 'Front ATLAS suggestions').length, 1);
   await f.click('Accept suggestion');
   assert.equal(f.calls.length, 1); assert.equal(f.calls[0].kind, 'proposal');
   assert.equal(f.calls[0].request.action, 'ACCEPT'); assert.equal(f.calls[0].request.actor, 'HUMAN');
@@ -158,18 +158,18 @@ test('unknown/refused analysis never blocks manual work or claims that no defect
   for (const status of ['RUNNING', 'UNKNOWN', 'REFUSED', 'FAILED', 'UNRECOGNIZED']) {
     const state = workspace(false), f = harness({ workspace: state, astra: { ...astraFor(state, status), proposals: [] } }); f.ready();
     assert.equal(f.button('Add finding', 'Back').props.disabled, false, status);
-    assert.equal(f.has('Astra returned no suggestions.'), false, status);
-    if (['RUNNING', 'UNKNOWN', 'UNRECOGNIZED'].includes(status)) assert.equal(f.button('Find defects with Astra').props.disabled, true);
+    assert.equal(f.has('ATLAS returned no suggestions.'), false, status);
+    if (['RUNNING', 'UNKNOWN', 'UNRECOGNIZED'].includes(status)) assert.equal(f.button('Find defects with ATLAS').props.disabled, true);
   }
 });
 
 test('an uncertain request reply requires status reconciliation; no local success or blind retry is fabricated', async () => {
   const state = workspace(false), f = harness({ workspace: state, astra: { ...astraFor(state, 'IDLE'), proposals: [] },
     onAnalyzeDefects: async () => { throw Error('lost response'); }, onRefreshAnalysis: async () => {} }); f.ready();
-  await f.click('Find defects with Astra'); assert.equal(f.button('Find defects with Astra').props.disabled, true);
+  await f.click('Find defects with ATLAS'); assert.equal(f.button('Find defects with ATLAS').props.disabled, true);
   assert.equal(f.has('No analysis result has been received'), true); assert.equal(f.button('Add finding', 'Front').props.disabled, false);
   f.props.astra = { ...f.props.astra, status: 'REFUSED' }; f.render();
-  assert.equal(f.button('Find defects with Astra').props.disabled, false);
+  assert.equal(f.button('Find defects with ATLAS').props.disabled, false);
 });
 
 test('pending reviewed memory survives recovery without a fabricated saved state or extra grading confirmation', async () => {
@@ -184,7 +184,7 @@ test('pending reviewed memory survives recovery without a fabricated saved state
 });
 
 test('feature-disabled props preserve the manual surface and reviewed revisions do not stale same-frame proposals', () => {
-  const f = harness(); f.ready(); assert.equal(f.has('Astra defect assistance'), false); assert.equal(f.has('Reviewed examples'), false);
+  const f = harness(); f.ready(); assert.equal(f.has('ATLAS defect assistance'), false); assert.equal(f.has('Reviewed examples'), false);
   const state = workspace(false), astra = astraFor(state), edited = structuredClone(state);
   edited.sides.FRONT.findingRevision++; edited.sides.FRONT.reviewRevision++;
   assert.equal(presentation.proposalFrameMatches(edited, astra, 'FRONT'), true);
@@ -233,12 +233,12 @@ test('a saved empty review does not claim that new defect examples were publishe
   assert.equal(f.has('Reviewed examples saved and available'), false);
 });
 
-test('Astra image limitations remain visible with an empty proposal list without claiming inspection completion', () => {
+test('ATLAS image limitations remain visible with an empty proposal list without claiming inspection completion', () => {
   const state = workspace(false), f = harness({ workspace: state, astra: { ...astraFor(state), proposals: [],
     limitations: ['Glare obscures part of the back surface.', 'A fine mark is too small to localize.'] } }); f.ready();
-  assert.equal(f.has('Astra returned no suggestions. Inspect both sides'), true);
+  assert.equal(f.has('ATLAS returned no suggestions. Inspect both sides'), true);
   assert.equal(f.has('Glare obscures part of the back surface.'), true);
-  assert.equal(f.nodes(node => node.props?.['aria-label'] === 'Astra image limitations').length, 1);
+  assert.equal(f.nodes(node => node.props?.['aria-label'] === 'ATLAS image limitations').length, 1);
   assert.equal(f.button('Confirm findings').props.disabled, true);
 });
 
@@ -274,7 +274,7 @@ test('collective confirmation requires the current server roster and both inspec
 
 test('saved suggestions stay reviewable when a new provider request is unavailable', async () => {
   const state = workspace(false), f = harness({ workspace: state, astra: { ...astraFor(state), requestAvailable: false } }); f.ready();
-  assert.equal(f.button('Find defects with Astra').props.disabled, true);
+  assert.equal(f.button('Find defects with ATLAS').props.disabled, true);
   assert.equal(f.button('Accept suggestion').props.disabled, false);
   await f.click('Reject suggestion'); assert.equal(f.calls.length, 1); assert.equal(f.calls[0].kind, 'proposal');
   assert.equal(f.calls[0].request.action, 'REJECT');
@@ -282,11 +282,11 @@ test('saved suggestions stay reviewable when a new provider request is unavailab
 });
 
 
-test('background acceptance explains Astra’s first inspection without asking the human to inspect first', () => {
+test('background acceptance explains ATLAS’s first inspection without asking the human to inspect first', () => {
   const state = workspace(false), f = harness({ workspace: state, astra: { ...astraFor(state, 'RUNNING'), backgroundAccepted: true, proposals: [] } });
-  assert.equal(f.has('Astra has accepted the card for analysis.'), true);
+  assert.equal(f.has('ATLAS has accepted the card for analysis.'), true);
   assert.equal(f.has('this can take several minutes'), true);
-  assert.equal(f.button('Find defects with Astra').props.disabled, true);
+  assert.equal(f.button('Find defects with ATLAS').props.disabled, true);
   assert.equal(f.calls.length, 0);
 });
 
@@ -295,8 +295,8 @@ test('exhausted background collection reports uncertainty and does not offer pai
     astra: { ...astraFor(state, 'UNKNOWN'), backgroundAccepted: true, collectionStopped: true, proposals: [] } });
   assert.equal(f.has('automatic checking stopped'), true);
   assert.equal(f.has('Checking the saved request again'), false);
-  assert.equal(f.has('Start a new Astra analysis'), false);
-  assert.equal(f.button('Find defects with Astra').props.disabled, true);
+  assert.equal(f.has('Start a new ATLAS analysis'), false);
+  assert.equal(f.button('Find defects with ATLAS').props.disabled, true);
   assert.equal(f.calls.length, 0);
 });
 
@@ -304,8 +304,8 @@ test('a retained unknown needs an explicit new-analysis click and verified curre
   const state = workspace(false), calls = [], f = harness({ workspace: state,
     astra: { ...astraFor(state, 'UNKNOWN'), proposals: [], replacement: { analysisId: 'analysis-1', outcomeHash: 'a'.repeat(64) } },
     onReplaceAnalysis: async input => calls.push(input) });
-  assert.equal(f.button('Start a new Astra analysis').props.disabled, true); assert.equal(calls.length, 0);
-  f.ready(); await f.click('Start a new Astra analysis');
+  assert.equal(f.button('Start a new ATLAS analysis').props.disabled, true); assert.equal(calls.length, 0);
+  f.ready(); await f.click('Start a new ATLAS analysis');
   assert.equal(calls.length, 1); assert.deepEqual(calls[0].base.FRONT, actions.defectBase(state, 'FRONT'));
   assert.equal(f.calls.length, 0, 'the ordinary start callback is never used for replacement');
 });
@@ -313,17 +313,17 @@ test('a retained unknown needs an explicit new-analysis click and verified curre
 test('accepted background work offers no replacement and a manual trace blocks replacing old unknown work', async () => {
   const state = workspace(false), astra = { ...astraFor(state, 'UNKNOWN'), proposals: [], replacement: { analysisId: 'analysis-1', outcomeHash: 'a'.repeat(64) } };
   const accepted = harness({ workspace: state, astra: { ...astra, backgroundAccepted: true }, onReplaceAnalysis: async () => assert.fail() });
-  assert.equal(accepted.has('Start a new Astra analysis'), false);
+  assert.equal(accepted.has('Start a new ATLAS analysis'), false);
   const editable = harness({ workspace: state, astra, onReplaceAnalysis: async () => assert.fail() }); editable.ready();
   await editable.click('Add finding', 'Front');
-  assert.equal(editable.button('Start a new Astra analysis').props.disabled, true);
+  assert.equal(editable.button('Start a new ATLAS analysis').props.disabled, true);
 });
 
 test('a durably refused concurrent action offers status recovery without another paid start', async () => {
   const state = workspace(false); let refreshes = 0;
   const f = harness({ workspace: state, astra: { ...astraFor(state, 'REFUSED'), proposals: [], followLatest: true },
     onRefreshAnalysis: async () => { refreshes++; } }); f.ready();
-  assert.equal(f.button('Find defects with Astra').props.disabled, true);
+  assert.equal(f.button('Find defects with ATLAS').props.disabled, true);
   assert.equal(f.button('Check analysis status').props.disabled, false);
   await f.click('Check analysis status');
   assert.equal(refreshes, 1); assert.equal(f.calls.length, 0);
@@ -375,7 +375,7 @@ test('focus, zoom, overlay visibility and expanded side switching preserve both 
   for (const { request } of f.calls) {
     const pixels = traceWire.decodeSpeedsterTraceBitmapWireV1(request.action.trace.traceWire);
     assert.equal(pixels[660 * 1270 + 660], 1);
-    assert.equal(pixels[365 * 1270 + 265], 0, 'focusing never substitutes Astra contour pixels');
+    assert.equal(pixels[365 * 1270 + 265], 0, 'focusing never substitutes ATLAS contour pixels');
   }
 });
 

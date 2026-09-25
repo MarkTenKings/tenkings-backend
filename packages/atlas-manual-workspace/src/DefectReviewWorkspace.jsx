@@ -267,7 +267,7 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
     </div>
     <div className="am-local-tools">
       <label><input type="checkbox" checked={showMasks} onChange={event => setShowMasks(event.target.checked)} />Show findings</label>
-      {astra?.enabled && <label><input type="checkbox" checked={showProposals} onChange={event => setShowProposals(event.target.checked)} />Show Astra suggestions</label>}
+      {astra?.enabled && <label><input type="checkbox" checked={showProposals} onChange={event => setShowProposals(event.target.checked)} />Show ATLAS suggestions</label>}
       {zoom > 1 && <div className="am-pan" aria-label={`${name(side)} defect pan`}>
         {[[1, 0, 'Left', '←'], [0, 1, 'Up', '↑'], [0, -1, 'Down', '↓'], [-1, 0, 'Right', '→']].map(([x, y, label, symbol]) =>
           <button disabled={viewingDisabled} key={label} aria-label={`Pan ${name(side)} ${label.toLowerCase()}`} onClick={() => moveView({ x: x * 80, y: y * 80 })}>{symbol}</button>)}
@@ -315,7 +315,7 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
     </div>
     <div className="ad-review-panel">
     {editor ? <div className="ad-trace-tools">
-      {editor.proposal && <p className="ad-proposal-note">Correcting an Astra suggestion. Save the trace to add your corrected finding.</p>}
+      {editor.proposal && <p className="ad-proposal-note">Correcting an ATLAS suggestion. Save the trace to add your corrected finding.</p>}
       {stale && <p role="alert">This side changed while you were drawing. Discard this trace to use its latest saved version.</p>}
       {editor.findingId === null && <label>Defect type <select value={newType} onChange={event => setNewType(event.target.value)} disabled={busy}>
         {Object.entries(TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -350,8 +350,8 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
       <div className="ad-inspect"><label><input type="checkbox" aria-label={`I inspected ${name(side)}`} checked={inspected} disabled={disabled || inspected || !onInspect}
         onChange={() => perform(() => onInspect({ side, base, actor: 'HUMAN', inspected: true }))} />I inspected {name(side)} and corrected its findings.</label></div>
     </>}
-    {astra?.enabled && proposals.length > 0 && <section className="ad-proposals" aria-label={`${name(side)} Astra suggestions`}>
-      <div className="ad-proposal-heading"><h3>Astra suggestions</h3><span>Blue outlines · review required</span></div>
+    {astra?.enabled && proposals.length > 0 && <section className="ad-proposals" aria-label={`${name(side)} ATLAS suggestions`}>
+      <div className="ad-proposal-heading"><h3>ATLAS suggestions</h3><span>Blue outlines · review required</span></div>
       {!proposalsCurrent && <p className="ad-muted">These suggestions cannot be added from this analysis. Your saved findings are unchanged.</p>}
       <ul className="ad-proposal-list">{proposals.map((proposal, index) => {
         const unreviewed = proposal.reviewStatus === 'UNREVIEWED', valid = validProposalContour(proposal) && TYPES[proposal.defectType];
@@ -431,20 +431,20 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
   };
   return <div className="atlas-manual ad-workspace">
     <header className="am-header"><span className="am-brand">ATLAS</span><h1>Defects & condition</h1><span>{saveStatus}</span></header>
-    <div className="am-toolbar"><span>{analysis.enabled ? 'Run Astra’s initial inspection, then review and correct its findings on both sides.' : 'Inspect both sides. Correct, remove or trace findings before confirming.'}</span>{grade && <strong>Draft grade {grade}</strong>}</div>
-    {analysis.enabled && <section className="ad-astra" aria-label="Astra defect assistance">
-      <div><h2>Astra defect assistance</h2><p role="status">{requesting ? requesting === 'REFRESH' ? 'Checking the saved Astra analysis…' : 'Sending the card to Astra for its initial inspection…' : analysis.message}</p>
+    <div className="am-toolbar"><span>{analysis.enabled ? 'Run ATLAS’s initial inspection, then review and correct its findings on both sides.' : 'Inspect both sides. Correct, remove or trace findings before confirming.'}</span>{grade && <strong>Draft grade {grade}</strong>}</div>
+    {analysis.enabled && <section className="ad-astra" aria-label="ATLAS defect assistance">
+      <div><h2>ATLAS defect assistance</h2><p role="status">{requesting ? requesting === 'REFRESH' ? 'Checking the saved ATLAS analysis…' : 'Sending the card to ATLAS for its initial inspection…' : analysis.message}</p>
         {analysis.status === 'READY' && <p>{collective.unresolvedCount} suggestions remaining for confirmation · {collective.rejectedCount} rejected suggestions</p>}
-        {Array.isArray(astra?.limitations) && astra.limitations.some(value => typeof value === 'string' && value) && <ul className="ad-analysis-limitations" aria-label="Astra image limitations">
+        {Array.isArray(astra?.limitations) && astra.limitations.some(value => typeof value === 'string' && value) && <ul className="ad-analysis-limitations" aria-label="ATLAS image limitations">
           {astra.limitations.filter(value => typeof value === 'string' && value).slice(0,8).map((value,index) => <li key={index}>{value}</li>)}
         </ul>}
       </div>
       <div className="am-side-actions"><button disabled={requesting || confirming || editing || !currentImagesReady || !analysis.mayRequest || astra?.followLatest || !onAnalyzeDefects}
-        onClick={() => requestAnalysis()}>Find defects with Astra</button>
+        onClick={() => requestAnalysis()}>Find defects with ATLAS</button>
         {(['RUNNING', 'UNKNOWN'].includes(analysis.status) || astra?.followLatest) && onRefreshAnalysis && <button disabled={requesting || confirming} onClick={() => requestAnalysis('REFRESH')}>Check analysis status</button>}
         {astra?.resumeAvailable && onResumeAnalysis && <button disabled={requesting || confirming} onClick={() => requestAnalysis('RESUME')}>Retry saved analysis</button>}
         {analysis.status === 'UNKNOWN' && astra?.replacement && !astra.backgroundAccepted && onReplaceAnalysis && <button
-          disabled={requesting || confirming || editing || !currentImagesReady || astra?.requestAvailable === false} onClick={() => requestAnalysis('REPLACE')}>Start a new Astra analysis</button>}
+          disabled={requesting || confirming || editing || !currentImagesReady || astra?.requestAvailable === false} onClick={() => requestAnalysis('REPLACE')}>Start a new ATLAS analysis</button>}
       </div>
     </section>}
     {expandedSide && <div className="ad-expanded-switch" aria-label="Expanded inspection side">{SIDES.map(side => <button key={side}

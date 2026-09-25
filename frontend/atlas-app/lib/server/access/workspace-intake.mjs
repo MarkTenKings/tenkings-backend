@@ -169,7 +169,7 @@ export class StaffWorkspaceIntake {
         const subtitle = [identity.year, identity.manufacturer, identity.productSet, identity.parallel, identity.cardNumber].filter(Boolean).join(' · ');
         const value = { id: card.id, title: card.title || identity.cardName || identity.playerName || 'New card',
             subtitle, revision: card.revision, state: card.state, stage: card.stage, sides,
-            operator: claim ? { kind: claim.kind, name: claim.kind === 'ASTRA' ? 'Astra' : claim.actorName, mode: claim.mode } : null,
+            operator: claim ? { kind: claim.kind, name: claim.kind === 'ASTRA' ? 'ATLAS' : claim.actorName, mode: claim.mode } : null,
             specimenId: card.specimenId ?? null, updatedAt: workspaceTimestamp(card.updatedAt), identity: json(identity),
             identityReady, ...(card.identityReview ? { identityReview: json(card.identityReview) } : {}),
             pairConfirmed: card.pairConfirmedAt !== null && Boolean(card.captureHash),
@@ -196,7 +196,7 @@ export class StaffWorkspaceIntake {
                 photoStorage: { ready: Boolean(this.storage), message: this.storage ? 'Photo storage is connected.' : 'Photo storage is not connected yet.' },
                 preparation: { ready: false, message: 'Image preparation has not been admitted.' },
                 manualGrading: { ready: context.policy.claimsEnabled === true, message: context.policy.claimsEnabled ? 'Manual grading is available.' : 'Manual grading is not ready yet.' },
-                astra: { ready: context.policy.astraEnabled === true, message: context.policy.astraEnabled ? 'Astra is available.' : 'Astra is not running.' },
+                astra: { ready: context.policy.astraEnabled === true, message: context.policy.astraEnabled ? 'ATLAS is available.' : 'ATLAS is not running.' },
             };
             return { cards, readiness };
         });

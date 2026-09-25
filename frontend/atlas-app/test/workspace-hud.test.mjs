@@ -84,9 +84,9 @@ test('activity renders held saved work truthfully and permits only the admitted 
         async workspaceRequest(path) { calls.push(path); return path.endsWith('/activity') ? { control, activity: [] } : { card: initial }; }
     });
     await f.settle(); assert.deepEqual(calls, ['workspace/cards/test-card', 'workspace/cards/test-card/activity']);
-    assert.match(f.text(), /Astra needs attention/); assert.doesNotMatch(f.text(), /Astra is working/); assert.match(f.text(), /Continue from the saved response/);
-    const recover = f.nodes(node => node.type === 'button' && text(node).includes('Continue Astra'))[0]; assert.equal(recover.props.disabled, false); recover.props.onClick(); assert.deepEqual(controls, ['RECOVER']);
-    for (const label of ['Pause Astra', 'Resume Astra', 'Run next step', 'Take over manually']) assert.equal(f.nodes(node => node.type === 'button' && text(node).includes(label))[0].props.disabled, true);
+    assert.match(f.text(), /ATLAS needs attention/); assert.doesNotMatch(f.text(), /ATLAS is working/); assert.match(f.text(), /Continue from the saved response/);
+    const recover = f.nodes(node => node.type === 'button' && text(node).includes('Continue ATLAS'))[0]; assert.equal(recover.props.disabled, false); recover.props.onClick(); assert.deepEqual(controls, ['RECOVER']);
+    for (const label of ['Pause ATLAS', 'Resume ATLAS', 'Run next step', 'Take over manually']) assert.equal(f.nodes(node => node.type === 'button' && text(node).includes(label))[0].props.disabled, true);
     assert.equal(f.exports.operatorPresentation({ state: 'UNKNOWN', pending: 1 }, initial).tone, 'attention');
     assert.equal(f.exports.operatorPresentation({ state: 'RUNNING', mode: 'CONTINUOUS' }, { ...initial, state: 'HUMAN_REVIEW' }).label, 'Ready for human review'); f.dispose();
 });
@@ -98,11 +98,11 @@ test('activity feed orders actual saved events newest first and cannot recover w
             { id: 'newer', at: '2026-09-10T22:51:00.000Z', stage: 'IDENTITY', actor: 'ASTRA', summary: 'Identity proposed', status: 'PROPOSED' },
         ] } : { card: initial }; }
     });
-    await f.settle(); assert.equal(f.nodes(node => node.type === 'button' && text(node).includes('Continue Astra')).length, 0);
-    assert.match(text(f.nodes(node => node.type === 'li')[0]), /Identity proposed/); assert.doesNotMatch(f.text(), /Astra is working/); f.dispose();
+    await f.settle(); assert.equal(f.nodes(node => node.type === 'button' && text(node).includes('Continue ATLAS')).length, 0);
+    assert.match(text(f.nodes(node => node.type === 'li')[0]), /Identity proposed/); assert.doesNotMatch(f.text(), /ATLAS is working/); f.dispose();
 });
 
-for (const failedRead of ['card', 'activity']) test(`interrupted ${failedRead} reads retain the feed without claiming Astra is working or permitting a stale restart`, async () => {
+for (const failedRead of ['card', 'activity']) test(`interrupted ${failedRead} reads retain the feed without claiming ATLAS is working or permitting a stale restart`, async () => {
     const initial = card(), actions = [], connection = []; let fail = false, stopped = false;
     const saved = [{ id: 'saved-inspection', at, stage: 'PHOTOS', actor: 'ASTRA', summary: 'Both original photographs inspected', status: 'RECORDED' }];
     const f = harness(activityCode, { card: initial, disabled: false, onControl: action => actions.push(action), onObservedCard() {}, onConnectionChange: value => connection.push(value) }, {
@@ -115,35 +115,35 @@ for (const failedRead of ['card', 'activity']) test(`interrupted ${failedRead} r
     });
     const button = label => f.nodes(node => node.type === 'button' && text(node).includes(label))[0];
     const poll = async () => { const [id, timer] = [...f.timers].find(([, value]) => !value.interval); f.timers.delete(id); await timer.callback(); await f.settle(); };
-    await f.settle(); assert.match(f.text(), /Astra is working/); assert.equal(connection.at(-1), 'CONNECTED');
+    await f.settle(); assert.match(f.text(), /ATLAS is working/); assert.equal(connection.at(-1), 'CONNECTED');
     fail = true; await poll();
-    assert.match(f.text(), /Reconnecting to Astra/); assert.match(f.text(), /Current progress is unconfirmed/);
-    assert.match(f.text(), /Both original photographs inspected/); assert.doesNotMatch(f.text(), /Astra is working|The request could not be completed/);
+    assert.match(f.text(), /Reconnecting to ATLAS/); assert.match(f.text(), /Current progress is unconfirmed/);
+    assert.match(f.text(), /Both original photographs inspected/); assert.doesNotMatch(f.text(), /ATLAS is working|The request could not be completed/);
     assert.equal(connection.at(-1), 'INTERRUPTED');
-    for (const label of ['Continue Astra', 'Resume Astra', 'Run next step', 'Take over manually']) { assert.equal(button(label).props.disabled, true); button(label).props.onClick(); }
-    assert.equal(actions.length, 0); assert.equal(button('Pause Astra').props.disabled, false); button('Pause Astra').props.onClick(); assert.deepEqual(actions, ['PAUSE']);
+    for (const label of ['Continue ATLAS', 'Resume ATLAS', 'Run next step', 'Take over manually']) { assert.equal(button(label).props.disabled, true); button(label).props.onClick(); }
+    assert.equal(actions.length, 0); assert.equal(button('Pause ATLAS').props.disabled, false); button('Pause ATLAS').props.onClick(); assert.deepEqual(actions, ['PAUSE']);
     assert.equal(f.nodes(node => node.props['aria-label'] === 'Refresh recorded activity')[0].props.disabled, false);
     assert.equal([...f.timers.values()].some(timer => timer.ms === 8000), true, 'Failed reads still reconnect automatically.');
     fail = false; stopped = true; await poll();
-    assert.match(f.text(), /Astra needs attention/); assert.match(f.text(), /could not confirm its saved progress/);
-    assert.doesNotMatch(f.text(), /Astra is working|Reconnecting to Astra|ASTRA_DATABASE_TRANSACTION_FAILED/);
+    assert.match(f.text(), /ATLAS needs attention/); assert.match(f.text(), /could not confirm its saved progress/);
+    assert.doesNotMatch(f.text(), /ATLAS is working|Reconnecting to ATLAS|ASTRA_DATABASE_TRANSACTION_FAILED/);
     assert.equal(connection.at(-1), 'CONNECTED'); assert.equal(button('Take over manually').props.disabled, false);
-    assert.equal(button('Resume Astra').props.disabled, true); assert.match(f.text(), /Both original photographs inspected/); f.dispose();
+    assert.equal(button('Resume ATLAS').props.disabled, true); assert.match(f.text(), /Both original photographs inspected/); f.dispose();
 });
 
-test('pausing activity updates does not claim to pause Astra and suppresses stale start controls', async () => {
+test('pausing activity updates does not claim to pause ATLAS and suppresses stale start controls', async () => {
     let fail = false;
     const initial = card(), connection = [], f = harness(activityCode, { card: initial, disabled: false, onObservedCard() {}, onConnectionChange: value => connection.push(value), onControl() {} }, {
         async workspaceRequest(path) { if (fail) throw Error('Synthetic interrupted update'); return path.endsWith('/activity') ? { control: { state: 'RUNNING', mode: 'CONTINUOUS', pending: 1, canPause: true, canResume: true }, activity: [] } : { card: initial }; }
     });
     await f.settle(); fail = true; f.nodes(node => node.props['aria-label'] === 'Keep activity updated')[0].props.onChange({ target: { checked: false } }); f.render(); await f.settle();
     assert.match(f.text(), /Activity updates paused/); assert.match(f.text(), /current status is unconfirmed/);
-    assert.doesNotMatch(f.text(), /Astra is working|Astra is paused|One action is in progress|Reconnecting|retry automatically/);
+    assert.doesNotMatch(f.text(), /ATLAS is working|ATLAS is paused|One action is in progress|Reconnecting|retry automatically/);
     assert.equal(connection.at(-1), 'PAUSED'); assert.equal(f.timers.size, 0);
-    assert.equal(f.nodes(node => node.type === 'button' && text(node).includes('Resume Astra'))[0].props.disabled, true);
+    assert.equal(f.nodes(node => node.type === 'button' && text(node).includes('Resume ATLAS'))[0].props.disabled, true);
     fail = false; f.nodes(node => node.props['aria-label'] === 'Keep activity updated')[0].props.onChange({ target: { checked: true } }); f.render(); f.render();
-    assert.doesNotMatch(f.text(), /Astra is working/); assert.equal(connection.at(-1), 'CONNECTING'); await f.settle();
-    assert.match(f.text(), /Astra is working/); assert.equal(connection.at(-1), 'CONNECTED'); f.dispose();
+    assert.doesNotMatch(f.text(), /ATLAS is working/); assert.equal(connection.at(-1), 'CONNECTING'); await f.settle();
+    assert.match(f.text(), /ATLAS is working/); assert.equal(connection.at(-1), 'CONNECTED'); f.dispose();
 });
 
 test('unconfirmed-request recovery requires reviewing the recorded charge and explicitly authorizing one step', async () => {
@@ -156,8 +156,8 @@ test('unconfirmed-request recovery requires reviewing the recorded charge and ex
     });
     await f.settle(); assert.equal(actions.length, 0);
     const review = f.nodes(node => node.type === 'button' && text(node).includes('Review recovery'))[0]; review.props.onClick(); f.render();
-    assert.equal(actions.length, 0); assert.match(f.text(), /\$23\.65 remains recorded/); assert.match(f.text(), /one new Astra step/);
-    assert.match(f.text(), /Astra will then pause/);
+    assert.equal(actions.length, 0); assert.match(f.text(), /\$23\.65 remains recorded/); assert.match(f.text(), /one new ATLAS step/);
+    assert.match(f.text(), /ATLAS will then pause/);
     const note = f.nodes(node => node.type === 'textarea')[0]; note.props.onChange({ target: { value: 'Keep the unconfirmed request; continue once.' } }); f.render();
     const confirm = f.nodes(node => node.type === 'button' && text(node) === 'Continue one step')[0];
     assert.equal(confirm.props.disabled, false); await confirm.props.onClick(); f.render();
@@ -187,10 +187,10 @@ test('recovery review cannot silently adopt a changed card or dispatch when canc
     f.dispose();
 });
 
-test('Astra workbench exposes actual source evidence and marks attention without inventing saved identity or approval', () => {
+test('ATLAS workbench exposes actual source evidence and marks attention without inventing saved identity or approval', () => {
     const initial = { ...card(), observedOperator: { state: 'NEEDS_ATTENTION' } }, f = harness(viewCode, { card: initial, stage: 'IDENTITY' });
     assert.match(f.text(), /Needs attention/); assert.match(f.text(), /Card details will appear here once they are saved/);
-    assert.match(f.text(), /Human reviewer/); assert.doesNotMatch(f.text(), /Human reviewed|Human approved|Astra at work/);
+    assert.match(f.text(), /Human reviewer/); assert.doesNotMatch(f.text(), /Human reviewed|Human approved|ATLAS at work/);
     assert.equal(f.nodes(node => node.type === 'photo')[0].props.side, 'FRONT');
     const back = f.nodes(node => node.type === 'button' && text(node) === 'Back')[0]; back.props.onClick(); f.render();
     assert.equal(f.nodes(node => node.type === 'photo')[0].props.side, 'BACK');
@@ -202,10 +202,10 @@ test('Astra workbench exposes actual source evidence and marks attention without
 
 test('workbench distinguishes unconfirmed progress from the last saved running or failed state', () => {
     const f = harness(viewCode, { card: card(), stage: 'IDENTITY', activityConnection: 'INTERRUPTED' });
-    assert.match(f.text(), /Progress unconfirmed/); assert.doesNotMatch(f.text(), /Astra at work/);
-    f.props.activityConnection = 'PAUSED'; f.render(); assert.match(f.text(), /Activity updates paused/); assert.doesNotMatch(f.text(), /Astra at work/);
+    assert.match(f.text(), /Progress unconfirmed/); assert.doesNotMatch(f.text(), /ATLAS at work/);
+    f.props.activityConnection = 'PAUSED'; f.render(); assert.match(f.text(), /Activity updates paused/); assert.doesNotMatch(f.text(), /ATLAS at work/);
     f.props.activityConnection = 'CONNECTED'; f.props.card.observedOperator.state = 'NEEDS_ATTENTION'; f.render();
-    assert.match(f.text(), /Needs attention/); assert.doesNotMatch(f.text(), /Astra at work/);
+    assert.match(f.text(), /Needs attention/); assert.doesNotMatch(f.text(), /ATLAS at work/);
     assert.equal(f.nodes(node => node.type === 'photo').length, 1, 'Original photograph remains visible.'); f.dispose();
 });
 
@@ -213,11 +213,11 @@ test('activity connection status also keeps the workspace claim bar and workbenc
     const initial = card(), f = harness(workspaceCode, { initial, staff: { id: 'reviewer', role: 'REVIEWER' }, csrf: 'test-csrf' });
     const activity = () => f.nodes(node => node.type === 'WorkspaceActivity')[0];
     const workbench = () => f.nodes(node => node.type === 'AstraStageView')[0];
-    assert.match(f.text(), /Checking Astra’s saved progress/); assert.doesNotMatch(f.text(), /Astra is operating this card/);
-    activity().props.onConnectionChange('CONNECTED'); f.render(); assert.match(f.text(), /Astra is operating this card/);
-    activity().props.onConnectionChange('INTERRUPTED'); f.render(); assert.match(f.text(), /Astra’s current progress is unconfirmed/);
-    assert.doesNotMatch(f.text(), /Astra is operating this card/); assert.equal(workbench().props.activityConnection, 'INTERRUPTED');
+    assert.match(f.text(), /Checking ATLAS’s saved progress/); assert.doesNotMatch(f.text(), /ATLAS is operating this card/);
+    activity().props.onConnectionChange('CONNECTED'); f.render(); assert.match(f.text(), /ATLAS is operating this card/);
+    activity().props.onConnectionChange('INTERRUPTED'); f.render(); assert.match(f.text(), /ATLAS’s current progress is unconfirmed/);
+    assert.doesNotMatch(f.text(), /ATLAS is operating this card/); assert.equal(workbench().props.activityConnection, 'INTERRUPTED');
     activity().props.onObservedCard({ ...initial, observedOperator: { state: 'NEEDS_ATTENTION', failureCode: 'ASTRA_DATABASE_TRANSACTION_FAILED' } });
-    activity().props.onConnectionChange('CONNECTED'); f.render(); assert.match(f.text(), /Astra needs attention/);
-    assert.doesNotMatch(f.text(), /Astra is operating this card/); assert.equal(workbench().props.card.sides.length, 2); f.dispose();
+    activity().props.onConnectionChange('CONNECTED'); f.render(); assert.match(f.text(), /ATLAS needs attention/);
+    assert.doesNotMatch(f.text(), /ATLAS is operating this card/); assert.equal(workbench().props.card.sides.length, 2); f.dispose();
 });

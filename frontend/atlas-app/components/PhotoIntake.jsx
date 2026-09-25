@@ -33,7 +33,7 @@ const retainedHumanIdentity = entry => {
 const mergeIdentity = (entry, card) => normalizedIdentity({ ...card.identity,
     ...Object.fromEntries(humanFields(entry).map(field => [field, entry.identity?.[field] ?? ''])) });
 const identityEqual = (left, right) => IDENTITY_FIELDS.every(field => (left?.[field] ?? '') === (right?.[field] ?? ''));
-const identityReviewMessage = status => ({ UNKNOWN: 'Choose the card category below so Astra can continue.', UNSUPPORTED: 'This pair appears to be outside Sports or Pokémon. Review its category before grading.', CONFLICT: 'The photographed category and staff details differ. Review the category below.' }[status]);
+const identityReviewMessage = status => ({ UNKNOWN: 'Choose the card category below so ATLAS can continue.', UNSUPPORTED: 'This pair appears to be outside Sports or Pokémon. Review its category before grading.', CONFLICT: 'The photographed category and staff details differ. Review the category below.' }[status]);
 function identityFields(entry, disabled, edit) {
     return <fieldset disabled={disabled}>
         <label>Category<select value={entry.identity.category ?? ''} onChange={event => edit(entry.id, 'category', event.target.value)}><option value="">Identify from photographs</option><option value="SPORTS">Sports</option><option value="POKEMON">Pokémon</option></select></label>
@@ -238,7 +238,7 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
             await patch(id, value => ({ ...value, timings: { ...value.timings, uploadMs: (value.timings?.uploadMs ?? 0) + Date.now() - started } }));
             if (!intakePairVerified(current(id))) return;
             await syncIdentity(id, access);
-            phase('Reading Front + Back with OCR and Astra'); await identify(id, access);
+            phase('Reading Front + Back with OCR and ATLAS'); await identify(id, access);
             phase('Adding to the grading queue'); await queue(id, access);
         } catch (cause) {
             if (!alive.current) return;
@@ -283,7 +283,7 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
         {error && <Notice error>{error}</Notice>}
         {!storageReady ? <div className="empty-state" role="status">{error ? 'Saved photos could not be opened.' : 'Opening your saved photographs…'}</div> : <>
             <RapidCardCamera entry={captureTarget} disabled={!storageReady} onCapture={selectFile} />
-            <div className={intake.explanation}><strong>Take or choose both sides of one physical card.</strong><p>The pair is saved, verified and identified automatically. Astra picks up eligible cards as capacity becomes available and stops for human review.</p></div>
+            <div className={intake.explanation}><strong>Take or choose both sides of one physical card.</strong><p>The pair is saved, verified and identified automatically. ATLAS picks up eligible cards as capacity becomes available and stops for human review.</p></div>
             <div className={styles.intakeToolbar}><p>{entries.filter(entry => entry.card || PHOTO_SIDES.some(side => entry.files?.[side] || entry.selections?.[side])).length} of 10 card slots <span>{saving ? 'Saving photographs and progress…' : 'Photos and progress are kept on this browser'}</span></p>{!focusCard && !captureTarget && entries.length < 10 && <button type="button" onClick={() => persist(values => [...values, blankEntry(values.length + 1)]).catch(cause => setError(cause.message))}>+ Add another card</button>}</div>
             <div className={focusCard ? styles.focusIntake : styles.intakeCards}>{visible.map((entry, index) => {
                 const queued = !intakePhotoEditable(entry) || Boolean(entry.resolvedCard), active = activity[entry.id], failure = errors[entry.id], photosLocked = queued || Boolean(entry.pending) || running.current.has(entry.id);
@@ -307,7 +307,7 @@ export default function PhotoIntake({ staff, readiness, savedCards = [], focusCa
                     {active && <p className={intake.liveStatus} role="status"><span aria-hidden="true" />{active.phase}<small>{intakeDuration(Math.max(0, (clock || Date.now()) - active.startedAt))}</small></p>}
                     {failure && <Notice error>{failure.message}</Notice>}
                     {entry.resolvedCard ? <div className={styles.panelFooter}><p>This pair is already saved as {entry.resolvedCard.title}.</p><Link href={`/workspace/${entry.resolvedCard.cardId}`}>Open existing card ↗</Link></div>
-                        : queued ? <div className={styles.panelFooter}><p>{entry.card.state === 'WAITING' ? 'In the grading queue. Astra will pick it up when eligible capacity is available.' : 'Saved in the grading workspace.'}</p><Link href={`/workspace/${entry.card.id}`}>Watch card ↗</Link></div> : <>
+                        : queued ? <div className={styles.panelFooter}><p>{entry.card.state === 'WAITING' ? 'In the grading queue. ATLAS will pick it up when eligible capacity is available.' : 'Saved in the grading workspace.'}</p><Link href={`/workspace/${entry.card.id}`}>Watch card ↗</Link></div> : <>
                             {review && <Notice>{review}</Notice>}
                             {entry.identification?.status === 'UNKNOWN' && <Notice>Photos are saved. Identification needs attention; no uncertain request is sent again.</Notice>}
                             {entry.identification?.warnings?.map(warning => <Notice key={warning}>{warning}</Notice>)}

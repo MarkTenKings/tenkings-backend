@@ -40,7 +40,7 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
       controller.signal.removeEventListener('abort', onAbort);
     }
   }
-  async function resume(operationId, { signal } = {}) {
+  async function resume(operationId, { signal, fallbackFile } = {}) {
     requireThat(!running.has(operationId), 'INTAKE_UPLOAD_IN_PROGRESS'); running.add(operationId);
     try {
       let saved = await journal.get(operationId); requireThat(saved, 'INTAKE_PENDING_UPLOAD_NOT_FOUND');
@@ -89,7 +89,18 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
             && new URL(signed.url).protocol === 'https:', 'INTAKE_UPLOAD_PLAN_INVALID');
           // Rehash persisted bytes before a later retry. A lost/modified Blob
           // cannot be used to satisfy a different native-photo plan.
-          const bytes = await readNativePhotoBytes(saved.file);
+          let bytes;
+          try { bytes = await readNativePhotoBytes(saved.file); }
+          catch (failure) {
+            if (failure?.code !== 'PHOTO_BYTES_UNREADABLE' || !(fallbackFile instanceof Blob)) throw failure;
+            requireThat(fallbackFile.size === saved.input.byteCount, 'INTAKE_PENDING_BYTES_CONFLICT');
+            const recovered = await encodePhoto(fallbackFile);
+            requireThat(hex(await cryptoImpl.subtle.digest('SHA-256', recovered.bytes)) === saved.input.sha256, 'INTAKE_PENDING_BYTES_CONFLICT');
+            // Upgrade only this exact retained original; no new request, card,
+            // upload plan or pixel conversion is introduced by recovery.
+            saved = { ...saved, file: decodePhoto(recovered) };
+            await journal.put(operationId, saved, { recoverOriginal: true }); bytes = recovered.bytes;
+          }
           requireThat(hex(await cryptoImpl.subtle.digest('SHA-256', bytes)) === saved.input.sha256, 'INTAKE_PENDING_BYTES_CONFLICT');
           try {
             await putNative(signed.url, { method: 'PUT', headers: signed.headers, body: new Blob([bytes], { type: saved.file.type }),
@@ -218,20 +229,28 @@ export function createBrowserIntakeJournal({ staffId, indexedDB = globalThis.ind
     }
     return { ...value, file };
   }
-  async function put(id, value) {
+  async function put(id, value, { recoverOriginal = false } = {}) {
     const { current, legacy } = await raw(id);
     const { file, photoRef: ignored, ...metadata } = value;
     let encoded;
     if (value.kind === 'upload') {
       requireThat(file instanceof Blob, 'PHOTO_STORAGE_CORRUPT');
       metadata.photoRef = current?.photoRef ?? (legacy?.file instanceof Blob ? 'legacy' : 'bytes');
-      if (!current && !legacy) encoded = await encodePhoto(file);
+      if (recoverOriginal) {
+        const prior = current ?? legacy;
+        requireThat(prior?.kind === 'upload' && prior.cardId === value.cardId && prior.uploadId === value.uploadId
+          && JSON.stringify(prior.input) === JSON.stringify(value.input), 'INTAKE_PENDING_BYTES_CONFLICT');
+        encoded = await encodePhoto(file);
+        requireThat(encoded.byteCount === prior.input.byteCount
+          && hex(await globalThis.crypto.subtle.digest('SHA-256', encoded.bytes)) === prior.input.sha256, 'INTAKE_PENDING_BYTES_CONFLICT');
+        metadata.photoRef = 'bytes';
+      } else if (!current && !legacy) encoded = await encodePhoto(file);
     }
     await transaction('readwrite', store => {
       if (encoded) store.put(encoded, bytesPrefix + id);
       store.put(metadata, metadataPrefix + id);
-      // Old upload rows may contain unreadable disk-backed Blobs. Never copy
-      // or delete those while an exact upload outcome is still uncertain.
+      // Preserve legacy rows during ordinary progress. Exact-byte recovery
+      // removes one only with its verified byte replacement in this transaction.
       if (metadata.photoRef !== 'legacy') store.delete(prefix + id);
     });
     if (encoded) cache.set(id, decodePhoto(encoded));

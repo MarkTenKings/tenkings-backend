@@ -2,7 +2,7 @@ import {useState} from 'react';
 export default function MachineProposals({proposals=[],disabled,onDecide}) {
     const [notes,setNotes]=useState({});
     if (!proposals.length) return null;
-    return <section className="machine-proposals"><div className="panel-heading"><div><h2>Astra proposals</h2>
+    return <section className="machine-proposals"><div className="panel-heading"><div><h2>ATLAS proposals</h2>
         <p>Inspect the evidence and save any grading correction, then record your decision. Each decision belongs to the current analysis.</p></div>
         <span className="quiet-label">{proposals.filter(p=>!p.decision).length} TO REVIEW</span></div>
         {proposals.map(p=><article key={p.stepId} className="proposal"><strong>{p.toolName==='propose_identity'?'Card identity':p.proposal.action.replaceAll('_',' ').toLowerCase()}</strong>

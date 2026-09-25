@@ -223,7 +223,7 @@ test('legacy V1/V2 and context V2 saved suggestions remain reviewable without ne
   }
 });
 
-test('a new explicit connected analysis selects context image effects and stores exact context V2 request before provider work', async () => {
+for (const mode of ['analyze', 'analyzeMachine']) test(`new ${mode} stores its exact context request before provider work`, async () => {
   const f = await fixture(), state = await f.state(), before = f.card();
   let imageCalls = 0, pendingRun;
   const stop = new Error('fixture stops at the database insert boundary');
@@ -237,7 +237,7 @@ test('a new explicit connected analysis selects context image effects and stores
     },
     async $executeRawUnsafe(sql, ...args) {
       assert(sql.startsWith('INSERT INTO atlas_defect_analysis.run'));
-      pendingRun = { requestHash: args[6], requestRef: JSON.parse(args[7]), evidence: JSON.parse(args[8]), evidenceHash: args[9] };
+      pendingRun = { baseHash: args[11], requestHash: args[6], requestRef: JSON.parse(args[7]), evidence: JSON.parse(args[8]), evidenceHash: args[9] };
       throw stop;
     },
   };
@@ -260,8 +260,9 @@ test('a new explicit connected analysis selects context image effects and stores
       async lessonImages(knowledge) { assert.equal(knowledge.status, 'EMPTY_REVIEWED_BANK'); return []; },
     } });
   const actionId = randomUUID();
-  await assert.rejects(assistance.analyze(f.staff, f.cardId, { actionId,
-    base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) }), error => error === stop);
+  const request = { actionId, base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) };
+  await assert.rejects(assistance[mode](f.staff, f.cardId, request), error => error === stop);
+  assert.equal(pendingRun.baseHash, digest(canonical(request)));
   assert.equal(imageCalls, 1); assert.equal(pendingRun.evidence.cropLayoutVersion, INSPECTION_CONTEXT_CROP_LAYOUT);
   validateRequestEvidence(pendingRun.evidence);
   const stored = await readAnalysisRequest(pendingRun.requestRef, { cardId: f.cardId,

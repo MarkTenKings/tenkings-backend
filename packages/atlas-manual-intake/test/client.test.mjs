@@ -75,6 +75,50 @@ test('persisted byte corruption refuses before dispatch and keeps exact pending 
   assert.equal(fixture.puts, 0); assert.equal((await fixture.client().pending()).length, 1);
 });
 
+const unreadable = content => Object.assign(new Blob([content]), {
+  arrayBuffer: async () => { throw new TypeError('Synthetic missing backing file'); },
+  stream: () => { throw new TypeError('Synthetic missing backing file'); },
+});
+
+test('unreadable legacy intake original recovers only from identical durable batch bytes with the same plan', async () => {
+  const fixture = setup({ losePlan: true }), file = new Blob(['original']);
+  await assert.rejects(fixture.client().upload(cardId, 'FRONT', 0, file), { code: 'NETWORK_LOST' });
+  const [pending] = await fixture.client().pending(), input = structuredClone(pending.value.input);
+  pending.value.file = unreadable('original');
+  const put = fixture.journal.put, recoveries = [];
+  fixture.journal.put = async (id, value, options) => { if (options?.recoverOriginal) recoveries.push({ id, input: value.input }); await put(id, value); };
+  await fixture.client().resume(pending.id, { fallbackFile: file });
+  assert.deepEqual(recoveries, [{ id: pending.id, input }]);
+  assert.equal(fixture.puts, 1); assert.deepEqual(fixture.original, Buffer.from('original'));
+  const plans = fixture.calls.filter(call => call.url.endsWith('/uploads')); assert.deepEqual(plans[0], plans[1]);
+  assert.equal((await fixture.client().pending()).length, 0);
+});
+
+test('wrong replacement bytes or refused recovery persistence leave the original intent without a PUT', async () => {
+  for (const variant of ['wrong-size', 'wrong-hash', 'storage']) {
+    const fixture = setup({ losePlan: true });
+    await assert.rejects(fixture.client().upload(cardId, 'FRONT', 0, new Blob(['original'])));
+    const [pending] = await fixture.client().pending(), oldFile = unreadable('original'); pending.value.file = oldFile;
+    const input = structuredClone(pending.value.input), put = fixture.journal.put;
+    fixture.journal.put = async (id, value, options) => {
+      if (options?.recoverOriginal && variant === 'storage') throw fail('PHOTO_STORAGE_QUOTA');
+      return put(id, value);
+    };
+    const fallbackFile = new Blob([variant === 'wrong-size' ? 'short' : variant === 'wrong-hash' ? 'modified' : 'original']);
+    await assert.rejects(fixture.client().resume(pending.id, { fallbackFile }), { code: variant === 'storage' ? 'PHOTO_STORAGE_QUOTA' : 'INTAKE_PENDING_BYTES_CONFLICT' });
+    const retained = await fixture.journal.get(pending.id);
+    assert.deepEqual(retained.input, input); assert.equal(retained.file, oldFile); assert.equal(fixture.puts, 0);
+  }
+});
+
+test('remote verified original resumes even when both retained browser copies are unreadable', async () => {
+  const fixture = setup({ failPrepare: true });
+  await assert.rejects(fixture.client().upload(cardId, 'FRONT', 0, new Blob(['original'])), { code: 'PHOTO_DECODE_TIMEOUT' });
+  const [pending] = await fixture.client().pending(); pending.value.file = unreadable('original');
+  await fixture.client().resume(pending.id, { fallbackFile: unreadable('original') });
+  assert.equal(fixture.puts, 1); assert.equal((await fixture.client().pending()).length, 0);
+});
+
 test('cleared device journal still permits exact verified-original preparation without a new upload', async () => {
   const fixture=setup({failPrepare:true}),file=new Blob(['retained-native-original']);
   await assert.rejects(fixture.client().upload(cardId,'BACK',0,file),{code:'PHOTO_DECODE_TIMEOUT'});

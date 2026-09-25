@@ -184,8 +184,11 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
           && /^[a-f0-9]{64}$/.test(input.replacement.outcomeHash));
       } else requireThat(!Object.hasOwn(input, 'replacement'));
       input = JSON.parse(canonical(input));
-      const machine = preparation === MACHINE_PREPARATION;
-      const baseHash = digest(canonical(machine ? { version: 'atlas-batch-analysis-v1', request: input } : input));
+      // The executor independently reconstructs this exact action from its
+      // evidence. Batch actions already have a stable, namespaced action ID;
+      // wrapping only this caller's hash makes every new batch dispatch fail.
+      // Machine readiness remains controlled by the private preparation token.
+      const baseHash = digest(canonical(input));
       try {
       const old = await repository.find(staff, { cardId, actionId: input.actionId });
       if (old) {

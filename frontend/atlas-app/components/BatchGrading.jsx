@@ -10,9 +10,9 @@ import { MachineReportReview } from '@atlas/manual-workspace/report-review';
 import ManualFinishing, { openManualLabelPrintWindow } from './ManualFinishing';
 
 const path = '/api/staff/manual-connected/cards/batch';
-const status = { QUEUED: 'Queued', RUNNING: 'Grading', REVIEW: 'Review', NEEDS_ATTENTION: 'Check card', SUPERSEDED: 'Photos changed', APPROVED: 'Approved' };
+const status = { QUEUED: 'Queued up for ATLAS', RUNNING: 'ATLAS processing', REVIEW: 'Review', NEEDS_ATTENTION: 'Check card', SUPERSEDED: 'Photos changed', APPROVED: 'Approved' };
 const queueTabs = ['INTAKE', 'PROCESSING', 'REVIEW', 'NEEDS_ATTENTION'];
-const stages = { PREPARE: 'Preparing', ANALYZE: 'Astra analysis', REPORT: 'Measuring' };
+const stages = { PREPARE: 'ATLAS preparing', ANALYZE: 'ATLAS grading', REPORT: 'ATLAS preparing report' };
 const messages = {
   BATCH_IDENTITY_NEEDS_REVIEW: 'Check card details', BATCH_GEOMETRY_NEEDS_REVIEW: 'Check edges',
   BATCH_HUMAN_WORK_PRESENT: 'Continue your review', BATCH_ANALYSIS_UNCERTAIN: 'Check saved analysis',
@@ -183,7 +183,7 @@ export default function BatchGrading({ staff }) {
           onPrintDialog={() => setAutoPrintWindow(null)} printDisabled={busy} />}
       </section>}
       <section className={styles.intake} hidden={tab !== 'INTAKE'}>
-        <BatchImport staff={staff} enabled={loaded} onImported={refresh}/>
+        <BatchImport staff={staff} enabled={loaded} onImported={refresh} jobs={jobs} onOpenCard={cardId=>void router.push(`/manual/${cardId}?from=batch`)}/>
       </section>
       {tab !== 'INTAKE' && <div className={styles.review}>
         <aside className={styles.rail} aria-label="Cards">{shown.map(job => <button disabled={busy} className={styles.cardRow} aria-current={focused?.key === job.key ? 'true' : undefined} key={job.key} onClick={() => setActive(job.key)}><img src={`${STAFF_BASE_PATH}/api/staff/manual-connected/cards/${job.cardId}/preview-image/FRONT`} alt="" loading="lazy"/><span><strong>{job.evidence?.name || job.label || 'Card'}</strong><small>{job.state === 'RUNNING' ? stages[job.stage] : status[job.state]}</small></span><b>{job.evidence?.proposedGrade ?? '·'}</b></button>)}</aside>
@@ -200,7 +200,7 @@ export default function BatchGrading({ staff }) {
           <footer className={styles.actions}><span>{focused.state === 'REVIEW' ? `${focused.evidence.findingCount ?? 0} proposed findings` : messages[focused.code] ?? stages[focused.stage]}<small>↑ ↓ select · Enter review</small></span>
             {focused.canResumeProcessing && <button disabled={busy} onClick={() => resume(focused)}>{busy ? 'Resuming…' : 'Resume saved processing'}</button>}
             <button disabled={busy} className={styles.primary} onClick={() => open(focused)}>{focused.state === 'NEEDS_ATTENTION' ? 'Check card' : 'Review card'} <span aria-hidden="true">↗</span></button></footer>
-        </section> : <section className={styles.empty}><span aria-hidden="true">◇</span><h2>{loaded ? tab === 'REVIEW' ? 'Your next review lands here.' : 'All clear.' : 'Loading saved work…'}</h2><p>{tab === 'REVIEW' ? 'Finished Astra drafts appear automatically.' : 'Every card keeps its own progress.'}</p></section>}
+        </section> : <section className={styles.empty}><span aria-hidden="true">◇</span><h2>{loaded ? tab === 'REVIEW' ? 'Your next review lands here.' : 'All clear.' : 'Loading saved work…'}</h2><p>{tab === 'REVIEW' ? 'Finished ATLAS drafts appear automatically.' : 'Every card keeps its own progress.'}</p></section>}
       </div>}
     </main>
   </Shell>;

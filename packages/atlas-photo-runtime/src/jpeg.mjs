@@ -126,6 +126,69 @@ function appleGainMap(auxiliary, headroom) {
   return data;
 }
 
+// Some Apple originals also carry capture dates and face-region annotations in
+// the primary JPEG. They are inert metadata, not gain-map/color evidence. Admit
+// only this closed, bounded shape; never apply its regions as crops or read an
+// XMP orientation. Unknown namespaces/properties and all HDR claims still fail.
+function applePrimaryMetadata(primary) {
+  const segments = matching(primary, 225, XMP); hdr(segments.length <= 1);
+  if (!segments.length) return Buffer.alloc(0);
+  const data = segments[0].data.subarray(XMP.length); hdr(data.length <= 16_384);
+  let xml; try { xml = new TextDecoder('utf-8', { fatal: true }).decode(data); } catch { hdr(false); }
+  let offset = 0;
+  const read = pattern => {
+    pattern.lastIndex = offset; const match = pattern.exec(xml); hdr(match);
+    offset = pattern.lastIndex; return match;
+  };
+  const space = () => { read(/\s*/y); };
+  const literal = value => { space(); hdr(xml.startsWith(value, offset)); offset += value.length; };
+  const value = (tag, pattern) => {
+    literal(`<${tag}>`); const text = read(pattern)[0]; literal(`</${tag}>`); return text;
+  };
+  space(); read(/<x:xmpmeta xmlns:x="adobe:ns:meta\/" x:xmptk="XMP Core [0-9.]+">/y);
+  literal('<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">');
+  literal('<rdf:Description rdf:about=""');
+  const namespaces = new Map([
+    ['xmp', 'http://ns.adobe.com/xap/1.0/'],
+    ['mwg-rs', 'http://www.metadataworkinggroup.com/schemas/regions/'],
+    ['stArea', 'http://ns.adobe.com/xmp/sType/Area#'],
+    ['apple-fi', 'http://ns.apple.com/faceinfo/1.0/'],
+    ['stDim', 'http://ns.adobe.com/xap/1.0/sType/Dimensions#'],
+    ['photoshop', 'http://ns.adobe.com/photoshop/1.0/'],
+  ]);
+  for (let i = 0; i < 6; i++) {
+    const match = read(/\s+xmlns:([A-Za-z-]+)="([^"<>&]*)"/y);
+    hdr(namespaces.has(match[1]) && namespaces.get(match[1]) === match[2]); namespaces.delete(match[1]);
+  }
+  literal('>');
+  const date = /[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})?/y;
+  value('xmp:CreateDate', date); value('xmp:CreatorTool', /[0-9]+(?:\.[0-9]+){1,3}/y); value('xmp:ModifyDate', date);
+  literal('<mwg-rs:Regions rdf:parseType="Resource">'); literal('<mwg-rs:RegionList>'); literal('<rdf:Seq>');
+  let regions = 0;
+  space();
+  while (xml.startsWith('<rdf:li', offset)) {
+    hdr(++regions <= 32); literal('<rdf:li rdf:parseType="Resource">');
+    literal('<mwg-rs:Area rdf:parseType="Resource">');
+    for (const tag of ['y', 'w', 'x', 'h']) {
+      const area = Number(value(`stArea:${tag}`, /[0-9]+(?:\.[0-9]+)?/y)); hdr(area >= 0 && area <= 1);
+    }
+    value('stArea:unit', /normalized/y); literal('</mwg-rs:Area>'); value('mwg-rs:Type', /Face/y);
+    literal('<mwg-rs:Extensions rdf:parseType="Resource">');
+    for (const [tag, maximum] of [['AngleInfoYaw', 360], ['AngleInfoRoll', 360], ['ConfidenceLevel', 100], ['FaceID', 2_147_483_647]]) {
+      const number = Number(value(`apple-fi:${tag}`, /[0-9]+/y)); hdr(number <= maximum);
+    }
+    literal('</mwg-rs:Extensions>'); literal('</rdf:li>'); space();
+  }
+  hdr(regions > 0); literal('</rdf:Seq>'); literal('</mwg-rs:RegionList>');
+  literal('<mwg-rs:AppliedToDimensions rdf:parseType="Resource">');
+  hdr(Number(value('stDim:h', /[0-9]+/y)) === primary.height);
+  hdr(Number(value('stDim:w', /[0-9]+/y)) === primary.width);
+  value('stDim:unit', /pixel/y); literal('</mwg-rs:AppliedToDimensions>'); literal('</mwg-rs:Regions>');
+  value('photoshop:DateCreated', date); literal('</rdf:Description>'); literal('</rdf:RDF>'); literal('</x:xmpmeta>');
+  space(); hdr(offset === xml.length);
+  return data;
+}
+
 // A missing ICC is not color evidence. The additional iPhone JPEG variant must
 // explicitly declare Exif ColorSpace=1 (sRGB) in exactly one bounded Exif IFD.
 // Other metadata is never surfaced or interpreted as a profile.
@@ -165,8 +228,9 @@ export function inspectJpeg(bytes, { allowAppleJpegSdrBase = false } = {}) {
   hdr(mpf.length === 1 && primary.channels === 3 && primary.end < bytes.length);
   const auxiliary = image(bytes, primary.end);
   hdr(auxiliary.channels === 1 && auxiliary.width <= primary.width && auxiliary.height <= primary.height
-    && !matching(auxiliary, 226, MPF).length && !matching(primary, 225, XMP).length);
+    && !matching(auxiliary, 226, MPF).length);
   mpIndex(mpf[0], primary, auxiliary, bytes.length);
+  const primaryMetadata = applePrimaryMetadata(primary);
   const iso = isoMetadata(primary, auxiliary), xmp = appleGainMap(auxiliary, iso.headroom);
   const profiles = matching(primary, 226, ICC); hdr(profiles.length <= 1);
   let iccSha256 = null, colorEvidence = Buffer.alloc(0);
@@ -181,5 +245,5 @@ export function inspectJpeg(bytes, { allowAppleJpegSdrBase = false } = {}) {
       selection: { kind: 'primary-jpeg-sdr-base', primaryByteCount: primary.end,
         gainMapByteCount: auxiliary.end - auxiliary.start,
         gainMapSha256: sha(bytes.subarray(auxiliary.start, auxiliary.end)),
-        metadataSha256: sha(Buffer.concat([mpf[0].data, iso.bytes, xmp, colorEvidence])) } } };
+        metadataSha256: sha(Buffer.concat([mpf[0].data, iso.bytes, xmp, colorEvidence, primaryMetadata])) } } };
 }

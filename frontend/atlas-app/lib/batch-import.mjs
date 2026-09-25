@@ -216,7 +216,10 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
         check(pending.length <= 1, 'BATCH_IMPORT_UPLOAD_CONFLICT');
         if (pending.length) {
           check(pending[0].value.input.sha256 === item.hashes[side], 'BATCH_IMPORT_UPLOAD_CONFLICT');
-          await step(`RESUME_${side}_UPLOAD`, () => intake.resume(pending[0].id)); return;
+          // A pre-byte-storage intake journal can retain an unreadable Safari
+          // Blob while this batch holds the same original in durable bytes.
+          // Resume may use it only after checking the existing plan's hash.
+          await step(`RESUME_${side}_UPLOAD`, () => intake.resume(pending[0].id, { fallbackFile: item.files[side] })); return;
         }
         const slot = await step(`READ_${side}_CARD`, async () => (await intake.read(item.cardId)).card.sides[side]);
         if (slot.upload) {
@@ -226,19 +229,12 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
         }
         await step(`UPLOAD_${side}`, () => intake.upload(item.cardId, side, slot.version, item.files[side]));
       };
-      const outcomes = await Promise.allSettled(['FRONT', 'BACK'].map(async side => {
-        for (let attempt = 0; attempt < 30; attempt++) {
-          if (disposed) return;
-          try { return await prepareSide(side); }
-          catch (error) {
-            // This explicit refusal occurs before work. Other uncertainty is
-            // retained for exact-intent recovery, never retried by new intake.
-            if (error?.code !== 'MANUAL_PROCESSING_BUSY' || attempt === 29 || disposed) throw error;
-            item.code = 'MANUAL_PROCESSING_BUSY'; await saveItem(item); await pause(3000);
-          }
-        }
-      }));
-      const failed = outcomes.find(outcome => outcome.status === 'rejected'); if (failed) throw failed.reason;
+      const outcomes = await Promise.allSettled(['FRONT', 'BACK'].map(prepareSide));
+      const failures = outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
+      // A busy side must not hide the other side's real attention/auth error.
+      const failed = failures.find(error => [401, 403].includes(error?.status))
+        ?? failures.find(error => error?.code !== 'MANUAL_PROCESSING_BUSY') ?? failures[0];
+      if (failed) throw failed;
       if (disposed) return;
       const { card } = await step('VERIFY_PAIR', async () => { const result = await intake.read(item.cardId); check(result.card.ready && ['FRONT', 'BACK'].every(side => result.card.sides[side].upload?.plan.expected.sha256 === item.hashes[side]), 'BATCH_IMPORT_UPLOAD_CONFLICT'); return result; });
       await step('ENQUEUE_CARD', () => post('/api/staff/manual-connected/cards/batch', { actionId: item.enqueueId, cards: [{ cardId: item.cardId, sourceHash: card.sourceHash }] }));
@@ -248,6 +244,7 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
       item.code = safeCode(error?.code); item.failure = error?.diagnostic ?? { phase: 'UNKNOWN', exceptionName: exceptionNames.has(error?.name) ? error.name : 'Error' };
       await saveItem(item);
       if ([401, 403].includes(error?.status)) authBlocked = true;
+      return item.code;
     }
   }
   function kick(retry = false) {
@@ -256,15 +253,28 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
     if (running) return drained;
     running = true;
     drained = (async () => {
-      const attempted = new Set(); let latest;
+      const attempted = new Set(), busyAttempts = new Map(), deferredBusy = new Set(); let latest;
       try {
       do {
         requested = false;
         while (!disposed && !authBlocked) {
           const batch = await read(); check(batch?.version === 1, 'BATCH_IMPORT_MISSING'); latest = batch;
-          const item = batch.items.find(value => !value.done && !attempted.has(value.createId) && (retry || !value.code));
+          const item = batch.items.find(value => !value.done && !attempted.has(value.createId) && (retry || !value.code || deferredBusy.has(value.createId)));
           if (!item) break;
-          attempted.add(item.createId); await processItem(item);
+          attempted.add(item.createId);
+          const code = await processItem(item);
+          if (code === 'MANUAL_PROCESSING_BUSY') {
+            const count = (busyAttempts.get(item.createId) ?? 0) + 1; busyAttempts.set(item.createId, count);
+            if (count < 30) deferredBusy.add(item.createId); else deferredBusy.delete(item.createId);
+          } else deferredBusy.delete(item.createId);
+        }
+        // Server contention is an explicit pre-work refusal. Let every other
+        // saved pair run first, then retry these exact intents on a bounded
+        // cadence. Uncertain/unsupported work still needs deliberate recovery.
+        if (deferredBusy.size && !disposed && !authBlocked) {
+          await pause(3000);
+          for (const id of deferredBusy) attempted.delete(id);
+          requested = true;
         }
       } while (requested && !disposed && !authBlocked);
       return latest;

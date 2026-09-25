@@ -13,6 +13,9 @@ test('each customer HTML response gets its own nonce and private CSP', () => {
         assert(csp.includes(`'nonce-${nonce}'`));
         assert.doesNotMatch(csp.split('script-src ')[1].split(';')[0], /unsafe-inline/);
         assert.match(csp, /frame-ancestors 'none'/);
+        assert.equal(csp.split('frame-src ')[1].split(';')[0], 'https://maps.google.com/maps https://www.google.com/maps/embed');
+        assert.doesNotMatch(csp.split('script-src ')[1].split(';')[0], /google/);
+        assert.doesNotMatch(csp.split('connect-src ')[1].split(';')[0], /google/);
         assert.match(res.headers['Cache-Control'], /private, no-store/);
         assert.equal(res.headers['CDN-Cache-Control'], 'no-store');
         assert.equal(res.headers['Vercel-CDN-Cache-Control'], 'no-store');

@@ -106,7 +106,7 @@ export function projectWorkspaceActivity(rows) {
                     .filter(p => UUID.test(p?.stepId ?? '') && SHA.test(p?.requestHash ?? ''))
                     .slice(0,3).map(p => ({ stepId:p.stepId,requestHash:p.requestHash })) } : null;
         return { id: row.id, at: instant(row.createdAt), actor: 'ASTRA', stage: stages[row.toolName], type: row.toolName,
-            summary: unavailableRegion ? 'The requested area extended beyond the photograph. Astra received the image bounds to choose another area.' : boundedText(request.summary) ?? summaries[row.toolName],
+            summary: unavailableRegion ? 'The requested area extended beyond the photograph. ATLAS received the image bounds to choose another area.' : boundedText(request.summary) ?? summaries[row.toolName],
             status: proposal ? 'PROPOSED' : attention ? 'NEEDS_ATTENTION' : 'RECORDED',
             runId: row.runId, revision: row.revision, evidence: unavailableRegion ? [] : evidence, ...(proposal ? { proposal, decision } : {}),
             ...(selection ? { selection } : {}), ...(measurement ? { measurements: measurement } : {}), ...(geometry ? { geometry } : {}),

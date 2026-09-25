@@ -5,7 +5,7 @@ import styles from './OperationalRecovery.module.css';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const SHA = /^[a-f0-9]{64}$/;
-const names = { INITIALIZATION: 'Queued preparation', ASTRA: 'Uncertain Astra run', WORKER: 'Uncertain grading worker' };
+const names = { INITIALIZATION: 'Queued preparation', ASTRA: 'Uncertain ATLAS run', WORKER: 'Uncertain grading worker' };
 const fail = () => { throw Object.assign(new Error('OUTCOME_UNCONFIRMED'), { code: 'OUTCOME_UNCONFIRMED', status: 0 }); };
 export function recoveryTargets(initializations, runs, costs) {
     return [...initializations.filter(row => row.state === 'QUEUED').map(row => ({ kind: 'INITIALIZATION', recordId: row.id, specimenId: row.specimenId })),
@@ -68,7 +68,7 @@ export default function OperationalRecovery({ csrf, pilotId, specimens = [], ini
             <option value="">Choose a queued or uncertain record…</option>{targets.map(row => <option key={`${row.kind}:${row.recordId}`} value={`${row.kind}:${row.recordId}`}>
                 {names[row.kind]} · {specimens.find(card => card.specimenId === row.specimenId)?.title ?? row.specimenId} · {row.recordId}</option>)}</select></label>
             <button type="button" disabled={!target || !UUID.test(pilotId)} onClick={inspect}>Inspect exact recovery record</button>
-            {!targets.length && <p>No queued preparations or uncertain Astra/worker records are shown. Refresh the pilot summary for current state.</p>}
+            {!targets.length && <p>No queued preparations or uncertain ATLAS/worker records are shown. Refresh the pilot summary for current state.</p>}
         </fieldset>
         {inspected && <div className={styles.preview}><h4>{names[inspected.kind]}</h4><p>{specimens.find(card => card.specimenId === inspected.specimenId)?.title ?? 'Pilot specimen'} · {inspected.specimenId}</p>
             <p>Inspected state: {inspected.state.toLowerCase().replaceAll('_', ' ')} · Record {inspected.recordId}</p><Holds value={inspected.holds}/>

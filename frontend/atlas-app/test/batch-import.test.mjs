@@ -36,7 +36,7 @@ function fixture(options = {}) {
     return { card: structuredClone(creates.get(body.requestId)) };
   }
   const importer = () => createBatchImporter({ request, intake, journal, cryptoImpl: webcrypto, ...options, pause:async ms=>{assert.equal(ms,3000);pauses++;} });
-  return { importer, journal, cards, creates, queued, uploads, get peak() { return peak; },get pauses(){return pauses;},busy:()=>{busyFront=true;}, loseCreate: () => { loseCreate = true; }, loseEnqueue: () => { loseEnqueue = true; } };
+  return { importer, journal, intake, cards, creates, queued, uploads, get peak() { return peak; },get pauses(){return pauses;},busy:()=>{busyFront=true;}, loseCreate: () => { loseCreate = true; }, loseEnqueue: () => { loseEnqueue = true; } };
 }
 test('pairs exact filename stems regardless of file order and refuses ambiguous or incomplete physical pairings', () => {
   assert.equal(pairBatchPhotos([file('card-A_back.HEIC'), file('card-A_front.jpg')])[0].label, 'card-A');
@@ -72,6 +72,54 @@ test('ordinary CPU contention automatically waits then finishes the same pair wi
  const f=fixture(),owner=f.importer();await owner.stage([file('one_front.jpg'),file('one_back.jpg')]);f.busy();
  const result=await owner.run();assert.equal(result.items[0].done,true);assert.equal(result.items[0].code,null);
  assert.equal(f.pauses,1);assert.equal(f.creates.size,1);assert.equal(f.uploads.length,2);assert.equal(f.queued.size,1);
+});
+
+test('automatic intake processes a healthy pair before retrying a busy pair with the same IDs', async () => {
+  const completed = [], f = fixture({ onQueued: event => completed.push(event.cardId) }), owner = f.importer();
+  f.busy();
+  const saved = await owner.append([file('one_front.jpg'), file('one_back.jpg'), file('two_front.jpg'), file('two_back.jpg')]);
+  const result = await owner.whenIdle();
+  assert.equal(result.items.every(item => item.done), true);
+  assert.deepEqual(completed, [result.items[1].cardId, result.items[0].cardId]);
+  assert.deepEqual(result.items.map(item => [item.createId, item.enqueueId]), saved.items.map(item => [item.createId, item.enqueueId]));
+  assert.equal(f.pauses, 1); assert.equal(f.creates.size, 2); assert.equal(f.uploads.length, 4); assert.equal(f.queued.size, 2);
+});
+
+test('persistent busy refusal is bounded while the other original uploads only once', async () => {
+  const f = fixture(), upload = f.intake.upload; let refused = 0;
+  f.intake.upload = async (...args) => {
+    if (args[1] === 'FRONT') { refused++; throw Object.assign(new Error('busy'), { code: 'MANUAL_PROCESSING_BUSY', status: 503 }); }
+    return upload(...args);
+  };
+  const owner = f.importer(), saved = await owner.appendPair(file('front.jpg'), file('back.jpg'));
+  const result = await owner.whenIdle();
+  assert.equal(refused, 30); assert.equal(f.pauses, 29); assert.equal(f.creates.size, 1); assert.equal(f.uploads.length, 1); assert.equal(f.queued.size, 0);
+  assert.equal(result.items[0].code, 'MANUAL_PROCESSING_BUSY'); assert.equal(result.items[0].done, false);
+  assert.equal(result.items[0].createId, saved.items[0].createId); assert.equal(result.items[0].files.FRONT instanceof Blob, true);
+});
+
+test('busy Front does not hide Back attention or authentication failures', async () => {
+  for (const [code, status] of [['PHOTO_HDR_UNSUPPORTED', 422], ['SIGN_IN_REQUIRED', 401]]) {
+    const f = fixture();
+    f.intake.upload = async (_id, side) => { throw Object.assign(new Error('synthetic refusal'), side === 'FRONT'
+      ? { code: 'MANUAL_PROCESSING_BUSY', status: 503 } : { code, status }); };
+    const owner = f.importer(); await owner.appendPair(file('front.jpg'), file('back.jpg')); const result = await owner.whenIdle();
+    assert.equal(result.items[0].code, code); assert.equal(result.items[0].failure.phase, 'UPLOAD_BACK'); assert.equal(f.pauses, 0);
+    assert.equal(f.queued.size, 0); assert.equal(result.items[0].files.BACK instanceof Blob, true);
+  }
+});
+
+test('pending exact upload receives the preserved batch original as a recovery candidate', async () => {
+  const f = fixture(), upload = f.intake.upload, resumes = [];
+  // Derive the exact expected original hash; the resume operation owns checking its byte count and hash again.
+  const front = file('front.jpg', 'front original');
+  const sha256 = Buffer.from(await webcrypto.subtle.digest('SHA-256', await front.arrayBuffer())).toString('hex');
+  f.intake.pending = async () => [...f.cards.values()].flatMap(card => card.sides.FRONT.upload ? [] : [{ id: card.cardId, value: {
+    kind: 'upload', cardId: card.cardId, input: { side: 'FRONT', sha256 },
+  } }]);
+  f.intake.resume = async (id, { fallbackFile }) => { resumes.push(await fallbackFile.text()); return upload(id, 'FRONT', 0, fallbackFile); };
+  const owner = f.importer(); await owner.appendPair(front, file('back.jpg')); const result = await owner.whenIdle();
+  assert.equal(result.items[0].done, true); assert.deepEqual(resumes, ['front original']); assert.equal(f.uploads.length, 2);
 });
 
 test('explicit side slots accept camera filenames and queue automatically after original persistence', async () => {

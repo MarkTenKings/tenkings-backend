@@ -29,6 +29,7 @@ import { createDealerOfferService } from './dealer-offers.mjs';
 import { createAtlasResearchService } from './research-service.mjs';
 import { createFinishingStationRepository } from './finishing-station-repository.mjs';
 import { createFinishingStationService } from './finishing-station-service.mjs';
+import { createConnectedCardReader } from './card-reader.mjs';
 
 export const DEFAULT_LIMITS = Object.freeze({
   decode:{maxInputBytes:256*1024*1024,maxPixels:52_000_000,maxRasterBytes:512*1024*1024,maxOutputBytes:256*1024*1024,timeoutMs:90000},
@@ -158,18 +159,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
       const [extras,status]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId)]);
       return {...extras,publication:status,presentationEnabled,marketEnabled:Boolean(marketProvider),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};
     },
-    async open(staff,cardId){
-      const [{card},saved]=await Promise.all([intake.read(staff,cardId),details.read(staff,cardId)]);
-      let manual=null;try{manual=await workflow.service.read(staff,cardId);}catch(error){if(error?.code!=='MANUAL_CARD_NOT_FOUND')throw error;}
-      const previews={};
-      if(imageReadUrl)for(const side of SIDES)if(card.sides[side].upload?.source){const {photo}=await intake.readSource(staff,cardId,card.sides[side].upload.uploadId);previews[side]=await imageReadUrl({kind:'original',descriptor:photo.workingFrame,photo});}
-      const identificationState=await identification.status(staff,cardId);
-      const geometryState=await earlyGeometry.status(staff,cardId);
-      const currentCard=(await intake.read(staff,cardId)).card;
-      requireThat(currentCard.revision===card.revision&&currentCard.sourceHash===card.sourceHash,409,'MANUAL_PHOTOS_CHANGED');
-      return {card,...saved,previews,manual:manual?{revision:manual.revision,current:manual.draft.source?.sourceHash===card.sourceHash}:null,
-        identification:identificationState,earlyGeometry:geometryState};
-    },
+    open:createConnectedCardReader({intake,details,workflow,identification,earlyGeometry,imageReadUrl}),
     async initialize(staff,cardId,input){
       requireThat(input && Object.keys(input).length===2 && /^[a-f0-9]{64}$/.test(input.sourceHash) && Number.isSafeInteger(input.detailsRevision));
       const pair=await intake.verifiedPair(staff,cardId),saved=await details.read(staff,cardId);

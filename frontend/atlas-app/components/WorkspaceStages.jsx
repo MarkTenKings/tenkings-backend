@@ -57,9 +57,9 @@ export default function WorkspaceStages({ card, selectedStage = card.stage, onSe
                 : timing?.pausedReason ? 'Clock paused' : clock.totalMs === null ? 'Timing not yet recorded' : 'Recorded active time';
     return <section className={styles.journey} aria-label="Card grading progress and timing">
         <div className={styles.journeyHeading}>
-            <div><p className={styles.journeyEyebrow}>CARD JOURNEY</p><div className={styles.journeyTitle}><h2>{stageNames[card.stage] ?? 'Grading'}<span>{waitingForReview ? 'Ready for your review' : card.operator?.kind === 'ASTRA' ? 'Astra at the controls' : card.operator?.kind === 'HUMAN' ? 'Human at the controls' : 'Every detail, accounted for'}</span></h2></div></div>
+            <div><p className={styles.journeyEyebrow}>CARD JOURNEY</p><div className={styles.journeyTitle}><h2>{stageNames[card.stage] ?? 'Grading'}<span>{waitingForReview ? 'Ready for your review' : card.operator?.kind === 'ASTRA' ? 'ATLAS at the controls' : card.operator?.kind === 'HUMAN' ? 'Human at the controls' : 'Every detail, accounted for'}</span></h2></div></div>
             <div className={styles.journeyTools}>
-                {onFollowLiveChange && card.operator?.kind === 'ASTRA' && <label className={styles.followControl}><input type="checkbox" checked={Boolean(followLive)} onChange={event => onFollowLiveChange(event.target.checked)} /><span>Follow Astra</span></label>}
+                {onFollowLiveChange && card.operator?.kind === 'ASTRA' && <label className={styles.followControl}><input type="checkbox" checked={Boolean(followLive)} onChange={event => onFollowLiveChange(event.target.checked)} /><span>Follow ATLAS</span></label>}
                 <div className={`${styles.cardClock} ${waitingForReview || timing?.pausedReason ? styles.clockPaused : ''}`}><WorkspaceIcon name={clock.running && !clock.stale ? 'CLOCK' : 'PAUSE'} /><div><span>{clockState}</span><strong aria-label={`${clockState}: ${formatActiveDuration(clock.totalMs)}`}>{formatActiveDuration(clock.totalMs)}</strong></div></div>
             </div>
         </div>
@@ -76,6 +76,6 @@ export default function WorkspaceStages({ card, selectedStage = card.stage, onSe
                 <span className={styles.stageDuration} title={recorded?.measured === false ? 'Included in workflow; separate stage timing was not recorded.' : undefined}><span>{formatActiveDuration(stageMs)}</span>{current && clock.running && !clock.stale && <span className={styles.durationLive}>active</span>}</span>
             </li>;
         })}</ol></nav>
-        <div className={styles.journeyFooter}><span><i aria-hidden="true" />{completed.length} of 8 stages completed</span><p>{waitingForReview ? 'Astra’s draft is ready. Time resumes when a reviewer picks up this card.' : 'Active time includes work on this card. Time waiting for human review is excluded.'}</p>{selectedStage !== card.stage && <button type="button" onClick={() => onSelectStage?.(card.stage)}>View current stage <span aria-hidden="true">→</span></button>}</div>
+        <div className={styles.journeyFooter}><span><i aria-hidden="true" />{completed.length} of 8 stages completed</span><p>{waitingForReview ? 'ATLAS’s draft is ready. Time resumes when a reviewer picks up this card.' : 'Active time includes work on this card. Time waiting for human review is excluded.'}</p>{selectedStage !== card.stage && <button type="button" onClick={() => onSelectStage?.(card.stage)}>View current stage <span aria-hidden="true">→</span></button>}</div>
     </section>;
 }

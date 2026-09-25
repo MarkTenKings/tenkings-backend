@@ -69,7 +69,7 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
 export function createBatchPreparation({ connected, artifacts, pythonExecutable, measurementLimits,
   measure = measureDefectWorkspaceEdit }) {
   async function current(staff, job) {
-    const value = await connected.open(staff, job.cardId);
+    const value = await connected.open(staff, job.cardId, { includePreviews: false });
     requireThat(value.card.ready && value.card.sourceHash === job.sourceHash
       && SIDES.every(side => value.card.sides[side].upload.uploadId === job.uploads[side]), 409, 'BATCH_PHOTOS_CHANGED');
     return value;

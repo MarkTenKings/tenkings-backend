@@ -8,7 +8,7 @@ import styles from './WorkspaceUi.module.css';
 export function StateBadge({ state }) { return <span className={`${styles.badge} ${styles[`state${state}`] ?? ''}`}>{stateNames[state] ?? state}</span>; }
 export function Readiness({ readiness }) {
     if (!readiness) return null;
-    const capabilities = [['photoStorage', 'Photo storage'], ['preparation', 'Image preparation'], ['manualGrading', 'Manual grading'], ['astra', 'Astra']];
+    const capabilities = [['photoStorage', 'Photo storage'], ['preparation', 'Image preparation'], ['manualGrading', 'Manual grading'], ['astra', 'ATLAS']];
     return <details className={styles.readiness}><summary>Workspace availability</summary><div>{capabilities.map(([key, title]) => {
         const value = readiness[key], available = value === true || value?.available === true || value?.ready === true;
         return <p key={key}><strong>{title}</strong><span>{available ? 'Available' : 'Awaiting connection'}</span>{value?.message && <small>{value.message}</small>}</p>;

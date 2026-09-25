@@ -140,3 +140,91 @@ test('temporary native capacity waits on the same job instead of requiring human
  try{worker.wake(f.staff);await until(()=>f.rows[0].state==='REVIEW');assert.equal(actions.length,2);assert.equal(new Set(actions).size,1);assert.equal(f.rows[0].code,undefined);}
  finally{worker.stop();}
 });
+
+for (const stage of ['PREPARE', 'ANALYZE', 'REPORT']) test(`storage transport failure has bounded retries only before analysis: ${stage}`, async () => {
+  const f = fixture(1), identities = [], outcomes = [];
+  f.rows[0].stage = stage; f.rows[0].attempts = 50; f.rows[0].evidence = { retained: 'existing evidence' };
+  const finish = f.repo.finish;
+  f.repo.finish = async (...args) => { outcomes.push(args[2]); return finish(...args); };
+  const worker = createBatchWorker({ repository: f.repo, prepare: { async run(_staff, job) {
+    identities.push([job.key, job.cardId, job.sourceHash, job.analysisActionId]);
+    throw Object.assign(Error('transport unavailable'), { code: 'PHOTO_STORAGE_UNAVAILABLE' });
+  } } });
+  try {
+    worker.wake(f.staff); await until(() => f.rows[0].state === 'NEEDS_ATTENTION');
+    assert.equal(f.rows[0].attempts, stage === 'PREPARE' ? 53 : 51);
+    assert.equal(f.rows[0].code, 'PHOTO_STORAGE_UNAVAILABLE');
+    assert.equal(new Set(identities.map(value => JSON.stringify(value))).size, 1);
+    assert(outcomes.slice(0, -1).every(value => value.kind === 'WAIT' && value.retryAfterMs === 3000));
+    assert.equal(outcomes.at(-1).kind, 'ATTENTION');
+    assert.deepEqual(f.rows[0].evidence, { retained: 'existing evidence', ...(stage === 'PREPARE' ? { storageRetryCount: 2 } : {}) });
+    if (stage === 'PREPARE') assert.deepEqual(outcomes.slice(0, -1).map(value => value.evidence.storageRetryCount), [1, 2]);
+  } finally { await worker.stop(); }
+});
+
+test('storage retry budget survives worker replacement and ordinary waits without changing action identity', async () => {
+  const f = fixture(1), identities = [], outcomes = [];
+  f.rows[0].evidence = { retained: 'same source evidence' };
+  const finish = f.repo.finish;
+  let first, stopping;
+  f.repo.finish = async (...args) => {
+    outcomes.push(args[2]); const saved = await finish(...args);
+    if (args[2].evidence?.storageRetryCount === 1 && !stopping) stopping = first.stop();
+    return saved;
+  };
+  const failStorage = job => {
+    identities.push([job.key, job.cardId, job.sourceHash, job.analysisActionId]);
+    throw Object.assign(Error('transport unavailable'), { code: 'PHOTO_STORAGE_UNAVAILABLE' });
+  };
+  first = createBatchWorker({ repository: f.repo, prepare: { run: async (_staff, job) => failStorage(job) } });
+  first.wake(f.staff); await until(() => Boolean(stopping)); await stopping;
+  assert.equal(f.rows[0].state, 'QUEUED'); assert.equal(f.rows[0].evidence.storageRetryCount, 1);
+  let ordinaryWait = false;
+  const second = createBatchWorker({ repository: f.repo, prepare: { async run(_staff, job) {
+    if (!ordinaryWait) { ordinaryWait = true; return { kind: 'WAIT', retryAfterMs: 3000 }; }
+    return failStorage(job);
+  } } });
+  try {
+    second.wake(f.staff); await until(() => f.rows[0].state === 'NEEDS_ATTENTION');
+    assert.equal(f.rows[0].attempts, 4); assert.equal(identities.length, 3);
+    assert.equal(new Set(identities.map(value => JSON.stringify(value))).size, 1);
+    assert.deepEqual(f.rows[0].evidence, { retained: 'same source evidence', storageRetryCount: 2 });
+    assert.deepEqual(outcomes.map(value => value.evidence?.storageRetryCount ?? value.kind), [1, 'WAIT', 2, 'ATTENTION']);
+  } finally { await first.stop(); await second.stop(); }
+});
+
+test('storage failures cannot retry with expired authorization, an abort, or an invalid saved budget', async () => {
+  for (const variant of [{ status: 401 }, { status: 403 }, { name: 'AbortError' }, { budget: -1 }, { budget: '1' }, { budget: null }, { budget: 3 }]) {
+    const f = fixture(1), outcomes = [];
+    if (Object.hasOwn(variant, 'budget')) f.rows[0].evidence.storageRetryCount = variant.budget;
+    const finish = f.repo.finish;
+    f.repo.finish = async (...args) => { outcomes.push(args[2]); return finish(...args); };
+    const worker = createBatchWorker({ repository: f.repo, prepare: { async run() {
+      throw Object.assign(Error('transport unavailable'), { code: 'PHOTO_STORAGE_UNAVAILABLE', status: variant.status, name: variant.name ?? 'Error' });
+    } } });
+    try {
+      worker.wake(f.staff); await until(() => f.rows[0].state === 'NEEDS_ATTENTION');
+      assert.equal(f.rows[0].attempts, 1); assert.equal(outcomes.length, 1); assert.equal(outcomes[0].kind, 'ATTENTION');
+      if (variant.status) assert.equal(worker.status().authenticatedOwners, 0);
+    } finally { await worker.stop(); }
+  }
+});
+
+for (const reason of ['lease loss', 'shutdown']) test(`storage failure cannot spend a retry after ${reason}`, async () => {
+  const f = fixture(1), outcomes = []; let entered = false, release;
+  const gate = new Promise(resolve => { release = resolve; }), finish = f.repo.finish;
+  f.repo.finish = async (...args) => { outcomes.push(args[2]); return finish(...args); };
+  if (reason === 'lease loss') f.repo.renew = async () => false;
+  const worker = createBatchWorker({ repository: f.repo, heartbeatMs: 10, prepare: { async run() {
+    entered = true;
+    if (reason === 'lease loss') await delay(25); else await gate;
+    throw Object.assign(Error('transport unavailable'), { code: 'PHOTO_STORAGE_UNAVAILABLE' });
+  } } });
+  try {
+    worker.wake(f.staff); await until(() => entered);
+    if (reason === 'shutdown') { const stopping = worker.stop(); release(); await stopping; }
+    else await until(() => f.rows[0].state === 'NEEDS_ATTENTION');
+    assert.equal(f.rows[0].attempts, 1); assert.equal(outcomes[0].kind, 'ATTENTION');
+    assert.equal(f.rows[0].evidence.storageRetryCount, undefined);
+  } finally { release(); await worker.stop(); }
+});

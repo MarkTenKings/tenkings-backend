@@ -9,6 +9,7 @@ const code=babel.transformSync(readFileSync(new URL('../components/BatchImport.j
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 const all=(node,p,out=[])=>{if(Array.isArray(node))node.forEach(n=>all(n,p,out));else if(node&&typeof node==='object'){if(p(node))out.push(node);all(node.props?.children,p,out);}return out;};
+const text=node=>Array.isArray(node)?node.map(text).join(''):node&&typeof node==='object'?text(node.props?.children):node??'';
 function fixture({enabled=true,saved=null}={}){
  const f={sessionCalls:0,props:{staff:{id:'staff-a',role:'REVIEWER'},enabled},lock:false,runs:0,appends:[],closed:0,disposed:0,saved};
  const slots=[],effects=[];let cursor=0,dirty=false,tree;const react={Fragment:'fragment',createElement:(type,props,...children)=>({type,props:{...props,children}}),useState(initial){const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],next=>{const value=typeof next==='function'?next(slots[i]):next;if(!Object.is(slots[i],value)){slots[i]=value;dirty=true;}}];},useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={current:initial};return slots[i];},useEffect(work,deps){const i=cursor++,old=slots[i];if(!old||deps.some((x,j)=>x!==old.deps[j])){slots[i]={deps,cleanup:old?.cleanup};effects.push(()=>{slots[i].cleanup?.();slots[i].cleanup=work();});}}};
@@ -27,4 +28,27 @@ test('continuous photo intake admits the next card after persistence, keeps one 
  f.select('Batch Front photo',{name:'front2'});await flush();f.render();f.select('Batch Back photo',{name:'back2'});await flush();f.render();assert.equal(f.appends.length,2);assert.equal(f.lock,true);
  f.disposal=deferred();f.unmount();await flush();assert.equal(f.disposed,1);assert.equal(f.closed,0);assert.equal(f.lock,true);f.disposal.resolve();f.idle.resolve();await flush();assert.equal(f.closed,2);assert.equal(f.lock,false);
 
+});
+
+test('uploaded pairs show current ATLAS job state and attention instead of a permanent queued claim',async()=>{
+ const item={createId:'saved-pair',cardId:'saved-card',label:'Card 1',done:true},opened=[];
+ const f=fixture({saved:{version:1,items:[item],draft:null}});f.props.onOpenCard=id=>opened.push(id);await flush();
+ assert.match(text(f.render()),/1 uploaded to ATLAS/);assert.match(text(f.render()),/Checking grading status/);assert.doesNotMatch(text(f.render()),/Queued up/);
+ for(const [state,stage,code,expected] of [
+  ['QUEUED','PREPARE',null,'Queued up for ATLAS'],
+  ['RUNNING','PREPARE',null,'ATLAS preparing'],
+  ['RUNNING','ANALYZE',null,'ATLAS grading'],
+  ['RUNNING','REPORT',null,'ATLAS preparing report'],
+  ['NEEDS_ATTENTION','PREPARE','BATCH_GEOMETRY_NEEDS_REVIEW','Check edges before grading'],
+  ['NEEDS_ATTENTION','PREPARE','BATCH_IDENTITY_NEEDS_REVIEW','Check card details before grading'],
+  ['REVIEW','REPORT',null,'Ready for human review'],
+  ['APPROVED','REPORT',null,'Approved'],
+ ]){
+  f.props.jobs=[{cardId:item.cardId,state,stage,code}];const rendered=f.render();assert.ok(text(rendered).includes(expected),expected);
+  if(state!=='QUEUED')assert.doesNotMatch(text(rendered),/Queued up for ATLAS/);
+  if(state==='NEEDS_ATTENTION'){const button=all(rendered,node=>node.type==='button'&&text(node).includes('Review card'))[0];assert.ok(button);button.props.onClick();}
+ }
+ assert.deepEqual(opened,['saved-card','saved-card']);
+ f.props.jobs=[{cardId:'other-card',state:'QUEUED'}];assert.match(text(f.render()),/Checking grading status/);assert.doesNotMatch(text(f.render()),/Queued up/);
+ assert.equal(item.done,true);assert.equal(f.appends.length,0);f.unmount();await flush();
 });
