@@ -19,6 +19,8 @@ from color_geometry import engine_error_result, propose_printed_frame, serialize
 from atlas_photo_geometry import POLICY_VERSION, propose_physical_outer
 from preparation_pixels import encode_webp, reveal_views
 
+FULL_OUTPUT_CONTRACT = "atlas-preparation-full-v1"
+CORE_OUTPUT_CONTRACT = "atlas-preparation-core-v1"
 
 def require(ok, code="PREPARATION_INVALID"):
     if not ok:
@@ -54,6 +56,8 @@ def color_proposal(image, mat, mode):
 def execute(request):
     require(request["mode"] in ("PHYSICAL", "PREPARE"))
     require(request["matColor"] in ("BLACK", "WHITE", "MAGENTA"))
+    output_contract = request.get("outputContract", FULL_OUTPUT_CONTRACT)
+    require(output_contract in (FULL_OUTPUT_CONTRACT, CORE_OUTPUT_CONTRACT))
     cv2.setNumThreads(1)
     image = checked_image(request)
     root = Path(__file__).resolve().parent
@@ -71,9 +75,10 @@ def execute(request):
     source = np.float32(quad * np.array([image.shape[1], image.shape[0]]))
     rectified, transform = warp_to_card_map(image, source)
     inspection, inspection_transform = warp_to_inspection_map(image, source)
-    normalized, micro, directional = reveal_views(inspection)
-    rasters = {"rectified": rectified, "inspection": inspection,
-               "normalized": normalized, "microDefect": micro, "directional": directional}
+    rasters = {"rectified": rectified, "inspection": inspection}
+    if output_contract == FULL_OUTPUT_CONTRACT:
+        normalized, micro, directional = reveal_views(inspection)
+        rasters.update(normalized=normalized, microDefect=micro, directional=directional)
     frames, output_bytes = {}, 0
     for name, raster in rasters.items():
         encoded = encode_webp(raster)
@@ -87,7 +92,7 @@ def execute(request):
         frames[name] = {"filename": filename, "sha256": hashlib.sha256(encoded).hexdigest(),
                         "byteCount": len(encoded), "mime": "image/webp", "width": raster.shape[1], "height": raster.shape[0],
                         "frameToDerivative": (transform if name == "rectified" else inspection_transform).reshape(-1).tolist()}
-    return {"ok": True, "identity": identity, "frames": frames,
+    return {"ok": True, "identity": identity, "frames": frames, "outputContract": output_contract,
             "proposal": color_proposal(rectified, request["matColor"], "PRINTED_FRAME"),
             "encoderSettings": {"format": "webp", "quality": 92, "sourceBitDepth": 8}}
 

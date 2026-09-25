@@ -1,4 +1,5 @@
 import { canonical, digest, requireThat, uuid } from '@atlas/manual-service/contract';
+import { geometryProcessingSettings } from './geometry-processing.mjs';
 
 export async function recordEarlyGeometryIntent({ tx, principal, cardId, uploadId }) {
   await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.early_geometry_intent(upload_id,card_id,actor_id,access_version)
@@ -71,14 +72,16 @@ export function createEarlyGeometryStore({ boundary, intakeRepository, receiptCl
       return authorized(staff, cardId, async tx => parseGeometryJob((await tx.$queryRawUnsafe(
         'SELECT * FROM atlas_manual_connected.early_geometry WHERE card_id=$1::uuid AND key=$2', cardId, key))[0]));
     },
-    async claim(engineHash, claimId) {
+    async claim(engineHash, claimId, geometryConcurrency = 2) {
+      geometryProcessingSettings({ geometryConcurrency });
       uuid(claimId); requireThat(receiptClient, 503, 'GEOMETRY_WORKER_UNAVAILABLE');
-      return parseGeometryJob((await workerQuery('SELECT * FROM atlas_manual_connected.claim_early_geometry($1,$2::uuid)', engineHash, claimId))[0]);
+      return parseGeometryJob((await workerQuery('SELECT * FROM atlas_manual_connected.claim_early_geometry($1,$2::uuid,$3::integer)', engineHash, claimId, geometryConcurrency))[0]);
     },
-    async pending(engineHash, cursor = null) {
+    async pending(engineHash, cursor = null, geometryDiscoveryPageSize = 2) {
+      geometryProcessingSettings({ geometryDiscoveryPageSize });
       requireThat(receiptClient, 503, 'GEOMETRY_WORKER_UNAVAILABLE');
-      return workerQuery('SELECT * FROM atlas_manual_connected.pending_early_geometry($1,$2::timestamptz,$3::uuid)',
-        engineHash, cursor?.createdAt ?? null, cursor?.uploadId ?? null);
+      return workerQuery('SELECT * FROM atlas_manual_connected.pending_early_geometry($1,$2::timestamptz,$3::uuid,$4::integer)',
+        engineHash, cursor?.createdAt ?? null, cursor?.uploadId ?? null, geometryDiscoveryPageSize);
     },
     async stage(input) {
       const [row] = await workerQuery('SELECT atlas_manual_connected.queue_early_geometry($1) AS queued', canonical(input, { maxBytes: 32768 }));
@@ -98,5 +101,5 @@ export function earlyGeometryGrantSQL(role) {
 GRANT SELECT,INSERT ON atlas_manual_connected.early_geometry_intent TO "${role}";
 GRANT UPDATE(access_version) ON atlas_manual_connected.early_geometry_intent TO "${role}";
 GRANT UPDATE(state,result,error,claim_id,lease_until,access_version,attempts,updated_at) ON atlas_manual_connected.early_geometry TO "${role}";
-GRANT EXECUTE ON FUNCTION atlas_manual_connected.pending_early_geometry(text,timestamptz,uuid),atlas_manual_connected.queue_early_geometry(text),atlas_manual_connected.claim_early_geometry(text,uuid),atlas_manual_connected.finish_early_geometry(text,uuid,text,text,text) TO "${role}";`;
+GRANT EXECUTE ON FUNCTION atlas_manual_connected.pending_early_geometry(text,timestamptz,uuid),atlas_manual_connected.pending_early_geometry(text,timestamptz,uuid,integer),atlas_manual_connected.queue_early_geometry(text),atlas_manual_connected.claim_early_geometry(text,uuid),atlas_manual_connected.claim_early_geometry(text,uuid,integer),atlas_manual_connected.finish_early_geometry(text,uuid,text,text,text) TO "${role}";`;
 }

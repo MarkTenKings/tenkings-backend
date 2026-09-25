@@ -27,6 +27,21 @@ second login or pretend the private host is Vercel. Use one private process with
 the supplied nonce store; multiple replicas require a shared atomic nonce store.
 TLS termination must pass the exact request path and headers without rewriting.
 
+Background geometry defaults to two jobs and two discovery rows per page.
+`ATLAS_MANUAL_GEOMETRY_CONCURRENCY` accepts 1–12 and
+`ATLAS_MANUAL_GEOMETRY_DISCOVERY_PAGE_SIZE` accepts 1–32. Geometry still shares
+the native limiter configured by `ATLAS_MANUAL_NATIVE_CONCURRENCY` (default two);
+raising geometry alone does not allocate additional native slots. Larger values
+require measured memory and sustained full-pipeline throughput on the selected
+worker hardware; neither upload speed nor CPU count supplies that qualification.
+Migration `20260925130000_manual_geometry_capacity` and the two new EXECUTE
+grants from `earlyGeometryGrantSQL` are required before using the new worker.
+The database counts active geometry claims across processes. Existing claims
+pin their capacity until all finish or expire, so workers using different limits
+during a restart cannot combine their ceilings. Legacy SQL callers retain two.
+Discovery cursors preserve PostgreSQL microseconds to avoid repeating a failed
+source indefinitely with one-row pages.
+
 JSON requests/responses are bounded; the web proxy has a 210-second deadline
 within the existing 240-second Next route budget. Large working images use
 short-lived private object GET grants. The browser checks streamed size, expected

@@ -7,6 +7,7 @@
     ".": "./src/index.mjs",
     "./http": "./src/http.mjs",
     "./identification": "./src/identification.mjs",
+    "./geometry-processing": "./src/geometry-processing.mjs",
     "./transport": "./src/transport.mjs",
     "./publication": "./src/publication.mjs",
     "./publication-repository": "./src/publication-repository.mjs",

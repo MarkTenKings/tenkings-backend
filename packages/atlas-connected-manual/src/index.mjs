@@ -64,7 +64,8 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     }});
   const details=createDetailsStore({boundary,intakeRepository});
   earlyGeometry=createEarlyGeometry({store:createEarlyGeometryStore({boundary,intakeRepository,receiptClient}),intake,details,storage,artifacts,keyPrefix,
-    limited,pythonExecutable,limits:limits.preparation});
+    limited,pythonExecutable,limits:limits.preparation,
+    geometryConcurrency:processing.geometryConcurrency,geometryDiscoveryPageSize:processing.geometryDiscoveryPageSize});
   const identification=createIdentification({boundary,intake,intakeRepository,storage,artifacts,details,effects,receiptClient,limited});
   const validateAccess=({tx,cardId})=>intakeRepository.assertActiveInTransaction(tx,cardId);
   const publicationRepository=createPublicationRepository({boundary,validateAccess});

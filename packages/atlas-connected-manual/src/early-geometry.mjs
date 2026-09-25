@@ -2,9 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { canonical, digest, object, requireThat } from '@atlas/manual-service/contract';
 import { descriptorSha256, parseDerivative } from '@atlas/photo-core';
 import { processedPhoto } from '@atlas/manual-intake';
+import { geometryProcessingSettings } from './geometry-processing.mjs';
 import { geometryBase, preparationBase, validatePhotoGeometryQuad } from '@atlas/manual-workspace/geometry-actions';
 import { preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry, describePreparationDerivative,
-  adoptPhysicalGeometryProposal, adoptGeometryPreparation } from '@atlas/preparation-runtime';
+  adoptPhysicalGeometryProposal, adoptGeometryPreparation, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1,
+  preparationOutputNames } from '@atlas/preparation-runtime';
 
 const SIDES = ['FRONT', 'BACK'];
 const POLICY = 'atlas-early-photo-geometry-v1';
@@ -60,12 +62,14 @@ export function adoptEarlyGeometry(geometry, side, packet, input) {
 
 export function createEarlyGeometry({ store, intake, details, storage, artifacts, keyPrefix, limited, pythonExecutable, limits,
   runtimeIdentity = preparationRuntimeIdentity, physical = proposePhotoGeometry, prepare = preparePhotoGeometry,
-  intervalMs = 2000, onEvent = () => {} }) {
+  geometryConcurrency = 2, geometryDiscoveryPageSize = 2, intervalMs = 2000, onEvent = () => {} }) {
+  geometryProcessingSettings({ geometryConcurrency, geometryDiscoveryPageSize });
   let enginePromise = null, stopped = true, closed = false, timer = null, cycling = null, discoveryCursor = null, wakePending = false;
   const controllers = new Set(), tasks = new Set();
   const engine = () => {
     if (!enginePromise) {
-      enginePromise = limited(async () => ({ policy: POLICY, runtime: await runtimeIdentity(pythonExecutable), limits }));
+      enginePromise = limited(async () => ({ policy: POLICY, outputContract: PREPARATION_CORE_V1,
+        runtime: await runtimeIdentity(pythonExecutable), limits }));
       enginePromise.catch(() => { enginePromise = null; });
     }
     return enginePromise;
@@ -104,7 +108,12 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
     let printed = null, preparationError = null;
     if (quad) {
       try {
-      const prepared = await prepare({ ...options, quad });
+      const prepared = await prepare({ ...options, quad, outputContract: PREPARATION_CORE_V1 });
+      const names = preparationOutputNames(PREPARATION_CORE_V1);
+      requireThat(prepared.outputContract === PREPARATION_CORE_V1 && prepared.outputs
+        && equal(prepared.sourceQuad, quad)
+        && Object.keys(prepared.outputs).length === names.length && names.every(name => prepared.outputs[name]),
+      503, 'GEOMETRY_STORED_CONTENT_INVALID');
       const images = {};
       for (const [name, output] of Object.entries(prepared.outputs)) {
         const descriptor = describePreparationDerivative(prepared, name, source, { id: `${prepared.id}:${name}`,
@@ -112,10 +121,12 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
         images[name] = await storage.writeDerivative({ descriptor, frame: source.frame, original: source.original,
           decodePlan: source.decodePlan, bytes: output.bytes, signal });
       }
-      const value = { frameId: prepared.frame.id, images, identity: prepared.identity, encoderSettings: prepared.encoderSettings };
+      const { outputs, ...metadata } = prepared;
+      const value = { frameId: prepared.frame.id, images, identity: prepared.identity, encoderSettings: prepared.encoderSettings,
+        outputContract: PREPARATION_CORE_V1, deferredReveals: { outputContract: PREPARATION_REVEALS_V1,
+          workingFrame: source.frame, preparation: metadata } };
       const sourceHash = digest(JSON.stringify(value));
       const ref = await artifacts.write(value, { cardId: input.cardId, kind: 'PREPARED_IMAGES', sourceHash }, { signal });
-      const { outputs, ...metadata } = prepared;
       packet.preparation = metadata; packet.preparedImages = { ref, sourceHash }; printed = usable(prepared.proposal);
       } catch (error) {
         if (error?.name !== 'PreparationError') throw error;
@@ -134,7 +145,7 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
     try {
       // Reserve the shared native slot BEFORE acquiring a durable job lease.
       return await limited(async () => {
-        job = await store.claim(digest(canonical(actualEngine)), randomUUID());
+        job = await store.claim(digest(canonical(actualEngine)), randomUUID(), geometryConcurrency);
         if (!job) return false;
         if (stopped) { await store.finish(job, 'QUEUED', null, 'GEOMETRY_INTERRUPTED'); return false; }
         const result = await compute(job, controller.signal);
@@ -151,9 +162,13 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
     if (stopped || cycling) return;
     cycling = (async () => {
       const actualEngine = await engine();
-      const pending = await store.pending(digest(canonical(actualEngine)), discoveryCursor);
-      requireThat(Array.isArray(pending) && pending.length <= 2, 503, 'GEOMETRY_STORED_CONTENT_INVALID');
-      discoveryCursor = pending.length === 2 ? { createdAt: new Date(pending.at(-1).created_at).toISOString(), uploadId: pending.at(-1).upload_id } : null;
+      const pending = await store.pending(digest(canonical(actualEngine)), discoveryCursor, geometryDiscoveryPageSize);
+      requireThat(Array.isArray(pending) && pending.length <= geometryDiscoveryPageSize, 503, 'GEOMETRY_STORED_CONTENT_INVALID');
+      // PostgreSQL retains microseconds; Date would round this down and repeat
+      // a failed source forever with one-row pages. Keep the SQL cursor exact.
+      discoveryCursor = pending.length === geometryDiscoveryPageSize ? {
+        createdAt: pending.at(-1).cursor_created_at ?? new Date(pending.at(-1).created_at).toISOString(), uploadId: pending.at(-1).upload_id,
+      } : null;
       for (const row of pending) {
         if (stopped) break;
         try {
@@ -165,7 +180,7 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
         } catch (error) { emit({ event: 'MANUAL_GEOMETRY_SOURCE_PENDING', uploadId: row.upload_id, code: safeCode(error) }); }
       }
       if (!stopped) {
-        const available = 2 - tasks.size;
+        const available = geometryConcurrency - tasks.size;
         for (let i = 0; i < available; i++) {
           const work = one(actualEngine); tasks.add(work);
           void work.then(didWork => { tasks.delete(work); if (didWork) wake(); }, () => { tasks.delete(work); });
@@ -226,9 +241,14 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
       requireThat(packet.key === key && equal(packet.binding, input), 503, 'GEOMETRY_STORED_CONTENT_INVALID');
       if (packet.preparation) {
         const manifest = await artifacts.read(packet.preparedImages.ref, { cardId, kind: 'PREPARED_IMAGES', sourceHash: packet.preparedImages.sourceHash });
-        const names = ['rectified','inspection','normalized','microDefect','directional'];
+        const names = preparationOutputNames(PREPARATION_CORE_V1);
         requireThat(manifest.frameId === packet.preparation.frame.id && equal(manifest.identity, input.engine.runtime.identity)
-          && Object.keys(manifest.images).length === names.length && names.every(name => manifest.images[name]), 503, 'GEOMETRY_STORED_CONTENT_INVALID');
+          && manifest.outputContract === PREPARATION_CORE_V1 && packet.preparation.outputContract === PREPARATION_CORE_V1
+          && manifest.deferredReveals?.outputContract === PREPARATION_REVEALS_V1
+          && equal(manifest.deferredReveals.workingFrame, photo.workingFrame)
+          && equal(manifest.deferredReveals.preparation, packet.preparation)
+          && equal(packet.preparation.sourceQuad, packet.physical.proposal.proposal)
+          && manifest.images && Object.keys(manifest.images).length === names.length && names.every(name => manifest.images[name]), 503, 'GEOMETRY_STORED_CONTENT_INVALID');
         for (const name of names) parseDerivative(manifest.images[name], photo.workingFrame, photo.original, photo.decodePlan);
         requireThat(manifest.images.rectified.raster.content.sha256 === packet.preparation.frame.rectified.sha256
           && manifest.images.inspection.raster.content.sha256 === packet.preparation.frame.inspection.sha256,

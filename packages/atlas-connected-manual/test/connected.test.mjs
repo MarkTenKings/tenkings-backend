@@ -19,10 +19,16 @@ test('cold connected composition accepts explicit resource configuration without
   const artifacts = { async read() { calls++; throw new Error('Unexpected artifact read'); } };
   const connected = createConnectedManual({ boundary, storage, artifacts, keyPrefix: 'intake',
     pythonExecutable: '/synthetic/not-invoked/python', receiptClient: { $queryRawUnsafe() { calls++; } },
+    processing: { nativeConcurrency: 12, verificationConcurrency: 4, executionConcurrency: 20, analysisConcurrency: 64,
+      geometryConcurrency: 8, geometryDiscoveryPageSize: 24 },
     effects: { async ocr() { calls++; throw new Error('Unexpected OCR'); }, async model() { calls++; throw new Error('Unexpected model'); } } });
   assert.equal(calls, 0); assert.equal(typeof connected.intake.create, 'function');
   assert.equal(typeof connected.workflow.service.execute, 'function');
   assert.equal(typeof connected.initialize, 'function');
+  assert.throws(() => createConnectedManual({ boundary, storage, artifacts, keyPrefix: 'intake',
+    pythonExecutable: '/synthetic/not-invoked/python', processing: { nativeConcurrency: 2, geometryConcurrency: 13 } }),
+  { code: 'GEOMETRY_PROCESSING_CONFIG_INVALID' });
+  assert.equal(calls, 0);
 });
 
 /** Invoked only by the explicit ownership-checked native runner. This exercises

@@ -4,6 +4,7 @@ import { createManualArtifactStore,createS3ManualArtifactTransport } from '@atla
 import { createDurableStaffBoundary } from '@atlas/manual-service/staff-auth';
 import { createMachineStaffBoundary } from '@atlas/manual-service/machine-auth';
 import { createConnectedManual } from '@atlas/connected-manual';
+import { geometryProcessingEnvironment } from '@atlas/connected-manual/geometry-processing';
 import { createConnectedHandler } from '@atlas/connected-manual/http';
 import { identificationEffects } from '@atlas/connected-manual/identification';
 import { createAstraDefectProvider } from '@atlas/defect-analysis/provider';
@@ -57,10 +58,11 @@ export function manualProcessingSettings(env) {
     const value=env[name]===undefined?fallback:Number(env[name]);
     requireThat(Number.isInteger(value)&&value>=1&&value<=max,503,'MANUAL_PROCESSING_CONFIG_INVALID');return value;
   };
-  return Object.freeze({nativeConcurrency:setting('ATLAS_MANUAL_NATIVE_CONCURRENCY',2,8),
+  return Object.freeze({nativeConcurrency:setting('ATLAS_MANUAL_NATIVE_CONCURRENCY',2,12),
     verificationConcurrency:setting('ATLAS_MANUAL_VERIFY_CONCURRENCY',4,16),
     executionConcurrency:setting('ATLAS_MANUAL_BATCH_CONCURRENCY',20,128),
-    analysisConcurrency:setting('ATLAS_MANUAL_ANALYSIS_CONCURRENCY',64,128)});
+    analysisConcurrency:setting('ATLAS_MANUAL_ANALYSIS_CONCURRENCY',64,128),
+    ...geometryProcessingEnvironment(env)});
 }
 
 /** Private CPU service behind the approved Vercel staff application.

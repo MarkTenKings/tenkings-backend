@@ -8,10 +8,13 @@ const config={mode:'PRODUCTION',databaseUrl:'postgresql://staff:password@db.exam
 const env={ATLAS_MANUAL_ENABLED:'true',ATLAS_MANUAL_DATABASE_URL:'postgresql://manual:password@db.example.com:5432/atlas?schema=atlas_manual&sslmode=require',
  ATLAS_MANUAL_STORAGE_ENDPOINT:'https://nyc3.digitaloceanspaces.com',ATLAS_MANUAL_UPLOAD_ORIGIN:'https://example.nyc3.digitaloceanspaces.com',ATLAS_MANUAL_STORAGE_BUCKET:'example',ATLAS_MANUAL_STORAGE_REGION:'nyc3',ATLAS_MANUAL_STORAGE_PREFIX:'atlas/manual/v1',ATLAS_MANUAL_PYTHON:'/opt/atlas-python/bin/python',ATLAS_MANUAL_STORAGE_ACCESS_KEY:'test-access-key',ATLAS_MANUAL_STORAGE_SECRET_KEY:'test-secret-key-is-fictional'};
 test('machine processing separates native CPU slots, upload verification, job execution and accepted model capacity',()=>{
- assert.deepEqual(manualProcessingSettings({}),{nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64});
+ assert.deepEqual(manualProcessingSettings({}),{nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64,
+  geometryConcurrency:2,geometryDiscoveryPageSize:2});
  assert.deepEqual(manualProcessingSettings({ATLAS_MANUAL_NATIVE_CONCURRENCY:'4',ATLAS_MANUAL_VERIFY_CONCURRENCY:'8',ATLAS_MANUAL_BATCH_CONCURRENCY:'25',ATLAS_MANUAL_ANALYSIS_CONCURRENCY:'80'}),
-  {nativeConcurrency:4,verificationConcurrency:8,executionConcurrency:25,analysisConcurrency:80});
- for(const [name,values] of Object.entries({ATLAS_MANUAL_NATIVE_CONCURRENCY:['0','9','NaN',''],ATLAS_MANUAL_VERIFY_CONCURRENCY:['17','1.5'],ATLAS_MANUAL_BATCH_CONCURRENCY:['129','-1'],ATLAS_MANUAL_ANALYSIS_CONCURRENCY:['129','Infinity']}))
+  {nativeConcurrency:4,verificationConcurrency:8,executionConcurrency:25,analysisConcurrency:80,geometryConcurrency:2,geometryDiscoveryPageSize:2});
+ assert.deepEqual(manualProcessingSettings({ATLAS_MANUAL_NATIVE_CONCURRENCY:'12',ATLAS_MANUAL_GEOMETRY_CONCURRENCY:'8',ATLAS_MANUAL_GEOMETRY_DISCOVERY_PAGE_SIZE:'24'}),
+  {nativeConcurrency:12,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64,geometryConcurrency:8,geometryDiscoveryPageSize:24});
+ for(const [name,values] of Object.entries({ATLAS_MANUAL_NATIVE_CONCURRENCY:['0','13','NaN',''],ATLAS_MANUAL_VERIFY_CONCURRENCY:['17','1.5'],ATLAS_MANUAL_BATCH_CONCURRENCY:['129','-1'],ATLAS_MANUAL_ANALYSIS_CONCURRENCY:['129','Infinity']}))
   for(const value of values)assert.throws(()=>manualProcessingSettings({[name]:value}),{code:'MANUAL_PROCESSING_CONFIG_INVALID'});
 });
 test('connected runtime is explicitly disabled or requires isolated encrypted manual role and exact private origins',()=>{

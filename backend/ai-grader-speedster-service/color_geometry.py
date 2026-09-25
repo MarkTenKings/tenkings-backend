@@ -42,8 +42,22 @@ def _canonical_ambiguity(raw_ratio: float, threshold: float) -> tuple[float, boo
     return serialized, serialized >= threshold
 
 
+# Preserve the former float32 operations exactly for every possible encoded
+# byte. OpenCV applies this three-channel table in one pass, avoiding repeated
+# strided writes over the full-resolution float raster.
+_LAB_BYTE_LOOKUP = np.repeat(np.arange(256, dtype=np.float32)[:, None], 3, axis=1)
+_LAB_BYTE_LOOKUP[:, 0] *= 100.0 / 255.0
+_LAB_BYTE_LOOKUP[:, 1:] -= 128.0
+_LAB_BYTE_LOOKUP = _LAB_BYTE_LOOKUP.reshape(256, 1, 3)
+_LAB_BYTE_LOOKUP.flags.writeable = False
+
+
 def _cie_lab(image: np.ndarray) -> np.ndarray:
-    raw = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
+    encoded = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    if encoded.dtype == np.uint8 and encoded.ndim == 3 and encoded.shape[2] == 3:
+        return cv2.LUT(encoded, _LAB_BYTE_LOOKUP)
+    # Retain the historical behavior for other supported OpenCV source types.
+    raw = encoded.astype(np.float32)
     raw[:, :, 0] *= 100.0 / 255.0
     raw[:, :, 1:] -= 128.0
     return raw
@@ -369,7 +383,9 @@ def propose_printed_frame(rectified: np.ndarray, mat_color: str) -> dict:
         offset, evidence = _top_transition_evidence(rotated)
         offsets[side] = offset
         sides[side] = evidence
-        rotated = np.ascontiguousarray(np.rot90(rotated))
+        # Sampling below uses NumPy indexing and accepts negative strides. A
+        # rotation view preserves every value without copying the full raster.
+        rotated = np.rot90(rotated)
 
     ambiguous_sides = [side for side, evidence in sides.items() if evidence["ambiguous"]]
     candidate_count = max((evidence["candidateCount"] for evidence in sides.values()), default=0)

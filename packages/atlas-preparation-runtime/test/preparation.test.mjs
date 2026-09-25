@@ -9,7 +9,8 @@ import { createHash } from 'node:crypto';
 import { describeDecodedFrame, verifyAndDecodePhoto } from '@atlas/photo-runtime';
 import { applyGeometryEdit, createGeometryWorkspace, geometryBase, updateGeometrySettings } from '@atlas/manual-workspace/geometry-actions';
 import { adoptGeometryPreparation, describePreparationDerivative, prepareGeometry, proposePhysicalGeometry,
-  preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry } from '../src/index.mjs';
+  preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry, prepareDeferredPhotoReveals,
+  PREPARATION_FULL_V1, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1, preparationOutputNames } from '../src/index.mjs';
 import { runPreparationWorker } from '../src/process.mjs';
 
 const python = process.env.ATLAS_PREPARATION_PYTHON;
@@ -88,6 +89,58 @@ test('identity-independent preparation retains actual proposals and all five leg
   assert.deepEqual(early.proposal, prepared.proposal);
   const changed = structuredClone(engine); changed.identity.opencv = 'unmatched-runtime';
   await assert.rejects(proposePhotoGeometry({ ...options, engine: changed }), e => e.code === 'PREPARATION_ENGINE_CHANGED');
+});
+
+test('versioned core preparation preserves legacy core pixels, transforms and quality; lazy reveals preserve its analysis frame', async () => {
+  const engine = await preparationRuntimeIdentity(python);
+  const options = { source, matColor: 'BLACK', limits, pythonExecutable: python, engine };
+  const core = await preparePhotoGeometry({ ...options, quad: workspace.sides.FRONT.physical.quad, outputContract: PREPARATION_CORE_V1 });
+  assert.equal(core.outputContract, PREPARATION_CORE_V1);
+  assert.deepEqual(Object.keys(core.outputs), ['rectified', 'inspection']);
+  assert.deepEqual(core.sourceQuad, workspace.sides.FRONT.physical.quad);
+  for (const name of ['rectified', 'inspection']) {
+    assert.deepEqual(core.outputs[name].bytes, prepared.outputs[name].bytes);
+    assert.deepEqual(core.outputs[name].frameToDerivative, prepared.outputs[name].frameToDerivative);
+  }
+  assert.deepEqual(core.proposal, prepared.proposal);
+  assert.deepEqual(core.frame.sourceToRectified, prepared.frame.sourceToRectified);
+  const { outputs, ...metadata } = core, before = structuredClone(metadata);
+  const reveals = await prepareDeferredPhotoReveals({ ...options, prepared: metadata });
+  assert.deepEqual(metadata, before);
+  assert.equal(reveals.parentPreparationId, core.id);
+  assert.equal(reveals.outputContract, PREPARATION_REVEALS_V1);
+  assert.deepEqual(reveals.frame, core.frame);
+  assert.deepEqual(Object.keys(reveals.outputs), ['normalized', 'microDefect', 'directional']);
+  for (const name of Object.keys(reveals.outputs)) {
+    assert.deepEqual(reveals.outputs[name].bytes, prepared.outputs[name].bytes);
+    const descriptor = describePreparationDerivative(reveals, name, source, { id: name, object: { key: `lazy/${name}`, versionId: null } });
+    assert.equal(descriptor.frameDescriptorSha256, core.frameDescriptorSha256);
+  }
+  // A stored hash or proposal change must never rebind old analysis to new work.
+  const differentPixels = structuredClone(metadata); differentPixels.frame.inspection.sha256 = 'a'.repeat(64);
+  await assert.rejects(prepareDeferredPhotoReveals({ ...options, prepared: differentPixels }), e => e.code === 'PREPARATION_SOURCE_MISMATCH');
+  const differentProposal = structuredClone(metadata); differentProposal.proposal.outcome = 'ABSTAIN';
+  await assert.rejects(prepareDeferredPhotoReveals({ ...options, prepared: differentProposal }), e => e.code === 'PREPARATION_SOURCE_MISMATCH');
+  await assert.rejects(prepareDeferredPhotoReveals({ ...options, prepared: { ...metadata, id: 'f'.repeat(64) } }), e => e.code === 'PREPARATION_SOURCE_MISMATCH');
+  const differentTransform = structuredClone(metadata); differentTransform.frame.sourceToRectified[2] += 10;
+  await assert.rejects(prepareDeferredPhotoReveals({ ...options, prepared: differentTransform }));
+  await assert.rejects(prepareDeferredPhotoReveals({ ...options, source: { ...source, bytes: prepared.outputs.inspection.bytes }, prepared: metadata }),
+    e => ['PREPARATION_SOURCE_MISMATCH', 'PREPARATION_LIMIT'].includes(e.code));
+});
+
+test('contracts distinguish legacy full outputs, reject malformed requests and do not expose phantom reveal descriptors', async () => {
+  assert.deepEqual(preparationOutputNames(), ['rectified', 'inspection', 'normalized', 'microDefect', 'directional']);
+  assert.equal(prepared.outputContract, PREPARATION_FULL_V1);
+  assert.throws(() => preparationOutputNames(PREPARATION_CORE_V1).push('normalized'), TypeError);
+  const engine = await preparationRuntimeIdentity(python);
+  for (const outputContract of [null, 'core', {}, [], PREPARATION_REVEALS_V1]) {
+    if (outputContract !== PREPARATION_REVEALS_V1) assert.throws(() => preparationOutputNames(outputContract), e => e.code === 'PREPARATION_OUTPUT_INVALID');
+    await assert.rejects(preparePhotoGeometry({ source, matColor: 'BLACK', limits, pythonExecutable: python, engine,
+      quad: workspace.sides.FRONT.physical.quad, outputContract }), e => e.code === 'PREPARATION_OUTPUT_INVALID');
+  }
+  const missing = { ...prepared, outputs: {} };
+  assert.throws(() => describePreparationDerivative(missing, 'normalized', source, { id: 'absent', object: { key: 'absent', versionId: null } }),
+    e => e.code === 'PREPARATION_SOURCE_MISMATCH');
 });
 
 test('late preparation cannot erase a newer physical edit; changed mat keeps warp but discards old proposal', () => {

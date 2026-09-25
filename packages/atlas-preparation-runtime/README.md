@@ -2,7 +2,8 @@
 
 An isolated Node adapter for the existing CPU physical-edge, card warp,
 inspection, reveal and printed-border engines. It uses no model, GPU, network,
-database or old operator. No production application imports this package yet.
+database or old operator. Connected manual intake uses this package for automatic
+geometry and explicit manual preparation.
 
 `prepareGeometry` takes the saved geometry workspace, side, verified photo-core
 original/decode-plan/frame descriptors, exact decoded `Uint8Array` bytes,
@@ -34,8 +35,8 @@ therefore does not establish that every decoded iPhone image can use this
 preparation pipeline. Actual original/inspection fine-defect acceptance remains
 required before selecting broader color or depth treatment.
 
-The Python child verifies the actual PNG bytes and decoded array, uses unchanged
-`card_geometry.py` and `color_geometry.py`, and creates five real WebP92 images:
+The Python child verifies the actual PNG bytes and decoded array, uses the retained
+geometry algorithms, and by default creates five real WebP92 images:
 1270×1778 `rectified`, and 1350×1858 `inspection`, `normalized`, `microDefect` and
 `directional`. Inspection card bounds remain `(40,40,1270,1778)`. The extracted
 reveal and encoding function bodies match `preparation_core.py` exactly; the
@@ -43,6 +44,42 @@ source manifest is `backend/ai-grader-speedster-service/preparation-pixels-extra
 Returned output hashes, byte counts, dimensions and transforms are verified.
 Library versions and engine source hashes accompany the result. A genuine
 printed-border proposal or engine abstention is returned, without human approval.
+
+## Automatic core and deferred reveal contracts
+
+`preparePhotoGeometry({ ...input, outputContract: PREPARATION_CORE_V1 })` uses
+`atlas-preparation-core-v1`: only `rectified` and `inspection` are generated.
+Physical/printed detection, source resolution, two warps, WebP quality 92,
+transforms and proposal gates are identical to full preparation. Optional reveal
+pixels are not computed or encoded. Results retain `outputContract` and the exact
+`sourceQuad`; the contract is part of the preparation identifier and automatic
+geometry engine/cache key. An old unversioned five-image cache cannot satisfy a
+new core request.
+
+Omitting `outputContract` preserves the full five-output API, explicitly returned
+as `atlas-preparation-full-v1`. `prepareGeometry`, including manual re-preparation,
+continues to produce all five outputs. Historical manifests without a contract
+remain full manifests. Unsupported or malformed contract values are rejected.
+
+Automatic `PREPARED_IMAGES` manifests retain the verified working PNG descriptor
+and core preparation metadata under `deferredReveals`. No original or working
+PNG is removed. A future authorized lazy consumer can use
+`prepareDeferredPhotoReveals({ source, prepared, matColor, engine, limits,
+pythonExecutable, signal })`, where `source` contains the freshly verified
+working PNG and `prepared` is that saved core metadata. This API deliberately
+recomputes from the working PNG with the saved quad, verifies exact original core
+hashes, transforms and complete printed proposal, then returns only normalized,
+microDefect and directional outputs under `atlas-preparation-reveals-v1`. It
+retains the parent preparation ID and original prepared frame. It does not write
+storage, alter the parent manifest, replace a frame, or rebind an analysis.
+Recomputation occurs only on explicit demand, outside automatic capture→ASTRA;
+there is no new lazy UI route. A lossy prepared WebP is never a valid source.
+
+RGB8 Lab normalization uses an exhaustive float32 byte lookup with identical
+values; other supported source types retain the previous operations. Printed
+detection samples rotation views instead of copying entire Lab rasters. Tests
+compare all byte values, noncontiguous inputs and complete proposal/quality
+results against the previous operations.
 
 `proposePhysicalGeometry` runs the existing physical-edge proposal against that
 same verified source and returns its current geometry dependency base. It does
@@ -74,7 +111,7 @@ it does not qualify arbitrary replacement libraries. Package deployment must
 include the fixed backend worker and its CPU modules at their repository paths.
 
 Set `ATLAS_PREPARATION_PYTHON` to the absolute pinned Python executable, then run
-`npm test --workspace @atlas/preparation-runtime`. Nine focused checks cover all
+`npm test --workspace @atlas/preparation-runtime`. Focused checks cover all
 five legacy byte hashes, genuine proposals, selective invalidation, stale
 results, exact derivative lineage, input/output limits, caller mutation and real
 blocked-child kill/reap. Local synthetic parity is not production-runtime or

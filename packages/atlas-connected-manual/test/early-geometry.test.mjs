@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '@atlas/manual-service/contract';
 import { descriptorSha256 } from '@atlas/photo-core';
+import { PREPARATION_CORE_V1, PREPARATION_REVEALS_V1 } from '@atlas/preparation-runtime';
 import { createManualArtifactStore } from '@atlas/manual-service/artifacts';
 import { createPhotoProcessor } from '@atlas/manual-intake/photo-processing';
 import { createGeometryWorkspace, applyGeometryEdit, geometryBase } from '@atlas/manual-workspace/geometry-actions';
@@ -80,7 +81,7 @@ async function fixture() {
       async readSource(_staff, _card, id) { return { photo: photos.get(id) }; } },
     details: { async read() { return { details: currentSettings }; } }, physical: input => physical(input),
     prepare: input => preparation(input) });
-  return { cardId, staff, upload, build, jobs, intents, selected, photos, store, identity, limits,
+  return { cardId, staff, upload, build, jobs, intents, selected, photos, store, identity, limits, artifacts,
     breakArtifact(uploadId) { objects.delete(photos.get(uploadId) && Object.values(selected).find(u => u.uploadId === uploadId).source.ref.key); },
     setSettings(value) { currentSettings = { ...currentSettings, ...value }; },
     setPhysical(value) { physical = value; }, setPrepare(value) { preparation = value; }, get calls() { return calls; }, get maximum() { return maximum; } };
@@ -132,6 +133,58 @@ test('a native preparation refusal retains its valid physical proposal and expos
     const result = (await service.status(f.staff, f.cardId)).FRONT;
     assert.deepEqual(result.physical, quad); assert.equal(result.prepared, false); assert.equal(result.printed, null);
     assert.equal(result.error, 'PREPARATION_LIMIT'); assert.equal(result.canRetry, true);
+  } finally { await service.stop(); }
+});
+
+test('automatic cache requires explicit core outputs and retains exact working-source metadata for deferred reveals', async () => {
+  const f = await fixture(), service = f.build();
+  f.setPhysical(async input => ({ id: 'physical-core', identity: identity.identity,
+    frameDescriptorSha256: descriptorSha256(input.source.frame), proposal: { outcome: 'ACCEPTED', proposal: quad } }));
+  f.setPrepare(async input => {
+    assert.equal(input.outputContract, PREPARATION_CORE_V1);
+    const transform = [141, 0, -211.5, 0, 138.828125, -222.125, 0, 0, 1];
+    // Native preparation itself has separate real-byte equivalence tests. This
+    // transport fixture exercises contract selection and retained provenance.
+    const output = (name, width, height) => { const bytes = Buffer.from(`fixture-${name}`);
+      return { filename: `${name}.webp`, mime: 'image/webp', bytes, byteCount: bytes.length, sha256: sha(bytes), width, height,
+        frameToDerivative: name === 'rectified' ? transform : [141, 0, -171.5, 0, 138.828125, -182.125, 0, 0, 1] }; };
+    const outputs = { rectified: output('rectified', 1270, 1778), inspection: output('inspection', 1350, 1858) };
+    return { id: 'core-result', frameDescriptorSha256: descriptorSha256(input.source.frame), identity: identity.identity,
+      outputContract: PREPARATION_CORE_V1, sourceQuad: input.quad, proposal: { outcome: 'ACCEPTED', proposal: quad },
+      encoderSettings: { format: 'webp', quality: 92, sourceBitDepth: 8 }, outputs,
+      frame: { id: 'prepared-core', version: 1, sourceToRectified: transform,
+        rectified: { sha256: outputs.rectified.sha256, width: 1270, height: 1778 },
+        inspection: { sha256: outputs.inspection.sha256, width: 1350, height: 1858, cardBounds: { x: 40, y: 40, width: 1270, height: 1778 } } } };
+  });
+  try {
+    const upload = await f.upload('FRONT'), photo = f.photos.get(upload.uploadId);
+    await service.ensure(f.staff, f.cardId); await until(() => [...f.jobs.values()][0]?.state === 'READY');
+    const { input, packet } = await service.consume(f.staff, f.cardId, 'FRONT', upload, photo, settings);
+    assert.equal(input.engine.outputContract, PREPARATION_CORE_V1);
+    const historicalEngine = { ...input.engine }; delete historicalEngine.outputContract;
+    assert.notEqual(digest(canonical(geometryCacheInput(upload, photo, settings, historicalEngine))), packet.key);
+    const manifest = await f.artifacts.read(packet.preparedImages.ref,
+      { cardId: f.cardId, kind: 'PREPARED_IMAGES', sourceHash: packet.preparedImages.sourceHash });
+    assert.deepEqual(Object.keys(manifest.images).sort(), ['inspection', 'rectified']);
+    assert.equal(manifest.outputContract, PREPARATION_CORE_V1);
+    assert.equal(manifest.deferredReveals.outputContract, PREPARATION_REVEALS_V1);
+    assert.deepEqual(manifest.deferredReveals.workingFrame, photo.workingFrame);
+    assert.deepEqual(manifest.deferredReveals.preparation.sourceQuad, quad);
+    assert.deepEqual(manifest.deferredReveals.preparation, packet.preparation);
+    assert.equal(manifest.deferredReveals.preparation.outputs, undefined);
+  } finally { await service.stop(); }
+});
+
+test('an unversioned full worker result cannot be persisted as new core preparation', async () => {
+  const f = await fixture(), service = f.build();
+  f.setPhysical(async input => ({ id: 'physical-core', identity: identity.identity,
+    frameDescriptorSha256: descriptorSha256(input.source.frame), proposal: { outcome: 'ACCEPTED', proposal: quad } }));
+  f.setPrepare(async () => ({ outputs: Object.fromEntries(['rectified','inspection','normalized','microDefect','directional'].map(k => [k, {}])) }));
+  try {
+    await f.upload('FRONT'); await service.ensure(f.staff, f.cardId);
+    await until(() => [...f.jobs.values()][0]?.state === 'FAILED');
+    assert.equal([...f.jobs.values()][0].error, 'GEOMETRY_STORED_CONTENT_INVALID');
+    assert.equal([...f.jobs.values()][0].result, null);
   } finally { await service.stop(); }
 });
 
