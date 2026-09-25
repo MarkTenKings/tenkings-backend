@@ -1,4 +1,5 @@
-// Browser-only. Native File/Blob is retained in IndexedDB until verified storage
+import { encodePhoto, decodePhoto, readNativePhotoBytes, photoStorageError } from './photo-bytes.mjs';
+// Browser-only. Exact native photo bytes are retained until verified storage
 // and working-photo preparation are recorded. No image re-encoding occurs here.
 const error = code => Object.assign(new Error(code), { code });
 function requireThat(ok, code) { if (!ok) throw error(code); }
@@ -88,10 +89,10 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
             && new URL(signed.url).protocol === 'https:', 'INTAKE_UPLOAD_PLAN_INVALID');
           // Rehash persisted bytes before a later retry. A lost/modified Blob
           // cannot be used to satisfy a different native-photo plan.
-          const bytes = await saved.file.arrayBuffer();
+          const bytes = await readNativePhotoBytes(saved.file);
           requireThat(hex(await cryptoImpl.subtle.digest('SHA-256', bytes)) === saved.input.sha256, 'INTAKE_PENDING_BYTES_CONFLICT');
           try {
-            await putNative(signed.url, { method: 'PUT', headers: signed.headers, body: saved.file,
+            await putNative(signed.url, { method: 'PUT', headers: signed.headers, body: new Blob([bytes], { type: saved.file.type }),
               mode: 'cors', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' }, signal);
           } catch (failure) { if (signal?.aborted) throw failure; }
           // 2xx, 412, other errors and a lost reply all require the same server
@@ -107,7 +108,7 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
     } finally { running.delete(operationId); }
   }
   return Object.freeze({
-    pending: () => journal.list(), resume,
+    pending: options => journal.list(options), resume,
     list: options => request(`${base}${options?.cursor ? `?cursor=${encodeURIComponent(options.cursor)}` : ''}`, { method: 'GET' }),
     read: cardId => request(`${base}/${cardId}`, { method: 'GET' }),
     async prepareSaved(cardId, uploadId, { signal } = {}) {
@@ -153,10 +154,12 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
       // independent, while a double selection cannot allocate two side plans.
       requireThat(!uploadingSides.has(sideKey), 'INTAKE_UPLOAD_IN_PROGRESS'); uploadingSides.add(sideKey);
       try {
-        const pending = await journal.list();
+        const pending = await journal.list({ metadataOnly: true });
         requireThat(!pending.some(item => item.value.kind === 'upload' && item.value.cardId === cardId
           && item.value.input.side === side && !item.value.verified), 'INTAKE_SIDE_UPLOAD_PENDING');
-        const sha256 = hex(await cryptoImpl.subtle.digest('SHA-256', await file.arrayBuffer()));
+        const encoded = await encodePhoto(file);
+        const sha256 = hex(await cryptoImpl.subtle.digest('SHA-256', encoded.bytes));
+        file = decodePhoto(encoded);
         const operationId = cryptoImpl.randomUUID();
         await journal.put(operationId, { kind: 'upload', cardId, file, planUncertain: false, input: { requestId: operationId, side,
           expectedVersion, sha256, byteCount: file.size } });
@@ -168,34 +171,89 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
 
 export function createBrowserIntakeJournal({ staffId, indexedDB = globalThis.indexedDB }) {
   requireThat(typeof staffId === 'string' && /^[a-f0-9-]{36}$/.test(staffId) && indexedDB, 'INTAKE_JOURNAL_UNAVAILABLE');
-  const prefix = `${staffId}:`, opened = new Promise((resolve, reject) => {
+  const prefix = `${staffId}:`, metadataPrefix = `${prefix}byte-metadata:`, bytesPrefix = `${prefix}photo-bytes:`, cache = new Map();
+  const storageFailure = cause => photoStorageError(cause, 'INTAKE_JOURNAL_UNAVAILABLE');
+  const opened = new Promise((resolve, reject) => {
     const operation = indexedDB.open('atlas-native-photo-intake-v1', 1);
     operation.onupgradeneeded = () => operation.result.createObjectStore('pending');
     operation.onsuccess = () => resolve(operation.result);
-    operation.onerror = () => reject(error('INTAKE_JOURNAL_UNAVAILABLE'));
+    operation.onerror = () => reject(storageFailure(operation.error));
   });
   async function transaction(mode, execute) {
     const db = await opened;
     return new Promise((resolve, reject) => {
-      const tx = db.transaction('pending', mode), store = tx.objectStore('pending'); let result;
-      const set = value => { result = value; };
-      tx.oncomplete = () => resolve(result); tx.onerror = tx.onabort = () => reject(error('INTAKE_JOURNAL_UNAVAILABLE'));
-      execute(store, set);
+      const tx = db.transaction('pending', mode), store = tx.objectStore('pending'); let result, failure;
+      const guard = work => event => { try { work(event); } catch (error) { failure = error; tx.abort(); } };
+      tx.oncomplete = () => resolve(result);
+      tx.onerror = tx.onabort = event => reject(failure ?? storageFailure(event.target.error ?? tx.error));
+      try { execute(store, value => { result = value; }, guard); }
+      catch (error) { tx.abort(); reject(storageFailure(error)); }
     });
   }
-  return Object.freeze({
-    get: id => transaction('readonly', (store, done) => { store.get(prefix + id).onsuccess = event => done(event.target.result); }),
-    put: (id, value) => transaction('readwrite', store => { store.put(value, prefix + id); }),
-    remove: id => transaction('readwrite', store => { store.delete(prefix + id); }),
-    list: () => transaction('readonly', (store, done) => {
-      const values = [], cursor = store.openCursor();
-      cursor.onsuccess = event => {
-        const item = event.target.result;
-        if (!item) { done(values); return; }
-        if (String(item.key).startsWith(prefix)) values.push({ id: String(item.key).slice(prefix.length), value: item.value });
-        item.continue();
-      };
-    }),
-    close: async () => (await opened).close(),
+  const raw = id => transaction('readonly', (store, done) => {
+    store.get(metadataPrefix + id).onsuccess = event => {
+      if (event.target.result) return done({ current: event.target.result });
+      store.get(prefix + id).onsuccess = legacy => done({ legacy: legacy.target.result });
+    };
   });
+  async function get(id, { metadataOnly = false } = {}) {
+    const { current, legacy } = await raw(id), value = current ?? legacy;
+    if (!value) return undefined;
+    if (value.kind !== 'upload') return value;
+    if (metadataOnly) { const { file, photoRef, ...metadata } = value; return metadata; }
+    if (!current) return value; // Leave the legacy Blob and intent intact.
+    let file = cache.get(id);
+    if (!file) {
+      if (current.photoRef === 'bytes') file = decodePhoto(await transaction('readonly', (store, done) => {
+        store.get(bytesPrefix + id).onsuccess = event => done(event.target.result);
+      }));
+      else {
+        requireThat(current.photoRef === 'legacy', 'PHOTO_STORAGE_CORRUPT');
+        const old = await transaction('readonly', (store, done) => {
+          store.get(prefix + id).onsuccess = event => done(event.target.result);
+        });
+        requireThat(old?.file instanceof Blob, 'PHOTO_STORAGE_CORRUPT'); file = old.file;
+      }
+      cache.set(id, file);
+    }
+    return { ...value, file };
+  }
+  async function put(id, value) {
+    const { current, legacy } = await raw(id);
+    const { file, photoRef: ignored, ...metadata } = value;
+    let encoded;
+    if (value.kind === 'upload') {
+      requireThat(file instanceof Blob, 'PHOTO_STORAGE_CORRUPT');
+      metadata.photoRef = current?.photoRef ?? (legacy?.file instanceof Blob ? 'legacy' : 'bytes');
+      if (!current && !legacy) encoded = await encodePhoto(file);
+    }
+    await transaction('readwrite', store => {
+      if (encoded) store.put(encoded, bytesPrefix + id);
+      store.put(metadata, metadataPrefix + id);
+      // Old upload rows may contain unreadable disk-backed Blobs. Never copy
+      // or delete those while an exact upload outcome is still uncertain.
+      if (metadata.photoRef !== 'legacy') store.delete(prefix + id);
+    });
+    if (encoded) cache.set(id, decodePhoto(encoded));
+  }
+  async function remove(id) {
+    await transaction('readwrite', store => {
+      store.delete(prefix + id); store.delete(metadataPrefix + id); store.delete(bytesPrefix + id);
+    });
+    cache.delete(id);
+  }
+  async function list(options = {}) {
+    // Key enumeration avoids cursor deserialization of unrelated photo bodies.
+    const keys = await transaction('readonly', (store, done) => { store.getAllKeys().onsuccess = event => done(event.target.result); });
+    const ids = new Set();
+    for (const key of keys) {
+      if (typeof key !== 'string' || !key.startsWith(prefix) || key.startsWith(bytesPrefix)) continue;
+      ids.add(key.startsWith(metadataPrefix) ? key.slice(metadataPrefix.length) : key.slice(prefix.length));
+    }
+    const values = [];
+    // Sequential reads keep peak memory bounded when the caller requests files.
+    for (const id of ids) { const value = await get(id, options); if (value) values.push({ id, value }); }
+    return values;
+  }
+  return Object.freeze({ get, put, remove, list, close: async () => { cache.clear(); (await opened).close(); } });
 }

@@ -1,0 +1,23 @@
+{
+  "status": "PASS_WITH_DEVICE_RECOVERY_PENDING",
+  "files": {
+    "bridge-browser.json": "1e175eb4542d42323b3bf48bcc9ce10e000683991b4e92521f939ba0594bd206",
+    "production-observation.json": "0fe31375704085acc24f5d41401364fdb9d737eadbf60ff19cc99724941b751d",
+    "storage-browser.json": "64109abe6b4161c81b2bae9765410337f33c16a8699d13b2c8178fd4cabe5990",
+    "unit.json": "7a09d542f985423bc313ef2073a4f641da2d082b178d96d728243258549b6483"
+  },
+  "changes": [
+    "Native photo bytes stored in immutable ArrayBuffer records; progress metadata commits separately in the existing IndexedDB stores.",
+    "Existing legacy Blob records remain untouched by unrelated progress; readable originals migrate lazily without conversion.",
+    "Immutable reconstructed photo cache and metadata-only intake listing prevent repeated full-photo reads.",
+    "Bounded arrayBuffer, FileReader and Response fallbacks read exact originals; upload bodies reconstructed from verified bytes.",
+    "Exact card/create/enqueue/upload intents and reconciliation behavior preserved, including unknown outcomes.",
+    "Full-storage advice requires confirmed QuotaExceededError."
+  ],
+  "references": [
+    "https://www.w3.org/TR/IndexedDB/",
+    "https://github.com/WebKit/WebKit/commit/74123c260a439c4e69d44300b7ebd2f8a8f39fe7"
+  ],
+  "referenceBoundary": "WebKit file-backed IndexedDB Blob issue is an engineering analogue, not proof of this owner device OS/root exception.",
+  "dataPolicy": "No actual card IDs, original photos, customer identities, photo hashes, credentials, sessions, or raw private logs copied into these safe receipts."
+}

@@ -1,0 +1,291 @@
+{
+  "status": "PASS",
+  "syntheticOnly": true,
+  "browserErrors": [],
+  "serviceLayouts": [
+    {
+      "width": 320,
+      "title": "Two Speeds. Same Finish.",
+      "spans": [
+        {
+          "y": 395.140625,
+          "bottom": 431.53125
+        },
+        {
+          "y": 431.53125,
+          "bottom": 467.921875
+        }
+      ],
+      "overflow": false,
+      "films": [
+        {
+          "ratio": 1.7777777777777777,
+          "fit": "contain"
+        },
+        {
+          "ratio": 1.7777777777777777,
+          "fit": "contain"
+        }
+      ],
+      "labels": [
+        {
+          "text": "Super Fast",
+          "bottom": 680.421875,
+          "filmTop": 680.421875
+        },
+        {
+          "text": "Fast",
+          "bottom": 1839.65625,
+          "filmTop": 1839.65625
+        }
+      ],
+      "metrics": [
+        [
+          34,
+          34
+        ],
+        [
+          34,
+          34
+        ]
+      ]
+    },
+    {
+      "width": 390,
+      "title": "Two Speeds. Same Finish.",
+      "spans": [
+        {
+          "y": 352.09375,
+          "bottom": 392.640625
+        },
+        {
+          "y": 392.640625,
+          "bottom": 433.1875
+        }
+      ],
+      "overflow": false,
+      "films": [
+        {
+          "ratio": 1.7777777777777777,
+          "fit": "contain"
+        },
+        {
+          "ratio": 1.7777777777777777,
+          "fit": "contain"
+        }
+      ],
+      "labels": [
+        {
+          "text": "Super Fast",
+          "bottom": 645.6875,
+          "filmTop": 645.6875
+        },
+        {
+          "text": "Fast",
+          "bottom": 1749.875,
+          "filmTop": 1749.875
+        }
+      ],
+      "metrics": [
+        [
+          39,
+          39
+        ],
+        [
+          39,
+          39
+        ]
+      ]
+    },
+    {
+      "width": 820,
+      "title": "Two Speeds. Same Finish.",
+      "spans": [
+        {
+          "y": 366.296875,
+          "bottom": 420.296875
+        },
+        {
+          "y": 366.296875,
+          "bottom": 420.296875
+        }
+      ],
+      "overflow": false,
+      "films": [
+        {
+          "ratio": 1.7777777777777777,
+          "fit": "contain"
+        },
+        {
+          "ratio": 1.7777777777777777,
+          "fit": "contain"
+        }
+      ],
+      "labels": [
+        {
+          "text": "Super Fast",
+          "bottom": 611.4375,
+          "filmTop": 611.4375
+        },
+        {
+          "text": "Fast",
+          "bottom": 611.4375,
+          "filmTop": 611.4375
+        }
+      ],
+      "metrics": [
+        [
+          38,
+          38
+        ],
+        [
+          38,
+          38
+        ]
+      ]
+    },
+    {
+      "width": 1280,
+      "title": "Two Speeds. Same Finish.",
+      "spans": [
+        {
+          "y": 363.296875,
+          "bottom": 446.296875
+        },
+        {
+          "y": 363.296875,
+          "bottom": 446.296875
+        }
+      ],
+      "overflow": false,
+      "films": [
+        {
+          "ratio": 1.7777777777777777,
+          "fit": "contain"
+        },
+        {
+          "ratio": 1.7777777777777777,
+          "fit": "contain"
+        }
+      ],
+      "labels": [
+        {
+          "text": "Super Fast",
+          "bottom": 648.28125,
+          "filmTop": 648.28125
+        },
+        {
+          "text": "Fast",
+          "bottom": 648.28125,
+          "filmTop": 648.28125
+        }
+      ],
+      "metrics": [
+        [
+          51.2,
+          51.2
+        ],
+        [
+          51.2,
+          51.2
+        ]
+      ]
+    }
+  ],
+  "motion": {
+    "synchronization": {
+      "durations": [
+        16000,
+        16000
+      ],
+      "startDelta": 0
+    },
+    "frozen": {
+      "delta": 0,
+      "pausedAnimations": true,
+      "videosPaused": true
+    },
+    "daySeven": [
+      {
+        "progress": 1,
+        "delivered": 1
+      },
+      {
+        "progress": 0.5,
+        "delivered": 0
+      }
+    ],
+    "dayFourteen": [
+      {
+        "progress": 1,
+        "delivered": 1
+      },
+      {
+        "progress": 1,
+        "delivered": 1
+      }
+    ],
+    "perFilmPausePreserved": true,
+    "reduced": {
+      "animations": 0,
+      "stamps": [
+        1,
+        1
+      ]
+    }
+  },
+  "directory": {
+    "emptySelectionBlocked": true,
+    "nearbyClearsQuery": true,
+    "errorDistinctFromEmpty": true,
+    "staleResultIgnored": true,
+    "approvedDealerVisible": true,
+    "contactSelectionBlocked": true
+  },
+  "kiosk": {
+    "cards": 2,
+    "originals": [
+      {
+        "size": 214091
+      },
+      {
+        "size": 127117
+      },
+      {
+        "size": 214091
+      },
+      {
+        "size": 127117
+      }
+    ],
+    "paymentCreates": 1,
+    "reviewWrites": 1,
+    "profileWrites": 1,
+    "dealerEntries": 1
+  },
+  "mail": {
+    "cards": 1,
+    "paymentState": "PAID",
+    "totalDistinctPaymentCreates": 2,
+    "profileWrites": 1
+  },
+  "coldCheckout": {
+    "actualServiceBlockers": [
+      "PAYMENT_NOT_CONFIGURED",
+      "TAX_NOT_CONFIGURED",
+      "SHIPPING_NOT_CONFIGURED",
+      "MEASURED_PACKAGING_NOT_CONFIGURED",
+      "MAIL_TURNAROUND_NOT_CONFIGURED",
+      "MAIL_SHIPPING_TERMS_NOT_CONFIGURED"
+    ],
+    "savedCompletion": true,
+    "unknownPaymentPreserved": true,
+    "paidReceiptPreserved": true
+  },
+  "rapid": {
+    "cards": 10,
+    "elapsedMs": 2039,
+    "serverCreateStillBlocked": true,
+    "completedPairCounterVerified": true
+  }
+}

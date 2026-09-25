@@ -22,6 +22,7 @@ for (const file of ['components/AccountWorkspace.jsx', 'components/intake/Submis
     }]], babelrc: false, configFile: false }).code);
 }
 for (const file of ['RapidCardCamera.jsx', 'rapid-camera.mjs']) modules.set(`atlas-shared/${file}`, babel.transformSync(readFileSync(join(root, '../atlas-shared', file), 'utf8'), {filename:file,presets:[[require.resolve('next/babel'),{'preset-env':{targets:{chrome:'120'}},'transform-runtime':{helpers:false}}]],babelrc:false,configFile:false}).code);
+modules.set('packages/atlas-manual-intake/src/photo-bytes.mjs', babel.transformSync(readFileSync(join(root, '../../packages/atlas-manual-intake/src/photo-bytes.mjs'), 'utf8'), {filename:'photo-bytes.mjs',presets:[[require.resolve('next/babel'),{'preset-env':{targets:{chrome:'120'}},'transform-runtime':{helpers:false}}]],babelrc:false,configFile:false}).code);
 const cameraClasses = {};
 const cameraCss = readFileSync(join(root, '../atlas-shared/RapidCardCamera.module.css'), 'utf8').replace(/\.([a-zA-Z_][\w-]*)/g, (_, name) => { cameraClasses[name] = `camera_${name}`; return `.camera_${name}`; });
 modules.set('atlas-shared/RapidCardCamera.module.css', `module.exports=${JSON.stringify(cameraClasses)};`);
@@ -118,12 +119,54 @@ async function serviceLayout(width) {
     for (const [price, speed] of layout.metrics) { assert.equal(price, speed, 'Price and speed have equal type size'); assert(price >= 34); }
     return { width, ...layout };
 }
+async function serviceMotion() {
+    await page.waitForFunction(() => document.querySelector('.service-choice')?.dataset.motion === 'running' && [...document.querySelectorAll('.service-film video')].every(video => video.readyState >= 2));
+    const synchronization = await page.evaluate(() => {
+        const animations = [...document.querySelectorAll('.service-timeline-fill')].map(element => element.getAnimations()[0]);
+        return { durations: animations.map(animation => animation.effect.getTiming().duration), startDelta: Math.abs(animations[0].startTime - animations[1].startTime) };
+    });
+    assert.deepEqual(synchronization.durations, [16000,16000]); assert(synchronization.startDelta < 20, 'Both service timelines begin on the same animation clock');
+    await page.getByRole('button',{name:'Pause motion',exact:true}).click();
+    const frozen = await page.evaluate(async () => {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const animation = document.querySelector('.service-timeline-fill').getAnimations()[0], before = animation.currentTime;
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return { delta: Math.abs(animation.currentTime - before), pausedAnimations: [...document.querySelectorAll('.service-speed-art *, .service-timeline *')].flatMap(element => element.getAnimations()).every(value => value.playState === 'paused'), videosPaused: [...document.querySelectorAll('.service-film video')].every(video => video.paused) };
+    });
+    assert(frozen.delta < 1 && frozen.pausedAnimations && frozen.videosPaused, 'Global pause freezes both films and all decorative motion: '+JSON.stringify(frozen));
+    async function seek(time) {
+        return page.evaluate(time => {
+            for (const element of document.querySelectorAll('.service-timeline *')) for (const animation of element.getAnimations()) animation.currentTime = time;
+            return [...document.querySelectorAll('.service-timeline')].map(timeline => ({ progress: new DOMMatrixReadOnly(getComputedStyle(timeline.querySelector('.service-timeline-fill')).transform).a, delivered: Number(getComputedStyle(timeline.querySelector('.finish-stamp')).opacity) }));
+        }, time);
+    }
+    const beforeSeven = await seek(6900); assert.equal(beforeSeven[0].delivered,0,'Gold cannot finish before day seven');
+    const daySeven = await seek(7000); assert.equal(daySeven[0].progress,1); assert.equal(daySeven[0].delivered,1); assert(daySeven[1].progress > .45 && daySeven[1].progress < .6); assert.equal(daySeven[1].delivered,0,'Silver must not celebrate with gold');
+    await shot('00-motion-seven-day-desktop');
+    const dayFourteen = await seek(14000); for (const service of dayFourteen) assert(service.progress === 1 && service.delivered === 1,'Both finish after the silver service reaches fourteen days');
+    await shot('00-motion-both-delivered-desktop');
+    await page.setViewportSize({width:390,height:844}); await shot('00-motion-delivered-mobile');
+    await page.getByRole('button',{name:'Play motion',exact:true}).click();
+    await page.waitForFunction(() => [...document.querySelectorAll('.service-film video')].every(video => !video.paused));
+    await page.getByRole('button',{name:'Pause ATLAS kiosk drop-off preview',exact:true}).click();
+    await page.getByRole('button',{name:'Pause motion',exact:true}).click(); await page.getByRole('button',{name:'Play motion',exact:true}).click();
+    await page.waitForFunction(() => document.querySelector('.service-film-kiosk video').paused && !document.querySelector('.service-film-fedex video').paused);
+    await page.emulateMedia({reducedMotion:'reduce'});
+    await page.waitForFunction(() => document.querySelector('.service-choice').dataset.reducedMotion === 'true' && [...document.querySelectorAll('.service-film video')].every(video => video.paused));
+    assert(await page.getByRole('button',{name:'Reduced motion on',exact:true}).isDisabled());
+    const reduced = await page.evaluate(() => ({ animations: [...document.querySelectorAll('.service-speed-art *, .service-timeline *')].flatMap(element => element.getAnimations()).length, stamps: [...document.querySelectorAll('.finish-stamp')].map(element => Number(getComputedStyle(element).opacity)) }));
+    assert.equal(reduced.animations,0); assert.deepEqual(reduced.stamps,[1,1]); await shot('00-motion-reduced-mobile');
+    await page.emulateMedia({reducedMotion:'no-preference'});
+    await page.waitForFunction(() => document.querySelector('.service-choice').dataset.motion === 'running');
+    return { synchronization, frozen, daySeven, dayFourteen, perFilmPausePreserved:true, reduced };
+}
 try {
     await page.goto(`${origin}/?kiosk=synthetic-entry`);
     await page.getByRole('heading',{name:'Super Fast', exact:true}).waitFor();
     assert.equal(await page.getByRole('navigation', {name:'Submission progress'}).count(), 0, 'Initial anonymous service comparison has no progress tracker');
     const serviceLayouts = [];
     for (const width of [320, 390, 820, 1280]) { serviceLayouts.push(await serviceLayout(width)); if(width===390)await shot('00-service-mobile'); if(width===1280)await shot('00-service-desktop'); }
+    const motion = await serviceMotion();
     await page.setViewportSize({width:390,height:844});
     await page.getByRole('button', { name: 'Continue with your phone' }).click();
     await page.getByRole('textbox', { name: 'Mobile number' }).fill('2025550141');
@@ -261,9 +304,15 @@ try {
     assert.equal(await rapid.getByRole('navigation',{name:'Submission progress'}).count(),0,'Initial signed-in service comparison has no progress tracker');
     await rapid.getByRole('button',{name:'Choose mail-in →'}).click(); await rapid.getByRole('button',{name:/^Continue to camera/}).click();
     await rapid.getByRole('button',{name:'Capture Front'}).waitFor(); const startedAt=Date.now();
-    for(let i=0;i<10;i++){await rapid.getByRole('button',{name:'Capture Front'}).click();await rapid.getByRole('button',{name:'Capture Back'}).click();}
+    for(let i=0;i<10;i++){
+        await rapid.waitForFunction(expected => document.querySelector('[aria-label="Completed card pairs"] b')?.textContent === String(expected),i);
+        await rapid.getByRole('button',{name:'Capture Front'}).click(); await rapid.getByRole('button',{name:'Capture Back'}).waitFor();
+        assert.equal(await rapid.locator('[aria-label="Completed card pairs"] b').textContent(),String(i),'A saved Front alone must not increase the completed-pair count');
+        await rapid.getByRole('button',{name:'Capture Back'}).click(); await rapid.getByRole('button',{name:'Capture Front'}).waitFor();
+        await rapid.waitForFunction(expected => document.querySelector('[aria-label="Completed card pairs"] b')?.textContent === String(expected),i+1);
+    }
     await rapid.getByRole('button',{name:'Capture Front'}).waitFor();
-    const rapidEvidence={cards:10,elapsedMs:Date.now()-startedAt,serverCreateStillBlocked:await rapid.evaluate(()=>window.__blockedDraft===true)};
+    const rapidEvidence={cards:10,elapsedMs:Date.now()-startedAt,serverCreateStillBlocked:await rapid.evaluate(()=>window.__blockedDraft===true),completedPairCounterVerified:true};
     assert(rapidEvidence.elapsedMs<60000,'Twenty captures must be locally accepted within a minute even while server creation remains blocked');
     await rapid.screenshot({path:join(output,'12-continuous-camera-mobile.png')});
     await rapid.getByRole('button',{name:'Close camera'}).click(); await rapid.getByRole('button',{name:'Done adding cards →'}).click();
@@ -273,7 +322,7 @@ try {
     await rapid.getByRole('button',{name:'Keep capturing'}).click(); await rapid.getByRole('button',{name:'Capture Front'}).click(); await rapid.getByRole('button',{name:'Capture Back'}).waitFor();
     await rapid.reload(); await rapid.getByRole('button',{name:'Continue with the back'}).waitFor();
     await rapidContext.close();
-    writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'PASS', syntheticOnly: true, browserErrors: errors, serviceLayouts, directory: {emptySelectionBlocked:true,nearbyClearsQuery:true,errorDistinctFromEmpty:true,staleResultIgnored:true,approvedDealerVisible:true,contactSelectionBlocked:true}, kiosk: evidence, mail, coldCheckout: {actualServiceBlockers:coldCheckout.blockers,savedCompletion:true,unknownPaymentPreserved:true,paidReceiptPreserved:true}, rapid: rapidEvidence }, null, 2) + '\n');
+    writeFileSync(join(output, 'result.json'), JSON.stringify({ status: 'PASS', syntheticOnly: true, browserErrors: errors, serviceLayouts, motion, directory: {emptySelectionBlocked:true,nearbyClearsQuery:true,errorDistinctFromEmpty:true,staleResultIgnored:true,approvedDealerVisible:true,contactSelectionBlocked:true}, kiosk: evidence, mail, coldCheckout: {actualServiceBlockers:coldCheckout.blockers,savedCompletion:true,unknownPaymentPreserved:true,paidReceiptPreserved:true}, rapid: rapidEvidence }, null, 2) + '\n');
     process.stdout.write(JSON.stringify({ status: 'PASS', output, kiosk: evidence, mail }) + '\n');
 } catch (error) {
     await shot('failure'); writeFileSync(join(output, 'failure.json'), JSON.stringify({ error: error.message, browserErrors: errors, text: await page.locator('body').innerText() }, null, 2)); throw error;

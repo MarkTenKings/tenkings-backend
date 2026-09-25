@@ -1,18 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
 import { request } from '../../lib/client.mjs';
 
-function ServiceFilm({ kind, label }) {
-  const video = useRef(null), [playing, setPlaying] = useState(false), [available, setAvailable] = useState(false);
-  useEffect(() => { const reduced = window.matchMedia('(prefers-reduced-motion: reduce)'); if (!reduced.matches && available) video.current?.play().then(() => setPlaying(true)).catch(() => {}); }, [available]);
-  return <div className={`service-film service-film-${kind}`}><video ref={video} muted loop playsInline preload="metadata" poster={`/account/atlas/submission-${kind}.jpg`} onCanPlay={() => setAvailable(true)} aria-label={label}><source src={`/account/atlas/submission-${kind}.mp4`} type="video/mp4"/></video>{available && <button type="button" className="film-control" aria-label={playing ? `Pause ${label}` : `Play ${label}`} onClick={event => { event.stopPropagation(); if (playing) video.current.pause(); else video.current.play().catch(() => {}); setPlaying(!playing); }}>{playing ? 'Ⅱ' : '▶'}</button>}</div>;
+function ServiceFilm({ kind, label, motionPaused }) {
+  const video = useRef(null), [playing, setPlaying] = useState(false), [available, setAvailable] = useState(false), [filmPaused, setFilmPaused] = useState(false);
+  useEffect(() => {
+    const element = video.current; let active = true;
+    if (!element) return;
+    if (motionPaused || filmPaused || !available) element.pause();
+    else element.play().catch(() => { if (active) setPlaying(false); });
+    return () => { active = false; element.pause(); };
+  }, [motionPaused, filmPaused, available]);
+  return <div className={`service-film service-film-${kind}`}><video ref={video} muted loop playsInline preload="metadata" poster={`/account/atlas/submission-${kind}.jpg`} onCanPlay={() => setAvailable(true)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} aria-label={label}><source src={`/account/atlas/submission-${kind}.mp4`} type="video/mp4"/></video>{available && <button type="button" className="film-control" disabled={motionPaused} aria-label={motionPaused ? `${label} paused with motion` : playing ? `Pause ${label}` : `Play ${label}`} onClick={event => { event.stopPropagation(); setFilmPaused(playing); if (playing) video.current.pause(); else video.current.play().catch(() => setPlaying(false)); }}>{playing ? 'Ⅱ' : '▶'}</button>}</div>;
+}
+function SpeedMark({ kind }) {
+  return <svg className={`service-speed-art speed-art-${kind}`} viewBox="0 0 600 150" aria-hidden="true" focusable="false">{kind === 'kiosk' ? <><path className="speed-bolt bolt-main" d="M468 -20 355 58 414 60 311 157 519 50 447 45 547 -15"/><path className="speed-bolt bolt-echo" d="M307 -18 226 52 271 55 197 125"/><path className="speed-flare" d="M10 128 300 59M299 124 581 10"/></> : <><path className="speed-wind-base" d="M-40 38H420q55 0 25-23M90 78H560q55 0 15 34M-30 120H370q45 0 28 18M350 12H640"/><path className="speed-wind wind-one" d="M-40 38H420q55 0 25-23"/><path className="speed-wind wind-two" d="M90 78H560q55 0 15 34"/><path className="speed-wind wind-three" d="M-30 120H370q45 0 28 18"/><path className="speed-wind wind-four" d="M350 12H640"/></>}</svg>;
 }
 function ServiceJourney({ kind }) {
   const steps = kind === 'kiosk' ? ['Drop off at dealer', 'ATLAS collects & grades', 'Back at your dealer'] : ['Send via FedEx', 'ATLAS grades', 'Return shipment'];
-  return <ol className="service-journey" aria-label={kind === 'kiosk' ? 'Kiosk service journey' : 'Mail-in service journey'}>{steps.map((step, index) => <li key={step}><span aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><strong>{step}</strong></li>)}</ol>;
+  return <div className={`service-timeline service-timeline-${kind}`}>
+    <div className="service-timeline-track" aria-hidden="true"><i className="service-timeline-fill"/><b className="timeline-node node-start"/><b className="timeline-node node-middle"/><b className="timeline-node node-finish"/></div>
+    <ol className="service-journey" aria-label={kind === 'kiosk' ? 'Kiosk service journey' : 'Mail-in service journey'}>{steps.map((step, index) => <li key={step}><span aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><strong>{step}</strong></li>)}</ol>
+    <div className="service-finish" aria-hidden="true"><span className="finish-caption">SERVICE SPEED</span><div className="finish-stamp"><svg viewBox="0 0 36 36" focusable="false"><path d="m7 18 7 7L30 9"/></svg><strong>{kind === 'kiosk' ? '7' : '14'} days <span>/ delivered</span></strong><i/><i/><i/></div></div>
+  </div>;
 }
 export default function ServiceChoice({ value, onChange }) {
   const [locations, setLocations] = useState([]), [dealerContacts, setDealerContacts] = useState([]), [query, setQuery] = useState(''), [error, setError] = useState(''), [loading, setLoading] = useState(false), [mapId, setMapId] = useState(null);
   const searchVersion = useRef(0);
+  const [paused, setPaused] = useState(false), [reducedMotion, setReducedMotion] = useState(true), [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updateMotion = () => setReducedMotion(preference.matches), updateVisibility = () => setHidden(document.hidden);
+    updateMotion(); updateVisibility(); preference.addEventListener('change', updateMotion); document.addEventListener('visibilitychange', updateVisibility);
+    return () => { preference.removeEventListener('change', updateMotion); document.removeEventListener('visibilitychange', updateVisibility); };
+  }, []);
+  const motionPaused = paused || reducedMotion || hidden;
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const schedule = times => (times ?? []).map(item => `${days[item.weekday]} ${item.time}${item.cutoff ? ` (cutoff ${item.cutoff})` : ''}`).join('; ');
   const date = (value, zone) => value ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: zone }).format(new Date(value)) : 'Schedule unavailable';
@@ -34,19 +55,19 @@ export default function ServiceChoice({ value, onChange }) {
     navigator.geolocation.getCurrentPosition(position => { setQuery(''); search({ lat: position.coords.latitude.toFixed(5), lng: position.coords.longitude.toFixed(5) }, ''); },
       () => setError('You can search by ZIP code or city without sharing your location.'), { timeout: 10000, maximumAge: 60000 });
   }
-  return <section className="service-choice"><div className="section-heading"><div><span className="eyebrow">Choose your move</span><h1 className="service-choice-title"><span>Two Speeds.</span>{' '}<span>Same Finish.</span></h1><p>Drop off nearby or send with FedEx. Every card gets the full ATLAS treatment.</p></div></div>
+  return <section className="service-choice" data-motion={motionPaused ? 'paused' : 'running'} data-reduced-motion={reducedMotion ? 'true' : 'false'}><div className="service-motion-toolbar"><span>ATLAS GRADING <i>/</i> TWO WAYS TO THE FINISH</span><button type="button" className="service-motion-toggle" disabled={reducedMotion} aria-pressed={motionPaused} onClick={() => setPaused(!paused)}>{reducedMotion ? 'Reduced motion on' : paused ? 'Play motion' : 'Pause motion'}</button></div><div className="section-heading"><div><span className="eyebrow">Choose your move</span><h1 className="service-choice-title"><span>Two Speeds.</span>{' '}<span>Same Finish.</span></h1><p>Drop off nearby or send with FedEx. Every card gets the full ATLAS treatment.</p></div></div>
     <div className="intake-options service-comparison">
       <article className={`service-card service-card-kiosk ${value?.intakeMethod === 'DEALER_DROP_OFF' ? 'selected' : ''}`}>
-        <div className="service-speed-label"><h2>Super Fast</h2><span>Authorized Dealer</span></div>
-        <ServiceFilm kind="kiosk" label="ATLAS kiosk drop-off preview"/>
+        <div className="service-speed-label"><SpeedMark kind="kiosk"/><h2>Super Fast</h2><span>Authorized Dealer</span></div>
+        <ServiceFilm kind="kiosk" label="ATLAS kiosk drop-off preview" motionPaused={motionPaused}/>
         <div className="service-card-body"><div className="service-card-title"><span className="eyebrow">LOCAL DROP-OFF</span><span className="service-badge">PICKUP + RETURN INCLUDED</span></div><p className="service-channel">ATLAS Submission Station<br/><strong>at an Authorized Dealer</strong></p><p>Drop your cards in the ATLAS kiosk at your local dealer. We handle pickup and return.</p>
           <dl className="service-metrics"><div><dt>Per card</dt><dd><strong>$50</strong><small>Transport included</small></dd></div><div><dt>Turnaround</dt><dd><strong>1 week</strong><small>From ATLAS collection</small></dd></div></dl>
           <ServiceJourney kind="kiosk"/><div className="service-details"><p><strong>Drop off. Pick up.</strong> Your cards return to the same dealer.</p><p>The clock starts when ATLAS collects your cards, not when you drop them off.</p></div>
           <button type="button" className={value?.intakeMethod === 'DEALER_DROP_OFF' ? 'primary' : 'secondary'} aria-pressed={value?.intakeMethod === 'DEALER_DROP_OFF'} onClick={() => onChange({ intakeMethod: 'DEALER_DROP_OFF', kioskId: value?.intakeMethod === 'DEALER_DROP_OFF' ? value.kioskId : null })}>{value?.intakeMethod === 'DEALER_DROP_OFF' ? 'Kiosk selected ✓' : 'Find an Authorized Dealer →'}</button></div>
       </article>
       <article className={`service-card service-card-mail ${value?.intakeMethod === 'MAIL_IN' ? 'selected' : ''}`}>
-        <div className="service-speed-label"><h2>Fast</h2><span>Mail-in</span></div>
-        <ServiceFilm kind="fedex" label="FedEx mail-in drop-off preview"/>
+        <div className="service-speed-label"><SpeedMark kind="mail"/><h2>Fast</h2><span>Mail-in</span></div>
+        <ServiceFilm kind="fedex" label="FedEx mail-in drop-off preview" motionPaused={motionPaused}/>
         <div className="service-card-body"><div className="service-card-title"><span className="eyebrow">FROM WHEREVER YOU ARE</span><span className="service-badge">FEDEX SHIPPING</span></div><p className="service-channel">Mail-in with FedEx<br/><strong>From your door to ATLAS</strong></p><p>Pack your cards and send them with FedEx. Your graded cards ship back to you.</p>
           <dl className="service-metrics"><div><dt>Per card</dt><dd><strong>$40</strong><small>Plus FedEx shipping</small></dd></div><div><dt>Service speed</dt><dd><strong>2 weeks</strong><small>Mail-in service</small></dd></div></dl>
           <ServiceJourney kind="mail"/><div className="service-details"><p><strong>Shipping at cost.</strong> See your actual FedEx quote before payment.</p><p>Final shipping and turnaround terms appear with your confirmed quote.</p></div>

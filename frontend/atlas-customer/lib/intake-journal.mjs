@@ -5,24 +5,109 @@ const hex = value => [...new Uint8Array(value)].map(byte => byte.toString(16).pa
 
 export function createBrowserIntakeJournal({ accountId, draftId, indexedDB = globalThis.indexedDB }) {
   check(uuid(accountId) && uuid(draftId) && indexedDB, 'BROWSER_SAVE_UNAVAILABLE');
-  const key = `${accountId}:${draftId}`;
+  const key = `${accountId}:${draftId}`, metadataKey = `${key}:bytes-v1`;
+  // New photo keys are immutable until verified completion releases them.
+  // Progress reads therefore need only metadata once each Blob is decoded.
+  const decodedPhotos = new Map();
   const opened = new Promise((resolve, reject) => {
     const request = indexedDB.open('atlas-customer-originals-v1', 1);
     request.onupgradeneeded = () => request.result.createObjectStore('pairs');
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(Object.assign(new Error('BROWSER_SAVE_UNAVAILABLE'), { code: 'BROWSER_SAVE_UNAVAILABLE' }));
+    request.onerror = () => reject(photoStorageError(request.error, 'BROWSER_SAVE_UNAVAILABLE'));
   });
   async function transact(mode, operation) {
     const db = await opened;
     return new Promise((resolve, reject) => {
-      const tx = db.transaction('pairs', mode); let value;
+      const tx = db.transaction('pairs', mode); let value, failure;
       tx.oncomplete = () => resolve(value);
-      tx.onerror = tx.onabort = () => reject(Object.assign(new Error('BROWSER_SAVE_UNAVAILABLE'), { code: 'BROWSER_SAVE_UNAVAILABLE' }));
-      operation(tx.objectStore('pairs'), result => { value = result; });
+      tx.onerror = tx.onabort = () => reject(failure ?? photoStorageError(tx.error, 'BROWSER_SAVE_UNAVAILABLE'));
+      const store = tx.objectStore('pairs');
+      const get = (id, next) => { store.get(id).onsuccess = event => { try { next(event.target.result); } catch (error) { failure = error; tx.abort(); } }; };
+      try { operation(store, result => { value = result; }, get); } catch (error) { failure = error; tx.abort(); }
     });
   }
-  return { get: () => transact('readonly', (store, done) => { store.get(key).onsuccess = event => done(event.target.result ?? null); }),
-    put: value => transact('readwrite', store => store.put(value, key)), close: async () => (await opened).close() };
+  const readRaw = () => transact('readonly', (_store, done, get) => get(metadataKey, metadata => {
+    if (metadata) done({ metadata, legacy: null });
+    else get(key, legacy => done({ metadata, legacy }));
+  }));
+  const legacyRefs = item => item?.files ? Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { legacy: item.requestId, side }])) : null;
+  return {
+    async get() {
+      return transact('readonly', (_store, done, get) => get(metadataKey, metadata => {
+        if (!metadata) { decodedPhotos.clear(); get(key, legacy => done(legacy ?? null)); return; }
+        const retained = new Set(metadata.items.flatMap(item => Object.values(item.photoRefs ?? {}).map(ref => ref.key).filter(Boolean)));
+        for (const photoKey of decodedPhotos.keys()) if (!retained.has(photoKey)) decodedPhotos.delete(photoKey);
+        function restore(legacy) {
+          const restored = { version: 1, items: metadata.items.map(item => ({ ...item, files: null })) };
+          let pending = 1;
+          const finish = () => { if (--pending === 0) done(restored); };
+          restored.items.forEach(item => {
+            if (!item.photoRefs) return;
+            item.files = {};
+            for (const side of ['FRONT', 'BACK']) {
+              const ref = item.photoRefs[side];
+              if (ref?.legacy) {
+                const old = legacy?.items.find(entry => entry.requestId === ref.legacy);
+                check(old?.files?.[side] instanceof Blob, 'BROWSER_SAVE_UNAVAILABLE'); item.files[side] = old.files[side];
+              } else {
+                check(typeof ref?.key === 'string' && ref.key.startsWith(`${key}:photo:`), 'BROWSER_SAVE_UNAVAILABLE');
+                const cached = decodedPhotos.get(ref.key);
+                if (cached) item.files[side] = cached;
+                else {
+                  pending++; get(ref.key, photo => {
+                    check(photo, 'BROWSER_SAVE_UNAVAILABLE');
+                    const decoded = decodePhoto(photo); decodedPhotos.set(ref.key, decoded); item.files[side] = decoded; finish();
+                  });
+                }
+              }
+            }
+          });
+          finish();
+        }
+        // Preserve old rows without repeatedly loading them for byte-only carts.
+        const needsLegacy = metadata.items.some(item => Object.values(item.photoRefs ?? {}).some(ref => ref.legacy));
+        if (needsLegacy) get(key, restore); else restore(null);
+      }));
+    },
+    async put(value) {
+      check(value?.version === 1 && Array.isArray(value.items), 'BROWSER_SAVE_UNAVAILABLE');
+      const { metadata, legacy } = await readRaw(), writes = [], releases = [];
+      const previous = new Map((metadata?.items ?? legacy?.items ?? []).map(item => [item.requestId, item]));
+      const items = [];
+      for (const item of value.items) {
+        check(uuid(item.requestId), 'BROWSER_SAVE_UNAVAILABLE');
+        const old = previous.get(item.requestId), priorRefs = old?.photoRefs ?? legacyRefs(old);
+        const saved = { ...item, files: null, photoRefs: null };
+        if (item.files) {
+          saved.photoRefs = {};
+          for (const side of ['FRONT', 'BACK']) {
+            const ref = priorRefs?.[side];
+            // A legacy Blob may already be unreadable. Preserve its old row and
+            // reference without forcing other cards to read or rewrite it.
+            if (ref) saved.photoRefs[side] = ref;
+            else {
+              const photo = await encodePhoto(item.files[side]);
+              const photoKey = `${key}:photo:${item.requestId}:${side}`;
+              saved.photoRefs[side] = { key: photoKey }; writes.push([photoKey, photo]);
+            }
+          }
+        } else if (item.done) {
+          for (const ref of Object.values(priorRefs ?? {})) if (ref.key) releases.push(ref.key);
+        }
+        items.push(saved);
+      }
+      const revision = metadata?.revision ?? 0;
+      await transact('readwrite', (store, _done, get) => get(metadataKey, current => {
+        check((current?.revision ?? 0) === revision, 'BROWSER_SAVE_UNAVAILABLE');
+        for (const [id, photo] of writes) store.put(photo, id);
+        store.put({ version: 1, revision: revision + 1, items }, metadataKey);
+        for (const id of releases) store.delete(id);
+      }));
+      const retained = new Set(items.flatMap(item => Object.values(item.photoRefs ?? {}).map(ref => ref.key).filter(Boolean)));
+      for (const photoKey of decodedPhotos.keys()) if (!retained.has(photoKey)) decodedPhotos.delete(photoKey);
+    },
+    close: async () => { decodedPhotos.clear(); (await opened).close(); },
+  };
 }
 
 /** Exact originals and stable operation IDs commit before any network work.
@@ -44,7 +129,7 @@ export function createCustomerUploader({ draftId, journal, request, put = putOri
       item.error = null;
       if (!item.input) {
         const input = { requestId: item.requestId, cardId: item.cardId, pairId: item.pairId };
-        for (const side of ['FRONT', 'BACK']) input[side.toLowerCase()] = { uploadId: item.uploadIds[side], sha256: hex(await cryptoImpl.subtle.digest('SHA-256', await item.files[side].arrayBuffer())),
+        for (const side of ['FRONT', 'BACK']) input[side.toLowerCase()] = { uploadId: item.uploadIds[side], sha256: hex(await cryptoImpl.subtle.digest('SHA-256', await readNativePhotoBytes(item.files[side]))),
           byteCount: item.files[side].size, fileName: (item.files[side].name ?? '').slice(0, 240) };
         check(input.front.sha256 !== input.back.sha256, 'DISTINCT_CARD_SIDES_REQUIRED'); item.input = input; await save(item);
       }
@@ -57,9 +142,11 @@ export function createCustomerUploader({ draftId, journal, request, put = putOri
         const signed = await request(`${path}/sign`, { body: {} });
         if (signed.state !== 'VERIFIED') {
           check(signed.state === 'UPLOAD' && signed.method === 'PUT' && typeof signed.url === 'string' && new URL(signed.url).protocol === 'https:', 'UPLOAD_REPLY_INVALID');
+          const bytes = await readNativePhotoBytes(item.files[side]), expected = item.input[side.toLowerCase()];
+          check(bytes.byteLength === expected.byteCount && hex(await cryptoImpl.subtle.digest('SHA-256', bytes)) === expected.sha256, 'INTAKE_PENDING_BYTES_CONFLICT');
           // Conditional PUT on the same key is safe after a lost reply. A 412
           // is verified by the server before this side is considered complete.
-          await put(signed, item.files[side]);
+          await put(signed, new Blob([bytes], { type: item.files[side].type }));
         }
         const result = await request(`${path}/complete`, { body: {} });
         check(result.draft?.cards?.find(card => card.id === item.cardId)?.uploads?.[side]?.state === 'VERIFIED', 'UPLOAD_REPLY_INVALID');
@@ -126,3 +213,4 @@ async function putOriginal(signed, file) {
     if (!response.ok && response.status !== 412) fail('UPLOAD_INTERRUPTED');
   } catch { fail('UPLOAD_INTERRUPTED'); } finally { clearTimeout(timer); }
 }
+import { encodePhoto, decodePhoto, readNativePhotoBytes, photoStorageError } from '../../../packages/atlas-manual-intake/src/photo-bytes.mjs';

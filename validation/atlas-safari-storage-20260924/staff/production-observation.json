@@ -1,0 +1,114 @@
+{
+  "status": "READ_ONLY_OBSERVED",
+  "observedAt": "2026-09-24T23:57:33.079383+00:00",
+  "runtime": {
+    "containerId": "49bd38bf10b3a9f81bb14c902272b846133300f5c300f51b86b941d82d46b71d",
+    "startedAt": "2026-09-24T20:14:38.424599806Z",
+    "restartCount": 0,
+    "enabledFlags": {
+      "ATLAS_MANUAL_RESEARCH_ENABLED": "true",
+      "ATLAS_MANUAL_STATION_ENABLED": "false",
+      "ATLAS_CUSTOMER_INTAKE_ENABLED": "true",
+      "ATLAS_MANUAL_IDENTIFICATION_ENABLED": "true",
+      "ATLAS_MANUAL_ENABLED": "true",
+      "ATLAS_MANUAL_DEFECT_ANALYSIS_ENABLED": "true",
+      "ATLAS_CUSTOMER_IDENTIFICATION_ENABLED": "true",
+      "ATLAS_MANUAL_PRESENTATION_ENABLED": "true",
+      "ATLAS_COMMERCE_ENABLED": "false",
+      "ATLAS_MANUAL_CATALOG_ENABLED": "true",
+      "ATLAS_MANUAL_MARKET_ENABLED": "true",
+      "ATLAS_MANUAL_DEFECT_MEMORY_ENABLED": "true",
+      "ATLAS_CUSTOMER_SERVICE_ENABLED": "true",
+      "ATLAS_MANUAL_BATCH_ENABLED": "true",
+      "ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED": "false"
+    }
+  },
+  "productionMutation": false,
+  "counts": {
+    "recentIntakeCards": 10,
+    "verifiedPreparedOriginals": 4,
+    "queuedBatchJobs": 2,
+    "identificationComplete": 2,
+    "analysisRuns": 0,
+    "refusals": 0
+  },
+  "queuedCards": [
+    {
+      "ordinal": 1,
+      "state": "NEEDS_ATTENTION",
+      "stage": "PREPARE",
+      "code": "BATCH_GEOMETRY_NEEDS_REVIEW",
+      "analysisReserved": false,
+      "sides": [
+        {
+          "side": "FRONT",
+          "state": "READY",
+          "physicalBoundsFound": true,
+          "printedBoundsFound": true,
+          "prepared": true,
+          "error": null
+        },
+        {
+          "side": "BACK",
+          "state": "NEEDS_REVIEW",
+          "physicalBoundsFound": true,
+          "printedBoundsFound": false,
+          "prepared": true,
+          "error": null
+        }
+      ]
+    },
+    {
+      "ordinal": 2,
+      "state": "NEEDS_ATTENTION",
+      "stage": "PREPARE",
+      "code": "BATCH_GEOMETRY_NEEDS_REVIEW",
+      "analysisReserved": false,
+      "sides": [
+        {
+          "side": "BACK",
+          "state": "NEEDS_REVIEW",
+          "physicalBoundsFound": true,
+          "printedBoundsFound": false,
+          "prepared": true,
+          "error": null
+        },
+        {
+          "side": "FRONT",
+          "state": "NEEDS_REVIEW",
+          "physicalBoundsFound": true,
+          "printedBoundsFound": false,
+          "prepared": true,
+          "error": null
+        }
+      ]
+    }
+  ],
+  "deviceEvidence": {
+    "screenshots": [
+      "IMG_0625.PNG",
+      "IMG_0626.PNG",
+      "IMG_0624.PNG"
+    ],
+    "savedForUploadShown": 10,
+    "queuedShown": 2,
+    "topCode": "BATCH_IMPORT_STORAGE",
+    "itemFailures": [
+      {
+        "code": "BATCH_IMPORT_INTERRUPTED",
+        "phase": "UPLOAD_FRONT"
+      },
+      {
+        "code": "BATCH_IMPORT_INTERRUPTED",
+        "phase": "READ_FRONT_BYTES"
+      }
+    ]
+  },
+  "limits": [
+    "Physical iPhone OS and exact underlying native exception are not established by the screenshots.",
+    "Desktop WebKit proof does not prove the owner device has recovered.",
+    "The two queued cards need ordinary printed-border review; no geometry approval or quality-gate change was performed.",
+    "Eight older card rows have no allocated upload sides; device-only photos and extra captures cannot be enumerated from the database.",
+    "No production retries, uploads, grading, customer writes, or provider changes were performed during this investigation."
+  ]
+}

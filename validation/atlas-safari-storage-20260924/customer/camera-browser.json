@@ -1,0 +1,307 @@
+{
+  "status": "PASS",
+  "scope": "Synthetic camera + actual browser IndexedDB/Web Locks, network stalled; no hardware or human throughput acceptance",
+  "twentyCapturesElapsedMs": 1350,
+  "pairs": {
+    "count": 10,
+    "allOriginals": true,
+    "requests": 1,
+    "streams": 1,
+    "ids": 10
+  },
+  "durable80MiB": {
+    "durationMs": 107.60000000149012,
+    "calls": 1,
+    "count": 10,
+    "allExact": true,
+    "bytes": 83886080
+  },
+  "flips": [
+    {
+      "side": "BACK",
+      "duration": "0.3s",
+      "running": true,
+      "frames": [
+        "rotateY(0deg)",
+        "rotateY(180deg)"
+      ]
+    },
+    {
+      "side": "FRONT",
+      "duration": "0.3s",
+      "running": true,
+      "frames": [
+        "rotateY(180deg)",
+        "rotateY(0deg)"
+      ]
+    }
+  ],
+  "layouts": [
+    {
+      "name": "mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "camera": {
+        "x": 0,
+        "y": 0,
+        "right": 390,
+        "bottom": 844,
+        "width": 390,
+        "height": 844
+      },
+      "viewfinder": {
+        "x": 0,
+        "y": 83,
+        "right": 390,
+        "bottom": 672.5,
+        "width": 390,
+        "height": 589.5
+      },
+      "guide": {
+        "x": 35.1015625,
+        "y": 147.8515625,
+        "right": 354.8984375,
+        "bottom": 607.6484375,
+        "width": 319.796875,
+        "height": 459.796875
+      },
+      "cue": {
+        "x": 161.9921875,
+        "y": 112.8515625,
+        "right": 227.9921875,
+        "bottom": 138.8515625,
+        "width": 66,
+        "height": 26
+      },
+      "instruction": {
+        "x": 0,
+        "y": 619.5,
+        "right": 390,
+        "bottom": 658.5,
+        "width": 390,
+        "height": 39
+      },
+      "counter": {
+        "x": 238.734375,
+        "y": 31,
+        "right": 312,
+        "bottom": 53,
+        "width": 73.265625,
+        "height": 22
+      },
+      "close": {
+        "x": 326,
+        "y": 20,
+        "right": 370,
+        "bottom": 64,
+        "width": 44,
+        "height": 44
+      },
+      "fontSize": "10px"
+    },
+    {
+      "name": "small-mobile",
+      "viewport": {
+        "width": 320,
+        "height": 568
+      },
+      "camera": {
+        "x": 0,
+        "y": 0,
+        "right": 320,
+        "bottom": 568,
+        "width": 320,
+        "height": 568
+      },
+      "viewfinder": {
+        "x": 0,
+        "y": 69,
+        "right": 320,
+        "bottom": 441.5,
+        "width": 320,
+        "height": 372.5
+      },
+      "guide": {
+        "x": 62.890625,
+        "y": 119.2890625,
+        "right": 257.109375,
+        "bottom": 391.2109375,
+        "width": 194.21875,
+        "height": 271.921875
+      },
+      "cue": {
+        "x": 127,
+        "y": 84.2890625,
+        "right": 193,
+        "bottom": 110.2890625,
+        "width": 66,
+        "height": 26
+      },
+      "instruction": {
+        "x": 0,
+        "y": 413.5,
+        "right": 320,
+        "bottom": 433.5,
+        "width": 320,
+        "height": 20
+      },
+      "counter": {
+        "x": 176.734375,
+        "y": 23,
+        "right": 250,
+        "bottom": 45,
+        "width": 73.265625,
+        "height": 22
+      },
+      "close": {
+        "x": 260,
+        "y": 12,
+        "right": 304,
+        "bottom": 56,
+        "width": 44,
+        "height": 44
+      },
+      "fontSize": "10px"
+    },
+    {
+      "name": "desktop",
+      "viewport": {
+        "width": 1360,
+        "height": 1000
+      },
+      "camera": {
+        "x": 0,
+        "y": 0,
+        "right": 1360,
+        "bottom": 1000,
+        "width": 1360,
+        "height": 1000
+      },
+      "viewfinder": {
+        "x": 180,
+        "y": 83,
+        "right": 1180,
+        "bottom": 826.5,
+        "width": 1000,
+        "height": 743.5
+      },
+      "guide": {
+        "x": 472.890625,
+        "y": 164.7890625,
+        "right": 887.109375,
+        "bottom": 744.7109375,
+        "width": 414.21875,
+        "height": 579.921875
+      },
+      "cue": {
+        "x": 647,
+        "y": 129.7890625,
+        "right": 713,
+        "bottom": 155.7890625,
+        "width": 66,
+        "height": 26
+      },
+      "instruction": {
+        "x": 180,
+        "y": 766.5,
+        "right": 1180,
+        "bottom": 812.5,
+        "width": 1000,
+        "height": 46
+      },
+      "counter": {
+        "x": 1188.734375,
+        "y": 31,
+        "right": 1262,
+        "bottom": 53,
+        "width": 73.265625,
+        "height": 22
+      },
+      "close": {
+        "x": 1276,
+        "y": 20,
+        "right": 1320,
+        "bottom": 64,
+        "width": 44,
+        "height": 44
+      },
+      "fontSize": "10px"
+    },
+    {
+      "name": "landscape",
+      "viewport": {
+        "width": 844,
+        "height": 390
+      },
+      "camera": {
+        "x": 0,
+        "y": 0,
+        "right": 844,
+        "bottom": 390,
+        "width": 844,
+        "height": 390
+      },
+      "viewfinder": {
+        "x": 0,
+        "y": 69,
+        "right": 844,
+        "bottom": 263.5,
+        "width": 844,
+        "height": 194.5
+      },
+      "guide": {
+        "x": 381.109375,
+        "y": 109,
+        "right": 462.890625,
+        "bottom": 223.5,
+        "width": 81.78125,
+        "height": 114.5
+      },
+      "cue": {
+        "x": 389,
+        "y": 74,
+        "right": 455,
+        "bottom": 100,
+        "width": 66,
+        "height": 26
+      },
+      "instruction": {
+        "x": 0,
+        "y": 228.5,
+        "right": 844,
+        "bottom": 255.5,
+        "width": 844,
+        "height": 27
+      },
+      "counter": {
+        "x": 672.734375,
+        "y": 23,
+        "right": 746,
+        "bottom": 45,
+        "width": 73.265625,
+        "height": 22
+      },
+      "close": {
+        "x": 760,
+        "y": 12,
+        "right": 804,
+        "bottom": 56,
+        "width": 44,
+        "height": 44
+      },
+      "fontSize": "10px"
+    }
+  ],
+  "completedCountAfterDurableBack": true,
+  "counterOnlyAnnouncesPairs": true,
+  "reducedMotion": true,
+  "persistentVideo": true,
+  "partialFrontReload": true,
+  "quotaRetainedFront": true,
+  "secondTabBlocked": true,
+  "perCardMappedError": true,
+  "safeDiagnosticsDownload": true,
+  "errors": []
+}

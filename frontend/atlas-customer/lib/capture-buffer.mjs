@@ -7,11 +7,14 @@ const photo = file => check(file instanceof Blob && file.size > 0 && file.size <
 export function createCaptureBuffer({ accountId, indexedDB = globalThis.indexedDB, cryptoImpl = globalThis.crypto }) {
   check(uuid(accountId) && indexedDB && cryptoImpl, 'BROWSER_SAVE_UNAVAILABLE');
   const prefix = `${accountId}:`, metaKey = `${prefix}meta`, frontKey = `${prefix}front`;
+  // Pair IDs own immutable originals. Reuse their decoded Blobs within this
+  // journal instance; still read each stored pair to observe uploaded state.
+  const decodedPairs = new Map();
   const opened = new Promise((resolve, reject) => {
     const request = indexedDB.open('atlas-customer-capture-v2', 1);
     request.onupgradeneeded = () => request.result.createObjectStore('capture');
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(Object.assign(Error('BROWSER_SAVE_UNAVAILABLE'), { code: 'BROWSER_SAVE_UNAVAILABLE' }));
+    request.onerror = () => reject(photoStorageError(request.error, 'BROWSER_SAVE_UNAVAILABLE'));
   });
   const empty = () => ({ version: 2, pairIds: [], draftId: null, createRequest: null, service: null });
   async function transaction(mode, operation) {
@@ -19,7 +22,7 @@ export function createCaptureBuffer({ accountId, indexedDB = globalThis.indexedD
     return new Promise((resolve, reject) => {
       const tx = db.transaction('capture', mode); let output, failure;
       tx.oncomplete = () => resolve(output);
-      tx.onabort = tx.onerror = () => reject(failure ?? Object.assign(Error('BROWSER_SAVE_UNAVAILABLE'), { code: 'BROWSER_SAVE_UNAVAILABLE' }));
+      tx.onabort = tx.onerror = () => reject(failure ?? photoStorageError(tx.error, 'BROWSER_SAVE_UNAVAILABLE'));
       const store = tx.objectStore('capture');
       const get = (key, next) => { store.get(key).onsuccess = event => { try { next(event.target.result); } catch (error) { failure = error; tx.abort(); } }; };
       operation({ store, get, done: value => { output = value; } });
@@ -27,11 +30,22 @@ export function createCaptureBuffer({ accountId, indexedDB = globalThis.indexedD
   }
   async function snapshot() {
     return transaction('readonly', ({ get, done }) => get(metaKey, value => {
-      const meta = value ?? empty(); get(frontKey, front => {
+      const meta = value ?? empty();
+      const retained = new Set(meta.pairIds);
+      for (const id of decodedPairs.keys()) if (!retained.has(id)) decodedPairs.delete(id);
+      get(frontKey, front => {
         const pairs = []; let pending = meta.pairIds.length;
-        if (!pending) return done({ ...meta, front: front ?? null, pairs });
+        const restoredFront = front ? decodePhoto(front) : null;
+        if (!pending) return done({ ...meta, front: restoredFront, pairs });
         meta.pairIds.forEach((id, index) => get(`${prefix}pair:${id}`, pair => {
-          check(pair, 'BROWSER_SAVE_UNAVAILABLE'); pairs[index] = pair; if (--pending === 0) done({ ...meta, front: front ?? null, pairs });
+          check(pair, 'BROWSER_SAVE_UNAVAILABLE');
+          let files = null;
+          if (pair.files) {
+            files = decodedPairs.get(id);
+            if (!files) { files = Object.freeze({ FRONT: decodePhoto(pair.files.FRONT), BACK: decodePhoto(pair.files.BACK) }); decodedPairs.set(id, files); }
+          } else decodedPairs.delete(id);
+          pairs[index] = { ...pair, files };
+          if (--pending === 0) done({ ...meta, front: restoredFront, pairs });
         }));
       });
     }));
@@ -49,13 +63,16 @@ export function createCaptureBuffer({ accountId, indexedDB = globalThis.indexedD
     },
     async capture(side, file) {
       photo(file); check(['FRONT', 'BACK'].includes(side), 'INVALID_SIDE');
+      // Materialize exact original bytes before opening the transaction. Safari
+      // must not depend on an IndexedDB file-backed Blob to read this photo later.
+      const encoded = await encodePhoto(file);
       await transaction('readwrite', ({ store, get }) => get(metaKey, value => {
         const meta = value ?? empty(); check(meta.pairIds.length < 100, 'INTAKE_CARD_LIMIT');
         get(frontKey, front => {
-          if (side === 'FRONT') { check(!front, 'FRONT_ALREADY_SAVED'); store.put(file, frontKey); }
+          if (side === 'FRONT') { check(!front, 'FRONT_ALREADY_SAVED'); store.put(encoded, frontKey); }
           else {
-            check(front instanceof Blob, 'FRONT_REQUIRED');
-            const requestId = cryptoImpl.randomUUID(), pair = { requestId, cardId: cryptoImpl.randomUUID(), pairId: cryptoImpl.randomUUID(), uploadIds: { FRONT: cryptoImpl.randomUUID(), BACK: cryptoImpl.randomUUID() }, files: { FRONT: front, BACK: file }, uploaded: false };
+            check(front && decodePhoto(front) instanceof Blob, 'FRONT_REQUIRED');
+            const requestId = cryptoImpl.randomUUID(), pair = { requestId, cardId: cryptoImpl.randomUUID(), pairId: cryptoImpl.randomUUID(), uploadIds: { FRONT: cryptoImpl.randomUUID(), BACK: cryptoImpl.randomUUID() }, files: { FRONT: front, BACK: encoded }, uploaded: false };
             store.put(pair, `${prefix}pair:${requestId}`); meta.pairIds.push(requestId); store.put(meta, metaKey); store.delete(frontKey);
           }
         });
@@ -68,7 +85,7 @@ export function createCaptureBuffer({ accountId, indexedDB = globalThis.indexedD
       await transaction('readwrite', ({ store, get }) => get(metaKey, meta => get(`${prefix}pair:${requestId}`, pair => {
         check(meta && pair && !pair.uploaded, 'CAPTURE_ALREADY_UPLOADED');
         meta.pairIds = meta.pairIds.filter(id => id !== requestId); store.put(meta, metaKey); store.delete(`${prefix}pair:${requestId}`);
-      }))); return snapshot();
+      }))); decodedPairs.delete(requestId); return snapshot();
     },
     async creation() {
       return transaction('readwrite', ({ store, get, done }) => get(metaKey, value => {
@@ -83,10 +100,13 @@ export function createCaptureBuffer({ accountId, indexedDB = globalThis.indexedD
     },
     async uploaded(requestId) {
       await transaction('readwrite', ({ store, get }) => get(`${prefix}pair:${requestId}`, pair => { if (pair && !pair.uploaded) { pair.uploaded = true; pair.files = null; store.put(pair, `${prefix}pair:${requestId}`); } }));
+      decodedPairs.delete(requestId);
     },
     async clearPaid() {
       await transaction('readwrite', ({ store, get }) => get(metaKey, meta => { for (const id of meta?.pairIds ?? []) store.delete(`${prefix}pair:${id}`); store.delete(frontKey); store.delete(metaKey); }));
+      decodedPairs.clear();
     },
-    close: async () => (await opened).close(),
+    close: async () => { decodedPairs.clear(); (await opened).close(); },
   };
 }
+import { encodePhoto, decodePhoto, photoStorageError } from '../../../packages/atlas-manual-intake/src/photo-bytes.mjs';

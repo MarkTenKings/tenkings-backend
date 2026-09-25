@@ -1,0 +1,52 @@
+{
+  "status": "PASS",
+  "scope": "Actual desktop Chrome/WebKit IndexedDB; exact synthetic original bytes and stable IDs; no network uploads or physical iPhone proof",
+  "results": [
+    {
+      "browser": "Chrome",
+      "pairs": 10,
+      "sameIds": true,
+      "exactCaptureBytes": true,
+      "exactUploadBytes": true,
+      "uploadIdsPreserved": true,
+      "photoWrites": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "completedReleased": true,
+      "otherPairRetained": true,
+      "namePreserved": true,
+      "lastModifiedPreserved": true,
+      "legacyPreserved": true,
+      "captureBlobCache": true,
+      "progressPhotoReads": 0,
+      "elapsedMs": 569,
+      "bytesPerPair": 8388609
+    },
+    {
+      "browser": "WebKit",
+      "pairs": 10,
+      "sameIds": true,
+      "exactCaptureBytes": true,
+      "exactUploadBytes": true,
+      "uploadIdsPreserved": true,
+      "photoWrites": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "completedReleased": true,
+      "otherPairRetained": true,
+      "namePreserved": true,
+      "lastModifiedPreserved": true,
+      "legacyPreserved": null,
+      "captureBlobCache": true,
+      "progressPhotoReads": 0,
+      "elapsedMs": 474,
+      "bytesPerPair": 8388609
+    }
+  ]
+}

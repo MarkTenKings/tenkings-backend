@@ -1,0 +1,17 @@
+{
+  "status": "PASS",
+  "tests": 49,
+  "failed": 0,
+  "skipped": 0,
+  "command": "node --test frontend/atlas-app/test/batch-import.test.mjs packages/atlas-manual-intake/test/client*.test.mjs packages/atlas-manual-intake/test/photo-bytes.test.mjs",
+  "sourceHashes": {
+    "frontend/atlas-app/components/BatchImport.jsx": "34187efcfe446b067269deaf5ad666a4c26acd01e6735881f9622df6bd1cae39",
+    "frontend/atlas-app/lib/batch-import.mjs": "09702cece98a8058a5c7ad0b0f7b2149050f37bccb4f0f5b939d8b64d20f92cc",
+    "frontend/atlas-app/scripts/batch-storage-browser.mjs": "b14f0a7b94fc41f693c90070097dd65a95bc4d8fb02858a37f455db0af15c854",
+    "frontend/atlas-app/scripts/batch-upload-browser.mjs": "9009212ef2bec91313e8f490c15e723ff4304f95aafb8b9310334032a95150ad",
+    "packages/atlas-manual-intake/src/client.mjs": "daa1d573ed66078bef86b8d8a7f4a97694de0de3611d61f44ac40fc6df7d4666",
+    "packages/atlas-manual-intake/src/photo-bytes.mjs": "e5a8d966eded4710f117da9f2048896981440c224749a6ae78a6e91c71c49ec2",
+    "packages/atlas-manual-intake/test/photo-bytes.test.mjs": "95cf6ddf7b23540ffb99d5ba6cdc8c15ddc2d16ee070ffd813206d0f38973af2"
+  },
+  "scope": "Targeted existing importer/client recovery tests plus eight exact byte-codec/fallback/failure/timeout tests."
+}

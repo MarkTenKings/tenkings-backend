@@ -1,3 +1,4 @@
+import { encodePhoto, decodePhoto, photoStorageError } from '../../../packages/atlas-manual-intake/src/photo-bytes.mjs';
 const BASE = '/api/staff/manual-intake/cards';
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -6,7 +7,7 @@ const phases = new Set(['SAVE_CARD_INTENT','CREATE_CARD','SAVE_CARD_ID','READ_FR
 const exceptionNames = new Set(['Error','TypeError','RangeError','AbortError','DataCloneError','InvalidStateError','NotReadableError','NotSupportedError','OperationError','QuotaExceededError','SecurityError','TimeoutError','TransactionInactiveError','UnknownError']);
 const safeCode = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,100}$/.test(value) ? value : 'BATCH_IMPORT_INTERRUPTED';
 const safeId = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value) ? value : null;
-const storageFailure = cause => Object.assign(new Error('BATCH_IMPORT_STORAGE'), { code: 'BATCH_IMPORT_STORAGE', name: exceptionNames.has(cause?.name) ? cause.name : 'Error' });
+const storageFailure = cause => photoStorageError(cause, 'BATCH_IMPORT_STORAGE');
 export function batchImportFailureDetails(item) {
   if (!item?.code) return null;
   return { code: safeCode(item.code), phase: phases.has(item.failure?.phase) ? item.failure.phase : 'UNKNOWN',
@@ -49,6 +50,12 @@ export function previewOrderedBatchPhotos(files) {
 
 export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThis.indexedDB }) {
   check(typeof staffId === 'string' && /^[a-f0-9-]{36}$/.test(staffId) && indexedDB, 'BATCH_IMPORT_STORAGE');
+  const metadataKey = `${staffId}:byte-metadata-v1`, prefix = `${staffId}:photo-bytes:`, photoCache = new Map();
+  const isRef = value => value?.format === 'atlas-photo-reference-v1' && typeof value.key === 'string' && value.key.startsWith(prefix);
+  const isLegacy = value => value?.format === 'atlas-legacy-batch-photo-v1' && ['item', 'draft'].includes(value.kind)
+    && typeof value.id === 'string' && ['FRONT', 'BACK'].includes(value.side);
+  const entries = batch => [...(batch?.items ?? []).map(item => ({ item, kind: 'item', id: item.createId })),
+    ...(batch?.draft ? [{ item: batch.draft, kind: 'draft', id: batch.draft.id }] : [])];
   const opened = new Promise((resolve, reject) => {
     const request = indexedDB.open('atlas-batch-originals-v1', 1);
     request.onupgradeneeded = () => request.result.createObjectStore('imports');
@@ -57,17 +64,105 @@ export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThi
   async function transaction(mode, operation) {
     const db = await opened;
     return new Promise((resolve, reject) => {
-      const tx = db.transaction('imports', mode), store = tx.objectStore('imports'); let value;
+      const tx = db.transaction('imports', mode), store = tx.objectStore('imports'); let value, failure;
       tx.oncomplete = () => resolve(value); tx.onerror = tx.onabort = event => reject(storageFailure(event.target.error ?? tx.error));
-      try { operation(store, result => { value = result; }); }
+      const guard = work => event => { try { work(event); } catch (error) { failure = error; tx.abort(); } };
+      tx.onabort = tx.onerror = event => reject(failure ?? storageFailure(event.target.error ?? tx.error));
+      try { operation(store, result => { value = result; }, guard); }
       catch (error) { tx.abort(); reject(storageFailure(error)); }
     });
   }
+  const raw = () => transaction('readonly', (store, done) => { store.get(metadataKey).onsuccess = event => done(event.target.result ?? null); });
+  async function get() {
+    return transaction('readonly', (store, done, guard) => {
+      store.get(metadataKey).onsuccess = guard(event => {
+        const metadata = event.target.result;
+        const restore = guard(legacyEvent => {
+          const legacy = legacyEvent.target.result;
+          if (!metadata) {
+            if (!legacy) return done(null);
+            for (const { item, kind, id } of entries(legacy)) if (item.files) item.photoRefs = Object.fromEntries(
+              Object.keys(item.files).map(side => [side, { format: 'atlas-legacy-batch-photo-v1', kind, id, side }]));
+            return done(legacy);
+          }
+          let pending = 1;
+          const finish = () => { if (--pending === 0) done(metadata); };
+          for (const { item } of entries(metadata)) {
+            if (!item.files) continue;
+            item.photoRefs = { ...item.files };
+            for (const [side, reference] of Object.entries(item.photoRefs)) {
+              if (isLegacy(reference)) {
+                const original = reference.kind === 'draft' ? legacy?.draft : legacy?.items.find(value => value.createId === reference.id);
+                check(original && (reference.kind !== 'draft' || original.id === reference.id) && original.files?.[side] instanceof Blob, 'PHOTO_STORAGE_CORRUPT');
+                item.files[side] = original.files[side];
+              } else {
+                check(isRef(reference), 'PHOTO_STORAGE_CORRUPT');
+                if (photoCache.has(reference.key)) { item.files[side] = photoCache.get(reference.key); continue; }
+                pending++;
+                store.get(reference.key).onsuccess = guard(photoEvent => {
+                  item.files[side] = decodePhoto(photoEvent.target.result);
+                  check(item.files[side].size === reference.byteCount, 'PHOTO_STORAGE_CORRUPT');
+                  photoCache.set(reference.key, item.files[side]); finish();
+                });
+              }
+            }
+          }
+          finish();
+        });
+        const needsLegacy = !metadata || entries(metadata).some(({ item }) => Object.values(item.files ?? {}).some(isLegacy));
+        if (needsLegacy) store.get(staffId).onsuccess = restore;
+        else restore({ target: { result: null } });
+      });
+    });
+  }
+  async function put(value) {
+    // Bytes are materialized outside a transaction, and only for new or
+    // explicitly recovered photos. A broken legacy Blob is kept by reference
+    // in its untouched old record; it cannot block another card's progress.
+    const previous = await raw(), metadata = { ...value, items: value.items.map(item => ({ ...item })),
+      ...(value.draft ? { draft: { ...value.draft } } : {}) }, photos = new Map();
+    const prior = new Map(entries(previous).map(entry => [`${entry.kind}:${entry.id}`, entry.item]));
+    for (const { item, kind, id } of entries(metadata)) {
+      if (!item.files) { delete item.photoRefs; continue; }
+      const files = {};
+      for (const [side, file] of Object.entries(item.files)) {
+        const old = prior.get(`${kind}:${id}`)?.files?.[side], retained = item.photoRefs?.[side];
+        let reference = isRef(old) ? old : isRef(retained) || isLegacy(retained) ? retained : null;
+        if (reference && isRef(reference)) check(file.size === reference.byteCount, 'PHOTO_STORAGE_CORRUPT');
+        if (!reference) {
+          const key = `${prefix}${kind}:${id}:${side}`, encoded = await encodePhoto(file);
+          photos.set(key, encoded); reference = { format: 'atlas-photo-reference-v1', key, byteCount: encoded.byteCount };
+        }
+        files[side] = reference;
+      }
+      item.files = files; delete item.photoRefs;
+    }
+    const references = entries(metadata).flatMap(({ item }) => Object.values(item.files ?? {}));
+    const liveKeys = new Set(references.filter(isRef).map(reference => reference.key));
+    await transaction('readwrite', store => {
+      for (const [key, encoded] of photos) store.put(encoded, key);
+      store.put(metadata, metadataKey);
+      for (const { item } of entries(previous)) for (const reference of Object.values(item.files ?? {})) {
+        if (isRef(reference) && !liveKeys.has(reference.key)) store.delete(reference.key);
+      }
+      // The legacy aggregate is retired only after every live original has a
+      // byte record or a verified queued outcome, in this same atomic commit.
+      if (!references.some(isLegacy)) store.delete(staffId);
+    });
+    for (const [key, encoded] of photos) photoCache.set(key, decodePhoto(encoded));
+    for (const key of photoCache.keys()) if (!liveKeys.has(key)) photoCache.delete(key);
+  }
   return {
-    get: () => transaction('readonly', (store, done) => { store.get(staffId).onsuccess = event => done(event.target.result ?? null); }),
-    put: value => transaction('readwrite', store => store.put(value, staffId)),
-    remove: () => transaction('readwrite', store => store.delete(staffId)),
-    close: async () => (await opened).close(),
+    get, put,
+    remove: async () => {
+      const previous = await raw();
+      await transaction('readwrite', store => {
+        for (const { item } of entries(previous)) for (const reference of Object.values(item.files ?? {})) if (isRef(reference)) store.delete(reference.key);
+        store.delete(metadataKey); store.delete(staffId);
+      });
+      photoCache.clear();
+    },
+    close: async () => { photoCache.clear(); (await opened).close(); },
   };
 }
 
@@ -108,14 +203,16 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
       }
       for (const side of ['FRONT', 'BACK']) {
         if (!item.hashes[side]) {
-          const bytes = await step(`READ_${side}_BYTES`, () => item.files[side].arrayBuffer());
-          item.hashes[side] = await step(`HASH_${side}_BYTES`, async () => hex(await cryptoImpl.subtle.digest('SHA-256', bytes)));
+          const encoded = await step(`READ_${side}_BYTES`, () => encodePhoto(item.files[side]));
+          item.hashes[side] = await step(`HASH_${side}_BYTES`, async () => hex(await cryptoImpl.subtle.digest('SHA-256', encoded.bytes)));
+          item.files[side] = decodePhoto(encoded);
+          if (item.photoRefs) delete item.photoRefs[side];
         }
       }
       await step('SAVE_HASHES', () => saveItem(item));
       const prepareSide = async side => {
         if (disposed) return;
-        const pending = await step(`READ_${side}_JOURNAL`, async () => (await intake.pending()).filter(entry => entry.value.kind === 'upload' && entry.value.cardId === item.cardId && entry.value.input.side === side));
+        const pending = await step(`READ_${side}_JOURNAL`, async () => (await intake.pending({ metadataOnly: true })).filter(entry => entry.value.kind === 'upload' && entry.value.cardId === item.cardId && entry.value.input.side === side));
         check(pending.length <= 1, 'BATCH_IMPORT_UPLOAD_CONFLICT');
         if (pending.length) {
           check(pending[0].value.input.sha256 === item.hashes[side], 'BATCH_IMPORT_UPLOAD_CONFLICT');
@@ -210,7 +307,7 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
         check(!draft.files[side], 'BATCH_IMPORT_SIDE_SAVED');
         draft.files[side] = file; draft.acquisition[side] = acquisition;
         if (draft.files.FRONT && draft.files.BACK) {
-          batch.items.push(makeItem({ key: draft.id, label: `Card ${batch.items.length + 1}`, files: draft.files, acquisition: draft.acquisition }));
+          batch.items.push(makeItem({ key: draft.id, label: `Card ${batch.items.length + 1}`, files: draft.files, photoRefs: draft.photoRefs, acquisition: draft.acquisition }));
           batch.draft = null;
         } else batch.draft = draft;
         // Complete pair insertion and removal of the partial pair are atomic.

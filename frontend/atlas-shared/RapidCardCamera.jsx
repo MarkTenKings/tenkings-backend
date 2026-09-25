@@ -3,8 +3,9 @@ import { captureRapidCameraPhoto, RAPID_CAMERA_CONSTRAINTS, rapidCameraError } f
 import styles from './RapidCardCamera.module.css';
 
 /** Keep mounted across Front → Back → next Front. onCapture must acknowledge
- * local durable storage only; no upload or identification promise belongs here. */
-export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card', disabled = false, onCapture, onClose, autoStart = true, status = '' }) {
+ * local durable storage only; no upload or identification promise belongs here.
+ * completedPairs comes from durable paired originals, independent of uploads. */
+export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card', completedPairs = 0, disabled = false, onCapture, onClose, autoStart = true, status = '' }) {
   const video = useRef(null), stream = useRef(null), root = useRef(null), generation = useRef(0), alive = useRef(false), busyRef = useRef(false), starting = useRef(false);
   const latest = useRef({ side, cardLabel, disabled, onCapture, onClose }); latest.current = { side, cardLabel, disabled, onCapture, onClose };
   const [state, setState] = useState('idle'), [error, setError] = useState(''), [busy, setBusy] = useState(false), [flash, setFlash] = useState(false);
@@ -59,10 +60,17 @@ export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card
     finally { busyRef.current = false; if (alive.current) setBusy(false); }
   }
   return <section ref={root} tabIndex={-1} className={styles.camera} role="dialog" aria-modal="true" aria-label="Rapid card capture">
-    <header className={styles.header}><div><span className={styles.brand}>ATLAS <b>CAPTURE</b></span><p>{cardLabel}</p></div><button type="button" className={styles.close} onClick={onClose} disabled={busy} aria-label="Close camera">✕</button></header>
+    <header className={styles.header}>
+      <div><span className={styles.brand}>ATLAS <b>CAPTURE</b></span><p>{cardLabel}</p></div>
+      <span className={styles.pairCount} role="status" aria-label="Completed card pairs" aria-live="polite" aria-atomic="true">
+        <svg viewBox="0 0 22 24" fill="none" aria-hidden="true"><path d="M5 4 2 5.5l3 16 12-2"/><rect x="7" y="2" width="12" height="17" rx="2"/><path d="M10 6h6M10 9h6"/></svg>
+        <span><b>{completedPairs}</b><span> saved</span></span>
+      </span>
+      <button type="button" className={styles.close} onClick={onClose} disabled={busy} aria-label="Close camera">✕</button>
+    </header>
     <div className={styles.viewfinder} data-flash={flash}>
       <video ref={video} autoPlay muted playsInline aria-label="Live rear camera" onLoadedData={() => { if (stream.current && video.current?.videoWidth && !video.current?.paused) { starting.current = false; setState('ready'); } }} />
-      <div className={styles.guide} aria-hidden="true"><i/><i/><i/><i/><span key={side} className={styles.sideCue}>{side}</span></div>
+      <div className={styles.guide} aria-hidden="true"><i/><i/><i/><i/><span className={styles.sideCue}><span className={styles.sideCoin} data-side={side}><span>FRONT</span><span>BACK</span></span></span></div>
       <div className={styles.instruction} aria-live="polite"><strong>{side === 'FRONT' ? 'Front. Frame it. Capture.' : 'Flip it. Capture the back.'}</strong><span>Fill the guide. Keep every corner in view.</span></div>
       {state !== 'ready' && <div className={styles.paused}>{state === 'starting' ? 'Opening your camera…' : 'Your next card is waiting.'}</div>}
     </div>

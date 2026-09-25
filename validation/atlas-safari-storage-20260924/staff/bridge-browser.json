@@ -1,0 +1,695 @@
+{
+  "status": "PASS",
+  "sourceHashes": {
+    "/batch.mjs": "09702cece98a8058a5c7ad0b0f7b2149050f37bccb4f0f5b939d8b64d20f92cc",
+    "/client.mjs": "daa1d573ed66078bef86b8d8a7f4a97694de0de3611d61f44ac40fc6df7d4666",
+    "/camera.mjs": "6dc68561526cbf2ccf2a9966e2a13cdc40fc29fee4e50694068c82122cbdfe0a",
+    "/photo-bytes.mjs": "e5a8d966eded4710f117da9f2048896981440c224749a6ae78a6e91c71c49ec2",
+    "/packages/atlas-manual-intake/src/photo-bytes.mjs": "e5a8d966eded4710f117da9f2048896981440c224749a6ae78a6e91c71c49ec2"
+  },
+  "scope": "Local actual acquisition fallback, IndexedDB journals and intake client; synthetic request/storage; desktop Chrome and WebKit, not physical iPhone proof",
+  "results": [
+    {
+      "browser": "Chrome",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+      "results": [
+        {
+          "fault": "NONE",
+          "fileBytes": 7135005,
+          "captureSource": "LOSSLESS_VIDEO_FRAME",
+          "colorSpace": "display-p3",
+          "cards": 8,
+          "cardReads": 24,
+          "plans": 16,
+          "puts": 16,
+          "queued": 8,
+          "pendingUploadIntents": 0,
+          "itemCodes": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "hashCounts": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "failures": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "elapsedMs": 747
+        },
+        {
+          "fault": "BLOB_READ",
+          "fileBytes": 7135005,
+          "captureSource": "LOSSLESS_VIDEO_FRAME",
+          "colorSpace": "display-p3",
+          "cards": 8,
+          "cardReads": 24,
+          "plans": 16,
+          "puts": 16,
+          "queued": 8,
+          "pendingUploadIntents": 0,
+          "itemCodes": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "hashCounts": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "failures": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "elapsedMs": 957
+        },
+        {
+          "fault": "READ_ALL",
+          "fileBytes": 7135005,
+          "captureSource": "LOSSLESS_VIDEO_FRAME",
+          "colorSpace": "display-p3",
+          "cards": 8,
+          "cardReads": 0,
+          "plans": 0,
+          "puts": 0,
+          "queued": 0,
+          "pendingUploadIntents": 0,
+          "itemCodes": [
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE"
+          ],
+          "hashCounts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "failures": [
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            }
+          ],
+          "elapsedMs": 18,
+          "originalsRetained": true,
+          "originalReadableAfterFaultRemoved": true,
+          "recovery": {
+            "cards": 8,
+            "queued": 8,
+            "sameIds": true,
+            "clearedFailures": true
+          }
+        },
+        {
+          "fault": "PLAN_LOST",
+          "fileBytes": 7135005,
+          "captureSource": "LOSSLESS_VIDEO_FRAME",
+          "colorSpace": "display-p3",
+          "cards": 8,
+          "cardReads": 16,
+          "plans": 16,
+          "puts": 0,
+          "queued": 0,
+          "pendingUploadIntents": 16,
+          "itemCodes": [
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED"
+          ],
+          "hashCounts": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "failures": [
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            }
+          ],
+          "elapsedMs": 545,
+          "originalsRetained": true,
+          "originalReadableAfterFaultRemoved": true,
+          "recovery": {
+            "cards": 8,
+            "queued": 8,
+            "sameIds": true,
+            "clearedFailures": true
+          }
+        },
+        {
+          "fault": "INTAKE_JOURNAL_LIST",
+          "fileBytes": 7135005,
+          "captureSource": "LOSSLESS_VIDEO_FRAME",
+          "colorSpace": "display-p3",
+          "cards": 8,
+          "cardReads": 0,
+          "plans": 0,
+          "puts": 0,
+          "queued": 0,
+          "pendingUploadIntents": 0,
+          "itemCodes": [
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE"
+          ],
+          "hashCounts": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "failures": [
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            }
+          ],
+          "elapsedMs": 280,
+          "originalsRetained": true,
+          "originalReadableAfterFaultRemoved": true,
+          "recovery": {
+            "cards": 8,
+            "queued": 8,
+            "sameIds": true,
+            "clearedFailures": true
+          }
+        }
+      ]
+    },
+    {
+      "browser": "WebKit",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+      "results": [
+        {
+          "fault": "NONE",
+          "fileBytes": 7262509,
+          "captureSource": "LOSSLESS_VIDEO_FRAME",
+          "colorSpace": "display-p3",
+          "cards": 8,
+          "cardReads": 24,
+          "plans": 16,
+          "puts": 16,
+          "queued": 8,
+          "pendingUploadIntents": 0,
+          "itemCodes": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "hashCounts": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "failures": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "elapsedMs": 543
+        },
+        {
+          "fault": "BLOB_READ",
+          "fileBytes": 7262509,
+          "captureSource": "LOSSLESS_VIDEO_FRAME",
+          "colorSpace": "display-p3",
+          "cards": 8,
+          "cardReads": 24,
+          "plans": 16,
+          "puts": 16,
+          "queued": 8,
+          "pendingUploadIntents": 0,
+          "itemCodes": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "hashCounts": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "failures": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "elapsedMs": 503
+        },
+        {
+          "fault": "READ_ALL",
+          "fileBytes": 7262509,
+          "captureSource": "LOSSLESS_VIDEO_FRAME",
+          "colorSpace": "display-p3",
+          "cards": 8,
+          "cardReads": 0,
+          "plans": 0,
+          "puts": 0,
+          "queued": 0,
+          "pendingUploadIntents": 0,
+          "itemCodes": [
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE",
+            "PHOTO_BYTES_UNREADABLE"
+          ],
+          "hashCounts": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "failures": [
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            },
+            {
+              "code": "PHOTO_BYTES_UNREADABLE",
+              "phase": "READ_FRONT_BYTES",
+              "exceptionName": "NotReadableError"
+            }
+          ],
+          "elapsedMs": 34,
+          "originalsRetained": true,
+          "originalReadableAfterFaultRemoved": true,
+          "recovery": {
+            "cards": 8,
+            "queued": 8,
+            "sameIds": true,
+            "clearedFailures": true
+          }
+        },
+        {
+          "fault": "PLAN_LOST",
+          "fileBytes": 7262509,
+          "captureSource": "LOSSLESS_VIDEO_FRAME",
+          "colorSpace": "display-p3",
+          "cards": 8,
+          "cardReads": 16,
+          "plans": 16,
+          "puts": 0,
+          "queued": 0,
+          "pendingUploadIntents": 16,
+          "itemCodes": [
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED",
+            "NETWORK_INTERRUPTED"
+          ],
+          "hashCounts": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "failures": [
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "NETWORK_INTERRUPTED",
+              "phase": "UPLOAD_FRONT",
+              "exceptionName": "Error"
+            }
+          ],
+          "elapsedMs": 421,
+          "originalsRetained": true,
+          "originalReadableAfterFaultRemoved": true,
+          "recovery": {
+            "cards": 8,
+            "queued": 8,
+            "sameIds": true,
+            "clearedFailures": true
+          }
+        },
+        {
+          "fault": "INTAKE_JOURNAL_LIST",
+          "fileBytes": 7262509,
+          "captureSource": "LOSSLESS_VIDEO_FRAME",
+          "colorSpace": "display-p3",
+          "cards": 8,
+          "cardReads": 0,
+          "plans": 0,
+          "puts": 0,
+          "queued": 0,
+          "pendingUploadIntents": 0,
+          "itemCodes": [
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE",
+            "INTAKE_JOURNAL_UNAVAILABLE"
+          ],
+          "hashCounts": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "failures": [
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            },
+            {
+              "code": "INTAKE_JOURNAL_UNAVAILABLE",
+              "phase": "READ_FRONT_JOURNAL",
+              "exceptionName": "Error"
+            }
+          ],
+          "elapsedMs": 252,
+          "originalsRetained": true,
+          "originalReadableAfterFaultRemoved": true,
+          "recovery": {
+            "cards": 8,
+            "queued": 8,
+            "sameIds": true,
+            "clearedFailures": true
+          }
+        }
+      ]
+    }
+  ]
+}
