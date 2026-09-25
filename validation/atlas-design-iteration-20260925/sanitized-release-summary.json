@@ -1,0 +1,282 @@
+{
+  "status": "DESIGN_ITERATION_DEPLOYED_AND_VERIFIED",
+  "sourceCommit": "47dffea96b4731395a336b796918d7ca73b41ac0",
+  "verifiedAt": "2026-09-25T05:30:51.353738+00:00",
+  "scope": [
+    "Submission motion, compact faster timelines, decorative parcel/slab arrivals",
+    "Taller opt-in map and branded contact-only dealer presentation",
+    "Exact owner-supplied PNG across website and new v3 label plans",
+    "Homepage redesign researched as proposal only"
+  ],
+  "suppliedLogoSha256": "4b40262a23bb01decf504dfe740626924d252dd097f44a916f9d52457d3c6e56",
+  "deployments": {
+    "staff": {
+      "id": "dpl_D8qmKC4h37TJSgjaJM7B7JzfugxY",
+      "hostname": "atlas-grading-staff-ig3uqh713-ten-kings.vercel.app",
+      "sourceCommit": "47dffea96b4731395a336b796918d7ca73b41ac0",
+      "status": "READY"
+    },
+    "customer": {
+      "id": "dpl_7qVPqTtv19UuHw7ra6CxFnW68Yrh",
+      "hostname": "atlas-grading-customer-9u6rvsbtq-ten-kings.vercel.app",
+      "sourceCommit": "47dffea96b4731395a336b796918d7ca73b41ac0",
+      "status": "READY"
+    },
+    "public": {
+      "id": "dpl_95BZufjt5u6MV3s3wMp8s9GfPhfV",
+      "hostname": "atlas-grading-public-fkt2kh6nf-ten-kings.vercel.app",
+      "sourceCommit": "47dffea96b4731395a336b796918d7ca73b41ac0",
+      "status": "READY"
+    }
+  },
+  "publicAliases": [
+    {
+      "alias": "atlas-grading-public-ten-kings.vercel.app",
+      "deploymentId": "dpl_95BZufjt5u6MV3s3wMp8s9GfPhfV",
+      "redirect": null,
+      "redirectStatusCode": null
+    },
+    {
+      "alias": "atlas-grading-public.vercel.app",
+      "deploymentId": "dpl_95BZufjt5u6MV3s3wMp8s9GfPhfV",
+      "redirect": null,
+      "redirectStatusCode": null
+    },
+    {
+      "alias": "atlasgrading.com",
+      "deploymentId": "dpl_95BZufjt5u6MV3s3wMp8s9GfPhfV",
+      "redirect": null,
+      "redirectStatusCode": null
+    },
+    {
+      "alias": "www.atlasgrading.com",
+      "deploymentId": "dpl_95BZufjt5u6MV3s3wMp8s9GfPhfV",
+      "redirect": "atlasgrading.com",
+      "redirectStatusCode": 308
+    }
+  ],
+  "private": {
+    "container": {
+      "id": "92ab04be4dcc3ea9636c9725c78db6b611ca87738505edfabe3b9c4f40e09d3b",
+      "image": "sha256:f4985716a277a9d9c9277f73a815c0c13709031cd38ff7cea189b72b6fec2c3c",
+      "name": "/atlas-manual-connected-20260917",
+      "oom": false,
+      "restartCount": 0,
+      "running": true,
+      "startedAt": "2026-09-25T05:28:15.640893775Z"
+    },
+    "retainedPredecessor": {
+      "id": "9a21d430649a60d7bb16205f07085d9c157df222d0f481791571500bd50435da",
+      "image": "sha256:65f6d935c5147788ccc64e6faa1f406cbfb127c255b7beaa8ac6b159a1de036f",
+      "name": "/atlas-manual-connected-20260917-retained-e4a75-design-47dffea9",
+      "oom": false,
+      "restartCount": 0,
+      "running": false,
+      "startedAt": "2026-09-25T03:14:29.167751026Z"
+    },
+    "environment": {
+      "path": "/opt/atlas/design-iteration-20260925/private.env",
+      "sha256": "22b6ed6e02e7346a0ffc13992ef583b5f3beee60a71a5afd25a65800f8aeec92"
+    },
+    "changedEnvironmentKeys": [
+      "ATLAS_CUSTOMER_SERVICE_BINDING_JSON",
+      "ATLAS_MANUAL_WEB_DEPLOYMENT",
+      "ATLAS_MANUAL_WEB_RELEASE_SHA"
+    ],
+    "bindings": {
+      "customer": {
+        "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563",
+        "deploymentId": "atlas-grading-customer-9u6rvsbtq-ten-kings.vercel.app",
+        "mode": "PRODUCTION",
+        "origin": "https://atlasgrading.com",
+        "releaseSha": "47dffea96b4731395a336b796918d7ca73b41ac0"
+      },
+      "public": {
+        "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8",
+        "deploymentId": "atlas-grading-public-fkt2kh6nf-ten-kings.vercel.app",
+        "mode": "PRODUCTION",
+        "origin": "https://atlasgrading.com",
+        "releaseSha": "47dffea96b4731395a336b796918d7ca73b41ac0"
+      },
+      "staff": {
+        "configHash": "d0bb0834446501d6186e05dd8f77b654151e7c9615e94b3d63c2c0152ee675ed",
+        "deploymentId": "atlas-grading-staff-ig3uqh713-ten-kings.vercel.app",
+        "mode": "PRODUCTION",
+        "origin": "https://atlasgrading.com",
+        "releaseSha": "47dffea96b4731395a336b796918d7ca73b41ac0"
+      }
+    }
+  },
+  "controls": {
+    "staffRevision": 32,
+    "staffSmsRevision": 30,
+    "publicRevision": 10,
+    "customerRevision": 12,
+    "customerSmsRevision": 10
+  },
+  "preservation": {
+    "status": "FOLLOWUP_PRESERVATION_PASS",
+    "historyTables": 30,
+    "customerTables": 21,
+    "staffMigrations": 52,
+    "publicMigrations": 112,
+    "allowedControlRows": 6,
+    "newMigrations": 0,
+    "caddyUnchanged": true,
+    "unrelatedContainersUnchanged": true,
+    "originalsAndHistoryPreserved": true
+  },
+  "validation": {
+    "productionBuilds": 3,
+    "frontend": {
+      "pass": 730,
+      "fail": 0,
+      "skipped": 0
+    },
+    "localFinishingStation": {
+      "pass": 93,
+      "fail": 0,
+      "skipped": 0
+    },
+    "actualLinuxFocused": {
+      "tests": 99,
+      "pass": 99,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "linuxTestFiles": 16,
+    "nativeArtifactsPreserved": 16,
+    "sourceFilesVerified": 899,
+    "prior585SuiteReplayed": false,
+    "originalPhotosReplayed": false,
+    "signedPrivateChecks": 3,
+    "canonicalChecks": 37,
+    "liveBrowser": {
+      "status": "PASS",
+      "widths": [
+        390,
+        1440
+      ],
+      "exactLogoLoaded": true,
+      "timelineHeightPx": 67,
+      "cycleMs": 5333.333333,
+      "pauseControl": true,
+      "pageErrors": 0,
+      "videosDecodedAndPlayed": 2,
+      "normalAnonymousBootstrapAfterStrictPreservation": true,
+      "googleMapInteracted": false
+    },
+    "localBrowserEvidence": "See local-validation.json; synthetic integrated flow and responsive motion/map/brand tests are not owner iPhone acceptance",
+    "immutableCandidatePreview": "HELD due Vercel deployment protection and zero existing automation bypass tokens; no application checks performed; canonical checks passed after promotion"
+  },
+  "remaining": [
+    "Google custom pins and live Places photos need provider configuration; no owner answer yet",
+    "Main homepage/report/gallery redesign remains proposal-only; no likes/comments/offers enabled",
+    "Rapid-capture save/upload/queue report under separate fresh Astra Ultra investigation; this release contains no capture/grading fix",
+    "No physical printing/NFC or real completed-grading acceptance established"
+  ],
+  "effects": {
+    "gitPush": false,
+    "gradingOrModelCalls": 0,
+    "recordDeletions": 0,
+    "featureEnablements": 0,
+    "providerWrites": "3 candidate uploads, exactly2 existing public-origin updates,1 explicit public promotion; normal CLI upload traffic is separately retained",
+    "releaseIntentsConsumed": true,
+    "automaticRetry": false
+  },
+  "externalReceipts": [
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/native-build/native-build-result.json",
+      "sha256": "7269be4d46e9b5f6ae7677952deae289d1cf279a755a083c451d44e57fc5798f"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/native-build/native-qualification.json",
+      "sha256": "119e1529eaf50b26f3d22c541196641704ec64240fc1b36d158ae92a9d54efb9"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/web-release/build/qualification.json",
+      "sha256": "fc70ead7265a907f0734560c34568f571542590bef7259e072a41f57e0b4385b"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/web-release/independent-source-review.json",
+      "sha256": "30a05e1acda1d92af6893b73d4930c19ef575dee97723298207e4b86102d6c80"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/web-release/staff-ready-47dffea9.json",
+      "sha256": "36e08d8f3497cfe5b7560f9ff9b298e4894c6a6e7b996e2fbecac7e05e9b1989"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/web-release/customer-ready-47dffea9.json",
+      "sha256": "2b93d3e3532a80fc094a5941052e31dbecf0e2271d9eb50cc759f34db32b29ec"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/web-release/public-ready-47dffea9.json",
+      "sha256": "432686835214b1a8d51e83c3dd55c79d64d71c69439df130818a14a8f40d3d5e"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/web-release/public-env-install-47dffea9/result.json",
+      "sha256": "6074152f5e2e001966d42d1c483ec4916cdea00f5a79ddb3292b0bf481c358ef"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/web-release/public-promotion-47dffea9/result.json",
+      "sha256": "bafb571eacff83df565aaf37972cbc83f1fee93451681b8bfab664772f6dd6ef"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/runtime/plan.json",
+      "sha256": "cd81dc50d3f77ee27eb4c0734a1f22417d3f5e1f0150194d3ab2af887a7df8ea"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/runtime/controls-plan.json",
+      "sha256": "027f5512b8e905f360464b92546e8f38c9a4bbd0593df0100de9b96a7bc8e1bc"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/runtime/final-runtime-source-review.json",
+      "sha256": "5ae215fc616a4cdfc321e96d7f6283cc4e5338ff64b895c0a55754442c7b96a7"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/runtime/host-readback/derive-result.json",
+      "sha256": "7b38076712644736849ac69aac55914c51d492d808ea76081f3ef5af5307f082"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/runtime/host-readback/constructor-result.json",
+      "sha256": "556436bca6505d620a4080369a64d3fa2d119c6216690090e046018facb8ec52"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/runtime/host-readback/controls-result.json",
+      "sha256": "5418a44051922299341655756bb1f42ece80033777460ef0187efc4faa21b6a0"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/runtime/host-readback/cutover-result.json",
+      "sha256": "0015a13c6029104c7a097fef4c2f3a5c15f9146a3d50a96c91516e2d77d35c58"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/runtime/host-readback/post-promotion-result.json",
+      "sha256": "6d22ae00852d02285ab2d9c3437c38e112ae11ea899d7633eb31f938e5e31a91"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/readonly-customer/signed-private-design-1/result.json",
+      "sha256": "746edcb2ea589be97293377d99dd44eb7db190e64c8cc06cc207c241013a460a"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/readonly-customer/canonical-design-1/result.json",
+      "sha256": "25524cb6be2b4dedd575e9f880c2dbb5ed5ccbe14a721e6a4b9dc64017b83906"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/readonly-customer/immutable-public-candidate/failure.json",
+      "sha256": "15898fbc450a5e1c3fbcf6cc15700d22dc0118eac41d53d500b6ffd3fcd39e5c"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/readonly-customer/immutable-public-candidate-limitation.json",
+      "sha256": "d8b564bc9184593234d517d9c72f33fc09ee21b69aa925f0fb0bd77563868a10"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/readonly-customer/live-visual-1/result.json",
+      "sha256": "51d7246a55425b84c6e29c0fcf0aa59fad5a1372636fdf43528ee23044377fb4"
+    },
+    {
+      "path": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/readonly-customer/live-media-1/result.json",
+      "sha256": "63974d66fe29d290225fe684b9aa829af64022f601f8d01b106598a935e96b43"
+    }
+  ]
+}
