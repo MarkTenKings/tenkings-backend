@@ -37,10 +37,11 @@ export function approvedPublicationSource(row) {
   503, 'MANUAL_PUBLICATION_CORRUPT');
   return { approval, draft };
 }
-export function createPublicationRepository({ boundary }) {
+export function createPublicationRepository({ boundary, validateAccess = null }) {
   async function card(tx, principal, cardId, write) {
     const [row] = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.card WHERE id=$1::uuid FOR SHARE', cardId);
     access(row, principal, write);
+    if (validateAccess) await validateAccess({ tx, principal, cardId });
   }
   return Object.freeze({
     async approvalCommitted({ tx, principal, cardId, actionId }) {

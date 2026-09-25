@@ -52,6 +52,15 @@ export function createBatchRepository({ boundary, intakeRepository }) {
     const [row] = await tx.$queryRawUnsafe(`SELECT *,lease_until>clock_timestamp() AS lease_active FROM atlas_manual_connected.batch_grading WHERE key=$1${lock ? ' FOR UPDATE' : ''}`, key);
     requireThat(row && row.actor_id === principal.id, 404, 'BATCH_NOT_FOUND'); return row;
   }
+  async function releaseDiscarded(tx, row, claimId) {
+    const [card] = await tx.$queryRawUnsafe('SELECT id FROM atlas_manual_intake.card WHERE id=$1::uuid FOR SHARE', row.card_id);
+    const deleted = card && (await tx.$queryRawUnsafe('SELECT 1 FROM atlas_manual_intake.discarded_card WHERE card_id=$1::uuid', row.card_id)).length;
+    if (!deleted) return false;
+    await tx.$executeRawUnsafe(`UPDATE atlas_manual_connected.batch_grading SET state='NEEDS_ATTENTION',code='INTAKE_CARD_DELETED',
+      claim_id=NULL,lease_until=NULL,revision=revision+1,updated_at=clock_timestamp()
+      WHERE key=$1 AND state='RUNNING' AND claim_id=$2::uuid`, row.key, claimId);
+    return true;
+  }
   return Object.freeze({
     async readReview(staff, key) {
       requireThat(/^[a-f0-9]{64}$/.test(key));
@@ -122,7 +131,8 @@ export function createBatchRepository({ boundary, intakeRepository }) {
           FROM atlas_manual_connected.batch_grading j
           JOIN atlas_manual_intake.card c ON c.id=j.card_id AND c.owner_id=j.actor_id
           LEFT JOIN atlas_manual.card m ON m.id=j.card_id
-          WHERE j.actor_id=$1::uuid) visible
+          WHERE j.actor_id=$1::uuid
+          AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=j.card_id)) visible
           ORDER BY current_approval,
             CASE WHEN access_changed AND (state IN ('QUEUED','NEEDS_ATTENTION','REVIEW') OR (state='RUNNING' AND NOT lease_active)) THEN 1
               ELSE CASE state WHEN 'REVIEW' THEN 0 WHEN 'NEEDS_ATTENTION' THEN 1 WHEN 'RUNNING' THEN 2 WHEN 'QUEUED' THEN 3 ELSE 4 END END,
@@ -136,6 +146,14 @@ export function createBatchRepository({ boundary, intakeRepository }) {
         // A process-local pool cannot cap multiple service instances. This
         // short database lock owns the actual shared execution-slot decision.
         await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(721930,45)');
+        // A deleted worker may have crashed before its next heartbeat. Retire
+        // only its expired local lease; the following receipt-based accounting
+        // still protects every dispatched/uncertain provider reservation.
+        await tx.$executeRawUnsafe(`UPDATE atlas_manual_connected.batch_grading j
+          SET state='NEEDS_ATTENTION',code='INTAKE_CARD_DELETED',claim_id=NULL,lease_until=NULL,
+            revision=revision+1,updated_at=clock_timestamp()
+          WHERE j.state='RUNNING' AND j.lease_until<=clock_timestamp()
+            AND EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=j.card_id)`);
         // Provider background work outlives ordinary worker leases. Its slot
         // remains reserved across WAIT, crashes and uncertain dispatch until
         // the existing immutable provider journal proves completion/refusal.
@@ -149,14 +167,15 @@ export function createBatchRepository({ boundary, intakeRepository }) {
         const [reserved] = await tx.$queryRawUnsafe('SELECT count(*)::int AS count FROM atlas_manual_connected.batch_grading WHERE analysis_reserved');
         const [count] = await tx.$queryRawUnsafe("SELECT count(*)::int AS count FROM atlas_manual_connected.batch_grading WHERE state='RUNNING' AND lease_until>clock_timestamp()");
         if (count.count >= concurrency) return null;
-        const rows = await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual_connected.batch_grading
-          WHERE actor_id=$1::uuid AND access_version=$2 AND ((state='QUEUED' AND available_at<=clock_timestamp())
+        const rows = await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual_connected.batch_grading j
+          WHERE NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=j.card_id) AND actor_id=$1::uuid AND access_version=$2 AND ((state='QUEUED' AND available_at<=clock_timestamp())
           OR (state='RUNNING' AND lease_until<=clock_timestamp()))
           AND (stage<>'ANALYZE' OR analysis_reserved OR $3::boolean) ORDER BY created_at,key LIMIT 1 FOR UPDATE SKIP LOCKED`, principal.id, principal.accessVersion, reserved.count < concurrency);
         if (!rows.length) return null;
         const row = rows[0];
         try { await source(tx, principal, row, 'SHARE'); }
         catch (error) {
+          if (error?.code === 'INTAKE_CARD_DELETED') return null;
           if (!['BATCH_PHOTOS_CHANGED', 'BATCH_ACCESS_CHANGED'].includes(error?.code)) throw error;
           await tx.$executeRawUnsafe("UPDATE atlas_manual_connected.batch_grading SET state='SUPERSEDED',claim_id=NULL,lease_until=NULL,code=$2,revision=revision+1,updated_at=clock_timestamp() WHERE key=$1", row.key, error.code);
           return null;
@@ -169,7 +188,9 @@ export function createBatchRepository({ boundary, intakeRepository }) {
     },
     async renew(staff, job) {
       return boundary.transaction(staff, async ({ tx, principal }) => {
-        const row = await owned(tx, principal, job.key, 'UPDATE'); await source(tx, principal, row, 'SHARE');
+        const row = await owned(tx, principal, job.key, 'UPDATE');
+        if (await releaseDiscarded(tx, row, job.claimId)) return false;
+        await source(tx, principal, row, 'SHARE');
         const count = await tx.$executeRawUnsafe(`UPDATE atlas_manual_connected.batch_grading SET lease_until=clock_timestamp()+interval '2 minutes'
           WHERE key=$1 AND state='RUNNING' AND claim_id=$2::uuid AND lease_until>clock_timestamp()`, job.key, job.claimId);
         return count === 1;
@@ -178,6 +199,7 @@ export function createBatchRepository({ boundary, intakeRepository }) {
     async finish(staff, job, outcome) {
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await owned(tx, principal, job.key, 'UPDATE');
+        if (await releaseDiscarded(tx, row, job.claimId)) return false;
         await source(tx, principal, row, 'SHARE');
         const old = project(row);
         let state = ({ CONTINUE: 'QUEUED', WAIT: 'QUEUED', REVIEW: 'REVIEW', ATTENTION: 'NEEDS_ATTENTION' })[outcome.kind];

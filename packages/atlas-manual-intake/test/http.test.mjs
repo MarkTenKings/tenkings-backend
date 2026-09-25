@@ -31,6 +31,30 @@ test('list pagination and exact upload/source routes do not bypass method or que
   assert.equal(res.statusCode, 200); assert.deepEqual(res.body, { source: true });
 });
 
+test('discard and deletion-status routes require ordinary staff POST/CSRF and preserve exact acknowledgement', async () => {
+  const calls = [], actor = { id: 'ordinary-staff' }, receipt = { requestId: id, scope: 'ALL', cardIds: [], createRequestIds: [] };
+  const handler = createIntakeHandler({ origin, assertRequest: async () => {}, boundary: { async authenticate(cookie, csrf) {
+    assert.equal(cookie, 'ordinary-cookie'); assert.equal(csrf, 'csrf'); return actor;
+  } }, service: {
+    async discard(staff, input) { assert.equal(staff, actor); calls.push(input); return { receipt }; },
+    async discardStatus(staff, input) { assert.equal(staff, actor); calls.push(input); return { cardIds: [], createRequestIds: [] }; }
+  } });
+  const base = { method: 'POST', headers: { origin, cookie: 'ordinary-cookie', 'content-type': 'application/json', 'x-atlas-csrf': 'csrf' }, body: receipt };
+  for (const suffix of ['discard', 'discard-status']) {
+    const url = `/api/staff/manual-intake/cards/${suffix}`;
+    for (const changed of [{ method: 'GET' }, { method: 'DELETE' }, { headers: { ...base.headers, origin: 'https://foreign.invalid' } },
+      { headers: { ...base.headers, 'x-atlas-csrf': '' } }, { url: `${url}?limit=1` }]) {
+      const res = response(); await handler({ ...base, url, ...changed }, res); assert([400, 403, 405].includes(res.statusCode));
+    }
+  }
+  assert.equal(calls.length, 0);
+  const deleted = response(); await handler({ ...base, url: '/api/staff/manual-intake/cards/discard' }, deleted);
+  assert.equal(deleted.statusCode, 200); assert.deepEqual(deleted.body, { receipt });
+  const status = response(); await handler({ ...base, url: '/api/staff/manual-intake/cards/discard-status' }, status);
+  assert.equal(status.statusCode, 200); assert.deepEqual(status.body, { cardIds: [], createRequestIds: [] });
+  assert.equal(calls.length, 2);
+});
+
 test('known photo refusals reach the browser as exact422 codes while conflicts and unknown internals stay distinct',async()=>{
   let error;
   const handler=createIntakeHandler({service:{prepare:async()=>{throw error;}},boundary:{authenticate:async()=>({})},origin,assertRequest:async()=>{}});

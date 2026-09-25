@@ -20,6 +20,8 @@ export async function readManualResponse(response) {
     status = body.status; body = body.body;
   }
   if (status < 200 || status >= 300)
-    throw Object.assign(new Error(body?.error ?? 'Save unavailable'), { status, code: body?.error, fields: body?.fields });
+    throw Object.assign(new Error(body?.error ?? 'Save unavailable'), { status, code: body?.error, fields: body?.fields,
+      ...(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(body?.reference ?? '')
+        ? { reference: body.reference } : {}) });
   return body;
 }

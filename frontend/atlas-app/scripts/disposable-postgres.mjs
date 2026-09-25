@@ -248,7 +248,8 @@ export async function disposablePostgres(args, { beforeUpgradeFrom48 } = {}) {
         if (beforeUpgradeFrom48) {
             assert.equal(source.staffMigrations[47]?.name, '20260924030000_manual_research_effects');
             assert.equal(source.staffMigrations[48]?.name, '20260924060000_customer_photo_intake');
-            assert.equal(source.staffMigrations.length, 52, 'Review the upgrade boundary before adding further migrations');
+            assert.equal(source.staffMigrations.length, 53, 'Review the upgrade boundary before adding further migrations');
+            assert.equal(source.staffMigrations[52]?.name, '20260925080000_manual_workspace_discard');
             // Copy only the exact recorded predecessor bytes into a new owned
             // folder; never hide, rename or mutate the working tree migrations.
             const staged = join(directory, 'staff-through-48'), stagedMigrations = join(staged, 'migrations');

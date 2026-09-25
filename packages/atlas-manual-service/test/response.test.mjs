@@ -5,6 +5,16 @@ import { readManualResponse, MANUAL_STREAM_HEADER, MANUAL_STREAM_PROTOCOL } from
 const stream = (status, body) => new Response(`\n\n${JSON.stringify({ protocol: MANUAL_STREAM_PROTOCOL, status, body })}`,
   { headers: { [MANUAL_STREAM_HEADER]: MANUAL_STREAM_PROTOCOL } });
 
+test('failure correlation preserves only an opaque UUID and never arbitrary provider detail', async () => {
+  const id = 'ac7aba2c-94e7-4bd4-8b86-572606c2746b';
+  for (const reference of [id, 'https://private.invalid/photo?secret=value', { token: 'private' }, 'private']) {
+    const body = { error: 'TEMPORARILY_UNAVAILABLE', reference };
+    for (const response of [Response.json(body, { status: 503 }), stream(503, body)])
+      await assert.rejects(readManualResponse(response), error => error.status === 503
+        && error.reference === (reference === id ? id : undefined));
+  }
+});
+
 test('ordinary and streamed replies preserve actual success, refusal fields and uncertain failure status', async () => {
   assert.deepEqual(await readManualResponse(Response.json({ saved: true })), { saved: true });
   assert.deepEqual(await readManualResponse(stream(200, { saved: true })), { saved: true });

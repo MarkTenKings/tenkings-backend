@@ -49,3 +49,19 @@ export function requireOwner(row, principal, edit = false) {
   requireThat(row && row.owner_id === principal.id, 404, 'INTAKE_CARD_NOT_FOUND');
   if (edit) requireThat(principal.role === 'REVIEWER', 403, 'INTAKE_CARD_ACCESS_DENIED');
 }
+
+// Operational request bounds do not limit the size of an owner's workspace.
+export function discardSelection(value, withRequest = false) {
+  requireThat(value && typeof value === 'object' && !Array.isArray(value));
+  const allowed = withRequest ? ['requestId', 'scope', 'createRequestIds', 'cardIds'] : ['createRequestIds', 'cardIds'];
+  requireThat(Object.keys(value).every(key => allowed.includes(key)));
+  const ids = name => {
+    const values = value[name] ?? []; requireThat(Array.isArray(values) && values.length <= 100);
+    values.forEach(uuid); return [...new Set(values)].sort();
+  };
+  const selected = { createRequestIds: ids('createRequestIds'), cardIds: ids('cardIds') };
+  if (!withRequest) return immutable(selected);
+  uuid(value.requestId); requireThat(['ALL', 'SELECTED'].includes(value.scope));
+  requireThat(value.scope === 'ALL' || selected.createRequestIds.length + selected.cardIds.length > 0);
+  return immutable({ requestId: value.requestId, scope: value.scope, ...selected });
+}

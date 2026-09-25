@@ -18,6 +18,8 @@ for(const [index,file]of ['atlas-app/components/BatchGrading.module.css','atlas-
  const names={},css=readFileSync(join(root,file),'utf8').replace(/\.([a-zA-Z_][\w-]*)/g,(_,name)=>{names[name]=`s${index}_${name}`;return `.${names[name]}`;});sheets.push(css);modules.set(file,`module.exports=${JSON.stringify(names)};`);
 }
 modules.set('react','module.exports=window.React;');
+// This camera/admission harness isolates deletion-network behavior, qualified separately.
+modules.set('atlas-app/lib/card-discard.mjs',"exports.hasPendingDiscard=()=>false;exports.discardKey=id=>id;exports.discardEvent='discard';exports.createWorkspaceDiscarder=()=>({pending:()=>false,reconcile:async()=>({cardIds:[],createRequestIds:[]})});");
 modules.set('@atlas/manual-intake/client','exports.createBrowserIntakeJournal=()=>({close:async()=>{}});exports.createIntakeClient=()=>({});');
 const manualMessageSource=readFileSync(join(root,'atlas-app/lib/manual-client.mjs'),'utf8').split('export function manualMessage')[1];
 modules.set('atlas-app/lib/manual-client.mjs',`exports.manualMessage=function manualMessage${manualMessageSource};exports.manualRequest=async()=>{window.__requests++;await new Promise(resolve=>window.__release=resolve);throw {status:401,code:'SIGN_IN_REQUIRED'};};`);

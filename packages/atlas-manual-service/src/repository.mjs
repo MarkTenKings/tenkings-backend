@@ -29,7 +29,7 @@ function approvalSnapshot(row) {
 /** No provider/storage/reducer effect is accepted inside these transactions.
  * Brief row locks cover auth/ACL, CAS, action receipt and optional approval.
  */
-export function createManualRepository({ boundary, validateSource = null, validateCommit = null, approvalCommitted = null }) {
+export function createManualRepository({ boundary, validateAccess = null, validateSource = null, validateCommit = null, approvalCommitted = null }) {
   const loadRow = async (tx, cardId, lock = false) => (await tx.$queryRawUnsafe(
     `SELECT * FROM atlas_manual.card WHERE id=$1::uuid${lock ? ' FOR UPDATE' : ''}`, cardId))[0];
   return Object.freeze({
@@ -37,10 +37,11 @@ export function createManualRepository({ boundary, validateSource = null, valida
       uuid(cardId); const document = stateDocument(draft);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         requireThat(principal.role === 'REVIEWER', 403, 'MANUAL_CARD_ACCESS_DENIED');
-        if (validateSource) await validateSource({ tx, principal, cardId, draft: document.draft, initial: true });
         await tx.$executeRawUnsafe(`INSERT INTO atlas_manual.card(id,revision,content,content_hash,owner_id)
           VALUES($1::uuid,1,$2,$3,$4::uuid) ON CONFLICT(id) DO NOTHING`, cardId, document.text, document.hash, principal.id);
         const row = await loadRow(tx, cardId, true); access(row, principal, 'edit');
+        if (validateSource) await validateSource({ tx, principal, cardId, draft: document.draft, initial: true });
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         requireThat(row.owner_id === principal.id && row.revision === 1 && row.content_hash === document.hash, 409, 'MANUAL_CARD_ID_CONFLICT');
         return card(row);
       });
@@ -49,6 +50,7 @@ export function createManualRepository({ boundary, validateSource = null, valida
       uuid(cardId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await loadRow(tx, cardId); access(row, principal);
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         return immutable({ card: card(row), principal });
       });
     },
@@ -56,6 +58,7 @@ export function createManualRepository({ boundary, validateSource = null, valida
       uuid(cardId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await loadRow(tx, cardId); access(row, principal, 'edit');
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         return immutable({ card: card(row), principal });
       });
     },
@@ -63,6 +66,7 @@ export function createManualRepository({ boundary, validateSource = null, valida
       uuid(cardId); const { input: command, requestHash } = inputCommand(input);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await loadRow(tx, cardId); access(row, principal, command.action.type === 'APPROVE_REPORT' ? 'approve' : 'edit');
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         const found = (await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.action WHERE card_id=$1::uuid AND action_id=$2::uuid', cardId, command.actionId))[0];
         return replay(found, principal, requestHash);
       });
@@ -71,6 +75,7 @@ export function createManualRepository({ boundary, validateSource = null, valida
       uuid(cardId); uuid(actionId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await loadRow(tx, cardId); access(row, principal);
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         const found = (await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.action WHERE card_id=$1::uuid AND action_id=$2::uuid', cardId, actionId))[0];
         requireThat(!found || found.actor_id === principal.id, 404, 'MANUAL_ACTION_NOT_FOUND');
         return found ? { state: 'COMMITTED', requestHash: found.request_hash, result: JSON.parse(found.result) }
@@ -81,6 +86,7 @@ export function createManualRepository({ boundary, validateSource = null, valida
       uuid(cardId); uuid(actionId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await loadRow(tx, cardId); access(row, principal);
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         const found = (await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.approval WHERE card_id=$1::uuid AND action_id=$2::uuid', cardId, actionId))[0];
         requireThat(found, 404, 'MANUAL_APPROVAL_NOT_FOUND');
         return approvalSnapshot(found);
@@ -90,6 +96,7 @@ export function createManualRepository({ boundary, validateSource = null, valida
       uuid(cardId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await loadRow(tx, cardId); access(row, principal);
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         const found = (await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.approval WHERE card_id=$1::uuid ORDER BY source_revision DESC LIMIT 1', cardId))[0];
         return approvalSnapshot(found);
       });
@@ -103,6 +110,7 @@ export function createManualRepository({ boundary, validateSource = null, valida
         const row = await loadRow(tx, cardId, true);
         ({ principal, now } = await refresh());
         access(row, principal, report ? 'approve' : 'edit');
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         const found = (await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.action WHERE card_id=$1::uuid AND action_id=$2::uuid', cardId, command.actionId))[0];
         const previous = replay(found, principal, requestHash); if (previous) return previous;
         requireThat(row.revision === command.expectedRevision && row.content_hash === baseHash, 409, 'MANUAL_DRAFT_STALE');

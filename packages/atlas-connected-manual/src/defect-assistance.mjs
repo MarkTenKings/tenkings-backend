@@ -57,10 +57,13 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
   requireThat(!provider || memoryEnabled, 503, 'DEFECT_ANALYSIS_MEMORY_REQUIRED');
   const validateSource = ({ tx, principal, cardId, draft }) => intakeRepository.assertCurrentPair(tx, principal,
     { cardId, sourceHash: draft.source?.sourceHash });
-  const memory = memoryEnabled ? createDefectMemory({ repository: createDefectMemoryRepository({ boundary, validateSource }),
+  const memory = memoryEnabled ? createDefectMemory({ repository: createDefectMemoryRepository({ boundary, validateSource, validateAccess: ({tx,cardId})=>intakeRepository.assertActiveInTransaction(tx,cardId) }),
     hydrate: workflow.hydrate, createExemplar: imageEffects.createExemplar, proposalTrace: proposalRle }) : null;
   const repository = memoryEnabled ? createAnalysisRepository({ boundary, receiptClient,
-    authorize: ({ tx, principal, cardId, edit }) => authorizeManualCard(tx, principal, cardId, { edit }),
+    authorize: async ({ tx, principal, cardId, edit }) => {
+      await authorizeManualCard(tx, principal, cardId, { edit, lock: edit });
+      await intakeRepository.assertActiveInTransaction(tx, cardId);
+    },
     assertCurrent: async ({ tx, principal, cardId, binding }) => {
       const card = await authorizeManualCard(tx, principal, cardId, { edit: true, lock: true,
         expectedContentHash: binding.manualContentHash });
@@ -75,6 +78,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     if (!reader) return { fence: null, offer: null, entries: [] };
     const fence = await boundary.transaction(staff, async ({ tx, principal }) => {
       await authorizeManualCard(tx, principal, card.cardId);
+      await intakeRepository.assertActiveInTransaction(tx, card.cardId);
       return readConfirmationFence(tx, card.cardId);
     });
     if (!fence) return { fence, offer: null, entries: [] };

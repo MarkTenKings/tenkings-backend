@@ -17,13 +17,15 @@ export function createIntakeHandler({ service, boundary, origin, assertRequest }
   const pattern = new RegExp(`^/api/staff/manual-intake/cards(?:/(${id})(?:/(uploads)(?:/(${id})(?:/(sign|complete|prepare|source))?)?)?)?$`);
   return async (req, res) => {
     const url = new URL(req.url, origin), match = pattern.exec(url.pathname);
-    if (!match) return false;
+    const discardAction = /^\/api\/staff\/manual-intake\/cards\/(discard|discard-status)$/.exec(url.pathname)?.[1];
+    if (!match && !discardAction) return false;
     res.setHeader('Cache-Control', 'private, no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
     try {
       await assertRequest(req); requireThat(url.origin === origin, 400, 'INTAKE_REQUEST_INVALID');
-      const [, cardId, uploads, uploadId, action] = match;
+      const [, cardId, uploads, uploadId, action] = match ?? [];
       const write = req.method === 'POST';
       requireThat(write || req.method === 'GET', 405, 'INTAKE_METHOD_NOT_ALLOWED');
+      if (discardAction) requireThat(write, 405, 'INTAKE_METHOD_NOT_ALLOWED');
       const list = !write && !cardId;
       if (list) requireThat([...url.searchParams.keys()].every(key => ['limit', 'cursor'].includes(key))
         && new Set(url.searchParams.keys()).size === [...url.searchParams.keys()].length, 400, 'INTAKE_REQUEST_INVALID');
@@ -35,7 +37,8 @@ export function createIntakeHandler({ service, boundary, origin, assertRequest }
         if (uploadId) object(req.body, []);
       } else requireThat(!uploads || uploadId && (!action || action === 'source'), 405, 'INTAKE_METHOD_NOT_ALLOWED');
       const staff = await boundary.authenticate(req.headers.cookie ?? '', write ? req.headers['x-atlas-csrf'] : undefined);
-      const result = !cardId ? (write ? await service.create(staff, req.body) : await service.list(staff, {
+      const result = discardAction ? await service[discardAction === 'discard' ? 'discard' : 'discardStatus'](staff, req.body)
+        : !cardId ? (write ? await service.create(staff, req.body) : await service.list(staff, {
         limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : 30, cursor: url.searchParams.get('cursor') }))
         : !uploads ? await service.read(staff, cardId)
           : !uploadId ? await service.plan(staff, cardId, req.body)

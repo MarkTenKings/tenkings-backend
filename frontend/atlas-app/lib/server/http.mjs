@@ -1,15 +1,20 @@
 import { BROWSER_COOKIE, SESSION_COOKIE, isBoundaryError, assertLocalRequest, assertWrite, deny, fixtureCookie, identifier, privateHeaders, strictObject } from './policy.mjs';
 import { createGradingResponse } from './grading-response.mjs';
-export function createHandler(resolveRuntime, env = process.env) {
+import { recordApiFailure } from './api-failure.mjs';
+export function createHandler(resolveRuntime, env = process.env, diagnostics = {}) {
     return async function handler(req, res) {
         privateHeaders(res);
-        let gradingResponse;
+        let gradingResponse, stage = 'RUNTIME';
+        const startedAt = Date.now();
         try {
             const state = typeof resolveRuntime === 'function' ? await resolveRuntime(req) : resolveRuntime;
             const { auth, review } = state;
+            stage = 'INGRESS';
             if (state.assertRequest) state.assertRequest(req);
             else assertLocalRequest(req, env);
+            stage = 'MANUAL_PROXY';
             if (state.connectedManual && await state.connectedManual.handler(req,res)) return;
+            stage = 'ROUTE';
             const cookieNames = state.cookies ?? { browser: BROWSER_COOKIE, session: SESSION_COOKIE };
             const serializeCookie = state.cookie ?? fixtureCookie;
             const cardPattern = '(sample-\\d{3}|[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})';
@@ -63,7 +68,9 @@ export function createHandler(resolveRuntime, env = process.env) {
                     deny(413, 'REQUEST_TOO_LARGE');
             }
             let body;
+            stage = 'ACTION';
             if (path === '/api/staff/session') {
+                stage = 'SESSION';
                 const reauthenticate = new URL(req.url, state.origin ?? 'http://127.0.0.1').searchParams.getAll('reauthenticate');
                 const boot = await auth.bootstrap(cookie, client, { reauthenticate: reauthenticate.length === 1 && reauthenticate[0] === '1' });
                 res.setHeader('Set-Cookie', serializeCookie(cookieNames.browser, boot.browserToken, 3600));
@@ -186,6 +193,8 @@ export function createHandler(resolveRuntime, env = process.env) {
         catch (error) {
             const status = isBoundaryError(error) ? error.status : 503;
             const body = { error: isBoundaryError(error) ? error.code : 'TEMPORARILY_UNAVAILABLE' };
+            if (!isBoundaryError(error)) body.reference = recordApiFailure({ error, stage, req,
+                elapsedMs: Date.now() - startedAt, env, ...diagnostics });
             if (isBoundaryError(error) && error.outcome === 'NOT_DISPATCHED') body.outcome = 'NOT_DISPATCHED';
             return gradingResponse?.started ? gradingResponse.finish(status, body) : res.status(status).json(body);
         }

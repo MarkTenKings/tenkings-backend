@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { cookies, deny, equal, hash, identifier, strictObject } from '../policy.mjs';
 import { phoneInput } from '../../phone.mjs';
+import { markAccessFailure } from '../api-failure.mjs';
 
 const MINUTE = 60_000;
 const opaque = () => randomBytes(32).toString('base64url');
@@ -37,18 +38,24 @@ export class DurableStaffAuth {
         return row && row.expiresAt > context.now && row.controlRevision === context.control.revision ? row : null;
     }
     async current(context, sessionHash, browserHash) {
-        const { tx, now, control } = context;
-        const session = await tx.staffSession.findUnique({ where: { tokenHash: sessionHash }, include: { identity: true, browser: true } });
-        if (!session || session.revokedAt || session.expiresAt <= now || session.browserHash !== browserHash
-            || session.controlRevision !== control.revision || session.browser.controlRevision !== control.revision
-            || session.browser.expiresAt <= now) return null;
-        // Holding the identity row prevents a concurrent revocation/role change
-        // from passing the final mutation's authorization check.
-        const rows = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffIdentity" WHERE id = ${session.identityId}::uuid FOR SHARE`;
-        const identity = rows[0];
-        if (!identity || identity.revokedAt || identity.accessVersion !== session.accessVersion
-            || !this.config.phoneByHash.has(identity.phoneHash) || !['REVIEWER', 'OBSERVER'].includes(identity.role)) return null;
-        return { identity, session };
+        let phase = 'SESSION_LOOKUP';
+        try {
+            const { tx, now, control } = context;
+            const session = await tx.staffSession.findUnique({ where: { tokenHash: sessionHash }, include: { identity: true, browser: true } });
+            phase = 'SESSION_RULES';
+            if (!session || session.revokedAt || session.expiresAt <= now || session.browserHash !== browserHash
+                || session.controlRevision !== control.revision || session.browser.controlRevision !== control.revision
+                || session.browser.expiresAt <= now) return null;
+            // Holding the identity row prevents a concurrent revocation/role change
+            // from passing the final mutation's authorization check.
+            phase = 'IDENTITY_LOCK';
+            const rows = await tx.$queryRaw`SELECT * FROM atlas_staff."StaffIdentity" WHERE id = ${session.identityId}::uuid FOR SHARE`;
+            phase = 'IDENTITY_RULES';
+            const identity = rows[0];
+            if (!identity || identity.revokedAt || identity.accessVersion !== session.accessVersion
+                || !this.config.phoneByHash.has(identity.phoneHash) || !['REVIEWER', 'OBSERVER'].includes(identity.role)) return null;
+            return { identity, session };
+        } catch (error) { throw markAccessFailure(error, phase); }
     }
     actor(current, browserHash) {
         const staff = { id: current.identity.id, name: current.identity.name, role: current.identity.role, mode: this.config.mode };

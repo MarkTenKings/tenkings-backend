@@ -55,7 +55,9 @@ test('unconfirmed database failures stay private and retain their pending recove
     ]) {
         const f = fixture(error);
         await assert.rejects(f.invoke, caught => caught === error);
-        assert.deepEqual(await f.http(), { status: 503, body: { error: 'TEMPORARILY_UNAVAILABLE' } });
+        const failed = await f.http();
+        assert.match(failed.body.reference, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+        assert.deepEqual(failed, { status: 503, body: { error: 'TEMPORARILY_UNAVAILABLE', reference: failed.body.reference } });
         assert.equal(isNotDispatched({ code: 'TEMPORARILY_UNAVAILABLE' }), false);
     }
 });

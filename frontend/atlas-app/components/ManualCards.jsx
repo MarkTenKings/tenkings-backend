@@ -19,6 +19,8 @@ import ReportPhotoUploader from './ReportPhotoUploader';
 import ReportMarketPicker from './ReportMarketPicker';
 import ReportResearchPicker from './ReportResearchPicker';
 import DealerOfferPicker from './DealerOfferPicker';
+import {createBrowserBatchImportJournal} from '../lib/batch-import.mjs';
+import {createWorkspaceDiscarder,hasPendingDiscard,discardKey,discardEvent,discardedIdsFromEvent} from '../lib/card-discard.mjs';
 
 const labels={name:'Name',category:'Printed category',manufacturer:'Manufacturer',card_number:'Card number',year:'Year',set_name:'Product / set',variant:'Printed variant',card_type:'Printed card type'};
 const prefix='/api/staff/manual-connected/cards';
@@ -40,18 +42,30 @@ export default function ManualCards({staff,cardId=null}){
   const [nextCursor,setNextCursor]=useState(null);
   const [uploadState,setUploadState]=useState({}),[invalidDetails,setInvalidDetails]=useState({});
   const geometryClient=useRef(null),[geometryError,setGeometryError]=useState(''),[geometryRetry,setGeometryRetry]=useState({});
+  const discarder=useRef(null),leavingDeleted=useRef(false),[deletePending,setDeletePending]=useState(false);
   const commandKey=`atlas-connected-command:${staff.id}:${cardId??'new'}`;
   const dirty=Object.keys(changes).length>0;
-  const request=(path,options={})=>manualRequest(path,{...options,csrf:session.current?.csrf});
+  const request=(path,options={})=>{
+    if(options.method==='POST'&&!/\/discard(?:-status)?$/.test(path)&&hasPendingDiscard(localStorage,staff.id))throw {code:'INTAKE_DISCARD_PENDING'};
+    return manualRequest(path,{...options,csrf:session.current?.csrf});
+  };
   async function refresh(){
     const started=generation.current,sequence=++reads.current.next;
-    if(cardId){const value=await request(`${prefix}/${cardId}`);if(started!==generation.current)return null;
+    if(cardId){let value;try{value=await request(`${prefix}/${cardId}`);}catch(failure){
+      if(failure?.code==='INTAKE_CARD_DELETED'&&started===generation.current){await leaveDeletedCard();return null;}throw failure;
+    }if(started!==generation.current)return null;
       const current=savedRef.current;
       if(current&&(sequence<reads.current.applied||value.card.revision<current.card.revision||value.revision<current.revision||value.manual?.revision<current.manual?.revision))return current;
       reads.current.applied=sequence;savedRef.current=value;setSaved(value);return value;}
-    const result=await client.current.list();if(started===generation.current){setCards(result.cards??[]);setNextCursor(result.nextCursor??null);}
+    const result=await client.current.list();if(started===generation.current&&sequence>=reads.current.applied){reads.current.applied=sequence;setCards(result.cards??[]);setNextCursor(result.nextCursor??null);}
   }
   async function pendingList(){const started=generation.current,sequence=++pendingRead.current,result=await client.current.pending();if(started===generation.current&&sequence===pendingRead.current)setPending(result);}
+  async function leaveDeletedCard(){
+    leavingDeleted.current=true;generation.current++;geometryClient.current?.dispose();
+    savedRef.current=null;changesRef.current={};activity.current=null;uploadLocks.current={};
+    setSaved(null);setChanges({});setBusy('');setUploadState({});setIdentifying(false);setCommandPending(null);setPending([]);
+    await router.replace('/manual');
+  }
   async function attempt(work,label='Saving…'){
     if(activity.current)return;
     const started=generation.current,token={};activity.current=token;
@@ -85,8 +99,8 @@ export default function ManualCards({staff,cardId=null}){
     }
   }
   useEffect(()=>{
-    const started=++generation.current;let stopped=false,journal,ownedClient;
-    savedRef.current=null;changesRef.current={};uploadLocks.current={};activity.current=null;reads.current={next:0,applied:0};
+    const started=++generation.current;let stopped=false,journal,batchJournal,ownedClient,cleanup;
+    savedRef.current=null;changesRef.current={};uploadLocks.current={};activity.current=null;reads.current={next:0,applied:0};leavingDeleted.current=false;
     setSaved(null);setChanges({});setUploadState({});setInvalidDetails({});setBusy('');setError('');setIdentifying(false);setCommandPending(null);setPending([]);setScreen('intake');setLocalReady(false);
     (async()=>{
       const currentSession=await request('/api/staff/session');
@@ -95,19 +109,52 @@ export default function ManualCards({staff,cardId=null}){
       if(currentSession.staff.id!==staff.id)throw {code:'MANUAL_STAFF_CHANGED'};
       session.current=currentSession;
       journal=createBrowserIntakeJournal({staffId:staff.id});
-      ownedClient=createIntakeClient({request:(path,options)=>manualRequest(path,{...options,csrf:currentSession.csrf}),journal});client.current=ownedClient;
+      ownedClient=createIntakeClient({request:(path,options)=>manualRequest(path,{...options,csrf:currentSession.csrf}),journal,isPaused:()=>hasPendingDiscard(localStorage,staff.id)});client.current=ownedClient;
+      batchJournal=createBrowserBatchImportJournal({staffId:staff.id});
+      cleanup=createWorkspaceDiscarder({staffId:staff.id,request,batchJournal,intakeJournal:journal});discarder.current=cleanup;
+      setDeletePending(cleanup.pending());
+      // Status reconciliation retires old device copies, including completed
+      // batch entries that would otherwise never contact the server again.
+      if(cleanup.pending()){await cleanup.recover();if(stopped)return;setDeletePending(cleanup.pending());}
+      else void cleanup.reconcile().then(()=>{if(!stopped)return pendingList();}).catch(failure=>{if(!stopped)setError(manualMessage(failure));});
       setCommandPending(JSON.parse(localStorage.getItem(commandKey)??'null'));setLocalReady(true);await pendingList();if(stopped)return;const result=await refresh();
       if(!stopped&&result?.manual?.current)setScreen('workspace');
     })().catch(error=>{if(!stopped)setError(manualMessage(error));});
-    return()=>{stopped=true;if(generation.current===started)generation.current++;if(client.current===ownedClient)client.current=null;void journal?.close();};
+    return()=>{stopped=true;generation.current++;if(client.current===ownedClient)client.current=null;if(discarder.current===cleanup)discarder.current=null;void journal?.close();void batchJournal?.close();};
   },[cardId,staff.id]);
   useEffect(()=>{
-    if(!saved?.card.ready || saved.manual || saved.identification.state!=='NOT_STARTED' || auto.current.has(saved.card.sourceHash))return;
+    const changed=event=>{
+      if(event.type==='storage'&&event.key!==discardKey(staff.id)||event.detail?.staffId&&event.detail.staffId!==staff.id)return;
+      const pending=hasPendingDiscard(localStorage,staff.id);setDeletePending(pending);
+      const confirmed=discardedIdsFromEvent(event);
+      if(!pending&&client.current&&confirmed){
+        if(cardId&&confirmed.cardIds.includes(cardId)){void leaveDeletedCard().catch(failure=>setError(manualMessage(failure)));return;}
+        // Deleting another card must not invalidate this card's active upload,
+        // edits or finally handlers. Only the dashboard needs a list refresh.
+        void Promise.all([...(cardId?[]:[refresh()]),pendingList()]).catch(failure=>setError(manualMessage(failure)));
+      }
+    };
+    const online=()=>{void discarder.current?.reconcile().then(()=>{setDeletePending(hasPendingDiscard(localStorage,staff.id));return Promise.all([refresh(),pendingList()]);}).catch(failure=>setError(manualMessage(failure)));};
+    window.addEventListener('storage',changed);window.addEventListener(discardEvent,changed);window.addEventListener('online',online);
+    return()=>{window.removeEventListener('storage',changed);window.removeEventListener(discardEvent,changed);window.removeEventListener('online',online);};
+  },[staff.id,cardId]);
+  async function removeCards(selected=null){
+    if(!discarder.current||activity.current||Object.keys(uploadLocks.current).length||staff.role!=='REVIEWER')return;
+    await attempt(async()=>{
+      const result=await discarder.current.discard(selected?{scope:'SELECTED',cardIds:[selected]}:{scope:'ALL'});
+      setDeletePending(false);setPending([]);setCommandPending(null);
+      if(cardId&&result.cardIds.includes(cardId)){if(!leavingDeleted.current)await leaveDeletedCard();}
+      else {await refresh();await pendingList();}
+    },'Deleting cards…').catch(()=>{});
+    setBusy('');setDeletePending(hasPendingDiscard(localStorage,staff.id));
+  }
+  useEffect(()=>{
+    if(deletePending || !saved?.card.ready || saved.manual || saved.identification.state!=='NOT_STARTED' || auto.current.has(saved.card.sourceHash))return;
     const started=generation.current;auto.current.add(saved.card.sourceHash);setIdentifying(true);
     request(`${prefix}/${cardId}/identify`,{method:'POST',body:{}}).then(()=>{if(started===generation.current)return refresh();}).catch(error=>{if(started===generation.current)setError(manualMessage(error));}).finally(()=>{if(started===generation.current)setIdentifying(false);});
-  },[saved?.card.sourceHash,saved?.identification.state,saved?.manual]);
+  },[saved?.card.sourceHash,saved?.identification.state,saved?.manual,deletePending]);
   useEffect(()=>{
-    if(!localReady||!cardId||staff.role!=='REVIEWER'||!savedRef.current?.earlyGeometry)return;
+    if(deletePending||!localReady||!cardId||staff.role!=='REVIEWER'||!savedRef.current?.earlyGeometry)return;
     const started=generation.current;
     const owner=createEarlyGeometryClient({request:body=>request(`${prefix}/${cardId}/geometry`,{method:'POST',body}),
       read:()=>started===generation.current?refresh():null,
@@ -117,11 +164,11 @@ export default function ManualCards({staff,cardId=null}){
     void owner.ensure(savedRef.current);
     const timer=setInterval(()=>void owner.poll(savedRef.current),2000);
     return()=>{owner.dispose();clearInterval(timer);if(geometryClient.current===owner)geometryClient.current=null;};
-  },[localReady,cardId,staff.id,staff.role,Boolean(saved?.earlyGeometry)]);
+  },[localReady,cardId,staff.id,staff.role,Boolean(saved?.earlyGeometry),deletePending]);
   useEffect(()=>{void geometryClient.current?.ensure(saved);},[earlyGeometryIdentity(saved)]);
   useEffect(()=>{
-    if(!dirty)return;const warn=event=>{event.preventDefault();event.returnValue='';};
-    const block=()=>{if(!window.confirm('Discard the unsaved card details?')){router.events.emit('routeChangeError');throw 'Unsaved card details';}};
+    if(!dirty)return;const warn=event=>{if(leavingDeleted.current)return;event.preventDefault();event.returnValue='';};
+    const block=()=>{if(leavingDeleted.current)return;if(!window.confirm('Discard the unsaved card details?')){router.events.emit('routeChangeError');throw 'Unsaved card details';}};
     window.addEventListener('beforeunload',warn);router.events.on('routeChangeStart',block);
     return()=>{window.removeEventListener('beforeunload',warn);router.events.off('routeChangeStart',block);};
   },[dirty,router]);
@@ -194,6 +241,7 @@ export default function ManualCards({staff,cardId=null}){
     finally{if(started===generation.current)setGeometryRetry(old=>({...old,[side]:false}));}
   }
   return <Shell staff={staff} title="Manual grading" manual><div className="mc-page">
+    {deletePending&&<section className="mc-notice"><p>A saved deletion is waiting for confirmation. Uploads are paused; originals stay on this device until ATLAS confirms.</p><button disabled={Boolean(busy)||uploading} onClick={()=>void removeCards()}>Finish saved deletion</button></section>}
     {error&&<div className="mc-notice error" role="alert">{error} <button onClick={()=>perform(()=>refresh(),'Loading saved card…')}>Reload saved state</button></div>}
     {busy&&<p role="status">{busy}</p>}
     {commandPending&&!busy&&<section className="mc-notice"><p>A saved request needs confirmation. Resume it before making another change.</p><button disabled={uploading} onClick={()=>perform(resumeCommand,'Checking the saved request…')}>Resume saved request</button></section>}
@@ -203,12 +251,12 @@ export default function ManualCards({staff,cardId=null}){
     </div>)}</section>}
     {!cardId?<>
       <header className="mc-heading mc-dashboard-heading"><div><p className="mc-kicker">THE ATLAS GRADING STUDIO</p><h1>Every card.<br/><em>A clearer story.</em></h1><p>Your cards, from the first photograph to a fully explained final grade.</p></div>
-        {staff.role==='REVIEWER'&&<Link className="primary" href="/batch?tab=INTAKE">+ Add cards</Link>}</header>
+        {staff.role==='REVIEWER'&&<div className="mc-actions"><Link className="primary" href="/batch?tab=INTAKE">+ Add cards</Link><button disabled={!localReady||Boolean(busy)||uploading} onClick={()=>void removeCards()}>Delete all cards</button></div>}</header>
       <div className="mc-section-title"><h2>Your cards</h2><span>{cards.length}{nextCursor?'+':''} in this view</span></div>
       <div className="mc-card-list">{cards.map(card=><Link href={`/manual/${card.cardId}`} key={card.cardId}><span className="mc-card-monogram" aria-hidden="true">A<span>↗</span></span><strong>{card.label||'Untitled card'}</strong><span className="mc-card-photostatus"><i data-ready={Boolean(card.sides.FRONT.upload?.source)}>Front {card.sides.FRONT.upload?.source?'ready':'needed'}</i><i data-ready={Boolean(card.sides.BACK.upload?.source)}>Back {card.sides.BACK.upload?.source?'ready':'needed'}</i></span><small>{new Date(card.createdAt).toLocaleString()}</small></Link>)}{localReady&&!cards.length&&<div className="mc-empty-collection"><span aria-hidden="true">✧</span><h3>Your next discovery starts here.</h3><p>Add Front and Back photos to the queue. ATLAS starts preparing and grading each card automatically.</p></div>}</div>
       {nextCursor&&<div className="mc-actions"><button disabled={Boolean(busy)} onClick={()=>perform(async()=>{const result=await client.current.list({cursor:nextCursor});setCards(old=>[...old,...result.cards.filter(card=>!old.some(value=>value.cardId===card.cardId))]);setNextCursor(result.nextCursor);},'Loading older cards…')}>Load more cards</button></div>}
-    </>:!saved?<p role="status">Loading saved card…</p>:screen==='workspace'&&saved.manual?.current?<ManualWorkspace key={`${staff.id}:${cardId}`} staff={staff} cardId={cardId} csrf={session.current.csrf} onPhotos={()=>{setScreen('intake');perform(()=>refresh(),'Loading saved photos…');}}/>:<>
-      <header className="mc-heading"><div><Link className="mc-back" href="/manual">← All cards</Link><p className="mc-kicker">01 / PHOTOGRAPHS &amp; IDENTITY</p><h1>{saved.card.label||'New card'}</h1><p>Choose the original Front and Back photographs. Edge detection starts automatically as each photo becomes ready.</p></div>{saved.manual?.current&&<button className="primary" disabled={Boolean(busy)||uploading||pendingPhotos} onClick={()=>setScreen('workspace')}>Return to review</button>}</header>
+    </>:deletePending?<p role="status">Finish the saved deletion to continue.</p>:!saved?<p role="status">Loading saved card…</p>:screen==='workspace'&&saved.manual?.current?<ManualWorkspace key={`${staff.id}:${cardId}`} staff={staff} cardId={cardId} csrf={session.current.csrf} onPhotos={()=>{setScreen('intake');perform(()=>refresh(),'Loading saved photos…');}}/>:<>
+      <header className="mc-heading"><div><Link className="mc-back" href="/manual">← All cards</Link>{staff.role==='REVIEWER'&&<button className="mc-delete-card" disabled={Boolean(busy)||uploading} onClick={()=>void removeCards(cardId)}>Delete this card</button>}<p className="mc-kicker">01 / PHOTOGRAPHS &amp; IDENTITY</p><h1>{saved.card.label||'New card'}</h1><p>Choose the original Front and Back photographs. Edge detection starts automatically as each photo becomes ready.</p></div>{saved.manual?.current&&<button className="primary" disabled={Boolean(busy)||uploading||pendingPhotos} onClick={()=>setScreen('workspace')}>Return to review</button>}</header>
       <ol className="mc-journey" aria-label="Grading journey"><li aria-current="step"><b>01</b><span>Capture<small>Original photographs</small></span></li><li><b>02</b><span>Measure<small>Edges &amp; centering</small></span></li><li><b>03</b><span>Inspect<small>Every finding</small></span></li><li><b>04</b><span>Explain<small>The final report</small></span></li></ol>
       {geometryError&&<div className="mc-notice" role="status">Geometry status could not be refreshed. {geometryError} <button onClick={()=>perform(()=>refresh(),'Checking geometry…')}>Refresh geometry status</button></div>}
       <section className="mc-photo-pair">{['FRONT','BACK'].map(side=>{const slot=saved.card.sides[side],sideName=side==='FRONT'?'Front':'Back';

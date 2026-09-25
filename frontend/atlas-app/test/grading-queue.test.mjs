@@ -142,7 +142,9 @@ test('assigned-report reads remain available with no processing runtime and neve
     }
     assert.deepEqual(await get(), { status: 200, body: { cards: [] } });
     failure = new Error('Private database failure that must not reach the browser');
-    assert.deepEqual(await get(), { status: 503, body: { error: 'TEMPORARILY_UNAVAILABLE' } });
+    const failed = await get();
+    assert.match(failed.body.reference, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+    assert.deepEqual(failed, { status: 503, body: { error: 'TEMPORARILY_UNAVAILABLE', reference: failed.body.reference } });
     failure = null;
     assert.deepEqual(await get(), { status: 200, body: { cards: [] } });
     assert.deepEqual(await get('expired-session'), { status: 401, body: { error: 'SIGN_IN_REQUIRED' } });

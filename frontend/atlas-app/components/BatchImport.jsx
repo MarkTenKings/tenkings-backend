@@ -3,6 +3,7 @@ import { createBrowserIntakeJournal, createIntakeClient } from '@atlas/manual-in
 import RapidCardCamera from '../../atlas-shared/RapidCardCamera.jsx';
 import { batchImportDiagnostics, batchImportFailureDetails, createBatchImporter, createBrowserBatchImportJournal, previewOrderedBatchPhotos } from '../lib/batch-import.mjs';
 import { manualRequest, manualMessage } from '../lib/manual-client.mjs';
+import { createWorkspaceDiscarder, hasPendingDiscard, discardKey, discardEvent, discardedIdsFromEvent } from '../lib/card-discard.mjs';
 import styles from './BatchGrading.module.css';
 const copy={BATCH_IMPORT_COUNT:'Choose Front and Back photos for up to 100 cards at a time.',BATCH_IMPORT_PAIR_NAMES:'For bulk import, name each pair card-name_front.jpg and card-name_back.jpg. Use the two photo slots for any filenames.',BATCH_IMPORT_MISSING_SIDE:'Each bulk card needs a matching Front and Back file.',BATCH_IMPORT_DUPLICATE_SIDE:'Two files claim the same side. Give every physical card its own name.',BATCH_IMPORT_PENDING:'Resume the saved upload first.',BATCH_IMPORT_BUSY:'Batch intake is open in another tab. Use that tab or close it and reload this page.',BATCH_IMPORT_STORAGE:'This browser could not finish saving the photo. Keep this tab and its saved uploads, then resume.',PHOTO_STORAGE_QUOTA:'This device reported full storage. Free device space without clearing this site’s saved data, then resume.',PHOTO_BYTES_UNREADABLE:'This browser could not read a saved original. Keep the saved uploads here and try Resume saved uploads.',PHOTO_BYTES_INVALID:'The original photo bytes could not be verified. Your saved record is kept.',PHOTO_STORAGE_CORRUPT:'This browser could not verify a saved photo record. Keep your saved uploads here.',BATCH_IMPORT_SIDE_SAVED:'This side is already saved. Capture the other side of the same card.',BATCH_IMPORT_PAIR_FILES:'Choose an original photo under 64 MiB.',BATCH_IMPORT_ORDER_COUNT:'Choose an even number of photos, up to 100 Front/Back pairs. Review their order before adding them.'};
 const emptyPair=()=>({FRONT:null,BACK:null});
@@ -14,15 +15,17 @@ export function batchUploadPresentation(item,jobs=[]){
   if(job.state==='NEEDS_ATTENTION')return {label:({BATCH_GEOMETRY_NEEDS_REVIEW:'Check edges before grading',BATCH_IDENTITY_NEEDS_REVIEW:'Check card details before grading',BATCH_HUMAN_WORK_PRESENT:'Continue your review'})[job.code]??'Needs attention · Open card',attention:true};
   return {label:job.state==='RUNNING'?({PREPARE:'ATLAS preparing',ANALYZE:'ATLAS grading',REPORT:'ATLAS preparing report'})[job.stage]??'ATLAS processing':({QUEUED:'Queued up for ATLAS',REVIEW:'Ready for human review',APPROVED:'Approved',SUPERSEDED:'Photos changed · Review card'})[job.state]??'Uploaded to ATLAS',attention:false};
 }
-export default function BatchImport({staff,onImported,enabled,jobs=[],onOpenCard}){
+export default function BatchImport({staff,onImported,enabled,jobs=[],onOpenCard,onDiscarded,onDeleteControls}){
   const importer=useRef(null),notify=useRef(onImported),lifetime=useRef(null),selection=useRef(emptyPair()),staging=useRef(false),recovered=useRef(false);
   notify.current=onImported;
   const [batch,setBatch]=useState(null),[error,setError]=useState(''),[ready,setReady]=useState(false),[saving,setSaving]=useState(false),[resuming,setResuming]=useState(false);
   const [pair,setPair]=useState(emptyPair),[message,setMessage]=useState(''),[camera,setCamera]=useState(false),[ordered,setOrdered]=useState(null);
   const refreshSession=useRef(null);
+  const discarder=useRef(null),discarded=useRef(onDiscarded),[deleting,setDeleting]=useState(false),[deletePending,setDeletePending]=useState(false);
+  discarded.current=onDiscarded;
   useEffect(()=>{
     const token={};lifetime.current=token;let stopped=false,batchJournal,intakeJournal,owner,release;
-    setReady(false);setBatch(null);setError('');setSaving(false);setResuming(false);setMessage('');selection.current=emptyPair();setPair(selection.current);staging.current=false;recovered.current=false;
+    setReady(false);setBatch(null);setError('');setSaving(false);setResuming(false);setDeleting(false);setDeletePending(hasPendingDiscard(localStorage,staff.id));setMessage('');selection.current=emptyPair();setPair(selection.current);staging.current=false;recovered.current=false;
     const current=()=>!stopped&&lifetime.current===token;
     (async()=>{
       // Local admission is bound to the authenticated page's staff ID. A slow
@@ -38,24 +41,27 @@ export default function BatchImport({staff,onImported,enabled,jobs=[],onOpenCard
         const held=new Promise(resolve=>{release=resolve;});
         const request=async(path,options={})=>{const access=await session();return manualRequest(path,{...options,csrf:access.csrf});};
         batchJournal=createBrowserBatchImportJournal({staffId:staff.id});intakeJournal=createBrowserIntakeJournal({staffId:staff.id});
-        owner=createBatchImporter({request,intake:createIntakeClient({request,journal:intakeJournal}),journal:batchJournal,
+        const isPaused=()=>hasPendingDiscard(localStorage,staff.id);
+        owner=createBatchImporter({request,intake:createIntakeClient({request,journal:intakeJournal,isPaused}),journal:batchJournal,isPaused,
           onProgress:value=>{if(current()){setBatch(value);selection.current={...emptyPair(),...value?.draft?.files};setPair(selection.current);}},onQueued:()=>{if(current())void Promise.resolve(notify.current?.()).catch(()=>{});}});
-        importer.current=owner;const saved=await owner.read();if(!current())return;
+        importer.current=owner;
+        discarder.current=createWorkspaceDiscarder({staffId:staff.id,request,batchJournal,intakeJournal,pause:()=>owner.pauseForDiscard(),resume:()=>owner.resumeAfterDiscard()});
+        const saved=await owner.read();if(!current())return;
         setBatch(saved);selection.current={...emptyPair(),...saved?.draft?.files};setPair(selection.current);setReady(true);
         await held;
       });
     })().catch(failure=>{if(current())setError(copy[failure.code]??manualMessage(failure));});
-    return()=>{stopped=true;if(lifetime.current===token)lifetime.current=null;if(importer.current===owner)importer.current=null;
+    return()=>{stopped=true;if(lifetime.current===token)lifetime.current=null;if(importer.current===owner){importer.current=null;discarder.current=null;}
       void Promise.resolve(owner?.dispose()).then(()=>Promise.all([batchJournal?.close(),intakeJournal?.close()])).catch(()=>{}).finally(()=>release?.());};
   },[staff.id]);
   useEffect(()=>{
     if(!ready||!enabled||staff.role!=='REVIEWER'||recovered.current||!importer.current)return;
     recovered.current=true;const token=lifetime.current,owner=importer.current;
-    void owner.read().then(saved=>{if(lifetime.current===token&&saved?.items.some(item=>!item.done))return owner.run();})
+    void reconcile().then(()=>owner.read()).then(saved=>{if(lifetime.current===token&&!hasPendingDiscard(localStorage,staff.id)&&saved?.items.some(item=>!item.done))return owner.run();})
       .catch(failure=>{if(lifetime.current===token)setError(copy[failure.code]??manualMessage(failure));});
   },[ready,enabled,staff.role]);
   async function append(work){
-    if(staging.current||!ready||!enabled||staff.role!=='REVIEWER'||!importer.current)return;
+    if(staging.current||deleting||deletePending||!ready||!enabled||staff.role!=='REVIEWER'||!importer.current)return;
     staging.current=true;setSaving(true);setError('');const token=lifetime.current,owner=importer.current;
     try{
       await work(owner);
@@ -66,7 +72,7 @@ export default function BatchImport({staff,onImported,enabled,jobs=[],onOpenCard
     finally{if(lifetime.current===token){staging.current=false;setSaving(false);}}
   }
   async function choose(side,file,acquisition=null){
-    if(!file||staging.current||!ready||!enabled||staff.role!=='REVIEWER'||!importer.current)throw new Error('Wait for this device to finish saving your previous photo.');
+    if(!file||staging.current||deleting||deletePending||!ready||!enabled||staff.role!=='REVIEWER'||!importer.current)throw new Error('Wait for this device to finish saving your previous photo.');
     staging.current=true;setSaving(true);setError('');const token=lifetime.current,owner=importer.current;
     try{
       const value=await owner.saveSide(side,file,acquisition);
@@ -79,9 +85,40 @@ export default function BatchImport({staff,onImported,enabled,jobs=[],onOpenCard
   }
   function reviewOrder(files){try{previewOrderedBatchPhotos(files);setOrdered(files);setError('');}catch(failure){setError(copy[failure.code]??manualMessage(failure));}}
   function movePhoto(index,offset){setOrdered(files=>{const next=[...files],target=index+offset;if(target<0||target>=next.length)return files;[next[index],next[target]]=[next[target],next[index]];return next;});}
-  useEffect(()=>{const reconnect=()=>{if(ready&&enabled&&staff.role==='REVIEWER'){refreshSession.current?.();void importer.current?.run().catch(failure=>setError(copy[failure.code]??manualMessage(failure)));}};window.addEventListener('online',reconnect);return()=>window.removeEventListener('online',reconnect);},[ready,enabled,staff.role]);
+  async function reconcile(){
+    const owner=importer.current,cleanup=discarder.current,token=lifetime.current;if(!owner||!cleanup)return;
+    const result=await cleanup.reconcile();if(lifetime.current!==token)return;
+    await owner.refresh();setDeletePending(cleanup.pending());
+    if(result?.cardIds.length||result?.createRequestIds.length){discarded.current?.(result);await notify.current?.();}
+    return result;
+  }
+  useEffect(()=>{
+    const reconnect=()=>{if(ready&&enabled&&staff.role==='REVIEWER'){refreshSession.current?.();void reconcile().then(()=>importer.current?.run()).catch(failure=>setError(copy[failure.code]??manualMessage(failure)));}};
+    const changed=event=>{if(event.type==='storage'&&event.key!==discardKey(staff.id)||event.detail?.staffId&&event.detail.staffId!==staff.id)return;
+      const pending=hasPendingDiscard(localStorage,staff.id);setDeletePending(pending);
+      if(pending){setCamera(false);void importer.current?.pauseForDiscard();}
+      else {importer.current?.resumeAfterDiscard();void importer.current?.refresh().catch(()=>{});
+        const confirmed=discardedIdsFromEvent(event);if(confirmed){discarded.current?.(confirmed);void Promise.resolve(notify.current?.()).catch(()=>{});}}
+    };
+    window.addEventListener('online',reconnect);window.addEventListener('storage',changed);window.addEventListener(discardEvent,changed);
+    return()=>{window.removeEventListener('online',reconnect);window.removeEventListener('storage',changed);window.removeEventListener(discardEvent,changed);};
+  },[ready,enabled,staff.id,staff.role]);
+  async function removeCards(item=null){
+    const owner=importer.current,cleanup=discarder.current,token=lifetime.current;
+    if(!owner||!cleanup||deleting||saving||staff.role!=='REVIEWER')return;
+    setDeleting(true);setCamera(false);setError('');
+    try{
+      refreshSession.current?.();
+      const result=await cleanup.discard(item?{scope:'SELECTED',createRequestIds:[item.createId],cardIds:item.cardId?[item.cardId]:[]}:{scope:'ALL'});
+      if(lifetime.current!==token)return;
+      await owner.refresh();setOrdered(null);setMessage(item?'Card deleted from your workspace and this device.':'All cards deleted from your workspace and this device.');
+      discarded.current?.(result);await notify.current?.();
+    }catch(failure){if(lifetime.current===token)setError(copy[failure.code]??manualMessage(failure));}
+    finally{if(lifetime.current===token){setDeleting(false);setDeletePending(cleanup.pending());}}
+  }
+  useEffect(()=>{onDeleteControls?.({removeAll:()=>removeCards(),busy:deleting,pending:deletePending,disabled:!discarder.current||saving||deleting||staff.role!=='REVIEWER'});},[onDeleteControls,ready,saving,deleting,deletePending,staff.role,error]);
   async function resume(){
-    if(resuming||!ready||!enabled||staff.role!=='REVIEWER'||!importer.current)return;setResuming(true);setError('');const token=lifetime.current,owner=importer.current;
+    if(resuming||deleting||deletePending||!ready||!enabled||staff.role!=='REVIEWER'||!importer.current)return;setResuming(true);setError('');const token=lifetime.current,owner=importer.current;
     try{refreshSession.current?.();await owner.whenIdle();await owner.run();await notify.current?.();}catch(failure){if(lifetime.current===token)setError(copy[failure.code]??manualMessage(failure));}
     finally{if(lifetime.current===token)setResuming(false);}
   }
@@ -93,7 +130,7 @@ export default function BatchImport({staff,onImported,enabled,jobs=[],onOpenCard
     }catch(failure){setError(copy[failure.code]??manualMessage(failure));}
   }
   const done=batch?.items.filter(item=>item.done).length??0,total=batch?.items.length??0;
-  const disabled=!ready||!enabled||saving||staff.role!=='REVIEWER',attention=batch?.items.some(item=>!item.done&&item.code);
+  const disabled=!ready||!enabled||saving||deleting||deletePending||staff.role!=='REVIEWER',attention=batch?.items.some(item=>!item.done&&item.code);
   return <section className={styles.importer} aria-label="Automatic batch photo intake">
     <div className={styles.importHeading}><div><p className={styles.captureEyebrow}>CAPTURE. FLIP. NEXT.</p><h2>Your cards. On repeat.</h2><p>Front, back, next card. Uploading and identification keep working while you capture.</p></div></div>
     <div className={styles.rapidLaunch}><div className={styles.captureIcon} aria-hidden="true"><span>＋</span></div><div><h3>Rapid capture</h3><p>One camera. Every card. No filenames to change.</p><small>Both sides save on this device before the next card opens.</small></div><button type="button" className={styles.primary} disabled={disabled} onClick={()=>{void navigator.storage?.persist?.().catch(()=>{});setCamera(true);}}>Open camera <span aria-hidden="true">↗</span></button></div>
@@ -114,9 +151,11 @@ export default function BatchImport({staff,onImported,enabled,jobs=[],onOpenCard
       <div className={styles.orderActions}><button type="button" disabled={disabled} className={styles.primary} onClick={()=>void append(async owner=>{await owner.appendReviewedPairs(previewOrderedBatchPhotos(ordered));setOrdered(null);})}>Confirm {ordered.length/2} card pairs</button><button type="button" disabled={saving} onClick={()=>setOrdered(null)}>Cancel selection</button></div></section>}
     <details className={styles.namedImport}><summary>Have files already named Front and Back?</summary><p>Optional: match <code>card-01_front</code> with <code>card-01_back</code> automatically, up to 100 cards.</p><label className={styles.fileButton}>Choose named pairs<input aria-label="Choose named bulk photos" type="file" multiple accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" disabled={disabled} onChange={event=>{const files=[...event.target.files];event.target.value='';if(files.length)void append(owner=>owner.append(files));}}/></label></details>
     {error&&<p className={styles.error} role="alert">{error}</p>}
+    {deletePending&&<p role="status">Deletion is saved. Uploads are paused until ATLAS confirms it. Your originals stay on this device until then.</p>}
+    {staff.role==='REVIEWER'&&<div className={styles.deleteActions}><button type="button" disabled={!discarder.current||saving||deleting} onClick={()=>void removeCards()}>{deleting?'Deleting cards…':deletePending?'Finish saved deletion':'Delete all cards'}</button><small>Removes cards from your workspace and clears their saved photos on this device. Recorded history is retained.</small></div>}
     {batch&&<><div className={styles.intakeBar}><span aria-live="polite">{done} uploaded to ATLAS · {total-done} saved for upload</span>
-      {attention&&<button type="button" disabled={resuming||!ready||!enabled||staff.role!=='REVIEWER'} onClick={()=>void resume()}>{resuming?'Checking saved uploads…':'Resume saved uploads'}</button>}</div>
-      <div className={styles.pairRoster}>{batch.items.slice(-100).map(item=>{const failure=batchImportFailureDetails(item),progress=batchUploadPresentation(item,jobs);return <div key={item.createId}><span>{progress.attention?'!':item.done?'✓':'·'}</span><strong>{item.label}</strong><small className={failure||progress.attention?styles.pairFailure:undefined}>{progress.label}{failure&&<code>{failure.code}{failure.phase!=='UNKNOWN'?` · ${failure.phase}`:''}{failure.exceptionName!=='Error'?` · ${failure.exceptionName}`:''}</code>}</small>{item.done&&item.cardId&&onOpenCard&&<button type="button" className={styles.pairOpen} onClick={()=>onOpenCard(item.cardId)}>{progress.attention?'Review card':'View card'} ↗</button>}</div>;})}</div>
+      {attention&&<button type="button" disabled={resuming||disabled} onClick={()=>void resume()}>{resuming?'Checking saved uploads…':'Resume saved uploads'}</button>}</div>
+      <div className={styles.pairRoster}>{batch.items.slice(-100).map(item=>{const failure=batchImportFailureDetails(item),progress=batchUploadPresentation(item,jobs);return <div key={item.createId}><span>{progress.attention?'!':item.done?'✓':'·'}</span><strong>{item.label}</strong><small className={failure||progress.attention?styles.pairFailure:undefined}>{progress.label}{failure&&<code>{failure.code}{failure.phase!=='UNKNOWN'?` · ${failure.phase}`:''}{failure.exceptionName!=='Error'?` · ${failure.exceptionName}`:''}</code>}</small>{item.done&&item.cardId&&onOpenCard&&<button type="button" className={styles.pairOpen} onClick={()=>onOpenCard(item.cardId)}>{progress.attention?'Review card':'View card'} ↗</button>}{staff.role==='REVIEWER'&&<button type="button" className={styles.deleteButton} disabled={disabled} aria-label={`Delete ${item.label}`} onClick={()=>void removeCards(item)}>Delete</button>}</div>;})}</div>
       <details className={styles.uploadDiagnostics}><summary>Upload diagnostics</summary><p>Download saved progress and error details for troubleshooting. No photos, filenames, or sign-in credentials are included.</p><button type="button" disabled={!ready} onClick={()=>void downloadDiagnostics()}>Download upload diagnostics</button></details></>}
   </section>;
 }

@@ -4,7 +4,7 @@ export function researchGrantSQL(role,receiptRole=role){
   return `GRANT SELECT,INSERT ON atlas_manual.research_effect TO "${role}";\nGRANT EXECUTE ON FUNCTION atlas_manual.append_research_receipt(uuid,uuid,integer,text,text,text) TO "${receiptRole}";`;
 }
 const parse=row=>{requireThat(digest(row.evidence)===row.evidence_hash,503,'RESEARCH_RECEIPT_CORRUPT');return {...row,evidence:JSON.parse(row.evidence)};};
-export function createResearchJournal({boundary,repository,receiptClient}) {
+export function createResearchJournal({boundary,repository,receiptClient,validateAccess=null}) {
   requireThat(typeof receiptClient?.$queryRawUnsafe==='function',503,'RESEARCH_RECEIPT_STORE_REQUIRED');
   async function access(staff,cardId,requestId,work){
     await repository.market(staff,cardId,requestId);
@@ -15,7 +15,9 @@ export function createResearchJournal({boundary,repository,receiptClient}) {
         AND (c.owner_id=$3::uuid OR $3::uuid=ANY(c.approvers))
         AND m.approval_action_id=(SELECT CASE WHEN p.state='PUBLISHED' THEN p.action_id ELSE NULL END FROM atlas_manual.publication p WHERE p.card_id=m.card_id ORDER BY p.version DESC LIMIT 1)
         FOR UPDATE OF m`,cardId,requestId,principal.id);
-      requireThat(principal.role==='REVIEWER'&&parent,403,'RESEARCH_ACCESS_DENIED');return work(tx,parent);
+      requireThat(principal.role==='REVIEWER'&&parent,403,'RESEARCH_ACCESS_DENIED');
+      if(validateAccess)await validateAccess({tx,principal,cardId});
+      return work(tx,parent);
     });
   }
   async function put(tx,cardId,requestId,sequence,event,requestHash,evidence){

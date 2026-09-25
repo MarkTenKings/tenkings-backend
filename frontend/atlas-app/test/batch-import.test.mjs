@@ -259,7 +259,8 @@ test('local hash failure retains exact card intent and safe stage/native name; r
   } } } }), owner = f.importer();
   await owner.appendPair(file('private-front.jpg'), file('private-back.jpg')); await owner.whenIdle();
   const before = (await owner.read()).items[0];
-  assert.deepEqual(batchImportFailureDetails(before), { code: 'BATCH_IMPORT_INTERRUPTED', phase: 'HASH_FRONT_BYTES', exceptionName: 'OperationError' });
+  const details=batchImportFailureDetails(before);assert.ok(Number.isFinite(Date.parse(details.at)));
+  assert.deepEqual({...details,at:undefined}, { code: 'BATCH_IMPORT_INTERRUPTED', phase: 'HASH_FRONT_BYTES', exceptionName: 'OperationError',at:undefined });
   assert(before.files.FRONT instanceof Blob); assert.equal(f.creates.size, 1); assert.equal(f.uploads.length, 0);
   assert.equal(JSON.stringify(before).includes('PRIVATE RAW ERROR'), false);
   failing = false; await owner.run(); const after = (await owner.read()).items[0];
@@ -275,4 +276,19 @@ test('diagnostic export allowlists metadata and strips photo/name/hash/authority
   assert.deepEqual(batchImportFailureDetails({code:'PRIVATE EXCEPTION MESSAGE',failure:{phase:'PRIVATE PHASE',exceptionName:'PRIVATE NATIVE MESSAGE'}}),{code:'BATCH_IMPORT_INTERRUPTED',phase:'UNKNOWN',exceptionName:'Error'});
   assert.deepEqual(batchImportFailureDetails({code:'PHOTO_HDR_UNSUPPORTED'}),{code:'PHOTO_HDR_UNSUPPORTED',phase:'UNKNOWN',exceptionName:'Error'});
   assert.equal(batchImportFailureDetails({code:{toString:()=> 'PHOTO_HDR_UNSUPPORTED',private:'secret'}}).code,'BATCH_IMPORT_INTERRUPTED');
+});
+
+test('export includes only a bounded HTTP status, UTC failure time and opaque request reference',()=>{
+ const reference=randomUUID(),at='2026-09-25T06:00:00.123Z';
+ assert.deepEqual(batchImportFailureDetails({code:'TEMPORARILY_UNAVAILABLE',failure:{phase:'CREATE_CARD',exceptionName:'Error',status:503,at,reference,url:'PRIVATE'}}),
+ {code:'TEMPORARILY_UNAVAILABLE',phase:'CREATE_CARD',exceptionName:'Error',status:503,at,reference});
+ const value=batchImportFailureDetails({code:'BATCH_IMPORT_INTERRUPTED',failure:{status:999,at:'PRIVATE TIME',reference:'PRIVATE TOKEN'}});
+ assert.deepEqual(value,{code:'BATCH_IMPORT_INTERRUPTED',phase:'UNKNOWN',exceptionName:'Error'});
+});
+test('a processing status pause still admits the next original locally while a pending deletion blocks admission',async()=>{
+ let deleting=false;const f=fixture({isPaused:()=>deleting}),owner=f.importer();await owner.pauseForDiscard();
+ await owner.saveSide('FRONT',file('front.jpg'));assert.equal(f.creates.size,0);
+ deleting=true;await assert.rejects(owner.saveSide('BACK',file('back.jpg')),{code:'BATCH_IMPORT_BUSY'});
+ assert.equal((await owner.read()).draft.files.BACK,undefined);deleting=false;owner.resumeAfterDiscard();
+ await owner.saveSide('BACK',file('back.jpg'));await owner.whenIdle();assert.equal(f.creates.size,1);
 });

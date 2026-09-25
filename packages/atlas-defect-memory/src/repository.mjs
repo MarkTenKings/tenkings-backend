@@ -63,7 +63,7 @@ function validateBundle(bundle, confirmation) {
 /** One append-only publication table in the existing manual database. The
  * existing immutable action is the durable outbox; no best-effort enqueue can
  * lose an already confirmed review. Never call a provider/storage effect here. */
-export function createDefectMemoryRepository({ boundary, validateSource = null }) {
+export function createDefectMemoryRepository({ boundary, validateSource = null, validateAccess = null }) {
   const rowFor = async (tx, cardId, lock = false) => (await tx.$queryRawUnsafe(
     `SELECT * FROM atlas_manual.card WHERE id=$1::uuid${lock ? ' FOR UPDATE' : ''}`, cardId))[0];
   const actionFor = async (tx, cardId, actionId = null) => (await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual.action
@@ -83,6 +83,7 @@ export function createDefectMemoryRepository({ boundary, validateSource = null }
       uuid(cardId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await rowFor(tx, cardId); access(row, principal);
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         const saved = card(row); if (validateSource) await validateSource({ tx, principal, cardId, draft: saved.draft });
         return immutable(saved);
       });
@@ -91,6 +92,7 @@ export function createDefectMemoryRepository({ boundary, validateSource = null }
       uuid(cardId); if (actionId) uuid(actionId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await rowFor(tx, cardId); access(row, principal, false);
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         const latest = await actionFor(tx, cardId);
         if (!latest) return { status: 'NO_CONFIRMED_FINDINGS', cardId, actionId: null };
         if (actionId && actionId !== latest.action_id) {
@@ -107,6 +109,7 @@ export function createDefectMemoryRepository({ boundary, validateSource = null }
       uuid(cardId); uuid(actionId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await rowFor(tx, cardId); access(row, principal);
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         const action = await actionFor(tx, cardId, actionId), confirmation = confirmed(action);
         requireThat(action.actor_id === principal.id, 403, 'MEMORY_CONFIRMER_REQUIRED');
         const latest = await actionFor(tx, cardId);
@@ -125,6 +128,7 @@ export function createDefectMemoryRepository({ boundary, validateSource = null }
       const { cardId } = confirmation.card; uuid(cardId); uuid(confirmation.actionId);
       return boundary.transaction(staff, async ({ tx, principal, refresh }) => {
         const row = await rowFor(tx, cardId, true); ({ principal } = await refresh()); access(row, principal);
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         const sourceAction = await actionFor(tx, cardId, confirmation.actionId), actual = confirmed(sourceAction);
         requireThat(actual.actorId === principal.id, 403, 'MEMORY_CONFIRMER_REQUIRED');
         requireThat(canonical(actual, { maxBytes: 524288 }) === canonical(confirmation, { maxBytes: 524288 }), 409, 'MEMORY_CONFIRMATION_STALE');
@@ -140,6 +144,7 @@ export function createDefectMemoryRepository({ boundary, validateSource = null }
         // It never covers card editing, reads, crop generation or model calls.
         await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(719400621)::text AS locked');
         ({ principal } = await refresh()); access(row, principal);
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         const inserted = await tx.$queryRawUnsafe(`INSERT INTO atlas_manual.defect_memory_publication
           (revision,card_id,action_id,actor_id,result_revision,content_hash,source_hash,design_key,document,document_hash)
           SELECT COALESCE(MAX(revision),0)+1,$1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9 FROM atlas_manual.defect_memory_publication
@@ -155,6 +160,7 @@ export function createDefectMemoryRepository({ boundary, validateSource = null }
       const { cardNumber: _number, ...family } = design;
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await rowFor(tx, cardId); access(row, principal);
+        if (validateAccess) await validateAccess({ tx, principal, cardId });
         requireThat(row.content_hash === expectedContentHash, 409, 'MEMORY_TARGET_STALE');
         const target = card(row); if (validateSource) await validateSource({ tx, principal, cardId, draft: target.draft });
         // One statement snapshot binds the publication generation, latest
@@ -166,6 +172,7 @@ export function createDefectMemoryRepository({ boundary, validateSource = null }
           SELECT l.*,c.content_hash AS current_hash,c.content::jsonb AS current_draft,i.revision AS intake_revision,
             i.front_upload_id,i.back_upload_id FROM latest_action l JOIN atlas_manual.card c ON c.id=l.card_id
             LEFT JOIN atlas_manual_intake.card i ON i.id=l.card_id
+            WHERE NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=l.card_id)
         ), relevant AS (
           SELECT l.*,p.document,p.document_hash,p.revision AS publication_revision FROM latest l
           LEFT JOIN atlas_manual.defect_memory_publication p ON p.card_id=l.card_id AND p.action_id=l.action_id
@@ -213,5 +220,5 @@ export function createDefectMemoryRepository({ boundary, validateSource = null }
 
 export function defectMemoryGrantSQL(role) {
   requireThat(/^[a-z][a-z0-9_]{0,62}$/.test(role));
-  return `GRANT SELECT,INSERT ON atlas_manual.defect_memory_publication TO "${role}";\nGRANT EXECUTE ON FUNCTION atlas_manual.defect_memory_design(jsonb,text) TO "${role}";`;
+  return `GRANT USAGE ON SCHEMA atlas_manual_intake TO "${role}";\nGRANT SELECT ON atlas_manual_intake.discarded_card TO "${role}";\nGRANT SELECT,INSERT ON atlas_manual.defect_memory_publication TO "${role}";\nGRANT EXECUTE ON FUNCTION atlas_manual.defect_memory_design(jsonb,text) TO "${role}";`;
 }

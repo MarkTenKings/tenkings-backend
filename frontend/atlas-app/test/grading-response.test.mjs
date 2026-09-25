@@ -96,8 +96,10 @@ test('handler awaits dispatched grading and encodes both final success and late 
         if (error) result.reject(error); else result.resolve(body);
         await pending; assert.equal(res.statusCode, 200); assert.equal(res.writableEnded, true);
         const terminal = gradingResponseResult(res.body());
+        const reference = error && !error.status ? terminal.data.reference : undefined;
+        if (reference !== undefined) assert.match(reference, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
         assert.deepEqual(terminal, error ? { status: error.status ?? 503, ok: false,
-            data: { error: error.code ?? 'TEMPORARILY_UNAVAILABLE' } } : { status: 200, ok: true, data: body });
+            data: { error: error.code ?? 'TEMPORARILY_UNAVAILABLE', ...(reference ? { reference } : {}) } } : { status: 200, ok: true, data: body });
         assert.doesNotMatch(res.chunks.join(''), /private worker detail/); assert.equal(res.eventNames().length, 0);
     }
 });

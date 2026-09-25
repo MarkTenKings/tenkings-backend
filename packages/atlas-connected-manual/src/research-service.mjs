@@ -46,10 +46,10 @@ function proposalFrom(saved,observationId){
     note:`Unreviewed machine research; saved identity comes from a human-approved ATLAS report. Proposed variant: ${variant?.slice(0,50)??'unresolved'}. Positive treatment observation: ${treatment?`${treatment.side}: ${treatment.value.slice(0,60)}`:'unresolved'}. Source hashes bind the original photos and derived research. No private image or image rights are shared. Authorized Set Ops review is required before publication.`};
 }
 
-export function createAtlasResearchService({boundary,repository,approved,intake,storage,artifacts,receiptClient,config,run=work=>work(),journal:injectedJournal=null,loadPhotos=loadResearchPhotos}){
+export function createAtlasResearchService({boundary,repository,approved,intake,storage,artifacts,receiptClient,config,validateAccess=null,run=work=>work(),journal:injectedJournal=null,loadPhotos=loadResearchPhotos}){
   requireThat(config&&typeof config.openaiApiKey==='string'&&config.openaiApiKey.length>=16&&typeof config.soldCompsApiKey==='string'&&config.soldCompsApiKey.length>=8,503,'RESEARCH_NOT_CONFIGURED');
   const policy={...ATLAS_RESEARCH_POLICY,catalogConfigured:Boolean(config.catalogToken)},policyHash=digest(canonical(policy));
-  const journal=injectedJournal??createResearchJournal({boundary,repository,receiptClient}),active=new Set();
+  const journal=injectedJournal??createResearchJournal({boundary,repository,receiptClient,validateAccess}),active=new Set();
   const directCatalog=config.catalogToken?createAtlasCatalogClient({token:config.catalogToken,fetchImpl:config.fetchImpl}):null;
   const secrets=[config.openaiApiKey,config.soldCompsApiKey,config.catalogToken].filter(Boolean);
   const asset=(cardId,kind,value,sourceHash)=>artifacts.write(value,{cardId,kind,sourceHash});

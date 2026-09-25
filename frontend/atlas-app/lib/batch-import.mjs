@@ -7,11 +7,16 @@ const phases = new Set(['SAVE_CARD_INTENT','CREATE_CARD','SAVE_CARD_ID','READ_FR
 const exceptionNames = new Set(['Error','TypeError','RangeError','AbortError','DataCloneError','InvalidStateError','NotReadableError','NotSupportedError','OperationError','QuotaExceededError','SecurityError','TimeoutError','TransactionInactiveError','UnknownError']);
 const safeCode = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,100}$/.test(value) ? value : 'BATCH_IMPORT_INTERRUPTED';
 const safeId = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value) ? value : null;
+const failureContext = value => ({
+  ...(typeof value?.at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value.at) && Number.isFinite(Date.parse(value.at)) ? { at: value.at } : {}),
+  ...(Number.isInteger(value?.status) && value.status >= 400 && value.status <= 599 ? { status: value.status } : {}),
+  ...(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value?.reference ?? '') ? { reference: value.reference } : {}),
+});
 const storageFailure = cause => photoStorageError(cause, 'BATCH_IMPORT_STORAGE');
 export function batchImportFailureDetails(item) {
   if (!item?.code) return null;
   return { code: safeCode(item.code), phase: phases.has(item.failure?.phase) ? item.failure.phase : 'UNKNOWN',
-    exceptionName: exceptionNames.has(item.failure?.exceptionName) ? item.failure.exceptionName : 'Error' };
+    exceptionName: exceptionNames.has(item.failure?.exceptionName) ? item.failure.exceptionName : 'Error', ...failureContext(item.failure) };
 }
 /** Deliberately excludes photo bytes, filenames, hashes, labels, staff/session
  * authority and raw exception messages. IDs are exact operation correlation. */
@@ -51,6 +56,9 @@ export function previewOrderedBatchPhotos(files) {
 export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThis.indexedDB }) {
   check(typeof staffId === 'string' && /^[a-f0-9-]{36}$/.test(staffId) && indexedDB, 'BATCH_IMPORT_STORAGE');
   const metadataKey = `${staffId}:byte-metadata-v1`, prefix = `${staffId}:photo-bytes:`, photoCache = new Map();
+  const retiredKey = `${staffId}:discarded-v1`;
+  const filter = (value, retired) => value ? { ...value, items: value.items.filter(item => !retired?.createRequestIds?.includes(item.createId)
+    && !retired?.cardIds?.includes(item.cardId)), ...(value.draft && retired?.draftIds?.includes(value.draft.id) ? { draft: null } : {}) } : null;
   const isRef = value => value?.format === 'atlas-photo-reference-v1' && typeof value.key === 'string' && value.key.startsWith(prefix);
   const isLegacy = value => value?.format === 'atlas-legacy-batch-photo-v1' && ['item', 'draft'].includes(value.kind)
     && typeof value.id === 'string' && ['FRONT', 'BACK'].includes(value.side);
@@ -67,16 +75,24 @@ export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThi
       const tx = db.transaction('imports', mode), store = tx.objectStore('imports'); let value, failure;
       tx.oncomplete = () => resolve(value); tx.onerror = tx.onabort = event => reject(storageFailure(event.target.error ?? tx.error));
       const guard = work => event => { try { work(event); } catch (error) { failure = error; tx.abort(); } };
-      tx.onabort = tx.onerror = event => reject(failure ?? storageFailure(event.target.error ?? tx.error));
+      tx.onabort = tx.onerror = event => reject(storageFailure(failure ?? event.target.error ?? tx.error));
       try { operation(store, result => { value = result; }, guard); }
       catch (error) { tx.abort(); reject(storageFailure(error)); }
     });
   }
   const raw = () => transaction('readonly', (store, done) => { store.get(metadataKey).onsuccess = event => done(event.target.result ?? null); });
+  const getMetadata = () => transaction('readonly', (store, done) => {
+    store.get(metadataKey).onsuccess = event => {
+      if (event.target.result) return done(event.target.result);
+      store.get(staffId).onsuccess = legacy => done(legacy.target.result ?? null);
+    };
+  });
   async function get() {
     return transaction('readonly', (store, done, guard) => {
       store.get(metadataKey).onsuccess = guard(event => {
         const metadata = event.target.result;
+        const liveKeys = new Set(entries(metadata).flatMap(({ item }) => Object.values(item.files ?? {})).filter(isRef).map(ref => ref.key));
+        for (const key of photoCache.keys()) if (!liveKeys.has(key)) photoCache.delete(key);
         const restore = guard(legacyEvent => {
           const legacy = legacyEvent.target.result;
           if (!metadata) {
@@ -137,23 +153,49 @@ export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThi
       }
       item.files = files; delete item.photoRefs;
     }
-    const references = entries(metadata).flatMap(({ item }) => Object.values(item.files ?? {}));
-    const liveKeys = new Set(references.filter(isRef).map(reference => reference.key));
-    await transaction('readwrite', store => {
-      for (const [key, encoded] of photos) store.put(encoded, key);
-      store.put(metadata, metadataKey);
-      for (const { item } of entries(previous)) for (const reference of Object.values(item.files ?? {})) {
-        if (isRef(reference) && !liveKeys.has(reference.key)) store.delete(reference.key);
-      }
-      // The legacy aggregate is retired only after every live original has a
-      // byte record or a verified queued outcome, in this same atomic commit.
-      if (!references.some(isLegacy)) store.delete(staffId);
+    let retained = value, liveKeys;
+    await transaction('readwrite', (store, done, guard) => {
+      store.get(retiredKey).onsuccess = guard(event => {
+        const accepted = filter(metadata, event.target.result); retained = filter(value, event.target.result);
+        const references = entries(accepted).flatMap(({ item }) => Object.values(item.files ?? {}));
+        liveKeys = new Set(references.filter(isRef).map(reference => reference.key));
+        for (const [key, encoded] of photos) if (liveKeys.has(key)) store.put(encoded, key);
+        store.put(accepted, metadataKey);
+        for (const { item } of entries(previous)) for (const reference of Object.values(item.files ?? {})) {
+          if (isRef(reference) && !liveKeys.has(reference.key)) store.delete(reference.key);
+        }
+        // Legacy records remain only while another live original needs them.
+        if (!references.some(isLegacy)) store.delete(staffId);
+      });
     });
-    for (const [key, encoded] of photos) photoCache.set(key, decodePhoto(encoded));
+    for (const [key, encoded] of photos) if (liveKeys.has(key)) photoCache.set(key, decodePhoto(encoded));
     for (const key of photoCache.keys()) if (!liveKeys.has(key)) photoCache.delete(key);
+    return retained;
+  }
+  async function retire({ createRequestIds = [], cardIds = [], draftId = null }) {
+    await transaction('readwrite', (store, done, guard) => {
+      store.get(retiredKey).onsuccess = guard(event => {
+        const old = event.target.result ?? {}, retired = { createRequestIds: [...new Set([...(old.createRequestIds ?? []), ...createRequestIds])],
+          cardIds: [...new Set([...(old.cardIds ?? []), ...cardIds])], draftIds: [...new Set([...(old.draftIds ?? []), ...(draftId ? [draftId] : [])])] };
+        store.put(retired, retiredKey);
+        store.get(metadataKey).onsuccess = guard(metadataEvent => {
+          const previous = metadataEvent.target.result, next = filter(previous, retired);
+          if (next) {
+            const liveKeys = new Set(entries(next).flatMap(({ item }) => Object.values(item.files ?? {})).filter(isRef).map(ref => ref.key));
+            for (const { item } of entries(previous)) for (const ref of Object.values(item.files ?? {})) if (isRef(ref) && !liveKeys.has(ref.key)) store.delete(ref.key);
+            if (!next.items.length && !next.draft) store.delete(metadataKey); else store.put(next, metadataKey);
+          }
+          store.get(staffId).onsuccess = guard(legacyEvent => {
+            const legacy = filter(legacyEvent.target.result, retired);
+            if (legacy?.items.length || legacy?.draft) store.put(legacy, staffId); else store.delete(staffId);
+          });
+        });
+      });
+    });
+    photoCache.clear();
   }
   return {
-    get, put,
+    get, put, getMetadata, retire,
     remove: async () => {
       const previous = await raw();
       await transaction('readwrite', store => {
@@ -167,8 +209,9 @@ export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThi
 }
 
 export function createBatchImporter({ request, intake, journal, cryptoImpl = globalThis.crypto, onProgress = () => {}, onQueued = () => {},
-  pause = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
-  let running = false, disposed = false, drained = Promise.resolve(), journalTail = Promise.resolve(), requested = false, authBlocked = false;
+  pause = ms => new Promise(resolve => setTimeout(resolve, ms)), isPaused = () => false }) {
+  let running = false, disposed = false, paused = false, drained = Promise.resolve(), journalTail = Promise.resolve(), requested = false, authBlocked = false;
+  const blocked = () => paused || isPaused();
   const post = (path, body) => request(path, { method: 'POST', body });
   // Every append and progress write reads the newest journal inside this queue.
   // In particular, a slow upload may never overwrite a newly appended pair.
@@ -177,7 +220,7 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
     journalTail = result.catch(() => {}); return result;
   };
   const notify = value => { if (!disposed) { try { onProgress(structuredClone(value)); } catch { /* UI callbacks do not change persisted intent. */ } } };
-  async function write(value) { await journal.put(value); notify(value); return structuredClone(value); }
+  async function write(value) { const saved = await journal.put(value) ?? value; notify(saved); return structuredClone(saved); }
   const read = () => serial(() => journal.get());
   const makeItem = pair => ({ ...pair, createId: cryptoImpl.randomUUID(), enqueueId: cryptoImpl.randomUUID(),
     cardId: null, started: false, hashes: {}, done: false, code: null });
@@ -190,9 +233,9 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
   async function processItem(item) {
     item.code = null; item.failure = null;
     const step = async (phase, operation) => {
-      try { return await operation(); }
+      try { check(!blocked(), 'INTAKE_DISCARD_PENDING'); return await operation(); }
       catch (error) { throw Object.assign(new Error('Saved upload step did not finish'), { code: safeCode(error?.code), status: error?.status,
-        diagnostic: { phase, exceptionName: exceptionNames.has(error?.name) ? error.name : 'Error' } }); }
+        diagnostic: { phase, exceptionName: exceptionNames.has(error?.name) ? error.name : 'Error', ...failureContext({ ...error, at: new Date().toISOString() }) } }); }
     };
     try {
       if (!item.cardId) {
@@ -241,6 +284,11 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
       item.done = true; item.files = null; item.code = null; item.failure = null; await step('SAVE_QUEUE', () => saveItem(item));
       if (!disposed) { try { onQueued({ cardId: item.cardId, createId: item.createId, enqueueId: item.enqueueId, label: item.label }); } catch { /* Queue confirmation is already durable. */ } }
     } catch (error) {
+      if (error?.code === 'INTAKE_CARD_DELETED' && journal.retire) {
+        await serial(async () => { await journal.retire({ createRequestIds: [item.createId], cardIds: item.cardId ? [item.cardId] : [] }); notify(await journal.get()); });
+        return error.code;
+      }
+      if (error?.code === 'INTAKE_DISCARD_PENDING') return error.code;
       item.code = safeCode(error?.code); item.failure = error?.diagnostic ?? { phase: 'UNKNOWN', exceptionName: exceptionNames.has(error?.name) ? error.name : 'Error' };
       await saveItem(item);
       if ([401, 403].includes(error?.status)) authBlocked = true;
@@ -248,7 +296,7 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
     }
   }
   function kick(retry = false) {
-    if (disposed || authBlocked) return drained;
+    if (disposed || authBlocked || blocked()) return drained;
     requested = true;
     if (running) return drained;
     running = true;
@@ -257,8 +305,8 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
       try {
       do {
         requested = false;
-        while (!disposed && !authBlocked) {
-          const batch = await read(); check(batch?.version === 1, 'BATCH_IMPORT_MISSING'); latest = batch;
+        while (!disposed && !authBlocked && !blocked()) {
+          const batch = await read(); if (!batch) { latest = null; break; } check(batch.version === 1, 'BATCH_IMPORT_MISSING'); latest = batch;
           const item = batch.items.find(value => !value.done && !attempted.has(value.createId) && (retry || !value.code || deferredBusy.has(value.createId)));
           if (!item) break;
           attempted.add(item.createId);
@@ -271,12 +319,12 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
         // Server contention is an explicit pre-work refusal. Let every other
         // saved pair run first, then retry these exact intents on a bounded
         // cadence. Uncertain/unsupported work still needs deliberate recovery.
-        if (deferredBusy.size && !disposed && !authBlocked) {
+        if (deferredBusy.size && !disposed && !authBlocked && !blocked()) {
           await pause(3000);
           for (const id of deferredBusy) attempted.delete(id);
           requested = true;
         }
-      } while (requested && !disposed && !authBlocked);
+      } while (requested && !disposed && !authBlocked && !blocked());
       return latest;
       } finally { running = false; }
     })();
@@ -285,9 +333,9 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
     drained.catch(() => {}); return drained;
   }
   async function appendPairs(pairs) {
-    check(!disposed, 'BATCH_IMPORT_BUSY');
+    check(!disposed && !isPaused(), 'BATCH_IMPORT_BUSY');
     const value = await serial(async () => {
-      check(!disposed, 'BATCH_IMPORT_BUSY');
+      check(!disposed && !isPaused(), 'BATCH_IMPORT_BUSY');
       const old = await journal.get(); check(!old || old.version === 1, 'BATCH_IMPORT_STORAGE');
       const batch = old ?? { version: 1, id: cryptoImpl.randomUUID(), items: [] };
       batch.items.push(...pairs.map(makeItem));
@@ -309,7 +357,7 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
       check(['FRONT', 'BACK'].includes(side), 'BATCH_IMPORT_PAIR_FILES');
       check(file instanceof Blob && file.size > 0 && file.size <= 64 * 1024 * 1024, 'BATCH_IMPORT_PAIR_FILES');
       const value = await serial(async () => {
-        check(!disposed, 'BATCH_IMPORT_BUSY');
+        check(!disposed && !isPaused(), 'BATCH_IMPORT_BUSY');
         const old = await journal.get(); check(!old || old.version === 1, 'BATCH_IMPORT_STORAGE');
         const batch = old ?? { version: 1, id: cryptoImpl.randomUUID(), items: [] };
         const draft = batch.draft ?? { id: cryptoImpl.randomUUID(), files: {}, acquisition: {} };
@@ -334,7 +382,7 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
     async stage(files) {
       const pairs = pairBatchPhotos(files);
       return serial(async () => {
-        check(!running && !disposed, 'BATCH_IMPORT_BUSY');
+        check(!running && !disposed && !blocked(), 'BATCH_IMPORT_BUSY');
         const old = await journal.get(); check(!old || (!old.draft && old.items.every(item => item.done)), 'BATCH_IMPORT_PENDING');
         return write({ version: 1, id: cryptoImpl.randomUUID(), items: pairs.map(makeItem) });
       });
@@ -349,6 +397,9 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
     },
     run() { check(!disposed, 'BATCH_IMPORT_BUSY'); if (!running) authBlocked = false; return kick(true); },
     whenIdle: () => drained,
+    pauseForDiscard() { paused = true; return Promise.allSettled([drained, journalTail]).then(() => undefined); },
+    resumeAfterDiscard() { paused = false; },
+    refresh: () => serial(async () => { const saved = await journal.get(); notify(saved); return saved; }),
     dispose() { disposed = true; return Promise.allSettled([drained, journalTail]).then(() => undefined); },
   });
 }

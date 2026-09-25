@@ -13,11 +13,12 @@ const definitePlanRefusal = failure => [400, 403, 404, 409, 413].includes(failur
  * client with current CSRF. journal must be scoped to the current staff identity.
  * One operation per card/side; call pending() and resume() after phone reload.
  */
-export function createIntakeClient({ request, journal, fetchImpl = globalThis.fetch, cryptoImpl = globalThis.crypto, uploadTimeoutMs = 90000 }) {
+export function createIntakeClient({ request, journal, fetchImpl = globalThis.fetch, cryptoImpl = globalThis.crypto, uploadTimeoutMs = 90000,
+  isPaused = () => false }) {
   requireThat(typeof request === 'function' && journal && typeof fetchImpl === 'function', 'INTAKE_CLIENT_INVALID');
   requireThat(Number.isSafeInteger(uploadTimeoutMs) && uploadTimeoutMs > 0 && uploadTimeoutMs <= 2_147_483_647, 'INTAKE_CLIENT_INVALID');
   const running = new Set(), uploadingSides = new Set();
-  const post = (path, body, signal) => request(path, { method: 'POST', body, signal });
+  const post = (path, body, signal) => { requireThat(!isPaused(), 'INTAKE_DISCARD_PENDING'); return request(path, { method: 'POST', body, signal }); };
   async function putNative(url, options, signal) {
     const controller = new AbortController();
     const cancel = () => controller.abort(signal.reason ?? error('INTAKE_UPLOAD_CANCELLED'));
@@ -42,8 +43,10 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
   }
   async function resume(operationId, { signal, fallbackFile } = {}) {
     requireThat(!running.has(operationId), 'INTAKE_UPLOAD_IN_PROGRESS'); running.add(operationId);
+    let identity;
     try {
       let saved = await journal.get(operationId); requireThat(saved, 'INTAKE_PENDING_UPLOAD_NOT_FOUND');
+      identity = saved;
       if (saved.kind === 'create') {
         const result = await post(base, saved.input, signal); await journal.remove(operationId); return result;
       }
@@ -116,6 +119,10 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
       const prepared = await post(`${path}/prepare`, {}, signal);
       requireThat(prepared.upload.source, 'INTAKE_PHOTO_NOT_PREPARED');
       await journal.remove(operationId); return prepared;
+    } catch (failure) {
+      if (failure?.code === 'INTAKE_CARD_DELETED' && identity && journal.retire) await journal.retire({
+        createRequestIds: identity.kind === 'create' ? [identity.input.requestId] : [], cardIds: identity.cardId ? [identity.cardId] : [] });
+      throw failure;
     } finally { running.delete(operationId); }
   }
   return Object.freeze({
@@ -153,11 +160,13 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
       requireThat(result.upload.verification, 'INTAKE_UPLOAD_UNVERIFIED'); await journal.remove(operationId);
     },
     async create(label = '', options = {}) {
+      requireThat(!isPaused(), 'INTAKE_DISCARD_PENDING');
       const operationId = cryptoImpl.randomUUID();
       await journal.put(operationId, { kind: 'create', input: { requestId: operationId, label } });
       return resume(operationId, options);
     },
     async upload(cardId, side, expectedVersion, file, options = {}) {
+      requireThat(!isPaused(), 'INTAKE_DISCARD_PENDING');
       requireThat(file instanceof Blob && file.size > 0, 'INTAKE_NATIVE_FILE_REQUIRED');
       requireThat(file.size <= MAX_NATIVE_PHOTO_BYTES, 'INTAKE_PHOTO_TOO_LARGE');
       const sideKey = `${cardId}:${side}`;
@@ -183,6 +192,9 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
 export function createBrowserIntakeJournal({ staffId, indexedDB = globalThis.indexedDB }) {
   requireThat(typeof staffId === 'string' && /^[a-f0-9-]{36}$/.test(staffId) && indexedDB, 'INTAKE_JOURNAL_UNAVAILABLE');
   const prefix = `${staffId}:`, metadataPrefix = `${prefix}byte-metadata:`, bytesPrefix = `${prefix}photo-bytes:`, cache = new Map();
+  const retiredKey = `${prefix}discarded-v1`;
+  const deleted = (value, retired) => value?.kind === 'create' ? retired?.createRequestIds?.includes(value.input.requestId)
+    : retired?.cardIds?.includes(value?.cardId);
   const storageFailure = cause => photoStorageError(cause, 'INTAKE_JOURNAL_UNAVAILABLE');
   const opened = new Promise((resolve, reject) => {
     const operation = indexedDB.open('atlas-native-photo-intake-v1', 1);
@@ -196,7 +208,7 @@ export function createBrowserIntakeJournal({ staffId, indexedDB = globalThis.ind
       const tx = db.transaction('pending', mode), store = tx.objectStore('pending'); let result, failure;
       const guard = work => event => { try { work(event); } catch (error) { failure = error; tx.abort(); } };
       tx.oncomplete = () => resolve(result);
-      tx.onerror = tx.onabort = event => reject(failure ?? storageFailure(event.target.error ?? tx.error));
+      tx.onerror = tx.onabort = event => reject(failure?.code === 'INTAKE_CARD_DELETED' ? failure : storageFailure(failure ?? event.target.error ?? tx.error));
       try { execute(store, value => { result = value; }, guard); }
       catch (error) { tx.abort(); reject(storageFailure(error)); }
     });
@@ -209,7 +221,7 @@ export function createBrowserIntakeJournal({ staffId, indexedDB = globalThis.ind
   });
   async function get(id, { metadataOnly = false } = {}) {
     const { current, legacy } = await raw(id), value = current ?? legacy;
-    if (!value) return undefined;
+    if (!value) { cache.delete(id); return undefined; }
     if (value.kind !== 'upload') return value;
     if (metadataOnly) { const { file, photoRef, ...metadata } = value; return metadata; }
     if (!current) return value; // Leave the legacy Blob and intent intact.
@@ -246,12 +258,17 @@ export function createBrowserIntakeJournal({ staffId, indexedDB = globalThis.ind
         metadata.photoRef = 'bytes';
       } else if (!current && !legacy) encoded = await encodePhoto(file);
     }
-    await transaction('readwrite', store => {
-      if (encoded) store.put(encoded, bytesPrefix + id);
-      store.put(metadata, metadataPrefix + id);
-      // Preserve legacy rows during ordinary progress. Exact-byte recovery
-      // removes one only with its verified byte replacement in this transaction.
-      if (metadata.photoRef !== 'legacy') store.delete(prefix + id);
+    await transaction('readwrite', (store, done, guard) => {
+      store.get(retiredKey).onsuccess = guard(event => {
+        // A different tab may retire this card while bytes are being hashed.
+        // Test the fence inside the same transaction as the delayed write.
+        requireThat(!deleted(metadata, event.target.result), 'INTAKE_CARD_DELETED');
+        if (encoded) store.put(encoded, bytesPrefix + id);
+        store.put(metadata, metadataPrefix + id);
+        // Preserve legacy rows during ordinary progress. Exact-byte recovery
+        // removes one only with its verified byte replacement in this transaction.
+        if (metadata.photoRef !== 'legacy') store.delete(prefix + id);
+      });
     });
     if (encoded) cache.set(id, decodePhoto(encoded));
   }
@@ -266,7 +283,7 @@ export function createBrowserIntakeJournal({ staffId, indexedDB = globalThis.ind
     const keys = await transaction('readonly', (store, done) => { store.getAllKeys().onsuccess = event => done(event.target.result); });
     const ids = new Set();
     for (const key of keys) {
-      if (typeof key !== 'string' || !key.startsWith(prefix) || key.startsWith(bytesPrefix)) continue;
+      if (typeof key !== 'string' || !key.startsWith(prefix) || key.startsWith(bytesPrefix) || key === retiredKey) continue;
       ids.add(key.startsWith(metadataPrefix) ? key.slice(metadataPrefix.length) : key.slice(prefix.length));
     }
     const values = [];
@@ -274,5 +291,24 @@ export function createBrowserIntakeJournal({ staffId, indexedDB = globalThis.ind
     for (const id of ids) { const value = await get(id, options); if (value) values.push({ id, value }); }
     return values;
   }
-  return Object.freeze({ get, put, remove, list, close: async () => { cache.clear(); (await opened).close(); } });
+  async function retire({ createRequestIds = [], cardIds = [] }) {
+    await transaction('readwrite', (store, done, guard) => {
+      store.get(retiredKey).onsuccess = guard(event => {
+        const old = event.target.result ?? {}, retired = { createRequestIds: [...new Set([...(old.createRequestIds ?? []), ...createRequestIds])],
+          cardIds: [...new Set([...(old.cardIds ?? []), ...cardIds])] };
+        store.put(retired, retiredKey);
+        store.getAllKeys().onsuccess = guard(keys => {
+          for (const key of keys.target.result) {
+            if (typeof key !== 'string' || !key.startsWith(prefix) || key.startsWith(bytesPrefix) || key === retiredKey) continue;
+            const id = key.startsWith(metadataPrefix) ? key.slice(metadataPrefix.length) : key.slice(prefix.length);
+            store.get(key).onsuccess = guard(value => {
+              if (deleted(value.target.result, retired)) { store.delete(prefix + id); store.delete(metadataPrefix + id); store.delete(bytesPrefix + id); }
+            });
+          }
+        });
+      });
+    });
+    cache.clear();
+  }
+  return Object.freeze({ get, put, remove, list, retire, close: async () => { cache.clear(); (await opened).close(); } });
 }

@@ -40,6 +40,7 @@ function harness({ journal } = {}) {
     setInterval: (callback, ms) => { timers.set(ms, callback); return ms; }, clearInterval: id => timers.delete(id),
     window: { addEventListener() {}, removeEventListener() {} }, require(name) {
       if (name === 'react') return react;
+      if (name === '../lib/card-discard.mjs' || name === '../lib/batch-import.mjs') return {};
       if (name === 'next/router') return { useRouter: () => ({ events: { on() {}, off() {} } }) };
       if (name === 'next/link' || name === './Shell') return { default: name };
       if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};

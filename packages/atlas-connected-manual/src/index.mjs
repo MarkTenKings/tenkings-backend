@@ -56,21 +56,22 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   earlyGeometry=createEarlyGeometry({store:createEarlyGeometryStore({boundary,intakeRepository,receiptClient}),intake,details,storage,artifacts,keyPrefix,
     limited,pythonExecutable,limits:limits.preparation});
   const identification=createIdentification({boundary,intake,intakeRepository,storage,artifacts,details,effects,receiptClient});
-  const publicationRepository=createPublicationRepository({boundary});
+  const validateAccess=({tx,cardId})=>intakeRepository.assertActiveInTransaction(tx,cardId);
+  const publicationRepository=createPublicationRepository({boundary,validateAccess});
   const publication=createManualPublication({repository:publicationRepository,artifacts,storage,readSource:intake.readSource});
   const finishing=createManualFinishing({repository:publicationRepository,artifacts});
-  const station=stationConfig?createFinishingStationService({...stationConfig,finishing,repository:createFinishingStationRepository({boundary})}):null;
-  const presentationRepository=presentationEnabled?createPresentationRepository({boundary,keyPrefix}):null;
+  const station=stationConfig?createFinishingStationService({...stationConfig,finishing,repository:createFinishingStationRepository({boundary,validateAccess})}):null;
+  const presentationRepository=presentationEnabled?createPresentationRepository({boundary,keyPrefix,validateAccess}):null;
   const presentation=presentationEnabled?createPresentationService({repository:presentationRepository,storage,processPhoto:photoProcessor,keyPrefix,run:limited}):null;
   const market=presentationEnabled?createPresentationMarketService({repository:presentationRepository,approved:finishing,artifacts,provider:marketProvider,run:limited}):null;
   requireThat(!researchConfig || presentationEnabled && marketProvider,503,'RESEARCH_PRESENTATION_REQUIRED');
   const dealerOffers=presentationEnabled?createDealerOfferService({repository:presentationRepository,approved:finishing,loadConfiguration:dealerConfiguration}):null;
-  const research=researchConfig?createAtlasResearchService({boundary,repository:presentationRepository,approved:finishing,intake,storage,artifacts,receiptClient,config:researchConfig,run:limited}):null;
+  const research=researchConfig?createAtlasResearchService({boundary,repository:presentationRepository,approved:finishing,intake,storage,artifacts,receiptClient,validateAccess,config:researchConfig,run:limited}):null;
   async function current(staff,card){
     const actual=(await intake.read(staff,card.cardId)).card;
     requireThat(actual.ready && actual.sourceHash===card.draft.source?.sourceHash,409,'MANUAL_PHOTOS_CHANGED');return actual;
   }
-  const repository=createManualRepository({boundary,validateCommit: memoryEnabled ? validateConfirmationCommit : null,approvalCommitted:publicationRepository.approvalCommitted,
+  const repository=createManualRepository({boundary,validateAccess,validateCommit: memoryEnabled ? validateConfirmationCommit : null,approvalCommitted:publicationRepository.approvalCommitted,
     validateSource:async({tx,principal,cardId,draft,initial})=>{
     await intakeRepository.assertCurrentPair(tx,principal,{cardId,sourceHash:draft.source?.sourceHash});
     if(initial){const [saved]=await tx.$queryRawUnsafe('SELECT revision FROM atlas_manual_connected.details WHERE card_id=$1::uuid FOR SHARE',cardId);

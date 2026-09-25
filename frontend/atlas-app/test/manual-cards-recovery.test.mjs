@@ -8,6 +8,7 @@ import * as identity from '@atlas/grading-core/identity';
 import * as defectAnalysisClient from '../lib/manual-defect-analysis-client.mjs';
 import * as earlyGeometryClient from '../lib/early-geometry-client.mjs';
 import { manualMessage } from '../lib/manual-client.mjs';
+import * as discard from '../lib/card-discard.mjs';
 
 const require = createRequire(import.meta.url);
 const babel = require('next/dist/compiled/babel/core');
@@ -23,7 +24,7 @@ const storage = (initial = command) => { const values = new Map(initial ? [[key,
 }; };
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 function harness(store, post, { readCard, intake = {}, message = error => error.code ?? 'Retained' } = {}) {
-  const slots = [], effects = [], cleanups=[],timers=new Map(); let cursor = 0, tree, activeCardId='card';
+  const slots = [], effects = [], cleanups=[],timers=new Map(),listeners=new Map(),navigations=[]; let cursor = 0, tree, activeCardId='card';
   const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment',
     useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = initial; return [slots[i], next => { slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; },
     useRef(initial) { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; },
@@ -34,10 +35,12 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
     identification: { state: 'UNAVAILABLE' }, details: { fields: {}, profile: 'SPORTS' } };
   const exports = {};
   vm.runInNewContext(compiled, { exports, crypto: { randomUUID }, localStorage: store, setInterval:(callback,ms)=>{timers.set(ms,callback);return ms;}, clearInterval:ms=>timers.delete(ms),
-    window: { addEventListener() {}, removeEventListener() {} },
+    window: { addEventListener(name,action) {listeners.set(name,action);}, removeEventListener(name) {listeners.delete(name);} },
     require(name) {
       if (name === 'react') return react;
-      if (name === 'next/router') return { useRouter: () => ({ events: { on() {}, off() {} } }) };
+      if (name === '../lib/card-discard.mjs') return {...discard,createWorkspaceDiscarder:()=>({pending:()=>false,reconcile:async()=>null})};
+      if (name === '../lib/batch-import.mjs') return {createBrowserBatchImportJournal:()=>({close(){}})};
+      if (name === 'next/router') return { useRouter: () => ({ replace:async path=>{navigations.push(path);},events: { on() {}, off() {} } }) };
       if (name === 'next/link' || name === './Shell') return { default: name };
       if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
       if (name === './ReportPhotoUploader') return {__esModule:true,default:'ReportPhotoUploader'};
@@ -67,7 +70,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
   const field = label => find(tree, node => node.props?.['aria-label'] === label);
   const submit = () => { const form=find(tree,node=>node.type==='form'); assert.ok(form,'details form');form.props.onSubmit({preventDefault(){}}); };
   const render = () => { cursor = 0; tree = exports.default({ staff: { id: 'reviewer', role: 'REVIEWER' }, cardId: activeCardId }); for (const effect of effects.splice(0)) effect(); };
-  return { render, submit,async tick(){timers.get(2000)?.();await flush();render();},dispose(){cleanups.forEach(cleanup=>cleanup?.());}, navigate(cardId){activeCardId=cardId;render();}, upload(side,file={name:side}) { const target=field(`${side} original photo`);assert.ok(target);assert.notEqual(target.props.disabled,true);target.props.onChange({target:{files:[file],value:'picked'}}); }, workspace:()=>Boolean(find(tree,node=>node.type?.name==='ManualWorkspace')), click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
+  return { render, submit,navigations,event(name,value){listeners.get(name)?.(value);},async tick(){timers.get(2000)?.();await flush();render();},dispose(){cleanups.forEach(cleanup=>cleanup?.());}, navigate(cardId){activeCardId=cardId;render();}, upload(side,file={name:side}) { const target=field(`${side} original photo`);assert.ok(target);assert.notEqual(target.props.disabled,true);target.props.onChange({target:{files:[file],value:'picked'}}); }, workspace:()=>Boolean(find(tree,node=>node.type?.name==='ManualWorkspace')), click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
     has(label) { return Boolean(button(label)); }, disabled(label) { return button(label)?.props.disabled === true; }, text: () => text(tree), sideText:side=>text(find(tree,node=>node.type==='article'&&text(node).startsWith(side))), field,
     change(label, value) { const target = field(label); assert.ok(target, label); target.props.onChange({ target: { value } }); } };
 }
@@ -438,4 +441,15 @@ test('actual intake reconciles first-side geometry before identity, then reads b
     card.earlyGeometry.FRONT.state='READY';await f.tick();f.render();
     assert.equal(f.field('Name').props.value,'My unsaved detail');assert.equal(calls.length,1);
   }finally{f.dispose();}
+});
+
+test('acknowledged deletion of another card leaves active upload finally handlers usable',async()=>{
+ let finish;const f=harness(storage(null),async()=>({}),{intake:{upload:async()=>new Promise(resolve=>finish=resolve)}});
+ f.render();await flush();f.render();f.upload('FRONT');await flush();f.render();
+ f.event(discard.discardEvent,{type:discard.discardEvent,detail:{staffId:'reviewer',confirmed:{cardIds:['other'],createRequestIds:[]}}});
+ await flush();finish({});await flush();f.render();assert.equal(f.field('FRONT original photo').props.disabled,false);assert.deepEqual(f.navigations,[]);
+});
+test('confirmed current-card deletion routes away instead of keeping a stale grading workspace',async()=>{
+ const f=harness(storage(null),async()=>({}),{readCard:async()=>{throw {code:'INTAKE_CARD_DELETED',status:410};}});
+ f.render();await flush();f.render();assert.deepEqual(f.navigations,['/manual']);assert.equal(f.workspace(),false);
 });

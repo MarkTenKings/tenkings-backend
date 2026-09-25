@@ -20,6 +20,8 @@ export function createManualIntake({ repository, storage, artifacts, processPhot
     return { upload, photo: checked };
   };
   return Object.freeze({
+    discard: (staff, input) => repository.discard(staff, input),
+    discardStatus: (staff, input) => repository.discardStatus(staff, input),
     create: (staff, input) => repository.create(staff, input),
     list: (staff, options) => repository.list(staff, options),
     read: async (staff, cardId) => ({ card: (await repository.read(staff, cardId)).card }),

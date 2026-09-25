@@ -199,7 +199,7 @@ async function savedAnalysisFixture({ background=false, contextLayout=false, rec
     throw Error(`Unrecognized offline write: ${sql}`);
   } };
   const boundary = { transaction: async (_staff, work) => work({ tx, principal, now: new Date(), refresh: async () => ({ principal, now: new Date() }) }) };
-  const assistance = createDefectAssistance({ boundary, intakeRepository: { assertCurrentPair: async () => {} }, workflow: { ...f.workflow, hydrate: card => f.hydrateOverride ?? f.workflow.hydrate(card) },
+  const assistance = createDefectAssistance({ boundary, intakeRepository: { assertCurrentPair: async () => {}, assertActiveInTransaction: async () => {} }, workflow: { ...f.workflow, hydrate: card => f.hydrateOverride ?? f.workflow.hydrate(card) },
     artifacts: f.artifacts, imageEffects: { createExemplar: async () => { throw Error('No exemplar effect permitted'); },currentImages:async()=>{calls.images++;throw Error('No image effects expected');} },
     memoryEnabled: true, provider: providerEnabled ? provider : null, receiptClient: tx });
   Object.assign(f, { assistance, prepared, parsed, row, receipt, acceptance, calls, refusals, tx });
@@ -246,7 +246,7 @@ for (const mode of ['analyze', 'analyzeMachine']) test(`new ${mode} stores its e
     assert.equal(staff, f.staff);
     return work({ tx, principal, now: new Date(), refresh: async () => ({ principal, now: new Date() }) });
   } };
-  const assistance = createDefectAssistance({ boundary, intakeRepository: { assertCurrentPair: async () => {} },
+  const assistance = createDefectAssistance({ boundary, intakeRepository: { assertCurrentPair: async () => {}, assertActiveInTransaction: async () => {} },
     workflow: f.workflow, artifacts: f.artifacts, memoryEnabled: true, receiptClient: tx,
     provider: { bindingHash: digest('connected synthetic provider'), dispatch: async () => assert.fail('Cannot dispatch before preparation commits') },
     imageEffects: {

@@ -20,7 +20,7 @@ export function presentationGrantSQL(role) {
   requireThat(typeof role === 'string' && /^[a-z][a-z0-9_]{0,62}$/.test(role));
   return `GRANT SELECT,INSERT ON atlas_manual.presentation,atlas_manual.presentation_upload,atlas_manual.presentation_market TO "${role}";\nGRANT UPDATE(state,result,result_hash) ON atlas_manual.presentation_market TO "${role}";`;
 }
-export function createPresentationRepository({ boundary, keyPrefix, maxOriginalBytes = 64 * 1024 * 1024 }) {
+export function createPresentationRepository({ boundary, keyPrefix, maxOriginalBytes = 64 * 1024 * 1024, validateAccess = null }) {
   requireThat(typeof keyPrefix === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_/-]{0,100}$/.test(keyPrefix) && !keyPrefix.includes('..') && !keyPrefix.endsWith('/'), 500, 'PRESENTATION_CONFIGURATION_INVALID');
   async function scope(tx, principal, cardId, actionId = null, write = false) {
     uuid(cardId); if (actionId) uuid(actionId);
@@ -28,6 +28,7 @@ export function createPresentationRepository({ boundary, keyPrefix, maxOriginalB
     const approve = card && (card.owner_id === principal.id || card.approvers.includes(principal.id));
     requireThat(card && (approve || card.editors.includes(principal.id) || card.readers.includes(principal.id)), 404, 'MANUAL_CARD_NOT_FOUND');
     if (write) requireThat(approve && principal.role === 'REVIEWER', 403, 'MANUAL_CARD_ACCESS_DENIED');
+    if (validateAccess) await validateAccess({ tx, principal, cardId });
     const [publication] = await tx.$queryRawUnsafe(`SELECT p.*,i.public_token FROM atlas_manual.publication p
       JOIN atlas_manual.public_report_identity i USING(card_id) WHERE p.card_id=$1::uuid ORDER BY p.version DESC LIMIT 1`, cardId);
     requireThat(publication?.state === 'PUBLISHED', 409, 'PRESENTATION_APPROVAL_REQUIRED');

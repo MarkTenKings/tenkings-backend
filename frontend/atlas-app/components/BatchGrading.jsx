@@ -34,6 +34,14 @@ export default function BatchGrading({ staff }) {
   const [lastApproved, setLastApproved] = useState(null), [finishing, setFinishing] = useState(null);
   const [autoPrintWindow, setAutoPrintWindow] = useState(null), [finishingError, setFinishingError] = useState('');
   const [preparingLabel, setPreparingLabel] = useState(false);
+  const [deleteControls,setDeleteControls]=useState(null);
+  const onDiscarded=useCallback(result=>{
+    current.current++;
+    const removed=new Set(result.cardIds);
+    setJobs(old=>old.filter(job=>!removed.has(job.cardId)));setActive(null);setPacket(null);setImagesReady(false);
+    if(removed.has(lastApproved?.cardId)){labelRead.current++;setLastApproved(null);setFinishing(null);setAutoPrintWindow(null);setPreparingLabel(false);
+      approvalPopup.current?.close();approvalPopup.current=null;}
+  },[lastApproved?.cardId]);
   useEffect(() => { setTab(queueTabs.includes(router.query?.tab) ? router.query.tab : 'INTAKE'); setActive(null); }, [router.query?.tab]);
   function selectTab(value) {
     setTab(value); setActive(null);
@@ -118,7 +126,7 @@ export default function BatchGrading({ staff }) {
     } finally { if (lifetime.current === owner && sequence === labelRead.current) setPreparingLabel(false); }
   }
   async function approve() {
-    if (mutation.current || !session.current || !imagesReady || !packet?.canCertify || packet.key !== focused?.key) return;
+    if (mutation.current || deleteControls?.busy || deleteControls?.pending || !session.current || !imagesReady || !packet?.canCertify || packet.key !== focused?.key) return;
     const owner = lifetime.current;
     mutation.current = true; reviewing.current = focused.key; setBusy(true); setReviewError('');
     approvalPopup.current?.close(); let popup = null;
@@ -146,7 +154,7 @@ export default function BatchGrading({ staff }) {
     }
   }
   async function resume(job) {
-    if (mutation.current || !session.current || !job.canResumeProcessing) return;
+    if (mutation.current || deleteControls?.busy || deleteControls?.pending || !session.current || !job.canResumeProcessing) return;
     const owner = lifetime.current;
     mutation.current = true; reviewing.current = job.key; setBusy(true); setError('');
     try {
@@ -166,7 +174,7 @@ export default function BatchGrading({ staff }) {
   }
   return <Shell staff={staff} manual title="Batch grading">
     <main className={styles.studio}>
-      <header className={styles.heading}><div><p>ATLAS STUDIO</p><h1>Grading queue</h1></div><button type="button" className={styles.add} onClick={() => selectTab('INTAKE')}>+ Add cards</button></header>
+      <header className={styles.heading}><div><p>ATLAS STUDIO</p><h1>Grading queue</h1></div><div className={styles.headingActions}>{staff.role==='REVIEWER'&&<button type="button" className={styles.deleteButton} disabled={busy||!deleteControls||deleteControls.disabled} onClick={()=>void deleteControls.removeAll()}>{deleteControls?.busy?'Deleting cards…':deleteControls?.pending?'Finish saved deletion':'Delete all cards'}</button>}<button type="button" className={styles.add} onClick={() => selectTab('INTAKE')}>+ Add cards</button></div></header>
       {error && <p className={styles.error} role="alert">{error}</p>}
       <nav className={styles.tabs} aria-label="Grading queues">
         {[['INTAKE', 'Add cards'], ['PROCESSING', 'Grading'], ['REVIEW', 'Review'], ['NEEDS_ATTENTION', 'Needs attention']].map(([value, label]) => {
@@ -183,7 +191,7 @@ export default function BatchGrading({ staff }) {
           onPrintDialog={() => setAutoPrintWindow(null)} printDisabled={busy} />}
       </section>}
       <section className={styles.intake} hidden={tab !== 'INTAKE'}>
-        <BatchImport staff={staff} enabled={loaded} onImported={refresh} jobs={jobs} onOpenCard={cardId=>void router.push(`/manual/${cardId}?from=batch`)}/>
+        <BatchImport staff={staff} enabled={loaded} onImported={refresh} jobs={jobs} onDiscarded={onDiscarded} onDeleteControls={setDeleteControls} onOpenCard={cardId=>void router.push(`/manual/${cardId}?from=batch`)}/>
       </section>
       {tab !== 'INTAKE' && <div className={styles.review}>
         <aside className={styles.rail} aria-label="Cards">{shown.map(job => <button disabled={busy} className={styles.cardRow} aria-current={focused?.key === job.key ? 'true' : undefined} key={job.key} onClick={() => setActive(job.key)}><img src={`${STAFF_BASE_PATH}/api/staff/manual-connected/cards/${job.cardId}/preview-image/FRONT`} alt="" loading="lazy"/><span><strong>{job.evidence?.name || job.label || 'Card'}</strong><small>{job.state === 'RUNNING' ? stages[job.stage] : status[job.state]}</small></span><b>{job.evidence?.proposedGrade ?? '·'}</b></button>)}</aside>

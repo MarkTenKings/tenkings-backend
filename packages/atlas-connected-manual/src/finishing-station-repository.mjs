@@ -20,7 +20,7 @@ function arm(row) {
 }
 function receipt(row) { return row ? { kind: row.kind, receipt: stored(row.receipt, row.receipt_hash), receiptHash: row.receipt_hash,
   signature: row.signature, recordedAt: new Date(row.recorded_at).getTime() } : null; }
-export function createFinishingStationRepository({ boundary }) {
+export function createFinishingStationRepository({ boundary, validateAccess = null }) {
   const lockStation = (tx, stationId) => tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(721930,hashtext($1))', `finishing:${stationId}`);
   async function member(tx, principal, enrollmentId) {
     const [row] = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.station_enrollment WHERE id=$1::uuid AND actor_id=$2::uuid', enrollmentId, principal.id);
@@ -29,6 +29,7 @@ export function createFinishingStationRepository({ boundary }) {
   async function publication(tx, principal, cardId, actionId, latest = false) {
     const [card] = await tx.$queryRawUnsafe('SELECT owner_id,approvers FROM atlas_manual.card WHERE id=$1::uuid FOR SHARE', cardId);
     requireThat(card && (card.owner_id === principal.id || card.approvers.includes(principal.id)), 404, 'MANUAL_CARD_NOT_FOUND');
+    if (validateAccess) await validateAccess({ tx, principal, cardId });
     const [row] = await tx.$queryRawUnsafe(`SELECT p.*,a.report_hash FROM atlas_manual.publication p
       JOIN atlas_manual.approval a ON a.card_id=p.card_id AND a.action_id=p.action_id
       WHERE p.card_id=$1::uuid AND p.action_id=$2::uuid`, cardId, actionId);
