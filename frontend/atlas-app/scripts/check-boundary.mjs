@@ -30,7 +30,7 @@ for (const trace of traces) {
             || rel === 'packages/atlas-manual-workflow/node_modules/@atlas/manual-service')
             && lstatSync(full).isSymbolicLink()
             && realpathSync(full) === realpathSync(resolve(repo, 'packages/atlas-manual-service'));
-        const manualPackage = /^packages\/atlas-(?:connected-manual\/(?:package\.json|src\/transport\.mjs)|manual-service\/(?:package\.json|src\/response\.mjs)|manual-intake\/(?:package\.json|src\/client\.mjs)|manual-workflow\/(?:package\.json|src\/client\.mjs)|manual-workspace\/package\.json)$/.test(rel);
+        const manualPackage = /^packages\/atlas-(?:connected-manual\/(?:package\.json|src\/transport\.mjs)|manual-service\/(?:package\.json|src\/response\.mjs)|manual-intake\/(?:package\.json|src\/(?:client|photo-bytes)\.mjs)|manual-workflow\/(?:package\.json|src\/client\.mjs)|manual-workspace\/package\.json)$/.test(rel);
         const sharedCamera = ['frontend/atlas-shared/RapidCardCamera.jsx', 'frontend/atlas-shared/RapidCardCamera.module.css', 'frontend/atlas-shared/rapid-camera.mjs'].includes(rel);
         assert.ok(manualResponseLink || manualPackage || sharedCamera || rel.startsWith('frontend/atlas-app/') || rel.startsWith('node_modules/') || rel === 'package.json' || rel === 'packages/atlas-grading-core/package.json' || rel.startsWith('packages/atlas-grading-core/dist/') || rel.startsWith('packages/atlas-report-view/') || rel.startsWith('packages/atlas-service-bridge/')
             || rel.startsWith('packages/atlas-site-router/') || rel === 'packages/atlas-finishing/package.json' || rel === 'packages/atlas-finishing/src/nfc.mjs' || rel === 'packages/atlas-finishing/browser.mjs', `Non-app server dependency: ${rel}`);
