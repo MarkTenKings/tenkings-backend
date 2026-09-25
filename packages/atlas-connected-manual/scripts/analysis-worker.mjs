@@ -1,9 +1,10 @@
 // This worker receives only durable accepted-work lookup and GET reconciliation.
 // It cannot build, claim, submit, replace, cancel or adopt an analysis.
-export function createAnalysisWorker({ reconciler, intervalMs = 5000, batchSize = 5, onEvent = () => {} }) {
+export function createAnalysisWorker({ reconciler, intervalMs = 5000, batchSize = 5, concurrency = 1, onEvent = () => {} }) {
   if (!reconciler || typeof reconciler.pending !== 'function' || typeof reconciler.reconcile !== 'function'
     || !Number.isSafeInteger(intervalMs) || intervalMs < 1 || intervalMs > 60000
-    || !Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 10 || typeof onEvent !== 'function') {
+    || !Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 10
+    || !Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 10 || typeof onEvent !== 'function') {
     throw new Error('DEFECT_BACKGROUND_WORKER_CONFIGURATION_INVALID');
   }
   let stopped = true, timer = null, inFlight = null, controller = null, cursor = null;
@@ -20,8 +21,9 @@ export function createAnalysisWorker({ reconciler, intervalMs = 5000, batchSize 
       if (new Set(ids).size !== ids.length || ids.some(id => typeof id !== 'string'
         || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id))) throw new Error('Invalid accepted-work identity');
       cursor = page.nextCursor ?? null;
-      for (const analysisId of ids) {
-        if (owned.signal.aborted) break;
+      let next = 0;
+      async function collect() { while (next < ids.length && !owned.signal.aborted) {
+        const analysisId = ids[next++];
         try {
           const result = await reconciler.reconcile({ analysisId, signal: owned.signal });
           if (!owned.signal.aborted && ['SETTLED', 'UNKNOWN'].includes(result?.state)) {
@@ -30,7 +32,8 @@ export function createAnalysisWorker({ reconciler, intervalMs = 5000, batchSize 
         } catch (error) {
           if (!owned.signal.aborted) emit({ event: 'MANUAL_DEFECT_BACKGROUND_RETRIEVAL_PENDING', analysisId, code: errorCode(error) });
         }
-      }
+      } }
+      await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, collect));
     })();
     try { await inFlight; }
     catch (error) {

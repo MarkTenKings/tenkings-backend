@@ -79,8 +79,9 @@ try {
   let entered = 0, release;
   const gate = new Promise(resolve => { release = resolve; }), errors = [];
   unblock.push(release);
-  const firstWorker = createBatchWorker({ repository, concurrency: 2, onError: error => errors.push(error.code), prepare: { async run() {
-    entered++; await gate; return { kind: 'CONTINUE' };
+  const firstWorker = createBatchWorker({ repository, concurrency: 2, onError: error => errors.push(error.code), prepare: { async run(_staff, job) {
+    entered++; await gate; return { kind: 'CONTINUE', evidence: { manualRevision: 1,
+      manualContentHash: digest(canonical({ source: { sourceHash: job.sourceHash } })) } };
   } } });
   workers.push(firstWorker); firstWorker.wake(staff); await until(() => entered === 2);
   let stopped = false;
@@ -132,7 +133,8 @@ try {
           throw Object.assign(new Error('Synthetic lost provider response'), { code: 'BATCH_ANALYSIS_UNCERTAIN' });
         }
       }
-      return job.stage === 'REPORT' ? report(job) : { kind: 'CONTINUE' };
+      return job.stage === 'REPORT' ? report(job) : { kind: 'CONTINUE', evidence: { manualRevision: 1,
+        manualContentHash: digest(canonical({ source: { sourceHash: job.sourceHash } })) } };
     } finally { active--; }
   } };
   const worker = createBatchWorker({ repository: freshRepository, prepare, concurrency: 2, onError: error => errors.push(error.code) });
@@ -155,13 +157,11 @@ try {
   checks.push('one uncertain analysis and one source replacement do not block the other eight cards; native contention retries the same job');
 
   const payload = canonical({ fixture: 'synthetic provider journal; no actual provider request' });
-  await fixture.admin.$executeRawUnsafe("INSERT INTO atlas_defect_analysis.receipt(analysis_id,kind,request_hash,evidence) VALUES($1::uuid,'RESPONSE',$2,$3)", uncertainRun, digest(payload), canonical({ fixture: 'synthetic terminal result' }));
-  const toResume = (await freshRepository.list(staff)).jobs.find(job => job.key === uncertain.key);
-  await freshRepository.resume(staff, { key: toResume.key, expectedRevision: toResume.revision });
+  await fixture.admin.$executeRawUnsafe("INSERT INTO atlas_defect_analysis.receipt(analysis_id,kind,request_hash,evidence) VALUES($1::uuid,'RESPONSE',$2,$3)", uncertainRun, digest(payload), canonical({ state: 'READY', fixture: 'synthetic terminal result' }));
   await worker.tick(staff);
   await until(async () => (await freshRepository.list(staff)).jobs.filter(job => job.state === 'REVIEW').length === 9);
   await worker.stop(); assert.equal(dispatches, 1); assert.equal(uncertainCalls, 2);
-  checks.push('terminal receipt followed by explicit resume reuses original analysis action without redispatch');
+  checks.push('late READY receipt automatically recovers the exact interrupted action without manual resume or redispatch');
 
   const reviewBefore = (await freshRepository.readReview(staff, busy.key)).job;
   const manual = canonical({ source: { sourceHash: busy.sourceHash } });

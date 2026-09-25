@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { batchImportDiagnostics, batchImportFailureDetails, pairBatchPhotos, createBatchImporter } from '../lib/batch-import.mjs';
+import { batchImportDiagnostics, batchImportFailureDetails, pairBatchPhotos, createBatchImporter, capturePairIdentity } from '../lib/batch-import.mjs';
 const file = (name, content = name) => Object.assign(new Blob([content]), { name });
 function fixture(options = {}) {
   let saved = null, active = 0, peak = 0, loseCreate = false, loseEnqueue = false, busyFront = false, pauses=0;
@@ -16,7 +16,7 @@ function fixture(options = {}) {
       try {
         const card = cards.get(id), sha = Buffer.from(await webcrypto.subtle.digest('SHA-256', await value.arrayBuffer())).toString('hex');
         assert.equal(card.sides[side].version, version); uploads.push({ id, side });
-        card.sides[side] = { version: version + 1, upload: { uploadId: randomUUID(), source: { fixture: true }, plan: { expected: { sha256: sha } } } };
+        card.sides[side] = { version: version + 1, upload: { uploadId: randomUUID(), verification: { sha256: sha }, source: { fixture: true }, plan: { expected: { sha256: sha } } } };
         card.ready = Boolean(card.sides.FRONT.upload && card.sides.BACK.upload);
         return { card: structuredClone(card) };
       } finally { active--; }
@@ -35,12 +35,68 @@ function fixture(options = {}) {
     if (loseCreate) { loseCreate = false; throw Error('lost committed create reply'); }
     return { card: structuredClone(creates.get(body.requestId)) };
   }
-  const importer = () => createBatchImporter({ request, intake, journal, cryptoImpl: webcrypto, ...options, pause:async ms=>{assert.equal(ms,3000);pauses++;} });
-  return { importer, journal, intake, cards, creates, queued, uploads, get peak() { return peak; },get pauses(){return pauses;},busy:()=>{busyFront=true;}, loseCreate: () => { loseCreate = true; }, loseEnqueue: () => { loseEnqueue = true; } };
+  const importer = () => createBatchImporter({ request, intake, journal, cryptoImpl: webcrypto, ...options, pause:options.pause??(async ms=>{assert.equal(ms,3000);pauses++;}) });
+  return { importer, request, journal, intake, cards, creates, queued, uploads, get peak() { return peak; },get pauses(){return pauses;},busy:()=>{busyFront=true;}, loseCreate: () => { loseCreate = true; }, loseEnqueue: () => { loseEnqueue = true; } };
 }
 test('pairs exact filename stems regardless of file order and refuses ambiguous or incomplete physical pairings', () => {
   assert.equal(pairBatchPhotos([file('card-A_back.HEIC'), file('card-A_front.jpg')])[0].label, 'card-A');
   for (const files of [[file('a_front.jpg')], [file('a_front.jpg'), file('b_back.jpg')], [file('a_front.jpg'), file('a_front.png'), file('a_back.jpg')], [file('IMG123.jpg'), file('IMG124.jpg')]]) assert.throws(() => pairBatchPhotos(files), /BATCH_IMPORT_/);
+});
+
+test('parallel importer refills a free card slot while another card original remains stalled', async () => {
+  const f = fixture({ concurrency: 2 }), upload = f.intake.upload; let release, entered;
+  const gate = new Promise(resolve => { release = resolve; }), blocked = new Promise(resolve => { entered = resolve; }); let first;
+  f.intake.upload = async (...args) => {
+    first ??= args[0]; if(args[0] === first && args[1] === 'FRONT'){ entered(); await gate; }
+    return upload(...args);
+  };
+  const owner = f.importer(); await owner.append(Array.from({length:3},(_,i)=>[file(`${i}_front.jpg`),file(`${i}_back.jpg`)]).flat());
+  await blocked;
+  try {
+    for(let i=0;i<100 && f.queued.size<2;i++) await delay(5);
+    assert.equal(f.creates.size,3); assert.equal(f.queued.size,2);
+    assert.equal((await owner.read()).items.find(item=>item.cardId===first).done,false);
+  } finally { release(); await owner.whenIdle(); await owner.dispose(); }
+  assert.equal(f.queued.size,3); assert.equal(f.uploads.length,6); assert.ok(f.peak<=4);
+});
+
+test('server handoff parallel retries lost create response with original IDs and never calls browser enqueue', async () => {
+  const pauses=[],f=fixture({ concurrency:2,serverProcessing:true,pause:async ms=>{pauses.push(ms);} }), owner=f.importer();
+  f.loseCreate();const before=await owner.append([file('a_front.jpg'),file('a_back.jpg'),file('b_front.jpg'),file('b_back.jpg')]);
+  await owner.whenIdle();const after=await owner.read();
+  assert(after.items.every(item=>item.done&&item.files===null));assert.equal(f.creates.size,2);assert.equal(f.uploads.length,4);assert.equal(f.queued.size,0);
+  assert.deepEqual(after.items.map(item=>item.createId),before.items.map(item=>item.createId));assert.equal(pauses.length,1);
+});
+
+test('parallel authentication failure pauses network admission but retains later captures for a fresh session', async () => {
+  const f=fixture();let signedOut=true,calls=0;
+  const request=async(...args)=>{calls++;if(signedOut)throw Object.assign(Error('signed out'),{code:'SIGN_IN_REQUIRED',status:401});return f.request(...args);};
+  const owner=createBatchImporter({request,intake:f.intake,journal:f.journal,cryptoImpl:webcrypto,concurrency:2,serverProcessing:true});
+  const saved=await owner.append(Array.from({length:4},(_,i)=>[file(`${i}_front.jpg`),file(`${i}_back.jpg`)]).flat());await owner.whenIdle();
+  assert.ok(calls<=2);assert.equal(f.uploads.length,0);assert((await owner.read()).items.every(item=>item.files.FRONT instanceof Blob));
+  await owner.appendPair(file('later-front.jpg'),file('later-back.jpg'));assert.equal((await owner.read()).items.length,5);
+  await owner.dispose();signedOut=false;
+  const fresh=createBatchImporter({request,intake:f.intake,journal:f.journal,cryptoImpl:webcrypto,concurrency:2,serverProcessing:true});
+  await fresh.run();const result=await fresh.read();assert(result.items.every(item=>item.done));assert.equal(f.creates.size,5);assert.equal(f.uploads.length,10);
+  assert.deepEqual(result.items.slice(0,4).map(item=>item.createId),saved.items.map(item=>item.createId));await fresh.dispose();
+});
+
+test('external capture pair IDs survive restart and reject different bytes under the same physical pair', async () => {
+  const f=fixture(),owner=f.importer(),pairId=randomUUID(),pair={pairId,files:{FRONT:file('DSC_0001.JPG','exact front'),BACK:file('DSC_0002.JPG','exact back')}};
+  const identity=await capturePairIdentity('mac-camera-station',pairId,webcrypto);
+  const saved=await owner.appendProducerPairs({producerId:'mac-camera-station',pairs:[pair]});assert.equal(saved.items[0].createId,identity.createId);
+  assert.equal(await saved.items[0].files.FRONT.text(),'exact front');await owner.whenIdle();await owner.dispose();
+  const second=f.importer();await second.appendProducerPairs({producerId:'mac-camera-station',pairs:[pair]});await second.whenIdle();
+  assert.equal((await second.read()).items.length,1);assert.equal(f.creates.size,1);assert.equal(f.uploads.length,2);
+  await assert.rejects(second.appendProducerPairs({producerId:'mac-camera-station',pairs:[{...pair,files:{...pair.files,BACK:file('same.JPG','different')}}]}),/BATCH_IMPORT_PRODUCER_CONFLICT/);
+  assert.notEqual((await capturePairIdentity('another-camera',pairId,webcrypto)).createId,identity.createId);await second.dispose();
+});
+
+test('deleted external capture ID is refused locally before any replayed card request', async () => {
+  const f=fixture(),owner=f.importer(),pairId=randomUUID(),{createId}=await capturePairIdentity('camera',pairId,webcrypto),put=f.journal.put;
+  f.journal.put=async value=>{const retained={...value,items:value.items.filter(item=>item.createId!==createId)};await put(retained);return retained;};
+  await assert.rejects(owner.appendProducerPairs({producerId:'camera',pairs:[{pairId,files:{FRONT:file('front.jpg'),BACK:file('back.jpg')}}]}),/INTAKE_CARD_DELETED/);
+  assert.equal(f.creates.size,0);assert.equal(f.uploads.length,0);await owner.dispose();
 });
 test('100 physical pairs preserve originals, cap upload concurrency at two and queue independently', async () => {
   const f = fixture(), owner = f.importer();

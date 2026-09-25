@@ -1,12 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {manualRuntimeSettings,manualStationSettings} from '../lib/server/connected-manual-runtime.mjs';
+import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings} from '../lib/server/connected-manual-runtime.mjs';
 import {generateKeyPairSync} from 'node:crypto';
 import {staffContentSecurityPolicy} from '../lib/content-security.mjs';
 import {privateManualAccessConfig,productionAccessConfig} from '../lib/server/access/config.mjs';
 const config={mode:'PRODUCTION',databaseUrl:'postgresql://staff:password@db.example.com:5432/atlas?schema=atlas_staff&sslmode=require'};
 const env={ATLAS_MANUAL_ENABLED:'true',ATLAS_MANUAL_DATABASE_URL:'postgresql://manual:password@db.example.com:5432/atlas?schema=atlas_manual&sslmode=require',
  ATLAS_MANUAL_STORAGE_ENDPOINT:'https://nyc3.digitaloceanspaces.com',ATLAS_MANUAL_UPLOAD_ORIGIN:'https://example.nyc3.digitaloceanspaces.com',ATLAS_MANUAL_STORAGE_BUCKET:'example',ATLAS_MANUAL_STORAGE_REGION:'nyc3',ATLAS_MANUAL_STORAGE_PREFIX:'atlas/manual/v1',ATLAS_MANUAL_PYTHON:'/opt/atlas-python/bin/python',ATLAS_MANUAL_STORAGE_ACCESS_KEY:'test-access-key',ATLAS_MANUAL_STORAGE_SECRET_KEY:'test-secret-key-is-fictional'};
+test('machine processing separates native CPU slots, upload verification, job execution and accepted model capacity',()=>{
+ assert.deepEqual(manualProcessingSettings({}),{nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64});
+ assert.deepEqual(manualProcessingSettings({ATLAS_MANUAL_NATIVE_CONCURRENCY:'4',ATLAS_MANUAL_VERIFY_CONCURRENCY:'8',ATLAS_MANUAL_BATCH_CONCURRENCY:'25',ATLAS_MANUAL_ANALYSIS_CONCURRENCY:'80'}),
+  {nativeConcurrency:4,verificationConcurrency:8,executionConcurrency:25,analysisConcurrency:80});
+ for(const [name,values] of Object.entries({ATLAS_MANUAL_NATIVE_CONCURRENCY:['0','9','NaN',''],ATLAS_MANUAL_VERIFY_CONCURRENCY:['17','1.5'],ATLAS_MANUAL_BATCH_CONCURRENCY:['129','-1'],ATLAS_MANUAL_ANALYSIS_CONCURRENCY:['129','Infinity']}))
+  for(const value of values)assert.throws(()=>manualProcessingSettings({[name]:value}),{code:'MANUAL_PROCESSING_CONFIG_INVALID'});
+});
 test('connected runtime is explicitly disabled or requires isolated encrypted manual role and exact private origins',()=>{
  assert.equal(manualRuntimeSettings({},config),null);assert.equal(manualRuntimeSettings(env,config).keyPrefix,'atlas/manual/v1');
  for(const change of [{VERCEL:'1'},{AWS_LAMBDA_FUNCTION_NAME:'function'},{ATLAS_MANUAL_DATABASE_URL:env.ATLAS_MANUAL_DATABASE_URL.replace('sslmode=require','sslmode=disable')},

@@ -14,7 +14,7 @@ const definitePlanRefusal = failure => [400, 403, 404, 409, 413].includes(failur
  * One operation per card/side; call pending() and resume() after phone reload.
  */
 export function createIntakeClient({ request, journal, fetchImpl = globalThis.fetch, cryptoImpl = globalThis.crypto, uploadTimeoutMs = 90000,
-  isPaused = () => false }) {
+  isPaused = () => false, serverProcessing = false }) {
   requireThat(typeof request === 'function' && journal && typeof fetchImpl === 'function', 'INTAKE_CLIENT_INVALID');
   requireThat(Number.isSafeInteger(uploadTimeoutMs) && uploadTimeoutMs > 0 && uploadTimeoutMs <= 2_147_483_647, 'INTAKE_CLIENT_INVALID');
   const running = new Set(), uploadingSides = new Set();
@@ -105,17 +105,27 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
             await journal.put(operationId, saved, { recoverOriginal: true }); bytes = recovered.bytes;
           }
           requireThat(hex(await cryptoImpl.subtle.digest('SHA-256', bytes)) === saved.input.sha256, 'INTAKE_PENDING_BYTES_CONFLICT');
+          let uploadDiagnostic;
           try {
-            await putNative(signed.url, { method: 'PUT', headers: signed.headers, body: new Blob([bytes], { type: saved.file.type }),
+            const response = await putNative(signed.url, { method: 'PUT', headers: signed.headers, body: new Blob([bytes], { type: saved.file.type }),
               mode: 'cors', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' }, signal);
-          } catch (failure) { if (signal?.aborted) throw failure; }
+            if (Number.isInteger(response?.status) && response.status >= 400 && response.status <= 599)
+              uploadDiagnostic = { code: 'INTAKE_UPLOAD_HTTP_ERROR', status: response.status, at: new Date().toISOString() };
+          } catch (failure) {
+            if (signal?.aborted) throw failure;
+            uploadDiagnostic = { code: ['INTAKE_UPLOAD_TIMEOUT','INTAKE_UPLOAD_CANCELLED'].includes(failure?.code)
+              ? failure.code : 'INTAKE_UPLOAD_NETWORK_ERROR', at: new Date().toISOString() };
+          }
+          if (uploadDiagnostic) { saved = { ...saved, uploadDiagnostic }; await journal.put(operationId, saved); }
           // 2xx, 412, other errors and a lost reply all require the same server
           // checksum/readback. Never count the browser's response as proof.
         } else requireThat(signed.state === 'VERIFIED', 'INTAKE_UPLOAD_PLAN_INVALID');
-        verified = await post(`${path}/complete`, {}, signal);
+        try { verified = await post(`${path}/complete`, {}, signal); }
+        catch (failure) { if (saved.uploadDiagnostic) failure.uploadDiagnostic = saved.uploadDiagnostic; throw failure; }
       }
       requireThat(verified.upload.verification && verified.upload.uploadId === saved.uploadId, 'INTAKE_UPLOAD_UNVERIFIED');
-      saved = { ...saved, verified: true }; await journal.put(operationId, saved);
+      saved = { ...saved, verified: true, uploadDiagnostic: null }; await journal.put(operationId, saved);
+      if (serverProcessing) { await journal.remove(operationId); return verified; }
       const prepared = await post(`${path}/prepare`, {}, signal);
       requireThat(prepared.upload.source, 'INTAKE_PHOTO_NOT_PREPARED');
       await journal.remove(operationId); return prepared;
@@ -138,6 +148,7 @@ export function createIntakeClient({ request, journal, fetchImpl = globalThis.fe
         const path = `${base}/${cardId}/uploads/${uploadId}`;
         const verified = await post(`${path}/complete`, {}, signal);
         requireThat(verified.upload?.verification && verified.upload.uploadId === uploadId, 'INTAKE_UPLOAD_UNVERIFIED');
+        if (serverProcessing) return verified;
         const prepared = await post(`${path}/prepare`, {}, signal);
         requireThat(prepared.upload?.source && prepared.upload.uploadId === uploadId, 'INTAKE_PHOTO_NOT_PREPARED');
         return prepared;

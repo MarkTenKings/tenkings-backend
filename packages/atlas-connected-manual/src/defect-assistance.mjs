@@ -145,12 +145,16 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       && (Date.parse(run.acceptance.pollUntil) <= Date.now() || run.receipts.some(receipt => receipt.kind === 'OUTCOME'
         && receipt.evidence.code === 'DEFECT_ANALYSIS_POLL_WINDOW_EXHAUSTED'
         && receipt.evidence.responseId === run.acceptance.responseId));
+    const rateLimited = run.state === 'REFUSED' && !run.backgroundAccepted && run.receipts.some(receipt => receipt.kind === 'RESPONSE'
+      && receipt.evidence.state === 'REFUSED' && receipt.evidence.httpStatus === 429 && receipt.evidence.responseId === null
+      && receipt.evidence.code === 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR');
     return { state: run.state, astra: { enabled: true, requestAvailable: Boolean(provider), status, analysisId: run.analysisId,
       base: Object.fromEntries(SIDES.map(side => [side, baseFromRun(run, side)])), proposals,
       ...(status === 'READY' && loaded?.result ? { proposalReview: confirmationOffer(run, loaded.result, state) } : {}),
       limitations: loaded?.result?.limitations ?? [],
       resumeAvailable: run.state === 'PREPARED', knowledgeRevision: run.requestEvidence.knowledge.revision,
       ...(run.backgroundAccepted ? { backgroundAccepted: true } : {}), ...(collectionStopped ? { collectionStopped: true } : {}),
+      ...(rateLimited ? { rateLimited: true } : {}),
       ...(replacement ? { replacement } : {}) } };
   }
   const api = Object.freeze({

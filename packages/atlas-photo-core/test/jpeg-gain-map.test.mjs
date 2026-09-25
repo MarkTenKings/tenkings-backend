@@ -24,6 +24,9 @@ test('JPEG HDR provenance binds full original, gain map, metadata, SDR base trea
   const { original, plan, frame } = fixture();
   assert.deepEqual(parseOriginal(original), original);
   assert.deepEqual(parseDecodedFrame(frame, original, plan), frame);
+  const v2 = structuredClone(frame); v2.treatment.policyVersion = 'atlas-jpeg-apple-sdr-base-srgb-v2';
+  assert.deepEqual(parseDecodedFrame(v2, original, plan), v2);
+  assert.notEqual(descriptorSha256(v2), descriptorSha256(frame));
   const unknown = { ...original, metadata: null };
   assert.equal(planDecode(unknown, original.metadata, limits).metadata.selection.kind, 'primary-jpeg-sdr-base');
   for (const mutate of [m => m.selection.primaryByteCount++, m => m.selection.gainMapByteCount++,
@@ -48,6 +51,9 @@ test('EXIF-qualified sRGB JPEG provenance uses a distinct policy without weakeni
     originalDescriptorSha256: descriptorSha256(original), decodePlanSha256: descriptorSha256(plan),
     treatment: { ...old.frame.treatment, policyVersion: 'atlas-jpeg-apple-exif-srgb-base-v1' } };
   assert.deepEqual(parseDecodedFrame(frame, original, plan), frame);
+  const v2 = structuredClone(frame); v2.treatment.policyVersion = 'atlas-jpeg-apple-exif-srgb-base-v2';
+  assert.deepEqual(parseDecodedFrame(v2, original, plan), v2);
+  assert.notEqual(descriptorSha256(v2), descriptorSha256(frame));
   for (const colorSpace of [null, 'srgb', 'Display P3', 'unknown']) {
     const changed = structuredClone(original); changed.metadata.colorSpace = colorSpace;
     assert.throws(() => parseOriginal(changed));

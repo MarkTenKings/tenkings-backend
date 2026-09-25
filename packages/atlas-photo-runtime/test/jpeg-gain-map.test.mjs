@@ -118,7 +118,7 @@ test('qualified synthetic Apple JPEG preserves the HDR original and independentl
     assert.deepEqual(await sharp(rich.png, { ignoreIcc: true }).raw().toBuffer(), await sharp(working.png, { ignoreIcc: true }).raw().toBuffer());
     assert.deepEqual(bytes, before); assert.equal(rich.original.content.sha256, sha256(before));
     assert.equal(rich.original.metadata.dynamicRange, 'HDR');
-    assert.equal(rich.treatment.policyVersion, 'atlas-jpeg-apple-sdr-base-srgb-v1');
+    assert.equal(rich.treatment.policyVersion, 'atlas-jpeg-apple-sdr-base-srgb-v2');
     assert.equal(rich.treatment.hdrTreatment, 'sdr-base'); assert.equal((await sharp(working.png).metadata()).orientation, undefined);
     assert.deepEqual(working.original, rich.original); assert.deepEqual(working.decodePlan, rich.decodePlan);
     assert.equal(describeDecodedFrame(working, { id: 'synthetic-working', object: { key: 'working/front', versionId: '1' } }).schemaVersion, 2);

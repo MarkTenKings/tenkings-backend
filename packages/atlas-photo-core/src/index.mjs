@@ -258,13 +258,14 @@ export function parseDecodedFrame(value, originalValue, decodePlan) {
   if (value.schemaVersion === 1 && value.treatment.hdrTreatment === 'sdr-base') requireThat(
     original.content.mime === 'image/heic' ? ['atlas-heif-apple-sdr-base-v1', 'atlas-heif-apple-sdr-base-clli-v1'].includes(value.treatment.policyVersion)
       && value.treatment.colorSpace === 'Display P3' && value.treatment.colorTreatment === 'preserved'
-      : value.treatment.policyVersion === (decodePlan.metadata.iccSha256 === null
-          ? 'atlas-jpeg-apple-exif-srgb-base-v1' : 'atlas-jpeg-apple-sdr-base-srgb-v1')
+      : (decodePlan.metadata.iccSha256 === null
+          ? ['atlas-jpeg-apple-exif-srgb-base-v1', 'atlas-jpeg-apple-exif-srgb-base-v2']
+          : ['atlas-jpeg-apple-sdr-base-srgb-v1', 'atlas-jpeg-apple-sdr-base-srgb-v2']).includes(value.treatment.policyVersion)
         && value.treatment.colorSpace === 'sRGB' && value.treatment.colorTreatment === 'converted');
   if (value.schemaVersion === 2) {
     const working = value.workingImage;
     object(working, ['policyVersion', 'sourceRaster', 'sourceTreatment', 'outputIccSha256', 'geometryTreatment']);
-    requireThat(working.policyVersion === 'atlas-sdr-working-srgb8-v1'
+    requireThat(['atlas-sdr-working-srgb8-v1', 'atlas-sdr-working-srgb8-v2', 'atlas-sdr-working-srgb8-identity-v3'].includes(working.policyVersion)
       && working.geometryTreatment === 'identity-no-resampling');
     object(working.sourceRaster, ['content', 'dimensions']);
     content(working.sourceRaster.content, ['image/png']); dimensions(working.sourceRaster.dimensions);
@@ -286,6 +287,15 @@ export function parseDecodedFrame(value, originalValue, decodePlan) {
       && value.treatment.bitDepth === 8 && value.treatment.colorSpace === 'sRGB'
       && value.treatment.colorTreatment === 'converted' && value.treatment.policyVersion === working.policyVersion
       && value.treatment.hdrTreatment === working.sourceTreatment.hdrTreatment);
+    if (working.policyVersion === 'atlas-sdr-working-srgb8-identity-v3') requireThat(
+      equal(value.raster.content, working.sourceRaster.content)
+      && working.sourceTreatment.channels === 3 && working.sourceTreatment.bitDepth === 8
+      && working.sourceTreatment.colorSpace === 'sRGB' && working.sourceTreatment.colorTreatment === 'converted'
+      && working.sourceTreatment.decoder === 'sharp/libvips' && value.treatment.decoder === 'sharp/libvips'
+      && working.sourceTreatment.version === value.treatment.version
+      && ['atlas-native-raster-srgb-v1', 'atlas-native-raster-srgb-v2',
+        'atlas-jpeg-apple-exif-srgb-base-v1', 'atlas-jpeg-apple-exif-srgb-base-v2',
+        'atlas-jpeg-apple-sdr-base-srgb-v1', 'atlas-jpeg-apple-sdr-base-srgb-v2'].includes(working.sourceTreatment.policyVersion));
   }
   return copy(value);
 }

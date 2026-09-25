@@ -47,7 +47,10 @@ export function createEarlyGeometryStore({ boundary, intakeRepository, receiptCl
         const upload = card.sides[input.side]?.upload;
         requireThat(upload?.uploadId === input.uploadId && canonical(upload.source) === canonical(input.photoSource), 409, 'GEOMETRY_PHOTO_CHANGED');
         await recordEarlyGeometryIntent({ tx, principal, cardId: input.cardId, uploadId: input.uploadId });
-        const rows = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.early_geometry WHERE key=$1 FOR UPDATE', key);
+        // Worker claim/finish lock geometry before intake. Normal ensure already
+        // holds intake: reading an existing job must not wait on its row lock.
+        // Its immutable input is sufficient; only an explicit mutation locks it.
+        let rows = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.early_geometry WHERE key=$1', key);
         if (!rows.length) {
           const [count] = await tx.$queryRawUnsafe("SELECT count(*)::int AS count FROM atlas_manual_connected.early_geometry WHERE actor_id=$1::uuid AND state IN ('QUEUED','RUNNING')", principal.id);
           requireThat(count.count < 32, 429, 'GEOMETRY_QUEUE_FULL');
@@ -55,6 +58,7 @@ export function createEarlyGeometryStore({ boundary, intakeRepository, receiptCl
             VALUES($1,$2::uuid,$3::uuid,$4,$5::uuid,$6,$7,$8) ON CONFLICT DO NOTHING`,
           key, input.cardId, input.uploadId, input.side, principal.id, principal.accessVersion, digest(canonical(input.engine)), text);
         } else if (retry || rows[0].access_version !== principal.accessVersion) {
+          rows = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.early_geometry WHERE key=$1 FOR UPDATE', key);
           requireThat(retry || rows[0].actor_id === principal.id, 409, 'GEOMETRY_RETRY_STALE');
           if (retry) requireThat(['FAILED','NEEDS_REVIEW'].includes(rows[0].state), 409, 'GEOMETRY_RETRY_STALE');
           await tx.$executeRawUnsafe(`UPDATE atlas_manual_connected.early_geometry SET state='QUEUED',result=NULL,error=NULL,claim_id=NULL,lease_until=NULL,

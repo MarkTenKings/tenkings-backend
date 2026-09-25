@@ -45,12 +45,37 @@ export function isCreditBalanceRejection(reply) {
   } catch { return false; }
 }
 
+// A normal transient capacity refusal is different from insufficient funds or
+// an unknown transport outcome. Never infer refusal from HTTP429 alone: retain
+// and verify the provider's error envelope, excluding accepted response IDs.
+export function isRateLimitRejection(reply) {
+  if (reply.status !== 429) return false;
+  try {
+    const body = JSON.parse(reply.bytes.toString('utf8'));
+    return !body?.id && !body?.output && body?.error?.code === 'rate_limit_exceeded'
+      && ['rate_limit_error', 'requests', 'tokens'].includes(body.error.type)
+      && (body.error.param === null || body.error.param === undefined);
+  } catch { return false; }
+}
+
+export async function identificationRetryCount(row, access) {
+  let current = row, count = 0;
+  while (current.retry_of) {
+    if (++count >= 3) return count;
+    const parent = await access.attempt(current.retry_of);
+    refuse(parent && parent.id !== current.id && parent.card_id === row.card_id && parent.source_hash === row.source_hash
+      && parent.input === row.input && (current.evidence_attempt_id === parent.evidence_attempt_id || current.evidence_attempt_id === parent.id));
+    current = parent;
+  }
+  return count;
+}
+
 /** Recovery never infers OCR or substitutes photos. The original model request
  * contains the exact JPEGs whose hashes are in the immutable engine input. */
-export async function prepareIdentificationRecovery(row, access, model = null) {
+export async function prepareIdentificationRecovery(row, access, model = null, { rateLimit = false } = {}) {
   refuse(row.state === 'UNKNOWN' && row.result === null && row.finished_at != null);
   model ??= await recordedIdentificationEffect(row, 'MODEL', access);
-  refuse(isCreditBalanceRejection(model));
+  refuse(rateLimit ? isRateLimitRejection(model) : isCreditBalanceRejection(model));
   const root = row.evidence_attempt_id ? await access.attempt(row.evidence_attempt_id) : row;
   refuse(root && root.retry_of == null && root.evidence_attempt_id == null
     && root.card_id === row.card_id && root.source_hash === row.source_hash && root.input === row.input);
@@ -60,7 +85,7 @@ export async function prepareIdentificationRecovery(row, access, model = null) {
   const input = parseCardIdentificationInput(envelope.input);
   refuse(input.subject.id === row.card_id && input.subject.revision === row.source_hash);
   const original = root.id === row.id ? model : await recordedIdentificationEffect(root, 'MODEL', access);
-  refuse(isCreditBalanceRejection(original) && original.requestJson === model.requestJson
+  refuse((isCreditBalanceRejection(original) || rateLimit && isRateLimitRejection(original)) && original.requestJson === model.requestJson
     && original.requestHash === model.requestHash);
   const request = JSON.parse(original.requestJson), loaded = new Map(), ocr = {};
   for (const [index, side] of ['front', 'back'].entries()) {

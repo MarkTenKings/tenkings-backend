@@ -59,3 +59,22 @@ test('visible Delete all cards control performs a server discard and resets the 
  assert.ok(button);assert.equal(button.props.disabled,false);button.props.onClick();await flush();tree=f.render();
  assert.deepEqual(JSON.parse(JSON.stringify(f.deletions)),[{scope:'ALL'}]);assert.equal(f.saved,null);assert.match(text(tree),/All cards deleted from your workspace and this device/);f.unmount();await flush();
 });
+
+test('another device sees verified originals and exact-side preparation attention from compact server progress',async()=>{
+ const f=fixture(),opened=[];f.props.onOpenCard=id=>opened.push(id);await flush();
+ const card={cardId:'remote-card',createRequestId:'remote-create',label:'Camera card',ready:false,
+  sides:{FRONT:{verified:true,prepared:true},BACK:{verified:true,prepared:false}},
+  ingestion:{FRONT:{stage:'ADMIT',state:'COMPLETE',code:null},BACK:{stage:'PREPARE',state:'ATTENTION',code:'PHOTO_FORMAT_UNSUPPORTED'}}};
+ f.props.intakeCards=[card];let tree=f.render();
+ assert.match(text(tree),/1 uploaded to ATLAS/);assert.match(text(tree),/Back · Unsupported format, including camera RAW/);
+ assert.match(text(tree),/original retained/);assert.match(text(tree),/PHOTO_FORMAT_UNSUPPORTED/);
+ assert.doesNotMatch(text(tree),/Checking grading status|Queued up for ATLAS/);
+ all(tree,n=>n.type==='button'&&text(n).includes('Review card'))[0].props.onClick();assert.deepEqual(opened,['remote-card']);
+ card.ingestion.BACK={stage:'PREPARE',state:'RUNNING',code:null};tree=f.render();assert.match(text(tree),/Front prepared · Back verified · Preparing/);
+ card.ingestion.BACK={stage:'PREPARE',state:'QUEUED',code:'PHOTO_STORAGE_TIMEOUT'};
+ tree=f.render();assert.match(text(tree),/Back · Preparation delayed; retrying automatically/);assert.match(text(tree),/PHOTO_STORAGE_TIMEOUT/);
+ assert.doesNotMatch(text(tree),/Preparation queued|Resume saved uploads/);
+ card.sides.BACK.verified=false;card.ingestion.BACK={stage:'VERIFY',state:'QUEUED',code:'INTAKE_UPLOAD_ABSENT'};
+ tree=f.render();assert.match(text(tree),/Back · Waiting for original upload/);assert.match(text(tree),/0 uploaded to ATLAS/);
+ assert.doesNotMatch(text(tree),/Uploading originals…/);f.unmount();await flush();
+});

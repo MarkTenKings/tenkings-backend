@@ -84,6 +84,61 @@ authentication after waiting for locks and before returning the transaction, as
 the existing durable staff boundary does. No CPU, storage or provider work may
 run in these callbacks.
 
+## Device-independent ingestion
+
+The additive `20260925120000_manual_durable_ingestion` migration records an
+ingestion intent in the same transaction as every original upload plan. Its
+one-time reconciliation includes selected historical plans and prepared sources;
+workspace deletion tombstones are excluded. The private runtime starts
+`createIntakeIngestionWorker` from `@atlas/manual-intake/ingestion`. It discovers
+due jobs immediately and periodically, without an owner/browser wake.
+
+```js
+const ingestionRepository = createIntakeIngestionRepository({ boundary });
+const ingestion = createIntakeIngestionWorker({
+  repository: ingestionRepository, intake,
+  authorityFor: job => boundary.machineOwner({
+    ownerId: job.ownerId, accessVersion: job.accessVersion,
+  }),
+  verificationConcurrency: 4, preparationConcurrency: 2,
+});
+ingestion.start();
+// Await ingestion.stop() during private-runtime shutdown.
+```
+
+The boundary must implement deployment-checked `machineTransaction(null, work)`
+and opaque owner authority that rechecks current owner access in every ordinary
+repository transaction. `ingestionGrantSQL(role)` adds only queue read and named
+state-column updates to the restricted role. It does not grant certification or
+change historical staff/session privileges.
+
+VERIFY reads and hashes the exact planned object. PREPARE independently claims
+the verified original for bounded native work. ADMIT replays existing prepared
+sources after restart. Missing objects remain WAIT on the same upload identity;
+confirmed storage/network/database outages retry indefinitely with bounded
+backoff and retained safe diagnostic/failure counts, while invalid evidence
+becomes ATTENTION. All pools have database-wide leases and owner fairness. Lease
+renewal and final evidence adoption check the exact selected upload/claim, and
+deleted/replaced uploads are retired without deleting originals.
+
+Configure `pairCommitted({tx,principal,card})` on the intake repository to insert
+the eligible pair's downstream job in the same source-commit transaction. This
+hook runs only for a fully prepared pair and repeats on exact source replay; it
+must be idempotent and perform no external work. `sourceCommitted` continues to
+receive the same transaction for early geometry. A browser completion callback
+is an optional latency optimization, never the durable handoff.
+
+Enable `includeIngestionStatus` only with the installed queue schema/grants.
+Ordinary card reads then include separate operational `card.ingestion` metadata;
+these fields never enter the immutable photo-pair source hash. For queue polling,
+use `processingList(staff,{limit:100})`: one owner-authorized joined query returns
+card IDs/labels, per-side verified/prepared booleans and stage/state/safe codes,
+without original keys, descriptors, signed URLs, claims or image bytes.
+
+This removes browser dependence once the two original objects have arrived.
+Bytes still only on a closed/offline device cannot be uploaded by this worker.
+Measured native/provider capacity and final human report approval remain separate.
+
 ## HTTP and browser
 
 `createIntakeHandler({service,boundary,origin,assertRequest})` mounts under
@@ -110,8 +165,8 @@ No storage policy, CORS configuration or intended-provider capability is inferre
 from these APIs. Before live use, independently verify private access, exact
 conditional create/checksum/HEAD/GET/version semantics and browser PUT preflight
 for every signed header. Configure bounded SDK deadlines and aggregate worker
-capacity outside the database; the package does not create a scheduler or paid
-model retry mechanism. A compromised serving database credential is not isolated
+capacity outside the database; the ingestion scheduler never retries a paid
+model action. A compromised serving database credential is not isolated
 by row-level security: ordinary application ownership checks plus restricted
 SQL grants are the intended boundary.
 
@@ -138,4 +193,13 @@ logout during processing. The owned fixture is always stopped afterward.
 These tests do not prove live SMS, actual phone IndexedDB/browser uploads,
 intended S3/Spaces behavior, deployment-runtime compatibility, retained real-card
 optical quality, automatic identification or complete manual-app acceptance.
+
+The staff batch importer also exposes `appendProducerPairs({producerId,pairs})`
+for future capture producers. Each pair supplies a stable UUID `pairId` and
+explicit `files:{FRONT,BACK}` originals. It derives stable card-create and queue
+request IDs from the producer/pair identity, persists both originals before any
+network request, and rejects different bytes under an existing pair identity.
+Restarted producers can submit the same pair safely, including from another
+device; existing server photo hashes still fence a conflicting replay. This is
+a capture contract, not a selected camera SDK or support for camera RAW decoding.
 Those belong to the connected host's separately recorded integration evidence.

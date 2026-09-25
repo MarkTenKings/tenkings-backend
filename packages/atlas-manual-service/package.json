@@ -7,6 +7,7 @@
     ".": "./src/service.mjs",
     "./repository": "./src/repository.mjs",
     "./staff-auth": "./src/staff-auth.mjs",
+    "./machine-auth": "./src/machine-auth.mjs",
     "./http": "./src/http.mjs",
     "./contract": "./src/contract.mjs",
     "./artifacts": "./src/artifacts.mjs",

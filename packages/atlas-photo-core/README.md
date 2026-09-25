@@ -119,8 +119,14 @@ Schema 2 `decoded-frame` is a narrow full-dimension working-image derivative.
 It keeps the original/decode-plan hashes and source transform, and adds
 `workingImage: { policyVersion, sourceRaster, sourceTreatment, outputIccSha256,
 geometryTreatment }`. Source PNG dimensions/content and richer treatment remain
-bound. The only current policy is `atlas-sdr-working-srgb8-v1`, with exact sRGB
-output ICC, RGB8, unchanged geometry and source HDR treatment. Schema 1 remains
+bound. Policies `atlas-sdr-working-srgb8-v1` (PNG deflate level 6) and
+`atlas-sdr-working-srgb8-v2` (level 1) use the exact same sRGB output ICC, RGB8,
+unchanged geometry and source HDR treatment. The runtime emits v2; retained v1
+descriptors remain readable. `atlas-sdr-working-srgb8-identity-v3` additionally
+requires identical source/output content, a qualified native/JPEG source policy,
+matching decoder/version, and already converted sRGB RGB8. It records a complete
+entropy check and byte-preserving identity operation rather than a second color
+conversion. The policy is part of the descriptor hash. Schema 1 remains
 valid and unchanged. This supports preparation without falsely describing the
 native original as an SDR or sRGB file. Neither schema proves byte inspection or
 optical fidelity; the runtime and storage adapter supply those observations.

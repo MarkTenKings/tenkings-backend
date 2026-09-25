@@ -326,6 +326,18 @@ test('only the verified no-ID legacy UNKNOWN outcome exposes an explicit replace
   assert.deepEqual(f.row,before);assert.deepEqual(f.calls,{provider:0,images:0});
 });
 
+test('only a saved definite HTTP429 refusal without provider acceptance advertises a bounded rate-limit retry', async () => {
+  for (const variant of [{ httpStatus: 429 }, { httpStatus: 503 }, { httpStatus: 429, responseId: 'resp_observed' },
+    { httpStatus: 429, accepted: true }]) {
+    const f = await savedAnalysisFixture({ background: true, accepted: variant.accepted === true });
+    Object.assign(f.receipt, { state: 'REFUSED', resultRef: null, code: 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR',
+      httpStatus: variant.httpStatus, responseId: variant.responseId ?? null });
+    const result = await f.assistance.status(f.staff, f.cardId, f.analysisId);
+    assert.equal(result.astra.rateLimited, variant.httpStatus === 429 && !variant.responseId && !variant.accepted ? true : undefined);
+    assert.deepEqual(f.calls, { provider: 0, images: 0 });
+  }
+});
+
 test('a different ordinary action while UNKNOWN is durably refused before image or paid work and cannot resume later',async()=>{
   const f=await savedAnalysisFixture({receiptKind:'OUTCOME'}),state=await f.state();
   const input={actionId:randomUUID(),base:Object.fromEntries(SIDES.map(side=>[side,defectBase(state.defects,side)]))};

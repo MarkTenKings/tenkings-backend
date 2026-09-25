@@ -9,6 +9,7 @@ import { PhotoRuntimeError } from './process.mjs';
 import { decodeHeif } from './heif.mjs';
 import { decodeSdrWorking } from './working.mjs';
 import { APPLE_P3_SHA256 } from './jpeg.mjs';
+import { LOSSLESS_PNG } from './png-policy.mjs';
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const reject = code => { throw new PhotoRuntimeError(code); };
@@ -108,7 +109,7 @@ async function decode(request) {
   try {
     await pipeline(sharp(sourceBytes, options).rotate().pipelineColourspace(colorSpace)
       .withIccProfile('srgb').toColourspace(colorSpace)
-      .png({ compressionLevel: 6, adaptiveFiltering: false, palette: false }),
+      .png(LOSSLESS_PNG),
     bound, createWriteStream(outputPath, { flags: 'wx', mode: 0o600 }));
   } catch (error) {
     reject(error.code === 'PHOTO_DECODE_LIMIT' ? error.code : 'PHOTO_DECODE_INVALID');
@@ -129,8 +130,8 @@ async function decode(request) {
     },
     treatment: {
       decoder: 'sharp/libvips', version: `${sharp.versions.sharp}/${sharp.versions.vips}`,
-      policyVersion: jpegHdr?.colorSpace === 'sRGB' ? 'atlas-jpeg-apple-exif-srgb-base-v1'
-        : jpegHdr ? 'atlas-jpeg-apple-sdr-base-srgb-v1' : 'atlas-native-raster-srgb-v1', channels: outputMeta.channels,
+      policyVersion: jpegHdr?.colorSpace === 'sRGB' ? 'atlas-jpeg-apple-exif-srgb-base-v2'
+        : jpegHdr ? 'atlas-jpeg-apple-sdr-base-srgb-v2' : 'atlas-native-raster-srgb-v2', channels: outputMeta.channels,
       bitDepth, colorSpace: 'sRGB', colorTreatment: 'converted', hdrTreatment: jpegHdr ? 'sdr-base' : 'unknown',
     },
   };

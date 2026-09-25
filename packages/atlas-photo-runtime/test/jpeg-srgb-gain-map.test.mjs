@@ -33,7 +33,7 @@ test('explicit sRGB Apple gain-map originals retain their complete bytes and exa
     const decoded = await verifyAndDecodePhoto(request(bytes, policy)), working = await deriveSdrWorkingPhoto(decoded);
     assert.deepEqual(bytes, original); assert.equal(decoded.original.content.sha256, sha256(original));
     assert.equal(decoded.original.metadata.dynamicRange, 'HDR');
-    assert.equal(decoded.treatment.policyVersion, 'atlas-jpeg-apple-exif-srgb-base-v1');
+    assert.equal(decoded.treatment.policyVersion, 'atlas-jpeg-apple-exif-srgb-base-v2');
     assert.deepEqual(decoded.raster.dimensions, orientation < 5 ? { width: 24, height: 18 } : { width: 18, height: 24 });
     assert.deepEqual(await sharp(decoded.png, { ignoreIcc: true }).raw().toBuffer(), orient(expected, 24, 18, 3, orientation));
     assert.deepEqual(await sharp(working.png, { ignoreIcc: true }).raw().toBuffer(), orient(expected, 24, 18, 3, orientation));

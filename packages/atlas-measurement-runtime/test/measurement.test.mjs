@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,15 @@ import { workspace, edit, measurements, traceAction, clone } from '../../atlas-m
 
 const python = process.env.ATLAS_MEASUREMENT_PYTHON;
 if (!python?.startsWith('/')) throw new Error('Set ATLAS_MEASUREMENT_PYTHON to the absolute pinned CPU Python environment');
+// Node runs this test file in its own process. Scope native temporary work to
+// this suite so a concurrent server/benchmark cannot look like our leaked files.
+const sharedTemporaryDirectory = tmpdir(), previousTmpdir = process.env.TMPDIR;
+const suiteTemporaryDirectory = await mkdtemp(join(sharedTemporaryDirectory, 'atlas-measurement-suite-'));
+process.env.TMPDIR = suiteTemporaryDirectory;
+after(async () => {
+  if (previousTmpdir === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = previousTmpdir;
+  await rm(suiteTemporaryDirectory, { recursive: true, force: true });
+});
 const limits = { maxInputBytes: 8_000_000, maxOutputBytes: 8_000_000, maxFindings: 128, timeoutMs: 15000 };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const run = (state, overrides = {}) => measureDefectWorkspaceEdit({ workspace: state, side: 'FRONT', limits, pythonExecutable: python, ...overrides });
@@ -104,16 +113,21 @@ test('caller state and resource limits are captured before asynchronous filesyst
   assert.equal(result.base.frame.inspectionImageSha256, '3'.repeat(64));
 });
 
-test('input/output limits and invalid/pre-aborted signals fail explicitly and clean temporary artifacts', async () => {
-  const pending = edit(workspace(false), traceAction()), before = new Set((await readdir(tmpdir())).filter(name => name.startsWith('atlas-measurement-')));
+test('input/output limits and invalid/pre-aborted signals fail explicitly and clean temporary artifacts', async t => {
+  const pending = edit(workspace(false), traceAction());
+  assert.equal(tmpdir(), suiteTemporaryDirectory);
+  // Another process may create this same runtime prefix in the shared OS temp
+  // directory while our child runs. It must not enter this suite's leak check.
+  const unrelated = await mkdtemp(join(sharedTemporaryDirectory, 'atlas-measurement-unrelated-'));
+  t.after(() => rm(unrelated, { recursive: true, force: true }));
   await assert.rejects(run(pending, { limits: { ...limits, maxInputBytes: 1 } }), /MEASUREMENT_LIMIT/);
   await assert.rejects(run(pending, { limits: { ...limits, maxOutputBytes: 1 } }), /MEASUREMENT_LIMIT/);
   await assert.rejects(run(pending, { signal: {} }), /MEASUREMENT_INVALID/);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(run(pending, { signal: controller.signal }), /MEASUREMENT_CANCELLED/);
   await assert.rejects(run(pending, { limits: { ...limits, timeoutMs: 0 } }), /MEASUREMENT_LIMIT/);
-  const after = (await readdir(tmpdir())).filter(name => name.startsWith('atlas-measurement-'));
-  assert.ok(after.every(name => before.has(name)));
+  const remaining = (await readdir(suiteTemporaryDirectory)).filter(name => name.startsWith('atlas-measurement-'));
+  assert.deepEqual(remaining, []);
 });
 
 test('timeout and cancellation actually terminate/reap a blocked child before rejection', async () => {

@@ -5,15 +5,18 @@ import { markAccessFailure } from '../api-failure.mjs';
 /** The client stays inside the server adapter; routes receive named operations. */
 export class StaffDatabase {
     constructor(client, config) { this.client = client; this.config = config; }
-    async transaction(work) {
+    async readTransaction(work) { return this.transaction(work, { shared: true }); }
+    async transaction(work, { shared = false } = {}) {
         let phase = 'STAFF_BEGIN';
         try { return await this.client.$transaction(async tx => {
             phase = 'STAFF_PRIVILEGES';
             await assertStaffPrivileges(tx);
-            // The initial small staff roster uses one short database gate. No
-            // provider, image, file or other external work may run inside it.
+            // Authentication-only reads share the gate. Session/rate mutations
+            // retain the exclusive gate, so uploads do not serialize every
+            // unrelated card's read-only authentication transaction.
             phase = 'STAFF_GLOBAL_LOCK';
-            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('atlas-staff-access-v1', 0))`;
+            if (shared) await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended('atlas-staff-access-v1', 0))`;
+            else await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('atlas-staff-access-v1', 0))`;
             phase = 'STAFF_CONTROL';
             const controls = await tx.$queryRaw`SELECT * FROM atlas_staff.lock_control()`;
             const control = controls[0], config = this.config;

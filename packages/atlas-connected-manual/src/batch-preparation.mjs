@@ -7,6 +7,7 @@ import { SPEEDSTER_RULE_VERSION } from '@atlas/grading-core/contracts';
 import { calculateAtlasFinalGrade, ATLAS_FINAL_GRADE_POLICY } from '@atlas/grading-core/manual-report';
 import { proposalEdit } from '../../atlas-manual-workflow/src/proposal-review.mjs';
 import { gradingIdentity } from './details.mjs';
+import { BATCH_RATE_LIMIT_RETRIES } from '@atlas/batch-grading';
 
 const SIDES = ['FRONT', 'BACK'];
 const attention = code => ({ kind: 'ATTENTION', code });
@@ -83,7 +84,9 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
         if (!opened.manual) {
           if (opened.identification.state !== 'COMPLETE') {
             dispatchSignal?.throwIfAborted();
-            const identification = await connected.identification.run(staff, job.cardId, { dispatchSignal });
+            const identify = connected.identification.runMachine ?? connected.identification.run;
+            const identification = await identify(staff, job.cardId, { dispatchSignal });
+            if (identification.state === 'RETRY_WAIT') return {kind:'WAIT',retryAfterMs:identification.retryAfterMs};
             if (identification.state === 'RUNNING') return wait();
             if (identification.state !== 'COMPLETE') return attention('BATCH_IDENTITY_NEEDS_REVIEW');
             opened = await current(staff, job);
@@ -108,11 +111,20 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
       requireThat(card.revision === job.evidence.manualRevision && card.contentHash === job.evidence.manualContentHash, 409, 'BATCH_MANUAL_DRAFT_CHANGED');
       if (job.stage === 'ANALYZE') {
         dispatchSignal?.throwIfAborted();
-        const response = await connected.assistance.analyzeMachine(staff, job.cardId, { actionId: job.analysisActionId,
-          base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) }, { dispatchSignal });
+        // Reconcile the saved action before constructing image/request buffers.
+        // A READY receipt after a lost socket reply advances this exact job;
+        // accepted/unknown work never becomes permission for another dispatch.
+        let response = await connected.assistance.status(staff, job.cardId, job.analysisActionId);
+        if (response.state === 'NOT_FOUND' || response.state === 'PREPARED') {
+          dispatchSignal?.throwIfAborted();
+          response = await connected.assistance.analyzeMachine(staff, job.cardId, { actionId: job.analysisActionId,
+            base: Object.fromEntries(SIDES.map(side => [side, defectBase(state.defects, side)])) }, { dispatchSignal });
+        }
         const astra = response.astra;
         if (astra?.status === 'READY') return { kind: 'CONTINUE', evidence: { analysisId: astra.analysisId } };
         if (['RUNNING', 'PREPARED', 'DISPATCHED'].includes(response.state) || astra?.status === 'RUNNING') return wait();
+        if (astra?.rateLimited === true) return (job.analysisAttempt ?? 0) < BATCH_RATE_LIMIT_RETRIES
+          ? { kind: 'RETRY_ANALYSIS', code: 'BATCH_PROVIDER_RATE_LIMITED' } : attention('BATCH_PROVIDER_RATE_LIMITED');
         return attention(astra?.status === 'UNKNOWN' ? 'BATCH_ANALYSIS_UNCERTAIN' : 'BATCH_ANALYSIS_NEEDS_REVIEW');
       }
       requireThat(job.stage === 'REPORT', 400, 'BATCH_STAGE_INVALID');

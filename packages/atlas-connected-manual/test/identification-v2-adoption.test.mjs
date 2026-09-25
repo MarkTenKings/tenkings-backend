@@ -11,6 +11,7 @@ import { createBatchPreparation } from '../src/batch-preparation.mjs';
 import { createIdentification, identificationEffects } from '../src/identification.mjs';
 import { createDetailsStore, FIELDS, gradingIdentity } from '../src/details.mjs';
 import { createConnectedHandler } from '../src/http.mjs';
+import { createWorkLimiter } from '../src/index.mjs';
 
 const V1 = 'card-identification-v1', V2 = 'card-identification-v2';
 const MASK = 'responses(fullTextAnnotation/text,textAnnotations/description,error)';
@@ -40,7 +41,8 @@ function deferred() {
 // stores. Transactions serialize, roll back on errors, and enforce row CAS and
 // unique effect claims. They do not establish PostgreSQL or staff-session proof.
 async function fixture({ category = 'Sports cards', values = {}, pauseModel = false,
-  engineVersion=V2,layoutProposal={value:null,confidence:'unknown',evidence:null},pauseRequestArtifact = false, httpStatus = 200, modelError = null, ocrText = null, pauseClaim = false } = {}) {
+  engineVersion=V2,layoutProposal={value:null,confidence:'unknown',evidence:null},pauseRequestArtifact = false, httpStatus = 200, modelError = null, ocrText = null, pauseClaim = false,
+  clock=()=>Date.now(), limited } = {}) {
   const cardId = randomUUID(), staff = { id: randomUUID(), edit: true };
   const sourceHash = digest('original synthetic pair'), objects = new Map();
   const db = { attempts: new Map(), details: new Map(), actions: new Map(), events: new Map() };
@@ -90,7 +92,7 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
           row.retry_of===retry_of || row.card_id===card_id && row.retry_action_id===retry_action_id:
           row.card_id===card_id && row.source_hash===source_hash && row.retry_of===null))return 0;
         db.attempts.set(id, { id, card_id, source_hash, actor_id, input, retry_of, retry_action_id, evidence_attempt_id, state: 'RUNNING',
-          result: null, error: null, created_at: new Date(), finished_at: null });
+          result: null, error: null, created_at: new Date(clock()), finished_at: null });
         if(retry_of && pauseClaim){claimEntered.resolve();await claimRelease.promise;}
         return 1;
       }
@@ -98,7 +100,7 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
         const [state, result, error, id] = args;
         const row = [...db.attempts.values()].find(item => item.id === id);
         if (!row || row.state !== 'RUNNING') return 0;
-        Object.assign(row, { state, result, error, finished_at: new Date() }); return 1;
+        Object.assign(row, { state, result, error, finished_at: new Date(clock()) }); return 1;
       }
       if (sql.startsWith('INSERT INTO atlas_manual_connected.effect(')) {
         const [attempt_id, stage, event, request_hash, evidence] = args;
@@ -198,7 +200,7 @@ async function fixture({ category = 'Sports cards', values = {}, pauseModel = fa
     },
   });
   const details = createDetailsStore({ boundary, intakeRepository });
-  const config = { boundary, intake, intakeRepository, storage, artifacts, details, effects, receiptClient, ...(engineVersion?{engineVersion}:{}) };
+  const config = { boundary, intake, intakeRepository, storage, artifacts, details, effects, receiptClient, clock, limited, ...(engineVersion?{engineVersion}:{}) };
   const identification = createIdentification(config);
   return { cardId, staff, sourceHash, originalPair, workingBytes, objects, db, calls, artifacts, details,
     identification, proposed, modelEntered, modelRelease,
@@ -252,6 +254,28 @@ test('shutdown during identification request persistence prevents a new model di
   assert.equal(f.calls.receipts.filter(value => value.event === 'RESPONSE').length, 2);
   assert.equal([...f.db.events.values()].some(value => value.stage === 'MODEL' && value.event === 'DISPATCH'), false);
   await f.identification.run(f.staff, f.cardId); assert.equal(f.calls.http.length, 2);
+});
+
+test('twenty identifications share two native decode slots without retaining them during model waits or changing JPEG bytes', async () => {
+  const native = createWorkLimiter(2, { maxQueue: 20 }), gate = deferred(); let active = 0, peak = 0, photos = 0;
+  const limited = work => native(async () => {
+    peak = Math.max(peak, ++active); photos++;
+    try { await gate.promise; return await work(); } finally { active--; }
+  });
+  const baseline = await fixture(); await baseline.identification.run(baseline.staff, baseline.cardId);
+  const expected = baseline.artifactsOf('IDENTIFICATION_IMAGE').map(image => image.base64);
+  const fixtures = await Promise.all(Array.from({ length: 20 }, () => fixture({ limited, pauseModel: true })));
+  const pending = fixtures.map(f => f.identification.run(f.staff, f.cardId));
+  try {
+    for (let turns = 0; turns < 1000 && active < 2; turns++) await nextTurn();
+    assert.equal(active, 2); assert.equal(photos, 2); assert.equal(fixtures.reduce((sum, f) => sum + f.calls.http.length, 0), 0);
+    gate.resolve(); await Promise.all(fixtures.map(f => f.modelEntered.promise));
+    assert.equal(active, 0); assert.equal(peak, 2); assert.equal(photos, 40);
+    assert(fixtures.every(f => f.calls.http.length === 3), 'all20 model requests enter while earlier models remain pending');
+    for (const f of fixtures) assert.deepEqual(f.artifactsOf('IDENTIFICATION_IMAGE').map(image => image.base64), expected);
+    fixtures.forEach(f => f.modelRelease.resolve());
+    assert((await Promise.all(pending)).every(result => result.state === 'COMPLETE'));
+  } finally { gate.resolve(); fixtures.forEach(f => f.modelRelease.resolve()); await Promise.allSettled(pending); }
 });
 
 test('shutdown admission does not cancel an identification model already dispatched or discard its response', async () => {
@@ -580,11 +604,90 @@ test('HTTP effects preserve historical V1 body, V2 fields transport, response li
 });
 
 const exhausted = { type:'insufficient_quota',code:'credit_balance_exhausted',param:null,message:'Synthetic API balance exhausted.' };
+const rateLimited = { type:'requests',code:'rate_limit_exceeded',param:null,message:'Synthetic request limit.' };
 const retryInput = f => ({actionId:randomUUID(),expectedAttemptId:f.currentRow().id,sourceHash:f.sourceHash});
 async function waitModelCalls(f,count){
   for(let i=0;i<1000 && f.calls.http.length<count;i++)await nextTurn();
   assert.equal(f.calls.http.length,count);
 }
+
+test('machine identification waits durably after a proven429, then a restarted worker retries the exact request without OCR',async()=>{
+  let now=Date.now();const f=await fixture({httpStatus:429,modelError:rateLimited,clock:()=>now});
+  const first=await f.identification.runMachine(f.staff,f.cardId),old=clone(f.currentRow());
+  assert.equal(first.state,'RETRY_WAIT');assert.equal(first.retryAfterMs,30000);assert.equal(f.calls.http.length,3);
+  now+=29999;assert.equal((await f.restart().runMachine(f.staff,f.cardId)).retryAfterMs,1);assert.equal(f.calls.http.length,3);
+  now++;f.setModel(200);
+  const completed=await f.restart().runMachine(f.staff,f.cardId);
+  assert.equal(completed.state,'COMPLETE');assert.equal(f.calls.http.length,4);assert.equal(f.calls.reads.length,2);
+  assert.equal(f.calls.http[2].init.body,f.calls.http[3].init.body);assert.deepEqual(f.db.attempts.get(old.id),old);
+  assert.equal(f.currentRow().retry_of,old.id);assert.equal(f.currentRow().evidence_attempt_id,old.id);
+  await f.restart().runMachine(f.staff,f.cardId);assert.equal(f.calls.http.length,4);
+});
+
+test('machine refusal retries remain queued across restart and stop after three immutable successors',async()=>{
+  let now=Date.now();const f=await fixture({httpStatus:429,modelError:rateLimited,clock:()=>now});
+  let result=await f.identification.runMachine(f.staff,f.cardId);const original=clone(f.currentRow());
+  for(const [index,delay] of [30000,60000,60000].entries()){
+    assert.equal(result.state,'RETRY_WAIT');assert.equal(result.retryAfterMs,delay);
+    now+=delay;result=await f.restart().runMachine(f.staff,f.cardId);
+    assert.equal(f.calls.http.length,4+index);assert.equal(f.db.attempts.size,2+index);
+  }
+  assert.equal(result.state,'UNKNOWN');assert.deepEqual(result.rejection,{code:'API_RATE_LIMIT_RETRY_EXHAUSTED',canRetry:false});
+  now+=3600000;await f.restart().runMachine(f.staff,f.cardId);assert.equal(f.calls.http.length,6);
+  assert.deepEqual(f.db.attempts.get(original.id),original);
+  assert.equal(new Set([...f.db.attempts.values()].slice(1).map(row=>row.retry_action_id)).size,3);
+});
+
+test('two restarted machine workers share one deterministic identification successor',async()=>{
+  let now=Date.now();const f=await fixture({httpStatus:429,modelError:rateLimited,clock:()=>now});
+  await f.identification.runMachine(f.staff,f.cardId);now+=30000;f.setModel(200,null,{pause:true});
+  const first=f.restart().runMachine(f.staff,f.cardId),second=f.restart().runMachine(f.staff,f.cardId);
+  await waitModelCalls(f,4);const pending=await Promise.race([first,second]);assert.equal(pending.state,'RUNNING');
+  assert.equal(f.db.attempts.size,2);f.modelRelease.resolve();await Promise.all([first,second]);
+  assert.equal(f.currentRow().state,'COMPLETE');assert.equal(f.calls.http.length,4);
+});
+
+test('a429 receipt retained before process loss closes the old RUNNING claim without blindly resending',async()=>{
+  let now=Date.now();const f=await fixture({httpStatus:429,modelError:rateLimited,clock:()=>now});
+  await f.identification.runMachine(f.staff,f.cardId);
+  // Reproduce the persisted snapshot immediately after RESPONSE and before the
+  // original process's terminal update; retain all immutable request evidence.
+  Object.assign(f.currentRow(),{state:'RUNNING',finished_at:null,error:null});
+  now+=120001;let result=await f.restart().runMachine(f.staff,f.cardId);
+  assert.equal(result.state,'RETRY_WAIT');assert.equal(result.retryAfterMs,30000);assert.equal(f.calls.http.length,3);
+  now+=30000;f.setModel(200);result=await f.restart().runMachine(f.staff,f.cardId);
+  assert.equal(result.state,'COMPLETE');assert.equal(f.calls.http.length,4);
+});
+
+test('machine retries never dispatch for unknown, accepted, unproven, or noncapacity outcomes',async t=>{
+  for(const kind of ['missing-model-response','http500','credit','bad-error','accepted'])await t.test(kind,async()=>{
+    let now=Date.now();const f=await fixture({clock:()=>now,httpStatus:kind==='http500'?500:kind==='accepted'?200:429,
+      modelError:kind==='accepted'?null:kind==='credit'?exhausted:kind==='bad-error'?{...rateLimited,type:'unrecognized'}:rateLimited});
+    await f.identification.runMachine(f.staff,f.cardId);
+    if(kind==='missing-model-response')f.db.events.delete(`${f.currentRow().id}:MODEL:RESPONSE`);
+    if(kind==='accepted')Object.assign(f.currentRow(),{state:'RUNNING',finished_at:null,result:null,error:null});
+    now+=180000;const result=await f.restart().runMachine(f.staff,f.cardId);
+    assert.equal(result.state,'UNKNOWN');assert.equal(f.calls.http.length,3);assert.equal(f.db.attempts.size,1);
+  });
+});
+
+test('workspace initialization and shutdown fence machine identification successors',async()=>{
+  let now=Date.now();const f=await fixture({clock:()=>now,httpStatus:429,modelError:rateLimited});
+  await f.identification.runMachine(f.staff,f.cardId);now+=30000;f.setWorkspace();
+  assert.equal((await f.restart().runMachine(f.staff,f.cardId)).state,'UNKNOWN');assert.equal(f.calls.http.length,3);
+  f.setWorkspace(false);const controller=new AbortController();controller.abort();
+  await assert.rejects(f.restart().runMachine(f.staff,f.cardId,{dispatchSignal:controller.signal}),{name:'AbortError'});
+  assert.equal(f.calls.http.length,3);assert.equal(f.db.attempts.size,1);
+});
+
+test('a source change between machine successor claim and dispatch preserves the old evidence without a provider call',async()=>{
+  let now=Date.now();const f=await fixture({clock:()=>now,httpStatus:429,modelError:rateLimited,pauseClaim:true});
+  await f.identification.runMachine(f.staff,f.cardId);const original=clone(f.currentRow());
+  now+=30000;f.setModel(200);const pending=f.restart().runMachine(f.staff,f.cardId);
+  await f.claimEntered.promise;f.retake();f.claimRelease.resolve();await pending;
+  assert.equal(f.calls.http.length,3);assert.deepEqual(f.db.attempts.get(original.id),original);
+  assert.equal([...f.db.events.values()].some(event=>event.attempt_id!==original.id && event.event==='DISPATCH'),false);
+});
 
 test('verified API credit rejection exposes a manual retry that reuses the exact saved pair/OCR/model request', async()=>{
   const f=await fixture({httpStatus:429,modelError:exhausted}), failed=await f.identification.run(f.staff,f.cardId);
@@ -758,7 +861,7 @@ for(const [layoutType,evidence] of [['POKEMON','Front: BASIC Pikachu, HP 60 and 
   identification:f.identification,earlyGeometry:{ensure:async()=>{},status:async()=>({FRONT:{state:'READY'},BACK:{state:'READY'}})},
   async initialize(){const {details}=await f.details.read(f.staff,f.cardId);assert.equal(gradingIdentity(details).layoutType,layoutType);assert.deepEqual(details.touched,[]);initialized=true;f.setWorkspace();},
   workflow:{service:{read:async()=>card},hydrate:async()=>state},
-  assistance:{async analyzeMachine(){analyses++;return {astra:{status:'READY',analysisId:'synthetic-astra'}};}},
+  assistance:{async status(){return {state:'NOT_FOUND'};},async analyzeMachine(){analyses++;return {astra:{status:'READY',analysisId:'synthetic-astra'}};}},
  };
  const prepare=createBatchPreparation({connected}),job={cardId:f.cardId,sourceHash:f.sourceHash,uploads,stage:'PREPARE'};
  const ready=await prepare.run(f.staff,job);assert.equal(ready.kind,'CONTINUE');assert.equal(initialized,true);assert.equal(analyses,0);

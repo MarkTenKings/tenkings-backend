@@ -1,5 +1,6 @@
 import { createManualIntake } from '@atlas/manual-intake';
 import { createIntakeRepository } from '@atlas/manual-intake/repository';
+import { createIntakeIngestionRepository, createIntakeIngestionWorker } from '@atlas/manual-intake/ingestion';
 import { createPhotoProcessor } from '@atlas/manual-intake/photo-processing';
 import { createManualRepository } from '@atlas/manual-service/repository';
 import { createManualWorkflow } from '@atlas/manual-workflow';
@@ -18,7 +19,7 @@ import { createEarlyGeometry, adoptEarlyGeometry } from './early-geometry.mjs';
 import { createPublicationRepository } from './publication-repository.mjs';
 import { createManualPublication } from './publication.mjs';
 import { createBatchGrading, createBatchWorker, batchActionId } from '@atlas/batch-grading';
-import { createBatchRepository } from '@atlas/batch-grading/repository';
+import { createBatchRepository, recordBatchPreparedPair } from '@atlas/batch-grading/repository';
 import { createBatchPreparation } from './batch-preparation.mjs';
 import { createBatchReview } from './batch-review.mjs';
 import { createManualFinishing } from './finishing.mjs';
@@ -38,24 +39,33 @@ export const DEFAULT_LIMITS = Object.freeze({
 });
 const SIDES=['FRONT','BACK'];
 // Bound CPU/native resource concurrency, independently of card count or spend.
-export function createWorkLimiter(maximum=2){let active=0;return async work=>{
-  requireThat(active<maximum,503,'MANUAL_PROCESSING_BUSY');active++;try{return await work();}finally{active--;}
-};}
-export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null}) {
+export function createWorkLimiter(maximum=2,{maxQueue=0}={}){
+  requireThat(Number.isInteger(maximum)&&maximum>=1&&maximum<=32&&Number.isInteger(maxQueue)&&maxQueue>=0&&maxQueue<=256,500,'MANUAL_PROCESSING_CONFIG_INVALID');
+  let active=0;const waiting=[];
+  return async work=>{
+    if(active>=maximum){requireThat(waiting.length<maxQueue,503,'MANUAL_PROCESSING_BUSY');await new Promise(resolve=>waiting.push(resolve));}
+    else active++;
+    try{return await work();}finally{const next=waiting.shift();if(next)next();else active--;}
+  };
+}
+export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,
+  processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
   let earlyGeometry,batch=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
-  const intakeRepository=createIntakeRepository({boundary,keyPrefix,maxOriginalBytes:64*1024*1024,sourceCommitted:recordEarlyGeometryIntent});
-  const limited=createWorkLimiter(2),photoProcessor=createPhotoProcessor({storage,keyPrefix,decodeLimits:limits.decode});
+  const autonomous=batchEnabled&&typeof boundary.machineTransaction==='function';
+  const intakeRepository=createIntakeRepository({boundary,keyPrefix,maxOriginalBytes:64*1024*1024,sourceCommitted:recordEarlyGeometryIntent,
+    pairCommitted:autonomous?recordBatchPreparedPair:null,includeIngestionStatus:autonomous});
+  const limited=createWorkLimiter(processing.nativeConcurrency,{maxQueue:64}),photoProcessor=createPhotoProcessor({storage,keyPrefix,decodeLimits:limits.decode});
   const intake=createManualIntake({repository:intakeRepository,storage,artifacts,processPhoto:input=>limited(()=>photoProcessor(input)),
     sourcePrepared:async(staff,cardId,uploadId)=>{
       await earlyGeometry.sourcePrepared(staff,cardId,uploadId);
-      if(batch){const {card}=await intake.read(staff,cardId);if(card.ready)await batch.enqueue(staff,{
+      if(batch&&!autonomous){const {card}=await intake.read(staff,cardId);if(card.ready)await batch.enqueue(staff,{
         actionId:batchActionId(card.sourceHash,'ENQUEUE'),cards:[{cardId,sourceHash:card.sourceHash}]});}
     }});
   const details=createDetailsStore({boundary,intakeRepository});
   earlyGeometry=createEarlyGeometry({store:createEarlyGeometryStore({boundary,intakeRepository,receiptClient}),intake,details,storage,artifacts,keyPrefix,
     limited,pythonExecutable,limits:limits.preparation});
-  const identification=createIdentification({boundary,intake,intakeRepository,storage,artifacts,details,effects,receiptClient});
+  const identification=createIdentification({boundary,intake,intakeRepository,storage,artifacts,details,effects,receiptClient,limited});
   const validateAccess=({tx,cardId})=>intakeRepository.assertActiveInTransaction(tx,cardId);
   const publicationRepository=createPublicationRepository({boundary,validateAccess});
   const publication=createManualPublication({repository:publicationRepository,artifacts,storage,readSource:intake.readSource});
@@ -197,9 +207,14 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     const batchRepository=createBatchRepository({boundary,intakeRepository});
     const prepare=createBatchPreparation({connected,artifacts,pythonExecutable,measurementLimits:limits.measurement,
       measure:input=>limited(()=>measureDefectWorkspaceEdit(input))});
-    batch=createBatchGrading({repository:batchRepository,worker:createBatchWorker({repository:batchRepository,prepare,concurrency:2}),
-      review:createBatchReview({connected,repository:batchRepository,artifacts})});
+    batch=createBatchGrading({repository:batchRepository,worker:createBatchWorker({repository:batchRepository,prepare,
+      concurrency:processing.executionConcurrency,analysisConcurrency:processing.analysisConcurrency,onError:onWorkerError,autoStart:false}),
+      review:createBatchReview({connected,repository:batchRepository,artifacts}),
+      intakeStatus:autonomous?async staff=>(await intake.processingList(staff,{limit:100})).cards:null});
   }
   connected.batch=batch;
+  connected.ingestion=autonomous?createIntakeIngestionWorker({repository:createIntakeIngestionRepository({boundary}),intake,
+    authorityFor:job=>boundary.machineOwner({ownerId:job.ownerId,accessVersion:job.accessVersion}),
+    verificationConcurrency:processing.verificationConcurrency,preparationConcurrency:processing.nativeConcurrency,onError:onWorkerError}):null;
   return Object.freeze(connected);
 }

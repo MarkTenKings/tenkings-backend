@@ -70,6 +70,40 @@ test('preparation pauses safely for missing identity without calling human actio
   assert.equal(result.code, 'BATCH_IDENTITY_NEEDS_REVIEW'); assert.equal(initialized, false);
 });
 
+test('preparation persists machine identification capacity backoff without requiring human resume', async () => {
+  let machineCalls = 0;
+  const sourceHash = 'b'.repeat(64), uploads = { FRONT: 'front', BACK: 'back' };
+  const connected = {
+    open: async () => ({ card: { ready: true, sourceHash, sides: Object.fromEntries(SIDES.map(side => [side, { upload: { uploadId: uploads[side] } }])) },
+      manual: null, identification: { state: 'UNKNOWN' } }),
+    identification: {
+      async runMachine() { machineCalls++; return { state: 'RETRY_WAIT', retryAfterMs: 30000 }; },
+      async run() { assert.fail('batch must use the durable machine continuation'); },
+    },
+    async initialize() { assert.fail('identification has not completed'); },
+  };
+  const result = await createBatchPreparation({ connected }).run({}, { cardId: 'synthetic-card', sourceHash, uploads, stage: 'PREPARE' });
+  assert.deepEqual(result, { kind: 'WAIT', retryAfterMs: 30000 }); assert.equal(machineCalls, 1);
+});
+
+for (const status of ['READY', 'RUNNING', 'UNKNOWN', 'PREPARED', 'NOT_FOUND']) test(`machine analysis reconciles exact saved ${status} state before dispatch`, async () => {
+  const f = fixture(), uploads = { FRONT: 'front', BACK: 'back' }, calls = [];
+  const job = { cardId: f.card.cardId, sourceHash: f.card.draft.source.sourceHash, uploads, stage: 'ANALYZE',
+    analysisActionId: 'same-analysis-action', evidence: { manualRevision: f.card.revision, manualContentHash: f.card.contentHash } };
+  const opened = { card: { ready: true, sourceHash: job.sourceHash,
+    sides: Object.fromEntries(SIDES.map(side => [side, { upload: { uploadId: uploads[side] } }])) } };
+  const connected = { open: async () => opened, workflow: { service: { read: async () => f.card }, hydrate: async () => f.state },
+    assistance: {
+      async status(_actor, cardId, actionId) { calls.push(['status', cardId, actionId]); return { state: status, astra: { status, analysisId: actionId } }; },
+      async analyzeMachine(_actor, cardId, input) { calls.push(['analyze', cardId, input.actionId]); return { state: 'DISPATCHED', astra: { status: 'RUNNING' } }; },
+    } };
+  const result = await createBatchPreparation({ connected }).run({}, job);
+  assert.deepEqual(calls[0], ['status', job.cardId, job.analysisActionId]);
+  assert.equal(calls.length, ['PREPARED', 'NOT_FOUND'].includes(status) ? 2 : 1);
+  assert.equal(result.kind, status === 'READY' ? 'CONTINUE' : status === 'UNKNOWN' ? 'ATTENTION' : 'WAIT');
+  if (status === 'READY') assert.equal(result.evidence.analysisId, job.analysisActionId);
+});
+
 for (const stage of ['PREPARE', 'ANALYZE']) test(`shutdown during real ${stage} preparation reads prevents provider admission and retains the same stage`, async () => {
   const f = fixture(), staff = { id: 'synthetic-staff' }, uploads = { FRONT: 'front', BACK: 'back' };
   const job = { cardId: f.card.cardId, sourceHash: f.card.draft.source.sourceHash, uploads, stage,

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { descriptorSha256, parseUploadPlan } from '@atlas/photo-core';
 import { canonical, createInput, discardSelection, document, hash, immutable, integer, planInput, requireOwner, requireThat,
   storedDocument, uuid, verification } from './contract.mjs';
+import { assertIngestionLease } from './ingestion.mjs';
 
 function uploadView(row) {
   if (!row) return null;
@@ -23,7 +24,7 @@ async function assertNotDiscarded(tx, row) {
 }
 const uploadRow = async (tx, cardId, uploadId) => (await tx.$queryRawUnsafe(
   'SELECT * FROM atlas_manual_intake.upload WHERE card_id=$1::uuid AND id=$2::uuid', cardId, uploadId))[0];
-async function view(tx, row) {
+async function cardView(tx, row, includeIngestionStatus) {
   const uploads = await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_intake.upload WHERE card_id=$1::uuid AND id=ANY($2::uuid[])',
     row.id, [row.front_upload_id, row.back_upload_id].filter(Boolean));
   const sides = Object.fromEntries(['FRONT', 'BACK'].map(side => {
@@ -35,18 +36,30 @@ async function view(tx, row) {
   const ready = Boolean(sides.FRONT.upload?.source && sides.BACK.upload?.source);
   const sourceHash = ready ? descriptorSha256({ cardId: row.id, pairId: row.pair_id,
     front: sides.FRONT.upload, back: sides.BACK.upload }) : null;
+  let ingestion;
+  if (includeIngestionStatus) {
+    const jobs = await tx.$queryRawUnsafe(`SELECT upload_id,stage,state,code,attempts,updated_at
+      FROM atlas_manual_intake.ingestion WHERE card_id=$1::uuid AND upload_id=ANY($2::uuid[])`,
+    row.id, [row.front_upload_id,row.back_upload_id].filter(Boolean));
+    ingestion = Object.fromEntries(['FRONT','BACK'].map(side => {
+      const job = jobs.find(value => value.upload_id === sides[side].upload?.uploadId);
+      return [side, job ? { stage: job.stage, state: job.state, code: job.code, attempts: job.attempts,
+        updatedAt: new Date(job.updated_at).toISOString() } : null];
+    }));
+  }
   return immutable({ cardId: row.id, createRequestId: row.create_request_id, pairId: row.pair_id, label: row.label, revision: row.revision,
-    createdAt: new Date(row.created_at).toISOString(), sides, ready, sourceHash });
+    createdAt: new Date(row.created_at).toISOString(), sides, ready, sourceHash, ...(ingestion ? { ingestion } : {}) });
 }
 
 /** Only compact metadata enters PostgreSQL. CPU, signing, reads and writes are
  * deliberately absent from transaction callbacks. All mutation locks one card.
  * The ordinary existing staff boundary authenticates and rechecks expiry.
  */
-export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes, sourceCommitted = null }) {
+export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes, sourceCommitted = null, pairCommitted = null, includeIngestionStatus = false }) {
   requireThat(typeof boundary?.transaction === 'function' && typeof keyPrefix === 'string'
     && /^[a-zA-Z0-9][a-zA-Z0-9_/-]{0,100}$/.test(keyPrefix) && !keyPrefix.includes('..') && !keyPrefix.endsWith('/'), 500, 'INTAKE_CONFIG_INVALID');
   integer(maxOriginalBytes, 1);
+  const view = (tx, row) => cardView(tx, row, includeIngestionStatus);
   const mutate = async (staff, cardId, work) => boundary.transaction(staff, async ({ tx, principal, refresh }) => {
     const row = await cardRow(tx, uuid(cardId), 'UPDATE'); principal = (await refresh()).principal;
     requireOwner(row, principal, true); await assertNotDiscarded(tx, row); return work(tx, row, principal);
@@ -161,6 +174,29 @@ export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes, 
         return { cards, nextCursor: rows.length > limit ? page.at(-1).id : null };
       });
     },
+    async processingList(staff, { limit = 100 } = {}) {
+      integer(limit, 1); requireThat(limit <= 100 && includeIngestionStatus, 503, 'INTAKE_INGESTION_UNAVAILABLE');
+      return boundary.transaction(staff, async ({ tx, principal }) => {
+        const rows = await tx.$queryRawUnsafe(`SELECT c.id,c.create_request_id,c.label,
+          f.verification IS NOT NULL AS front_verified,f.source IS NOT NULL AS front_prepared,
+          b.verification IS NOT NULL AS back_verified,b.source IS NOT NULL AS back_prepared,
+          jf.stage AS front_stage,jf.state AS front_state,jf.code AS front_code,
+          jb.stage AS back_stage,jb.state AS back_state,jb.code AS back_code
+          FROM atlas_manual_intake.card c
+          LEFT JOIN atlas_manual_intake.upload f ON f.id=c.front_upload_id
+          LEFT JOIN atlas_manual_intake.upload b ON b.id=c.back_upload_id
+          LEFT JOIN atlas_manual_intake.ingestion jf ON jf.upload_id=f.id
+          LEFT JOIN atlas_manual_intake.ingestion jb ON jb.upload_id=b.id
+          WHERE c.owner_id=$1::uuid AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=c.id)
+          ORDER BY c.created_at DESC,c.id DESC LIMIT $2`, principal.id, limit);
+        return { cards: rows.map(row => ({ cardId: row.id, createRequestId: row.create_request_id, label: row.label,
+          ready: row.front_prepared && row.back_prepared,
+          sides: Object.fromEntries(['FRONT','BACK'].map(side => { const key = side.toLowerCase();
+            return [side, { verified: row[`${key}_verified`], prepared: row[`${key}_prepared`] }]; })),
+          ingestion: Object.fromEntries(['FRONT','BACK'].map(side => { const key = side.toLowerCase();
+            return [side, row[`${key}_state`] ? { stage: row[`${key}_stage`], state: row[`${key}_state`], code: row[`${key}_code`] } : null]; })) })) };
+      });
+    },
     async read(staff, cardId, { edit = false } = {}) {
       uuid(cardId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
@@ -191,18 +227,20 @@ export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes, 
         return { card: await view(tx, await cardRow(tx, cardId)), upload: uploadView(await uploadRow(tx, cardId, uploadId)) };
       });
     },
-    async upload(staff, cardId, uploadId, { edit = false, current = false } = {}) {
+    async upload(staff, cardId, uploadId, { edit = false, current = false, lease = null } = {}) {
       uuid(cardId); uuid(uploadId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await cardRow(tx, cardId, 'SHARE'); requireOwner(row, principal, edit); await assertNotDiscarded(tx, row);
+        await assertIngestionLease(tx, row, uploadId, lease);
         const upload = uploadView(await uploadRow(tx, cardId, uploadId)); requireThat(upload, 404, 'INTAKE_UPLOAD_NOT_FOUND');
         if (current) requireThat(row[`${upload.side.toLowerCase()}_upload_id`] === uploadId, 409, 'INTAKE_SIDE_STALE');
         return { card: await view(tx, row), upload, principal };
       });
     },
-    async recordVerification(staff, cardId, uploadId, observed) {
+    async recordVerification(staff, cardId, uploadId, observed, { lease = null } = {}) {
       uuid(uploadId); const observedSnapshot = structuredClone(observed);
       return mutate(staff, cardId, async (tx, row) => {
+        await assertIngestionLease(tx, row, uploadId, lease);
         const saved = await uploadRow(tx, cardId, uploadId), upload = uploadView(saved); requireThat(upload, 404, 'INTAKE_UPLOAD_NOT_FOUND');
         const next = document(verification(observedSnapshot, upload.plan));
         if (upload.verification) requireThat(saved.verification_hash === next.hash, 409, 'INTAKE_UPLOAD_CONFLICT');
@@ -212,12 +250,14 @@ export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes, 
           if (row[`${upload.side.toLowerCase()}_upload_id`] === uploadId) await tx.$executeRawUnsafe(
             'UPDATE atlas_manual_intake.card SET revision=revision+1,updated_at=clock_timestamp() WHERE id=$1::uuid', cardId);
         }
+        await assertIngestionLease(tx, row, uploadId, lease);
         return { card: await view(tx, await cardRow(tx, cardId)), upload: uploadView(await uploadRow(tx, cardId, uploadId)) };
       });
     },
-    async recordSource(staff, cardId, uploadId, { verificationHash, source }) {
+    async recordSource(staff, cardId, uploadId, { verificationHash, source }, { lease = null } = {}) {
       uuid(uploadId); hash(verificationHash); const next = document(source);
       return mutate(staff, cardId, async (tx, row, principal) => {
+        await assertIngestionLease(tx, row, uploadId, lease);
         const saved = await uploadRow(tx, cardId, uploadId), upload = uploadView(saved); requireThat(upload, 404, 'INTAKE_UPLOAD_NOT_FOUND');
         requireThat(saved.verification_hash === verificationHash, 409, 'INTAKE_UPLOAD_CONFLICT');
         if (upload.source) requireThat(saved.source_hash === next.hash, 409, 'INTAKE_SOURCE_CONFLICT');
@@ -227,8 +267,11 @@ export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes, 
           if (row[`${upload.side.toLowerCase()}_upload_id`] === uploadId) await tx.$executeRawUnsafe(
             'UPDATE atlas_manual_intake.card SET revision=revision+1,updated_at=clock_timestamp() WHERE id=$1::uuid', cardId);
         }
-        if (sourceCommitted) await sourceCommitted({ tx, principal, cardId, uploadId });
-        return { card: await view(tx, await cardRow(tx, cardId)), upload: uploadView(await uploadRow(tx, cardId, uploadId)) };
+        const card = await view(tx, await cardRow(tx, cardId));
+        if (sourceCommitted) await sourceCommitted({ tx, principal, cardId, uploadId, card });
+        if (card.ready && pairCommitted) await pairCommitted({ tx, principal, card });
+        await assertIngestionLease(tx, row, uploadId, lease);
+        return { card, upload: uploadView(await uploadRow(tx, cardId, uploadId)) };
       });
     },
     /** Trusted manual-service commit hook, inside that SAME authenticated tx.
@@ -254,4 +297,12 @@ GRANT USAGE ON SCHEMA atlas_dealer,atlas_manual_connected TO "${role}";
 GRANT SELECT ON atlas_manual.publication,atlas_dealer.manual_card_link,atlas_manual_connected.station_arm,atlas_manual_connected.station_active TO "${role}";
 GRANT UPDATE (revision,front_version,back_version,front_upload_id,back_upload_id,updated_at) ON atlas_manual_intake.card TO "${role}";
 GRANT UPDATE (verification,verification_hash,source,source_hash) ON atlas_manual_intake.upload TO "${role}";`;
+}
+
+/** Additive queue grants kept separate for old-schema upgrade rehearsals. */
+export function ingestionGrantSQL(role) {
+  requireThat(/^[a-z][a-z0-9_]{0,62}$/.test(role));
+  return `GRANT SELECT ON atlas_manual_intake.ingestion TO "${role}";
+GRANT UPDATE(stage,state,claim_id,lease_until,attempts,failures,available_at,last_claimed_at,code,updated_at)
+ON atlas_manual_intake.ingestion TO "${role}";`;
 }

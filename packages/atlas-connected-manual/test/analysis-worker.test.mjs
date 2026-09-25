@@ -82,3 +82,23 @@ test('invalid and duplicate accepted IDs cannot reach provider reconciliation', 
   t.mock.timers.reset(); assert.equal(reads, 0);
   assert.throws(() => createAnalysisWorker({ reconciler: {}, batchSize: 11 }), /CONFIGURATION_INVALID/);
 });
+
+test('parallel collectors refill free slots while one accepted response is slow, with a fixed concurrency bound', async () => {
+  const ids = Array.from({ length: 7 }, () => randomUUID()), gates = ids.map(() => deferred());
+  const started = []; let active = 0, peak = 0;
+  const worker = createAnalysisWorker({ concurrency: 3, batchSize: 10, reconciler: {
+    async pending() { return page(ids); },
+    async reconcile({ analysisId }) {
+      const index = ids.indexOf(analysisId); started.push(index); peak = Math.max(peak, ++active);
+      await gates[index].promise; active--; return { state: 'SETTLED' };
+    },
+  } });
+  try {
+    worker.start(); await nextTurn(); assert.deepEqual(started, [0, 1, 2]);
+    gates[1].resolve(); await nextTurn(); assert.deepEqual(started, [0, 1, 2, 3]);
+    gates[2].resolve(); await nextTurn(); assert.deepEqual(started, [0, 1, 2, 3, 4]);
+    assert.equal(peak, 3);
+    gates.forEach(gate => gate.resolve()); await nextTurn();
+    assert.deepEqual(started, [0, 1, 2, 3, 4, 5, 6]); assert.equal(peak, 3);
+  } finally { gates.forEach(gate => gate.resolve()); await worker.stop(); }
+});

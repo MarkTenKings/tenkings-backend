@@ -90,7 +90,7 @@ export class DurableStaffAuth {
     async maybeAuthenticate(header) {
         const jar = this.jar(header), token = jar[this.config.cookies.session], browser = jar[this.config.cookies.browser];
         if (!tokenShape(token) || !tokenShape(browser)) return null;
-        return this.database.transaction(async context => {
+        return (this.database.readTransaction ?? this.database.transaction).call(this.database, async context => {
             const current = await this.current(context, hash(token), hash(browser));
             return current ? this.actor(current, hash(browser)) : null;
         });

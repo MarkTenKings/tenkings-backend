@@ -7,10 +7,14 @@ const phases = new Set(['SAVE_CARD_INTENT','CREATE_CARD','SAVE_CARD_ID','READ_FR
 const exceptionNames = new Set(['Error','TypeError','RangeError','AbortError','DataCloneError','InvalidStateError','NotReadableError','NotSupportedError','OperationError','QuotaExceededError','SecurityError','TimeoutError','TransactionInactiveError','UnknownError']);
 const safeCode = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,100}$/.test(value) ? value : 'BATCH_IMPORT_INTERRUPTED';
 const safeId = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value) ? value : null;
+const uploadDiagnostic = value => value && ['INTAKE_UPLOAD_HTTP_ERROR','INTAKE_UPLOAD_TIMEOUT','INTAKE_UPLOAD_CANCELLED','INTAKE_UPLOAD_NETWORK_ERROR'].includes(value.code)
+  ? { code: value.code, ...(Number.isInteger(value.status) && value.status >= 400 && value.status <= 599 ? { status: value.status } : {}),
+    ...(typeof value.at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value.at) ? { at: value.at } : {}) } : null;
 const failureContext = value => ({
   ...(typeof value?.at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value.at) && Number.isFinite(Date.parse(value.at)) ? { at: value.at } : {}),
   ...(Number.isInteger(value?.status) && value.status >= 400 && value.status <= 599 ? { status: value.status } : {}),
   ...(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value?.reference ?? '') ? { reference: value.reference } : {}),
+  ...(uploadDiagnostic(value?.uploadDiagnostic) ? { uploadDiagnostic: uploadDiagnostic(value.uploadDiagnostic) } : {}),
 });
 const storageFailure = cause => photoStorageError(cause, 'BATCH_IMPORT_STORAGE');
 export function batchImportFailureDetails(item) {
@@ -51,6 +55,19 @@ export function previewOrderedBatchPhotos(files) {
   check(files?.length > 0 && files.length <= 200 && files.length % 2 === 0, 'BATCH_IMPORT_ORDER_COUNT');
   files.forEach(value => check(value instanceof Blob && value.size > 0 && value.size <= 64 * 1024 * 1024, 'BATCH_IMPORT_PAIR_FILES'));
   return Array.from({ length: files.length / 2 }, (_, index) => ({ label: `Card ${index + 1}`, files: { FRONT: files[index * 2], BACK: files[index * 2 + 1] } }));
+}
+
+/** Producer-neutral identity for a physically associated Front/Back pair.
+ * A tethered camera host can retain producerId/pairId across restarts; this
+ * boundary neither selects camera hardware nor guesses a pairing from names. */
+export async function capturePairIdentity(producerId, pairId, cryptoImpl = globalThis.crypto) {
+  check(typeof producerId === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$/.test(producerId)
+    && typeof pairId === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(pairId), 'BATCH_IMPORT_PRODUCER_ID');
+  const id = async purpose => {
+    const value = hex(await cryptoImpl.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(['atlas-capture-pair-v1',producerId,pairId,purpose]))));
+    return `${value.slice(0,8)}-${value.slice(8,12)}-4${value.slice(13,16)}-a${value.slice(17,20)}-${value.slice(20,32)}`;
+  };
+  return { producerId, pairId, createId: await id('CREATE'), enqueueId: await id('ENQUEUE') };
 }
 
 export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThis.indexedDB }) {
@@ -209,7 +226,8 @@ export function createBrowserBatchImportJournal({ staffId, indexedDB = globalThi
 }
 
 export function createBatchImporter({ request, intake, journal, cryptoImpl = globalThis.crypto, onProgress = () => {}, onQueued = () => {},
-  pause = ms => new Promise(resolve => setTimeout(resolve, ms)), isPaused = () => false }) {
+  pause = ms => new Promise(resolve => setTimeout(resolve, ms)), isPaused = () => false, concurrency = 1, serverProcessing = false }) {
+  check(Number.isInteger(concurrency) && concurrency >= 1 && concurrency <= 4, 'BATCH_IMPORT_CONFIG');
   let running = false, disposed = false, paused = false, drained = Promise.resolve(), journalTail = Promise.resolve(), requested = false, authBlocked = false;
   const blocked = () => paused || isPaused();
   const post = (path, body) => request(path, { method: 'POST', body });
@@ -279,8 +297,10 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
         ?? failures.find(error => error?.code !== 'MANUAL_PROCESSING_BUSY') ?? failures[0];
       if (failed) throw failed;
       if (disposed) return;
-      const { card } = await step('VERIFY_PAIR', async () => { const result = await intake.read(item.cardId); check(result.card.ready && ['FRONT', 'BACK'].every(side => result.card.sides[side].upload?.plan.expected.sha256 === item.hashes[side]), 'BATCH_IMPORT_UPLOAD_CONFLICT'); return result; });
-      await step('ENQUEUE_CARD', () => post('/api/staff/manual-connected/cards/batch', { actionId: item.enqueueId, cards: [{ cardId: item.cardId, sourceHash: card.sourceHash }] }));
+      const { card } = await step('VERIFY_PAIR', async () => { const result = await intake.read(item.cardId);
+        check((serverProcessing || result.card.ready) && ['FRONT', 'BACK'].every(side => result.card.sides[side].upload?.plan.expected.sha256 === item.hashes[side]
+          && (!serverProcessing || result.card.sides[side].upload?.verification)), 'BATCH_IMPORT_UPLOAD_CONFLICT'); return result; });
+      if (!serverProcessing) await step('ENQUEUE_CARD', () => post('/api/staff/manual-connected/cards/batch', { actionId: item.enqueueId, cards: [{ cardId: item.cardId, sourceHash: card.sourceHash }] }));
       item.done = true; item.files = null; item.code = null; item.failure = null; await step('SAVE_QUEUE', () => saveItem(item));
       if (!disposed) { try { onQueued({ cardId: item.cardId, createId: item.createId, enqueueId: item.enqueueId, label: item.label }); } catch { /* Queue confirmation is already durable. */ } }
     } catch (error) {
@@ -301,26 +321,43 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
     if (running) return drained;
     running = true;
     drained = (async () => {
-      const attempted = new Set(), busyAttempts = new Map(), deferredBusy = new Set(); let latest;
+      const attempted = new Set(), busyAttempts = new Map(), deferredBusy = new Set(), activeTasks = new Set(); let latest;
       try {
       do {
         requested = false;
-        while (!disposed && !authBlocked && !blocked()) {
+        while ((!disposed && !authBlocked && !blocked()) || activeTasks.size) {
+          if (disposed || authBlocked || blocked()) {
+            await Promise.allSettled([...activeTasks]); break;
+          }
           const batch = await read(); if (!batch) { latest = null; break; } check(batch.version === 1, 'BATCH_IMPORT_MISSING'); latest = batch;
-          const item = batch.items.find(value => !value.done && !attempted.has(value.createId) && (retry || !value.code || deferredBusy.has(value.createId)));
-          if (!item) break;
-          attempted.add(item.createId);
-          const code = await processItem(item);
-          if (code === 'MANUAL_PROCESSING_BUSY') {
-            const count = (busyAttempts.get(item.createId) ?? 0) + 1; busyAttempts.set(item.createId, count);
-            if (count < 30) deferredBusy.add(item.createId); else deferredBusy.delete(item.createId);
-          } else deferredBusy.delete(item.createId);
+          const items = batch.items.filter(value => !value.done && !attempted.has(value.createId) && (retry || !value.code || deferredBusy.has(value.createId))).slice(0, concurrency - activeTasks.size);
+          if (!items.length && !activeTasks.size) break;
+          for (const item of items) attempted.add(item.createId);
+          for (const item of items) {
+            const task = (async () => {
+            const code = await processItem(item);
+            const networkPhase = /^(CREATE_CARD|READ_(FRONT|BACK)_CARD|RESUME_(FRONT|BACK)_UPLOAD|UPLOAD_(FRONT|BACK)|VERIFY_PAIR|ENQUEUE_CARD)$/.test(item.failure?.phase ?? '');
+            const transient = code === 'MANUAL_PROCESSING_BUSY' || serverProcessing && (['TEMPORARILY_UNAVAILABLE','INTAKE_TEMPORARILY_UNAVAILABLE',
+              'MANUAL_SERVICE_UNAVAILABLE','MANUAL_SERVICE_TIMEOUT','INTAKE_UPLOAD_TIMEOUT','INTAKE_UPLOAD_ABSENT','PHOTO_STORAGE_UNAVAILABLE'].includes(code)
+              || code === 'BATCH_IMPORT_INTERRUPTED' && networkPhase);
+            if (transient && !authBlocked) {
+              const count = (busyAttempts.get(item.createId) ?? 0) + 1; busyAttempts.set(item.createId, count);
+              if (count < (serverProcessing ? 8 : 30)) deferredBusy.add(item.createId); else deferredBusy.delete(item.createId);
+            } else deferredBusy.delete(item.createId);
+            })().then(() => ({ task }), failure => ({ task, failure }));
+            activeTasks.add(task);
+          }
+          // Refill the first free card slot immediately. A stalled PUT on one
+          // pair must not hold every later card behind a two-card wave.
+          const settled = await Promise.race(activeTasks); activeTasks.delete(settled.task);
+          if (settled.failure) { await Promise.allSettled([...activeTasks]); throw settled.failure; }
         }
         // Server contention is an explicit pre-work refusal. Let every other
         // saved pair run first, then retry these exact intents on a bounded
         // cadence. Uncertain/unsupported work still needs deliberate recovery.
         if (deferredBusy.size && !disposed && !authBlocked && !blocked()) {
-          await pause(3000);
+          const attempts = Math.max(...[...deferredBusy].map(id => busyAttempts.get(id) ?? 1));
+          await pause(serverProcessing ? Math.min(30000, 1000 * 2 ** Math.min(attempts, 5)) : 3000);
           for (const id of deferredBusy) attempted.delete(id);
           requested = true;
         }
@@ -346,6 +383,39 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
   }
   return Object.freeze({
     async append(files) { return appendPairs(pairBatchPhotos(files)); },
+    async appendProducerPairs({ producerId, pairs }) {
+      check(Array.isArray(pairs) && pairs.length > 0 && pairs.length <= 100 && !disposed && !isPaused(), 'BATCH_IMPORT_COUNT');
+      const prepared = [], seen = new Set();
+      for (const pair of pairs) {
+        const identity = await capturePairIdentity(producerId, pair?.pairId, cryptoImpl);
+        check(!seen.has(identity.createId), 'BATCH_IMPORT_PRODUCER_CONFLICT'); seen.add(identity.createId);
+        const label = pair.label ?? 'Card';
+        check(typeof label === 'string' && label.length <= 120 && !/[\x00-\x1f\x7f]/.test(label), 'BATCH_IMPORT_PAIR_FILES');
+        const files = {}, hashes = {};
+        for (const side of ['FRONT','BACK']) {
+          const file = pair?.files?.[side];
+          check(file instanceof Blob && file.size > 0 && file.size <= 64 * 1024 * 1024, 'BATCH_IMPORT_PAIR_FILES');
+          const encoded = await encodePhoto(file); hashes[side] = hex(await cryptoImpl.subtle.digest('SHA-256', encoded.bytes)); files[side] = decodePhoto(encoded);
+        }
+        prepared.push({ ...makeItem({ key: `${producerId}:${pair.pairId}`, label: label.trim(), files }),
+          ...identity, hashes });
+      }
+      const saved = await serial(async () => {
+        check(!disposed && !isPaused(), 'BATCH_IMPORT_BUSY');
+        const batch = await journal.get() ?? { version: 1, id: cryptoImpl.randomUUID(), items: [] };
+        check(batch.version === 1, 'BATCH_IMPORT_STORAGE');
+        for (const item of prepared) {
+          const prior = batch.items.find(value => value.createId === item.createId);
+          if (prior) check(prior.producerId === producerId && prior.pairId === item.pairId && prior.label === item.label
+            && ['FRONT','BACK'].every(side => prior.hashes?.[side] === item.hashes[side]), 'BATCH_IMPORT_PRODUCER_CONFLICT');
+          else batch.items.push(item);
+        }
+        const accepted = await write(batch);
+        check(prepared.every(item => accepted.items.some(value => value.createId === item.createId)), 'INTAKE_CARD_DELETED');
+        return accepted;
+      });
+      kick(); return saved;
+    },
     async appendReviewedPairs(pairs) {
       check(Array.isArray(pairs) && pairs.length > 0 && pairs.length <= 100, 'BATCH_IMPORT_COUNT');
       return appendPairs(pairs.map((pair, index) => {

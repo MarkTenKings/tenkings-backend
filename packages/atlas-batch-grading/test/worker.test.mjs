@@ -131,38 +131,59 @@ test('shutdown also waits for a lease renewal already in flight before releasing
     renewRelease(); await stopping; assert.equal(worker.status().active, 0);
   } finally { release(); renewRelease(); await worker.stop(); }
 });
-test('temporary native capacity waits on the same job instead of requiring human recovery',async()=>{
+for(const [code,stage,status] of [['MANUAL_PROCESSING_BUSY','ANALYZE',503],['GEOMETRY_QUEUE_FULL','PREPARE',429]])test(`temporary ${code} waits on the same job instead of requiring human recovery`,async()=>{
  const f=fixture(1),actions=[];let refused=false;
  const worker=createBatchWorker({repository:f.repo,prepare:{async run(_staff,job){
-  if(job.stage==='ANALYZE'){actions.push(job.analysisActionId);if(!refused){refused=true;throw Object.assign(new Error('Busy'),{code:'MANUAL_PROCESSING_BUSY',status:503});}}
+  if(job.stage===stage){actions.push(job.analysisActionId);if(!refused){refused=true;throw Object.assign(new Error('Busy'),{code,status});}}
   return job.stage==='REPORT'?{kind:'REVIEW',evidence:{authority:'MACHINE_PROPOSAL',sourceHash:job.sourceHash,reportHash:'a'.repeat(64),manualRevision:1}}:{kind:'CONTINUE'};
  }}});
  try{worker.wake(f.staff);await until(()=>f.rows[0].state==='REVIEW');assert.equal(actions.length,2);assert.equal(new Set(actions).size,1);assert.equal(f.rows[0].code,undefined);}
  finally{worker.stop();}
 });
 
-for (const stage of ['PREPARE', 'ANALYZE', 'REPORT']) test(`storage transport failure has bounded retries only before analysis: ${stage}`, async () => {
+for (const stage of ['PREPARE', 'ANALYZE', 'REPORT']) test(`storage outage recovers automatically on the same action with durable backoff: ${stage}`, async () => {
   const f = fixture(1), identities = [], outcomes = [];
-  f.rows[0].stage = stage; f.rows[0].attempts = 50; f.rows[0].evidence = { retained: 'existing evidence' };
+  f.rows[0].stage = stage; f.rows[0].evidence = { retained: 'existing evidence' };
   const finish = f.repo.finish;
   f.repo.finish = async (...args) => { outcomes.push(args[2]); return finish(...args); };
+  let failures = 0;
   const worker = createBatchWorker({ repository: f.repo, prepare: { async run(_staff, job) {
     identities.push([job.key, job.cardId, job.sourceHash, job.analysisActionId]);
-    throw Object.assign(Error('transport unavailable'), { code: 'PHOTO_STORAGE_UNAVAILABLE' });
+    if (failures++ < 3) throw Object.assign(Error('transport unavailable'), { code: 'PHOTO_STORAGE_UNAVAILABLE' });
+    return job.stage === 'REPORT' ? { kind: 'REVIEW', evidence: { authority: 'MACHINE_PROPOSAL', sourceHash: job.sourceHash,
+      reportHash: 'b'.repeat(64), manualRevision: 1 } } : { kind: 'CONTINUE' };
   } } });
   try {
-    worker.wake(f.staff); await until(() => f.rows[0].state === 'NEEDS_ATTENTION');
-    assert.equal(f.rows[0].attempts, stage === 'PREPARE' ? 53 : 51);
-    assert.equal(f.rows[0].code, 'PHOTO_STORAGE_UNAVAILABLE');
+    worker.wake(f.staff); await until(() => f.rows[0].state === 'REVIEW');
     assert.equal(new Set(identities.map(value => JSON.stringify(value))).size, 1);
-    assert(outcomes.slice(0, -1).every(value => value.kind === 'WAIT' && value.retryAfterMs === 3000));
-    assert.equal(outcomes.at(-1).kind, 'ATTENTION');
-    assert.deepEqual(f.rows[0].evidence, { retained: 'existing evidence', ...(stage === 'PREPARE' ? { storageRetryCount: 2 } : {}) });
-    if (stage === 'PREPARE') assert.deepEqual(outcomes.slice(0, -1).map(value => value.evidence.storageRetryCount), [1, 2]);
+    assert.deepEqual(outcomes.slice(0, 3).map(value => [value.kind, value.retryAfterMs, value.evidence.storageRetryCount]),
+      [['WAIT', 3000, 1], ['WAIT', 6000, 2], ['WAIT', 12000, 3]]);
+    assert.equal(f.rows[0].evidence.retained, 'existing evidence'); assert.equal(f.rows[0].evidence.storageRetryCount, 3);
   } finally { await worker.stop(); }
 });
 
-test('storage retry budget survives worker replacement and ordinary waits without changing action identity', async () => {
+test('Prisma raw-query contention retries the same durable action, but SQL permission and evidence errors remain attention', async () => {
+  for (const sqlstate of ['40001','40P01','55P03','57014','42501','P0001']) {
+    const retryable = ['40001','40P01','55P03','57014'].includes(sqlstate), f = fixture(1), actions = [], outcomes = [];
+    const finish = f.repo.finish;
+    f.repo.finish = async (...args) => { outcomes.push(args[2]); return finish(...args); };
+    let thrown = false;
+    const worker = createBatchWorker({ repository: f.repo, prepare: { async run(_staff, job) {
+      actions.push(job.analysisActionId);
+      if (!thrown) { thrown = true; throw Object.assign(Error('raw query failed'), { code: 'P2010', meta: { code: sqlstate } }); }
+      return job.stage === 'REPORT' ? { kind: 'REVIEW', evidence: { authority: 'MACHINE_PROPOSAL', sourceHash: job.sourceHash,
+        reportHash: 'b'.repeat(64), manualRevision: 1 } } : { kind: 'CONTINUE' };
+    } } });
+    try {
+      worker.wake(f.staff); await until(() => f.rows[0].state === (retryable ? 'REVIEW' : 'NEEDS_ATTENTION'));
+      assert.equal(outcomes[0].kind, retryable ? 'WAIT' : 'ATTENTION'); assert.equal(new Set(actions).size, 1);
+      if (retryable) assert.equal(outcomes[0].retryAfterMs, 3000);
+      else assert.equal(actions.length, 1);
+    } finally { await worker.stop(); }
+  }
+});
+
+test('storage retry backoff survives worker replacement and ordinary waits without changing action identity', async () => {
   const f = fixture(1), identities = [], outcomes = [];
   f.rows[0].evidence = { retained: 'same source evidence' };
   const finish = f.repo.finish;
@@ -179,22 +200,24 @@ test('storage retry budget survives worker replacement and ordinary waits withou
   first = createBatchWorker({ repository: f.repo, prepare: { run: async (_staff, job) => failStorage(job) } });
   first.wake(f.staff); await until(() => Boolean(stopping)); await stopping;
   assert.equal(f.rows[0].state, 'QUEUED'); assert.equal(f.rows[0].evidence.storageRetryCount, 1);
-  let ordinaryWait = false;
+  let ordinaryWait = false, retried = false;
   const second = createBatchWorker({ repository: f.repo, prepare: { async run(_staff, job) {
     if (!ordinaryWait) { ordinaryWait = true; return { kind: 'WAIT', retryAfterMs: 3000 }; }
-    return failStorage(job);
+    if (!retried) { retried = true; return failStorage(job); }
+    return job.stage === 'REPORT' ? { kind: 'REVIEW', evidence: { authority: 'MACHINE_PROPOSAL', sourceHash: job.sourceHash,
+      reportHash: 'b'.repeat(64), manualRevision: 1 } } : { kind: 'CONTINUE' };
   } } });
   try {
-    second.wake(f.staff); await until(() => f.rows[0].state === 'NEEDS_ATTENTION');
-    assert.equal(f.rows[0].attempts, 4); assert.equal(identities.length, 3);
-    assert.equal(new Set(identities.map(value => JSON.stringify(value))).size, 1);
-    assert.deepEqual(f.rows[0].evidence, { retained: 'same source evidence', storageRetryCount: 2 });
-    assert.deepEqual(outcomes.map(value => value.evidence?.storageRetryCount ?? value.kind), [1, 'WAIT', 2, 'ATTENTION']);
+    second.wake(f.staff); await until(() => f.rows[0].state === 'REVIEW');
+    assert.equal(identities.length, 2); assert.equal(new Set(identities.map(value => JSON.stringify(value))).size, 1);
+    assert.equal(f.rows[0].evidence.storageRetryCount, 2);
+    assert.deepEqual(outcomes.slice(0, 3).map(value => value.evidence?.storageRetryCount ?? value.kind), [1, 'WAIT', 2]);
+    assert.equal(outcomes[2].retryAfterMs, 6000);
   } finally { await first.stop(); await second.stop(); }
 });
 
 test('storage failures cannot retry with expired authorization, an abort, or an invalid saved budget', async () => {
-  for (const variant of [{ status: 401 }, { status: 403 }, { name: 'AbortError' }, { budget: -1 }, { budget: '1' }, { budget: null }, { budget: 3 }]) {
+  for (const variant of [{ status: 401 }, { status: 403 }, { name: 'AbortError' }, { budget: -1 }, { budget: '1' }, { budget: null }, { budget: 1000001 }]) {
     const f = fixture(1), outcomes = [];
     if (Object.hasOwn(variant, 'budget')) f.rows[0].evidence.storageRetryCount = variant.budget;
     const finish = f.repo.finish;
@@ -224,7 +247,26 @@ for (const reason of ['lease loss', 'shutdown']) test(`storage failure cannot sp
     worker.wake(f.staff); await until(() => entered);
     if (reason === 'shutdown') { const stopping = worker.stop(); release(); await stopping; }
     else await until(() => f.rows[0].state === 'NEEDS_ATTENTION');
-    assert.equal(f.rows[0].attempts, 1); assert.equal(outcomes[0].kind, 'ATTENTION');
+    assert.equal(f.rows[0].attempts, 1); assert.equal(outcomes[0].kind, reason === 'shutdown' ? 'WAIT' : 'ATTENTION');
     assert.equal(f.rows[0].evidence.storageRetryCount, undefined);
   } finally { release(); await worker.stop(); }
+});
+
+test('stage diagnostics identify the failure without exposing exception messages or blocking durable finish', async () => {
+  for (const diagnosticThrows of [false, true]) {
+    const f = fixture(1), observed = [];
+    f.rows[0].stage = 'REPORT';
+    const failure = new TypeError('secret token and https://private.invalid/photo?signature=secret');
+    failure.stack = 'TypeError: secret token\n    at buildMachineReport (file:///workspace/packages/atlas-connected-manual/src/batch-preparation.mjs:42:7)\n    at internal';
+    const worker = createBatchWorker({ repository: f.repo, prepare: { async run() { throw failure; } },
+      onError(error) { observed.push(error); if (diagnosticThrows) throw new Error('logger failed'); } });
+    try {
+      worker.wake(f.staff); await until(() => f.rows[0].state === 'NEEDS_ATTENTION');
+      assert.equal(f.rows[0].code, 'BATCH_STAGE_INTERRUPTED'); assert.equal(observed.length, 1);
+      assert.equal(observed[0].stage, 'REPORT'); assert.equal(observed[0].errorType, 'TypeError');
+      assert.equal(observed[0].location, 'packages/atlas-connected-manual/src/batch-preparation.mjs:42:7');
+      assert.equal(JSON.stringify(observed[0]).includes('secret'), false);
+      assert.equal(observed[0].message, 'BATCH_STAGE_INTERRUPTED'); assert.equal(observed[0].cause, undefined);
+    } finally { await worker.stop(); }
+  }
 });

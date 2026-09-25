@@ -26,6 +26,7 @@ const messages = {
 export default function BatchGrading({ staff }) {
   const router = useRouter(), session = useRef(null), current = useRef(0), mutation = useRef(false);
   const [jobs, setJobs] = useState([]);
+  const [intakeCards,setIntakeCards] = useState([]);
   const [tab, setTab] = useState(queueTabs.includes(router.query?.tab) ? router.query.tab : 'INTAKE'), [active, setActive] = useState(null), [error, setError] = useState('');
   const [busy, setBusy] = useState(false), [loaded, setLoaded] = useState(false);
   const [packet, setPacket] = useState(null), [imagesReady, setImagesReady] = useState(false), [reviewError, setReviewError] = useState('');
@@ -39,6 +40,7 @@ export default function BatchGrading({ staff }) {
     current.current++;
     const removed=new Set(result.cardIds);
     setJobs(old=>old.filter(job=>!removed.has(job.cardId)));setActive(null);setPacket(null);setImagesReady(false);
+    setIntakeCards(old=>old.filter(card=>!removed.has(card.cardId)));
     if(removed.has(lastApproved?.cardId)){labelRead.current++;setLastApproved(null);setFinishing(null);setAutoPrintWindow(null);setPreparingLabel(false);
       approvalPopup.current?.close();approvalPopup.current=null;}
   },[lastApproved?.cardId]);
@@ -52,12 +54,12 @@ export default function BatchGrading({ staff }) {
   const refresh = useCallback(async () => {
     const sequence = ++current.current;
     const result = await request(path);
-    if (sequence === current.current && !reviewing.current) { setJobs(result.jobs ?? []); setLoaded(true); }
+    if (sequence === current.current && !reviewing.current) { setJobs(result.jobs ?? []); setIntakeCards(result.intakeCards ?? []); setLoaded(true); }
   }, [request]);
   useEffect(() => {
     let stopped = false; const owner = {}; lifetime.current = owner; session.current = null;
     mutation.current = false; reviewing.current = null;
-    setJobs([]); setActive(null); setPacket(null); setImagesReady(false); setLoaded(false); setBusy(false);
+    setJobs([]); setIntakeCards([]); setActive(null); setPacket(null); setImagesReady(false); setLoaded(false); setBusy(false);
     setLastApproved(null); setFinishing(null); setAutoPrintWindow(null); setFinishingError(''); setPreparingLabel(false);
     (async () => {
       const result = await request('/api/staff/session');
@@ -191,7 +193,7 @@ export default function BatchGrading({ staff }) {
           onPrintDialog={() => setAutoPrintWindow(null)} printDisabled={busy} />}
       </section>}
       <section className={styles.intake} hidden={tab !== 'INTAKE'}>
-        <BatchImport staff={staff} enabled={loaded} onImported={refresh} jobs={jobs} onDiscarded={onDiscarded} onDeleteControls={setDeleteControls} onOpenCard={cardId=>void router.push(`/manual/${cardId}?from=batch`)}/>
+        <BatchImport staff={staff} enabled={loaded} onImported={refresh} jobs={jobs} intakeCards={intakeCards} onDiscarded={onDiscarded} onDeleteControls={setDeleteControls} onOpenCard={cardId=>void router.push(`/manual/${cardId}?from=batch`)}/>
       </section>
       {tab !== 'INTAKE' && <div className={styles.review}>
         <aside className={styles.rail} aria-label="Cards">{shown.map(job => <button disabled={busy} className={styles.cardRow} aria-current={focused?.key === job.key ? 'true' : undefined} key={job.key} onClick={() => setActive(job.key)}><img src={`${STAFF_BASE_PATH}/api/staff/manual-connected/cards/${job.cardId}/preview-image/FRONT`} alt="" loading="lazy"/><span><strong>{job.evidence?.name || job.label || 'Card'}</strong><small>{job.state === 'RUNNING' ? stages[job.stage] : status[job.state]}</small></span><b>{job.evidence?.proposedGrade ?? '·'}</b></button>)}</aside>

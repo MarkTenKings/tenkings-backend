@@ -5,7 +5,12 @@ import { CARD_IDENTIFICATION_VERSION, parseCardIdentificationInput, parseCardIde
 import { CARD_IDENTIFICATION_VERSION_V2, CARD_IDENTIFICATION_GOOGLE_TEXT_FIELDS_V2,
   identifyCardV2, parseCardIdentificationResultV2 } from '@tenkings/card-identification-core/v2';
 import { canonical, digest, object, requireThat, uuid } from '@atlas/manual-service/contract';
-import { recordedIdentificationEffect, isCreditBalanceRejection, prepareIdentificationRecovery } from './identification-recovery.mjs';
+import { batchActionId } from '@atlas/batch-grading';
+import { recordedIdentificationEffect, isCreditBalanceRejection, isRateLimitRejection, identificationRetryCount,
+  prepareIdentificationRecovery } from './identification-recovery.mjs';
+
+const MACHINE_RATE_LIMIT_RETRY = Symbol('atlas-identification-rate-limit-retry');
+const retryDelay = attempt => Math.min(60000, 30000 * 2 ** attempt);
 
 // Input is immutable in PostgreSQL. Historical bare inputs keep V1 semantics;
 // new attempts bind V2 before any dispatch. Never infer a version from a reply.
@@ -48,7 +53,8 @@ export function identificationEffects({ openaiKey, googleKey, fetchImpl=fetch })
     model:(request,context)=>send('https://api.openai.com/v1/responses',request,{Authorization:`Bearer ${openaiKey}`},context.signal) };
 }
 
-export function createIdentification({ boundary,intake,intakeRepository,storage,artifacts,details,effects=null,receiptClient=null,engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION }) {
+export function createIdentification({ boundary,intake,intakeRepository,storage,artifacts,details,effects=null,receiptClient=null,engineVersion=ATLAS_IDENTIFICATION_LAYOUT_VERSION,
+  clock = () => Date.now(), limited = work => work() }) {
   requireThat([CARD_IDENTIFICATION_VERSION_V2,ATLAS_IDENTIFICATION_LAYOUT_VERSION].includes(engineVersion),503,'IDENTIFICATION_VERSION_UNSUPPORTED');
   requireThat(!effects || typeof receiptClient?.$queryRawUnsafe==='function',503,'IDENTIFICATION_RECEIPT_STORE_REQUIRED');
   async function transaction(staff,cardId,work,{sourceHash=null,edit=false}={}) {
@@ -70,7 +76,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
   async function project(staff,row) {
     if(!row)return {state:effects?'NOT_STARTED':'UNAVAILABLE'};
     const saved=storedInput(row);
-    const state=row.state==='RUNNING' && Date.now()-new Date(row.created_at).getTime()>120000?'UNKNOWN':row.state;
+    const state=row.state==='RUNNING' && clock()-new Date(row.created_at).getTime()>120000?'UNKNOWN':row.state;
     const value={attemptId:row.id,state,startedAt:new Date(row.created_at).toISOString()};
     if(row.result){const stored=JSON.parse(row.result); const result=await artifacts.read(stored.ref,{cardId:row.card_id,kind:'IDENTIFICATION_RESULT',sourceHash:row.source_hash});
       value.result=saved.parseResult(result,saved.input);}
@@ -157,7 +163,7 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
         await event(staff,row,stage,'DISPATCH',context.requestHash,requestEvidence,true,context.signal,dispatchSignal);
         // Once the durable claim exists, any uncertainty retains the attempt.
-        // Only a separately claimed, verified human retry can start a successor.
+        // Only a separately claimed, proven refusal can start a successor.
         dispatched=true;
         requireThat(!context.signal.aborted,503,'IDENTIFICATION_CANCELLED');
         dispatchSignal?.throwIfAborted();
@@ -215,10 +221,11 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         return project(staff,terminal);
       }
   }
-  return Object.freeze({
+  const api = Object.freeze({
     async status(staff,cardId){const {card}=await intake.read(staff,cardId);const result=await project(staff,card.ready?await read(staff,cardId,card.sourceHash):null);
       const latest=(await intake.read(staff,cardId)).card;requireThat(latest.sourceHash===card.sourceHash,409,'INTAKE_PAIR_STALE');return result;},
-    async retry(staff,cardId,input){
+    async retry(staff,cardId,input,policy=null,dispatchSignal=null){
+      dispatchSignal?.throwIfAborted();
       object(input,['actionId','expectedAttemptId','sourceHash']);uuid(input.actionId);uuid(input.expectedAttemptId);
       requireThat(typeof input.sourceHash==='string' && /^[a-f0-9]{64}$/.test(input.sourceHash));
       input=structuredClone(input);
@@ -239,10 +246,23 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       requireThat(parent?.id===input.expectedAttemptId,409,'IDENTIFICATION_RETRY_STALE');
       await requireUninitialized(staff,parent);
       let evidence;
-      try{evidence=await prepareIdentificationRecovery(parent,recoveryAccess(staff,parent));}
+      const automatic = policy === MACHINE_RATE_LIMIT_RETRY;
+      let retryAt = null;
+      try{
+        const access = recoveryAccess(staff,parent);
+        evidence=await prepareIdentificationRecovery(parent,access,null,{rateLimit:automatic});
+        if(automatic){
+          const count=await identificationRetryCount(parent,access);
+          requireThat(count<3,409,'IDENTIFICATION_RATE_LIMIT_RETRY_EXHAUSTED');
+          retryAt=new Date(parent.finished_at).getTime()+retryDelay(count);
+          requireThat(clock()>=retryAt,409,'IDENTIFICATION_RATE_LIMIT_WAIT');
+          requireThat(input.actionId===batchActionId(parent.id,'IDENTIFICATION_RATE_LIMIT_RETRY'),409,'IDENTIFICATION_RETRY_ACTION_CONFLICT');
+        }
+      }
       catch{requireThat(false,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');}
-      const claim=signal=>transaction(staff,cardId,async({tx,principal})=>{
+      const claim=signal=>transaction(staff,cardId,async({tx,principal,now})=>{
         requireThat(!signal.aborted,503,'IDENTIFICATION_CANCELLED');
+        dispatchSignal?.throwIfAborted();
         const [locked]=await tx.$queryRawUnsafe('SELECT * FROM atlas_manual_connected.identification WHERE id=$1::uuid AND card_id=$2::uuid AND source_hash=$3 FOR UPDATE',parent.id,cardId,input.sourceHash);
         const known=await replay(tx);if(known)return {...known,won:false};
         requireThat(locked?.state==='UNKNOWN' && locked.input===parent.input && locked.result===null,409,'IDENTIFICATION_RETRY_STALE');
@@ -250,14 +270,58 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
         requireThat(!child,409,'IDENTIFICATION_RETRY_STALE');
         const [manual]=await tx.$queryRawUnsafe('SELECT id FROM atlas_manual.card WHERE id=$1::uuid',cardId);
         requireThat(!manual,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
+        if(automatic)requireThat(+(now??new Date(clock()))>=retryAt,409,'IDENTIFICATION_RATE_LIMIT_WAIT');
         requireThat(!signal.aborted,503,'IDENTIFICATION_CANCELLED');
+        dispatchSignal?.throwIfAborted();
         const id=randomUUID();
         const count=await tx.$executeRawUnsafe("INSERT INTO atlas_manual_connected.identification(id,card_id,source_hash,actor_id,state,input,retry_of,retry_action_id,evidence_attempt_id) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'RUNNING',$5,$6::uuid,$7::uuid,$8::uuid) ON CONFLICT DO NOTHING",id,cardId,input.sourceHash,principal.id,parent.input,parent.id,input.actionId,evidence.rootId);
         const found=await replay(tx);
         requireThat(found,409,'IDENTIFICATION_RETRY_ACTION_CONFLICT');
         return {...found,won:count===1};
       },{edit:true,sourceHash:input.sourceHash});
-      return execute(staff,parent,evidence.loaded,{...evidence,claim});
+      return execute(staff,parent,evidence.loaded,{...evidence,claim},dispatchSignal);
+    },
+    async runMachine(staff,cardId,{dispatchSignal}={}) {
+      const continueMachine=async(current,allowDispatch)=>{
+        if(current.state!=='UNKNOWN' || !effects)return current;
+        dispatchSignal?.throwIfAborted();
+        const {card}=await intake.read(staff,cardId);
+        if(!card.ready)return current;
+        let row=await read(staff,cardId,card.sourceHash);
+        if(!row || row.id!==current.attemptId || !['RUNNING','UNKNOWN'].includes(row.state))return current;
+        const access=recoveryAccess(staff,row);
+        let count,retryAt;
+        try{
+          const model=await recordedIdentificationEffect(row,'MODEL',access);
+          if(!isRateLimitRejection(model))return current;
+          if(row.state==='RUNNING'){
+            // A process may die after persisting the actual rejection but before
+            // settling its attempt. Only that verified refusal closes an old
+            // RUNNING attempt; missing/accepted replies never authorize a resend.
+            if(clock()-new Date(row.created_at).getTime()<=120000)return current;
+            await transaction(staff,cardId,async({tx,now})=>{
+              requireThat(+(now??new Date(clock()))-new Date(row.created_at).getTime()>120000,409,'IDENTIFICATION_RETRY_NOT_ALLOWED');
+              await tx.$executeRawUnsafe("UPDATE atlas_manual_connected.identification SET state=$1,result=$2,error=$3,finished_at=clock_timestamp() WHERE id=$4::uuid AND state='RUNNING'",'UNKNOWN',null,'IDENTIFICATION_RATE_LIMIT_REFUSED',row.id);
+            },{edit:true,sourceHash:row.source_hash});
+            row=await read(staff,cardId,card.sourceHash);
+            if(!row || row.id!==current.attemptId || row.state!=='UNKNOWN')return current;
+          }
+          count=await identificationRetryCount(row,access);
+          if(count>=3)return {...current,rejection:{code:'API_RATE_LIMIT_RETRY_EXHAUSTED',canRetry:false}};
+          await prepareIdentificationRecovery(row,access,model,{rateLimit:true});
+          await requireUninitialized(staff,row);
+          retryAt=new Date(row.finished_at).getTime()+retryDelay(count);
+        }catch(error){
+          if(error?.code==='IDENTIFICATION_RETRY_NOT_ALLOWED' || error instanceof SyntaxError)return current;
+          throw error;
+        }
+        if(!allowDispatch || clock()<retryAt)return {state:'RETRY_WAIT',attemptId:row.id,retryAfterMs:Math.max(1,retryAt-clock())};
+        dispatchSignal?.throwIfAborted();
+        const retried=await api.retry(staff,cardId,{actionId:batchActionId(row.id,'IDENTIFICATION_RATE_LIMIT_RETRY'),
+          expectedAttemptId:row.id,sourceHash:row.source_hash},MACHINE_RATE_LIMIT_RETRY,dispatchSignal);
+        return continueMachine(retried,false);
+      };
+      return continueMachine(await api.run(staff,cardId,{dispatchSignal}),true);
     },
     async run(staff,cardId,{dispatchSignal}={}) {
       dispatchSignal?.throwIfAborted();
@@ -273,11 +337,17 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       if(!effects)return {state:'UNAVAILABLE'};
       const photos={},loaded=new Map();
       for(const [side,slot] of Object.entries(pair.sides)){
-        dispatchSignal?.throwIfAborted();
-        const photo=slot.photo, found=await storage.readDecodedFrame({frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan});
-        const bytes=await sharp(found.bytes,{limitInputPixels:52_000_000,failOn:'warning'}).resize(1400,1400,{fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer();
-        requireThat(bytes.length<=3*1024*1024,422,'IDENTIFICATION_PHOTO_TOO_LARGE');
-        const sha256=digest(bytes), saved=await asset(cardId,'IDENTIFICATION_IMAGE',{base64:bytes.toString('base64'),mime:'image/jpeg',workingFrame:photo.workingFrame,original:photo.original},pair.sourceHash);
+        // Keep full-resolution reads/decodes inside the native memory bound.
+        // Release it before OCR or model waits so provider concurrency remains
+        // independent of CPU capacity. Queue admission rechecks shutdown.
+        const {bytes,sha256,saved}=await limited(async()=>{
+          dispatchSignal?.throwIfAborted();
+          const photo=slot.photo, found=await storage.readDecodedFrame({frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan});
+          const bytes=await sharp(found.bytes,{limitInputPixels:52_000_000,failOn:'warning'}).resize(1400,1400,{fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer();
+          requireThat(bytes.length<=3*1024*1024,422,'IDENTIFICATION_PHOTO_TOO_LARGE');
+          const sha256=digest(bytes), saved=await asset(cardId,'IDENTIFICATION_IMAGE',{base64:bytes.toString('base64'),mime:'image/jpeg',workingFrame:photo.workingFrame,original:photo.original},pair.sourceHash);
+          return {bytes,sha256,saved};
+        });
         photos[side.toLowerCase()]={ref:saved.ref.key,sha256,byteCount:bytes.length};loaded.set(saved.ref.key,bytes);
       }
       const input=parseCardIdentificationInput({subject:{id:cardId,revision:pair.sourceHash},photos});
@@ -294,4 +364,5 @@ export function createIdentification({ boundary,intake,intakeRepository,storage,
       return execute(staff,row,loaded,null,dispatchSignal);
     },
   });
+  return api;
 }

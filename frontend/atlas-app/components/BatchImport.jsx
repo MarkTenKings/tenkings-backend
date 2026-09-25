@@ -8,14 +8,35 @@ import styles from './BatchGrading.module.css';
 const copy={BATCH_IMPORT_COUNT:'Choose Front and Back photos for up to 100 cards at a time.',BATCH_IMPORT_PAIR_NAMES:'For bulk import, name each pair card-name_front.jpg and card-name_back.jpg. Use the two photo slots for any filenames.',BATCH_IMPORT_MISSING_SIDE:'Each bulk card needs a matching Front and Back file.',BATCH_IMPORT_DUPLICATE_SIDE:'Two files claim the same side. Give every physical card its own name.',BATCH_IMPORT_PENDING:'Resume the saved upload first.',BATCH_IMPORT_BUSY:'Batch intake is open in another tab. Use that tab or close it and reload this page.',BATCH_IMPORT_STORAGE:'This browser could not finish saving the photo. Keep this tab and its saved uploads, then resume.',PHOTO_STORAGE_QUOTA:'This device reported full storage. Free device space without clearing this site’s saved data, then resume.',PHOTO_BYTES_UNREADABLE:'This browser could not read a saved original. Keep the saved uploads here and try Resume saved uploads.',PHOTO_BYTES_INVALID:'The original photo bytes could not be verified. Your saved record is kept.',PHOTO_STORAGE_CORRUPT:'This browser could not verify a saved photo record. Keep your saved uploads here.',BATCH_IMPORT_SIDE_SAVED:'This side is already saved. Capture the other side of the same card.',BATCH_IMPORT_PAIR_FILES:'Choose an original photo under 64 MiB.',BATCH_IMPORT_ORDER_COUNT:'Choose an even number of photos, up to 100 Front/Back pairs. Review their order before adding them.'};
 const emptyPair=()=>({FRONT:null,BACK:null});
 const uploadMessage=item=>copy[item.code]??({BATCH_IMPORT_INTERRUPTED:'This saved photo could not continue. Resume saved uploads to retry the same card.',INTAKE_JOURNAL_UNAVAILABLE:'This browser could not open its saved upload records. Keep your photos here and resume the saved uploads.',BATCH_IMPORT_CREATE_UNCERTAIN:'The card creation reply was interrupted. Resume saved uploads to recover the same card.'})[item.code]??manualMessage({code:item.code});
-export function batchUploadPresentation(item,jobs=[]){
-  if(!item.done)return {label:item.code?uploadMessage(item):item.started?'Uploading originals…':'Saved for upload',attention:Boolean(item.code)};
+export function ingestionSidePresentation(card,side){
+  const slot=card?.sides?.[side],job=card?.ingestion?.[side],verified=Boolean(slot?.verified||slot?.upload?.verification),prepared=Boolean(slot?.prepared||slot?.upload?.source);
+  if(job?.state==='ATTENTION'){
+    const code=job.code??'INTAKE_PROCESSING_INTERRUPTED';
+    const correction=code==='PHOTO_FORMAT_UNSUPPORTED'?'Unsupported format, including camera RAW. Add a full-resolution JPEG, PNG, HEIC or WebP; original retained.'
+      :code.startsWith('PHOTO_')&&code.endsWith('UNSUPPORTED')?'This photo format cannot be prepared. Open card to replace the photo; original retained.'
+      :code==='PHOTO_DECODE_LIMIT'?'Photo exceeds processing limits. Open card; original retained.'
+      :code.includes('ACCESS')||code.includes('SIGN_IN')?'Processing access changed. Open card with current staff access.'
+      :'Preparation needs attention. Open card; original retained.';
+    return {label:`${side==='FRONT'?'Front':'Back'} · ${correction}`,attention:true,code};
+  }
+  if(job?.state==='QUEUED'&&job.code&&job.code!=='INTAKE_UPLOAD_ABSENT')return {
+    label:`${side==='FRONT'?'Front':'Back'} · ${{VERIFY:'Original verification',PREPARE:'Preparation',ADMIT:'Grading handoff'}[job.stage]??'Processing'} delayed; retrying automatically`,
+    attention:false,retrying:true,code:job.code};
+  if(prepared)return {label:`${side==='FRONT'?'Front':'Back'} prepared`,attention:false};
+  if(verified)return {label:`${side==='FRONT'?'Front':'Back'} verified · ${job?.state==='RUNNING'?'Preparing':'Preparation queued'}`,attention:false};
+  return {label:`${side==='FRONT'?'Front':'Back'} · ${job?.stage==='VERIFY'&&job?.state==='RUNNING'?'Verifying original':'Waiting for original upload'}`,attention:false};
+}
+export function batchUploadPresentation(item,jobs=[],intakeCards=[]){
+  const card=intakeCards.find(value=>value.cardId===item.cardId),sides=card?['FRONT','BACK'].map(side=>ingestionSidePresentation(card,side)):[];
+  const failed=sides.find(value=>value.attention);if(failed)return failed;
+  const retry=sides.find(value=>value.retrying);
+  if(!item.done)return {label:item.code?uploadMessage(item):card?sides.map(value=>value.label).join(' · '):item.started?'Uploading originals…':'Saved for upload',attention:Boolean(item.code),...(retry&&!item.code?{code:retry.code}:{})};
   const job=jobs.find(value=>value.cardId===item.cardId&&value.state!=='SUPERSEDED')??jobs.find(value=>value.cardId===item.cardId);
-  if(!job)return {label:'Uploaded to ATLAS · Checking grading status',attention:false};
+  if(!job)return {label:card&&(!card.ready||retry)?sides.map(value=>value.label).join(' · '):'Uploaded to ATLAS · Checking grading status',attention:false,...(retry?{code:retry.code}:{})};
   if(job.state==='NEEDS_ATTENTION')return {label:({BATCH_GEOMETRY_NEEDS_REVIEW:'Check edges before grading',BATCH_IDENTITY_NEEDS_REVIEW:'Check card details before grading',BATCH_HUMAN_WORK_PRESENT:'Continue your review'})[job.code]??'Needs attention · Open card',attention:true};
   return {label:job.state==='RUNNING'?({PREPARE:'ATLAS preparing',ANALYZE:'ATLAS grading',REPORT:'ATLAS preparing report'})[job.stage]??'ATLAS processing':({QUEUED:'Queued up for ATLAS',REVIEW:'Ready for human review',APPROVED:'Approved',SUPERSEDED:'Photos changed · Review card'})[job.state]??'Uploaded to ATLAS',attention:false};
 }
-export default function BatchImport({staff,onImported,enabled,jobs=[],onOpenCard,onDiscarded,onDeleteControls}){
+export default function BatchImport({staff,onImported,enabled,jobs=[],intakeCards=[],onOpenCard,onDiscarded,onDeleteControls}){
   const importer=useRef(null),notify=useRef(onImported),lifetime=useRef(null),selection=useRef(emptyPair()),staging=useRef(false),recovered=useRef(false);
   notify.current=onImported;
   const [batch,setBatch]=useState(null),[error,setError]=useState(''),[ready,setReady]=useState(false),[saving,setSaving]=useState(false),[resuming,setResuming]=useState(false);
@@ -42,7 +63,7 @@ export default function BatchImport({staff,onImported,enabled,jobs=[],onOpenCard
         const request=async(path,options={})=>{const access=await session();return manualRequest(path,{...options,csrf:access.csrf});};
         batchJournal=createBrowserBatchImportJournal({staffId:staff.id});intakeJournal=createBrowserIntakeJournal({staffId:staff.id});
         const isPaused=()=>hasPendingDiscard(localStorage,staff.id);
-        owner=createBatchImporter({request,intake:createIntakeClient({request,journal:intakeJournal,isPaused}),journal:batchJournal,isPaused,
+        owner=createBatchImporter({request,intake:createIntakeClient({request,journal:intakeJournal,isPaused,serverProcessing:true}),journal:batchJournal,isPaused,serverProcessing:true,concurrency:2,
           onProgress:value=>{if(current()){setBatch(value);selection.current={...emptyPair(),...value?.draft?.files};setPair(selection.current);}},onQueued:()=>{if(current())void Promise.resolve(notify.current?.()).catch(()=>{});}});
         importer.current=owner;
         discarder.current=createWorkspaceDiscarder({staffId:staff.id,request,batchJournal,intakeJournal,pause:()=>owner.pauseForDiscard(),resume:()=>owner.resumeAfterDiscard()});
@@ -129,7 +150,10 @@ export default function BatchImport({staff,onImported,enabled,jobs=[],onOpenCard
       const link=document.createElement('a');link.href=url;link.download='atlas-upload-diagnostics.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     }catch(failure){setError(copy[failure.code]??manualMessage(failure));}
   }
-  const done=batch?.items.filter(item=>item.done).length??0,total=batch?.items.length??0;
+  const localItems=batch?.items??[],known=new Set(localItems.map(item=>item.cardId).filter(Boolean));
+  const items=[...localItems,...intakeCards.filter(card=>!known.has(card.cardId)).map(card=>({createId:card.createRequestId,cardId:card.cardId,
+    label:card.label||'Card',started:true,done:['FRONT','BACK'].every(side=>card.sides?.[side]?.verified||card.sides?.[side]?.upload?.verification),remote:true}))];
+  const done=items.filter(item=>item.done).length,total=items.length;
   const disabled=!ready||!enabled||saving||deleting||deletePending||staff.role!=='REVIEWER',attention=batch?.items.some(item=>!item.done&&item.code);
   return <section className={styles.importer} aria-label="Automatic batch photo intake">
     <div className={styles.importHeading}><div><p className={styles.captureEyebrow}>CAPTURE. FLIP. NEXT.</p><h2>Your cards. On repeat.</h2><p>Front, back, next card. Uploading and identification keep working while you capture.</p></div></div>
@@ -153,9 +177,9 @@ export default function BatchImport({staff,onImported,enabled,jobs=[],onOpenCard
     {error&&<p className={styles.error} role="alert">{error}</p>}
     {deletePending&&<p role="status">Deletion is saved. Uploads are paused until ATLAS confirms it. Your originals stay on this device until then.</p>}
     {staff.role==='REVIEWER'&&<div className={styles.deleteActions}><button type="button" disabled={!discarder.current||saving||deleting} onClick={()=>void removeCards()}>{deleting?'Deleting cards…':deletePending?'Finish saved deletion':'Delete all cards'}</button><small>Removes cards from your workspace and clears their saved photos on this device. Recorded history is retained.</small></div>}
-    {batch&&<><div className={styles.intakeBar}><span aria-live="polite">{done} uploaded to ATLAS · {total-done} saved for upload</span>
+    {(batch||items.length>0)&&<><div className={styles.intakeBar}><span aria-live="polite">{done} uploaded to ATLAS · {total-done} awaiting upload</span>
       {attention&&<button type="button" disabled={resuming||disabled} onClick={()=>void resume()}>{resuming?'Checking saved uploads…':'Resume saved uploads'}</button>}</div>
-      <div className={styles.pairRoster}>{batch.items.slice(-100).map(item=>{const failure=batchImportFailureDetails(item),progress=batchUploadPresentation(item,jobs);return <div key={item.createId}><span>{progress.attention?'!':item.done?'✓':'·'}</span><strong>{item.label}</strong><small className={failure||progress.attention?styles.pairFailure:undefined}>{progress.label}{failure&&<code>{failure.code}{failure.phase!=='UNKNOWN'?` · ${failure.phase}`:''}{failure.exceptionName!=='Error'?` · ${failure.exceptionName}`:''}</code>}</small>{item.done&&item.cardId&&onOpenCard&&<button type="button" className={styles.pairOpen} onClick={()=>onOpenCard(item.cardId)}>{progress.attention?'Review card':'View card'} ↗</button>}{staff.role==='REVIEWER'&&<button type="button" className={styles.deleteButton} disabled={disabled} aria-label={`Delete ${item.label}`} onClick={()=>void removeCards(item)}>Delete</button>}</div>;})}</div>
+      <div className={styles.pairRoster}>{items.slice(-100).map(item=>{const failure=batchImportFailureDetails(item),progress=batchUploadPresentation(item,jobs,intakeCards);return <div key={item.createId??item.cardId}><span>{progress.attention?'!':item.done?'✓':'·'}</span><strong>{item.label}</strong><small className={failure||progress.attention?styles.pairFailure:undefined}>{progress.label}{failure&&<code>{failure.code}{failure.phase!=='UNKNOWN'?` · ${failure.phase}`:''}{failure.exceptionName!=='Error'?` · ${failure.exceptionName}`:''}{failure.uploadDiagnostic?.status?` · Upload HTTP ${failure.uploadDiagnostic.status}`:''}</code>}{progress.code&&<code>{progress.code}</code>}</small>{item.cardId&&onOpenCard&&<button type="button" className={styles.pairOpen} onClick={()=>onOpenCard(item.cardId)}>{progress.attention?'Review card':'View card'} ↗</button>}{staff.role==='REVIEWER'&&<button type="button" className={styles.deleteButton} disabled={disabled} aria-label={`Delete ${item.label}`} onClick={()=>void removeCards(item)}>Delete</button>}</div>;})}</div>
       <details className={styles.uploadDiagnostics}><summary>Upload diagnostics</summary><p>Download saved progress and error details for troubleshooting. No photos, filenames, or sign-in credentials are included.</p><button type="button" disabled={!ready} onClick={()=>void downloadDiagnostics()}>Download upload diagnostics</button></details></>}
   </section>;
 }

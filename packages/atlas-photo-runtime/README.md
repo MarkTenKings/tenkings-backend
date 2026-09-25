@@ -49,7 +49,7 @@ available for retry or another decoder; this package never deletes that object.
 | Alpha | Retained as an alpha channel |
 
 PNG with lower-bit-depth samples expands to RGB/RGBA8. Grayscale expands to RGB.
-The output color policy is `atlas-native-raster-srgb-v1`. It is a deliberate sRGB
+The output color policy is `atlas-native-raster-srgb-v2`. It is a deliberate sRGB
 working raster, not proof of wide-gamut/HDR or fine-defect fidelity. Original
 bytes are untouched. Dynamic range remains unknown unless independently known;
 an ordinary 8-bit file or ICC profile does not prove SDR. No HDR-preservation or
@@ -69,8 +69,25 @@ HDR bases and mismatched headroom are refused. The complete original, including
 the gain map, stays byte-identical. The separately decoded primary is oriented
 once and converted from P3 to sRGB; no gain map is applied and no pixel is resized.
 `primary-jpeg-sdr-base` provenance records both byte spans and the auxiliary and
-metadata hashes. Treatment `atlas-jpeg-apple-sdr-base-srgb-v1` explicitly records
+metadata hashes. Treatment `atlas-jpeg-apple-sdr-base-srgb-v2` explicitly records
 this SDR view of an HDR original. Ordinary raster treatment remains unchanged.
+
+The native raster and JPEG policies ending in `v2`, and working-image policy
+`atlas-sdr-working-srgb8-v2`, fingerprint lossless PNG compression level 1 with
+adaptive filtering and palettes disabled. Their `v1` versions used level 6.
+Only deflate effort changes: decoded samples, dimensions, bit depth, ICC bytes,
+orientation and HDR treatment are unchanged. Historical descriptors remain
+readable. The separate HEIF rich-raster encoder retains its existing settings
+and policies. Larger level-1 PNGs still obey the configured output byte bound;
+the encoder never resizes an image to fit that bound.
+
+`atlas-sdr-working-srgb8-identity-v3` avoids a redundant conversion only for
+known native/JPEG raster policies produced by the current pinned decoder, RGB8
+without alpha, declared converted sRGB, and the exact fixed output ICC bytes.
+It fully decodes the PNG entropy stream into a bounded discard sink before
+copying every PNG byte unchanged. The working descriptor binds identical source
+and output content. P3 and 16-bit sources still use the existing explicit color
+conversion; unqualified source policies cannot select this identity path.
 
 Format references: Apple's [HDR gain-map description](https://developer.apple.com/documentation/appkit/applying-apple-hdr-effect-to-your-photos)
 defines the auxiliary type and SDR-base/gain-map relationship; Google's reference

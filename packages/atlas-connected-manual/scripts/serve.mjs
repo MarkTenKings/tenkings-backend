@@ -16,16 +16,20 @@ if(publicKey&&(publicKey.length!==32||publicKey.toString('base64')!==env.ATLAS_M
 if(!/^\d{2,5}$/.test(env.PORT??'4319')||Number(env.PORT??4319)>65535)throw new Error('Manual port invalid');
 const client=new PrismaClient({datasources:{db:{url:config.databaseUrl}},errorFormat:'minimal'});
 const auth=new DurableStaffAuth({database:new StaffDatabase(client,config),config,provider:{}});
-const runtime=createServingConnectedManual({env,auth,staffConfig:config,Client:PrismaClient,assertRequest(){throw new Error('Private signed transport required');}});
+const runtime=createServingConnectedManual({env,auth,staffConfig:config,Client:PrismaClient,assertRequest(){throw new Error('Private signed transport required');},
+  onWorkerError:error=>console.log(JSON.stringify({event:'MANUAL_BACKGROUND_RETRY',code:/^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code??'')?error.code:'MANUAL_BACKGROUND_INTERRUPTED',
+    ...(['PREPARE','ANALYZE','REPORT'].includes(error?.stage)?{stage:error.stage}:{}),
+    ...(['Error','TypeError','RangeError','SyntaxError','AbortError'].includes(error?.errorType)?{errorType:error.errorType}:{}),
+    ...(/^packages\/atlas-[a-z-]+\/(?:src|scripts)\/[a-zA-Z0-9_./-]+\.mjs:\d+:\d+$/.test(error?.location??'')?{location:error.location}:{})}))});
 if(!runtime)throw new Error('Manual runtime is disabled');
 const publicHandler=publicKey?createManualPublicHandler({key:publicKey,reader:runtime.approvedManualReader}):null;
 const customerRuntime=createServingCustomerService({env,Client:PrismaClient,onEvent:event=>console.log(JSON.stringify(event))});
 const server=createPrivateManualServer({connected:runtime.connected,boundary:runtime.boundary,origin:config.origin,key,publicHandler,customerHandler:customerRuntime?.handler??null});
-const analysisWorker=runtime.analysisReconciler?createAnalysisWorker({reconciler:runtime.analysisReconciler,
+const analysisWorker=runtime.analysisReconciler?createAnalysisWorker({reconciler:runtime.analysisReconciler,batchSize:10,concurrency:4,intervalMs:2000,
   onEvent:event=>console.log(JSON.stringify(event))}):null;
 server.listen(Number(env.PORT??4319),'0.0.0.0',()=>{
   console.log(JSON.stringify({event:'MANUAL_PRIVATE_LISTENING',webDeployment:config.deploymentId,webReleaseSha:config.releaseSha,port:Number(env.PORT??4319),node:process.version,platform:process.platform,arch:process.arch}));
-  if(!stopping){analysisWorker?.start();runtime.connected.earlyGeometry.start();customerRuntime?.start();}
+  if(!stopping){analysisWorker?.start();runtime.connected.ingestion?.start();runtime.connected.batch?.worker.start();runtime.connected.earlyGeometry.start();customerRuntime?.start();}
 });
 let stopping=false;
 async function stop(){
@@ -33,12 +37,14 @@ async function stop(){
  const workerStopped=analysisWorker?.stop();
  const geometryStopped=runtime.connected.earlyGeometry.stop();
  const batchStopped=runtime.connected.batch?.worker.stop();
+ const ingestionStopped=runtime.connected.ingestion?.stop();
  const customerStopped=customerRuntime?.stopWorkers();
  const deadline=setTimeout(()=>server.closeAllConnections(),215000);deadline.unref();
  await new Promise(resolve=>server.close(resolve));clearTimeout(deadline);
  await workerStopped;
  await geometryStopped;
  await batchStopped;
+ await ingestionStopped;
  await customerStopped;
  await Promise.all([runtime.close(),client.$disconnect(),customerRuntime?.close()]);
 }

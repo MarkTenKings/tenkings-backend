@@ -65,6 +65,7 @@ export function createManualRepository({ boundary, validateAccess = null, valida
     async findAction(staff, cardId, input) {
       uuid(cardId); const { input: command, requestHash } = inputCommand(input);
       return boundary.transaction(staff, async ({ tx, principal }) => {
+        requireThat(principal.actorKind !== 'MACHINE', 403, 'MANUAL_HUMAN_ACTION_REQUIRED');
         const row = await loadRow(tx, cardId); access(row, principal, command.action.type === 'APPROVE_REPORT' ? 'approve' : 'edit');
         if (validateAccess) await validateAccess({ tx, principal, cardId });
         const found = (await tx.$queryRawUnsafe('SELECT * FROM atlas_manual.action WHERE card_id=$1::uuid AND action_id=$2::uuid', cardId, command.actionId))[0];
@@ -107,6 +108,7 @@ export function createManualRepository({ boundary, validateAccess = null, valida
       const report = approval === null ? null : stateDocument(approval);
       requireThat((report !== null) === (command.action.type === 'APPROVE_REPORT'), 400, 'MANUAL_APPROVAL_INVALID');
       return boundary.transaction(staff, async ({ tx, principal, now, refresh }) => {
+        requireThat(principal.actorKind !== 'MACHINE', 403, 'MANUAL_HUMAN_ACTION_REQUIRED');
         const row = await loadRow(tx, cardId, true);
         ({ principal, now } = await refresh());
         access(row, principal, report ? 'approve' : 'edit');

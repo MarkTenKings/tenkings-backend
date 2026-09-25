@@ -1,17 +1,73 @@
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
-import { BATCH_POLICY, BATCH_STAGES, batchActionId, parseBatchInput } from './index.mjs';
+import { BATCH_POLICY, BATCH_STAGES, BATCH_RATE_LIMIT_RETRIES, batchAnalysisActionId, parseBatchInput } from './index.mjs';
+
+function admission(card) {
+  const key = digest(canonical([BATCH_POLICY, card.cardId, card.sourceHash]));
+  const input = canonical({ policy: BATCH_POLICY, cardId: card.cardId, sourceHash: card.sourceHash, label: card.label,
+    uploads: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, card.sides[side].upload.uploadId])) });
+  return { key, cardId: card.cardId, sourceHash: card.sourceHash, analysisActionId: batchAnalysisActionId(key), input, inputHash: digest(input) };
+}
+
+/** Called only inside the intake source-commit transaction, after its current
+ * pair/owner/deletion checks and while its card lock is held. A lost response
+ * or worker restart cannot separate the second prepared source from its job.
+ * This admits machine preparation, never a human review or paid dispatch. */
+export async function recordBatchPreparedPair({ tx, principal, card }) {
+  requireThat(principal?.role === 'REVIEWER' && card?.ready && card.cardId && card.sourceHash, 409, 'BATCH_PHOTOS_CHANGED');
+  const row = admission(card);
+  // Source replay holds the intake card lock. Never wait for an existing batch
+  // row here: its worker takes batch then intake locks in the opposite order.
+  const [existing] = await tx.$queryRawUnsafe('SELECT key,actor_id,card_id,source_hash,analysis_action_id FROM atlas_manual_connected.batch_grading WHERE key=$1', row.key);
+  if (existing) {
+    requireThat(existing.actor_id === principal.id && existing.card_id === row.cardId && existing.source_hash === row.sourceHash,
+      409, 'BATCH_ACCESS_CHANGED');
+    return { key: row.key, analysisActionId: existing.analysis_action_id };
+  }
+  await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.batch_grading
+    (key,card_id,source_hash,actor_id,access_version,analysis_action_id,input,input_hash)
+    VALUES($1,$2::uuid,$3,$4::uuid,$5,$6::uuid,$7,$8) ON CONFLICT(key) DO NOTHING`,
+  row.key, row.cardId, row.sourceHash, principal.id, principal.accessVersion, row.analysisActionId, row.input, row.inputHash);
+  return { key: row.key, analysisActionId: row.analysisActionId };
+}
+
+// A terminal receipt can arrive after a network exception parked the job. Only
+// a READY result for this exact action and unchanged manual draft is eligible;
+// the ordinary analysis reader still verifies all immutable result artifacts.
+const readyReceipt = `EXISTS(SELECT 1 FROM atlas_defect_analysis.run r
+  JOIN atlas_defect_analysis.receipt p ON p.analysis_id=r.id AND p.kind='RESPONSE'
+  WHERE r.card_id=j.card_id AND r.action_id=j.analysis_action_id AND r.actor_id=j.actor_id
+    AND p.evidence::jsonb->>'state'='READY')`;
+const rateLimitReceipt = `EXISTS(SELECT 1 FROM atlas_defect_analysis.run r
+  JOIN atlas_defect_analysis.receipt p ON p.analysis_id=r.id AND p.kind='RESPONSE'
+  WHERE r.card_id=j.card_id AND r.action_id=j.analysis_action_id AND r.actor_id=j.actor_id
+    AND p.evidence::jsonb->>'state'='REFUSED' AND p.evidence::jsonb->>'httpStatus'='429'
+    AND p.evidence::jsonb->>'code'='DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR'
+    AND p.evidence::jsonb->>'responseId' IS NULL
+    AND NOT EXISTS(SELECT 1 FROM atlas_defect_analysis.provider_event e WHERE e.analysis_id=r.id AND e.kind='ACCEPTED'))`;
+const recoverableReceipt = `(j.state='NEEDS_ATTENTION' AND j.stage='ANALYZE'
+  AND j.code NOT IN ('BATCH_HUMAN_WORK_PRESENT','BATCH_MANUAL_DRAFT_CHANGED','BATCH_PHOTOS_CHANGED','BATCH_ACCESS_CHANGED','INTAKE_CARD_DELETED')
+  AND (${readyReceipt} OR (j.analysis_attempt<${BATCH_RATE_LIMIT_RETRIES} AND ${rateLimitReceipt}))
+  AND EXISTS(SELECT 1 FROM atlas_manual.card m WHERE m.id=j.card_id AND m.owner_id=j.actor_id
+    AND m.content_hash=j.evidence::jsonb->>'manualContentHash'
+    AND m.revision::text=j.evidence::jsonb->>'manualRevision')
+  AND NOT EXISTS(SELECT 1 FROM atlas_manual_connected.batch_review v WHERE v.job_key=j.key))`;
+const due = `((j.state='QUEUED' AND j.available_at<=clock_timestamp())
+  OR (j.state='RUNNING' AND j.lease_until<=clock_timestamp()) OR ${recoverableReceipt})`;
 
 function project(row) {
   if (!row) return null;
   requireThat(row.input_hash === digest(row.input), 503, 'BATCH_STORED_CONTENT_INVALID');
   const input = JSON.parse(row.input);
+  const attempt = row.analysis_attempt ?? 0, evidence = row.evidence ? JSON.parse(row.evidence) : {};
   requireThat(input.cardId === row.card_id && input.sourceHash === row.source_hash && input.policy === BATCH_POLICY
     && digest(canonical([BATCH_POLICY, row.card_id, row.source_hash])) === row.key
-    && row.analysis_action_id === batchActionId(row.key, 'ANALYZE'), 503, 'BATCH_STORED_CONTENT_INVALID');
+    && row.analysis_action_id === batchAnalysisActionId(row.key, attempt)
+    && (attempt === 0 || Array.isArray(evidence.analysisActions) && evidence.analysisActions.length === attempt
+      && evidence.analysisActions.every((id, index) => id === batchAnalysisActionId(row.key, index))), 503, 'BATCH_STORED_CONTENT_INVALID');
   return { key: row.key, cardId: row.card_id, sourceHash: row.source_hash, label: input.label,
     uploads: input.uploads, stage: row.stage, state: row.state, revision: row.revision, claimId: row.claim_id,
-    evidence: row.evidence ? JSON.parse(row.evidence) : {}, code: row.code, attempts: row.attempts,
-    analysisActionId: batchActionId(row.key, 'ANALYZE'), createdAt: new Date(row.created_at).toISOString(),
+    evidence, code: row.code, attempts: row.attempts, analysisAttempt: attempt,
+    analysisActionId: row.analysis_action_id, createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString() };
 }
 const safeRow = row => {
@@ -42,6 +98,7 @@ const canResume = row => Boolean(!row.current_approval && !row.photos_changed
 /** All calls run through the existing ordinary staff boundary. No worker DB
  * credential can borrow a human review, publication or certification action. */
 export function createBatchRepository({ boundary, intakeRepository }) {
+  let discoveryCursor = null;
   async function source(tx, principal, row, lock = '') {
     const card = await intakeRepository.authorizeInTransaction(tx, principal, row.card_id, { edit: true, lock });
     requireThat(card.ready && card.sourceHash === row.source_hash, 409, 'BATCH_PHOTOS_CHANGED');
@@ -62,6 +119,28 @@ export function createBatchRepository({ boundary, intakeRepository }) {
     return true;
   }
   return Object.freeze({
+    ...(boundary.machineTransaction && boundary.machineOwner ? {
+      async discoverOwners() {
+        const owners = await boundary.machineTransaction(null, async ({ tx }) => tx.$queryRawUnsafe(`
+          WITH pending AS (SELECT DISTINCT j.actor_id,j.access_version FROM atlas_manual_connected.batch_grading j
+            WHERE ${due} AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=j.card_id)),
+          owners AS (SELECT all_jobs.actor_id,all_jobs.access_version,MAX(all_jobs.updated_at) AS last_served
+            FROM atlas_manual_connected.batch_grading all_jobs JOIN pending p
+              ON p.actor_id=all_jobs.actor_id AND p.access_version=all_jobs.access_version
+            GROUP BY all_jobs.actor_id,all_jobs.access_version)
+          SELECT * FROM owners WHERE $1::timestamptz IS NULL OR (last_served,actor_id,access_version)>($1::timestamptz,$2::uuid,$3::integer)
+          ORDER BY last_served,actor_id,access_version LIMIT 128`, discoveryCursor?.lastServed ?? null,
+        discoveryCursor?.actorId ?? null, discoveryCursor?.accessVersion ?? null));
+        discoveryCursor = owners.length === 128 ? { lastServed: new Date(owners.at(-1).last_served).toISOString(),
+          actorId: owners.at(-1).actor_id, accessVersion: owners.at(-1).access_version } : null;
+        const handles = [];
+        for (const owner of owners) {
+          try { handles.push(await boundary.machineOwner({ ownerId: owner.actor_id, accessVersion: owner.access_version })); }
+          catch (error) { if (![401,403].includes(error?.status)) throw error; }
+        }
+        return handles;
+      },
+    } : {}),
     async readReview(staff, key) {
       requireThat(/^[a-f0-9]{64}$/.test(key));
       return boundary.transaction(staff, async ({ tx, principal }) => {
@@ -100,10 +179,7 @@ export function createBatchRepository({ boundary, intakeRepository }) {
         for (const entry of [...input.cards].sort((a, b) => a.cardId.localeCompare(b.cardId))) {
           const card = await intakeRepository.authorizeInTransaction(tx, principal, entry.cardId, { edit: true, lock: 'SHARE' });
           requireThat(card.ready && card.sourceHash === entry.sourceHash, 409, 'BATCH_PHOTOS_CHANGED');
-          const key = digest(canonical([BATCH_POLICY, card.cardId, card.sourceHash]));
-          const value = canonical({ policy: BATCH_POLICY, cardId: card.cardId, sourceHash: card.sourceHash, label: card.label,
-            uploads: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, card.sides[side].upload.uploadId])) });
-          rows.push({ key, cardId: card.cardId, sourceHash: card.sourceHash, analysisActionId: batchActionId(key, 'ANALYZE'), input: value, inputHash: digest(value) });
+          rows.push(admission(card));
         }
         await tx.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.batch_request(actor_id,action_id,request_hash)
           VALUES($1::uuid,$2::uuid,$3) ON CONFLICT DO NOTHING`, principal.id, input.actionId, requestHash);
@@ -140,7 +216,9 @@ export function createBatchRepository({ boundary, intakeRepository }) {
         return { jobs: rows.map(safeRow) };
       });
     },
-    async claim(staff, claimId, concurrency) {
+    async claim(staff, claimId, concurrency, analysisConcurrency = concurrency) {
+      requireThat(Number.isInteger(concurrency) && concurrency >= 1 && concurrency <= 128
+        && Number.isInteger(analysisConcurrency) && analysisConcurrency >= 1 && analysisConcurrency <= 128, 500, 'BATCH_CONFIG_INVALID');
       return boundary.transaction(staff, async ({ tx, principal }) => {
         requireThat(principal.role === 'REVIEWER', 403, 'BATCH_ACCESS_DENIED');
         // A process-local pool cannot cap multiple service instances. This
@@ -167,10 +245,11 @@ export function createBatchRepository({ boundary, intakeRepository }) {
         const [reserved] = await tx.$queryRawUnsafe('SELECT count(*)::int AS count FROM atlas_manual_connected.batch_grading WHERE analysis_reserved');
         const [count] = await tx.$queryRawUnsafe("SELECT count(*)::int AS count FROM atlas_manual_connected.batch_grading WHERE state='RUNNING' AND lease_until>clock_timestamp()");
         if (count.count >= concurrency) return null;
-        const rows = await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual_connected.batch_grading j
-          WHERE NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=j.card_id) AND actor_id=$1::uuid AND access_version=$2 AND ((state='QUEUED' AND available_at<=clock_timestamp())
-          OR (state='RUNNING' AND lease_until<=clock_timestamp()))
-          AND (stage<>'ANALYZE' OR analysis_reserved OR $3::boolean) ORDER BY created_at,key LIMIT 1 FOR UPDATE SKIP LOCKED`, principal.id, principal.accessVersion, reserved.count < concurrency);
+        const rows = await tx.$queryRawUnsafe(`SELECT j.*,${readyReceipt} AS analysis_ready FROM atlas_manual_connected.batch_grading j
+          WHERE NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=j.card_id)
+          AND actor_id=$1::uuid AND access_version=$2 AND ${due}
+          AND (stage<>'ANALYZE' OR analysis_reserved OR ${readyReceipt} OR $3::boolean)
+          ORDER BY available_at,created_at,key LIMIT 1 FOR UPDATE SKIP LOCKED`, principal.id, principal.accessVersion, reserved.count < analysisConcurrency);
         if (!rows.length) return null;
         const row = rows[0];
         try { await source(tx, principal, row, 'SHARE'); }
@@ -181,8 +260,8 @@ export function createBatchRepository({ boundary, intakeRepository }) {
           return null;
         }
         const [saved] = await tx.$queryRawUnsafe(`UPDATE atlas_manual_connected.batch_grading SET state='RUNNING',claim_id=$2::uuid,
-          lease_until=clock_timestamp()+interval '2 minutes',analysis_reserved=(analysis_reserved OR stage='ANALYZE'),
-          attempts=attempts+1,revision=revision+1,code=NULL,updated_at=clock_timestamp() WHERE key=$1 RETURNING *`, row.key, claimId);
+          lease_until=clock_timestamp()+interval '2 minutes',analysis_reserved=(analysis_reserved OR (stage='ANALYZE' AND NOT $3::boolean)),
+          attempts=attempts+1,revision=revision+1,code=NULL,updated_at=clock_timestamp() WHERE key=$1 RETURNING *`, row.key, claimId, row.analysis_ready);
         return project(saved);
       });
     },
@@ -202,16 +281,29 @@ export function createBatchRepository({ boundary, intakeRepository }) {
         if (await releaseDiscarded(tx, row, job.claimId)) return false;
         await source(tx, principal, row, 'SHARE');
         const old = project(row);
-        let state = ({ CONTINUE: 'QUEUED', WAIT: 'QUEUED', REVIEW: 'REVIEW', ATTENTION: 'NEEDS_ATTENTION' })[outcome.kind];
+        let state = ({ CONTINUE: 'QUEUED', WAIT: 'QUEUED', REVIEW: 'REVIEW', ATTENTION: 'NEEDS_ATTENTION', RETRY_ANALYSIS: 'QUEUED' })[outcome.kind];
         requireThat(state && old.stage === job.stage, 409, 'BATCH_STAGE_STALE');
+        if (row.state !== 'RUNNING' || row.claim_id !== job.claimId || row.lease_active !== true) return false;
         const stage = outcome.kind === 'CONTINUE' ? BATCH_STAGES[BATCH_STAGES.indexOf(old.stage) + 1] : old.stage;
         requireThat(stage, 409, 'BATCH_STAGE_STALE');
-        const evidence = canonical({ ...old.evidence, ...(outcome.evidence ?? {}) }, { maxBytes: 65536 });
-        const delay = outcome.kind === 'WAIT' ? Math.max(2000, Math.min(60000, outcome.retryAfterMs ?? 3000)) : 0;
+        let analysisAttempt = old.analysisAttempt, analysisActionId = old.analysisActionId;
+        const nextEvidence = { ...old.evidence, ...(outcome.evidence ?? {}) };
+        if (outcome.kind === 'RETRY_ANALYSIS') {
+          requireThat(stage === 'ANALYZE' && analysisAttempt < BATCH_RATE_LIMIT_RETRIES, 409, 'BATCH_RATE_LIMIT_RETRY_EXHAUSTED');
+          const [refusal] = await tx.$queryRawUnsafe(`SELECT ${rateLimitReceipt} AS eligible
+            FROM atlas_manual_connected.batch_grading j WHERE j.key=$1`, job.key);
+          requireThat(refusal?.eligible, 409, 'BATCH_RATE_LIMIT_RETRY_UNPROVEN');
+          nextEvidence.analysisActions = [...(old.evidence.analysisActions ?? []), old.analysisActionId];
+          analysisActionId = batchAnalysisActionId(job.key, ++analysisAttempt);
+        }
+        const evidence = canonical(nextEvidence, { maxBytes: 65536 });
+        const delay = outcome.kind === 'RETRY_ANALYSIS' ? Math.min(60000, 30000 * 2 ** (analysisAttempt - 1))
+          : outcome.kind === 'WAIT' ? Math.max(2000, Math.min(60000, outcome.retryAfterMs ?? 3000)) : 0;
         const changed = await tx.$executeRawUnsafe(`UPDATE atlas_manual_connected.batch_grading SET state=$3,stage=$4,evidence=$5,code=$6,
-          claim_id=NULL,lease_until=NULL,analysis_reserved=CASE WHEN stage='ANALYZE' AND $4='REPORT' THEN false ELSE analysis_reserved END,
+          claim_id=NULL,lease_until=NULL,analysis_reserved=CASE WHEN stage='ANALYZE' AND ($4='REPORT' OR analysis_action_id<>$8::uuid) THEN false ELSE analysis_reserved END,
+          analysis_action_id=$8::uuid,analysis_attempt=$9,
           revision=revision+1,available_at=clock_timestamp()+$7::integer*interval '1 millisecond',updated_at=clock_timestamp()
-          WHERE key=$1 AND state='RUNNING' AND claim_id=$2::uuid AND lease_until>clock_timestamp()`, job.key, job.claimId, state, stage, evidence, outcome.code ?? null, delay);
+          WHERE key=$1 AND state='RUNNING' AND claim_id=$2::uuid AND lease_until>clock_timestamp()`, job.key, job.claimId, state, stage, evidence, outcome.code ?? null, delay, analysisActionId, analysisAttempt);
         return changed === 1;
       });
     },
@@ -240,5 +332,5 @@ export function createBatchRepository({ boundary, intakeRepository }) {
 
 export function batchGrantSQL(role) {
   requireThat(/^[a-z][a-z0-9_]{0,62}$/.test(role));
-  return `GRANT SELECT,INSERT ON atlas_manual_connected.batch_request,atlas_manual_connected.batch_grading,atlas_manual_connected.batch_review TO "${role}";\nGRANT UPDATE(state,stage,evidence,code,claim_id,lease_until,revision,available_at,updated_at,attempts,access_version,analysis_reserved) ON atlas_manual_connected.batch_grading TO "${role}";\nGRANT USAGE ON SCHEMA atlas_defect_analysis TO "${role}";\nGRANT SELECT ON atlas_defect_analysis.run,atlas_defect_analysis.receipt,atlas_defect_analysis.request_refusal TO "${role}";`;
+  return `GRANT SELECT,INSERT ON atlas_manual_connected.batch_request,atlas_manual_connected.batch_grading,atlas_manual_connected.batch_review TO "${role}";\nGRANT UPDATE(state,stage,evidence,code,claim_id,lease_until,revision,available_at,updated_at,attempts,access_version,analysis_reserved,analysis_action_id,analysis_attempt) ON atlas_manual_connected.batch_grading TO "${role}";\nGRANT USAGE ON SCHEMA atlas_defect_analysis TO "${role}";\nGRANT SELECT ON atlas_defect_analysis.run,atlas_defect_analysis.receipt,atlas_defect_analysis.request_refusal,atlas_defect_analysis.provider_event TO "${role}";`;
 }

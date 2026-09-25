@@ -2,6 +2,7 @@ import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3
 import { createPhotoStorage } from '@atlas/photo-storage';
 import { createManualArtifactStore,createS3ManualArtifactTransport } from '@atlas/manual-service/artifacts';
 import { createDurableStaffBoundary } from '@atlas/manual-service/staff-auth';
+import { createMachineStaffBoundary } from '@atlas/manual-service/machine-auth';
 import { createConnectedManual } from '@atlas/connected-manual';
 import { createConnectedHandler } from '@atlas/connected-manual/http';
 import { identificationEffects } from '@atlas/connected-manual/identification';
@@ -51,13 +52,24 @@ export function manualRuntimeSettings(env,staffConfig) {
     region:env.ATLAS_MANUAL_STORAGE_REGION,keyPrefix:env.ATLAS_MANUAL_STORAGE_PREFIX,pythonExecutable:env.ATLAS_MANUAL_PYTHON};
 }
 
+export function manualProcessingSettings(env) {
+  const setting=(name,fallback,max)=>{
+    const value=env[name]===undefined?fallback:Number(env[name]);
+    requireThat(Number.isInteger(value)&&value>=1&&value<=max,503,'MANUAL_PROCESSING_CONFIG_INVALID');return value;
+  };
+  return Object.freeze({nativeConcurrency:setting('ATLAS_MANUAL_NATIVE_CONCURRENCY',2,8),
+    verificationConcurrency:setting('ATLAS_MANUAL_VERIFY_CONCURRENCY',4,16),
+    executionConcurrency:setting('ATLAS_MANUAL_BATCH_CONCURRENCY',20,128),
+    analysisConcurrency:setting('ATLAS_MANUAL_ANALYSIS_CONCURRENCY',64,128)});
+}
+
 /** Private CPU service behind the approved Vercel staff application.
  * The signed transport forwards the ordinary staff cookie; auth rechecks the
  * independently restricted manual DB role on every short transaction. */
-export function createServingConnectedManual({env,auth,staffConfig,Client,assertRequest}) {
+export function createServingConnectedManual({env,auth,staffConfig,Client,assertRequest,onWorkerError=()=>{}}) {
   const settings=manualRuntimeSettings(env,staffConfig);if(!settings)return null;
   const manualClient=new Client({datasources:{db:{url:settings.databaseUrl}},errorFormat:'minimal'});
-  const boundary=createDurableStaffBoundary({auth,manualClient});
+  const boundary=createMachineStaffBoundary({auth,manualClient,boundary:createDurableStaffBoundary({auth,manualClient})});
   const client=new S3Client({region:settings.region,endpoint:settings.endpoint,maxAttempts:1,
     credentials:{accessKeyId:env.ATLAS_MANUAL_STORAGE_ACCESS_KEY,secretAccessKey:env.ATLAS_MANUAL_STORAGE_SECRET_KEY}});
   const baseStorage=createPhotoStorage({client,bucket:settings.bucket,keyPrefix:settings.keyPrefix,limits:{maxObjectBytes:256*1024*1024,timeoutMs:90000}});
@@ -86,7 +98,8 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const stationConfig=manualStationSettings(env,staffConfig.origin);
   const researchConfig=manualResearchSettings(env),dealerConfiguration=manualDealerConfigurationLoader(env);
   const dealerOperations=env.ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED==='true'?createDealerStaffService({auth,boundary}):null;
-  const connected=createConnectedManual({dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl});
+  const connected=createConnectedManual({dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
+    processing:manualProcessingSettings(env),onWorkerError});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
   // Construction is cold: no database scan or provider request starts here.
@@ -95,5 +108,5 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     reconcile:input=>connected.assistance.executor.reconcile(input),
   }):null;
   const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,dealerOffers:connected.dealerOffers});
-  return {connected,boundary,handler,analysisReconciler,approvedManualReader,uploadOrigin:settings.uploadOrigin,async close(){await connected.batch?.worker.stop();await manualClient.$disconnect();client.destroy();}};
+  return {connected,boundary,handler,analysisReconciler,approvedManualReader,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop()]);await manualClient.$disconnect();client.destroy();}};
 }

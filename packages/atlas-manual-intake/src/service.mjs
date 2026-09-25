@@ -24,6 +24,7 @@ export function createManualIntake({ repository, storage, artifacts, processPhot
     discardStatus: (staff, input) => repository.discardStatus(staff, input),
     create: (staff, input) => repository.create(staff, input),
     list: (staff, options) => repository.list(staff, options),
+    processingList: (staff, options) => repository.processingList(staff, options),
     read: async (staff, cardId) => ({ card: (await repository.read(staff, cardId)).card }),
     plan: (staff, cardId, input) => repository.plan(staff, cardId, input),
     upload: async (staff, cardId, uploadId) => {
@@ -37,8 +38,8 @@ export function createManualIntake({ repository, storage, artifacts, processPhot
       await repository.upload(staff, cardId, uploadId, { edit: true, current: true });
       return { state: 'UPLOAD', ...signed };
     },
-    async complete(staff, cardId, uploadId, { signal } = {}) {
-      const { upload } = await repository.upload(staff, cardId, uploadId, { edit: true });
+    async complete(staff, cardId, uploadId, { signal, lease = null } = {}) {
+      const { upload } = await repository.upload(staff, cardId, uploadId, { edit: true, lease });
       // A lost committed reply returns its exact durable receipt. No HEAD of a
       // later version can rewrite which object was originally accepted.
       if (upload.verification) return { card: (await repository.read(staff, cardId)).card, upload };
@@ -49,28 +50,38 @@ export function createManualIntake({ repository, storage, artifacts, processPhot
         throw error;
       }
       const observed = verification({ object: found.object, sha256: found.sha256, byteCount: found.byteCount, contentType: found.contentType }, upload.plan);
-      return repository.recordVerification(staff, cardId, uploadId, observed);
+      signal?.throwIfAborted();
+      return repository.recordVerification(staff, cardId, uploadId, observed, { lease });
     },
-    async prepare(staff, cardId, uploadId, { signal } = {}) {
+    async prepare(staff, cardId, uploadId, { signal, lease = null } = {}) {
       requireThat(typeof processPhoto === 'function', 503, 'INTAKE_PHOTO_PROCESSOR_UNAVAILABLE');
-      let { upload } = await repository.upload(staff, cardId, uploadId, { edit: true, current: true });
-      if (!upload.verification) ({ upload } = await this.complete(staff, cardId, uploadId, { signal }));
+      let { upload } = await repository.upload(staff, cardId, uploadId, { edit: true, current: true, lease });
+      if (!upload.verification) ({ upload } = await this.complete(staff, cardId, uploadId, { signal, lease }));
       if (upload.source) {
-        await readSource(staff, cardId, uploadId, { signal });
-        if (sourcePrepared) await sourcePrepared(staff, cardId, uploadId);
-        return { card: (await repository.read(staff, cardId)).card, upload };
+        // Replay the exact source through the same atomic intent/admission
+        // hooks. A prepared pair remains recoverable after process replacement.
+        if (!lease) await readSource(staff, cardId, uploadId, { signal });
+        signal?.throwIfAborted();
+        const result = await repository.recordSource(staff, cardId, uploadId, {
+          verificationHash: document(upload.verification).hash, source: upload.source }, { lease });
+        if (sourcePrepared && !lease) await sourcePrepared(staff, cardId, uploadId);
+        return result;
       }
       const found = await storage.readOriginal({ uploadPlan: upload.plan, object: upload.verification.object, signal });
       requireThat(canonical(verification({ object: found.object, sha256: found.sha256, byteCount: found.byteCount,
         contentType: found.contentType }, upload.plan)) === canonical(upload.verification), 409, 'INTAKE_UPLOAD_CONFLICT');
       const processed = processedPhoto(await processPhoto({ uploadPlan: upload.plan, verification: upload.verification,
         bytes: found.bytes, signal }), upload.plan, upload.verification);
+      signal?.throwIfAborted();
       const sourceHash = photoSourceHash(upload), ref = await artifacts.write(processed, { cardId, kind: 'PHOTO_SOURCE', sourceHash }, { signal });
       // Late successful work may be retained as historical evidence, but cannot
       // replace a newer selected side. Current pair readiness uses selected IDs.
+      signal?.throwIfAborted();
       const result = await repository.recordSource(staff, cardId, uploadId, { verificationHash: document(upload.verification).hash,
-        source: { photoSourceHash: sourceHash, ref } });
-      if (sourcePrepared) await sourcePrepared(staff, cardId, uploadId);
+        source: { photoSourceHash: sourceHash, ref } }, { lease });
+      // Machine source/geometry/pair intents committed above. An optional wake
+      // failing afterward must not recast that durable success as attention.
+      if (sourcePrepared && !lease) await sourcePrepared(staff, cardId, uploadId);
       return result;
     },
     readSource,
