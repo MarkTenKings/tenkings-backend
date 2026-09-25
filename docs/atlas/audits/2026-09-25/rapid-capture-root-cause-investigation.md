@@ -2,6 +2,12 @@
 
 Investigation date: 2026-09-25 UTC. Status: evidence-backed diagnosis and implementation proposal; no recovery, grading, deletion, or application changes performed by this investigation.
 
+## Dated implementation follow-up — September 25, 2026
+
+The later owner-authorized [workspace-deletion and diagnostics release](workspace-deletion-release.md) is live at application source `b013a4f13e582f6159ec214f18230aa446d26eea`, with final release preservation at 08:43:18 UTC. It implements owner-scoped deletion, server/device replay fences and safe API failure references/phase diagnostics. The fixed current-test cleanup committed at 08:53:18 UTC after a recorded first maintenance-helper refusal; matching read-only receipt reconciliation and a zero-active-card census verified retirement of the exact 28 server cards plus five local-only create IDs. This later authorization supersedes the investigation-only no-delete direction for that exact cohort; actual iPhone-local cleanup remains unobserved. The original read-only investigation and its evidence remain unchanged.
+
+The exact historical 503 exception is still unknown. Automatic progression from an existing READY receipt, durable server pickup without the originating browser, and measured 10–20-card capacity remain open; the recommendations and benchmark below are not completed by the deletion/diagnostics release. Original images, prior grading evidence and accepted provider accounting remain retained.
+
 ## Finding
 
 Photography is producing retained images, but the current system does not reliably carry every captured pair through upload, preparation, machine grading, and review. The evidence establishes several different stopping points. They require different recovery actions; one generic error and one Resume button cannot represent them accurately.

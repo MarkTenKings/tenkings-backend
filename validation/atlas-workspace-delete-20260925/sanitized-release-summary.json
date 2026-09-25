@@ -1,0 +1,306 @@
+{
+  "status": "LIVE_RELEASE_AND_FIXED_SERVER_CLEANUP_VERIFIED",
+  "sourceCommit": "b013a4f13e582f6159ec214f18230aa446d26eea",
+  "observedThrough": "2026-09-25T08:53:55.712473Z",
+  "web": {
+    "staff": {
+      "deploymentId": "dpl_5CC8EzCJ7PgDvM6YF6C2KKiq8CNU",
+      "url": "https://atlas-grading-staff-ovis4q938-ten-kings.vercel.app",
+      "state": "READY"
+    },
+    "customer": {
+      "deploymentId": "dpl_32TARCjDG75sFuQw3uY7VWqvL5Xe",
+      "url": "https://atlas-grading-customer-ccr53lm0u-ten-kings.vercel.app",
+      "state": "READY"
+    },
+    "public": {
+      "deploymentId": "dpl_6s17NYmG1gJ3e96rAvzEQjT8x88k",
+      "url": "https://atlas-grading-public-bxc9cnokj-ten-kings.vercel.app",
+      "state": "READY"
+    }
+  },
+  "publicAliasesVerified": 4,
+  "runtime": {
+    "containerId": "a59b818c5150f48127454cf8632c6b5144d5c89050398a8c98ddcf472b436431",
+    "imageId": "sha256:1d3e4cb1fccfae6eb98e98bfac54baa4b2292002e4b154fc54b03f7b8a09024a",
+    "startedAt": "2026-09-25T08:39:38.762578648Z",
+    "restartCount": 0,
+    "configurationPath": "/opt/atlas/workspace-delete-20260925/private.env",
+    "environmentSha256": "309f8d2d805f221819f0411e3889c9a5d80f04e411647e19d74733bb85bebe09",
+    "staffConfigHash": "66dccf9a94147ead6785ea4f0d75fc0e6efc5bbcb4e7c839762950f5943557d9",
+    "retainedPredecessor": {
+      "containerId": "92ab04be4dcc3ea9636c9725c78db6b611ca87738505edfabe3b9c4f40e09d3b",
+      "name": "atlas-manual-connected-20260917-retained-47dff-workspace-delete-b013a4f1",
+      "running": false,
+      "disconnected": true
+    }
+  },
+  "schema": {
+    "staffMigrations": 53,
+    "publicMigrations": 112,
+    "migration": "20260925080000_manual_workspace_discard",
+    "migrationSha256": "324f839e0596ec0151fff150e7bd8fd9e1960d9b5f2936903b77fc9254a99b2e",
+    "grantsSha256": "c09630e0f6ad8aafa40350e9948226a9afa1f0678a3a2b6ffb5521052e2d77b4",
+    "migrationReplayed": false,
+    "initialPostStepCustomerActiveTransactions": 1,
+    "freshIdleReadbackReconciled": true,
+    "publicCleanMigrationEntries": 99,
+    "publicHistoricalRollbackEntries": 13
+  },
+  "controls": {
+    "staffRevision": 33,
+    "staffSmsRevision": 31,
+    "publicRevision": 11,
+    "customerRevision": 13,
+    "customerSmsRevision": 11
+  },
+  "features": {
+    "customerIntake": true,
+    "customerIdentification": true,
+    "commerce": false,
+    "dealerOperations": false,
+    "physicalStation": false
+  },
+  "verification": {
+    "frontend": {
+      "passed": 748,
+      "failed": 0,
+      "skipped": 0
+    },
+    "productionBuilds": 3,
+    "backendFocused": 160,
+    "backendPostgresScenarioGroups": 10,
+    "migrationVerifierPositiveChecks": 3,
+    "migrationVerifierRefusalChecks": 26,
+    "cleanupOwnedPostgresChecks": 6,
+    "native": {
+      "coverageTests": 197,
+      "runs": 2,
+      "firstRunPassed": 196,
+      "firstRunEnvironmentalSkips": 1,
+      "firstRunFailedZeroSkipGateRetained": true,
+      "supplementalPreviouslySkippedTestPassed": true,
+      "sourceFiles": 906,
+      "nativeArtifacts": 16,
+      "newOriginalPhotoReplays": 0,
+      "earlier585SuiteRepeated": false
+    },
+    "signedPrivateChecks": 3,
+    "canonicalChecks": 61,
+    "canonicalAt": "2026-09-25T08:42:52.073Z",
+    "postPromotionPreservation": {
+      "status": "FOLLOWUP_PRESERVATION_PASS",
+      "at": "2026-09-25T08:43:18.720379+00:00",
+      "gradingHistoryTables": 30,
+      "customerTables": 21,
+      "discardTablesEmpty": true
+    },
+    "publicPromotionAt": "2026-09-25T08:40:46.778Z",
+    "productionSchemaProofAt": "2026-09-25T08:38:27.747450Z",
+    "privateCutoverAt": "2026-09-25T08:39:45.437350Z",
+    "oldNewManualAuthGrantCompatibility": "Byte-identical auth boundary plus actual authenticated-role PostgreSQL checks after grants",
+    "cleanupOriginalOwnedPostgresChecks": 5
+  },
+  "cleanup": {
+    "status": "COMMITTED_AND_READONLY_RECONCILED",
+    "plannedServerCards": 28,
+    "plannedLocalOnlyCreateIds": 5,
+    "plannedDiscardRequests": 1,
+    "plannedTombstones": 33,
+    "serverWorkspaceRetirementVerified": true,
+    "ownerDeviceCleanupObserved": false,
+    "originalObjectsPurged": false,
+    "attemptsDispatched": 2,
+    "firstAttempt": {
+      "psqlExitCode": 3,
+      "sqlstate": "P0001",
+      "cause": "Maintenance helper required 112 clean public ledger entries; actual preserved ledger has 99 clean and 13 historical rollbacks"
+    },
+    "fixedRequestAndScopeRetained": true,
+    "correctedMaintenanceHelper": {
+      "status": "QUALIFIED_AND_COMMITTED_SAME_FIXED_REQUEST",
+      "publicLedgerShape": {
+        "total": 112,
+        "clean": 99,
+        "historicalRolledBack": 13,
+        "unfinishedUnrolled": 0
+      },
+      "checks": 6,
+      "fixedRequestAndScopeRetained": true
+    },
+    "firstReconciliation": {
+      "status": "NOT_COMMITTED",
+      "at": "2026-09-25T08:45:33.373999Z",
+      "meaning": "No matching receipt visible; not alone proof that an earlier transaction ended"
+    },
+    "committedAt": "2026-09-25T08:53:18.980196Z",
+    "discardedAt": "2026-09-25T08:53:15.975Z",
+    "lastReconciliation": {
+      "status": "COMMITTED",
+      "at": "2026-09-25T08:53:41.191041Z",
+      "exactReceiptMatched": true,
+      "databaseWrites": 0
+    },
+    "insertedDiscardRequests": 1,
+    "insertedTombstones": 33,
+    "retiredServerCards": 28,
+    "retiredLocalOnlyCreateIds": 5,
+    "preservedExistingTableFingerprints": 120,
+    "retainedIntakeRows": 28,
+    "activeWorkspaceCards": 0,
+    "activeCensusAt": "2026-09-25T08:53:55.712473Z",
+    "receiptHash": "722e19d9f2b93117fc822a5ec04abde68eebae1fc17dd935277691c2f570ffcd",
+    "providerEffects": 0,
+    "applicationCalls": 0
+  },
+  "delivered": [
+    "Owner-scoped immutable workspace deletion with stable selected/all receipts and stale-create fences",
+    "Browser journal cleanup only after confirmed server deletion",
+    "Deleted queued/expired geometry job cleanup without freeing live CPU leases",
+    "Allowlisted API failure stage/reference diagnostics"
+  ],
+  "limitations": [
+    "Exact historical HTTP 503 exception remains unresolved",
+    "Complete browser-independent post-verification processing is not implemented by this release",
+    "Automatic 10\u201320-card capacity and comparable one-card latency are unmeasured and unimplemented",
+    "Existing worker concurrency remains two; 50 is request size",
+    "Required human review and original-photo preservation remain",
+    "Real iPhone reconciliation and new full grading acceptance not established",
+    "No physical print/NFC, commerce or dealer activation"
+  ],
+  "privateEvidenceRoot": "/Users/markthomas/.codex/atlas-handoffs/atlas-workspace-delete-20260925",
+  "receipts": [
+    {
+      "path": "web-release/build/qualification.json",
+      "sha256": "1101225386a8a6bf615b773ac9c52a74f6eaa83c2452eaabbec8ef43c292d937"
+    },
+    {
+      "path": "web-release/native-qualification-b013a4f1.json",
+      "sha256": "33322f995d774540b9caad8a53958cb3cee1f9590b8617a966659b8804ac5566"
+    },
+    {
+      "path": "web-release/staff-b013-ready.json",
+      "sha256": "4573f5b3ab29aca84321b850e93d1c8460b57434efba4a3acb7d9e9f3046d2b3"
+    },
+    {
+      "path": "web-release/customer-b013-ready.json",
+      "sha256": "184c2b52ba8434e0517d3f4f6e35f490d6040cf1bbcc0f92fd8265592c5114c4"
+    },
+    {
+      "path": "web-release/public-b013-ready.json",
+      "sha256": "a4197af8e4ba11ea855d13ff1b5fd6a5e5715d3585e95ae7b957094329731489"
+    },
+    {
+      "path": "web-release/public-promotion-b013/result.json",
+      "sha256": "954325acc1a65f07de37e1da67755a4ad5370024053a1b5227f151635df7fc45"
+    },
+    {
+      "path": "runtime/host-readback/derive-result.json",
+      "sha256": "0f44cd27d5eec05a4f5aa5b3696178173d4a1a3b695a12a3107606b27ff8c97c"
+    },
+    {
+      "path": "migration-plan/reconciliation-result.json",
+      "sha256": "b903025e1546ce298e1a28734c2e387c893d28e2e8ee7acce9a20d4afc779330"
+    },
+    {
+      "path": "migration-plan/owned-qualification-1/verifier-result-v2.json",
+      "sha256": "b96d1d4b6ed39dce9b33d76a19f9b1df7c7afed68511c57c39b6ed27d9349e92"
+    },
+    {
+      "path": "discard-postgres-reaper/result.json",
+      "sha256": "4b8f2592fbeafd13d519ae3576b395f4d05249100ef2e5ae1635fe6b694af9cb"
+    },
+    {
+      "path": "cleanup/owned-sql-qualification.json",
+      "sha256": "b206b2f811466be036d4278cd408d0fe0cda56f867e14a1152f3113394e49cba"
+    },
+    {
+      "path": "probes/signed-private-workspace-delete-1/result.json",
+      "sha256": "e3d1bdcfd667ee62f0d2c6024f2c1fa11ccb5aeaaa5ce26ed59f373725c690d8"
+    },
+    {
+      "path": "probes/canonical-1/failure.json",
+      "sha256": "02cfd21c57b0e7e2a99724e471eb3bfdfe2cee60d440714cc2ad9e62c54b4eb7"
+    },
+    {
+      "path": "probes/canonical-2/failure.json",
+      "sha256": "9db08351db56e1626167bb4780bda8e3887b8a67299ded8ac53da80a9f88bd7e"
+    },
+    {
+      "path": "probes/canonical-3/result.json",
+      "sha256": "24380594dcb4b92c7e8e59d26030796249f683eac7becc06293b132d77b36168"
+    },
+    {
+      "path": "runtime/host-readback/post-promotion-result.json",
+      "sha256": "e3d06347fe456b8cf2e0cd1a750b43f43843eda3c49dbd9d13b344268ced713c"
+    },
+    {
+      "path": "runtime/host-readback/post-promotion-readonly.json",
+      "sha256": "9927666ed4ff0b2c9282f3242006d06cdf644c71c2a0091aa622b75d3abb1b5b"
+    },
+    {
+      "path": "runtime/host-readback/migration-process.json",
+      "sha256": "f34a1c448460e5fc4c923c730d4cb93ae57c66f601b43bf902b574e8c6ccc8a6"
+    },
+    {
+      "path": "runtime/host-readback/migration-result.json",
+      "sha256": "c7a00ab3a57db631f7e8cdf435951db447f5c81639582433a549fb4cd629c242"
+    },
+    {
+      "path": "runtime/host-readback/schema53-result.json",
+      "sha256": "4ab90bc5e14919a9cff9cdf13b4a488caa9ebffc1aa06492009c2352005ba687"
+    },
+    {
+      "path": "runtime/host-readback/constructor-result.json",
+      "sha256": "76fce9d4add321cffefadffcf6f26b073fc37b5596a2ec0b8bde388e93217630"
+    },
+    {
+      "path": "runtime/host-readback/controls-result.json",
+      "sha256": "f4a385c810249b02109eb28e502d270cebceda300c75c7519c70b23bf48b9b09"
+    },
+    {
+      "path": "runtime/host-readback/cutover-result.json",
+      "sha256": "571e870c66e3dc152b47a30084eda8949d029d141b111d2f2bce8e8fe454ad45"
+    },
+    {
+      "path": "runtime/host-readback/post-cutover-result.json",
+      "sha256": "74557ea86e1a9f42d6e8f167af4b30da7a2fc51d4a5d6e6dc162c71363a7bd7d"
+    },
+    {
+      "path": "cleanup/execute-1.json",
+      "sha256": "842415649f80966159657c5384e2070d0c0bee94da0a53cbfbda7a54b41404eb"
+    },
+    {
+      "path": "cleanup/reconcile-1.json",
+      "sha256": "1ff3a24e7148ba08316d781c390a280e256bd3f727eb2f6b2418026f063675ac"
+    },
+    {
+      "path": "cleanup/owned-sql-v2-qualification.json",
+      "sha256": "9765db18dc601d16fb601dfa434bdb9258dd47fd80cda4efd4035e283c939b96"
+    },
+    {
+      "path": "cleanup/owned-sql-v2-cleanup.json",
+      "sha256": "0c4ab959abc4036387969865a4066e4a46f4a75b1d4f433b661654b58b9cf8a8"
+    },
+    {
+      "path": "cleanup/review-seal.json",
+      "sha256": "ebeedfb4e9bc5660a470eb21a6829af540560e7f986a16ba47c53895b5e3a464"
+    },
+    {
+      "path": "cleanup/final-impact-2.json",
+      "sha256": "f8eb31545a5efe3552e94d276b4070d96c4d1f432f1681e8690095bd51a41376"
+    },
+    {
+      "path": "cleanup/execute-2.json",
+      "sha256": "8079466516eec0d8a34f557060aebc5af36e776f87a9be34b4907950130b4459"
+    },
+    {
+      "path": "cleanup/reconcile-2.json",
+      "sha256": "2fdb40d7b9843fd828380267dd8b2e6337f2c5ec3baf0036621754aeec6bfef1"
+    },
+    {
+      "path": "cleanup/active-counts-result.json",
+      "sha256": "1e06e4546c698ceb9a8ce9fad21a2f68d91cd9079352b1dd104925e95fd47547"
+    }
+  ]
+}
