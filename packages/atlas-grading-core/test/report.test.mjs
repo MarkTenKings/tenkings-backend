@@ -17,12 +17,18 @@ function source() {
   return { cardProfile: 'SPORTS', identity: { playerName: 'Synthetic Player', year: '2026', manufacturer: 'Fixture', productSet: 'Local test' },
     capture, reviewedDefects: [structuredClone(finding)], gradeReport: { ...grade, detectorVersion: 'synthetic-unit-fixture' } };
 }
-test('historical canonical modules moved byte-for-byte; no grading formula fork', () => {
+test('historical canonical modules and explicitly recorded optimizations retain pinned source provenance', () => {
   const manifest = JSON.parse(readFileSync(new URL('../extraction-manifest.json', import.meta.url)));
   for (const module of manifest.unchangedModules) {
     const filename = module.canonical.split('/').at(-1);
     assert.equal(createHash('sha256').update(readFileSync(new URL(`../src/${filename}`, import.meta.url))).digest('hex'), module.sha256);
   }
+  assert.equal(manifest.optimizedModules.length, 1);
+  const optimized = manifest.optimizedModules[0];
+  assert.equal(optimized.canonical, 'packages/atlas-grading-core/src/trace-bitmap-wire.ts');
+  assert.equal(optimized.sha256, 'db1e4afdc0ff81c304289eca2ba70580123818141eb0943e84703eb71312faf7');
+  assert.equal(createHash('sha256').update(readFileSync(new URL('../src/trace-bitmap-wire.ts', import.meta.url))).digest('hex'), optimized.optimizedSha256);
+  assert.equal(optimized.equivalenceTest, 'packages/atlas-grading-core/test/trace-bitmap-wire.test.mjs');
 });
 test('draft recalculates the existing rule and preserves unreviewed findings without approval', () => {
   const input = source(), report = previewAtlasReport(input);

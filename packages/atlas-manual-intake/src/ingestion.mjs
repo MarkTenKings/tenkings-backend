@@ -150,11 +150,16 @@ export function createIntakeIngestionWorker({ repository, intake, authorityFor, 
     if (stopped || cycling) return cycling;
     cycling = (async () => {
       for (const stage of STAGES) {
-        while (!stopped && active[stage] < limits[stage]) {
+        // Fast absent-object checks can finish during the next claim. Bound
+        // each stage's turn so that a growing VERIFY backlog cannot keep
+        // already uploaded photos from reaching PREPARE and ADMIT.
+        let claimed = 0;
+        while (!stopped && active[stage] < limits[stage] && claimed < limits[stage]) {
           let job;
           try { job = await repository.claim(stage, limits[stage]); } catch (error) { emit(error); break; }
           if (!job) break;
           if (stopped) { await repository.finish(job, { kind: 'WAIT', retryAfterMs: 1000 }); break; }
+          claimed++;
           active[stage]++;
           const task = execute(job).catch(emit).finally(() => {
             tasks.delete(task); active[stage]--; if (!stopped) void cycle();

@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
+import { createHash, webcrypto } from 'node:crypto';
 import { GetObjectCommand, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { completeUpload, descriptorSha256, parseDecodedFrame, parseDerivative, parseOriginal, parseUploadPlan } from '@atlas/photo-core';
-import { describeDecodedFrame, verifyAndDecodePhoto } from '@atlas/photo-runtime';
+import { describeDecodedFrameAsync, verifyAndDecodePhoto } from '@atlas/photo-runtime';
 
 export class PhotoStorageError extends Error {
   constructor(code) { super(code); this.name = 'PhotoStorageError'; this.code = code; }
@@ -96,8 +96,14 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
     check(bytes.byteLength > 0 && bytes.byteLength <= maximum, 'PHOTO_STORAGE_LIMIT');
     check(bytes.byteLength === expected.content.byteCount, 'PHOTO_STORAGE_CONFLICT');
     const owned = Buffer.from(bytes);
-    check(sha256(owned) === expected.content.sha256, 'PHOTO_STORAGE_CONFLICT');
     return owned;
+  }
+  async function hashOwnedBytes(bytes, signal) {
+    aborted(signal);
+    const digest = bytes.byteLength < 1024 * 1024 ? sha256(bytes)
+      : Buffer.from(await cancellable(webcrypto.subtle.digest('SHA-256', bytes), signal)).toString('hex');
+    aborted(signal);
+    return digest;
   }
   function putInput(expected, bytes) {
     return { Bucket: bucket, Key: expected.object.key, ...(bytes ? { Body: bytes } : {}),
@@ -138,7 +144,7 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
         const observed = headers(result, expected, object.versionId);
         check(observed.versionId === object.versionId && result.ETag === head.ETag, 'PHOTO_STORAGE_CONFLICT');
         check(body && typeof body[Symbol.asyncIterator] === 'function' && typeof body.destroy === 'function', 'PHOTO_STORAGE_INVALID_RESPONSE');
-        const chunks = [], hash = createHash('sha256'), iterator = body[Symbol.asyncIterator]();
+        const chunks = [], iterator = body[Symbol.asyncIterator]();
         let count = 0;
         while (true) {
           const next = await cancellable(iterator.next(), activeSignal);
@@ -147,12 +153,14 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
           count += next.value.byteLength;
           check(count <= expected.content.byteCount && count <= maximum, 'PHOTO_STORAGE_LIMIT');
           // Own each chunk: an injected reader may reuse its backing buffer.
-          const chunk = Buffer.from(next.value); hash.update(chunk); chunks.push(chunk);
+          chunks.push(Buffer.from(next.value));
         }
         aborted(activeSignal);
-        check(count === expected.content.byteCount && hash.digest('hex') === expected.content.sha256, 'PHOTO_STORAGE_CONFLICT');
+        check(count === expected.content.byteCount, 'PHOTO_STORAGE_CONFLICT');
+        const bytes = Buffer.concat(chunks, count);
+        check(await hashOwnedBytes(bytes, activeSignal) === expected.content.sha256, 'PHOTO_STORAGE_CONFLICT');
         return { object: observed, byteCount: count, sha256: expected.content.sha256,
-          contentType: expected.content.mime, bytes: Buffer.concat(chunks, count) };
+          contentType: expected.content.mime, bytes };
       } catch (error) {
         if (error instanceof PhotoStorageError || error?.name === 'PhotoContractError') throw error;
         if (isMissing(error)) fail('PHOTO_OBJECT_NOT_FOUND');
@@ -164,6 +172,9 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
   async function writeExpected(expected, suppliedBytes, signal) {
     signalShape(signal);
     const bytes = ownedBytes(suppliedBytes, expected);
+    await bounded(signal, timeoutMs, async activeSignal => {
+      check(await hashOwnedBytes(bytes, activeSignal) === expected.content.sha256, 'PHOTO_STORAGE_CONFLICT');
+    });
     // Readback makes replay cheap in writes and preserves provider version.
     try { return { ...await readExpected(expected, signal), disposition: 'EXISTING' }; }
     catch (error) { if (error.code !== 'PHOTO_OBJECT_NOT_FOUND') throw error; }
@@ -257,9 +268,14 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
         limits, existingOriginal, signal });
     },
     async writeDecodedFrame(decoded, { id, key, signal } = {}) {
-      const planned = describeDecodedFrame(decoded, { id, object: { key, versionId: null } });
-      const original = parseOriginal(decoded.original), decodePlan = clone(decoded.decodePlan);
-      const stored = await writeExpected(derivedExpectation(planned), decoded.png, signal);
+      check(decoded?.png instanceof Uint8Array && decoded.png.buffer instanceof ArrayBuffer, 'PHOTO_STORAGE_CONFLICT');
+      const png = Buffer.from(decoded.png), snapshot = clone({ original: decoded.original,
+        decodePlan: decoded.decodePlan, raster: decoded.raster, treatment: decoded.treatment,
+        ...(decoded.workingImage ? { workingImage: decoded.workingImage } : {}) });
+      const original = parseOriginal(snapshot.original), decodePlan = clone(snapshot.decodePlan);
+      const planned = await bounded(signal, timeoutMs, activeSignal => cancellable(
+        describeDecodedFrameAsync({ ...snapshot, png }, { id, object: { key, versionId: null } }), activeSignal));
+      const stored = await writeExpected(derivedExpectation(planned), png, signal);
       return parseDecodedFrame({ ...planned, raster: { ...planned.raster, object: stored.object } }, original, decodePlan);
     },
     async readDecodedFrame({ frame, original, decodePlan, signal } = {}) {

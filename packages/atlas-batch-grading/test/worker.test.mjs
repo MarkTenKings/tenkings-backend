@@ -183,6 +183,33 @@ test('Prisma raw-query contention retries the same durable action, but SQL permi
   }
 });
 
+test('report child interruptions retry only that report, with durable backoff and no new analysis', async () => {
+  for (const code of ['BATCH_REPORT_UNAVAILABLE', 'BATCH_REPORT_TIMEOUT', 'BATCH_REPORT_FAILED',
+    'BATCH_REPORT_PROTOCOL', 'BATCH_REPORT_COMPUTE_INVALID', 'BATCH_REPORT_LIMIT', 'BATCH_REPORT_CLEANUP_UNCERTAIN']) {
+    const retryable = ['BATCH_REPORT_UNAVAILABLE', 'BATCH_REPORT_TIMEOUT', 'BATCH_REPORT_FAILED'].includes(code);
+    const f = fixture(1), actions = [], outcomes = [];
+    f.rows[0].stage = 'REPORT'; f.rows[0].evidence = { analysisId: 'retained-result' };
+    const finish = f.repo.finish;
+    f.repo.finish = async (...args) => { outcomes.push(args[2]); return finish(...args); };
+    const worker = createBatchWorker({ repository: f.repo, prepare: { async run(_staff, job) {
+      assert.equal(job.stage, 'REPORT'); actions.push(job.analysisActionId);
+      if (actions.length <= 2) throw Object.assign(Error('child interrupted'), { code });
+      return { kind: 'REVIEW', evidence: { authority: 'MACHINE_PROPOSAL', sourceHash: job.sourceHash,
+        reportHash: 'b'.repeat(64), manualRevision: 1 } };
+    } } });
+    try {
+      worker.wake(f.staff); await until(() => f.rows[0].state === (retryable ? 'REVIEW' : 'NEEDS_ATTENTION'));
+      assert.equal(new Set(actions).size, 1);
+      assert.equal(f.rows[0].evidence.analysisId, 'retained-result');
+      if (retryable) {
+        assert.equal(actions.length, 3);
+        assert.deepEqual(outcomes.slice(0, 2).map(x => [x.kind, x.retryAfterMs, x.evidence.transportRetryCount]),
+          [['WAIT', 3000, 1], ['WAIT', 6000, 2]]);
+      } else { assert.equal(actions.length, 1); assert.equal(outcomes[0].kind, 'ATTENTION'); }
+    } finally { await worker.stop(); }
+  }
+});
+
 test('storage retry backoff survives worker replacement and ordinary waits without changing action identity', async () => {
   const f = fixture(1), identities = [], outcomes = [];
   f.rows[0].evidence = { retained: 'same source evidence' };

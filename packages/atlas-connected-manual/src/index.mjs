@@ -21,6 +21,7 @@ import { createManualPublication } from './publication.mjs';
 import { createBatchGrading, createBatchWorker, batchActionId } from '@atlas/batch-grading';
 import { createBatchRepository, recordBatchPreparedPair } from '@atlas/batch-grading/repository';
 import { createBatchPreparation } from './batch-preparation.mjs';
+import { createBatchReportProcess } from './batch-report-process.mjs';
 import { createBatchReview } from './batch-review.mjs';
 import { createManualFinishing } from './finishing.mjs';
 import { createPresentationRepository } from './presentation-repository.mjs';
@@ -207,7 +208,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   if(batchEnabled){
     const batchRepository=createBatchRepository({boundary,intakeRepository});
     const prepare=createBatchPreparation({connected,artifacts,pythonExecutable,measurementLimits:limits.measurement,
-      measure:input=>limited(()=>measureDefectWorkspaceEdit(input))});
+      reportBuilder:createBatchReportProcess({limited})});
     batch=createBatchGrading({repository:batchRepository,worker:createBatchWorker({repository:batchRepository,prepare,
       concurrency:processing.executionConcurrency,analysisConcurrency:processing.analysisConcurrency,onError:onWorkerError,autoStart:false}),
       review:createBatchReview({connected,repository:batchRepository,artifacts}),

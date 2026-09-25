@@ -4,7 +4,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const modules = JSON.parse(readFileSync(resolve(root, 'extraction-manifest.json'), 'utf8')).unchangedModules;
+const manifest = JSON.parse(readFileSync(resolve(root, 'extraction-manifest.json'), 'utf8'));
+const modules = [...manifest.unchangedModules, ...(manifest.optimizedModules ?? [])];
 const entries = [...modules.map(m => resolve(root, 'src', m.canonical.split('/').at(-1))), resolve(root, 'src/report.ts'), resolve(root, 'src/review-action-contract.ts'), resolve(root, 'src/manual-report.ts')];
 const result = await build({ absWorkingDir: root, entryPoints: entries, outdir: resolve(root, 'dist'), bundle: true, splitting: true,
     format: 'esm', platform: 'neutral', target: ['es2022'], metafile: true, logLevel: 'silent',

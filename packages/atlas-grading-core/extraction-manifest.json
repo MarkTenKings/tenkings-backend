@@ -42,11 +42,6 @@
       "sha256": "a58e4e50c7dbbc60475f8303680c934fc4c6d0422b1c4cf23916b77d4dab3993"
     },
     {
-      "source": "frontend/nextjs-app/lib/ai-grader-v2/trace-bitmap-wire.ts",
-      "canonical": "packages/atlas-grading-core/src/trace-bitmap-wire.ts",
-      "sha256": "db1e4afdc0ff81c304289eca2ba70580123818141eb0943e84703eb71312faf7"
-    },
-    {
       "source": "frontend/nextjs-app/lib/ai-grader-v2/trace-editor.ts",
       "canonical": "packages/atlas-grading-core/src/trace-editor.ts",
       "sha256": "04a184d9fe80dd4c697c7963226ec761a11060258331f51b56f411ec82921c44"
@@ -56,5 +51,15 @@
     "zod@4.1.11"
   ],
   "ambientEffectDependencies": [],
-  "injectedCallbacks": "scan/re-measure functions invoke caller-supplied ports; the package creates no provider, storage, auth or database client"
+  "injectedCallbacks": "scan/re-measure functions invoke caller-supplied ports; the package creates no provider, storage, auth or database client",
+  "optimizedModules": [
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/trace-bitmap-wire.ts",
+      "canonical": "packages/atlas-grading-core/src/trace-bitmap-wire.ts",
+      "sha256": "db1e4afdc0ff81c304289eca2ba70580123818141eb0943e84703eb71312faf7",
+      "optimizedSha256": "2afca46f877c1c9c7ec0ca82f809466a18a7220fdd3794800ae7fc8304bf15ce",
+      "reason": "Reuse the same validated bitmap and canonical RLE within one decode; copy decoded byte characters directly without iterator/callback allocation. Frozen format, hash preimage and rejection checks remain unchanged. No mutable-object cache.",
+      "equivalenceTest": "packages/atlas-grading-core/test/trace-bitmap-wire.test.mjs"
+    }
+  ]
 }

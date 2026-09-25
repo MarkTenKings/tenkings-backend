@@ -3,6 +3,7 @@ import {
   SPEEDSTER_TRACE_PIXEL_COUNT,
   SPEEDSTER_TRACE_WIDTH,
   encodeSpeedsterTraceRleV1,
+  type SpeedsterTraceRleV1,
 } from "./trace-codec";
 
 export const SPEEDSTER_TRACE_BITMAP_WIRE_V1_FORMAT = "TK_SPEEDSTER_TRACE_BITMAP_WIRE_V1" as const;
@@ -49,7 +50,9 @@ function base64ToBytes(value: string): Uint8Array {
   } catch {
     throw new Error("Speedster trace bitmap dataBase64 is malformed.");
   }
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 
 function exactWireObject(value: unknown): Record<string, unknown> {
@@ -67,7 +70,13 @@ function exactWireObject(value: unknown): Record<string, unknown> {
   return candidate;
 }
 
-export function parseSpeedsterTraceBitmapWireV1(value: unknown): SpeedsterTraceBitmapWireV1 {
+/** Check the wire once and return the exact pixels and RLE verified together.
+ * Results are per-call: mutable wires and returned pixels are never cached. */
+export function checkedSpeedsterTraceBitmapWireV1(value: unknown): {
+  wire: SpeedsterTraceBitmapWireV1;
+  pixels: Uint8Array;
+  rle: SpeedsterTraceRleV1;
+} {
   const candidate = exactWireObject(value);
   if (
     candidate.format !== SPEEDSTER_TRACE_BITMAP_WIRE_V1_FORMAT ||
@@ -103,7 +112,11 @@ export function parseSpeedsterTraceBitmapWireV1(value: unknown): SpeedsterTraceB
   if (rle.sha256 !== parsed.rleSha256) {
     throw new Error("Speedster trace bitmap RLE SHA-256 does not match the decoded pixels.");
   }
-  return parsed;
+  return { wire: parsed, pixels, rle };
+}
+
+export function parseSpeedsterTraceBitmapWireV1(value: unknown): SpeedsterTraceBitmapWireV1 {
+  return checkedSpeedsterTraceBitmapWireV1(value).wire;
 }
 
 function unpackSpeedsterTraceBitmapBytes(bytes: Uint8Array): Uint8Array {
@@ -147,6 +160,5 @@ export function encodeSpeedsterTraceBitmapWireV1(
 }
 
 export function decodeSpeedsterTraceBitmapWireV1(value: unknown): Uint8Array {
-  const wire = parseSpeedsterTraceBitmapWireV1(value);
-  return unpackSpeedsterTraceBitmapBytes(base64ToBytes(wire.dataBase64));
+  return checkedSpeedsterTraceBitmapWireV1(value).pixels;
 }

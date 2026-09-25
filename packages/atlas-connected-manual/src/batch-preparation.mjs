@@ -5,7 +5,7 @@ import { calculateSpeedsterReview } from '@atlas/grading-core/review';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
 import { SPEEDSTER_RULE_VERSION } from '@atlas/grading-core/contracts';
 import { calculateAtlasFinalGrade, ATLAS_FINAL_GRADE_POLICY } from '@atlas/grading-core/manual-report';
-import { proposalEdit, proposalTrace } from '../../atlas-manual-workflow/src/proposal-review.mjs';
+import { measurableProposalEdit } from '../../atlas-manual-workflow/src/proposal-review.mjs';
 import { gradingIdentity } from './details.mjs';
 import { BATCH_RATE_LIMIT_RETRIES } from '@atlas/batch-grading';
 
@@ -38,11 +38,11 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
     // or cover less than one canonical pixel. Keep that proposal for a human;
     // an empty clipped mask is neither a measurable finding nor a zero-area
     // measurement. Malformed contours and other measurement errors still fail.
-    if (!proposalTrace({ proposal, cornerShape: slot.cornerShape }).some(pixel => pixel !== 0)) {
+    const trace = measurableProposalEdit(proposal, side, slot.cornerShape);
+    if (!trace) {
       unmeasurableProposals.push({ ...structuredClone(proposal), reason: 'NO_IN_CARD_RASTER_PIXELS' });
       continue;
     }
-    const trace = proposalEdit(proposal, side, slot.cornerShape);
     // ENGINE is an existing pending-work authority. No call to HUMAN-only
     // beginDefectEdit/confirmation and no humanEditedIds are manufactured.
     measured = parseDefectWorkspace({ ...measured, draftRevision: measured.draftRevision + 1, confirmation: null,
@@ -81,7 +81,7 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
 }
 
 export function createBatchPreparation({ connected, artifacts, pythonExecutable, measurementLimits,
-  measure = measureDefectWorkspaceEdit }) {
+  measure = measureDefectWorkspaceEdit, reportBuilder = buildMachineReport }) {
   async function current(staff, job) {
     const value = await connected.open(staff, job.cardId, { includePreviews: false });
     requireThat(value.card.ready && value.card.sourceHash === job.sourceHash
@@ -142,7 +142,7 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
       }
       requireThat(job.stage === 'REPORT', 400, 'BATCH_STAGE_INVALID');
       const response = await connected.assistance.status(staff, job.cardId, job.analysisActionId);
-      const report = await buildMachineReport({ card, state, analysis: response.astra, measure, pythonExecutable, measurementLimits, signal });
+      const report = await reportBuilder({ card, state, analysis: response.astra, measure, pythonExecutable, measurementLimits, signal });
       await current(staff, job);
       const latest = await connected.workflow.service.read(staff, job.cardId);
       requireThat(latest.contentHash === card.contentHash && latest.revision === card.revision, 409, 'BATCH_MANUAL_DRAFT_CHANGED');

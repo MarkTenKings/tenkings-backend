@@ -9,6 +9,7 @@ import { descriptorSha256, parseDecodedFrame } from '@atlas/photo-core';
 import { validatePhotoGeometryQuad, validatePreparedPhotoFrame } from '@atlas/manual-workspace/geometry-actions';
 import { PreparationError, aborted, runPreparationWorker } from './process.mjs';
 import { PREPARATION_FULL_V1, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1, preparationOutputNames } from './output-contract.mjs';
+import { hashOwnedBytes } from './hash-bytes.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const worker = fileURLToPath(new URL('../../../backend/ai-grader-speedster-service/manual_preparation_worker.py', import.meta.url));
@@ -64,11 +65,12 @@ async function run(mode, { source, matColor, quad, limits: requestedLimits, pyth
   const frame = parseDecodedFrame(source.frame, source.original, source.decodePlan), { content, dimensions } = frame.raster;
   requireThat(content.mime === 'image/png' && frame.treatment.bitDepth === 8 && frame.treatment.channels === 3
     && frame.treatment.colorSpace === 'sRGB', 'PREPARATION_RASTER_UNSUPPORTED');
-  requireThat(source.bytes instanceof Uint8Array && source.bytes.byteLength === content.byteCount
+  requireThat(source.bytes instanceof Uint8Array && source.bytes.buffer instanceof ArrayBuffer && source.bytes.byteLength === content.byteCount
     && content.byteCount <= limits.maxInputBytes && dimensions.width * dimensions.height <= limits.maxPixels, 'PREPARATION_LIMIT');
   const bytes = Buffer.from(source.bytes);
-  requireThat(hash(bytes) === content.sha256, 'PREPARATION_SOURCE_MISMATCH');
   if (mode === 'PREPARE') quad = validatePhotoGeometryQuad(quad);
+  const image = photoImage(source);
+  requireThat(await hashOwnedBytes(bytes, signal) === content.sha256, 'PREPARATION_SOURCE_MISMATCH');
   const directory = await mkdtemp(join(tmpdir(), 'atlas-photo-geometry-'));
   try {
     const inputPath = join(directory, 'source.png'); await writeFile(inputPath, bytes, { mode: 0o600, flag: 'wx' });
@@ -76,6 +78,7 @@ async function run(mode, { source, matColor, quad, limits: requestedLimits, pyth
       source: { ...dimensions, sha256: content.sha256, byteCount: bytes.length }, limits,
       ...(mode === 'PREPARE' ? { quad, outputContract } : {}), inputPath, outputDirectory: directory }, { timeoutMs: limits.timeoutMs, signal });
     requireThat(descriptorSha256(result.identity) === descriptorSha256(engine.identity), 'PREPARATION_ENGINE_CHANGED');
+    requireThat(!aborted(signal), 'PREPARATION_CANCELLED');
     const frameDescriptorSha256 = descriptorSha256(frame);
     const id = descriptorSha256({ mode, matColor, quad: quad ?? null, frameDescriptorSha256, engine, proposal: result.proposal,
       ...(mode === 'PREPARE' ? { outputContract } : {}) });
@@ -89,7 +92,7 @@ async function run(mode, { source, matColor, quad, limits: requestedLimits, pyth
         && output.width === expected[0] && output.height === expected[1], 'PREPARATION_OUTPUT_INVALID');
       const path = join(directory, output.filename), size = (await stat(path)).size; total += size;
       requireThat(size > 0 && size === output.byteCount && total <= limits.maxOutputBytes, 'PREPARATION_LIMIT');
-      const data = await readFile(path); requireThat(hash(data) === output.sha256, 'PREPARATION_OUTPUT_INVALID');
+      const data = await readFile(path); requireThat(await hashOwnedBytes(data, signal) === output.sha256, 'PREPARATION_OUTPUT_INVALID');
       outputs[name] = { ...output, bytes: data };
     }
     requireThat(!aborted(signal), 'PREPARATION_CANCELLED');
@@ -97,7 +100,7 @@ async function run(mode, { source, matColor, quad, limits: requestedLimits, pyth
       rectified: { sha256: outputs.rectified.sha256, width: 1270, height: 1778 },
       inspection: { sha256: outputs.inspection.sha256, width: 1350, height: 1858, cardBounds: { x: 40, y: 40, width: 1270, height: 1778 } },
       sourceToRectified: outputs.rectified.frameToDerivative };
-    validatePreparedPhotoFrame(prepared, photoImage(source), quad);
+    validatePreparedPhotoFrame(prepared, image, quad);
     return { id, frameDescriptorSha256, identity: result.identity, proposal: result.proposal,
       frame: prepared, encoderSettings: result.encoderSettings, outputContract, sourceQuad: quad, outputs };
   } finally { await rm(directory, { recursive: true, force: true }); }

@@ -1,6 +1,12 @@
 import { check, digest, canonical, uuid, sha } from './contract.mjs';
+import { webcrypto } from 'node:crypto';
 import { validatePreparedRequest, validateRequestEvidence, restorePreparedRequest, parseAstraResponse, normalizeUsage,
   LIMITS, MODEL, BACKGROUND_VERSION, BACKGROUND_POLICY } from './index.mjs';
+
+// These buffers are private snapshots made below; the exact request hashes
+// stay unchanged while large payload verification leaves the main event loop.
+const payloadDigest = bytes => bytes.length < 262144 ? digest(bytes)
+  : webcrypto.subtle.digest('SHA-256', bytes).then(value => Buffer.from(value).toString('hex'));
 
 export function analysisActionHash(evidence, actionId = evidence.analysisId, replacement = null) {
   if (replacement !== null) {
@@ -43,7 +49,7 @@ export async function storeAnalysisRequest(prepared, artifacts) {
   const source = { cardId: prepared.evidence.cardId, sourceHash: prepared.evidence.sourceBindingSha256 };
   const bytes = Buffer.from(prepared.requestText), parts = [], size = 6 * 1024 * 1024;
   for (let start = 0; start < bytes.length; start += size) {
-    const chunk = bytes.subarray(start, start + size), sha256 = digest(chunk);
+    const chunk = bytes.subarray(start, start + size), sha256 = await payloadDigest(chunk);
     const ref = await artifacts.write({ version: 1, index: parts.length, sha256, base64: chunk.toString('base64') },
       { ...source, kind: 'DEFECT_REQUEST_PART' });
     parts.push({ ref, byteCount: chunk.length, sha256 });
@@ -53,23 +59,23 @@ export async function storeAnalysisRequest(prepared, artifacts) {
 }
 
 export async function readAnalysisRequest(ref, source, artifacts) {
-  const manifest = await artifacts.read(ref, { ...source, kind: 'DEFECT_REQUEST' });
+  const manifest = structuredClone(await artifacts.read(ref, { ...source, kind: 'DEFECT_REQUEST' }));
   check(manifest?.version === 1 && Array.isArray(manifest.parts) && manifest.parts.length > 0 && manifest.parts.length <= 8
     && Number.isSafeInteger(manifest.byteCount) && manifest.byteCount <= LIMITS.requestBytes
     && manifest.evidenceHash === digest(canonical(manifest.evidence)), 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
   const parts = []; let length = 0;
   for (const [index, part] of manifest.parts.entries()) {
     check(Number.isSafeInteger(part.byteCount) && part.byteCount > 0 && part.byteCount <= 6 * 1024 * 1024);
-    const saved = await artifacts.read(part.ref, { ...source, kind: 'DEFECT_REQUEST_PART' });
+    const saved = structuredClone(await artifacts.read(part.ref, { ...source, kind: 'DEFECT_REQUEST_PART' }));
     check(saved?.version === 1 && saved.index === index && typeof saved.base64 === 'string'
       && saved.base64.length <= 8 * 1024 * 1024, 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
     const bytes = Buffer.from(saved.base64, 'base64');
-    check(bytes.toString('base64') === saved.base64 && bytes.length === part.byteCount && digest(bytes) === part.sha256
+    check(bytes.toString('base64') === saved.base64 && bytes.length === part.byteCount && await payloadDigest(bytes) === part.sha256
       && saved.sha256 === part.sha256, 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
     length += bytes.length; check(length <= LIMITS.requestBytes); parts.push(bytes);
   }
   const bytes = Buffer.concat(parts, length);
-  check(length === manifest.byteCount && digest(bytes) === manifest.requestHash, 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
+  check(length === manifest.byteCount && await payloadDigest(bytes) === manifest.requestHash, 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
   return { bytes, manifest };
 }
 

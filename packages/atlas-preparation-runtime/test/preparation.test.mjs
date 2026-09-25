@@ -12,6 +12,7 @@ import { adoptGeometryPreparation, describePreparationDerivative, prepareGeometr
   preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry, prepareDeferredPhotoReveals,
   PREPARATION_FULL_V1, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1, preparationOutputNames } from '../src/index.mjs';
 import { runPreparationWorker } from '../src/process.mjs';
+import { hashOwnedBytes } from '../src/hash-bytes.mjs';
 
 const python = process.env.ATLAS_PREPARATION_PYTHON;
 if (!python?.startsWith('/')) throw new Error('Set ATLAS_PREPARATION_PYTHON to the absolute path of the pinned CPU Python environment');
@@ -179,6 +180,28 @@ test('caller mutation cannot change the captured source or decode resource limit
   capturedLimits.timeoutMs = 1; capturedLimits.maxOutputBytes = 1; bytes.fill(0);
   const result = await pending;
   assert.equal(result.outputs.rectified.sha256, prepared.outputs.rectified.sha256);
+});
+
+test('large preparation digests match the independent synchronous SHA-256 oracle and reject cancellation', async () => {
+  for (const size of [1024 * 1024 - 1, 1024 * 1024, 3 * 1024 * 1024]) {
+    const bytes = Buffer.alloc(size); for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
+    assert.equal(await hashOwnedBytes(bytes), sha(bytes));
+  }
+  const controller = new AbortController(), pending = hashOwnedBytes(Buffer.alloc(3 * 1024 * 1024), controller.signal);
+  controller.abort(); await assert.rejects(pending, error => error.code === 'PREPARATION_CANCELLED');
+});
+
+test('early preparation snapshots source lineage, quad, engine and limits before asynchronous hashing', async () => {
+  const engine = await preparationRuntimeIdentity(python), captured = structuredClone(source);
+  const quad = structuredClone(workspace.sides.FRONT.physical.quad), capturedLimits = { ...limits };
+  const pending = preparePhotoGeometry({ source: captured, matColor: 'BLACK', quad,
+    limits: capturedLimits, pythonExecutable: python, engine, outputContract: PREPARATION_CORE_V1 });
+  captured.bytes.fill(0); captured.frame.raster.content.sha256 = '0'.repeat(64);
+  captured.original.content.sha256 = '0'.repeat(64); quad[0].x = 999;
+  engine.identity.opencv = 'changed'; capturedLimits.maxOutputBytes = 1;
+  const result = await pending;
+  assert.equal(result.outputs.rectified.sha256, prepared.outputs.rectified.sha256);
+  assert.equal(result.outputs.inspection.sha256, prepared.outputs.inspection.sha256);
 });
 
 test('native worker timeout and abort reap the actual child before returning; malformed signal spawns nothing', async () => {

@@ -1,8 +1,7 @@
 import { speedsterReviewPostSchema } from '@atlas/grading-core/review-action-contract';
 import { parsePersistedSpeedsterReviewFindings } from '@atlas/grading-core/review-findings';
 import { completeSpeedsterReview, remeasureSpeedsterReviewAction } from '@atlas/grading-core/review';
-import { decodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
-import { encodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
+import { checkedSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
 import { previewAtlasManualReport } from '@atlas/grading-core/manual-report';
 
 /** In-memory exact evidence and pure actions. The authenticated host owns actor,
@@ -92,7 +91,7 @@ function parseAction(value, slot, side) {
     const source = wire.findingId === null ? wire.trace.sourceViewId : targets[0].sourceViewId;
     requireThat(source.startsWith(`${side}:`) && source === wire.trace.traceProvenance.sourceViewId,
       'ATLAS_DEFECT_PROVENANCE_INVALID');
-    const rle = encodeSpeedsterTraceRleV1(decodeSpeedsterTraceBitmapWireV1(wire.trace.traceWire));
+    const { rle } = checkedSpeedsterTraceBitmapWireV1(wire.trace.traceWire);
     const provenance = wire.trace.traceProvenance, crop = provenance.cropTransform.crop;
     requireThat(rle.sha256 === provenance.finalTraceSha256 && crop.x >= 0 && crop.y >= 0
       && crop.width > 0 && crop.height > 0 && crop.x + crop.width <= 1269 && crop.y + crop.height <= 1777,
@@ -103,7 +102,7 @@ function parseAction(value, slot, side) {
 function cpuAction(wire) {
   if (wire.type !== 'TRACE_SAVE') return wire;
   const { traceWire, ...trace } = wire.trace;
-  return { ...wire, trace: { ...trace, finalTrace: encodeSpeedsterTraceRleV1(decodeSpeedsterTraceBitmapWireV1(traceWire)) } };
+  return { ...wire, trace: { ...trace, finalTrace: checkedSpeedsterTraceBitmapWireV1(traceWire).rle } };
 }
 function validate(state) {
   // Only this module's deeply frozen outputs are cached. Mutable/rehydrated

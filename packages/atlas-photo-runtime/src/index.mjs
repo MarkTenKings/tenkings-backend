@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, webcrypto } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +11,16 @@ export { PhotoRuntimeError };
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const worker = fileURLToPath(new URL('./worker.mjs', import.meta.url));
 const requireThat = (value, code = 'PHOTO_DECODE_INVALID') => { if (!value) throw new PhotoRuntimeError(code); };
+
+// Callers own the byte snapshot before entering this asynchronous boundary.
+// WebCrypto copies its input and runs large digests away from the event loop.
+async function hashOwnedBytes(bytes, signal) {
+  requireThat(!isAborted(signal), 'PHOTO_DECODE_CANCELLED');
+  const hash = bytes.byteLength < 1024 * 1024 ? sha256(bytes)
+    : Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
+  requireThat(!isAborted(signal), 'PHOTO_DECODE_CANCELLED');
+  return hash;
+}
 
 function checkedLimits(value) {
   const keys = ['maxInputBytes', 'maxPixels', 'maxRasterBytes', 'maxOutputBytes', 'timeoutMs'];
@@ -37,7 +47,6 @@ export async function verifyAndDecodePhoto({ uploadPlan, observedObject, bytes, 
   requireThat(bytes.byteLength === plan.expected.byteCount, 'PHOTO_SOURCE_MISMATCH');
   // A detached owned snapshot prevents caller mutation across async file writes.
   const input = Buffer.from(bytes);
-  requireThat(sha256(input) === plan.expected.sha256, 'PHOTO_SOURCE_MISMATCH');
   const observed = structuredClone(observedObject);
   // Validate provider key/version shape without assigning a MIME from this dummy
   // shape check. Actual original media type comes only from the child probe.
@@ -47,6 +56,7 @@ export async function verifyAndDecodePhoto({ uploadPlan, observedObject, bytes, 
   requireThat(observed.key === plan.object.key, 'PHOTO_SOURCE_MISMATCH');
   const existing = existingOriginal === null ? null : parseOriginal(existingOriginal);
   if (existing) completeUpload(plan, existing, existing);
+  requireThat(await hashOwnedBytes(input, signal) === plan.expected.sha256, 'PHOTO_SOURCE_MISMATCH');
   requireThat(!isAborted(signal), 'PHOTO_DECODE_CANCELLED');
   const directory = await mkdtemp(join(tmpdir(), 'atlas-photo-'));
   try {
@@ -60,7 +70,7 @@ export async function verifyAndDecodePhoto({ uploadPlan, observedObject, bytes, 
     requireThat((await stat(outputPath)).size <= limits.maxOutputBytes, 'PHOTO_DECODE_LIMIT');
     const png = await readFile(outputPath);
     requireThat(png.length === result.raster.content.byteCount
-      && sha256(png) === result.raster.content.sha256, 'PHOTO_SOURCE_MISMATCH');
+      && await hashOwnedBytes(png, signal) === result.raster.content.sha256, 'PHOTO_SOURCE_MISMATCH');
     // Validate every observation with photo-core before returning bytes. This
     // private placeholder is never returned or presented as a stored object.
     const validationKey = original.object.key === 'decoded-validation' ? 'decoded-validation-2' : 'decoded-validation';
@@ -84,12 +94,30 @@ export function describeDecodedFrame(decoded, { id, object }) {
   requireThat(decoded?.png instanceof Uint8Array
     && decoded.png.byteLength === decoded.raster?.content?.byteCount
     && sha256(decoded.png) === decoded.raster.content.sha256, 'PHOTO_SOURCE_MISMATCH');
+  return describeVerifiedFrame(decoded, { id, object });
+}
+
+function describeVerifiedFrame(decoded, { id, object }) {
   return parseDecodedFrame({ schemaVersion: decoded.workingImage ? 2 : 1, kind: 'decoded-frame', id,
     originalDescriptorSha256: descriptorSha256(decoded.original),
     decodePlanSha256: descriptorSha256(decoded.decodePlan),
     raster: { ...decoded.raster, object }, sourceToFrame: decoded.decodePlan.geometry.matrix,
     treatment: decoded.treatment, ...(decoded.workingImage ? { workingImage: decoded.workingImage } : {}),
   }, decoded.original, decoded.decodePlan);
+}
+
+/** Asynchronous equivalent with owned bytes and descriptor inputs. The original
+ * synchronous API remains available; neither form trusts a claimed byte hash. */
+export async function describeDecodedFrameAsync(decoded, { id, object, signal }) {
+  requireThat(!isAborted(signal), 'PHOTO_DECODE_CANCELLED');
+  requireThat(decoded?.png instanceof Uint8Array && decoded.png.buffer instanceof ArrayBuffer
+    && decoded.png.byteLength === decoded.raster?.content?.byteCount, 'PHOTO_SOURCE_MISMATCH');
+  const png = Buffer.from(decoded.png), snapshot = structuredClone({ original: decoded.original,
+    decodePlan: decoded.decodePlan, raster: decoded.raster, treatment: decoded.treatment,
+    ...(decoded.workingImage ? { workingImage: decoded.workingImage } : {}) });
+  const destination = structuredClone({ id, object });
+  requireThat(await hashOwnedBytes(png, signal) === snapshot.raster.content.sha256, 'PHOTO_SOURCE_MISMATCH');
+  return describeVerifiedFrame(snapshot, destination);
 }
 
 /** Derive a full-dimension sRGB RGB8 working image from the richer decoded PNG.
@@ -107,7 +135,9 @@ export async function deriveSdrWorkingPhoto(decoded, { limits: limitValue = deco
     decodePlan: decoded.decodePlan, raster: decoded.raster, treatment: decoded.treatment });
   const source = { ...snapshot, png: input };
   const key = snapshot.original.object.key === 'working-validation' ? 'working-validation-2' : 'working-validation';
-  const sourceFrame = describeDecodedFrame(source, { id: 'working-validation', object: { key, versionId: null } });
+  requireThat(input.byteLength === snapshot.raster?.content?.byteCount
+    && await hashOwnedBytes(input, signal) === snapshot.raster.content.sha256, 'PHOTO_SOURCE_MISMATCH');
+  const sourceFrame = describeVerifiedFrame(source, { id: 'working-validation', object: { key, versionId: null } });
   const { width, height } = sourceFrame.raster.dimensions;
   requireThat(width * height <= limits.maxPixels && width * height * 8 <= limits.maxRasterBytes, 'PHOTO_DECODE_LIMIT');
   requireThat(sourceFrame.treatment.channels === 3 && sourceFrame.treatment.colorTreatment !== 'unmanaged'
@@ -126,7 +156,9 @@ export async function deriveSdrWorkingPhoto(decoded, { limits: limitValue = deco
       raster: result.raster, treatment: result.treatment, workingImage: result.workingImage };
     requireThat(descriptorSha256(working.workingImage.sourceRaster) === descriptorSha256(snapshot.raster)
       && descriptorSha256(working.workingImage.sourceTreatment) === descriptorSha256(snapshot.treatment), 'PHOTO_SOURCE_MISMATCH');
-    describeDecodedFrame(working, { id: 'working-validation', object: { key, versionId: null } });
+    requireThat(png.byteLength === working.raster?.content?.byteCount
+      && await hashOwnedBytes(png, signal) === working.raster.content.sha256, 'PHOTO_SOURCE_MISMATCH');
+    describeVerifiedFrame(working, { id: 'working-validation', object: { key, versionId: null } });
     requireThat(!isAborted(signal), 'PHOTO_DECODE_CANCELLED');
     return working;
   } finally { await rm(directory, { recursive: true, force: true }); }

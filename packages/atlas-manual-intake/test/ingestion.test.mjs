@@ -62,6 +62,36 @@ test('persisted ADMIT work replays the exact existing upload after process repla
   } finally { await f.worker.stop(); }
 });
 
+test('fast missing-photo backlog yields to already prepared and admission work every cycle', async () => {
+  const claims = [], done = deferred(); let verifies = 0;
+  const f = fixture({ stages: ['PREPARE', 'ADMIT'], verificationConcurrency: 2,
+    preparationConcurrency: 1, admissionConcurrency: 1, intervalMs: 60000 });
+  const originalClaim = f.repository.claim;
+  f.repository.claim = async (stage, ...args) => {
+    // A real database claim yields while the previous absent-object check
+    // completes. An arbitrarily replenished backlog must not own the cycle.
+    await new Promise(resolve => setImmediate(resolve));
+    claims.push(stage);
+    if (stage === 'VERIFY' && verifies < 100) return { ...f.jobs[0], stage,
+      uploadId: randomUUID(), attempts: ++verifies, failures: 0 };
+    return originalClaim(stage, ...args);
+  };
+  f.repository.finish = async (job, outcome) => {
+    f.outcomes.push({ job, outcome });
+    if (job.stage === 'ADMIT') done.resolve();
+    return true;
+  };
+  f.intake.complete = async () => { throw error('INTAKE_UPLOAD_ABSENT', 409); };
+  f.worker.start();
+  try {
+    await done.promise;
+    assert.equal(claims.indexOf('PREPARE'), 2);
+    assert.equal(claims.indexOf('ADMIT'), 3);
+    assert.equal(verifies, 2);
+    assert(f.outcomes.some(({ job, outcome }) => job.stage === 'ADMIT' && outcome.kind === 'COMPLETE'));
+  } finally { await f.worker.stop(); }
+});
+
 test('durable machine source/admission success is independent of a failed optional post-commit wake', async () => {
   const cardId=randomUUID(),uploadId=randomUUID(),lease={cardId,uploadId,claimId:randomUUID()},upload={uploadId,
     verification:{sha256:'a'.repeat(64)},source:{ref:'retained source'}},card={cardId,ready:true};let committed=0,wakes=0;

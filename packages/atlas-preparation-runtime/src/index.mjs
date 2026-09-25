@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { descriptorSha256, parseDecodedFrame, parseDerivative } from '@atlas/photo-core';
 import { applyPreparedFrame, geometryBase, parseGeometryWorkspace, preparationBase } from '@atlas/manual-workspace/geometry-actions';
 import { aborted, PreparationError, runPreparationWorker } from './process.mjs';
+import { hashOwnedBytes } from './hash-bytes.mjs';
 
 export { PreparationError };
 export { preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry, prepareDeferredPhotoReveals } from './photo-preparation.mjs';
@@ -44,7 +45,7 @@ async function run(mode, { workspace, side, source, limits: limitValue, pythonEx
   requireThat(source.bytes.length === content.byteCount && content.byteCount <= limits.maxInputBytes
     && dimensions.width * dimensions.height <= limits.maxPixels, 'PREPARATION_LIMIT');
   const bytes = Buffer.from(source.bytes);
-  requireThat(hash(bytes) === content.sha256, 'PREPARATION_SOURCE_MISMATCH');
+  requireThat(await hashOwnedBytes(bytes, signal) === content.sha256, 'PREPARATION_SOURCE_MISMATCH');
   const base = mode === 'PHYSICAL' ? geometryBase(state, side, 'PHYSICAL') : preparationBase(state, side);
   const request = { mode, matColor: state.sides[side].matColor,
     source: { ...dimensions, sha256: content.sha256, byteCount: bytes.length }, limits: { ...limits } };
@@ -72,7 +73,7 @@ async function run(mode, { workspace, side, source, limits: limitValue, pythonEx
       total += size;
       requireThat(Number.isSafeInteger(size) && size > 0 && size === output.byteCount && total <= limits.maxOutputBytes, 'PREPARATION_LIMIT');
       const data = await readFile(path);
-      requireThat(hash(data) === output.sha256, 'PREPARATION_OUTPUT_INVALID');
+      requireThat(await hashOwnedBytes(data, signal) === output.sha256, 'PREPARATION_OUTPUT_INVALID');
       outputs[name] = { ...output, bytes: data };
     }
     requireThat(!aborted(signal), 'PREPARATION_CANCELLED');

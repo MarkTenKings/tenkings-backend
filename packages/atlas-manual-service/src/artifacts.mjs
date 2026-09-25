@@ -1,6 +1,12 @@
 import { digest, canonical, object, requireThat, uuid } from './contract.mjs';
+import { webcrypto } from 'node:crypto';
 
 const LIMIT = 16 * 1024 * 1024;
+// Large, already-owned payloads use the bounded native crypto pool so image
+// evidence cannot monopolize the HTTP/lease/transaction event loop.
+const payloadDigest = bytes => bytes.length < 262144 ? digest(bytes)
+  : webcrypto.subtle.digest('SHA-256', bytes).then(value => Buffer.from(value).toString('hex'));
+const active = signal => requireThat(!signal?.aborted, 503, 'MANUAL_ARTIFACT_READ_ABORTED');
 function lineage(value) {
   object(value, ['cardId', 'kind', 'sourceHash']); uuid(value.cardId);
   requireThat(typeof value.kind === 'string' && /^[A-Z][A-Z0-9_]{0,39}$/.test(value.kind)
@@ -23,20 +29,27 @@ export function createManualArtifactStore({ transport, prefix = 'atlas-manual-ar
   requireThat(/^[a-zA-Z0-9][a-zA-Z0-9_/-]{0,120}$/.test(prefix) && !prefix.includes('..') && !prefix.endsWith('/'));
   function key(ref) { return `${prefix}/${ref.cardId}/${ref.kind}/${ref.lineageSha256}-${ref.sha256}.json`; }
   async function read(ref, expected, options = {}) {
+    const signal = options.signal; active(signal);
     ref = structuredClone(ref); reference(ref);
     const expectedHash = digest(lineage(expected));
     requireThat(ref.key === key(ref) && ref.cardId === expected.cardId && ref.kind === expected.kind
       && ref.lineageSha256 === expectedHash, 409, 'MANUAL_ARTIFACT_LINEAGE_CONFLICT');
-    const found = await transport.read({ key: ref.key, maxBytes: ref.byteCount, signal: options.signal });
+    const found = await transport.read({ key: ref.key, maxBytes: ref.byteCount, signal });
     requireThat(found && Buffer.isBuffer(found.bytes) && found.bytes.length === ref.byteCount
-      && digest(found.bytes) === ref.sha256 && found.contentType === 'application/json'
+      && found.contentType === 'application/json'
       && found.lineageSha256 === expectedHash, 503, 'MANUAL_ARTIFACT_UNVERIFIED');
-    let content; try { content = JSON.parse(found.bytes.toString('utf8')); } catch { requireThat(false, 503, 'MANUAL_ARTIFACT_UNVERIFIED'); }
+    // The transport may retain/reuse its buffer. Hash and parse the very same
+    // detached snapshot even when verification yields to another task.
+    const bytes = Buffer.from(found.bytes);
+    requireThat(await payloadDigest(bytes) === ref.sha256, 503, 'MANUAL_ARTIFACT_UNVERIFIED');
+    active(signal);
+    let content; try { content = JSON.parse(bytes.toString('utf8')); } catch { requireThat(false, 503, 'MANUAL_ARTIFACT_UNVERIFIED'); }
     return content;
   }
   return Object.freeze({
     read,
     async write(content, source, options = {}) {
+      const signal = options.signal; active(signal);
       const sourceText = lineage(source), sourceSnapshot = JSON.parse(sourceText);
       // Full measured contours/RLE belong here, not in PostgreSQL. Ordinary
       // JSON serialization preserves exact numeric values without image codecs.
@@ -50,18 +63,19 @@ export function createManualArtifactStore({ transport, prefix = 'atlas-manual-ar
       requireThat(typeof serialized === 'string', 400, 'MANUAL_ARTIFACT_INVALID');
       const bytes = Buffer.from(serialized);
       requireThat(bytes.length > 0 && bytes.length <= LIMIT, 413, 'MANUAL_ARTIFACT_TOO_LARGE');
-      const ref = { key: '', sha256: digest(bytes), byteCount: bytes.length,
+      const ref = { key: '', sha256: await payloadDigest(bytes), byteCount: bytes.length,
         lineageSha256: digest(sourceText), cardId: sourceSnapshot.cardId, kind: sourceSnapshot.kind };
       ref.key = key(ref);
+      active(signal);
       try {
         await transport.putIfAbsent({ key: ref.key, bytes: Buffer.from(bytes), sha256: ref.sha256,
-          lineageSha256: ref.lineageSha256, contentType: 'application/json', signal: options.signal });
+          lineageSha256: ref.lineageSha256, contentType: 'application/json', signal });
       } catch (error) {
         // A timeout may have committed. Reconcile only this same immutable key;
         // the subsequent read must prove the whole content and lineage.
-        if (options.signal?.aborted) throw error;
+        if (signal?.aborted) throw error;
       }
-      await read(ref, sourceSnapshot, options);
+      await read(ref, sourceSnapshot, { signal });
       return Object.freeze(ref);
     },
   });
@@ -79,16 +93,21 @@ export function createS3ManualArtifactTransport({ client, bucket, PutObjectComma
       // Own and verify the exact payload before the asynchronous SDK boundary.
       // A checksum header is not proof that an S3-compatible provider enforces it.
       const owned = Buffer.from(bytes);
-      requireThat(digest(owned) === sha256, 503, 'MANUAL_ARTIFACT_UNVERIFIED');
-      return client.send(new PutObjectCommand({
+      const send = actualHash => {
+        requireThat(actualHash === sha256, 503, 'MANUAL_ARTIFACT_UNVERIFIED'); active(signal);
+        return client.send(new PutObjectCommand({
         Bucket: bucket, Key: key, Body: owned, ContentLength: owned.length, ContentType: 'application/json',
         IfNoneMatch: '*', ChecksumAlgorithm: 'SHA256', ChecksumSHA256: Buffer.from(sha256, 'hex').toString('base64'),
         Metadata: { 'atlas-manual-lineage-sha256': lineageSha256 },
-      }), { abortSignal: signal });
+        }), { abortSignal: signal });
+      };
+      const actual = payloadDigest(owned);
+      return typeof actual === 'string' ? send(actual) : actual.then(send);
     },
     async read({ key, maxBytes, signal }) {
       requireThat(Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes <= LIMIT, 503, 'MANUAL_ARTIFACT_UNVERIFIED');
       const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key, ChecksumMode: 'ENABLED' }), { abortSignal: signal });
+      const checksum = result.ChecksumSHA256, lineageSha256 = result.Metadata?.['atlas-manual-lineage-sha256'], contentType = result.ContentType;
       const body = result.Body; let length = 0; const chunks = [];
       try {
         requireThat(result.ContentLength === maxBytes && result.ContentType === 'application/json'
@@ -100,10 +119,11 @@ export function createS3ManualArtifactTransport({ client, bucket, PutObjectComma
           requireThat(length <= maxBytes, 503, 'MANUAL_ARTIFACT_UNVERIFIED'); chunks.push(bytes);
         }
         const bytes = Buffer.concat(chunks, length);
-        requireThat(length === maxBytes && (result.ChecksumSHA256 === undefined
-          || result.ChecksumSHA256 === Buffer.from(digest(bytes), 'hex').toString('base64')), 503, 'MANUAL_ARTIFACT_UNVERIFIED');
-        return { bytes, contentType: result.ContentType,
-          lineageSha256: result.Metadata?.['atlas-manual-lineage-sha256'] };
+        requireThat(length === maxBytes && (checksum === undefined
+          || checksum === Buffer.from(await payloadDigest(bytes), 'hex').toString('base64')), 503, 'MANUAL_ARTIFACT_UNVERIFIED');
+        active(signal);
+        return { bytes, contentType,
+          lineageSha256 };
       } finally { body?.destroy?.(); }
     },
   });

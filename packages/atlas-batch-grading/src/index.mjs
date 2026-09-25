@@ -95,7 +95,8 @@ export function createBatchWorker({ repository, prepare, concurrency = 20, analy
           ?{kind:'WAIT',retryAfterMs:3000}
         :canRetry && validCount(transportRetryCount) && error?.name !== 'AbortError' && (sqlContention || ['ECONNRESET','ECONNREFUSED','ETIMEDOUT','EAI_AGAIN',
           'UND_ERR_CONNECT_TIMEOUT','UND_ERR_SOCKET','P1001','P1002','P1017','P2024','P2028','P2034',
-          'GEOMETRY_PROCESSING_PENDING'].includes(error?.code))
+          'GEOMETRY_PROCESSING_PENDING', 'BATCH_REPORT_UNAVAILABLE', 'BATCH_REPORT_TIMEOUT',
+          'BATCH_REPORT_FAILED'].includes(error?.code))
           ?{kind:'WAIT',retryAfterMs:backoff(transportRetryCount),
             evidence:{transportRetryCount:Math.min(1000000,transportRetryCount+1)}}
         :{kind:'ATTENTION',code:/^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code??'')?error.code:'BATCH_STAGE_INTERRUPTED'};

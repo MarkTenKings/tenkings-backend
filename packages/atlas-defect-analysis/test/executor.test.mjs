@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { createManualArtifactStore } from '../../atlas-manual-service/src/artifacts.mjs';
 import { createAnalysisExecutor, storeAnalysisRequest, readAnalysisRequest, analysisActionHash } from '../src/executor.mjs';
 import { createAstraDefectProvider } from '../src/provider.mjs';
+import { buildAstraDefectRequest } from '../src/index.mjs';
 import { canonical, digest } from '../src/contract.mjs';
-import { preparedFixture, responseFixture, id } from './fixtures.mjs';
+import { preparedFixture, responseFixture, inputFixture, id } from './fixtures.mjs';
 
 // This fixture verifies orchestration/artifact behavior. SQL and actual staff
 // handles are exercised separately by scripts/fixture-checks.mjs on owned PG.
@@ -49,6 +50,31 @@ test('exact stored request manifest reassembles all bytes; corrupt chunk cannot 
   assert.equal(bytes.toString(), prepared.requestText); assert.equal(manifest.requestHash, prepared.requestHash);
   const chunk = context.objects.get(manifest.parts[0].ref.key); chunk.bytes[20] ^= 1;
   await assert.rejects(readAnalysisRequest(ref, source, context.artifacts), { code: 'MANUAL_ARTIFACT_UNVERIFIED' }); assert.equal(context.activity.calls, 0);
+});
+
+test('large multi-part request keeps exact bytes and detects same-length corruption after async verification', async () => {
+  const input = inputFixture(), image = input.images[0].whole;
+  // A valid PNG ancillary text chunk enlarges the request without changing
+  // fixture pixels or requiring an optical/image-quality assertion here.
+  const text = Buffer.from(`Comment\0${'A'.repeat(5 * 1024 * 1024)}`), chunk = Buffer.alloc(text.length + 12);
+  chunk.writeUInt32BE(text.length); chunk.write('tEXt', 4); text.copy(chunk, 8);
+  let crc = 0xffffffff;
+  for (const byte of chunk.subarray(4, -4)) {
+    crc ^= byte; for (let bit = 0; bit < 8; bit++) crc = crc & 1 ? 0xedb88320 ^ crc >>> 1 : crc >>> 1;
+  }
+  chunk.writeUInt32BE((crc ^ 0xffffffff) >>> 0, chunk.length - 4);
+  image.bytes = Buffer.concat([image.bytes.subarray(0, -12), chunk, image.bytes.subarray(-12)]);
+  image.sha256 = digest(image.bytes);
+  const prepared = buildAstraDefectRequest(input), context = setup(async () => { throw Error('provider unused'); });
+  const source = { cardId: input.cardId, sourceHash: prepared.evidence.sourceBindingSha256 };
+  const ref = await storeAnalysisRequest(prepared, context.artifacts);
+  const restored = await readAnalysisRequest(ref, source, context.artifacts);
+  assert.equal(restored.manifest.parts.length, 2);
+  assert.equal(restored.bytes.toString(), prepared.requestText);
+  assert.equal(digest(restored.bytes), prepared.requestHash);
+  context.objects.get(restored.manifest.parts[0].ref.key).bytes[1000] ^= 1;
+  await assert.rejects(readAnalysisRequest(ref, source, context.artifacts), { code: 'MANUAL_ARTIFACT_UNVERIFIED' });
+  assert.equal(context.activity.calls, 0);
 });
 
 test('two racing human request handlers claim one provider dispatch, retain result, and never mutate manual findings', async () => {

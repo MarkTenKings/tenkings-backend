@@ -13,7 +13,16 @@ export function proposalRle({ proposal, review }) {
   return encodeSpeedsterTraceRleV1(proposalTrace({ proposal, cornerShape: review.base.cornerShape }));
 }
 export function proposalEdit(proposal, side, cornerShape) {
-  const bitmap = proposalTrace({ proposal, cornerShape }), rle = encodeSpeedsterTraceRleV1(bitmap);
+  return editFromBitmap(proposal, side, proposalTrace({ proposal, cornerShape }));
+}
+/** Machine proposals with no in-card pixels remain visible but unmeasurable.
+ * Build the edit from that same clipped bitmap, without rasterizing twice. */
+export function measurableProposalEdit(proposal, side, cornerShape) {
+  const bitmap = proposalTrace({ proposal, cornerShape });
+  return bitmap.some(pixel => pixel !== 0) ? editFromBitmap(proposal, side, bitmap) : null;
+}
+function editFromBitmap(proposal, side, bitmap) {
+  const rle = encodeSpeedsterTraceRleV1(bitmap);
   const sourceViewId = `${side}:inspection`;
   const traceProvenance = buildSpeedsterTraceProvenanceRevision({ sourceViewId, cropTransform: FULL_CROP,
     highlighterStrokes: [], finalTraceSha256: rle.sha256 });

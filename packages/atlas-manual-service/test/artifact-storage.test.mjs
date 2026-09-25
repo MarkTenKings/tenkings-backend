@@ -80,3 +80,36 @@ test('invalid artifact read bounds fail before SDK work', async () => {
   }
   assert.equal(calls.length, 0);
 });
+
+test('large artifact hashing preserves a pre-yield snapshot and cancels before a new PUT', async () => {
+  const f = fixture(), bytes = Buffer.alloc(1024 * 1024, 65), original = Buffer.from(bytes);
+  const request = { key: 'large-hash', bytes, sha256: digest(bytes), lineageSha256: digest('lineage') };
+  const pending = f.transport.putIfAbsent(request); bytes.fill(66);
+  await pending;
+  assert.deepEqual(f.calls[0].input.Body, original);
+  await assert.rejects(f.transport.putIfAbsent(request), { code: 'MANUAL_ARTIFACT_UNVERIFIED' });
+  const abort = new AbortController(), g = fixture();
+  const cancelled = g.transport.putIfAbsent({ ...request, bytes: original, signal: abort.signal });
+  abort.abort();
+  await assert.rejects(cancelled, { code: 'MANUAL_ARTIFACT_READ_ABORTED' });
+  assert.equal(g.calls.length, 0);
+});
+
+test('large artifact read hashes and parses one owned snapshot despite transport buffer reuse', async () => {
+  let saved, mutate = false, mutated = false;
+  const store = createManualArtifactStore({ transport: {
+    async putIfAbsent(value) { saved = { ...value, bytes: Buffer.from(value.bytes) }; },
+    async read() {
+      const found = { ...saved, bytes: Buffer.from(saved.bytes) };
+      if (mutate) queueMicrotask(() => queueMicrotask(() => { found.bytes.fill(0); mutated = true; }));
+      return found;
+    },
+  } });
+  const value = { payload: 'A'.repeat(1024 * 1024) }, expected = structuredClone(value), bound = { ...source };
+  const writing = store.write(value, bound); value.payload = 'changed'; bound.cardId = randomUUID();
+  const ref = await writing;
+  assert.equal(ref.cardId, source.cardId);
+  mutate = true;
+  assert.deepEqual(await store.read(ref, source), expected);
+  assert.equal(mutated, true);
+});

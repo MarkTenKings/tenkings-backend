@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
+import { webcrypto } from 'node:crypto';
 import { S3Client } from '@aws-sdk/client-s3';
 import { descriptorSha256 } from '@atlas/photo-core';
 import { createPhotoStorage } from '../src/index.mjs';
@@ -67,6 +68,46 @@ class ByteTransport {
 }
 function storage(client, options = {}) { return createPhotoStorage({ client, bucket: 'synthetic-bucket', keyPrefix: 'test', limits: storageLimits, ...options }); }
 function putCount(client) { return client.calls.filter(call => call.name === 'PutObjectCommand').length; }
+
+test('large write/read hashing owns caller and reused stream buffers and preserves exact SHA-256 checks', async t => {
+  const large = Buffer.alloc(2 * 1024 * 1024); for (let i = 0; i < large.length; i++) large[i] = i % 251;
+  const expected = Buffer.from(large), uploadPlan = plan(large), client = new ByteTransport(), store = storage(client);
+  const digest = webcrypto.subtle.digest.bind(webcrypto.subtle); let digests = 0;
+  t.mock.method(webcrypto.subtle, 'digest', (...args) => { digests++; return digest(...args); });
+  const pending = store.writeOriginal({ uploadPlan, bytes: large }); large.fill(0); uploadPlan.expected.sha256 = '0'.repeat(64);
+  assert.deepEqual((await pending).bytes, expected); assert.equal(putCount(client), 1);
+  client.makeBody = value => {
+    const reused = Buffer.alloc(65536);
+    return { destroy() { this.destroyed = true; }, async *[Symbol.asyncIterator]() {
+      for (let at = 0; at < value.bytes.length; at += reused.length) {
+        value.bytes.copy(reused, 0, at, at + reused.length); yield reused;
+      }
+    } };
+  };
+  assert.deepEqual((await store.readOriginal({ uploadPlan: plan(expected) })).bytes, expected);
+  assert.ok(digests >= 3);
+  client.omitChecksum = true; client.current(plan(expected).object.key).bytes[50] ^= 1;
+  await assert.rejects(store.readOriginal({ uploadPlan: plan(expected) }), code('PHOTO_STORAGE_CONFLICT'));
+  assert.equal(client.lastBody.destroyed, true);
+});
+
+test('abort during a large prewrite digest sends no storage request and fences the eventual digest', async () => {
+  const large = Buffer.alloc(2 * 1024 * 1024, 93), client = new ByteTransport(), controller = new AbortController();
+  const pending = storage(client).writeOriginal({ uploadPlan: plan(large), bytes: large, signal: controller.signal });
+  controller.abort(); await assert.rejects(pending, code('PHOTO_STORAGE_CANCELLED'));
+  assert.equal(client.calls.length, 0);
+});
+
+test('a timed-out large read digest closes the stream and cannot adopt a late result', async t => {
+  const large = Buffer.alloc(2 * 1024 * 1024, 17), client = new ByteTransport(), uploadPlan = plan(large);
+  await storage(client).writeOriginal({ uploadPlan, bytes: large });
+  const digest = webcrypto.subtle.digest.bind(webcrypto.subtle); let finish;
+  t.mock.method(webcrypto.subtle, 'digest', (...args) => new Promise(resolve => { finish = async () => resolve(await digest(...args)); }));
+  await assert.rejects(storage(client, { limits: { ...storageLimits, timeoutMs: 25 } }).readOriginal({ uploadPlan }), code('PHOTO_STORAGE_TIMEOUT'));
+  assert.equal(client.lastBody.destroyed, true); assert.equal(putCount(client), 1);
+  await finish(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(client.current(uploadPlan.object.key).bytes, large);
+});
 async function fixture() {
   const client = new ByteTransport(), store = storage(client), uploadPlan = plan();
   await store.writeOriginal({ uploadPlan, bytes });
