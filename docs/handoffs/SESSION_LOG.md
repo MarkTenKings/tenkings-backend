@@ -37853,3 +37853,31 @@ Exact source d4a7dec2af187f4aa03166e639f4d9bb066fb612/image d21c runs as f29356f
 Minimal live routing confirms homepage200, www308 to canonical, and anonymous batch redirects through /admin/ normalization to /admin200 sign-in. Initial no-redirect checker expectedbatch200 and held; bounded redirect follow verified expected signed-out behavior, not an application failure. No broad61-request scanner, new browser acceptance, capacity benchmark or synthetic paid analyses were run, per Mark's request.
 
 Actual05:58:26Z seven-job census: five resumed jobs progressed past geometry into QUEUED/ANALYZE, oneexistingREPORT/REVIEW, onePREPARE/BATCH_IDENTITY_NEEDS_REVIEW. Allseven retained; humanreviews0/approvals0. Original14 photos and fullhistory/grants/schema were verified preserved at CAS; no original writes/approval performed by release. Background five-card completion is not claimed. Owner may test live at https://atlasgrading.com/admin (Batch Intake after signing in). Top current state in MASTER_PRODUCT_CONTEXT, DEPLOY_RUNBOOK and HANDOFF_SET_OPS updated from evidence;86bb state explicitly historical. Private release-handoff.result.json binds closing leaves. No Git push; capacity25uploads/minute and20-card latency remain unqualified.
+
+
+### 2026-09-26T23:37:19.961619+00:00 — Staff-access outage diagnosed; capacity change awaiting owner cost approval
+
+Matched screenshot reference79d629ce-f7e1-42ad-b36c-31cc8d21c394 to current staff deployment dpl_39CSADat2L3mhMETQtRiJMM6GJxG: ATLAS_STAFF_PAGE_ACCESS_FAILED, DATABASE_ACCESS, Prisma P2037, HTTP503. Multiple adjacent staff routes show the same connection exhaustion. Current d4a runtime f29356fd remains running/restart0/OOMfalse; account revocation or release mismatch is not evidenced. Read-only SQL confirms22 ordinary cluster connections and staff role atlas_website_staff_20260909 capped at6; approximately20 concurrent sessions, mostly idle. Provider UI confirms the current1GB/1vCPU/10GiB database costs$15.15/month.
+
+Prepared but NOT applied: provider2GB/1vCPU/30GiB tier,47 ordinary connections,$30.45/month (+$15.30/month), followed by a guarded staff-only connection limit6→16. Explicit recurring-charge approval requested from Mark; no provider Save, role change, deploy, restart, migration or card mutation has occurred. No-cost PgBouncer routing is an alternative requiring an application release; existing pool and unrelated services remain untouched. Private incident evidence and default-inert role helper are under staff-access-incident-20260926 in the scalable-pipeline evidence root.
+
+Seven retained cards:4 REPORT/REVIEW,2 ANALYZE/NEEDS_ATTENTION with saved DEFECT_ANALYSIS_OUTSIDE_CARD refusals,1 PREPARE/BATCH_IDENTITY_NEEDS_REVIEW; all human reviews/approvals remain0. These holds are separate from staff access. No paid model requests or reruns were made. Mark explicitly accepts truthful borderless-card centering abstention with continued grading; preserve that behavior.
+
+
+### 2026-09-26T23:40:06.335179+00:00 — Approved database capacity repair: planned production action
+
+Mark explicitly approved the$15.30/month recurring increase. Fresh provider review confirms exactly one primary2GB/1vCPU/30GiB at$30.45/month,47 ordinary connections, no standby, existing storage autoscaling unchanged. Fresh read-only SQL still reports22 slots/staff role limit6 and preserves seven original jobs. Plan: Save this resize once; wait for provider completion and SQL capacity47; then apply the prepared guarded staff-only role connection limit6→16. No application deployment, manual restart, schema migration, access grant, credential, card, original, report approval or model request is planned. Record provider result and live access readback after completion.
+
+
+### 2026-09-26T23:40:32.022957+00:00 — Approved provider resize accepted
+
+Clicked Save once for database81abedef-4aaa-48f0-8a29-48fad58fac0e. DigitalOcean returned “Your cluster configuration has been updated” and RESIZING status, showing2GB/1vCPU/30GiB,47 connections,$30.45/month,primary only. Resize is in progress; completion and actual SQL capacity are not yet verified. Staff role remains6 pending completion. Private provider-resize-submitted.json records this observation.
+
+
+### 2026-09-26T23:49:51.917268+00:00 — Database capacity repair complete; essential live verification passed
+
+DigitalOcean completed the explicitly approved resize; Settings shows2GB/1vCPU/30GiB,47 connections,$30.45/month,primary only,existing storage autoscaling preserved. Actual SQL at23:47:39Z confirmed47 ordinary slots. One guarded transaction at23:47:56Z changed only atlas_website_staff_20260909 CONNECTION LIMIT6→16, asserting capacity and preserving every other role attribute and all memberships before commit. No retry, grant/password change, direct card mutation, application deploy, schema migration or manual restart occurred.
+
+Live Chrome navigation to /admin/batch?tab=INTAKE passed the staff database access check and reached the normal /admin sign-in form without the previous access-error screen. The browser is signed out; genuine owner authentication and ten-card acceptance remain for Mark. SQL23:48:59Z reports47 ordinary slots,17 total sessions,2 staff sessions and all seven existing job records exactly equal to the approved-before snapshot, including source hashes/analyses/reviews/approvals. Runtime f29356fd/d4a/image d21c remains running since05:54:20Z,restart0,OOMfalse. No paid model requests or additional analyses were run.
+
+Updated current context, deployment runbook and handoff to supersede the former role-limit statement. Private evidence: approved-before.jsonl, provider-resize-submitted.json, resize-complete-readonly.json, role-limit-apply.intent.json/result.json, after-repair-readonly.jsonl, after-runtime-readonly.json and database-upgrade-complete.png. Connection pooling and sustained capacity qualification remain future work; this repair supplies immediate headroom.
