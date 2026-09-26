@@ -345,3 +345,43 @@ test('machine packet exposes proposed evidence and one deliberate review slot on
   props.packet={...props.packet,report:{...report,geometry:{...report.geometry,FRONT:{...report.geometry.FRONT,frame:{inspectionImageSha256:'9'.repeat(64)}}}}};
   f.render(); assert.equal(f.readyValues.at(-1),false);
 });
+
+test('partial machine and corrected reports show verified evidence and measured findings without inventing grades or approval readiness',()=>{
+  for(const corrected of [false,true]){
+    const source=fixture(),original=source.preview.review.report,{inspection,...rest}=original;
+    const report={...rest,version:corrected?'atlas-review-provisional-report-v1':'atlas-machine-provisional-report-v1',
+      authority:corrected?'HUMAN_REVIEW_DRAFT':'MACHINE_PROPOSAL',certification:null,grade:null,proposedGrade:null,
+      calculationState:'GEOMETRY_UNRESOLVED',unresolvedGeometry:[{side:'BACK',code:'PRINTED_GEOMETRY_UNRESOLVED'}],
+      geometry:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{frame:{inspectionImageSha256:inspection[side.toLowerCase()].imageSha256},centeringQuad:null}]))};
+    report.limitations=['Capture glare may obscure damage.'];
+    if(corrected)report.originalMachineEvidence={limitations:['Original unresolved border warning.']};
+    const before=structuredClone(report),f=harness({packet:{report,reportHash:source.preview.reportHash,explanation:null,images:source.images},children:'OPEN_GEOMETRY'},{machine:true});
+    assert.equal(f.has('Capture glare may obscure damage.'),true);
+    if(corrected)assert.equal(f.has('Original machine warnings · historical evidence'),true);
+    assert.equal(f.has('PARTIAL REPORT'),true);assert.equal(f.has('OPEN_GEOMETRY'),true);assert.equal(f.has('Centering needs review'),true);
+    assert.equal(f.has('How this grade is calculated'),false);assert.equal(f.has('ATLAS / 10'),false);assert.equal(f.has('unavailable until the missing centering geometry is resolved'),true);
+    f.ready();assert.equal(f.readyValues.at(-1),false,'verified photos cannot make an incomplete grade approvable');
+    const finding=report.findings.find(value=>value.side==='BACK');
+    f.control('Back 1 · '+finding.defectType.toLowerCase().replaceAll('_',' ')).props.onClick();f.render();
+    assert.ok(f.control('Selected finding measurements'));assert.equal(f.has('Measured area'),true);assert.equal(f.has('Marginal unrounded overall effect'),false);
+    const area=presentation.reportFindingRegions(finding)[0].measurement.areaMm2;
+    assert.ok(f.nodes(node=>node.type==='data'&&node.props.value===area).length);
+    f.listeners.get('beforeprint')();f.render();assert.ok(f.control('All included finding measurements'));
+    assert.deepEqual(report,before);
+  }
+});
+test('malformed partial packets never display fabricated grades or accept stale explanation',()=>{
+  for(const alter of [report=>{report.proposedGrade=10;},report=>{report.unresolvedGeometry=[];},report=>{report.geometry.FRONT.frame.inspectionImageSha256='wrong';}]){
+    const source=fixture(),original=source.preview.review.report;
+    const report={...original,version:'atlas-machine-provisional-report-v1',authority:'MACHINE_PROPOSAL',certification:null,
+      grade:null,proposedGrade:null,calculationState:'GEOMETRY_UNRESOLVED',unresolvedGeometry:[{side:'BACK',code:'PRINTED_GEOMETRY_UNRESOLVED'}],
+      geometry:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{frame:{inspectionImageSha256:original.inspection[side.toLowerCase()].imageSha256},centeringQuad:null}]))};
+    alter(report);const f=harness({packet:{report,reportHash:source.preview.reportHash,explanation:source.preview.review.explanation,images:source.images},children:'APPROVAL_SLOT'},{machine:true});
+    assert.equal(f.has('APPROVAL_SLOT'),false);assert.equal(f.readyValues.at(-1),false);assert.equal(presentation.reportAwardedGrade(report),null);
+  }
+});
+test('an excluded old-frame removed trace supplies neither current report bounds nor measurements',()=>{
+  const finding={...fixture().preview.review.report.findings[0],reviewResult:'REMOVED',geometryExclusion:{version:'atlas-geometry-exclusion-v1'}};
+  assert.equal(presentation.reportFindingBounds(finding),null);assert.equal(presentation.reportFindingMask(finding),null);
+  assert.deepEqual(presentation.reportFindingRegions(finding),[]);
+});

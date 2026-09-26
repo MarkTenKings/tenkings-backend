@@ -1,10 +1,8 @@
-"""ATLAS native-photo recovery for an unusable legacy physical proposal.
+"""ATLAS proposer-only physical outlines from observed card-to-mat boundaries.
 
-Successful shared-engine proposals are returned unchanged. If its selected
-region cannot satisfy the manual workspace's quad contract, color-channel
-edges may supply an enclosing, physically supported contour. No template,
-clamped point, prior card or minimum-area rectangle becomes card authority.
-The shared Speedster engine and every grading/warp function remain unchanged.
+All candidates, including shape-valid inner artwork, need four supported outer
+sides. Lighting-aware mat paths and multiscale contours preserve faint physical
+edges without synthesizing a card rectangle or a printed frame.
 """
 import cv2
 import numpy as np
@@ -13,9 +11,13 @@ import card_geometry as geometry
 import color_geometry as color
 
 
-POLICY_VERSION = "atlas-native-photo-color-edge-v1"
-ENGINE_VERSION = "atlas-physical-color-recovery-v1"
-POLICY_PROVENANCE = "ATLAS_NATIVE_PHOTO_COLOR_EDGE_V1"
+POLICY_VERSION = "atlas-native-photo-outer-ranking-v2"
+ENGINE_VERSION = "atlas-physical-outer-ranking-v2"
+POLICY_PROVENANCE = "ATLAS_NATIVE_PHOTO_OUTER_RANKING_V2"
+PHYSICAL_LOCAL_CONTRAST_FLOOR = 8.0
+MIN_SELECTED_PERIMETER_FRACTION = .20
+MAX_PHYSICAL_CANDIDATES = 64
+MAX_RAY_PATCHES = 160
 
 
 def _adoptable(quad, width, height):
@@ -44,32 +46,34 @@ def _color_candidates(image):
     median = float(np.median(gray))
     low = max(12, int(0.66 * median))
     high = max(low + 20, min(255, int(1.33 * median)))
-    # Canny chooses the strongest B/G/R gradient, retaining chromatic physical
-    # edges that disappear when blue card and dark mat collapse to gray.
-    edges = cv2.Canny(cv2.GaussianBlur(working, (5, 5), 0), low, high)
-    contours, _ = cv2.findContours(cv2.dilate(edges, np.ones((3, 3), np.uint8)),
-                                  cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
     candidates = []
-    for contour in contours:
-        x, y, width, height = cv2.boundingRect(contour)
-        if x <= 0 or y <= 0 or x + width >= working.shape[1] or y + height >= working.shape[0]:
-            continue
-        area = float(cv2.contourArea(contour))
-        rectangle = cv2.minAreaRect(contour)
-        a, b = rectangle[1]
-        if area <= 1 or min(a, b) <= 0:
-            continue
-        fitted = _fitted_perimeter(contour, rectangle)
-        if fitted is None:
-            continue
-        quad = geometry._portraitize(fitted) / scale
-        if not _adoptable(quad, image.shape[1], image.shape[0]):
-            continue
-        aspect_quality = max(0.01, 1 - abs(min(a, b) / max(a, b) - geometry.EXPECTED_ASPECT) / geometry.ASPECT_RANK_SCALE)
-        fill_quality = max(0.01, min(1, area / (a * b) / geometry.FILL_RANK_TARGET))
-        candidates.append((area * aspect_quality * fill_quality, quad))
+    # The second scale suppresses textured-mat edges before looking for faint
+    # card edges. Both paths still require four independently observed sides;
+    # a minimum-area rectangle never supplies a missing side.
+    for kernel, thresholds in ((5, (low, high)), (15, (8, 20))):
+        edges = cv2.Canny(cv2.GaussianBlur(working, (kernel, kernel), 0), *thresholds)
+        contours, _ = cv2.findContours(cv2.dilate(edges, np.ones((3, 3), np.uint8)),
+                                      cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        for contour in contours:
+            x, y, width, height = cv2.boundingRect(contour)
+            if x <= 0 or y <= 0 or x + width >= working.shape[1] or y + height >= working.shape[0]:
+                continue
+            area = float(cv2.contourArea(contour))
+            rectangle = cv2.minAreaRect(contour)
+            a, b = rectangle[1]
+            if area <= 1 or min(a, b) <= 0:
+                continue
+            fitted = _fitted_perimeter(contour, rectangle)
+            if fitted is None:
+                continue
+            quad = geometry._portraitize(fitted) / scale
+            if not _adoptable(quad, image.shape[1], image.shape[0]):
+                continue
+            aspect_quality = max(0.01, 1 - abs(min(a, b) / max(a, b) - geometry.EXPECTED_ASPECT) / geometry.ASPECT_RANK_SCALE)
+            fill_quality = max(0.01, min(1, area / (a * b) / geometry.FILL_RANK_TARGET))
+            candidates.append((area * aspect_quality * fill_quality, quad))
     candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates
+    return candidates[:MAX_PHYSICAL_CANDIDATES]
 
 
 def _fitted_perimeter(contour, rectangle):
@@ -108,12 +112,20 @@ def _fitted_perimeter(contour, rectangle):
     return geometry.order_corners(np.asarray(corners, dtype=np.float32))
 
 
-def _perimeter_evidence(lab, quad):
-    """Compare each outside sample to the photo perimeter along its own ray.
+def _patches(lab, points):
+    """Bounded vectorized median patches; callers supply only in-image points."""
+    pixels = np.rint(points).astype(np.int32)
+    dy, dx = np.mgrid[-2:3, -2:3]
+    return np.median(lab[pixels[..., 1, None] + dy.ravel(),
+                         pixels[..., 0, None] + dx.ravel()], axis=-2)
 
-    Local perimeter references tolerate a lighting gradient across the mat.
-    A printed/art rectangle instead has card material on its outside and fails
-    this test. The complete contour and all four sides still need evidence.
+
+def _perimeter_evidence(lab, quad):
+    """Follow outside material to the photo perimeter without a global color.
+
+    Mat illumination may change smoothly. An internal print boundary instead
+    crosses another material transition on its outward path. Record both the
+    nearby stability and the full path, including chroma at the perimeter.
     """
     height, width = lab.shape[:2]
     center = quad.mean(axis=0)
@@ -121,80 +133,122 @@ def _perimeter_evidence(lab, quad):
     sides = {}
     for index, name in enumerate(color.SIDE_NAMES):
         first, second = quad[index], quad[(index + 1) % 4]
-        inward = center - (first + second) * 0.5
+        tangent = second - first
+        inward = np.array([-tangent[1], tangent[0]], dtype=np.float64)
         inward /= np.linalg.norm(inward)
-        outward = -inward
-        samples = []
-        for along in np.linspace(0.12, 0.88, 33):
-            edge = first + along * (second - first)
-            inside, outside = edge + inward * distance, edge - inward * distance
-            # Sampling outside the image would synthesize boundary evidence.
-            if not all(2 <= point[0] < width - 2 and 2 <= point[1] < height - 2
-                       for point in (inside, outside)):
-                samples.append((0.0, False, False))
+        if np.dot(inward, center - (first + second) * .5) < 0:
+            inward *= -1
+        edges = first + np.linspace(.12, .88, 33)[:, None] * tangent
+        inner_points = edges + inward * distance
+        outer_points = edges - inward * distance
+        valid = np.all((inner_points >= 2) & (inner_points < [width - 3, height - 3])
+                       & (outer_points >= 2) & (outer_points < [width - 3, height - 3]), axis=1)
+        contrast = np.zeros(33)
+        noise = np.zeros(33)
+        stable = np.zeros(33, dtype=bool)
+        continuous = np.zeros(33, dtype=bool)
+        chroma_matches = np.zeros(33, dtype=bool)
+        for sample in np.flatnonzero(valid):
+            edge = edges[sample]
+            outward = -inward
+            reaches = [(bound - edge[axis]) / outward[axis]
+                       for axis, bound in ((0, 2), (0, width - 4), (1, 2), (1, height - 4))
+                       if abs(outward[axis]) > 1e-8 and (bound - edge[axis]) / outward[axis] > 0]
+            reach = min(reaches)
+            if reach < 4 * distance:
                 continue
-            distances = [(bound - edge[axis]) / outward[axis]
-                         for axis, bound in ((0, 2), (0, width - 3), (1, 2), (1, height - 3))
-                         if abs(outward[axis]) > 1e-8 and (bound - edge[axis]) / outward[axis] > 0]
-            reference = color._sample_patch(lab, edge + outward * min(distances))
-            inner = color._sample_patch(lab, inside)
-            outer = color._sample_patch(lab, outside)
-            contrast = float(np.linalg.norm(inner - outer))
-            outside_matches = np.linalg.norm(outer - reference) <= color.PHYSICAL_MAT_REFERENCE_MAX_DELTA_E
-            inside_differs = np.linalg.norm(inner - reference) >= color.PHYSICAL_CONTRAST_FLOOR_DELTA_E
-            samples.append((contrast, bool(outside_matches), bool(inside_differs)))
-        values = np.asarray(samples)
-        supported = ((values[:, 0] >= color.PHYSICAL_CONTRAST_FLOOR_DELTA_E)
-                     & values[:, 1].astype(bool) & values[:, 2].astype(bool))
-        sides[name] = {"medianContrastDeltaE": round(float(np.median(values[:, 0])), 3),
+            offsets = np.linspace(distance, reach, min(MAX_RAY_PATCHES, max(4, int(np.ceil(reach / distance)))))
+            outer = _patches(lab, edge + offsets[:, None] * outward)
+            # Different designs can match the mat several pixels inside an
+            # otherwise visible cut edge. Sample the observed narrow edge band
+            # as well as the card interior rather than requiring one inset.
+            inner_band = _patches(lab, edge + np.linspace(-.5, 1.0, max(7, int(np.ceil(1.5 * distance)) + 1))[:, None] * distance * inward)
+            contrast[sample] = np.max(np.linalg.norm(inner_band - outer[0], axis=1))
+            drift = np.linalg.norm(np.diff(outer, axis=0), axis=1)
+            # Fit away the local lighting slope before estimating mat noise;
+            # a smooth shadow is not random uncertainty in the visible edge.
+            local = outer[:4]
+            positions = np.arange(4) - 1.5
+            slope = positions @ local / np.dot(positions, positions)
+            residual = local - (local.mean(axis=0) + positions[:, None] * slope)
+            noise[sample] = np.median(np.linalg.norm(residual, axis=1))
+            stable[sample] = np.max(np.linalg.norm(outer[:4] - outer[0], axis=1)) <= 18
+            # A mat seam or another object can interrupt one ray far from the
+            # card. Three outward-only paths provide independent observed
+            # routes to the perimeter; none can cross a convex card interior.
+            for direction in (outward,
+                              .258819 * outward + .965926 * tangent / np.linalg.norm(tangent),
+                              .258819 * outward - .965926 * tangent / np.linalg.norm(tangent)):
+                origin = outer_points[sample]
+                lengths = [(bound - origin[axis]) / direction[axis]
+                           for axis, bound in ((0, 2), (0, width - 4), (1, 2), (1, height - 4))
+                           if abs(direction[axis]) > 1e-8 and (bound - origin[axis]) / direction[axis] > 0]
+                length = min(lengths)
+                path = _patches(lab, origin + np.linspace(0, length, min(MAX_RAY_PATCHES, max(2, int(np.ceil(length / distance)) + 1)))[:, None] * direction)
+                path_continuous = np.max(np.linalg.norm(np.diff(path, axis=0), axis=1)) <= 18
+                path_chroma_matches = np.linalg.norm(path[0, 1:] - path[-1, 1:]) <= 18
+                continuous[sample] |= path_continuous
+                chroma_matches[sample] |= path_chroma_matches
+                if path_continuous and path_chroma_matches:
+                    break
+            else:
+                # Both facts must belong to the same outward path.
+                continuous[sample] = False
+        # A faint edge must exceed the observed adjacent-mat variation as well
+        # as the absolute floor. This is versioned ATLAS photo evidence, not a
+        # change to the shared Speedster physical or printed-frame policy.
+        contrast_supported = contrast >= np.maximum(PHYSICAL_LOCAL_CONTRAST_FLOOR, 3 * noise)
+        outside = stable & continuous & chroma_matches
+        supported = valid & contrast_supported & outside
+        sides[name] = {"medianContrastDeltaE": round(float(np.median(contrast)), 3),
+                       "medianMatNoiseResidualDeltaE": round(float(np.median(noise)), 3),
                        "supportFraction": round(float(np.mean(supported)), 4),
-                       "outsidePerimeterSupportFraction": round(float(np.mean(values[:, 1])), 4),
-                       "insideNonPerimeterSupportFraction": round(float(np.mean(values[:, 2])), 4),
+                       "contrastSupportFraction": round(float(np.mean(contrast_supported)), 4),
+                       "outsidePerimeterSupportFraction": round(float(np.mean(outside)), 4),
+                       "outsideLocalStabilityFraction": round(float(np.mean(stable)), 4),
+                       "outsideRayContinuityFraction": round(float(np.mean(continuous)), 4),
+                       "outsidePerimeterChromaFraction": round(float(np.mean(chroma_matches)), 4),
                        "sampleCount": 33, "candidateCount": 1, "ambiguous": False}
     return sides
 
 
+def _result(mat_color, outcome, **kwargs):
+    result = color._result("PHYSICAL_OUTER", mat_color, outcome, **kwargs)
+    result.update(engineVersion=ENGINE_VERSION, policyProvenance=POLICY_PROVENANCE,
+                  contrastFloorDeltaE=PHYSICAL_LOCAL_CONTRAST_FLOOR)
+    return result
+
+
 def propose_physical_outer(image, mat_color):
-    prior = color.propose_physical_outer(image, mat_color)
+    if mat_color not in color.MAT_COLORS:
+        raise ValueError("matColor must be BLACK, WHITE, or MAGENTA")
     height, width = image.shape[:2]
-    if prior["outcome"] != "ACCEPTED" or _adoptable(prior["proposal"], width, height):
-        return prior
-    rejected = np.asarray(prior["proposal"], dtype=np.float32)
-    if rejected.shape != (4, 2) or not np.isfinite(rejected).all():
-        return prior
-    # Bind recovery to a visible selected mat, using the shared perimeter
-    # support requirement without the global color reference that loses a
-    # locally illuminated side. A frame filled by card art is not a mat.
     perimeter = color._photo_perimeter_mask(height, width)
-    if float(np.mean(color._mat_pixel_mask(image[perimeter], mat_color))) < 0.55:
-        return prior
+    if float(np.mean(color._mat_pixel_mask(image[perimeter], mat_color))) < MIN_SELECTED_PERIMETER_FRACTION:
+        return _result(mat_color, "ABSTAIN", advisory=color._advisory(
+            "PHYSICAL_MAT_NOT_VISIBLE", None, "The selected mat is not sufficiently visible around this photo."))
     lab = color._cie_lab(cv2.GaussianBlur(image, (5, 5), 0))
     supported = []
-    for score, quad in _color_candidates(image):
-        # A recovery must enclose the failed region. An unrelated small shape
-        # elsewhere in the photo cannot become the replacement physical card.
-        if not all(cv2.pointPolygonTest(quad.astype(np.float32), tuple(map(float, point)), False) >= 0
-                   for point in rejected):
-            continue
+    candidates = _color_candidates(image)
+    for score, quad in candidates:
         sides = _perimeter_evidence(lab, quad)
         if not all(side["supportFraction"] >= color.PHYSICAL_MINIMUM_SIDE_SUPPORT for side in sides.values()):
             continue
         diagonal = float(np.linalg.norm(quad[2] - quad[0]))
-        if any(float(np.mean(np.linalg.norm(quad - existing, axis=1))) / diagonal < 0.012
+        if any(float(np.mean(np.linalg.norm(quad - existing, axis=1))) / diagonal < .012
                for _, existing, _ in supported):
             continue
         supported.append((score, quad, sides))
     if not supported:
-        return prior
+        return _result(mat_color, "INSUFFICIENT_EVIDENCE", candidate_count=len(candidates),
+                       advisory=color._advisory("NO_SUPPORTED_PHYSICAL_OUTLINE", None,
+                       "No complete outline has supported card-to-mat evidence on all four sides."))
     score, quad, sides = supported[0]
     ratio, ambiguous = (color._canonical_ambiguity(supported[1][0] / score,
                         color.PHYSICAL_AMBIGUOUS_RUNNER_UP_RATIO)
                         if len(supported) > 1 else (None, False))
-    if ambiguous:
-        return prior
     for side in sides.values():
-        side["candidateCount"] = len(supported)
-    result = color._result("PHYSICAL_OUTER", mat_color, "ACCEPTED", proposal=quad,
-                           sides=sides, candidate_count=len(supported), runner_up_ratio=ratio)
-    result.update(engineVersion=ENGINE_VERSION, policyProvenance=POLICY_PROVENANCE)
-    return result
+        side.update(candidateCount=len(supported), ambiguous=ambiguous)
+    return _result(mat_color, "ABSTAIN" if ambiguous else "ACCEPTED",
+                   proposal=None if ambiguous else quad, sides=sides,
+                   candidate_count=len(supported), runner_up_ratio=ratio, ambiguous=ambiguous)

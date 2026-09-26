@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { requireThat, uuid } from './contract.mjs';
+import { safeTransactionDiagnostic } from '@atlas/manual-service/contract';
 
 const STAGES = ['VERIFY', 'PREPARE', 'ADMIT'];
 const safeCode = error => /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'INTAKE_PROCESSING_INTERRUPTED';
@@ -110,7 +111,7 @@ export function createIntakeIngestionWorker({ repository, intake, authorityFor, 
     && Number.isInteger(heartbeatMs) && heartbeatMs >= 10 && heartbeatMs <= 30000, 500, 'INTAKE_INGESTION_CONFIG_INVALID');
   const tasks = new Set(), controllers = new Set(), active = { VERIFY: 0, PREPARE: 0, ADMIT: 0 };
   let stopped = true, closed = false, timer = null, cycling = null;
-  const emit = error => { try { onError({ code: safeCode(error) }); } catch { /* diagnostics cannot stop recovery */ } };
+  const emit = error => { try { onError({ code: safeCode(error), ...safeTransactionDiagnostic(error) }); } catch { /* diagnostics cannot stop recovery */ } };
   async function execute(job) {
     const controller = new AbortController(); controllers.add(controller);
     let renewal = null;
@@ -128,6 +129,7 @@ export function createIntakeIngestionWorker({ repository, intake, authorityFor, 
       await repository.finish(job, { kind: job.stage === 'VERIFY' ? 'CONTINUE' : 'COMPLETE' });
     } catch (error) {
       const code = safeCode(error), interrupted = controller.signal.aborted;
+      if (code === 'P2028') emit(error);
       const absent = code === 'INTAKE_UPLOAD_ABSENT';
       const capacity = ['MANUAL_PROCESSING_BUSY', 'PHOTO_STORAGE_BUSY'].includes(code);
       const permanent = [401, 403].includes(error?.status)

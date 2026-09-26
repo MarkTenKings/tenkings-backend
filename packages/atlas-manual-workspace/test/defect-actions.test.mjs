@@ -179,9 +179,9 @@ test('material-only revision retains exact source findings as pending remeasurem
   assert.ok(discarded.sides.FRONT.findingRevision > next.sides.FRONT.findingRevision);
 });
 
-test('defect actions only import the existing pure grading-core contracts and never old orchestration', () => {
+test('defect actions only import pure grading and source-geometry validators, never old orchestration', () => {
   const source = readFileSync(new URL('../src/defect-actions.mjs', import.meta.url), 'utf8');
   const imports = [...source.matchAll(/from ['"]([^'"]+)['"]/g)].map(match => match[1]);
-  assert.ok(imports.length > 0 && imports.every(path => path.startsWith('@atlas/grading-core/')));
+  assert.ok(imports.length > 0 && imports.every(path => path.startsWith('@atlas/grading-core/') || path === './geometry-actions.mjs'));
   assert.ok(!/atlas-operator|atlasWorkspace|sam3_detector|fetch\(/.test(source));
 });

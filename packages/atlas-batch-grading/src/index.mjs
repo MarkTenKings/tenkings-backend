@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { safeTransactionDiagnostic } from '@atlas/manual-service/contract';
 
 export const BATCH_POLICY = 'atlas-astra-batch-v1';
 export const BATCH_STAGES = Object.freeze(['PREPARE', 'ANALYZE', 'REPORT']);
@@ -106,6 +107,7 @@ export function createBatchWorker({ repository, prepare, concurrency = 20, analy
       const code = outcome.code ?? (/^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'BATCH_STAGE_RETRY');
       const location = String(error?.stack ?? '').match(/(?:^|\n)\s+at [^\n]*?(packages\/atlas-[a-z-]+\/(?:src|scripts)\/[a-zA-Z0-9_./-]+\.mjs:\d+:\d+)\)?(?:\n|$)/)?.[1];
       const diagnostic = Object.assign(new Error(code), { code, stage: job.stage,
+        ...safeTransactionDiagnostic(error),
         errorType: ['Error', 'TypeError', 'RangeError', 'SyntaxError', 'AbortError'].includes(error?.name) ? error.name : 'Error',
         ...(location ? { location } : {}) });
       try { onError(diagnostic); } catch { /* Diagnostics cannot strand a lease. */ }

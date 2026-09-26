@@ -12,7 +12,7 @@ import { workspace } from '../../atlas-manual-workspace/test/defect-fixtures.mjs
 function fixture(proposals = false) {
   const quad = [{ x: .04, y: .03 }, { x: .96, y: .03 }, { x: .96, y: .97 }, { x: .04, y: .97 }];
   return { card: { cardId: 'synthetic-card', revision: 1, contentHash: 'a'.repeat(64), draft: { source: { sourceHash: 'b'.repeat(64) } } },
-    state: { defects: workspace(false), geometry: { profile: 'SPORTS', sides: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { printed: { quad }, prepared: { id: side } }])) },
+    state: { defects: workspace(false), geometry: { profile: 'SPORTS', sides: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { physical: { quad }, printed: { quad }, prepared: { id: side } }])) },
       identity: { playerName: 'Synthetic player', year: '2026', manufacturer: 'Fixture', productSet: 'Isolation test' } },
     analysis: { status: 'READY', analysisId: 'synthetic-analysis', limitations: [], proposals: proposals ? ['FRONT', 'BACK'].map((side, i) => ({
       id: 'shape-' + i, side, defectType: 'LIGHT_SCRATCH_SCUFF', reviewStatus: 'UNREVIEWED', canonicalContour: [
@@ -44,6 +44,15 @@ async function waitFile(path) {
 test('real isolated report equals the pure builder and preserves machine-only authority', async t => {
   const f = await owned(t), input = fixture(), expected = await buildMachineReport(input);
   assert.deepEqual(await f.run(input), expected); assert.equal(f.active(), 0); assert.deepEqual(await f.jobs(), []);
+});
+test('real isolated report retains missing-border evidence without creating a numeric grade', async t => {
+  const f = await owned(t), input = fixture(); input.state.geometry.sides.BACK.printed = null;
+  const report = await f.run(input);
+  assert.deepEqual(report, await buildMachineReport(input));
+  assert.equal(report.grade, null); assert.equal(report.proposedGrade, null);
+  assert.equal(report.calculationState, 'GEOMETRY_UNRESOLVED');
+  assert.deepEqual(report.unresolvedGeometry, [{ side: 'BACK', code: 'PRINTED_GEOMETRY_UNRESOLVED' }]);
+  assert.equal(report.certification, null); assert.deepEqual(await f.jobs(), []);
 });
 test('native isolated reports preserve exact measurement receipts, traces and grades', { skip: !process.env.ATLAS_MEASUREMENT_PYTHON }, async t => {
   const f = await owned(t), input = fixture(true), expected = await buildMachineReport(input);

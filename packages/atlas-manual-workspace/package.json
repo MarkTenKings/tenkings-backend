@@ -10,6 +10,7 @@
     "./snapping": "./dist/gradient-snap.js",
     "./preparation-result": "./src/preparation-result.mjs",
     "./defect-actions": "./src/defect-actions.mjs",
+    "./geometry-reprojection": "./src/geometry-reprojection.mjs",
     "./defects": "./dist/DefectReviewWorkspace.js",
     "./defects.css": "./src/defects.css",
     "./report-review": "./dist/FinalReportReview.js",

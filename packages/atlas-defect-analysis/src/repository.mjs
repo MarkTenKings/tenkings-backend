@@ -50,7 +50,7 @@ function verifyReply(value) {
  * Neither callback performs image, provider or object-store work. prepare and
  * claim use short card-scoped transactions; manual editing is never blocked by
  * the run's DISPATCHED or UNKNOWN status. Host owns explicit human adoption. */
-export function createAnalysisRepository({ boundary, authorize, assertCurrent, receiptClient }) {
+export function createAnalysisRepository({ boundary, authorize, assertCurrent, assertMachinePending = null, receiptClient }) {
   check(typeof boundary?.transaction === 'function' && typeof authorize === 'function' && typeof assertCurrent === 'function'
     && typeof receiptClient?.$queryRawUnsafe === 'function');
   async function tx(staff, cardId, edit, work) {
@@ -104,6 +104,27 @@ export function createAnalysisRepository({ boundary, authorize, assertCurrent, r
       check(['READY', 'REFUSED'].includes(state), 'DEFECT_ANALYSIS_PENDING', 409);
     }
   }
+  // One receipt-aware reader serves human status and the machine wait path.
+  // A DISPATCHED run row alone says nothing about a later terminal receipt.
+  async function readStatus(tx, cardId, analysisId) {
+    const retired = await readRefusal(tx, cardId, 'analysis', analysisId); if (retired) return clone(retired);
+    const run = parseRun(await read(tx, cardId, analysisId)); if (!run) return null;
+    const rows = await tx.$queryRawUnsafe('SELECT kind,evidence,recorded_at FROM atlas_defect_analysis.receipt WHERE analysis_id=$1::uuid ORDER BY kind', analysisId);
+    const receipts = rows.map(row => { const evidence = JSON.parse(row.evidence); verifyReply(evidence);
+      return { kind: row.kind, evidence, recordedAt: new Date(row.recorded_at).toISOString() }; });
+    const selected = receipts.find(x => x.kind === 'RESPONSE') ?? receipts.find(x => x.kind === 'OUTCOME');
+    const expired = Date.parse(run.expiresAt) <= Date.now();
+    const [acceptedRow] = run.requestEvidence.version === 'atlas-astra-defect-analysis-v2'
+      ? await tx.$queryRawUnsafe("SELECT * FROM atlas_defect_analysis.provider_event WHERE analysis_id=$1::uuid AND kind='ACCEPTED'", analysisId) : [];
+    const acceptance = parseAcceptance(acceptedRow, run);
+    const terminal = receipts.find(value => value.kind === 'RESPONSE');
+    const state = terminal?.evidence.state ?? (acceptance ? (Date.parse(acceptance.pollUntil)>Date.now() ? 'DISPATCHED' : 'UNKNOWN')
+      : selected?.evidence.state ?? (expired && run.state === 'DISPATCHED' ? 'UNKNOWN' : run.state));
+    return clone({ ...run, state, receipts, backgroundAccepted: Boolean(acceptance), acceptance });
+  }
+  const acceptedPending = run => Boolean(run && !run.retired && run.state === 'DISPATCHED'
+    && run.backgroundAccepted && run.acceptance && Date.parse(run.acceptance.pollUntil) > Date.now()
+    && !run.receipts.some(receipt => receipt.kind === 'RESPONSE' || receipt.kind === 'OUTCOME'));
   const repository = {
     ...createBackgroundPersistence({ receiptClient, parseRun }),
     async prepare(staff, input) {
@@ -178,21 +199,28 @@ export function createAnalysisRepository({ boundary, authorize, assertCurrent, r
     },
     async status(staff, { cardId, analysisId }) {
       uuid(analysisId);
-      return tx(staff, cardId, false, async ({ tx }) => {
-        const retired = await readRefusal(tx, cardId, 'analysis', analysisId); if (retired) return clone(retired);
-        const run = parseRun(await read(tx, cardId, analysisId)); if (!run) return null;
-        const rows = await tx.$queryRawUnsafe('SELECT kind,evidence,recorded_at FROM atlas_defect_analysis.receipt WHERE analysis_id=$1::uuid ORDER BY kind', analysisId);
-        const receipts = rows.map(row => { const evidence = JSON.parse(row.evidence); verifyReply(evidence);
-          return { kind: row.kind, evidence, recordedAt: new Date(row.recorded_at).toISOString() }; });
-        const selected = receipts.find(x => x.kind === 'RESPONSE') ?? receipts.find(x => x.kind === 'OUTCOME');
-        const expired = Date.parse(run.expiresAt) <= Date.now();
-        const [acceptedRow] = run.requestEvidence.version === 'atlas-astra-defect-analysis-v2'
-          ? await tx.$queryRawUnsafe("SELECT * FROM atlas_defect_analysis.provider_event WHERE analysis_id=$1::uuid AND kind='ACCEPTED'", analysisId) : [];
-        const acceptance = parseAcceptance(acceptedRow, run);
-        const terminal = receipts.find(value => value.kind === 'RESPONSE');
-        const state = terminal?.evidence.state ?? (acceptance ? (Date.parse(acceptance.pollUntil)>Date.now() ? 'DISPATCHED' : 'UNKNOWN')
-          : selected?.evidence.state ?? (expired && run.state === 'DISPATCHED' ? 'UNKNOWN' : run.state));
-        return clone({ ...run, state, receipts, backgroundAccepted: Boolean(acceptance), acceptance });
+      return tx(staff, cardId, false, ({ tx }) => readStatus(tx, cardId, analysisId));
+    },
+    /** Read-only continuation of one already accepted machine action. Nothing
+     * here may prepare, dispatch, replace, collect or project an artifact. */
+    async pendingMachine(staff, { cardId, analysisId, expected }) {
+      uuid(cardId); uuid(analysisId);
+      check(typeof boundary.machineTransaction === 'function' && typeof assertMachinePending === 'function',
+        'DEFECT_ANALYSIS_MACHINE_UNAVAILABLE', 503);
+      return boundary.machineTransaction(staff, async context => {
+        check(context.principal?.actorKind === 'MACHINE' && context.principal.canCertify === false,
+          'MANUAL_MACHINE_AUTH_REQUIRED', 403);
+        // Keep dispatch's manual-before-intake lock order, including when the
+        // host checks expected manual/source revisions below.
+        await authorize({ ...context, cardId, edit: true });
+        const run = await readStatus(context.tx, cardId, analysisId);
+        if (!acceptedPending(run)) return false;
+        check(run.actorId === context.principal.id && run.actionId === analysisId,
+          'DEFECT_ANALYSIS_STALE', 409);
+        await assertMachinePending({ ...context, cardId, run, expected });
+        // A terminal receipt can arrive while current-source fences wait. Read
+        // it again after those checks; terminal work takes the normal reader.
+        return acceptedPending(await readStatus(context.tx, cardId, analysisId));
       });
     },
     async latest(staff, { cardId }) {

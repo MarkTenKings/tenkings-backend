@@ -6,7 +6,7 @@ import {createIntakeClient,createBrowserIntakeJournal} from '@atlas/manual-intak
 import {createManualClient} from '@atlas/manual-workflow/client';
 import {PairedGeometryWorkspace} from '@atlas/manual-workspace';
 import {DefectReviewWorkspace} from '@atlas/manual-workspace/defects';
-import {FinalReportReview} from '@atlas/manual-workspace/report-review';
+import {FinalReportReview,MachineReportReview} from '@atlas/manual-workspace/report-review';
 import {geometryStatus} from '@atlas/manual-workspace/geometry-actions';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
 import {manualRequest,manualMessage} from '../lib/manual-client.mjs';
@@ -290,6 +290,17 @@ export default function ManualCards({staff,cardId=null}){
   </div></Shell>;
 }
 
+function finalFindingsAvailable(view){
+  if(geometryStatus(view.geometry).confirmed)return true;
+  return Boolean(view.finalReview&&['FRONT','BACK'].every(side=>{
+    const slot=view.geometry.sides?.[side],frame=slot?.prepared?.frame,defectFrame=view.defects?.sides?.[side]?.frame;
+    return slot?.physical&&frame&&defectFrame&&frame.id===defectFrame.frameId
+      &&frame.version===defectFrame.preparationVersion&&slot.image.version===defectFrame.imageVersion
+      &&slot.image.originalSha256===defectFrame.originalSha256&&frame.inspection.sha256===defectFrame.inspectionImageSha256
+      &&frame.rectified.sha256===defectFrame.rectifiedImageSha256;
+  }));
+}
+
 export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
   const [view,setView]=useState(null),[screen,setScreen]=useState('geometry'),[error,setError]=useState(''),[status,setStatus]=useState(''),[report,setReport]=useState(null),[editing,setEditing]=useState(false),[preparing,setPreparing]=useState({}),[approving,setApproving]=useState(false),[identity,setIdentity]=useState(null),[refreshingImages,setRefreshingImages]=useState(false);
   const client=useRef(null),analysisClient=useRef(null),imageRefresh=useRef(null),viewRef=useRef(null),interaction=useRef({}),router=useRouter();
@@ -311,7 +322,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
         const updated={...viewRef.current,astra};viewRef.current=updated;setView(updated);
       }});
     analysisClient.current=ownedAnalysis;
-    void ownedClient.recover().then(async value=>{if(stopped)return;setScreen(geometryStatus(value.geometry).confirmed?'defects':'geometry');
+    void ownedClient.recover().then(async value=>{if(stopped)return;setScreen(value.finalReview?'provisional':geometryStatus(value.geometry).confirmed?'defects':'geometry');
       if(value.astra?.enabled)await ownedAnalysis.refresh();
     }).catch(error=>{if(!stopped)setError(manualMessage(error));});
     const timer=setInterval(()=>{if(!ownedClient.hasPending())void attempt(refreshImages);},240000);
@@ -359,7 +370,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
   function switchStage(next){
     const owner=client.current,active=interaction.current;
     if(!owner||active.editing||active.identity||active.approving||active.saving||owner.hasPending())return;
-    if(next==='defects'&&!geometryStatus(viewRef.current.geometry).confirmed)return;
+    if(next==='defects'&&!finalFindingsAvailable(viewRef.current))return;
     setReport(null);setReportImagesReady(false);setScreen(next);
     // The current verified pixels are usable immediately. Renew their grants
     // in the background without replacing the command base or a new edit.
@@ -468,17 +479,26 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
   }
   async function prepare(side){setPreparing(old=>({...old,[side]:true}));try{await execute({type:'PREPARE_SIDE',side});}finally{setPreparing(old=>({...old,[side]:false}));}}
   const savePending=status==='Saving…'||Boolean(client.current?.hasPending());
-  const locked=editing||Boolean(identity)||approving||savePending||loadingReport;
+  const unsaved=editing||Boolean(identity);
+  const calculating=savePending||Object.values(preparing).some(Boolean);
+  const locked=unsaved||approving||savePending||loadingReport;
   if(!view)return <div>{error&&<p role="alert">{error}</p>}<p role="status">Loading saved review…</p><button onClick={()=>attempt(()=>client.current.recover())}>Retry</button></div>;
+  const findingsAvailable=finalFindingsAvailable(view);
+  const partial=view.provisional?.report?.calculationState==='GEOMETRY_UNRESOLVED';
+  const currentGrade=!unsaved&&!calculating&&view.provisional?.state==='READY'&&Number.isFinite(view.provisional.report.proposedGrade)?view.provisional.report.proposedGrade:undefined;
   return <>
     {error&&<div className="mc-notice error" role="alert">{error}</div>}
     {router.query?.from==='batch'&&<Link className="mc-back" href="/batch">← Back to batch review</Link>}
-    <nav className="mc-review-nav" aria-label="Review stages"><button disabled={locked} onClick={onPhotos}>Photos</button><button aria-current={screen==='geometry'?'step':undefined} disabled={locked||screen==='geometry'} onClick={()=>switchStage('geometry')}>Geometry</button><button aria-current={screen==='defects'?'step':undefined} disabled={locked||screen==='defects'||!geometryStatus(view.geometry).confirmed} onClick={()=>switchStage('defects')}>Findings</button><button disabled={locked} onClick={()=>setIdentity({...view.identity})}>Edit card details</button><button disabled={savePending||refreshingImages} onClick={()=>attempt(refreshImages)}>{refreshingImages?'Loading images…':'Reload images'}</button><span>{screen==='report'?'Final report · ':''}{status||'Saved'}</span>{client.current.hasPending()&&<button onClick={()=>attempt(()=>client.current.recover())}>Retry pending save</button>}</nav>
+    {view.finalReview&&<section className="mc-notice" aria-label="Current final review"><strong>Final human review</strong><p role="status">{unsaved?'Unsaved changes. Save or discard them to see the current grade.':calculating?'Updating measurements and grade…':partial?'Centering geometry needs review. Measured findings are saved; the overall grade is unavailable.':currentGrade!==undefined?`Current provisional grade: ${currentGrade}`:'Preparation or measurement is incomplete. Open Geometry or Findings to resolve it.'}</p><p>Geometry and finding corrections update the ATLAS measurements and score. Approve the exact corrected report after reviewing both sides.</p><details><summary>Original machine proposal retained</summary><p>Original proposed grade: {Number.isFinite(view.finalReview.report.proposedGrade)?view.finalReview.report.proposedGrade:'Unavailable — centering unresolved'} · {view.finalReview.report.findings.length} measured findings. Original observations and geometry remain saved in this card’s review history.</p></details></section>}
+    {view.finalReview?.report.unmeasurableProposals?.length>0&&<section className="mc-notice" aria-label="Original observations without measurable pixels"><h3>Original observations to resolve</h3><p>These observations produced no measurable trace. Inspect the original photograph in Geometry. Reject a false observation; trace any actual damage in Findings.</p>{view.finalReview.report.unmeasurableProposals.map(proposal=>{const reviewed=view.assistance?.reviews.some(review=>review.analysisId===view.finalReview.report.analysisId&&review.proposalId===proposal.id);return <p key={proposal.id}>{proposal.side==='FRONT'?'Front':'Back'} · {proposal.defectType.toLowerCase().replaceAll('_',' ')} · {reviewed?'Reviewed':<button disabled={locked} onClick={()=>attempt(()=>execute({type:'REJECT_FINAL_OBSERVATION',reportHash:view.finalReview.reportHash,proposalId:proposal.id,reviewed:true}))}>Reject original observation</button>}</p>;})}</section>}
+    <nav className="mc-review-nav" aria-label="Review stages"><button disabled={locked} onClick={onPhotos}>Photos</button><button aria-current={screen==='geometry'?'step':undefined} disabled={locked||screen==='geometry'} onClick={()=>switchStage('geometry')}>Geometry</button><button aria-current={screen==='defects'?'step':undefined} disabled={locked||screen==='defects'||!findingsAvailable} onClick={()=>switchStage('defects')}>Findings</button><button disabled={locked} onClick={()=>setIdentity({...view.identity})}>Edit card details</button><button disabled={savePending||refreshingImages} onClick={()=>attempt(refreshImages)}>{refreshingImages?'Loading images…':'Reload images'}</button><span>{screen==='report'?'Final report · ':''}{status||'Saved'}</span>{client.current.hasPending()&&<button onClick={()=>attempt(()=>client.current.recover())}>Retry pending save</button>}</nav>
+    {['FRONT','BACK'].filter(side=>view.card.draft?.geometryBeforeEdit?.[side]&&!view.geometry.sides?.[side]?.prepared).map(side=><section className="mc-notice" key={side} aria-label={`${side==='FRONT'?'Front':'Back'} geometry recovery`}><p>The {side==='FRONT'?'Front':'Back'} outline has changed. Preparation must preserve all saved findings. If a finding falls outside the new outline, restore the previous outline, correct the finding in Findings, then try the geometry change again.</p><button type="button" disabled={locked||calculating} onClick={()=>attempt(async()=>{await execute({type:'RESTORE_GEOMETRY',side});setReport(null);setScreen('geometry');})}>Restore {side==='FRONT'?'Front':'Back'} previous outline</button></section>)}
+    {view.finalReview&&<button type="button" disabled={locked||screen==='provisional'} onClick={()=>switchStage('provisional')}>View current provisional report</button>}
     {identity?<section className="mc-details"><h1>Correct card details</h1><form onSubmit={event=>{event.preventDefault();if(savePending)return;void attempt(async()=>{await execute({type:'IDENTITY_EDIT',identity});setIdentity(null);setReport(null);setScreen('geometry');});}}><fieldset disabled={savePending} style={{border:0,padding:0,margin:0}}><div className="mc-fields">{Object.entries(identity).map(([key,value])=><label key={key}>{({playerName:'Player name',cardName:'Card name',productSet:'Product / set',cardNumber:'Card number',layoutType:'Pokémon card kind'})[key]??key}{key==='layoutType'?<select value={value} onChange={event=>setIdentity(old=>({...old,[key]:event.target.value}))}>{['POKEMON','TRAINER','ENERGY'].map(layout=><option key={layout}>{layout}</option>)}</select>:<input value={value??''} onChange={event=>setIdentity(old=>({...old,[key]:event.target.value}))}/>}</label>)}</div><div className="mc-actions"><button className="primary">Save card details</button><button type="button" onClick={()=>setIdentity(null)}>Discard changes</button></div></fieldset></form></section>:
     screen==='geometry'?<PairedGeometryWorkspace workspace={view.geometry} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} preparingSides={preparing} onPrepare={prepare}
       onEdit={async input=>{const {actor,proposal,...edit}=input;await execute({type:'GEOMETRY_EDIT',edit});if(input.kind==='PHYSICAL')void attempt(()=>prepare(input.side));}}
       onConfirm={async({base,reviewed})=>{await execute({type:'CONFIRM_GEOMETRY',base,reviewed});setScreen('defects');}}/>:
-    screen==='defects'&&view.defects?<DefectReviewWorkspace workspace={view.defects} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'}
+    screen==='defects'&&view.defects?<DefectReviewWorkspace workspace={view.defects} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} grade={currentGrade}
       astra={view.astra} reviewedMemory={view.reviewedMemory} onAnalyzeDefects={input=>analyze('start',input)} onRefreshAnalysis={()=>analyze('refresh')}
       onResumeAnalysis={()=>analyze('resume')} onReplaceAnalysis={input=>analyze('replace',input)} onRetryReviewedMemory={retryMemory}
       onReviewProposal={async input=>{const owner=client.current;await owner.reviewProposal(input);if(client.current===owner&&input.action!=='REJECT')void attempt(()=>owner.execute({type:'MEASURE_SIDE',side:input.side}));}}
@@ -486,6 +506,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
       onRetry={side=>execute({type:'MEASURE_SIDE',side})} onDiscardPending={({side,base})=>execute({type:'DISCARD_PENDING',side,base})}
       onInspect={({side,base,inspected})=>execute({type:'INSPECT_SIDE',side,base,inspected})} onConfirm={({base,reviewed,proposalReview})=>execute({type:'CONFIRM_FINDINGS',base,reviewed,...(proposalReview?{proposalReview}:{})})}
       onContinue={()=>attempt(openReport)}/>:
+    screen==='provisional'?(view.provisional?.state==='READY'&&!unsaved&&!calculating?<MachineReportReview packet={{...view.provisional,images:view.images}} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}><button disabled={locked} onClick={()=>switchStage('geometry')}>Review geometry</button><button disabled={locked||!findingsAvailable} onClick={()=>switchStage('defects')}>Review findings</button></MachineReportReview>:<p role="status">{unsaved?'Save or discard your changes to view the current report.':'Preparation or measurement is incomplete. Open Geometry to retry preparation or restore the last prepared outline; open Findings to finish any pending measurement.'}</p>):
     report&&<FinalReportReview key={report.reportHash} preview={report} workspace={view.defects} images={view.images} geometry={view.geometry} publication={view.publication?.reportHash===report.reportHash?view.publication:undefined} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`} onReadyChange={setReportImagesReady}
       approved={view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash}
       rejectedSuggestions={report.sourceHash===view.card.contentHash?view.astra?.proposals?.filter(proposal=>proposal.reviewStatus==='REJECTED').length??0:0}

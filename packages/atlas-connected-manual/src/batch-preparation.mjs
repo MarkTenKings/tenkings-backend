@@ -8,6 +8,7 @@ import { calculateAtlasFinalGrade, ATLAS_FINAL_GRADE_POLICY } from '@atlas/gradi
 import { measurableProposalEdit } from '../../atlas-manual-workflow/src/proposal-review.mjs';
 import { gradingIdentity } from './details.mjs';
 import { BATCH_RATE_LIMIT_RETRIES } from '@atlas/batch-grading';
+import { machineGeometryReview } from './machine-geometry.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
 const attention = code => ({ kind: 'ATTENTION', code });
@@ -20,7 +21,7 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
   pythonExecutable, measurementLimits, signal }) {
   requireThat(analysis?.status === 'READY' && analysis.analysisId && Array.isArray(analysis.proposals)
     && analysis.proposals.length <= 32 && state.defects, 409, 'BATCH_ANALYSIS_NOT_READY');
-  requireThat(SIDES.every(side => state.geometry.sides[side].printed && state.geometry.sides[side].prepared
+  requireThat(SIDES.every(side => state.geometry.sides[side].physical && state.geometry.sides[side].prepared
     && !state.defects.sides[side].pending && !state.defects.sides[side].findings.length
     && !state.defects.sides[side].humanEditedIds.length && !state.defects.sides[side].inspection)
     && !state.defects.confirmation && !(state.assistance?.reviews.length), 409, 'BATCH_HUMAN_WORK_PRESENT');
@@ -62,28 +63,41 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
     receipts.push({ proposalId: proposal.id, side, receipt: result.receipt });
   }
   const findings = SIDES.flatMap(side => measured.sides[side].findings);
-  const capture = Object.fromEntries(SIDES.map(side => [side.toLowerCase(), {
+  const geometryReview = machineGeometryReview(state.geometry);
+  const unresolvedGeometry = SIDES.flatMap(side => geometryReview.sides[side].unresolved.map(code => ({ side, code })));
+  // Missing printed-frame evidence does not withhold genuine defect analysis.
+  // Keep measured findings/receipts, but do not invent centering inputs or an
+  // overall numeric grade. Final human geometry correction can complete it.
+  const capture = unresolvedGeometry.length ? null : Object.fromEntries(SIDES.map(side => [side.toLowerCase(), {
     centeringBorders: measureSpeedsterCenteringBorders(state.geometry.sides[side].printed.quad),
   }]));
-  const calculated = calculateSpeedsterReview(capture, findings);
+  const calculated = capture ? calculateSpeedsterReview(capture, findings) : { grade: null, defects: findings };
+  const ambiguousSides = SIDES.filter(side => geometryReview.sides[side].ambiguous);
   return { version: 'atlas-machine-provisional-report-v1', authority: 'MACHINE_PROPOSAL', certification: null,
     cardId: card.cardId, sourceHash: card.draft.source.sourceHash, manualRevision: card.revision, manualContentHash: card.contentHash,
     analysisId: analysis.analysisId, analysisResultHash: digest(canonical(analysis.proposals)),
     identity: state.identity, cardProfile: state.geometry.profile, ruleVersion: SPEEDSTER_RULE_VERSION,
-    grade: calculated.grade, proposedGrade: calculateAtlasFinalGrade(calculated.grade.overall.rawGrade),
+    grade: calculated.grade, proposedGrade: calculated.grade ? calculateAtlasFinalGrade(calculated.grade.overall.rawGrade) : null,
+    calculationState: calculated.grade ? 'COMPLETE' : 'GEOMETRY_UNRESOLVED', unresolvedGeometry,
     finalGradePolicy: ATLAS_FINAL_GRADE_POLICY, findings: calculated.defects,
-    limitations: [...(analysis.limitations ?? []), ...(unmeasurableProposals.length
+    geometryReview,
+    analysisLimitations: [...(analysis.limitations ?? [])],
+    limitations: [...(analysis.limitations ?? []), ...(unresolvedGeometry.length
+      ? ['Printed-frame geometry is unresolved. Defects were analyzed and measured, but centering and the overall grade remain unavailable until final review supplies supported geometry.'] : []), ...(ambiguousSides.length
+      ? [`Machine geometry has competing plausible outlines on ${ambiguousSides.join(' and ')}. Review the proposed edges and centering in final review; this grade remains tentative.`] : []), ...(unmeasurableProposals.length
       ? ['Some model proposals have no measurable pixels within the selected card outline. Review those proposals in the manual workspace before certification.'] : [])],
     unmeasurableProposals, measurementReceipts: receipts,
     geometry: Object.fromEntries(SIDES.map(side => [side, { frame: state.defects.sides[side].frame,
-      centeringQuad: state.geometry.sides[side].printed.quad }])),
+      centeringQuad: state.geometry.sides[side].printed?.quad ?? null }])),
   };
 }
 
 export function createBatchPreparation({ connected, artifacts, pythonExecutable, measurementLimits,
   measure = measureDefectWorkspaceEdit, reportBuilder = buildMachineReport }) {
-  async function current(staff, job) {
-    const value = await connected.open(staff, job.cardId, { includePreviews: false });
+  async function current(staff, job, options) {
+    const value = staff?.actorKind === 'MACHINE' && connected.machineBatchSnapshot
+      ? await connected.machineBatchSnapshot(staff, job, options)
+      : await connected.open(staff, job.cardId, { includePreviews: false });
     requireThat(value.card.ready && value.card.sourceHash === job.sourceHash
       && SIDES.every(side => value.card.sides[side].upload.uploadId === job.uploads[side]), 409, 'BATCH_PHOTOS_CHANGED');
     return value;
@@ -92,6 +106,15 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
     async run(staff, job, { signal, dispatchSignal } = {}) {
       requireThat(!signal?.aborted, 409, 'BATCH_INTERRUPTED');
       dispatchSignal?.throwIfAborted();
+      // Only an opaque machine handle can use the receipt-only wait path. The
+      // boundary reauthenticates it and checks the exact current pair/draft;
+      // terminal or unaccepted actions still use the complete existing path.
+      if (job.stage === 'ANALYZE' && staff?.actorKind === 'MACHINE'
+        && await connected.assistance?.pendingMachineAnalysis?.(staff, job)) {
+        requireThat(!signal?.aborted, 409, 'BATCH_INTERRUPTED');
+        dispatchSignal?.throwIfAborted();
+        return wait();
+      }
       let opened = await current(staff, job);
       if (job.stage === 'PREPARE') {
         if (!opened.manual) {
@@ -106,21 +129,21 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
           }
           try { gradingIdentity(opened.details); } catch { return attention('BATCH_IDENTITY_NEEDS_REVIEW'); }
           dispatchSignal?.throwIfAborted();
-          await connected.earlyGeometry.ensure(staff, job.cardId);
-          const geometry = await connected.earlyGeometry.status(staff, job.cardId);
-          if (SIDES.some(side => ['FAILED', 'NEEDS_REVIEW'].includes(geometry[side].state))) return attention('BATCH_GEOMETRY_NEEDS_REVIEW');
-          if (!SIDES.every(side => geometry[side].state === 'READY')) return wait();
+          const { earlyGeometry: geometry } = await connected.earlyGeometry.ensure(staff, job.cardId);
+          if (SIDES.some(side => geometry[side].state === 'FAILED'
+            || geometry[side].state === 'NEEDS_REVIEW' && geometry[side].machineUsable !== true)) return attention('BATCH_GEOMETRY_NEEDS_REVIEW');
+          if (!SIDES.every(side => geometry[side].state === 'READY' || geometry[side].machineUsable === true)) return wait();
           dispatchSignal?.throwIfAborted();
           await connected.initialize(staff, job.cardId, { sourceHash: job.sourceHash, detailsRevision: opened.revision });
         }
-        const card = await connected.workflow.service.read(staff, job.cardId), state = await connected.workflow.hydrate(card);
-        if (!state.defects || SIDES.some(side => !state.geometry.sides[side].printed || !state.geometry.sides[side].prepared)) return attention('BATCH_GEOMETRY_NEEDS_REVIEW');
+        const card = opened.manualCard ?? await connected.workflow.service.read(staff, job.cardId), state = await connected.workflow.hydrate(card);
+        if (!state.defects || SIDES.some(side => !state.geometry.sides[side].physical || !state.geometry.sides[side].prepared)) return attention('BATCH_GEOMETRY_NEEDS_REVIEW');
         if (SIDES.some(side => state.defects.sides[side].findings.length || state.defects.sides[side].inspection)
           || state.defects.confirmation || state.assistance?.reviews.length) return attention('BATCH_HUMAN_WORK_PRESENT');
-        await current(staff, job);
+        await current(staff, job, { pairOnly: true });
         return { kind: 'CONTINUE', evidence: { manualRevision: card.revision, manualContentHash: card.contentHash } };
       }
-      const card = await connected.workflow.service.read(staff, job.cardId), state = await connected.workflow.hydrate(card);
+      const card = opened.manualCard ?? await connected.workflow.service.read(staff, job.cardId), state = await connected.workflow.hydrate(card);
       requireThat(card.revision === job.evidence.manualRevision && card.contentHash === job.evidence.manualContentHash, 409, 'BATCH_MANUAL_DRAFT_CHANGED');
       if (job.stage === 'ANALYZE') {
         dispatchSignal?.throwIfAborted();
@@ -143,7 +166,7 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
       requireThat(job.stage === 'REPORT', 400, 'BATCH_STAGE_INVALID');
       const response = await connected.assistance.status(staff, job.cardId, job.analysisActionId);
       const report = await reportBuilder({ card, state, analysis: response.astra, measure, pythonExecutable, measurementLimits, signal });
-      await current(staff, job);
+      await current(staff, job, { pairOnly: true });
       const latest = await connected.workflow.service.read(staff, job.cardId);
       requireThat(latest.contentHash === card.contentHash && latest.revision === card.revision, 409, 'BATCH_MANUAL_DRAFT_CHANGED');
       const reportHash = digest(JSON.stringify(report));
@@ -152,7 +175,8 @@ export function createBatchPreparation({ connected, artifacts, pythonExecutable,
         sourceHash: job.sourceHash, manualRevision: card.revision, manualContentHash: card.contentHash,
         proposedGrade: report.proposedGrade, findingCount: report.findings.length,
         name: report.identity.playerName ?? report.identity.cardName,
-        limitations: report.limitations, analysisId: report.analysisId } };
+        limitations: report.limitations, calculationState: report.calculationState,
+        unresolvedGeometry: report.unresolvedGeometry, analysisId: report.analysisId } };
     },
   });
 }

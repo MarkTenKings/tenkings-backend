@@ -73,3 +73,11 @@ test('queue projection exposes no resume for superseded, approved or edited mach
     const f = fixture(override); assert.equal((await f.repo.list(f.staff)).jobs[0].canResumeProcessing, false);
   }
 });
+test('a corrected finished card stays in final review without exposing its obsolete machine score', async () => {
+  const f = fixture({ state: 'REVIEW', manual_changed: true,
+    evidence: canonical({ name: 'Saved card', proposedGrade: 10, manualContentHash: 'b'.repeat(64), manualRevision: 3 }) });
+  const job = (await f.repo.list(f.staff)).jobs[0];
+  assert.equal(job.state, 'REVIEW'); assert.equal(job.code, 'BATCH_MANUAL_DRAFT_CHANGED');
+  assert.equal(job.evidence.name, 'Saved card'); assert.equal(job.evidence.proposedGrade, undefined);
+  assert.equal(job.canResumeProcessing, false); assert.equal(f.updated, 0);
+});

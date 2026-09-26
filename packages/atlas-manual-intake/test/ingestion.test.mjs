@@ -151,6 +151,19 @@ test('wrapped Prisma raw-query retries only confirmed operational SQLSTATEs', as
   }
 });
 
+test('P2028 emits only its safe failure category while retaining the existing upload retry', async () => {
+  const f = fixture({ stages: ['PREPARE'] });
+  f.intake.prepare = async () => { throw Object.assign(error('P2028'), { meta: {
+    error: 'Unable to start a transaction in the given time.', databaseUrl: 'postgresql://private-password@db/private' } }); };
+  f.worker.start();
+  try {
+    await until(() => f.outcomes.length === 1);
+    assert.deepEqual(f.workerErrors, [{ code: 'P2028', transactionFailureCategory: 'START_WAIT' }]);
+    assert.deepEqual(f.outcomes[0].outcome, { kind: 'WAIT', code: 'P2028', retryAfterMs: 1000, failure: true });
+    assert.equal(f.outcomes[0].job.uploadId, f.jobs[0].uploadId);
+  } finally { await f.worker.stop(); }
+});
+
 test('owner revocation refuses all effects and saves a safe attention code', async () => {
   const f = fixture({ authorityFor: async () => { throw error('MANUAL_MACHINE_ACCESS_DENIED', 403); } }); f.worker.start();
   try { await until(() => f.outcomes.length === 2);

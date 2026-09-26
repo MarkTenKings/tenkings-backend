@@ -63,6 +63,8 @@ export function collectiveProposalReview(workspace, astra) {
 export function reviewedMemoryState(memory) {
   if (!memory?.enabled) return null;
   const status = ['UNSAVED', 'PENDING', 'SAVED', 'FAILED', 'UNKNOWN'].includes(memory.status) ? memory.status : 'UNKNOWN';
+  const retained = status === 'SAVED' && Number.isSafeInteger(memory.retainedObservationCount) && memory.retainedObservationCount > 0
+    ? ` ${memory.retainedObservationCount} original-frame observation${memory.retainedObservationCount === 1 ? ' remains' : 's remain'} retained and ${memory.retainedObservationCount === 1 ? 'was' : 'were'} not added as current-frame lessons.` : '';
   return { status, mayRecover: ['PENDING', 'FAILED', 'UNKNOWN'].includes(status), message: {
     UNSAVED: 'Confirm findings also saves your reviewed outcomes as examples for future ATLAS analysis. Final report approval stays separate.',
     PENDING: 'Reviewed examples are pending. They will be available to later analysis after saving is confirmed.',
@@ -70,5 +72,5 @@ export function reviewedMemoryState(memory) {
       : 'Reviewed examples saved and available to future relevant ATLAS analysis.',
     FAILED: 'Reviewed examples are not yet saved. Retry saving the same reviewed outcomes.',
     UNKNOWN: 'The save status of your reviewed examples is not confirmed. Check the saved outcome.',
-  }[status] };
+  }[status] + retained };
 }

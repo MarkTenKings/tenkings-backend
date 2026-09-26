@@ -3,7 +3,8 @@ import { canonical, digest, object, requireThat } from '@atlas/manual-service/co
 import { descriptorSha256, parseDerivative } from '@atlas/photo-core';
 import { processedPhoto } from '@atlas/manual-intake';
 import { geometryProcessingSettings } from './geometry-processing.mjs';
-import { geometryBase, preparationBase, validatePhotoGeometryQuad } from '@atlas/manual-workspace/geometry-actions';
+import { applyGeometryEdit, geometryBase, preparationBase } from '@atlas/manual-workspace/geometry-actions';
+import { machineGeometryCandidate, MACHINE_GEOMETRY_POLICY } from './machine-geometry.mjs';
 import { preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry, describePreparationDerivative,
   adoptPhysicalGeometryProposal, adoptGeometryPreparation, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1,
   preparationOutputNames } from '@atlas/preparation-runtime';
@@ -13,10 +14,7 @@ const POLICY = 'atlas-early-photo-geometry-v1';
 const TERMINAL = ['READY', 'NEEDS_REVIEW', 'FAILED'];
 const safeCode = error => /^(?:GEOMETRY|PREPARATION|PHOTO|MANUAL_PROCESSING)_[A-Z_]{1,80}$/.test(error?.code ?? '') ? error.code : 'GEOMETRY_PROCESSING_FAILED';
 const equal = (a, b) => canonical(a) === canonical(b);
-const usable = proposal => {
-  if (proposal?.outcome !== 'ACCEPTED') return null;
-  try { return validatePhotoGeometryQuad(proposal.proposal); } catch { return null; }
-};
+const usable = proposal => machineGeometryCandidate(proposal)?.quad ?? null;
 
 export function geometryCacheInput(upload, photo, settings, engine) {
   requireThat(upload?.source && photo.original.binding.side === upload.side && photo.original.binding.version === upload.version,
@@ -31,7 +29,10 @@ export function geometryCacheInput(upload, photo, settings, engine) {
 export function geometryJobStatus(job, uploadId = null, key = null) {
   return { state: job?.state ?? (uploadId ? 'QUEUED' : 'WAITING_PHOTO'), uploadId, key,
     canRetry: ['FAILED','NEEDS_REVIEW'].includes(job?.state), error: job?.error ?? null,
-    physical: job?.result?.physical ?? null, printed: job?.result?.printed ?? null, prepared: job?.result?.prepared === true };
+    physical: job?.result?.physical ?? null, printed: job?.result?.printed ?? null, prepared: job?.result?.prepared === true,
+    machineUsable: job?.result?.machineUsable === true,
+    requiresHumanConfirmation: true, ambiguous: job?.result?.ambiguous === true,
+    unresolved: job?.result?.unresolved ?? [] };
 }
 
 /** Rebind verified immutable pixel work to the actual current workspace only
@@ -54,9 +55,17 @@ export function adoptEarlyGeometry(geometry, side, packet, input) {
   if (packet.physical) state = adoptPhysicalGeometryProposal(state, { ...packet.physical, side, base: geometryBase(state, side, 'PHYSICAL') }).state;
   if (!state.sides[side].physical || !packet.preparation) return { geometry: state, prepared: null };
   const prepared = packet.preparation;
-  const adopted = adoptGeometryPreparation(state, { ...prepared, side, base: preparationBase(state, side),
+  let adopted = adoptGeometryPreparation(state, { ...prepared, side, base: preparationBase(state, side),
     settingsRevision: state.sides[side].settingsRevision, ...input.settings,
     frame: { ...prepared.frame, version: state.sides[side].preparationRevision + 1 } });
+  const candidate = machineGeometryCandidate(prepared.proposal);
+  if (!adopted.state.sides[side].printed && candidate?.provisional) {
+    requireThat(input.engine.machineGeometryPolicy === MACHINE_GEOMETRY_POLICY, 503, 'GEOMETRY_STORED_CONTENT_INVALID');
+    // Preserve the native ABSTAIN packet and its diagnostics. This is an ENGINE
+    // proposal with explicit ambiguity, never a human confirmation.
+    adopted = applyGeometryEdit(adopted.state, { side, kind: 'PRINTED', base: geometryBase(adopted.state, side, 'PRINTED'),
+      quad: candidate.quad, actor: 'ENGINE', proposal: { id: prepared.id, ambiguous: true } });
+  }
   return { geometry: adopted.state, prepared: packet.preparedImages };
 }
 
@@ -68,7 +77,7 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
   const controllers = new Set(), tasks = new Set();
   const engine = () => {
     if (!enginePromise) {
-      enginePromise = limited(async () => ({ policy: POLICY, outputContract: PREPARATION_CORE_V1,
+      enginePromise = limited(async () => ({ policy: POLICY, outputContract: PREPARATION_CORE_V1, machineGeometryPolicy: MACHINE_GEOMETRY_POLICY,
         runtime: await runtimeIdentity(pythonExecutable), limits }));
       enginePromise.catch(() => { enginePromise = null; });
     }
@@ -135,8 +144,12 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
     }
     const ref = await artifacts.write(packet, { cardId: input.cardId, kind: 'EARLY_GEOMETRY', sourceHash: job.key }, { signal });
     requireThat(!signal.aborted, 503, 'GEOMETRY_INTERRUPTED');
-    const result = { ref, sourceHash: job.key, physical: quad, printed, prepared: Boolean(packet.preparation) };
-    return { state: quad && printed ? 'READY' : 'NEEDS_REVIEW', result, error: preparationError };
+    const result = { ref, sourceHash: job.key, physical: quad, printed, prepared: Boolean(packet.preparation),
+      machineUsable: Boolean(quad && packet.preparation && !preparationError),
+      ambiguous: Boolean(machineGeometryCandidate(proposed.proposal)?.ambiguous || machineGeometryCandidate(packet.preparation?.proposal)?.ambiguous),
+      unresolved: [!quad && 'PHYSICAL_GEOMETRY_UNRESOLVED', !packet.preparation && 'PREPARED_FRAME_UNAVAILABLE',
+        !printed && 'PRINTED_GEOMETRY_UNRESOLVED'].filter(Boolean) };
+    return { state: result.machineUsable ? 'READY' : 'NEEDS_REVIEW', result, error: preparationError };
   }
   async function one(actualEngine) {
     let job = null;

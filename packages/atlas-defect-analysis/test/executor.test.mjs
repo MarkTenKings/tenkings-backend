@@ -94,6 +94,32 @@ test('a PREPARED crash resumes exact saved bytes without resolving newer images 
   assert.equal(resumed.state, 'READY'); assert.equal(sent, prepared.requestText); assert.equal(context.activity.prepares, 1);
 });
 
+test('cancelling asynchronous PREPARED restoration leaves the saved request claimable exactly once', async () => {
+  const prepared = preparedFixture(), admission = new AbortController(), reason = Error('admission stopped');
+  const context = setup(async (_url, options) => {
+    assert.equal(options.body, prepared.requestText);
+    return new Response(JSON.stringify(responseFixture(prepared.evidence)), { headers: { 'content-type': 'application/json' } });
+  });
+  context.activity.failClaim = true; await assert.rejects(call(context, prepared), /preclaim interruption/);
+  context.activity.failClaim = false;
+  let claims = 0;
+  const read = context.artifacts.read, claim = context.repository.claim;
+  context.repository.claim = (...args) => { claims++; return claim(...args); };
+  context.artifacts.read = async (...args) => {
+    const value = await read(...args);
+    if (args[1].kind === 'DEFECT_REQUEST_PART') setImmediate(() => admission.abort(reason));
+    return value;
+  };
+  await assert.rejects(context.executor.resume(context.staff, { cardId: prepared.evidence.cardId,
+    analysisId: prepared.evidence.analysisId, dispatchSignal: admission.signal }), error => error === reason);
+  assert.equal(claims, 0); assert.equal(context.activity.calls, 0);
+  assert.equal(context.rows.get(prepared.evidence.analysisId).state, 'PREPARED');
+  context.artifacts.read = read;
+  await context.executor.resume(context.staff, { cardId: prepared.evidence.cardId, analysisId: prepared.evidence.analysisId });
+  await context.executor.resume(context.staff, { cardId: prepared.evidence.cardId, analysisId: prepared.evidence.analysisId });
+  assert.equal(claims, 1); assert.equal(context.activity.calls, 1); assert.equal(context.activity.prepares, 1);
+});
+
 test('shutdown after a committed analysis claim fences provider dispatch and retains the claim without replay', async () => {
   const prepared = preparedFixture(), context = setup(async () => { throw Error('must not dispatch'); }), admission = new AbortController();
   let entered, release;

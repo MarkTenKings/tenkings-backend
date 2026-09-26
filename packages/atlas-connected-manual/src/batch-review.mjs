@@ -58,15 +58,35 @@ export function createBatchReview({ connected, repository, artifacts }) {
     return { card, complete };
   }
   return Object.freeze({
+    async resolveCorrections({ staff, card, batchKey, reportHash }) {
+      const { job, report, review } = await load(staff, batchKey);
+      requireThat(!review && card.cardId === job.cardId && reportHash === job.evidence.reportHash
+        && card.revision === report.manualRevision && card.contentHash === report.manualContentHash, 409, 'BATCH_REVIEW_STALE');
+      const { astra: analysis } = await connected.assistance.status(staff, job.cardId, job.analysisActionId);
+      requireThat(analysis?.status === 'READY' && analysis.analysisId === report.analysisId
+        && digest(canonical(analysis.proposals.map(proposal => ({ ...proposal, reviewStatus: 'UNREVIEWED' })))) === report.analysisResultHash,
+      409, 'BATCH_REVIEW_ANALYSIS_CHANGED');
+      return { batchKey, reportHash, report, proposals: analysis.proposals };
+    },
     async detail(staff, key) {
       const { job, report, review, canCertify } = await load(staff, key);
+      const latest = await service.read(staff, job.cardId);
+      if (latest.draft.finalReview) {
+        const state = await connected.workflow.hydrate(latest);
+        requireThat(state.finalReview.batchKey === key && state.finalReview.reportHash === job.evidence.reportHash,
+          409, 'BATCH_REVIEW_BINDING_CHANGED');
+        const current = connected.workflow.currentPreview(latest, state);
+        return { key, cardId: job.cardId, correctionAvailable: true, canCertify: false,
+          ...current, images: await connected.imageDescriptors({ card: latest, state, staff }) };
+      }
       const { card, complete } = await progress(staff, job, report), state = await connected.workflow.hydrate(card);
       const images = await connected.imageDescriptors({ card, state, staff });
       // Pure explanation of the same deterministic numbers. This local
       // presentation input creates neither a human report nor an attestation.
-      const explanation = explainAtlasManualReport({ ...report, version: 'atlas-manual-draft-report-v2', finalGrade: report.proposedGrade });
+      const geometryUnresolved = report.calculationState === 'GEOMETRY_UNRESOLVED' || !Number.isFinite(report.proposedGrade);
+      const explanation = geometryUnresolved ? null : explainAtlasManualReport({ ...report, version: 'atlas-manual-draft-report-v2', finalGrade: report.proposedGrade });
       await repository.readReview(staff, key);
-      const reviewRequiredReason = report.unmeasurableProposals?.length ? 'BATCH_PROPOSAL_REVIEW_REQUIRED' : null;
+      const reviewRequiredReason = geometryUnresolved ? 'BATCH_FINAL_GEOMETRY_REQUIRED' : report.unmeasurableProposals?.length ? 'BATCH_PROPOSAL_REVIEW_REQUIRED' : null;
       return { key, cardId: job.cardId, reportHash: job.evidence.reportHash, report, explanation, images,
         canCertify: canCertify && !reviewRequiredReason, reviewRequiredReason,
         resumeAvailable: Boolean(review), approved: complete === STEPS.length };
@@ -76,6 +96,7 @@ export function createBatchReview({ connected, repository, artifacts }) {
       requireThat(input.reviewed === true, 400, 'BATCH_REVIEW_REQUIRED');
       const { job, report, canCertify, review } = await load(staff, key);
       requireThat(canCertify, 403, 'MANUAL_CERTIFICATION_REQUIRED');
+      requireThat(report.calculationState !== 'GEOMETRY_UNRESOLVED' && Number.isFinite(report.proposedGrade), 409, 'BATCH_FINAL_GEOMETRY_REQUIRED');
       requireThat(!report.unmeasurableProposals?.length, 409, 'BATCH_PROPOSAL_REVIEW_REQUIRED');
       requireThat(input.reportHash === job.evidence.reportHash && SIDES.every(side =>
         input.images[side] === report.geometry[side].frame.inspectionImageSha256), 409, 'BATCH_REVIEW_BINDING_CHANGED');

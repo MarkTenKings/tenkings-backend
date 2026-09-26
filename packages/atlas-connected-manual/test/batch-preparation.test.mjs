@@ -10,7 +10,7 @@ const SIDES = ['FRONT', 'BACK'];
 const quad = [{ x: .04, y: .03 }, { x: .96, y: .03 }, { x: .96, y: .97 }, { x: .04, y: .97 }];
 function fixture() {
   const card = { cardId: 'synthetic-card', revision: 1, contentHash: 'a'.repeat(64), draft: { source: { sourceHash: 'b'.repeat(64) } } };
-  const state = { defects: workspace(false), geometry: { profile: 'SPORTS', sides: Object.fromEntries(SIDES.map(side => [side, { printed: { quad }, prepared: { id: side } }])) },
+  const state = { defects: workspace(false), geometry: { profile: 'SPORTS', sides: Object.fromEntries(SIDES.map(side => [side, { physical: { quad }, printed: { quad }, prepared: { id: side } }])) },
     identity: { playerName: 'Synthetic player', year: '2026', manufacturer: 'Fixture', productSet: 'Evidence test' } };
   const analysis = { status: 'READY', analysisId: 'synthetic-analysis', limitations: ['Synthetic verification only'], proposals: SIDES.map((side, index) => ({
     id: `proposal-${index}`, side, defectType: 'LIGHT_SCRATCH_SCUFF', reviewStatus: 'UNREVIEWED',
@@ -46,6 +46,32 @@ test('a clean machine proposal still remains uncertified and uninspected', async
   const f = fixture(); f.analysis.proposals = []; const report = await buildMachineReport(f);
   assert.equal(report.proposedGrade, 10); assert.equal(report.certification, null); assert.deepEqual(report.measurementReceipts, []);
   assert.equal(f.inputs.length, 0); assert.equal(report.findings.length, 0);
+});
+test('ambiguous geometry produces a tentative machine report with final-review warning and original authority', async () => {
+  const f = fixture();
+  f.state.geometry.sides.FRONT.physical = { quad, actor: 'ENGINE', proposal: { id: 'physical', ambiguous: false } };
+  f.state.geometry.sides.FRONT.printed = { quad, actor: 'ENGINE', proposal: { id: 'competing-real-candidate', ambiguous: true } };
+  f.state.geometry.sides.BACK.physical = { quad, actor: 'ENGINE', proposal: { id: 'back', ambiguous: false } };
+  const before = structuredClone(f.state), report = await buildMachineReport(f);
+  assert.equal(report.certification, null); assert.equal(report.proposedGrade, 10);
+  assert.equal(report.geometryReview.requiresHumanConfirmation, true);
+  assert.deepEqual(report.geometryReview.sides.FRONT, { machineUsable: true, ambiguous: true, confirmed: false, unresolved: [] });
+  assert.match(report.limitations.at(-1), /competing plausible outlines on FRONT/);
+  assert.deepEqual(f.state, before);
+});
+test('missing printed geometry still measures real proposals but cannot fabricate centering or an overall grade', async () => {
+  const f = fixture(); f.state.geometry.sides.BACK.printed = null;
+  const before = structuredClone(f.state), report = await buildMachineReport(f);
+  assert.equal(report.grade, null); assert.equal(report.proposedGrade, null);
+  assert.equal(report.calculationState, 'GEOMETRY_UNRESOLVED');
+  assert.deepEqual(report.unresolvedGeometry, [{ side: 'BACK', code: 'PRINTED_GEOMETRY_UNRESOLVED' }]);
+  assert.equal(report.geometry.BACK.centeringQuad, null);
+  assert.deepEqual(report.geometry.FRONT.centeringQuad, quad);
+  assert.equal(report.findings.length, 2); assert.equal(report.measurementReceipts.length, 2);
+  assert.ok(report.findings.every(finding => finding.origin === 'DETECTOR' && finding.reviewResult === 'UNREVIEWED'));
+  assert.equal(report.geometryReview.sides.BACK.machineUsable, true);
+  assert.match(report.limitations.at(-1), /overall grade remain unavailable/);
+  assert.equal(report.certification, null); assert.deepEqual(f.state, before);
 });
 test('a proposal outside a rounded corner is retained for human review while real in-card defects are measured', async () => {
   const f = fixture();
@@ -120,6 +146,50 @@ test('preparation persists machine identification capacity backoff without requi
   };
   const result = await createBatchPreparation({ connected }).run({}, { cardId: 'synthetic-card', sourceHash, uploads, stage: 'PREPARE' });
   assert.deepEqual(result, { kind: 'WAIT', retryAfterMs: 30000 }); assert.equal(machineCalls, 1);
+});
+
+for (const cacheState of ['READY', 'NEEDS_REVIEW']) test(`PREPARE admits ${cacheState} physical/prepared evidence with missing printed borders`, async () => {
+  const f = fixture(), uploads = { FRONT: 'front', BACK: 'back' }, calls = [];
+  f.state.geometry.sides.BACK.printed = null;
+  const job = { cardId: f.card.cardId, sourceHash: f.card.draft.source.sourceHash, uploads, stage: 'PREPARE' };
+  const opened = { card: { ready: true, sourceHash: job.sourceHash,
+    sides: Object.fromEntries(SIDES.map(side => [side, { upload: { uploadId: uploads[side] } }])) },
+    revision: 4, manual: null, identification: { state: 'COMPLETE' }, details: {
+      fields: { name: 'Synthetic player', category: 'Sports cards', manufacturer: 'Fixture', card_number: '1', year: '2026', set_name: 'Evidence test', variant: '', card_type: '' },
+      profile: 'SPORTS', layoutType: null, cornerShape: 'SQUARE', matColor: 'BLACK', parallel: '', insert: '', touched: [], sourceHash: job.sourceHash,
+    } };
+  const connected = { open: async () => opened,
+    earlyGeometry: { async ensure() { calls.push('geometry'); return { earlyGeometry: {
+      FRONT: { state: 'READY', machineUsable: true },
+      BACK: { state: cacheState, machineUsable: true, unresolved: ['PRINTED_GEOMETRY_UNRESOLVED'] },
+    } }; } },
+    async initialize(_staff, cardId, input) { calls.push('initialize'); assert.equal(cardId, job.cardId);
+      assert.deepEqual(input, { sourceHash: job.sourceHash, detailsRevision: 4 }); },
+    workflow: { service: { read: async () => f.card }, hydrate: async () => f.state },
+  };
+  const before = structuredClone(f.state), result = await createBatchPreparation({ connected }).run({}, job);
+  assert.deepEqual(result, { kind: 'CONTINUE', evidence: { manualRevision: f.card.revision, manualContentHash: f.card.contentHash } });
+  assert.deepEqual(calls, ['geometry', 'initialize']); assert.deepEqual(f.state, before);
+});
+
+test('REPORT persists measured partial report and enters final review when printed geometry is missing', async () => {
+  const f = fixture(), uploads = { FRONT: 'front', BACK: 'back' }, writes = [];
+  f.state.geometry.sides.BACK.printed = null;
+  const job = { cardId: f.card.cardId, sourceHash: f.card.draft.source.sourceHash, uploads, stage: 'REPORT',
+    analysisActionId: 'same-analysis-action', evidence: { manualRevision: f.card.revision, manualContentHash: f.card.contentHash } };
+  const connected = { open: async () => ({ card: { ready: true, sourceHash: job.sourceHash,
+    sides: Object.fromEntries(SIDES.map(side => [side, { upload: { uploadId: uploads[side] } }])) } }),
+    workflow: { service: { read: async () => f.card }, hydrate: async () => f.state },
+    assistance: { async status() { return { astra: f.analysis }; } },
+  };
+  const result = await createBatchPreparation({ connected, measure: f.measure,
+    artifacts: { async write(report, binding) { writes.push({ report, binding }); return { key: 'partial-report' }; } } }).run({}, job);
+  assert.equal(result.kind, 'REVIEW'); assert.equal(result.evidence.proposedGrade, null);
+  assert.equal(result.evidence.calculationState, 'GEOMETRY_UNRESOLVED'); assert.equal(result.evidence.findingCount, 2);
+  assert.deepEqual(result.evidence.unresolvedGeometry, [{ side: 'BACK', code: 'PRINTED_GEOMETRY_UNRESOLVED' }]);
+  assert.equal(writes.length, 1); assert.equal(writes[0].report.grade, null);
+  assert.equal(writes[0].report.measurementReceipts.length, 2); assert.equal(writes[0].report.certification, null);
+  assert.equal(writes[0].binding.kind, 'BATCH_REPORT');
 });
 
 for (const status of ['READY', 'RUNNING', 'UNKNOWN', 'PREPARED', 'NOT_FOUND']) test(`machine analysis reconciles exact saved ${status} state before dispatch`, async () => {

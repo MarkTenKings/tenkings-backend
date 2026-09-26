@@ -1,0 +1,311 @@
+{
+  "status": "LIVE_FUNCTIONAL_PILOT_VERIFIED_CAPACITY_UNQUALIFIED",
+  "releaseId": "4a95242a-46a9-4079-b22f-7eb740b3d744",
+  "sourceCommit": "86bb1ed4890b0ff7a881caf95932c1486bb35ef3",
+  "imageId": "sha256:6384b81c155a2f50ef0814251b8d0a82a3e504ecba93706de97be3deb421bcd7",
+  "capacityQualified": false,
+  "functionalPilotPassed": true,
+  "productionVerificationComplete": true,
+  "qualification": {
+    "status": "CANDIDATE_OFFLINE_REGRESSION_PASS",
+    "summary": {
+      "tests": 701,
+      "pass": 701,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "pythonSummary": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "sourceFiles": 943,
+    "nativeArtifactsPreserved": 16,
+    "sourceVerifiedBeforeAndAfter": true,
+    "evidence": {
+      "privateEvidenceRelativePath": "dedicated-host/cpu-86bb1-qualified-v1/qualification-result.json",
+      "sha256": "0559e0642ff9e5c265ec15c3febde691c3879fd96cd7c2e103ac503e437b3942"
+    }
+  },
+  "realProviderFunctional": {
+    "status": "PASS",
+    "cards": 3,
+    "originalsVerified": 6,
+    "reportsVerified": 3,
+    "uniqueAdmissions": 3,
+    "uniqueAccepted": 3,
+    "uniqueReady": 3,
+    "actualProviderMode": true,
+    "gradingPosts": 3,
+    "identificationPosts": 3,
+    "ocrPosts": 6,
+    "activeBrowserSessions": 0,
+    "browserRevokedBeforeUploads": true,
+    "errors": 0,
+    "duplicatePosts": 0,
+    "acceptedUnsettled": 0,
+    "unknownWithoutAcceptance": 0,
+    "humanApprovals": 0,
+    "originalFilesUnchanged": true,
+    "sourceVerifiedBeforeAndAfter": true,
+    "fullObjectHashReadback": true,
+    "waves": [
+      {
+        "cards": 1,
+        "status": "PASS"
+      },
+      {
+        "cards": 2,
+        "status": "PASS"
+      }
+    ],
+    "observedWaveSeconds": {
+      "oneCard": 247.002,
+      "twoCards": 288.051
+    }
+  },
+  "sameSourceSyntheticRestart": {
+    "status": "PASS",
+    "separateProcesses": 3,
+    "originals": 2,
+    "cards": 1,
+    "analysisAdmissions": 1,
+    "actualProviderCalls": 0,
+    "humanApprovals": 0,
+    "phases": [
+      {
+        "phase": "upload",
+        "exitCode": 0,
+        "oomKilled": false,
+        "abruptKill": false
+      },
+      {
+        "phase": "admit",
+        "exitCode": 137,
+        "oomKilled": false,
+        "abruptKill": true
+      },
+      {
+        "phase": "recover",
+        "exitCode": 0,
+        "oomKilled": false,
+        "abruptKill": false
+      }
+    ]
+  },
+  "schema": {
+    "staffMigrations": 57,
+    "publicMigrations": 112,
+    "predecessorLedgerPreserved": true,
+    "publicLedgerPreserved": true,
+    "historyPreserved": true,
+    "tombstonesPreserved": true,
+    "controlsPreserved": true,
+    "grantsScoped": true,
+    "seededIngestionCount": 0
+  },
+  "controls": {
+    "receiptStatus": "SCALABLE_PIPELINE_SIX_CONTROL_PRESERVATION_PASS",
+    "historyPreserved": true,
+    "bindings": {
+      "staff": {
+        "mode": "PRODUCTION",
+        "origin": "https://atlasgrading.com",
+        "deploymentId": "atlas-grading-staff-ndcyi0qfz-ten-kings.vercel.app",
+        "releaseSha": "86bb1ed4890b0ff7a881caf95932c1486bb35ef3",
+        "configHash": "344c503c31bc8926d758acd5d83c09efec227a33e5c553e739812061a029bf0b"
+      },
+      "customer": {
+        "mode": "PRODUCTION",
+        "origin": "https://atlasgrading.com",
+        "deploymentId": "atlas-grading-customer-6zzpq7oga-ten-kings.vercel.app",
+        "releaseSha": "86bb1ed4890b0ff7a881caf95932c1486bb35ef3",
+        "configHash": "a16194cda97d081b2b878bb59343f68ba30e6e56085dfdaa064c32f7e6ea1563"
+      },
+      "public": {
+        "mode": "PRODUCTION",
+        "origin": "https://atlasgrading.com",
+        "deploymentId": "atlas-grading-public-b4xnw54fe-ten-kings.vercel.app",
+        "releaseSha": "86bb1ed4890b0ff7a881caf95932c1486bb35ef3",
+        "configHash": "cc3c81e9c8541fb3a2c9c0c8c01e54298a22f04522714561743051d4d331c1c8"
+      }
+    },
+    "revisions": {
+      "staff": 34,
+      "staffSms": 32,
+      "publicReader": 12,
+      "customer": 14,
+      "customerSms": 12
+    },
+    "customerService": {
+      "enabled": true,
+      "identificationEnabled": true
+    }
+  },
+  "databasePoolBudget": {
+    "staff": 1,
+    "manual": 4,
+    "customer": 2,
+    "fullTarget": 7,
+    "minimumAdditionalSpareConnections": 4,
+    "manualRoleLimit": 4,
+    "roleLimitCorrectionStatus": "EXACT_MANUAL_ROLE_LIMIT_2_TO_4_PASS",
+    "otherRoleAttributesMembershipsGrantsAndDatabaseMaximumPreserved": true
+  },
+  "capacityTargetsNotYetQualified": {
+    "originalPhotosPerMinute": 25,
+    "twoPhotoCardsPerMinuteEquivalent": 12.5,
+    "simultaneousAstraAnalyses": 20,
+    "nearOneCardWallTime": true
+  },
+  "limitations": [
+    "The three real-provider jobs repeated one retained front/back pair; varied-card quality and physical-iPhone acceptance remain unobserved.",
+    "Machine reports remain proposals requiring human review; no human approvals were performed.",
+    "Earlier sustained capacity tests failed or were incomplete. Configured concurrency and the functional pass do not establish throughput or 20-card latency.",
+    "Discovery/claim database failures retry by polling; a claimed-stage P2037 can produce NEEDS_ATTENTION because it is absent from that stage retry allowlist. The role/pool mismatch is fixed, but sustained shared-database pressure remains unqualified.",
+    "Same-source process restart recovery passed; full-host reboot recovery has not been tested."
+  ],
+  "evidence": {
+    "qualification": {
+      "privateEvidenceRelativePath": "dedicated-host/cpu-86bb1-qualified-v1/qualification-result.json",
+      "sha256": "0559e0642ff9e5c265ec15c3febde691c3879fd96cd7c2e103ac503e437b3942"
+    },
+    "realProviderFunctional": {
+      "privateEvidenceRelativePath": "functional-pilot-86bb1ed-real-v2-result/summary.json",
+      "sha256": "4d80982896af46668cf5729a71a8e1795f063ab173314515bd4b07f54eccb234"
+    },
+    "functionalReleaseGate": {
+      "privateEvidenceRelativePath": "runtime-move-86bb1ed4/functional-reviewed-v1/functionalPilot.proof.json",
+      "sha256": "0e11fc6d0a8bc4e8b444472d40d3e509747f0f1f9fc0307beb409c6573cd8046"
+    },
+    "syntheticRestart": {
+      "privateEvidenceRelativePath": "dedicated-host/cpu-functional-86bb1-v1/synthetic-restart-v2/summary.json",
+      "sha256": "0eaad71fe6145aa8808493f83d61271d5278b4eb0ade9fa11c1f8a0347150a0a"
+    },
+    "schemaPreservation": {
+      "privateEvidenceRelativePath": "runtime-schema-86bb1ed4/schema-executed-v1/preservation.json",
+      "sha256": "34f94be8cb0e3dddc284235051fc64b137c25f7ffc438fcf2c92fb336182334b"
+    },
+    "controlRebind": {
+      "privateEvidenceRelativePath": "runtime-schema-86bb1ed4/controls-executed-v1/controls.result.json",
+      "sha256": "f9549c36b51943e7df2c7d1d01383f9e12a1608df3fb5cd7b5c4ec9109a89b1a"
+    },
+    "controlsReadback": {
+      "privateEvidenceRelativePath": "runtime-schema-86bb1ed4/controls-executed-v1/controls.after.json",
+      "sha256": "0fe2e195ca7b2e45ca926b62d84210f6b7d727a1c933c9c8936822c8b78466ec"
+    },
+    "activation": {
+      "privateEvidenceRelativePath": "runtime-move-86bb1ed4/activation-executed-v2/result.json",
+      "sha256": "24868cf7ddb1139fc00512d83f9fe6cdb0f5b3a7df9a0f22c255888db22add58"
+    },
+    "preRouteReadback": {
+      "privateEvidenceRelativePath": "runtime-move-86bb1ed4/live-serving-v1/resume0222-readonly.json",
+      "sha256": "0725564208ed82288ef030da70bfb8f92e643cead0a78a53b0805f58f04435a2"
+    },
+    "manualRoleLimitCorrection": {
+      "privateEvidenceRelativePath": "runtime-move-86bb1ed4/manual-role-limit-v2/executed/result.json",
+      "sha256": "6e626521f208d3404f957c1ef7fc14eb07b20174872f04d1e304359edf4068cc"
+    },
+    "finalRouteReadback": {
+      "privateEvidenceRelativePath": "runtime-move-86bb1ed4/route-two-phase-v1/executed-v1/result.json",
+      "sha256": "adda3fecdbd3ca31f40a78017ecec746c0d4588e0577d5dae5f614c865e3a7fe"
+    },
+    "signedPrivateTls": {
+      "privateEvidenceRelativePath": "probes-86bb1/signed-private-86bb1-1/result.json",
+      "sha256": "c0694f9368bdbe565b28209a76bc3eb9063b236bd568b6bd77b32420498ae9f2"
+    },
+    "webPromotion": {
+      "privateEvidenceRelativePath": "web-release/promote-86bb1-executed-v1/result.json",
+      "sha256": "4fad683963fae51a5b76239304237768830c75b127aaaa0c8fe634e9ab11ac05"
+    },
+    "postRouteRuntimeHealth": {
+      "privateEvidenceRelativePath": "runtime-move-86bb1ed4/live-serving-v1/post-role-runtime-health.json",
+      "sha256": "2c80396c66439344543e349d5f62151258c66dd6fcbbd1289502e35403bb6c2c"
+    },
+    "canonicalProbes": {
+      "privateEvidenceRelativePath": "probes-86bb1/canonical-live-v1/result.json",
+      "sha256": "b7e70a7d49967dc4a6fbd8b625d33163c13f0cb08d6c870536a4d49f96cf74ea"
+    },
+    "startupWorkerHandling": {
+      "privateEvidenceRelativePath": "runtime-move-86bb1ed4/manual-role-limit-v1/startup-findings.json",
+      "sha256": "4ba3b84ed1685d463df49a44bb9322f7fa0a631b7370849278c70480ce4c19e3"
+    }
+  },
+  "pendingReceipts": [],
+  "runtime": {
+    "containerId": "3d70d656d89762b621297d6170b64bf619b44ae7b00eedf5dd9ab03d00c82c7c",
+    "startedAt": "2026-09-26T01:32:30.905094089Z",
+    "restartCount": 0,
+    "pid": 105419,
+    "readyObserved": true,
+    "priorRuntimeStopped": true,
+    "sameSourceFallbackStopped": true,
+    "readyObservedAt": "2026-09-26T02:22:34.711622+00:00",
+    "caddySha256": "8507445e857b04a5997724064a97af4e0270912df4248af6f7f1c1ebd83217ea",
+    "mountedAndLoadedVerified": true,
+    "routeLockReleased": true,
+    "privateRoutesActive": true,
+    "envSha256": "35e19233777c0d80ccaf4c64fd62e562afe43856ef7adba1829636f7b279bf3e",
+    "workerHealthObservedAt": "2026-09-26T02:24:49.651168+00:00",
+    "oomKilled": false,
+    "logEventsSinceRoleCorrection": 0,
+    "loggedErrorsSinceRoleCorrection": 0,
+    "logWindowStart": "2026-09-26T01:54:04.843395Z",
+    "healthLimitation": "Zero logged events/errors in the retained observation window; this idle census is not a live grading workload test."
+  },
+  "verificationNote": "Signed private reads, exact-cohort promotion, canonical anonymous checks and worker health passed. Authenticated physical-iPhone acceptance remains separate. Schema/control preservation uses the completed retained receipts.",
+  "verifiedAt": "2026-09-26T02:25:18.746Z",
+  "deployments": {
+    "staff": {
+      "id": "dpl_A82eqBmnLHtkZLQusQJMj1uQzah4",
+      "hostname": "atlas-grading-staff-ndcyi0qfz-ten-kings.vercel.app"
+    },
+    "customer": {
+      "id": "dpl_9Xwk1cog2v4YTVTYf7LCtSHanGjj",
+      "hostname": "atlas-grading-customer-6zzpq7oga-ten-kings.vercel.app"
+    },
+    "public": {
+      "id": "dpl_8Df1zH3DmD8q7D9Sj1y9duAkRydr",
+      "hostname": "atlas-grading-public-b4xnw54fe-ten-kings.vercel.app"
+    }
+  },
+  "promotion": {
+    "status": "PUBLIC_PROMOTION_READBACK_PASS",
+    "at": "2026-09-26T02:24:32.898Z",
+    "providerWrites": 1,
+    "publicAliasCount": 4,
+    "allPublicAliasesSelectExactDeployment": true
+  },
+  "signedPrivateChecks": {
+    "status": "SIGNED_PRIVATE_TLS_READS_PASS",
+    "at": "2026-09-26T02:23:45.907Z",
+    "checks": 3,
+    "cardWrites": 0,
+    "realSessionsUsed": 0,
+    "paidRequests": 0,
+    "runtimeUnchanged": true
+  },
+  "canonicalChecks": {
+    "status": "CANONICAL_ANONYMOUS_FUNCTIONAL_PILOT_PASS",
+    "at": "2026-09-26T02:25:18.746Z",
+    "requests": 61,
+    "metadataReads": 11,
+    "canonicalMatchesExactReadyStaffAssets": true,
+    "sessionRequests": 0,
+    "javascriptExecuted": false,
+    "authenticatedActions": 0,
+    "cardWrites": 0,
+    "providerWrites": 0,
+    "paidRequests": 0,
+    "physicalDeviceAcceptance": false
+  },
+  "featurePolicy": {
+    "customerIntake": true,
+    "customerIdentification": true,
+    "commerce": false,
+    "dealerOperations": false,
+    "physicalStation": false
+  }
+}

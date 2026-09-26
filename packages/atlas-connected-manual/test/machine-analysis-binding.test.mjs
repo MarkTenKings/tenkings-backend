@@ -27,10 +27,21 @@ test('untrusted authority text cannot enter the private machine path', async () 
     assert.throws(() => defectAnalysisBinding(f.card, f.state, authority), error => error.code === 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
   }
 });
-test('ambiguous geometry and pending edits refuse even machine analysis', async () => {
+test('complete ambiguous geometry remains machine-usable without granting human confirmation', async () => {
   const ambiguous = await fixture(); ambiguous.state.geometry.sides.FRONT.printed.actor = 'ENGINE';
   ambiguous.state.geometry.sides.FRONT.printed.proposal = { id: 'ambiguous-machine-border', ambiguous: true };
-  assert.throws(() => machineDefectAnalysisBinding(ambiguous.card, ambiguous.state), error => error.code === 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
+  const before = structuredClone(ambiguous.state);
+  const binding = machineDefectAnalysisBinding(ambiguous.card, ambiguous.state);
+  assert.equal(binding.manualContentHash, ambiguous.card.contentHash);
+  assert.deepEqual(ambiguous.state, before);
+  assert.throws(() => defectAnalysisBinding(ambiguous.card, ambiguous.state), error => error.code === 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
+});
+test('missing printed geometry permits defect analysis while human confirmation remains unavailable', async () => {
+  const missing = await fixture(); missing.state.geometry.sides.BACK.printed = null;
+  assert.equal(machineDefectAnalysisBinding(missing.card, missing.state).manualRevision, 3);
+  assert.throws(() => defectAnalysisBinding(missing.card, missing.state), error => error.code === 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
+});
+test('pending defect edits still refuse machine analysis', async () => {
   const pending = await fixture(); pending.state.defects = structuredClone(pending.state.defects); pending.state.defects.sides.BACK.pending = { synthetic: true };
   assert.throws(() => machineDefectAnalysisBinding(pending.card, pending.state), error => error.code === 'MANUAL_DEFECT_PENDING');
 });

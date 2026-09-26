@@ -3,6 +3,7 @@ import { parsePersistedSpeedsterReviewFindings } from '@atlas/grading-core/revie
 import { completeSpeedsterReview, remeasureSpeedsterReviewAction } from '@atlas/grading-core/review';
 import { checkedSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
 import { previewAtlasManualReport } from '@atlas/grading-core/manual-report';
+import { validatePreparedPhotoFrame } from './geometry-actions.mjs';
 
 /** In-memory exact evidence and pure actions. The authenticated host owns actor,
  * durable revisions, immutable artifact storage and verified CPU results. Never
@@ -60,6 +61,15 @@ function findings(value, side) {
     requireThat(finding.finalTrace || finding.detectorMask, 'ATLAS_DEFECT_EXACT_MASK_REQUIRED');
     if (finding.reviewResult === 'REMOVED') requireThat(finding.reviewResultBeforeRemoval,
       'ATLAS_DEFECT_REMOVAL_HISTORY_REQUIRED');
+    if (finding.geometryExclusion) {
+      const retained = finding.geometryExclusion;
+      object(retained, ['version', 'reason', 'sourceImage', 'sourceQuad', 'sourceFrame', 'sourceTraceSha256']);
+      requireThat(retained.version === 'atlas-geometry-exclusion-v1'
+        && ['TRACE_OUTSIDE_CORRECTED_CARD', 'TRACE_COMPONENT_LOST'].includes(retained.reason)
+        && finding.reviewResult === 'REMOVED' && finding.finalTrace?.sha256 === retained.sourceTraceSha256
+        && finding.measurementRegions?.length === 0, 'ATLAS_DEFECT_GEOMETRY_EXCLUSION_INVALID');
+      validatePreparedPhotoFrame(retained.sourceFrame, retained.sourceImage, retained.sourceQuad);
+    }
   }
   return parsed;
 }
@@ -81,8 +91,10 @@ function parseAction(value, slot, side) {
     requireThat(target, 'ATLAS_DEFECT_NOT_FOUND'); return target;
   });
   for (const target of targets) {
-    if (wire.type === 'UNDO') requireThat(target.reviewResult === 'REMOVED' && target.reviewResultBeforeRemoval,
-      'ATLAS_DEFECT_NOT_REMOVED');
+    if (wire.type === 'UNDO') {
+      requireThat(target.reviewResult === 'REMOVED' && target.reviewResultBeforeRemoval, 'ATLAS_DEFECT_NOT_REMOVED');
+      requireThat(!target.geometryExclusion, 'ATLAS_DEFECT_RETRACE_REQUIRED');
+    }
     else requireThat(target.reviewResult !== 'REMOVED', 'ATLAS_DEFECT_REMOVED');
   }
   if (wire.type === 'TRACE_SAVE') {
@@ -121,6 +133,12 @@ function validate(state) {
     allIds.push(...findings(slot.findings, side).map(f => f.id));
     requireThat(Array.isArray(slot.humanEditedIds) && new Set(slot.humanEditedIds).size === slot.humanEditedIds.length);
     slot.humanEditedIds.forEach(text);
+    for (const finding of slot.findings) if (finding.geometryExclusion) {
+      const retained = finding.geometryExclusion;
+      requireThat(slot.humanEditedIds.includes(finding.id)
+        && retained.sourceImage.version === slot.frame.imageVersion && retained.sourceImage.originalSha256 === slot.frame.originalSha256
+        && retained.sourceFrame.version < slot.frame.preparationVersion, 'ATLAS_DEFECT_GEOMETRY_EXCLUSION_INVALID');
+    }
     object(slot.source, ['method'], ['version', 'id', 'map']);
     requireThat(['HUMAN', 'DETECTOR'].includes(slot.source.method));
     if (slot.source.method === 'DETECTOR') { text(slot.source.version); text(slot.source.id); }
@@ -131,12 +149,22 @@ function validate(state) {
       matches({ ...measured, findingRevision: current.findingRevision, reviewRevision: current.reviewRevision }, current);
     }
     if (slot.pending !== null) {
-      object(slot.pending, ['actor', 'action'], ['previousCornerShape']); requireThat(['HUMAN', 'ENGINE'].includes(slot.pending.actor));
+      object(slot.pending, ['actor', 'action'], ['previousCornerShape', 'geometryReprojection']); requireThat(['HUMAN', 'ENGINE'].includes(slot.pending.actor));
       if (slot.pending.action.type === 'REMEASURE') {
-        object(slot.pending.action, ['type']); material(slot.pending.previousCornerShape);
-        requireThat(slot.pending.actor === 'HUMAN' && slot.pending.previousCornerShape !== slot.cornerShape);
+        object(slot.pending.action, ['type']); requireThat(slot.pending.actor === 'HUMAN');
+        if (Object.hasOwn(slot.pending, 'geometryReprojection')) {
+          object(slot.pending.geometryReprojection, ['version', 'previousFrame']);
+          requireThat(slot.pending.geometryReprojection.version === 'atlas-geometry-reprojection-v1');
+          const previous = slot.pending.geometryReprojection.previousFrame; frame(previous);
+          requireThat(previous.imageVersion === slot.frame.imageVersion && previous.originalSha256 === slot.frame.originalSha256
+            && previous.preparationVersion < slot.frame.preparationVersion && !Object.hasOwn(slot.pending, 'previousCornerShape'));
+          requireThat(slot.findings.every(f => f.finalTrace && f.measurementRegions.length === 0));
+        } else {
+          material(slot.pending.previousCornerShape);
+          requireThat(slot.pending.previousCornerShape !== slot.cornerShape);
+        }
       }
-      else parseAction(slot.pending.action, slot, side);
+      else { requireThat(!Object.hasOwn(slot.pending, 'geometryReprojection')); parseAction(slot.pending.action, slot, side); }
       requireThat(slot.inspection === null && slot.measurement === null);
     }
     if (slot.inspection !== null) {
@@ -209,6 +237,9 @@ export function discardPendingDefectEdit(state, request) {
   validate(state); object(request, ['side', 'base', 'actor']); requireThat(request.actor === 'HUMAN', 'ATLAS_DEFECT_HUMAN_REQUIRED');
   matches(request.base, baseFor(state, request.side)); const slot = state.sides[request.side];
   requireThat(slot.pending, 'ATLAS_DEFECT_NO_PENDING_EDIT');
+  // Reprojection replaces the coordinate frame as well as the trace. Dropping
+  // just its CPU pass would make an unmeasured trace appear settled.
+  requireThat(!slot.pending.geometryReprojection, 'ATLAS_DEFECT_GEOMETRY_REVIEW_REQUIRED');
   return changed(state, request.side, { ...slot, findingRevision: next(slot.findingRevision), pending: null,
     cornerShape: slot.pending.previousCornerShape ?? slot.cornerShape, measurement: null, inspection: null });
 }

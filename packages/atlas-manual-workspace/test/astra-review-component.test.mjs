@@ -444,3 +444,26 @@ test('Pan image and held Space move the view without adding pixels to an active 
   f.draw(); assert.equal(f.button('Save trace', 'Front').props.disabled, false);
   assert.equal(f.calls.length, 0);
 });
+
+test('retained old-frame removed observation cannot inspect or restore stale coordinates and explains how to retrace',async()=>{
+  const state=structuredClone(workspace()),slot=state.sides.FRONT,finding=slot.findings[0];
+  finding.reviewResult='REMOVED';finding.reviewResultBeforeRemoval='UNREVIEWED';finding.finalTrace=finding.detectorMask;finding.measurementRegions=[];delete finding.zone;delete finding.measurement;delete finding.canonicalContour;
+  finding.traceProvenance={version:'speedster-trace-provenance-v1',sourceViewId:finding.sourceViewId,
+    cropTransform:{version:'speedster-canonical-crop-affine-v1',crop:{x:0,y:0,width:1269,height:1777}},highlighterStrokes:[],finalTraceSha256:finding.finalTrace.sha256};
+  const sourceImage={version:1,originalSha256:slot.frame.originalSha256,frameId:'working-FRONT',frameSha256:'a'.repeat(64),width:1600,height:2400,coordinateSpace:'ORIENTED_DECODED'};
+  const sourceQuad=[{x:.125,y:.1},{x:.875,y:.1},{x:.875,y:.9},{x:.125,y:.9}],sx=1269/1200,sy=1777/1920;
+  const sourceFrame={id:slot.frame.frameId,version:1,rectified:{sha256:slot.frame.rectifiedImageSha256,width:1270,height:1778},
+    inspection:{sha256:slot.frame.inspectionImageSha256,width:1350,height:1858,cardBounds:{x:40,y:40,width:1270,height:1778}},sourceToRectified:[sx,0,-200*sx,0,sy,-240*sy,0,0,1]};
+  finding.geometryExclusion={version:'atlas-geometry-exclusion-v1',reason:'TRACE_OUTSIDE_CORRECTED_CARD',sourceImage,sourceQuad,sourceFrame,sourceTraceSha256:finding.finalTrace.sha256};
+  slot.humanEditedIds=[finding.id];slot.frame.preparationVersion=2;slot.frame.frameId='corrected-FRONT';const f=harness({workspace:state});f.ready();
+  assert.equal(f.has('Removed · retained in previous image frame'),true);
+  assert.equal(f.control('Inspect Front finding 1').props.disabled,true);f.control('Inspect Front finding 1').props.onClick();f.render();
+  const choose=f.nodes(node=>node.type==='button'&&node.props.className==='ad-finding-name','Front')[0];choose.props.onClick();f.render();
+  assert.equal(f.has('Add a new trace to restore this finding on the current photograph'),true);
+  assert.equal(f.button('Restore finding','Front').props.disabled,true);await f.button('Restore finding','Front').props.onClick();
+  assert.equal(f.calls.length,0);
+});
+test('saved examples distinguish retained old-frame observations without offering a publication retry',()=>{
+  const memory=presentation.reviewedMemoryState({enabled:true,status:'SAVED',exampleCount:2,retainedObservationCount:1});
+  assert.equal(memory.mayRecover,false);assert.match(memory.message,/Reviewed examples saved/);assert.match(memory.message,/1 original-frame observation remains retained and was not added as current-frame lessons/);
+});

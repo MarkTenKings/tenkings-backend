@@ -1,4 +1,6 @@
 import { validateRetrieval } from '../../atlas-defect-memory/src/contract.mjs';
+import { webcrypto } from 'node:crypto';
+import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { check, object, string, integer, sha, uuid, digest, canonical, clone, frozen, SIDES, DEFECT_TYPES, parseBinding } from './contract.mjs';
 export { DefectAnalysisError, assertCurrentBinding, parseBinding, DEFECT_TYPES } from './contract.mjs';
 
@@ -17,6 +19,65 @@ const WIDTH = 1350, HEIGHT = 1858;
 const CARD = frozen({ x: 40, y: 40, width: 1270, height: 1778 });
 const preparedRequests = new WeakSet();
 
+// One validation/reconstruction algorithm serves both APIs. Synchronous callers
+// retain their exact bytes and errors; async callers yield real event-loop turns
+// between bounded image operations and hash large private payloads off-thread.
+function runSteps(steps) {
+  let result = steps.next();
+  while (!result.done) result = steps.next(result.value === null ? undefined : digest(result.value));
+  return result.value;
+}
+async function runStepsAsync(steps, signal) {
+  signal?.throwIfAborted();
+  let result = steps.next();
+  while (!result.done) {
+    const value = result.value;
+    let hash;
+    if (value !== null) {
+      const size = typeof value === 'string' ? Buffer.byteLength(value) : value.byteLength;
+      hash = size < 262144 ? digest(value) : Buffer.from(await webcrypto.subtle.digest('SHA-256',
+        typeof value === 'string' ? Buffer.from(value) : value)).toString('hex');
+    }
+    signal?.throwIfAborted();
+    await yieldTurn();
+    signal?.throwIfAborted();
+    result = steps.next(hash);
+  }
+  signal?.throwIfAborted();
+  return result.value;
+}
+
+// Capture all caller-owned data before the first await, including images not yet
+// reached by the builder. Bound copies by the existing per-image/total limits.
+function snapshotRequestInput(input) {
+  object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages']);
+  const metadata = clone({ analysisId: input.analysisId, cardId: input.cardId, profile: input.profile,
+    cornerShapes: input.cornerShapes, binding: input.binding, knowledge: input.knowledge });
+  check(Array.isArray(input.images) && input.images.length === 2 && Array.isArray(input.lessonImages)
+    && input.lessonImages.length <= LIMITS.lessons);
+  let byteCount = 0;
+  const raster = (value, extra = []) => {
+    object(value, ['mime', 'sha256', 'width', 'height', 'bytes', ...extra]);
+    check(value.bytes instanceof Uint8Array && value.bytes.byteLength > 32 && value.bytes.byteLength <= LIMITS.imageBytes,
+      'DEFECT_ANALYSIS_IMAGE_LIMIT', 413);
+    byteCount += value.bytes.byteLength;
+    check(byteCount <= LIMITS.totalImageBytes, 'DEFECT_ANALYSIS_IMAGE_LIMIT', 413);
+    const { bytes, ...fields } = value;
+    return { ...clone(fields), bytes: Buffer.from(bytes) };
+  };
+  const images = input.images.map(slot => {
+    object(slot, ['side', 'whole', 'crops']); check(Array.isArray(slot.crops) && slot.crops.length === 4);
+    return { side: slot.side, whole: raster(slot.whole, ['sourceSha256']),
+      crops: slot.crops.map(crop => raster(crop, ['id', 'x', 'y'])) };
+  });
+  const lessonImages = input.lessonImages.map(value => {
+    object(value, ['lessonId', 'mime', 'sha256', 'width', 'height', 'bytes', 'traceOverlay']);
+    const { traceOverlay, ...part } = value;
+    return { ...raster(part, ['lessonId']), traceOverlay: raster(traceOverlay, ['traceSha256']) };
+  });
+  return { ...metadata, images, lessonImages };
+}
+
 /** Four overlapping, untranslated-resolution crops cover the physical card.
  * Host supplies verified PNG bytes from exactly these rectangles. The untouched
  * native originals and the existing inspection preparation remain unchanged.
@@ -32,7 +93,7 @@ export function planDefectCrops(side, cropLayoutVersion) {
   return clone([[40, 40], [611, 40], [40, 865], [611, 865]].map(([x, y], i) =>
     ({ id: `${side}:crop:${i + 1}`, x, y, width: 699, height: 953 })));
 }
-function image(value, expected) {
+function* image(value, expected) {
   object(value, ['mime', 'sha256', 'width', 'height', 'bytes']);
   check(value.mime === 'image/png'); sha(value.sha256);
   integer(value.width, 1, WIDTH); integer(value.height, 1, HEIGHT);
@@ -44,7 +105,7 @@ function image(value, expected) {
   check(bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
     && bytes.readUInt32BE(8) === 13 && bytes.toString('ascii', 12, 16) === 'IHDR'
     && bytes.readUInt32BE(16) === value.width && bytes.readUInt32BE(20) === value.height
-    && digest(bytes) === value.sha256, 'DEFECT_ANALYSIS_IMAGE_MISMATCH');
+    && (yield bytes) === value.sha256, 'DEFECT_ANALYSIS_IMAGE_MISMATCH');
   if (expected) check(Object.entries(expected).every(([k, v]) => value[k] === v), 'DEFECT_ANALYSIS_IMAGE_MISMATCH');
   return { bytes, descriptor: { mime: value.mime, sha256: value.sha256, width: value.width, height: value.height, byteCount: bytes.length } };
 }
@@ -75,17 +136,29 @@ Never output area, millimeters, confidence probabilities, grade, score, measurem
  * calling this builder. PUBLICATION_PENDING refuses dispatch; missing memory is
  * not silently replaced by an empty bank. Source/image effects happen outside DB. */
 export function buildAstraDefectRequest(input) {
-  return buildRequest(input, VERSION);
+  return runSteps(buildRequest(input, VERSION));
 }
 export function buildAstraBackgroundDefectRequest(input) {
-  return buildRequest(input, BACKGROUND_VERSION);
+  return runSteps(buildRequest(input, BACKGROUND_VERSION));
 }
 /** Only a new human-requested analysis selects this layout. Legacy builders and
  * retained-request restoration never upgrade image evidence implicitly. */
 export function buildAstraContextBackgroundDefectRequest(input) {
-  return buildRequest(input, BACKGROUND_VERSION, INSPECTION_CONTEXT_CROP_LAYOUT);
+  return runSteps(buildRequest(input, BACKGROUND_VERSION, INSPECTION_CONTEXT_CROP_LAYOUT));
 }
-function buildRequest(input, version, cropLayoutVersion) {
+export async function buildAstraDefectRequestAsync(input, { signal } = {}) {
+  signal?.throwIfAborted();
+  return runStepsAsync(buildRequest(snapshotRequestInput(input), VERSION), signal);
+}
+export async function buildAstraBackgroundDefectRequestAsync(input, { signal } = {}) {
+  signal?.throwIfAborted();
+  return runStepsAsync(buildRequest(snapshotRequestInput(input), BACKGROUND_VERSION), signal);
+}
+export async function buildAstraContextBackgroundDefectRequestAsync(input, { signal } = {}) {
+  signal?.throwIfAborted();
+  return runStepsAsync(buildRequest(snapshotRequestInput(input), BACKGROUND_VERSION, INSPECTION_CONTEXT_CROP_LAYOUT), signal);
+}
+function* buildRequest(input, version, cropLayoutVersion) {
   object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages']);
   uuid(input.analysisId); uuid(input.cardId); check(['SPORTS', 'POKEMON'].includes(input.profile));
   object(input.cornerShapes, SIDES); check(SIDES.every(side => ['SQUARE', 'ROUNDED_3_18_MM'].includes(input.cornerShapes[side])));
@@ -101,13 +174,13 @@ function buildRequest(input, version, cropLayoutVersion) {
     object(slot.whole, ['mime', 'sha256', 'sourceSha256', 'width', 'height', 'bytes']);
     const { sourceSha256, ...wholeRaster } = slot.whole;
     check(sourceSha256 === binding.sides[side].frame.inspectionImageSha256, 'DEFECT_ANALYSIS_IMAGE_MISMATCH');
-    const whole = image(wholeRaster, { width: WIDTH, height: HEIGHT });
+    const whole = yield* image(wholeRaster, { width: WIDTH, height: HEIGHT });
     const specs = planDefectCrops(side, cropLayoutVersion); check(Array.isArray(slot.crops) && slot.crops.length === specs.length);
     const current = [{ id: `${side}:whole`, crop: { x: 0, y: 0, width: WIDTH, height: HEIGHT }, ...whole }];
     for (const spec of specs) {
       const crop = slot.crops.find(x => x?.id === spec.id); object(crop, ['id', 'x', 'y', 'width', 'height', 'mime', 'sha256', 'bytes']);
       check(Object.entries(spec).every(([k, v]) => crop[k] === v), 'DEFECT_ANALYSIS_CROP_MISMATCH');
-      const part = image({ mime: crop.mime, sha256: crop.sha256, width: crop.width, height: crop.height, bytes: crop.bytes });
+      const part = yield* image({ mime: crop.mime, sha256: crop.sha256, width: crop.width, height: crop.height, bytes: crop.bytes });
       const { id, ...rect } = spec; current.push({ id, crop: rect, ...part });
     }
     for (const item of current) {
@@ -116,6 +189,7 @@ function buildRequest(input, version, cropLayoutVersion) {
       images.push(descriptor); byteCount += item.bytes.length;
       check(byteCount <= LIMITS.totalImageBytes, 'DEFECT_ANALYSIS_IMAGE_LIMIT', 413);
       content.push(inputText({ kind: 'CURRENT_CARD', ...descriptor }), inputImage(item));
+      yield null;
     }
   }
   const lessonImages = [];
@@ -124,16 +198,18 @@ function buildRequest(input, version, cropLayoutVersion) {
       && lesson.source.nativeSourceHash !== binding.sourceHash, 'DEFECT_ANALYSIS_TARGET_LESSON_FORBIDDEN');
     const value = input.lessonImages.find(x => x?.lessonId === lesson.id); object(value, ['lessonId', 'mime', 'sha256', 'width', 'height', 'bytes', 'traceOverlay']);
     check(!seen.has(value.lessonId)); seen.add(value.lessonId);
-    const { lessonId, traceOverlay, ...part } = value, loaded = image(part, {
+    const { lessonId, traceOverlay, ...part } = value, loaded = yield* image(part, {
       mime: lesson.exemplar.crop.mime, sha256: lesson.exemplar.crop.sha256, width: lesson.exemplar.crop.width, height: lesson.exemplar.crop.height });
     object(traceOverlay, ['mime', 'sha256', 'width', 'height', 'bytes', 'traceSha256']);
     check(traceOverlay.traceSha256 === lesson.exemplar.trace.sha256, 'DEFECT_ANALYSIS_LESSON_TRACE_MISMATCH');
     const { traceSha256, ...overlayRaster } = traceOverlay;
-    const overlay = image(overlayRaster, { width: loaded.descriptor.width, height: loaded.descriptor.height });
+    const overlay = yield* image(overlayRaster, { width: loaded.descriptor.width, height: loaded.descriptor.height });
     byteCount += loaded.bytes.length + overlay.bytes.length; check(byteCount <= LIMITS.totalImageBytes, 'DEFECT_ANALYSIS_IMAGE_LIMIT', 413);
     lessonImages.push({ lessonId, ...loaded.descriptor, traceOverlay: { ...overlay.descriptor, traceSha256 } });
     content.push(inputText({ kind: 'HUMAN_REVIEWED_EXAMPLE', ...lesson }), inputImage(loaded));
+    yield null;
     content.push(inputText({ kind: 'HUMAN_REVIEWED_TRACE_OVERLAY', lessonId, traceSha256, ...overlay.descriptor }), inputImage(overlay));
+    yield null;
   }
   const sourceBindingSha256 = digest(canonical({ cardId: input.cardId, profile: input.profile, cornerShapes: input.cornerShapes, binding }));
   const evidence = { version, ...(cropLayoutVersion === undefined ? {} : { cropLayoutVersion }),
@@ -148,8 +224,10 @@ function buildRequest(input, version, cropLayoutVersion) {
       analysisId: input.analysisId, profile: input.profile, cornerShapes: input.cornerShapes, sourceBindingSha256, knowledgeRevision: knowledge.revision,
       knowledgeStatus: knowledge.status, taxonomy: DEFECT_TYPES }), ...content] }],
     text: { format: { type: 'json_schema', name: 'atlas_defect_proposals', strict: true, schema: RESULT_SCHEMA } } };
+  yield null;
   const requestText = JSON.stringify(request); check(Buffer.byteLength(requestText) <= LIMITS.requestBytes, 'DEFECT_ANALYSIS_REQUEST_LIMIT', 413);
-  const prepared = frozen({ request, requestText, requestHash: digest(requestText), evidence: clone(evidence), evidenceHash: digest(canonical(evidence)) });
+  const requestHash = yield requestText;
+  const prepared = frozen({ request, requestText, requestHash, evidence: clone(evidence), evidenceHash: digest(canonical(evidence)) });
   preparedRequests.add(prepared); return prepared;
 }
 
@@ -207,11 +285,19 @@ export function validateRequestEvidence(value) {
 }
 /** Rebuild only an exact immutable stored request. No new knowledge, image read,
  * fallback prompt or new analysis identity is selected when resuming PREPARED. */
-export function restorePreparedRequest({ requestText, requestHash, evidence, evidenceHash }) {
+export function restorePreparedRequest(input) {
+  return runSteps(restoreRequest(input));
+}
+export async function restorePreparedRequestAsync({ requestText, requestHash, evidence, evidenceHash }, { signal } = {}) {
+  signal?.throwIfAborted();
+  return runStepsAsync(restoreRequest({ requestText, requestHash, evidence: clone(evidence), evidenceHash }), signal);
+}
+function* restoreRequest({ requestText, requestHash, evidence, evidenceHash }) {
   check(typeof requestText === 'string' && Buffer.byteLength(requestText) <= LIMITS.requestBytes
-    && digest(requestText) === requestHash && digest(canonical(evidence)) === evidenceHash, 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
+    && (yield requestText) === requestHash && digest(canonical(evidence)) === evidenceHash, 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
   validateRequestEvidence(evidence);
   let request; try { request = JSON.parse(requestText); } catch { check(false, 'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID'); }
+  yield null;
   const content = request?.input?.[1]?.content;
   check(Array.isArray(content) && content.length >= 21 && content.length <= 69 && (content.length - 1) % 2 === 0,
     'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
@@ -235,11 +321,12 @@ export function restorePreparedRequest({ requestText, requestHash, evidence, evi
       lessonImages.push({ lessonId: lesson.id, mime: lesson.exemplar.crop.mime, sha256: lesson.exemplar.crop.sha256,
         width: lesson.exemplar.crop.width, height: lesson.exemplar.crop.height, bytes, traceOverlay: null });
     }
+    yield null;
   }
   const knowledge = { version: 'atlas-defect-memory-retrieval-v1', revision: evidence.knowledge.revision,
     generation: evidence.knowledge.generation, status: evidence.knowledge.status, pendingPublications: 0,
     lessonIds: evidence.knowledge.lessonIds, lessons, sha256: evidence.knowledge.sha256 };
-  const restored = buildRequest({ analysisId: evidence.analysisId, cardId: evidence.cardId, profile: evidence.profile,
+  const restored = yield* buildRequest({ analysisId: evidence.analysisId, cardId: evidence.cardId, profile: evidence.profile,
     cornerShapes: evidence.cornerShapes, binding: evidence.binding, images, knowledge, lessonImages }, evidence.version, evidence.cropLayoutVersion);
   check(restored.requestText === requestText && restored.requestHash === requestHash && restored.evidenceHash === evidenceHash,
     'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');

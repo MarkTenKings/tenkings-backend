@@ -33,7 +33,7 @@ export function batchUploadPresentation(item,jobs=[],intakeCards=[]){
   if(!item.done)return {label:item.code?uploadMessage(item):card?sides.map(value=>value.label).join(' · '):item.started?'Uploading originals…':'Saved for upload',attention:Boolean(item.code),...(retry&&!item.code?{code:retry.code}:{})};
   const job=jobs.find(value=>value.cardId===item.cardId&&value.state!=='SUPERSEDED')??jobs.find(value=>value.cardId===item.cardId);
   if(!job)return {label:card&&(!card.ready||retry)?sides.map(value=>value.label).join(' · '):'Uploaded to ATLAS · Checking grading status',attention:false,...(retry?{code:retry.code}:{})};
-  if(job.state==='NEEDS_ATTENTION')return {label:({BATCH_GEOMETRY_NEEDS_REVIEW:'Check edges before grading',BATCH_IDENTITY_NEEDS_REVIEW:'Check card details before grading',BATCH_HUMAN_WORK_PRESENT:'Continue your review'})[job.code]??'Needs attention · Open card',attention:true};
+  if(job.state==='NEEDS_ATTENTION')return {label:({BATCH_GEOMETRY_NEEDS_REVIEW:'Card outline needs attention',BATCH_IDENTITY_NEEDS_REVIEW:'Check card details before grading',BATCH_HUMAN_WORK_PRESENT:'Continue your review'})[job.code]??'Needs attention · Open card',attention:true};
   return {label:job.state==='RUNNING'?({PREPARE:'ATLAS preparing',ANALYZE:'ATLAS grading',REPORT:'ATLAS preparing report'})[job.stage]??'ATLAS processing':({QUEUED:'Queued up for ATLAS',REVIEW:'Ready for human review',APPROVED:'Approved',SUPERSEDED:'Photos changed · Review card'})[job.state]??'Uploaded to ATLAS',attention:false};
 }
 export default function BatchImport({staff,onImported,enabled,jobs=[],intakeCards=[],onOpenCard,onDiscarded,onDeleteControls}){

@@ -299,3 +299,23 @@ test('aborting a background GET preserves accepted work for a later worker', asy
   assert.equal((await c.executor.pending()).items.length, 1);
   assert.equal(c.activity.calls.filter(x => x.method === 'POST').length, 1);
 });
+
+test('aborting exact terminal-request reconstruction retains acceptance and resumes with GET only', async () => {
+  const prepared = prepare(), controller = new AbortController();
+  const c = context(async (_url, options) => options.method === 'POST' ? json(ack()) : json(responseFixture(prepared.evidence)));
+  await run(c, prepared);
+  const read = c.artifacts.read;
+  c.artifacts.read = async (...args) => {
+    const value = await read(...args);
+    if (args[1].kind === 'DEFECT_REQUEST_PART') setImmediate(() => controller.abort());
+    return value;
+  };
+  assert.equal((await c.executor.reconcile({ analysisId: prepared.evidence.analysisId, signal: controller.signal })).state, 'PENDING');
+  assert.equal(c.accepted.size, 1); assert.equal(c.rows.get(prepared.evidence.analysisId).receipts.length, 0);
+  assert.equal((await c.executor.pending()).items.length, 1);
+  c.artifacts.read = read;
+  assert.equal((await c.executor.reconcile({ analysisId: prepared.evidence.analysisId })).state, 'SETTLED');
+  assert.equal(c.activity.calls.filter(x => x.method === 'POST').length, 1);
+  assert.equal(c.activity.calls.filter(x => x.method === 'GET').length, 2);
+  assert.equal(c.rows.get(prepared.evidence.analysisId).receipts[0].evidence.state, 'READY');
+});

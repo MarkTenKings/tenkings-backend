@@ -191,7 +191,7 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
     setEditor(previous => ({ ...previous, trace: clipped, undo: [...previous.undo.slice(-19), previous.trace] }));
   };
   const inspectTarget = (target, kind, index) => {
-    if (viewingDisabled || (kind === 'suggestion' && !proposalsCurrent)) return;
+    if (viewingDisabled || target.geometryExclusion || (kind === 'suggestion' && !proposalsCurrent)) return;
     const bounds = inspectionBounds(target); if (!bounds) return;
     // Focusing is display-only, even when another finding has an unsaved trace.
     if (kind === 'suggestion') setSelectedProposal(target.id);
@@ -333,19 +333,20 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
       <ul className="ad-findings" aria-label={`${name(side)} findings`}>
         {slot.findings.map((entry, index) => <li key={entry.id} className={`${selected === entry.id ? 'ad-selected' : ''} ${entry.reviewResult === 'REMOVED' ? 'ad-removed' : ''}`}>
           <button className="ad-finding-name" disabled={Boolean(editor)} aria-pressed={selected === entry.id} onClick={() => setSelected(entry.id)}>{index + 1}. {TYPES[entry.defectType]}</button>
-          <span>{entry.reviewResult === 'REMOVED' ? 'Removed' : `${areaOf(entry).toFixed(3)} mm² · ${regionsOf(entry).map(r => r.zone.toLowerCase()).join(', ')}`}</span>
-          <button className="ad-inspect-target" disabled={viewingDisabled} aria-label={`Inspect ${name(side)} finding ${index + 1}`} onClick={() => inspectTarget(entry, 'finding', index)}>Inspect finding</button>
+          <span>{entry.geometryExclusion ? 'Removed · retained in previous image frame' : entry.reviewResult === 'REMOVED' ? 'Removed' : `${areaOf(entry).toFixed(3)} mm² · ${regionsOf(entry).map(r => r.zone.toLowerCase()).join(', ')}`}</span>
+          <button className="ad-inspect-target" disabled={viewingDisabled || Boolean(entry.geometryExclusion)} aria-label={`Inspect ${name(side)} finding ${index + 1}`} onClick={() => inspectTarget(entry, 'finding', index)}>Inspect finding</button>
         </li>)}
       </ul>
       {!editor && <>
       {!slot.findings.length && <p className="ad-muted">No findings yet. Inspect the image and add any damage you can see.</p>}
       {finding && <div className="ad-finding-tools">
+        {finding.geometryExclusion && <p>This removed observation is retained in its previous image frame. Add a new trace to restore this finding on the current photograph.</p>}
         <label>Defect type <select aria-label={`${name(side)} finding type`} disabled={disabled || finding.reviewResult === 'REMOVED' || !onEdit} value={finding.defectType}
           onChange={event => edit({ type: 'CHANGE_TYPE', defectId: finding.id, defectType: event.target.value })}>
           {Object.entries(TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select></label>
         <div className="am-side-actions"><button disabled={disabled || finding.reviewResult === 'REMOVED' || !onEdit} onClick={() => start(finding)}>Edit trace</button>
-          <button disabled={disabled || !onEdit} onClick={() => edit({ type: finding.reviewResult === 'REMOVED' ? 'UNDO' : 'REMOVE', defectIds: [finding.id] })}>{finding.reviewResult === 'REMOVED' ? 'Restore finding' : 'Remove finding'}</button></div>
+          <button disabled={disabled || !onEdit || Boolean(finding.geometryExclusion)} onClick={() => { if (!finding.geometryExclusion) return edit({ type: finding.reviewResult === 'REMOVED' ? 'UNDO' : 'REMOVE', defectIds: [finding.id] }); }}>{finding.reviewResult === 'REMOVED' ? 'Restore finding' : 'Remove finding'}</button></div>
       </div>}
       <div className="ad-inspect"><label><input type="checkbox" aria-label={`I inspected ${name(side)}`} checked={inspected} disabled={disabled || inspected || !onInspect}
         onChange={() => perform(() => onInspect({ side, base, actor: 'HUMAN', inspected: true }))} />I inspected {name(side)} and corrected its findings.</label></div>

@@ -8,6 +8,7 @@ import styles from './BatchGrading.module.css';
 import BatchImport from './BatchImport';
 import { MachineReportReview } from '@atlas/manual-workspace/report-review';
 import ManualFinishing, { openManualLabelPrintWindow } from './ManualFinishing';
+import { createManualClient } from '@atlas/manual-workflow/client';
 
 const path = '/api/staff/manual-connected/cards/batch';
 const status = { QUEUED: 'Queued up for ATLAS', RUNNING: 'ATLAS processing', REVIEW: 'Review', NEEDS_ATTENTION: 'Check card', SUPERSEDED: 'Photos changed', APPROVED: 'Approved' };
@@ -22,6 +23,7 @@ const messages = {
   BATCH_RESUME_STALE: 'This card changed. Its current progress has been refreshed.',
   BATCH_ALREADY_APPROVED: 'This report is already approved.',
   BATCH_CONTINUE_MANUAL_REVIEW: 'Continue your saved corrections in the card workspace.',
+  BATCH_FINAL_GEOMETRY_REQUIRED: 'Defect analysis and measurements are saved. Review the physical outlines and printed borders in final review; centering and the overall grade remain unavailable until supported geometry is saved.',
   BATCH_PROPOSAL_REVIEW_REQUIRED: 'The report is ready. Some observations could not be measured; check them in the card workspace before approval.',
 };
 export default function BatchGrading({ staff }) {
@@ -90,6 +92,21 @@ export default function BatchGrading({ staff }) {
   const shown = jobs.filter(job => tab === 'PROCESSING' ? ['QUEUED', 'RUNNING'].includes(job.state) : job.state === tab);
   const focused = shown.find(job => job.key === active) ?? shown[0] ?? null;
   const open = useCallback(job => { if (job) void router.push(`/manual/${job.cardId}?from=batch`); }, [router]);
+  async function correct(job) {
+    if (!job || mutation.current || !session.current || packet?.key !== job.key) return;
+    const owner = lifetime.current;
+    mutation.current = true; setBusy(true); setReviewError('');
+    try {
+      const client = createManualClient({ cardId: job.cardId, staffId: staff.id, csrf: session.current.csrf,
+        storage: localStorage, basePath: STAFF_BASE_PATH, timeoutMs: 210000 });
+      const current = await client.recover();
+      if (lifetime.current !== owner) return;
+      if (!current.finalReview) await client.execute({ type: 'BEGIN_FINAL_REVIEW', batchKey: job.key,
+        reportHash: packet.reportHash });
+      if (lifetime.current === owner) await router.push(`/manual/${job.cardId}?from=batch`);
+    } catch (failure) { if (lifetime.current === owner) setReviewError(messages[failure.code] ?? manualMessage(failure)); }
+    finally { if (lifetime.current === owner) { mutation.current = false; setBusy(false); } }
+  }
   useEffect(() => {
     let stopped = false; setPacket(null); setImagesReady(false); setReviewError('');
     if (focused?.state === 'REVIEW') void request(`${path}/${focused.key}`).then(value => {
@@ -200,15 +217,17 @@ export default function BatchGrading({ staff }) {
         <aside className={styles.rail} aria-label="Cards">{shown.map(job => <button disabled={busy} className={styles.cardRow} aria-current={focused?.key === job.key ? 'true' : undefined} key={job.key} onClick={() => setActive(job.key)}><img src={`${STAFF_BASE_PATH}/api/staff/manual-connected/cards/${job.cardId}/preview-image/FRONT`} alt="" loading="lazy"/><span><strong>{job.evidence?.name || job.label || 'Card'}</strong><small>{job.state === 'RUNNING' ? stages[job.stage] : status[job.state]}</small></span><b>{job.evidence?.proposedGrade ?? '·'}</b></button>)}</aside>
         {focused?.state === 'REVIEW' ? <section className={styles.machineReview} aria-label="Review proposed grade">
           {reviewError && <p className={styles.error} role="alert">{reviewError}</p>}
-          {packet?.key === focused.key ? <MachineReportReview key={packet.reportHash} packet={packet} onReadyChange={setImagesReady} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}>
-            <div className={styles.reviewActions}><button disabled={busy} onClick={() => open(focused)}>Make corrections</button>
-              <button className={styles.primary} onClick={approve} disabled={busy || !imagesReady || !packet.canCertify}>{busy ? 'Saving your review…' : packet.resumeAvailable ? 'Finish approval & print' : 'Approve & print next'}</button></div>
-            {packet.reviewRequiredReason === 'BATCH_PROPOSAL_REVIEW_REQUIRED'
-              ? <p role="status">{messages.BATCH_PROPOSAL_REVIEW_REQUIRED}{' '}<button disabled={busy} onClick={() => open(focused)}>Review observations</button></p>
-              : !packet.canCertify && <p>A trained reviewer is required to approve this card.</p>}
-          </MachineReportReview> : <div className={styles.empty}><p>{reviewError ? 'Open the current card to continue.' : 'Loading the exact grading evidence…'}</p><button onClick={() => open(focused)}>Open card workspace</button></div>}
+          {packet?.key === focused.key && packet.state !== 'PENDING' ? <MachineReportReview key={packet.reportHash} packet={packet} onReadyChange={setImagesReady} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}>
+            <div className={styles.reviewActions}><button disabled={busy} onClick={() => void correct(focused)}>{packet.correctionAvailable ? 'Continue final review' : 'Review geometry / make corrections'}</button>
+              {!packet.correctionAvailable && <button className={styles.primary} onClick={approve} disabled={busy || !imagesReady || !packet.canCertify}>{busy ? 'Saving your review…' : packet.resumeAvailable ? 'Finish approval & print' : 'Approve & print next'}</button>}</div>
+            {packet.report?.calculationState === 'GEOMETRY_UNRESOLVED' || packet.reviewRequiredReason === 'BATCH_FINAL_GEOMETRY_REQUIRED'
+              ? <p role="status">{messages.BATCH_FINAL_GEOMETRY_REQUIRED}</p>
+              : packet.reviewRequiredReason === 'BATCH_PROPOSAL_REVIEW_REQUIRED'
+              ? <p role="status">{messages.BATCH_PROPOSAL_REVIEW_REQUIRED}{' '}<button disabled={busy} onClick={() => void correct(focused)}>Review observations</button></p>
+              : packet.correctionAvailable ? <p>Current corrections are saved. Continue final review to approve the exact updated report.</p> : !packet.canCertify && <p>A trained reviewer is required to approve this card.</p>}
+          </MachineReportReview> : <div className={styles.empty}><p>{reviewError ? 'Open the current card to continue.' : packet?.state === 'PENDING' ? 'Preparation or measurement is incomplete. Open the card workspace to retry preparation, restore the previous outline or finish pending findings.' : 'Loading the exact grading evidence…'}</p><button onClick={() => open(focused)}>Open card workspace</button></div>}
         </section> : focused ? <section className={styles.focus} aria-label="Selected card">
-          <div className={styles.focusHeader}><div><p>{focused.state === 'REVIEW' ? 'MACHINE DRAFT · HUMAN REVIEW' : status[focused.state]}</p><h2>{focused.evidence?.name || focused.label || 'Card review'}</h2></div>{focused.evidence?.proposedGrade !== undefined && <div className={styles.grade}><strong>{focused.evidence.proposedGrade}</strong><span>PROPOSED</span></div>}</div>
+          <div className={styles.focusHeader}><div><p>{focused.state === 'REVIEW' ? 'MACHINE DRAFT · HUMAN REVIEW' : status[focused.state]}</p><h2>{focused.evidence?.name || focused.label || 'Card review'}</h2></div>{Number.isFinite(focused.evidence?.proposedGrade) && <div className={styles.grade}><strong>{focused.evidence.proposedGrade}</strong><span>PROPOSED</span></div>}</div>
           <div className={styles.photos}>{['FRONT', 'BACK'].map(side => <figure key={side}><img src={`${STAFF_BASE_PATH}/api/staff/manual-connected/cards/${focused.cardId}/preview-image/${side}`} alt={`${side === 'FRONT' ? 'Front' : 'Back'} of selected card`}/><figcaption>{side}</figcaption></figure>)}</div>
           <footer className={styles.actions}><span>{focused.state === 'REVIEW' ? `${focused.evidence.findingCount ?? 0} proposed findings` : messages[focused.code] ?? stages[focused.stage]}<small>↑ ↓ select · Enter review</small></span>
             {focused.canResumeProcessing && <button disabled={busy} onClick={() => resume(focused)}>{busy ? 'Resuming…' : 'Resume saved processing'}</button>}

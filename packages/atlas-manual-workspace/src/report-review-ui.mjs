@@ -1,8 +1,8 @@
 import { speedsterTraceRleV1Spans } from '@atlas/grading-core/trace-codec';
 import { INSPECTION_SIZE, fitInspectionScale, clampInspectionPan, zoomInspectionAt } from './inspection-viewport.mjs';
 
-export const reportFindingMask = finding => finding.finalTrace ?? finding.detectorMask;
-export const reportFindingRegions = finding => finding.measurementRegions ?? [{ zone: finding.zone, measurement: finding.measurement, canonicalContour: finding.canonicalContour }];
+export const reportFindingMask = finding => finding.geometryExclusion ? null : finding.finalTrace ?? finding.detectorMask;
+export const reportFindingRegions = finding => finding.geometryExclusion ? [] : finding.measurementRegions ?? [{ zone: finding.zone, measurement: finding.measurement, canonicalContour: finding.canonicalContour }];
 const spanCache = new WeakMap();
 export function reportTraceSpans(mask) {
   let spans = spanCache.get(mask);
@@ -10,8 +10,17 @@ export function reportTraceSpans(mask) {
   return spans;
 }
 
+export function reportGeometryUnresolved(report) {
+  return report?.calculationState === 'GEOMETRY_UNRESOLVED'
+    && report.grade === null && report.proposedGrade === null
+    && Array.isArray(report.unresolvedGeometry) && report.unresolvedGeometry.length > 0
+    && report.unresolvedGeometry.every(value => ['FRONT', 'BACK'].includes(value.side) && value.code === 'PRINTED_GEOMETRY_UNRESOLVED');
+}
+
 export function reportAwardedGrade(report) {
-  if (report?.version === 'atlas-machine-provisional-report-v1' && report.authority === 'MACHINE_PROPOSAL'
+  if (report?.calculationState === 'GEOMETRY_UNRESOLVED') return null;
+  if ((report?.version === 'atlas-machine-provisional-report-v1' && report.authority === 'MACHINE_PROPOSAL'
+    || report?.version === 'atlas-review-provisional-report-v1' && report.authority === 'HUMAN_REVIEW_DRAFT')
     && report.certification === null && report.finalGradePolicy === 'atlas-final-half-point-v1') return report.proposedGrade;
   if (report?.version === 'atlas-manual-draft-report-v1') return report.grade?.overall?.displayGrade;
   if (report?.version === 'atlas-manual-draft-report-v2' && report.finalGradePolicy === 'atlas-final-half-point-v1') return report.finalGrade;
@@ -20,6 +29,7 @@ export function reportAwardedGrade(report) {
 
 /** Display geometry comes only from this report's saved trace, never an Astra proposal. */
 export function reportFindingBounds(finding) {
+  if (finding.geometryExclusion) return null;
   let x = Infinity, y = Infinity, right = -Infinity, bottom = -Infinity;
   const include = (left, top, r = left, b = top) => { x = Math.min(x, left); y = Math.min(y, top); right = Math.max(right, r); bottom = Math.max(bottom, b); };
   const mask = reportFindingMask(finding);

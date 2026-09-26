@@ -81,7 +81,7 @@ const safeRow = row => {
     return { ...result, state: 'NEEDS_ATTENTION', code: 'BATCH_ACCESS_CHANGED', evidence: {}, canResumeProcessing: canResume(row) };
   if (row.manual_changed === true && row.review_started === true && result.state === 'REVIEW')
     return { ...result, resumeAvailable: true, evidence: { name: result.evidence.name }, code: 'BATCH_REVIEW_IN_PROGRESS' };
-  if (row.manual_changed === true && result.state === 'REVIEW') return { ...result, state: 'NEEDS_ATTENTION', code: 'BATCH_MANUAL_DRAFT_CHANGED', evidence: {} };
+  if (row.manual_changed === true && result.state === 'REVIEW') return { ...result, state: 'REVIEW', code: 'BATCH_MANUAL_DRAFT_CHANGED', evidence: { name: result.evidence.name } };
   return { ...result, canResumeProcessing: canResume(row) };
 };
 // A fresh authenticated session may explicitly resume its own saved work, but
