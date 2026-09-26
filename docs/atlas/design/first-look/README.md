@@ -1,0 +1,122 @@
+# ATLAS first design study — September 25, 2026
+
+Local working prototype for the independent website design task. It is not the rebuilt production homepage or a functioning grading report. Owner approved the cinematic, evidence-led direction and selected an Alakazam concept specimen until a physical card is available tomorrow.
+
+## Open
+
+From the design worktree, run `node docs/atlas/design/first-look/serve.mjs`, then open http://127.0.0.1:8789. The server binds only to loopback and serves an explicit file allowlist. It has no credentials, database, grading, payment or account operations. Links to submission open the existing production route; the prototype itself submits nothing.
+
+## Iteration 08 — data-driven fingerprint and cinematic connection
+
+Owner’s screenshot review authorized enlarging the hero title, rebuilding the fingerprint from actual record inputs, a 3–5 second defect-to-gold mapping reveal, chip-first NFC/phone/tunnel/report choreography and repairing the submission handoff. The hero title now shares Beyond the Grade’s 7.8vw desktop scale (112.32px at 1440px); hero report content/math/controls and Beyond the Grade content remain intact.
+
+- **ATLAS FINGERPRINT.** Replaced the arbitrary per-card art seed with `atlas-fingerprint-v1`, a canonical record → SHA-256 → defect-influenced whorl/loop/double-loop path recipe. Input polygon position/shape, magnitude/unit, side, card identity and dimensions all affect the result. Equivalent finding orders and polygon winding/start vertices produce identical output. See `../ATLAS_FINGERPRINT_V1.md` and `tests/fingerprint-v1.test.mjs`. All examples are still authored fixtures, not measured photographic evidence.
+- Coral defect contours and numbered targets sprout in, connecting strokes map toward the signature and gold ridges trace into view. Entry/card selection/replay triggers a 4.3s sequence. New selection cancels stale work; global pause, reduced motion and leaving the visible lab produce the complete static result. Details remain directly selectable and the overlay remains optional.
+- **NFC cinematic sequence:** chip → complete slab → phone at logo → chip interior → gold/blue light tunnel → connected report. Six direct controls, native desktop scrolling and an explicit 14-second Play/Replay/Pause control share the same timeline. Playback finishes by moving/focusing the connected record. Wheel/touch/Escape cancel timed playback; hidden/global pause stops it. The chip has electric-blue signal motion and the label/card illustration follows the selected specimen. New WebGL drawing caps at roughly 30fps and sleeps offscreen/hidden or with motion paused. Tunnel is canvas animation, not prerecorded footage or radio/network telemetry.
+- **ONE CARD. ONE FINGERPRINT. ONE TAP.** The arrival places a selected sample report beside the exact same generated fingerprint and shortened record key. The NFC/QR comparison follows this arrival so it does not interrupt the tunnel.
+- Optional native disclosure **The copycat meets the evidence** contains a user-initiated 14-second vector motion concept: a fictional villain, four generic labels, the ATLAS record exposing mismatched details and creature guardians arriving. It is a storyboard-level animation, not a finished Pokémon film, actual competitor test, or claim of impossible counterfeiting. No character asset generation, video export or publishing was performed.
+- **Submission fix:** removed the journey’s sticky hold/long spacer and placed its heading, route switch, route illustration, stages and footer in ordinary document flow. Pricing follows the section’s actual bottom. The parcel still follows native scroll; both original service routes/terms/videos remain.
+- Study 07 source snapshots are preserved in `archive/study07/`. No new dependency/server route/restart, production change, database/hardware action or deployment.
+
+Verification: all nine algorithm property tests pass; browser/Node Alakazam digest prefix matches `D2B5B703F77F787B`. Desktop hero font matches cinema, card selection/record synchronization, mapping replay, NFC stages and timed tunnel arrival were checked. At 320/390/768/1440px the document fits its viewport; the four main headings do not overflow their boxes. Journey scene is relative and its bottom equals the pricing section top at inspected sizes. Global pause completes mapping and produces static NFC layout. Review captures use `review/study08-*.png`. Real hardware/OS reduced-motion testing, actual report integration and production performance/accessibility audit remain release work.
+
+## Iteration 07 — fingerprint, NFC and connected proof
+
+The normal preview now includes, in order: frozen report hero, frozen Beyond the Grade, **Same edition. Different fingerprint.**, **IF YOU CAN’T TAP IT, YOU CAN’T TRUST IT.**, NFC/QR comparison, **A label is only half the story**, the retained submission journey, and the complete original service comparison. The prepared reactions section remains hidden until permissioned customer footage arrives.
+
+- `#fingerprint`: Alakazam, Charizard and Kobe reference-card selection; three selectable authored findings per card; synchronized numbered hotspots, cropped reference region, example measurements and explanations; distinct generated ridge art and an overlay toggle. Copy: “The grade tells you how good. The fingerprint tells you which card.” The SVG art is a metaphor for a report record, not a computed card identity. The reference photographs do not substantiate the fixture findings or measurements.
+- `#slab`: native-scroll and direct-button tap/report/inside states; conceptual slab, antenna, bond wires, die layers and instanced microstructures in Three.js; phone notification/report illustration; text explains compatible phone → notification → saved report and batteryless tag operation. Phone controls stay above the illustration. Deep geometry is explicitly conceptual, not real hardware/microscopy, and does not assert micron dimensions. New rendering initializes near the viewport, caps DPR at 1.5 and stops after settling/offscreen/hidden. Manual selection persists until Follow scroll; mobile and paused states use direct controls without a long sticky chapter. Clamped stage interpolation reaches exact 0/1/2 endpoints.
+- NFC/QR comparison emphasizes reproducing a printed image versus programming another compatible physical tag, camera alignment versus close proximity and a hidden/embedded link. Both mechanisms still require comparison with the report; no uncloneability claim.
+- `#connected-proof`: fingerprint + NFC = “Proof you can inspect,” followed by a reversible recorded/different-card example with visibly different ridge artwork, relocated marks and a comparison explanation. This does not return an actual authentication result.
+- Owner explicitly confirmed **tap opens report for comparison**. Source `packages/atlas-finishing/src/nfc.mjs` specifies `securityMode: static_url_v1`; signed finishing/workstation receipts are not secure-tag authentication. Background technical sources: [NFC Forum technology](https://nfc-forum.org/learn/nfc-technology/), [NFC Forum passive tag behavior](https://nfc-forum.org/learn/what-nfc-does), and [NXP secure-tag architecture](https://www.nxp.com/products/NTAG424DNA) for distinguishing optional cryptographic authentication from this implementation. No competitor-wide claim was researched or made.
+- Study 06 HTML/controller/renderer snapshots are retained in `archive/study06/`. Those are historical source snapshots, not an independently served site. The current server allowlist and process are unchanged; no new assets, dependencies, hardware operations or production deployment.
+
+Verification: browser at 1440×900/1120, 768×1024, 390×844 and 320×800. Verified card switching, individual findings/measurements, overlay off, direct NFC report/deep views, scroll-driven endpoint 2.0000, pause/static layout with service films paused, and card-swap mismatch. Dealer/FedEx route copy still changes correctly. Document width matched every checked viewport; narrowed the small-phone heading and moved mobile NFC controls above the artwork. Frozen hero + cinema markup, their existing controller prefix and the hero Three.js renderer prefix match study 06 byte-for-byte. Generated service build and both JS syntax checks pass. Review images use `review/study07-*.png`. Physical-device testing, OS reduced-motion emulation and a formal performance/accessibility audit remain part of production integration.
+
+## Iteration 06 — slab, submission journey and finishing
+
+Owner requested building the remaining design on September 25. The hero stays frozen pending the actual report. Both hero and Beyond the Grade markup are byte-identical to study 05; the prior CSS and hero slab renderer remain intact.
+
+- Added the **Made to hold your attention** slab showcase with whole-slab, label and card close-ups. Desktop native scroll drives the camera; direct selection holds a view until **Follow scroll** is used. Phone chapters use direct controls and ordinary page scrolling. Geometry, label grade and Alakazam reference remain presentation concepts.
+- Added **Two ways in. One ATLAS finish**: selectable dealer/FedEx routes converge through grading and human review, then return to the appropriate destination. A parcel follows the selected path on desktop. The complete existing two-route comparison follows, including both service films, prices, timelines, qualifications, CTAs and terms. Its generated markup differs from study 05 only in video preload (`metadata` → `none`).
+- Service films load/play as they enter view and pause individually offscreen. Manual per-film pause survives viewport changes; global pause still stops both. The new 3D scene initializes near the viewport, caps pixel ratio at 1.5, renders only while its camera is settling or interacting, and suspends when hidden/offscreen. Retained drawing buffer preserves a settled still image. Camera distances fit the actual viewport aspect ratio.
+- Prepared a portrait customer-footage section and native video dialog with user-initiated sound, captions-track support, associated-report link, Escape/close and focus restoration. **No customer footage is present. The section is hidden on the normal page.** Review the presentation at `http://127.0.0.1:8789/?reactions=layout#reactions`; this explicit layout mode uses the existing service films and labels them as illustrations, not customer reactions.
+- Real clips can be added to `customerStories` in `study.js` after receiving permissioned assets, approved display copy and any associated exact public report URL. Each record has `title`, `credit`, `poster`, `video`, optional `report`, and optional `captions`, `language`, `captionLabel`. Add supplied static assets to the preview allowlist when needed, documenting any necessary server restart. Do not fill this list with stock/generated customer identities or made-up quotes.
+- No new assets, dependencies, production React integration, deployment, server restart, customer messaging or real-report integration occurred. Existing source remains uncommitted in this design checkout.
+
+Verification: CUA at 1440×900 desktop, 768×1024 tablet, 390×844 phone and a 320px narrow-width check. Corrected tablet full-slab clipping. Verified full/label/card controls, native-scroll camera changes, dealer/mail copy switching, complete service content, per-film in-view playback and pause, global pause, footage playback/close/Escape/focus return, and hero regression (rapid corners→surface, illustrative values, full-card reset, math and slab/evidence modes). No horizontal overflow at the checked widths. Both films reached readyState 4; on the phone the offscreen mail film remained unloaded while the dealer film played. Browser warning/error list empty in the final normal-page check. Source assembly, JS syntax and whitespace checks pass. Captures: `review/study06-*.png`.
+
+These are local browser checks, not a physical-iPhone test, a formal accessibility audit, separately emulated OS reduced-motion test or production performance benchmark. The actual approved report and authentic customer media remain the two missing content inputs; public release also needs current-source React integration and its release checks.
+
+## Iteration 05 — inspect, measure, explain
+
+- Category selection now moves the in-report camera automatically to the selected region, reveals an image-anchored demonstration outline/ruler after 850 ms, and reveals a category deduction/equation after 1450 ms. The original selectors, slab/evidence switch, zoom button and overall math remain.
+- Added a full-card navigator that shows the selected region and returns to the complete image, explicit digital-zoom magnification, accessible final explanation, and a compact detail/measure/deduct panel.
+- All physical measurements are fictional design fixtures and labeled as examples both beside the image and beside the equation. They are not extracted from this photograph and do not describe ATLAS grading policy. Centering shows an example 53:47 ratio; corners/edges/surface show sample affected area/length. Category deductions match existing sample scores; overall grade stays 9.
+- Switching findings clears older reveal timers. Full-card reset preserves the completed explanation. Pause, hidden-tab and reduced-motion state complete the reveal without motion. Slab mode makes the whole evidence controls group inert.
+- Real microscopic detail requires actual high-resolution inspection photographs. This is a digital enlargement of the existing local Alakazam reference, not newly captured microscopy.
+- Browser checks: 1280×720 / 1440×900 desktop and 390×844 phone, all category results, rapid category changes, full-card navigator, math disclosure, centering, motion pause and unchanged overall grade. Phone width equals viewport, including the inspection panel. Actual OS reduced-motion preference was not emulated. Screenshot: `review/report-inspection-desktop.png`.
+
+## Iteration 04 — report first, cinematic treatment around it
+
+- Restored “SEE WHY IT’S A 9.” plus the existing sample report as the first screen. Beyond the Grade remains immediately below, followed by the complete submission experience.
+- Kept report markup byte-for-byte identical, verified by SHA-256 before/after the rearrangement. Preserved evidence default, slab/evidence switch, all four subgrades, enlargement, explanatory text and math disclosure.
+- Added an external canvas field of slowly moving contour light, a brief perspective entrance, moving frame highlights, metallic headline/button light and subtle selection-response glow. The report entrance settles immediately on pointer or keyboard interaction. No continuous tilt, auto-changing selection, wheel interception, animated scores or obscuring layers.
+- Report selection also prepares the corresponding region in the following cinematic section without scrolling away. Centering uses a whole-card view. Cinematic section controls continue to synchronize the report.
+- Added offscreen/hidden-tab/global-pause/reduced-motion handling for the new light field; retained existing motion controls and static fallback. No new dependencies, image generation, report data, production changes or restart.
+- Browser checks: 1440×900 desktop and 390×844 phone; report controls, expanded math, slab WebGL, focus behavior, section order, chapter navigation and category synchronization passed. Document width equals viewport at both sizes. Existing report text, scores and calculations remain samples awaiting the approved real report.
+- Review captures: `review/report-hero-desktop.png`, `review/report-hero-phone.png`. OS reduced-motion was not separately emulated; global pause/static fallback was exercised.
+
+## Iteration 03 — cinematic opening
+
+- Spacious full-viewport opening with metallic brand typography, a gently lit Alakazam reference, pointer perspective, and a continuous scroll-driven camera move into its surface. No new asset downloads or dependencies.
+- Corners / Edges / Surface controls move the camera to an illustrative region and synchronize the sample report category. Direct report links bypass the sequence and focus the report. Evidence remains the default report view.
+- The camera follows native page scroll without wheel interception or scroll locking. The camera eases between targets and stops requesting animation frames when settled; input and resize restart it. Ambient motion pauses offscreen and on hidden tabs.
+- Existing OS reduced-motion and global pause support also provide a static, shorter opening. Small-screen composition retains all controls. Section entrances are one-time reveals; the full original submission comparison and films remain.
+- Actual approved report integration, eligible specimen gallery, genuine macro imagery, and customer videos remain pending their source material. The current Alakazam close-up enlarges the existing reference; it is not a captured defect or a real grading result.
+
+## Iteration 02 — owner feedback
+
+- Compact “See why it’s a 9.” hero with the Alakazam slab and immediately available sample report. The evidence view is now the default (owner follow-up). Four selectable subgrades update a plain-language finding and image inspection region; enlargement and optional calculation disclosure work. All scores, findings and image regions are illustrative, not detected defects or a certified report. The actual report remains dependent on an approved specimen and its exact evidence.
+- Gold range sampled from the supplied logo: bronze `#9e6c33`, midtone `#bea06c`, highlight `#e9cb8f`, bright highlight `#f3ddad`. Shared metallic treatment now applies to display accents, scores and buttons. Body text stays neutral for readability.
+- Local Oxanium variable display font paired with existing Atlas/Manrope body font. Font license included.
+- Actual Three.js slab geometry, transparent frame, reference label/card textures, warm/cool moving lights, subtle idle motion and pointer orientation. Static fallback remains when WebGL or textures fail. Geometry remains a presentation concept, not a manufacturer specification.
+- Full existing ServiceChoice presentation brought into the homepage directly after the report: both films, gold lightning/silver wind, parcel timelines, prices, turnaround qualifications, CTAs and full terms. CTAs open the existing live submission route. The private account flow and location finder are not embedded or simulated here.
+- Manual/global and individual-film playback controls, OS reduced-motion support, viewport/hidden-tab pausing, keyboard focus and announced report updates. Mobile uses a card/grade introduction, two-column subgrade controls and full-width explanations.
+- Narrative: see the grade → understand why → submit your own card. No unsupported generic “whole story” claim.
+
+### Updating the service presentation
+
+`render-service.mjs` renders the existing `frontend/atlas-customer/components/intake/ServiceChoice.jsx` into the local template, extracts its scoped styles and assembles `index.html`. It uses installed Next SWC and React through the adjacent lead worktree's customer package; set `ATLAS_CUSTOMER_PACKAGE` to an absolute installed customer package.json to use another checkout. Run it from this worktree with `node docs/atlas/design/first-look/render-service.mjs` after editing `index.template.html` or the source presentation.
+
+The preview adapter omits the authenticated station finder, converts the section heading to h2 and replaces route-selection buttons with links to the real submission flow. It does not modify the shared component, business terms, account code or APIs. `study.js` adds local presentation interactions after static rendering. `submission-source.css` and `service-fragment.html` are generated outputs; prototype overrides are in `study.css`.
+
+## Asset provenance
+
+- Label layout: existing `/Users/markthomas/.codex/atlas-handoffs/atlas-design-iteration-20260925/logo/label-front.svg`, copied with identity/sample text changes only. Embedded logo preserved. No real report or customer identifier.
+- Alakazam reference: https://archives.bulbagarden.net/media/upload/9/94/AlakazamBaseSet1.jpg, source page https://bulbapedia.bulbagarden.net/wiki/Alakazam_(Base_Set_1). Downloaded unchanged for the local design study. This reference is not the owner's physical card or a marketing rights clearance. Replace with the selected owned/permitted photographs before public release.
+- Three.js modules: reused from the existing local ATLAS station viewer vendor directory; module headers retain their MIT license references. https://github.com/mrdoob/three.js/blob/dev/LICENSE
+- Logo, body/mono fonts, service media: served from existing project assets without rewriting their originals.
+- Oxanium: official Google Fonts repository, https://github.com/google/fonts/tree/main/ofl/oxanium. Local `assets/oxanium.ttf` and `assets/Oxanium-OFL.txt` retain the SIL Open Font License.
+- Built-in image generation was attempted once and rejected by output moderation with unspecified category `other`. No generated image exists. No retry, CLI fallback or fabricated generation success. See `attempted-image-prompt.txt` for the exact submitted prompt.
+
+## Verification — iteration 02
+
+JavaScript syntax checks and `git diff --check` passed. Local loopback preview restarted successfully (owned exec session46551). CUA browser review at 1280px desktop and 390px phone widths confirmed fonts, 3D canvas and all image assets. The complete collapsed desktop report fits in a 720px-high viewport. Phone document width equals390px with both collapsed and expanded math; a glow-layer overflow was corrected. Inspection boxes now align to the reference image's actual rendered dimensions.
+
+All four category selectors updated the selected state, finding and image region consistently. Main evidence CTA, slab/evidence switch, enlargement and optional math worked. Both service films reached readyState4 and played while the section was visible. Global pause stopped both videos and CSS motion; returning to the hero paused offscreen service films. Desktop viewport was restored, motion resumed and the slab view left selected. Browser error/warning log was empty.
+
+This is not a physical-iPhone test, a full accessibility audit, a performance benchmark or validation of approved report data. OS reduced-motion behavior is implemented but was not separately emulated during this check. No production deployment has occurred.
+
+## Next build
+
+Integrate the owner's genuine approved report and curated specimen selector as soon as its link is supplied. Add real permissioned customer footage to the prepared presentation when supplied. Then port the selected composition into the current public React application, preserving report/image provenance and actual service availability. The local fingerprint/NFC/connected-proof sequence is implemented in study 07, and the submission journey in study 06; physical hardware, production integration and release are separate. The supplied Alakazam reference and fixture values remain unsuitable as certified grading evidence.
+
+
+## Verification — iteration 03
+
+CUA review at 1440×900, 1280×800 and 390×844 confirmed the opening, scroll-driven inspection view, corner/surface/edge selection, synchronized report category, evidence default, direct-link focus transfer, math disclosure, and preserved service experience. Corrected glow overflow; document width equals viewport width at 390px and 1280px. All images loaded and final browser error/warning log was empty. Keyboard activation was used for the decisive interaction checks.
+
+Global pause produced the static short opening and paused both service videos. Resuming in the service section restarted both videos, each readyState4. Reduced-motion shares the static behavior but OS preference was not separately emulated. This is desktop-browser responsive verification, not physical-device or performance certification.
+
+Review captures: `review/cinematic-desktop.png`, `review/cinematic-inspection.png`, and `review/cinematic-phone.png`. Final JS syntax and git diff checks passed. Loopback preview remains http://127.0.0.1:8789; production unchanged.
