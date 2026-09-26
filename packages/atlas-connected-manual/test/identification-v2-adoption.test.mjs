@@ -858,7 +858,7 @@ for(const [layoutType,evidence] of [['POKEMON','Front: BASIC Pikachu, HP 60 and 
  const card={cardId:f.cardId,revision:1,contentHash:'a'.repeat(64)};
  const connected={
   async open(){const details=await f.details.read(f.staff,f.cardId);return {...details,card:{ready:true,sourceHash:f.sourceHash,sides:Object.fromEntries(Object.entries(uploads).map(([side,uploadId])=>[side,{upload:{uploadId}}]))},manual:initialized?{}:null,identification:await f.identification.status(f.staff,f.cardId)};},
-  identification:f.identification,earlyGeometry:{ensure:async()=>{},status:async()=>({FRONT:{state:'READY'},BACK:{state:'READY'}})},
+  identification:f.identification,earlyGeometry:{ensure:async()=>({earlyGeometry:{FRONT:{state:'READY'},BACK:{state:'READY'}}}),status:async()=>({FRONT:{state:'READY'},BACK:{state:'READY'}})},
   async initialize(){const {details}=await f.details.read(f.staff,f.cardId);assert.equal(gradingIdentity(details).layoutType,layoutType);assert.deepEqual(details.touched,[]);initialized=true;f.setWorkspace();},
   workflow:{service:{read:async()=>card},hydrate:async()=>state},
   assistance:{async status(){return {state:'NOT_FOUND'};},async analyzeMachine(){analyses++;return {astra:{status:'READY',analysisId:'synthetic-astra'}};}},
