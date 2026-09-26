@@ -37501,3 +37501,217 @@ Changed only the injected earlyGeometry.ensure return in identification-v2-adopt
 ### 2026-09-26 00:06 UTC — resumed after usage interruption; explicit testing extension
 
 The owner approved temporary dedicated-server testing up to $6 total through September25 9:20 p.m. Pacific (September26 04:20UTC), replacing the earlier $4/00:20UTC cutoff. Existing explicit approval permits retaining the existing16CPU/32GiB server at no more than $336/month only after real automatic grading passes. Codex usage interruption did not complete deployment; canonical production remains at its prior recorded release pending fresh readback. Root resumes source-qualified functional3-card real-ASTRA and same-source recovery checks, then authorized production pilot. Sustained25-photo/min report throughput and20-card latency remain unqualified. No blind repeat of prior provider/upload intents.
+
+### 2026-09-26T00:06:31.636127+00:00 — Planned isolated86bb1 corrected-test build/qualification
+
+Root authorized exact committed source `86bb1ed4890b0ff7a881caf95932c1486bb35ef3`, plan `75d4da60798c2a39aaca47298434b3d40fdac8548a9f84a4e3d824e9fd195812`, manifest `b35fd0d612c9a699b2b872914355e68c178db679e53402c709092fa44830db93`, archive `b7ffc708ede92a2e63789b819e005158acf5ed5affa133876da32b192569b77d` on dedicated603665696. Source closure943/archive952; only the reviewed test adapter line differs fromf11a2, and all six v3 build helpers are byte-identical. Pinned native16, dependency/schema, network-none4CPU/8GiB/init/PID1024 and read-only4GiB-tmpfs qualification remain unchanged. Fresh transfer/build/qualification namespaces retain failedf11 evidence. User-approved testing ceiling is$6 through2026-09-26 04:20UTC; conditional retention requires separate real automatic grading acceptance. No providers or production actions in this sequence.
+
+### 2026-09-26 00:07 UTC — planned exact86bb website staging
+
+Fresh provider readback confirms original b013 canonical cohort remains READY; previously staged f11 staff/customer are READY but not canonical. The final test-fixture-only source86bb1ed4890b0ff7a881caf95932c1486bb35ef3 has been materialized with all3 actual CLI dry manifests matched (19fd774b) and read-only payload checks passing. Root will upload staff then customer with the existing reviewed --prod --skip-domain wrapper and fresh per-operation provider snapshots. No Git push or canonical promotion; public future-origin changes and private activation remain subsequent explicit planned steps after functional evidence.
+
+### 2026-09-26T00:09:34.676240+00:00 — planned86bb public candidate origin binding
+
+Staff dpl_A82eqBmnLHtkZLQusQJMj1uQzah4 and customer dpl_9Xwk1cog2v4YTVTYf7LCtSHanGjj are READY with exact86bb source; receipts cd41667f/c4bb7168 retained. Root reviewed plan8dc5fed6 for only two existing public future-build origin rows, replacing priorbb staged URLs with these exactREADY URLs. Apply those2PATCHes, verify preservation, then upload immutable public candidate with --skip-domain. Existing canonical b013 remains selected; no private/schema/control change is part of staging.
+
+
+## 2026-09-26 86bb1 offline qualification observed and synthetic checks planned
+
+Owned dedicated host603665696 built exact commit86bb1ed4890b0ff7a881caf95932c1486bb35ef3 as image sha256:6384b81c155a2f50ef0814251b8d0a82a3e504ecba93706de97be3deb421bcd7. Offline qualification passed701/701 Node and4/4 Python tests with no skips or cancellations; source943 and native16 remained unchanged. Exact qualification SHA0559e0642ff9e5c265ec15c3febde691c3879fd96cd7c2e103ac503e437b3942 is retained under atlas-scalable-pipeline-20260925/dedicated-host/cpu-86bb1-qualified-v1. Build and tests used the reviewed network-none/init4CPU8GiB profile; no model calls, DB/storage writes or production changes.
+
+Planned within existing authorization: transfer and execute same-source synthetic smoke followed by the three-process SIGKILL/GET-only recovery proof, sequentially without other heavy host work. Fresh sealed fixtures linux-runtime-replay-86bb1-smoke-v1 and linux-runtime-restart-86bb1-v2 bind actual qualification; earlier restart v1 remains unexecuted because its README retained historical pins, corrected only in fresh v2. Only six canonical storage fields, compared with actual legacy runtime values without logging, enter owned isolated PostgreSQL/runtime containers. All original bytes, receipts, PGDATA and stopped owned containers remain retained. No paid calls, production mutations or capacity claim.
+
+
+### 2026-09-26T00:19:28.353587+00:00 — Planned isolated functional pilot staging and credential-free smoke
+
+Owner's revised priority is reliable automatic real ASTRA grading with a bounded three-card functional check; previous throughput criteria remain unchanged and unqualified. Root reviewed and authorized staging the fresh `linux-functional-acceptance-86bb1ed-v1-sealed` fixture (seal `06239bda123a9d71179aaf01788953c235b8cb4d68d117b6eb1fcf6b2f5cf0d5`) and `functional-pilot-ops-86bb1ed-v1` helpers (manifest `f63c077d8e56fc1e99efa527c57105a5aafd045fb6542ff306d361838e60dde9`) only on owned droplet603665696. They bind qualified source `86bb1ed4890b0ff7a881caf95932c1486bb35ef3`, image `sha256:6384b81c155a2f50ef0814251b8d0a82a3e504ecba93706de97be3deb421bcd7`, and actual offline701Node+4Python PASS receipt `0559e0642ff9e5c265ec15c3febde691c3879fd96cd7c2e103ac503e437b3942`. Local helper tests passed48Node+21Python.
+
+After Helm's owned restart run stops, use the prior reviewed pinned-SSH transfer protocol with fresh destinations and exact archive/member/host/qualification checks. Root permits fixture staging during the separate fallback image export. Credential-free smoke will wait until that export clears and uses only fresh owned loopback PostgreSQL and the immutable qualified app, with no provider credentials or provider/storage network effects. All fixture records and process receipts remain private; no production DB, serving env, runtime, controls, routes, or retained unrelated containers change. Paid credential forwarding and actual3/3/6 provider calls remain held for root's final go. Private preparation evidence: `functional-fixture-review-86bb1ed/bound-review-v2.json`, SHA `8605886a72e862c5ff90e8850df5f8ed42f1911fd3c51e8e6d3260181fe466ad`.
+
+### 2026-09-26T00:19:39.021671+00:00 — planned pilot preparation without serving changes
+
+Exact86bb website cohort is READY (summary16567aa9), public future origins verifiedinstalled; canonicalpromotion remains held. Public configa9ae and retained-sensitive customer confige8aa bind existing hashes transparently; candidatecold/private and postpromotioncanonicalchecks remain required. Root reviewed old-only11-file env-preparation assets1d519af4/pland5ca4fb1 and will stage those helpers without executing workers. Also prepared exact6384-image export/transfer into freshimage-86bb1-to-old-v1 for same-source fallback import, once restarttestreleasesnewhost. Preserve original app/Caddy/env/DB and allothercontainers. These are preparation steps, not productionactivation.
+
+### 2026-09-26T00:20:45.990416+00:00 — observed prep and same-source restart; image export begins
+
+Old-host helper staging passed11exact files; initial local permission refusal occurred beforeSSH, twolocal files were made0600 withoutbytechanges, thenfreshattemptsucceeded. Noenv/app/DB/Caddywrite. Synthetic smoke2originals/1report passed26.195s withfullhashreadback andcleanexit. Three-process restart on86bb/source943/image6384 passed0/137/0, oneacceptedaction andGET-onlyrecovery withzero newproviderPOSTs,allownedcontainersstopped/noOOM (summary0eaad71f). This remains simulated-providerrecovery evidence. Rootnowexports exactqualifiedimage6384into freshnamespace for same-sourcefallback; actual real3cardtest remainsnext.
+
+
+## 2026-09-26 00:20 UTC — 86bb1 synthetic smoke and process restart observed PASS
+
+The exact qualified image 6384b81c passed the one-card smoke: 2 originals independently reread and verified, 1 machine report, zero errors, source 943 unchanged, 26.195 seconds through report completion. App and owned PostgreSQL stopped at exit 0 with no OOM and no cleanup errors. Summary SHA256: 6f02cf7118007be50f6813a5c220a6404da7c8a7cbe11c3c431d2c346926b506.
+
+The same-source three-process restart passed: upload/revoke exited 0; the exact accepted-analysis process was deliberately SIGKILLed and exited 137; cold recovery exited 0. All three processes verified source 943. There was exactly one admission and accepted response. Recovery made one exact-ID GET and zero OCR, identification or ASTRA POSTs, independently reread both originals and the machine report, and retained zero errors/human approvals. All three app containers and the owned PostgreSQL container are stopped without OOM; PGDATA and object evidence remain retained, cleanup errors are empty. Restart summary SHA256: 0eaad71fe6145aa8808493f83d61271d5278b4eb0ade9fa11c1f8a0347150a0a. Recovery result SHA256: 087a5be21b56a1e2d11c544a0f30f3788796ff43cd92fe1dc7cd4b3b0e0181c8.
+
+Exact local evidence, copies and binding receipts: atlas-scalable-pipeline-20260925/dedicated-host/cpu-functional-86bb1-v1. The dedicated host was released to root for image export and Volta for functional fixture staging. These are synthetic-provider functional/recovery proofs only; no real-provider, throughput, diverse-card or physical-iPhone acceptance is claimed. No production change occurred.
+
+
+### 2026-09-26T00:21:00.320192+00:00 — Observed functional fixture staging PASS
+
+Transferred and verified the exact112-member functional fixture and8-member operations package in their fresh owned namespaces on droplet603665696. Both metadata/region/host pins, payload hashes/member closures, committed source943, image6384, fixture seal and actual qualification receipt matched. Both helpers report0Docker calls and0provider calls; no app/env/DB/control/route change. Transfer receipt SHA256s: fixture `67a515ef968c9f0dd31335b03501485ec8c15e247a0620ba8d3f4a4eb5e3245b`, operations `7390d99814b57627b89e1e23e56e9db61d9afde50fda9bc56078a2b5a965950b` under the corresponding private `dedicated-host/functional-*-86bb1ed-transfer-v1/transfer-result.json`. Credential-free smoke remains held for root's new-host image-export clear; paid forwarding remains held for root.
+
+### 2026-09-26T00:25:13.910171+00:00 — planned old-host image import and inactive helper correction
+
+Exact6384image exported151.833s and2,164,563,938byte archive8baa1d96 copied toold in23.986s; temporaryfrom-restrictedSSHkeyremoved andoriginalauthorized_keys hashrestored. Rootreviewed importhelper1508271c bound toactualarchive andfresh185-containerinventory; loadmustpreserveallcontainers,daemonPID,canonicalenv/Caddy. Separately inactivefunctional_pilot helper timestamp parser wascorrected forDocker nanoseconds;69checks andactualrestartreceiptvalidationpass. Rootwillreplaceonlyoldstagedhelperb0ed0341 with85a94d28 byhashCAS beforeanyenv/cold/stageoperation, preservingexactv1backup, thenstagefreshenv-v2plan5ea3e161. No productionactivation.
+
+
+### 2026-09-26T00:26:26.635410+00:00 — Functional smoke v1 start refusal; planned narrow v2 repair
+
+The credential-free v1 smoke did not start its app: owned container `6a70818117c64bc9955ff03f50afa4dcc7f979fe4dd6b87da049c1b9c17b71ee` remained created, PID0/zeroStartedAt, exit128/noOOM. Docker29 rejected inherited local logging settings because compression defaults on with max-file1. Owned PG `fb71c77122d4a600b7237d7e7f9223435ca4cc27a9419e0b600a82e7ca3af4c8` stopped cleanly exit0/noOOM; all failed fixture records are retained. No application imports, provider calls or paid credentials occurred.
+
+Root explicitly approved only `--log-opt=compress=false`, an exact LogConfig readback guard and regression in fresh v2 helpers.15launcher+7operator tests pass. The application source/image, three-card criteria,3/3/6 provider caps and all runtime resources remain identical. Plan: stage fresh `linux-functional-acceptance-86bb1ed-v2-sealed` (seal `add0610307bdc04e68463ca692653fd855dabc44e1b003671d143c17e72af970`) and `functional-pilot-ops-86bb1ed-v2` (manifest `357010e20f0350f6ba1cf484f8ccc269e13ddf1c74b52644ee12c39b0b231ca1`), then credential-free smoke with a new output. Root reported new-host export/direct transfer complete; no performance run overlaps. Paid forwarding remains held.
+
+### 2026-09-26T00:27:33.341327+00:00 — observed fallback image import; planned pure env preparation
+
+Image6384loadedoldhost in78.508s,185containeridentities/startstates preserved,daemonPIDunchanged,canonicalenv/Caddyunchanged,onlyexactimageadded. InactivehelperCAScompletedwitholdbytesretained;v2plan5ea3e161 staged. Rootnowexecutesoldhostprepare_env for thatplan: derivesnew/fallbackconfigfiles andnetwork-noneconfigprobeonly, noappworkers/DB/providerorservingroutechanges.
+
+### 2026-09-26T00:28:35.886517+00:00 — planned real three-card ASTRA functional acceptance
+
+Root independentlyreviewed v2 fixturechange: Dockerlocal logcompression disabled formax-file1 andexactLogConfigvalidated; originalfailedv1stoppedbeforeappstartup/no paidrequests. Freshv2credential-free smokePASS, app/PGstoppedexit0/noOOM/zeroeffects. Rootnowdispatchesone real 1then2 card functionalrun, exact86bb/image6384/qualified701+4, fixtureadd06103 andops357010e2. Ceilings3gradingPOST+3identificationPOST+6OCR; no blindpaidretries, acceptedGET-onlyrecovery, alloriginal/reporthashreadback, browserrevokedbeforePUT. Authorizeduntil04:20UTC with75minlaunchand35minadmissionreserves. Eightexistingcanonicalstorage/providerfields flow encryptedthroughboundedmemoryonly; no productionDBURL. DisposableownedPG andfreshprivateobjectprefix retained. This testdoesnotqualify25photos/min,20-cardlatency ordiverse-cardquality.
+
+
+### 2026-09-26T00:28:57.681467+00:00 — Observed functional v2 smoke PASS; actual paid run held for root
+
+Fresh v2 fixture and operators staged with exact112+8 member closures; credential-free smoke succeeded after explicitly disabling local-log compression with max-file1. App `1bd7bc224b61d255b3de682c13aa5d56b15657d1b53eb501d41670a13a2701a5` ran00:26:51.678–00:26:58.496UTC and stopped exit0/noOOM; owned PG `def48cf85104c6415f5e44c38a20ac0279bfc458db0a86a5beae9cb0fc7751c7` stopped00:26:59.897UTC exit0/noOOM. Result SMOKE_PASS has no errors and an empty network list. Source943 files verified before/after against exact86bb/6384 candidate. No provider/storage requests or paid credentials were used.
+
+Small noncredential result/source/cleanup/native/browser/scope/container receipts were copied locally; `functional-fixture-review-86bb1ed/smoke-v2/smoke-receipt.json` SHA `2d9e2bd8d33bc9f2b0ce16bf8d39f69294364f099879b93440327e5bc3d26ebc` binds all8 raw file hashes. Final fixture seal `add0610307bdc04e68463ca692653fd855dabc44e1b003671d143c17e72af970`, operations manifest `357010e20f0350f6ba1cf484f8ccc269e13ddf1c74b52644ee12c39b0b231ca1`. All owned smoke containers are stopped; failed v1 evidence remains retained. Root was given the reviewed v2 Mac dispatch path for the separately authorized3-card real grading check, deadline2026-09-26T04:20:00Z; this agent has not forwarded paid credentials or launched paid work. No throughput claim or production mutation.
+
+### 2026-09-26T00:29:53.099415+00:00 — Planned exact86 cold construction, old host only
+
+Root authorized local cold plan materialization, old-host asset staging, then `cold-new` and `cold-fallback` only. Image6384/source86bb is imported on old host; actual env receipt SHA7fe93cf33cb64d129d85c43b007ad31859fc4ec44eb5cdaaae9be7c18e2604a1 derives unchanged credentials and exact cohort bindings. Both constructors run network-none/read-only, do not import/start the application service, and must observe0DB/provider/worker calls with2constructed/2closed clients. No new-host commands while real3-card test runs; no serving, schema, controls, Caddy or canonical promotion actions. Evidence namespace: private `runtime-move-86bb1ed4/cold-reviewed-v1`. Capacity remains unqualified.
+
+### 2026-09-26T00:31:52.173654+00:00 — Observed exact86 cold constructor PASS, old host only
+
+Cold plan00d42a8c6d48f589c4a9f1ab3887dbc6aec5486cb9f3942d6238f7e16239f456 staged only its new hash-named plan on old host; existing10helper assets matched. `cold-new` and `cold-fallback` both returned RAPID_PRIVATE_CONFIGURATION_PASS on exact86bb/6384, networknone,0DB/provider/worker calls,2constructed/2closed clients each, correct staff/customer bindings and processing12/12/page8 versus2/2/page2. Both controller transitions released their lock. Raw host cold JSON bytes were read back bounded/no-follow and hash verified locally. New receipt SHAd94a7681f942d7f4931f30371392a031bbf98837af4bb34af491d3a855d76d43; fallback SHA2f05028ff4cca07257989ef725b12a23c20386315d585db464a7d39f8462a895. Evidence: private runtime-move-86bb1ed4/cold-reviewed-v1/result.json. No new-host commands, serving runtime, schema/control, Caddy or canonical promotion changes. Capacity remains unqualified.
+
+
+### 2026-09-26T01:06:47.243034+00:00 — Real automatic grading passed; planned stopped production staging
+
+Real three-card host qualifier reports all3 reports and6original fullreadbacks, exactly3acceptedREADY ASTRA/3identification/6OCR, noerrors/duplicates/unsettled/humanapprovals; app/ownedPG stoppedexit0/noOOM. Root is retaining the approved16CPU32GiB server for the production functional pilot within the authorized336USD/month ceiling, based on this actual real grading acceptance. Sustained capacity remains unqualified. Planned exact86/image6384 stopped stage-new andstage-fallback usingplan786ba70c; bothrestartno andnoappstart, existingoldservice/Caddy/schema/controls unchanged. Volta copies actualsummary/rawmetadata; fullfunctional gate remains required before maintenance/cutover.
+
+
+### 2026-09-26T01:08:02.775166+00:00 — Actual three-card real ASTRA functional acceptance PASS
+
+Root launched the existing approved bounded paid run once at `functional-pilot-86bb1ed-real-v2-evidence`; this agent only observed, qualified after shutdown, and copied retained evidence. Actual86bb/6384 runtime completed the first-card wave in247.002seconds and the following two-card wave in288.051seconds. All3unique grading submissions were accepted, persistedREADY and produced machine REVIEW reports; exactly3gradingPOSTs+3identificationPOSTs+6OCRPOSTs and6untouched-originalPUTs succeeded. Accepted-to-response times were142/216/219seconds. Browser sessions were revoked and their oldcookie rejected before anyPUT. No retries, duplicatePOSTs, errors, uncertain/unsettledeffects or human approvals remained.
+
+Final integrity read every6originals and3reports back from private S3 and checked exact bytecounts/hashes, original version keys, report artifact lineage, current selected upload/source binding, manual revision/content hash, analysis ID and machine-only authority. Source943files remained identical before/after. App `0fa61d56b5da1fbf9c1bce22dee861e4398006ed462611c0da8fcdf5334b9225` stopped00:37:43.831UTC, PG `8a964db9d56ea565c10f132428d2cdaede21667774f5e3cd4f72b12a828c060b` stopped00:37:48.084UTC, both exit0/noOOM. The reviewed host qualifier bracketed stopped identities and emitted FUNCTIONAL_ONLY PASS.
+
+Actual final summary: private `functional-pilot-86bb1ed-real-v2-result/summary.json`, SHA `4d80982896af46668cf5729a71a8e1795f063ab173314515bd4b07f54eccb234`. Its complete rawleaf/provider-attempt/response metadata closure (304JSONfiles) was copied without credentials, photos orPGDATA; copy receiptSHA `c91191a194b1442e70276c847bb40517650e4ec4ae3345ac1727470519bd8ae5`. Root and independent release-proof assembler received these exact paths/hashes. All3reports proposed10 with3/5/5findings, remain machine proposals with certificationnull, and were not published or approved.
+
+This proves bounded automatic real-provider functional completion for the same retained matching pair repeated over three independent jobs. It does not qualify sustained25originals/minute,20-card model concurrency, diverse-card grading quality or managed production DB capacity. Existing capacity failures/criteria and `capacityNotQualified=true` remain explicit. No production schema/control/env/routing/app mutation occurred in this acceptance task.
+
+
+### 2026-09-26T01:08:42.614785+00:00 — Stopped candidates staged; planned controlled maintenance and graceful stop
+
+Both exact6384 candidates staged/stopped: new3d70d656d89762b621297d6170b64bf619b44ae7b00eedf5dd9ab03d00c82c7c, fallback2b922f4552d5f0224688ae40b7e715f783878b2385a8a8d63c7f674cfd20e21d, no application imports. Rootreadactualfinalfunctional summary4d809828 confirming3/3reports/6originals andallreceipts; reviewed fullcutoverpland3485b89 withfunctional0e11fc6d andsame-source restart. Plan: stage53old/55new exactassets, switchonly4private4319routes to503maintenance, thenTERMoriginalb013with240sgrace/noforcekill. AllotherCaddyroutes/8091/DBunchanged in thistransition. Afterconfirmedstop, separately applyadditiveschema53→57 andwhole-row6-controlCAS; b013mustnotrestartafterthat. VercelCLIwhoamirefreshedexpiredaccessnormally; promotionplan77bceed6 preparedread-only, canonicalstillold.
+
+
+### 2026-09-26T01:10:07.684548+00:00 — Planned schema rollout helper staging only
+
+After actual real-provider functional PASS, root assigned schema/control rollout support and authorized staging only the17 reviewed immutable schema assets on oldhost. Local hash review matched schema plan `1a6c668b4d084748fd2adf1b2839a02ff509b2369c004cce4a96e7ced3466807`, asset manifest `ee86bbe9cf64aebc72f277772eea98616be87e915ca27073054529134c6542e1`, release `4a95242a-46a9-4079-b22f-7eb740b3d744`, exact86bb/6384sourceimage and explicit FUNCTIONAL_PILOT/capacityNotQualified scope. Existing schema guard tests were reviewed by the independent owner; no helper edits are made.
+
+Execute only `runtime-schema-86bb1ed4/stage_schema.py` with its exact reviewed manifest and old-host SSH config. It verifies the oldhost private IP and pinned original runtime ID/image, then writes only matching immutable helper/plan/proof files under `/opt/atlas/scalable-pipeline-20260925/runtime-schema-86bb1ed4`; no application start, SQL, env, route, role or control mutation. Actual migrate/grants remain held until root separately confirms maintenance routing and clean stopped original and gives that phase go. Six-control CAS will be prepared from actual fresh preserved snapshots only, for root review.
+
+
+### 2026-09-26T01:10:14.358445+00:00 — Maintenance and original stop observed
+
+Controllerroute-maintenancepassed mounted+loaded Caddy8f3b4478, exactfourprivate4319routes changed; unrelatedroutespreserved. Originala59b gracefullystoppedexit0/noOOM at2026-09-26T01:09:53.16216381Z, restartno, stopreceiptpersistedandlockreleased. New3d70/fallback2b92 remainstopped. RootauthorizedVoltaexactschema1a6c668b migrate→grants andpreservationverification; controlmutationrequiresnextreview. Noactive-active.
+
+
+### 2026-09-26T01:10:58.575035+00:00 — Schema helpers staged; planned authorized53→57 migration
+
+All17schema assets staged successfully on exactoldhost with all17hashes verified; helperstaging performed no application or DB calls. Root confirmed exactfour-route maintenance (Caddyhash8f3b4478…) and clean originala59b stop at2026-09-26T01:09:53.16216381Z, exit0/noOOM, releasedcontrollerlocks, then explicitly authorized schema plan `1a6c668b4d084748fd2adf1b2839a02ff509b2369c004cce4a96e7ced3466807`: execute one-shot `apply-schema.review.py migrate`, then separate `grants` only after successfulmigrationreceipt. Each step checks stopped originalgeneration, clean predecessorledger53/public112, no accepted/unsettled activity, exact6384image+86bbsource and committedmigrationchecksums. It preserves full before/aftermetadata and never retries unknown mutations. Controls remain held; no b013restart. After verifying57/narrowgrants/history+tombstonepreservation, prepare six-control CAS for root review.
+
+
+### 2026-09-26T01:11:37.893462+00:00 — Observed migration process exit0; grant phase next
+
+Exact one-shot schema migration returnedexit0 with empty stderr and applied only54–57: durable ingestion, machine auth, batch capacity, geometry capacity. Root-reviewed plan1a6c668b and release4a95242a matched; fullbefore/after snapshots and intent/result remain on oldhost. No automatic retry occurred. The helper verified original stoppedGeneration unchanged across mutation. Next execute the separately authorized narrow grant SQL with the same plan; full preservation verification follows copied snapshots. Control mutation remains held.
+
+
+### 2026-09-26T01:16:47.157169+00:00 — Schema and scoped grants preservation verified
+
+Both authorized one-shot phases completed exit 0 with empty stderr and no retry. The exact before/after metadata was copied to private runtime-schema-86bb1ed4/schema-executed-v1. Verification PASS `34f94be8cb0e3dddc284235051fc64b137c25f7ffc438fcf2c92fb336182334b`: staff ledger exactly 53→57, public ledger112 unchanged, all prior history/tombstones and controls preserved, additive seed count and narrow grants correct, and original stopped generation identical across the whole operation. Six-control whole-row CAS is prepared locally from actual grants.after: JSON `1f17bbd24c09c3fac9670b695a75f2804806ea460b0be1d9f72edc197dedaf42`, SQL `a0efd2c7fa99b7c30c30fc764725592fd9ae199543de0714e031055daa9e0d1c`. Exact changes STAFF33→34, STAFF_SMS31→32, PUBLIC11→12, CUSTOMER13→14, CUSTOMER_SMS11→12 and CustomerServiceControl binding only; all bind exact86bb web cohort. Root review/authorization is still required before control mutation; no application or route changes made by this phase.
+
+
+### 2026-09-26T01:17:06.125991+00:00 — Planned authorized exact six-control CAS
+
+Root reviewed and authorized exact prepared control JSON1f17bbd2, SQL a0efd2c7, controls-phase planbab6a9ed and assetmanifest1304c3ed. Stage those hash-bound assets and the exact CAS as one additional immutable evidence-1f17bbd2 file (one-file manifest63a5505f). Execute host-controls once against fresh stopped-original snapshot; it compares all six full old rows, changes only reviewed binding/revision fields atomically, and verifies stopped generation plus unrelated history after commit. No automatic retry on uncertainty, no application start or routing action.
+
+
+### 2026-09-26T01:18:02.687369+00:00 — Exact six-control CAS observed PASS
+
+Root-authorized controls phase staged38 new immutable proof/plan assets plus exact CAS evidence1f17, then executed host-controls once. Result SCALABLE_PIPELINE_SIX_CONTROL_PRESERVATION_PASS, exit0: all six reviewed86bb bindings applied atomically with exact revisions, old stopped generation unchanged, unrelated schema/history/tombstones preserved. No automatic retry. Full actual before/intent/process/after/result copied into private runtime-schema-86bb1ed4/controls-executed-v1 with hash-bound controlRebind wrapper. Application start and route activation remain root-owned; this agent performed none.
+
+### 2026-09-26T01:19:46.974868+00:00 — Planned fresh86 pre-start observation and activation asset staging
+
+Root authorized after actual schema57/grants and six-control PASS. Verified schema wrapperd1a31322/control wrapper674a9a10 plus all local raw hashes. Run only installed read-only observe_release against exact cutoverpland3485b89, copy exact raw gate+snapshot, preserve observedAt, seal local activation inputs, then stage their immutable assets old→new. No start, route, schema/control or provider actions. Existing125s original-stop interval complete; final runtime start belongs to root and must enforce proofage<120s. Evidence: private runtime-move-86bb1ed4/activation-executed-v1.
+
+### 2026-09-26T01:19:58.553467+00:00 — Observed86 activation inputs staged, no start or route action
+
+Actual read-only pre-start PASS observed2026-09-26T01:19:50.267551+00:00 with 4 ordinary connections spare after reserving7target; exact57/112schemas/sixbindings/all in-flight counts0 and maintenance/stopped original+fallback checked. Original gate+snapshot bytes retained; only local evidence paths rebased, observedAt unchanged. Full eight-proof activation planfc81ae1c7d8ae27b878201d41ae6f0671ee11dae54de15aa2148fe62a4900c77 validated and assets staged old→new with no application start. Pre-start age at stage completion 8.286seconds. Root exclusively owns subsequent start/readiness/route. Capacity remains false/unqualified. Evidence runtime-move-86bb1ed4/activation-executed-v1/result.json.
+
+
+### 2026-09-26T01:21:22.476382+00:00 — Planned production worker start after fresh readiness prerequisites
+
+Schema57/public112 preservationpassed34f94; sixcontrolCASpassedf9549. Activationplanfc81ae1c bindsallactualproofs; old/newassetsstaged. FreshpreStartobserved01:19:50UTCshowsallinflightzero and4ordinaryDBconnectionsspareAFTER reserving7targetconnections. Originalstoppedover125s; rootnowstarts exactnew3d70 viaexistingcontroller, whichchecksallgatesagainandbootfences125s beforeappimport. Routesremainmaintenanceuntilsource/generationreadiness. Capacitynotqualified.
+
+
+### 2026-09-26T01:23:08.570417+00:00 — Worker start held before host action; timing reconciliation
+
+Firststart-newcontroller attemptfc81heldwithRELATIVE_CLOCK_UNCERTAINTY_TOO_LARGE beforedispatchingremote start. Retainedlock8ab64095b776cb6bc565b7dd9a48cb8c5408c3394f4a456c. Freshreadonlypairedprobeverifiedoriginalstopped744s, new/fallbackneverstarted/PID0,restart0, maintenanceandproxyhealthy; bothNTPsynchronized. OldfullSSHprobe2.829s/new1.668sincludesposttimestampCaddy/transportwork, causingconservative2sclockintervalrefusal. No workerstarted. PlantryprivatepinnedlocalSSHmultiplexconnectionsandreadonlytimingcheck withoutrelaxinganygate ormodifyingapplication/hosthelper. FreshpreStartrequiredafterresolution; no blindstartreplay.
+
+
+### 2026-09-26 — planned reviewed clock-window amendment and private runtime start
+
+Root authorized exact inactive old/new move helper CAS after first start was held before any start intent. New helper hashes: move_common ea991e225be08283f931131519e072980ff77d6492e20ca6b3e7d50d1d7c5c22; move_host 9f2d247953812e236ebd01e6398911bc56b3d828a8e0ea332e9b0c22fa1bc4f7. The measured host processing window is excluded from clock offset uncertainty using [hostEnd-controllerEnd, hostStart-controllerStart]; 2s relative uncertainty, 5s total probe, clock stability, NTP, locks and 125s replay drain remain enforced. 81 tests and independent review pass; cold scope unchanged. Exact CAS executor 04497f1a274a39207305b7db52a7a7eb9747fa643e6a05ed29edcc3892ba68d1 preserves old helper bytes and stages plan035248ec81a0a23a0cf398ce641ab5e4602d380a76ca161810033e1392a06504. Authorized sequence: CAS old then new, stage amended assets, paired warm read-only probe, fresh preStart/leaf closure, fresh activation seal/staging, single start-new. No route switch or database/provider write is authorized in this sequence; serving stays maintenance until root verification. Functional pilot only, capacity remains unqualified.
+
+Observed reviewed clock-window CAS PASS on both hosts; backups retained. Warm full probe passed unchanged clock bounds. Fresh preStart and activation staging passed, then one start-new returned APPLICATION_STARTED_ROUTE_STILL_MAINTENANCE. Exact receipt: /Users/markthomas/.codex/atlas-handoffs/atlas-scalable-pipeline-20260925/runtime-move-86bb1ed4/activation-executed-v2/result.json; plan d6b997649d245693d350629d2c6e9b6778548b65204591280cbb9d4f515da8c8. Source86bb1/image6384 unchanged; capacity unqualified. Root owns subsequent readiness, route and web promotion.
+
+
+### 2026-09-26T01:35:18.159456+00:00 — Source-matched production readiness; planned live private routing
+
+Actualnew3d70source86bb/image6384isready, StartedAt01:32:30.905094089Z,restartCount0/PID105419. Oldoriginalandfallbackstopped,proxyhealthy,maintenancecurrentlyactive. Rootnowroutesfourprivate4319endpoints tonewWGproxy usingactivationpland6b99764 andwarmexistingcontroller; itreconfirms exactreadinessgenerationimmediatelybeforeCaddywrite. NextsignedprivateTLS3readsandcanonical86promotionremainseparatestep. No paidworkorcardwritesinchecks.
+
+### 2026-09-26 — reviewed route sequencing correction, planned single route commit
+
+The first route-new attempt left the original route intent and lock intact and Caddy in maintenance; exact original error was not retained. Read-only timing measured 1.230166184s of old-host preflight, supporting readiness-confirmation expiry without claiming a recovered error. Prepared standalone two-phase core19d7caa1def33bd2a22901628c135511b18fa766ca51f2c53c1b9d1323a10b31 and executorbd8f68b178c8caae4a9f95f18c2aa616179988d0a8f007f267053c3499df5329 in private runtime-move-86bb1ed4/route-two-phase-v1; nine focused tests pass. No installed helper/application change. After root/independent review, intended one-shot sequence persists exact validated maintenance/desired Caddy configurations and generation/inode, then fresh confirms the current source-ready new generation, verifies unchanged lock/plan/file/mount/loaded config and old/fallback stopped, applies the unchanged two-second guard immediately before the existing inode-preserving write, reloads and verifies mounted/loaded config, and releases only the retained route lock. No automatic retry; any hold preserves evidence and route/lock state for reconciliation.
+
+Before execution, independent review found timeout exceptions would omit partial subprocess output. Narrow capture-only correction changes the standalone executor to5d8d22e7d33b981f2cbd88ec179f938c5643629ef50dfbc7254f5d247ab8df3f; core19d7 unchanged. Timeout now retains partial stdout/stderr and a timedOut receipt before holding without retry. Root notified; route remains gated on actual approved manual-role connection-limit alignment.
+
+
+### 2026-09-26T01:50:03.905200+00:00 — Planned exact manual-role connection-limit alignment
+
+Startup read-only investigation found two P2037 errors: the deployed manual Prisma pool is four but the existing PostgreSQL role atlas_manual_connected_20260912 retains CONNECTION LIMIT2. Actual cluster snapshot was14 clients/22 ordinary, with current runtime3 of target7 leaving the previously budgeted four spare slots. Root reviewed and authorized exact SQL6751549d7fe9ca490c2cd7e4417c37f663eb85729324bf587be8e8267dc4a828/helper40fbecf0db9561b3e252a807dfb8722d433644241f1cfbd86725f2ddafe340da. Execute once with fresh full nonpassword role/membership/119-object ACL equality checks and target7/headroom guard; alter only this role CONNECTION LIMIT2→4. Preserve credentials, all other role attributes/grants/memberships, database global maximum, application generation and routes. No automatic retry; retain full private before/intent/process/after/result.
+
+
+### 2026-09-26T01:53:01.685508+00:00 — Role alignment held before SQL; precise observer accounting prepared
+
+The first exact attempt stopped before intent/SQL: actual01:50:44 snapshot showed rolelimit2, ordinary22,15 clients including the operator, runtime3 of target7. Only before.json exists; no intent/process/after and no ALTER executed. Fresh grouped census identified the extra connection as legitimate Vercel customer web pool, which must not be terminated or assumed ephemeral. Root approved preparing a narrowly corrected accounting guard: exclude only current pg_backend_pid() short-lived observer, retain target7 and at least4 spare after observer exits, with no other exclusions. The same exclusion appears in before snapshot and the atomic SQL guard; all role/membership/ACL drift checks and the single ALTER remain unchanged. Preserved v1 evidence; v2 execution remains held for exact hash/diff review.
+
+
+### 2026-09-26T01:53:48.319577+00:00 — Planned reviewed V2 role-cap correction
+
+Root reviewed full V2 diff and gave execution GO for helper93a564f704088367677e6bd04ce313cf39c393c7eef2c16b06e45e00e77c9115 and SQL5753332ec0a5a9a84c898289768df05a242a045597abfa3f7232ff5602ea6c69. Stage into fresh manual-role-limit-v2 and execute once, with only current observer PID excluded and all other headroom/drift constraints unchanged. First attempt was proven pre-SQL and remains retained.
+
+
+### 2026-09-26T02:23:31.156830+00:00 — Recovered actual role-cap PASS after credit interruption; planned route activation
+
+Read-only remote reconciliation found the V2 operation had completed before interruption: result6e626521, process exit0, actual role2→4 only; all other role attributes, memberships and119 ACL objects preserved. All five exact receipts copied to private manual-role-limit-v2/executed and before/after equality verified; no SQL repeated. Fresh runtime/route reconciliation found source-ready new3d70 running in the original01:32:30 generation, restart0, old/fallback stopped, Caddy maintenance and original route lock retained, no two-phase files or prior two-phase attempt. Root resumes exact reviewed core19d7/executor5d8 prepare→fresh-confirm→commit once, then signed TLS and canonical promotion. Application image/source unchanged; capacity not qualified.
+
+
+### 2026-09-26T02:24:24.130386+00:00 — New runtime routes verified; planned exact public promotion
+
+Two-phase Caddy switch completed once and released retained lock: loaded/mounted8507445e, same source-ready3d70 generation with restart0. Signed private TLS reads PASS3/3 (staff401, unknown-public404, customer-directory200), TLS1.3/native security headers, all exact86 bindings, no card writes/sessions/paid calls. Receiptc0694f9368bdbe565b28209a76bc3eb9063b236bd568b6bd77b32420498ae9f2. Root now executes exact reviewed Vercel promotion77bceed6 for publicdpl8Df and linked exact86 staff/customer cohort. One public promotion only, actual baseline equality and READY checks remain mandatory; unrelated projects/settings/env/redirects preserved. Canonical anonymous checks follow actual provider readback.
+
+
+### 2026-09-26 — Verified live automatic-grading functional pilot and current handoff
+
+Root completed the authorized release at 02:25:18.746 UTC. Exact source `86bb1ed4890b0ff7a881caf95932c1486bb35ef3`/image `6384b81c155a2f50ef0814251b8d0a82a3e504ecba93706de97be3deb421bcd7` serves through dedicated container `3d70d656d89762b621297d6170b64bf619b44ae7b00eedf5dd9ab03d00c82c7c`, started 01:32:30.905094089 UTC, restart zero. Actual role correction `6e626521f208d3404f957c1ef7fc14eb07b20174872f04d1e304359edf4068cc` changed only the manual role limit 2→4. Two-phase route receipt `adda3fecdbd3ca31f40a78017ecec746c0d4588e0577d5dae5f614c865e3a7fe` verified mounted/loaded Caddy `8507445e857b04a5997724064a97af4e0270912df4248af6f7f1c1ebd83217ea`, retained the same generation and released the route lock. Earlier held attempts and receipts remain retained.
+
+Signed private TLS passed 3/3 (`c0694f9368bdbe565b28209a76bc3eb9063b236bd568b6bd77b32420498ae9f2`). Exact public promotion used one provider write and passed all four alias/cohort readbacks (`4fad683963fae51a5b76239304237768830c75b127aaaa0c8fe634e9ab11ac05`). Canonical checks passed 61 anonymous requests plus 11 metadata reads (`b7e70a7d49967dc4a6fbd8b625d33163c13f0cb08d6c870536a4d49f96cf74ea`) without real sessions, card writes or paid work. The post-role worker census (`2c80396c66439344543e349d5f62151258c66dd6fcbbd1289502e35403bb6c2c`) found the same running generation/no OOM and zero logged events/errors since the correction; it is an idle health observation. Completed schema57/public112 and six-control preservation receipts remain authoritative; no additional whole-database qualification was needed for these probes.
+
+Current product/deploy/Set Ops handoff pointers, the [release audit](../atlas/audits/2026-09-26/automatic-functional-pilot.md) and [sanitized summary](../../validation/atlas-functional-pilot-20260926/sanitized-release-summary.json) now record the actual release. All 15 referenced private receipt hashes were checked locally. The owner-approved blueprint and Set Ops runbook are unchanged. Documentation work ran no new tests, probes, deployments, provider actions or push; root owns local review/commit.
+
+Real functional evidence remains three jobs using the same retained pair, six exact originals and three machine reports, with browser sessions revoked and no duplicates/unsettled effects/human approvals. Synthetic same-source three-process restart recovery is separate. Capacity remains unqualified: sustained25 original photos/minute and20 simultaneous analyses near one-card wall time are still open. The next owner acceptance is three fresh distinct iPhone cards: wait for both originals on each to be server-verified, close/lock the browser before grading ends, then return to the same cards and verify one exact report each at Ready for human review. Do not re-upload or press Resume for that test; a genuine correction state is incomplete automatic acceptance. Human approval/publication and physical finishing remain separate.
+
+Handoff review supplement: retained startup findings distinguish discovery/claim polling retry from claimed-stage P2037, which can produce NEEDS_ATTENTION. The audit and sanitized summary preserve that limitation, unqualified sustained shared-database pressure and untested full-host reboot recovery. The proved three-process restart test remains separate. All 16 final private evidence references hash-verified; no new acceptance gate or operational action was added.
