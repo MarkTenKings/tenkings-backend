@@ -120,3 +120,7 @@ CUA review at 1440×900, 1280×800 and 390×844 confirmed the opening, scroll-dr
 Global pause produced the static short opening and paused both service videos. Resuming in the service section restarted both videos, each readyState4. Reduced-motion shares the static behavior but OS preference was not separately emulated. This is desktop-browser responsive verification, not physical-device or performance certification.
 
 Review captures: `review/cinematic-desktop.png`, `review/cinematic-inspection.png`, and `review/cinematic-phone.png`. Final JS syntax and git diff checks passed. Loopback preview remains http://127.0.0.1:8789; production unchanged.
+
+## Production packaging — September 26
+
+Owner approved publication of study08 with its existing sample disclosures. `frontend/atlas-public/scripts/build-homepage.mjs` packages this document and its local dependencies under a content-versioned `/homepage/<digest>/` directory. The public Next app rewrites only `/` to the packaged HTML; all report/dealer/account/staff routes retain their existing code and policy. Direct HTML avoids hydration changing the approved motion layout. Client navigation to the Next fallback starts a fresh document, so controllers have a normal document lifetime. Re-run the adapter after changes, commit generated output, and run `node --test frontend/atlas-public/test/homepage.test.mjs` plus fingerprint tests. Release status belongs in SESSION_LOG; packaging alone is not a live-deployment claim.
