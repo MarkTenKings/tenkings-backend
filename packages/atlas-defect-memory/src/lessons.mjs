@@ -31,7 +31,7 @@ export async function buildReviewedLessons({ confirmation, hydrate, createExempl
   const card = immutable(structuredClone(confirmation.card));
   const hydrated = await hydrate(card), defects = parseDefectWorkspace(hydrated.defects);
   requireThat(defects.cardId === card.cardId && defects.confirmation?.actor === 'HUMAN', 409, 'MEMORY_CONFIRMATION_REQUIRED');
-  const design = deriveDesignContext(defects.profile, card.draft.identity), lessons = [];
+  const design = deriveDesignContext(defects.profile, card.draft.identity), lessons = [], retainedObservations = [];
   const reviews = hydrated.assistance?.reviews ?? [];
   requireThat(Array.isArray(reviews) && reviews.length <= 200, 503, 'MEMORY_REVIEW_INVALID');
   const unique = new Set();
@@ -64,8 +64,17 @@ export async function buildReviewedLessons({ confirmation, hydrate, createExempl
       // findings deliberately reviews the surviving list; removal lessons need
       // the separately preserved human edit identity as well.
       if (finding.reviewResult === 'REMOVED' && !slot.humanEditedIds.includes(finding.id)) continue;
+      // The human rejected this trace in an older frame and it no longer maps
+      // completely into the corrected card. Its exact history is retained,
+      // but the current inspection cannot provide an exemplar for old pixels.
+      if (finding.geometryExclusion) {
+        retainedObservations.push({ findingId: finding.id, side, reason: 'ORIGINAL_FRAME_NOT_CURRENT',
+          sourceFrameId: finding.geometryExclusion.sourceFrame.id, sourceTraceSha256: finding.geometryExclusion.sourceTraceSha256 });
+        continue;
+      }
       const trace = parseSpeedsterTraceRleV1(finding.finalTrace ?? finding.detectorMask);
-      const review = reviews.find(entry => entry.side === side && entry.findingId === finding.id && entry.action !== 'REJECT'
+      const review = reviews.find(entry => entry.side === side && entry.findingId === finding.id
+        && (entry.action !== 'REJECT' || finding.reviewResult === 'REMOVED')
         && canonical(entry.base.frame) === canonical(slot.frame));
       let correctedProposal = false;
       if (review?.action === 'ACCEPT') {
@@ -83,7 +92,9 @@ export async function buildReviewedLessons({ confirmation, hydrate, createExempl
       await append(side, slot, finding, trace, disposition, previousDefectType, review);
     }
     for (const review of reviews.filter(entry => entry.side === side && entry.action === 'REJECT'
-      && canonical(entry.base.frame) === canonical(slot.frame))) {
+      && !entry.findingId && entry.noMeasurablePixels !== true && canonical(entry.base.frame) === canonical(slot.frame))) {
+      // Explicitly rejected original observations with no measurable pixels
+      // retain their review history, but cannot supply an invented crop/mask.
       requireThat(typeof proposalTrace === 'function', 503, 'MEMORY_PROPOSAL_TRACE_UNAVAILABLE');
       const trace = parseSpeedsterTraceRleV1(await proposalTrace({ proposal: review.proposal, side, frame: slot.frame, review }));
       const finding = { id: `astra-rejected:${review.analysisId}:${review.proposalId}`, side, defectType: review.proposal.defectType };
@@ -91,5 +102,6 @@ export async function buildReviewedLessons({ confirmation, hydrate, createExempl
     }
   }
   requireThat(lessons.length <= 200, 413, 'MEMORY_LESSON_LIMIT');
-  return immutable({ version: 'atlas-reviewed-lessons-v1', design, lessons });
+  return immutable({ version: 'atlas-reviewed-lessons-v1', design, lessons,
+    ...(retainedObservations.length ? { retainedObservations } : {}) });
 }

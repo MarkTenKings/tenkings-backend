@@ -16,7 +16,7 @@ const base = Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { cardId: '
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
 const all = (node, predicate, out = []) => { if (Array.isArray(node)) node.forEach(child => all(child, predicate, out));
   else if (node && typeof node === 'object') { if (predicate(node)) out.push(node); all(node.props?.children, predicate, out); } return out; };
-function harness({ journal } = {}) {
+function harness({ journal, finalReview = false } = {}) {
   const values = new Map(journal ? [['atlas-defect-analysis:v1:staff:card', JSON.stringify(journal)]] : []), slots = [], effects = [], timers = new Map(), cleanups = [];
   let cursor = 0, tree, viewCallback;
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
@@ -28,6 +28,8 @@ function harness({ journal } = {}) {
   };
   const f = { calls: [], actions: [], popups: [], closedPopups: 0, pending: false, current: { card: { revision: 1, contentHash: 'one' }, geometry: { confirmed: true },
     defects: { marker: 'saved-original-defects' }, images: { marker: 'original-grants' }, identity: {}, astra: { enabled: true, status: 'IDLE', proposals: [] }, reviewedMemory: { enabled: true, status: 'UNSAVED' } } };
+  if (finalReview) Object.assign(f.current, { finalReview: { report: { proposedGrade: 9.5, findings: [] } },
+    provisional: { state: 'READY', report: { proposedGrade: 9.5 }, reportHash: 'first-current' } });
   f.respond = async (path, options) => path.endsWith('/view') ? f.current : { astra: f.current.astra };
   f.preview = async () => ({ reportHash: 'exact-report-hash', sourceRevision: f.current.card.revision,
     sourceHash: f.current.card.contentHash, canCertify: true, report: {}, review: {} });
@@ -53,7 +55,7 @@ function harness({ journal } = {}) {
       if (name === '@atlas/manual-workflow/client') return { createManualClient: options => { viewCallback = options.onView; return client; } };
       if (name === '@atlas/manual-workspace') return { PairedGeometryWorkspace: 'PairedGeometryWorkspace' };
       if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace' };
-      if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview' };
+      if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview', MachineReportReview: 'MachineReportReview' };
       if (name === '@atlas/manual-workspace/geometry-actions') return { geometryStatus: value => value };
       if (name.startsWith('@atlas/')) return {};
       if (name === '../lib/manual-defect-analysis-client.mjs') return analysisClient;
@@ -74,6 +76,18 @@ function harness({ journal } = {}) {
   f.publish = next => { f.current = next; viewCallback(next); f.render(); };
   f.render(); return f;
 }
+
+test('final correction workspace shows the current computed grade and hides it while measurement is pending without creating human decisions', async () => {
+  const f = harness({ finalReview: true }); await flush(); f.render();
+  assert.match(f.text(), /Current provisional grade: 9.5/); assert.equal(f.actions.length, 0);
+  f.publish({ ...f.current, card: { revision: 2, contentHash: 'pending' }, provisional: { state: 'PENDING' } });
+  assert.match(f.text(), /Preparation or measurement is incomplete/); assert.doesNotMatch(f.text(), /Current provisional grade: 9.5/);
+  f.publish({ ...f.current, card: { revision: 3, contentHash: 'measured' }, provisional: { state: 'READY', report: { proposedGrade: 8 }, reportHash: 'updated' } });
+  assert.match(f.text(), /Current provisional grade: 8/);
+  f.button('Findings').props.onClick(); await flush(); f.render();
+  assert.equal(f.defects().grade, 8); assert.equal(f.actions.length, 0); assert.equal(f.popups.length, 0);
+  f.dispose();
+});
 
 test('actual staff parent refreshes analysis assistance without replacing a newer saved finding edit or leaving its editor', async () => {
   const f = harness(); await flush(); f.render(); const old = structuredClone(f.current); let complete;
@@ -316,4 +330,47 @@ test('background navigation refresh cannot replace a new save or active editor a
   f.geometry().onEditingChange(false);f.render();f.respond=async()=>{throw {code:'IMAGE_ACCESS_UNAVAILABLE'};};
   f.button('Findings').props.onClick();f.render();assert.ok(f.defects());await flush();f.render();
   assert.ok(f.defects());assert.match(f.text(),/IMAGE_ACCESS_UNAVAILABLE/);assert.equal(f.actions.length,0);f.dispose();
+});
+
+const preparedReview = current => {
+  const sides=Object.fromEntries(['FRONT','BACK'].map((side,index)=>{
+    const frame={id:`prepared-${side}`,version:1,inspection:{sha256:String(index+1).repeat(64)},rectified:{sha256:String(index+3).repeat(64)}};
+    return [side,{image:{version:1,originalSha256:String(index+5).repeat(64)},physical:{actor:'ENGINE'},prepared:{frame},printed:null}];
+  }));
+  return {...current,geometry:{confirmed:false,sides},defects:{sides:Object.fromEntries(Object.entries(sides).map(([side,slot])=>[side,{
+    frame:{frameId:slot.prepared.frame.id,preparationVersion:1,imageVersion:1,originalSha256:slot.image.originalSha256,
+      inspectionImageSha256:slot.prepared.frame.inspection.sha256,rectifiedImageSha256:slot.prepared.frame.rectified.sha256},findings:[]}
+  ]))}};
+};
+test('partial final review permits Findings in the exact prepared physical frame without printed borders or geometry confirmation',async()=>{
+  const f=harness({finalReview:true});await flush();f.render();
+  f.publish({...preparedReview(f.current),provisional:{state:'READY',report:{proposedGrade:null,calculationState:'GEOMETRY_UNRESOLVED'}}});
+  assert.match(f.text(),/Centering geometry needs review/);assert.doesNotMatch(f.text(),/Updating measurements|Current provisional grade: null/);
+  assert.equal(f.button('Review findings').props.disabled,false);f.button('Review findings').props.onClick();f.render();
+  assert.ok(f.defects());assert.equal(f.defects().grade,undefined);assert.equal(f.actions.length,0);
+  f.button('Geometry').props.onClick();f.render();
+  f.publish({...f.current,defects:{sides:{...f.current.defects.sides,FRONT:{...f.current.defects.sides.FRONT,frame:{...f.current.defects.sides.FRONT.frame,frameId:'wrong-frame'}}}}});
+  assert.equal(f.button('Findings').props.disabled,true);f.button('Findings').props.onClick();f.render();assert.ok(f.geometry());
+  f.dispose();
+});
+test('unsaved geometry and finding edits suppress saved grade until saved or discarded',async()=>{
+  const f=harness({finalReview:true});await flush();f.render();
+  f.button('Findings').props.onClick();f.render();assert.equal(f.defects().grade,9.5);
+  f.defects().onEditingChange(true);f.render();assert.equal(f.defects().grade,undefined);
+  assert.match(f.text(),/Unsaved changes/);assert.doesNotMatch(f.text(),/Current provisional grade:/);
+  f.defects().onEditingChange(false);f.render();assert.equal(f.defects().grade,9.5);
+  f.button('Geometry').props.onClick();f.render();f.geometry().onEditingChange(true);f.render();
+  assert.match(f.text(),/Unsaved changes/);assert.doesNotMatch(f.text(),/Current provisional grade:/);
+  f.geometry().onEditingChange(false);f.render();assert.match(f.text(),/Current provisional grade: 9.5/);assert.equal(f.actions.length,0);f.dispose();
+});
+test('failed physical preparation exposes an explicit same-side restore command and recovers Findings access without approval',async()=>{
+  const f=harness({finalReview:true});await flush();f.render();const prepared=preparedReview(f.current);
+  f.publish({...prepared,card:{...prepared.card,draft:{geometryBeforeEdit:{FRONT:{ref:{id:'retained-original'}}}}},
+    geometry:{...prepared.geometry,sides:{...prepared.geometry.sides,FRONT:{...prepared.geometry.sides.FRONT,prepared:null}}},provisional:{state:'PENDING'}});
+  assert.equal(f.button('Findings').props.disabled,true);assert.match(f.text(),/restore the previous outline, correct the finding/);
+  f.onExecute=action=>{if(action.type==='RESTORE_GEOMETRY')f.publish(prepared);};
+  await f.button('Restore Front previous outline').props.onClick();f.render();
+  assert.deepEqual(JSON.parse(JSON.stringify(f.actions)),[{type:'RESTORE_GEOMETRY',side:'FRONT'}]);
+  assert.ok(f.geometry());assert.equal(f.button('Findings').props.disabled,false);
+  assert.equal(f.button('Restore Front previous outline'),undefined);assert.equal(f.popups.length,0);f.dispose();
 });

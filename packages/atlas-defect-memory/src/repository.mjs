@@ -33,8 +33,10 @@ function confirmed(row) {
 function publication(row) {
   if (!row) return null;
   requireThat(digest(row.document) === row.document_hash, 503, 'MEMORY_PUBLICATION_INVALID');
+  const bundle = JSON.parse(row.document);
   return { status: 'PUBLISHED', cardId: row.card_id, actionId: row.action_id, generation: Number(row.revision),
-    lessonCount: JSON.parse(row.document).lessons.length, publicationHash: row.document_hash };
+    lessonCount: bundle.lessons.length, publicationHash: row.document_hash,
+    ...(bundle.retainedObservations?.length ? { retainedObservationCount: bundle.retainedObservations.length } : {}) };
 }
 function sameCurrentEvidence(current, confirmation) {
   const saved = confirmation.card;
@@ -45,7 +47,7 @@ function sameCurrentEvidence(current, confirmation) {
     && canonical(current.draft.identity) === canonical(saved.draft.identity);
 }
 function validateBundle(bundle, confirmation) {
-  object(bundle, ['version', 'design', 'lessons']); validateDesign(bundle.design);
+  object(bundle, ['version', 'design', 'lessons', ...(Object.hasOwn(bundle, 'retainedObservations') ? ['retainedObservations'] : [])]); validateDesign(bundle.design);
   requireThat(bundle.version === 'atlas-reviewed-lessons-v1' && Array.isArray(bundle.lessons) && bundle.lessons.length <= 200,
     503, 'MEMORY_PUBLICATION_INVALID');
   const ids = new Set(), findingIds = new Set();
@@ -57,6 +59,18 @@ function validateBundle(bundle, confirmation) {
       && lesson.source.contentHash === confirmation.card.contentHash && lesson.source.nativeSourceHash === confirmation.card.draft.source.sourceHash,
       503, 'MEMORY_PUBLICATION_INVALID');
     ids.add(lesson.id); findingIds.add(lesson.findingId);
+  }
+  if (Object.hasOwn(bundle, 'retainedObservations')) {
+    requireThat(Array.isArray(bundle.retainedObservations) && bundle.retainedObservations.length > 0
+      && bundle.retainedObservations.length + bundle.lessons.length <= 200, 503, 'MEMORY_PUBLICATION_INVALID');
+    for (const retained of bundle.retainedObservations) {
+      object(retained, ['findingId', 'side', 'reason', 'sourceFrameId', 'sourceTraceSha256']); hash(retained.sourceTraceSha256);
+      requireThat(typeof retained.findingId === 'string' && retained.findingId.length > 0 && retained.findingId.length <= 512
+        && !findingIds.has(retained.findingId) && ['FRONT', 'BACK'].includes(retained.side)
+        && retained.reason === 'ORIGINAL_FRAME_NOT_CURRENT' && typeof retained.sourceFrameId === 'string'
+        && retained.sourceFrameId.length > 0 && retained.sourceFrameId.length <= 512, 503, 'MEMORY_PUBLICATION_INVALID');
+      findingIds.add(retained.findingId);
+    }
   }
 }
 

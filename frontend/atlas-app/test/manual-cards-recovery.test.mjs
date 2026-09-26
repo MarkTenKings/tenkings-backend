@@ -453,3 +453,9 @@ test('confirmed current-card deletion routes away instead of keeping a stale gra
  const f=harness(storage(null),async()=>({}),{readCard:async()=>{throw {code:'INTAKE_CARD_DELETED',status:410};}});
  f.render();await flush();f.render();assert.deepEqual(f.navigations,['/manual']);assert.equal(f.workspace(),false);
 });
+
+test('final geometry correction holds explain preserving findings and deliberate recovery instead of blind retry',()=>{
+  assert.match(manualMessage({code:'ATLAS_DEFECT_GEOMETRY_REVIEW_REQUIRED'}),/Restore the previous outline, review the affected findings/);
+  assert.match(manualMessage({code:'ATLAS_DEFECT_RETRACE_REQUIRED'}),/Add a new trace on the current photograph/);
+  assert.match(manualMessage({code:'MANUAL_GEOMETRY_REVIEW_REQUIRED'}),/confirm both sides in Geometry/);
+});

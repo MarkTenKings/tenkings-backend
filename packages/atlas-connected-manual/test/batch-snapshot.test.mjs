@@ -23,7 +23,7 @@ function fixture({ stage = 'ANALYZE', initialized = true } = {}) {
   f.identity = { state: 'COMPLETE' };
   f.geometry = Object.fromEntries(SIDES.map(side => [side, { state: 'READY' }]));
   f.state = { defects: clone(workspace(false)), assistance: null, geometry: { sides: Object.fromEntries(SIDES.map(side => [side,
-    { printed: { quad: [] }, prepared: { id: side } }])) } };
+    { physical: { quad: [] }, printed: { quad: [] }, prepared: { id: side } }])) } };
   f.intakeRepository = { async read(actor, cardId, options) {
     check(actor); assert.equal(cardId, f.card.cardId); assert.deepEqual(options, { edit: true });
     f.calls.push('pair'); await f.onPair?.(f.calls.filter(x => x === 'pair').length);

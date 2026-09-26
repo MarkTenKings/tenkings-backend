@@ -11,6 +11,7 @@ from color_geometry import (
     PHYSICAL_AMBIGUOUS_RUNNER_UP_RATIO,
     POLICY_PROVENANCE,
     PRINTED_FRAME_AMBIGUOUS_RUNNER_UP_RATIO,
+    PRINTED_CANDIDATE_POLICY,
     _canonical_ambiguity,
     propose_physical_outer,
     propose_printed_frame,
@@ -189,6 +190,37 @@ class SpeedsterColorGeometryTest(unittest.TestCase):
         self.assertEqual(result["outcome"], "NOT_APPLICABLE")
         self.assertEqual(result["advisory"]["code"], "NO_PRINTED_FRAME")
         self.assertIsNone(result["proposal"])
+
+    def test_complete_ambiguous_candidate_retains_measured_offsets_without_accepting_it(self):
+        offsets = [41.0, 65.0, 88.0, 72.0]
+        sides = [{"medianContrastDeltaE": 24.0, "supportFraction": 0.8,
+                  "sampleCount": 200, "candidateCount": 2,
+                  "ambiguous": i == 1, "runnerUpScoreRatio": 0.97 if i == 1 else 0.5}
+                 for i in range(4)]
+        with patch("color_geometry._top_transition_evidence", side_effect=list(zip(offsets, sides))):
+            result = propose_printed_frame(np.zeros((1778, 1270, 3), dtype=np.uint8), "BLACK")
+        self.assertEqual(result["outcome"], "ABSTAIN")
+        self.assertIsNone(result["proposal"])
+        self.assertTrue(result["ambiguity"]["ambiguous"])
+        candidate = result["diagnosticCandidate"]
+        self.assertEqual(candidate["policy"], PRINTED_CANDIDATE_POLICY)
+        self.assertEqual(candidate["authority"], "PROPOSER_ONLY")
+        np.testing.assert_array_equal(candidate["quad"], [[72, 41], [1204, 41], [1204, 1689], [72, 1689]])
+        serialized = serialize_proposal(result, 1270, 1778)
+        self.assertEqual(serialized["diagnosticCandidate"]["quad"][0], {"x": 72 / 1270, "y": 41 / 1778})
+        self.assertEqual(serialized["sideEvidence"], result["sideEvidence"])
+
+    def test_ambiguous_partial_frame_does_not_invent_the_unsupported_side(self):
+        for bad in [{"medianContrastDeltaE": 11.99}, {"supportFraction": 0.5499}]:
+            sides = [{"medianContrastDeltaE": 24.0, "supportFraction": 0.8,
+                      "sampleCount": 200, "candidateCount": 2, "ambiguous": True,
+                      "runnerUpScoreRatio": 0.97} for _ in range(4)]
+            sides[0].update(bad)
+            with patch("color_geometry._top_transition_evidence", side_effect=[(50.0, side) for side in sides]):
+                result = propose_printed_frame(np.zeros((1778, 1270, 3), dtype=np.uint8), "BLACK")
+            self.assertEqual(result["outcome"], "ABSTAIN")
+            self.assertIsNone(result["proposal"])
+            self.assertIsNone(result["diagnosticCandidate"])
 
 
 if __name__ == "__main__":

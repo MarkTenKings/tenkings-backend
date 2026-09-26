@@ -128,9 +128,10 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     }
     return {...packet,changedSides};
   }
-  let assistance;
+  let assistance, batchReview;
   const workflow=createManualWorkflow({repository,artifacts,pythonExecutable,measurementLimits:limits.measurement,
     resolveProposal: input => assistance.resolveProposal(input),
+    resolveFinalReview: input => { requireThat(batchReview,503,'BATCH_DISABLED'); return batchReview.resolveCorrections(input); },
     resolveConfirmation: input => assistance.resolveConfirmation(input),
     assertReviewComplete: input => assistance.assertReviewComplete(input),
     afterConfirm: memoryEnabled ? (staff,cardId,actionId)=>assistance.publish(staff,cardId,actionId) : null,
@@ -171,7 +172,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   const connected={dealerOperations,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
     workspaceExtras: async input => {
       const [extras,status]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId)]);
-      return {...extras,publication:status,presentationEnabled,marketEnabled:Boolean(marketProvider),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};
+      return {...extras,publication:status,provisional:workflow.currentPreview(input.card,input.state),presentationEnabled,marketEnabled:Boolean(marketProvider),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};
     },
     open:createConnectedCardReader({intake,details,workflow,identification,earlyGeometry,imageReadUrl}),
     machineBatchSnapshot:createMachineBatchSnapshot({intakeRepository,workflow,details,identification}),
@@ -211,9 +212,10 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     const batchRepository=createBatchRepository({boundary,intakeRepository});
     const prepare=createBatchPreparation({connected,artifacts,pythonExecutable,measurementLimits:limits.measurement,
       reportBuilder:createBatchReportProcess({limited})});
+    batchReview=createBatchReview({connected,repository:batchRepository,artifacts});
     batch=createBatchGrading({repository:batchRepository,worker:createBatchWorker({repository:batchRepository,prepare,
       concurrency:processing.executionConcurrency,analysisConcurrency:processing.analysisConcurrency,onError:onWorkerError,autoStart:false}),
-      review:createBatchReview({connected,repository:batchRepository,artifacts}),
+      review:batchReview,
       intakeStatus:autonomous?async staff=>(await intake.processingList(staff,{limit:100})).cards:null});
   }
   connected.batch=batch;

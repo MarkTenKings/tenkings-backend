@@ -33,6 +33,10 @@ PHYSICAL_MAT_REFERENCE_MAX_DELTA_E = 18.0
 PRINTED_FRAME_CONTRAST_FLOOR_DELTA_E = 12.0
 PRINTED_FRAME_MINIMUM_SIDE_SUPPORT = 0.55
 PRINTED_FRAME_AMBIGUOUS_RUNNER_UP_RATIO = 0.90
+# A complete, supported but ambiguous outline is retained as proposer evidence
+# for ATLAS's final-review workflow. It does not change the shared outcome or
+# lower any edge-support threshold, and cannot supply an unobserved border.
+PRINTED_CANDIDATE_POLICY = "atlas-supported-printed-candidate-v1"
 
 
 def _canonical_ambiguity(raw_ratio: float, threshold: float) -> tuple[float, bool]:
@@ -408,26 +412,9 @@ def propose_printed_frame(rectified: np.ndarray, mat_color: str) -> dict:
         and evidence["supportFraction"] >= 0.25
     ]
 
-    if ambiguous_sides:
-        return _result(
-            "PRINTED_FRAME",
-            mat_color,
-            "ABSTAIN",
-            sides=sides,
-            candidate_count=candidate_count,
-            runner_up_ratio=runner_ratio,
-            ambiguous=True,
-            advisory=_advisory(
-                "AMBIGUOUS_PRINTED_FRAME",
-                None,
-                "Multiple printed-frame transitions are similarly plausible. Confirm the current manual draft.",
-            ),
-        )
+    quad = None
     if len(supported_sides) == 4:
-        top = offsets["top"]
-        right = offsets["right"]
-        bottom = offsets["bottom"]
-        left = offsets["left"]
+        top, right, bottom, left = (offsets[side] for side in SIDE_NAMES)
         quad = np.array(
             [
                 [left, top],
@@ -437,6 +424,28 @@ def propose_printed_frame(rectified: np.ndarray, mat_color: str) -> dict:
             ],
             dtype=np.float32,
         )
+
+    if ambiguous_sides:
+        return _result(
+            "PRINTED_FRAME",
+            mat_color,
+            "ABSTAIN",
+            sides=sides,
+            candidate_count=candidate_count,
+            runner_up_ratio=runner_ratio,
+            ambiguous=True,
+            diagnostic_candidate=(
+                {"policy": PRINTED_CANDIDATE_POLICY, "authority": AUTHORITY,
+                 "reason": "AMBIGUOUS_SUPPORTED_TRANSITIONS", "quad": quad}
+                if quad is not None else None
+            ),
+            advisory=_advisory(
+                "AMBIGUOUS_PRINTED_FRAME",
+                None,
+                "Multiple printed-frame transitions are similarly plausible. Confirm the current manual draft.",
+            ),
+        )
+    if quad is not None:
         return _result(
             "PRINTED_FRAME",
             mat_color,

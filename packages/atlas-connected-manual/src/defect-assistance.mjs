@@ -8,13 +8,15 @@ import { createAnalysisRepository } from '@atlas/defect-analysis/repository';
 import { createAnalysisExecutor, createAnalysisResultReader } from '@atlas/defect-analysis/executor';
 import { proposalRle } from '../../atlas-manual-workflow/src/proposal-review.mjs';
 import { readConfirmationFence } from './confirmation-fence.mjs';
+import { importedProposalIds } from '../../atlas-manual-workflow/src/final-review.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
 const MACHINE_PREPARATION = Symbol('atlas-machine-preparation');
 function confirmationOffer(run, result, state) {
   const reviews = state.assistance?.reviews ?? [];
+  const imported = state.finalReview?.report.analysisId === run.analysisId ? importedProposalIds(state.finalReview) : [];
   return { analysisId: run.analysisId, resultHash: digest(canonical(result)),
-    proposalIds: result.proposals.filter(proposal => !reviews.some(review => review.analysisId === run.analysisId
+    proposalIds: result.proposals.filter(proposal => !imported.includes(proposal.id) && !reviews.some(review => review.analysisId === run.analysisId
       && review.proposalId === proposal.id)).map(proposal => proposal.id).sort() };
 }
 export function defectAnalysisBinding(card, state, preparation = null) {
@@ -22,7 +24,7 @@ export function defectAnalysisBinding(card, state, preparation = null) {
   // Batch analysis consumes prepared geometry as a machine proposal. It never
   // creates the human confirmation needed to certify a report or a lesson.
   const ready = preparation === MACHINE_PREPARATION
-    ? geometry.canConfirmBoth && SIDES.every(side => !geometry.sides[side].ambiguous)
+    ? SIDES.every(side => state.geometry.sides[side].physical && state.geometry.sides[side].prepared)
     : geometry.confirmed;
   requireThat(state.defects && ready, 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
   requireThat(SIDES.every(side => !state.defects.sides[side].pending), 409, 'MANUAL_DEFECT_PENDING');
@@ -115,7 +117,8 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     if (!memory) return { enabled: false, status: 'UNSAVED' };
     const saved = await memory.status(staff, cardId);
     return { enabled: true, status: { NO_CONFIRMED_FINDINGS: 'UNSAVED', SUPERSEDED: 'UNSAVED',
-      PENDING: 'PENDING', PUBLISHED: 'SAVED' }[saved.status] ?? 'UNKNOWN', exampleCount: saved.lessonCount ?? 0 };
+      PENDING: 'PENDING', PUBLISHED: 'SAVED' }[saved.status] ?? 'UNKNOWN', exampleCount: saved.lessonCount ?? 0,
+      ...(saved.retainedObservationCount ? { retainedObservationCount: saved.retainedObservationCount } : {}) };
   }
   async function project(staff, cardId, analysisId = null, snapshot = null) {
     if (!reader) return { astra: { enabled: false, requestAvailable: false, status: 'IDLE' } };
@@ -145,7 +148,8 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     const status = run.state === 'READY' && !compatible(run, card, state) ? 'STALE'
       : { PREPARED: 'UNKNOWN', DISPATCHED: 'RUNNING' }[run.state] ?? run.state;
     const reviews = state.assistance?.reviews ?? [];
-    const proposals = (loaded?.result?.proposals ?? []).map(proposal => {
+    const imported = state.finalReview?.report.analysisId === run.analysisId ? importedProposalIds(state.finalReview) : [];
+    const proposals = (loaded?.result?.proposals ?? []).filter(proposal => !imported.includes(proposal.id)).map(proposal => {
       const review = reviews.find(r => r.analysisId === run.analysisId && r.proposalId === proposal.id);
       return { ...proposal, reviewStatus: review ? { ACCEPT: 'ACCEPTED', TRACE_SAVE: 'CORRECTED', REJECT: 'REJECTED' }[review.action] : 'UNREVIEWED' };
     });
@@ -165,7 +169,7 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     const rateLimited = run.state === 'REFUSED' && !run.backgroundAccepted && run.receipts.some(receipt => receipt.kind === 'RESPONSE'
       && receipt.evidence.state === 'REFUSED' && receipt.evidence.httpStatus === 429 && receipt.evidence.responseId === null
       && receipt.evidence.code === 'DEFECT_ANALYSIS_PROVIDER_HTTP_ERROR');
-    return { state: run.state, astra: { enabled: true, requestAvailable: Boolean(provider), status, analysisId: run.analysisId,
+    return { state: run.state, astra: { enabled: !state.finalReview || proposals.length > 0, requestAvailable: !state.finalReview && Boolean(provider), status, analysisId: run.analysisId,
       base: Object.fromEntries(SIDES.map(side => [side, baseFromRun(run, side)])), proposals,
       ...(status === 'READY' && loaded?.result ? { proposalReview: confirmationOffer(run, loaded.result, state) } : {}),
       limitations: loaded?.result?.limitations ?? [],

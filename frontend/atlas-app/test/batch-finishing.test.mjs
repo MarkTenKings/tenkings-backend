@@ -12,16 +12,18 @@ const code = babel.transformSync(readFileSync(new URL('../components/BatchGradin
 }).code;
 const all = (value, match, out = []) => { if (Array.isArray(value)) value.forEach(item => all(item, match, out)); else if (value && typeof value === 'object') { if (match(value)) out.push(value); all(value.props?.children, match, out); } return out; };
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
-async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null } = {}) {
+async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null, correcting = false, partial = false } = {}) {
   const plan = samplePlan(), key = 'a'.repeat(64); let staff = { id: 'fixture-reviewer', role: 'REVIEWER' };
   const packet = { key, cardId: plan.binding.cardId, canCertify: true, reportHash: 'c'.repeat(64), report: {
     geometry: { FRONT: { frame: { inspectionImageSha256: 'd'.repeat(64) } }, BACK: { frame: { inspectionImageSha256: 'e'.repeat(64) } } },
   } };
+  if (partial) Object.assign(packet,{canCertify:false,reviewRequiredReason:'BATCH_FINAL_GEOMETRY_REQUIRED',explanation:null,report:{...packet.report,calculationState:'GEOMETRY_UNRESOLVED',grade:null,proposedGrade:null}});
+  if (correcting) { packet.correctionAvailable = true; packet.canCertify = false; }
   const result = { cardId: packet.cardId, actionId: plan.binding.approvalActionId, publication: {
     state: pending ? 'PENDING' : 'PUBLISHED', actionId: plan.binding.approvalActionId,
     reportHash: plan.binding.reportHash, publicHash: plan.binding.publicHash, version: plan.binding.approvalVersion, reportNumber: plan.binding.reportNumber,
   } };
-  const f = { calls: [], popups: [], events: [], approved: false, disposed: false, plan, result, packet };
+  const f = { calls: [], popups: [], events: [], approved: false, disposed: false, plan, result, packet, actions: [], routes: [] };
   let resolveApproval, resolveJobs; const response = deferred ? new Promise(resolve => { resolveApproval = resolve; }) : Promise.resolve(result);
   f.release = () => resolveApproval?.(result);
   f.releaseJobs = jobs => resolveJobs?.({ jobs });
@@ -53,7 +55,7 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
     if (url.includes('/finishing/')) return mismatch ? { ...plan, binding: { ...plan.binding, cardId: randomUUID() } } : plan;
     throw new Error(`Unexpected fixture request ${url}`);
   };
-  const exports = {}, local = new Map(), router = { query: { tab: intake ? 'INTAKE' : attention ? 'NEEDS_ATTENTION' : 'REVIEW' }, pathname: '/batch', push() {}, replace() {} };
+  const exports = {}, local = new Map(), router = { query: { tab: intake ? 'INTAKE' : attention ? 'NEEDS_ATTENTION' : 'REVIEW' }, pathname: '/batch', push(url) { f.routes.push(url); }, replace() {} };
   vm.runInNewContext(code, { exports, crypto: { randomUUID }, setInterval: () => 1, clearInterval() {},
     window: { addEventListener() {}, removeEventListener() {} }, document: { visibilityState: 'visible' },
     localStorage: { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value), removeItem: key => local.delete(key) },
@@ -66,6 +68,10 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
       if (name.endsWith('/manual-client.mjs')) return { manualRequest: request, manualMessage: failure => failure.code ?? 'Label unavailable.' };
       if (name.endsWith('/routes.mjs')) return { STAFF_BASE_PATH: '/app' };
       if (name === '@atlas/manual-workspace/report-review') return { MachineReportReview };
+      if (name === '@atlas/manual-workflow/client') return { createManualClient: () => ({
+        recover: async () => correcting ? { finalReview: { reportHash: packet.reportHash } } : {},
+        execute: async action => { f.actions.push(action); },
+      }) };
       if (name === './ManualFinishing') return { __esModule: true, default: ManualFinishing, openManualLabelPrintWindow() {
         f.events.push('POPUP'); const popup = { closed: false, close() { this.closed = true; } }; f.popups.push(popup); return popup;
       } };
@@ -94,6 +100,24 @@ test('batch approval owns one popup before POST and prepares only the exact comm
   const post = f.calls.find(call => call.options.method === 'POST');
   assert.equal(post.options.body.reviewed, true); assert.equal(post.options.body.images.FRONT, 'd'.repeat(64));
   assert.equal(post.options.body.reportHash, f.packet.reportHash); f.dispose();
+});
+test('final corrections begin only on the explicit gesture and retain the exact displayed machine report binding', async () => {
+  const f = await fixture();
+  assert.equal(f.actions.length, 0);
+  f.find(node => node.type === 'button' && text(node) === 'Review geometry / make corrections')[0].props.onClick();
+  await f.flush();
+  assert.deepEqual(f.actions.map(action => ({ ...action })), [{ type: 'BEGIN_FINAL_REVIEW', batchKey: f.packet.key, reportHash: f.packet.reportHash }]);
+  assert.deepEqual(f.routes, [`/manual/${f.packet.cardId}?from=batch`]);
+  assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
+  f.dispose();
+});
+test('a corrected report continues the current final review and cannot approve the old machine report', async () => {
+  const f = await fixture({ correcting: true });
+  assert.equal(f.find(node => node.type === 'button' && /Approve & print/.test(text(node))).length, 0);
+  f.find(node => node.type === 'button' && text(node) === 'Continue final review')[0].props.onClick();
+  await f.flush();
+  assert.equal(f.actions.length, 0); assert.deepEqual(f.routes, [`/manual/${f.packet.cardId}?from=batch`]);
+  f.dispose();
 });
 test('mismatched label cannot print; pending publication closes popup without reading a label', async () => {
   for (const options of [{ mismatch: true }, { pending: true }]) {
@@ -145,4 +169,13 @@ test('resume binds the displayed revision once and reconciles a lost response wi
     assert.equal(f.calls.at(-1).url, '/api/staff/manual-connected/cards/batch');
     f.dispose();
   }
+});
+
+test('partial batch report keeps evidence visible and gives geometry action instead of a certification or loading message',async()=>{
+  const f=await fixture({partial:true});assert.equal(f.reviews().length,1);f.ready();
+  assert.match(f.text(),/Defect analysis and measurements are saved/);assert.doesNotMatch(f.text(),/trained reviewer is required|Loading the exact/);
+  const approve=f.find(node=>node.type==='button'&&text(node)==='Approve & print next')[0];assert.equal(approve.props.disabled,true);
+  await approve.props.onClick();await f.flush();assert.equal(f.popups.length,0);assert.equal(f.calls.some(call=>call.options.method==='POST'),false);
+  f.find(node=>node.type==='button'&&text(node)==='Review geometry / make corrections')[0].props.onClick();await f.flush();
+  assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.equal(f.routes.length,1);f.dispose();
 });

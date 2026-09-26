@@ -854,7 +854,7 @@ test('existing identify endpoint dispatches only a closed explicit retry body af
 for(const [layoutType,evidence] of [['POKEMON','Front: BASIC Pikachu, HP 60 and Thunder Shock attack.'],['TRAINER','Front: TRAINER — Supporter header and trainer rules text.'],['ENERGY','Front: ENERGY header and Basic Lightning Energy symbol.']])test(`fresh ${layoutType} pair identifies layout and automatically proceeds through batch preparation to Astra without human preparation`,async()=>{
  const f=await fixture({engineVersion:ATLAS_IDENTIFICATION_LAYOUT_VERSION,category:'Pokémon',layoutProposal:{value:layoutType,confidence:'high',evidence}});
  let initialized=false,analyses=0;const uploads={FRONT:'fixture-front',BACK:'fixture-back'},defects=(await import('../../atlas-manual-workspace/test/defect-fixtures.mjs')).workspace(false);
- const state={geometry:{sides:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{printed:{},prepared:{}}]))},defects};
+ const state={geometry:{sides:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{physical:{},printed:{},prepared:{}}]))},defects};
  const card={cardId:f.cardId,revision:1,contentHash:'a'.repeat(64)};
  const connected={
   async open(){const details=await f.details.read(f.staff,f.cardId);return {...details,card:{ready:true,sourceHash:f.sourceHash,sides:Object.fromEntries(Object.entries(uploads).map(([side,uploadId])=>[side,{upload:{uploadId}}]))},manual:initialized?{}:null,identification:await f.identification.status(f.staff,f.cardId)};},

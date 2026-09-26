@@ -39,7 +39,7 @@ test('uploaded pairs show current ATLAS job state and attention instead of a per
   ['RUNNING','PREPARE',null,'ATLAS preparing'],
   ['RUNNING','ANALYZE',null,'ATLAS grading'],
   ['RUNNING','REPORT',null,'ATLAS preparing report'],
-  ['NEEDS_ATTENTION','PREPARE','BATCH_GEOMETRY_NEEDS_REVIEW','Check edges before grading'],
+  ['NEEDS_ATTENTION','PREPARE','BATCH_GEOMETRY_NEEDS_REVIEW','Card outline needs attention'],
   ['NEEDS_ATTENTION','PREPARE','BATCH_IDENTITY_NEEDS_REVIEW','Check card details before grading'],
   ['REVIEW','REPORT',null,'Ready for human review'],
   ['APPROVED','REPORT',null,'Approved'],

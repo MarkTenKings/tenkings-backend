@@ -11,6 +11,7 @@ import { rgb16Png } from '../../atlas-photo-runtime/test/helpers.mjs';
 import { memoryPhotoStorage, sha } from '../../atlas-manual-intake/test/helpers.mjs';
 import { createWorkLimiter } from '../src/index.mjs';
 import { adoptEarlyGeometry, createEarlyGeometry, geometryCacheInput } from '../src/early-geometry.mjs';
+import { MACHINE_GEOMETRY_POLICY, PRINTED_CANDIDATE_POLICY } from '../src/machine-geometry.mjs';
 
 const settings = { matColor: 'BLACK', cornerShape: 'ROUNDED_3_18_MM', profile: null, fields: { name: '' } };
 const identity = { identity: { opencv: 'fixture', numpy: 'fixture', physicalProposalPolicy: 'fixture', sources: {} }, native: { fixture: 'a'.repeat(64) } };
@@ -136,7 +137,8 @@ test('a native preparation refusal retains its valid physical proposal and expos
   } finally { await service.stop(); }
 });
 
-test('automatic cache requires explicit core outputs and retains exact working-source metadata for deferred reveals', async () => {
+for (const proposalKind of ['accepted', 'provisional ambiguous', 'missing printed']) test(`automatic cache retains exact core pixels and ${proposalKind} geometry provenance`, async () => {
+  const provisional = proposalKind === 'provisional ambiguous', missingPrinted = proposalKind === 'missing printed';
   const f = await fixture(), service = f.build();
   f.setPhysical(async input => ({ id: 'physical-core', identity: identity.identity,
     frameDescriptorSha256: descriptorSha256(input.source.frame), proposal: { outcome: 'ACCEPTED', proposal: quad } }));
@@ -150,7 +152,15 @@ test('automatic cache requires explicit core outputs and retains exact working-s
         frameToDerivative: name === 'rectified' ? transform : [141, 0, -171.5, 0, 138.828125, -182.125, 0, 0, 1] }; };
     const outputs = { rectified: output('rectified', 1270, 1778), inspection: output('inspection', 1350, 1858) };
     return { id: 'core-result', frameDescriptorSha256: descriptorSha256(input.source.frame), identity: identity.identity,
-      outputContract: PREPARATION_CORE_V1, sourceQuad: input.quad, proposal: { outcome: 'ACCEPTED', proposal: quad },
+      outputContract: PREPARATION_CORE_V1, sourceQuad: input.quad, proposal: missingPrinted
+        ? { mode: 'PRINTED_FRAME', outcome: 'NOT_APPLICABLE', authority: 'PROPOSER_ONLY', proposal: null, advisory: { code: 'NO_PRINTED_FRAME' } }
+        : provisional
+        ? { mode: 'PRINTED_FRAME', outcome: 'ABSTAIN', authority: 'PROPOSER_ONLY', proposal: null,
+          ambiguity: { ambiguous: true }, advisory: { code: 'AMBIGUOUS_PRINTED_FRAME' },
+          diagnosticCandidate: { policy: PRINTED_CANDIDATE_POLICY, authority: 'PROPOSER_ONLY', reason: 'AMBIGUOUS_SUPPORTED_TRANSITIONS', quad },
+          sideEvidence: Object.fromEntries(['top', 'right', 'bottom', 'left'].map(side => [side,
+            { medianContrastDeltaE: 24, supportFraction: .8, sampleCount: 200, candidateCount: 2 }])) }
+        : { outcome: 'ACCEPTED', proposal: quad },
       encoderSettings: { format: 'webp', quality: 92, sourceBitDepth: 8 }, outputs,
       frame: { id: 'prepared-core', version: 1, sourceToRectified: transform,
         rectified: { sha256: outputs.rectified.sha256, width: 1270, height: 1778 },
@@ -161,6 +171,9 @@ test('automatic cache requires explicit core outputs and retains exact working-s
     await service.ensure(f.staff, f.cardId); await until(() => [...f.jobs.values()][0]?.state === 'READY');
     const { input, packet } = await service.consume(f.staff, f.cardId, 'FRONT', upload, photo, settings);
     assert.equal(input.engine.outputContract, PREPARATION_CORE_V1);
+    assert.equal(input.engine.machineGeometryPolicy, MACHINE_GEOMETRY_POLICY);
+    const oldPolicy = { ...input.engine }; delete oldPolicy.machineGeometryPolicy;
+    assert.notEqual(digest(canonical(geometryCacheInput(upload, photo, settings, oldPolicy))), packet.key);
     const historicalEngine = { ...input.engine }; delete historicalEngine.outputContract;
     assert.notEqual(digest(canonical(geometryCacheInput(upload, photo, settings, historicalEngine))), packet.key);
     const manifest = await f.artifacts.read(packet.preparedImages.ref,
@@ -172,6 +185,30 @@ test('automatic cache requires explicit core outputs and retains exact working-s
     assert.deepEqual(manifest.deferredReveals.preparation.sourceQuad, quad);
     assert.deepEqual(manifest.deferredReveals.preparation, packet.preparation);
     assert.equal(manifest.deferredReveals.preparation.outputs, undefined);
+    const frame = photo.workingFrame;
+    const geometry = createGeometryWorkspace({ cardId: f.cardId, profile: 'POKEMON', sides: {
+      FRONT: { ...input.settings, image: { version: upload.version, originalSha256: photo.original.content.sha256,
+        frameId: frame.id, frameSha256: frame.raster.content.sha256, ...frame.raster.dimensions, coordinateSpace: 'ORIENTED_DECODED' } },
+      BACK: { ...input.settings, image: null },
+    } });
+    const before = structuredClone(packet), adopted = adoptEarlyGeometry(geometry, 'FRONT', packet, input);
+    if (missingPrinted) {
+      assert.equal(adopted.geometry.sides.FRONT.printed, null);
+      assert.deepEqual(adopted.geometry.sides.FRONT.physical.quad, quad);
+      assert.ok(adopted.geometry.sides.FRONT.prepared);
+      assert.equal(packet.preparation.proposal.advisory.code, 'NO_PRINTED_FRAME');
+    } else {
+      assert.deepEqual(adopted.geometry.sides.FRONT.printed.quad, quad);
+      assert.equal(adopted.geometry.sides.FRONT.printed.actor, 'ENGINE');
+      assert.equal(adopted.geometry.sides.FRONT.printed.proposal.ambiguous, provisional);
+    }
+    assert.equal(adopted.geometry.sides.FRONT.confirmation, null);
+    assert.deepEqual(packet, before);
+    const status = (await service.status(f.staff, f.cardId)).FRONT;
+    assert.equal(status.machineUsable, true); assert.equal(status.ambiguous, provisional);
+    assert.equal(status.requiresHumanConfirmation, true);
+    assert.deepEqual(status.unresolved, missingPrinted ? ['PRINTED_GEOMETRY_UNRESOLVED'] : []);
+    if (provisional) assert.equal(packet.preparation.proposal.outcome, 'ABSTAIN');
   } finally { await service.stop(); }
 });
 
