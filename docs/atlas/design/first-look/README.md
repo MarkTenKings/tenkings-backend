@@ -1,6 +1,6 @@
 # ATLAS first design study — September 25, 2026
 
-Local working prototype for the independent website design task. It is not the rebuilt production homepage or a functioning grading report. Owner approved the cinematic, evidence-led direction and selected an Alakazam concept specimen until a physical card is available tomorrow.
+Study08 is now the source of the production homepage published September26,2026 at https://atlasgrading.com/. The production adapter packages this document under a versioned asset path; this folder retains the loopback preview and historical iteration record. See the [release audit](../../audits/2026-09-26/homepage-release.md). The featured report and measurements remain illustrative pending approved real report evidence. Earlier no-deployment statements below describe those historical iterations only.
 
 ## Open
 
