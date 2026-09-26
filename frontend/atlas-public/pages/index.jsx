@@ -3,5 +3,5 @@ import { useEffect } from 'react';
 // another public page must start a fresh document for its scoped animation lifecycle.
 export default function Home() {
     useEffect(() => { window.location.replace('/' + window.location.search + window.location.hash); }, []);
-    return <main><a href="/">Open ATLAS Grading</a></main>;
+    return <main><button type="button" onClick={() => window.location.assign('/')}>Open ATLAS Grading</button></main>;
 }
