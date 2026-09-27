@@ -1,6 +1,20 @@
 # ATLAS first design study — September 25, 2026
 
-Study08 is now the source of the production homepage published September26,2026 at https://atlasgrading.com/. The production adapter packages this document under a versioned asset path; this folder retains the loopback preview and historical iteration record. See the [release audit](../../audits/2026-09-26/homepage-release.md). The featured report and measurements remain illustrative pending approved real report evidence. Earlier no-deployment statements below describe those historical iterations only.
+Study09 is the current local refinement. Study08 was published September26,2026; this revision has **not** been deployed. The default Alakazam report remains illustrative. Three published, approved reports are now selectable in the hero. See the earlier [release audit](../../audits/2026-09-26/homepage-release.md) for the last website-agent deployment; another agent may have advanced production since then.
+
+## Iteration 09 — approved reports and synchronized selection
+
+The hero preserves its title styling and desktop placement, defaults to Alakazam / 9, and changes the headline grade only while another report is actively selected. Fully leaving the hero and returning resets the default. The curved thumbnail wheel includes Maye 9.5, Abomasnow 10 and Dart 10. These are read-only snapshots of published production v1 reports; the six original photographs have been checked against their approved SHA-256 and byte counts. Findings, contours, subgrades and calculations come from those packets. Real reports use Front / Back because no approved slab photographs were provided. The complete published report remains available through an optional link inside the math disclosure.
+
+Selecting a thumbnail decodes its image first, then launches the card, headline grade and report grade from the thumbnail on one shared 820ms animation clock. All three rise, expand and settle with the same keyframes/easing. The underlying camera snaps before destination measurement so a preceding magnified finding cannot misplace the landing. New selection replaces pending work; scrolling, resizing, hiding the tab, reduced motion or global pause cancels cleanly to the selected result.
+
+The owner-approved supporting copy is WE SHOW YOU EVERYTHING. Removed CTA/eyebrow content retains invisible desktop spacing to preserve the title position. One visible report control receives a paired gold heartbeat at a time, pausing during interaction and respecting motion settings. The same optional guidance asset is attached to public manual reports, without changing grading or review authority.
+
+Desktop scrolling advances Beyond through edges, surface and corners; then the fingerprint examples through Alakazam, Charizard and Kobe; then all six NFC chapters. Direct controls remain available. Reduced motion and phone layouts keep direct access. Security and NFC/QR comparison now share SAME LABEL. SAME CARD? Submission journey and pricing share TWO WAYS TO GRADE WITH ATLAS. The closing call to action is WHAT’S YOUR CARD HIDING? / Find out with ATLAS.
+
+Preview this revision with `ATLAS_PREVIEW_PORT=8792 node docs/atlas/design/first-look/serve.mjs` at http://127.0.0.1:8792/#top. The already-running 8789 preview is left untouched. Public packaging uses content-addressed assets and includes the three read-only report snapshots; it performs no publication or deployment.
+
+Verification: all 36 public-app tests passed, including approved grade consistency, six photograph hashes, contour coordinates and empty finding categories. Changed JSX compiled through Next Babel. Browser checks covered desktop and 390px layouts, real-report selection, category/side controls, return-to-default, sequential scroll chapters and the merged journey. This is not a new production build/deployment, physical-device acceptance, or full accessibility/performance audit. The original Alakazam and separate fingerprint examples remain labeled illustrations pending approved evidence.
 
 ## Open
 

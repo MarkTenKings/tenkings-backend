@@ -14,9 +14,12 @@ for(const name of ['submission-kiosk.jpg','submission-fedex.jpg','submission-kio
 for(const name of ['alakazam-reference.jpg','alakazam-label-sample.svg','vendor/three.core.js','vendor/three.module.js'])files.set('/assets/'+name,path.join(here,'assets',name));
 files.set('/submission-source.css',path.join(here,'submission-source.css'));
 files.set('/assets/oxanium.ttf',path.join(here,'assets/oxanium.ttf'));
-const types={'.svg':'image/svg+xml','.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.jpg':'image/jpeg','.png':'image/png','.mp4':'video/mp4','.woff2':'font/woff2','.ttf':'font/ttf'};
+for(const name of ['hero-reports.js','hero-report-model.mjs','report-guidance.js','report-guidance.css'])files.set('/'+name,path.join(here,name));
+for(const name of ['approved.json','maye-front.webp','maye-back.webp','abomasnow-front.webp','abomasnow-back.webp','dart-front.webp','dart-back.webp'])files.set('/reports-data/'+name,path.join(here,'reports',name));
+const port=Number(process.env.ATLAS_PREVIEW_PORT||8789);
+const types={'.json':'application/json','.webp':'image/webp','.mjs':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.jpg':'image/jpeg','.png':'image/png','.mp4':'video/mp4','.woff2':'font/woff2','.ttf':'font/ttf'};
 http.createServer(async(req,res)=>{
   const file=files.get(new URL(req.url,'http://localhost').pathname);
   if(!file||!['GET','HEAD'].includes(req.method)){res.writeHead(404);res.end();return;}
   try{const bytes=await readFile(file);res.writeHead(200,{'Content-Type':types[path.extname(file)],'Content-Length':bytes.length,'X-Robots-Tag':'noindex, nofollow','Cache-Control':'no-store'});res.end(req.method==='HEAD'?undefined:bytes);}catch{res.writeHead(500);res.end('Preview asset unavailable');}
-}).listen(8789,'127.0.0.1',()=>console.log('ATLAS first design study: http://127.0.0.1:8789'));
+}).listen(port,'127.0.0.1',()=>console.log(`ATLAS design study: http://127.0.0.1:${port}`));
