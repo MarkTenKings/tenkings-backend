@@ -37897,3 +37897,38 @@ Read-only Vercel discovery found the homepage agent has deployed public source d
 143 viewer/batch tests passed, zero failures; one opt-in native remeasurement test skipped (native measurement is unchanged). Staff and public Next production builds and their route/bundle boundary checks passed. Desktop1440×1000 and phone390×844 browser checks passed: real marker selection, correct-side focus, all3 available guides checked by default, optional comparison, one-side default, and no horizontal overflow. Phone finding selection reduces stage height to retain evidence and measurements together. Browser screenshots and explicitly synthetic fixture retained at /Users/markthomas/.codex/atlas-handoffs/atlas-inspect-20260926. No real finding confirmed or graded during these checks.
 
 Imported the exact live dcc58d88 public homepage subtree into this release checkout, preserving its cinematic homepage and routes. Its source is also unchanged in homepage agent's later documentation-only0cf390b3 commit. Local builds preserve public read-only boundaries; no homepage redesign or grading-rule changes. Frontend release preparation follows; production remains unchanged.
+
+
+### 2026-09-27T00:59:20.179Z — ATLAS INSPECT planned staged staff deployment
+
+Preparing exactly committed source bc364f9496023a56e96cb2cb576d032c11946e0a on the dedicated Vercel staff project with --prod --skip-domain. Verified clean frozen source roster, read-only CLI payload, successful staff production build, and unchanged provider project settings/environment values. Upload will create a staged candidate and may advance its generated team alias; canonical public routing remains pinned to the prior staff origin. No control rebind, private restart, homepage promotion, schema change or model call occurs in this staging action.
+
+
+### 2026-09-27T01:04:09.623Z — Staged staff READY; planned public candidate
+
+Provider confirms staff dpl_BmVr5A1Pd8t89VgLh7n2JqUWJfqD READY from exact bc364f9496023a56e96cb2cb576d032c11946e0a. Canonical routing remains unchanged. Plan one public-project environment update: staff origin to https://atlas-grading-staff-osxud6i3a-ten-kings.vercel.app; customer origin unchanged. Then upload the same frozen source as a production candidate with --skip-domain, preserving the exact live homepage subtree. No runtime restart or database control change in this action.
+
+
+### 2026-09-27T01:08:42.507951+00:00 — Planned ATLAS INSPECT production binding cutover
+
+Both Vercel candidates READY on exact bc364f9496023a56e96cb2cb576d032c11946e0a; public candidate dpl_D9JhLqWeW9stc5rZDEnTe5bqKMA5 and staff dpl_BmVr5A1Pd8t89VgLh7n2JqUWJfqD. Fresh SQL has zero active/queued batch, ingestion, geometry, identity and customer work; zero unsettled accepted model requests. Plan gracefully stop the current dedicated private container and recreate with its identical d4a immutable image/security/resource/network profile, changing only the two staff web-release environment fields. Cold network-none constructors agree on new staff binding; customer binding remains d4a. Retain old stopped container for rollback and existing125s replay boot fence. Then guarded compare-and-swap of precisely StaffControl, STAFF SmsPilotControl and PublicReaderControl, with all23 grading history tables compared before/after. No schema/grant/job/model changes. After readiness and three signed read-only probes, promote public candidate once and verify canonical routes. Brief private unavailability during restart is expected.
+
+
+### 2026-09-27T01:10:43.961994+00:00 — Runtime binding cutover and control readback verified
+
+Container b20540f32f68c4bb48fc2b69e3745ad3cdea1f6cdfdf0c802480223be3841387 started once with unchanged d4a/image d21c, bc364 staff binding, same isolation/resources/network and125s boot fence; prior stopped exit0 and retained. Three-row CAS committed once: staff36/public15/STAFF SMS34. Initial exact after-assertion held because existing SMS update trigger advances updatedAt; no write retry occurred. Fresh read-only reconciliation confirms exactly intended binding/revision deltas plus STAFF SMS timestamp. All23 grading-history counts/hashes and23 job records unchanged; customer controls unchanged, no active work. Awaiting private readiness and canonical promotion.
+
+
+### 2026-09-27T01:11:19.276Z — Runtime transport qualified; planned canonical promotion
+
+Same private runtime generation is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_D9JhLqWeW9stc5rZDEnTe5bqKMA5, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-27T01:11:22.145Z — ATLAS INSPECT canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_D9JhLqWeW9stc5rZDEnTe5bqKMA5, source bc364f9496023a56e96cb2cb576d032c11946e0a. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+
+### 2026-09-27T01:13:45.892858+00:00 — ATLAS INSPECT live verification and handoff
+
+Canonical verification passed at 2026-09-27T01:12:46.528Z: homepage200 with exact preserved homepage SHA06149b1e819e5c42091e8f5709f83986482a25772f80ff3d569b92866b75abe3; www308; signed-out batch307/308 to admin200 sign-in; deployed INSPECT/shared chunks200; unknown public report404. Initial asset probe expected a nonexistent literal in the thin batch entry chunk; read-only follow-up resolved its actual shared dependencies and verified INSPECT dock and queue code. This was a verifier assumption, not a deployment failure. Updated current context/deploy/handoff with separate frontend bc364 and unchanged private/customer d4a sources, current container and control revisions. No additional deployment, data write or model call was needed. Owner can test https://atlasgrading.com/admin/batch?tab=REVIEW after signing in again. Authenticated real-card acceptance remains explicit.
