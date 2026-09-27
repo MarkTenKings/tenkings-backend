@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { flushSync } from 'react-dom';
+import { useVerifiedImage } from './verified-image.mjs';
 import { ReportInspectionImage } from './ReportInspectionImage.jsx';
 import { CardIdentityDetails, SlabPhotoHero, ReportMarketAndDealers } from './ReportPresentation.jsx';
 import { boundReportPresentation } from './report-presentation-ui.mjs';
@@ -133,7 +134,7 @@ export function FinalReportReview({ preview, workspace, images, current = true, 
 
 /** Machine evidence is visibly provisional. No HUMAN inspection fields are
  * introduced: bitmap verification enables the explicit human decision below. */
-export function MachineReportReview({ packet, onReadyChange, onCorrectFinding, inspectionMode, children, brandSrc = '/brand/atlas-grading-logo.png' }) {
+export function MachineReportReview({ packet, onReadyChange, onCorrectFinding, inspectionMode, guidedFindingId, onFindingSelect, children, brandSrc = '/brand/atlas-grading-logo.png' }) {
   const source = packet?.report;
   const corrected = source?.version === 'atlas-review-provisional-report-v1' && source.authority === 'HUMAN_REVIEW_DRAFT';
   const evidenceAvailable = Array.isArray(source?.findings)
@@ -153,7 +154,7 @@ export function MachineReportReview({ packet, onReadyChange, onCorrectFinding, i
     physicalQuad: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], printedQuad: source.geometry[side].centeringQuad,
   }]));
   return <ReportExperience report={report} explanation={packet?.explanation} available={available} images={packet?.images}
-    reportKey={packet?.reportHash} geometry={geometry} brandSrc={brandSrc} machine corrected={corrected} inspectionMode={inspectionMode} onReadyChange={onReadyChange} onCorrectFinding={onCorrectFinding}>{children}</ReportExperience>;
+    reportKey={packet?.reportHash} geometry={geometry} brandSrc={brandSrc} machine corrected={corrected} inspectionMode={inspectionMode} guidedFindingId={guidedFindingId} onFindingSelect={onFindingSelect} onReadyChange={onReadyChange} onCorrectFinding={onCorrectFinding}>{children}</ReportExperience>;
 }
 
 /** Server-parsed approved projection only. No workspace, action callbacks or staff approval controls. */
@@ -167,10 +168,10 @@ export function ApprovedReportView({ report, explanation, images, publication, g
 }
 
 function ReportExperience({ report, explanation, available, images, approved = false, publicView = false, reportKey,
-  rejectedSuggestions = 0, onReadyChange, onCorrectFinding, children, geometry, brandSrc, publication, presentation, machine = false, corrected = false, inspectionMode }) {
+  rejectedSuggestions = 0, onReadyChange, onCorrectFinding, children, geometry, brandSrc, publication, presentation, machine = false, corrected = false, inspectionMode, guidedFindingId, onFindingSelect }) {
   const partial = machine && reportGeometryUnresolved(report);
   const finalGrade = reportAwardedGrade(report), halfPointGrade = machine || report?.version === 'atlas-manual-draft-report-v2';
-  const CalculationContainer = machine ? 'details' : 'section';
+  const CalculationContainer = machine || inspectionMode ? 'details' : 'section';
   const [selected, setSelected] = useState(null), [expanded, setExpanded] = useState(inspectionMode ? null : 'FRONT'), [ready, setReady] = useState({});
   const [activeSide, setActiveSide] = useState('FRONT'), [panelOpen, setPanelOpen] = useState(inspectionMode !== 'geometry');
   const [layers, setLayers] = useState({ physical: true, printed: true, centering: true }), [overlays, setOverlays] = useState(true);
@@ -188,10 +189,19 @@ function ReportExperience({ report, explanation, available, images, approved = f
   const approvalReady = bothReady && !partial;
   useEffect(() => { onReadyChange?.(approvalReady); return () => onReadyChange?.(false); }, [approvalReady, onReadyChange]);
   const select = finding => {
+    onFindingSelect?.(finding.id);
     setSelected(previous => ({ id: finding.id, sequence: (previous?.sequence ?? 0) + 1 }));
     setActiveSide(finding.side); setPanelOpen(true);
     setExpanded(finding.side);
   };
+  useEffect(() => {
+    if (inspectionMode !== 'findings' || !guidedFindingId) return;
+    const finding = report?.findings?.find(value => value.id === guidedFindingId);
+    if (finding && selected?.id !== finding.id) {
+      setSelected(previous => ({id:finding.id,sequence:(previous?.sequence ?? 0)+1}));
+      setActiveSide(finding.side); setPanelOpen(true); setExpanded(finding.side);
+    }
+  }, [inspectionMode, guidedFindingId, report, selected?.id]);
   useEffect(() => {
     if (typeof window === 'undefined' || !available) return;
     const followLink = () => { const finding = reportFindingFromFragment(window.location.hash, reportKey, report.findings);
@@ -218,7 +228,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
   const identityLine = [identity.year, identity.manufacturer, identity.productSet, identity.parallel, identity.insert, identity.cardNumber && `#${identity.cardNumber}`].filter(Boolean).join(' · ');
   return <section className={`rr-report rr-inspect${precise ? ' rr-precision' : ''}${printing ? ' rr-printing' : ''}${publicView ? ' rr-public' : ''}${machine ? ' rr-machine' : ''}${inspectionMode ? ' rr-guided rr-guided-' + inspectionMode : ''}`} data-finding-selected={Boolean(selectedFinding)} aria-label={publicView ? 'Approved ATLAS grading report' : 'Final draft report review'} onKeyDown={event => {
     if (event.altKey || event.ctrlKey || event.metaKey || /INPUT|TEXTAREA|SELECT/.test(event.target?.tagName ?? '') || event.target?.isContentEditable) return;
-    if (event.key === '[' || event.key === ']') { event.preventDefault(); event.stopPropagation(); step(event.key === ']' ? 1 : -1); }
+    if (!inspectionMode && (event.key === '[' || event.key === ']')) { event.preventDefault(); event.stopPropagation(); step(event.key === ']' ? 1 : -1); }
   }}>
     <header className="rr-heading"><div className="rr-hero-copy"><img className="rr-brand" src={brandSrc} alt="ATLAS Grading · Know what you have"/>
       <p className="rr-eyebrow">{corrected ? 'CURRENT CORRECTIONS · PROVISIONAL' : machine ? 'ATLAS PROPOSAL · HUMAN REVIEW' : approved ? 'HUMAN-APPROVED REPORT' : 'FINAL HUMAN REVIEW · DRAFT'}</p><h1>{name}</h1><p className="rr-identity">{identityLine}</p>
@@ -237,7 +247,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
           {SIDES.map(side => <ReportInspectionImage key={`${side}:${report.inspection[side.toLowerCase()].imageSha256}`} side={side}
             descriptor={images?.[side]?.inspection} expectedHash={report.inspection[side.toLowerCase()].imageSha256} findings={sideFindings[side]} selected={selected}
             onSelect={finding => { setSideFilter('ALL'); setCategoryFilter('ALL'); select(finding); }} expanded={expanded === side && !printing} hidden={!printing && Boolean(expanded && expanded !== side)}
-            onExpand={setExpanded} onReady={imageReady} geometry={geometry?.[side]} showFindingButtons={false} compact
+            onExpand={setExpanded} onReady={imageReady} geometry={geometry?.[side]} showFindingButtons={false} compact fitViewport={Boolean(inspectionMode)}
             layerOptions={layers} findingsVisible={overlays} command={command} onViewChange={viewChanged} onActivate={setActiveSide} cleanComparison={cleanComparison && Boolean(expanded) && !printing} blueprint={blueprint && !printing} explanation={selectedFinding?.side === side ? selectedExplanation : null} centering={explanation?.sides?.[side]?.centering} policy={explanation?.policy}/>)}</div>
           <div className="rr-stage-caption"><span>{expanded ? title(activeSide) : 'Front & Back'} · Saved photograph</span><span>Drag to pan · Scroll or pinch to zoom</span></div>
         </div>
@@ -245,13 +255,13 @@ function ReportExperience({ report, explanation, available, images, approved = f
           <div className="rr-findings-heading"><h3>{selectedFinding ? 'In focus' : 'Findings'}</h3><span>{position >= 0 ? `${position + 1} / ${filtered.length}` : `${entries.length} recorded`}</span></div>
           {selectedFinding && (selectedExplanation || partial) ? <>
             <FindingSummary finding={selectedFinding} explanation={selectedExplanation} partial={partial}/>
-            {machine && onCorrectFinding && <button className="rr-correct-finding" type="button" onClick={() => onCorrectFinding(selectedFinding)}>Review or correct this finding ↗</button>}
+            {machine && !inspectionMode && onCorrectFinding && <button className="rr-correct-finding" type="button" onClick={() => onCorrectFinding(selectedFinding)}>Review or correct this finding ↗</button>}
             <details className="rr-full-measurements"><summary>Measurements & grade effect</summary>{partial ? <FindingMeasurements finding={selectedFinding}/> : <FindingCalculation finding={selectedFinding} explanation={selectedExplanation} policy={explanation.policy}/>}
               <button type="button" aria-pressed={precise} onClick={() => setPrecise(value => !value)}>{precise ? 'Use readable precision' : 'Show full precision'}</button>
               {findingLink && <a href={findingLink}>Link to this finding</a>}
             </details>
           </> : <p className="rr-selection-prompt">{entries.length ? 'Select a number on the card. Follow its exact trace, size and grade effect here.' : partial ? 'No included damage findings. Centering and the overall grade remain unavailable.' : 'No included damage findings. Explore the saved borders and grade calculation.'}</p>}
-          <div className="rr-finding-pagination"><button type="button" title="Previous finding ( [ )" disabled={!filtered.length} onClick={() => step(-1)}>Previous finding</button><button type="button" title="Next finding ( ] )" disabled={!filtered.length} onClick={() => step(1)}>Next finding</button></div>
+          {!inspectionMode && <div className="rr-finding-pagination"><button type="button" title="Previous finding ( [ )" disabled={!filtered.length} onClick={() => step(-1)}>Previous finding</button><button type="button" title="Next finding ( ] )" disabled={!filtered.length} onClick={() => step(1)}>Next finding</button></div>}
           <details className="rr-finding-index" open={!selectedFinding}><summary>All findings <span>{filtered.length}</span></summary>
             <div className="rr-filters"><label>Side<select aria-label="Filter findings by side" value={sideFilter} onChange={event => { setSideFilter(event.target.value); setSelected(null); }}>{['ALL', ...SIDES].map(side => <option key={side} value={side}>{side === 'ALL' ? 'Both sides' : title(side)}</option>)}</select></label><label>Category<select aria-label="Filter findings by category" value={categoryFilter} onChange={event => chooseCategory(event.target.value)}><option value="ALL">All categories</option>{CATEGORIES.map(category => <option key={category} value={category}>{title(category)}</option>)}</select></label></div>
             <ol className="rr-finding-list">{filtered.map(({ finding, number, label, categories }) => <li key={finding.id}><button type="button" aria-label={`${label} · ${words(finding.defectType)}`} disabled={!sideReady(finding.side)} aria-pressed={selected?.id === finding.id} onClick={() => select(finding)}><span className="rr-finding-number" aria-hidden="true">{number}</span><span><strong>{label} · {words(finding.defectType)}</strong><small>{categories.map(title).join(' · ') || 'No owned damage pixels'} · {machine ? 'Proposed' : 'Confirmed'}</small></span></button></li>)}</ol>
@@ -272,10 +282,10 @@ function ReportExperience({ report, explanation, available, images, approved = f
     </>}
     {machine && report.limitations?.length > 0 && <section className="rr-why rr-evidence-limitations" aria-label="Current evidence limitations"><h2>Evidence limitations</h2><ul>{report.limitations.map((value,index)=><li key={index}>{value}</li>)}</ul></section>}
     {corrected && report.originalMachineEvidence?.limitations?.length > 0 && <details className="rr-machine-details"><summary>Original machine warnings · historical evidence</summary><p>These warnings describe the original machine report. Current geometry and measurement status is shown above.</p><ul>{report.originalMachineEvidence.limitations.map((value,index)=><li key={index}>{value}</li>)}</ul></details>}
-    {machine ? <details className="rr-machine-details"><summary>Card details</summary><CardIdentityDetails report={report}/></details> : <CardIdentityDetails report={report} details={presentation?.identityDetails}/>}
+    {machine || inspectionMode ? <details className="rr-machine-details"><summary>Card details</summary><CardIdentityDetails report={report}/></details> : <CardIdentityDetails report={report} details={presentation?.identityDetails}/>}
     {printing && partial && entries.length > 0 && <section aria-label="All included finding measurements">{entries.map(({ finding, label }) => <FindingMeasurements key={finding.id} finding={finding} printLabel={label}/>)}</section>}
     {printing && !partial && entries.length > 0 && <section className="rr-print-findings" aria-label="All included finding calculations"><div className="rr-print-findings-intro"><p className="rr-eyebrow">EVERY CONFIRMED FINDING</p><h2>Measurements and grade effects</h2><p>Measured area excludes pixels outside the card and overlap assigned to another finding. Marginal effects compare the grade with and without one region; overlap ownership is not remeasured. Effects are not additive. The category calculation uses all included weighted damage together.</p></div>{entries.map(({ finding, label }) => <FindingCalculation key={finding.id} finding={finding} printLabel={label} explanation={explanation.findings.find(value => value.id === finding.id)} policy={explanation.policy}/>)}</section>}
-    {!partial && <CalculationContainer className="rr-calculation" aria-label="Grade calculation">{machine && <summary>Measurements & grade calculation</summary>}<div className="rr-section-heading"><div><p className="rr-eyebrow">FOLLOW THE NUMBERS</p><h2>How this grade is calculated</h2></div><button type="button" className="rr-precision-control" aria-pressed={precise} onClick={() => setPrecise(value => !value)}>{precise ? 'Use readable precision' : 'Show full precision'}</button></div>
+    {!partial && <CalculationContainer className="rr-calculation" aria-label="Grade calculation">{(machine || inspectionMode) && <summary>Measurements & grade calculation</summary>}<div className="rr-section-heading"><div><p className="rr-eyebrow">FOLLOW THE NUMBERS</p><h2>How this grade is calculated</h2></div><button type="button" className="rr-precision-control" aria-pressed={precise} onClick={() => setPrecise(value => !value)}>{precise ? 'Use readable precision' : 'Show full precision'}</button></div>
       {finalGrade === 10 && entries.length > 0 && <p className="rr-tolerance-note">A final 10 can include measured damage. Category tolerances and final rounding explain this result; a 10 does not mean zero imperfections.</p>}
       <div className="rr-weighting"><div><span>FRONT</span><strong>{explanation.policy.frontWeight * 100}%</strong></div><div className="rr-weighting-bar" aria-hidden="true"><span style={{ width: `${explanation.policy.frontWeight * 100}%` }}/></div><div><span>BACK</span><strong>{explanation.policy.backWeight * 100}%</strong></div></div>
       <p className="rr-help">Each category combines both sides, then contributes {n(explanation.policy.categoryWeight * 100, '%')} of the overall result. Readable numbers are rounded for display; full precision exposes every stored digit.</p>
@@ -293,7 +303,16 @@ function ReportExperience({ report, explanation, available, images, approved = f
       {approved && <button type="button" className="rr-print-button" disabled={!bothReady} onClick={() => { if (typeof window !== 'undefined') window.print(); }}>Print approved report</button>}
       {reportKey && <details className="rr-report-reference" open={printing ? true : undefined}><summary>Exact report reference</summary><code>{reportKey}</code></details>}
     </section>}
-    {!publicView && !machine && !approved && <footer className="rr-approval"><h2>{approved ? 'Report approved and saved' : 'Final approval'}</h2><p>{machine ? 'Review & approve confirms that you inspected both photos and accept the displayed card details, outlines, findings and grade. Corrections open the card workspace.' : 'Approval saves this exact report. Return to Findings or Geometry to make corrections before approving.'}</p>{!bothReady && <p role="status">Both saved photographs must load and verify before approval is available.</p>}{children}</footer>}
+    {!publicView && !machine && !approved && !inspectionMode && <footer className="rr-approval"><h2>{approved ? 'Report approved and saved' : 'Final approval'}</h2><p>{machine ? 'Review & approve confirms that you inspected both photos and accept the displayed card details, outlines, findings and grade. Corrections open the card workspace.' : 'Approval saves this exact report. Return to Findings or Geometry to make corrections before approving.'}</p>{!bothReady && <p role="status">Both saved photographs must load and verify before approval is available.</p>}{children}</footer>}
+    {inspectionMode === 'summary' && children}
     {publicView && children}
   </section>;
+}
+
+export function CompletedReviewCard({descriptor, expectedHash, name, grade, reportNumber, brandSrc}) {
+  const verified = useVerifiedImage(descriptor?.sha256 === expectedHash ? descriptor : null);
+  return <figure className="mc-complete-card" aria-label="Approved card and ATLAS label">
+    <figcaption className="mc-complete-card-label"><img src={brandSrc} alt="ATLAS Grading"/><span><b>{name}</b><small>{reportNumber}</small></span><strong>{Number.isFinite(grade) ? grade : '—'}</strong></figcaption>
+    <div className="mc-complete-card-photo">{verified.url ? <img src={verified.url} alt={`${name} · approved front photograph`}/> : <span role="status">{verified.error ? 'Photo unavailable · approval saved' : 'Loading saved card…'}</span>}</div>
+  </figure>;
 }

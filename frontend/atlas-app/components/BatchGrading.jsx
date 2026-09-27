@@ -1,3 +1,5 @@
+import {AtlasSoundControl} from './RapidReviewControls';
+import {createReviewSession,primeReviewAudio} from '../lib/review-feedback.mjs';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -40,12 +42,15 @@ function QueuePhoto({ job, side = 'FRONT', readPreview }) {
     : <span className={styles.photoFallback} aria-label={failed ? 'Photo preview unavailable' : 'Loading photo preview'}>{failed ? '◇' : '·'}</span>;
 }
 function RapidReviewDialog({ job, staff, csrf, busy, error, onClose, onQueued }) {
-  const dialog=useRef(null),[locked,setLocked]=useState(true);
+  const dialog=useRef(null),[locked,setLocked]=useState(true),reviewSession=useRef(null);
+  if(reviewSession.current?.staffId!==staff.id)reviewSession.current=createReviewSession(staff.id);
   useEffect(()=>{const element=dialog.current,previous=document.activeElement,overflow=document.body.style.overflow;element?.showModal();document.body.style.overflow='hidden';return()=>{element?.close();document.body.style.overflow=overflow;previous?.focus?.();};},[]);
   return <dialog className={styles.rapidDialog} ref={dialog} aria-labelledby="rapid-review-title" onCancel={event=>{event.preventDefault();if(!locked&&!busy)onClose();}}>
-    <header className={styles.rapidHeader}><div><small>ATLAS INSPECT</small><h2 id="rapid-review-title">Rapid review <span>· {job.evidence?.name||job.label||'Card'}</span></h2></div><button type="button" disabled={locked||busy} onClick={onClose}>Exit review ×</button></header>
+    <header className={styles.rapidHeader}><div><small>ATLAS INSPECT</small><h2 id="rapid-review-title">Rapid review <span>· {job.evidence?.name||job.label||'Card'}</span></h2></div><div className={styles.rapidHeaderTools}><AtlasSoundControl/><button type="button" disabled={locked||busy} onClick={onClose}>Exit review ×</button></div></header>
+    <div className={styles.rapidBody}>
     {error&&<p className={styles.error} role="alert">{error}</p>}
-    <ManualWorkspace key={job.key} rapid staff={staff} cardId={job.cardId} csrf={csrf} onBusyChange={setLocked} onQueued={onQueued}/>
+    <ManualWorkspace key={job.key} rapid reviewSession={reviewSession.current} staff={staff} cardId={job.cardId} csrf={csrf} onBusyChange={setLocked} onQueued={onQueued}/>
+    </div><footer id="atlas-rapid-actions" className="mc-rapid-actions" aria-label="Review controls"><div id="atlas-rapid-edits" className="mc-rapid-edit-dock"/></footer>
   </dialog>;
 }
 export default function BatchGrading({ staff }) {
@@ -149,7 +154,7 @@ export default function BatchGrading({ staff }) {
       if (lifetime.current !== owner) return;
       if (!current.finalReview) await client.execute({ type: 'BEGIN_FINAL_REVIEW', batchKey: job.key,
         reportHash: detail.reportHash });
-      if (lifetime.current === owner && rapid) {reviewing.current=job.key;setRapidJob(job);}
+      if (lifetime.current === owner && rapid) {primeReviewAudio();reviewing.current=job.key;setRapidJob(job);}
       else if (lifetime.current === owner) await router.push(`/manual/${job.cardId}?from=batch`);
     } catch (failure) { if (lifetime.current === owner) setReviewError(messages[failure.code] ?? manualMessage(failure)); }
     finally { if (lifetime.current === owner) { mutation.current = false; setBusy(false); } }

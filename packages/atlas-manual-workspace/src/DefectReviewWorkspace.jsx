@@ -78,7 +78,7 @@ function ProposalOverlay({ proposals, selected, visible }) {
   </svg>;
 }
 
-function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending, onReady, onActivity, locked, astra, onReviewProposal, expanded, hidden, onExpand }) {
+function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending, onReady, onActivity, locked, astra, onReviewProposal, expanded, hidden, onExpand, renderEditActions }) {
   const slot = workspace.sides[side], base = defectBase(workspace, side), currentBase = key(base);
   const descriptor = image?.inspection;
   const binding = inspectionImageBinding(workspace, side, image);
@@ -324,8 +324,8 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
         <label>Width <select disabled={busy || stroke.length > 0} aria-label={`${name(side)} brush width`} value={brush} onChange={event => setBrush(Number(event.target.value))}>
           {[1, 2, 4, 8, 16, 32].map(width => <option key={width} value={width}>{width} px</option>)}
         </select></label><button disabled={busy || stroke.length > 0 || !editor.undo.length} onClick={() => setEditor(previous => ({ ...previous, trace: previous.undo.at(-1), undo: previous.undo.slice(0, -1) }))}>Undo stroke</button></div>
-      <div className="am-side-actions"><button className="am-primary" disabled={disabled || stale || stroke.length > 0 || !isNonEmptySpeedsterTrace(editor.trace)} onClick={saveTrace}>Save trace</button>
-        <button disabled={busy} onClick={() => { strokeRef.current = null; setStroke([]); setEditor(null); setError(''); }}>Discard trace</button></div>
+      {(renderEditActions ?? (children=>children))(<div className="am-side-actions"><button className="am-primary" disabled={disabled || stale || stroke.length > 0 || !isNonEmptySpeedsterTrace(editor.trace)} onClick={saveTrace}>Save trace</button>
+        <button disabled={busy} onClick={() => { strokeRef.current = null; setStroke([]); setEditor(null); setError(''); }}>Discard trace</button></div>,side)}
     </div> : <div className="am-side-actions"><button disabled={disabled || !onEdit} onClick={() => start(null)}>Add finding</button>
         {pending && onRetry && <button disabled={busy || locked} onClick={() => perform(() => onRetry(side))}>Retry measurement</button>}
         {pending && onDiscardPending && <button disabled={busy || locked} onClick={() => perform(() => onDiscardPending({ side, base }))}>Discard pending change</button>}
@@ -380,7 +380,7 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
 /** Controlled human review. Callbacks must authenticate, durably save/read back,
  * and then update workspace. Full masks remain in verified artifact storage;
  * browser state and a checked descriptor are not approval or storage authority. */
-export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth, onConfirm, onRetry, onDiscardPending, onContinue, onEditingChange, saveStatus = '', grade,
+export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth, onConfirm, onRetry, onDiscardPending, onContinue, onEditingChange, saveStatus = '', grade, renderReviewActions, renderEditActions,
   astra, onAnalyzeDefects, onRefreshAnalysis, onResumeAnalysis, onReplaceAnalysis, onReviewProposal, reviewedMemory, onRetryReviewedMemory }) {
   const [activity, setActivity] = useState({}), [ready, setReady] = useState({}), [confirming, setConfirming] = useState(false), [error, setError] = useState('');
   const [expandedSide, setExpandedSide] = useState(null);
@@ -459,12 +459,17 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth
     <div className={`am-pair${expandedSide ? ' ad-expanded-pair' : ''}`}>{SIDES.map(side => <DefectSide key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]}
       onEdit={onEdit} onRetry={onRetry} onDiscardPending={onDiscardPending} onReady={onReady} onActivity={onActivity} locked={confirming}
       astra={astra} onReviewProposal={onReviewProposal} expanded={expandedSide === side} hidden={Boolean(expandedSide && expandedSide !== side)}
-      onExpand={() => setExpandedSide(previous => previous === side ? null : side)} />)}</div>
+      renderEditActions={renderEditActions} onExpand={() => setExpandedSide(previous => previous === side ? null : side)} />)}</div>
     {memory && <div className="ad-memory" aria-label="Reviewed example memory"><p role="status">{recoveringMemory ? 'Checking the saved reviewed examples…' : memory.message}</p>
       {memory.mayRecover && onRetryReviewedMemory && <button disabled={recoveringMemory || confirming} onClick={recoverMemory}>
         {memory.status === 'FAILED' ? 'Retry saving examples' : 'Check example save'}</button>}
     </div>}
-    <footer className="am-footer ad-confirm-footer">
+    {renderReviewActions ? renderReviewActions({
+      approve:reportReady && onContinue ? onContinue : confirm,
+      disabled:editing || confirming || !currentImagesReady || !status.canConfirm || !collective.ready, busy:confirming,
+      message:editing ? 'Save or discard your trace.' : collective.unresolvedCount ? `Approve accepts ${collective.unresolvedCount} remaining suggestions.` : 'Confirm corners, edges and surface.',
+      inspection:<label className="mc-rapid-inspection"><input type="checkbox" aria-label="I inspected both Front and Back" checked={status.canConfirm} disabled={status.canConfirm || !status.settled || !currentImagesReady || editing || confirming || !onInspectBoth} onChange={inspectBoth}/><span>I inspected both Front and Back</span></label>
+    }) : <footer className="am-footer ad-confirm-footer">
       <label className={`ad-confirm-inspection${status.canConfirm ? ' ad-confirmed' : ''}`}>
         <input type="checkbox" aria-label="I inspected both Front and Back" checked={status.canConfirm}
           disabled={status.canConfirm || !status.settled || !currentImagesReady || editing || confirming || !onInspectBoth} onChange={inspectBoth}/>
@@ -475,6 +480,6 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth
       : reportReady ? 'Findings confirmed. Final report approval is a separate step.' : status.canConfirm ? 'Inspection saved. Confirm findings to continue.' : 'Check the inspection box above, then confirm findings.'}</span>
       {reportReady && onContinue ? <button className="am-primary" onClick={onContinue} disabled={editing || confirming || !currentImagesReady}>Review draft report</button>
         : <button className="am-primary" onClick={confirm} disabled={!status.canConfirm || !currentImagesReady || !collective.ready || editing || confirming || !onConfirm}>{confirming ? 'Confirming…' : collective.unresolvedCount ? `Confirm findings & accept ${collective.unresolvedCount} suggestions` : 'Confirm findings'}</button>}
-    </footer>{error && <p className="am-error" role="alert">{error}</p>}
+    </footer>}{error && <p className="am-error" role="alert">{error}</p>}
   </div>;
 }

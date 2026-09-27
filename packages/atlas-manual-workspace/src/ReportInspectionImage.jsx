@@ -32,7 +32,7 @@ function ReportMasks({ findings, selected, visible }) {
 const dimension = value => Number.isFinite(value) ? (value !== 0 && Math.abs(value) < .0001 ? value.toExponential(2) : value.toLocaleString('en-US', { maximumFractionDigits: 4 })) : 'Unavailable';
 const clampLabel = (value, limit, gutter = 28) => Math.max(gutter, Math.min(limit - gutter, value));
 /** Labels stay in screen pixels while their leaders follow the verified card frame. */
-function Blueprint({ finding, explanation, centering, policy, side, printed, view, size, scale, locatorBox, outside = false }) {
+function Blueprint({ finding, explanation, centering, policy, side, printed, view, size, scale, locatorBox, outside = false, docked = false }) {
   const [regionIndex, setRegionIndex] = useState(0);
   useEffect(() => setRegionIndex(0), [finding?.id]);
   const project = point => ({ x: size.width / 2 + view.pan.x + (40 + point.x * 1270 - 675) * scale * view.zoom,
@@ -69,17 +69,17 @@ function Blueprint({ finding, explanation, centering, policy, side, printed, vie
     <p>{effect ? <><b>{dimension(effect.marginalOverallEffect)} pts</b> effect on unrounded grade</> : 'Grade effect unavailable'}</p>
     <small>Straight span of saved pixels. Region effects are not additive.</small>
   </div>;
-  if (outside) return position ? null : callout;
+  if (outside) return !docked && position ? null : callout;
   return <div className="rr-blueprint rr-defect-blueprint" aria-label={`${name(side)} finding dimensions and grade effect`}>
     {ruler && <svg width={size.width} height={size.height} aria-hidden="true"><path className="rr-ruler-contrast" d={ruler.path}/><path d={ruler.path}/></svg>}
-    {position && callout}
+    {!docked && position && callout}
   </div>;
 
 }
 
 /** No edit/action callbacks: every control here changes only the displayed view. */
 export function ReportInspectionImage({ side, descriptor, expectedHash, findings, selected, onSelect, expanded, hidden, onExpand, onReady,
-  geometry, showFindingButtons = true, compact = false, layerOptions, findingsVisible, command, onViewChange, onActivate, cleanComparison = false, blueprint = true, explanation, centering, policy }) {
+  geometry, showFindingButtons = true, compact = false, fitViewport = false, layerOptions, findingsVisible, command, onViewChange, onActivate, cleanComparison = false, blueprint = true, explanation, centering, policy }) {
   const supplied = descriptor?.sha256 === expectedHash && descriptor?.url ? descriptor : null;
   const image = useVerifiedImage(supplied), [loaded, setLoaded] = useState(null);
   const ready = Boolean(supplied && image.url && loaded === image.url);
@@ -101,8 +101,9 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
   const project = point => ({x:size.width/2+view.pan.x+(40+point.x*1270-675)*scale*zoom,y:size.height/2+view.pan.y+(40+point.y*1778-929)*scale*zoom});
   const spanRuler = focusedFinding && reportSpanRuler(reportMarkedSpan(focusedFinding),project);
   const projectedBox = selectedBounds && (()=>{const a=project(selectedBounds),b=project({x:selectedBounds.x+selectedBounds.width,y:selectedBounds.y+selectedBounds.height});return {x:a.x,y:a.y,width:b.x-a.x,height:b.y-a.y};})();
-  const locatorWidth=Math.min(124,size.width*.4),locatorHeight=locatorWidth*1858/1350+4;
-  const locatorBox = reportMeasurementPlacement(size,[...(projectedBox?[projectedBox]:[]),...(spanRuler?[spanRuler.bounds]:[])],locatorWidth,locatorHeight);
+  const docked = fitViewport && Boolean(selectedBounds);
+  const locatorWidth=Math.min(docked ? 94 : 124,size.width*.4),locatorHeight=locatorWidth*1858/1350+4;
+  const locatorBox = docked ? null : reportMeasurementPlacement(size,[...(projectedBox?[projectedBox]:[]),...(spanRuler?[spanRuler.bounds]:[])],locatorWidth,locatorHeight);
 
   const fit = () => { setView({ zoom: 1, pan: { x: 0, y: 0 } }); setLens(null); };
   const changeZoom = next => { setView(previous => zoomInspectionAt(previous, next, { x: size.width / 2, y: size.height / 2 }, size)); setLens(null); };
@@ -198,7 +199,7 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
         const box = event.currentTarget.getBoundingClientRect(), x = (event.clientX - box.left) / box.width, y = (event.clientY - box.top) / box.height;
         setView(previous => ({ ...previous, pan: clampInspectionPan({ x: (.5 - x) * INSPECTION_SIZE.width * scale * previous.zoom, y: (.5 - y) * INSPECTION_SIZE.height * scale * previous.zoom }, previous.zoom, size) }));
       }}><img src={image.url} alt="" draggable={false}/><span style={{ left: `${map.x * 100}%`, top: `${map.y * 100}%`, width: `${map.width * 100}%`, height: `${map.height * 100}%` }}/></button> : null;
-  return <section className={`rr-image-side${expanded ? ' rr-image-expanded' : ''}`} hidden={hidden} aria-label={`${name(side)} report image`}>
+  return <section className={`rr-image-side${expanded ? ' rr-image-expanded' : ''}${docked ? ' rr-image-docked' : ''}`} hidden={hidden} aria-label={`${name(side)} report image`}>
     {!compact && <><header><h3>{name(side)}</h3><button type="button" onClick={() => onExpand(expanded ? null : side)}>{expanded ? 'Return to pair' : 'Expand image'}</button></header>
     <div className="rr-image-tools"><label>Zoom <select aria-label={`${name(side)} report zoom`} value={zoom} disabled={!ready} onChange={event => changeZoom(Number(event.target.value))}>
       {[1, 2, 4, 8, 16, ...([1, 2, 4, 8, 16].includes(zoom) ? [] : [zoom])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value === 1 ? 'Fit' : `${Number(value.toFixed(1))}×`}</option>)}
@@ -225,7 +226,7 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
         </div>}
       </div>}
       {!ready && <p className="rr-image-status" role="status">{!supplied ? 'This report’s saved photograph is unavailable.' : image.error || loaded === 'IMAGE_ERROR' ? 'Could not verify the saved photograph. Reload images to try again.' : loaded === 'INVALID_DIMENSIONS' ? 'The saved photograph has unexpected dimensions. Reload images before continuing.' : 'Loading verified photograph…'}</p>}
-      {ready && blueprint && <Blueprint finding={bounds.find(entry => entry.finding.id === selected?.id)?.finding} explanation={explanation} centering={layers.centering ? centering : null} policy={policy} side={side} printed={layers.centering ? printed : null} view={view} size={size} scale={scale} locatorBox={locatorBox}/>}
+      {ready && blueprint && <Blueprint finding={bounds.find(entry => entry.finding.id === selected?.id)?.finding} explanation={explanation} centering={layers.centering ? centering : null} policy={policy} side={side} printed={layers.centering ? printed : null} view={view} size={size} scale={scale} locatorBox={locatorBox} docked={docked}/>}
       {cleanComparison && selectedBounds && <span className="rr-photo-label">Measured trace</span>}
       {ready && magnifier && lens && <div className="rr-magnifier" aria-hidden="true" style={{ [lens.right ? 'right' : 'left']: 12, backgroundImage: `url("${image.url}")`, backgroundSize: `${INSPECTION_SIZE.width * scale * zoom * 3}px ${INSPECTION_SIZE.height * scale * zoom * 3}px`, backgroundPosition: `${90 - lens.x * INSPECTION_SIZE.width * scale * zoom * 3}px ${90 - lens.y * INSPECTION_SIZE.height * scale * zoom * 3}px` }}><span>3× · image only</span></div>}
       {locatorBox && locator}
@@ -236,8 +237,10 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
       <span className="rr-photo-label">Unmarked photograph · synchronized</span>
     </div>}
     </div>
+    <div className="rr-inspection-readouts">
     {!locatorBox && locator}
-    {ready && blueprint && selectedBounds && <Blueprint outside finding={bounds.find(entry=>entry.finding.id===selected?.id)?.finding} explanation={explanation} policy={policy} side={side} view={view} size={size} scale={scale} locatorBox={locatorBox}/>}
+    {ready && blueprint && selectedBounds && <Blueprint outside finding={bounds.find(entry=>entry.finding.id===selected?.id)?.finding} explanation={explanation} policy={policy} side={side} view={view} size={size} scale={scale} locatorBox={locatorBox} docked={docked}/>}
+    </div>
     {!compact && <p className="rr-help">Drag to pan · pinch or scroll to zoom · arrow keys pan · + / − zoom · 0 fits. Magnification enlarges saved pixels.</p>}
     {!printed && <p className="rr-help">Border geometry is not available in this report view.</p>}
     {!compact && ready && crop && <figure className="rr-selected-crop"><div style={{ aspectRatio: `${crop.width} / ${crop.height}`, width: `min(100%, ${220 * crop.width / crop.height}px)` }}><img src={image.url} alt={`Detail from the verified ${name(side).toLowerCase()} photograph`} style={{ width: `${1350 / crop.width * 100}%`, height: `${1858 / crop.height * 100}%`, left: `${-crop.x / crop.width * 100}%`, top: `${-crop.y / crop.height * 100}%` }}/></div><figcaption>Selected area · the same verified photograph, without markings</figcaption></figure>}
