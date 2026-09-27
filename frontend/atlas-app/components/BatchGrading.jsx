@@ -26,6 +26,18 @@ const messages = {
   BATCH_FINAL_GEOMETRY_REQUIRED: 'Defect analysis and measurements are saved. Review the physical outlines and printed borders in final review; centering and the overall grade remain unavailable until supported geometry is saved.',
   BATCH_PROPOSAL_REVIEW_REQUIRED: 'The report is ready. Some observations could not be measured; check them in the card workspace before approval.',
 };
+function QueuePhoto({ job, side = 'FRONT', readPreview }) {
+  const [src, setSrc] = useState(null), [failed, setFailed] = useState(false), [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let stopped = false; setSrc(null); setFailed(false);
+    readPreview(job, retry > 0).then(images => {
+      if (!stopped) { setSrc(images?.[side]?.url ?? null); setFailed(!images?.[side]?.url); }
+    }).catch(() => { if (!stopped) setFailed(true); });
+    return () => { stopped = true; };
+  }, [job.key, job.revision, side, readPreview, retry]);
+  return src && !failed ? <img src={src} alt="" loading="lazy" onError={() => retry === 0 ? setRetry(1) : setFailed(true)}/>
+    : <span className={styles.photoFallback} aria-label={failed ? 'Photo preview unavailable' : 'Loading photo preview'}>{failed ? '◇' : '·'}</span>;
+}
 export default function BatchGrading({ staff }) {
   const router = useRouter(), session = useRef(null), current = useRef(0), mutation = useRef(false);
   const [jobs, setJobs] = useState([]);
@@ -39,6 +51,8 @@ export default function BatchGrading({ staff }) {
   const [autoPrintWindow, setAutoPrintWindow] = useState(null), [finishingError, setFinishingError] = useState('');
   const [preparingLabel, setPreparingLabel] = useState(false);
   const [deleteControls,setDeleteControls]=useState(null);
+  const [queueExpanded, setQueueExpanded] = useState(false);
+  const previewReads = useRef(new Map());
   const onDiscarded=useCallback(result=>{
     current.current++;
     const removed=new Set(result.cardIds);
@@ -54,6 +68,25 @@ export default function BatchGrading({ staff }) {
   }
   const pendingKey = `atlas-batch-enqueue:${staff.id}`;
   const request = useCallback((url, options = {}) => manualRequest(url, { ...options, csrf: session.current?.csrf }), []);
+  // Share bounded, short-lived reads between the rail and the active report.
+  // Prepared inspection photos use the authorized storage URL, avoiding the
+  // 4 MB proxy ceiling that rejects full-resolution originals.
+  const readReview = useCallback((job, fresh = false) => {
+    const key = `${job.key}:${job.revision}`, cached = previewReads.current.get(key);
+    if (!fresh && cached && Date.now() - cached.at < 60000) return cached.promise;
+    const promise = request(`${path}/${job.key}`);
+    previewReads.current.set(key, { promise, at: Date.now() });
+    if (previewReads.current.size > 30) previewReads.current.delete(previewReads.current.keys().next().value);
+    promise.catch(() => { if (previewReads.current.get(key)?.promise === promise) previewReads.current.delete(key); });
+    return promise;
+  }, [request]);
+  const readPreview = useCallback(async (job, fresh) => {
+    if (job.state === 'REVIEW') {
+      const detail = await readReview(job, fresh);
+      if (detail.images?.FRONT?.inspection) return Object.fromEntries(['FRONT', 'BACK'].map(side => [side, detail.images[side]?.inspection]));
+    }
+    return (await request(`/api/staff/manual-connected/cards/${job.cardId}`)).previews;
+  }, [request, readReview]);
   const refresh = useCallback(async () => {
     const sequence = ++current.current;
     const result = await request(path);
@@ -61,6 +94,7 @@ export default function BatchGrading({ staff }) {
   }, [request]);
   useEffect(() => {
     let stopped = false; const owner = {}; lifetime.current = owner; session.current = null;
+    previewReads.current.clear();
     mutation.current = false; reviewing.current = null;
     setJobs([]); setIntakeCards([]); setActive(null); setPacket(null); setImagesReady(false); setLoaded(false); setBusy(false);
     setLastApproved(null); setFinishing(null); setAutoPrintWindow(null); setFinishingError(''); setPreparingLabel(false);
@@ -109,14 +143,14 @@ export default function BatchGrading({ staff }) {
   }
   useEffect(() => {
     let stopped = false; setPacket(null); setImagesReady(false); setReviewError('');
-    if (focused?.state === 'REVIEW') void request(`${path}/${focused.key}`).then(value => {
+    if (focused?.state === 'REVIEW') void readReview(focused).then(value => {
       if (!stopped) setPacket(value);
     }).catch(failure => { if (!stopped) setReviewError(messages[failure.code] ?? manualMessage(failure)); });
     return () => { stopped = true; };
-  }, [focused?.key, focused?.state, request]);
+  }, [focused?.key, focused?.revision, focused?.state, readReview]);
   useEffect(() => {
     const keydown = event => {
-      if (mutation.current || event.repeat || event.altKey || event.ctrlKey || event.metaKey || /INPUT|TEXTAREA|SELECT|BUTTON|A/.test(event.target?.tagName ?? '') || event.target?.isContentEditable) return;
+      if (mutation.current || event.defaultPrevented || event.target?.closest?.('.rr-inspect') || event.repeat || event.altKey || event.ctrlKey || event.metaKey || /INPUT|TEXTAREA|SELECT|BUTTON|A/.test(event.target?.tagName ?? '') || event.target?.isContentEditable) return;
       const index = shown.findIndex(job => job.key === focused?.key);
       if (event.key === 'j' || event.key === 'ArrowDown') { event.preventDefault(); setActive(shown[Math.min(shown.length - 1, index + 1)]?.key); }
       if (event.key === 'k' || event.key === 'ArrowUp') { event.preventDefault(); setActive(shown[Math.max(0, index - 1)]?.key); }
@@ -213,11 +247,11 @@ export default function BatchGrading({ staff }) {
       <section className={styles.intake} hidden={tab !== 'INTAKE'}>
         <BatchImport staff={staff} enabled={loaded} onImported={refresh} jobs={jobs} intakeCards={intakeCards} onDiscarded={onDiscarded} onDeleteControls={setDeleteControls} onOpenCard={cardId=>void router.push(`/manual/${cardId}?from=batch`)}/>
       </section>
-      {tab !== 'INTAKE' && <div className={styles.review}>
-        <aside className={styles.rail} aria-label="Cards">{shown.map(job => <button disabled={busy} className={styles.cardRow} aria-current={focused?.key === job.key ? 'true' : undefined} key={job.key} onClick={() => setActive(job.key)}><img src={`${STAFF_BASE_PATH}/api/staff/manual-connected/cards/${job.cardId}/preview-image/FRONT`} alt="" loading="lazy"/><span><strong>{job.evidence?.name || job.label || 'Card'}</strong><small>{job.state === 'RUNNING' ? stages[job.stage] : status[job.state]}</small></span><b>{job.evidence?.proposedGrade ?? '·'}</b></button>)}</aside>
+      {tab !== 'INTAKE' && <div className={`${styles.review} ${!queueExpanded ? styles.compactQueue : ''}`}>
+        <aside className={styles.rail} aria-label="Cards"><button className={styles.queueToggle} type="button" aria-expanded={queueExpanded} aria-label={queueExpanded ? 'Collapse card queue' : 'Expand card queue'} onClick={() => setQueueExpanded(value => !value)}>{queueExpanded ? '← Cards' : '☰'}<small>{shown.length}</small></button>{shown.map(job => <button disabled={busy} className={styles.cardRow} aria-label={`${job.evidence?.name || job.label || 'Card'} · ${status[job.state]}${job.evidence?.proposedGrade != null ? ` · ${job.evidence.proposedGrade}` : ''}`} title={job.evidence?.name || job.label || 'Card'} aria-current={focused?.key === job.key ? 'true' : undefined} key={job.key} onClick={() => setActive(job.key)}><QueuePhoto job={job} readPreview={readPreview}/><span className={styles.cardLabel}><strong>{job.evidence?.name || job.label || 'Card'}</strong><small>{job.state === 'RUNNING' ? stages[job.stage] : status[job.state]}</small></span><b>{job.evidence?.proposedGrade ?? '·'}</b></button>)}</aside>
         {focused?.state === 'REVIEW' ? <section className={styles.machineReview} aria-label="Review proposed grade">
           {reviewError && <p className={styles.error} role="alert">{reviewError}</p>}
-          {packet?.key === focused.key && packet.state !== 'PENDING' ? <MachineReportReview key={packet.reportHash} packet={packet} onReadyChange={setImagesReady} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}>
+          {packet?.key === focused.key && packet.state !== 'PENDING' ? <MachineReportReview key={packet.reportHash} packet={packet} onReadyChange={setImagesReady} onCorrectFinding={() => { if (!busy) void correct(focused); }} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}>
             <div className={styles.reviewActions}><button disabled={busy} onClick={() => void correct(focused)}>{packet.correctionAvailable ? 'Continue final review' : 'Review geometry / make corrections'}</button>
               {!packet.correctionAvailable && <button className={styles.primary} onClick={approve} disabled={busy || !imagesReady || !packet.canCertify}>{busy ? 'Saving your review…' : packet.resumeAvailable ? 'Finish approval & print' : 'Approve & print next'}</button>}</div>
             {packet.report?.calculationState === 'GEOMETRY_UNRESOLVED' || packet.reviewRequiredReason === 'BATCH_FINAL_GEOMETRY_REQUIRED'
@@ -228,7 +262,7 @@ export default function BatchGrading({ staff }) {
           </MachineReportReview> : <div className={styles.empty}><p>{reviewError ? 'Open the current card to continue.' : packet?.state === 'PENDING' ? 'Preparation or measurement is incomplete. Open the card workspace to retry preparation, restore the previous outline or finish pending findings.' : 'Loading the exact grading evidence…'}</p><button onClick={() => open(focused)}>Open card workspace</button></div>}
         </section> : focused ? <section className={styles.focus} aria-label="Selected card">
           <div className={styles.focusHeader}><div><p>{focused.state === 'REVIEW' ? 'MACHINE DRAFT · HUMAN REVIEW' : status[focused.state]}</p><h2>{focused.evidence?.name || focused.label || 'Card review'}</h2></div>{Number.isFinite(focused.evidence?.proposedGrade) && <div className={styles.grade}><strong>{focused.evidence.proposedGrade}</strong><span>PROPOSED</span></div>}</div>
-          <div className={styles.photos}>{['FRONT', 'BACK'].map(side => <figure key={side}><img src={`${STAFF_BASE_PATH}/api/staff/manual-connected/cards/${focused.cardId}/preview-image/${side}`} alt={`${side === 'FRONT' ? 'Front' : 'Back'} of selected card`}/><figcaption>{side}</figcaption></figure>)}</div>
+          <div className={styles.photos}>{['FRONT', 'BACK'].map(side => <figure key={`${focused.key}:${side}`}><QueuePhoto job={focused} side={side} readPreview={readPreview}/><figcaption>{side}</figcaption></figure>)}</div>
           <footer className={styles.actions}><span>{focused.state === 'REVIEW' ? `${focused.evidence.findingCount ?? 0} proposed findings` : messages[focused.code] ?? stages[focused.stage]}<small>↑ ↓ select · Enter review</small></span>
             {focused.canResumeProcessing && <button disabled={busy} onClick={() => resume(focused)}>{busy ? 'Resuming…' : 'Resume saved processing'}</button>}
             <button disabled={busy} className={styles.primary} onClick={() => open(focused)}>{focused.state === 'NEEDS_ATTENTION' ? 'Check card' : 'Review card'} <span aria-hidden="true">↗</span></button></footer>

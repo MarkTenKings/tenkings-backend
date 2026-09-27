@@ -111,6 +111,23 @@ test('final corrections begin only on the explicit gesture and retain the exact 
   assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
   f.dispose();
 });
+test('queue previews share the loaded report and use prepared image URLs without a full-photo proxy or review write', async () => {
+  const f = await fixture();
+  f.packet.images = { FRONT: { inspection: { url: 'https://private-images.example/front.png' } }, BACK: { inspection: { url: 'https://private-images.example/back.png' } } };
+  const photo = f.find(node => node.type?.name === 'QueuePhoto')[0];
+  assert.ok(photo);
+  const before = f.calls.length;
+  const [first, second] = await Promise.all([photo.props.readPreview(f.jobs[0]), photo.props.readPreview(f.jobs[0])]);
+  assert.equal(first.FRONT.url, f.packet.images.FRONT.inspection.url); assert.deepEqual(first, second);
+  assert.equal(f.calls.length, before); assert.equal(f.actions.length, 0);
+  assert.equal(f.calls.some(call => call.url.includes('/preview-image/') || call.options.method === 'POST'), false);
+  f.dispose();
+});
+test('the contextual correction action retains the same explicit final-review binding', async () => {
+  const f = await fixture(); f.reviews()[0].props.onCorrectFinding({ id: 'fixture-finding', side: 'BACK' }); await f.flush();
+  assert.equal(f.actions[0].type, 'BEGIN_FINAL_REVIEW'); assert.equal(f.actions[0].reportHash, f.packet.reportHash);
+  assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false); f.dispose();
+});
 test('a corrected report continues the current final review and cannot approve the old machine report', async () => {
   const f = await fixture({ correcting: true });
   assert.equal(f.find(node => node.type === 'button' && /Approve & print/.test(text(node))).length, 0);

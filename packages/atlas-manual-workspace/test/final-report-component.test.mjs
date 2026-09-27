@@ -88,21 +88,43 @@ test('selecting an included finding focuses its side and renders core measuremen
   const f = harness(), before = structuredClone(f.props.preview); f.ready();
   const buttons = f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Back 1 ·')); assert.equal(buttons.length, 1);
   buttons[0].props.onClick(); f.render();
-  assert.equal(f.has('Selected finding'), false); assert.ok(f.control('Back report zoom').props.value > 1);
+  assert.equal(f.has('Selected finding'), false); assert.ok(parseFloat(text(f.control('Current zoom'))) > 1);
   assert.ok(f.control('Selected finding calculation')); assert.equal(f.has('Measured area'), true); assert.equal(f.has('Marginal unrounded overall effect'), true);
   const expected = f.props.preview.review.explanation.findings.find(finding => finding.side === 'BACK').regions[0].weightedAreaMm2;
   assert.ok(f.nodes(node => node.type === 'data' && node.props.value === expected).length > 0);
   assert.deepEqual(f.props.preview, before);
 });
 
-test('report viewer supports 16x, overlays, expansion and image-only magnifier with no command interface', () => {
+test('compact dock supports 16x, shared layers, side switching and optional comparison without changing evidence', () => {
   const f = harness(), before = structuredClone(f.props.workspace); f.ready();
-  f.control('Front report zoom').props.onChange({ target: { value: '16' } }); f.render(); assert.equal(f.control('Front report zoom').props.value, 16);
-  f.click('Hide findings'); assert.equal(f.nodes(node => node.props.className === 'rr-finding-markers').length, 1);
-  f.click('Expand image'); assert.equal(f.control('Back report image').props.hidden, true); f.click('Return to pair'); assert.equal(f.control('Back report image').props.hidden, false);
-  f.click('3× magnifier'); f.control('Front report inspection').props.onPointerMove({ clientX: 200, clientY: 200 }); f.render();
-  const lens = f.nodes(node => node.props.className === 'rr-magnifier')[0]; assert.ok(lens.props.style.backgroundImage.includes('blob:FRONT'));
+  assert.equal(f.control('Back report image').props.hidden, true);
+  for (let i = 0; i < 7; i++) { f.control('Zoom in').props.onClick(); f.render(); }
+  assert.equal(parseFloat(text(f.control('Current zoom'))), 16);
+  const toggle = label => f.nodes(node => node.type === 'label' && text(node).includes(label))[0].props.children.flat(Infinity).find(node => node?.type === 'input');
+  toggle('Defect markings').props.onChange({ target: { checked: false } }); f.render();
+  assert.equal(f.nodes(node => node.props.className === 'rr-finding-markers').length, 0);
+  toggle('Compare front & back').props.onChange({ target: { checked: true } }); f.render();
+  assert.equal(f.control('Back report image').props.hidden, false);
+  toggle('Compare front & back').props.onChange({ target: { checked: false } }); f.render();
+  f.click('Back'); assert.equal(f.control('Front report image').props.hidden, true);
+  assert.equal(f.control('Back report image').props.hidden, false);
+  assert.equal(f.nodes(node => node.props.className === 'rr-crop').length, 0);
   assert.deepEqual(f.props.workspace, before);
+});
+
+test('numbered photo buttons select exact findings and keyboard navigation never confirms evidence', () => {
+  const f = harness(), before = structuredClone(f.props.preview); f.ready();
+  const marker = f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Inspect Front finding 1:'))[0];
+  assert.ok(marker); let stopped = false;
+  marker.props.onClick({ stopPropagation() { stopped = true; } }); f.render();
+  assert.equal(stopped, true); assert.ok(f.control('Selected finding overview'));
+  assert.equal(f.control('Front report image').props.hidden, false);
+  assert.ok(parseFloat(text(f.control('Current zoom'))) > 1);
+  f.nodes(node => node.props.className?.startsWith('rr-report rr-inspect'))[0].props.onKeyDown({ key: ']', target: { tagName: 'DIV' }, preventDefault() {}, stopPropagation() {} }); f.render();
+  assert.ok(f.control('Selected finding overview')); assert.deepEqual(f.props.preview, before);
+  f.click('Front'); f.click('Back');
+  assert.equal(f.nodes(node => node.props?.['aria-label'] === 'Selected finding overview').length, 0);
+  assert.deepEqual(f.props.preview, before);
 });
 
 test('stale report frame, revision, missing projection or changed source suppress the approval slot', () => {
@@ -145,7 +167,7 @@ test('finding filters and next/previous retain side numbering and never change a
   f.control('Filter findings by side').props.onChange({ target: { value: 'BACK' } }); f.render();
   assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Front 1 ·')).length, 0);
   assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Back 1 ·')).length, 1);
-  f.click('Next finding'); assert.ok(f.control('Back report zoom').props.value > 1); f.click('Previous finding');
+  f.click('Next finding'); assert.ok(parseFloat(text(f.control('Current zoom'))) > 1); f.click('Previous finding');
   assert.equal(f.readyValues.at(-1), true); assert.deepEqual(f.props.preview, before);
   f.control('Filter findings by category').props.onChange({ target: { value: 'centering' } }); f.render();
   assert.equal(f.button('Next finding').props.disabled, true); assert.equal(f.has('Centering uses the saved border geometry'), true);
@@ -155,11 +177,11 @@ test('deep links select only a finding in the exact report and honor reduced mot
   const props = fixture(), finding = props.preview.review.report.findings.find(value => value.side === 'BACK');
   const fragment = presentation.reportFindingFragment(props.preview.reportHash, finding.id);
   const f = harness(props, { fragment, reducedMotion: true }); f.ready();
-  assert.ok(f.control('Back report zoom').props.value > 1);
+  assert.ok(parseFloat(text(f.control('Current zoom'))) > 1);
   assert.equal(f.control('Back report inspection').props.ref.current.scrollOptions.behavior, 'auto');
   assert.equal(f.nodes(node => node.type === 'a' && node.props.href === fragment).length, 1);
   const wrong = harness(fixture(), { fragment: fragment.replace('f'.repeat(64), 'a'.repeat(64)) }); wrong.ready();
-  assert.equal(wrong.control('Back report zoom').props.value, 1);
+  assert.equal(parseFloat(text(wrong.control('Current zoom'))), 1);
   assert.equal(presentation.reportFindingFromFragment(fragment + '&finding=another', props.preview.reportHash, props.preview.review.report.findings), null);
 });
 
@@ -169,13 +191,13 @@ test('touch pinch changes view without selecting a finding and keyboard remains 
   f.control('Front report inspection').props.onPointerDown(event(1, 100, 200));
   f.control('Front report inspection').props.onPointerDown(event(2, 200, 200));
   f.control('Front report inspection').props.onPointerMove(event(2, 300, 200)); f.render();
-  assert.equal(f.control('Front report zoom').props.value, 2);
+  assert.equal(parseFloat(text(f.control('Current zoom'))), 2);
   f.control('Front report inspection').props.onPointerUp(event(2, 300, 200));
   f.control('Front report inspection').props.onPointerUp(event(1, 100, 200)); f.render();
   assert.equal(f.nodes(node => node.props?.['aria-label'] === 'Selected finding calculation').length, 0);
   const viewport = f.control('Front report inspection').props.ref.current;
   f.control('Front report inspection').props.onKeyDown({ key: '0', target: viewport, currentTarget: viewport, preventDefault() {} }); f.render();
-  assert.equal(f.control('Front report zoom').props.value, 1); assert.deepEqual(f.props.preview, before);
+  assert.equal(parseFloat(text(f.control('Current zoom'))), 1); assert.deepEqual(f.props.preview, before);
 });
 
 test('explicit precision and print disclosure preserve original report and approval state', () => {
@@ -202,8 +224,12 @@ test('approved public rendering has the same verified viewer without staff appro
 test('geometry layers bind staff printed coordinates to the exact report frame', () => {
   const props = fixture(), report = props.preview.review.report, quad = [{ x: .05, y: .04 }, { x: .95, y: .04 }, { x: .95, y: .96 }, { x: .05, y: .96 }];
   props.geometry = { sides: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { prepared: { frame: { id: side, inspection: { sha256: report.inspection[side.toLowerCase()].imageSha256 }, rectified: { sha256: 'a'.repeat(64) } } }, printed: { frameId: side, frameSha256: 'a'.repeat(64), quad } }])) };
-  const f = harness(props); f.ready(); assert.equal(f.button('Printed border').props.disabled, false); f.click('Printed border');
-  assert.equal(f.nodes(node => node.props?.className === 'rr-printed-line').length, 1);
+  const f = harness(props); f.ready();
+  const printed = f.nodes(node => node.type === 'label' && text(node).includes('Printed border'))[0].props.children.flat(Infinity).find(node => node?.type === 'input');
+  assert.equal(printed.props.disabled, false); assert.equal(printed.props.checked, true);
+  assert.equal(f.nodes(node => node.props?.className === 'rr-printed-line').length, 2);
+  printed.props.onChange({ target: { checked: false } }); f.render();
+  assert.equal(f.nodes(node => node.props?.className === 'rr-printed-line').length, 0);
   assert.deepEqual(presentation.reportDisplayGeometry(props.geometry, report).FRONT.printedQuad, quad);
   props.geometry.sides.FRONT.prepared.frame.inspection.sha256 = 'b'.repeat(64);
   assert.equal(presentation.reportDisplayGeometry(props.geometry, report).FRONT, null);

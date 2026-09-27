@@ -30,15 +30,17 @@ function ReportMasks({ findings, selected, visible }) {
 
 /** No edit/action callbacks: every control here changes only the displayed view. */
 export function ReportInspectionImage({ side, descriptor, expectedHash, findings, selected, onSelect, expanded, hidden, onExpand, onReady,
-  geometry, showFindingButtons = true }) {
+  geometry, showFindingButtons = true, compact = false, layerOptions, findingsVisible, command, onViewChange, onActivate }) {
   const supplied = descriptor?.sha256 === expectedHash && descriptor?.url ? descriptor : null;
   const image = useVerifiedImage(supplied), [loaded, setLoaded] = useState(null);
   const ready = Boolean(supplied && image.url && loaded === image.url);
   const [view, setView] = useState({ zoom: 1, pan: { x: 0, y: 0 } }), [size, setSize] = useState({ width: 400, height: 540 });
   const sizeRef = useRef(size), viewport = useRef(null), plane = useRef(null), gesture = useRef(null);
   const pointers = useRef(new Map()), viewRef = useRef(view); viewRef.current = view;
-  const [overlays, setOverlays] = useState(true), [magnifier, setMagnifier] = useState(false), [lens, setLens] = useState(null);
-  const [layers, setLayers] = useState({ physical: false, printed: false, centering: false });
+  const [localOverlays, setOverlays] = useState(true), [magnifier, setMagnifier] = useState(false), [lens, setLens] = useState(null);
+  const [localLayers, setLayers] = useState({ physical: true, printed: true, centering: true });
+  const [transition, setTransition] = useState(false);
+  const layers = layerOptions ?? localLayers, overlays = findingsVisible ?? localOverlays;
   const bounds = useMemo(() => { let number = 0; return findings.map(finding => ({ finding,
     number: finding.reviewResult === 'REMOVED' ? null : ++number, bounds: reportFindingBounds(finding) })); }, [findings]);
   const selectedBounds = bounds.find(entry => entry.finding.id === selected?.id)?.bounds;
@@ -48,6 +50,13 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
   const scale = fitInspectionScale(size), zoom = view.zoom;
   const fit = () => { setView({ zoom: 1, pan: { x: 0, y: 0 } }); setLens(null); };
   const changeZoom = next => { setView(previous => zoomInspectionAt(previous, next, { x: size.width / 2, y: size.height / 2 }, size)); setLens(null); };
+  useEffect(() => { onViewChange?.(side, zoom); }, [side, zoom, onViewChange]);
+  useEffect(() => {
+    if (!command || command.side !== side) return;
+    setTransition(true);
+    if (command.type === 'FIT') fit();
+    if (command.type === 'ZOOM') changeZoom(command.zoom);
+  }, [command]);
   useEffect(() => { onReady(side, ready, expectedHash); return () => onReady(side, false, expectedHash); }, [side, ready, expectedHash, onReady]);
   useEffect(() => {
     const element = viewport.current; if (!element || typeof ResizeObserver === 'undefined') return;
@@ -63,18 +72,18 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
     if (!ready || hidden || !selected) return;
     const target = bounds.find(entry => entry.finding.id === selected.id);
     if (!target?.bounds) return;
-    setView(focusInspectionBounds(target.bounds, sizeRef.current)); setLens(null);
-    viewport.current?.scrollIntoView?.({ block: 'nearest', behavior: typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    setTransition(true); setView(focusInspectionBounds(target.bounds, sizeRef.current)); setLens(null);
+    viewport.current?.scrollIntoView?.({ block: typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches ? 'start' : 'nearest', behavior: typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }, [selected, bounds, ready, hidden]);
   useEffect(() => {
     const element = viewport.current; if (!element?.addEventListener) return;
     const wheel = event => {
       if (!ready || gesture.current) return;
-      event.preventDefault(); const box = element.getBoundingClientRect(), factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size.height : 1;
+      event.preventDefault(); setTransition(false); onActivate?.(side); const box = element.getBoundingClientRect(), factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size.height : 1;
       setView(previous => zoomInspectionAt(previous, previous.zoom * Math.exp(-event.deltaY * factor * .002), { x: event.clientX - box.left, y: event.clientY - box.top }, size)); setLens(null);
     };
     element.addEventListener('wheel', wheel, { passive: false }); return () => element.removeEventListener('wheel', wheel);
-  }, [ready, size]);
+  }, [ready, size, onActivate, side]);
   const localPoint = event => { const box = viewport.current.getBoundingClientRect(); return { x: event.clientX - box.left, y: event.clientY - box.top }; };
   const beginGesture = () => {
     const points = [...pointers.current.values()];
@@ -85,7 +94,7 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
   };
   const pointerDown = event => {
     if (!ready || (event.pointerType !== 'touch' && event.button !== 0) || pointers.current.size >= 2) return;
-    event.preventDefault(); viewport.current?.focus?.({ preventScroll: true });
+    event.preventDefault(); setTransition(false); onActivate?.(side); viewport.current?.focus?.({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
     pointers.current.set(event.pointerId, localPoint(event)); beginGesture();
     if (pointers.current.size === 1) gesture.current.moved = false;
@@ -120,6 +129,8 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
   const cancelPointer = event => { pointers.current.delete(event.pointerId); beginGesture(); setLens(null); };
   const keyboard = event => {
     if (!ready || event.target !== event.currentTarget || gesture.current) return;
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-', '0', 'Home', 'Escape'].includes(event.key)) event.stopPropagation?.();
+    setTransition(false);
     const moves = { ArrowLeft: [60, 0], ArrowRight: [-60, 0], ArrowUp: [0, 60], ArrowDown: [0, -60] };
     if (moves[event.key]) { event.preventDefault(); const [x, y] = moves[event.key]; setView(previous => ({ ...previous, pan: clampInspectionPan({ x: previous.pan.x + x, y: previous.pan.y + y }, previous.zoom, size) })); }
     else if (['+', '=', '-'].includes(event.key)) { event.preventDefault(); changeZoom(zoom * (event.key === '-' ? 1 / 1.25 : 1.25)); }
@@ -127,13 +138,13 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
     else if (event.key === 'Escape') { setLens(null); if (expanded) onExpand(null); }
   };
   return <section className={`rr-image-side${expanded ? ' rr-image-expanded' : ''}`} hidden={hidden} aria-label={`${name(side)} report image`}>
-    <header><h3>{name(side)}</h3><button type="button" onClick={() => onExpand(expanded ? null : side)}>{expanded ? 'Return to pair' : 'Expand image'}</button></header>
+    {!compact && <><header><h3>{name(side)}</h3><button type="button" onClick={() => onExpand(expanded ? null : side)}>{expanded ? 'Return to pair' : 'Expand image'}</button></header>
     <div className="rr-image-tools"><label>Zoom <select aria-label={`${name(side)} report zoom`} value={zoom} disabled={!ready} onChange={event => changeZoom(Number(event.target.value))}>
       {[1, 2, 4, 8, 16, ...([1, 2, 4, 8, 16].includes(zoom) ? [] : [zoom])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value === 1 ? 'Fit' : `${Number(value.toFixed(1))}×`}</option>)}
     </select></label><button type="button" onClick={fit} disabled={!ready}>Fit image</button><button type="button" aria-pressed={!overlays} disabled={!ready} onClick={() => setOverlays(value => !value)}>{overlays ? 'Hide findings' : 'Show findings'}</button><button type="button" aria-pressed={magnifier} disabled={!ready} onClick={() => { setMagnifier(value => !value); setLens(null); }}>3× magnifier</button></div>
-    <div className="rr-layer-tools" aria-label={`${name(side)} evidence layers`}>{[['physical', 'Card edge', physical], ['printed', 'Printed border', printed], ['centering', 'Centering guides', printed]].map(([key, label, available]) => <button key={key} type="button" aria-pressed={layers[key]} disabled={!ready || !available} onClick={() => setLayers(old => ({ ...old, [key]: !old[key] }))}>{label}</button>)}</div>
+    <div className="rr-layer-tools" aria-label={`${name(side)} evidence layers`}>{[['physical', 'Card edge', physical], ['printed', 'Printed border', printed], ['centering', 'Centering guides', printed]].map(([key, label, available]) => <button key={key} type="button" aria-pressed={layers[key]} disabled={!ready || !available} onClick={() => setLayers(old => ({ ...old, [key]: !old[key] }))}>{label}</button>)}</div></>}
     <div className="rr-viewport" ref={viewport} tabIndex={0} role="group" aria-label={`${name(side)} report inspection`} onKeyDown={keyboard} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer} onPointerLeave={() => setLens(null)}>
-      {image.url && <div className="rr-plane" ref={plane} style={{ width: INSPECTION_SIZE.width * scale * zoom, height: INSPECTION_SIZE.height * scale * zoom, transform: `translate(calc(-50% + ${view.pan.x}px), calc(-50% + ${view.pan.y}px))` }}>
+      {image.url && <div className="rr-plane" ref={plane} data-transition={transition} style={{ width: INSPECTION_SIZE.width * scale * zoom, height: INSPECTION_SIZE.height * scale * zoom, transform: `translate(calc(-50% + ${view.pan.x}px), calc(-50% + ${view.pan.y}px))` }}>
         <img src={image.url} alt={`${name(side)} saved inspection photograph`} draggable={false} onLoad={event => setLoaded(event.currentTarget.naturalWidth === INSPECTION_SIZE.width && event.currentTarget.naturalHeight === INSPECTION_SIZE.height ? image.url : 'INVALID_DIMENSIONS')} onError={() => setLoaded('IMAGE_ERROR')}/>
         {ready && <div className="rr-card-plane"><ReportMasks findings={findings} selected={selected?.id} visible={overlays}/>
           <svg viewBox="0 0 1270 1778" className="rr-geometry-layers" aria-hidden="true">
@@ -141,10 +152,14 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
             {layers.printed && printed && <polygon className="rr-printed-line" points={printed.map(p => `${p.x * 1270},${p.y * 1778}`).join(' ')}/>}
             {layers.centering && printed && <g className="rr-centering-line"><path d="M635 0V1778 M0 889H1270"/>{printed.map((p, index) => { const q = printed[(index + 1) % 4], x = (p.x + q.x) / 2 * 1270, y = (p.y + q.y) / 2 * 1778; return <line key={index} x1={x} y1={y} x2={index % 2 ? index === 1 ? 1270 : 0 : x} y2={index % 2 ? y : index === 0 ? 0 : 1778}/>; })}</g>}
           </svg>
-          {overlays && <svg viewBox="0 0 1270 1778" className="rr-finding-markers" aria-hidden="true">{bounds.filter(entry => entry.bounds && entry.finding.reviewResult !== 'REMOVED').map(({ finding, bounds: box, number }) => <g key={finding.id} className={selected?.id === finding.id ? 'rr-active-marker' : ''}>
+          {overlays && <svg viewBox="0 0 1270 1778" className="rr-finding-markers" aria-hidden="true">{bounds.filter(entry => entry.bounds && entry.finding.reviewResult !== 'REMOVED').map(({ finding, bounds: box }) => <g key={finding.id} className={selected?.id === finding.id ? 'rr-active-marker' : ''}>
             <rect x={box.x * 1270} y={box.y * 1778} width={Math.max(1, box.width * 1270)} height={Math.max(1, box.height * 1778)}/>
-            <g transform={`translate(${Math.max(12 / scale / zoom, box.x * 1270)},${Math.max(12 / scale / zoom, box.y * 1778)})`}><circle r={10 / scale / zoom}/><text textAnchor="middle" dominantBaseline="central" fontSize={11 / scale / zoom}>{number}</text></g>
           </g>)}</svg>}
+          {overlays && bounds.filter(entry => entry.bounds && entry.finding.reviewResult !== 'REMOVED').map(({ finding, bounds: box, number }) => <button type="button" key={finding.id} className="rr-marker-button"
+            aria-label={`Inspect ${name(side)} finding ${number}: ${words(finding.defectType)}`} aria-pressed={selected?.id === finding.id}
+            style={{ left: `${Math.min(1 - 16 / (1270 * scale * zoom), Math.max(16 / (1270 * scale * zoom), box.x)) * 100}%`, top: `${Math.min(1 - 16 / (1778 * scale * zoom), Math.max(16 / (1778 * scale * zoom), box.y)) * 100}%` }}
+            onPointerDown={event => event.stopPropagation()} onPointerUp={event => event.stopPropagation()} onKeyDown={event => { if (!['[', ']'].includes(event.key)) event.stopPropagation(); }}
+            onClick={event => { event.stopPropagation(); onSelect(finding); }}><span>{number}</span></button>)}
         </div>}
       </div>}
       {!ready && <p className="rr-image-status" role="status">{!supplied ? 'This report’s saved photograph is unavailable.' : image.error || loaded === 'IMAGE_ERROR' ? 'Could not verify the saved photograph. Reload images to try again.' : loaded === 'INVALID_DIMENSIONS' ? 'The saved photograph has unexpected dimensions. Reload images before continuing.' : 'Loading verified photograph…'}</p>}
@@ -155,9 +170,9 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
         setView(previous => ({ ...previous, pan: clampInspectionPan({ x: (.5 - x) * INSPECTION_SIZE.width * scale * previous.zoom, y: (.5 - y) * INSPECTION_SIZE.height * scale * previous.zoom }, previous.zoom, size) }));
       }}><img src={image.url} alt="" draggable={false}/><span style={{ left: `${map.x * 100}%`, top: `${map.y * 100}%`, width: `${map.width * 100}%`, height: `${map.height * 100}%` }}/></button>}
     </div>
-    <p className="rr-help">Drag to pan · pinch or scroll to zoom · arrow keys pan · + / − zoom · 0 fits. Magnification enlarges saved pixels.</p>
+    {!compact && <p className="rr-help">Drag to pan · pinch or scroll to zoom · arrow keys pan · + / − zoom · 0 fits. Magnification enlarges saved pixels.</p>}
     {!printed && <p className="rr-help">Border geometry is not available in this report view.</p>}
-    {ready && crop && <figure className="rr-selected-crop"><div style={{ aspectRatio: `${crop.width} / ${crop.height}`, width: `min(100%, ${220 * crop.width / crop.height}px)` }}><img src={image.url} alt={`Detail from the verified ${name(side).toLowerCase()} photograph`} style={{ width: `${1350 / crop.width * 100}%`, height: `${1858 / crop.height * 100}%`, left: `${-crop.x / crop.width * 100}%`, top: `${-crop.y / crop.height * 100}%` }}/></div><figcaption>Selected area · the same verified photograph, without markings</figcaption></figure>}
+    {!compact && ready && crop && <figure className="rr-selected-crop"><div style={{ aspectRatio: `${crop.width} / ${crop.height}`, width: `min(100%, ${220 * crop.width / crop.height}px)` }}><img src={image.url} alt={`Detail from the verified ${name(side).toLowerCase()} photograph`} style={{ width: `${1350 / crop.width * 100}%`, height: `${1858 / crop.height * 100}%`, left: `${-crop.x / crop.width * 100}%`, top: `${-crop.y / crop.height * 100}%` }}/></div><figcaption>Selected area · the same verified photograph, without markings</figcaption></figure>}
     {showFindingButtons && <div className="rr-side-findings">{findings.filter(finding => finding.reviewResult !== 'REMOVED').map((finding, index) => <button type="button" key={finding.id} disabled={!ready} aria-pressed={selected?.id === finding.id} onClick={() => onSelect(finding)}>{name(side)} {index + 1} · {words(finding.defectType)}</button>)}{!findings.some(finding => finding.reviewResult !== 'REMOVED') && <p>No included findings on {name(side)}.</p>}</div>}
   </section>;
 }
