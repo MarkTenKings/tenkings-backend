@@ -37990,3 +37990,44 @@ Replaced axis-aligned box rulers with a cached maximum straight span between the
 Selecting a finding now exits Front/Back comparison into that side's synchronized annotated/clean pair in rapid and regular/shared public viewing. Locator is larger, preserves portrait aspect ratio, and moves away from evidence or below the photograph when necessary. Selected number is offset outside the trace. One prominent sticky Front-and-Back inspection checkbox replaces two buried side checkboxes; its sequential saves use current returned revisions and fail closed. Rapid correction confirmation opens the final grade directly, removing the extra return-and-approve loop. Final approval remains explicit.
 
 Validation: 210 focused tests pass, 0 fail, 1 existing opt-in native test skipped. Includes diagonal/disconnected/single-pixel span versus exhaustive edge distances, collision exclusions, rapid selected-side clean camera, combined confirmation verification/save failure, and direct correction-to-grade navigation. Staff production build and boundary check pass; public build running. Browser synthetic checks at 1280, 1920 and 390 widths show equal annotated/clean cameras, no horizontal overflow, legible coral ruler, portrait 124×175 desktop locator, and safe outside-caption fallback on phone. Private visual artifact: atlas-inspect-20260926/refined-desktop.png. No production writes or paid model requests in implementation/qualification.
+
+
+### 2026-09-27T04:36:55.397Z — ATLAS INSPECT planned staged staff deployment
+
+Preparing exactly committed source 658548c03bd4e1c38a83641e5c381d8b21316361 on the dedicated Vercel staff project with --prod --skip-domain. Verified clean frozen source roster, read-only CLI payload, successful staff production build, and unchanged provider project settings/environment values. Upload will create a staged candidate and may advance its generated team alias; canonical public routing remains pinned to the prior staff origin. No control rebind, private restart, homepage promotion, schema change or model call occurs in this staging action.
+
+
+### 2026-09-27T04:38:24.965Z — Staged staff READY; planned public candidate
+
+Provider confirms staff dpl_223YaCEhmeDeQke6xHAZgWUYEZVs READY from exact 658548c03bd4e1c38a83641e5c381d8b21316361. Canonical routing remains unchanged. Plan one public-project environment update: staff origin to https://atlas-grading-staff-1nie3x1ne-ten-kings.vercel.app; customer origin unchanged. Then upload the same frozen source as a production candidate with --skip-domain, preserving the exact live homepage subtree. No runtime restart or database control change in this action.
+
+
+### 2026-09-27T04:40:19.417196+00:00 — Planned ATLAS INSPECT production binding cutover
+
+Both Vercel candidates READY on exact 658548c03bd4e1c38a83641e5c381d8b21316361; public candidate dpl_7WZHX6ziZir4nXia63cWSTcNFXZd and staff dpl_223YaCEhmeDeQke6xHAZgWUYEZVs. Fresh SQL has zero active/queued batch, ingestion, geometry, identity and customer work; zero unsettled accepted model requests. Plan gracefully stop the current dedicated private container and recreate with its identical d4a immutable image/security/resource/network profile, changing only the two staff web-release environment fields. Cold network-none constructors agree on new staff binding; customer binding remains d4a. Retain old stopped container for rollback and existing125s replay boot fence. Then guarded compare-and-swap of precisely StaffControl, STAFF SmsPilotControl and PublicReaderControl, with all23 grading history tables compared before/after. No schema/grant/job/model changes. After readiness and three signed read-only probes, promote public candidate once and verify canonical routes. Brief private unavailability during restart is expected.
+
+
+### 2026-09-27T04:40:27.404167+00:00 — Runtime restarted with UI binding; three control rows updated
+
+New container c89b88a75ae306c85d4008e9875b3a110cab1bbf6ade0bcaed68e42d06d293af uses unchanged d4a/image d21c with 658548c staff web binding, same isolation and resource limits, restart0. Prior container stopped gracefully/exit0 and retained; unrelated containers preserved. The existing125s replay fence is active before service load. Three-row guarded control transaction passed: staff revision38, public17, STAFF SMS36; customer controls unchanged. All23 grading-history table counts/hashes and23 existing job records exactly preserved. Canonical promotion waits for source-bound readiness and signed transport checks.
+
+
+### 2026-09-27T04:43:42.842Z — Runtime transport qualified; planned canonical promotion
+
+Same private runtime generation is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_7WZHX6ziZir4nXia63cWSTcNFXZd, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-27T04:43:47.154Z — ATLAS INSPECT canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_7WZHX6ziZir4nXia63cWSTcNFXZd, source 658548c03bd4e1c38a83641e5c381d8b21316361. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+
+### 2026-09-27T04:44:29.667619+00:00 — INSPECT refinements live and verified
+
+Current INSPECT refinement release — 2026-09-27T04:44:29.667619+00:00: frontend `658548c03bd4e1c38a83641e5c381d8b21316361` is live on staff `dpl_223YaCEhmeDeQke6xHAZgWUYEZVs` (`atlas-grading-staff-1nie3x1ne-ten-kings.vercel.app`) and public `dpl_7WZHX6ziZir4nXia63cWSTcNFXZd` (`atlas-grading-public-pftv3z4pr-ten-kings.vercel.app`). All four public aliases select this release. Earlier af7fabb/bc364 checkpoints below are historical. Customer remains dpl_2bUeFNMvvdkEDXjpJcWYRSpiHMmG / d4a. The exact dcc58d88 homepage remains byte-identical (HTML SHA256 06149b1e819e5c42091e8f5709f83986482a25772f80ff3d569b92866b75abe3).
+
+Shared staff/public inspection now measures the maximum straight span of saved trace pixels with a coral ruler outside the trace. Callouts and the enlarged portrait locator avoid the selected trace/ruler; crowded views place readouts below the photo. Area and marginal grade effects remain saved measurements, and span is not curved path length. Selecting a finding opens its matching annotated/clean pair in rapid review. A single prominent sticky Front-and-Back inspection checkbox replaces separate buried boxes; it persists both side records with current revisions. Confirming corrections proceeds directly to final grade, whose approval remains explicit. No scoring or database schema change.
+
+Private grading source/image remain d4a / sha256:d21cacaadfdc780a1da2be85aa6629bfc249d12871e6017d839832a885b44871. Current container `c89b88a75ae306c85d4008e9875b3a110cab1bbf6ade0bcaed68e42d06d293af` (`atlas-inspect-refine-658548c03bd4`) started `2026-09-27T04:40:22.666509803Z`, restart0. Only two staff web-binding environment fields changed. Prior 09da9b container is retained stopped/exit0, restart disabled, network detached. Protected configuration `/opt/atlas/inspect-refine-20260927/candidate.docker.env` has SHA256 `434515dc61f5fd845e4ab1b8e5a0820cc2bf4ee9a1736bb554f83069d9cf2c52`. Controls: Staff38 / STAFF SMS36 / PublicReader17; customer15/13 unchanged. Database47 ordinary slots / staff role limit16 unchanged.
+
+Qualification:210 focused tests pass,0 fail,1 existing native opt-in skip. Staff/public production builds and boundary checks pass. Synthetic browser checks at1280/1920/390 verify matching cameras, no horizontal overflow, locator124×175 on desktop and unobscured ruler/callouts. Production signed reads pass401/404/200. Canonical homepage, sign-in and updated staff/public bundles return200; unknown report404. All23 grading-history table counts/hashes and job records preserved. No paid grading runs or real-card approvals. Authenticated live acceptance remains with Mark. Private evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-inspect-20260926/review-refinement-release`. All consumed deployment intents are one-shot and must not be rerun.
