@@ -1,0 +1,25 @@
+// Reuse the approved ServiceChoice presentation. Preview CTAs lead to the real intake flow.
+import {createRequire} from 'node:module';
+import {readFile,writeFile} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import path from 'node:path';
+const here=path.dirname(fileURLToPath(import.meta.url));
+const root=path.resolve(here,'../../../..');
+const require=createRequire(process.env.ATLAS_CUSTOMER_PACKAGE || '/Users/markthomas/.codex/worktrees/1ce0/ten-kings-mystery-packs-clean/frontend/atlas-customer/package.json');
+const React=require('react');
+const {renderToStaticMarkup}=require('react-dom/server');
+const {transform}=require('next/dist/build/swc');
+let src=await readFile(path.join(root,'frontend/atlas-customer/components/intake/ServiceChoice.jsx'),'utf8');
+src=src.replace("import SubmissionStationFinder from './SubmissionStationFinder.jsx';",'const SubmissionStationFinder=()=>null;');
+const {code}=await transform(src,{filename:'ServiceChoice.jsx',jsc:{parser:{syntax:'ecmascript',jsx:true},transform:{react:{runtime:'automatic'}}},module:{type:'commonjs'}});
+const mod={exports:{}};new Function('require','module','exports',code)(require,mod,mod.exports);
+let html=renderToStaticMarkup(React.createElement(mod.exports.default,{value:null,onChange:()=>{}}));
+html=html.replaceAll('/account/atlas/','/service/').replaceAll('/account/brand/','/brand/').replace('<h1 class="service-choice-title">','<h2 class="service-choice-title">').replace('</h1>','</h2>');
+html=html.replaceAll('preload="metadata"','preload="none"');
+html=html.replace(/<button type="button" class="secondary" aria-pressed="false">(.*?)<\/button>/g,'<a class="secondary service-cta" href="https://atlasgrading.com/account/submit">$1</a>');
+await writeFile(path.join(here,'service-fragment.html'),html);
+const template=await readFile(path.join(here,'index.template.html'),'utf8');
+await writeFile(path.join(here,'index.html'),template.replace('<!-- SERVICE_COMPONENT -->',html));
+const css=await readFile(path.join(root,'frontend/atlas-customer/styles/submission.css'),'utf8');
+await writeFile(path.join(here,'submission-source.css'),'/* Reused ServiceChoice presentation; source and adapter documented in README. */\n'+css.slice(css.indexOf('.service-choice{'),css.indexOf('.wizard-footer{')));
+console.log('Rendered full service comparison and assembled local study.');

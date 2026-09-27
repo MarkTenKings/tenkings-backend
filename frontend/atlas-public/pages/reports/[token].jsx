@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import ReportGuidance from '../../components/ReportGuidance';
 import Link from 'next/link';
 import GradedReport from '@atlas/report-view/GradedReport';
 import ApprovedPhotographs from '../../components/ApprovedPhotographs';
@@ -27,7 +28,7 @@ export default function Report({ packet, publicHash, explanation, presentation, 
             {packet.mode === 'LOCAL_FIXTURE' && <div className="demo-notice">SYNTHETIC DEMONSTRATION · This is not a physical card grade.</div>}
             <ApprovedReportView report={packet.report} explanation={explanation} images={images} geometry={packet.geometry} brandSrc="/brand/atlas-grading-logo.png" presentation={presentation}
                 publication={{ reportNumber: packet.reportNumber, version: packet.approvalVersion, approvedAt: packet.approvedAt, reportHash: publicHash, url: path }}/>
-            <footer className="report-footer"><p>This is the saved human-approved report. Physical slab finishing and NFC are separate steps.</p></footer>
+            <footer className="report-footer"><ReportGuidance reportKey={packet.publicToken}/><p>This is the saved human-approved report. Physical slab finishing and NFC are separate steps.</p></footer>
         </main>;
     }
     return <main className="public-page"><Head><title>{`${identity.playerName ?? identity.cardName} · ${packet.reportNumber} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head>
