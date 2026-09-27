@@ -38427,3 +38427,50 @@ Owner additionally requests precise red guidance in the correction workspace. Im
 ### 2026-09-27 — Capture/corrective-review release qualification complete
 
 All710 staff tests and38 public tests pass; both production builds and boundaries pass. Shared geometry/defect workspace tests:141 pass,1 existing optional native skip. Real JSX synthetic browser checks pass on390px phone and1440px desktop: only missing Year highlighted; first field visible below issue panel; correction clears marker; unprepared Front alone red while Back stays ready; missing Back printed border opens the correct tool and banner navigation restores it. Geometry photos were fetched and hash verified through the real image loader. No page errors or synthetic POSTs. Camera browser regression passes full-frame aspect/corner preservation,10-pair admission and recovery/locking scenarios. Screenshots visually inspected. These are local browser fixtures, not actual iPhone optical/throughput acceptance. No production action yet.
+
+
+### 2026-09-27T23:27:25.213Z — ATLAS capture and corrective review planned staged staff deployment
+
+Preparing exactly committed source cb680dbcf7a4b28329393022cf38aa5a5e228bb4 on the dedicated Vercel staff project with --prod --skip-domain. Verified clean frozen source roster, read-only CLI payload, successful staff production build, and unchanged provider project settings/environment values. Upload will create a staged candidate and may advance its generated team alias; canonical public routing remains pinned to the prior staff origin. No control rebind, private restart, homepage promotion, schema change or model call occurs in this staging action.
+
+
+### 2026-09-27T23:29:11.296Z — Staged staff READY; planned public candidate
+
+Provider confirms staff dpl_H5qYd2MjAKfSziFTDhjtsMvAZoC3 READY from exact cb680dbcf7a4b28329393022cf38aa5a5e228bb4. Canonical routing remains unchanged. Plan one public-project environment update: staff origin to https://atlas-grading-staff-7z34fyt7x-ten-kings.vercel.app; customer origin unchanged. Then upload the same frozen source as a production candidate with --skip-domain, preserving the exact live homepage subtree. No runtime restart or database control change in this action.
+
+
+### 2026-09-27T23:30:41.484720+00:00 — Planned ATLAS capture and corrective review production binding cutover
+
+Both Vercel candidates READY on exact cb680dbcf7a4b28329393022cf38aa5a5e228bb4; public candidate dpl_E3UFCTGGY15vtPpwfSL4eWfNLQ4L and staff dpl_H5qYd2MjAKfSziFTDhjtsMvAZoC3. Fresh SQL has zero active/queued batch, ingestion, geometry, identity and customer work; zero unsettled accepted model requests. Plan gracefully stop the current dedicated private container and recreate with its identical d4a immutable image/security/resource/network profile, changing only the two staff web-release environment fields. Cold network-none constructors agree on new staff binding; customer binding remains d4a. Retain old stopped container for rollback and existing125s replay boot fence. Then guarded compare-and-swap of precisely StaffControl, STAFF SmsPilotControl and PublicReaderControl, with all23 grading history tables compared before/after. No schema/grant/job/model changes. After readiness and three signed read-only probes, promote public candidate once and verify canonical routes. Brief private unavailability during restart is expected.
+
+
+### 2026-09-27T23:30:49.467289+00:00 — Runtime restarted with UI binding; three control rows updated
+
+New container 54eca7dba260524873acfc743c0a80f457b32af15652fbf5bec32bd88aca8703 uses unchanged d4a/image d21c with cb680dbc staff web binding, same isolation and resource limits, restart0. Prior container stopped gracefully/exit0 and retained; unrelated containers preserved. The existing125s replay fence is active before service load. Three-row guarded control transaction passed: staff revision42, public22, STAFF SMS40; customer controls unchanged. All23 grading-history table counts/hashes and43 existing job records exactly preserved. Canonical promotion waits for source-bound readiness and signed transport checks.
+
+
+### 2026-09-27T23:33:18.894Z — Runtime transport qualified; planned canonical promotion
+
+Same private runtime generation is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_E3UFCTGGY15vtPpwfSL4eWfNLQ4L, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-27T23:33:21.932Z — ATLAS capture and corrective review canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_E3UFCTGGY15vtPpwfSL4eWfNLQ4L, source cb680dbcf7a4b28329393022cf38aa5a5e228bb4. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+
+### 2026-09-27T23:34:23.260510+00:00 — Capture and corrective-review production postflight complete
+
+Current ATLAS capture and corrective-review release — 2026-09-27T23:33:31.589Z: source `cb680dbcf7a4b28329393022cf38aa5a5e228bb4` is live on staff `dpl_H5qYd2MjAKfSziFTDhjtsMvAZoC3` (`atlas-grading-staff-7z34fyt7x-ten-kings.vercel.app`) and public `dpl_E3UFCTGGY15vtPpwfSL4eWfNLQ4L` (`atlas-grading-public-1fterpinr-ten-kings.vercel.app`). All four public aliases select this public deployment. The approved 229485b homepage is preserved byte-for-byte. Customer remains dpl_2bUeFNMvvdkEDXjpJcWYRSpiHMmG / d4a7dec2af187f4aa03166e639f4d9bb066fb612. Earlier checkpoints below are historical.
+
+Review Card opens the exact saved card and now shows current correction needs in red: missing identity fields, affected photo side, physical-edge/printed-border tool and analysis recovery section. A sticky issue list links directly to each item and scrolls to the first issue. Markers clear as the current issue is resolved; stale upload failures are ignored. Grading, saves and approvals remain explicit and retain their existing guards.
+
+Rapid camera now displays the entire delivered camera frame with its guide fitted to that frame, removing the prior object-fit:cover crop mismatch. Saved lossless PNG uses the same video pixels shown in the preview; no crop, upscale or separate still-camera field of view. Users move physically closer to fill the guide. Actual camera resolution remains browser/device-dependent; this does not claim sensor full resolution or physical-iPhone optical acceptance.
+
+The persistent staff sign-in and six-backend DigitalOcean transaction pool from c902 remain active, with preview/report reads capped at two. There is no 30-minute/inactivity sign-out. Explicit logout/revocation and release binding remain; this new release needs one fresh sign-in. Staff ledger 58/public 112 are unchanged. Only three controls changed: Staff 42 / STAFF SMS 40 / PublicReader 22; customer 15/13 unchanged. All 23 grading-history fingerprints and 43 job records preserved across cutover and final postflight.
+
+Private source/image remain d4a / `sha256:d21cacaadfdc780a1da2be85aa6629bfc249d12871e6017d839832a885b44871`. Current container `54eca7dba260524873acfc743c0a80f457b32af15652fbf5bec32bd88aca8703` (`atlas-capture-review-cb680dbcf7a4`) started `2026-09-27T23:30:44.528627516Z`, restart 0/OOM false. Only two staff web-binding fields changed. Protected config `/opt/atlas/capture-review-20260927/candidate.docker.env` SHA256 `d0a05a7029a4dec53c03ae53be81175b5e56e06e54560c9757fd37adad5093aa`. Previous 61d05b127b4a container retained stopped/exit0, restart disabled/network detached. Existing 125s boot fence, isolation/resources and customer binding retained.
+
+Qualification: 710 staff tests, 38 public tests and 141 shared workspace tests pass; one pre-existing optional native skip. Staff/public production builds and boundaries pass. Synthetic browser proofs cover full-frame saved corners, portrait/tall/landscape camera ratios,10 pairs / 20 captures and admission recovery/locks; correction UI checks 390px phone / 1440px desktop, exact red Year/Front/Back printed-border targets, automatic scrolling, marker clearing and verified geometry image loading, with no page errors. Production signed reads pass 401/404/200; 33 canonical reads confirm homepage preservation, sign-in, live camera and corrective-review bundles, saved Abomasnow report 200, unknown report 404 and all nine exact approved audio files. Live anonymous session checks returned 200 with persistent cookies; the bounded new-deployment 503 log query returned no events. No paid model/research, real-card approval or printing. Authenticated iPhone acceptance remains with Mark.
+
+The correct `atlas-upload-diagnostics 3.json` was received and reconciled: 30 unique uploaded server IDs, all done, no pending/partial pairs. Seven are from the prior test and 23 from the new test. Released local photo bodies after verified upload are not missing originals. Mark explicitly reports 30 NEW physical captures; the seven additional captures remain unexplained by this export and server history. Do not dismiss that report as a counter error or repeat the now-completed request for the same diagnostics. Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-camera-framing-20260927` (release subdirectory for deployment). Consumed release intents are one-shot and must not be replayed.
