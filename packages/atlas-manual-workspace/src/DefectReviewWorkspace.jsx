@@ -381,7 +381,7 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
  * and then update workspace. Full masks remain in verified artifact storage;
  * browser state and a checked descriptor are not approval or storage authority. */
 export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth, onConfirm, onRetry, onDiscardPending, onContinue, onEditingChange, saveStatus = '', grade, renderReviewActions, renderEditActions,
-  astra, onAnalyzeDefects, onRefreshAnalysis, onResumeAnalysis, onReplaceAnalysis, onReviewProposal, reviewedMemory, onRetryReviewedMemory }) {
+  astra, attentionMessage, onAnalyzeDefects, onRefreshAnalysis, onResumeAnalysis, onReplaceAnalysis, onReviewProposal, reviewedMemory, onRetryReviewedMemory }) {
   const [activity, setActivity] = useState({}), [ready, setReady] = useState({}), [confirming, setConfirming] = useState(false), [error, setError] = useState('');
   const [expandedSide, setExpandedSide] = useState(null);
   const status = defectStatus(workspace);
@@ -439,7 +439,8 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth
   return <div className="atlas-manual ad-workspace">
     <header className="am-header"><span className="am-brand">ATLAS</span><h1>Defects & condition</h1><span>{saveStatus}</span></header>
     <div className="am-toolbar"><span>{analysis.enabled ? 'Run ATLAS’s initial inspection, then review and correct its findings on both sides.' : 'Inspect both sides. Correct, remove or trace findings before confirming.'}</span>{grade && <strong>Draft grade {grade}</strong>}</div>
-    {analysis.enabled && <section className="ad-astra" aria-label="ATLAS defect assistance">
+    {analysis.enabled && <section className="ad-astra" aria-label="ATLAS defect assistance" data-review-target="analysis" data-review-attention={Boolean(attentionMessage)} tabIndex={-1}>
+      {attentionMessage && <p className="mc-review-reason">{attentionMessage}</p>}
       <div><h2>ATLAS defect assistance</h2><p role="status">{requesting ? requesting === 'REFRESH' ? 'Checking the saved ATLAS analysis…' : 'Sending the card to ATLAS for its initial inspection…' : analysis.message}</p>
         {analysis.status === 'READY' && <p>{collective.unresolvedCount} suggestions remaining for confirmation · {collective.rejectedCount} rejected suggestions</p>}
         {Array.isArray(astra?.limitations) && astra.limitations.some(value => typeof value === 'string' && value) && <ul className="ad-analysis-limitations" aria-label="ATLAS image limitations">

@@ -1,3 +1,4 @@
+import * as reviewAttention from '../lib/manual-review-attention.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -24,7 +25,7 @@ const storage = (initial = command) => { const values = new Map(initial ? [[key,
   getItem: k => values.get(k) ?? null, setItem: (k, v) => values.set(k, v), removeItem: k => values.delete(k),
 }; };
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-function harness(store, post, { readCard, intake = {}, message = error => error.code ?? 'Retained' } = {}) {
+function harness(store, post, { readCard, intake = {}, message = error => error.code ?? 'Retained', fromBatch = false } = {}) {
   const slots = [], effects = [], cleanups=[],timers=new Map(),listeners=new Map(),navigations=[]; let cursor = 0, tree, activeCardId='card';
   const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: 'fragment',
     useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = initial; return [slots[i], next => { slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; },
@@ -39,11 +40,13 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
     window: { addEventListener(name,action) {listeners.set(name,action);}, removeEventListener(name) {listeners.delete(name);} },
     require(name) {
       if (name === 'react') return react;
+      if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
+      if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};
       if (name === './RapidReviewControls') return {RapidActionDock:'RapidActionDock',RapidEditDock:'RapidEditDock'};
       if (name === '../lib/review-feedback.mjs') return {...reviewFeedback,primeReviewAudio(){},playReviewCompletion(){},playAtlasVoice(){}};
       if (name === '../lib/card-discard.mjs') return {...discard,createWorkspaceDiscarder:()=>({pending:()=>false,reconcile:async()=>null})};
       if (name === '../lib/batch-import.mjs') return {createBrowserBatchImportJournal:()=>({close(){}})};
-      if (name === 'next/router') return { useRouter: () => ({ replace:async path=>{navigations.push(path);},events: { on() {}, off() {} } }) };
+      if (name === 'next/router') return { useRouter: () => ({ query:fromBatch?{from:'batch'}:{}, replace:async path=>{navigations.push(path);},events: { on() {}, off() {} } }) };
       if (name === 'next/link' || name === './Shell') return { default: name };
       if (name === './EarlyGeometryPreview') return {default:name,EarlyGeometryStatus:'EarlyGeometryStatus'};
       if (name === './ReportPhotoUploader') return {__esModule:true,default:'ReportPhotoUploader'};
@@ -74,7 +77,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
   const submit = () => { const form=find(tree,node=>node.type==='form'); assert.ok(form,'details form');form.props.onSubmit({preventDefault(){}}); };
   const render = () => { cursor = 0; tree = exports.default({ staff: { id: 'reviewer', role: 'REVIEWER' }, cardId: activeCardId }); for (const effect of effects.splice(0)) effect(); };
   return { render, submit,navigations,event(name,value){listeners.get(name)?.(value);},async tick(){timers.get(2000)?.();await flush();render();},dispose(){cleanups.forEach(cleanup=>cleanup?.());}, navigate(cardId){activeCardId=cardId;render();}, upload(side,file={name:side}) { const target=field(`${side} original photo`);assert.ok(target);assert.notEqual(target.props.disabled,true);target.props.onChange({target:{files:[file],value:'picked'}}); }, workspace:()=>Boolean(find(tree,node=>node.type?.name==='ManualWorkspace')), click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
-    has(label) { return Boolean(button(label)); }, disabled(label) { return button(label)?.props.disabled === true; }, text: () => text(tree), sideText:side=>text(find(tree,node=>node.type==='article'&&text(node).startsWith(side))), field,
+    attention:key=>find(tree,node=>node.props?.['data-review-target']===key)?.props?.['data-review-attention'],reviewIssues:()=>find(tree,node=>node.type==='ReviewAttention')?.props?.issues??[],has(label) { return Boolean(button(label)); }, disabled(label) { return button(label)?.props.disabled === true; }, text: () => text(tree), sideText:side=>text(find(tree,node=>node.type==='article'&&text(node).startsWith(side))), field,
     change(label, value) { const target = field(label); assert.ok(target, label); target.props.onChange({ target: { value } }); } };
 }
 
@@ -461,4 +464,24 @@ test('final geometry correction holds explain preserving findings and deliberate
   assert.match(manualMessage({code:'ATLAS_DEFECT_GEOMETRY_REVIEW_REQUIRED'}),/Restore the previous outline, review the affected findings/);
   assert.match(manualMessage({code:'ATLAS_DEFECT_RETRACE_REQUIRED'}),/Add a new trace on the current photograph/);
   assert.match(manualMessage({code:'MANUAL_GEOMETRY_REVIEW_REQUIRED'}),/confirm both sides in Geometry/);
+});
+
+
+test('batch correction immediately marks only the missing Year field and clears the marker after correction',async()=>{
+  const card=sportsCard();card.details.fields.year='';
+  const f=harness(storage(null),async()=>assert.fail('Navigation never saves or grades'),{readCard:()=>card,fromBatch:true});
+  f.render();await flush();f.render();
+  assert.equal(f.field('Year').props['aria-invalid'],true);
+  assert.equal(f.attention('detail-year'),true);assert.equal(f.attention('detail-name'),false);
+  assert(f.reviewIssues().some(issue=>issue.key==='detail-year'));
+  f.change('Year','2023-24');f.render();assert.equal(f.attention('detail-year'),false);
+  assert(!f.reviewIssues().some(issue=>issue.key==='detail-year'));f.dispose();
+});
+
+test('batch correction marks only the retained unprepared Front, preserving the ready Back',async()=>{
+  const card=sportsCard();card.card.ready=false;
+  card.card.sides={FRONT:{version:1,upload:{uploadId:'front',verification:{verified:true}}},BACK:{version:1,upload:{uploadId:'back',source:{prepared:true},verification:{verified:true}}}};
+  const f=harness(storage(null),async()=>assert.fail('No automatic replacement'),{readCard:()=>card,fromBatch:true});
+  f.render();await flush();f.render();assert.equal(f.attention('photo-FRONT'),true);assert.equal(f.attention('photo-BACK'),false);
+  assert.deepEqual(Array.from(f.reviewIssues(),issue=>issue.key),['photo-FRONT']);f.dispose();
 });

@@ -1,6 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { captureRapidCameraPhoto } from '../../atlas-shared/rapid-camera.mjs';
+import { captureRapidCameraPhoto, fitRapidCameraPreview } from '../../atlas-shared/rapid-camera.mjs';
+test('full-frame preview keeps camera aspect and every edge through phone rotation', () => {
+    for (const [width, height] of [[4032, 3024], [3024, 4032], [1920, 1080], [1080, 1920]]) {
+        for (const [availableWidth, availableHeight] of [[366, 450], [610, 210], [296, 270]]) {
+            const frame = fitRapidCameraPreview(width, height, availableWidth, availableHeight);
+            assert(Math.abs(frame.width / frame.height - width / height) < 1e-10);
+            assert(frame.width <= availableWidth + 1e-8 && frame.height <= availableHeight + 1e-8);
+            const guide = fitRapidCameraPreview(63.5, 88.9, frame.width * .9, frame.height * .9);
+            assert(Math.abs(guide.width / guide.height - 63.5 / 88.9) < 1e-10);
+            assert(guide.width <= frame.width * .9 + 1e-8 && guide.height <= frame.height * .9 + 1e-8);
+        }
+    }
+    assert.equal(fitRapidCameraPreview(0, 0, 390, 450), null);
+    assert.equal(fitRapidCameraPreview(3024, 4032, 390, 0), null);
+});
+
+test('rapid viewfinder captures exactly the delivered image even when native still framing differs', async () => {
+    const video = { paused: false, videoWidth: 3024, videoHeight: 4032 };
+    let draws;
+    const canvas = { getContext: () => ({ drawImage: (...args) => { draws = args; } }),
+        toBlob(callback, type) { assert.equal(type, 'image/png'); callback(new Blob(['full camera frame'], { type })); } };
+    class DifferentStillCamera { constructor() { assert.fail('A native still can have a different field of view'); } }
+    const result = await captureRapidCameraPhoto(video, { readyState: 'live' }, 'FRONT', {
+        matchPreview: true, ImageCaptureImpl: DifferentStillCamera, documentImpl: { createElement: () => canvas }
+    });
+    assert.deepEqual(draws, [video, 0, 0, 3024, 4032]);
+    assert.equal(result.capture.source, 'LOSSLESS_VIDEO_FRAME');
+    assert.equal(result.capture.width, 3024); assert.equal(result.capture.height, 4032);
+    assert.equal(result.file.type, 'image/png');
+});
 test('native camera capture keeps original still bytes and requests actual available maximum', async () => {
     const original = new Blob(['original still JPEG bytes'], { type: 'image/jpeg' }); let requested;
     class Camera {

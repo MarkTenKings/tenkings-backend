@@ -32,7 +32,7 @@ export function geometryImageBinding(state, side, kind, images) {
     revision: kind === 'PHYSICAL' ? state.sides[side].imageRevision : state.sides[side].preparationRevision }) : null;
 }
 
-function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, onReady, preparing, locked, compact, renderEditActions }) {
+function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, onReady, preparing, locked, compact, renderEditActions, attention }) {
   const slot = state.sides[side], status = geometryStatus(state).sides[side];
   const image = geometryImage(state, side, kind, images);
   const verified = useVerifiedImage(image);
@@ -94,7 +94,8 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
     setPoint(drag.current.corner, { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }, true);
   };
   const inactive = busy || locked || stale || !ready;
-  return <section className="am-side" aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} geometry`}>
+  return <section className="am-side" aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} geometry`} data-review-target={`geometry-${side}`} data-review-attention={Boolean(attention && (attention.reviewBoth || attention.kind === kind))} tabIndex={-1}>
+    {attention && (attention.reviewBoth || attention.kind === kind) && <p className="mc-review-reason">{attention.message}</p>}
     <div className="am-side-heading"><h2>{side === 'FRONT' ? 'Front' : 'Back'}</h2><span>{busy ? busy === 'DETECTING' ? 'Detecting edges…' : busy === 'PREPARING' ? 'Preparing…' : 'Saving…' : dirty ? 'Unsaved adjustment' : preparing ? canDetect ? 'Detecting edges…' : 'Preparing…' : STATUS[status.stage]}</span></div>
     <div className="am-view-label">{kind === 'PHYSICAL' ? 'Original view' : 'Straightened view'}</div>
     <div ref={viewport} className="am-viewport" onPointerMove={pointerMove} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
@@ -145,15 +146,21 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
  * authoritative save/readback and update `workspace`; rejected saves retain the
  * local draft. The host owns source verification, current version CAS, session
  * auth, persistence, automatic preparation and stage progression. */
-export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, onPrepare, onEditingChange, preparingSides = {}, title = 'Edges & centering', saveStatus = '', renderReviewActions, renderEditActions }) {
+export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, onPrepare, onEditingChange, preparingSides = {}, title = 'Edges & centering', saveStatus = '', renderReviewActions, renderEditActions, attention = [], attentionSelection }) {
   const status = geometryStatus(workspace);
-  const [kind, setKind] = useState('PHYSICAL'), [activity, setActivity] = useState({ FRONT: false, BACK: false });
+  const [kind, setKind] = useState(attention[0]?.kind ?? 'PHYSICAL'), [activity, setActivity] = useState({ FRONT: false, BACK: false });
   const [loaded, setLoaded] = useState({ FRONT: null, BACK: null });
   const onReady = useCallback((side, binding) => setLoaded(previous => previous[side] === binding ? previous : { ...previous, [side]: binding }), []);
   const bothVisible = SIDES.every(side => { const binding = geometryImageBinding(workspace, side, kind, images); return binding !== null && loaded[side] === binding; });
   const [confirming, setConfirming] = useState(false), [error, setError] = useState('');
   const onActivity = useCallback((side, active) => setActivity(previous => previous[side] === active ? previous : { ...previous, [side]: active }), []);
   const editing = activity.FRONT || activity.BACK;
+  const attentionKey = attention[0] ? `${attention[0].key}:${attention[0].kind}` : '';
+  useEffect(() => { if (attention[0] && !editing && !confirming) setKind(attention[0].kind); }, [attentionKey, editing, confirming]);
+  useEffect(() => {
+    const selected = attention.find(issue => issue.key === attentionSelection?.key);
+    if (selected && !editing && !confirming) setKind(selected.kind);
+  }, [attentionSelection]);
   useEffect(() => { onEditingChange?.(editing || confirming); return () => onEditingChange?.(false); }, [editing, confirming, onEditingChange]);
   const confirm = async () => {
     if (editing || confirming || !bothVisible || !status.canConfirmBoth || !onConfirm) return;
@@ -164,8 +171,8 @@ export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, 
   };
   return <div className="atlas-manual">
     <header className="am-header"><span className="am-brand">ATLAS</span><h1>{title}</h1><span>{saveStatus}</span></header>
-    <div className="am-toolbar"><div className="am-tool-choice" aria-label="Geometry tool"><button type="button" disabled={editing || confirming} aria-pressed={kind === 'PHYSICAL'} onClick={() => setKind('PHYSICAL')}>Physical edge</button><button type="button" disabled={editing || confirming} aria-pressed={kind === 'PRINTED'} onClick={() => setKind('PRINTED')}>Printed border</button></div><div className="am-legend"><span><i className="am-edge-key" />Physical edge</span><span><i className="am-border-key" />Printed border</span></div></div>
-    <div className="am-pair">{SIDES.map(side => <SideEditor key={side} compact={Boolean(renderReviewActions)} renderEditActions={renderEditActions} state={workspace} side={side} kind={kind} images={images} onEdit={onEdit} onPrepare={onPrepare} onActivity={onActivity} onReady={onReady} preparing={Boolean(preparingSides[side])} locked={confirming} />)}</div>
+    <div className="am-toolbar"><div className="am-tool-choice" aria-label="Geometry tool"><button type="button" disabled={editing || confirming} data-review-attention={attention.some(issue=>issue.kind==='PHYSICAL')} aria-pressed={kind === 'PHYSICAL'} onClick={() => setKind('PHYSICAL')}>Physical edge</button><button type="button" disabled={editing || confirming} data-review-attention={attention.some(issue=>issue.kind==='PRINTED'||issue.reviewBoth)} aria-pressed={kind === 'PRINTED'} onClick={() => setKind('PRINTED')}>Printed border</button></div><div className="am-legend"><span><i className="am-edge-key" />Physical edge</span><span><i className="am-border-key" />Printed border</span></div></div>
+    <div className="am-pair">{SIDES.map(side => <SideEditor key={side} attention={attention.find(issue=>issue.side===side)} compact={Boolean(renderReviewActions)} renderEditActions={renderEditActions} state={workspace} side={side} kind={kind} images={images} onEdit={onEdit} onPrepare={onPrepare} onActivity={onActivity} onReady={onReady} preparing={Boolean(preparingSides[side])} locked={confirming} />)}</div>
     {renderReviewActions ? renderReviewActions({approve:confirm, disabled:!bothVisible || !status.canConfirmBoth || editing || confirming || !onConfirm, busy:confirming, message:editing ? 'Save or discard your outline.' : 'Approve both physical edges and printed borders.'}) : <footer className="am-footer"><span aria-live="polite">{editing ? 'Save or discard your adjustments before continuing.' : status.confirmed ? 'Both sides confirmed. Ready for defect inspection.' : 'Review the physical edge and printed border on both sides.'}</span><button type="button" className="am-primary" onClick={confirm} disabled={!bothVisible || !status.canConfirmBoth || status.confirmed || editing || confirming || !onConfirm}>{confirming ? 'Confirming…' : 'Confirm both sides'}</button></footer>}
     {error && <p className="am-error" role="alert">{error}</p>}
   </div>;

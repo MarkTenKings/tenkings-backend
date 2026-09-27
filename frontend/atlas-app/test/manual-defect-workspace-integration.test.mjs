@@ -1,3 +1,4 @@
+import * as reviewAttention from '../lib/manual-review-attention.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -43,6 +44,8 @@ function harness({ journal, finalReview = false, rapid = false } = {}) {
     setInterval: (callback, ms) => { timers.set(ms, callback); return ms; }, clearInterval: id => timers.delete(id),
     window: { addEventListener() {}, removeEventListener() {} }, require(name) {
       if (name === 'react') return react;
+      if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
+      if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};
       if (name === './RapidReviewControls') return {RapidActionDock:'RapidActionDock',RapidEditDock:'RapidEditDock'};
       if (name === '../lib/review-feedback.mjs') return {...reviewFeedback,primeReviewAudio(){},playReviewCompletion(){},playAtlasVoice(){}};
       if (name === '../lib/card-discard.mjs' || name === '../lib/batch-import.mjs') return {};

@@ -10,15 +10,23 @@ export function rapidCameraError(error) {
     if (['NotReadableError', 'AbortError'].includes(error?.name)) return 'The camera stopped. Close other apps using it, then tap Resume camera.';
     return error?.message || 'The camera could not start. Tap Resume camera or choose photos below.';
 }
+/** Fit the whole delivered image into the available preview, without cropping. */
+export function fitRapidCameraPreview(width, height, availableWidth, availableHeight) {
+    if (![width, height, availableWidth, availableHeight].every(value => Number.isFinite(value) && value > 0)) return null;
+    const scale = Math.min(availableWidth / width, availableHeight / height);
+    return { width: width * scale, height: height * scale };
+}
 /** Prefer native still bytes when the browser supports them. Safari's video
  * fallback saves every delivered frame pixel as a lossless PNG. Neither path
- * uses the inventory thumbnail or promises the sensor's maximum resolution. */
+ * uses the inventory thumbnail or promises the sensor's maximum resolution.
+ * matchPreview captures the delivered frame: native still cameras may change
+ * field of view independently of the video preview, even at the same ratio. */
 export async function captureRapidCameraPhoto(video, track, side, { ImageCaptureImpl = globalThis.ImageCapture,
-    documentImpl = globalThis.document, bitmap = globalThis.createImageBitmap, now = Date.now } = {}) {
+    documentImpl = globalThis.document, bitmap = globalThis.createImageBitmap, now = Date.now, matchPreview = false } = {}) {
     if (!['FRONT', 'BACK'].includes(side)) throw new Error('Choose the Front or Back before capture.');
     if (!video || video.paused || !video.videoWidth || !video.videoHeight || track?.readyState !== 'live') throw new Error('Wait for a live camera picture, then capture again.');
     const started = now(); let blob, width, height, source, colorSpace;
-    if (typeof ImageCaptureImpl === 'function') {
+    if (!matchPreview && typeof ImageCaptureImpl === 'function') {
         try {
             const camera = new ImageCaptureImpl(track), capabilities = await camera.getPhotoCapabilities?.();
             const settings = {};
