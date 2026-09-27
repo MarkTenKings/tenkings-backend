@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
+import * as scoring from '@atlas/grading-core/scoring';
 import * as traceCodec from '@atlas/grading-core/trace-codec';
 import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 import * as presentation from '../src/report-review-ui.mjs';
@@ -44,6 +45,7 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
   for (const [name, code] of Object.entries(sources)) {
     const exports = {}; vm.runInNewContext(code, { exports, window: browser, setTimeout: (...args) => setTimeout(...args).unref(), clearTimeout, ResizeObserver: class { constructor(callback) { this.callback = callback; } observe(element) { element.resize = this.callback; } disconnect() {} }, require(name) {
       if (name === 'react') return react;
+      if (name === '@atlas/grading-core/scoring') return scoring;
       if (name === 'react-dom') return { flushSync: callback => callback() };
       if (name === '@atlas/grading-core/trace-codec') return traceCodec;
       if (name === './inspection-viewport.mjs') return viewportMath;
@@ -410,4 +412,18 @@ test('an excluded old-frame removed trace supplies neither current report bounds
   const finding={...fixture().preview.review.report.findings[0],reviewResult:'REMOVED',geometryExclusion:{version:'atlas-geometry-exclusion-v1'}};
   assert.equal(presentation.reportFindingBounds(finding),null);assert.equal(presentation.reportFindingMask(finding),null);
   assert.deepEqual(presentation.reportFindingRegions(finding),[]);
+});
+
+test('clean comparison uses identical verified photograph and camera; blueprint includes disconnected trace pixels',()=>{
+ const f=harness();f.ready();f.control('Inspect Front finding 1: visible whitening').props.onClick({stopPropagation(){}});f.render();
+ const planes=f.nodes(node=>node.props.className==='rr-plane'),active=planes[0],clean=planes[1];
+ assert.deepEqual(clean.props.style,active.props.style);
+ const images=all(clean,node=>node.type==='img');assert.equal(images.length,1);assert.equal(images[0].props.src,'blob:FRONT');
+ assert.equal(all(clean,node=>node.type==='canvas'||node.type==='svg'||node.type==='button').length,0);
+ assert.ok(f.has('15.1 mm trace'));assert.ok(f.has('not additive'));assert.ok(f.control('Front finding dimensions and grade effect'));
+ f.control('Zoom in').props.onClick();f.render();const changed=f.nodes(node=>node.props.className==='rr-plane');assert.deepEqual(changed[0].props.style,changed[1].props.style);
+});
+
+test('card identity is available directly from the inspection dock',()=>{
+ const f=harness();f.click('Card details');assert.ok(f.nodes(node=>node.props.className==='rr-inline-details').length);assert.ok(f.has('Synthetic report'));
 });

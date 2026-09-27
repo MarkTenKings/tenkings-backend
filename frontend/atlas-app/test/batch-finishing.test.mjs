@@ -62,6 +62,7 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
     require(name) {
       if (name === 'react') return react;
       if (name === 'next/router') return { useRouter: () => router };
+      if (name === './ManualCards') return {ManualWorkspace:'ManualWorkspace'};
       if (name === './BatchImport') return BatchImport;
       if (['next/link', './Shell'].includes(name)) return () => null;
       if (name.endsWith('.css')) return new Proxy({}, { get: (_, key) => key });

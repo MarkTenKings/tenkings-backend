@@ -65,17 +65,20 @@ function FindingSummary({ finding, explanation, partial }) {
 }
 
 function InspectionDock({ activeSide, chooseSide, expanded, setExpanded, panelOpen, setPanelOpen, layers, setLayers,
-  overlays, setOverlays, zoom, sendView, ready, geometry, findingCount }) {
+  overlays, setOverlays, zoom, sendView, ready, geometry, findingCount, cleanComparison, setCleanComparison, blueprint, setBlueprint, onDetails }) {
   return <div className="rr-inspect-dock" aria-label="Inspection controls">
     <div className="rr-side-switch" aria-label="Card side">{SIDES.map(side => <button type="button" key={side} aria-pressed={activeSide === side} onClick={() => chooseSide(side)}>{title(side)}</button>)}</div>
     <button type="button" aria-expanded={panelOpen} aria-controls="atlas-inspect-findings" onClick={() => setPanelOpen(value => !value)}>Findings <span>{findingCount}</span></button>
+    <button type="button" onClick={onDetails}>Card details</button>
     <details className="rr-dock-menu"><summary>Layers</summary><div>
+      <label><input type="checkbox" checked={blueprint} onChange={event => setBlueprint(event.target.checked)}/>Measurement callouts</label>
       {[["physical", "Card edge", geometry?.physicalQuad], ["printed", "Printed border", geometry?.printedQuad], ["centering", "Centering guides", geometry?.printedQuad]].map(([key, label, available]) => <label key={key}><input type="checkbox" checked={Boolean(available) && layers[key]} disabled={!available} onChange={event => setLayers(old => ({ ...old, [key]: event.target.checked }))}/><span>{label}{!available && <small>Unavailable on {title(activeSide)}</small>}</span></label>)}
       <label><input type="checkbox" checked={overlays} onChange={event => setOverlays(event.target.checked)}/>Defect markings</label>
     </div></details>
     <button type="button" disabled={!ready} onClick={() => sendView('FIT')}>Fit</button>
     <details className="rr-dock-menu rr-view-menu"><summary>View <span>{Number(zoom.toFixed(1))}×</span></summary><div>
       <div className="rr-zoom-stepper"><button type="button" aria-label="Zoom out" disabled={!ready || zoom <= 1} onClick={() => sendView('ZOOM', zoom / 1.5)}>−</button><output aria-label="Current zoom">{Number(zoom.toFixed(1))}×</output><button type="button" aria-label="Zoom in" disabled={!ready || zoom >= 16} onClick={() => sendView('ZOOM', zoom * 1.5)}>+</button></div>
+      <label><input type="checkbox" checked={cleanComparison} onChange={event => setCleanComparison(event.target.checked)}/>Unmarked defect comparison</label>
       <label><input type="checkbox" checked={!expanded} onChange={event => setExpanded(event.target.checked ? null : activeSide)}/>Compare front & back</label>
       <p>Drag to pan. Pinch or scroll to zoom.<br/>Arrow keys pan · + / − zoom · 0 fits.<br/>[ / ] move between findings.</p>
     </div></details>
@@ -120,17 +123,17 @@ function explanationMatches(report, explanation) {
 }
 
 export function FinalReportReview({ preview, workspace, images, current = true, approved = false, rejectedSuggestions = 0,
-  onReadyChange, children, geometry, brandSrc = '/brand/atlas-grading-logo.png', publication }) {
+  onReadyChange, children, geometry, inspectionMode, brandSrc = '/brand/atlas-grading-logo.png', publication }) {
   const report = preview?.review?.report, explanation = preview?.review?.explanation;
   const available = Boolean(current && reportImagesMatch(report, workspace) && explanationMatches(report, explanation));
   return <ReportExperience report={report} explanation={explanation} available={available} images={images} approved={approved}
-    reportKey={preview?.reportHash} rejectedSuggestions={rejectedSuggestions} onReadyChange={onReadyChange}
+    reportKey={preview?.reportHash} inspectionMode={inspectionMode} rejectedSuggestions={rejectedSuggestions} onReadyChange={onReadyChange}
     geometry={reportDisplayGeometry(geometry, report)} brandSrc={brandSrc} publication={publication}>{children}</ReportExperience>;
 }
 
 /** Machine evidence is visibly provisional. No HUMAN inspection fields are
  * introduced: bitmap verification enables the explicit human decision below. */
-export function MachineReportReview({ packet, onReadyChange, onCorrectFinding, children, brandSrc = '/brand/atlas-grading-logo.png' }) {
+export function MachineReportReview({ packet, onReadyChange, onCorrectFinding, inspectionMode, children, brandSrc = '/brand/atlas-grading-logo.png' }) {
   const source = packet?.report;
   const corrected = source?.version === 'atlas-review-provisional-report-v1' && source.authority === 'HUMAN_REVIEW_DRAFT';
   const evidenceAvailable = Array.isArray(source?.findings)
@@ -150,7 +153,7 @@ export function MachineReportReview({ packet, onReadyChange, onCorrectFinding, c
     physicalQuad: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], printedQuad: source.geometry[side].centeringQuad,
   }]));
   return <ReportExperience report={report} explanation={packet?.explanation} available={available} images={packet?.images}
-    reportKey={packet?.reportHash} geometry={geometry} brandSrc={brandSrc} machine corrected={corrected} onReadyChange={onReadyChange} onCorrectFinding={onCorrectFinding}>{children}</ReportExperience>;
+    reportKey={packet?.reportHash} geometry={geometry} brandSrc={brandSrc} machine corrected={corrected} inspectionMode={inspectionMode} onReadyChange={onReadyChange} onCorrectFinding={onCorrectFinding}>{children}</ReportExperience>;
 }
 
 /** Server-parsed approved projection only. No workspace, action callbacks or staff approval controls. */
@@ -164,13 +167,14 @@ export function ApprovedReportView({ report, explanation, images, publication, g
 }
 
 function ReportExperience({ report, explanation, available, images, approved = false, publicView = false, reportKey,
-  rejectedSuggestions = 0, onReadyChange, onCorrectFinding, children, geometry, brandSrc, publication, presentation, machine = false, corrected = false }) {
+  rejectedSuggestions = 0, onReadyChange, onCorrectFinding, children, geometry, brandSrc, publication, presentation, machine = false, corrected = false, inspectionMode }) {
   const partial = machine && reportGeometryUnresolved(report);
   const finalGrade = reportAwardedGrade(report), halfPointGrade = machine || report?.version === 'atlas-manual-draft-report-v2';
   const CalculationContainer = machine ? 'details' : 'section';
-  const [selected, setSelected] = useState(null), [expanded, setExpanded] = useState('FRONT'), [ready, setReady] = useState({});
-  const [activeSide, setActiveSide] = useState('FRONT'), [panelOpen, setPanelOpen] = useState(true);
+  const [selected, setSelected] = useState(null), [expanded, setExpanded] = useState(inspectionMode ? null : 'FRONT'), [ready, setReady] = useState({});
+  const [activeSide, setActiveSide] = useState('FRONT'), [panelOpen, setPanelOpen] = useState(inspectionMode !== 'geometry');
   const [layers, setLayers] = useState({ physical: true, printed: true, centering: true }), [overlays, setOverlays] = useState(true);
+  const [cleanComparison, setCleanComparison] = useState(true), [blueprint, setBlueprint] = useState(true), [detailsOpen, setDetailsOpen] = useState(false);
   const [command, setCommand] = useState(null), [zooms, setZooms] = useState({ FRONT: 1, BACK: 1 });
   const viewChanged = useCallback((side, zoom) => setZooms(old => old[side] === zoom ? old : { ...old, [side]: zoom }), []);
   const [sideFilter, setSideFilter] = useState('ALL'), [categoryFilter, setCategoryFilter] = useState('ALL');
@@ -212,7 +216,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
   if (!available) return <section className="rr-report" aria-label="Final draft review unavailable"><div className="rr-unavailable"><h1>{publicView ? 'Report temporarily unavailable' : 'Review draft report'}</h1><p role="alert">{publicView ? 'The approved evidence could not be verified. Please try again later.' : 'The full report does not match the current saved review. Return to Findings and open the draft report again.'}</p></div></section>;
   const identity = report.identity, name = identity.playerName ?? identity.cardName;
   const identityLine = [identity.year, identity.manufacturer, identity.productSet, identity.parallel, identity.insert, identity.cardNumber && `#${identity.cardNumber}`].filter(Boolean).join(' · ');
-  return <section className={`rr-report rr-inspect${precise ? ' rr-precision' : ''}${printing ? ' rr-printing' : ''}${publicView ? ' rr-public' : ''}${machine ? ' rr-machine' : ''}`} data-finding-selected={Boolean(selectedFinding)} aria-label={publicView ? 'Approved ATLAS grading report' : 'Final draft report review'} onKeyDown={event => {
+  return <section className={`rr-report rr-inspect${precise ? ' rr-precision' : ''}${printing ? ' rr-printing' : ''}${publicView ? ' rr-public' : ''}${machine ? ' rr-machine' : ''}${inspectionMode ? ' rr-guided rr-guided-' + inspectionMode : ''}`} data-finding-selected={Boolean(selectedFinding)} aria-label={publicView ? 'Approved ATLAS grading report' : 'Final draft report review'} onKeyDown={event => {
     if (event.altKey || event.ctrlKey || event.metaKey || /INPUT|TEXTAREA|SELECT/.test(event.target?.tagName ?? '') || event.target?.isContentEditable) return;
     if (event.key === '[' || event.key === ']') { event.preventDefault(); event.stopPropagation(); step(event.key === ']' ? 1 : -1); }
   }}>
@@ -226,14 +230,15 @@ function ReportExperience({ report, explanation, available, images, approved = f
         {publicView && entries.length > 0 && <button type="button" disabled={!bothReady} onClick={() => { setSideFilter('ALL'); setCategoryFilter('ALL'); select(entries[0].finding); }}>See why it’s {finalGrade} ↗</button>}
       </div>
       <InspectionDock activeSide={activeSide} chooseSide={chooseSide} expanded={expanded} setExpanded={setExpanded} panelOpen={panelOpen} setPanelOpen={setPanelOpen}
-        layers={layers} setLayers={setLayers} overlays={overlays} setOverlays={setOverlays} zoom={zooms[activeSide]} sendView={sendView} ready={sideReady(activeSide)} geometry={geometry?.[activeSide]} findingCount={entries.length}/>
+        layers={layers} setLayers={setLayers} overlays={overlays} setOverlays={setOverlays} zoom={zooms[activeSide]} sendView={sendView} ready={sideReady(activeSide)} geometry={geometry?.[activeSide]} findingCount={entries.length} cleanComparison={cleanComparison} setCleanComparison={setCleanComparison} blueprint={blueprint} setBlueprint={setBlueprint} onDetails={() => setDetailsOpen(value => !value)}/>
+      {detailsOpen && <div className="rr-inline-details"><CardIdentityDetails report={report} details={presentation?.details}/></div>}
       <div className={`rr-evidence-layout${panelOpen ? '' : ' rr-panel-closed'}`}>
         <div className="rr-evidence-main"><div className={`rr-image-pair${expanded && !printing ? ' rr-pair-expanded' : ''}`}>
           {SIDES.map(side => <ReportInspectionImage key={`${side}:${report.inspection[side.toLowerCase()].imageSha256}`} side={side}
             descriptor={images?.[side]?.inspection} expectedHash={report.inspection[side.toLowerCase()].imageSha256} findings={sideFindings[side]} selected={selected}
             onSelect={finding => { setSideFilter('ALL'); setCategoryFilter('ALL'); select(finding); }} expanded={expanded === side && !printing} hidden={!printing && Boolean(expanded && expanded !== side)}
             onExpand={setExpanded} onReady={imageReady} geometry={geometry?.[side]} showFindingButtons={false} compact
-            layerOptions={layers} findingsVisible={overlays} command={command} onViewChange={viewChanged} onActivate={setActiveSide}/>)}</div>
+            layerOptions={layers} findingsVisible={overlays} command={command} onViewChange={viewChanged} onActivate={setActiveSide} cleanComparison={cleanComparison && Boolean(expanded) && !printing} blueprint={blueprint && !printing} explanation={selectedFinding?.side === side ? selectedExplanation : null} centering={explanation?.sides?.[side]?.centering} policy={explanation?.policy}/>)}</div>
           <div className="rr-stage-caption"><span>{expanded ? title(activeSide) : 'Front & Back'} · Saved photograph</span><span>Drag to pan · Scroll or pinch to zoom</span></div>
         </div>
         <aside id="atlas-inspect-findings" className="rr-findings-panel" hidden={!panelOpen && !printing} aria-label="Finding navigator">
@@ -258,7 +263,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
       </div>
       {!publicView && report.findingCounts.removed > 0 && <details className="rr-removed"><summary>Removed findings · {report.findingCounts.removed}</summary><p>Retained in review history; excluded from the grade.</p>{report.findings.filter(finding => finding.reviewResult === 'REMOVED').map(finding => <button key={finding.id} type="button" onClick={() => select(finding)}>{title(finding.side)} · {words(finding.defectType)}</button>)}</details>}
     </section>
-    {machine && <details className="rr-review-summary"><summary>Review summary <span>{partial ? 'Centering unresolved' : 'Confirm or correct, then approve'} →</span></summary>
+    {machine && !inspectionMode && <details className="rr-review-summary"><summary>Review summary <span>{partial ? 'Centering unresolved' : 'Confirm or correct, then approve'} →</span></summary>
       <p>{partial ? 'Review the geometry and findings. Approval is unavailable until the missing centering geometry is resolved.' : 'Approve confirms both photos, card details, outlines, findings and grade.'} {bothReady ? 'Both photos verified.' : 'Verifying both photos…'}</p>{children}
     </details>}
     {partial ? <section className="rr-why rr-unresolved" aria-label="Unresolved centering geometry"><div><p className="rr-eyebrow">PARTIAL REPORT · FINAL HUMAN REVIEW</p><h2>Centering needs review</h2></div><div><p>Defect analysis and measurements are saved. Open Geometry to check the physical outline and supply a supported printed border on {Array.from(new Set(report.unresolvedGeometry.map(value => value.side))).map(title).join(' and ')}. Then review both sides and the findings. ATLAS will recalculate the grade from the corrected evidence.</p><p>A borderless or full-bleed card remains unresolved until a supported centering rule is available. No centering value or overall grade has been assumed.</p></div></section> : <>

@@ -37932,3 +37932,12 @@ One promotion POST completed; all four public aliases and production target now 
 ### 2026-09-27T01:13:45.892858+00:00 — ATLAS INSPECT live verification and handoff
 
 Canonical verification passed at 2026-09-27T01:12:46.528Z: homepage200 with exact preserved homepage SHA06149b1e819e5c42091e8f5709f83986482a25772f80ff3d569b92866b75abe3; www308; signed-out batch307/308 to admin200 sign-in; deployed INSPECT/shared chunks200; unknown public report404. Initial asset probe expected a nonexistent literal in the thin batch entry chunk; read-only follow-up resolved its actual shared dependencies and verified INSPECT dock and queue code. This was a verifier assumption, not a deployment failure. Updated current context/deploy/handoff with separate frontend bc364 and unchanged private/customer d4a sources, current container and control revisions. No additional deployment, data write or model call was needed. Owner can test https://atlasgrading.com/admin/batch?tab=REVIEW after signing in again. Authenticated real-card acceptance remains explicit.
+
+
+### 2026-09-27T03:07:48.842315+00:00 — INSPECT comparison, measurement overlays and rapid review implemented
+
+Shared staff/public viewer now provides synchronized annotated/unmarked close-ups from the same verified bitmap and camera, on-image trace dimensions, measured region area and marginal grade effects, and saved-border centering dimensions/balance/effect. Complete trace extents include disconnected mask pixels; region effects remain explicitly non-additive. Card details are directly accessible in the dock. Existing outlines remain visible by default.
+
+Staff rapid review uses a native modal with Geometry → Findings → Final grade, existing in-modal correction tools, exact saved revision bases, verified photographs and separate final report approval. Navigation does not approve. Unmeasurable original observations require decisions. Label queue uses existing approved records, and rapid approval does not open a print popup. Approved cards reopen their report/finishing view. No model calls, new grading policy, API, schema or permission changes.
+
+204 focused workspace/batch/manual tests passed, zero failures, one existing opt-in native test skipped. Staff/public production builds and route/bundle boundaries passed. Desktop and390px browser fixture checks verify same photograph, pane dimensions and camera; phone has no horizontal overflow. Screenshots are explicitly synthetic findings, not production grades. Final build refresh and source-bound deployment preparation follow.

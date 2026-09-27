@@ -14,7 +14,8 @@
     "./defects": "./dist/DefectReviewWorkspace.js",
     "./defects.css": "./src/defects.css",
     "./report-review": "./dist/FinalReportReview.js",
-    "./report-review.css": "./src/report-review.css"
+    "./report-review.css": "./src/report-review.css",
+    "./rapid-review": "./src/rapid-review.mjs"
   },
   "scripts": {
     "build": "node scripts/build.mjs",

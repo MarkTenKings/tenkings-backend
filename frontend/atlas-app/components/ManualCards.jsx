@@ -7,6 +7,7 @@ import {createManualClient} from '@atlas/manual-workflow/client';
 import {PairedGeometryWorkspace} from '@atlas/manual-workspace';
 import {DefectReviewWorkspace} from '@atlas/manual-workspace/defects';
 import {FinalReportReview,MachineReportReview} from '@atlas/manual-workspace/report-review';
+import {approveRapidStage,rapidReviewStatus} from '@atlas/manual-workspace/rapid-review';
 import {geometryStatus} from '@atlas/manual-workspace/geometry-actions';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
 import {manualRequest,manualMessage} from '../lib/manual-client.mjs';
@@ -301,8 +302,9 @@ function finalFindingsAvailable(view){
   }));
 }
 
-export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
+export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,onBusyChange,onQueued}){
   const [view,setView]=useState(null),[screen,setScreen]=useState('geometry'),[error,setError]=useState(''),[status,setStatus]=useState(''),[report,setReport]=useState(null),[editing,setEditing]=useState(false),[preparing,setPreparing]=useState({}),[approving,setApproving]=useState(false),[identity,setIdentity]=useState(null),[refreshingImages,setRefreshingImages]=useState(false);
+  const rapidInFlight=useRef(false),[rapidSaving,setRapidSaving]=useState(false);
   const client=useRef(null),analysisClient=useRef(null),imageRefresh=useRef(null),viewRef=useRef(null),interaction=useRef({}),router=useRouter();
   const [reportImagesReady,setReportImagesReady]=useState(false),[loadingReport,setLoadingReport]=useState(false);
   const [publishing,setPublishing]=useState(false),[copyStatus,setCopyStatus]=useState('');
@@ -322,7 +324,8 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
         const updated={...viewRef.current,astra};viewRef.current=updated;setView(updated);
       }});
     analysisClient.current=ownedAnalysis;
-    void ownedClient.recover().then(async value=>{if(stopped)return;setScreen(value.finalReview?'provisional':geometryStatus(value.geometry).confirmed?'defects':'geometry');
+    void ownedClient.recover().then(async value=>{if(stopped)return;setScreen(rapid?'geometry-review':value.finalReview?'provisional':geometryStatus(value.geometry).confirmed?'defects':'geometry');
+      if(!rapid&&value.approval?.sourceHash===value.card.contentHash)await openReport();
       if(value.astra?.enabled)await ownedAnalysis.refresh();
     }).catch(error=>{if(!stopped)setError(manualMessage(error));});
     const timer=setInterval(()=>{if(!ownedClient.hasPending())void attempt(refreshImages);},240000);
@@ -450,7 +453,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
     // report reads can prepare a preview, but cannot trigger printing.
     approvalInFlight.current=true;
     let ownedWindow;
-    try{ownedWindow=openManualLabelPrintWindow();}catch{ownedWindow=null;}
+    try{ownedWindow=rapid?null:openManualLabelPrintWindow();}catch{ownedWindow=null;}
     approvalPrintWindow.current=ownedWindow;
     setAutoPrintWindow(null);setFinishing(null);setApproving(true);
     try{
@@ -481,23 +484,36 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
   const savePending=status==='Saving…'||Boolean(client.current?.hasPending());
   const unsaved=editing||Boolean(identity);
   const calculating=savePending||Object.values(preparing).some(Boolean);
-  const locked=unsaved||approving||savePending||loadingReport;
+  const locked=unsaved||approving||savePending||loadingReport||rapidSaving;
+  useEffect(()=>{onBusyChange?.(Boolean(locked||calculating||publishing));},[locked,calculating,publishing,onBusyChange]);
+  async function approveStage(stage){
+    if(locked||calculating||rapidInFlight.current||!reportImagesReady)return;
+    rapidInFlight.current=true;setRapidSaving(true);
+    try{await approveRapidStage(stage,viewRef.current,execute);
+      if(stage==='geometry'){setReportImagesReady(false);setScreen('findings-review');}
+      else await openReport();
+    }finally{rapidInFlight.current=false;setRapidSaving(false);}
+  }
   if(!view)return <div>{error&&<p role="alert">{error}</p>}<p role="status">Loading saved review…</p><button onClick={()=>attempt(()=>client.current.recover())}>Retry</button></div>;
   const findingsAvailable=finalFindingsAvailable(view);
   const partial=view.provisional?.report?.calculationState==='GEOMETRY_UNRESOLVED';
   const currentGrade=!unsaved&&!calculating&&view.provisional?.state==='READY'&&Number.isFinite(view.provisional.report.proposedGrade)?view.provisional.report.proposedGrade:undefined;
+  const rapidStatus=rapid?rapidReviewStatus(view):null;
+  const rapidStage=screen.startsWith('geometry')?'geometry':screen==='report'?'report':'findings';
   return <>
+    {rapid&&<div className="mc-rapid-progress" aria-label="Rapid review progress">{['geometry','findings','report'].map((step,index)=><span key={step} aria-current={rapidStage===step?'step':undefined}>{index+1}<b>{step==='report'?'Final grade':step==='geometry'?'Borders & centering':'Corners, edges & surface'}</b></span>)}<small>{status||'Saved'}</small></div>}
     {error&&<div className="mc-notice error" role="alert">{error}</div>}
-    {router.query?.from==='batch'&&<Link className="mc-back" href="/batch">← Back to batch review</Link>}
-    {view.finalReview&&<section className="mc-notice" aria-label="Current final review"><strong>Final human review</strong><p role="status">{unsaved?'Unsaved changes. Save or discard them to see the current grade.':calculating?'Updating measurements and grade…':partial?'Centering geometry needs review. Measured findings are saved; the overall grade is unavailable.':currentGrade!==undefined?`Current provisional grade: ${currentGrade}`:'Preparation or measurement is incomplete. Open Geometry or Findings to resolve it.'}</p><p>Geometry and finding corrections update the ATLAS measurements and score. Approve the exact corrected report after reviewing both sides.</p><details><summary>Original machine proposal retained</summary><p>Original proposed grade: {Number.isFinite(view.finalReview.report.proposedGrade)?view.finalReview.report.proposedGrade:'Unavailable — centering unresolved'} · {view.finalReview.report.findings.length} measured findings. Original observations and geometry remain saved in this card’s review history.</p></details></section>}
+    {!rapid&&router.query?.from==='batch'&&<Link className="mc-back" href="/batch">← Back to batch review</Link>}
+    {!rapid&&view.finalReview&&<section className="mc-notice" aria-label="Current final review"><strong>Final human review</strong><p role="status">{unsaved?'Unsaved changes. Save or discard them to see the current grade.':calculating?'Updating measurements and grade…':partial?'Centering geometry needs review. Measured findings are saved; the overall grade is unavailable.':currentGrade!==undefined?`Current provisional grade: ${currentGrade}`:'Preparation or measurement is incomplete. Open Geometry or Findings to resolve it.'}</p><p>Geometry and finding corrections update the ATLAS measurements and score. Approve the exact corrected report after reviewing both sides.</p><details><summary>Original machine proposal retained</summary><p>Original proposed grade: {Number.isFinite(view.finalReview.report.proposedGrade)?view.finalReview.report.proposedGrade:'Unavailable — centering unresolved'} · {view.finalReview.report.findings.length} measured findings. Original observations and geometry remain saved in this card’s review history.</p></details></section>}
     {view.finalReview?.report.unmeasurableProposals?.length>0&&<section className="mc-notice" aria-label="Original observations without measurable pixels"><h3>Original observations to resolve</h3><p>These observations produced no measurable trace. Inspect the original photograph in Geometry. Reject a false observation; trace any actual damage in Findings.</p>{view.finalReview.report.unmeasurableProposals.map(proposal=>{const reviewed=view.assistance?.reviews.some(review=>review.analysisId===view.finalReview.report.analysisId&&review.proposalId===proposal.id);return <p key={proposal.id}>{proposal.side==='FRONT'?'Front':'Back'} · {proposal.defectType.toLowerCase().replaceAll('_',' ')} · {reviewed?'Reviewed':<button disabled={locked} onClick={()=>attempt(()=>execute({type:'REJECT_FINAL_OBSERVATION',reportHash:view.finalReview.reportHash,proposalId:proposal.id,reviewed:true}))}>Reject original observation</button>}</p>;})}</section>}
-    <nav className="mc-review-nav" aria-label="Review stages"><button disabled={locked} onClick={onPhotos}>Photos</button><button aria-current={screen==='geometry'?'step':undefined} disabled={locked||screen==='geometry'} onClick={()=>switchStage('geometry')}>Geometry</button><button aria-current={screen==='defects'?'step':undefined} disabled={locked||screen==='defects'||!findingsAvailable} onClick={()=>switchStage('defects')}>Findings</button><button disabled={locked} onClick={()=>setIdentity({...view.identity})}>Edit card details</button><button disabled={savePending||refreshingImages} onClick={()=>attempt(refreshImages)}>{refreshingImages?'Loading images…':'Reload images'}</button><span>{screen==='report'?'Final report · ':''}{status||'Saved'}</span>{client.current.hasPending()&&<button onClick={()=>attempt(()=>client.current.recover())}>Retry pending save</button>}</nav>
+    <nav className="mc-review-nav" aria-label="Review stages">{!rapid&&<button disabled={locked} onClick={onPhotos}>Photos</button>}<button aria-current={screen==='geometry'?'step':undefined} disabled={locked||screen==='geometry'} onClick={()=>switchStage(rapid?'geometry-review':'geometry')}>Geometry</button><button aria-current={screen==='defects'?'step':undefined} disabled={locked||screen==='defects'||!findingsAvailable} onClick={()=>switchStage(rapid?'findings-review':'defects')}>Findings</button><button disabled={locked} onClick={()=>setIdentity({...view.identity})}>Edit card details</button><button disabled={savePending||refreshingImages} onClick={()=>attempt(refreshImages)}>{refreshingImages?'Loading images…':'Reload images'}</button><span>{screen==='report'?'Final report · ':''}{status||'Saved'}</span>{client.current.hasPending()&&<button onClick={()=>attempt(()=>client.current.recover())}>Retry pending save</button>}</nav>
     {['FRONT','BACK'].filter(side=>view.card.draft?.geometryBeforeEdit?.[side]&&!view.geometry.sides?.[side]?.prepared).map(side=><section className="mc-notice" key={side} aria-label={`${side==='FRONT'?'Front':'Back'} geometry recovery`}><p>The {side==='FRONT'?'Front':'Back'} outline has changed. Preparation must preserve all saved findings. If a finding falls outside the new outline, restore the previous outline, correct the finding in Findings, then try the geometry change again.</p><button type="button" disabled={locked||calculating} onClick={()=>attempt(async()=>{await execute({type:'RESTORE_GEOMETRY',side});setReport(null);setScreen('geometry');})}>Restore {side==='FRONT'?'Front':'Back'} previous outline</button></section>)}
-    {view.finalReview&&<button type="button" disabled={locked||screen==='provisional'} onClick={()=>switchStage('provisional')}>View current provisional report</button>}
+    {!rapid&&view.finalReview&&<button type="button" disabled={locked||screen==='provisional'} onClick={()=>switchStage('provisional')}>View current provisional report</button>}
     {identity?<section className="mc-details"><h1>Correct card details</h1><form onSubmit={event=>{event.preventDefault();if(savePending)return;void attempt(async()=>{await execute({type:'IDENTITY_EDIT',identity});setIdentity(null);setReport(null);setScreen('geometry');});}}><fieldset disabled={savePending} style={{border:0,padding:0,margin:0}}><div className="mc-fields">{Object.entries(identity).map(([key,value])=><label key={key}>{({playerName:'Player name',cardName:'Card name',productSet:'Product / set',cardNumber:'Card number',layoutType:'Pokémon card kind'})[key]??key}{key==='layoutType'?<select value={value} onChange={event=>setIdentity(old=>({...old,[key]:event.target.value}))}>{['POKEMON','TRAINER','ENERGY'].map(layout=><option key={layout}>{layout}</option>)}</select>:<input value={value??''} onChange={event=>setIdentity(old=>({...old,[key]:event.target.value}))}/>}</label>)}</div><div className="mc-actions"><button className="primary">Save card details</button><button type="button" onClick={()=>setIdentity(null)}>Discard changes</button></div></fieldset></form></section>:
+    rapid&&['geometry-review','findings-review'].includes(screen)?<>{view.provisional?.state==='READY'&&!unsaved&&!calculating?<MachineReportReview key={`${screen}:${view.provisional.reportHash}`} packet={{...view.provisional,images:view.images}} inspectionMode={rapidStage} onReadyChange={setReportImagesReady} onCorrectFinding={()=>switchStage('defects')} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}/>:<p role="status">Preparation or measurements need attention. Choose Adjust to continue with the saved evidence.</p>}<div className="mc-rapid-actions"><p>{rapidStage==='geometry'?'Check both physical outlines, printed borders and calculated centering against the card in your hand.':'Review the numbered findings on both photographs. Approval confirms corners, edges and surface together.'}{rapidStatus.unresolved>0&&<strong> {rapidStatus.unresolved} original observations still need a decision above.</strong>}</p><button disabled={locked||calculating} onClick={()=>switchStage(rapidStage==='geometry'?'geometry':'defects')}>Adjust {rapidStage}</button><button className="primary" disabled={locked||calculating||!reportImagesReady||!rapidStatus[rapidStage]} onClick={()=>attempt(()=>approveStage(rapidStage))}>{rapidSaving?'Saving…':`Approve ${rapidStage}`}</button></div></>:
     screen==='geometry'?<PairedGeometryWorkspace workspace={view.geometry} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} preparingSides={preparing} onPrepare={prepare}
       onEdit={async input=>{const {actor,proposal,...edit}=input;await execute({type:'GEOMETRY_EDIT',edit});if(input.kind==='PHYSICAL')void attempt(()=>prepare(input.side));}}
-      onConfirm={async({base,reviewed})=>{await execute({type:'CONFIRM_GEOMETRY',base,reviewed});setScreen('defects');}}/>:
+      onConfirm={async({base,reviewed})=>{await execute({type:'CONFIRM_GEOMETRY',base,reviewed});setScreen(rapid?'findings-review':'defects');setReportImagesReady(false);}}/>:
     screen==='defects'&&view.defects?<DefectReviewWorkspace workspace={view.defects} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} grade={currentGrade}
       astra={view.astra} reviewedMemory={view.reviewedMemory} onAnalyzeDefects={input=>analyze('start',input)} onRefreshAnalysis={()=>analyze('refresh')}
       onResumeAnalysis={()=>analyze('resume')} onReplaceAnalysis={input=>analyze('replace',input)} onRetryReviewedMemory={retryMemory}
@@ -505,9 +521,9 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
       onEdit={async input=>{await client.current.editDefect(input);void attempt(()=>execute({type:'MEASURE_SIDE',side:input.side}));}}
       onRetry={side=>execute({type:'MEASURE_SIDE',side})} onDiscardPending={({side,base})=>execute({type:'DISCARD_PENDING',side,base})}
       onInspect={({side,base,inspected})=>execute({type:'INSPECT_SIDE',side,base,inspected})} onConfirm={({base,reviewed,proposalReview})=>execute({type:'CONFIRM_FINDINGS',base,reviewed,...(proposalReview?{proposalReview}:{})})}
-      onContinue={()=>attempt(openReport)}/>:
+      onContinue={()=>rapid?switchStage('findings-review'):attempt(openReport)}/>:
     screen==='provisional'?(view.provisional?.state==='READY'&&!unsaved&&!calculating?<MachineReportReview packet={{...view.provisional,images:view.images}} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}><button disabled={locked} onClick={()=>switchStage('geometry')}>Review geometry</button><button disabled={locked||!findingsAvailable} onClick={()=>switchStage('defects')}>Review findings</button></MachineReportReview>:<p role="status">{unsaved?'Save or discard your changes to view the current report.':'Preparation or measurement is incomplete. Open Geometry to retry preparation or restore the last prepared outline; open Findings to finish any pending measurement.'}</p>):
-    report&&<FinalReportReview key={report.reportHash} preview={report} workspace={view.defects} images={view.images} geometry={view.geometry} publication={view.publication?.reportHash===report.reportHash?view.publication:undefined} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`} onReadyChange={setReportImagesReady}
+    report&&<FinalReportReview key={report.reportHash} inspectionMode={rapid?'summary':undefined} preview={report} workspace={view.defects} images={view.images} geometry={view.geometry} publication={view.publication?.reportHash===report.reportHash?view.publication:undefined} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`} onReadyChange={setReportImagesReady}
       approved={view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash}
       rejectedSuggestions={report.sourceHash===view.card.contentHash?view.astra?.proposals?.filter(proposal=>proposal.reviewStatus==='REJECTED').length??0:0}
       current={report.sourceHash===view.card.contentHash&&(report.sourceRevision===view.card.revision||view.approval?.reportHash===report.reportHash)}>
@@ -526,7 +542,9 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos}){
           <ReportResearchPicker key={`research:${view.publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={view.publication.actionId} csrf={csrf} available={view.researchEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
           <DealerOfferPicker key={`dealers:${view.publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={view.publication.actionId} csrf={csrf} available={view.presentationEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
         </>}
-      </div>:<><p>Approve this exact identity, evidence and grade to create the final report and prepare its label.</p>{view.approval&&<p>An earlier approved report is retained in history. This draft needs its own approval.</p>}{report.canCertify!==true&&<p role="status">Your account has no current report certification. A trained reviewer with current certification must approve this report. <button type="button" disabled={approving||savePending||loadingReport} onClick={()=>attempt(openReport)}>{loadingReport?'Refreshing…':'Refresh report'}</button></p>}<button className="primary" disabled={approving||savePending||loadingReport||report.canCertify!==true||!reportImagesReady} onClick={()=>attempt(approveAndPrepareLabel)}>{approving?'Approving…':'Approve & print label'}</button></>}
+      </div>:<><p>Approve this exact identity, evidence and grade to create the final report and prepare its label.</p>{view.approval&&<p>An earlier approved report is retained in history. This draft needs its own approval.</p>}{report.canCertify!==true&&<p role="status">Your account has no current report certification. A trained reviewer with current certification must approve this report. <button type="button" disabled={approving||savePending||loadingReport} onClick={()=>attempt(openReport)}>{loadingReport?'Refreshing…':'Refresh report'}</button></p>}<button className="primary" disabled={approving||savePending||loadingReport||report.canCertify!==true||!reportImagesReady} onClick={()=>attempt(approveAndPrepareLabel)}>{approving?'Approving…':rapid?'Approve grade & queue label':'Approve & print label'}</button></>}
     </FinalReportReview>}
+    {rapid&&['geometry','defects'].includes(screen)&&<div className="mc-rapid-actions"><p>Corrections remain in this review. Save or discard edits before returning.</p><button disabled={locked||calculating} onClick={()=>switchStage(screen==='geometry'?'geometry-review':'findings-review')}>Return to review</button></div>}
+    {rapid&&screen==='report'&&view.publication?.state==='PUBLISHED'&&view.publication.reportHash===report?.reportHash&&finishing?.binding.approvalActionId===view.publication.actionId&&<div className="mc-rapid-actions"><p>Approved report and label are saved. Open Label queue whenever you are ready to print.</p><button className="primary" disabled={locked||calculating} onClick={()=>onQueued?.({cardId,actionId:view.publication.actionId,publication:view.publication})}>Next card →</button></div>}
   </>;
 }

@@ -16,7 +16,7 @@ const base = Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { cardId: '
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
 const all = (node, predicate, out = []) => { if (Array.isArray(node)) node.forEach(child => all(child, predicate, out));
   else if (node && typeof node === 'object') { if (predicate(node)) out.push(node); all(node.props?.children, predicate, out); } return out; };
-function harness({ journal, finalReview = false } = {}) {
+function harness({ journal, finalReview = false, rapid = false } = {}) {
   const values = new Map(journal ? [['atlas-defect-analysis:v1:staff:card', JSON.stringify(journal)]] : []), slots = [], effects = [], timers = new Map(), cleanups = [];
   let cursor = 0, tree, viewCallback;
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
@@ -56,6 +56,7 @@ function harness({ journal, finalReview = false } = {}) {
       if (name === '@atlas/manual-workspace') return { PairedGeometryWorkspace: 'PairedGeometryWorkspace' };
       if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace' };
       if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview', MachineReportReview: 'MachineReportReview' };
+      if (name === '@atlas/manual-workspace/rapid-review') return {rapidReviewStatus:()=>({geometry:true,findings:true,unresolved:0}),approveRapidStage:async(stage,view,execute)=>execute({type:'EXPLICIT_STAGE',stage})};
       if (name === '@atlas/manual-workspace/geometry-actions') return { geometryStatus: value => value };
       if (name.startsWith('@atlas/')) return {};
       if (name === '../lib/manual-defect-analysis-client.mjs') return analysisClient;
@@ -64,7 +65,7 @@ function harness({ journal, finalReview = false } = {}) {
         f.calls.push({ path, options: options && structuredClone(options) }); return f.respond(path, options); } };
       return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
     } });
-  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: 'card', csrf: 'csrf', onPhotos() {} }); effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
+  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: 'card', csrf: 'csrf', rapid, onBusyChange:value=>{f.locked=value;}, onPhotos() {} }); effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
   f.tick = async (ms = 5000) => { const tick = timers.get(ms); if (!tick) return; tick(); await flush(); f.render(); };
   f.dispose = () => cleanups.splice(0).forEach(cleanup => cleanup());
   f.defects = () => { const node = all(tree, node => node.type === 'DefectReviewWorkspace')[0]; assert.ok(node, 'defect workspace rendered'); return node.props; };
@@ -72,6 +73,7 @@ function harness({ journal, finalReview = false } = {}) {
   f.geometry = () => all(tree, node => node.type === 'PairedGeometryWorkspace')[0]?.props;
   f.finishing = () => all(tree, node => node.type === 'ManualFinishing')[0]?.props;
   f.report = () => all(tree, node => node.type === 'FinalReportReview')[0]?.props;
+  f.machine = () => all(tree,node=>node.type==='MachineReportReview')[0]?.props;
   f.text = () => text(tree);
   f.publish = next => { f.current = next; viewCallback(next); f.render(); };
   f.render(); return f;
@@ -373,4 +375,17 @@ test('failed physical preparation exposes an explicit same-side restore command 
   assert.deepEqual(JSON.parse(JSON.stringify(f.actions)),[{type:'RESTORE_GEOMETRY',side:'FRONT'}]);
   assert.ok(f.geometry());assert.equal(f.button('Findings').props.disabled,false);
   assert.equal(f.button('Restore Front previous outline'),undefined);assert.equal(f.popups.length,0);f.dispose();
+});
+
+
+test('rapid review waits for verified photos, adjustments stay inside, and final approval queues without a print popup', async()=>{
+ const f=harness({finalReview:true,rapid:true});await flush();f.render();
+ assert.equal(f.machine().inspectionMode,'geometry');assert.equal(f.button('Approve geometry').props.disabled,true);assert.equal(f.actions.length,0);
+ f.machine().onReadyChange(true);f.render();f.button('Adjust geometry').props.onClick();await flush();f.render();assert.ok(f.geometry());assert.equal(f.actions.length,0);
+ f.button('Return to review').props.onClick();await flush();f.render();f.machine().onReadyChange(true);f.render();
+ await f.button('Approve geometry').props.onClick();await flush();f.render();assert.equal(f.machine().inspectionMode,'findings');assert.equal(f.button('Approve findings').props.disabled,true);
+ f.machine().onReadyChange(true);f.render();await f.button('Approve findings').props.onClick();await flush();f.render();assert.ok(f.report());assert.equal(f.popups.length,0);
+ assert.deepEqual(f.actions.map(a=>a.type),['EXPLICIT_STAGE','EXPLICIT_STAGE']);
+ f.report().onReadyChange(true);f.render();await f.button('Approve grade & queue label').props.onClick();await flush();f.render();
+ assert.equal(f.actions.at(-1).type,'APPROVE_REPORT');assert.equal(f.actions.at(-1).reportHash,'exact-report-hash');assert.equal(f.popups.length,0);f.dispose();
 });

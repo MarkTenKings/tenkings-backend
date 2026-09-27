@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
 import { useVerifiedImage } from './verified-image.mjs';
 import { INSPECTION_SIZE, fitInspectionScale, clampInspectionPan, zoomInspectionAt,
   resizeInspectionView, focusInspectionBounds, canonicalInspectionPoint } from './inspection-viewport.mjs';
@@ -28,9 +29,55 @@ function ReportMasks({ findings, selected, visible }) {
   return <canvas className="rr-mask" ref={canvas} width={1270} height={1778} aria-hidden="true"/>;
 }
 
+const dimension = value => Number.isFinite(value) ? (value !== 0 && Math.abs(value) < .0001 ? value.toExponential(2) : value.toLocaleString('en-US', { maximumFractionDigits: 4 })) : 'Unavailable';
+const clampLabel = (value, limit, gutter = 28) => Math.max(gutter, Math.min(limit - gutter, value));
+/** Labels stay in screen pixels while their leaders follow the verified card frame. */
+function Blueprint({ finding, explanation, centering, policy, side, printed, view, size, scale }) {
+  const [regionIndex, setRegionIndex] = useState(0);
+  useEffect(() => setRegionIndex(0), [finding?.id]);
+  const project = point => ({ x: size.width / 2 + view.pan.x + (40 + point.x * 1270 - 675) * scale * view.zoom,
+    y: size.height / 2 + view.pan.y + (40 + point.y * 1778 - 929) * scale * view.zoom });
+  if (!finding) {
+    if (!printed) return null;
+    let borders; try { borders = measureSpeedsterCenteringBorders(printed); } catch { return null; }
+    const labels = [
+      { p: { x: .5, y: printed[0].y / 2 }, label: `Top ${dimension(borders.topMm)} mm · ${dimension(centering?.topBottomBalance?.[0])}%` },
+      { p: { x: (1 + printed[1].x) / 2, y: .5 }, label: `Right ${dimension(borders.rightMm)} mm · ${dimension(centering?.leftRightBalance?.[1])}%` },
+      { p: { x: .5, y: (1 + printed[2].y) / 2 }, label: `Bottom ${dimension(borders.bottomMm)} mm · ${dimension(centering?.topBottomBalance?.[1])}%` },
+      { p: { x: printed[3].x / 2, y: .5 }, label: `Left ${dimension(borders.leftMm)} mm · ${dimension(centering?.leftRightBalance?.[0])}%` },
+    ];
+    const effect = policy && centering && (10 - centering.score) * (side === 'FRONT' ? policy.frontWeight : policy.backWeight) * policy.categoryWeight;
+    return <div className="rr-blueprint" aria-label={`${name(side)} centering measurements`}>{labels.map(({p, label}) => { const point = project(p); return <span className="rr-dimension-label" key={label} style={{left: clampLabel(point.x, size.width, 64), top: clampLabel(point.y, size.height)}}>{label}</span>; })}
+      <div className="rr-centering-readout">Centering <b>{dimension(centering?.score)} / 10</b><span>{dimension(effect)} pts from unrounded grade · versus a perfect {name(side).toLowerCase()}</span></div>
+    </div>;
+  }
+  if (finding.reviewResult === 'REMOVED') return null;
+  const regions = reportFindingRegions(finding), region = regions[regionIndex] ?? regions[0], measured = region?.measurement;
+  const effect = explanation?.regions?.find(value => value.zone === region?.zone);
+  // The saved trace can have disconnected pixels outside its display contour.
+  // Dimension the complete saved trace, never label a contour with region-owned extents.
+  const box = reportFindingBounds(finding);
+  if (!box || !measured) return null;
+  const a = project(box), b = project({x:box.x + box.width, y:box.y + box.height});
+  const left = clampLabel(a.x, size.width), right = clampLabel(b.x, size.width), top = clampLabel(a.y - 22, size.height), bottom = clampLabel(b.y, size.height);
+  const calloutY = b.y + 130 < size.height ? b.y + 20 : Math.max(40, a.y - 145);
+  const calloutX = Math.max(8, Math.min(size.width - 232, (a.x + b.x) / 2 - 112));
+  return <div className="rr-blueprint" aria-label={`${name(side)} finding dimensions and grade effect`}>
+    <svg width={size.width} height={size.height} aria-hidden="true"><path d={`M${left} ${top-6}v12 M${left} ${top}H${right} M${right} ${top-6}v12 M${right+14} ${a.y}h12 M${right+20} ${a.y}V${bottom} M${right+14} ${bottom}h12`}/><path className="rr-blueprint-leader" d={`M${(a.x+b.x)/2} ${b.y}L${calloutX+112} ${calloutY}`}/></svg>
+    <span className="rr-dimension-label" style={{left:(left+right)/2,top}}>{dimension(box.width * 63.5)} mm trace</span>
+    <span className="rr-dimension-label rr-dimension-vertical" style={{left:clampLabel(right+20,size.width,48),top:clampLabel((a.y+b.y)/2,size.height)}}>{dimension(box.height * 88.9)} mm trace</span>
+    <div className="rr-measure-callout" style={{left:calloutX,top:calloutY}} onPointerDown={event=>event.stopPropagation()} onPointerUp={event=>event.stopPropagation()} onKeyDown={event=>event.stopPropagation()}>
+      <div className="rr-region-tabs">{regions.length===1?<span>{words(region.zone)}</span>:regions.map((value,index)=><button type="button" key={index} aria-pressed={regionIndex===index} onClick={()=>setRegionIndex(index)}>{words(value.zone)}</button>)}</div>
+      <strong>{dimension(measured.areaMm2)} mm² <small>measured damage</small></strong>
+      <p>{effect ? <><b>{dimension(effect.marginalOverallEffect)} pts</b> effect on unrounded grade</> : 'Grade effect unavailable'}</p>
+      <small>Region effect; not additive.</small>
+    </div>
+  </div>;
+}
+
 /** No edit/action callbacks: every control here changes only the displayed view. */
 export function ReportInspectionImage({ side, descriptor, expectedHash, findings, selected, onSelect, expanded, hidden, onExpand, onReady,
-  geometry, showFindingButtons = true, compact = false, layerOptions, findingsVisible, command, onViewChange, onActivate }) {
+  geometry, showFindingButtons = true, compact = false, layerOptions, findingsVisible, command, onViewChange, onActivate, cleanComparison = false, blueprint = true, explanation, centering, policy }) {
   const supplied = descriptor?.sha256 === expectedHash && descriptor?.url ? descriptor : null;
   const image = useVerifiedImage(supplied), [loaded, setLoaded] = useState(null);
   const ready = Boolean(supplied && image.url && loaded === image.url);
@@ -84,7 +131,7 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
     };
     element.addEventListener('wheel', wheel, { passive: false }); return () => element.removeEventListener('wheel', wheel);
   }, [ready, size, onActivate, side]);
-  const localPoint = event => { const box = viewport.current.getBoundingClientRect(); return { x: event.clientX - box.left, y: event.clientY - box.top }; };
+  const localPoint = event => { const box = event.currentTarget.getBoundingClientRect(); return { x: event.clientX - box.left, y: event.clientY - box.top }; };
   const beginGesture = () => {
     const points = [...pointers.current.values()];
     if (points.length >= 2) gesture.current = { kind: 'pinch', view: viewRef.current,
@@ -143,6 +190,7 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
       {[1, 2, 4, 8, 16, ...([1, 2, 4, 8, 16].includes(zoom) ? [] : [zoom])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value === 1 ? 'Fit' : `${Number(value.toFixed(1))}×`}</option>)}
     </select></label><button type="button" onClick={fit} disabled={!ready}>Fit image</button><button type="button" aria-pressed={!overlays} disabled={!ready} onClick={() => setOverlays(value => !value)}>{overlays ? 'Hide findings' : 'Show findings'}</button><button type="button" aria-pressed={magnifier} disabled={!ready} onClick={() => { setMagnifier(value => !value); setLens(null); }}>3× magnifier</button></div>
     <div className="rr-layer-tools" aria-label={`${name(side)} evidence layers`}>{[['physical', 'Card edge', physical], ['printed', 'Printed border', printed], ['centering', 'Centering guides', printed]].map(([key, label, available]) => <button key={key} type="button" aria-pressed={layers[key]} disabled={!ready || !available} onClick={() => setLayers(old => ({ ...old, [key]: !old[key] }))}>{label}</button>)}</div></>}
+    <div className={`rr-synchronized-pair${cleanComparison && selectedBounds ? ' rr-show-clean' : ''}`}>
     <div className="rr-viewport" ref={viewport} tabIndex={0} role="group" aria-label={`${name(side)} report inspection`} onKeyDown={keyboard} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer} onPointerLeave={() => setLens(null)}>
       {image.url && <div className="rr-plane" ref={plane} data-transition={transition} style={{ width: INSPECTION_SIZE.width * scale * zoom, height: INSPECTION_SIZE.height * scale * zoom, transform: `translate(calc(-50% + ${view.pan.x}px), calc(-50% + ${view.pan.y}px))` }}>
         <img src={image.url} alt={`${name(side)} saved inspection photograph`} draggable={false} onLoad={event => setLoaded(event.currentTarget.naturalWidth === INSPECTION_SIZE.width && event.currentTarget.naturalHeight === INSPECTION_SIZE.height ? image.url : 'INVALID_DIMENSIONS')} onError={() => setLoaded('IMAGE_ERROR')}/>
@@ -163,12 +211,19 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
         </div>}
       </div>}
       {!ready && <p className="rr-image-status" role="status">{!supplied ? 'This report’s saved photograph is unavailable.' : image.error || loaded === 'IMAGE_ERROR' ? 'Could not verify the saved photograph. Reload images to try again.' : loaded === 'INVALID_DIMENSIONS' ? 'The saved photograph has unexpected dimensions. Reload images before continuing.' : 'Loading verified photograph…'}</p>}
+      {ready && blueprint && <Blueprint finding={bounds.find(entry => entry.finding.id === selected?.id)?.finding} explanation={explanation} centering={layers.centering ? centering : null} policy={policy} side={side} printed={layers.centering ? printed : null} view={view} size={size} scale={scale}/>}
+      {cleanComparison && selectedBounds && <span className="rr-photo-label">Measured trace</span>}
       {ready && magnifier && lens && <div className="rr-magnifier" aria-hidden="true" style={{ [lens.right ? 'right' : 'left']: 12, backgroundImage: `url("${image.url}")`, backgroundSize: `${INSPECTION_SIZE.width * scale * zoom * 3}px ${INSPECTION_SIZE.height * scale * zoom * 3}px`, backgroundPosition: `${90 - lens.x * INSPECTION_SIZE.width * scale * zoom * 3}px ${90 - lens.y * INSPECTION_SIZE.height * scale * zoom * 3}px` }}><span>3× · image only</span></div>}
       {ready && zoom > 1 && <button className="rr-minimap" type="button" aria-label={`Recenter ${name(side)} photograph; keyboard activation fits image`} onPointerDown={event => event.stopPropagation()} onClick={event => {
         if (!event.detail) { fit(); return; }
         const box = event.currentTarget.getBoundingClientRect(), x = (event.clientX - box.left) / box.width, y = (event.clientY - box.top) / box.height;
         setView(previous => ({ ...previous, pan: clampInspectionPan({ x: (.5 - x) * INSPECTION_SIZE.width * scale * previous.zoom, y: (.5 - y) * INSPECTION_SIZE.height * scale * previous.zoom }, previous.zoom, size) }));
       }}><img src={image.url} alt="" draggable={false}/><span style={{ left: `${map.x * 100}%`, top: `${map.y * 100}%`, width: `${map.width * 100}%`, height: `${map.height * 100}%` }}/></button>}
+    </div>
+    {cleanComparison && selectedBounds && <div className="rr-viewport rr-clean-viewport" role="img" aria-label={`${name(side)} clean close-up; same photograph, zoom and position`}>
+      {ready && <div className="rr-plane" data-transition={transition} style={{ width: INSPECTION_SIZE.width * scale * zoom, height: INSPECTION_SIZE.height * scale * zoom, transform: `translate(calc(-50% + ${view.pan.x}px), calc(-50% + ${view.pan.y}px))` }}><img src={image.url} alt={`${name(side)} unmarked defect close-up`} draggable={false}/></div>}
+      <span className="rr-photo-label">Unmarked photograph · synchronized</span>
+    </div>}
     </div>
     {!compact && <p className="rr-help">Drag to pan · pinch or scroll to zoom · arrow keys pan · + / − zoom · 0 fits. Magnification enlarges saved pixels.</p>}
     {!printed && <p className="rr-help">Border geometry is not available in this report view.</p>}
