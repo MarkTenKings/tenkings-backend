@@ -1,6 +1,8 @@
-.atlas-heartbeat{position:relative;z-index:3;animation:atlas-heartbeat 1.5s ease-in-out!important;transform-origin:center;will-change:transform,box-shadow}
-@keyframes atlas-heartbeat{0%,65%,100%{transform:scale(1);box-shadow:0 0 0 0 #e9cb8f00}16%{transform:scale(1.025);box-shadow:0 0 0 1px #f3ddad77,0 0 22px #e9cb8f38,inset 0 0 12px #e9cb8f12}27%{transform:scale(1.006);box-shadow:0 0 8px #e9cb8f15}40%{transform:scale(1.018);box-shadow:0 0 0 1px #f3ddad44,0 0 16px #e9cb8f2a}}
-.motion-off .atlas-heartbeat{animation:none!important}
-@media(prefers-reduced-motion:reduce){.atlas-heartbeat{animation:none!important}}
-
+.atlas-heartbeat:not(.rr-marker-button){position:relative}
+.atlas-heartbeat{z-index:5;animation:atlas-heartbeat 1.9s ease-in-out!important;transform-origin:center;will-change:scale,box-shadow;overflow:visible!important}
+.atlas-heartbeat:after{content:'';position:absolute;inset:-5px;border:1px solid #ffe5ab;border-radius:inherit;pointer-events:none;animation:atlas-heart-aura 1.9s ease-out!important}
+@keyframes atlas-heartbeat{0%,62%,100%{scale:1;box-shadow:0 0 0 0 #e9cb8f00;filter:brightness(1)}14%{scale:1.07;box-shadow:0 0 0 2px #ffe5ab99,0 0 32px #efc774aa,inset 0 0 17px #e9cb8f44;filter:brightness(1.45)}25%{scale:1.015;box-shadow:0 0 10px #e9cb8f33}39%{scale:1.05;box-shadow:0 0 0 1px #ffe5ab77,0 0 24px #e9cb8f88;filter:brightness(1.3)}}
+@keyframes atlas-heart-aura{0%,65%,100%{opacity:0;scale:1}14%{opacity:.8;scale:1.02}25%{opacity:.15;scale:1.09}39%{opacity:.7;scale:1.03}62%{opacity:0;scale:1.18}}
+.motion-off .atlas-heartbeat,.motion-off .atlas-heartbeat:after{animation:none!important}
+@media(prefers-reduced-motion:reduce){.atlas-heartbeat,.atlas-heartbeat:after{animation:none!important}}
 .report-guidance-toggle{background:transparent;border:1px solid #bea06c55;border-radius:22px;padding:10px 16px;color:#d5be87;font:inherit;cursor:pointer}.report-guidance-toggle:focus-visible{outline:2px solid #f3ddad;outline-offset:3px}

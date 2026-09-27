@@ -12,8 +12,8 @@ test('homepage rewrite is exact and leaves service/report routes untouched',asyn
 });
 test('published document contains approved sections and honest sample disclosures',()=>{
  for(const id of ['hero-title','fingerprint','slab','connected-proof','submit'])assert(html.includes(`id="${id}"`));
- for(const text of ['ILLUSTRATIVE GRADE','Not measured from this photograph','SAMPLE / 001','SAME LABEL.','SAME CARD?' ])assert(html.includes(text),text);
- assert(!html.includes('DESIGN STUDY 09'));assert(!html.includes('127.0.0.1'));assert(html.includes('href="/account/submit"'));
+ for(const text of ['ILLUSTRATIVE GRADE','Not measured from this photograph','SAMPLE / 001','KEEP','WHAT’S YOURS.' ])assert(html.includes(text),text);
+ assert(!html.includes('DESIGN STUDY 10'));assert(!html.includes('127.0.0.1'));assert(html.includes('href="/account/submit"'));
 });
 test('every local document asset exists inside the public release',()=>{
  for(const match of html.matchAll(/(?:src|href)="(\/[^"?#]+)(?:[?#][^"]*)?"/g)){
@@ -23,7 +23,7 @@ test('every local document asset exists inside the public release',()=>{
 });
 test('versioned scripts and styles do not retain loopback preview paths',()=>{
  const {version}=JSON.parse(readFileSync(resolve(root,'homepage/release.json')));
- for(const file of ['study.js','slab.js','study.css','submission-source.css','hero-reports.js','hero-report-model.mjs','report-guidance.js']){
+ for(const file of ['study.js','slab.js','study.css','submission-source.css','hero-reports.js','hero-report-model.mjs','report-guidance.js','report-embed.js','chapter-stops.js']){
   const s=readFileSync(resolve(root,'homepage',version,file),'utf8');
   assert(!s.includes('127.0.0.1'));assert(!s.includes('"/assets/'));assert(!s.includes("'/assets/"));
  }

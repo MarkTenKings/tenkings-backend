@@ -1,6 +1,16 @@
 # ATLAS first design study — September 25, 2026
 
-Study09 is the current local refinement. Study08 was published September26,2026; this revision has **not** been deployed. The default Alakazam report remains illustrative. Three published, approved reports are now selectable in the hero. See the earlier [release audit](../../audits/2026-09-26/homepage-release.md) for the last website-agent deployment; another agent may have advanced production since then.
+Study10 is the current local refinement. Study08 was published September26,2026; this revision has **not** been deployed. The default Alakazam report remains illustrative. Three published, approved reports are now selectable in the hero. See the earlier [release audit](../../audits/2026-09-26/homepage-release.md) for the last website-agent deployment; another agent may have advanced production since then.
+
+## Iteration 10 — actual Inspect viewer and owner refinements
+
+The hero now mounts the actual `ApprovedReportView` from grading UI commit `88f42a98`, including verified photographs, saved defect contours, measurement callouts, centering guides, finding navigation and complete calculations. The locally retained renderer source and integration exceptions are documented in [inspect-source/README.md](inspect-source/README.md). Maye 9.5, Abomasnow 10 and Dart 10 retain their existing published snapshots. Alakazam 9 uses the same renderer with a front-only, explicitly illustrative fixture; its authored measurements are not observations of the reference photograph.
+
+The established hero title/outer desktop frame remain in place. Supporting copy is “Every mark, measurement, and point.” Electric-blue light sweeps through “WE SHOW YOU EVERYTHING.” The compact curved carousel has larger thumbnails. Card, headline grade and report grade share a slower 1250ms rise and settle; a double gold heartbeat highlights one visible report control at a time without moving defect coordinates. Selection resets to Alakazam only after fully leaving and returning to the hero.
+
+Desktop wheel gestures settle Beyond on edges, surface and corners and fingerprint on all three cards, with longer final holds. Keyboard, touch, reduced motion and global pause retain their existing direct/native access. Security and NFC copy now share “KEEP WHAT’S YOURS.” The route diagram flows downward into the service videos and the redundant three captions are removed. The closing says “KNOW WHAT YOU HAVE.” with moving slab illustrations entering a “MAKE IT ATLAS / START YOUR SUBMISSION” logo CTA.
+
+Rebuild in order: `node docs/atlas/design/first-look/build-inspect.mjs`, then `node frontend/atlas-public/scripts/build-homepage.mjs`. All 38 public-app tests pass, including rendering all three approved packets and distinguishing the illustrative fixture. Browser visual/interaction acceptance is pending because the existing preview tabs remain on a cached error document blocked by browser URL policy. The loopback server independently returns HTTP 200. This revision is not deployed.
 
 ## Iteration 09 — approved reports and synchronized selection
 

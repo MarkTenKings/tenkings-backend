@@ -442,7 +442,7 @@ queueChapters();
 // All locations and measurements below are authored design fixtures, not image analysis.
 // Ridge art is a visual metaphor. It does not extract or authenticate a card fingerprint.
 const fingerprintCards={
-  alakazam:{name:'Alakazam',image:'/assets/alakazam-reference.jpg',code:'A–001',findings:[
+  alakazam:{name:'Alakazam',image:'/homepage/7a9766707c7f4c38/assets/alakazam-reference.jpg',code:'A–001',findings:[
     {point:[7,8],name:'Corner wear.',category:'CORNERS',value:'0.38',unit:'mm',measure:'EXAMPLE LENGTH',copy:'A small interruption at the corner. Its shape and position become part of the card’s recorded story.'},
     {point:[5,72],name:'Edge whitening.',category:'EDGES',value:'0.62',unit:'mm',measure:'EXAMPLE LENGTH',copy:'A break along the border. Look at where it begins, where it ends, and the shape in between.'},
     {point:[65,37],name:'Surface mark.',category:'SURFACE',value:'0.24',unit:'mm²',measure:'EXAMPLE AREA',copy:'A mark within the face of the card. Its location and outline add another detail to compare.'}]},
@@ -612,8 +612,8 @@ window.addEventListener('resize',scrollFingerprint,{passive:true});
 const customerStories=[];
 const layoutPreview=new URLSearchParams(location.search).get('reactions')==='layout';
 const layoutFilms=[
-  {title:'Dealer film',credit:'Illustrative service film · Not a customer reaction',poster:'/service/submission-kiosk.jpg',video:'/service/submission-kiosk.mp4'},
-  {title:'Mail-in film',credit:'Illustrative service film · Not a customer reaction',poster:'/service/submission-fedex.jpg',video:'/service/submission-fedex.mp4'}
+  {title:'Dealer film',credit:'Illustrative service film · Not a customer reaction',poster:'/homepage/7a9766707c7f4c38/service/submission-kiosk.jpg',video:'/homepage/7a9766707c7f4c38/service/submission-kiosk.mp4'},
+  {title:'Mail-in film',credit:'Illustrative service film · Not a customer reaction',poster:'/homepage/7a9766707c7f4c38/service/submission-fedex.jpg',video:'/homepage/7a9766707c7f4c38/service/submission-fedex.mp4'}
 ];
 const stories=layoutPreview?layoutFilms:customerStories;
 const reactions=document.getElementById('reactions');
