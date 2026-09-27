@@ -3,15 +3,44 @@
 const STAGES = ['geometry', 'findings', 'report', 'completion'];
 const draw = (random, size) => Math.min(size - 1, Math.max(0, Math.floor(random() * size)));
 export const ATLAS_LINES = [
-  {file:'wise.mp3', mood:'Wise', text:'Every card carries a story. Our job is to read it carefully.'},
-  {file:'reassuring.mp3', mood:'Reassuring', text:'Take your time. A second look is the mark of a good judge.'},
-  {file:'playful.mp3', mood:'Playful', text:'Sharp eyes. Remind me to have you check my crown before the next ceremony.'},
-  {file:'celebratory.mp3', mood:'Celebratory', text:'Another careful review, complete. Well judged, my friend. Well judged.', completionOnly:true},
-  {file:'serious.mp3', mood:'Serious', text:'The grade follows the evidence. Give every card the same care, whatever its name.'},
-  {file:'grand.mp3', mood:'Grand', text:'I have carried the heavens. You can trust me to appreciate something worth protecting.'},
-  {file:'teasing.mp3', mood:'Playfully teasing', text:"With an eye like yours, I'd better polish the back of my crown, too."},
-  {file:'well-judged.mp3', mood:'Wise', text:'A keen eye sees what thunder cannot. Well judged.', completionOnly:true},
-  {file:'one-detail.mp3', mood:'Reassuring', text:'Steady hands. Sharp eyes. Even legends are built one detail at a time.'},
+  {
+    "file": "wise.mp3",
+    "mood": "Wise",
+    "text": "The eye notices a mark. Experience knows when to look again."
+  },
+  {
+    "file": "reassuring.mp3",
+    "mood": "Reassuring",
+    "text": "Take another look, my friend. The heavens can wait."
+  },
+  {
+    "file": "playful.mp3",
+    "mood": "Playful",
+    "text": "An entire legend in the palm of your hand. Very efficient."
+  },
+  {
+    "file": "celebratory.mp3",
+    "mood": "Celebratory",
+    "text": "Carefully seen. Fairly judged. Fine work, my friend.",
+    "completionOnly": true
+  },
+  {
+    "file": "serious.mp3",
+    "mood": "Serious",
+    "text": "Famous name or not, every card deserves the same care."
+  },
+  {
+    "file": "grand.mp3",
+    "mood": "Grand",
+    "text": "I've watched mountains rise, yet a careful pair of hands still impresses me."
+  },
+  {
+    "file": "teasing.mp3",
+    "mood": "Playfully teasing",
+    "text": "Shall I bring that corner a chair for its interview, my friend?"
+  },
+  {file:"playful-door.mp3", mood:"Playful", text:"They expect thunder, so naturally, I use the door."},
+  {file:"teasing-crown.mp3", mood:"Playfully teasing", text:"With eyes like yours around, I'd better polish the back of my crown."}
 ];
 export function createReviewSession(staffId, random = Math.random) {
   return {staffId, random, count:0, approvals:new Set(), nextAt:5+draw(random,6), stage:STAGES[draw(random,STAGES.length)], remaining:[], lastLine:null};
