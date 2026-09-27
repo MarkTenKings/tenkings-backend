@@ -130,7 +130,7 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
     const target = bounds.find(entry => entry.finding.id === selected.id);
     if (!target?.bounds) return;
     setTransition(true); setView(focusInspectionBounds(target.bounds, sizeRef.current)); setLens(null);
-    viewport.current?.scrollIntoView?.({ block: typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches ? 'start' : 'nearest', behavior: typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    if (!viewport.current?.closest('.atlas-report-embed')) viewport.current?.scrollIntoView?.({ block: typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches ? 'start' : 'nearest', behavior: typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }, [selected, bounds, ready, hidden]);
   useEffect(() => {
     const element = viewport.current; if (!element?.addEventListener) return;

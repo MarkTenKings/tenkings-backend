@@ -16,5 +16,5 @@ test('hero uses actual ATLAS Inspect public renderer for all three approved pack
 });
 test('Alakazam uses the same viewer but cannot present illustrative data as certified',()=>{
  const e=JSON.parse(readFileSync(new URL('alakazam-demo.json',dir)));const{explainAtlasManualReport}=require('@atlas/grading-core/manual-report');assert.equal(e.demo,true);assert.equal(e.report.finalGrade,9);assert.deepEqual(explainAtlasManualReport(e.report),e.explanation);
- const html=renderToStaticMarkup(React.createElement(exports.IllustrativeReportView,{report:e.report,explanation:e.explanation,geometry:e.geometry,images:{}}));assert.match(html,/ILLUSTRATIVE DEMO/);assert.match(html,/ILLUSTRATIVE GRADE/);assert(!html.includes('HUMAN-APPROVED REPORT'));assert(!html.includes('APPROVED GRADE'));
+ const html=renderToStaticMarkup(React.createElement(exports.IllustrativeReportView,{report:e.report,explanation:e.explanation,geometry:e.geometry,images:{}}));assert.match(html,/ILLUSTRATIVE DEMO/);assert.match(html,/ILLUSTRATIVE GRADE/);assert(!html.includes('HUMAN-APPROVED REPORT'));assert(!html.includes('APPROVED GRADE'));assert(!html.includes('Approved ATLAS grading report'));assert(!html.includes('Your review, before approval'));assert.equal(e.report.cardProfile,'POKEMON');
 });
