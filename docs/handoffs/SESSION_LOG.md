@@ -38353,3 +38353,63 @@ Owner explicitly requests deployment for live production review. Fresh Vercel re
 ### 2026-09-27 — Preserve the newer live homepage in reliability release
 
 Merged exact homepage production source229485b5293638acca90843e247646d129592fa0 into the qualified staff fix. The only conflict was the append-only session log; both histories retained. Public app/homepage and design build inputs match that live source exactly, and staff code remains the tested11f2a28a change. No production action occurred in the merge.
+
+
+### 2026-09-27T22:31:33.280823+00:00 — Planned persistent staff session migration
+
+Apply exact committed 20260927000100_persistent_staff_sessions checksumadb34dd75fa2f47f2957246d30340cc9510beb33e49578df6e973656c6d0ed82 in one guarded transaction with1s lock timeout. Actual57 prior staff ledger checksums equal source; full disposable58-migration rehearsal passed. Only StaffBrowser_shape and StaffSession_shape gain the fixed non-expiring marker alternative, plus one corresponding migration receipt. No existing row, role, credential, trigger/function, grading record or customer expiry is changed. All pipeline work is quiescent. No automatic retry on an ambiguous result.
+
+
+### 2026-09-27T22:31:37.924142+00:00 — Persistent staff session migration observed
+
+Guarded migration committed once;58 staff entries with all57 prior records exactly preserved. Both constraints read back; all23 grading history fingerprints, jobs and controls preserved. Existing live issuer still creates legacy sessions until web cutover. No restart or model request. Evidence session-migration-result.json under private atlas-30-card-20260927.
+
+
+### 2026-09-27T22:32:45.569649+00:00 — Staff pool environment and release compatibility verified
+
+One Vercel staff-production ATLAS_DATABASE_URL update now selects the qualified atlas_staff_web transaction pool; all other project/environment/alias metadata preserved. Current deployment remains unchanged until candidate deployment. New public build and38 tests pass with the exact229485b homepage tree. Source frozen atc9023b8dce22f9d84c1424624b4de54b4fd3c3d1. New staff current/authenticate/withStaff methods and manual boundary are byte-identical to the existing d4a private image; config constructor byte-identical after excluding only cookie-serializer limit/import. Actual owned PostgreSQL already proved the existing manual SQL accepts the persistent marker and honors logout. Therefore private grading image remains unchanged; only the staff web binding will change on its normal fenced restart.
+
+
+### 2026-09-27T22:32:48.366Z — ATLAS staff reliability planned staged staff deployment
+
+Preparing exactly committed source c9023b8dce22f9d84c1424624b4de54b4fd3c3d1 on the dedicated Vercel staff project with --prod --skip-domain. Verified clean frozen source roster, read-only CLI payload, successful staff production build, and unchanged provider project settings/environment values. Upload will create a staged candidate and may advance its generated team alias; canonical public routing remains pinned to the prior staff origin. No control rebind, private restart, homepage promotion, schema change or model call occurs in this staging action.
+
+
+### 2026-09-27T22:34:04.308Z — Staged staff READY; planned public candidate
+
+Provider confirms staff dpl_7AcwXM3mCfMKT3BwESNsdMrgnXWY READY from exact c9023b8dce22f9d84c1424624b4de54b4fd3c3d1. Canonical routing remains unchanged. Plan one public-project environment update: staff origin to https://atlas-grading-staff-57valejpp-ten-kings.vercel.app; customer origin unchanged. Then upload the same frozen source as a production candidate with --skip-domain, preserving the exact live homepage subtree. No runtime restart or database control change in this action.
+
+
+### 2026-09-27T22:35:59.397212+00:00 — Planned ATLAS staff reliability production binding cutover
+
+Both Vercel candidates READY on exact c9023b8dce22f9d84c1424624b4de54b4fd3c3d1; public candidate dpl_EfsqbzYYKgzDU7uiBZBt2ZqFaJGZ and staff dpl_7AcwXM3mCfMKT3BwESNsdMrgnXWY. Fresh SQL has zero active/queued batch, ingestion, geometry, identity and customer work; zero unsettled accepted model requests. Plan gracefully stop the current dedicated private container and recreate with its identical d4a immutable image/security/resource/network profile, changing only the two staff web-release environment fields. Cold network-none constructors agree on new staff binding; customer binding remains d4a. Retain old stopped container for rollback and existing125s replay boot fence. Then guarded compare-and-swap of precisely StaffControl, STAFF SmsPilotControl and PublicReaderControl, with all23 grading history tables compared before/after. The additive session migration already passed; no further schema/grant/job/model changes. After readiness and three signed read-only probes, promote public candidate once and verify canonical routes. Brief private unavailability during restart is expected.
+
+
+### 2026-09-27T22:36:07.359192+00:00 — Runtime restarted with UI binding; three control rows updated
+
+New container 61d05b127b4a15f2146421f9285c1065f259660d81a4336d92156f6f0b06e017 uses unchanged d4a/image d21c with c9023b8d staff web binding, same isolation and resource limits, restart0. Prior container stopped gracefully/exit0 and retained; unrelated containers preserved. The existing125s replay fence is active before service load. Three-row guarded control transaction passed: staff revision41, public21, STAFF SMS39; customer controls unchanged. All23 grading-history table counts/hashes and43 existing job records exactly preserved. Canonical promotion waits for source-bound readiness and signed transport checks.
+
+
+### 2026-09-27T22:39:16.086Z — Runtime transport qualified; planned canonical promotion
+
+Same private runtime generation is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_EfsqbzYYKgzDU7uiBZBt2ZqFaJGZ, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-27T22:39:20.427Z — ATLAS staff reliability canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_EfsqbzYYKgzDU7uiBZBt2ZqFaJGZ, source c9023b8dce22f9d84c1424624b4de54b4fd3c3d1. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+
+### 2026-09-27T22:42:24.366634+00:00 — Staff reliability production postflight complete; phone diagnostics outstanding
+
+Current ATLAS staff reliability release — 2026-09-27, verified through 22:41 UTC: source `c9023b8dce22f9d84c1424624b4de54b4fd3c3d1` is live on staff `dpl_7AcwXM3mCfMKT3BwESNsdMrgnXWY` (`atlas-grading-staff-57valejpp-ten-kings.vercel.app`) and public `dpl_EfsqbzYYKgzDU7uiBZBt2ZqFaJGZ` (`atlas-grading-public-cgbxnnrge-ten-kings.vercel.app`). All four public aliases select the new public deployment. The latest owner-approved homepage from `229485b5293638acca90843e247646d129592fa0` is preserved byte-for-byte. Customer remains `dpl_2bUeFNMvvdkEDXjpJcWYRSpiHMmG` / source `d4a7dec2af187f4aa03166e639f4d9bb066fb612`. Earlier release checkpoints below are historical.
+
+The owner-required removal of automatic staff sign-out is live. New staff browser/session rows use the fixed non-expiring timestamp marker; there is no 30-minute or inactivity deadline. Valid bootstraps refresh persistent Secure/HttpOnly/SameSite cookies (400-day browser storage maximum). Explicit logout, identity revocation, CSRF, phone approval and release/control binding remain enforced. Old sessions are not resurrected; one fresh sign-in is required after this release. Migration `20260927000100_persistent_staff_sessions` brings the staff ledger to 58 and changes only two shape constraints, preserving all 57 prior receipts and all existing session rows.
+
+The screenshot access failure was DATABASE_ACCESS/P2037 while the owner's session was still valid. Web database traffic now uses DigitalOcean `atlas_staff_web`, transaction mode, six backend connections, defaultdb, inbound restricted staff-role privileges, port 25061. Prisma uses pgbouncer=true, connection_limit=1 and pool_timeout=20. Existing Vercel pool10, database47 ordinary slots, role16, cluster size and $30.45/month price remain unchanged. Private runtime database access remains direct. Preview/report reads share a queue limited to two, deduplicate repeated reads and cancel obsolete queued reads. Intake-only photo failures now appear in Needs Attention with their actual failure, including unsupported HDR, without a fabricated Resume action.
+
+Private source/image remain d4a / `sha256:d21cacaadfdc780a1da2be85aa6629bfc249d12871e6017d839832a885b44871`. Current container `61d05b127b4a15f2146421f9285c1065f259660d81a4336d92156f6f0b06e017` (`atlas-staff-reliability-c9023b8dce22`) started 2026-09-27T22:36:02.467341445Z, restart0. Only two staff web-binding environment fields changed. Protected configuration `/opt/atlas/staff-reliability-20260927/candidate.docker.env` SHA256 `89c83bdee19323e8746e32bd3b2e132c4e8acaa712581ffd017690e11cd81595`. Predecessor f1f6ff7b is retained stopped/exit0, restart disabled and network detached. Controls are Staff41 / STAFF SMS39 / PublicReader21; customer15/13 unchanged.
+
+Qualification: 703 staff tests and 38 public tests pass; both production builds and boundary checks pass. Disposable full-schema PostgreSQL proves persistent sign-in after two hours through both web and unchanged manual SQL boundaries, with logout denial. Time-travel tests extend through ten years. Actual 12-client Prisma pool qualification used exactly six backend PIDs. Live verification passed 27 canonical reads, all nine exact voice files, the saved Abomasnow report, 12 simultaneous anonymous session-bootstrap requests and the live persistent browser-row/cookie readback. No 503 events appeared in the new-deployment log query during postflight. This finite check is not sustained grading capacity or authenticated iPhone acceptance. Final census preserved all 23 grading-history fingerprints, 43 existing job records and controls, with zero active work/unsettled accepted requests. No real-card approvals, paid model/research requests or printing occurred.
+
+The reported 30 NEW physical captures remain an open incident: the server has 23 new cards (nine ready reports, nine identities missing a required printed year, three unsupported HDR fronts, two analysis replies rejected for findings outside the card). Seven earlier cards explain the cumulative displayed total but do NOT explain the owner's seven missing new captures. Obtain the phone's **Upload diagnostics → Download upload diagnostics** JSON without clearing site data or deleting/recreating saved entries. Authenticated reviewer acceptance also remains with Mark. Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-30-card-20260927`, release subdirectory. All consumed deployment/migration/control intents are one-shot and must not be replayed.

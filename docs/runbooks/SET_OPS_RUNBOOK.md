@@ -1,5 +1,7 @@
 # Set Ops Runbook
 
+ATLAS-only reliability checkpoint — 2026-09-27, 22:41 UTC: source `c9023b8dce22f9d84c1424624b4de54b4fd3c3d1` is live, preserving the latest 229485b homepage. Staff timeout removed; managed six-connection transaction pool serves staff web traffic; pre-grading photo failures appear in Needs Attention. Staff ledger58, controls41/39/21, customer unchanged. Current container `atlas-staff-reliability-c9023b8dce22` / 61d05b127b4a retains the d4a image. See DEPLOY_RUNBOOK for exact source, bindings and qualification. This release changes no Ten Kings or Set Ops behavior. Earlier checkpoints below are historical.
+
 ATLAS-only release checkpoint — 2026-09-27T09:19:58.455321+00:00: fixed rapid review and the exact approved voice are live from `851536b1368a90962cb4650eda7a8920d50bb2bb`. This release changed two private staff web-binding fields and three guarded ATLAS control rows, preserving all grading history and jobs. No Set Ops behavior, data, schema or permissions changed. Full release evidence is in the current Deploy Runbook and SESSION_LOG.
 
 last_verified_at: 2026-02-21
