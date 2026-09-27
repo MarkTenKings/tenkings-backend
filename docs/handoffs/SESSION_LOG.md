@@ -38040,3 +38040,46 @@ Mark reported that the approved-card workspace mixed provisional review, saved r
 Finishing uses a compact front-label preview, with setup disclosure and optional extras behind More options. The staff image CSP now allows data images for the original embedded label logo, while script/connect rules remain unchanged. Public approved reports no longer include the contradictory pre-approval footer. The public Abomasnow link was read successfully and records approved grade10/version1; browser staff session is signed out. No real approval, print, paid research or grading request made.
 
 Qualification:227 focused tests pass,0fail,1 existing opt-in skip; production staff/public builds and boundary checks pass. Added saved-award, lazy extras, correction, pending publication, rapid label-failure and direct label-queue coverage. Local browser preview of actual completion JSX and real label component verifies desktop and narrow(487 CSS px actual) layout without horizontal overflow, original logo renders and no console errors. Screenshot under atlas-inspect-20260926/completion-preview/completion-desktop.png. Planned release follows existing exact-source provider/runtime binding procedure with no schema or grading change.
+
+
+### 2026-09-27T06:25:59.269Z — ATLAS INSPECT planned staged staff deployment
+
+Preparing exactly committed source 21041faef71750b35b6e8015dc29a5952dddcd6a on the dedicated Vercel staff project with --prod --skip-domain. Verified clean frozen source roster, read-only CLI payload, successful staff production build, and unchanged provider project settings/environment values. Upload will create a staged candidate and may advance its generated team alias; canonical public routing remains pinned to the prior staff origin. No control rebind, private restart, homepage promotion, schema change or model call occurs in this staging action.
+
+
+### 2026-09-27T06:28:02.909Z — Staged staff READY; planned public candidate
+
+Provider confirms staff dpl_gzXTKufeMd4mAh6TptUHS57Howby READY from exact 21041faef71750b35b6e8015dc29a5952dddcd6a. Canonical routing remains unchanged. Plan one public-project environment update: staff origin to https://atlas-grading-staff-hogh8f0kn-ten-kings.vercel.app; customer origin unchanged. Then upload the same frozen source as a production candidate with --skip-domain, preserving the exact live homepage subtree. No runtime restart or database control change in this action.
+
+
+### 2026-09-27T06:30:56.061878+00:00 — Planned ATLAS INSPECT production binding cutover
+
+Both Vercel candidates READY on exact 21041faef71750b35b6e8015dc29a5952dddcd6a; public candidate dpl_A9eKWoTrGSt7ufeyknJeABmX2ujm and staff dpl_gzXTKufeMd4mAh6TptUHS57Howby. Fresh SQL has zero active/queued batch, ingestion, geometry, identity and customer work; zero unsettled accepted model requests. Plan gracefully stop the current dedicated private container and recreate with its identical d4a immutable image/security/resource/network profile, changing only the two staff web-release environment fields. Cold network-none constructors agree on new staff binding; customer binding remains d4a. Retain old stopped container for rollback and existing125s replay boot fence. Then guarded compare-and-swap of precisely StaffControl, STAFF SmsPilotControl and PublicReaderControl, with all23 grading history tables compared before/after. No schema/grant/job/model changes. After readiness and three signed read-only probes, promote public candidate once and verify canonical routes. Brief private unavailability during restart is expected.
+
+
+### 2026-09-27T06:31:05.343159+00:00 — Runtime restarted with UI binding; three control rows updated
+
+New container 339f1c6a7488733257d0f03f52f7d79fbd56cd55994076441047933d3583c179 uses unchanged d4a/image d21c with 21041fa staff web binding, same isolation and resource limits, restart0. Prior container stopped gracefully/exit0 and retained; unrelated containers preserved. The existing125s replay fence is active before service load. Three-row guarded control transaction passed: staff revision39, public18, STAFF SMS37; customer controls unchanged. All23 grading-history table counts/hashes and23 existing job records exactly preserved. Canonical promotion waits for source-bound readiness and signed transport checks.
+
+
+### 2026-09-27T06:34:09.106Z — Runtime transport qualified; planned canonical promotion
+
+Same private runtime generation is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_A9eKWoTrGSt7ufeyknJeABmX2ujm, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-27T06:34:12.793Z — ATLAS INSPECT canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_A9eKWoTrGSt7ufeyknJeABmX2ujm, source 21041faef71750b35b6e8015dc29a5952dddcd6a. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+
+### 2026-09-27T06:35:27.280060+00:00 — Review completion release verified and handed off
+
+Current review-completion release — 2026-09-27T06:35:27.280060+00:00: frontend `21041faef71750b35b6e8015dc29a5952dddcd6a` is live on staff `dpl_gzXTKufeMd4mAh6TptUHS57Howby` (`atlas-grading-staff-hogh8f0kn-ten-kings.vercel.app`) and public `dpl_A9eKWoTrGSt7ufeyknJeABmX2ujm` (`atlas-grading-public-2g3zt8kmp-ten-kings.vercel.app`). All four public aliases select this release. Earlier INSPECT checkpoints below are historical. Customer remains dpl_2bUeFNMvvdkEDXjpJcWYRSpiHMmG / d4a. The dcc58d88 homepage remains byte-identical (HTML SHA256 06149b1e819e5c42091e8f5709f83986482a25772f80ff3d569b92866b75abe3).
+
+After exact saved approval, staff see Review complete, the saved identity/awarded grade and one primary Next card action. Labels stay queued; rapid review no longer waits for a label fetch. Label queue opens this compact workspace directly. Saved evidence, corrections, report sharing, slab photo, research and dealer tools are available through progressive disclosure. Print actions remain explicit, and publication recovery still requires the exact saved approval. Completed views avoid unnecessary analysis/image polling. Label image CSP now permits the renderer's embedded original logo; script and connection restrictions remain unchanged. No grading rule or session-lifetime change. A post-approval access failure retains the saved approval and offers access recovery; the actual authenticated session-warning cause was not reproduced.
+
+Private grading source/image remain d4a / sha256:d21cacaadfdc780a1da2be85aa6629bfc249d12871e6017d839832a885b44871. Current container `339f1c6a7488733257d0f03f52f7d79fbd56cd55994076441047933d3583c179` (`atlas-inspect-complete-21041faef717`) started `2026-09-27T06:30:59.59949058Z`, restart0. Only two staff web-binding environment fields changed. Prior c89b88 container is retained stopped/exit0, restart disabled and network detached. Protected config `/opt/atlas/inspect-complete-20260927/candidate.docker.env` SHA256 `38ef070221093c5a7d8b997ca51aeca6ceb98c0f978a51a1e13f2efb19fcbcd7`. Controls: Staff39 / STAFF SMS37 / PublicReader18; customer15/13 unchanged. Database47 ordinary slots / staff role limit16 unchanged.
+
+Qualification:227 focused tests pass,0fail,1 existing optional native skip. Staff/public builds and boundary checks pass. Synthetic browser desktop and narrow-layout checks confirm clear completion, no horizontal overflow and rendered label logo. Production signed reads pass401/404/200; canonical homepage, staff sign-in, updated bundles and the user's saved Abomasnow report return200, unknown report404. All23 grading-history table counts/hashes and23 job records preserved across the three control updates. No paid grading/research, real-card approvals or physical printing. Browser staff session is signed out, so authenticated live acceptance remains with Mark. Private evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-inspect-20260926/review-completion-release`. Consumed release intents are one-shot and must not be rerun.
+
+Browser verification after promotion: the supplied Abomasnow public report shows grade10/version1, both photographs verified and zero browser console errors. Staff browser remains signed out; authenticated acceptance is not claimed.
