@@ -82,7 +82,7 @@ function harness(initial = {}) {
   const f = { calls: [], imageRect: { left: -40, top: -40, width: 1350, height: 1858 },
     viewportRect: { left: 0, top: 0, width: 400, height: 560 }, props: { workspace: state,
     images: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { inspection: { url: `blob:${side}`, sha256: state.sides[side].frame.inspectionImageSha256 } }])),
-    onEdit: async request => f.calls.push({ kind: 'edit', request }), onInspect: async () => {}, onConfirm: async () => {},
+    onEdit: async request => f.calls.push({ kind: 'edit', request }), onInspectBoth: async () => {}, onConfirm: async () => {},
     onReviewProposal: async request => f.calls.push({ kind: 'proposal', request }), onAnalyzeDefects: async request => f.calls.push({ kind: 'analyze', request }),
     ...initial } };
   f.render = () => { let count = 0; do { dirty = false; tree = expand({ type: exports.DefectReviewWorkspace, props: f.props }); const pending = effects; effects = []; pending.forEach(run => run());
@@ -466,4 +466,20 @@ test('retained old-frame removed observation cannot inspect or restore stale coo
 test('saved examples distinguish retained old-frame observations without offering a publication retry',()=>{
   const memory=presentation.reviewedMemoryState({enabled:true,status:'SAVED',exampleCount:2,retainedObservationCount:1});
   assert.equal(memory.mayRecover,false);assert.match(memory.message,/Reviewed examples saved/);assert.match(memory.message,/1 original-frame observation remains retained and was not added as current-frame lessons/);
+});
+
+
+test('one visible attestation requires both verified photos and persists both sides before confirmation',async()=>{
+ const f=harness();let resolve,calls=0;
+ f.props.onInspectBoth=()=>{calls++;return new Promise(done=>{resolve=done;});};f.render();
+ const label='I inspected both Front and Back';
+ assert.equal(f.nodes(n=>n.type==='input'&&n.props['aria-label']?.startsWith('I inspected')).length,1);
+ assert.equal(f.control(label).props.disabled,true);await f.control(label).props.onChange();assert.equal(calls,0);
+ f.ready();assert.equal(f.control(label).props.disabled,false);
+ const pending=f.control(label).props.onChange();await f.control(label).props.onChange();f.render();assert.equal(calls,1);assert.equal(f.button('Confirming…').props.disabled,true);
+ let state=f.props.workspace;for(const side of ['FRONT','BACK'])state=actions.markDefectSideInspected(state,{side,base:actions.defectBase(state,side),actor:'HUMAN',inspected:true}).state;
+ f.props.workspace=state;resolve();await pending;f.render();
+ assert.equal(f.control(label).props.checked,true);assert.equal(f.button('Confirm findings').props.disabled,false);
+ f.props.workspace=workspace(false);f.props.onInspectBoth=async()=>{throw Error('save failed');};f.render();f.ready();await f.control(label).props.onChange();f.render();
+ assert.equal(f.control(label).props.checked,false);assert.equal(f.button('Confirm findings').props.disabled,true);assert.ok(f.has('Inspection was not saved for both sides'));
 });

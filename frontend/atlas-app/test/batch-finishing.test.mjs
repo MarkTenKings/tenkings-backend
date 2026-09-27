@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import * as feedback from '../lib/review-feedback.mjs';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -60,8 +61,11 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
     window: { addEventListener() {}, removeEventListener() {} }, document: { visibilityState: 'visible' },
     localStorage: { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value), removeItem: key => local.delete(key) },
     require(name) {
+      if (name === '../lib/review-feedback.mjs') return {...feedback,primeReviewAudio(){}};
+      if (name === './RapidReviewControls') return {AtlasSoundControl:'AtlasSoundControl'};
       if (name === 'react') return react;
       if (name === 'next/router') return { useRouter: () => router };
+      if (name === './ManualCards') return {ManualWorkspace:'ManualWorkspace'};
       if (name === './BatchImport') return BatchImport;
       if (['next/link', './Shell'].includes(name)) return () => null;
       if (name.endsWith('.css')) return new Proxy({}, { get: (_, key) => key });
@@ -110,6 +114,23 @@ test('final corrections begin only on the explicit gesture and retain the exact 
   assert.deepEqual(f.routes, [`/manual/${f.packet.cardId}?from=batch`]);
   assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
   f.dispose();
+});
+test('queue previews share the loaded report and use prepared image URLs without a full-photo proxy or review write', async () => {
+  const f = await fixture();
+  f.packet.images = { FRONT: { inspection: { url: 'https://private-images.example/front.png' } }, BACK: { inspection: { url: 'https://private-images.example/back.png' } } };
+  const photo = f.find(node => node.type?.name === 'QueuePhoto')[0];
+  assert.ok(photo);
+  const before = f.calls.length;
+  const [first, second] = await Promise.all([photo.props.readPreview(f.jobs[0]), photo.props.readPreview(f.jobs[0])]);
+  assert.equal(first.FRONT.url, f.packet.images.FRONT.inspection.url); assert.deepEqual(first, second);
+  assert.equal(f.calls.length, before); assert.equal(f.actions.length, 0);
+  assert.equal(f.calls.some(call => call.url.includes('/preview-image/') || call.options.method === 'POST'), false);
+  f.dispose();
+});
+test('the contextual correction action retains the same explicit final-review binding', async () => {
+  const f = await fixture(); f.reviews()[0].props.onCorrectFinding({ id: 'fixture-finding', side: 'BACK' }); await f.flush();
+  assert.equal(f.actions[0].type, 'BEGIN_FINAL_REVIEW'); assert.equal(f.actions[0].reportHash, f.packet.reportHash);
+  assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false); f.dispose();
 });
 test('a corrected report continues the current final review and cannot approve the old machine report', async () => {
   const f = await fixture({ correcting: true });
@@ -178,4 +199,14 @@ test('partial batch report keeps evidence visible and gives geometry action inst
   await approve.props.onClick();await f.flush();assert.equal(f.popups.length,0);assert.equal(f.calls.some(call=>call.options.method==='POST'),false);
   f.find(node=>node.type==='button'&&text(node)==='Review geometry / make corrections')[0].props.onClick();await f.flush();
   assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.equal(f.routes.length,1);f.dispose();
+});
+
+
+test('label queue opens saved completion workspace directly instead of another navigation screen',async()=>{
+  const f=await fixture();f.jobs=[{...f.jobs[0],state:'APPROVED'}];
+  f.find(node=>node.type==='button'&&/^Label queue/.test(text(node)))[0].props.onClick();await f.flush();
+  // Refresh the fixture through a staff generation to provide the updated queue.
+  f.switchStaff('next-reviewer');await f.flush();
+  const workspace=f.find(node=>node.type==='ManualWorkspace')[0];assert.ok(workspace);assert.equal(workspace.props.cardId,f.packet.cardId);
+  assert.doesNotMatch(f.text(),/Open label & finishing/);assert.equal(f.popups.length,0);assert.equal(f.calls.some(call=>call.options.method==='POST'),false);f.dispose();
 });

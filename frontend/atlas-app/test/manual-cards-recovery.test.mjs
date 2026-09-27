@@ -9,6 +9,7 @@ import * as defectAnalysisClient from '../lib/manual-defect-analysis-client.mjs'
 import * as earlyGeometryClient from '../lib/early-geometry-client.mjs';
 import { manualMessage } from '../lib/manual-client.mjs';
 import * as discard from '../lib/card-discard.mjs';
+import * as reviewFeedback from '../lib/review-feedback.mjs';
 
 const require = createRequire(import.meta.url);
 const babel = require('next/dist/compiled/babel/core');
@@ -38,6 +39,8 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
     window: { addEventListener(name,action) {listeners.set(name,action);}, removeEventListener(name) {listeners.delete(name);} },
     require(name) {
       if (name === 'react') return react;
+      if (name === './RapidReviewControls') return {RapidActionDock:'RapidActionDock',RapidEditDock:'RapidEditDock'};
+      if (name === '../lib/review-feedback.mjs') return {...reviewFeedback,primeReviewAudio(){},playReviewCompletion(){},playAtlasVoice(){}};
       if (name === '../lib/card-discard.mjs') return {...discard,createWorkspaceDiscarder:()=>({pending:()=>false,reconcile:async()=>null})};
       if (name === '../lib/batch-import.mjs') return {createBrowserBatchImportJournal:()=>({close(){}})};
       if (name === 'next/router') return { useRouter: () => ({ replace:async path=>{navigations.push(path);},events: { on() {}, off() {} } }) };

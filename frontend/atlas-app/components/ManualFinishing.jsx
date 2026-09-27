@@ -49,7 +49,7 @@ async function printLabel(owned, rendered, label, isCurrent) {
  * browser relays signed hosted/native receipts; only verified station status
  * can report NFC completion. Selecting a station replaces the browser popup.
  */
-export default function ManualFinishing({ plan, autoPrintWindow = null, onPrintDialog = null, printDisabled = false, csrf, staffId }) {
+export default function ManualFinishing({ plan, autoPrintWindow = null, onPrintDialog = null, printDisabled = false, csrf, staffId, compact = false }) {
   const [rendered, setRendered] = useState(null), [error, setError] = useState(''), [dialogOpened, setDialogOpened] = useState(false);
   const [station, setStation] = useState(null), [operation, setOperation] = useState(null);
   const stationRef = useRef(null), currentPlan = useRef(plan?.planHash);
@@ -112,19 +112,19 @@ export default function ManualFinishing({ plan, autoPrintWindow = null, onPrintD
     void printInBrowser(target);
   };
   const currentOperation = operation?.planHash === plan?.planHash ? operation : null;
-  return <section className={styles.station} aria-label="Label and NFC finishing">
-    <div className={styles.header}><div><span className={styles.eyebrow}>ATLAS FINISHING</span><h2>Ready for the slab.</h2></div><span className={styles.version}>v{plan?.label?.approvalVersion}</span></div>
+  return <section className={`${styles.station} ${compact ? styles.compact : ''}`} aria-label="Label and NFC finishing">
+    <div className={styles.header}><div><span className={styles.eyebrow}>ATLAS FINISHING</span><h2>{compact ? 'Print the label' : 'Ready for the slab.'}</h2></div><span className={styles.version}>v{plan?.label?.approvalVersion}</span></div>
     <div className={styles.statuses} aria-live="polite"><span className={styles.ready}>✓ Report approved</span><span>{dialogOpened ? 'Print dialog opened' : error ? 'Label needs attention' : rendered?.planId === plan?.id ? 'Label ready' : 'Preparing label'}</span><span>{currentOperation?.nfc?.state === 'COMPLETE' ? '✓ NFC verified · remove confirmed' : currentOperation?.nfc?.state === 'WAITING_FOR_TAG' ? 'Tap new NFC chip' : currentOperation?.nfc?.state === 'WAITING_FOR_REMOVAL' ? 'Lift NFC chip' : currentOperation?.nfc?.state === 'WAITING_FOR_HOST_ACK' ? 'Saving NFC verification' : currentOperation?.nfc?.state === 'UNKNOWN' ? 'NFC needs recovery' : station?.selected ? station.local?.ready ? 'Station selected' : 'Station needs setup' : 'NFC setup pending'}</span>{currentOperation?.print && <span>{currentOperation.print.state === 'SPOOL_COMPLETED' ? 'Print job completed' : currentOperation.print.state === 'SPOOL_ACCEPTED' ? 'Print job queued' : currentOperation.print.state === 'SPOOL_FAILED' ? 'Print job failed' : 'Print status needs review'}</span>}</div>
     {error && <p className={styles.error} role="alert">{error}</p>}
     {rendered && rendered.planId === plan?.id && <div className={styles.faces}>
       <figure><figcaption>FRONT</figcaption><div className={styles.face} dangerouslySetInnerHTML={{ __html: rendered.front }} /></figure>
-      <figure><figcaption>REVERSE</figcaption><div className={styles.face} dangerouslySetInnerHTML={{ __html: rendered.reverse }} /></figure>
+      {!compact&&<figure><figcaption>REVERSE</figcaption><div className={styles.face} dangerouslySetInnerHTML={{ __html: rendered.reverse }} /></figure>}
     </div>}
     <div className={styles.controls}><button type="button" className={styles.print} onClick={print} disabled={!rendered || rendered.planId !== plan?.id || printDisabled || printingPlan === plan?.planHash || Boolean(station?.selected && currentOperation)}>
       {station?.selected ? 'Finish at station' : printingPlan === plan?.planHash ? 'Preparing print…' : 'Print label'} <span aria-hidden="true">↗</span></button>
       {plan?.label?.layoutVersion === 'atlas-noir-gold-v1' && <label>Ink<select disabled={station?.selected === true} aria-label="Label ink" value={palette} onChange={event => setPalette(event.target.value)}><option value="NOIR_GOLD">Black + gold</option><option value="MONOCHROME">Monochrome</option></select></label>}
       <Link href="/station">{station?.selected ? 'Station & recovery' : 'Set up station'}</Link>
-      {plan?.label && <a href={plan.label.url} target="_blank" rel="noreferrer">Open approved report ↗</a>}
+      {!compact && plan?.label && <a href={plan.label.url} target="_blank" rel="noreferrer">Open approved report ↗</a>}
     </div>
     <details className={styles.details}><summary>Print and NFC setup</summary><p>Each face is 2.73 × 0.83 in. Print at actual size with headers and footers off. The front reserves 11 mm for NFC with a 9 mm guide. Verify physical fit for the selected printer and material. The current design has a plain black reverse.</p><p>Automatic printing requires the configured Mac print bridge. NFC tap-to-write requires the qualified Mac bridge for ACS ACR1552U / F8215. The report reference is unchanged; printing does not record tag verification, assembly or welding.</p></details>
   </section>;
