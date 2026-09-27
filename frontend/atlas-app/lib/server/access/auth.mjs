@@ -2,6 +2,7 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { cookies, deny, equal, hash, identifier, strictObject } from '../policy.mjs';
 import { phoneInput } from '../../phone.mjs';
 import { markAccessFailure } from '../api-failure.mjs';
+import { PERSISTENT_STAFF_EXPIRY, STAFF_COOKIE_MAX_AGE } from './session-policy.mjs';
 
 const MINUTE = 60_000;
 const opaque = () => randomBytes(32).toString('base64url');
@@ -13,6 +14,7 @@ const tokenShape = value => typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.t
 export class DurableStaffAuth {
     constructor({ database, config, provider }) {
         this.database = database; this.config = config; this.provider = provider;
+        this.cookieMaxAge = STAFF_COOKIE_MAX_AGE;
         this.actors = new WeakMap();
     }
     digest(value, encoding = 'hex') { return createHmac('sha256', this.config.sessionKey).update(value).digest(encoding); }
@@ -35,7 +37,8 @@ export class DurableStaffAuth {
         const token = this.jar(header)[this.config.cookies.browser];
         if (!tokenShape(token) || !equal(csrf, this.digest(`browser:${token}`))) return null;
         const row = await context.tx.staffBrowser.findUnique({ where: { tokenHash: hash(token) } });
-        return row && row.expiresAt > context.now && row.controlRevision === context.control.revision ? row : null;
+        return row && row.expiresAt?.toISOString() === PERSISTENT_STAFF_EXPIRY
+            && row.controlRevision === context.control.revision ? row : null;
     }
     async current(context, sessionHash, browserHash) {
         let phase = 'SESSION_LOOKUP';
@@ -76,14 +79,15 @@ export class DurableStaffAuth {
             const { tx, now, control } = context, jar = this.jar(header);
             let token = jar[this.config.cookies.browser];
             const row = tokenShape(token) && await tx.staffBrowser.findUnique({ where: { tokenHash: hash(token) } });
-            if (!row || row.expiresAt <= now || row.controlRevision !== control.revision) {
+            if (!row || row.expiresAt?.toISOString() !== PERSISTENT_STAFF_EXPIRY || row.controlRevision !== control.revision) {
                 if (!await this.rate(tx, now, [['browser-global', 120], [`browser-client:${hash(client)}`, 30]])) return error(429, 'PLEASE_WAIT');
                 token = opaque();
-                await tx.staffBrowser.create({ data: { tokenHash: hash(token), controlRevision: control.revision, createdAt: now, expiresAt: new Date(+now + 60 * MINUTE) } });
+                await tx.staffBrowser.create({ data: { tokenHash: hash(token), controlRevision: control.revision, createdAt: now, expiresAt: new Date(PERSISTENT_STAFF_EXPIRY) } });
             }
             const sessionToken = jar[this.config.cookies.session];
             const current = tokenShape(sessionToken) && await this.current(context, hash(sessionToken), hash(token));
-            return { browserToken: token, csrf: this.digest(current && !reauthenticate ? `session:${sessionToken}` : `browser:${token}`),
+            return { browserToken: token, sessionToken: current ? sessionToken : null,
+                csrf: this.digest(current && !reauthenticate ? `session:${sessionToken}` : `browser:${token}`),
                 staff: current ? this.actor(current, hash(token)) : null };
         }));
     }
@@ -219,7 +223,7 @@ export class DurableStaffAuth {
             const token = this.issuedToken(challenge);
             const session = await tx.staffSession.create({ data: { tokenHash: hash(token), identityId: identity.id,
                 browserHash: challenge.browserHash, challengeId: challenge.id, controlRevision: control.revision,
-                accessVersion: identity.accessVersion, createdAt: now, expiresAt: new Date(+now + 30 * MINUTE) } });
+                accessVersion: identity.accessVersion, createdAt: now, expiresAt: new Date(PERSISTENT_STAFF_EXPIRY) } });
             await tx.staffChallenge.update({ where: { id: challenge.id }, data: { state: 'CONSUMED', consumedAt: now,
                 replayHash: claim.replayHash, replayUntil: new Date(Math.min(+challenge.expiresAt, +now + MINUTE)) } });
             await this.audit(tx, 'STAFF_SESSION_ISSUED', challenge.id, identity.id);

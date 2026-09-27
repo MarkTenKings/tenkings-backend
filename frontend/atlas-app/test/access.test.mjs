@@ -7,6 +7,8 @@ import { twilioVerifyTransport } from '../lib/server/access/twilio.mjs';
 import { assertWrite } from '../lib/server/policy.mjs';
 import { hash } from '../lib/server/policy.mjs';
 import { DurableStaffAuth } from '../lib/server/access/auth.mjs';
+import { PERSISTENT_STAFF_EXPIRY, STAFF_COOKIE_MAX_AGE } from '../lib/server/access/session-policy.mjs';
+import { createHandler } from '../lib/server/http.mjs';
 const sid = prefix => `${prefix}${'1'.repeat(32)}`;
 const environment = () => ({ ATLAS_STAFF_RUNTIME: 'postgres', NODE_ENV: 'production', VERCEL_ENV: 'production',
     ATLAS_STAFF_ORIGIN: 'https://atlasgrading.com', ATLAS_STAFF_BASE_PATH: '/admin',
@@ -83,7 +85,7 @@ function durableBootstrapFixture() {
         name: 'Fixture human', role: 'REVIEWER', accessVersion: 1, revokedAt: null },
         session: { tokenHash: hash(sessionToken), identityId: '00000000-0000-4000-8000-000000000001', browserHash: hash(browserToken),
             accessVersion: 1, controlRevision: 1, createdAt: new Date(+now - 6 * 60000), expiresAt: new Date(+now + 24 * 60000), revokedAt: null } };
-    const browsers = new Map([[hash(browserToken), { tokenHash: hash(browserToken), controlRevision: 1, createdAt: new Date(+now - 10 * 60000), expiresAt: new Date(+now + 50 * 60000) }]]);
+    const browsers = new Map([[hash(browserToken), { tokenHash: hash(browserToken), controlRevision: 1, createdAt: new Date(+now - 10 * 60000), expiresAt: new Date(PERSISTENT_STAFF_EXPIRY) }]]);
     const rates = new Map(); let createdBrowsers = 0;
     const tx = { staffBrowser: { async findUnique({ where }) { return browsers.get(where.tokenHash) ?? null; },
         async create({ data }) { createdBrowsers++; browsers.set(data.tokenHash, structuredClone(data)); return data; } },
@@ -159,8 +161,58 @@ test('production cookies, hosts, Origin and JSON cannot inherit local or legacy 
     assert.match(cookie, /^__Secure-atlas_staff=opaque; HttpOnly; Secure; Path=\/admin; SameSite=Lax; Max-Age=1800$/);
     assert.doesNotMatch(cookie, /Domain=/);
     assert.match(secureStaffCookie(ACCESS_COOKIES.session, '', 0), /Path=\/admin; SameSite=Lax; Max-Age=0$/);
-    for (const args of [['atlas_local_staff', 'opaque', 1800], [ACCESS_COOKIES.session, 'value; Domain=.atlasgrading.com', 30], [ACCESS_COOKIES.session, 'opaque', 3601]])
+    assert.match(secureStaffCookie(ACCESS_COOKIES.session, 'opaque', STAFF_COOKIE_MAX_AGE), /Max-Age=34560000$/);
+    for (const args of [['atlas_local_staff', 'opaque', 1800], [ACCESS_COOKIES.session, 'value; Domain=.atlasgrading.com', 30], [ACCESS_COOKIES.session, 'opaque', STAFF_COOKIE_MAX_AGE + 1]])
         assert.throws(() => secureStaffCookie(...args));
+});
+
+test('persistent staff authority survives elapsed time and bootstrap refreshes both protected cookies', async () => {
+    const f = durableBootstrapFixture();
+    f.state.session.expiresAt = new Date(PERSISTENT_STAFF_EXPIRY);
+    const original = structuredClone(f.state.session);
+    for (const elapsed of [31 * 60000, 2 * 3600000, 24 * 3600000, 3650 * 24 * 3600000]) {
+        f.state.now = new Date(+original.createdAt + elapsed);
+        const boot = await f.auth.bootstrap(f.cookie);
+        assert.equal(boot.staff.id, f.state.identity.id);
+        assert.equal(boot.sessionToken, f.sessionToken);
+        assert.equal(boot.browserToken, f.browserToken);
+        const staff = await f.auth.authenticate(f.cookie, boot.csrf);
+        await f.auth.withStaff(staff, context => assert.equal(context.identity.id, f.state.identity.id));
+        assert.deepEqual(f.state.session, original);
+    }
+    const headers = {}, result = {};
+    const handler = createHandler({ auth: f.auth, cookies: f.config.cookies, cookie: secureStaffCookie, assertRequest() {} });
+    await handler({ url:'/api/staff/session', method:'GET', headers:{cookie:f.cookie}, socket:{} }, {
+        setHeader(k,v) {headers[k]=v;}, status(s) {result.status=s;return this;}, json(v) {result.body=v;return this;}
+    });
+    assert.equal(result.status,200);
+    assert.equal(headers['Set-Cookie'].length,2);
+    for (const value of headers['Set-Cookie']) assert.match(value,/HttpOnly; Secure; Path=\/admin; SameSite=Lax; Max-Age=34560000$/);
+    assert(!JSON.stringify(result.body).includes(f.sessionToken));
+    assert.equal(f.createdBrowsers(),0);
+});
+
+test('persistent sessions still honor logout, identity revocation, browser binding and control changes', async () => {
+    for (const mutate of [f=>{f.state.session.revokedAt=f.state.now;},f=>{f.state.identity.revokedAt=f.state.now;},
+        f=>{f.state.identity.accessVersion++;},f=>{f.state.identity.role='UNKNOWN';},
+        f=>{f.state.session.browserHash='0'.repeat(64);},f=>{f.state.control.revision++;}]) {
+        const f=durableBootstrapFixture();f.state.session.expiresAt=new Date(PERSISTENT_STAFF_EXPIRY);
+        const staff=await f.auth.authenticate(f.cookie);mutate(f);
+        await assert.rejects(()=>f.auth.authenticate(f.cookie),{message:'SIGN_IN_REQUIRED'});
+        await assert.rejects(()=>f.auth.withStaff(staff,()=>{}),{message:'SIGN_IN_REQUIRED'});
+    }
+});
+
+test('legacy browser rows rotate without extending or resurrecting legacy sessions', async () => {
+    const f=durableBootstrapFixture();
+    f.browsers.get(hash(f.browserToken)).expiresAt=new Date(+f.state.now+60000);
+    const before=structuredClone(f.state.session);
+    const boot=await f.auth.bootstrap(f.cookie);
+    assert.equal(boot.staff,null);assert.equal(boot.sessionToken,null);
+    assert.notEqual(boot.browserToken,f.browserToken);
+    assert.equal(f.browsers.get(hash(boot.browserToken)).expiresAt.toISOString(),PERSISTENT_STAFF_EXPIRY);
+    assert.deepEqual(f.state.session,before);
+    assert.equal(await f.database.transaction(c=>f.auth.browser(c,f.cookie,f.auth.digest(`browser:${f.browserToken}`))),null);
 });
 test('every production ingress requires a fresh proof bound to method, path, deployment and dedicated key', () => {
     const env = environment(), config = productionAccessConfig(env), request = productionRequest(config);

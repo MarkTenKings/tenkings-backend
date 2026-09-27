@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import * as feedback from '../lib/review-feedback.mjs';
+import * as batchQueue from '../lib/batch-queue.mjs';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -61,6 +62,7 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
     window: { addEventListener() {}, removeEventListener() {} }, document: { visibilityState: 'visible' },
     localStorage: { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value), removeItem: key => local.delete(key) },
     require(name) {
+      if (name === '../lib/batch-queue.mjs') return batchQueue;
       if (name === '../lib/review-feedback.mjs') return {...feedback,primeReviewAudio(){}};
       if (name === './RapidReviewControls') return {AtlasSoundControl:'AtlasSoundControl'};
       if (name === 'react') return react;

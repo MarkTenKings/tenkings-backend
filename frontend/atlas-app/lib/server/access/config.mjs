@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import { acceptsSiteRequest } from '@atlas/site-router/server';
 import { deny, hash, parseApprovedPhones } from '../policy.mjs';
 import { STAFF_APPLICATION, STAFF_BASE_PATH } from '../../routes.mjs';
+import { STAFF_COOKIE_MAX_AGE } from './session-policy.mjs';
 
 export const STAFF_ORIGIN = 'https://atlasgrading.com';
 // Path scopes cookie delivery; customer/public scripts still share this origin.
@@ -78,6 +79,6 @@ export function assertProductionStaffRequest(req, config) {
 
 export function secureStaffCookie(name, value, maxAge) {
     if (!Object.values(ACCESS_COOKIES).includes(name) || !/^[A-Za-z0-9_-]*$/.test(value)
-        || !Number.isInteger(maxAge) || maxAge < 0 || maxAge > 3600) deny(503, 'ACCESS_CONFIGURATION_INVALID');
+        || !Number.isInteger(maxAge) || maxAge < 0 || maxAge > STAFF_COOKIE_MAX_AGE) deny(503, 'ACCESS_CONFIGURATION_INVALID');
     return `${name}=${value}; HttpOnly; Secure; Path=${STAFF_BASE_PATH}; SameSite=Lax; Max-Age=${maxAge}`;
 }

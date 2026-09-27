@@ -73,7 +73,10 @@ export function createHandler(resolveRuntime, env = process.env, diagnostics = {
                 stage = 'SESSION';
                 const reauthenticate = new URL(req.url, state.origin ?? 'http://127.0.0.1').searchParams.getAll('reauthenticate');
                 const boot = await auth.bootstrap(cookie, client, { reauthenticate: reauthenticate.length === 1 && reauthenticate[0] === '1' });
-                res.setHeader('Set-Cookie', serializeCookie(cookieNames.browser, boot.browserToken, 3600));
+                const browserCookie = serializeCookie(cookieNames.browser, boot.browserToken, auth.cookieMaxAge ?? 3600);
+                res.setHeader('Set-Cookie', boot.sessionToken
+                    ? [browserCookie, serializeCookie(cookieNames.session, boot.sessionToken, auth.cookieMaxAge ?? 1800)]
+                    : browserCookie);
                 body = { mode: state.mode ?? 'SYNTHETIC_LOCAL', csrf: boot.csrf, staff: boot.staff };
             }
             else if (path === '/api/staff/auth/request') {
@@ -87,7 +90,7 @@ export function createHandler(resolveRuntime, env = process.env, diagnostics = {
                 if (typeof req.body.code !== 'string' || !/^\d{6}$/.test(req.body.code))
                     deny(400, 'CODE_NOT_ACCEPTED');
                 const result = await auth.verify(cookie, csrf, req.body, client);
-                res.setHeader('Set-Cookie', serializeCookie(cookieNames.session, result.token, 1800));
+                res.setHeader('Set-Cookie', serializeCookie(cookieNames.session, result.token, auth.cookieMaxAge ?? 1800));
                 body = { staff: result.staff, csrf: result.csrf };
             }
             else {
