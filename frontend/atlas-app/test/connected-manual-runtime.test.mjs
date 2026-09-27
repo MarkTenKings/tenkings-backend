@@ -36,6 +36,8 @@ test('private CPU auth binds the actual approved web deployment without pretendi
 });
 test('runtime document CSP keeps both approved upload origins and does not accept paths or injected directives',()=>{
  const policy=staffContentSecurityPolicy({uploadOrigins:['https://old.example.com','https://new.example.com','https://old.example.com']});
+ assert.match(policy,/img-src 'self' blob: data:/,'approved label embeds its original logo');
+ assert.doesNotMatch(policy.split(';').find(v=>v.includes('script-src')),/data:|blob:/);
  assert(policy.includes('https://old.example.com https://new.example.com'));assert(!policy.includes("'unsafe-eval'"));
  assert.equal(policy.match(/https:\/\/old.example.com/g).length,2);
  assert.match(policy,/connect-src 'self' http:\/\/127\.0\.0\.1:47662 http:\/\/127\.0\.0\.1:47664 /);

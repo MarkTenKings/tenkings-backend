@@ -197,3 +197,13 @@ test('partial batch report keeps evidence visible and gives geometry action inst
   f.find(node=>node.type==='button'&&text(node)==='Review geometry / make corrections')[0].props.onClick();await f.flush();
   assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.equal(f.routes.length,1);f.dispose();
 });
+
+
+test('label queue opens saved completion workspace directly instead of another navigation screen',async()=>{
+  const f=await fixture();f.jobs=[{...f.jobs[0],state:'APPROVED'}];
+  f.find(node=>node.type==='button'&&/^Label queue/.test(text(node)))[0].props.onClick();await f.flush();
+  // Refresh the fixture through a staff generation to provide the updated queue.
+  f.switchStaff('next-reviewer');await f.flush();
+  const workspace=f.find(node=>node.type==='ManualWorkspace')[0];assert.ok(workspace);assert.equal(workspace.props.cardId,f.packet.cardId);
+  assert.doesNotMatch(f.text(),/Open label & finishing/);assert.equal(f.popups.length,0);assert.equal(f.calls.some(call=>call.options.method==='POST'),false);f.dispose();
+});

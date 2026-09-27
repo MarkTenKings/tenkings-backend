@@ -65,7 +65,7 @@ function harness({ journal, finalReview = false, rapid = false } = {}) {
         f.calls.push({ path, options: options && structuredClone(options) }); return f.respond(path, options); } };
       return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
     } });
-  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: 'card', csrf: 'csrf', rapid, onBusyChange:value=>{f.locked=value;}, onPhotos() {} }); effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
+  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: 'card', csrf: 'csrf', rapid, onQueued:value=>{f.queued=value;}, onBusyChange:value=>{f.locked=value;}, onPhotos() {} }); effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
   f.tick = async (ms = 5000) => { const tick = timers.get(ms); if (!tick) return; tick(); await flush(); f.render(); };
   f.dispose = () => cleanups.splice(0).forEach(cleanup => cleanup());
   f.defects = () => { const node = all(tree, node => node.type === 'DefectReviewWorkspace')[0]; assert.ok(node, 'defect workspace rendered'); return node.props; };
@@ -398,4 +398,45 @@ test('rapid correction confirmation opens the final grade directly and a failed 
  await assert.rejects(f.defects().onConfirm({base:{},reviewed:true}));f.render();assert.ok(f.defects());assert.equal(f.report(),undefined);
  f.onExecute=undefined;await f.defects().onConfirm({base:{},reviewed:true});await flush();f.render();
  assert.ok(f.report());assert.equal(f.button('Approve findings'),undefined);assert.equal(f.actions.filter(a=>a.type==='APPROVE_REPORT').length,0);f.dispose();
+});
+
+
+test('approved review opens a calm completion screen with saved award, lazy extras and retained correction path',async()=>{
+  const f=harness({finalReview:true});await flush();f.render();
+  f.preview=async()=>({reportHash:'exact-report-hash',sourceRevision:1,sourceHash:'one',report:{version:'atlas-manual-draft-report-v2',identity:{cardName:'Abomasnow'},finalGrade:10,grade:{overall:{displayGrade:9.9}}}});
+  f.publish({...f.current,approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:finishingPublication});
+  f.respond=async path=>path.includes('/finishing/')?finishingPlan:f.current;
+  f.button('Findings').props.onClick();await flush();f.render();await f.defects().onContinue();f.render();await flush();f.render();
+  assert.match(f.text(),/REVIEW COMPLETE.*Abomasnow.*APPROVED GRADE10/);assert.match(f.text(),/Review next card/);
+  assert.doesNotMatch(f.text(),/Final human review|Current provisional|View current provisional|Approved. Preserved|Optional report tools/);
+  assert.equal(f.report(),undefined);assert.equal(f.button('Geometry'),undefined);assert.equal(f.finishing().compact,true);
+  const calls=f.calls.length;await f.tick(240000);assert.equal(f.calls.length,calls,'completed review does not keep refreshing image grants');
+  f.button('More options +').props.onClick();f.render();assert.match(f.text(),/Optional report tools/);
+  f.button('Correct findings').props.onClick();await flush();f.render();assert.ok(f.defects());assert.equal(f.actions.length,0);
+  f.dispose();
+});
+
+test('rapid approval advances without fetching a label; optional label failure cannot undo saved review',async()=>{
+  const f=harness({finalReview:true,rapid:true});await flush();f.render();
+  f.machine().onReadyChange(true);f.render();await f.button('Approve geometry').props.onClick();f.render();
+  f.machine().onReadyChange(true);f.render();await f.button('Approve findings').props.onClick();f.render();
+  f.report().onReadyChange(true);f.render();
+  f.onExecute=action=>{if(action.type==='APPROVE_REPORT')f.publish({...f.current,approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:finishingPublication});};
+  f.respond=async path=>{if(path.includes('/finishing/'))throw {code:'SIGN_IN_REQUIRED'};return f.current;};
+  await f.button('Approve grade & queue label').props.onClick();f.render();await flush();f.render();
+  assert.match(f.text(),/REVIEW COMPLETE/);assert.equal(f.report(),undefined);assert.equal(f.popups.length,0);
+  assert.equal(f.calls.filter(call=>call.path.includes('/finishing/')).length,0);
+  assert.equal(f.button('Next card →').props.disabled,false);
+  f.button('Print label / station').props.onClick();f.render();await flush();f.render();
+  assert.match(f.text(),/Your grade is saved. SIGN_IN_REQUIRED/);assert.equal(f.button('Next card →').props.disabled,false);
+  f.button('Next card →').props.onClick();assert.equal(f.queued.actionId,finishingPublication.actionId);
+  assert.equal(f.actions.filter(action=>action.type==='APPROVE_REPORT').length,1);f.dispose();
+});
+
+test('publication pending remains a saved approval with explicit retry and no false ready label',async()=>{
+  const f=harness();await flush();f.render();
+  f.publish({...f.current,approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:{...finishingPublication,state:'PENDING',retryable:true}});
+  await f.defects().onContinue();f.render();await flush();f.render();
+  assert.match(f.text(),/Grade approved and saved. Report publication still needs attention/);assert.ok(f.button('Retry report publication'));
+  assert.equal(f.button('Next card →'),undefined);assert.equal(f.finishing(),undefined);assert.equal(f.actions.length,0);f.dispose();
 });

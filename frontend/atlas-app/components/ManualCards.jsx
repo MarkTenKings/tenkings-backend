@@ -305,6 +305,7 @@ function finalFindingsAvailable(view){
 export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,onBusyChange,onQueued}){
   const [view,setView]=useState(null),[screen,setScreen]=useState('geometry'),[error,setError]=useState(''),[status,setStatus]=useState(''),[report,setReport]=useState(null),[editing,setEditing]=useState(false),[preparing,setPreparing]=useState({}),[approving,setApproving]=useState(false),[identity,setIdentity]=useState(null),[refreshingImages,setRefreshingImages]=useState(false);
   const rapidInFlight=useRef(false),[rapidSaving,setRapidSaving]=useState(false);
+  const [showFinishing,setShowFinishing]=useState(!rapid),[showReport,setShowReport]=useState(false),[showExtras,setShowExtras]=useState(false);
   const client=useRef(null),analysisClient=useRef(null),imageRefresh=useRef(null),viewRef=useRef(null),interaction=useRef({}),router=useRouter();
   const [reportImagesReady,setReportImagesReady]=useState(false),[loadingReport,setLoadingReport]=useState(false);
   const [publishing,setPublishing]=useState(false),[copyStatus,setCopyStatus]=useState('');
@@ -325,13 +326,14 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,onBusyCh
       }});
     analysisClient.current=ownedAnalysis;
     void ownedClient.recover().then(async value=>{if(stopped)return;setScreen(rapid?'geometry-review':value.finalReview?'provisional':geometryStatus(value.geometry).confirmed?'defects':'geometry');
-      if(!rapid&&value.approval?.sourceHash===value.card.contentHash)await openReport();
-      if(value.astra?.enabled)await ownedAnalysis.refresh();
+      if(value.approval?.sourceHash===value.card.contentHash)await openReport();
+      else if(value.astra?.enabled)await ownedAnalysis.refresh();
     }).catch(error=>{if(!stopped)setError(manualMessage(error));});
-    const timer=setInterval(()=>{if(!ownedClient.hasPending())void attempt(refreshImages);},240000);
+    const timer=setInterval(()=>{const current=viewRef.current;if(!ownedClient.hasPending()&&current?.approval?.sourceHash!==current?.card.contentHash)void attempt(refreshImages);},240000);
     let polling=false,pollingDenied=false;
     const analysisTimer=setInterval(()=>{
       const current=ownedAnalysis.current();
+      if(viewRef.current?.approval?.sourceHash===viewRef.current?.card.contentHash)return;
       if(stopped||polling||pollingDenied||current?.collectionStopped||!(current?.status==='RUNNING'||current?.status==='UNKNOWN'&&current.backgroundAccepted))return;
       polling=true;
       // Status reads never start another analysis or replace the manual draft.
@@ -442,10 +444,10 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,onBusyCh
   }
   useEffect(()=>{
     const publication=view?.publication;
-    if(screen!=='report'||approving||publication?.state!=='PUBLISHED'||publication.reportHash!==report?.reportHash)return;
+    if(!showFinishing||screen!=='report'||approving||publication?.state!=='PUBLISHED'||publication.reportHash!==report?.reportHash)return;
     if(finishing?.binding.approvalActionId===publication.actionId&&finishing.binding.publicHash===publication.publicHash)return;
     setFinishing(null);setAutoPrintWindow(null);void loadFinishing(publication);
-  },[screen,approving,view?.publication?.actionId,view?.publication?.state,view?.publication?.publicHash,report?.reportHash]);
+  },[showFinishing,screen,approving,view?.publication?.actionId,view?.publication?.state,view?.publication?.publicHash,report?.reportHash]);
   async function approveAndPrepareLabel(){
     const owner=client.current,current=viewRef.current;
     if(!owner||approvalInFlight.current||approving||loadingReport||owner.hasPending()||report?.canCertify!==true||!reportImagesReady||report?.sourceHash!==current?.card.contentHash||report.sourceRevision!==current?.card.revision)return;
@@ -459,7 +461,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,onBusyCh
     try{
       const result=await execute({type:'APPROVE_REPORT',reportHash:report.reportHash,reviewed:true});
       if(client.current!==owner){ownedWindow?.close();return;}
-      if(result?.publication?.reportHash===report.reportHash&&result.publication.state==='PUBLISHED')await loadFinishing(result.publication,ownedWindow);
+      if(!rapid&&result?.publication?.reportHash===report.reportHash&&result.publication.state==='PUBLISHED')await loadFinishing(result.publication,ownedWindow);
       else ownedWindow?.close();
     }catch(error){ownedWindow?.close();if(client.current===owner&&error?.code==='MANUAL_CERTIFICATION_REQUIRED')setReport(current=>current?.reportHash===report.reportHash?{...current,canCertify:false}:current);throw error;}
     finally{approvalInFlight.current=false;if(client.current===owner)setApproving(false);}
@@ -495,6 +497,29 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,onBusyCh
     }finally{rapidInFlight.current=false;setRapidSaving(false);}
   }
   if(!view)return <div>{error&&<p role="alert">{error}</p>}<p role="status">Loading saved review…</p><button onClick={()=>attempt(()=>client.current.recover())}>Retry</button></div>;
+  const approved=screen==='report'&&report&&view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash;
+  if(approved){
+    const publication=view.publication?.reportHash===report.reportHash?view.publication:null;
+    const published=publication?.state==='PUBLISHED';
+    const labelReady=finishing?.binding.approvalActionId===publication?.actionId&&finishing?.binding.publicHash===publication?.publicHash;
+    const name=report.report?.identity?.playerName||report.report?.identity?.cardName||view.identity?.playerName||view.identity?.cardName||'Card';
+    const grade=report.report?.version==='atlas-manual-draft-report-v2'?report.report.finalGrade:report.report?.grade?.overall?.displayGrade;
+    return <section className="mc-complete" aria-label="Review complete">
+      <header className="mc-complete-header"><div><p className="mc-complete-eyebrow">✓ REVIEW COMPLETE</p><h1>{name}</h1><p role="status">{published?'Grade approved. Your card is in the label queue.':'Grade approved and saved. Report publication still needs attention.'}</p><small>{publication?.reportNumber}{publication?.version?` · Version ${publication.version}`:''}</small></div>{Number.isFinite(grade)&&<div className="mc-complete-grade"><span>APPROVED GRADE</span><strong>{grade}</strong><span>ATLAS / 10</span></div>}</header>
+      <div className="mc-complete-next"><div><h2>{published?'You’re done reviewing this card.':'Your review is saved.'}</h2><p>{published?'Continue to the next card. Print labels when your printer is ready.':'Finish publishing this saved approval to prepare the label.'}</p></div>
+        {published?(rapid?<button className="primary" disabled={locked} onClick={()=>onQueued?.({cardId,actionId:publication.actionId,publication})}>Next card →</button>:<Link className="primary" href="/batch?tab=REVIEW">Review next card →</Link>):publication?.retryable&&<button className="primary" disabled={publishing} onClick={()=>attempt(publishReport)}>{publishing?'Publishing…':'Retry report publication'}</button>}
+      </div>
+      {error&&<div className="mc-notice error" role="alert"><strong>Your approval is saved.</strong><p>{error}</p><a href={`${STAFF_BASE_PATH}?reauthenticate=1`} target="_blank" rel="noreferrer">Sign in again ↗</a><button disabled={locked} onClick={()=>attempt(()=>client.current.recover())}>Refresh access</button></div>}
+      <div className="mc-complete-tools">{published&&<><button aria-expanded={showFinishing} onClick={()=>setShowFinishing(value=>!value)}>{showFinishing?'Hide label':'Print label / station'}</button><a href={publication.href} target="_blank" rel="noreferrer">View customer report ↗</a></>}<button aria-expanded={showReport} onClick={()=>setShowReport(value=>!value)}>{showReport?'Hide evidence':'Review saved evidence'}</button><button aria-expanded={showExtras} onClick={()=>setShowExtras(value=>!value)}>More options {showExtras?'−':'+'}</button></div>
+      {published&&showFinishing&&<div className="mc-complete-label">{loadingFinishing&&<p role="status">Preparing approved label…</p>}{finishingError&&<p role="alert">Your grade is saved. {finishingError} <button onClick={()=>void loadFinishing(publication)}>Reload label</button></p>}{labelReady&&<ManualFinishing compact plan={finishing} autoPrintWindow={autoPrintWindow} staffId={staff.id} csrf={csrf} printDisabled={approving||savePending}/>}</div>}
+      {showReport&&<FinalReportReview key={report.reportHash} preview={report} workspace={view.defects} images={view.images} geometry={view.geometry} publication={publication} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`} onReadyChange={setReportImagesReady} approved current/>}
+      {showExtras&&<section className="mc-complete-extras" aria-label="Optional report tools"><h2>Optional report tools</h2><p>These are separate from grading and can be completed later.</p>
+        {published&&<><button onClick={()=>void copyReportLink()}>Copy report link</button>{copyStatus&&<div className="mc-copy-result"><p role="status">{copyStatus}</p><input aria-label="Approved report link" readOnly value={publication.href??''} onFocus={event=>event.target.select()}/></div>}
+          <details><summary>Slab photo, sales & dealer offers</summary><ReportPhotoUploader key={publication.actionId} cardId={cardId} staffId={staff.id} csrf={csrf} available={view.presentationEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/><ReportMarketPicker key={`market:${publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={publication.actionId} csrf={csrf} available={view.marketEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/><ReportResearchPicker key={`research:${publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={publication.actionId} csrf={csrf} available={view.researchEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/><DealerOfferPicker key={`dealers:${publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={publication.actionId} csrf={csrf} available={view.presentationEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/></details></>}
+        <details><summary>Make a correction</summary><p>The saved report remains in history. Changes require a new review and approval.</p><button disabled={locked} onClick={()=>switchStage('geometry')}>Correct borders</button><button disabled={locked} onClick={()=>switchStage('defects')}>Correct findings</button><button disabled={locked} onClick={()=>{setReport(null);setScreen('geometry');setIdentity({...view.identity});}}>Correct card details</button></details>
+      </section>}
+    </section>;
+  }
   const findingsAvailable=finalFindingsAvailable(view);
   const partial=view.provisional?.report?.calculationState==='GEOMETRY_UNRESOLVED';
   const currentGrade=!unsaved&&!calculating&&view.provisional?.state==='READY'&&Number.isFinite(view.provisional.report.proposedGrade)?view.provisional.report.proposedGrade:undefined;
@@ -527,24 +552,9 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,onBusyCh
       approved={view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash}
       rejectedSuggestions={report.sourceHash===view.card.contentHash?view.astra?.proposals?.filter(proposal=>proposal.reviewStatus==='REJECTED').length??0:0}
       current={report.sourceHash===view.card.contentHash&&(report.sourceRevision===view.card.revision||view.approval?.reportHash===report.reportHash)}>
-      {view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash?<div className="mc-publication">
-        <div><h3>Approved. Preserved. Explained.</h3><p role="status">Report approved and saved.</p>
-          {view.publication?.reportHash===report.reportHash&&<p>{view.publication.reportNumber} · Version {view.publication.version} · {view.publication.state==='PUBLISHED'?'Public report ready':'Public report delivery pending'}</p>}
-        </div>
-        {view.publication?.reportHash===report.reportHash&&<div className="mc-publication-actions">{view.publication.state==='PUBLISHED'?<><a href={view.publication.href} target="_blank" rel="noopener noreferrer">Open final report ↗</a><button type="button" onClick={()=>void copyReportLink()}>Copy report link</button><button type="button" disabled={!reportImagesReady} onClick={()=>window.print()}>Print / save PDF</button></>:view.publication.retryable&&<button type="button" disabled={publishing} onClick={()=>attempt(publishReport)}>{publishing?'Publishing…':'Retry report publication'}</button>}</div>}
-        {copyStatus&&<div className="mc-copy-result"><p role="status">{copyStatus}</p><input aria-label="Approved report link" readOnly value={view.publication?.href??''} onFocus={event=>event.target.select()}/></div>}
-        {view.publication?.state==='PUBLISHED'&&view.publication.reportHash===report.reportHash&&<>
-          {loadingFinishing&&<p role="status">Preparing approved label…</p>}
-          {finishingError&&<p role="alert">{finishingError} <button type="button" onClick={()=>void loadFinishing(view.publication)}>Reload approved label</button></p>}
-          {finishing?.binding.approvalActionId===view.publication.actionId&&finishing.binding.publicHash===view.publication.publicHash&&<ManualFinishing plan={finishing} autoPrintWindow={autoPrintWindow} staffId={staff.id} csrf={csrf} printDisabled={approving||savePending}/>}
-          <ReportPhotoUploader key={view.publication.actionId} cardId={cardId} staffId={staff.id} csrf={csrf} available={view.presentationEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
-          <ReportMarketPicker key={`market:${view.publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={view.publication.actionId} csrf={csrf} available={view.marketEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
-          <ReportResearchPicker key={`research:${view.publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={view.publication.actionId} csrf={csrf} available={view.researchEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
-          <DealerOfferPicker key={`dealers:${view.publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={view.publication.actionId} csrf={csrf} available={view.presentationEnabled===true} disabled={approving||savePending||staff.role!=='REVIEWER'}/>
-        </>}
-      </div>:<><p>Approve this exact identity, evidence and grade to create the final report and prepare its label.</p>{view.approval&&<p>An earlier approved report is retained in history. This draft needs its own approval.</p>}{report.canCertify!==true&&<p role="status">Your account has no current report certification. A trained reviewer with current certification must approve this report. <button type="button" disabled={approving||savePending||loadingReport} onClick={()=>attempt(openReport)}>{loadingReport?'Refreshing…':'Refresh report'}</button></p>}<button className="primary" disabled={approving||savePending||loadingReport||report.canCertify!==true||!reportImagesReady} onClick={()=>attempt(approveAndPrepareLabel)}>{approving?'Approving…':rapid?'Approve grade & queue label':'Approve & print label'}</button></>}
+<><p>Approve this exact identity, evidence and grade to create the final report and prepare its label.</p>{view.approval&&<p>An earlier approved report is retained in history. This draft needs its own approval.</p>}{report.canCertify!==true&&<p role="status">Your account has no current report certification. A trained reviewer with current certification must approve this report. <button type="button" disabled={approving||savePending||loadingReport} onClick={()=>attempt(openReport)}>{loadingReport?'Refreshing…':'Refresh report'}</button></p>}<button className="primary" disabled={approving||savePending||loadingReport||report.canCertify!==true||!reportImagesReady} onClick={()=>attempt(approveAndPrepareLabel)}>{approving?'Approving…':rapid?'Approve grade & queue label':'Approve & print label'}</button></>
     </FinalReportReview>}
     {rapid&&screen==='geometry'&&<div className="mc-rapid-actions"><p>Corrections remain in this review. Save or discard edits before returning.</p><button disabled={locked||calculating} onClick={()=>switchStage(screen==='geometry'?'geometry-review':'findings-review')}>Return to review</button></div>}
-    {rapid&&screen==='report'&&view.publication?.state==='PUBLISHED'&&view.publication.reportHash===report?.reportHash&&finishing?.binding.approvalActionId===view.publication.actionId&&<div className="mc-rapid-actions"><p>Approved report and label are saved. Open Label queue whenever you are ready to print.</p><button className="primary" disabled={locked||calculating} onClick={()=>onQueued?.({cardId,actionId:view.publication.actionId,publication:view.publication})}>Next card →</button></div>}
+
   </>;
 }

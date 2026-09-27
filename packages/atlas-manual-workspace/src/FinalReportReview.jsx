@@ -293,7 +293,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
       {approved && <button type="button" className="rr-print-button" disabled={!bothReady} onClick={() => { if (typeof window !== 'undefined') window.print(); }}>Print approved report</button>}
       {reportKey && <details className="rr-report-reference" open={printing ? true : undefined}><summary>Exact report reference</summary><code>{reportKey}</code></details>}
     </section>}
-    {!publicView && !machine && <footer className="rr-approval"><h2>{approved ? 'Report approved and saved' : 'Final approval'}</h2><p>{machine ? 'Review & approve confirms that you inspected both photos and accept the displayed card details, outlines, findings and grade. Corrections open the card workspace.' : 'Approval saves this exact report. Return to Findings or Geometry to make corrections before approving.'}</p>{!bothReady && <p role="status">Both saved photographs must load and verify before approval is available.</p>}{children}</footer>}
+    {!publicView && !machine && !approved && <footer className="rr-approval"><h2>{approved ? 'Report approved and saved' : 'Final approval'}</h2><p>{machine ? 'Review & approve confirms that you inspected both photos and accept the displayed card details, outlines, findings and grade. Corrections open the card workspace.' : 'Approval saves this exact report. Return to Findings or Geometry to make corrections before approving.'}</p>{!bothReady && <p role="status">Both saved photographs must load and verify before approval is available.</p>}{children}</footer>}
     {publicView && children}
   </section>;
 }
