@@ -152,3 +152,15 @@
 .rr-guided-summary{display:flex;flex-direction:column}.rr-guided-summary>.rr-heading{order:-3}.rr-guided-summary>.rr-score-strip{order:-2;display:grid}.rr-guided-summary>.rr-approval{order:-1}.rr-guided-summary>.rr-photo-review{display:none}.rr-guided-summary>.rr-why{display:block}.rr-guided-summary .rr-overall>strong{font-size:80px}
 
 .rr-region-tabs>span{color:#bcf0ff;font-size:10px;text-transform:uppercase;letter-spacing:.1em}.rr-measure-callout{padding:8px 10px}.rr-measure-callout strong{margin:5px 0}.rr-measure-callout>small{margin-top:4px}
+
+/* Fixed callout geometry is shared with collision placement. Small/crowded views use the caption below. */
+.rr-defect-blueprint path{stroke:#ff7968;stroke-width:2.2;filter:none}.rr-defect-blueprint path.rr-ruler-contrast{stroke:#160805;stroke-width:5;stroke-linejoin:round}
+.rr-defect-blueprint .rr-measure-callout{box-sizing:border-box;width:240px;max-width:none;height:176px;padding:10px 12px;background:#170e0df5;border-color:#ff7968b3;font-size:11px;line-height:1.4}
+.rr-span-readout{color:#ffae9e;font:10px var(--rr-sans);padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid #ff79684d}.rr-span-readout b{font:14px var(--rr-mono);display:inline-block;margin-right:4px}
+.rr-measure-callout.rr-measure-outside{position:static;box-sizing:border-box;width:100%;max-width:none;margin-top:12px;background:#170e0d;border-color:#ff7968b3;box-shadow:none}
+.rr-inspect .rr-minimap{width:124px;max-width:28%;border:2px solid #e9d496}.rr-inspect .rr-minimap>span{border:2px solid #ffe16c;box-shadow:0 0 0 1px #181408;background:#ffe16c1a;min-width:5px;min-height:5px}
+.rr-marker-button.rr-selected-pin{margin-top:-24px;margin-left:-24px}
+@media(max-width:760px){.rr-inspect .rr-show-clean .rr-minimap{width:72px;max-width:42%}.rr-measure-outside .rr-span-readout{font-size:11px}}
+@media print{.rr-measure-outside{display:none!important}}
+
+.rr-inspect .rr-minimap.rr-locator-outside{position:relative;right:auto;bottom:auto;display:block;margin:12px 0 0 auto}

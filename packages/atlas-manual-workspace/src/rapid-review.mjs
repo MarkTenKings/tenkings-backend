@@ -19,13 +19,20 @@ export async function approveRapidStage(stage, view, execute) {
     return execute({ type: 'CONFIRM_GEOMETRY', base: Object.fromEntries(sides.map(side => [side, geometryBase(view.geometry, side, 'REVIEW')])), reviewed: true });
   }
   if (stage !== 'findings' || !status.findings) throw { code: 'ATLAS_DEFECT_CONFIRMATION_REQUIRED' };
-  let current = view;
-  for (const side of sides) {
-    if (!defectStatus(current.defects).sides[side].inspected)
-      current = await execute({ type: 'INSPECT_SIDE', side, base: defectBase(current.defects, side), inspected: true });
-  }
+  const current = await inspectBothDefectSides(view, execute);
   if (!rapidReviewStatus(current).findings) throw { code: 'ATLAS_DEFECT_CONFIRMATION_REQUIRED' };
   if (defectStatus(current.defects).confirmed) return current;
   const { proposalReview } = collectiveProposalReview(current.defects, current.astra);
   return execute({ type: 'CONFIRM_FINDINGS', base: Object.fromEntries(sides.map(side => [side, defectBase(current.defects, side)])), reviewed: true, ...(proposalReview ? { proposalReview } : {}) });
+}
+
+/** One explicit human attestation, two durable side records, current bases throughout. */
+export async function inspectBothDefectSides(view, execute) {
+  let current = view;
+  if (!current.defects || !defectStatus(current.defects).settled) throw {code:'ATLAS_DEFECT_MEASUREMENT_PENDING'};
+  for (const side of sides) {
+    if (!defectStatus(current.defects).sides[side].inspected)
+      current = await execute({type:'INSPECT_SIDE',side,base:defectBase(current.defects,side),inspected:true});
+  }
+  return current;
 }

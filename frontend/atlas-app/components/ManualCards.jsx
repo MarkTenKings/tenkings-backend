@@ -7,7 +7,7 @@ import {createManualClient} from '@atlas/manual-workflow/client';
 import {PairedGeometryWorkspace} from '@atlas/manual-workspace';
 import {DefectReviewWorkspace} from '@atlas/manual-workspace/defects';
 import {FinalReportReview,MachineReportReview} from '@atlas/manual-workspace/report-review';
-import {approveRapidStage,rapidReviewStatus} from '@atlas/manual-workspace/rapid-review';
+import {approveRapidStage,inspectBothDefectSides,rapidReviewStatus} from '@atlas/manual-workspace/rapid-review';
 import {geometryStatus} from '@atlas/manual-workspace/geometry-actions';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
 import {manualRequest,manualMessage} from '../lib/manual-client.mjs';
@@ -514,14 +514,14 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,onBusyCh
     screen==='geometry'?<PairedGeometryWorkspace workspace={view.geometry} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} preparingSides={preparing} onPrepare={prepare}
       onEdit={async input=>{const {actor,proposal,...edit}=input;await execute({type:'GEOMETRY_EDIT',edit});if(input.kind==='PHYSICAL')void attempt(()=>prepare(input.side));}}
       onConfirm={async({base,reviewed})=>{await execute({type:'CONFIRM_GEOMETRY',base,reviewed});setScreen(rapid?'findings-review':'defects');setReportImagesReady(false);}}/>:
-    screen==='defects'&&view.defects?<DefectReviewWorkspace workspace={view.defects} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} grade={currentGrade}
+    screen==='defects'&&view.defects?<>{rapid&&<button disabled={locked||calculating} onClick={()=>switchStage('findings-review')}>Return to review</button>}<DefectReviewWorkspace workspace={view.defects} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} grade={currentGrade}
       astra={view.astra} reviewedMemory={view.reviewedMemory} onAnalyzeDefects={input=>analyze('start',input)} onRefreshAnalysis={()=>analyze('refresh')}
       onResumeAnalysis={()=>analyze('resume')} onReplaceAnalysis={input=>analyze('replace',input)} onRetryReviewedMemory={retryMemory}
       onReviewProposal={async input=>{const owner=client.current;await owner.reviewProposal(input);if(client.current===owner&&input.action!=='REJECT')void attempt(()=>owner.execute({type:'MEASURE_SIDE',side:input.side}));}}
       onEdit={async input=>{await client.current.editDefect(input);void attempt(()=>execute({type:'MEASURE_SIDE',side:input.side}));}}
       onRetry={side=>execute({type:'MEASURE_SIDE',side})} onDiscardPending={({side,base})=>execute({type:'DISCARD_PENDING',side,base})}
-      onInspect={({side,base,inspected})=>execute({type:'INSPECT_SIDE',side,base,inspected})} onConfirm={({base,reviewed,proposalReview})=>execute({type:'CONFIRM_FINDINGS',base,reviewed,...(proposalReview?{proposalReview}:{})})}
-      onContinue={()=>rapid?switchStage('findings-review'):attempt(openReport)}/>:
+      onInspectBoth={()=>inspectBothDefectSides(viewRef.current,execute)} onConfirm={async({base,reviewed,proposalReview})=>{await execute({type:'CONFIRM_FINDINGS',base,reviewed,...(proposalReview?{proposalReview}:{})});if(rapid)await attempt(openReport);}}
+      onContinue={()=>attempt(openReport)}/></>:
     screen==='provisional'?(view.provisional?.state==='READY'&&!unsaved&&!calculating?<MachineReportReview packet={{...view.provisional,images:view.images}} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}><button disabled={locked} onClick={()=>switchStage('geometry')}>Review geometry</button><button disabled={locked||!findingsAvailable} onClick={()=>switchStage('defects')}>Review findings</button></MachineReportReview>:<p role="status">{unsaved?'Save or discard your changes to view the current report.':'Preparation or measurement is incomplete. Open Geometry to retry preparation or restore the last prepared outline; open Findings to finish any pending measurement.'}</p>):
     report&&<FinalReportReview key={report.reportHash} inspectionMode={rapid?'summary':undefined} preview={report} workspace={view.defects} images={view.images} geometry={view.geometry} publication={view.publication?.reportHash===report.reportHash?view.publication:undefined} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`} onReadyChange={setReportImagesReady}
       approved={view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash}
@@ -544,7 +544,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,onBusyCh
         </>}
       </div>:<><p>Approve this exact identity, evidence and grade to create the final report and prepare its label.</p>{view.approval&&<p>An earlier approved report is retained in history. This draft needs its own approval.</p>}{report.canCertify!==true&&<p role="status">Your account has no current report certification. A trained reviewer with current certification must approve this report. <button type="button" disabled={approving||savePending||loadingReport} onClick={()=>attempt(openReport)}>{loadingReport?'Refreshing…':'Refresh report'}</button></p>}<button className="primary" disabled={approving||savePending||loadingReport||report.canCertify!==true||!reportImagesReady} onClick={()=>attempt(approveAndPrepareLabel)}>{approving?'Approving…':rapid?'Approve grade & queue label':'Approve & print label'}</button></>}
     </FinalReportReview>}
-    {rapid&&['geometry','defects'].includes(screen)&&<div className="mc-rapid-actions"><p>Corrections remain in this review. Save or discard edits before returning.</p><button disabled={locked||calculating} onClick={()=>switchStage(screen==='geometry'?'geometry-review':'findings-review')}>Return to review</button></div>}
+    {rapid&&screen==='geometry'&&<div className="mc-rapid-actions"><p>Corrections remain in this review. Save or discard edits before returning.</p><button disabled={locked||calculating} onClick={()=>switchStage(screen==='geometry'?'geometry-review':'findings-review')}>Return to review</button></div>}
     {rapid&&screen==='report'&&view.publication?.state==='PUBLISHED'&&view.publication.reportHash===report?.reportHash&&finishing?.binding.approvalActionId===view.publication.actionId&&<div className="mc-rapid-actions"><p>Approved report and label are saved. Open Label queue whenever you are ready to print.</p><button className="primary" disabled={locked||calculating} onClick={()=>onQueued?.({cardId,actionId:view.publication.actionId,publication:view.publication})}>Next card →</button></div>}
   </>;
 }

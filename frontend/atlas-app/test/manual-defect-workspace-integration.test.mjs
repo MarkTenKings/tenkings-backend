@@ -389,3 +389,13 @@ test('rapid review waits for verified photos, adjustments stay inside, and final
  f.report().onReadyChange(true);f.render();await f.button('Approve grade & queue label').props.onClick();await flush();f.render();
  assert.equal(f.actions.at(-1).type,'APPROVE_REPORT');assert.equal(f.actions.at(-1).reportHash,'exact-report-hash');assert.equal(f.popups.length,0);f.dispose();
 });
+
+test('rapid correction confirmation opens the final grade directly and a failed save stays in corrections',async()=>{
+ const f=harness({finalReview:true,rapid:true});await flush();f.render();
+ f.machine().onReadyChange(true);f.render();await f.button('Approve geometry').props.onClick();await flush();f.render();
+ f.button('Adjust findings').props.onClick();await flush();f.render();
+ f.onExecute=async()=>{throw Error('save failed');};
+ await assert.rejects(f.defects().onConfirm({base:{},reviewed:true}));f.render();assert.ok(f.defects());assert.equal(f.report(),undefined);
+ f.onExecute=undefined;await f.defects().onConfirm({base:{},reviewed:true});await flush();f.render();
+ assert.ok(f.report());assert.equal(f.button('Approve findings'),undefined);assert.equal(f.actions.filter(a=>a.type==='APPROVE_REPORT').length,0);f.dispose();
+});

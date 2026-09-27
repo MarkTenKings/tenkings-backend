@@ -148,3 +148,59 @@ export function reportCropBounds(bounds) {
   return { x: 40 + Math.max(0, Math.min(1270 - width, (bounds.x + bounds.width / 2) * 1270 - width / 2)),
     y: 40 + Math.max(0, Math.min(1778 - height, (bounds.y + bounds.height / 2) * 1778 - height / 2)), width, height };
 }
+
+
+const spanMeasurementCache = new WeakMap();
+const cross = (a, b, c) => (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
+/** Maximum straight span between saved pixel edges, in the canonical 20 px/mm frame.
+ * This is not a curved scratch's path length or a second grading calculation.
+ * Row extremes preserve the convex hull, including every disconnected component. */
+export function reportMarkedSpan(finding) {
+  const mask = reportFindingMask(finding);
+  if (!mask) return null; // A display contour is not a complete measured trace.
+  if (spanMeasurementCache.has(mask)) return spanMeasurementCache.get(mask);
+  const rows = new Map();
+  for (const {x,y,width} of reportTraceSpans(mask)) {
+    const old = rows.get(y); rows.set(y, {left:Math.min(x,old?.left ?? x),right:Math.max(x+width,old?.right ?? x+width)});
+  }
+  const points = [...rows].flatMap(([y,{left,right}])=>[{x:left,y},{x:right,y},{x:left,y:y+1},{x:right,y:y+1}]).sort((a,b)=>a.x-b.x||a.y-b.y);
+  const half = values => { const h=[]; for(const p of values){while(h.length>1&&cross(h.at(-2),h.at(-1),p)<=0)h.pop();h.push(p);}return h; };
+  const lo=half(points),hi=half([...points].reverse()),hull=[...lo.slice(0,-1),...hi.slice(0,-1)];
+  if(hull.length<2)return null;
+  let best=0,start,end,j=1;
+  const consider=(a,b)=>{const d=(a.x-b.x)**2+(a.y-b.y)**2;if(d>best){best=d;start=a;end=b;}};
+  for(let i=0;i<hull.length;i++){
+    const next=(i+1)%hull.length;
+    while(Math.abs(cross(hull[i],hull[next],hull[(j+1)%hull.length]))>Math.abs(cross(hull[i],hull[next],hull[j])))j=(j+1)%hull.length;
+    consider(hull[i],hull[j]);consider(hull[next],hull[j]);
+    if(Math.abs(cross(hull[i],hull[next],hull[(j+1)%hull.length]))===Math.abs(cross(hull[i],hull[next],hull[j])))consider(hull[i],hull[(j+1)%hull.length]);
+  }
+  const normalize=p=>({x:p.x/1270,y:p.y/1778});
+  const result={mm:Math.sqrt(best)/20,start:normalize(start),end:normalize(end),hull:hull.map(normalize)};
+  spanMeasurementCache.set(mask,result);return result;
+}
+
+export const rectanglesOverlap = (a,b) => a.x < b.x+b.width && a.x+a.width > b.x && a.y < b.y+b.height && a.y+a.height > b.y;
+/** A fixed-size label never covers the trace, its ruler, photo heading or locator.
+ * null means render in normal document flow below the photograph instead. */
+export function reportMeasurementPlacement(size, exclusions, width=240, height=176) {
+  if(size.width<width+32||size.height<height+32)return null;
+  const protectedBoxes=exclusions.map(b=>({x:b.x-14,y:b.y-14,width:b.width+28,height:b.height+28}));
+  const xs=[16,(size.width-width)/2,size.width-width-16],ys=[52,(size.height-height)/2,size.height-height-16];
+  for(const y of ys)for(const x of xs){const box={x,y,width,height};if(y+height<=size.height-16&&!protectedBoxes.some(p=>rectanglesOverlap(box,p)))return box;}
+  return null;
+}
+
+export function reportSpanRuler(span, project) {
+  if(!span)return null;
+  const a=project(span.start),b=project(span.end),length=Math.hypot(b.x-a.x,b.y-a.y);
+  if(!length)return null;
+  const normal={x:-(b.y-a.y)/length,y:(b.x-a.x)/length};
+  const support=Math.max(...span.hull.map(project).map(p=>(p.x-a.x)*normal.x+(p.y-a.y)*normal.y));
+  const offset=support+24;
+  const c={x:a.x+normal.x*offset,y:a.y+normal.y*offset},d={x:b.x+normal.x*offset,y:b.y+normal.y*offset};
+  const tick=p=>`M${p.x-normal.x*6} ${p.y-normal.y*6}L${p.x+normal.x*6} ${p.y+normal.y*6}`;
+  const points=[a,b,c,d],xs=points.map(p=>p.x),ys=points.map(p=>p.y);
+  return {path:`M${a.x} ${a.y}L${c.x} ${c.y} M${b.x} ${b.y}L${d.x} ${d.y} M${c.x} ${c.y}L${d.x} ${d.y} ${tick(c)} ${tick(d)}`,
+    bounds:{x:Math.min(...xs)-6,y:Math.min(...ys)-6,width:Math.max(...xs)-Math.min(...xs)+12,height:Math.max(...ys)-Math.min(...ys)+12}};
+}

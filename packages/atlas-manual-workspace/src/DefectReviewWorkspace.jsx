@@ -78,7 +78,7 @@ function ProposalOverlay({ proposals, selected, visible }) {
   </svg>;
 }
 
-function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDiscardPending, onReady, onActivity, locked, astra, onReviewProposal, expanded, hidden, onExpand }) {
+function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending, onReady, onActivity, locked, astra, onReviewProposal, expanded, hidden, onExpand }) {
   const slot = workspace.sides[side], base = defectBase(workspace, side), currentBase = key(base);
   const descriptor = image?.inspection;
   const binding = inspectionImageBinding(workspace, side, image);
@@ -348,8 +348,7 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
         <div className="am-side-actions"><button disabled={disabled || finding.reviewResult === 'REMOVED' || !onEdit} onClick={() => start(finding)}>Edit trace</button>
           <button disabled={disabled || !onEdit || Boolean(finding.geometryExclusion)} onClick={() => { if (!finding.geometryExclusion) return edit({ type: finding.reviewResult === 'REMOVED' ? 'UNDO' : 'REMOVE', defectIds: [finding.id] }); }}>{finding.reviewResult === 'REMOVED' ? 'Restore finding' : 'Remove finding'}</button></div>
       </div>}
-      <div className="ad-inspect"><label><input type="checkbox" aria-label={`I inspected ${name(side)}`} checked={inspected} disabled={disabled || inspected || !onInspect}
-        onChange={() => perform(() => onInspect({ side, base, actor: 'HUMAN', inspected: true }))} />I inspected {name(side)} and corrected its findings.</label></div>
+
     </>}
     {astra?.enabled && proposals.length > 0 && <section className="ad-proposals" aria-label={`${name(side)} ATLAS suggestions`}>
       <div className="ad-proposal-heading"><h3>ATLAS suggestions</h3><span>Blue outlines · review required</span></div>
@@ -381,7 +380,7 @@ function DefectSide({ workspace, side, image, onEdit, onInspect, onRetry, onDisc
 /** Controlled human review. Callbacks must authenticate, durably save/read back,
  * and then update workspace. Full masks remain in verified artifact storage;
  * browser state and a checked descriptor are not approval or storage authority. */
-export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, onConfirm, onRetry, onDiscardPending, onContinue, onEditingChange, saveStatus = '', grade,
+export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth, onConfirm, onRetry, onDiscardPending, onContinue, onEditingChange, saveStatus = '', grade,
   astra, onAnalyzeDefects, onRefreshAnalysis, onResumeAnalysis, onReplaceAnalysis, onReviewProposal, reviewedMemory, onRetryReviewedMemory }) {
   const [activity, setActivity] = useState({}), [ready, setReady] = useState({}), [confirming, setConfirming] = useState(false), [error, setError] = useState('');
   const [expandedSide, setExpandedSide] = useState(null);
@@ -399,6 +398,13 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
   useEffect(() => { onEditingChange?.(editing || confirming); return () => onEditingChange?.(false); }, [editing, confirming, onEditingChange]);
   const currentImagesReady = SIDES.every(side => images?.[side]?.inspection?.sha256 === workspace.sides[side].frame.inspectionImageSha256
     && ready[side] === inspectionImageBinding(workspace, side, images?.[side]));
+  const inspectBoth = async () => {
+    if (!status.settled || status.canConfirm || !currentImagesReady || editing || confirmRef.current || !onInspectBoth) return;
+    confirmRef.current = true; setConfirming(true); setError('');
+    try { await onInspectBoth(); }
+    catch { setError('Inspection was not saved for both sides. Try the confirmation box again.'); }
+    finally { confirmRef.current = false; setConfirming(false); }
+  };
   const confirm = async () => {
     if (!status.canConfirm || !currentImagesReady || !collective.ready || editing || confirmRef.current || !onConfirm) return;
     confirmRef.current = true;
@@ -451,17 +457,22 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspect, on
     {expandedSide && <div className="ad-expanded-switch" aria-label="Expanded inspection side">{SIDES.map(side => <button key={side}
       aria-pressed={expandedSide === side} onClick={() => setExpandedSide(side)}>Inspect {name(side)}</button>)}</div>}
     <div className={`am-pair${expandedSide ? ' ad-expanded-pair' : ''}`}>{SIDES.map(side => <DefectSide key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]}
-      onEdit={onEdit} onInspect={onInspect} onRetry={onRetry} onDiscardPending={onDiscardPending} onReady={onReady} onActivity={onActivity} locked={confirming}
+      onEdit={onEdit} onRetry={onRetry} onDiscardPending={onDiscardPending} onReady={onReady} onActivity={onActivity} locked={confirming}
       astra={astra} onReviewProposal={onReviewProposal} expanded={expandedSide === side} hidden={Boolean(expandedSide && expandedSide !== side)}
       onExpand={() => setExpandedSide(previous => previous === side ? null : side)} />)}</div>
     {memory && <div className="ad-memory" aria-label="Reviewed example memory"><p role="status">{recoveringMemory ? 'Checking the saved reviewed examples…' : memory.message}</p>
       {memory.mayRecover && onRetryReviewedMemory && <button disabled={recoveringMemory || confirming} onClick={recoverMemory}>
         {memory.status === 'FAILED' ? 'Retry saving examples' : 'Check example save'}</button>}
     </div>}
-    <footer className="am-footer"><span>{editing ? 'Save or discard your trace before continuing.' : collective.unresolvedCount > 0
+    <footer className="am-footer ad-confirm-footer">
+      <label className={`ad-confirm-inspection${status.canConfirm ? ' ad-confirmed' : ''}`}>
+        <input type="checkbox" aria-label="I inspected both Front and Back" checked={status.canConfirm}
+          disabled={status.canConfirm || !status.settled || !currentImagesReady || editing || confirming || !onInspectBoth} onChange={inspectBoth}/>
+        <span><strong>{confirming && !status.canConfirm ? 'Saving inspection…' : 'I inspected both Front and Back'}</strong><small>Including corners, edges and surface. My corrections are saved.</small></span>
+      </label><span>{editing ? 'Save or discard your trace before continuing.' : collective.unresolvedCount > 0
       ? collective.ready ? `After reviewing Front and Back, Confirm accepts all ${collective.unresolvedCount} remaining displayed suggestions and preserves your corrections and rejections. Final report approval stays separate.`
         : 'Reload images to refresh the saved suggestion list before confirming. Your corrections are retained.'
-      : reportReady ? 'Findings confirmed. Final report approval is a separate step.' : 'Confirm the corrected list after inspecting both sides.'}</span>
+      : reportReady ? 'Findings confirmed. Final report approval is a separate step.' : status.canConfirm ? 'Inspection saved. Confirm findings to continue.' : 'Check the inspection box above, then confirm findings.'}</span>
       {reportReady && onContinue ? <button className="am-primary" onClick={onContinue} disabled={editing || confirming || !currentImagesReady}>Review draft report</button>
         : <button className="am-primary" onClick={confirm} disabled={!status.canConfirm || !currentImagesReady || !collective.ready || editing || confirming || !onConfirm}>{confirming ? 'Confirming…' : collective.unresolvedCount ? `Confirm findings & accept ${collective.unresolvedCount} suggestions` : 'Confirm findings'}</button>}
     </footer>{error && <p className="am-error" role="alert">{error}</p>}

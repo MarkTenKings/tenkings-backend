@@ -23,7 +23,7 @@ function FindingCalculation({ finding, explanation, policy, printLabel }) {
     {explanation.included && explanation.regions.length === 0 && <p className="rr-tolerance-note">No owned damage pixels remain after clipping and overlap assignment. This finding has no deduction.</p>}
     {explanation.regions.map((region, index) => <article className="rr-region" key={`${region.zone}:${index}`}>
       <h4>{title(region.zone)} region</h4>
-      <dl className="rr-measurements"><div><dt>Measured area</dt><dd>{n(region.areaMm2, ' mm²')}</dd></div><div><dt>Measured pixels</dt><dd>{region.pixelCount === undefined ? 'Not recorded' : n(region.pixelCount)}</dd></div><div><dt>Width × height</dt><dd>{n(region.widthMm)} × {n(region.heightMm, ' mm')}</dd></div><div><dt>Region coverage</dt><dd>{n(region.zonePercent, '%')}</dd></div></dl>
+      <dl className="rr-measurements"><div><dt>Measured area</dt><dd>{n(region.areaMm2, ' mm²')}</dd></div><div><dt>Measured pixels</dt><dd>{region.pixelCount === undefined ? 'Not recorded' : n(region.pixelCount)}</dd></div><div><dt>Region bounds (W × H)</dt><dd>{n(region.widthMm)} × {n(region.heightMm, ' mm')}</dd></div><div><dt>Region coverage</dt><dd>{n(region.zonePercent, '%')}</dd></div></dl>
       <div className="rr-equations"><p><span>Weighted damage area</span>{n(region.areaMm2)} mm² × {n(region.multiplier)} = <strong>{n(region.weightedAreaMm2, ' mm²')}</strong></p>
         {region.eligibleAreaMm2 !== null && <p><span>Share of the {words(region.zone)} area</span>{n(region.weightedAreaMm2)} ÷ {n(region.eligibleAreaMm2)} mm² × 100 = <strong>{n(region.weightedDamagePercent, '%')}</strong></p>}
         {explanation.included && <><p><span>Marginal {words(region.zone)} subgrade effect</span>{Number.isFinite(region.scoreWithoutFinding) && Number.isFinite(region.scoreWithFinding) ? <>{n(region.scoreWithoutFinding)} without this region − {n(region.scoreWithFinding)} with it, × {n(finding.side === 'FRONT' ? policy.frontWeight : policy.backWeight)} = </> : null}<strong>{n(region.marginalSubgradeEffect, ' points')}</strong></p>
@@ -44,7 +44,7 @@ function FindingMeasurements({ finding, printLabel }) {
       <h4>{title(region.zone)} region</h4><dl className="rr-measurements">
         <div><dt>Measured area</dt><dd>{n(region.measurement?.areaMm2, ' mm²')}</dd></div>
         <div><dt>Measured pixels</dt><dd>{n(region.measurement?.pixelCount)}</dd></div>
-        <div><dt>Width × height</dt><dd>{n(region.measurement?.widthMm)} × {n(region.measurement?.heightMm, ' mm')}</dd></div>
+        <div><dt>Region bounds (W × H)</dt><dd>{n(region.measurement?.widthMm)} × {n(region.measurement?.heightMm, ' mm')}</dd></div>
       </dl>
     </article>)}
   </section>;
@@ -57,7 +57,7 @@ function FindingSummary({ finding, explanation, partial }) {
     <h3>{title(finding.defectType)}</h3>
     {regions.map((region, index) => <div className="rr-finding-facts" key={`${region.zone}:${index}`}>
       <span>{title(region.zone)}</span><dl><div><dt>Measured area</dt><dd>{n(region.areaMm2, ' mm²')}</dd></div>
-        <div><dt>Width × height</dt><dd>{n(region.widthMm)} × {n(region.heightMm, ' mm')}</dd></div>
+        <div><dt>Region bounds (W × H)</dt><dd>{n(region.widthMm)} × {n(region.heightMm, ' mm')}</dd></div>
         {!partial && <div><dt>Effect on unrounded grade</dt><dd>{n(region.marginalOverallEffect, ' points')}</dd></div>}</dl>
     </div>)}
     <p className="rr-help">{partial ? 'Measurements are saved. The overall grade awaits supported centering geometry.' : 'Each effect compares the grade with and without that region. Effects cannot be added together.'}</p>
@@ -190,7 +190,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
   const select = finding => {
     setSelected(previous => ({ id: finding.id, sequence: (previous?.sequence ?? 0) + 1 }));
     setActiveSide(finding.side); setPanelOpen(true);
-    if (expanded && expanded !== finding.side) setExpanded(finding.side);
+    setExpanded(finding.side);
   };
   useEffect(() => {
     if (typeof window === 'undefined' || !available) return;
@@ -251,7 +251,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
               {findingLink && <a href={findingLink}>Link to this finding</a>}
             </details>
           </> : <p className="rr-selection-prompt">{entries.length ? 'Select a number on the card. Follow its exact trace, size and grade effect here.' : partial ? 'No included damage findings. Centering and the overall grade remain unavailable.' : 'No included damage findings. Explore the saved borders and grade calculation.'}</p>}
-          <div className="rr-finding-pagination"><button type="button" disabled={!filtered.length} onClick={() => step(-1)}>Previous finding</button><button type="button" disabled={!filtered.length} onClick={() => step(1)}>Next finding</button></div>
+          <div className="rr-finding-pagination"><button type="button" title="Previous finding ( [ )" disabled={!filtered.length} onClick={() => step(-1)}>Previous finding</button><button type="button" title="Next finding ( ] )" disabled={!filtered.length} onClick={() => step(1)}>Next finding</button></div>
           <details className="rr-finding-index" open={!selectedFinding}><summary>All findings <span>{filtered.length}</span></summary>
             <div className="rr-filters"><label>Side<select aria-label="Filter findings by side" value={sideFilter} onChange={event => { setSideFilter(event.target.value); setSelected(null); }}>{['ALL', ...SIDES].map(side => <option key={side} value={side}>{side === 'ALL' ? 'Both sides' : title(side)}</option>)}</select></label><label>Category<select aria-label="Filter findings by category" value={categoryFilter} onChange={event => chooseCategory(event.target.value)}><option value="ALL">All categories</option>{CATEGORIES.map(category => <option key={category} value={category}>{title(category)}</option>)}</select></label></div>
             <ol className="rr-finding-list">{filtered.map(({ finding, number, label, categories }) => <li key={finding.id}><button type="button" aria-label={`${label} · ${words(finding.defectType)}`} disabled={!sideReady(finding.side)} aria-pressed={selected?.id === finding.id} onClick={() => select(finding)}><span className="rr-finding-number" aria-hidden="true">{number}</span><span><strong>{label} · {words(finding.defectType)}</strong><small>{categories.map(title).join(' · ') || 'No owned damage pixels'} · {machine ? 'Proposed' : 'Confirmed'}</small></span></button></li>)}</ol>

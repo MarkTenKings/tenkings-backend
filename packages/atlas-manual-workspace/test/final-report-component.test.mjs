@@ -420,10 +420,21 @@ test('clean comparison uses identical verified photograph and camera; blueprint 
  assert.deepEqual(clean.props.style,active.props.style);
  const images=all(clean,node=>node.type==='img');assert.equal(images.length,1);assert.equal(images[0].props.src,'blob:FRONT');
  assert.equal(all(clean,node=>node.type==='canvas'||node.type==='svg'||node.type==='button').length,0);
- assert.ok(f.has('15.1 mm trace'));assert.ok(f.has('not additive'));assert.ok(f.control('Front finding dimensions and grade effect'));
+ assert.ok(presentation.reportMarkedSpan(f.props.preview.review.report.findings[0]).mm>15.1);assert.ok(f.has('maximum marked span'));assert.ok(f.has('not additive'));assert.ok(f.control('Front finding dimensions and grade effect'));
  f.control('Zoom in').props.onClick();f.render();const changed=f.nodes(node=>node.props.className==='rr-plane');assert.deepEqual(changed[0].props.style,changed[1].props.style);
 });
 
 test('card identity is available directly from the inspection dock',()=>{
  const f=harness();f.click('Card details');assert.ok(f.nodes(node=>node.props.className==='rr-inline-details').length);assert.ok(f.has('Synthetic report'));
+});
+
+
+test('rapid finding selection replaces the front/back pair with the selected side and its clean twin',()=>{
+ const props=fixture();props.inspectionMode='findings';const f=harness(props);f.ready();
+ assert.equal(f.control('Front report image').props.hidden,false);assert.equal(f.control('Back report image').props.hidden,false);
+ f.control('Inspect Back finding 1: visible whitening').props.onClick({stopPropagation(){}});f.render();
+ assert.equal(f.control('Front report image').props.hidden,true);assert.equal(f.control('Back report image').props.hidden,false);
+ const clean=f.control('Back clean close-up; same photograph, zoom and position');
+ assert.equal(all(clean,n=>n.type==='img')[0].props.src,'blob:BACK');
+ const active=f.control('Back report inspection');assert.deepEqual(all(active,n=>n.props.className==='rr-plane')[0].props.style,all(clean,n=>n.props.className==='rr-plane')[0].props.style);
 });
