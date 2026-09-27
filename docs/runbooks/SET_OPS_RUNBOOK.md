@@ -1,5 +1,7 @@
 # Set Ops Runbook
 
+ATLAS-only release checkpoint — 2026-09-27T09:19:58.455321+00:00: fixed rapid review and the exact approved voice are live from `851536b1368a90962cb4650eda7a8920d50bb2bb`. This release changed two private staff web-binding fields and three guarded ATLAS control rows, preserving all grading history and jobs. No Set Ops behavior, data, schema or permissions changed. Full release evidence is in the current Deploy Runbook and SESSION_LOG.
+
 last_verified_at: 2026-02-21
 owner: Mark
 
