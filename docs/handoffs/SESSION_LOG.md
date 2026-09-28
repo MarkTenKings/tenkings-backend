@@ -38592,3 +38592,59 @@ Immutable candidate040f95dd04670489127593600acb0a1009c8117595c776c9df796ca06e8cc
 ### 2026-09-28 — Linux qualification held by component test module loader; harness corrected
 
 First candidate had1089/1115JavaScript passes; all26 failures came from the same VM-based component test loader failing to resolve newly imported inspection-preview.mjs. All38Python cases passed and source/native pre/post checks confirmed unchanged bytes. No production deployment occurred. The actual Next/browser builds had already resolved this module successfully. Added the real preview module to the test loader, preserving assertions; all30final-report component cases now pass locally on Node20. No production-source change. Plan freeze a new test-corrected commit and rebuild/requalify with new contexts/receipts while retaining failed evidence. Existing app build/browser proofs remain applicable because only the test harness and handoff log changed.
+
+### 2026-09-28 — Planned test-corrected isolated Linux rebuild
+
+New immutable sourcea11ca928a51309b50457579b74c849404e004043 changes only component test import and log from64419234; production application source is identical. Fresh1002-file source manifest8896d58634bbaed09a488822491d7d033636c03e0730ef1870211a5a616e93b5, plane215e60388ba04a13bc10b94fedef66a0dc037152b4018bcec21f03d59725698. Repeat isolated network-none source build and full regression using new lossless-native-20260928-v2 directory, preserving prior failed evidence and all serving state. Provider/DB baseline reread confirms unchanged current release and no active work.
+
+### 2026-09-28 — Test-corrected Linux lossless candidate qualified
+
+Exacta11ca928 source/image7c0d812d passes1115/1115JavaScript and38Python tests, zero failures/cancellations/skips. Source/native verified before and after;16native artifacts preserved; existing containers unchanged; no network/production credentials/model requests. Native proof release-prep-v2/native-qualification-result.json. Staff/public builds and8browser cases remain valid against identical production source; frozen a11ca web CLI dry/preflight rosters both pass. Ready for staged staff/public release and separately guarded runtime/control cutover.
+
+
+### 2026-09-28T02:54:11.704Z — ATLAS lossless grading and progressive review images planned staged staff deployment
+
+Preparing exactly committed source a11ca928a51309b50457579b74c849404e004043 on the dedicated Vercel staff project with --prod --skip-domain. Verified clean frozen source roster, read-only CLI payload, successful staff production build, and unchanged provider project settings/environment values. Upload will create a staged candidate and may advance its generated team alias; canonical public routing remains pinned to the prior staff origin. No control rebind, private restart, homepage promotion, schema change or model call occurs in this staging action.
+
+
+### 2026-09-28T02:56:06.109Z — Staged staff READY; planned public candidate
+
+Provider confirms staff dpl_4RNFBCw19Ljdz1G8URfSnncPNTEj READY from exact a11ca928a51309b50457579b74c849404e004043. Canonical routing remains unchanged. Plan one public-project environment update: staff origin to https://atlas-grading-staff-ao2a82prx-ten-kings.vercel.app; customer origin unchanged. Then upload the same qualified frozen source as a production candidate with --skip-domain, preserving the exact live homepage subtree. No runtime restart or database control change in this action.
+
+### 2026-09-28 — Staged staff ready and cold runtime configuration verified
+
+Staff dpl_4RNFBCw19Ljdz1G8URfSnncPNTEj/atlas-grading-staff-ao2a82prx-ten-kings.vercel.app READY on exacta11ca928. Public candidate dpl_AFbaoxdA3KpQygyuykhdVzjBJhou is building; existing canonical routing unchanged. Candidate private config saved only, envSHAfc4373d2d7a2c1af7937276f77056fe11385ace76ee5f7d962a07d5c537dedd5; exact source cold constructors pass with zero DB/provider/worker calls and unchanged customer binding. Manual/staff/customer pools4/1/2; analysis64, execution20, geometry12, native12 unchanged. Serving runtime not yet restarted.
+
+
+### 2026-09-28T02:57:49.272604+00:00 — Planned ATLAS lossless grading and progressive review images production binding cutover
+
+Both Vercel candidates READY on exact a11ca928a51309b50457579b74c849404e004043; public candidate dpl_AFbaoxdA3KpQygyuykhdVzjBJhou and staff dpl_4RNFBCw19Ljdz1G8URfSnncPNTEj. Fresh SQL has zero active/queued batch, ingestion, geometry, identity and customer work; zero unsettled accepted model requests. Plan gracefully stop the current dedicated private container and recreate with the qualified new immutable image sha256:7c0d812d0ea7dff9b22d88432a46f74e3657947e2cad458c834b2ee80d1ccfeb from a11ca928a51309b50457579b74c849404e004043, preserving native artifacts and security/resource/network profile, and changing only two staff web-release environment fields. Cold network-none constructors agree on new staff binding; customer binding remains d4a. Retain old stopped container for rollback and existing125s replay boot fence. Then guarded compare-and-swap of precisely StaffControl, STAFF SmsPilotControl and PublicReaderControl, with all23 grading history tables compared before/after. No migration execution, grant changes, job mutations or model requests. After readiness and three signed read-only probes, promote public candidate once and verify canonical routes. Brief private unavailability during restart is expected.
+
+
+### 2026-09-28T02:57:57.457041+00:00 — Runtime restarted with UI binding; three control rows updated
+
+New container d3d99b4f7c7df96abc7d16f2ba14faf2aa58080740bc6873706b92d366cbf252 uses qualified private image sha256:7c0d812d0ea7dff9b22d88432a46f74e3657947e2cad458c834b2ee80d1ccfeb and source a11ca928a51309b50457579b74c849404e004043 with the same staff web binding, same isolation and resource limits, restart0. Prior container stopped gracefully/exit0 and retained; unrelated containers preserved. The existing125s replay fence is active before service load. Three-row guarded control transaction passed: staff revision44, public24, STAFF SMS42; customer controls unchanged. All23 grading-history table counts/hashes and51 existing job records exactly preserved. Canonical promotion waits for source-bound readiness and signed transport checks.
+
+
+### 2026-09-28T03:01:38.176Z — Runtime transport qualified; planned canonical promotion
+
+Same private runtime generation is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_AFbaoxdA3KpQygyuykhdVzjBJhou, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-28T03:01:41.261Z — ATLAS lossless grading and progressive review images canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_AFbaoxdA3KpQygyuykhdVzjBJhou, source a11ca928a51309b50457579b74c849404e004043. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+### 2026-09-28T03:02:02.520Z — Lossless release live and verified
+
+Current ATLAS lossless grading and progressive inspection release — verified 2026-09-28T03:02:02.520Z: source `a11ca928a51309b50457579b74c849404e004043` is live on staff `dpl_4RNFBCw19Ljdz1G8URfSnncPNTEj` (`atlas-grading-staff-ao2a82prx-ten-kings.vercel.app`), public `dpl_AFbaoxdA3KpQygyuykhdVzjBJhou` (`atlas-grading-public-91ezlxi4i-ten-kings.vercel.app`), and the private processor. All four public aliases select this release. The approved homepage from 229485b and customer deployment `dpl_2bUeFNMvvdkEDXjpJcWYRSpiHMmG` from d4a remain unchanged. Earlier checkpoints below are historical.
+
+New preparations use `atlas-prepared-lossless-webp-v1`: lossless WebP preserves every prepared 8-bit pixel at the unchanged 1350×1858 inspection / 1270×1778 card dimensions. ASTRA decodes these exact canonical images into its existing PNG/crop inputs; staff approval and customer reports bind the same canonical hashes. This does not add original-resolution pixels or restore detail from historical lossy files. Existing prepared/approved reports retain their exact prior images and grades; no automatic regrade or replacement of their approved images occurred.
+
+Staff and public inspection can show a separate 558×768 JPEG preview while the full canonical image downloads and verifies. The preview is bound to its source image hash, outside the immutable grade packet, and cannot enable overlays, editing or approval. Public reports obtain 120-second grants for the exact approved objects and fetch from the existing private Spaces origin with verified CORS/CSP, avoiding the webpage server's binary response limit. Report-only rapid review skips original/reveal grants; adjustments request full editing images and handle pending narrower reads.
+
+Private image `sha256:7c0d812d0ea7dff9b22d88432a46f74e3657947e2cad458c834b2ee80d1ccfeb`, container `d3d99b4f7c7df96abc7d16f2ba14faf2aa58080740bc6873706b92d366cbf252` (`atlas-lossless-a11ca928a513`), started `2026-09-28T02:57:52.478516246Z`, zero restarts and no OOM kill. Protected config `/opt/atlas/lossless-release-20260928/candidate.docker.env` SHA256 `fc4373d2d7a2c1af7937276f77056fe11385ace76ee5f7d962a07d5c537dedd5`. Previous container 86072c80 is retained stopped with exit 0, restart disabled and network detached. Same 125-second boot fence, 14 CPU / 28 GiB resource profile, 16 native artifacts, database pools and capacities: analysis 64, execution 20, geometry 12, native 12. No schema, database grant or dependency changes. Controls Staff 44 / STAFFSMS 42 / Public 24; customer 15/13 and staff/public migration ledgers 58/112 unchanged. All 23 history-table fingerprints and 51 existing job records were preserved at cutover. Postflight confirms all existing history and jobs remain unchanged: 22 tables still match exactly; the geometry table retains its original 122 rows byte-for-byte and adds 71 cache entries under the new engine identity (65 READY, six NEEDS_REVIEW, no processing errors). This is ordinary geometry discovery, with no ASTRA runs or approval changes.
+
+Qualification: 1,115/1,115 Linux JavaScript and 38 Python tests pass, zero skips; 15 canonical outputs from local retained photographs have zero decoded-sample mismatches. Eight Chrome/WebKit progressive-display cases pass. Staff/public builds and CLI checks against the exact source pass. Canonical release checks preserve homepage, sign-in, bundles, approved report and audio; live Chrome/WebKit verifies both real approved photos through direct grants, exact hashes/dimensions and no browser errors. Authenticated staff workflow and physical-iPhone speed remain for Mark's acceptance, along with the six-card grading-quality comparison. No paid model tests or human approvals were performed.
+
+Comparison baseline at 2026-09-28T02:43:07 UTC retains 20 recent ASTRA runs (all have usage) and 35 batch records. Mark will recapture six previously graded physical cards after refreshing; their earlier grades remain the baseline. Join later runs by card/source/actions and retained dispatch/response times and token usage. Price costs from verified model/service-tier pricing or billing evidence. Higher original-resolution ASTRA-only testing remains a later experiment. Evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-lossless-release-20260928/release-prep-v2/web`; the prior candidate with a failed test-loader qualification is retained separately in `release-prep`. Release/control/promotion intents are consumed and must not be replayed.
