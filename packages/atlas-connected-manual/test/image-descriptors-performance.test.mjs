@@ -73,3 +73,11 @@ test('private-route fallback preserves exact hashes and does not mint external g
   assert.equal(result.FRONT.inspection.url, `/private/FRONT/inspection/${'a'.repeat(64)}`);
   assert.equal(result.BACK.original.sha256, 'a'.repeat(64));
 });
+
+test('report-only image scope avoids all original and reveal reads but retains source and final authority checks', async () => {
+  const f = fixture();
+  const result = await createImageDescriptors(f.dependencies)({ card: f.card, state: f.state, staff: {}, imageScope: 'inspection' });
+  assert.deepEqual(f.grants.sort(), ['BACK-inspection', 'FRONT-inspection']);
+  assert.equal(f.current, 2); assert.equal(f.sources.length, 2);
+  assert.deepEqual(Object.keys(result.FRONT), ['inspection']);
+});

@@ -10,9 +10,9 @@ const purpose = 'atlas-approved-manual-public-read-v1';
 function key(value) { requireBridge(Buffer.isBuffer(value) && value.length === 32, 'MANUAL_PUBLIC_CONFIGURATION_INVALID'); return value; }
 function selector(value) {
   keys(value, ['kind', 'token', 'version', 'side', 'findingId', ...(value.kind === 'PRESENTATION_IMAGE' ? ['presentationRevision'] : [])]);
-  requireBridge(['REPORT','IMAGE','TRACE','PRESENTATION_IMAGE'].includes(value.kind) && /^ar_[A-Za-z0-9_-]{24}$/.test(value.token)
+  requireBridge(['REPORT','IMAGE','IMAGE_ACCESS','TRACE','PRESENTATION_IMAGE'].includes(value.kind) && /^ar_[A-Za-z0-9_-]{24}$/.test(value.token)
     && (value.kind === 'REPORT' && value.version === null || Number.isSafeInteger(value.version) && value.version > 0 && value.version <= 2147483647)
-    && (value.kind === 'IMAGE' ? ['FRONT','BACK'].includes(value.side) : value.side === null)
+    && (['IMAGE','IMAGE_ACCESS'].includes(value.kind) ? ['FRONT','BACK'].includes(value.side) : value.side === null)
     && (value.kind === 'TRACE' ? typeof value.findingId === 'string' && value.findingId.length > 0 && value.findingId.length <= 180 : value.findingId === null),
   'MANUAL_PUBLIC_REQUEST_INVALID');
   if(value.kind === 'PRESENTATION_IMAGE') requireBridge(Number.isSafeInteger(value.presentationRevision) && value.presentationRevision > 0 && value.presentationRevision <= 2147483647, 'MANUAL_PUBLIC_REQUEST_INVALID');

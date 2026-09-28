@@ -23,6 +23,11 @@ export function approvedMediaHandler(kind) {
         try {
             const reader = runtime(req);
             if (kind === 'image') {
+                if (req.query.delivery === 'direct') {
+                    const result = await reader.imageAccess(selector);
+                    if (!result) return res.status(404).end();
+                    return req.method === 'HEAD' ? res.status(200).end() : res.status(200).json(result);
+                }
                 const result = req.method === 'HEAD' ? await reader.imageDescriptor(selector) : await reader.image(selector);
                 if (!result) return res.status(404).end();
                 res.setHeader('Content-Type', result.contentType ?? result.descriptor.contentType);

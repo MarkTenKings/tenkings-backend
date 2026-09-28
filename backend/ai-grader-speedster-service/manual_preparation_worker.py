@@ -18,6 +18,8 @@ from card_geometry import warp_to_card_map, warp_to_inspection_map
 from color_geometry import engine_error_result, propose_printed_frame, serialize_proposal
 from atlas_photo_geometry import POLICY_VERSION, propose_physical_outer
 from preparation_pixels import encode_webp, reveal_views
+from preparation_encoding import (LOSSLESS_SETTINGS, LEGACY_SETTINGS, PREVIEW_POLICY,
+                                  encode_lossless_webp, encode_inspection_preview)
 
 FULL_OUTPUT_CONTRACT = "atlas-preparation-full-v1"
 CORE_OUTPUT_CONTRACT = "atlas-preparation-core-v1"
@@ -58,13 +60,15 @@ def execute(request):
     require(request["matColor"] in ("BLACK", "WHITE", "MAGENTA"))
     output_contract = request.get("outputContract", FULL_OUTPUT_CONTRACT)
     require(output_contract in (FULL_OUTPUT_CONTRACT, CORE_OUTPUT_CONTRACT))
+    encoder_settings = request.get("encoderSettings", LOSSLESS_SETTINGS)
+    require(encoder_settings in (LOSSLESS_SETTINGS, LEGACY_SETTINGS), "PREPARATION_OUTPUT_INVALID")
     cv2.setNumThreads(1)
     image = checked_image(request)
     root = Path(__file__).resolve().parent
     identity = {
         "opencv": cv2.__version__, "numpy": np.__version__, "physicalProposalPolicy": POLICY_VERSION,
         "sources": {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in
-                    ("card_geometry.py", "color_geometry.py", "atlas_photo_geometry.py", "defect_math.py", "preparation_pixels.py")},
+                    ("card_geometry.py", "color_geometry.py", "atlas_photo_geometry.py", "defect_math.py", "preparation_pixels.py", "preparation_encoding.py")},
     }
     if request["mode"] == "PHYSICAL":
         return {"ok": True, "identity": identity, "proposal": color_proposal(image, request["matColor"], "PHYSICAL_OUTER")}
@@ -81,7 +85,7 @@ def execute(request):
         rasters.update(normalized=normalized, microDefect=micro, directional=directional)
     frames, output_bytes = {}, 0
     for name, raster in rasters.items():
-        encoded = encode_webp(raster)
+        encoded = encode_lossless_webp(raster) if encoder_settings == LOSSLESS_SETTINGS else encode_webp(raster)
         output_bytes += len(encoded)
         require(output_bytes <= request["limits"]["maxOutputBytes"], "PREPARATION_LIMIT")
         decoded = cv2.imdecode(np.frombuffer(encoded, np.uint8), cv2.IMREAD_UNCHANGED)
@@ -92,9 +96,20 @@ def execute(request):
         frames[name] = {"filename": filename, "sha256": hashlib.sha256(encoded).hexdigest(),
                         "byteCount": len(encoded), "mime": "image/webp", "width": raster.shape[1], "height": raster.shape[0],
                         "frameToDerivative": (transform if name == "rectified" else inspection_transform).reshape(-1).tolist()}
+    preview = None
+    if encoder_settings == LOSSLESS_SETTINGS:
+        encoded, (width, height), preview_transform = encode_inspection_preview(inspection, inspection_transform)
+        output_bytes += len(encoded)
+        require(output_bytes <= request["limits"]["maxOutputBytes"], "PREPARATION_LIMIT")
+        filename = "inspection-preview.jpg"
+        with (Path(request["outputDirectory"]) / filename).open("xb") as output:
+            output.write(encoded)
+        preview = {"filename": filename, "sha256": hashlib.sha256(encoded).hexdigest(), "byteCount": len(encoded),
+                   "mime": "image/jpeg", "width": width, "height": height, "frameToDerivative": preview_transform,
+                   "sourceSha256": frames["inspection"]["sha256"], "policyVersion": PREVIEW_POLICY}
     return {"ok": True, "identity": identity, "frames": frames, "outputContract": output_contract,
             "proposal": color_proposal(rectified, request["matColor"], "PRINTED_FRAME"),
-            "encoderSettings": {"format": "webp", "quality": 92, "sourceBitDepth": 8}}
+            "encoderSettings": encoder_settings, **({"inspectionPreview": preview} if preview else {})}
 
 
 if __name__ == "__main__":

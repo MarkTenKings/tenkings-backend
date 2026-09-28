@@ -5,7 +5,7 @@ import { createPhotoProcessor } from '@atlas/manual-intake/photo-processing';
 import { createManualRepository } from '@atlas/manual-service/repository';
 import { createManualWorkflow } from '@atlas/manual-workflow';
 import { createGeometryWorkspace, replaceGeometryImage, geometryBase, canDetectMissingPhysical } from '@atlas/manual-workspace/geometry-actions';
-import { proposePhysicalGeometry, prepareGeometry, describePreparationDerivative, adoptGeometryPreparation, adoptPhysicalGeometryProposal } from '@atlas/preparation-runtime';
+import { proposePhysicalGeometry, prepareGeometry, describePreparationDerivative, describePreparationPreview, adoptGeometryPreparation, adoptPhysicalGeometryProposal } from '@atlas/preparation-runtime';
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { createDetailsStore, gradingIdentity } from './details.mjs';
 import { createIdentification } from './identification.mjs';
@@ -103,7 +103,14 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
       const descriptor=describePreparationDerivative(result,name,photo,{id:`${result.id}:${name}`,object:{key:`${keyPrefix}/derived/${geometry.cardId}/preparation/${result.id}-${name}.webp`,versionId:null}});
       images[name]=await storage.writeDerivative({descriptor,frame:photo.frame,original:photo.original,decodePlan:photo.decodePlan,bytes:result.outputs[name].bytes});
     }
-    const value={frameId:result.frame.id,images,identity:result.identity,encoderSettings:result.encoderSettings},sourceHash=digest(JSON.stringify(value));
+    const preview=result.inspectionPreview;
+    let inspectionPreview;
+    if(preview){
+      const descriptor=describePreparationPreview(result,photo,{id:`${result.id}:inspection-preview`,object:{key:`${keyPrefix}/derived/${geometry.cardId}/preparation/${result.id}-inspection-preview.jpg`,versionId:null}});
+      inspectionPreview={policyVersion:preview.policyVersion,sourceSha256:preview.sourceSha256,
+        descriptor:await storage.writeDerivative({descriptor,frame:photo.frame,original:photo.original,decodePlan:photo.decodePlan,bytes:preview.bytes})};
+    }
+    const value={frameId:result.frame.id,images,identity:result.identity,encoderSettings:result.encoderSettings,...(inspectionPreview?{inspectionPreview}:{})},sourceHash=digest(JSON.stringify(value));
     const ref=await artifacts.write(value,{cardId:geometry.cardId,kind:'PREPARED_IMAGES',sourceHash});
     return {geometry:adoptGeometryPreparation(geometry,result).state,source:{...source,prepared:{...source.prepared,[side]:{ref,sourceHash}}}};
   }

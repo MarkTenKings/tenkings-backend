@@ -7,6 +7,8 @@ import { descriptorSha256, parseDecodedFrame, parseDerivative } from '@atlas/pho
 import { applyPreparedFrame, geometryBase, parseGeometryWorkspace, preparationBase } from '@atlas/manual-workspace/geometry-actions';
 import { aborted, PreparationError, runPreparationWorker } from './process.mjs';
 import { hashOwnedBytes } from './hash-bytes.mjs';
+import { PREPARATION_LOSSLESS_SETTINGS, PREPARATION_LEGACY_SETTINGS, sameEncoder, readInspectionPreview } from './encoding.mjs';
+export { describePreparationPreview, PREPARATION_LOSSLESS_SETTINGS, PREPARATION_LEGACY_SETTINGS, INSPECTION_PREVIEW_POLICY } from './encoding.mjs';
 
 export { PreparationError };
 export { preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry, prepareDeferredPhotoReveals } from './photo-preparation.mjs';
@@ -17,7 +19,6 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const worker = fileURLToPath(new URL('../../../backend/ai-grader-speedster-service/manual_preparation_worker.py', import.meta.url));
 const NAMES = ['rectified', 'inspection', 'normalized', 'microDefect', 'directional'];
 const requireThat = (value, code = 'PREPARATION_INVALID') => { if (!value) throw new PreparationError(code); };
-const equal = (a, b) => descriptorSha256(a) === descriptorSha256(b);
 
 function checkSource(workspace, side, source) {
   const state = parseGeometryWorkspace(workspace), slot = state.sides[side];
@@ -60,6 +61,7 @@ async function run(mode, { workspace, side, source, limits: limitValue, pythonEx
     const id = descriptorSha256({ ...binding, identity: result.identity, proposal: result.proposal });
     requireThat(!aborted(signal), 'PREPARATION_CANCELLED');
     if (mode === 'PHYSICAL') return { ...binding, id, identity: result.identity, proposal: result.proposal };
+    requireThat(sameEncoder(result.encoderSettings, PREPARATION_LOSSLESS_SETTINGS), 'PREPARATION_OUTPUT_INVALID');
     requireThat(result.outputContract === PREPARATION_FULL_V1 && result.frames && Object.keys(result.frames).length === NAMES.length
       && NAMES.every(name => Object.hasOwn(result.frames, name)), 'PREPARATION_OUTPUT_INVALID');
     const outputs = {};
@@ -76,6 +78,7 @@ async function run(mode, { workspace, side, source, limits: limitValue, pythonEx
       requireThat(await hashOwnedBytes(data, signal) === output.sha256, 'PREPARATION_OUTPUT_INVALID');
       outputs[name] = { ...output, bytes: data };
     }
+    const inspectionPreview = await readInspectionPreview(result, directory, { total, maxOutputBytes: limits.maxOutputBytes, signal });
     requireThat(!aborted(signal), 'PREPARATION_CANCELLED');
     const prepared = { id: `prepared-${id}`, version: state.sides[side].preparationRevision + 1,
       rectified: { sha256: outputs.rectified.sha256, width: 1270, height: 1778 },
@@ -85,7 +88,7 @@ async function run(mode, { workspace, side, source, limits: limitValue, pythonEx
     // an adoptable frame. This does not persist or change the supplied workspace.
     applyPreparedFrame(state, { side, base, frame: prepared });
     return { ...binding, id, identity: result.identity, proposal: result.proposal,
-      frame: prepared, encoderSettings: result.encoderSettings, outputContract: PREPARATION_FULL_V1, outputs };
+      frame: prepared, encoderSettings: result.encoderSettings, outputContract: PREPARATION_FULL_V1, outputs, inspectionPreview };
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
@@ -99,7 +102,8 @@ export function describePreparationDerivative(result, name, source, { id, object
   const frame = parseDecodedFrame(source.frame, source.original, source.decodePlan), output = result.outputs[name];
   requireThat(output && result.frameDescriptorSha256 === descriptorSha256(frame)
     && output.bytes.byteLength === output.byteCount && hash(output.bytes) === output.sha256, 'PREPARATION_SOURCE_MISMATCH');
-  requireThat(equal(result.encoderSettings, { format: 'webp', quality: 92, sourceBitDepth: 8 }), 'PREPARATION_OUTPUT_INVALID');
+  requireThat(sameEncoder(result.encoderSettings, PREPARATION_LOSSLESS_SETTINGS)
+    || sameEncoder(result.encoderSettings, PREPARATION_LEGACY_SETTINGS), 'PREPARATION_OUTPUT_INVALID');
   return parseDerivative({ schemaVersion: 1, kind: 'derivative', id,
     purpose: name === 'rectified' || name === 'inspection' ? name : 'reveal',
     originalDescriptorSha256: frame.originalDescriptorSha256, frameDescriptorSha256: descriptorSha256(frame),

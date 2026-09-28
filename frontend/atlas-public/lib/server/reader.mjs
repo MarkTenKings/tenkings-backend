@@ -8,6 +8,7 @@ import { encodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitm
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 import { parseReportPresentation } from '@atlas/report-view/presentation-contract';
+import { parseInspectionAccess } from '@atlas/service-bridge/inspection-access';
 
 export class PublicReportReader {
     constructor(client, config, media = null, manual = null) { if (!client && (!manual || media)) unavailable(); this.client = client; this.config = config; this.media = media; this.manual = manual; }
@@ -73,6 +74,13 @@ export class PublicReportReader {
         if (bytes.length !== selected.descriptor.byteCount || digest(bytes) !== selected.descriptor.sha256
             || canonical(await this.imageDescriptor(selector)) !== canonical(selected)) unavailable();
         return { bytes, contentType: selected.descriptor.contentType };
+    }
+    async imageAccess({ token, version, side }) {
+        if (!this.manual || !version || !['FRONT', 'BACK'].includes(side)) return null;
+        const found = await this.manual.read({ kind: 'IMAGE_ACCESS', token, version, side, findingId: null });
+        // The private reader verifies the immutable approved packet and its
+        // exact media, then rechecks current publication authority before reply.
+        return found ? parseInspectionAccess(found, { publicToken: token, approvalVersion: version, side }) : null;
     }
     async trace({ token, version, findingId }) {
         if (!version || typeof findingId !== 'string' || findingId.length < 1 || findingId.length > 180) return null;

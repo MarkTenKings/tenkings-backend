@@ -6,6 +6,7 @@ import ApprovedPhotographs from '../../components/ApprovedPhotographs';
 import { publicHeaders, reportSelector } from '../../lib/server/policy.mjs';
 import { runtime } from '../../lib/server/runtime.mjs';
 import { ApprovedReportView } from '@atlas/manual-workspace/report-review';
+import { useInspectionImages } from '../../components/useInspectionImages.mjs';
 export async function getServerSideProps(ctx) {
     publicHeaders(ctx.res);
     let selector;
@@ -17,13 +18,11 @@ export async function getServerSideProps(ctx) {
     } catch { ctx.res.statusCode = 503; return { props: { unavailable: true } }; }
 }
 export default function Report({ packet, publicHash, explanation, presentation, unavailable }) {
+    const images = useInspectionImages(packet, publicHash);
     if (unavailable) return <main className="public-page"><Head><title>ATLAS · Report unavailable</title></Head><Link className="atlas-brand" href="/" aria-label="ATLAS home"><img src="/brand/atlas-grading-logo.png" alt="ATLAS · Know what you have"/></Link><h1>This report is temporarily unavailable.</h1><p className="muted">Please try this link again later.</p></main>;
     const { identity } = packet.report;
     if (packet.version === 'atlas-public-manual-report-v2') {
         const path = `/reports/${packet.publicToken}?v=${packet.approvalVersion}`;
-        const images = Object.fromEntries(['FRONT','BACK'].map(side => [side, { inspection: {
-            url: `/api/reports/${packet.publicToken}/images/${side}?v=${packet.approvalVersion}`,
-            sha256: packet.images[side].sha256, byteCount: packet.images[side].byteCount } }]));
         return <main className="public-manual-report"><Head><title>{`${identity.playerName ?? identity.cardName} · ${packet.reportNumber} · ATLAS`}</title><meta name="robots" content="noindex,nofollow"/></Head>
             {packet.mode === 'LOCAL_FIXTURE' && <div className="demo-notice">SYNTHETIC DEMONSTRATION · This is not a physical card grade.</div>}
             <ApprovedReportView report={packet.report} explanation={explanation} images={images} geometry={packet.geometry} brandSrc="/brand/atlas-grading-logo.png" presentation={presentation}

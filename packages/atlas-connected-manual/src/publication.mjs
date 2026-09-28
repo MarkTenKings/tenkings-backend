@@ -2,6 +2,7 @@ import { digest, canonical, requireThat } from '@atlas/manual-service/contract';
 import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 import { parseGeometryWorkspace, geometryStatus } from '@atlas/manual-workspace/geometry-actions';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
+import { inspectionPreviewMedia } from './inspection-preview.mjs';
 import { approvedPublicationSource, publicationStatus } from './publication-repository.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
@@ -76,7 +77,9 @@ export function createManualPublication({ repository, artifacts, storage, readSo
         requireThat(found.bytes.length === content.byteCount && digest(found.bytes) === content.sha256
           && content.sha256 === full.inspection[side.toLowerCase()].imageSha256, 503, 'MANUAL_PUBLICATION_IMAGE_MISMATCH');
         images[side] = { sha256: content.sha256, byteCount: content.byteCount, width: dimensions.width, height: dimensions.height, contentType: content.mime };
-        privateMedia[side] = media;
+        const preview = inspectionPreviewMedia(prepared.inspectionPreview, descriptor, photo);
+        if (preview) await storage.readDerivative({ ...media, descriptor: preview.descriptor, signal });
+        privateMedia[side] = { ...media, ...(preview ? { inspectionPreview: preview } : {}) };
       }
       const packet = projectApprovedManualReport({ row, approval, full, geometry, images });
       const saved = await store(cardId, 'PUBLIC_REPORT', packet, signal);

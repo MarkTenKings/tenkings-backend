@@ -6,6 +6,7 @@ import { geometryProcessingSettings } from './geometry-processing.mjs';
 import { applyGeometryEdit, geometryBase, preparationBase } from '@atlas/manual-workspace/geometry-actions';
 import { machineGeometryCandidate, MACHINE_GEOMETRY_POLICY } from './machine-geometry.mjs';
 import { preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry, describePreparationDerivative,
+  describePreparationPreview,
   adoptPhysicalGeometryProposal, adoptGeometryPreparation, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1,
   preparationOutputNames } from '@atlas/preparation-runtime';
 
@@ -130,8 +131,17 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
         images[name] = await storage.writeDerivative({ descriptor, frame: source.frame, original: source.original,
           decodePlan: source.decodePlan, bytes: output.bytes, signal });
       }
-      const { outputs, ...metadata } = prepared;
+      let inspectionPreview;
+      if (prepared.inspectionPreview) {
+        const descriptor = describePreparationPreview(prepared, source, { id: `${prepared.id}:inspection-preview`,
+          object: { key: `${keyPrefix}/derived/${input.cardId}/preparation/${prepared.id}-inspection-preview.jpg`, versionId: null } });
+        inspectionPreview = { policyVersion: prepared.inspectionPreview.policyVersion, sourceSha256: prepared.inspectionPreview.sourceSha256,
+          descriptor: await storage.writeDerivative({ descriptor, frame: source.frame, original: source.original,
+            decodePlan: source.decodePlan, bytes: prepared.inspectionPreview.bytes, signal }) };
+      }
+      const { outputs, inspectionPreview: previewBytes, ...metadata } = prepared;
       const value = { frameId: prepared.frame.id, images, identity: prepared.identity, encoderSettings: prepared.encoderSettings,
+        ...(inspectionPreview ? { inspectionPreview } : {}),
         outputContract: PREPARATION_CORE_V1, deferredReveals: { outputContract: PREPARATION_REVEALS_V1,
           workingFrame: source.frame, preparation: metadata } };
       const sourceHash = digest(JSON.stringify(value));

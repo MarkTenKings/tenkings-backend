@@ -4,7 +4,7 @@ import { readManualResponse } from '@atlas/manual-service/response';
  * A missing response retries/reconciles the SAME action ID and exact payload;
  * it never treats an unobserved save as success or invents a second action.
  */
-export function createManualClient({ cardId, staffId, csrf, storage, basePath = '', timeoutMs = 45000, fetchImpl = fetch, onView = () => {}, onStatus = () => {} }) {
+export function createManualClient({ cardId, staffId, csrf, storage, basePath = '', timeoutMs = 45000, fetchImpl = fetch, onView = () => {}, onStatus = () => {}, imageScope = () => 'all' }) {
   if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>240000)throw new Error('Invalid request deadline');
   if (!/^\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+$/.test(basePath) && basePath !== '') throw new Error('Invalid staff mount');
   const path = `${basePath}/api/staff/manual/cards/${cardId}`, key = `atlas-manual-pending:v1:${basePath ? `${basePath}:` : ''}${staffId}:${cardId}`;
@@ -22,7 +22,7 @@ export function createManualClient({ cardId, staffId, csrf, storage, basePath = 
       signal: AbortSignal.timeout(timeoutMs) });
     return readManualResponse(response);
   }
-  async function load() { view = await request(`${path}/view`); onView(view); return view; }
+  async function load() { view = await request(`${path}/view${imageScope() === 'inspection' ? '?images=inspection' : ''}`); onView(view); return view; }
   async function finish(command) { await load(); clearPending(command); onStatus('Saved'); return view; }
   async function reconcile(command) {
     const found = await request(`${path}/actions/${command.actionId}`);

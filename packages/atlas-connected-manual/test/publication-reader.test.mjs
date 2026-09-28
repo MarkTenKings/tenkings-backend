@@ -6,7 +6,7 @@ import { signManualPublicRequest,MANUAL_PUBLIC_ORIGIN,MANUAL_PUBLIC_PATH } from 
 import { createApprovedManualReader,createManualPublicHandler } from '../src/publication-reader.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 const config={manualKey:Buffer.alloc(32,7),manualOrigin:MANUAL_PUBLIC_ORIGIN,deploymentId:'approved-fixture.vercel.app',releaseSha:'a'.repeat(40),configHash:'b'.repeat(64)};
-async function setup(){const f=await publicationFixture();await f.publication.publish({},f.cardId,f.actionId);let reads=0,disabled=false;
+async function setup(options){const f=await publicationFixture(options);await f.publication.publish({},f.cardId,f.actionId);let reads=0,disabled=false;
  const client={$transaction:async fn=>fn({$queryRawUnsafe:async(sql,...args)=>{reads++;assert.equal(sql,'SELECT * FROM atlas_manual.read_publication($1::text,$2::integer,$3::text,$4::text,$5::text)');assert.equal(args[0],f.row.public_token);return disabled?[]:[f.row];}})};
  const reader=createApprovedManualReader({client,artifacts:f.artifacts,storage:f.storage});const claims=kind=>({request:{kind,token:f.row.public_token,version:1,side:kind==='IMAGE'?'FRONT':null,findingId:kind==='TRACE'?f.full.findings[0].id:null},expiresAt:Date.now()+30000,deploymentId:config.deploymentId,releaseSha:config.releaseSha,configHash:config.configHash});
  return {...f,reader,claims,disable(){disabled=true;},get reads(){return reads;}};
@@ -21,6 +21,19 @@ test('reader rejects byte corruption and control revocation during slow media hy
  const f=await setup();f.corruptBytes();await assert.rejects(f.reader.read(f.claims('IMAGE')),{code:'MANUAL_PUBLICATION_IMAGE_MISMATCH'});
  const g=await setup(),original=g.storage.readDerivative;g.storage.readDerivative=async args=>{const result=await original(args);g.disable();return result;};
  await assert.rejects(g.reader.read(g.claims('IMAGE')),{code:'MANUAL_PUBLICATION_CHANGED'});
+});
+
+test('direct access grants only the exact approved image and rechecks revocation before returning', async()=>{
+ const f=await setup(); let calls=0;
+ f.storage.createDerivativeRead=async({descriptor,expiresIn})=>{calls++;assert.equal(expiresIn,120);const c=descriptor.raster.content;
+   return {url:'https://atlas-grading-private-20260910.nyc3.digitaloceanspaces.com/approved?signature=fixture',sha256:c.sha256,byteCount:c.byteCount,mime:c.mime};};
+ const claims=f.claims('IMAGE');claims.request.kind='IMAGE_ACCESS';
+ const result=JSON.parse((await f.reader.read(claims)).bytes);
+ assert.equal(result.image.sha256,f.geometry.sides.FRONT.prepared.frame.inspection.sha256);
+ assert.equal(result.publicHash,f.row.public_hash);assert.equal(result.side,'FRONT');assert.equal(calls,1);
+ const original=f.storage.createDerivativeRead;
+ f.storage.createDerivativeRead=async input=>{const value=await original(input);f.disable();return value;};
+ await assert.rejects(f.reader.read(claims),{code:'MANUAL_PUBLICATION_CHANGED'});
 });
 test('real HTTP bridge authenticates once, refuses replay and isolates malformed or oversized bodies',async t=>{
  let calls=0;const handler=createManualPublicHandler({key:config.manualKey,reader:{async read(){calls++;return {contentType:'application/json',bytes:Buffer.from('{}')};}}});
@@ -45,3 +58,12 @@ test('private host mounts the dedicated public reader without staff authenticati
  const refused=await send(MANUAL_PUBLIC_PATH,'','',{'x-test-refusal':'1'});assert.equal(refused.status,503);assert.equal(refused.headers.connection,'close');assert.equal(refused.body.includes('private secret'),false);
  assert.equal(staffCalls,0);assert.equal(reads,1);
 });
+
+ test('publication carries a separate source-bound preview into direct access without changing approved images',async()=>{
+ const f=await setup({withPreview:true});const claims=f.claims('IMAGE');claims.request.kind='IMAGE_ACCESS';const purposes=[];
+ f.storage.createDerivativeRead=async({descriptor})=>{purposes.push(descriptor.purpose);return {url:'https://atlas-grading-private-20260910.nyc3.digitaloceanspaces.com/'+descriptor.purpose,...descriptor.raster.content};};
+ const value=JSON.parse((await f.reader.read(claims)).bytes);assert.deepEqual(purposes,['inspection','preview']);
+ assert.equal(value.image.preview.sourceSha256,value.image.sha256);assert.equal(value.image.preview.width,558);
+ const report=JSON.parse((await f.reader.read(f.claims('REPORT'))).bytes);assert.equal(report.packet.images.FRONT.preview,undefined);
+ assert.equal(report.packet.images.FRONT.sha256,value.image.sha256);assert.equal(report.publicHash,value.publicHash);
+ });

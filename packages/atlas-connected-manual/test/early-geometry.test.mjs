@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '@atlas/manual-service/contract';
 import { descriptorSha256 } from '@atlas/photo-core';
-import { PREPARATION_CORE_V1, PREPARATION_REVEALS_V1 } from '@atlas/preparation-runtime';
+import { PREPARATION_CORE_V1, PREPARATION_REVEALS_V1, PREPARATION_LOSSLESS_SETTINGS, INSPECTION_PREVIEW_POLICY } from '@atlas/preparation-runtime';
 import { createManualArtifactStore } from '@atlas/manual-service/artifacts';
 import { createPhotoProcessor } from '@atlas/manual-intake/photo-processing';
 import { createGeometryWorkspace, applyGeometryEdit, geometryBase } from '@atlas/manual-workspace/geometry-actions';
@@ -151,6 +151,7 @@ for (const proposalKind of ['accepted', 'provisional ambiguous', 'missing printe
       return { filename: `${name}.webp`, mime: 'image/webp', bytes, byteCount: bytes.length, sha256: sha(bytes), width, height,
         frameToDerivative: name === 'rectified' ? transform : [141, 0, -171.5, 0, 138.828125, -182.125, 0, 0, 1] }; };
     const outputs = { rectified: output('rectified', 1270, 1778), inspection: output('inspection', 1350, 1858) };
+    const previewBytes = Buffer.from('fixture-jpeg-preview'), hasPreview = proposalKind === 'accepted';
     return { id: 'core-result', frameDescriptorSha256: descriptorSha256(input.source.frame), identity: identity.identity,
       outputContract: PREPARATION_CORE_V1, sourceQuad: input.quad, proposal: missingPrinted
         ? { mode: 'PRINTED_FRAME', outcome: 'NOT_APPLICABLE', authority: 'PROPOSER_ONLY', proposal: null, advisory: { code: 'NO_PRINTED_FRAME' } }
@@ -161,7 +162,10 @@ for (const proposalKind of ['accepted', 'provisional ambiguous', 'missing printe
           sideEvidence: Object.fromEntries(['top', 'right', 'bottom', 'left'].map(side => [side,
             { medianContrastDeltaE: 24, supportFraction: .8, sampleCount: 200, candidateCount: 2 }])) }
         : { outcome: 'ACCEPTED', proposal: quad },
-      encoderSettings: { format: 'webp', quality: 92, sourceBitDepth: 8 }, outputs,
+      encoderSettings: hasPreview ? PREPARATION_LOSSLESS_SETTINGS : { format: 'webp', quality: 92, sourceBitDepth: 8 }, outputs,
+      ...(hasPreview ? { inspectionPreview: { filename: 'inspection-preview.jpg', policyVersion: INSPECTION_PREVIEW_POLICY,
+        sourceSha256: outputs.inspection.sha256, bytes: previewBytes, sha256: sha(previewBytes), byteCount: previewBytes.length,
+        mime: 'image/jpeg', width: 558, height: 768, frameToDerivative: outputs.inspection.frameToDerivative } } : {}),
       frame: { id: 'prepared-core', version: 1, sourceToRectified: transform,
         rectified: { sha256: outputs.rectified.sha256, width: 1270, height: 1778 },
         inspection: { sha256: outputs.inspection.sha256, width: 1350, height: 1858, cardBounds: { x: 40, y: 40, width: 1270, height: 1778 } } } };
@@ -185,6 +189,14 @@ for (const proposalKind of ['accepted', 'provisional ambiguous', 'missing printe
     assert.deepEqual(manifest.deferredReveals.preparation.sourceQuad, quad);
     assert.deepEqual(manifest.deferredReveals.preparation, packet.preparation);
     assert.equal(manifest.deferredReveals.preparation.outputs, undefined);
+    assert.equal(manifest.deferredReveals.preparation.inspectionPreview, undefined);
+    if (proposalKind === 'accepted') {
+      assert.equal(manifest.inspectionPreview.policyVersion, INSPECTION_PREVIEW_POLICY);
+      assert.equal(manifest.inspectionPreview.sourceSha256, manifest.images.inspection.raster.content.sha256);
+      assert.equal(manifest.inspectionPreview.descriptor.purpose, 'preview');
+      assert.equal(manifest.inspectionPreview.descriptor.raster.content.mime, 'image/jpeg');
+      assert.deepEqual(Object.keys(manifest.inspectionPreview).sort(), ['descriptor', 'policyVersion', 'sourceSha256']);
+    } else assert.equal(manifest.inspectionPreview, undefined);
     const frame = photo.workingFrame;
     const geometry = createGeometryWorkspace({ cardId: f.cardId, profile: 'POKEMON', sides: {
       FRONT: { ...input.settings, image: { version: upload.version, originalSha256: photo.original.content.sha256,

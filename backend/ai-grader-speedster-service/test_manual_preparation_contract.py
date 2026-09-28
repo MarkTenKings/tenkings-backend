@@ -37,7 +37,10 @@ class ManualPreparationContractTest(unittest.TestCase):
                                            "outputContract": worker.CORE_OUTPUT_CONTRACT})
                 self.assertEqual(core["outputContract"], worker.CORE_OUTPUT_CONTRACT)
                 self.assertEqual(list(core["frames"]), ["rectified", "inspection"])
-                self.assertEqual(sorted(p.name for p in core_dir.iterdir()), ["inspection.webp", "rectified.webp"])
+                self.assertEqual(sorted(p.name for p in core_dir.iterdir()), ["inspection-preview.jpg", "inspection.webp", "rectified.webp"])
+                self.assertEqual(core["inspectionPreview"], expected["inspectionPreview"])
+                self.assertEqual(core["inspectionPreview"]["sourceSha256"], core["frames"]["inspection"]["sha256"])
+                self.assertEqual(core["encoderSettings"], worker.LOSSLESS_SETTINGS)
                 for name in core["frames"]:
                     self.assertEqual(core["frames"][name], expected["frames"][name])
                     self.assertEqual((core_dir / (name + ".webp")).read_bytes(), (full_mat_dir / (name + ".webp")).read_bytes())

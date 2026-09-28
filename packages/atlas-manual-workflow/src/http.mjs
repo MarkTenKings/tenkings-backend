@@ -14,7 +14,8 @@ export function createWorkflowHandler({ workflow, boundary, origin, assertReques
     if (!found) return ordinary(req, res);
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
     try {
-      await assertRequest(req); requireThat(url.origin === origin && !url.search);
+      await assertRequest(req); requireThat(url.origin === origin
+        && (!url.search || found[2] === 'view' && url.search === '?images=inspection'));
       const write = found[2] !== 'view';
       requireThat(req.method === (write ? 'POST' : 'GET'), 405, 'MANUAL_METHOD_NOT_ALLOWED');
       if (write) requireThat(req.headers.origin === origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')
@@ -27,7 +28,7 @@ export function createWorkflowHandler({ workflow, boundary, origin, assertReques
           workflow.hydrate(card), workflow.service.latestApproval(staff, found[1]),
         ]);
         const [images, extras] = await Promise.all([
-          imageDescriptors({ card, state, staff }),
+          imageDescriptors({ card, state, staff, imageScope: url.search ? 'inspection' : 'all' }),
           workspaceExtras ? workspaceExtras({ card, state, staff }) : {},
         ]);
         res.status(200).json({ card, ...state, images, approval, ...extras });

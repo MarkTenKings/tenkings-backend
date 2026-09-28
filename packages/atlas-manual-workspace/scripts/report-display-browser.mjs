@@ -1,0 +1,43 @@
+import { createRequire } from 'node:module';
+import { createServer } from 'node:http';
+import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
+import assert from 'node:assert/strict';
+const root=fileURLToPath(new URL('../',import.meta.url)),require=createRequire(import.meta.url);
+const {build}=require('esbuild');
+const {chromium,webkit}=process.env.ATLAS_BROWSER_RUNTIME ? createRequire(process.env.ATLAS_BROWSER_RUNTIME)('playwright') : require('playwright');
+const sharp=createRequire(resolve(root,'../atlas-photo-runtime/package.json'))('sharp');
+const output=process.env.ATLAS_BROWSER_EVIDENCE;
+assert(output?.startsWith('/'),'Set absolute ATLAS_BROWSER_EVIDENCE');await mkdir(output,{recursive:true});
+const full=process.env.ATLAS_INSPECTION_BROWSER_PHOTO?await readFile(process.env.ATLAS_INSPECTION_BROWSER_PHOTO):await sharp({create:{width:1350,height:1858,channels:3,background:'#dfc377'}}).webp({lossless:true}).toBuffer();
+const meta=await sharp(full).metadata();assert.equal(meta.width,1350);assert.equal(meta.height,1858);
+const preview=await sharp(full).resize(558,768).jpeg({quality:78}).toBuffer();
+const sha=b=>createHash('sha256').update(b).digest('hex');
+const descriptor={url:'/full.webp',sha256:sha(full),byteCount:full.length,preview:{url:'/preview.jpg',sha256:sha(preview),byteCount:preview.length,mime:'image/jpeg',width:558,height:768,sourceSha256:sha(full),policyVersion:'atlas-inspection-preview-v1'}};
+const contents=`import React,{useCallback,useState} from 'react';import {createRoot} from 'react-dom/client';import {ReportInspectionImage} from './src/ReportInspectionImage.jsx';
+const scenario=new URL(location.href).searchParams.get('scenario');const descriptor=${JSON.stringify(descriptor)};if(scenario==='legacy')delete descriptor.preview;if(scenario==='wrong-binding')descriptor.preview.sourceSha256='c'.repeat(64);window.events=[];window.start=performance.now();
+function App(){const [ready,setReady]=useState(false);const onReady=useCallback((side,value)=>{window.ready=value;window.events.push({side,ready:value,at:performance.now()-window.start});setReady(value);},[]);return <main className="rr-report"><button id="approve" disabled={!ready}>Approve grade</button><ReportInspectionImage side="FRONT" descriptor={descriptor} expectedHash={descriptor.sha256} findings={[]} selected={null} onSelect={()=>{}} onExpand={()=>{}} onReady={onReady} geometry={{}}/></main>;}createRoot(document.getElementById('app')).render(<App/>);`;
+const bundle=await build({stdin:{contents,resolveDir:root,loader:'jsx'},bundle:true,write:false,format:'esm',platform:'browser',define:{'process.env.NODE_ENV':'"production"'}});
+const css=await readFile(resolve(root,'src/report-review.css'));
+let waiting=[],corrupt=false,requests=[];
+const server=createServer((req,res)=>{requests.push(req.url);if(req.url==='/full.webp'){res.setHeader('Content-Type','image/webp');res.setHeader('Content-Length',full.length);waiting.push(()=>{const bytes=Buffer.from(full);if(corrupt)bytes[bytes.length-1]^=1;res.end(bytes);});}else if(req.url==='/preview.jpg'){res.setHeader('Content-Type','image/jpeg');res.setHeader('Content-Length',preview.length);res.end(preview);}else if(req.url==='/bundle.js'){res.setHeader('Content-Type','text/javascript');res.end(bundle.outputFiles[0].contents);}else if(req.url==='/style.css'){res.setHeader('Content-Type','text/css');res.end(css);}else{res.setHeader('Content-Type','text/html');res.end('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><div id="app"></div><script type="module" src="/bundle.js"></script>');}});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${server.address().port}`;const results=[];
+const release=()=>{for(const finish of waiting.splice(0))finish();};
+try{for(const [name,engine]of Object.entries({chromium,webkit})){const browser=await engine.launch({headless:true,...name==='chromium'&&process.env.ATLAS_CHROMIUM_CHANNEL?{channel:process.env.ATLAS_CHROMIUM_CHANNEL}:{}});try{for(const scenario of ['preview','legacy','wrong-binding','corrupt-full']){
+ requests=[];corrupt=scenario==='corrupt-full';const page=await browser.newPage({viewport:{width:390,height:844}});const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.route(/^https?:\/\//,route=>{assert.equal(new URL(route.request().url()).origin,origin);return route.continue();});
+ await page.goto(`${origin}/?scenario=${scenario}`);await page.waitForFunction(()=>window.ready===false);
+ if(['preview','corrupt-full'].includes(scenario))await page.waitForSelector('.rr-image-preview-status');
+ assert.equal(await page.locator('#approve').isDisabled(),true);assert.equal(await page.getByLabel('Front report zoom').isDisabled(),true);assert.equal(await page.locator('.rr-card-plane').count(),0);
+ const previewMs=await page.evaluate(()=>Math.round(performance.now()-window.start));
+ if(scenario==='preview')await page.screenshot({path:resolve(output,`${name}-preview.png`)});
+ if(scenario==='wrong-binding')assert(!requests.includes('/preview.jpg'));
+ const deadline=Date.now()+5000;while(!waiting.length&&Date.now()<deadline)await new Promise(r=>setTimeout(r,25));assert(waiting.length);release();
+ if(corrupt){await page.getByRole('button',{name:'Try again'}).waitFor();assert.equal(await page.locator('#approve').isDisabled(),true);assert.equal(await page.locator('.rr-card-plane').count(),0);corrupt=false;await page.getByRole('button',{name:'Try again'}).click();const until=Date.now()+5000;while(!waiting.length&&Date.now()<until)await new Promise(r=>setTimeout(r,25));assert(waiting.length);release();}
+ await page.waitForFunction(()=>window.ready===true);assert.equal(await page.locator('#approve').isDisabled(),false);
+ assert.equal(await page.locator('img[alt="Front saved inspection photograph"]').evaluate(img=>img.naturalWidth),1350);
+ await page.getByLabel('Front report zoom').selectOption('2');assert.equal(await page.getByLabel('Front report zoom').inputValue(),'2');
+ if(scenario==='preview')await page.screenshot({path:resolve(output,`${name}-lossless.png`)});
+ assert.deepEqual(errors,[]);results.push({engine:name,scenario,previewMs,fullReadyMs:await page.evaluate(()=>Math.round(performance.now()-window.start)),requests:[...requests],events:await page.evaluate(()=>window.events)});await page.close();
+ }}finally{await browser.close();}}await writeFile(resolve(output,'result.json'),JSON.stringify({pass:true,fullBytes:full.length,previewBytes:preview.length,results},null,2));console.log(JSON.stringify({pass:true,cases:results.length,fullBytes:full.length,previewBytes:preview.length,results:results.map(({events,requests,...r})=>r)}));}finally{release();server.closeAllConnections();await new Promise(r=>server.close(r));}

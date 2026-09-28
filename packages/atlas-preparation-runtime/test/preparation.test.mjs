@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { descriptorSha256 } from '@atlas/photo-core';
 import { describeDecodedFrame, verifyAndDecodePhoto } from '@atlas/photo-runtime';
 import { applyGeometryEdit, createGeometryWorkspace, geometryBase, updateGeometrySettings } from '@atlas/manual-workspace/geometry-actions';
 import { adoptGeometryPreparation, describePreparationDerivative, prepareGeometry, proposePhysicalGeometry,
   preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry, prepareDeferredPhotoReveals,
+  describePreparationPreview, PREPARATION_LOSSLESS_SETTINGS, PREPARATION_LEGACY_SETTINGS, INSPECTION_PREVIEW_POLICY,
   PREPARATION_FULL_V1, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1, preparationOutputNames } from '../src/index.mjs';
 import { runPreparationWorker } from '../src/process.mjs';
 import { hashOwnedBytes } from '../src/hash-bytes.mjs';
@@ -61,13 +63,15 @@ test('real CPU preparation yields exact canonical frames, source transform and a
   assert.deepEqual(result.state.sides.BACK, workspace.sides.BACK);
 });
 
-test('five encoded outputs match legacy warp, reveal and encoder functions byte for byte', async () => {
+test('all five lossless outputs decode to unchanged warp/reveal samples including expanded grayscale', async () => {
   const sourcePath = join(directory, 'decoded.png'); await writeFile(sourcePath, source.bytes);
   const service = fileURLToPath(new URL('../../../backend/ai-grader-speedster-service/', import.meta.url));
-  const script = `import sys,ast,json,hashlib\nfrom pathlib import Path\nimport cv2,numpy as np\nsys.path.insert(0,sys.argv[1])\nfrom card_geometry import warp_to_card_map,warp_to_inspection_map\ns=Path(sys.argv[1],'preparation_core.py').read_text();t=ast.parse(s)\nfor n in t.body:\n if isinstance(n,ast.FunctionDef) and n.name in ('reveal_views','encode_webp'):exec(ast.get_source_segment(s,n))\nimage=cv2.imread(sys.argv[2]);quad=np.float32(json.loads(sys.argv[3]))\nr,m=warp_to_card_map(image,quad);i,_=warp_to_inspection_map(image,quad);n,u,d=reveal_views(i)\nprint(json.dumps([hashlib.sha256(encode_webp(v)).hexdigest() for v in (r,i,n,u,d)]))\n`;
+  for (const [name, output] of Object.entries(prepared.outputs)) await writeFile(join(directory, `${name}.webp`), output.bytes);
+  const script = `import sys,json,hashlib\nfrom pathlib import Path\nimport cv2,numpy as np\nsys.path.insert(0,sys.argv[1])\nfrom card_geometry import warp_to_card_map,warp_to_inspection_map\nfrom preparation_pixels import reveal_views\nimage=cv2.imread(sys.argv[2]);quad=np.float32(json.loads(sys.argv[3]))\nr,m=warp_to_card_map(image,quad);i,_=warp_to_inspection_map(image,quad);n,u,d=reveal_views(i)\nfor name,expected in zip(['rectified','inspection','normalized','microDefect','directional'],[r,i,n,u,d]):\n expected=cv2.cvtColor(expected,cv2.COLOR_GRAY2BGR) if expected.ndim==2 else expected\n actual=cv2.imread(str(Path(sys.argv[4],name+'.webp')),cv2.IMREAD_UNCHANGED)\n assert actual.shape==expected.shape and actual.dtype==expected.dtype and np.array_equal(actual,expected),name\nprint('pass')\n`;
   const quad = fixture.FRONT.physical.map(p => [p.x*1200,p.y*1540]);
-  const expected = JSON.parse(execFileSync(python, ['-I','-c',script,service,sourcePath,JSON.stringify(quad)], { env: { PATH: process.env.PATH, OPENBLAS_NUM_THREADS: '1', OMP_NUM_THREADS: '1' } }));
-  assert.deepEqual(Object.values(prepared.outputs).map(output => output.sha256), expected);
+  assert.equal(execFileSync(python, ['-I','-c',script,service,sourcePath,JSON.stringify(quad),directory],
+    { encoding: 'utf8', env: { PATH: process.env.PATH, OPENBLAS_NUM_THREADS: '1', OMP_NUM_THREADS: '1' } }).trim(), 'pass');
+  assert.deepEqual(prepared.encoderSettings, PREPARATION_LOSSLESS_SETTINGS);
 });
 
 test('actual physical proposal uses the source frame and preserves its current geometry dependency base', async () => {
@@ -78,13 +82,15 @@ test('actual physical proposal uses the source frame and preserves its current g
   assert.ok(result.proposal.proposal.length === 4);
 });
 
-test('identity-independent preparation retains actual proposals and all five legacy pixel hashes', async () => {
+test('identity-independent preparation retains actual proposals and all five lossless image hashes', async () => {
   const engine = await preparationRuntimeIdentity(python);
   assert.equal(engine.identity.opencv, '4.10.0'); assert.ok(Object.keys(engine.native).length > 0);
   const options = { source, matColor: 'BLACK', limits, pythonExecutable: python, engine };
   const proposal = await proposePhotoGeometry(options), legacy = await proposePhysicalGeometry(input());
   assert.deepEqual(proposal.proposal, legacy.proposal);
-  const early = await preparePhotoGeometry({ ...options, quad: workspace.sides.FRONT.physical.quad });
+  const early = await preparePhotoGeometry({ ...options, quad: workspace.sides.FRONT.physical.quad,
+    encoderSettings: PREPARATION_LEGACY_SETTINGS });
+  assert.deepEqual(early.encoderSettings, PREPARATION_LOSSLESS_SETTINGS);
   assert.deepEqual(Object.values(early.outputs).map(o => o.sha256), Object.values(prepared.outputs).map(o => o.sha256));
   assert.deepEqual(early.frame.sourceToRectified, prepared.frame.sourceToRectified);
   assert.deepEqual(early.proposal, prepared.proposal);
@@ -92,7 +98,7 @@ test('identity-independent preparation retains actual proposals and all five leg
   await assert.rejects(proposePhotoGeometry({ ...options, engine: changed }), e => e.code === 'PREPARATION_ENGINE_CHANGED');
 });
 
-test('versioned core preparation preserves legacy core pixels, transforms and quality; lazy reveals preserve its analysis frame', async () => {
+test('versioned core preparation preserves canonical core bytes and transforms; lazy reveals preserve its analysis frame', async () => {
   const engine = await preparationRuntimeIdentity(python);
   const options = { source, matColor: 'BLACK', limits, pythonExecutable: python, engine };
   const core = await preparePhotoGeometry({ ...options, quad: workspace.sides.FRONT.physical.quad, outputContract: PREPARATION_CORE_V1 });
@@ -105,7 +111,7 @@ test('versioned core preparation preserves legacy core pixels, transforms and qu
   }
   assert.deepEqual(core.proposal, prepared.proposal);
   assert.deepEqual(core.frame.sourceToRectified, prepared.frame.sourceToRectified);
-  const { outputs, ...metadata } = core, before = structuredClone(metadata);
+  const { outputs, inspectionPreview, ...metadata } = core, before = structuredClone(metadata);
   const reveals = await prepareDeferredPhotoReveals({ ...options, prepared: metadata });
   assert.deepEqual(metadata, before);
   assert.equal(reveals.parentPreparationId, core.id);
@@ -162,6 +168,62 @@ test('every stored derivative binds actual bytes, current decoded source and exa
   }
   const altered = structuredClone(prepared); altered.outputs.rectified.bytes[10] ^= 1;
   assert.throws(() => describePreparationDerivative(altered,'rectified',source,{id:'r',object:{key:'prepared/r',versionId:null}}), error => error.code === 'PREPARATION_SOURCE_MISMATCH');
+});
+
+test('inspection context preview binds canonical lossless bytes and never enters canonical outputs', () => {
+  const preview = prepared.inspectionPreview;
+  assert.equal(preview.policyVersion, INSPECTION_PREVIEW_POLICY);
+  assert.equal(preview.sourceSha256, prepared.frame.inspection.sha256);
+  assert.equal(preview.mime, 'image/jpeg');
+  assert.deepEqual([preview.width, preview.height], [558, 768]);
+  assert.ok(preview.byteCount > 0 && preview.byteCount <= 1024 * 1024);
+  assert.ok(!Object.hasOwn(prepared.outputs, 'inspectionPreview'));
+  const destination = { id: 'preview', object: { key: 'prepared/preview.jpg', versionId: 'one' } };
+  const descriptor = describePreparationPreview(prepared, source, destination);
+  assert.equal(descriptor.purpose, 'preview');
+  assert.equal(descriptor.raster.content.sha256, sha(preview.bytes));
+  for (const change of [value => { value.inspectionPreview.sourceSha256 = 'a'.repeat(64); },
+    value => { value.inspectionPreview.bytes[8] ^= 1; }, value => { value.inspectionPreview.width = 769; },
+    value => { value.inspectionPreview.policyVersion = 'unknown'; },
+    value => { value.encoderSettings = PREPARATION_LEGACY_SETTINGS; }]) {
+    const bad = structuredClone(prepared); change(bad);
+    assert.throws(() => describePreparationPreview(bad, source, destination), e => e.code.startsWith('PREPARATION_'));
+  }
+});
+
+test('retained quality92 core regenerates exact historical reveals without replacing its frame or admitting it as new work', async () => {
+  const engine = await preparationRuntimeIdentity(python), historicalEngine = structuredClone(engine);
+  delete historicalEngine.identity.sources['preparation_encoding.py'];
+  delete historicalEngine.encodingAdapterSha256;
+  historicalEngine.workerSha256 = 'a'.repeat(64); historicalEngine.adapterSha256 = 'b'.repeat(64);
+  const outputDirectory = join(directory, 'legacy'); await mkdir(outputDirectory);
+  const inputPath = join(outputDirectory, 'input.png'); await writeFile(inputPath, source.bytes);
+  const quad = workspace.sides.FRONT.physical.quad;
+  const historical = await runPreparationWorker(python, fileURLToPath(new URL('../../../backend/ai-grader-speedster-service/manual_preparation_worker.py', import.meta.url)),
+    { mode: 'PREPARE', matColor: 'BLACK', quad, encoderSettings: PREPARATION_LEGACY_SETTINGS, outputContract: PREPARATION_FULL_V1,
+      inputPath, outputDirectory, source: { ...source.frame.raster.dimensions, ...source.frame.raster.content }, limits }, { timeoutMs: limits.timeoutMs });
+  assert.equal(historical.inspectionPreview, undefined);
+  const frameDescriptorSha256 = descriptorSha256(source.frame);
+  const id = descriptorSha256({ mode: 'PREPARE', matColor: 'BLACK', quad, frameDescriptorSha256, engine: historicalEngine,
+    proposal: historical.proposal, outputContract: PREPARATION_CORE_V1 });
+  const retained = { id, frameDescriptorSha256, identity: historicalEngine.identity, proposal: historical.proposal,
+    encoderSettings: PREPARATION_LEGACY_SETTINGS, outputContract: PREPARATION_CORE_V1, sourceQuad: quad,
+    frame: { ...structuredClone(prepared.frame), id: `prepared-${id}`, version: 1 } };
+  for (const name of ['rectified', 'inspection']) retained.frame[name].sha256 = historical.frames[name].sha256;
+  const before = structuredClone(retained), options = { source, matColor: 'BLACK', limits, pythonExecutable: python, engine: historicalEngine, prepared: retained };
+  const reveals = await prepareDeferredPhotoReveals(options);
+  assert.deepEqual(retained, before); assert.deepEqual(reveals.frame, retained.frame);
+  assert.deepEqual(reveals.encoderSettings, PREPARATION_LEGACY_SETTINGS);
+  assert.equal(reveals.inspectionPreview, undefined);
+  for (const name of ['normalized', 'microDefect', 'directional']) {
+    assert.deepEqual(reveals.outputs[name].bytes, await readFile(join(outputDirectory, `${name}.webp`)));
+    assert.equal(describePreparationDerivative(reveals, name, source, { id: name, object: { key: `history/${name}`, versionId: null } }).purpose, 'reveal');
+  }
+  const changed = structuredClone(retained); changed.frame.inspection.sha256 = 'c'.repeat(64);
+  await assert.rejects(prepareDeferredPhotoReveals({ ...options, prepared: changed }), e => e.code === 'PREPARATION_SOURCE_MISMATCH');
+  await assert.rejects(prepareDeferredPhotoReveals({ ...options, prepared: { ...retained, id: 'd'.repeat(64) } }), e => e.code === 'PREPARATION_SOURCE_MISMATCH');
+  await assert.rejects(preparePhotoGeometry({ source, matColor: 'BLACK', quad, limits, pythonExecutable: python, engine: historicalEngine }),
+    e => e.code === 'PREPARATION_ENGINE_CHANGED');
 });
 
 test('wrong bytes/side/frame, unsupported raster treatment and input/output bounds fail explicitly', async () => {

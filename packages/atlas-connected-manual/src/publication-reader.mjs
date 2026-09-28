@@ -6,6 +6,8 @@ import { MANUAL_PUBLIC_PATH, verifyManualPublicRequest } from '@atlas/service-br
 import { presentationRow } from './presentation-repository.mjs';
 import { parseReportPresentation } from '@atlas/report-view/presentation-contract';
 import { readApprovedIdentityDetails } from './presentation-identity.mjs';
+import { inspectionPreviewMedia, inspectionPreviewGrant } from './inspection-preview.mjs';
+import { parseInspectionAccess } from '@atlas/service-bridge/inspection-access';
 
 export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false, dealerOffers = null }) {
   async function presentation(row, token) {
@@ -67,6 +69,20 @@ export function createApprovedManualReader({ client, artifacts, storage, present
       result = { bytes: photo.bytes, contentType: descriptor.contentType };
       const current = await presentation(row, packet.publicToken);
       requireThat(current?.row.presentation_hash === extra.row.presentation_hash, 409, 'PRESENTATION_CHANGED');
+    }
+    else if (claims.request.kind === 'IMAGE_ACCESS') {
+      const media = await readArtifact(manifest.media, row, 'APPROVED_MEDIA', signal), side = claims.request.side;
+      const saved = media[side], descriptor = packet.images[side], expiresIn = 120;
+      const grant = await storage.createDerivativeRead({ ...saved, expiresIn, signal });
+      requireThat(grant.sha256 === descriptor.sha256 && grant.byteCount === descriptor.byteCount
+        && grant.mime === descriptor.contentType, 503, 'MANUAL_PUBLICATION_IMAGE_MISMATCH');
+      const image = { ...grant, width: descriptor.width, height: descriptor.height };
+      const preview = inspectionPreviewMedia(saved.inspectionPreview, saved.descriptor, saved);
+      if (preview) image.preview = inspectionPreviewGrant(preview,
+        await storage.createDerivativeRead({ ...saved, descriptor: preview.descriptor, expiresIn, signal }));
+      const access = parseInspectionAccess({ version: 'atlas-approved-image-access-v1', publicToken: packet.publicToken,
+        approvalVersion: packet.approvalVersion, publicHash: row.public_hash, side, image });
+      result = { contentType: 'application/json', bytes: Buffer.from(JSON.stringify(access)) };
     }
     else if (claims.request.kind === 'IMAGE') {
       const media = await readArtifact(manifest.media, row, 'APPROVED_MEDIA', signal), side = claims.request.side;

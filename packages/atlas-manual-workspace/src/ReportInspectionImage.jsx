@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
 import { useVerifiedImage } from './verified-image.mjs';
+import { reportInspectionPreview, inspectionLoadingText } from './inspection-preview.mjs';
 import { INSPECTION_SIZE, fitInspectionScale, clampInspectionPan, zoomInspectionAt,
   resizeInspectionView, focusInspectionBounds, canonicalInspectionPoint } from './inspection-viewport.mjs';
 import { reportFindingAt, reportFindingBounds, reportFindingMask, reportFindingRegions,
@@ -83,6 +84,10 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
   const supplied = descriptor?.sha256 === expectedHash && descriptor?.url ? descriptor : null;
   const image = useVerifiedImage(supplied), [loaded, setLoaded] = useState(null);
   const ready = Boolean(supplied && image.url && loaded === image.url);
+  const previewDescriptor = reportInspectionPreview(descriptor, expectedHash);
+  const preview = useVerifiedImage(previewDescriptor), [previewLoaded, setPreviewLoaded] = useState(null);
+  const previewReady = Boolean(preview.url && previewLoaded === preview.url);
+  const retryImage = () => { setLoaded(null); descriptor?.retryAccess?.(); image.retry(); };
   const [view, setView] = useState({ zoom: 1, pan: { x: 0, y: 0 } }), [size, setSize] = useState({ width: 400, height: 540 });
   const sizeRef = useRef(size), viewport = useRef(null), plane = useRef(null), gesture = useRef(null);
   const pointers = useRef(new Map()), viewRef = useRef(view); viewRef.current = view;
@@ -207,8 +212,12 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
     <div className="rr-layer-tools" aria-label={`${name(side)} evidence layers`}>{[['physical', 'Card edge', physical], ['printed', 'Printed border', printed], ['centering', 'Centering guides', printed]].map(([key, label, available]) => <button key={key} type="button" aria-pressed={layers[key]} disabled={!ready || !available} onClick={() => setLayers(old => ({ ...old, [key]: !old[key] }))}>{label}</button>)}</div></>}
     <div className={`rr-synchronized-pair${cleanComparison && selectedBounds ? ' rr-show-clean' : ''}`}>
     <div className="rr-viewport" ref={viewport} tabIndex={0} role="group" aria-label={`${name(side)} report inspection`} onKeyDown={keyboard} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={cancelPointer} onLostPointerCapture={cancelPointer} onPointerLeave={() => setLens(null)}>
-      {image.url && <div className="rr-plane" ref={plane} data-transition={transition} style={{ width: INSPECTION_SIZE.width * scale * zoom, height: INSPECTION_SIZE.height * scale * zoom, transform: `translate(calc(-50% + ${view.pan.x}px), calc(-50% + ${view.pan.y}px))` }}>
-        <img src={image.url} alt={`${name(side)} saved inspection photograph`} draggable={false} onLoad={event => setLoaded(event.currentTarget.naturalWidth === INSPECTION_SIZE.width && event.currentTarget.naturalHeight === INSPECTION_SIZE.height ? image.url : 'INVALID_DIMENSIONS')} onError={() => setLoaded('IMAGE_ERROR')}/>
+      {(image.url || preview.url) && <div className="rr-plane" ref={plane} data-transition={transition} style={{ width: INSPECTION_SIZE.width * scale * zoom, height: INSPECTION_SIZE.height * scale * zoom, transform: `translate(calc(-50% + ${view.pan.x}px), calc(-50% + ${view.pan.y}px))` }}>
+        {!ready && preview.url && <img src={preview.url} alt={`${name(side)} preview; full detail is loading`} draggable={false}
+          style={{ position: 'absolute', inset: 0, visibility: previewReady ? 'visible' : 'hidden' }}
+          onLoad={event => setPreviewLoaded(event.currentTarget.naturalWidth === previewDescriptor?.width && event.currentTarget.naturalHeight === previewDescriptor?.height ? preview.url : null)}
+          onError={() => setPreviewLoaded(null)}/>}
+        {image.url && <img src={image.url} alt={`${name(side)} saved inspection photograph`} draggable={false} style={{ visibility: ready ? 'visible' : 'hidden' }} onLoad={event => setLoaded(event.currentTarget.naturalWidth === INSPECTION_SIZE.width && event.currentTarget.naturalHeight === INSPECTION_SIZE.height ? image.url : 'INVALID_DIMENSIONS')} onError={() => setLoaded('IMAGE_ERROR')}/>}
         {ready && <div className="rr-card-plane"><ReportMasks findings={findings} selected={selected?.id} visible={overlays}/>
           <svg viewBox="0 0 1270 1778" className="rr-geometry-layers" aria-hidden="true">
             {layers.physical && physical && <polygon className="rr-physical-line" points={physical.map(p => `${p.x * 1270},${p.y * 1778}`).join(' ')}/>}
@@ -225,7 +234,10 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
             onClick={event => { event.stopPropagation(); onSelect(finding); }}><span>{number}</span></button>)}
         </div>}
       </div>}
-      {!ready && <p className="rr-image-status" role="status">{!supplied ? 'This report’s saved photograph is unavailable.' : image.error || loaded === 'IMAGE_ERROR' ? 'Could not verify the saved photograph. Reload images to try again.' : loaded === 'INVALID_DIMENSIONS' ? 'The saved photograph has unexpected dimensions. Reload images before continuing.' : 'Loading verified photograph…'}</p>}
+      {!ready && <div className={`rr-image-status${previewReady ? ' rr-image-preview-status' : ''}`} role="status">
+        <span>{descriptor?.accessLoading ? 'Opening saved photograph…' : !supplied ? 'This report’s saved photograph is unavailable.' : image.error || loaded === 'IMAGE_ERROR' ? 'Could not load and verify full detail.' : loaded === 'INVALID_DIMENSIONS' ? 'The saved photograph has unexpected dimensions.' : inspectionLoadingText(image.progress, previewReady)}</span>
+        {(image.error || descriptor?.accessError || loaded === 'IMAGE_ERROR' || loaded === 'INVALID_DIMENSIONS') && <button type="button" onClick={retryImage}>Try again</button>}
+      </div>}
       {ready && blueprint && <Blueprint finding={bounds.find(entry => entry.finding.id === selected?.id)?.finding} explanation={explanation} centering={layers.centering ? centering : null} policy={policy} side={side} printed={layers.centering ? printed : null} view={view} size={size} scale={scale} locatorBox={locatorBox} docked={docked}/>}
       {cleanComparison && selectedBounds && <span className="rr-photo-label">Measured trace</span>}
       {ready && magnifier && lens && <div className="rr-magnifier" aria-hidden="true" style={{ [lens.right ? 'right' : 'left']: 12, backgroundImage: `url("${image.url}")`, backgroundSize: `${INSPECTION_SIZE.width * scale * zoom * 3}px ${INSPECTION_SIZE.height * scale * zoom * 3}px`, backgroundPosition: `${90 - lens.x * INSPECTION_SIZE.width * scale * zoom * 3}px ${90 - lens.y * INSPECTION_SIZE.height * scale * zoom * 3}px` }}><span>3× · image only</span></div>}

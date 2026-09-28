@@ -10,6 +10,7 @@ import { validatePhotoGeometryQuad, validatePreparedPhotoFrame } from '@atlas/ma
 import { PreparationError, aborted, runPreparationWorker } from './process.mjs';
 import { PREPARATION_FULL_V1, PREPARATION_CORE_V1, PREPARATION_REVEALS_V1, preparationOutputNames } from './output-contract.mjs';
 import { hashOwnedBytes } from './hash-bytes.mjs';
+import { PREPARATION_LOSSLESS_SETTINGS, PREPARATION_LEGACY_SETTINGS, sameEncoder, readInspectionPreview } from './encoding.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const worker = fileURLToPath(new URL('../../../backend/ai-grader-speedster-service/manual_preparation_worker.py', import.meta.url));
@@ -26,7 +27,7 @@ export async function preparationRuntimeIdentity(pythonExecutable) {
         'import hashlib,json,pathlib,sys,importlib.util',
         "p=pathlib.Path(sys.argv[1]);s=importlib.util.spec_from_file_location('atlas_preparation_identity',p);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)",
         'h=lambda p:hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()',
-        "names=['card_geometry.py','color_geometry.py','atlas_photo_geometry.py','defect_math.py','preparation_pixels.py']",
+        "names=['card_geometry.py','color_geometry.py','atlas_photo_geometry.py','defect_math.py','preparation_pixels.py','preparation_encoding.py']",
         "identity={'opencv':m.cv2.__version__,'numpy':m.np.__version__,'physicalProposalPolicy':m.POLICY_VERSION,'sources':{n:h(p.parent/n) for n in names}}",
         'roots=[pathlib.Path(mod.__file__).parent for mod in [m.cv2,m.np]]',
         "roots += [roots[0].parent/n for n in ['opencv_python.libs','opencv_python_headless.libs','numpy.libs']]",
@@ -38,7 +39,8 @@ export async function preparationRuntimeIdentity(pythonExecutable) {
       });
       const value = JSON.parse(stdout);
       requireThat(value?.identity?.sources && Object.keys(value.native ?? {}).length > 0, 'PREPARATION_UNAVAILABLE');
-      return { ...value, adapterSha256: hash(await readFile(fileURLToPath(import.meta.url))) };
+      return { ...value, adapterSha256: hash(await readFile(fileURLToPath(import.meta.url))),
+        encodingAdapterSha256: hash(await readFile(new URL('./encoding.mjs', import.meta.url))) };
     })();
     identities.set(pythonExecutable, pending);
     pending.catch(() => identities.delete(pythonExecutable));
@@ -53,7 +55,7 @@ export function photoImage(source) {
 }
 
 async function run(mode, { source, matColor, quad, limits: requestedLimits, pythonExecutable, engine: requestedEngine, signal,
-  outputContract = PREPARATION_FULL_V1 }) {
+  outputContract = PREPARATION_FULL_V1 }, encoderSettings = PREPARATION_LOSSLESS_SETTINGS) {
   requireThat(!aborted(signal), 'PREPARATION_CANCELLED');
   requireThat(typeof pythonExecutable === 'string' && pythonExecutable.startsWith('/'), 'PREPARATION_UNAVAILABLE');
   requireThat(['BLACK', 'WHITE', 'MAGENTA'].includes(matColor), 'PREPARATION_INVALID');
@@ -76,13 +78,14 @@ async function run(mode, { source, matColor, quad, limits: requestedLimits, pyth
     const inputPath = join(directory, 'source.png'); await writeFile(inputPath, bytes, { mode: 0o600, flag: 'wx' });
     const result = await runPreparationWorker(pythonExecutable, worker, { mode, matColor,
       source: { ...dimensions, sha256: content.sha256, byteCount: bytes.length }, limits,
-      ...(mode === 'PREPARE' ? { quad, outputContract } : {}), inputPath, outputDirectory: directory }, { timeoutMs: limits.timeoutMs, signal });
+      ...(mode === 'PREPARE' ? { quad, outputContract, encoderSettings } : {}), inputPath, outputDirectory: directory }, { timeoutMs: limits.timeoutMs, signal });
     requireThat(descriptorSha256(result.identity) === descriptorSha256(engine.identity), 'PREPARATION_ENGINE_CHANGED');
     requireThat(!aborted(signal), 'PREPARATION_CANCELLED');
     const frameDescriptorSha256 = descriptorSha256(frame);
     const id = descriptorSha256({ mode, matColor, quad: quad ?? null, frameDescriptorSha256, engine, proposal: result.proposal,
       ...(mode === 'PREPARE' ? { outputContract } : {}) });
     if (mode === 'PHYSICAL') return { id, frameDescriptorSha256, identity: result.identity, proposal: result.proposal };
+    requireThat(sameEncoder(result.encoderSettings, encoderSettings), 'PREPARATION_OUTPUT_INVALID');
     requireThat(result.outputContract === outputContract && result.frames && Object.keys(result.frames).length === names.length
       && names.every(name => Object.hasOwn(result.frames, name)), 'PREPARATION_OUTPUT_INVALID');
     let total = 0; const outputs = {};
@@ -95,6 +98,7 @@ async function run(mode, { source, matColor, quad, limits: requestedLimits, pyth
       const data = await readFile(path); requireThat(await hashOwnedBytes(data, signal) === output.sha256, 'PREPARATION_OUTPUT_INVALID');
       outputs[name] = { ...output, bytes: data };
     }
+    const inspectionPreview = await readInspectionPreview(result, directory, { total, maxOutputBytes: limits.maxOutputBytes, signal });
     requireThat(!aborted(signal), 'PREPARATION_CANCELLED');
     const prepared = { id: `prepared-${id}`, version: 1,
       rectified: { sha256: outputs.rectified.sha256, width: 1270, height: 1778 },
@@ -102,7 +106,8 @@ async function run(mode, { source, matColor, quad, limits: requestedLimits, pyth
       sourceToRectified: outputs.rectified.frameToDerivative };
     validatePreparedPhotoFrame(prepared, image, quad);
     return { id, frameDescriptorSha256, identity: result.identity, proposal: result.proposal,
-      frame: prepared, encoderSettings: result.encoderSettings, outputContract, sourceQuad: quad, outputs };
+      frame: prepared, encoderSettings: result.encoderSettings, outputContract, sourceQuad: quad, outputs,
+      ...(inspectionPreview ? { inspectionPreview } : {}) };
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 export const proposePhotoGeometry = input => run('PHYSICAL', input);
@@ -123,8 +128,21 @@ export async function prepareDeferredPhotoReveals({ prepared, ...input }) {
     frameDescriptorSha256: retained.frameDescriptorSha256, engine: input.engine, proposal: retained.proposal,
     outputContract: PREPARATION_CORE_V1 }), 'PREPARATION_SOURCE_MISMATCH');
   validatePreparedPhotoFrame(retained.frame, photoImage(input.source), retained.sourceQuad);
-  const result = await preparePhotoGeometry({ ...input, quad: retained.sourceQuad, outputContract: PREPARATION_FULL_V1 });
+  const legacy = sameEncoder(retained.encoderSettings, PREPARATION_LEGACY_SETTINGS);
+  requireThat(legacy || sameEncoder(retained.encoderSettings, PREPARATION_LOSSLESS_SETTINGS), 'PREPARATION_OUTPUT_INVALID');
+  // Historical callers supply the immutable engine retained in the early-work
+  // packet. Permit only this encoding migration, with all old pixel sources and
+  // actual native binaries unchanged; still prove every saved core byte below.
+  const currentEngine = await preparationRuntimeIdentity(input.pythonExecutable);
   const equal = (a, b) => descriptorSha256({ value: a }) === descriptorSha256({ value: b });
+  if (legacy) {
+    const identity = structuredClone(currentEngine.identity);
+    delete identity.sources['preparation_encoding.py'];
+    requireThat(equal(input.engine.identity, identity)
+      && ['native', 'python', 'executableSha256'].every(key => equal(input.engine[key], currentEngine[key])), 'PREPARATION_ENGINE_CHANGED');
+  } else requireThat(equal(input.engine, currentEngine), 'PREPARATION_ENGINE_CHANGED');
+  const result = await run('PREPARE', { ...input, engine: currentEngine, quad: retained.sourceQuad, outputContract: PREPARATION_FULL_V1 },
+    legacy ? PREPARATION_LEGACY_SETTINGS : PREPARATION_LOSSLESS_SETTINGS);
   requireThat(equal(result.proposal, retained.proposal) && equal(result.encoderSettings, retained.encoderSettings)
     && ['rectified', 'inspection', 'sourceToRectified'].every(key => equal(result.frame[key], retained.frame[key])),
   'PREPARATION_SOURCE_MISMATCH');

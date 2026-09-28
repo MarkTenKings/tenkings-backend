@@ -1,3 +1,4 @@
+import { descriptorSha256, planDecode } from '@atlas/photo-core';
 import { randomUUID } from 'node:crypto';
 import { canonical, digest } from '@atlas/manual-service/contract';
 import { createManualArtifactStore } from '@atlas/manual-service/artifacts';
@@ -7,7 +8,7 @@ import { workspace } from '../../atlas-manual-workspace/test/defect-fixtures.mjs
 import { createManualPublication } from '../src/publication.mjs';
 import { publicationStatus } from '../src/publication-repository.mjs';
 export const sides = ['FRONT','BACK'];
-export async function publicationFixture() {
+export async function publicationFixture({ withPreview = false } = {}) {
   const cardId=randomUUID(), actionId=randomUUID(), actorId=randomUUID(), records=new Map();
   const bytes=Object.fromEntries(sides.map(side=>[side,Buffer.from(`synthetic inspection ${side}`)]));
   let failRead=false, corruptBytes=false, loseWriteReply=false, completeCalls=0;
@@ -19,15 +20,23 @@ export async function publicationFixture() {
   const printed=[{x:.04,y:.03},{x:.96,y:.03},{x:.96,y:.97},{x:.04,y:.97}];
   let geometry=createGeometryWorkspace({cardId,profile:'SPORTS',sides:Object.fromEntries(sides.map((side,i)=>[side,{
     image:{version:1,originalSha256:String(i+1).repeat(64),frameId:`working-${side}`,frameSha256:String(i+3).repeat(64),width:1600,height:2400,coordinateSpace:'ORIENTED_DECODED'},cornerShape:'SQUARE',matColor:'BLACK'}]))});
-  const prepared={}, photos={};
+  const prepared={}, photos={}, previews={};
   for(const side of sides){
     geometry=applyGeometryEdit(geometry,{side,kind:'PHYSICAL',quad:[{x:.125,y:.1},{x:.875,y:.1},{x:.875,y:.9},{x:.125,y:.9}],actor:'HUMAN',proposal:null,base:geometryBase(geometry,side,'PHYSICAL')}).state;
     const sx=1269/1200,sy=1777/1920,frame={id:`prepared-${side}`,version:1,rectified:{sha256:'f'.repeat(64),width:1270,height:1778},inspection:{sha256:digest(bytes[side]),width:1350,height:1858,cardBounds:{x:40,y:40,width:1270,height:1778}},sourceToRectified:[sx,0,-200*sx,0,sy,-240*sy,0,0,1]};
     geometry=applyPreparedFrame(geometry,{side,base:preparationBase(geometry,side),frame}).state;
     geometry=applyGeometryEdit(geometry,{side,kind:'PRINTED',quad:printed,actor:'HUMAN',proposal:null,base:geometryBase(geometry,side,'PRINTED')}).state;
     const descriptor={purpose:'inspection',raster:{content:{mime:'image/webp',sha256:digest(bytes[side]),byteCount:bytes[side].length},dimensions:{width:1350,height:1858},object:{key:`private/${side}`}}};
-    prepared[side]=await save('PREPARED_IMAGES',{frameId:frame.id,images:{inspection:descriptor}});
     photos[side]={original:{content:{sha256:geometry.sides[side].image.originalSha256}},workingFrame:{id:`working-${side}`,raster:{content:{sha256:geometry.sides[side].image.frameSha256}}},decodePlan:{private:'not public'}};
+    let inspectionPreview;
+    if(withPreview){
+      const photo=photos[side],original={schemaVersion:1,kind:'original',uploadId:`upload-${side}`,binding:{cardId,pairId:'pair',side,version:1},object:{key:`original/${side}`,versionId:null},content:{mime:'image/png',sha256:photo.original.content.sha256,byteCount:100},metadata:null};
+      const decodePlan=planDecode(original,{encoded:{width:1600,height:2400},orientation:1,orientationSource:'identity',crop:null,selection:{kind:'single-frame'},bitDepth:8,iccSha256:null,colorSpace:'sRGB',dynamicRange:'SDR'},{maxInputBytes:1000,maxPixels:4000000,maxRasterBytes:32000000,maxOutputBytes:1000,timeoutMs:100});
+      const workingFrame={schemaVersion:1,kind:'decoded-frame',id:`working-${side}`,originalDescriptorSha256:descriptorSha256(original),decodePlanSha256:descriptorSha256(decodePlan),raster:{object:{key:`working/${side}`,versionId:null},content:{mime:'image/png',sha256:photo.workingFrame.raster.content.sha256,byteCount:200},dimensions:{width:1600,height:2400}},sourceToFrame:decodePlan.geometry.matrix,treatment:{decoder:'synthetic-fixture',version:'1',policyVersion:'fixture-v1',channels:3,bitDepth:8,colorSpace:'sRGB',colorTreatment:'converted',hdrTreatment:'not-present'}};
+      photos[side]={original,workingFrame,decodePlan};previews[side]=Buffer.from(`preview ${side}`);
+      inspectionPreview={policyVersion:'atlas-inspection-preview-v1',sourceSha256:descriptor.raster.content.sha256,descriptor:{schemaVersion:1,kind:'derivative',id:`preview-${side}`,purpose:'preview',originalDescriptorSha256:descriptorSha256(original),frameDescriptorSha256:descriptorSha256(workingFrame),raster:{object:{key:`preview/${side}`,versionId:null},content:{mime:'image/jpeg',sha256:digest(previews[side]),byteCount:previews[side].length},dimensions:{width:558,height:768}},frameToDerivative:[1,0,0,0,1,0,0,0,1],encoder:{name:'fixture',version:'1',settingsSha256:'a'.repeat(64)}}};
+    }
+    prepared[side]=await save('PREPARED_IMAGES',{frameId:frame.id,images:{inspection:descriptor},...(inspectionPreview?{inspectionPreview}:{})});
   }
   geometry=confirmBothGeometry(geometry,{actor:'HUMAN',reviewed:true,base:Object.fromEntries(sides.map(side=>[side,geometryBase(geometry,side,'REVIEW')]))}).state;
   let defects=structuredClone(workspace());
@@ -40,7 +49,7 @@ export async function publicationFixture() {
   const reportText=canonical(approval),sourceHash=digest(canonical(draft));
   const row={card_id:cardId,action_id:actionId,actor_id:actorId,source_revision:10,source_hash:sourceHash,report_hash:digest(reportText),report:reportText,approved_at:'2026-09-22T12:00:00.000Z',public_token:'ar_'+ 'A'.repeat(24),report_number:'ATLAS-012345ABCDEF',version:1,mode:'LOCAL_FIXTURE',state:'PENDING'};
   row.result=canonical({card:{cardId,revision:11,contentHash:sourceHash,draft},receipt:{actionId,actorId,approval:{reportHash:row.report_hash,sourceHash,sourceRevision:10}}});
-  const storage={async readDerivative({descriptor}){if(failRead)throw new Error('private storage unavailable'); const side=sides.find(s=>digest(bytes[s])===descriptor.raster.content.sha256);return {bytes:corruptBytes?Buffer.from('changed bytes'):bytes[side]};}};
+  const storage={async readDerivative({descriptor}){if(failRead)throw new Error('private storage unavailable'); const values=descriptor.purpose==='preview'?previews:bytes;const side=sides.find(s=>values[s]&&digest(values[s])===descriptor.raster.content.sha256);return {bytes:corruptBytes?Buffer.from('changed bytes'):values[side]};}};
   const repository={async load(){return structuredClone(row);},async status(){return publicationStatus(row);},async complete(staff,before,manifest){completeCalls++;Object.assign(row,{state:'PUBLISHED',manifest:canonical(manifest),manifest_hash:digest(canonical(manifest)),public_hash:manifest.publicHash});return publicationStatus(row);}};
   const publication=createManualPublication({repository,artifacts,storage,readSource:async(staff,id,upload)=>({photo:photos[upload.side]})});
   return {cardId,actionId,actorId,row,draft,approval,full,geometry,photos,bytes,artifacts,records,storage,repository,publication,save,get completeCalls(){return completeCalls;},failRead(value=true){failRead=value;},corruptBytes(value=true){corruptBytes=value;},loseWriteReply(){loseWriteReply=true;}};
