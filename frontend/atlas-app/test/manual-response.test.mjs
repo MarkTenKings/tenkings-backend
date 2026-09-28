@@ -35,3 +35,30 @@ test('actual workflow reader clears a definite streamed refusal but preserves un
     if (status !== 409) assert.equal(JSON.parse([...values.values()][0]).actionId, posted[0].actionId);
   }
 });
+
+test('manual reads keep their deadline when selection cancellation is supplied', async t => {
+  const previous = globalThis.fetch; t.after(() => { globalThis.fetch = previous; });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const selection = new AbortController();
+  globalThis.fetch = (_url, { signal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  });
+  const pending = assert.rejects(manualRequest('/fixture', { signal: selection.signal }), { name: 'TimeoutError' });
+  t.mock.timers.tick(210000);
+  await pending;
+  assert.equal(selection.signal.aborted, false);
+});
+
+test('changing selection cancels a manual read immediately and clears its deadline', async t => {
+  const previous = globalThis.fetch; t.after(() => { globalThis.fetch = previous; });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const selection = new AbortController(); let aborted = 0;
+  globalThis.fetch = (_url, { signal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener('abort', () => { aborted++; reject(signal.reason); }, { once: true });
+  });
+  const reason = new DOMException('Card selection changed', 'AbortError');
+  const pending = assert.rejects(manualRequest('/fixture', { signal: selection.signal }), error => error === reason);
+  selection.abort(reason); await pending;
+  t.mock.timers.tick(210000);
+  assert.equal(aborted, 1);
+});

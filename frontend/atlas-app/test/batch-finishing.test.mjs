@@ -48,6 +48,7 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
       return { jobs: f.approved ? [] : f.jobs };
     }
     if (url.endsWith(`/${key}`)) return packet;
+    if (url.endsWith('/thumbnail')) return {images:{FRONT:{state:'READY',preview:{url:'/front-thumb.jpg'}},BACK:{state:'READY',preview:{url:'/back-thumb.jpg'}}}};
     if (url.endsWith(`/${key}/review`)) { f.approved = true; return response; }
     if (url.endsWith('/batch/resume')) {
       f.jobs = [{ ...f.jobs[0], state: 'QUEUED', revision: 8, canResumeProcessing: false }];
@@ -58,7 +59,7 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
     throw new Error(`Unexpected fixture request ${url}`);
   };
   const exports = {}, local = new Map(), router = { query: { tab: intake ? 'INTAKE' : attention ? 'NEEDS_ATTENTION' : 'REVIEW' }, pathname: '/batch', push(url) { f.routes.push(url); }, replace() {} };
-  vm.runInNewContext(code, { exports, crypto: { randomUUID }, setInterval: () => 1, clearInterval() {},
+  vm.runInNewContext(code, { exports, AbortController, crypto: { randomUUID }, setInterval: () => 1, clearInterval() {},
     window: { addEventListener() {}, removeEventListener() {} }, document: { visibilityState: 'visible' },
     localStorage: { getItem: key => local.get(key) ?? null, setItem: (key, value) => local.set(key, value), removeItem: key => local.delete(key) },
     require(name) {
@@ -73,6 +74,7 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
       if (name.endsWith('.css')) return new Proxy({}, { get: (_, key) => key });
       if (name.endsWith('/manual-client.mjs')) return { manualRequest: request, manualMessage: failure => failure.code ?? 'Label unavailable.' };
       if (name.endsWith('/routes.mjs')) return { STAFF_BASE_PATH: '/app' };
+      if (name === '@atlas/manual-workspace/image-cache') return {usePrefetchVerifiedImages:()=>()=>()=>{}};
       if (name === '@atlas/manual-workspace/report-review') return { MachineReportReview };
       if (name === '@atlas/manual-workflow/client') return { createManualClient: () => ({
         recover: async () => correcting ? { finalReview: { reportHash: packet.reportHash } } : {},
@@ -113,19 +115,19 @@ test('final corrections begin only on the explicit gesture and retain the exact 
   f.find(node => node.type === 'button' && text(node) === 'Review geometry / make corrections')[0].props.onClick();
   await f.flush();
   assert.deepEqual(f.actions.map(action => ({ ...action })), [{ type: 'BEGIN_FINAL_REVIEW', batchKey: f.packet.key, reportHash: f.packet.reportHash }]);
-  assert.deepEqual(f.routes, [`/manual/${f.packet.cardId}?from=batch`]);
+  assert.deepEqual(f.routes, []); assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'ordinary');
   assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
   f.dispose();
 });
-test('queue previews share the loaded report and use prepared image URLs without a full-photo proxy or review write', async () => {
+test('queue previews use the thumbnail-only projection without a full-photo proxy or review write', async () => {
   const f = await fixture();
   f.packet.images = { FRONT: { inspection: { url: 'https://private-images.example/front.png' } }, BACK: { inspection: { url: 'https://private-images.example/back.png' } } };
   const photo = f.find(node => node.type?.name === 'QueuePhoto')[0];
   assert.ok(photo);
   const before = f.calls.length;
   const [first, second] = await Promise.all([photo.props.readPreview(f.jobs[0]), photo.props.readPreview(f.jobs[0])]);
-  assert.equal(first.FRONT.url, f.packet.images.FRONT.inspection.url); assert.deepEqual(first, second);
-  assert.equal(f.calls.length, before); assert.equal(f.actions.length, 0);
+  assert.equal(first.FRONT.url, '/front-thumb.jpg'); assert.deepEqual(first, second);
+  assert.equal(f.calls.length, before+1); assert.equal(f.actions.length, 0);
   assert.equal(f.calls.some(call => call.url.includes('/preview-image/') || call.options.method === 'POST'), false);
   f.dispose();
 });
@@ -139,7 +141,7 @@ test('a corrected report continues the current final review and cannot approve t
   assert.equal(f.find(node => node.type === 'button' && /Approve & print/.test(text(node))).length, 0);
   f.find(node => node.type === 'button' && text(node) === 'Continue final review')[0].props.onClick();
   await f.flush();
-  assert.equal(f.actions.length, 0); assert.deepEqual(f.routes, [`/manual/${f.packet.cardId}?from=batch`]);
+  assert.equal(f.actions.length, 0); assert.deepEqual(f.routes, []); assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'ordinary');
   f.dispose();
 });
 test('mismatched label cannot print; pending publication closes popup without reading a label', async () => {
@@ -200,7 +202,7 @@ test('partial batch report keeps evidence visible and gives geometry action inst
   const approve=f.find(node=>node.type==='button'&&text(node)==='Approve & print next')[0];assert.equal(approve.props.disabled,true);
   await approve.props.onClick();await f.flush();assert.equal(f.popups.length,0);assert.equal(f.calls.some(call=>call.options.method==='POST'),false);
   f.find(node=>node.type==='button'&&text(node)==='Review geometry / make corrections')[0].props.onClick();await f.flush();
-  assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.equal(f.routes.length,1);f.dispose();
+  assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.equal(f.routes.length,0);assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'ordinary');f.dispose();
 });
 
 

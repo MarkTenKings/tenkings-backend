@@ -148,3 +148,23 @@ test('primary XMP admission rejects HDR claims, ambiguity, malformed XML and out
     assert.throws(() => inspect(bytes), code('PHOTO_HDR_UNSUPPORTED'));
   });
 });
+
+
+test('Apple face confidence is bounded inert metadata, never a percentage or pixel operation', async t => {
+  const { first } = await make({ orientation: 1 });
+  const expected = await sharp(first, { ignoreIcc: true }).raw().toBuffer();
+  for (const confidence of [0, 100, 144, 214, 531, 2147483647]) await t.test(String(confidence), async () => {
+    const xmp = primaryXmp.replace('<apple-fi:ConfidenceLevel>40', `<apple-fi:ConfidenceLevel>${confidence}`);
+    const { bytes } = await makePrimaryXmp(xmp, 6), original = Buffer.from(bytes);
+    const decoded = await verifyAndDecodePhoto(request(bytes, policy)), working = await deriveSdrWorkingPhoto(decoded);
+    assert.equal(decoded.original.content.sha256, sha256(original));
+    assert.deepEqual(bytes, original);
+    assert.deepEqual(decoded.raster.dimensions, { width: 18, height: 24 });
+    assert.deepEqual(await sharp(working.png, { ignoreIcc: true }).raw().toBuffer(), orient(expected, 24, 18, 3, 6));
+  });
+  for (const confidence of ['-1', '2147483648', '99999999999999999999999999', '1.5', '1e3', 'NaN', '&value;', '<x>531</x>']) {
+    const xmp = primaryXmp.replace('<apple-fi:ConfidenceLevel>40', `<apple-fi:ConfidenceLevel>${confidence}`);
+    const { bytes } = await makePrimaryXmp(xmp);
+    assert.throws(() => inspect(bytes), code('PHOTO_HDR_UNSUPPORTED'));
+  }
+});

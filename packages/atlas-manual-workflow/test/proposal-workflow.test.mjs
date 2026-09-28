@@ -5,7 +5,7 @@ import { createManualWorkflow } from '../src/workflow.mjs';
 import { createManualArtifactStore } from '../../atlas-manual-service/src/artifacts.mjs';
 import { canonical, digest, inputCommand, requireThat, stateDocument } from '../../atlas-manual-service/src/contract.mjs';
 import { createGeometryWorkspace, applyGeometryEdit, applyPreparedFrame, confirmBothGeometry, geometryBase, preparationBase } from '../../atlas-manual-workspace/src/geometry-actions.mjs';
-import { defectBase, runDefectMeasurement } from '../../atlas-manual-workspace/src/defect-actions.mjs';
+import { defectBase, reviewedDefectFindingIds, runDefectMeasurement } from '../../atlas-manual-workspace/src/defect-actions.mjs';
 import { traceAction } from '../../atlas-manual-workspace/test/defect-fixtures.mjs';
 import { decodeSpeedsterTraceBitmapWireV1 } from '@atlas/grading-core/trace-bitmap-wire';
 import { decodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
@@ -196,4 +196,22 @@ test('forged human or measurement fields fail the public action before proposal 
   await assert.rejects(f.review('ACCEPT', 1, { actor: 'HUMAN' }), { code: 'MANUAL_CLIENT_AUTHORITY_FORBIDDEN' });
   await assert.rejects(f.review('ACCEPT', 1, { areaMm2: 50 }), { code: 'MANUAL_REQUEST_INVALID' });
   assert.equal(resolved, 0); assert.equal(f.commits.length, 0);
+});
+
+
+test('individual review is a durable idempotent action, rejects concurrent stale writes, and never publishes learning',async()=>{
+  const f=await fixture();await f.review();await f.execute({type:'MEASURE_SIDE',side:'FRONT'});
+  const state=await f.state(),card=f.card(),finding=state.defects.sides.FRONT.findings[0];
+  const command={actionId:randomUUID(),expectedRevision:card.revision,action:{type:'REVIEW_FINDING',side:'FRONT',base:defectBase(state.defects,'FRONT'),findingId:finding.id,reviewed:true}};
+  const saved=await f.workflow.service.execute(f.staff,f.cardId,command);
+  assert.deepEqual(reviewedDefectFindingIds((await f.state()).defects,'FRONT'),[finding.id]);
+  assert.equal((await f.state()).defects.confirmation,null);assert.equal(f.publications.length,0);
+  assert.deepEqual(await f.workflow.service.execute(f.staff,f.cardId,command),saved);
+  await assert.rejects(f.workflow.service.execute(f.staff,f.cardId,{...command,actionId:randomUUID()}),/STALE|REVISION/);
+  const geometry=(await f.state()).geometry;
+  await f.execute({type:'MARK_PRINTED_ABSENT',side:'FRONT',base:geometryBase(geometry,'FRONT','PRINTED')});
+  const changed=await f.state();assert.equal(changed.geometry.sides.FRONT.printed,null);
+  assert.deepEqual(reviewedDefectFindingIds(changed.defects,'FRONT'),[]);
+  assert.deepEqual(changed.defects.sides.FRONT.findings,state.defects.sides.FRONT.findings);
+  assert.equal(f.publications.length,0);
 });

@@ -1,3 +1,6 @@
+import { createReviewDisplay } from './review-display.mjs';
+import { createReviewDisplayStore } from './review-display-store.mjs';
+import { createThumbnailReader } from './thumbnails.mjs';
 import { createManualIntake } from '@atlas/manual-intake';
 import { createIntakeRepository } from '@atlas/manual-intake/repository';
 import { createIntakeIngestionRepository, createIntakeIngestionWorker } from '@atlas/manual-intake/ingestion';
@@ -16,6 +19,7 @@ import { validateConfirmationCommit } from './confirmation-fence.mjs';
 import { createImageDescriptors } from './image-descriptors.mjs';
 import { createEarlyGeometryStore, recordEarlyGeometryIntent } from './early-geometry-store.mjs';
 import { createEarlyGeometry, adoptEarlyGeometry } from './early-geometry.mjs';
+import { createNativeGeometryLearning, readNativeGeometryAdvice } from './geometry-learning.mjs';
 import { createPublicationRepository } from './publication-repository.mjs';
 import { createManualPublication } from './publication.mjs';
 import { createBatchGrading, createBatchWorker, batchActionId } from '@atlas/batch-grading';
@@ -33,7 +37,7 @@ import { createFinishingStationRepository } from './finishing-station-repository
 import { createFinishingStationService } from './finishing-station-service.mjs';
 import { createConnectedCardReader } from './card-reader.mjs';
 import { createMachineBatchSnapshot } from './batch-snapshot.mjs';
-export { createReviewDisplayReader } from './review-display.mjs';
+export { createReviewDisplay } from './review-display.mjs';
 
 export const DEFAULT_LIMITS = Object.freeze({
   decode:{maxInputBytes:256*1024*1024,maxPixels:52_000_000,maxRasterBytes:512*1024*1024,maxOutputBytes:256*1024*1024,timeoutMs:90000},
@@ -51,7 +55,7 @@ export function createWorkLimiter(maximum=2,{maxQueue=0}={}){
     try{return await work();}finally{const next=waiting.shift();if(next)next();else active--;}
   };
 }
-export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,
+export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,displayEnabled=false,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,
   processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
   let earlyGeometry,batch=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
@@ -65,9 +69,12 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
       if(batch&&!autonomous){const {card}=await intake.read(staff,cardId);if(card.ready)await batch.enqueue(staff,{
         actionId:batchActionId(card.sourceHash,'ENQUEUE'),cards:[{cardId,sourceHash:card.sourceHash}]});}
     }});
+  const reviewDisplay=displayEnabled?createReviewDisplay({store:createReviewDisplayStore({boundary,client:receiptClient,intakeRepository}),storage,intake,artifacts,keyPrefix,limited,
+    authorityFor:job=>boundary.machineOwner({ownerId:job.owner_id,accessVersion:job.access_version}),onError:onWorkerError}):null;
   const details=createDetailsStore({boundary,intakeRepository});
   earlyGeometry=createEarlyGeometry({store:createEarlyGeometryStore({boundary,intakeRepository,receiptClient}),intake,details,storage,artifacts,keyPrefix,
     limited,pythonExecutable,limits:limits.preparation,
+    geometryLearning:learningEnabled?createNativeGeometryLearning({boundary,intakeRepository}):null,
     geometryConcurrency:processing.geometryConcurrency,geometryDiscoveryPageSize:processing.geometryDiscoveryPageSize});
   const identification=createIdentification({boundary,intake,intakeRepository,storage,artifacts,details,effects,receiptClient,limited});
   const validateAccess=({tx,cardId})=>intakeRepository.assertActiveInTransaction(tx,cardId);
@@ -165,7 +172,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   });
   async function manifest(card,side){const stored=card.draft.source.prepared[side];return stored?artifacts.read(stored.ref,{cardId:card.cardId,kind:'PREPARED_IMAGES',sourceHash:stored.sourceHash}):null;}
   const imageUrl=(cardId,side,kind,hash)=>`${basePath}/api/staff/manual-connected/cards/${cardId}/images/${side}/${kind}/${hash}`;
-  const imageDescriptors=createImageDescriptors({current,readSource:intake.readSource,readManifest:manifest,imageReadUrl,imageUrl});
+  const imageDescriptors=createImageDescriptors({current,readSource:intake.readSource,readManifest:manifest,imageReadUrl,imageUrl,reviewDisplay});
   async function readPrepared(staff,card,side,kind){
     await current(staff,card);
     const saved=await manifest(card,side),descriptor=saved?.images?.[kind];
@@ -176,12 +183,16 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     await current(staff,card);return found;
   }
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
-  assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,provider:defectProvider,receiptClient});
-  const connected={dealerOperations,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
+  assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,learningEnabled,provider:defectProvider,receiptClient,onWorkerError});
+  const connected={dealerOperations,reviewDisplay,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
     workspaceExtras: async input => {
-      const [extras,status]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId)]);
-      return {...extras,publication:status,provisional:workflow.currentPreview(input.card,input.state),presentationEnabled,marketEnabled:Boolean(marketProvider),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};
+      const [extras,status,geometryLearning]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId),
+        learningEnabled?readNativeGeometryAdvice({boundary,earlyGeometry,staff:input.staff,cardId:input.card.cardId}).catch(error=>{
+          if([401,403].includes(error?.status))throw error;onWorkerError({code:'GEOMETRY_LEARNING_UNAVAILABLE'});return null;
+        }):null]);
+      return {...extras,...(geometryLearning?{geometryLearning}:{}),publication:status,provisional:workflow.currentPreview(input.card,input.state),presentationEnabled,marketEnabled:Boolean(marketProvider),researchEnabled:Boolean(research),catalogEnabled:Boolean(researchConfig?.catalogToken)};
     },
+    thumbnails:createThumbnailReader({intake,workflow,readManifest:manifest,imageReadUrl,reviewDisplay}),
     open:createConnectedCardReader({intake,details,workflow,identification,earlyGeometry,imageReadUrl}),
     machineBatchSnapshot:createMachineBatchSnapshot({intakeRepository,workflow,details,identification}),
     async initialize(staff,cardId,input){

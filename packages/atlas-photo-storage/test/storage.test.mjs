@@ -407,3 +407,23 @@ test('private read signer is bounded, cancelled and hides raw diagnostics', asyn
   const bad=storage(client,{sign:async()=>{throw new Error('private diagnostic');}});
   await assert.rejects(bad.createDecodedFrameRead(args),error=>error.code==='PHOTO_STORAGE_UNAVAILABLE'&&!error.message.includes('private diagnostic'));
 });
+
+test('immutable derivative grant checks pinned metadata with HEAD only while processing still verifies full bytes', async () => {
+  const {client,store,decoded}=await fixture();
+  const frame=await store.writeDecodedFrame(decoded,{id:'display-source',key:'test/derived/display-source.png'});
+  const descriptor={schemaVersion:1,kind:'derivative',id:'display',purpose:'preview',originalDescriptorSha256:descriptorSha256(decoded.original),
+    frameDescriptorSha256:descriptorSha256(frame),raster:{object:{key:'test/derived/display.png',versionId:null},content:decoded.raster.content,dimensions:decoded.raster.dimensions},
+    frameToDerivative:[1,0,0,0,1,0,0,0,1],encoder:{name:'test',version:'1',settingsSha256:descriptorSha256({exact:true})}};
+  const args={descriptor,frame,original:decoded.original,decodePlan:decoded.decodePlan,bytes:decoded.png};
+  const saved=await store.writeDerivative(args), before=client.calls.length;
+  const signed=storage(client,{sign:async(_client,command)=>{assert.equal(command.input.VersionId,saved.raster.object.versionId);return'https://storage.invalid/verified';}});
+  const grant=await signed.createImmutableDerivativeRead({...args,descriptor:saved});
+  assert.equal(grant.sha256,saved.raster.content.sha256);
+  assert.deepEqual(client.calls.slice(before).map(call=>call.name),['HeadObjectCommand']);
+  const oldHead=client.changeHead;client.changeHead=r=>({...r,Metadata:{...r.Metadata,'atlas-binding-sha256':'0'.repeat(64)}});
+  await assert.rejects(signed.createImmutableDerivativeRead({...args,descriptor:saved}),code('PHOTO_STORAGE_CONFLICT'));client.changeHead=oldHead;
+  client.omitChecksum=true;client.current(saved.raster.object.key).bytes[25]^=1;
+  await assert.rejects(store.readDerivative({...args,descriptor:saved}),code('PHOTO_STORAGE_CONFLICT'));
+  const wrong=structuredClone(saved);wrong.frameDescriptorSha256='0'.repeat(64);
+  await assert.rejects(signed.createImmutableDerivativeRead({...args,descriptor:wrong}));
+});

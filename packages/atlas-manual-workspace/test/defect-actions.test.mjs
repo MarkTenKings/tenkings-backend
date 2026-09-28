@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createDefectWorkspace, parseDefectWorkspace, serializeDefectWorkspace, defectBase, defectStatus,
-  beginDefectEdit, runDefectMeasurement, applyDefectMeasurement, markDefectSideInspected, confirmDefectFindings,
+  markDefectFindingReviewed, reviewedDefectFindingIds, invalidateDefectFindingReviews, beginDefectEdit, runDefectMeasurement, applyDefectMeasurement, markDefectSideInspected, confirmDefectFindings,
   adoptDefectProposals, beginDefectMapFilter, discardPendingDefectEdit, replaceDefectFrame, previewDefectReport,
 } from '../src/defect-actions.mjs';
 import { workspace, measurements, traceAction, edit, clone, unchangedMeasurement } from './defect-fixtures.mjs';
@@ -184,4 +184,57 @@ test('defect actions only import pure grading and source-geometry validators, ne
   const imports = [...source.matchAll(/from ['"]([^'"]+)['"]/g)].map(match => match[1]);
   assert.ok(imports.length > 0 && imports.every(path => path.startsWith('@atlas/grading-core/') || path === './geometry-actions.mjs'));
   assert.ok(!/atlas-operator|atlasWorkspace|sam3_detector|fetch\(/.test(source));
+});
+
+
+test('individual finding decisions survive reload, remain separate from confirmation and invalidate with affected measurements', async () => {
+  const initial = workspace(), side = 'FRONT', findingId = initial.sides.FRONT.findings[0].id;
+  const request = { side, findingId, base:defectBase(initial,side), reviewed:true, actor:'HUMAN', reviewerId:'reviewer-one', reviewedAt:'2026-09-28T20:00:00.000Z' };
+  let saved = markDefectFindingReviewed(initial,request).state;
+  assert.deepEqual(reviewedDefectFindingIds(parseDefectWorkspace(serializeDefectWorkspace(saved)),side),[findingId]);
+  assert.equal(saved.confirmation,null); assert.equal(saved.sides.FRONT.inspection,null);
+  assert.equal(saved.sides.FRONT.findings[0].reviewResult,initial.sides.FRONT.findings[0].reviewResult);
+  assert.deepEqual(saved.sides.BACK,initial.sides.BACK);
+  assert.deepEqual(markDefectFindingReviewed(saved,{...request,base:defectBase(saved,side)}).state,saved);
+  assert.throws(()=>markDefectFindingReviewed(initial,{...request,actor:'ENGINE'}),/HUMAN_REQUIRED/);
+  assert.throws(()=>markDefectFindingReviewed(initial,{...request,findingId:'missing'}),/NOT_FOUND/);
+  const edited=edit(saved,{type:'CHANGE_TYPE',defectId:findingId,defectType:'FRAYING'});
+  assert.deepEqual(reviewedDefectFindingIds(edited,side),[]);
+  assert.throws(()=>markDefectFindingReviewed(edited,request),/STALE/);
+  const measured=await settle(edited);
+  assert.deepEqual(reviewedDefectFindingIds(measured,side),[]);
+  assert.deepEqual(reviewedDefectFindingIds(invalidateDefectFindingReviews(saved,side),side),[]);
+});
+
+test('individual acceptance protects detector findings without labeling them as human corrections', () => {
+  const initial=workspace(), side='FRONT', findingId=initial.sides.FRONT.findings[0].id;
+  const saved=markDefectFindingReviewed(initial,{side,findingId,base:defectBase(initial,side),reviewed:true,
+    actor:'HUMAN',reviewerId:'reviewer-one',reviewedAt:'2026-09-28T20:00:00.000Z'}).state;
+  assert.deepEqual(saved.sides.FRONT.humanEditedIds,[]);
+  assert.throws(()=>beginDefectMapFilter(saved,{side,base:defectBase(saved,side),removedFindingIds:[findingId],
+    map:{revisionId:'late-map',sha256:'a'.repeat(64)}}),/HUMAN_FINDING_PROTECTED/);
+  assert.throws(()=>adoptDefectProposals(saved,{side,base:defectBase(saved,side),findings:[],
+    source:{method:'DETECTOR',version:'fixture',id:'late'}}),/HUMAN_FINDING_PROTECTED/);
+  const confirmed=confirm(inspect(inspect(saved,'FRONT'),'BACK'));
+  assert.deepEqual(reviewedDefectFindingIds(confirmed,side),[findingId]);
+  assert.equal(confirmed.sides.FRONT.findings[0].reviewResult,'ACCEPTED');
+});
+
+test('editing one finding preserves exact unchanged decisions and invalidates a changed neighboring measurement', async () => {
+  let state=workspace(false), side='FRONT';
+  const findings=[clone(measurements.FRONT),{...clone(measurements.FRONT),id:'FRONT:second'}];
+  state=adoptDefectProposals(state,{side,base:defectBase(state,side),findings,
+    source:{method:'DETECTOR',version:'fixture',id:'pair'}}).state;
+  for(const finding of findings)state=markDefectFindingReviewed(state,{side,findingId:finding.id,base:defectBase(state,side),
+    reviewed:true,actor:'HUMAN',reviewerId:'reviewer-one',reviewedAt:'2026-09-28T20:00:00.000Z'}).state;
+  const pending=edit(state,{type:'CHANGE_TYPE',defectId:findings[0].id,defectType:'FRAYING'});
+  assert.deepEqual(reviewedDefectFindingIds(pending,side),[]);
+  const measured=await runDefectMeasurement(pending,side,unchangedMeasurement);
+  const settled=applyDefectMeasurement(pending,measured).state;
+  assert.deepEqual(reviewedDefectFindingIds(parseDefectWorkspace(serializeDefectWorkspace(settled)),side),[findings[1].id]);
+  const changed=clone(measured);
+  changed.findings[1].measurement.areaMm2+=0.1;
+  assert.deepEqual(reviewedDefectFindingIds(applyDefectMeasurement(pending,changed).state,side),[]);
+  const material=replaceDefectFrame(state,{side,base:defectBase(state,side),frame:state.sides.FRONT.frame,cornerShape:'ROUNDED_3_18_MM'}).state;
+  assert.deepEqual(reviewedDefectFindingIds(await settle(material),side),[]);
 });

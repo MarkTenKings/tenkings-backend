@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readManualResponse, MANUAL_STREAM_HEADER, MANUAL_STREAM_PROTOCOL } from '../src/response.mjs';
 
+test('authoritative access denial clears browser image grants but ordinary validation does not', async () => {
+  const previous = globalThis.window, events = [];
+  globalThis.window = { dispatchEvent: event => events.push(event.type) };
+  try {
+    for (const [status, error] of [[401, 'SIGN_IN_REQUIRED'], [403, 'STAFF_ACCESS_NOT_ENABLED'], [409, 'MANUAL_REPORT_STALE']])
+      await assert.rejects(readManualResponse({ status, json: async () => ({ error }) }));
+    assert.deepEqual(events, ['atlas:verified-image-access-ended', 'atlas:verified-image-access-ended']);
+  } finally { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; }
+});
+
 const stream = (status, body) => new Response(`\n\n${JSON.stringify({ protocol: MANUAL_STREAM_PROTOCOL, status, body })}`,
   { headers: { [MANUAL_STREAM_HEADER]: MANUAL_STREAM_PROTOCOL } });
 
@@ -38,4 +48,13 @@ test('heartbeat alone, truncated JSON and invalid terminal status never become c
     { code: 'MANUAL_RESPONSE_INVALID' });
   await assert.rejects(readManualResponse(Response.json({ protocol: MANUAL_STREAM_PROTOCOL, status: 200, body: {} })),
     { code: 'MANUAL_RESPONSE_INVALID' });
+});
+
+test('empty or malformed HTTP401 clears evidence before parsing while non-auth response failures retain it',async()=>{
+ const previous=globalThis.window,events=[];globalThis.window={dispatchEvent:event=>events.push(event.type)};
+ try {
+  for(const body of ['', '<html>Sign in required</html>'])await assert.rejects(readManualResponse(new Response(body,{status:401})));
+  await assert.rejects(readManualResponse(new Response('',{status:503})));
+  assert.deepEqual(events,['atlas:verified-image-access-ended','atlas:verified-image-access-ended']);
+ }finally{if(previous===undefined)delete globalThis.window;else globalThis.window=previous;}
 });

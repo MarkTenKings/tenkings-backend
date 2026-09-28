@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import {
-  GEOMETRY_CONVENTION, applyGeometryEdit, applyPreparedFrame, canDetectMissingPhysical, confirmBothGeometry,
+  GEOMETRY_CONVENTION, markPrintedBorderAbsent, applyGeometryEdit, applyPreparedFrame, canDetectMissingPhysical, confirmBothGeometry,
   createGeometryWorkspace, geometryBase, geometryStatus, originalPointToPrepared,
   parseGeometryWorkspace, preparationBase, preparedPointToOriginal, printedQuadOnOriginal,
   replaceGeometryImage, serializeGeometryWorkspace, updateGeometrySettings,
@@ -352,4 +352,25 @@ test('new core has only pure grading-core imports and no service, database, old 
   const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map(match => match[1]);
   assert.deepEqual(imports.sort(), ['@atlas/grading-core/geometry', '@atlas/grading-core/scoring']);
   assert.doesNotMatch(source, /\b(?:fetch|WebSocket|localStorage|indexedDB|process\.env)\b/);
+});
+
+
+test('an explicit absent printed border persists as human evidence but never invents centering or permits approval', () => {
+  const initial=ready(), side='FRONT', original=clone(initial);
+  const request={side,base:geometryBase(initial,side,'PRINTED'),actor:'HUMAN'};
+  const absent=markPrintedBorderAbsent(initial,request).state;
+  assert.equal(absent.sides.FRONT.printed,null);
+  assert.equal(absent.sides.FRONT.printedAbsence.reason,'NO_PRINTED_BORDER');
+  assert.equal(geometryStatus(absent).canConfirmBoth,false);
+  assert.equal(geometryStatus(absent).sides.FRONT.centering,null);
+  assert.deepEqual(absent.sides.BACK,initial.sides.BACK);
+  assert.deepEqual(absent.sides.FRONT.prepared,initial.sides.FRONT.prepared);
+  assert.deepEqual(parseGeometryWorkspace(serializeGeometryWorkspace(absent)),absent);
+  assert.throws(()=>confirmBothGeometry(absent,confirmation(absent)),/NOT_READY/);
+  assert.throws(()=>markPrintedBorderAbsent(absent,request),/STALE/);
+  assert.throws(()=>markPrintedBorderAbsent(initial,{...request,actor:'ENGINE'}),/HUMAN_REVIEW_REQUIRED/);
+  const restored=edit(absent,side,'PRINTED');
+  assert.equal(restored.sides.FRONT.printedAbsence,undefined);
+  assert.equal(geometryStatus(restored).canConfirmBoth,true);
+  assert.deepEqual(initial,original);
 });

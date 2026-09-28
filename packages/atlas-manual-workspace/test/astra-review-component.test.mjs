@@ -178,7 +178,7 @@ test('pending reviewed memory survives recovery without a fabricated saved state
   await f.click('Check example save'); assert.equal(f.has('Reviewed examples are pending.'), true);
   assert.equal(f.has('Reviewed examples saved'), false); assert.equal(f.button('Add finding', 'Front').props.disabled, false);
   f.props.reviewedMemory = { enabled: true, status: 'SAVED' }; f.render();
-  assert.equal(f.has('Reviewed examples saved and available'), true);
+  assert.equal(f.has('Reviewed examples saved. Evaluation and activation are separate steps.'), true);
   assert.equal(f.nodes(node => node.type === 'button' && text(node) === 'Check example save').length, 0);
   assert.equal(f.nodes(node => node.type === 'button' && text(node) === 'Confirm findings').length, 1);
 });
@@ -224,13 +224,13 @@ test('reloaded pending example publication can reconcile to saved without replay
     onRetryReviewedMemory: async () => { recoveries++; f.props.reviewedMemory = { enabled: true, status: 'SAVED' }; } }); f.ready();
   assert.equal(f.has('save status of your reviewed examples is not confirmed'), true);
   await f.click('Check example save'); assert.equal(recoveries, 1); assert.equal(confirmations, 0);
-  assert.equal(f.has('Reviewed examples saved and available'), true);
+  assert.equal(f.has('Reviewed examples saved. Evaluation and activation are separate steps.'), true);
 });
 
 test('a saved empty review does not claim that new defect examples were published', () => {
   const f = harness({ reviewedMemory: { enabled: true, status: 'SAVED', exampleCount: 0 } }); f.ready();
   assert.equal(f.has('There were no defect examples to add.'), true);
-  assert.equal(f.has('Reviewed examples saved and available'), false);
+  assert.equal(f.has('Reviewed examples saved. Evaluation and activation are separate steps.'), false);
 });
 
 test('ATLAS image limitations remain visible with an empty proposal list without claiming inspection completion', () => {
@@ -482,4 +482,35 @@ test('one visible attestation requires both verified photos and persists both si
  assert.equal(f.control(label).props.checked,true);assert.equal(f.button('Confirm findings').props.disabled,false);
  f.props.workspace=workspace(false);f.props.onInspectBoth=async()=>{throw Error('save failed');};f.render();f.ready();await f.control(label).props.onChange();f.render();
  assert.equal(f.control(label).props.checked,false);assert.equal(f.button('Confirm findings').props.disabled,true);assert.ok(f.has('Inspection was not saved for both sides'));
+});
+
+test('read-only review keeps inspection available while every mutation stays disabled', async () => {
+  const state=workspace(),f=harness({workspace:state,readOnly:true,astra:astraFor(state),onReviewFinding:async()=>{throw Error('must not save');}});
+  f.ready();assert.equal(f.has('Read-only review.'),true);
+  assert.equal(f.button('Add finding','Front').props.disabled,true);
+  assert.equal(f.button('Find defects with ATLAS').props.disabled,true);
+  const inspection=f.control('I inspected both Front and Back');assert.equal(inspection.props.disabled,true);
+  await inspection.props.onChange();assert.equal(f.calls.length,0,'handler also guards programmatic invocation');
+  await f.clickControl('Inspect Front finding 1');
+  assert.equal(f.button('Edit trace','Front').props.disabled,true);assert.equal(f.button('Reject finding','Front').props.disabled,true);
+  assert.equal(f.button('Accept finding','Front').props.disabled,true);
+});
+
+test('learning lifecycle names saved feedback, preparation, holds and activation separately',()=>{
+  for(const [stage,activation,expected] of [['QUEUED','INACTIVE','Preparing examples'],['RUNNING','INACTIVE','Preparing examples'],['PREPARED','INACTIVE','Prepared for evaluation'],['HELD','INACTIVE','held'],['PREPARED','ACTIVE','Active lesson']]) {
+    const value=presentation.reviewedMemoryState({enabled:true,status:'SAVED',feedbackStatus:'SAVED',preparationStatus:stage,activationStatus:activation,exampleCount:2});
+    assert.ok(value.message.toLowerCase().includes(expected.toLowerCase()),value.message);
+    if(activation!=='ACTIVE')assert.equal(value.message.includes('Active lesson'),false);
+  }
+});
+test('held learning gives the required human or operator action without offering an ineffective retry',()=>{
+  for(const code of ['MANUAL_MACHINE_ACCESS_REVOKED','MEMORY_HISTORICAL_AUTHORITY_REQUIRED','MEMORY_EVIDENCE_INVALID']) {
+    const memory={enabled:true,status:'PENDING',feedbackStatus:'SAVED',preparationStatus:'HELD',activationStatus:'INACTIVE',code};
+    const value=presentation.reviewedMemoryState(memory);
+    assert.equal(value.mayRecover,false);
+    assert.ok(value.message.includes(code==='MEMORY_EVIDENCE_INVALID'?'operator must inspect':'authorized reviewer must review and confirm'));
+    const f=harness({reviewedMemory:memory,onRetryReviewedMemory:async()=>{throw Error('Held work cannot be blindly retried');}});
+    assert.equal(f.has('Retry saving examples'),false);
+    assert.equal(f.has('Feedback saved'),true);
+  }
 });

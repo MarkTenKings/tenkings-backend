@@ -1,9 +1,13 @@
 import { canonical, digest, requireThat, object, uuid } from '@atlas/manual-service/contract';
 import { geometryStatus } from '@atlas/manual-workspace/geometry-actions';
 import { defectBase } from '@atlas/manual-workspace/defect-actions';
-import { createDefectMemory, createDefectMemoryRepository } from '@atlas/defect-memory';
+import { createDefectMemory, createDefectMemoryRepository, createLearningPublicationRepository, createLearningPublicationWorker, loadAvailableLessonImages,
+  readRoleLearning, consumeCleanLearning, consumeGeometryLearning } from '@atlas/defect-memory';
+import { learningRetrievalBindingFacts } from '../../atlas-defect-memory/src/binding-facts.mjs';
 import { authorizeManualCard } from '@atlas/defect-memory/repository';
-import { buildAstraContextBackgroundDefectRequestAsync, INSPECTION_CONTEXT_CROP_LAYOUT } from '@atlas/defect-analysis';
+import { buildAstraContextBackgroundDefectRequestAsync, INSPECTION_CONTEXT_CROP_LAYOUT, defectAnalysisBaselineFacts, cleanLearningConsumerFacts, LIMITS as ANALYSIS_LIMITS } from '@atlas/defect-analysis';
+import { PREPARATION_LOSSLESS_SETTINGS } from '@atlas/preparation-runtime';
+import { ATLAS_FINAL_GRADE_POLICY } from '@atlas/grading-core/manual-report';
 import { createAnalysisRepository } from '@atlas/defect-analysis/repository';
 import { createAnalysisExecutor, createAnalysisResultReader } from '@atlas/defect-analysis/executor';
 import { proposalRle } from '../../atlas-manual-workflow/src/proposal-review.mjs';
@@ -55,12 +59,22 @@ function compatible(run, card, state) {
 /** Memory and model state are independently durable. Neither changes a manual
  * draft; only an authenticated, journaled human proposal action can do that. */
 export function createDefectAssistance({ boundary, intakeRepository, workflow, artifacts, imageEffects,
-  memoryEnabled = false, provider = null, receiptClient = null }) {
+  memoryEnabled = false, learningEnabled = false, provider = null, receiptClient = null, onWorkerError = () => {} }) {
   requireThat(!provider || memoryEnabled, 503, 'DEFECT_ANALYSIS_MEMORY_REQUIRED');
+  requireThat(!learningEnabled || memoryEnabled && typeof boundary.machineTransaction === 'function', 503, 'MEMORY_WORKER_CONFIG_INVALID');
+  const learningBindings = { modelPromptSha256: digest(canonical({ baseline: defectAnalysisBaselineFacts(), cleanConsumer: cleanLearningConsumerFacts(), retrieval: learningRetrievalBindingFacts() })),
+    imagePolicySha256: digest(canonical(PREPARATION_LOSSLESS_SETTINGS)), scoringPolicySha256: digest(canonical(ATLAS_FINAL_GRADE_POLICY)) };
   const validateSource = ({ tx, principal, cardId, draft }) => intakeRepository.assertCurrentPair(tx, principal,
     { cardId, sourceHash: draft.source?.sourceHash });
-  const memory = memoryEnabled ? createDefectMemory({ repository: createDefectMemoryRepository({ boundary, validateSource, validateAccess: ({tx,cardId})=>intakeRepository.assertActiveInTransaction(tx,cardId) }),
-    hydrate: workflow.hydrate, createExemplar: imageEffects.createExemplar, proposalTrace: proposalRle }) : null;
+  const memory = memoryEnabled ? createDefectMemory({ repository: createDefectMemoryRepository({ boundary, validateSource, learningEnabled, learningBindings, validateAccess: ({tx,cardId})=>intakeRepository.assertActiveInTransaction(tx,cardId) }),
+    hydrate: workflow.hydrate, createExemplar: imageEffects.createExemplar, createCleanExemplar: imageEffects.createCleanExemplar, proposalTrace: proposalRle,
+    resolveAnalysisEvidence: async ({ staff, cardId, hydrated }) => {
+      const analysisId = hydrated.finalReview?.report?.analysisId;
+      return analysisId ? (await repository.status(staff, { cardId, analysisId }))?.requestEvidence ?? null : null;
+    } }) : null;
+  const learning = learningEnabled ? createLearningPublicationWorker({ repository: createLearningPublicationRepository({ boundary }),
+    prepare: memory.prepare, authorityFor: job => boundary.machineOwner({ ownerId: job.actorId, accessVersion: job.accessVersion }),
+    onError: onWorkerError }) : null;
   const repository = memoryEnabled ? createAnalysisRepository({ boundary, receiptClient,
     authorize: async ({ tx, principal, cardId, edit }) => {
       await authorizeManualCard(tx, principal, cardId, { edit, lock: edit });
@@ -93,6 +107,15 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
   }) : null;
   const executor = provider ? createAnalysisExecutor({ repository, provider, artifacts }) : null;
   const reader = repository ? createAnalysisResultReader({ repository, artifacts }) : null;
+  async function roleSnapshot(staff, card, state, domain, side = null, bindings = learningBindings) {
+    if (!learningEnabled) return null;
+    return boundary.transaction(staff, async ({ tx, principal }) => {
+      await authorizeManualCard(tx, principal, card.cardId, { expectedContentHash: card.contentHash });
+      await validateSource({ tx, principal, cardId: card.cardId, draft: card.draft });
+      return readRoleLearning(tx, { domain, bindings, target: { cardId: card.cardId, side,
+        originalSha256: SIDES.map(s => state.geometry.sides[s].image.originalSha256) } });
+    });
+  }
   async function reviewContext(staff, card, state = null) {
     if (!reader) return { fence: null, offer: null, entries: [] };
     const fence = await boundary.transaction(staff, async ({ tx, principal }) => {
@@ -118,6 +141,10 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
     const saved = await memory.status(staff, cardId);
     return { enabled: true, status: { NO_CONFIRMED_FINDINGS: 'UNSAVED', SUPERSEDED: 'UNSAVED',
       PENDING: 'PENDING', PUBLISHED: 'SAVED' }[saved.status] ?? 'UNKNOWN', exampleCount: saved.lessonCount ?? 0,
+      ...(learningEnabled ? { feedbackStatus: saved.feedbackStatus ?? 'UNSAVED', preparationStatus: saved.preparationStatus ?? 'NOT_STARTED',
+        activationStatus: saved.activationStatus ?? 'INACTIVE', candidateCount: saved.candidateCount ?? 0,
+        actionId: saved.actionId ?? null, code: saved.code ?? null, feedbackSavedAt: saved.feedbackSavedAt ?? null,
+        preparationUpdatedAt: saved.preparationUpdatedAt ?? null, activeReleaseId: saved.activeReleaseId ?? null } : {}),
       ...(saved.retainedObservationCount ? { retainedObservationCount: saved.retainedObservationCount } : {}) };
   }
   async function project(staff, cardId, analysisId = null, snapshot = null) {
@@ -200,9 +227,11 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       requireThat(memory, 503, 'DEFECT_MEMORY_DISABLED');
       const current = actionId ? { actionId } : await memory.status(staff, cardId);
       requireThat(current.actionId, 409, 'MEMORY_CONFIRMATION_REQUIRED');
-      await memory.publish(staff, cardId, current.actionId);
+      if (learning) learning.wake();
+      else await memory.publish(staff, cardId, current.actionId);
       return { reviewedMemory: await memoryStatus(staff, cardId) };
     },
+    learning,
     async analyze(staff, cardId, input, preparation = null, dispatchSignal = null) {
       requireThat(executor, 503, 'DEFECT_ANALYSIS_DISABLED');
       object(input, Object.hasOwn(input ?? {}, 'replacement') ? ['actionId', 'base', 'replacement'] : ['actionId', 'base']);
@@ -242,11 +271,20 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       requireThat(SIDES.every(side => canonical(input.base[side]) === canonical(defectBase(state.defects, side))), 409, 'DEFECT_ANALYSIS_STALE');
       const images = await imageEffects.currentImages(staff, card, binding, INSPECTION_CONTEXT_CROP_LAYOUT);
       // This is a fresh database retrieval for every new request, after costly
-      // image preparation. Pending reviewed publications refuse paid dispatch.
-      const knowledge = await memory.retrieve(staff, { cardId, limit: 12 });
+      // image preparation. Lifecycle retrieval excludes unavailable source
+      // lessons individually and records the fallback in immutable evidence.
+      const retrieved = await memory.retrieve(staff, { cardId, limit: 12 });
+      const { knowledge, lessonImages } = await loadAvailableLessonImages(retrieved, imageEffects.lessonImages);
+      const cleanScope = await roleSnapshot(staff, card, state, 'CLEAN');
+      const authoritativeImageBytes = images.reduce((total, side) => total + side.whole.bytes.byteLength
+        + side.crops.reduce((sum, image) => sum + image.bytes.byteLength, 0), 0)
+        + lessonImages.reduce((total, image) => total + image.bytes.byteLength + image.traceOverlay.bytes.byteLength, 0);
+      const cleanLearning = cleanScope && (cleanScope.policy || cleanScope.selection.reason !== 'POLICY_NOT_ACTIVE') ? await consumeCleanLearning({ selection: cleanScope.selection,
+        loadImage: imageEffects.cleanImage, limit: Math.min(4, 12 - knowledge.lessons.length),
+        remainingImageBytes: Math.max(0, ANALYSIS_LIMITS.totalImageBytes - authoritativeImageBytes) }) : null;
       const prepared = await buildAstraContextBackgroundDefectRequestAsync({ analysisId: input.actionId, cardId, profile: state.geometry.profile,
         cornerShapes: Object.fromEntries(SIDES.map(side => [side, state.defects.sides[side].cornerShape])),
-        binding, images, knowledge, lessonImages: await imageEffects.lessonImages(knowledge) }, { signal: dispatchSignal });
+        binding, images, knowledge, lessonImages, ...(cleanLearning ? { cleanLearning } : {}) }, { signal: dispatchSignal });
       await executor.prepareAndRun(staff, { cardId, actionId: input.actionId, prepared,
         expiresAt: new Date(Date.now() + 180000).toISOString(), baseHash, dispatchSignal,
         ...(input.replacement ? { replacement: input.replacement } : {}) });
@@ -265,6 +303,15 @@ export function createDefectAssistance({ boundary, intakeRepository, workflow, a
       }
     },
     analyzeMachine: (staff, cardId, input, { dispatchSignal } = {}) => api.analyze(staff, cardId, input, MACHINE_PREPARATION, dispatchSignal),
+    // Internal geometry/shadow consumer. Its source-bound advisory cannot
+    // mutate a workspace or certify a native proposal; normal human CAS remains.
+    async geometryLearning(staff, cardId, { side, candidates, engineSha256 }) {
+      requireThat(SIDES.includes(side), 400, 'LEARNING_GEOMETRY_SIDE_INVALID');
+      const { card } = await workflow.service.authorizeEdit(staff, cardId), state = await workflow.hydrate(card);
+      const scope = await roleSnapshot(staff, card, state, 'GEOMETRY', side, { ...learningBindings, modelPromptSha256: engineSha256 });
+      if (!scope?.policy) return { status: 'BASELINE', requiresHumanConfirmation: true };
+      return consumeGeometryLearning({ ...scope, targetFrameSha256: state.geometry.sides[side].image.frameSha256, candidates });
+    },
     status: (staff, cardId, analysisId = null) => project(staff, cardId, analysisId),
     pendingMachineAnalysis: (staff, job) => repository ? repository.pendingMachine(staff, {
       cardId: job.cardId, analysisId: job.analysisActionId, expected: {

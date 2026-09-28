@@ -81,3 +81,14 @@ test('report-only image scope avoids all original and reveal reads but retains s
   assert.equal(f.current, 2); assert.equal(f.sources.length, 2);
   assert.deepEqual(Object.keys(result.FRONT), ['inspection']);
 });
+
+for(const failure of ['lookup','corrupt-persisted'])test(`optional ${failure} inspection preview cannot hide full staff evidence`,async()=>{
+ const f=fixture();
+ if(failure==='lookup')f.dependencies.reviewDisplay={inspection:async()=>{throw new ManualServiceError(503,'PHOTO_STORAGE_UNAVAILABLE');}};
+ else {const read=f.dependencies.readManifest;f.dependencies.readManifest=async(...args)=>({...await read(...args),inspectionPreview:{policyVersion:'wrong'}});}
+ const result=await f.run();assert(result.FRONT.inspection.url);assert(result.BACK.inspection.url);assert.equal(result.FRONT.inspection.preview,undefined);assert.equal(f.current,2);
+});
+test('optional preview authority failures still refuse the staff descriptor response',async()=>{
+ const f=fixture();f.dependencies.reviewDisplay={inspection:async()=>{throw new ManualServiceError(403,'INTAKE_ACCESS_DENIED');}};
+ await assert.rejects(f.run(),{code:'INTAKE_ACCESS_DENIED'});
+});

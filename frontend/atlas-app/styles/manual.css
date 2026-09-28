@@ -49,3 +49,13 @@
 .mc-review-attention strong{font-size:14px}.mc-review-attention ul{margin:7px 0 0;padding:0;list-style:none}.mc-shell .mc-review-attention button{display:block;width:100%;text-align:left;border:0;background:none;padding:5px 0;color:#ffb7bb;font-size:13px;line-height:1.45;text-decoration:underline;text-underline-offset:3px}
 .mc-shell [data-review-attention=true]{outline:2px solid #ff5b62;outline-offset:3px;border-color:#ff5b62!important;scroll-margin-top:220px}.mc-fields label[data-review-attention=true]{padding:12px;border-radius:7px;background:#49161c55}.mc-shell [data-review-attention=true] input,.mc-shell [data-review-attention=true] select{border-color:#ff5b62}.mc-shell .mc-review-reason{font-size:13px;line-height:1.5;color:#ffb7bb;margin:0 0 14px;padding:10px 12px;background:#41151b;border-left:3px solid #ff5b62}.mc-shell .mc-field-error{color:#ffb7bb}.ad-astra>.mc-review-reason{flex-basis:100%}.mc-shell [data-review-target]:focus-visible{outline:3px solid #ff858b;outline-offset:4px}
 @media(max-width:640px){.mc-review-attention{top:4px;padding:10px 12px}.mc-review-attention strong{font-size:13px}.mc-shell .mc-review-attention button{font-size:12px}.mc-fields label[data-review-attention=true]{padding:8px}}
+
+/* The ordinary review route uses the same explicit actions as the queue modal. */
+.mc-review-actions{position:sticky;bottom:0;z-index:8;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;padding:16px;background:#101410f5;border:1px solid #d2b37344;border-radius:8px}
+.mc-review-actions .mc-rapid-action-context{flex:1;min-width:200px;font-size:13px;color:#c6cabc}
+.mc-review-actions .mc-rapid-action-buttons{display:flex;flex-wrap:wrap;gap:10px}
+.mc-review-actions button{padding:12px 18px;border:1px solid #d2b37388;border-radius:6px;background:#182119;color:#f1d6a0}
+.mc-review-actions .mc-rapid-approve{background:#d2b373;color:#17140e}
+.mc-review-actions button:disabled{opacity:.45;cursor:default}
+
+.mc-learning-status{font-size:11px;color:#c5bea8;line-height:1.45;margin:6px 0}.mc-rapid-action-context .mc-learning-status{margin:0;max-width:54ch}

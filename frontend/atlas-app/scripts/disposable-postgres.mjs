@@ -93,8 +93,8 @@ export async function disposablePostgres(args, { beforeUpgradeFrom48 } = {}) {
     const safe = value => String(value).replaceAll(ownerPassword, '[fixture-password]').replaceAll(staffPassword, '[fixture-password]')
         .replaceAll(publicPassword, '[fixture-password]').replaceAll(operatorPassword, '[fixture-password]').replaceAll(operationsPassword, '[fixture-password]')
         .replaceAll(customerPassword, '[fixture-password]');
-    function run(command, commandArgs, env = cleanEnv) {
-        const options = { cwd: root, env, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 120_000 };
+    function run(command, commandArgs, env = cleanEnv, timeout = 120_000) {
+        const options = { cwd: root, env, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout };
         const result = command === 'docker' ? docker(commandArgs, options) : spawnSync(command, commandArgs, options);
         log += safe(`${result.stdout ?? ''}${result.stderr ?? ''}`);
         writeFileSync(join(directory, 'validation.log'), log, { mode: 0o600 });
@@ -227,7 +227,7 @@ export async function disposablePostgres(args, { beforeUpgradeFrom48 } = {}) {
         const deploy = (scope, database = 'atlas_fixture_template', stagedSchema) => {
             const schema = stagedSchema ?? (scope === 'public' ? join(root, 'packages/database/prisma/schema.prisma') : join(appRoot, 'prisma/schema.prisma'));
             return run(process.execPath, [cli, 'migrate', 'deploy', '--schema', schema], { ...cleanEnv,
-                [scope === 'public' ? 'DATABASE_URL' : 'ATLAS_DATABASE_URL']: url(database, false, scope) });
+                [scope === 'public' ? 'DATABASE_URL' : 'ATLAS_DATABASE_URL']: url(database, false, scope) }, 300_000);
         };
         const ledger = async scope => (await sql(`SELECT * FROM ${scope}."_prisma_migrations" ORDER BY migration_name,id`, [], 'atlas_fixture_template')).rows;
         deploy('public');

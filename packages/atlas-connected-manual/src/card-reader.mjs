@@ -12,10 +12,12 @@ export function createConnectedCardReader({ intake, details, workflow, identific
     try { manual = await workflow.service.read(staff, cardId); }
     catch (error) { if (error?.code !== 'MANUAL_CARD_NOT_FOUND') throw error; }
     const previews = {};
-    if (includePreviews !== false && imageReadUrl) for (const side of SIDES) if (card.sides[side].upload?.source) {
+    if (includePreviews !== false && imageReadUrl) await Promise.all(SIDES.map(async side => {
+      if (!card.sides[side].upload?.source) return;
       const { photo } = await intake.readSource(staff, cardId, card.sides[side].upload.uploadId);
-      previews[side] = await imageReadUrl({ kind: 'original', descriptor: photo.workingFrame, photo });
-    }
+      previews[side] = await imageReadUrl({ kind: 'original', descriptor: photo.workingFrame, photo,
+        photoSource: card.sides[side].upload.source, contextOnly: true });
+    }));
     const identificationState = await identification.status(staff, cardId);
     const geometryState = await earlyGeometry.status(staff, cardId);
     const currentCard = (await intake.read(staff, cardId)).card;

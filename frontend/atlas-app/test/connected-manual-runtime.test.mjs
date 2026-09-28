@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings} from '../lib/server/connected-manual-runtime.mjs';
+import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings,validateLearningRuntimeConfiguration} from '../lib/server/connected-manual-runtime.mjs';
 import {generateKeyPairSync} from 'node:crypto';
 import {staffContentSecurityPolicy} from '../lib/content-security.mjs';
 import {privateManualAccessConfig,productionAccessConfig} from '../lib/server/access/config.mjs';
@@ -54,4 +54,12 @@ test('station runtime is cold by default and requires explicit dedicated P256 si
  for(const change of [{ATLAS_MANUAL_STATION_PRIVATE_KEY_PEM:'invalid'},{ATLAS_MANUAL_STATION_KEY_ID:''},{ATLAS_MANUAL_STATION_TRUSTED_STATIONS_JSON:'{}'}])
   assert.throws(()=>manualStationSettings({...settings,...change},'https://atlasgrading.com'),{code:'FINISHING_STATION_CONFIGURATION_INVALID'});
  assert.throws(()=>manualStationSettings(settings,'https://other.invalid'),{code:'FINISHING_STATION_CONFIGURATION_INVALID'});
+});
+
+test('private startup refuses legacy retrieval when the learning lifecycle is installed but disabled',async()=>{
+ let calls=0;const client={$queryRawUnsafe:async sql=>{calls++;assert.match(sql,/to_regclass/);return[{installed:true}];}};
+ await assert.rejects(validateLearningRuntimeConfiguration({memoryEnabled:true,learningEnabled:false,client}),{code:'MEMORY_LIFECYCLE_FLAG_REQUIRED'});
+ await validateLearningRuntimeConfiguration({memoryEnabled:true,learningEnabled:true,client});
+ await validateLearningRuntimeConfiguration({memoryEnabled:false,learningEnabled:false,client});assert.equal(calls,1);
+ await validateLearningRuntimeConfiguration({memoryEnabled:true,learningEnabled:false,client:{$queryRawUnsafe:async()=>[{installed:false}]}});
 });

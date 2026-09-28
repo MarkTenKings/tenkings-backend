@@ -207,3 +207,14 @@ test('lossless display changes transport only while geometry keeps canonical sou
   const wrongCanonical={...state,sides:{FRONT:{...state.sides.FRONT,image:{...state.sides.FRONT.image,frameSha256:'d'.repeat(64)}}}};
   assert.equal(geometryImage(wrongCanonical,'FRONT','PHYSICAL',images),null);
 });
+
+test('same-origin image401 revokes authorized browser evidence even without JSON; external grant failures do not',async()=>{
+ const previous=globalThis.window,events=[];globalThis.window={dispatchEvent:event=>events.push(event.type)};
+ try {
+  for(const [url,status] of [['/photo.png',401],['/photo.png',403],['https://private.example.invalid/photo?expired',403],['https://private.example.invalid/photo',401]]) {
+    const denied=fixture({fetchImpl:async()=>({ok:false,status})});
+    await assert.rejects(loadVerifiedImage({...image,url},denied.options),rejection('VERIFIED_IMAGE_UNAVAILABLE'));assert.equal(denied.created.length,0);
+  }
+  assert.deepEqual(events,['atlas:verified-image-access-ended']);
+ }finally{if(previous===undefined)delete globalThis.window;else globalThis.window=previous;}
+});

@@ -6,11 +6,14 @@
   "exports": {
     ".": "./src/index.mjs",
     "./repository": "./src/repository.mjs",
-    "./lessons": "./src/lessons.mjs"
+    "./lessons": "./src/lessons.mjs",
+    "./evaluation": "./src/evaluation.mjs",
+    "./retrieval-policy": "./src/retrieval-policy.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "test:postgres": "node scripts/validate-postgres.mjs"
+    "test:postgres": "node scripts/validate-postgres.mjs",
+    "evaluate": "node scripts/evaluate.mjs"
   },
   "dependencies": {
     "@atlas/grading-core": "workspace:*",

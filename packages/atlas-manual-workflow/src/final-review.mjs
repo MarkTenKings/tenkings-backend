@@ -69,7 +69,7 @@ export function finalReviewPreview(card, state) {
   });
   if (!ready) return { state: 'PENDING', sourceRevision: card.revision, sourceHash: card.contentHash };
   const unresolvedGeometry = SIDES.filter(side => !state.geometry.sides[side].printed)
-    .map(side => ({ side, code: 'PRINTED_GEOMETRY_UNRESOLVED' }));
+    .map(side => ({ side, code: state.geometry.sides[side].printedAbsence ? 'BORDERLESS_CENTERING_UNSUPPORTED' : 'PRINTED_GEOMETRY_UNRESOLVED' }));
   const capture = unresolvedGeometry.length ? null : Object.fromEntries(SIDES.map(side => [side.toLowerCase(), {
     centeringBorders: measureSpeedsterCenteringBorders(state.geometry.sides[side].printed.quad),
   }]));

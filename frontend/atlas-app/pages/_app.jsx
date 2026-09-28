@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import Router from 'next/router';
 import { installPendingNavigationController } from '../lib/pending-navigation.mjs';
+import { VerifiedImageCacheBoundary } from '@atlas/manual-workspace/image-cache';
 import '../styles/global.css';
 import '../styles/grading.css';
 import '@atlas/report-view/styles.css';
@@ -14,6 +15,7 @@ const useBrowserLayoutEffect = typeof window === 'undefined' ? useEffect : useLa
 export default function App({ Component, pageProps }) {
     const [navigationNotice,setNavigationNotice]=useState('');
     useBrowserLayoutEffect(()=>installPendingNavigationController({window,document,router:Router,onBlocked:setNavigationNotice}),[]);
-    return <>{navigationNotice && <aside role="alert" className="atlas-navigation-notice">
-        <p>{navigationNotice}</p><button type="button" onClick={()=>setNavigationNotice('')}>Dismiss message</button></aside>}<Component {...pageProps}/></>;
+    const imageScope = pageProps.staff ? JSON.stringify([pageProps.staff.id, pageProps.staff.role, pageProps.staff.mode]) : null;
+    return <VerifiedImageCacheBoundary scope={imageScope}>{navigationNotice && <aside role="alert" className="atlas-navigation-notice">
+        <p>{navigationNotice}</p><button type="button" onClick={()=>setNavigationNotice('')}>Dismiss message</button></aside>}<Component {...pageProps}/></VerifiedImageCacheBoundary>;
 }

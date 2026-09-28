@@ -127,7 +127,7 @@ function validate(state) {
   const allIds = [];
   for (const side of SIDES) {
     const slot = state.sides[side];
-    object(slot, ['frame', 'cornerShape', 'findingRevision', 'reviewRevision', 'findings', 'pending', 'inspection', 'humanEditedIds', 'source', 'measurement']);
+    object(slot, ['frame', 'cornerShape', 'findingRevision', 'reviewRevision', 'findings', 'pending', 'inspection', 'humanEditedIds', 'source', 'measurement'], ['findingReviews']);
     frame(slot.frame); material(slot.cornerShape); integer(slot.findingRevision, 1); integer(slot.reviewRevision);
     requireThat(slot.findingRevision <= state.draftRevision && slot.reviewRevision <= state.draftRevision);
     allIds.push(...findings(slot.findings, side).map(f => f.id));
@@ -142,6 +142,19 @@ function validate(state) {
     object(slot.source, ['method'], ['version', 'id', 'map']);
     requireThat(['HUMAN', 'DETECTOR'].includes(slot.source.method));
     if (slot.source.method === 'DETECTOR') { text(slot.source.version); text(slot.source.id); }
+    if (slot.findingReviews) {
+      const progress = slot.findingReviews;
+      object(progress, ['findingRevision', 'imageSha256', 'decisions']);
+      integer(progress.findingRevision, 1);
+      requireThat(progress.findingRevision <= slot.findingRevision && HASH.test(progress.imageSha256));
+      requireThat(Array.isArray(progress.decisions) && progress.decisions.length <= 200
+        && new Set(progress.decisions.map(value => value.findingId)).size === progress.decisions.length);
+      for (const decision of progress.decisions) {
+        object(decision, ['findingId', 'reviewerId', 'reviewedAt']);
+        text(decision.findingId); text(decision.reviewerId); text(decision.reviewedAt);
+        requireThat(Number.isFinite(Date.parse(decision.reviewedAt)));
+      }
+    }
     if (slot.measurement !== null) {
       object(slot.measurement, ['base', 'receipt']);
       const measured = slot.measurement.base, current = baseFor(state, side);
@@ -202,6 +215,41 @@ export function createDefectWorkspace(input) {
 export function parseDefectWorkspace(value) { return publish(validate(typeof value === 'string' ? JSON.parse(value) : value)); }
 export function serializeDefectWorkspace(state) { validate(state); return JSON.stringify(state); }
 export function defectBase(state, side) { validate(state); return copy(baseFor(state, side)); }
+/** Durable inspection progress. Neither bulk findings confirmation nor report approval. */
+export function reviewedDefectFindingIds(state, side) {
+  validate(state); requireThat(SIDES.includes(side));
+  const slot = state.sides[side], progress = slot.findingReviews;
+  if (!progress || progress.findingRevision !== slot.findingRevision
+    || progress.imageSha256 !== slot.frame.inspectionImageSha256 || slot.pending) return [];
+  return progress.decisions.map(value => value.findingId).filter(id => slot.findings.some(finding => finding.id === id && finding.reviewResult !== 'REMOVED'));
+}
+export function invalidateDefectFindingReviews(state, side) {
+  validate(state); requireThat(SIDES.includes(side));
+  const { findingReviews, ...slot } = state.sides[side];
+  return findingReviews ? changed(state, side, slot, ['findingsConfirmation', 'report']).state : state;
+}
+function advanceFindingReviews(slot, findingRevision, keep = () => true) {
+  const progress = slot.findingReviews;
+  if (!progress || progress.findingRevision !== slot.findingRevision
+    || progress.imageSha256 !== slot.frame.inspectionImageSha256) return {};
+  return { findingReviews: { ...progress, findingRevision,
+    decisions: progress.decisions.filter(decision => keep(decision.findingId)) } };
+}
+export function markDefectFindingReviewed(state, request) {
+  validate(state); object(request, ['side', 'base', 'findingId', 'reviewed', 'actor', 'reviewerId', 'reviewedAt']);
+  requireThat(request.actor === 'HUMAN' && request.reviewed === true, 'ATLAS_DEFECT_HUMAN_REQUIRED');
+  matches(request.base, baseFor(state, request.side));
+  const slot = state.sides[request.side];
+  requireThat(!slot.pending, 'ATLAS_DEFECT_MEASUREMENT_PENDING');
+  requireThat(slot.findings.some(finding => finding.id === request.findingId && finding.reviewResult !== 'REMOVED'), 'ATLAS_DEFECT_NOT_FOUND');
+  const ids = reviewedDefectFindingIds(state, request.side);
+  if (ids.includes(request.findingId)) return publish({ state, invalidated: { report: false, sides: { FRONT: [], BACK: [] } } });
+  const decisions = slot.findingReviews?.decisions.filter(value => ids.includes(value.findingId)) ?? [];
+  return changed(state, request.side, { ...slot, findingReviews: {
+    findingRevision: slot.findingRevision, imageSha256: slot.frame.inspectionImageSha256,
+    decisions: [...decisions, { findingId: request.findingId, reviewerId: request.reviewerId, reviewedAt: request.reviewedAt }],
+  } }, ['findingsConfirmation', 'report']);
+}
 export function beginDefectEdit(state, request) {
   validate(state); object(request, ['side', 'base', 'actor', 'action']);
   requireThat(request.actor === 'HUMAN', 'ATLAS_DEFECT_HUMAN_REQUIRED');
@@ -212,6 +260,7 @@ export function beginDefectEdit(state, request) {
     : action.type === 'CHANGE_TYPE' ? [action.defectId] : action.defectIds;
   requireThat(!ids.some(id => state.sides[request.side === 'FRONT' ? 'BACK' : 'FRONT'].findings.some(f => f.id === id)), 'ATLAS_DEFECT_ID_CONFLICT');
   return changed(state, request.side, { ...slot, findingRevision: next(slot.findingRevision),
+    ...advanceFindingReviews(slot, next(slot.findingRevision), id => !ids.includes(id)),
     pending: { actor: 'HUMAN', action }, humanEditedIds: [...new Set([...slot.humanEditedIds, ...ids])], inspection: null, measurement: null });
 }
 /** Late map filtering never removes a human-edited DETECTOR-origin finding.
@@ -226,9 +275,11 @@ export function beginDefectMapFilter(state, request) {
   for (const id of action.defectIds) {
     const finding = slot.findings.find(f => f.id === id);
     requireThat(finding.reviewResult === 'UNREVIEWED' && finding.origin !== 'SMART_MARK'
-      && !slot.humanEditedIds.includes(id) && !slot.inspection, 'ATLAS_DEFECT_HUMAN_FINDING_PROTECTED');
+      && !slot.humanEditedIds.includes(id) && !reviewedDefectFindingIds(state, request.side).includes(id)
+      && !slot.inspection, 'ATLAS_DEFECT_HUMAN_FINDING_PROTECTED');
   }
   return changed(state, request.side, { ...slot, findingRevision: next(slot.findingRevision),
+    ...advanceFindingReviews(slot, next(slot.findingRevision), id => !action.defectIds.includes(id)),
     pending: { actor: 'ENGINE', action }, source: { ...slot.source, map: request.map }, inspection: null, measurement: null });
 }
 /** Candidate remains separately visible on failure. Discard is itself a new
@@ -241,6 +292,7 @@ export function discardPendingDefectEdit(state, request) {
   // just its CPU pass would make an unmeasured trace appear settled.
   requireThat(!slot.pending.geometryReprojection, 'ATLAS_DEFECT_GEOMETRY_REVIEW_REQUIRED');
   return changed(state, request.side, { ...slot, findingRevision: next(slot.findingRevision), pending: null,
+    ...advanceFindingReviews(slot, next(slot.findingRevision)),
     cornerShape: slot.pending.previousCornerShape ?? slot.cornerShape, measurement: null, inspection: null });
 }
 function checkedMeasurement(input, result) {
@@ -292,6 +344,12 @@ export function applyDefectMeasurement(state, result) {
   // Current action/source/CPU verification happens in runDefectMeasurement.
   // This adoption boundary independently fences revisions and other-side IDs.
   return changed(state, result.side, { ...slot, findings: measured, pending: null,
+    // Other findings can change ownership/measurements when one trace changes.
+    // Keep an explicit decision only when its entire saved evidence is equal.
+    ...advanceFindingReviews(slot, slot.findingRevision, id => {
+      const before = slot.findings.find(finding => finding.id === id), after = measured.find(finding => finding.id === id);
+      return Boolean(before && after && equal(before, after));
+    }),
     measurement: { base: result.base, receipt: result.receipt } }, ['findingsConfirmation', 'report']);
 }
 /** Already measured, exact detector proposals only. Initialization is optional;
@@ -301,7 +359,8 @@ export function adoptDefectProposals(state, request) {
   matches(request.base, baseFor(state, request.side)); object(request.source, ['method', 'version', 'id']);
   requireThat(request.source.method === 'DETECTOR'); text(request.source.version); text(request.source.id);
   const slot = state.sides[request.side];
-  requireThat(!slot.pending && !slot.inspection && !slot.humanEditedIds.length && slot.findings.every(f => f.reviewResult === 'UNREVIEWED'),
+  requireThat(!slot.pending && !slot.inspection && !slot.humanEditedIds.length
+    && !reviewedDefectFindingIds(state, request.side).length && slot.findings.every(f => f.reviewResult === 'UNREVIEWED'),
     'ATLAS_DEFECT_HUMAN_FINDING_PROTECTED');
   const proposals = findings(request.findings, request.side);
   requireThat(proposals.every(f => f.reviewResult === 'UNREVIEWED' && f.origin !== 'SMART_MARK'), 'ATLAS_DEFECT_PROVENANCE_INVALID');
@@ -346,6 +405,7 @@ export function confirmDefectFindings(state, request) {
   for (const side of SIDES) {
     const slot = state.sides[side], findingRevision = next(slot.findingRevision);
     result.sides[side] = { ...slot, findingRevision, findings: completeSpeedsterReview(slot.findings),
+      ...advanceFindingReviews(slot, findingRevision),
       inspection: { ...slot.inspection, findingRevision } };
   }
   result.confirmation = { actor: 'HUMAN', base: Object.fromEntries(SIDES.map(side => [side, baseFor(result, side)])) };

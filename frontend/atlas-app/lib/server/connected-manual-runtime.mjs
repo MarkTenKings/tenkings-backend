@@ -3,7 +3,7 @@ import { createPhotoStorage } from '@atlas/photo-storage';
 import { createManualArtifactStore,createS3ManualArtifactTransport } from '@atlas/manual-service/artifacts';
 import { createDurableStaffBoundary } from '@atlas/manual-service/staff-auth';
 import { createMachineStaffBoundary } from '@atlas/manual-service/machine-auth';
-import { createConnectedManual, createReviewDisplayReader, createWorkLimiter } from '@atlas/connected-manual';
+import { createConnectedManual } from '@atlas/connected-manual';
 import { geometryProcessingEnvironment } from '@atlas/connected-manual/geometry-processing';
 import { createConnectedHandler } from '@atlas/connected-manual/http';
 import { identificationEffects } from '@atlas/connected-manual/identification';
@@ -65,6 +65,13 @@ export function manualProcessingSettings(env) {
     ...geometryProcessingEnvironment(env)});
 }
 
+export async function validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled,client}) {
+  if(memoryEnabled&&!learningEnabled){
+    const [found]=await client.$queryRawUnsafe("SELECT to_regclass('atlas_manual.learning_control') IS NOT NULL AS installed");
+    requireThat(found?.installed===false,503,'MEMORY_LIFECYCLE_FLAG_REQUIRED');
+  }
+}
+
 /** Private CPU service behind the approved Vercel staff application.
  * The signed transport forwards the ordinary staff cookie; auth rechecks the
  * independently restricted manual DB role on every short transaction. */
@@ -81,19 +88,22 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const artifacts=createManualArtifactStore({transport:createS3ManualArtifactTransport({client:artifactClient,bucket:settings.bucket,PutObjectCommand,GetObjectCommand}),prefix:`${settings.keyPrefix}/artifacts`});
   const effects=env.ATLAS_MANUAL_IDENTIFICATION_ENABLED==='true'?identificationEffects({openaiKey:env.ATLAS_MANUAL_OPENAI_KEY,googleKey:env.ATLAS_MANUAL_GOOGLE_VISION_KEY}):null;
   const reads=new Map();
-  const reviewDisplay=createReviewDisplayReader({storage,keyPrefix:settings.keyPrefix,limited:createWorkLimiter(2,{maxQueue:16})});
-  const imageReadUrl=async({kind,descriptor,photo})=>{
-    const key=descriptorSha256(descriptor),cached=reads.get(key);if(cached&&cached.expires>Date.now())return cached.value;
-    const value=kind==='original'?await storage.createDecodedFrameRead({frame:descriptor,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300})
-      :await storage.createDerivativeRead({descriptor,frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300});
-    requireThat(new URL(value.url).origin===settings.uploadOrigin,503,'MANUAL_UPLOAD_ORIGIN_MISMATCH');
-    if(kind==='original'){
-      const display=await reviewDisplay(photo);
-      if(display){requireThat(new URL(display.url).origin===settings.uploadOrigin
-        &&new URL(display.preview.url).origin===settings.uploadOrigin,503,'MANUAL_UPLOAD_ORIGIN_MISMATCH');value.display=display;}
-    }
+  const imageReadUrl=async({kind,descriptor,photo,photoSource,contextOnly=false})=>{
+    const key=`${kind}:${contextOnly}:${descriptorSha256(descriptor)}`,cached=reads.get(key);
+    if(cached&&cached.expires>Date.now())return cached.value;
+    let value;
+    if(kind==='original'&&connected.reviewDisplay)value=await connected.reviewDisplay.read(photo,photoSource,{contextOnly});
+    else if(kind==='original'&&contextOnly)value={...descriptor.raster.content,...descriptor.raster.dimensions,displayState:{state:'PENDING',retryable:true}};
+    else value=kind==='original'?await storage.createDecodedFrameRead({frame:descriptor,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300})
+      :await storage.createImmutableDerivativeRead({descriptor,frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300});
+    for(const grant of [value,value.preview,value.display,value.display?.preview])if(grant?.url)
+      requireThat(new URL(grant.url).origin===settings.uploadOrigin,503,'MANUAL_UPLOAD_ORIGIN_MISMATCH');
+    if(kind!=='original')value={...value,...descriptor.raster.dimensions,descriptorSha256:descriptorSha256(descriptor)};
     if(reads.size>=1000)reads.delete(reads.keys().next().value);
-    reads.set(key,{value,expires:Date.now()+(kind==='original'&&!value.display?30000:240000)});return value;
+    if((!value.displayState||value.displayState.state==='READY')&&(!value.previewState||value.previewState.state==='READY'))
+      reads.set(key,{value,expires:Date.now()+240000});
+    else reads.delete(key); // Explicit retry/read observes the newly queued state immediately.
+    return value;
   };
   const memoryEnabled=env.ATLAS_MANUAL_DEFECT_MEMORY_ENABLED==='true';
   const defectProvider=env.ATLAS_MANUAL_DEFECT_ANALYSIS_ENABLED==='true'?createAstraDefectProvider({apiKey:env.ATLAS_MANUAL_OPENAI_KEY}):null;
@@ -107,7 +117,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const stationConfig=manualStationSettings(env,staffConfig.origin);
   const researchConfig=manualResearchSettings(env),dealerConfiguration=manualDealerConfigurationLoader(env);
   const dealerOperations=env.ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED==='true'?createDealerStaffService({auth,boundary}):null;
-  const connected=createConnectedManual({dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
+  const connected=createConnectedManual({displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
     processing:manualProcessingSettings(env),onWorkerError});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
@@ -116,6 +126,7 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     pending:input=>connected.assistance.executor.pending(input),
     reconcile:input=>connected.assistance.executor.reconcile(input),
   }):null;
-  const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,dealerOffers:connected.dealerOffers});
-  return {connected,boundary,handler,analysisReconciler,approvedManualReader,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop()]);await manualClient.$disconnect();client.destroy();}};
+  const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,dealerOffers:connected.dealerOffers,reviewDisplay:connected.reviewDisplay});
+  const validateConfiguration=()=>validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',client:manualClient});
+  return {connected,boundary,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reviewDisplay?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();}};
 }

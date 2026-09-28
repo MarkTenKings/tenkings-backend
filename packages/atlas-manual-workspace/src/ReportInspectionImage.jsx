@@ -80,7 +80,7 @@ function Blueprint({ finding, explanation, centering, policy, side, printed, vie
 
 /** No edit/action callbacks: every control here changes only the displayed view. */
 export function ReportInspectionImage({ side, descriptor, expectedHash, findings, selected, onSelect, expanded, hidden, onExpand, onReady,
-  geometry, showFindingButtons = true, compact = false, fitViewport = false, layerOptions, findingsVisible, command, onViewChange, onActivate, cleanComparison = false, blueprint = true, explanation, centering, policy }) {
+  geometry, showFindingButtons = true, compact = false, fitViewport = false, layerOptions, findingsVisible, command, onViewChange, onActivate, initialInspection, cleanComparison = false, blueprint = true, explanation, centering, policy }) {
   const supplied = descriptor?.sha256 === expectedHash && descriptor?.url ? descriptor : null;
   const image = useVerifiedImage(supplied), [loaded, setLoaded] = useState(null);
   const ready = Boolean(supplied && image.url && loaded === image.url);
@@ -112,7 +112,7 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
 
   const fit = () => { setView({ zoom: 1, pan: { x: 0, y: 0 } }); setLens(null); };
   const changeZoom = next => { setView(previous => zoomInspectionAt(previous, next, { x: size.width / 2, y: size.height / 2 }, size)); setLens(null); };
-  useEffect(() => { onViewChange?.(side, zoom); }, [side, zoom, onViewChange]);
+  useEffect(() => { onViewChange?.(side, zoom, { view, size }); }, [side, view, size, onViewChange]);
   useEffect(() => {
     if (!command || command.side !== side) return;
     setTransition(true);
@@ -130,8 +130,16 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
     };
     resize(); const observer = new ResizeObserver(resize); observer.observe(element); return () => observer.disconnect();
   }, []);
+  const restoredInspection = useRef(false);
   useEffect(() => {
-    if (!ready || hidden || !selected) return;
+    if (!ready || hidden) return;
+    if (!restoredInspection.current && initialInspection?.side === side
+      && initialInspection.imageSha256 === expectedHash && initialInspection.view && initialInspection.size) {
+      restoredInspection.current = true;
+      setView(resizeInspectionView(initialInspection.view, initialInspection.size, sizeRef.current));
+      return;
+    }
+    if (!selected) return;
     const target = bounds.find(entry => entry.finding.id === selected.id);
     if (!target?.bounds) return;
     setTransition(true); setView(focusInspectionBounds(target.bounds, sizeRef.current)); setLens(null);

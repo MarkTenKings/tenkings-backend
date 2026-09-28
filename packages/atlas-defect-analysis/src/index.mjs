@@ -1,4 +1,4 @@
-import { validateRetrieval } from '../../atlas-defect-memory/src/contract.mjs';
+import { validateRetrieval, validateFreshness, validateFrame } from '../../atlas-defect-memory/src/contract.mjs';
 import { webcrypto } from 'node:crypto';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { check, object, string, integer, sha, uuid, digest, canonical, clone, frozen, SIDES, DEFECT_TYPES, parseBinding } from './contract.mjs';
@@ -16,6 +16,8 @@ export const LIMITS = frozen({ imageBytes: 10 * 1024 * 1024, totalImageBytes: 32
   requestBytes: 46 * 1024 * 1024, responseBytes: 1048576, outputBytes: 262144,
   lessons: 12, findings: 32, points: 64, timeoutMs: 120000, maxOutputTokens: 32768 });
 const WIDTH = 1350, HEIGHT = 1858;
+const CLEAN_REFERENCE_MEANING = 'No visible defect confirmed in this reference capture. Inspect the current card independently; this does not prove absence of hidden damage.';
+const CLEAN_REFERENCE_METADATA_FIELDS = ['id', 'feedbackSha256', 'sourceCardId', 'side', 'frame', 'imageSha256'];
 const CARD = frozen({ x: 40, y: 40, width: 1270, height: 1778 });
 const preparedRequests = new WeakSet();
 
@@ -50,7 +52,7 @@ async function runStepsAsync(steps, signal) {
 // Capture all caller-owned data before the first await, including images not yet
 // reached by the builder. Bound copies by the existing per-image/total limits.
 function snapshotRequestInput(input) {
-  object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages']);
+  object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages', ...(input.cleanLearning ? ['cleanLearning'] : [])]);
   const metadata = clone({ analysisId: input.analysisId, cardId: input.cardId, profile: input.profile,
     cornerShapes: input.cornerShapes, binding: input.binding, knowledge: input.knowledge });
   check(Array.isArray(input.images) && input.images.length === 2 && Array.isArray(input.lessonImages)
@@ -75,7 +77,21 @@ function snapshotRequestInput(input) {
     const { traceOverlay, ...part } = value;
     return { ...raster(part, ['lessonId']), traceOverlay: raster(traceOverlay, ['traceSha256']) };
   });
-  return { ...metadata, images, lessonImages };
+  const cleanLearning = input.cleanLearning ? { evidence: clone(input.cleanLearning.evidence),
+    examples: input.cleanLearning.examples.map(e => ({ metadata: clone(e.metadata), image: raster(e.image, ['sourceSha256']) })) } : null;
+  return { ...metadata, images, lessonImages, ...(cleanLearning ? { cleanLearning } : {}) };
+}
+
+function validateCleanEvidence(value) {
+  object(value, ['version', 'selectionSha256', 'policySha256', 'fallbackReason', 'examples', 'unavailable', 'sha256']);
+  const { sha256, ...body } = value; sha(sha256); sha(value.selectionSha256); sha(value.policySha256);
+  check(sha256 === digest(canonical(body)) && value.version === 'atlas-clean-consumer-v1'
+    && (value.fallbackReason === null || ['POLICY_NOT_ACTIVE', 'POLICY_EXPIRED', 'RUNTIME_POLICY_CHANGED', 'POLICY_INVALID'].includes(value.fallbackReason))
+    && Array.isArray(value.examples) && value.examples.length <= 4 && Array.isArray(value.unavailable) && value.unavailable.length <= 4,
+  'DEFECT_ANALYSIS_CLEAN_EVIDENCE_INVALID');
+  for (const e of value.examples) { object(e, CLEAN_REFERENCE_METADATA_FIELDS);
+    sha(e.id); sha(e.feedbackSha256); sha(e.imageSha256); uuid(e.sourceCardId); validateFrame(e.frame); check(SIDES.includes(e.side)); }
+  for (const e of value.unavailable) { object(e, ['id', 'reason']); sha(e.id); check(['CLEAN_IMAGE_UNAVAILABLE_OR_INVALID', 'CLEAN_EXAMPLE_BUDGET'].includes(e.reason)); }
 }
 
 /** Four overlapping, untranslated-resolution crops cover the physical card.
@@ -132,6 +148,19 @@ Reviewed examples include confirmed/corrected/rejected/human-added evidence with
 Each reviewed example includes its unmarked crop followed by a HUMAN_REVIEWED_TRACE_OVERLAY of that same crop. Cyan annotation marks the exact human-reviewed trace, not physical damage or printed artwork. For REJECTED examples it marks the rejected false-positive region. Compare the unmarked crop to understand actual appearance; the annotation teaches the reviewed boundary only.
 Never output area, millimeters, confidence probabilities, grade, score, measurement, acceptance, or approval. Outlines are fallible proposals; the human must review and edit before deterministic measurement. List material image limitations in at most eight short statements. Echo sourceBindingSha256 and knowledgeRevision exactly.`;
 
+/** Reproducible local facts only; a model alias is not an immutable provider
+ * snapshot. Evaluation additionally retains the actual response model/usage. */
+export function defectAnalysisBaselineFacts() {
+  return frozen({ model: MODEL, reasoningEffort: 'xhigh', requestVersion: BACKGROUND_VERSION,
+    cropLayoutVersion: INSPECTION_CONTEXT_CROP_LAYOUT, promptSha256: digest(INSTRUCTIONS),
+    schemaSha256: digest(canonical(RESULT_SCHEMA)), limits: LIMITS, modelAliasMayChange: true });
+}
+export function cleanLearningConsumerFacts() {
+  return frozen({ version: 'atlas-clean-reference-input-v1', meaningSha256: digest(CLEAN_REFERENCE_MEANING),
+    metadataSchemaSha256: digest(canonical(CLEAN_REFERENCE_METADATA_FIELDS)), kind: 'HUMAN_REVIEWED_CLEAN_EXAMPLE',
+    role: 'DEFECT_PROPOSER', optionalBudgetPolicy: 'CURRENT_AND_DEFECT_IMAGES_FIRST_SKIP_OPTIONAL_V1', mime: 'image/png', width: WIDTH, height: HEIGHT, maximum: 4 });
+}
+
 /** Root must retrieve acknowledged current reviewed memory immediately before
  * calling this builder. PUBLICATION_PENDING refuses dispatch; missing memory is
  * not silently replaced by an empty bank. Source/image effects happen outside DB. */
@@ -159,7 +188,7 @@ export async function buildAstraContextBackgroundDefectRequestAsync(input, { sig
   return runStepsAsync(buildRequest(snapshotRequestInput(input), BACKGROUND_VERSION, INSPECTION_CONTEXT_CROP_LAYOUT), signal);
 }
 function* buildRequest(input, version, cropLayoutVersion) {
-  object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages']);
+  object(input, ['analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'images', 'knowledge', 'lessonImages', ...(input.cleanLearning ? ['cleanLearning'] : [])]);
   uuid(input.analysisId); uuid(input.cardId); check(['SPORTS', 'POKEMON'].includes(input.profile));
   object(input.cornerShapes, SIDES); check(SIDES.every(side => ['SQUARE', 'ROUNDED_3_18_MM'].includes(input.cornerShapes[side])));
   const binding = parseBinding(input.binding), knowledge = validateRetrieval(input.knowledge);
@@ -211,12 +240,35 @@ function* buildRequest(input, version, cropLayoutVersion) {
     content.push(inputText({ kind: 'HUMAN_REVIEWED_TRACE_OVERLAY', lessonId, traceSha256, ...overlay.descriptor }), inputImage(overlay));
     yield null;
   }
+  let cleanLearning;
+  if (input.cleanLearning) {
+    validateCleanEvidence(input.cleanLearning.evidence);
+    check(input.cleanLearning.examples.length === input.cleanLearning.evidence.examples.length
+      && knowledge.lessons.length + input.cleanLearning.examples.length <= LIMITS.lessons, 'DEFECT_ANALYSIS_LESSON_LIMIT');
+    const cleanImages = [];
+    for (const [i, e] of input.cleanLearning.examples.entries()) {
+      check(canonical(e.metadata) === canonical(input.cleanLearning.evidence.examples[i]) && e.metadata.sourceCardId !== input.cardId
+        && !nativeHashes.includes(e.metadata.frame.originalSha256), 'DEFECT_ANALYSIS_TARGET_LESSON_FORBIDDEN');
+      const { sourceSha256, ...raster } = e.image;
+      check(sourceSha256 === e.metadata.frame.inspectionImageSha256 && raster.sha256 === e.metadata.imageSha256,
+        'DEFECT_ANALYSIS_CLEAN_EVIDENCE_INVALID');
+      const loaded = yield* image(raster, { width: WIDTH, height: HEIGHT });
+      byteCount += loaded.bytes.length; check(byteCount <= LIMITS.totalImageBytes, 'DEFECT_ANALYSIS_IMAGE_LIMIT');
+      cleanImages.push(loaded.descriptor);
+      content.push(inputText({ kind: 'HUMAN_REVIEWED_CLEAN_EXAMPLE', ...e.metadata,
+        meaning: CLEAN_REFERENCE_MEANING }), inputImage(loaded));
+      yield null;
+    }
+    cleanLearning = { consumer: input.cleanLearning.evidence, images: cleanImages };
+  }
   const sourceBindingSha256 = digest(canonical({ cardId: input.cardId, profile: input.profile, cornerShapes: input.cornerShapes, binding }));
   const evidence = { version, ...(cropLayoutVersion === undefined ? {} : { cropLayoutVersion }),
     analysisId: input.analysisId, cardId: input.cardId, profile: input.profile,
     cornerShapes: input.cornerShapes, binding, sourceBindingSha256, model: MODEL, reasoningEffort: 'xhigh', images, totalImageBytes: byteCount,
     knowledge: { revision: knowledge.revision, generation: knowledge.generation, sha256: knowledge.sha256,
-      status: knowledge.status, lessonIds: knowledge.lessonIds, lessonImages },
+      status: knowledge.status, lessonIds: knowledge.lessonIds, lessonImages,
+      ...(knowledge.freshness ? { freshness: knowledge.freshness } : {}) },
+    ...(cleanLearning ? { cleanLearning } : {}),
     promptSha256: digest(INSTRUCTIONS), schemaSha256: digest(canonical(RESULT_SCHEMA)), limits: LIMITS };
   const request = { model: MODEL, reasoning: { effort: 'xhigh' }, store: false,
     ...(version === BACKGROUND_VERSION ? { background: true } : {}), max_output_tokens: LIMITS.maxOutputTokens,
@@ -239,7 +291,7 @@ export function validateRequestEvidence(value) {
   if (providerBindingHash !== undefined) sha(providerBindingHash);
   const hasCropLayout = Object.hasOwn(evidence, 'cropLayoutVersion');
   object(evidence, ['version', ...(hasCropLayout ? ['cropLayoutVersion'] : []), 'analysisId', 'cardId', 'profile', 'cornerShapes', 'binding', 'sourceBindingSha256', 'model',
-    'reasoningEffort', 'images', 'totalImageBytes', 'knowledge', 'promptSha256', 'schemaSha256', 'limits']);
+    'reasoningEffort', 'images', 'totalImageBytes', 'knowledge', 'promptSha256', 'schemaSha256', 'limits', ...(evidence.cleanLearning ? ['cleanLearning'] : [])]);
   check(!hasCropLayout || (evidence.version === BACKGROUND_VERSION && evidence.cropLayoutVersion === INSPECTION_CONTEXT_CROP_LAYOUT),
     'DEFECT_ANALYSIS_CROP_LAYOUT_INVALID');
   check([VERSION, BACKGROUND_VERSION].includes(evidence.version) && evidence.model === MODEL && evidence.reasoningEffort === 'xhigh'
@@ -265,7 +317,9 @@ export function validateRequestEvidence(value) {
       && item.sourceImageSha256 === evidence.binding.sides[item.side].frame.inspectionImageSha256);
   }
   const knowledge = evidence.knowledge;
-  object(knowledge, ['revision', 'generation', 'sha256', 'status', 'lessonIds', 'lessonImages']);
+  object(knowledge, ['revision', 'generation', 'sha256', 'status', 'lessonIds', 'lessonImages',
+    ...(Object.hasOwn(knowledge, 'freshness') ? ['freshness'] : [])]);
+  if (knowledge.freshness) validateFreshness(knowledge.freshness);
   integer(knowledge.generation, 0, Number.MAX_SAFE_INTEGER); sha(knowledge.sha256);
   check(new RegExp(`^m1:${knowledge.generation}:[a-f0-9]{64}$`).test(knowledge.revision)
     && ['READY', 'EMPTY_REVIEWED_BANK'].includes(knowledge.status) && Array.isArray(knowledge.lessonIds)
@@ -279,6 +333,14 @@ export function validateRequestEvidence(value) {
     raster(item.traceOverlay); sha(item.traceOverlay.traceSha256);
     check(item.traceOverlay.width === item.width && item.traceOverlay.height === item.height);
     bytes += item.byteCount + item.traceOverlay.byteCount;
+  }
+  if (evidence.cleanLearning) {
+    object(evidence.cleanLearning, ['consumer', 'images']); validateCleanEvidence(evidence.cleanLearning.consumer);
+    check(Array.isArray(evidence.cleanLearning.images) && evidence.cleanLearning.images.length === evidence.cleanLearning.consumer.examples.length
+      && evidence.cleanLearning.images.length + knowledge.lessonIds.length <= LIMITS.lessons);
+    for (const [i, image] of evidence.cleanLearning.images.entries()) { raster(image);
+      check(image.width === WIDTH && image.height === HEIGHT && image.sha256 === evidence.cleanLearning.consumer.examples[i].imageSha256);
+      bytes += image.byteCount; }
   }
   check(bytes === evidence.totalImageBytes && bytes <= LIMITS.totalImageBytes); canonical(value, 32768);
   return clone(value);
@@ -301,7 +363,7 @@ function* restoreRequest({ requestText, requestHash, evidence, evidenceHash }) {
   const content = request?.input?.[1]?.content;
   check(Array.isArray(content) && content.length >= 21 && content.length <= 69 && (content.length - 1) % 2 === 0,
     'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
-  const images = SIDES.map(side => ({ side, whole: null, crops: [] })), lessons = [], lessonImages = [];
+  const images = SIDES.map(side => ({ side, whole: null, crops: [] })), lessons = [], lessonImages = [], cleanExamples = [];
   for (let i = 1; i < content.length; i += 2) {
     check(content[i]?.type === 'input_text' && typeof content[i].text === 'string' && content[i + 1]?.type === 'input_image'
       && typeof content[i + 1].image_url === 'string' && content[i + 1].image_url.startsWith('data:image/png;base64,'));
@@ -312,6 +374,11 @@ function* restoreRequest({ requestText, requestHash, evidence, evidenceHash }) {
       const part = { mime: metadata.mime, sha256: metadata.sha256, width: metadata.width, height: metadata.height, bytes };
       if (metadata.id === `${slot.side}:whole`) { check(slot.whole === null); slot.whole = { ...part, sourceSha256: metadata.sourceImageSha256 }; }
       else slot.crops.push({ ...part, id: metadata.id, x: metadata.crop.x, y: metadata.crop.y });
+    } else if (metadata.kind === 'HUMAN_REVIEWED_CLEAN_EXAMPLE') {
+      const { kind: _kind, meaning: _meaning, ...fields } = metadata;
+      const descriptor = evidence.cleanLearning?.images[cleanExamples.length]; check(descriptor);
+      const { byteCount: _byteCount, ...part } = descriptor;
+      cleanExamples.push({ metadata: fields, image: { ...part, bytes, sourceSha256: fields.frame.inspectionImageSha256 } });
     } else if (metadata.kind === 'HUMAN_REVIEWED_TRACE_OVERLAY') {
       const target = lessonImages.find(x => x.lessonId === metadata.lessonId); check(target && target.traceOverlay === null);
       target.traceOverlay = { mime: metadata.mime, sha256: metadata.sha256, width: metadata.width, height: metadata.height,
@@ -325,9 +392,11 @@ function* restoreRequest({ requestText, requestHash, evidence, evidenceHash }) {
   }
   const knowledge = { version: 'atlas-defect-memory-retrieval-v1', revision: evidence.knowledge.revision,
     generation: evidence.knowledge.generation, status: evidence.knowledge.status, pendingPublications: 0,
+    ...(evidence.knowledge.freshness ? { freshness: evidence.knowledge.freshness } : {}),
     lessonIds: evidence.knowledge.lessonIds, lessons, sha256: evidence.knowledge.sha256 };
   const restored = yield* buildRequest({ analysisId: evidence.analysisId, cardId: evidence.cardId, profile: evidence.profile,
-    cornerShapes: evidence.cornerShapes, binding: evidence.binding, images, knowledge, lessonImages }, evidence.version, evidence.cropLayoutVersion);
+    cornerShapes: evidence.cornerShapes, binding: evidence.binding, images, knowledge, lessonImages,
+    ...(evidence.cleanLearning ? { cleanLearning: { evidence: evidence.cleanLearning.consumer, examples: cleanExamples } } : {}) }, evidence.version, evidence.cropLayoutVersion);
   check(restored.requestText === requestText && restored.requestHash === requestHash && restored.evidenceHash === evidenceHash,
     'DEFECT_ANALYSIS_REQUEST_ARTIFACT_INVALID');
   return restored;
@@ -382,7 +451,8 @@ export function parseDefectProposals(value, evidence) {
     const image = evidence.images.find(x => x.id === finding.imageId && x.side === finding.side);
     check(image, 'DEFECT_ANALYSIS_RESPONSE_IMAGE_MISMATCH');
     check(Array.isArray(finding.lessonIds) && finding.lessonIds.length <= LIMITS.lessons && new Set(finding.lessonIds).size === finding.lessonIds.length
-      && finding.lessonIds.every(id => evidence.knowledge.lessonIds.includes(id)), 'DEFECT_ANALYSIS_RESPONSE_LESSON_MISMATCH');
+      && finding.lessonIds.every(id => evidence.knowledge.lessonIds.includes(id)
+        || evidence.cleanLearning?.consumer.examples.some(e => e.id === id)), 'DEFECT_ANALYSIS_RESPONSE_LESSON_MISMATCH');
     const canonicalContour = contour(finding.localContour, image);
     const shape = canonical({ side: finding.side, canonicalContour }); check(!duplicate.has(shape), 'DEFECT_ANALYSIS_DUPLICATE_PROPOSAL'); duplicate.add(shape);
     return { id: `${evidence.analysisId}:${i + 1}`, side: finding.side, defectType: finding.defectType, canonicalContour,

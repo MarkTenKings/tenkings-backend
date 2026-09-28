@@ -3,6 +3,36 @@ import assert from 'node:assert/strict';
 import { createBatchReadQueue, mergeProcessingCards, queueProblemMessage } from '../lib/batch-queue.mjs';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('the nineteenth selected card overtakes waiting rail reads without duplicate work', async () => {
+  const queue = createBatchReadQueue({ concurrency: 1 }), started = [], releases = [];
+  const reads = Array.from({ length: 19 }, (_, index) => queue.read(String(index), () => {
+    started.push(index); return new Promise(resolve => releases.push(() => resolve(index)));
+  }));
+  await tick(); const promoted = queue.read('18', () => assert.fail('must reuse queued work'), false, { priority: 100 });
+  assert.equal(promoted, reads[18]); releases.shift()(); await tick(); assert.deepEqual(started, [0, 18]);
+  while (releases.length) { releases.shift()(); await tick(); }
+  assert.equal((await Promise.all(reads)).length, 19);
+});
+
+test('leaving a selected card cancels its unused queued read but preserves a shared subscriber', async () => {
+  const queue = createBatchReadQueue({ concurrency: 1 }); let finish, orphanCalled = false;
+  const active = queue.read('active', () => new Promise(resolve => { finish = resolve; })); await tick();
+  const controller = new AbortController();
+  const orphan = queue.read('orphan', () => { orphanCalled = true; }, false, { signal: controller.signal });
+  const sharedGone = queue.read('shared', () => 'shared', false, { signal: controller.signal });
+  const sharedKept = queue.read('shared', () => assert.fail('duplicate'));
+  controller.abort(); await assert.rejects(orphan, { code: 'PREVIEW_READ_CANCELLED' });
+  await assert.rejects(sharedGone, { code: 'PREVIEW_READ_CANCELLED' }); finish(); await active;
+  assert.equal(await sharedKept, 'shared'); assert.equal(orphanCalled, false);
+});
+
+test('a selected read starts first when rail and selection are mounted together', async () => {
+  const queue = createBatchReadQueue({ concurrency: 1 }), order = [];
+  const thumbnail = queue.read('thumbnail', () => { order.push('thumbnail'); });
+  const selected = queue.read('selected', () => { order.push('selected'); }, false, { priority: 100 });
+  await Promise.all([thumbnail, selected]); assert.deepEqual(order, ['selected', 'thumbnail']);
+});
+
 test('30 cards share a two-request limit and the rail/front/back reuse each read', async () => {
   const queue = createBatchReadQueue(); let active = 0, maximum = 0, reads = 0;
   const release = [];

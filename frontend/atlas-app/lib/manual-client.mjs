@@ -1,9 +1,14 @@
 import { STAFF_BASE_PATH } from './routes.mjs';
 import { readManualResponse } from '@atlas/manual-service/response';
 export async function manualRequest(path,{method='GET',body,signal,csrf}={}){
-  const response=await fetch(`${STAFF_BASE_PATH}${path}`,{method,credentials:'same-origin',cache:'no-store',signal:signal??AbortSignal.timeout(210000),
-    ...(body!==undefined?{headers:{'Content-Type':'application/json','x-atlas-csrf':csrf},body:JSON.stringify(body)}:{})});
-  return readManualResponse(response);
+  const controller=new AbortController(),abort=()=>controller.abort(signal.reason);
+  const timer=setTimeout(()=>controller.abort(new DOMException('Request timed out','TimeoutError')),210000);
+  signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
+  try {
+    const response=await fetch(`${STAFF_BASE_PATH}${path}`,{method,credentials:'same-origin',cache:'no-store',signal:controller.signal,
+      ...(body!==undefined?{headers:{'Content-Type':'application/json','x-atlas-csrf':csrf},body:JSON.stringify(body)}:{})});
+    return await readManualResponse(response);
+  } finally {clearTimeout(timer);signal?.removeEventListener('abort',abort);}
 }
 export function manualMessage(error){
   if(error?.fields)return Object.values(error.fields).join(' ');
@@ -36,6 +41,8 @@ export function manualMessage(error){
     PHOTO_DECODE_CANCELLED:'Working-image preparation stopped before completion. Your original is saved. Resume this photo to check preparation.',
     INTAKE_PHOTO_PROCESSOR_UNAVAILABLE:'Photo preparation is unavailable. Your original is saved; keep the saved upload and retry when processing is available.',
     INTAKE_TEMPORARILY_UNAVAILABLE:'The photo service could not finish this step. Resume this side to check its saved upload. If it fails again, keep the upload for review. (INTAKE_TEMPORARILY_UNAVAILABLE)',
+    REVIEW_DISPLAY_RETRY_STALE:'This photo preparation attempt changed. Reload the photo status before retrying.',REVIEW_DISPLAY_RETRY_STORAGE_UNAVAILABLE:'The browser could not retain this retry safely. Enable local storage and reload before retrying photo preparation.',
+    MANUAL_DRAFT_STALE:'Another saved decision changed this card. Review the refreshed evidence before saving again.',MANUAL_REVISION_CONFLICT:'Another reviewer saved a newer version. Reload the current card before continuing.',MANUAL_EDIT_FORBIDDEN:'Your current access is read-only. A reviewer must save corrections.',
     MANUAL_PENDING_REQUEST:'Resume the saved request before starting another change.',
     MANUAL_STAFF_CHANGED:'The signed-in staff account changed. Reload this page before continuing.',
     IDENTIFICATION_RETRY_NOT_ALLOWED:'This identification attempt cannot be retried yet. Your photos are saved; enter the printed details or contact the owner.',

@@ -81,8 +81,44 @@ export function validateLesson(lesson) {
   const { id, ...body } = lesson; requireThat(id === digest(canonical(body)), 503, 'MEMORY_LESSON_INVALID'); return lesson;
 }
 export function retrievalDigest(value) { const { sha256: _sha, ...body } = value; return digest(canonical(body, { maxBytes: 524288 })); }
+export function validateFreshness(value) {
+  object(value, ['version', 'activeReleaseId', 'activeReleaseSha256', 'unavailableSources', 'policy', 'role', 'fallback',
+    ...(Object.hasOwn(value, 'decisions') ? ['decisions'] : []), ...(Object.hasOwn(value, 'unavailableLessons') ? ['unavailableLessons'] : []),
+    ...(Object.hasOwn(value, 'roleSelection') ? ['roleSelection'] : []),
+    ...(Object.hasOwn(value, 'qualification') ? ['qualification'] : [])]);
+  if (value.qualification) { object(value.qualification, ['status', 'reason', 'bindingSha256']); hash(value.qualification.bindingSha256);
+    requireThat(['QUALIFIED', 'BASELINE'].includes(value.qualification.status)
+      && (value.qualification.reason === null || value.qualification.reason === 'RUNTIME_POLICY_CHANGED'), 503, 'MEMORY_RETRIEVAL_INVALID'); }
+  if (value.roleSelection) { object(value.roleSelection, ['sha256', 'policySha256', 'registrySha256', 'reviewerQualitySha256', 'status', 'reason']);
+    for (const k of ['sha256', 'policySha256', 'registrySha256', 'reviewerQualitySha256']) hash(value.roleSelection[k]);
+    requireThat(['READY', 'BASELINE'].includes(value.roleSelection.status)
+      && (value.roleSelection.reason === null || ['POLICY_EXPIRED', 'RUNTIME_POLICY_CHANGED', 'POLICY_INVALID'].includes(value.roleSelection.reason)), 503, 'MEMORY_RETRIEVAL_INVALID'); }
+  hash(value.activeReleaseSha256);
+  requireThat(value.version === 'atlas-learning-freshness-v1' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(value.activeReleaseId)
+    && Number.isSafeInteger(value.unavailableSources) && value.unavailableSources >= 0
+    && ['legacy-defect-family-v1', 'balanced-defect-v1'].includes(value.policy) && value.role === 'DEFECT_PROPOSER'
+    && ['ELIGIBLE_EXAMPLES', 'BASELINE_WITHOUT_EXAMPLES'].includes(value.fallback), 503, 'MEMORY_RETRIEVAL_INVALID');
+  if (value.decisions) {
+    requireThat(Array.isArray(value.decisions) && value.decisions.length <= 96, 503, 'MEMORY_RETRIEVAL_INVALID');
+    for (const decision of value.decisions) {
+      object(decision, ['id', 'selected', 'reason']); hash(decision.id);
+      requireThat(typeof decision.selected === 'boolean' && ['DUPLICATE', 'SAME_SOURCE', 'DESIGN_MISMATCH', 'SIDE_MISMATCH',
+        'NEGATIVE_REQUIRES_EXACT_DESIGN', 'BUDGET', 'SOURCE_QUOTA', 'DISPOSITION_QUOTA', 'EXACT_DESIGN', 'MATCHING_FAMILY'].includes(decision.reason),
+      503, 'MEMORY_RETRIEVAL_INVALID');
+    }
+  }
+  if (value.unavailableLessons) {
+    requireThat(Array.isArray(value.unavailableLessons) && value.unavailableLessons.length <= 32, 503, 'MEMORY_RETRIEVAL_INVALID');
+    for (const lesson of value.unavailableLessons) {
+      object(lesson, ['id', 'reason']); hash(lesson.id);
+      requireThat(['EXEMPLAR_UNVERIFIED', 'EXEMPLAR_UNAVAILABLE'].includes(lesson.reason), 503, 'MEMORY_RETRIEVAL_INVALID');
+    }
+  }
+}
 export function validateRetrieval(value) {
-  object(value, ['version', 'revision', 'generation', 'status', 'pendingPublications', 'lessonIds', 'lessons', 'sha256']);
+  object(value, ['version', 'revision', 'generation', 'status', 'pendingPublications', 'lessonIds', 'lessons', 'sha256',
+    ...(Object.hasOwn(value, 'freshness') ? ['freshness'] : [])]);
+  if (value.freshness) validateFreshness(value.freshness);
   requireThat(value.version === 'atlas-defect-memory-retrieval-v1' && Number.isSafeInteger(value.generation) && value.generation >= 0
     && new RegExp(`^m1:${value.generation}:[a-f0-9]{64}$`).test(value.revision)
     && ['READY', 'EMPTY_REVIEWED_BANK', 'PUBLICATION_PENDING'].includes(value.status)

@@ -20,3 +20,9 @@ export function inspectionPreviewGrant(saved, grant) {
     503, 'MANUAL_PREVIEW_BINDING_INVALID');
   return { ...grant, ...dimensions, sourceSha256: saved.sourceSha256, policyVersion: saved.policyVersion };
 }
+
+// Optional transport failures must not suppress independently verified evidence.
+// Cancellation and authority/source conflicts still abort the entire response.
+export function rethrowPreviewControlFailure(error, signal) {
+  if (signal?.aborted || error?.name === 'AbortError' || [401,403,409].includes(error?.status)) throw error;
+}

@@ -1,4 +1,5 @@
 import { clearStationBrowserCredential } from '@atlas/finishing-station/browser';
+import { clearVerifiedImageAccess } from '@atlas/manual-workspace/image-cache';
 import { STAFF_SIGN_IN_PATH, STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
 import Link from 'next/link';
 import Head from 'next/head';
@@ -34,6 +35,7 @@ export default function Shell({ children, staff, title = 'Grading workspace', wo
         try {
             const session = await api('session');
             await api('auth/logout', { body: {}, csrf: session.csrf });
+            clearVerifiedImageAccess();
             clearStationBrowserCredential();
             window.location.replace(STAFF_SIGN_IN_PATH);
         }

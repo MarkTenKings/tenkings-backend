@@ -33,14 +33,17 @@ export function reviewImageDisplay(canonical, frame = null) {
 
 /** Small context only. It never supplies full-detail readiness or editor pixels. */
 export function reviewImagePreview(canonical, frame = null) {
-  const display = reviewImageDisplay(canonical, frame), preview = display?.preview;
+  const display = reviewImageDisplay(canonical, frame), preview = display?.preview ?? canonical?.preview;
+  const sourceWidth = display?.width ?? frame?.width, sourceHeight = display?.height ?? frame?.height;
   if (!preview || !transportDescriptor(preview) || preview.mime !== 'image/jpeg'
+    || (!display && preview.sourceSha256 !== canonical?.sha256)
+    || !positiveDimension(sourceWidth) || !positiveDimension(sourceHeight)
     || !positiveDimension(preview.width) || !positiveDimension(preview.height)
     || Math.max(preview.width, preview.height) > 768
-    || preview.width > display.width || preview.height > display.height) return null;
-  const scale = Math.min(preview.width / display.width, preview.height / display.height);
-  return Math.abs(preview.width - display.width * scale) <= 1
-    && Math.abs(preview.height - display.height * scale) <= 1 ? preview : null;
+    || preview.width > sourceWidth || preview.height > sourceHeight) return null;
+  const scale = Math.min(preview.width / sourceWidth, preview.height / sourceHeight);
+  return Math.abs(preview.width - sourceWidth * scale) <= 1
+    && Math.abs(preview.height - sourceHeight * scale) <= 1 ? preview : null;
 }
 
 /** Frame lineage is checked here; the shared loader verifies actual bytes. */
@@ -50,10 +53,12 @@ export function geometryImage(state, side, kind, images) {
   const frame = prepared ? source.prepared?.frame.rectified : source.image;
   const image = images?.[side]?.[prepared ? 'rectified' : 'original'];
   const expected = prepared ? frame?.sha256 : frame?.frameSha256;
-  if (!image || !frame || image.sha256 !== expected || typeof image.url !== 'string' || !image.url.length) return null;
+  if (!image || !frame || image.sha256 !== expected) return null;
+  if (prepared && (typeof image.url !== 'string' || !image.url.length)) return null;
   const display = prepared ? null : reviewImageDisplay(image, frame);
   return { ...(display ?? image), sourceSha256: expected, width: frame.width, height: frame.height,
-    preview: prepared ? null : reviewImagePreview(image, frame) };
+    preview: prepared ? null : reviewImagePreview(image, frame),
+    ...(prepared ? {} : {displayState:image.displayState,previewState:image.previewState}) };
 }
 
 export function geometryImageBinding(state, side, kind, images) {
@@ -62,10 +67,10 @@ export function geometryImageBinding(state, side, kind, images) {
     revision: kind === 'PHYSICAL' ? state.sides[side].imageRevision : state.sides[side].preparationRevision }) : null;
 }
 
-function SideEditor({ state, side, kind, images, onEdit, onPrepare, onBackground, onActivity, onReady, preparing, locked, compact, renderEditActions, attention }) {
+function SideEditor({ state, side, kind, images, onEdit, onPrepare, onBackground, onAbsentBorder, onRefreshImages, onRetryDisplay, onActivity, onReady, preparing, locked, compact, renderEditActions, attention, learningAdvice }) {
   const slot = state.sides[side], status = geometryStatus(state).sides[side];
   const image = geometryImage(state, side, kind, images);
-  const verified = useVerifiedImage(image, { cacheScope: JSON.stringify([state.cardId, side]) });
+  const verified = useVerifiedImage(typeof image?.url === 'string' && image.url.length ? image : null, { cacheScope: JSON.stringify([state.cardId, side]) });
   const preview = useVerifiedImage(verified.url ? null : image?.preview);
   const [previewLoaded, setPreviewLoaded] = useState(null);
   const previewKey = verifiedImageContentKey(image?.preview);
@@ -121,6 +126,15 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onBackground
       : 'Preparation did not finish. The saved physical edge is retained.'); }
     finally { setBusy(false); }
   };
+  const retryImagePreparation = async (preparationState, previewOnly = false) => {
+    if (!onRetryDisplay || busy || locked || preparationState?.state !== 'FAILED' || !preparationState.retry) return;
+    setBusy('PREPARING'); setError('');
+    try { await onRetryDisplay({side, ...preparationState.retry}); }
+    catch { setError(`${previewOnly ? 'Preview' : 'Full photo'} preparation was not restarted. Your original and saved work remain available; reload the image status before trying again.`); }
+    finally { setBusy(false); }
+  };
+  const retryDisplay = () => retryImagePreparation(image?.displayState);
+  const retryPreview = () => retryImagePreparation(image?.previewState, true);
   const changeBackground = async matColor => {
     if (!onBackground || !canDetect || busy || dirty || locked || preparing || matColor === slot.matColor) return;
     setBusy('DETECTING'); setError('');
@@ -139,6 +153,11 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onBackground
   return <section className="am-side" aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} geometry`} data-review-target={`geometry-${side}`} data-review-attention={Boolean(attention && (attention.reviewBoth || attention.kind === kind))} tabIndex={-1}>
     {attention && (attention.reviewBoth || attention.kind === kind) && <p className="mc-review-reason">{attention.message}</p>}
     <div className="am-side-heading"><h2>{side === 'FRONT' ? 'Front' : 'Back'}</h2><span>{busy ? busy === 'DETECTING' ? 'Detecting edges…' : busy === 'PREPARING' ? 'Preparing…' : 'Saving…' : dirty ? 'Unsaved adjustment' : preparing ? canDetect ? 'Detecting edges…' : 'Preparing…' : STATUS[status.stage]}</span></div>
+    {!dirty && learningAdvice?.requiresHumanConfirmation === true && learningAdvice.frameSha256 === slot.image?.frameSha256
+      && key(learningAdvice.nativeGeometry) === key({ physical: slot.physical?.quad ?? null, printed: slot.printed?.quad ?? null })
+      && ['CANDIDATE','ABSTAIN'].includes(learningAdvice.status) && <p role="status">{learningAdvice.status === 'CANDIDATE'
+        ? 'Reviewed geometry references support this proposed outline. Confirm it against this photo.'
+        : 'Reviewed references do not resolve this outline. Check the physical edge and printed border manually.'}</p>}
     <div className="am-view-label">{kind === 'PHYSICAL' ? 'Original view' : 'Straightened view'}</div>
     <div ref={viewport} className="am-viewport" onPointerMove={pointerMove} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
       {image ? <div className="am-image-plane" ref={area} style={{ transform: `translate(${pan.x}%,${pan.y}%) scale(${zoom})`, aspectRatio: `${image.width}/${image.height}`, ...(compact ? {width:fitWidth,height:fitWidth*image.height/image.width} : {}) }}>
@@ -147,9 +166,14 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onBackground
           onLoad={event => { const img = event.currentTarget; setPreviewLoaded(img.naturalWidth === image.preview.width && img.naturalHeight === image.preview.height ? previewKey : null); }}
           onError={() => setPreviewLoaded(null)} style={{ pointerEvents: 'none', visibility: showingPreview ? 'visible' : 'hidden' }}/>}
         {verified.url && <img key={loadedImageKey} src={verified.url} alt={`${side === 'FRONT' ? 'Front' : 'Back'} card, ${kind === 'PHYSICAL' ? 'oriented original' : 'straightened'}`} draggable={false}
-          onLoad={event => {
+          onLoad={async event => {
             const img = event.currentTarget;
             if (img.naturalWidth !== image.width || img.naturalHeight !== image.height) { setReadyKey(null); gradient.current = null; setSnapReady(false); onReady(side, null); setError('The displayed image does not match this outline. Reload the verified photo.'); return; }
+            // Decode asynchronously before drawing the bounded snap raster.
+            // Keep the reviewed sampling and snapping implementation exact.
+            try { if (typeof img.decode === 'function') await img.decode(); }
+            catch { if (img.isConnected !== false) { setReadyKey(null); onReady(side, null); setError('Photo unavailable. Your saved work is retained.'); } return; }
+            if (img.isConnected === false) return;
             const map = gradientMapFromImage(img);
             gradient.current = map && map.width > 1 && map.height > 1 ? map : null;
             setSnapReady(Boolean(gradient.current)); setReadyKey(loadedImageKey); onReady(side, imageKey);
@@ -171,14 +195,17 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onBackground
     </div>
     {image && !verified.url && <div>
       {showingPreview && <p className="am-preview-caption">{verified.error ? 'Preview · Full detail is unavailable. Retry the full photo to edit.' : 'Preview · Full detail is loading. Editing becomes available when the full photo is verified.'}</p>}
-      <p role={verified.error ? 'alert' : 'status'}>{verified.error
+      <p role={verified.error ? 'alert' : 'status'}>{image.displayState?.state==='PENDING' ? 'Preparing the full photo for precise editing. The preview is context only.' : image.displayState?.state==='FAILED' ? 'Full photo preparation failed. Your original and saved edits are retained. Retry preparation if available, or reload the current status.' : verified.error
         ? verified.error.code === 'VERIFIED_IMAGE_TIMEOUT'
           ? 'The saved photo is taking too long to download. Try loading it again; no new upload is needed.'
           : 'The saved photo could not be loaded or verified. Retry, or choose Reload images to renew access. Your saved work is retained.'
         : verified.progress?.phase === 'VERIFYING' ? 'Checking the saved photo…'
           : `Loading the saved photo${verified.progress?.totalBytes ? `… ${Math.min(99, Math.floor(100 * verified.progress.loadedBytes / verified.progress.totalBytes))}%` : '…'} No new upload is needed.`}</p>
+      {image.displayState?.state==='FAILED' && image.displayState.retry && onRetryDisplay && <button type="button" disabled={busy||locked} onClick={retryDisplay}>Retry {side==='FRONT'?'Front':'Back'} display preparation</button>}
+      {image.displayState && !transportDescriptor(image) && onRefreshImages && <button type="button" disabled={busy} onClick={onRefreshImages}>Reload {side==='FRONT'?'Front':'Back'} photo status</button>}
       {verified.error && <button type="button" onClick={verified.retry}>Retry {side === 'FRONT' ? 'Front' : 'Back'} photo</button>}
     </div>}
+    {image?.previewState?.state==='FAILED' && image.previewState.retry && onRetryDisplay && <button type="button" disabled={busy||locked} onClick={retryPreview}>Retry {side==='FRONT'?'Front':'Back'} preview</button>}
     <div className="am-local-tools">
       <label>Zoom <select aria-label={`${side} zoom`} value={zoom} onChange={event => { setZoom(Number(event.target.value)); setPan({ x: 0, y: 0 }); }}><option value="1">Fit</option><option value="2">2×</option><option value="4">4×</option></select></label>
       {zoom > 1 && <div className="am-pan" aria-label={`${side} pan`}><button type="button" aria-label={`${side} pan left`} onClick={() => setPan(p => ({ ...p, x: Math.min((zoom - 1) * 50, p.x + 20) }))}>←</button><button type="button" aria-label={`${side} pan up`} onClick={() => setPan(p => ({ ...p, y: Math.min((zoom - 1) * 50, p.y + 20) }))}>↑</button><button type="button" aria-label={`${side} pan down`} onClick={() => setPan(p => ({ ...p, y: Math.max(-(zoom - 1) * 50, p.y - 20) }))}>↓</button><button type="button" aria-label={`${side} pan right`} onClick={() => setPan(p => ({ ...p, x: Math.max(-(zoom - 1) * 50, p.x - 20) }))}>→</button></div>}
@@ -188,7 +215,9 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onBackground
     {stale && <p role="alert">This side changed while you were editing. Your unsaved adjustment has been retained.</p>}
     {error && <p role="alert">{error}</p>}
     {canDetect && onBackground && <div className="am-local-tools"><label>Photo background <select aria-label={`${side} background mat`} value={slot.matColor} disabled={busy || dirty || locked || preparing} onChange={event => void changeBackground(event.target.value)}><option value="BLACK">Black</option><option value="WHITE">White</option><option value="MAGENTA">Magenta</option></select></label><small>Match the surface behind this photo. Changing it retries this side's edge detection.</small></div>}
+    {kind==='PRINTED' && slot.printedAbsence && <p role="status">No printed border recorded. Centering and final approval remain unavailable until a supported borderless scoring rule exists. Findings are retained.</p>}
     <div className="am-side-actions">
+      {kind==='PRINTED' && onAbsentBorder && !slot.printedAbsence && <button type="button" disabled={!ready||dirty||busy||locked} onClick={async()=>{setBusy(true);setError('');try{await onAbsentBorder({side,base:geometryBase(state,side,'PRINTED')});}catch(error){setError(message(error));}finally{setBusy(false);}}}>No printed border on this side</button>}
       {!dirty && canDetect && onPrepare && <button type="button" className="am-primary" onClick={prepare} disabled={busy || locked || preparing}>Detect edges automatically</button>}
       {!quad && <button type="button" onClick={start} disabled={!ready || busy || locked}>Start manual outline</button>}
       {dirty && (renderEditActions ?? (children=>children))(<><button type="button" className="am-primary" onClick={save} disabled={inactive || !onEdit}>Save outline</button><button type="button" disabled={busy || locked} onClick={() => { setDraft(null); setError(''); }}>Discard adjustment</button></>,side)}
@@ -202,7 +231,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onBackground
  * authoritative save/readback and update `workspace`; rejected saves retain the
  * local draft. The host owns source verification, current version CAS, session
  * auth, persistence, automatic preparation and stage progression. */
-export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, onPrepare, onBackground, onEditingChange, preparingSides = {}, title = 'Edges & centering', saveStatus = '', renderReviewActions, renderEditActions, attention = [], attentionSelection }) {
+export function PairedGeometryWorkspace({ readOnly = false, workspace, images, onEdit, onConfirm, onPrepare, onBackground, onAbsentBorder, onRefreshImages, onRetryDisplay, onEditingChange, preparingSides = {}, title = 'Edges & centering', saveStatus = '', renderReviewActions, renderEditActions, attention = [], attentionSelection, learningAdvice = {} }) {
   const status = geometryStatus(workspace);
   const [kind, setKind] = useState(attention[0]?.kind ?? 'PHYSICAL'), [activity, setActivity] = useState({ FRONT: false, BACK: false });
   const [loaded, setLoaded] = useState({ FRONT: null, BACK: null });
@@ -219,7 +248,7 @@ export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, 
   }, [attentionSelection]);
   useEffect(() => { onEditingChange?.(editing || confirming); return () => onEditingChange?.(false); }, [editing, confirming, onEditingChange]);
   const confirm = async () => {
-    if (editing || confirming || !bothVisible || !status.canConfirmBoth || !onConfirm) return;
+    if (readOnly || editing || confirming || !bothVisible || !status.canConfirmBoth || !onConfirm) return;
     setConfirming(true); setError('');
     try { await onConfirm({ actor: 'HUMAN', reviewed: true, base: { FRONT: geometryBase(workspace, 'FRONT', 'REVIEW'), BACK: geometryBase(workspace, 'BACK', 'REVIEW') } }); }
     catch { setError('Geometry was not confirmed. Review the current saved outlines and try again.'); }
@@ -228,8 +257,8 @@ export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, 
   return <div className="atlas-manual">
     <header className="am-header"><span className="am-brand">ATLAS</span><h1>{title}</h1><span>{saveStatus}</span></header>
     <div className="am-toolbar"><div className="am-tool-choice" aria-label="Geometry tool"><button type="button" disabled={editing || confirming} data-review-attention={attention.some(issue=>issue.kind==='PHYSICAL')} aria-pressed={kind === 'PHYSICAL'} onClick={() => setKind('PHYSICAL')}>Physical edge</button><button type="button" disabled={editing || confirming} data-review-attention={attention.some(issue=>issue.kind==='PRINTED'||issue.reviewBoth)} aria-pressed={kind === 'PRINTED'} onClick={() => setKind('PRINTED')}>Printed border</button></div><div className="am-legend"><span><i className="am-edge-key" />Physical edge</span><span><i className="am-border-key" />Printed border</span></div></div>
-    <div className="am-pair">{SIDES.map(side => <SideEditor key={side} attention={attention.find(issue=>issue.side===side)} compact={Boolean(renderReviewActions)} renderEditActions={renderEditActions} state={workspace} side={side} kind={kind} images={images} onEdit={onEdit} onPrepare={onPrepare} onBackground={onBackground} onActivity={onActivity} onReady={onReady} preparing={Boolean(preparingSides[side])} locked={confirming} />)}</div>
-    {renderReviewActions ? renderReviewActions({approve:confirm, disabled:!bothVisible || !status.canConfirmBoth || editing || confirming || !onConfirm, busy:confirming, message:editing ? 'Save or discard your outline.' : 'Approve both physical edges and printed borders.'}) : <footer className="am-footer"><span aria-live="polite">{editing ? 'Save or discard your adjustments before continuing.' : status.confirmed ? 'Both sides confirmed. Ready for defect inspection.' : 'Review the physical edge and printed border on both sides.'}</span><button type="button" className="am-primary" onClick={confirm} disabled={!bothVisible || !status.canConfirmBoth || status.confirmed || editing || confirming || !onConfirm}>{confirming ? 'Confirming…' : 'Confirm both sides'}</button></footer>}
+    <div className="am-pair">{SIDES.map(side => <SideEditor key={side} learningAdvice={learningAdvice?.[side]} attention={attention.find(issue=>issue.side===side)} compact={Boolean(renderReviewActions)} renderEditActions={renderEditActions} state={workspace} side={side} kind={kind} images={images} onEdit={onEdit} onPrepare={onPrepare} onBackground={onBackground} onAbsentBorder={onAbsentBorder} onRefreshImages={onRefreshImages} onRetryDisplay={onRetryDisplay} onActivity={onActivity} onReady={onReady} preparing={Boolean(preparingSides[side])} locked={confirming||readOnly} />)}</div>
+    {renderReviewActions ? renderReviewActions({approve:confirm, disabled:readOnly || !bothVisible || !status.canConfirmBoth || editing || confirming || !onConfirm, busy:confirming, message:editing ? 'Save or cancel your outline.' : SIDES.some(side=>workspace.sides[side].printedAbsence) ? 'Borderless centering is unsupported. Findings remain saved; final approval is withheld.' : !bothVisible ? 'Waiting for both verified photographs. Full pixels are required for confirmation.' : 'Confirm both physical edges and printed borders.'}) : <footer className="am-footer"><span aria-live="polite">{editing ? 'Save or discard your adjustments before continuing.' : status.confirmed ? 'Both sides confirmed. Ready for defect inspection.' : 'Review the physical edge and printed border on both sides.'}</span><button type="button" className="am-primary" onClick={confirm} disabled={readOnly || !bothVisible || !status.canConfirmBoth || status.confirmed || editing || confirming || !onConfirm}>{confirming ? 'Confirming…' : 'Confirm both sides'}</button></footer>}
     {error && <p className="am-error" role="alert">{error}</p>}
   </div>;
 }

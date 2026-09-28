@@ -56,7 +56,7 @@ function harness(props = fixture(), verifiedImage = image => ({ url: image?.url 
   f.nodes = predicate => all(tree, predicate); f.has = value => text(tree).includes(value);
   f.button = label => { const node = f.nodes(node => node.type === 'button' && text(node) === label)[0]; assert.ok(node, label); return node; };
   f.click = label => { const node = f.button(label); assert.equal(Boolean(node.props.disabled), false); const result = node.props.onClick(); f.render(); return result; };
-  f.ready = () => { f.nodes(node => node.type === 'img').forEach(node => node.props.onLoad({ currentTarget: { naturalWidth: 1600, naturalHeight: 2400 } })); f.render(); };
+  f.ready = async () => { await Promise.all(f.nodes(node => node.type === 'img').map(node => node.props.onLoad({ currentTarget: { naturalWidth: 1600, naturalHeight: 2400 } }))); f.render(); };
   f.render(); return f;
 }
 
@@ -73,7 +73,7 @@ test('saved Back original remains visible and Printed mode truthfully offers aut
 test('explicit detection dispatches only Back, shows progress and retains recovery/manual choices after failure', async () => {
   const props = fixture(), before = structuredClone(props.workspace), calls = []; let reject;
   props.onPrepare = side => { calls.push(side); return new Promise((_resolve, fail) => { reject = fail; }); };
-  const f = harness(props); f.ready(); const pending = f.click('Detect edges automatically');
+  const f = harness(props); await f.ready(); const pending = f.click('Detect edges automatically');
   assert.deepEqual(calls, ['BACK']); assert.equal(f.has('Detecting edges…'), true);
   assert.equal(Boolean(f.button('Detect edges automatically').props.disabled), true);
   reject(new Error('synthetic preparation failure')); await pending; f.render();
@@ -83,8 +83,8 @@ test('explicit detection dispatches only Back, shows progress and retains recove
   assert.deepEqual(props.workspace, before);
 });
 
-test('an unsaved manual Back outline suppresses automatic recovery until discarded', () => {
-  const f = harness(); f.ready(); f.click('Start manual outline');
+test('an unsaved manual Back outline suppresses automatic recovery until discarded', async () => {
+  const f = harness(); await f.ready(); f.click('Start manual outline');
   assert.equal(f.nodes(node => node.type === 'button' && text(node) === 'Detect edges automatically').length, 0);
   assert.equal(f.has('Unsaved adjustment'), true); f.click('Discard adjustment');
   assert.equal(Boolean(f.button('Detect edges automatically').props.disabled), false);
@@ -118,13 +118,55 @@ test('saved-image download progress stays distinct from upload and does not enab
   assert.equal(f.nodes(node => node.type === 'img').length, 0);
   assert.equal(f.nodes(node => node.type === 'button' && /nudge/.test(node.props['aria-label'] ?? '')).every(node => node.props.disabled), true);
 });
+test('geometry learning advice is gated by exact working frame and never enables confirmation or changes outlines', () => {
+  const props = fixture(), before = structuredClone(props.workspace);
+  const nativeGeometry = { physical: props.workspace.sides.FRONT.physical?.quad ?? null, printed: props.workspace.sides.FRONT.printed?.quad ?? null };
+  props.learningAdvice = { FRONT: { status: 'CANDIDATE', requiresHumanConfirmation: true, frameSha256: hash('b'), nativeGeometry } };
+  const f = harness(props);
+  assert.equal(f.has('Reviewed geometry references support this proposed outline.'), true);
+  assert.equal(Boolean(f.button('Confirm both sides').props.disabled), true);
+  assert.deepEqual(props.workspace, before);
+  props.learningAdvice.FRONT.frameSha256 = hash('e'); f.render();
+  assert.equal(f.has('Reviewed geometry references support this proposed outline.'), false);
+  props.learningAdvice.FRONT = { status: 'ABSTAIN', requiresHumanConfirmation: true, frameSha256: hash('b'), nativeGeometry }; f.render();
+  assert.equal(f.has('Check the physical edge and printed border manually.'), true);
+  props.workspace = geometry.applyGeometryEdit(props.workspace, { side: 'FRONT', kind: 'PHYSICAL',
+    base: geometry.geometryBase(props.workspace, 'FRONT', 'PHYSICAL'), actor: 'HUMAN', proposal: null,
+    quad: nativeGeometry.physical.map(p => ({ ...p, x: p.x + .001 })) }).state; f.render();
+  assert.equal(f.has('Check the physical edge and printed border manually.'), false);
+});
 
-test('changing lossless transport requires its own image decode without changing canonical geometry lineage',()=>{
+test('changing lossless transport requires its own image decode without changing canonical geometry lineage',async()=>{
  const props=fixture(),original=props.images.FRONT.original;
  original.byteCount=100;original.mime='image/png';original.display={url:'/first.webp',sha256:hash('d'),byteCount:50,mime:'image/webp',policyVersion:'atlas-review-display-lossless-v1',sourceSha256:original.sha256,width:1600,height:2400};
- const f=harness(props);f.ready();assert(f.nodes(node=>node.type==='button'&&node.props.className?.includes('am-handle')).length>0);
+ const f=harness(props);await f.ready();assert(f.nodes(node=>node.type==='button'&&node.props.className?.includes('am-handle')).length>0);
  original.display={...original.display,url:'/replacement.webp',sha256:hash('e')};f.render();
  assert.equal(f.nodes(node=>node.type==='button'&&node.props['aria-label']?.startsWith('FRONT physical edge')).length,0);
  assert.equal(f.nodes(node=>node.type==='button'&&node.props['aria-label']==='FRONT nudge left')[0].props.disabled,true);
- f.ready();assert(f.nodes(node=>node.type==='button'&&node.props['aria-label']?.startsWith('FRONT physical edge')).length>0);
+ await f.ready();assert(f.nodes(node=>node.type==='button'&&node.props['aria-label']?.startsWith('FRONT physical edge')).length>0);
+});
+
+test('pending source-bound context preview remains visible without supplying authoritative editing pixels',()=>{
+ const props=fixture(),calls=[];props.images.FRONT.original={sha256:hash('b'),byteCount:100,mime:'image/png',width:1600,height:2400,displayState:{state:'PENDING',retryable:true},preview:{url:'blob:context',sha256:hash('e'),byteCount:20,mime:'image/jpeg',width:512,height:768,sourceSha256:hash('b'),policyVersion:'atlas-review-display-lossless-v1'}};
+ const f=harness(props,image=>{calls.push(image);return {url:image?.url??null};});
+ assert.equal(f.has('Preparing the full photo for precise editing.'),true);
+ assert.equal(calls.some(image=>image?.sha256===hash('b')&&!image.url),false,'pending full descriptor is not sent to byte loader');
+ assert.equal(f.nodes(node=>node.type==='img'&&node.props.src==='blob:context').length,1);
+ assert.equal(f.nodes(node=>node.type==='button'&&text(node)==='Start manual outline'&&!node.props.disabled).length,0,'context does not unlock edits');
+});
+
+test('failed preview retries its own bound job while full lossless detail stays ready, and respects busy/read-only gates',async()=>{
+ const props=fixture(),original=props.images.FRONT.original,calls=[],before=structuredClone(props.workspace);let resolve;
+ original.byteCount=100;original.mime='image/png';original.displayState={state:'READY'};
+ original.previewState={state:'FAILED',retry:{jobId:'preview-job',photoSourceHash:hash('f')}};
+ original.display={url:'blob:full',sha256:hash('d'),byteCount:50,mime:'image/webp',policyVersion:'atlas-review-display-lossless-v1',sourceSha256:original.sha256,width:1600,height:2400};
+ props.onRetryDisplay=input=>{calls.push(input);return new Promise(done=>{resolve=done;});};
+ const f=harness(props);await f.ready();assert.equal(f.nodes(node=>node.type==='img'&&node.props.src==='blob:full').length,1);
+ const pending=f.click('Retry Front preview');assert.deepEqual(JSON.parse(JSON.stringify(calls)),[{side:'FRONT',jobId:'preview-job',photoSourceHash:hash('f')}]);
+ assert.equal(Boolean(f.button('Retry Front preview').props.disabled),true);await f.button('Retry Front preview').props.onClick();assert.equal(calls.length,1);
+ resolve();await pending;f.render();assert.deepEqual(props.workspace,before);
+ f.props.readOnly=true;f.render();assert.equal(Boolean(f.button('Retry Front preview').props.disabled),true);
+ await f.button('Retry Front preview').props.onClick();assert.equal(calls.length,1);
+ f.props.readOnly=false;original.previewState={state:'PENDING'};f.render();assert.equal(f.nodes(node=>node.type==='button'&&text(node)==='Retry Front preview').length,0);
+ original.previewState={state:'FAILED'};f.render();assert.equal(f.nodes(node=>node.type==='button'&&text(node)==='Retry Front preview').length,0);
 });

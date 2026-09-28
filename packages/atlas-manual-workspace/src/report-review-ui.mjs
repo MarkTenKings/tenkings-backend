@@ -14,7 +14,7 @@ export function reportGeometryUnresolved(report) {
   return report?.calculationState === 'GEOMETRY_UNRESOLVED'
     && report.grade === null && report.proposedGrade === null
     && Array.isArray(report.unresolvedGeometry) && report.unresolvedGeometry.length > 0
-    && report.unresolvedGeometry.every(value => ['FRONT', 'BACK'].includes(value.side) && value.code === 'PRINTED_GEOMETRY_UNRESOLVED');
+    && report.unresolvedGeometry.every(value => ['FRONT', 'BACK'].includes(value.side) && ['PRINTED_GEOMETRY_UNRESOLVED', 'BORDERLESS_CENTERING_UNSUPPORTED'].includes(value.code));
 }
 
 export function reportAwardedGrade(report) {

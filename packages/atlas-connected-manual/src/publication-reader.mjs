@@ -9,7 +9,7 @@ import { readApprovedIdentityDetails } from './presentation-identity.mjs';
 import { inspectionPreviewMedia, inspectionPreviewGrant } from './inspection-preview.mjs';
 import { parseInspectionAccess } from '@atlas/service-bridge/inspection-access';
 
-export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false, dealerOffers = null }) {
+export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false, dealerOffers = null, reviewDisplay = null }) {
   async function presentation(row, token) {
     if (!presentationEnabled) return null;
     const rows = await client.$transaction(tx => tx.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation WHERE card_id=$1::uuid AND approval_action_id=$2::uuid ORDER BY revision DESC LIMIT 1', row.card_id, row.action_id), { maxWait: 1500, timeout: 3000 });
@@ -73,15 +73,21 @@ export function createApprovedManualReader({ client, artifacts, storage, present
     else if (claims.request.kind === 'IMAGE_ACCESS') {
       const media = await readArtifact(manifest.media, row, 'APPROVED_MEDIA', signal), side = claims.request.side;
       const saved = media[side], descriptor = packet.images[side], expiresIn = 120;
-      const grant = await storage.createDerivativeRead({ ...saved, expiresIn, signal });
+      const grant = await (storage.createImmutableDerivativeRead??storage.createDerivativeRead)({ ...saved, expiresIn, signal });
       requireThat(grant.sha256 === descriptor.sha256 && grant.byteCount === descriptor.byteCount
         && grant.mime === descriptor.contentType, 503, 'MANUAL_PUBLICATION_IMAGE_MISMATCH');
       const image = { ...grant, width: descriptor.width, height: descriptor.height };
-      const preview = inspectionPreviewMedia(saved.inspectionPreview, saved.descriptor, saved);
-      if (preview) image.preview = inspectionPreviewGrant(preview,
-        await storage.createDerivativeRead({ ...saved, descriptor: preview.descriptor, expiresIn, signal }));
-      const access = parseInspectionAccess({ version: 'atlas-approved-image-access-v1', publicToken: packet.publicToken,
-        approvalVersion: packet.approvalVersion, publicHash: row.public_hash, side, image });
+      const baseAccess={version:'atlas-approved-image-access-v1',publicToken:packet.publicToken,
+        approvalVersion:packet.approvalVersion,publicHash:row.public_hash,side,image};
+      // The verified immutable full image is independently usable. Optional
+      // derivative lookup, parsing, storage or signing failures cannot hide it.
+      let access=parseInspectionAccess(baseAccess);
+      try{
+        let preview=reviewDisplay?await reviewDisplay.inspection(saved,saved.descriptor,saved.inspectionPreview,{expiresIn,signal}):null;
+        if(!preview&&!reviewDisplay){const persisted=inspectionPreviewMedia(saved.inspectionPreview,saved.descriptor,saved);
+          if(persisted)preview=inspectionPreviewGrant(persisted,await (storage.createImmutableDerivativeRead??storage.createDerivativeRead)({...saved,descriptor:persisted.descriptor,expiresIn,signal}));}
+        if(preview)access=parseInspectionAccess({...baseAccess,image:{...image,preview}});
+      }catch{/* Keep independently verified full access; never emit an invalid preview. */}
       result = { contentType: 'application/json', bytes: Buffer.from(JSON.stringify(access)) };
     }
     else if (claims.request.kind === 'IMAGE') {

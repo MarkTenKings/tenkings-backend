@@ -156,7 +156,7 @@ function validateState(state) {
   for (const name of SIDES) {
     const side = state.sides[name];
     object(side, ['image', 'imageRevision', 'cornerShape', 'matColor', 'settingsRevision', 'physicalRevision',
-      'preparationRevision', 'printedRevision', 'reviewRevision', 'physical', 'prepared', 'printed', 'confirmation']);
+      'preparationRevision', 'printedRevision', 'reviewRevision', 'physical', 'prepared', 'printed', 'confirmation'], ['printedAbsence']);
     settings(side); integer(side.imageRevision); integer(side.settingsRevision, 1);
     for (const key of ['physicalRevision', 'preparationRevision', 'printedRevision', 'reviewRevision']) {
       integer(side[key]); requireThat(side[key] < state.reportRevision);
@@ -183,6 +183,12 @@ function validateState(state) {
         && side.printed.frameId === side.prepared.frame.id
         && side.printed.frameSha256 === side.prepared.frame.rectified.sha256, 'ATLAS_GEOMETRY_PREPARED_FRAME_MISMATCH');
       requireThat(equal(side.printed.centering, centering(side.printed.quad)), 'ATLAS_GEOMETRY_CENTERING_MISMATCH');
+    }
+    if (side.printedAbsence) {
+      object(side.printedAbsence, ['reason', 'actor', 'frameId', 'frameSha256']);
+      requireThat(side.printedAbsence.reason === 'NO_PRINTED_BORDER' && side.printedAbsence.actor === 'HUMAN'
+        && !side.printed && side.prepared && side.printedAbsence.frameId === side.prepared.frame.id
+        && side.printedAbsence.frameSha256 === side.prepared.frame.rectified.sha256, 'ATLAS_GEOMETRY_PREPARED_FRAME_MISMATCH');
     }
     if (side.confirmation !== null) {
       object(side.confirmation, ['actor', 'reviewed', 'base']);
@@ -243,11 +249,22 @@ function change(state, sideName, side, invalidated) {
   return copy({ state: result, invalidated: { sides: { FRONT: [], BACK: [], [sideName]: invalidated }, report: true } });
 }
 
+/** Explicit absence is evidence, never a fabricated centering result. */
+export function markPrintedBorderAbsent(state, action) {
+  validateState(state); object(action, ['side', 'base', 'actor']);
+  requireThat(action.actor === 'HUMAN', 'ATLAS_GEOMETRY_HUMAN_REVIEW_REQUIRED');
+  matches(action.base, baseFor(state, action.side, 'PRINTED'));
+  const side = state.sides[action.side];
+  requireThat(side.prepared, 'ATLAS_GEOMETRY_PREPARED_FRAME_REQUIRED');
+  return change(state, action.side, { ...side, printedRevision: next(side.printedRevision), printed: null,
+    confirmation: null, printedAbsence: { reason: 'NO_PRINTED_BORDER', actor: 'HUMAN',
+      frameId: side.prepared.frame.id, frameSha256: side.prepared.frame.rectified.sha256 } }, ['centering', 'geometryReview']);
+}
 export function applyGeometryEdit(state, action) {
   validateState(state); object(action, ['side', 'kind', 'base', 'quad', 'actor'], ['proposal']);
   requireThat(['PHYSICAL', 'PRINTED'].includes(action.kind));
   matches(action.base, baseFor(state, action.side, action.kind));
-  const side = state.sides[action.side], quad = validQuad(action.quad), proposal = action.proposal ?? null;
+  const { printedAbsence, ...side } = state.sides[action.side], quad = validQuad(action.quad), proposal = action.proposal ?? null;
   provenance(action.actor, proposal); requireThat(side.image, 'ATLAS_GEOMETRY_IMAGE_REQUIRED');
   if (action.kind === 'PHYSICAL') {
     const physicalRevision = next(side.physicalRevision);
@@ -274,7 +291,7 @@ export function applyPreparedFrame(state, action) {
   const side = state.sides[action.side]; preparedFrame(action.frame, side);
   requireThat(action.frame.version === next(side.preparationRevision), 'ATLAS_GEOMETRY_PREPARATION_VERSION_INVALID');
   return change(state, action.side, { ...side, preparationRevision: action.frame.version,
-    prepared: { source: source(side), frame: action.frame }, printed: null, confirmation: null },
+    prepared: { source: source(side), frame: action.frame }, printed: null, confirmation: null, ...(side.printedAbsence ? {printedAbsence:null} : {}) },
   ['printed', 'centering', 'mapRegistration', 'findings', 'measurement', 'inspection', 'geometryReview']);
 }
 
@@ -300,7 +317,7 @@ export function replaceGeometryImage(state, action) {
   // adopted. A newer selected version can therefore skip unused versions.
   requireThat(action.image.version >= next(side.imageRevision), 'ATLAS_GEOMETRY_IMAGE_VERSION_INVALID');
   return change(state, action.side, { ...side, image: action.image, imageRevision: action.image.version,
-    physical: null, prepared: null, printed: null, confirmation: null },
+    physical: null, prepared: null, printed: null, confirmation: null, ...(side.printedAbsence ? {printedAbsence:null} : {}) },
   ['physical', 'preparation', 'printed', 'centering', 'mapRegistration', 'findings', 'measurement', 'inspection', 'geometryReview']);
 }
 

@@ -1,4 +1,5 @@
 import { canonical, digest, immutable, object, requireThat, uuid, hash, validateDesign, deriveDesignContext, designKey, validateLesson } from './contract.mjs';
+import { readActiveLearning } from './active-retrieval.mjs';
 
 function access(row, principal, edit = true) {
   requireThat(row, 404, 'MANUAL_CARD_NOT_FOUND');
@@ -77,14 +78,15 @@ function validateBundle(bundle, confirmation) {
 /** One append-only publication table in the existing manual database. The
  * existing immutable action is the durable outbox; no best-effort enqueue can
  * lose an already confirmed review. Never call a provider/storage effect here. */
-export function createDefectMemoryRepository({ boundary, validateSource = null, validateAccess = null }) {
+export function createDefectMemoryRepository({ boundary, validateSource = null, validateAccess = null, learningEnabled = false, learningBindings = null }) {
+  const publicationTable = learningEnabled ? 'atlas_manual.learning_publication' : 'atlas_manual.defect_memory_publication';
   const rowFor = async (tx, cardId, lock = false) => (await tx.$queryRawUnsafe(
     `SELECT * FROM atlas_manual.card WHERE id=$1::uuid${lock ? ' FOR UPDATE' : ''}`, cardId))[0];
   const actionFor = async (tx, cardId, actionId = null) => (await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual.action
     WHERE card_id=$1::uuid AND request::jsonb #>> '{action,type}'='CONFIRM_FINDINGS'
     ${actionId ? 'AND action_id=$2::uuid' : ''} ORDER BY result_revision DESC LIMIT 1`, ...[cardId, ...(actionId ? [actionId] : [])]))[0];
   const publicationFor = async (tx, cardId, actionId) => (await tx.$queryRawUnsafe(
-    'SELECT * FROM atlas_manual.defect_memory_publication WHERE card_id=$1::uuid AND action_id=$2::uuid', cardId, actionId))[0];
+    `SELECT * FROM ${publicationTable} WHERE card_id=$1::uuid AND action_id=$2::uuid`, cardId, actionId))[0];
   const evidenceCurrent = async (tx, row, confirmation) => {
     if (!sameCurrentEvidence(card(row), confirmation)) return false;
     const uploads = confirmation.card.draft.source.uploads;
@@ -115,11 +117,26 @@ export function createDefectMemoryRepository({ boundary, validateSource = null, 
         }
         if (!await evidenceCurrent(tx, row, confirmed(latest))) return { status: 'SUPERSEDED', cardId, actionId: latest.action_id };
         const saved = publication(await publicationFor(tx, cardId, latest.action_id));
+        if (learningEnabled) {
+          const [job] = await tx.$queryRawUnsafe(`SELECT state,code,feedback,created_at,updated_at FROM atlas_manual.learning_publication_job
+            WHERE card_id=$1::uuid AND action_id=$2::uuid`, cardId, latest.action_id);
+          const [active] = await tx.$queryRawUnsafe(`SELECT p.revision,m.release_id FROM atlas_manual.learning_publication p
+            JOIN atlas_manual.learning_release_member m ON m.publication_revision=p.revision
+            JOIN atlas_manual.learning_control c ON c.active_release_id=m.release_id
+            WHERE p.card_id=$1::uuid AND p.action_id=$2::uuid
+              AND NOT EXISTS(SELECT 1 FROM atlas_manual.learning_withdrawal w WHERE w.publication_revision=p.revision)`, cardId, latest.action_id);
+          return { ...(saved ?? { status: 'PENDING', cardId, actionId: latest.action_id }), feedbackStatus: 'SAVED',
+            preparationStatus: job?.state ?? (saved ? 'PREPARED' : 'HELD'), activationStatus: active && saved?.lessonCount > 0 ? 'ACTIVE' : 'INACTIVE',
+            candidateCount: job?.feedback ? JSON.parse(job.feedback).examples.length : saved?.lessonCount ?? 0,
+            feedbackSavedAt: JSON.parse(latest.result).receipt.recordedAt ?? null,
+            preparationUpdatedAt: job?.updated_at ? new Date(job.updated_at).toISOString() : null,
+            activeReleaseId: active?.release_id ?? null, code: job?.code ?? null };
+        }
         if (saved) return saved;
         return { status: 'PENDING', cardId, actionId: latest.action_id };
       });
     },
-    async loadConfirmation(staff, cardId, actionId) {
+    async loadConfirmation(staff, cardId, actionId, { includePublished = false } = {}) {
       uuid(cardId); uuid(actionId);
       return boundary.transaction(staff, async ({ tx, principal }) => {
         const row = await rowFor(tx, cardId); access(row, principal);
@@ -129,7 +146,7 @@ export function createDefectMemoryRepository({ boundary, validateSource = null, 
         const latest = await actionFor(tx, cardId);
         if (latest.action_id !== actionId) return { status: 'SUPERSEDED', cardId, actionId, latestActionId: latest.action_id };
         if (!await evidenceCurrent(tx, row, confirmation)) return { status: 'SUPERSEDED', cardId, actionId };
-        const saved = publication(await publicationFor(tx, cardId, actionId)); if (saved) return saved;
+        const saved = publication(await publicationFor(tx, cardId, actionId)); if (saved && !includePublished) return saved;
         if (validateSource) await validateSource({ tx, principal, cardId, draft: confirmation.card.draft });
         return { status: 'PENDING', confirmation };
       });
@@ -159,9 +176,9 @@ export function createDefectMemoryRepository({ boundary, validateSource = null, 
         await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(719400621)::text AS locked');
         ({ principal } = await refresh()); access(row, principal);
         if (validateAccess) await validateAccess({ tx, principal, cardId });
-        const inserted = await tx.$queryRawUnsafe(`INSERT INTO atlas_manual.defect_memory_publication
+        const inserted = await tx.$queryRawUnsafe(`INSERT INTO ${publicationTable}
           (revision,card_id,action_id,actor_id,result_revision,content_hash,source_hash,design_key,document,document_hash)
-          SELECT COALESCE(MAX(revision),0)+1,$1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9 FROM atlas_manual.defect_memory_publication
+          SELECT COALESCE(MAX(revision),0)+1,$1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9 FROM ${publicationTable}
           RETURNING *`, cardId, confirmation.actionId, principal.id, actual.card.revision, actual.card.contentHash,
         actual.card.draft.source.sourceHash, designKey(bundle.design), bundleText, digest(bundleText));
         return publication(inserted[0]);
@@ -177,6 +194,7 @@ export function createDefectMemoryRepository({ boundary, validateSource = null, 
         if (validateAccess) await validateAccess({ tx, principal, cardId });
         requireThat(row.content_hash === expectedContentHash, 409, 'MEMORY_TARGET_STALE');
         const target = card(row); if (validateSource) await validateSource({ tx, principal, cardId, draft: target.draft });
+        if (learningEnabled) return readActiveLearning(tx, { cardId, design, originalSha256, side, limit, learningBindings });
         // One statement snapshot binds the publication generation, latest
         // confirmation set (including pending supersession), and candidate list.
         const [snapshot] = await tx.$queryRawUnsafe(`WITH latest_action AS MATERIALIZED (

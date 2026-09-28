@@ -82,3 +82,12 @@ test('display work honors cancellation and owns its source snapshot across async
   const actual = await pending;
   assert.deepEqual(actual.full.content, expected.full.content); assert.deepEqual(actual.preview.content, expected.preview.content);
 });
+
+test('context-only work is independently bounded and encodes identical preview pixels without full output', async () => {
+  const source=await working(fixture), args=input(source), both=await createReviewDisplay(args);
+  const preview=await createReviewDisplay({...args,output:'preview',limits:{...limits,maxOutputBytes:both.preview.bytes.length}});
+  assert.equal(preview.full,undefined);assert.deepEqual(preview.preview,both.preview);
+  const full=await createReviewDisplay({...args,output:'full',limits:{...limits,maxOutputBytes:both.full.bytes.length}});
+  assert.equal(full.preview,undefined);assert.deepEqual(full.full,both.full);
+  await assert.rejects(createReviewDisplay({...args,output:'thumbnail'}),code('PHOTO_DECODE_INVALID'));
+});

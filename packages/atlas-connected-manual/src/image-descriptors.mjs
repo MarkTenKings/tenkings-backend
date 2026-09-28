@@ -1,5 +1,5 @@
 import { requireThat } from '@atlas/manual-service/contract';
-import { inspectionPreviewMedia, inspectionPreviewGrant } from './inspection-preview.mjs';
+import { inspectionPreviewMedia, inspectionPreviewGrant, rethrowPreviewControlFailure } from './inspection-preview.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
 
@@ -7,7 +7,7 @@ const SIDES = ['FRONT', 'BACK'];
  * artifact and reauthorizes after its read; current brackets the whole batch.
  * Each side verifies/signs one image at a time, bounding raster reads to two.
  */
-export function createImageDescriptors({ current, readSource, readManifest, imageReadUrl, imageUrl }) {
+export function createImageDescriptors({ current, readSource, readManifest, imageReadUrl, imageUrl, reviewDisplay = null }) {
   return async function imageDescriptors({ card, state, staff, imageScope = 'all' }) {
     requireThat(['all', 'inspection'].includes(imageScope), 400, 'MANUAL_IMAGE_SCOPE_INVALID');
     await current(staff, card);
@@ -18,7 +18,7 @@ export function createImageDescriptors({ current, readSource, readManifest, imag
       const slot = state.geometry.sides[side], images = {};
       async function descriptor(kind, image) {
         const content = image.raster.content;
-        return imageReadUrl ? imageReadUrl({ kind, descriptor: image, photo: source.photo })
+        return imageReadUrl ? imageReadUrl({ kind, descriptor: image, photo: source.photo, photoSource: source.upload?.source })
           : { url: imageUrl(card.cardId, side, kind, content.sha256), sha256: content.sha256,
             byteCount: content.byteCount, mime: content.mime };
       }
@@ -27,9 +27,14 @@ export function createImageDescriptors({ current, readSource, readManifest, imag
         requireThat(saved.frameId === slot.prepared.frame.id, 503, 'MANUAL_IMAGE_BINDING_INVALID');
         for (const [kind, image] of Object.entries(saved.images))
           if (imageScope === 'all' || kind === 'inspection') images[kind] = await descriptor(kind, image);
-        const preview = inspectionPreviewMedia(saved.inspectionPreview, saved.images.inspection, source.photo);
-        if (preview && imageReadUrl) images.inspection = { ...images.inspection,
-          preview: inspectionPreviewGrant(preview, await descriptor('preview', preview.descriptor)) };
+        try {
+          const durablePreview = reviewDisplay ? await reviewDisplay.inspection(source.photo,saved.images.inspection,saved.inspectionPreview) : null;
+          if(durablePreview) images.inspection={...images.inspection,preview:durablePreview};
+          const preview = reviewDisplay ? null : inspectionPreviewMedia(saved.inspectionPreview, saved.images.inspection, source.photo);
+          if (preview && imageReadUrl) images.inspection = { ...images.inspection,
+            preview: inspectionPreviewGrant(preview, await descriptor('preview', preview.descriptor)) };
+        } catch(error) { rethrowPreviewControlFailure(error); }
+
       }
       return [side, images];
     }));

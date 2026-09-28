@@ -1,8 +1,8 @@
 import { canonical, digest, object, requireThat, ManualServiceError } from '@atlas/manual-service/contract';
 import { createManualService } from '@atlas/manual-service';
-import { applyGeometryEdit, canDetectMissingPhysical, confirmBothGeometry, geometryStatus, parseGeometryWorkspace, updateGeometrySettings, GeometryActionError } from '@atlas/manual-workspace/geometry-actions';
+import { applyGeometryEdit, markPrintedBorderAbsent, canDetectMissingPhysical, confirmBothGeometry, geometryStatus, parseGeometryWorkspace, updateGeometrySettings, GeometryActionError } from '@atlas/manual-workspace/geometry-actions';
 import { beginDefectEdit, applyDefectMeasurement, confirmDefectFindings, createDefectWorkspace, defectBase,
-  markDefectSideInspected, parseDefectWorkspace, previewDefectReport, replaceDefectFrame, discardPendingDefectEdit, DefectActionError } from '@atlas/manual-workspace/defect-actions';
+  markDefectSideInspected, markDefectFindingReviewed, invalidateDefectFindingReviews, parseDefectWorkspace, previewDefectReport, replaceDefectFrame, discardPendingDefectEdit, DefectActionError } from '@atlas/manual-workspace/defect-actions';
 import { measureDefectWorkspaceEdit, MeasurementError } from '@atlas/measurement-runtime';
 import { canonicalizeNewSpeedsterSessionIdentity, SpeedsterIdentityValidationError } from '@atlas/grading-core/identity';
 
@@ -140,6 +140,11 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       // enter this path; preparation remains a separate durable action.
       geometry = updateGeometrySettings(geometry, { side: action.side, base: action.base,
         matColor: action.matColor, cornerShape: geometry.sides[action.side].cornerShape }).state;
+    } else if (action.type === 'MARK_PRINTED_ABSENT') {
+      object(action, ['type', 'side', 'base']);
+      requireThat(principal.actorKind !== 'MACHINE', 403, 'MANUAL_HUMAN_REQUIRED');
+      geometry = markPrintedBorderAbsent(geometry, { side: action.side, base: action.base, actor: 'HUMAN' }).state;
+      if (defects) defects = invalidateDefectFindingReviews(defects, action.side);
     } else if (action.type === 'GEOMETRY_EDIT') {
       object(action, ['type', 'edit']);
       object(action.edit, ['side', 'kind', 'base', 'quad']);
@@ -150,6 +155,7 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
         draft = { ...draft, geometryBeforeEdit: { ...draft.geometryBeforeEdit, [action.edit.side]: draft.geometryBeforeEdit?.[action.edit.side] ?? draft.geometry } };
       }
       geometry = applyGeometryEdit(geometry, { ...action.edit, actor: 'HUMAN', proposal: null }).state;
+      if (defects) defects = invalidateDefectFindingReviews(defects, action.edit.side);
       // Preparation is a separate durable action: a failed CPU pass retains the
       // saved physical outline and a reload still exposes Retry preparation.
     } else if (action.type === 'RESTORE_GEOMETRY') {
@@ -197,7 +203,7 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       draft = { ...draft, identity: canonicalizeNewSpeedsterSessionIdentity(geometry.profile, action.identity), identityRevision: draft.identityRevision + 1 };
     } else {
       const editingFinal = finalReview && preparedForReview(geometry)
-        && ['DEFECT_EDIT', 'TRACE_SAVE', 'MEASURE_SIDE', 'DISCARD_PENDING', 'ASTRA_PROPOSAL_REVIEW', 'INSPECT_SIDE'].includes(action.type);
+        && ['DEFECT_EDIT', 'TRACE_SAVE', 'MEASURE_SIDE', 'DISCARD_PENDING', 'ASTRA_PROPOSAL_REVIEW', 'INSPECT_SIDE', 'REVIEW_FINDING'].includes(action.type);
       requireThat(defects && (geometryStatus(geometry).confirmed || editingFinal), 409, 'MANUAL_GEOMETRY_REVIEW_REQUIRED');
       if (action.type === 'ASTRA_PROPOSAL_REVIEW') {
         object(action, ['type', 'side', 'base', 'analysisId', 'proposalId', 'action', ...(action.action === 'TRACE_SAVE' ? ['traceRef', 'traceSourceHash'] : [])]);
@@ -242,6 +248,11 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
           draft = { ...draft, assistance: await store(assistance, card.cardId, 'ASSISTANCE') };
         }
         defects = discardPendingDefectEdit(defects, { side: action.side, base: action.base, actor: 'HUMAN' }).state;
+      } else if (action.type === 'REVIEW_FINDING') {
+        object(action, ['type', 'side', 'base', 'findingId', 'reviewed']);
+        requireThat(principal.actorKind !== 'MACHINE', 403, 'MANUAL_HUMAN_REQUIRED');
+        defects = markDefectFindingReviewed(defects, { side: action.side, base: action.base, findingId: action.findingId, reviewed: action.reviewed,
+          actor: 'HUMAN', reviewerId: principal.id, reviewedAt: new Date().toISOString() }).state;
       } else if (action.type === 'INSPECT_SIDE') {
         object(action, ['type', 'side', 'base', 'inspected']);
         defects = markDefectSideInspected(defects, { side: action.side, base: action.base, inspected: action.inspected, actor: 'HUMAN' }).state;

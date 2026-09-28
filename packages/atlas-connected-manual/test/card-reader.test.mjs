@@ -51,7 +51,7 @@ test('ordinary interactive card reads retain both previews and current manual st
   assert.deepEqual(result.previews, { FRONT: { url: 'https://fixture.invalid/FRONT' }, BACK: { url: 'https://fixture.invalid/BACK' } });
   assert.deepEqual(result.manual, { revision: 3, current: true });
   assert.equal(f.calls.filter(call => call === 'authorize-photo-read').length, 2);
-  assert.deepEqual(f.calls.filter(call => call.startsWith('preview-')), ['preview-source-FRONT', 'preview-url-FRONT', 'preview-source-BACK', 'preview-url-BACK']);
+  assert.deepEqual(f.calls.filter(call => call.startsWith('preview-')), ['preview-source-FRONT', 'preview-source-BACK', 'preview-url-FRONT', 'preview-url-BACK']);
 });
 
 test('only explicit false omits preview reads; all card status and authorization reads remain', async () => {

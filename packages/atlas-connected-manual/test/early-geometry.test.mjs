@@ -13,6 +13,8 @@ import { createWorkLimiter } from '../src/index.mjs';
 import { adoptEarlyGeometry, createEarlyGeometry, geometryCacheInput } from '../src/early-geometry.mjs';
 import { MACHINE_GEOMETRY_POLICY, PRINTED_CANDIDATE_POLICY } from '../src/machine-geometry.mjs';
 import { geometrySideSettings } from '../src/details.mjs';
+import { selectRoleLearning, consumeGeometryLearning } from '../../atlas-defect-memory/src/role-learning.mjs';
+import { roleFixture, seal } from '../../atlas-defect-memory/test/role-fixtures.mjs';
 
 const settings = { matColor: 'BLACK', cornerShape: 'ROUNDED_3_18_MM', profile: null, fields: { name: '' } };
 const identity = { identity: { opencv: 'fixture', numpy: 'fixture', physicalProposalPolicy: 'fixture', sources: {} }, native: { fixture: 'a'.repeat(64) } };
@@ -77,7 +79,7 @@ async function fixture() {
   let physical = async input => ({ id: `proposal-${++calls}`, identity: identity.identity,
     frameDescriptorSha256: descriptorSha256(input.source.frame), proposal: { outcome: 'REJECTED', proposal: null } });
   const limited = createWorkLimiter(2), staff = {};
-  const build = () => createEarlyGeometry({ store, storage, artifacts, limits, pythonExecutable: '/fixture/python', keyPrefix: 'intake',
+  const build = (options = {}) => createEarlyGeometry({ store, storage, artifacts, limits, pythonExecutable: '/fixture/python', keyPrefix: 'intake', ...options,
     runtimeIdentity: async () => identity, limited, intervalMs: 5,
     intake: { async read() { return { card: { cardId, sides: Object.fromEntries(['FRONT','BACK'].map(side => [side, { upload: selected[side] ?? null }])) } }; },
       async readSource(_staff, _card, id) { return { photo: photos.get(id) }; } },
@@ -135,6 +137,29 @@ test('a native preparation refusal retains its valid physical proposal and expos
     const result = (await service.status(f.staff, f.cardId)).FRONT;
     assert.deepEqual(result.physical, quad); assert.equal(result.prepared, false); assert.equal(result.printed, null);
     assert.equal(result.error, 'PREPARATION_LIMIT'); assert.equal(result.canRetry, true);
+  } finally { await service.stop(); }
+});
+
+test('opt-in geometry consumer observes real native output and retains frame-bound advice without replacing coordinates', async () => {
+  const f = await fixture(); let observed = 0;
+  f.setPhysical(async input => ({ id: 'native-observed', identity: identity.identity,
+    frameDescriptorSha256: descriptorSha256(input.source.frame), proposal: { outcome: 'ACCEPTED', proposal: quad } }));
+  f.setPrepare(async () => { throw Object.assign(Error(), { name: 'PreparationError', code: 'PREPARATION_LIMIT' }); });
+  const service = f.build({ geometryLearning: async ({ input, targetFrameSha256, candidates }) => {
+    observed++; assert.deepEqual(candidates[0].physical, quad);
+    const r = roleFixture('GEOMETRY'), { sha256: _sha, ...policy } = r.policy;
+    r.bindings = { ...policy.bindings, modelPromptSha256: digest(canonical(input.engine)) };
+    r.policy = seal({ ...policy, bindings: r.bindings }); r.candidates[0].example.confirmed.printed = null;
+    const selection = selectRoleLearning(r);
+    return consumeGeometryLearning({ selection, policy: r.policy, targetFrameSha256, candidates });
+  } });
+  try {
+    await f.upload('FRONT'); await service.ensure(f.staff, f.cardId);
+    await until(() => [...f.jobs.values()][0]?.state === 'NEEDS_REVIEW');
+    const status = (await service.status(f.staff, f.cardId)).FRONT;
+    assert.equal(observed, 1); assert.equal(status.learningAdvice.status, 'CANDIDATE');
+    assert.equal(status.learningAdvice.requiresHumanConfirmation, true); assert.deepEqual(status.physical, quad);
+    assert.equal(status.prepared, false); assert.equal(status.canRetry, true);
   } finally { await service.stop(); }
 });
 
@@ -343,4 +368,97 @@ test('cache adoption uses the real profile and refuses later human geometry with
   assert.throws(() => adoptEarlyGeometry(human, 'FRONT', packet, input), e => e.code === 'GEOMETRY_CACHE_STALE');
   const altered = structuredClone(packet); altered.physical.identity = { ...altered.physical.identity, opencv: 'other' };
   assert.throws(() => adoptEarlyGeometry(geometry, 'FRONT', altered, input), e => e.code === 'GEOMETRY_STORED_CONTENT_INVALID');
+});
+
+// Exercise the deployment-owned consumer and cache read together. SQL effects
+// are represented by a bounded active-release fixture; production predicate
+// semantics are separately exercised by the owned PostgreSQL qualification.
+import { createNativeGeometryLearning, readNativeGeometryAdvice } from '../src/geometry-learning.mjs';
+import { learningRetrievalBindingFacts } from '../../atlas-defect-memory/src/binding-facts.mjs';
+import { geometryLearningConsumerFacts } from '../../atlas-defect-memory/src/role-learning.mjs';
+import { ATLAS_FINAL_GRADE_POLICY } from '@atlas/grading-core/manual-report';
+
+async function geometryAdviceFixture({ active = true } = {}) {
+  const f = roleFixture('GEOMETRY'), now = Date.now();
+  const reseal = (value, changes) => { const { sha256: _hash, ...body } = value; return seal({ ...body, ...changes }); };
+  const engine = { policy: 'geometry-advice-fixture', runtime: identity, limits };
+  const nativeEngineSha256 = digest(canonical(engine));
+  const bindings = { modelPromptSha256: digest(canonical({ nativeEngineSha256, consumer: geometryLearningConsumerFacts(), retrieval: learningRetrievalBindingFacts() })),
+    imagePolicySha256: digest(canonical(PREPARATION_LOSSLESS_SETTINGS)), scoringPolicySha256: digest(canonical(ATLAS_FINAL_GRADE_POLICY)) };
+  const quality = reseal(f.quality, { reviewers: f.quality.reviewers.map(r => ({ ...r, measuredAt: new Date(now - 3600000).toISOString() })) });
+  const policy = reseal(f.policy, { bindings, reviewerQualitySha256: quality.sha256,
+    validFrom: new Date(now - 86400000).toISOString(), validUntil: new Date(now + 86400000).toISOString(),
+    ownerApproval: { ...f.policy.ownerApproval, approvedAt: new Date(now - 86400000).toISOString() } });
+  const scope = { policy, registry: f.registry, quality }, input = { cardId: f.target.cardId, side: 'FRONT', uploadId: randomUUID(),
+    photoSource: { photoSourceHash: digest('current-photo-source'), ref: { key: 'synthetic-photo-source' } }, engine };
+  const feedback = canonical({ source: f.candidates[0].source, examples: [f.candidates[0].example] });
+  const publication = { card_id: f.candidates[0].source.cardId, action_id: f.candidates[0].source.actionId,
+    revision: 1, feedback, feedback_hash: digest(feedback) };
+  const state = { active, withdrawn: false, statusReads: 0, sourceReads: 0, lessonReads: 0, intakeChecks: 0, queries: [],
+    manifest: { version: 'atlas-learning-release-v1', policy: 'legacy-defect-family-v1', publications: [{ revision: 1, sha256: digest('publication') }],
+      learningMembership: { DEFECT: [], CLEAN: [], GEOMETRY: [1] }, learningScopes: { GEOMETRY: scope } },
+    uploads: [{ id: input.uploadId, side: 'FRONT', original_hash: f.target.originalSha256[0], source: canonical(input.photoSource) },
+      { id: randomUUID(), side: 'BACK', original_hash: f.target.originalSha256[1], source: canonical({ photoSourceHash: digest('back-photo-source') }) }],
+    sides: {} };
+  const tx = { async $queryRawUnsafe(sql, ...args) {
+    state.queries.push(sql);
+    if (sql.includes(' AS policy_hash')) return [{ policy_hash: state.active ? policy.sha256 : null }];
+    if (sql.includes(' AS scope')) return [{ scope: state.active ? scope : null }];
+    if (sql.includes('SELECT r.id,r.manifest,r.manifest_hash')) {
+      const manifest = canonical(state.manifest);
+      return [{ id: 'synthetic-geometry-release', manifest, manifest_hash: digest(manifest) }];
+    }
+    if (sql.includes('FROM atlas_manual_intake.card c JOIN atlas_manual_intake.upload')) {
+      assert.equal(args[0], input.cardId); state.sourceReads++; return structuredClone(state.uploads);
+    }
+    if (sql.includes('FROM atlas_manual.learning_publication p JOIN atlas_manual.learning_release_member')) {
+      assert.match(sql, /learning_withdrawal/); assert.match(sql, /discarded_card/); assert.match(sql, /result_revision>p.result_revision/);
+      assert.equal(args[0], 'synthetic-geometry-release'); assert(args[1].includes(publication.card_id));
+      assert.deepEqual(args[2], [1]); state.lessonReads++; return state.withdrawn ? [] : [structuredClone(publication)];
+    }
+    assert.fail(`Unexpected cached geometry query: ${sql}`);
+  } };
+  const boundary = { transaction: async (_staff, run) => run({ tx }), machineTransaction: async (_principal, run) => run({ tx }) };
+  const earlyGeometry = { async status(_staff, cardId) { assert.equal(cardId, input.cardId); state.statusReads++; return structuredClone(state.sides); } };
+  const observe = createNativeGeometryLearning({ boundary, intakeRepository: { async assertActiveInTransaction(actual, cardId) {
+    assert.equal(actual, tx); assert.equal(cardId, input.cardId); state.intakeChecks++;
+  } } });
+  const request = { input, targetFrameSha256: digest('current-working-frame'), candidates: [{ id: 'native-candidate', authority: 'PROPOSER_ONLY',
+    nativeSupported: true, engineSha256: nativeEngineSha256, frameSha256: digest('current-working-frame'), physical: f.physical, printed: f.printed }] };
+  const before = structuredClone(request), saved = await observe(request);
+  assert.deepEqual(request, before, 'learning must not mutate the native proposal');
+  state.sides.FRONT = { learningAdvice: saved };
+  return { state, saved, input, now, policy, observe, request,
+    read: options => readNativeGeometryAdvice({ boundary, earlyGeometry, staff: {}, cardId: input.cardId, now, ...options }) };
+}
+
+test('cached geometry advice reuses only the exact qualified native proposal and remains advisory', async () => {
+  const f = await geometryAdviceFixture();
+  assert.equal(f.saved.status, 'CANDIDATE'); assert.equal(f.saved.requiresHumanConfirmation, true);
+  assert.equal(f.saved.selectedCandidateId, 'native-candidate');
+  assert.deepEqual(await f.read(), { FRONT: { status: 'CANDIDATE', frameSha256: f.request.targetFrameSha256,
+    nativeGeometry: { physical: f.request.candidates[0].physical, printed: f.request.candidates[0].printed }, requiresHumanConfirmation: true } });
+  assert.equal(f.state.lessonReads, 2); assert.equal(f.state.intakeChecks, 1);
+  f.state.sides.FRONT.learningAdvice.status = 'ABSTAIN';
+  assert.equal((await f.read()).FRONT.status, 'ABSTAIN');
+});
+
+test('cached geometry advice is withheld after policy expiry, withdrawal, release/source drift or changed native binding', async t => {
+  for (const reason of ['expiry', 'withdrawal', 'release', 'source', 'native binding', 'missing side']) await t.test(reason, async () => {
+    const f = await geometryAdviceFixture(); let options;
+    if (reason === 'expiry') options = { now: Date.parse(f.policy.validUntil) };
+    if (reason === 'withdrawal') f.state.withdrawn = true;
+    if (reason === 'release') f.state.manifest = { ...f.state.manifest, revisionNote: 'new immutable release with same policy and lessons' };
+    if (reason === 'source') f.state.uploads[0].original_hash = digest('replacement-front-original');
+    if (reason === 'native binding') f.state.sides.FRONT.learningAdvice.nativeEngineSha256 = digest('different-engine');
+    if (reason === 'missing side') f.state.uploads.pop();
+    assert.deepEqual(await f.read(options), {});
+  });
+});
+
+test('frozen baseline geometry advice is dormant without source, status or reference scans', async () => {
+  const f = await geometryAdviceFixture({ active: false });
+  assert.equal(f.saved, null); assert.equal(await f.read(), null);
+  assert.equal(f.state.intakeChecks, 0); assert.equal(f.state.sourceReads, 0);
+  assert.equal(f.state.statusReads, 0); assert.equal(f.state.lessonReads, 0); assert.equal(f.state.queries.length, 2);
 });

@@ -67,3 +67,27 @@ test('private host mounts the dedicated public reader without staff authenticati
  const report=JSON.parse((await f.reader.read(f.claims('REPORT'))).bytes);assert.equal(report.packet.images.FRONT.preview,undefined);
  assert.equal(report.packet.images.FRONT.sha256,value.image.sha256);assert.equal(report.publicHash,value.publicHash);
  });
+
+test('optional preview lookup, parsing and signing failures never hide the independently verified approved full image',async()=>{
+ for(const failure of ['lookup','wrong-source','sign']){
+  const f=await setup({withPreview:true});const claims=f.claims('IMAGE');claims.request.kind='IMAGE_ACCESS';
+  f.storage.createDerivativeRead=async({descriptor})=>{
+   if(failure==='sign'&&descriptor.purpose==='preview')throw Object.assign(Error('preview unavailable'),{code:'PHOTO_STORAGE_UNAVAILABLE'});
+   return{url:'https://atlas-grading-private-20260910.nyc3.digitaloceanspaces.com/'+descriptor.purpose,...descriptor.raster.content};};
+  const client={$transaction:async fn=>fn({$queryRawUnsafe:async()=>[f.row]})};
+  const reviewDisplay={async inspection(){if(failure==='lookup')throw Error('optional index unavailable');
+    if(failure==='wrong-source')return{url:'https://bad.invalid/x',sourceSha256:'f'.repeat(64)};return null;}};
+  const reader=createApprovedManualReader({client,artifacts:f.artifacts,storage:f.storage,reviewDisplay});
+  const value=JSON.parse((await reader.read(claims)).bytes);assert.equal(value.image.sha256,f.geometry.sides.FRONT.prepared.frame.inspection.sha256);
+  assert.equal(value.image.preview,undefined);assert.equal(value.publicHash,f.row.public_hash);
+ }
+});
+
+
+test('optional service deadline cannot fall through to an unbounded legacy preview grant',async()=>{
+ const f=await setup({withPreview:true}),purposes=[];const claims=f.claims('IMAGE');claims.request.kind='IMAGE_ACCESS';
+ f.storage.createDerivativeRead=async({descriptor})=>{purposes.push(descriptor.purpose);assert.equal(descriptor.purpose,'inspection');return{url:'https://atlas-grading-private-20260910.nyc3.digitaloceanspaces.com/full',...descriptor.raster.content};};
+ const client={$transaction:async fn=>fn({$queryRawUnsafe:async()=>[f.row]})};
+ const reader=createApprovedManualReader({client,artifacts:f.artifacts,storage:f.storage,reviewDisplay:{inspection:async()=>null}});
+ const value=JSON.parse((await reader.read(claims)).bytes);assert.equal(value.image.preview,undefined);assert.deepEqual(purposes,['inspection']);assert.equal(value.image.sha256,f.geometry.sides.FRONT.prepared.frame.inspection.sha256);
+});

@@ -4,11 +4,13 @@ import { decodeSpeedsterTraceBitmapWireV1, encodeSpeedsterTraceBitmapWireV1 } fr
 import { applyCompletedSpeedsterTraceStroke, buildSpeedsterTraceProvenanceRevision, clipSpeedsterTraceToEditorBounds,
   createEmptySpeedsterTrace, initializeSpeedsterHighlighterStrokes, isNonEmptySpeedsterTrace,
   rasterizeSpeedsterCanonicalContour } from '@atlas/grading-core/trace-editor';
-import { defectBase, defectStatus } from './defect-actions.mjs';
+import { defectBase, defectStatus, reviewedDefectFindingIds } from './defect-actions.mjs';
 import { useVerifiedImage } from './verified-image.mjs';
 import { astraReviewState, collectiveProposalReview, proposalFrameMatches, reviewedMemoryState, validProposalContour } from './astra-review-ui.mjs';
 import { INSPECTION_SIZE, MAX_INSPECTION_ZOOM, fitInspectionScale, clampInspectionPan, zoomInspectionAt,
   resizeInspectionView, focusInspectionBounds, canonicalInspectionPoint } from './inspection-viewport.mjs';
+
+export { reviewedMemoryState } from './astra-review-ui.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
 const GRID = { width: 1270, height: 1778 };
@@ -78,13 +80,13 @@ function ProposalOverlay({ proposals, selected, visible }) {
   </svg>;
 }
 
-function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending, onReady, onActivity, locked, astra, onReviewProposal, expanded, hidden, onExpand, renderEditActions }) {
+function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending, onReady, onActivity, locked, astra, onReviewProposal, expanded, hidden, onExpand, renderEditActions, initialInspection, onInspectionChange, onReviewFinding }) {
   const slot = workspace.sides[side], base = defectBase(workspace, side), currentBase = key(base);
   const descriptor = image?.inspection;
   const binding = inspectionImageBinding(workspace, side, image);
   const supplied = descriptor?.url && descriptor.sha256 === slot.frame.inspectionImageSha256;
   const verified = useVerifiedImage(supplied ? descriptor : null);
-  const [loaded, setLoaded] = useState(null), [selected, setSelected] = useState(null), [editor, setEditor] = useState(null);
+  const [loaded, setLoaded] = useState(null), [selected, setSelected] = useState(initialInspection?.side === side && initialInspection.imageSha256 === slot.frame.inspectionImageSha256 ? initialInspection.findingId : null), [editor, setEditor] = useState(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [view, setView] = useState({ zoom: 1, pan: { x: 0, y: 0 } }), [showMasks, setShowMasks] = useState(true);
   const { zoom, pan } = view;
@@ -169,6 +171,20 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
       sourceViewId: target?.sourceViewId ?? `${side}:inspection`,
       provenance: target?.traceProvenance, cropTransform: target?.traceProvenance?.cropTransform ?? FULL_CROP, id: target?.id ?? crypto.randomUUID(), undo: [] });
   };
+  const restored = useRef(false);
+  useEffect(() => {
+    if (!ready || restored.current || initialInspection?.side !== side) return;
+    restored.current = true;
+    if (initialInspection.imageSha256 !== slot.frame.inspectionImageSha256) {
+      setError('The photograph changed. Select the finding again in its current image.'); return;
+    }
+    if (initialInspection.view && initialInspection.size)
+      setView(resizeInspectionView(initialInspection.view, initialInspection.size, viewportSizeRef.current));
+    if (initialInspection.intent === 'ADD') start(null);
+  }, [ready, initialInspection, side]);
+  useEffect(() => {
+    if (!hidden && ready) onInspectionChange?.({side, findingId:selected, imageSha256:slot.frame.inspectionImageSha256, view, size:viewportSize});
+  }, [side, selected, view, viewportSize, hidden, ready, slot.frame.inspectionImageSha256, onInspectionChange]);
   const reviewProposal = (proposal, action) => {
     if (proposalDisabled || proposal.reviewStatus !== 'UNREVIEWED' || !validProposalContour(proposal) || !TYPES[proposal.defectType]) return;
     return perform(() => onReviewProposal({ side, base, actor: 'HUMAN', analysisId: astra.analysisId, proposalId: proposal.id, action }));
@@ -313,7 +329,7 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
     <p className="ad-focus-status" role="status">{inspecting ? `Inspecting ${inspecting} · ` : ''}Full image includes space around every card edge.</p>
     {!ready && supplied && <p role={verified.error ? 'alert' : 'status'}>{verified.error ? 'Inspection image unavailable or its bytes did not match. Your trace is retained.' : 'Waiting for the current verified inspection image.'}</p>}
     </div>
-    <div className="ad-review-panel">
+    <div className="ad-review-panel">{disabled && !editor && <p role="status">{pending?'This change is saved; measurement must finish before another edit. Retry measurement below.':busy?'Saving your decision…':locked?'Finish the current save before editing.':'Full photo verification is required before adding or changing a finding.'}</p>}
     {editor ? <div className="ad-trace-tools">
       {editor.proposal && <p className="ad-proposal-note">Correcting an ATLAS suggestion. Save the trace to add your corrected finding.</p>}
       {stale && <p role="alert">This side changed while you were drawing. Discard this trace to use its latest saved version.</p>}
@@ -325,7 +341,7 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
           {[1, 2, 4, 8, 16, 32].map(width => <option key={width} value={width}>{width} px</option>)}
         </select></label><button disabled={busy || stroke.length > 0 || !editor.undo.length} onClick={() => setEditor(previous => ({ ...previous, trace: previous.undo.at(-1), undo: previous.undo.slice(0, -1) }))}>Undo stroke</button></div>
       {(renderEditActions ?? (children=>children))(<div className="am-side-actions"><button className="am-primary" disabled={disabled || stale || stroke.length > 0 || !isNonEmptySpeedsterTrace(editor.trace)} onClick={saveTrace}>Save trace</button>
-        <button disabled={busy} onClick={() => { strokeRef.current = null; setStroke([]); setEditor(null); setError(''); }}>Discard trace</button></div>,side)}
+        <button disabled={busy} onClick={() => { strokeRef.current = null; setStroke([]); setEditor(null); setError(''); }}>Cancel trace</button></div>,side)}
     </div> : <div className="am-side-actions"><button disabled={disabled || !onEdit} onClick={() => start(null)}>Add finding</button>
         {pending && onRetry && <button disabled={busy || locked} onClick={() => perform(() => onRetry(side))}>Retry measurement</button>}
         {pending && onDiscardPending && <button disabled={busy || locked} onClick={() => perform(() => onDiscardPending({ side, base }))}>Discard pending change</button>}
@@ -345,8 +361,8 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
           onChange={event => edit({ type: 'CHANGE_TYPE', defectId: finding.id, defectType: event.target.value })}>
           {Object.entries(TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select></label>
-        <div className="am-side-actions"><button disabled={disabled || finding.reviewResult === 'REMOVED' || !onEdit} onClick={() => start(finding)}>Edit trace</button>
-          <button disabled={disabled || !onEdit || Boolean(finding.geometryExclusion)} onClick={() => { if (!finding.geometryExclusion) return edit({ type: finding.reviewResult === 'REMOVED' ? 'UNDO' : 'REMOVE', defectIds: [finding.id] }); }}>{finding.reviewResult === 'REMOVED' ? 'Restore finding' : 'Remove finding'}</button></div>
+        <div className="am-side-actions">{onReviewFinding && finding.reviewResult!=='REMOVED' && <button disabled={disabled || reviewedDefectFindingIds(workspace,side).includes(finding.id)} onClick={()=>perform(()=>onReviewFinding(finding))}>{reviewedDefectFindingIds(workspace,side).includes(finding.id)?'Decision saved':'Accept finding'}</button>}<button disabled={disabled || finding.reviewResult === 'REMOVED' || !onEdit} onClick={() => start(finding)}>Edit trace</button>
+          <button disabled={disabled || !onEdit || Boolean(finding.geometryExclusion)} onClick={() => { if (!finding.geometryExclusion) return edit({ type: finding.reviewResult === 'REMOVED' ? 'UNDO' : 'REMOVE', defectIds: [finding.id] }); }}>{finding.reviewResult === 'REMOVED' ? 'Restore finding' : 'Reject finding'}</button></div>
       </div>}
 
     </>}
@@ -380,10 +396,10 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
 /** Controlled human review. Callbacks must authenticate, durably save/read back,
  * and then update workspace. Full masks remain in verified artifact storage;
  * browser state and a checked descriptor are not approval or storage authority. */
-export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth, onConfirm, onRetry, onDiscardPending, onContinue, onEditingChange, saveStatus = '', grade, renderReviewActions, renderEditActions,
+export function DefectReviewWorkspace({ readOnly = false, workspace, images, onEdit, onInspectBoth, onConfirm, onRetry, onDiscardPending, onContinue, onEditingChange, saveStatus = '', grade, renderReviewActions, renderEditActions, initialInspection, onInspectionChange, onReturn, onReviewFinding,
   astra, attentionMessage, onAnalyzeDefects, onRefreshAnalysis, onResumeAnalysis, onReplaceAnalysis, onReviewProposal, reviewedMemory, onRetryReviewedMemory }) {
   const [activity, setActivity] = useState({}), [ready, setReady] = useState({}), [confirming, setConfirming] = useState(false), [error, setError] = useState('');
-  const [expandedSide, setExpandedSide] = useState(null);
+  const [expandedSide, setExpandedSide] = useState(initialInspection?.side ?? null);
   const status = defectStatus(workspace);
   const [unknownAnalysis, setUnknownAnalysis] = useState(null);
   const analysisKey = key({ analysisId: astra?.analysisId, status: astra?.status });
@@ -399,14 +415,14 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth
   const currentImagesReady = SIDES.every(side => images?.[side]?.inspection?.sha256 === workspace.sides[side].frame.inspectionImageSha256
     && ready[side] === inspectionImageBinding(workspace, side, images?.[side]));
   const inspectBoth = async () => {
-    if (!status.settled || status.canConfirm || !currentImagesReady || editing || confirmRef.current || !onInspectBoth) return;
+    if (readOnly || !status.settled || status.canConfirm || !currentImagesReady || editing || confirmRef.current || !onInspectBoth) return;
     confirmRef.current = true; setConfirming(true); setError('');
     try { await onInspectBoth(); }
     catch { setError('Inspection was not saved for both sides. Try the confirmation box again.'); }
     finally { confirmRef.current = false; setConfirming(false); }
   };
   const confirm = async () => {
-    if (!status.canConfirm || !currentImagesReady || !collective.ready || editing || confirmRef.current || !onConfirm) return;
+    if (readOnly || !status.canConfirm || !currentImagesReady || !collective.ready || editing || confirmRef.current || !onConfirm) return;
     confirmRef.current = true;
     setConfirming(true); setError('');
     try { await onConfirm({ base: { FRONT: defectBase(workspace, 'FRONT'), BACK: defectBase(workspace, 'BACK') }, actor: 'HUMAN', reviewed: true,
@@ -415,7 +431,7 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth
     finally { confirmRef.current = false; setConfirming(false); }
   };
   const requestAnalysis = async (mode = 'START') => {
-    if (requestRef.current || confirming || (['START', 'REPLACE'].includes(mode) && astra?.requestAvailable === false) || (mode === 'START' && (!analysis.mayRequest || astra?.followLatest || !currentImagesReady || editing || !onAnalyzeDefects))
+    if ((readOnly && mode !== 'REFRESH') || requestRef.current || confirming || (['START', 'REPLACE'].includes(mode) && astra?.requestAvailable === false) || (mode === 'START' && (!analysis.mayRequest || astra?.followLatest || !currentImagesReady || editing || !onAnalyzeDefects))
       || (mode === 'REFRESH' && !onRefreshAnalysis) || (mode === 'RESUME' && (!astra?.resumeAvailable || !onResumeAnalysis))
       || (mode === 'REPLACE' && (analysis.status !== 'UNKNOWN' || !astra?.replacement || astra.backgroundAccepted
         || !currentImagesReady || editing || !onReplaceAnalysis))) return;
@@ -430,7 +446,7 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth
     finally { requestRef.current = false; setRequesting(false); }
   };
   const recoverMemory = async () => {
-    if (memoryRef.current || !memory?.mayRecover || !onRetryReviewedMemory) return;
+    if (readOnly || memoryRef.current || !memory?.mayRecover || !onRetryReviewedMemory) return;
     memoryRef.current = true; setRecoveringMemory(true); setError('');
     try { await onRetryReviewedMemory(); }
     catch { setError('The reviewed example save is not confirmed. Your findings remain available.'); }
@@ -438,7 +454,8 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth
   };
   return <div className="atlas-manual ad-workspace">
     <header className="am-header"><span className="am-brand">ATLAS</span><h1>Defects & condition</h1><span>{saveStatus}</span></header>
-    <div className="am-toolbar"><span>{analysis.enabled ? 'Run ATLAS’s initial inspection, then review and correct its findings on both sides.' : 'Inspect both sides. Correct, remove or trace findings before confirming.'}</span>{grade && <strong>Draft grade {grade}</strong>}</div>
+    {readOnly&&<p role="status">Read-only review. Ask a reviewer to save or confirm changes.</p>}
+    <div className="am-toolbar">{onReturn&&<button type="button" disabled={editing||confirming||!status.settled} onClick={onReturn}>Return to findings review</button>}<span>{analysis.enabled ? 'Run ATLAS’s initial inspection, then review and correct its findings on both sides.' : 'Inspect both sides. Correct, remove or trace findings before confirming.'}</span>{grade && <strong>Draft grade {grade}</strong>}</div>
     {analysis.enabled && <section className="ad-astra" aria-label="ATLAS defect assistance" data-review-target="analysis" data-review-attention={Boolean(attentionMessage)} tabIndex={-1}>
       {attentionMessage && <p className="mc-review-reason">{attentionMessage}</p>}
       <div><h2>ATLAS defect assistance</h2><p role="status">{requesting ? requesting === 'REFRESH' ? 'Checking the saved ATLAS analysis…' : 'Sending the card to ATLAS for its initial inspection…' : analysis.message}</p>
@@ -447,40 +464,40 @@ export function DefectReviewWorkspace({ workspace, images, onEdit, onInspectBoth
           {astra.limitations.filter(value => typeof value === 'string' && value).slice(0,8).map((value,index) => <li key={index}>{value}</li>)}
         </ul>}
       </div>
-      <div className="am-side-actions"><button disabled={requesting || confirming || editing || !currentImagesReady || !analysis.mayRequest || astra?.followLatest || !onAnalyzeDefects}
+      <div className="am-side-actions"><button disabled={readOnly || requesting || confirming || editing || !currentImagesReady || !analysis.mayRequest || astra?.followLatest || !onAnalyzeDefects}
         onClick={() => requestAnalysis()}>Find defects with ATLAS</button>
         {(['RUNNING', 'UNKNOWN'].includes(analysis.status) || astra?.followLatest) && onRefreshAnalysis && <button disabled={requesting || confirming} onClick={() => requestAnalysis('REFRESH')}>Check analysis status</button>}
-        {astra?.resumeAvailable && onResumeAnalysis && <button disabled={requesting || confirming} onClick={() => requestAnalysis('RESUME')}>Retry saved analysis</button>}
+        {astra?.resumeAvailable && onResumeAnalysis && <button disabled={readOnly || requesting || confirming} onClick={() => requestAnalysis('RESUME')}>Retry saved analysis</button>}
         {analysis.status === 'UNKNOWN' && astra?.replacement && !astra.backgroundAccepted && onReplaceAnalysis && <button
-          disabled={requesting || confirming || editing || !currentImagesReady || astra?.requestAvailable === false} onClick={() => requestAnalysis('REPLACE')}>Start a new ATLAS analysis</button>}
+          disabled={readOnly || requesting || confirming || editing || !currentImagesReady || astra?.requestAvailable === false} onClick={() => requestAnalysis('REPLACE')}>Start a new ATLAS analysis</button>}
       </div>
     </section>}
     {expandedSide && <div className="ad-expanded-switch" aria-label="Expanded inspection side">{SIDES.map(side => <button key={side}
       aria-pressed={expandedSide === side} onClick={() => setExpandedSide(side)}>Inspect {name(side)}</button>)}</div>}
     <div className={`am-pair${expandedSide ? ' ad-expanded-pair' : ''}`}>{SIDES.map(side => <DefectSide key={`${workspace.cardId}:${side}`} workspace={workspace} side={side} image={images?.[side]}
-      onEdit={onEdit} onRetry={onRetry} onDiscardPending={onDiscardPending} onReady={onReady} onActivity={onActivity} locked={confirming}
+      onEdit={onEdit} onRetry={onRetry} onDiscardPending={onDiscardPending} onReady={onReady} onActivity={onActivity} locked={confirming||readOnly}
       astra={astra} onReviewProposal={onReviewProposal} expanded={expandedSide === side} hidden={Boolean(expandedSide && expandedSide !== side)}
-      renderEditActions={renderEditActions} onExpand={() => setExpandedSide(previous => previous === side ? null : side)} />)}</div>
+      renderEditActions={renderEditActions} initialInspection={initialInspection} onInspectionChange={onInspectionChange} onReviewFinding={onReviewFinding} onExpand={() => setExpandedSide(previous => previous === side ? null : side)} />)}</div>
     {memory && <div className="ad-memory" aria-label="Reviewed example memory"><p role="status">{recoveringMemory ? 'Checking the saved reviewed examples…' : memory.message}</p>
-      {memory.mayRecover && onRetryReviewedMemory && <button disabled={recoveringMemory || confirming} onClick={recoverMemory}>
+      {memory.mayRecover && onRetryReviewedMemory && <button disabled={readOnly || recoveringMemory || confirming} onClick={recoverMemory}>
         {memory.status === 'FAILED' ? 'Retry saving examples' : 'Check example save'}</button>}
     </div>}
     {renderReviewActions ? renderReviewActions({
       approve:reportReady && onContinue ? onContinue : confirm,
-      disabled:editing || confirming || !currentImagesReady || !status.canConfirm || !collective.ready, busy:confirming,
+      disabled:readOnly || editing || confirming || !currentImagesReady || !status.canConfirm || !collective.ready, busy:confirming,
       message:editing ? 'Save or discard your trace.' : collective.unresolvedCount ? `Approve accepts ${collective.unresolvedCount} remaining suggestions.` : 'Confirm corners, edges and surface.',
-      inspection:<label className="mc-rapid-inspection"><input type="checkbox" aria-label="I inspected both Front and Back" checked={status.canConfirm} disabled={status.canConfirm || !status.settled || !currentImagesReady || editing || confirming || !onInspectBoth} onChange={inspectBoth}/><span>I inspected both Front and Back</span></label>
+      inspection:<label className="mc-rapid-inspection"><input type="checkbox" aria-label="I inspected both Front and Back" checked={status.canConfirm} disabled={readOnly || status.canConfirm || !status.settled || !currentImagesReady || editing || confirming || !onInspectBoth} onChange={inspectBoth}/><span>I inspected both Front and Back</span></label>
     }) : <footer className="am-footer ad-confirm-footer">
       <label className={`ad-confirm-inspection${status.canConfirm ? ' ad-confirmed' : ''}`}>
         <input type="checkbox" aria-label="I inspected both Front and Back" checked={status.canConfirm}
-          disabled={status.canConfirm || !status.settled || !currentImagesReady || editing || confirming || !onInspectBoth} onChange={inspectBoth}/>
+          disabled={readOnly || status.canConfirm || !status.settled || !currentImagesReady || editing || confirming || !onInspectBoth} onChange={inspectBoth}/>
         <span><strong>{confirming && !status.canConfirm ? 'Saving inspection…' : 'I inspected both Front and Back'}</strong><small>Including corners, edges and surface. My corrections are saved.</small></span>
       </label><span>{editing ? 'Save or discard your trace before continuing.' : collective.unresolvedCount > 0
       ? collective.ready ? `After reviewing Front and Back, Confirm accepts all ${collective.unresolvedCount} remaining displayed suggestions and preserves your corrections and rejections. Final report approval stays separate.`
         : 'Reload images to refresh the saved suggestion list before confirming. Your corrections are retained.'
       : reportReady ? 'Findings confirmed. Final report approval is a separate step.' : status.canConfirm ? 'Inspection saved. Confirm findings to continue.' : 'Check the inspection box above, then confirm findings.'}</span>
       {reportReady && onContinue ? <button className="am-primary" onClick={onContinue} disabled={editing || confirming || !currentImagesReady}>Review draft report</button>
-        : <button className="am-primary" onClick={confirm} disabled={!status.canConfirm || !currentImagesReady || !collective.ready || editing || confirming || !onConfirm}>{confirming ? 'Confirming…' : collective.unresolvedCount ? `Confirm findings & accept ${collective.unresolvedCount} suggestions` : 'Confirm findings'}</button>}
+        : <button className="am-primary" onClick={confirm} disabled={readOnly || !status.canConfirm || !currentImagesReady || !collective.ready || editing || confirming || !onConfirm}>{confirming ? 'Confirming…' : collective.unresolvedCount ? `Confirm findings & accept ${collective.unresolvedCount} suggestions` : 'Confirm findings'}</button>}
     </footer>}{error && <p className="am-error" role="alert">{error}</p>}
   </div>;
 }

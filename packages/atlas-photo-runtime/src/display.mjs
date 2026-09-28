@@ -25,7 +25,8 @@ function checkLimits(value) {
 /** Create separate display assets from an exact verified working frame. The
  * full image is lossless and pixel-equivalent; the small JPEG is context only.
  * No storage writes, source replacement or grading authority is performed. */
-export async function createReviewDisplay({ bytes, frame, original, decodePlan, limits: limitValue, signal } = {}) {
+export async function createReviewDisplay({ bytes, frame, original, decodePlan, limits: limitValue, signal, output = 'both' } = {}) {
+  need(['both', 'preview', 'full'].includes(output), 'PHOTO_DECODE_INVALID');
   need(!isAborted(signal), 'PHOTO_DECODE_CANCELLED');
   const limits = checkLimits(limitValue), source = parseDecodedFrame(frame, original, decodePlan);
   need(bytes instanceof Uint8Array && bytes.buffer instanceof ArrayBuffer);
@@ -44,12 +45,12 @@ export async function createReviewDisplay({ bytes, frame, original, decodePlan, 
     const inputPath = join(directory, 'source.png'), fullPath = join(directory, 'full.webp'), previewPath = join(directory, 'preview.jpg');
     await writeFile(inputPath, input, { flag: 'wx', mode: 0o600 });
     const result = await runDecoderProcess(worker, { inputPath, fullPath, previewPath,
-      source: { content: source.raster.content, dimensions: source.raster.dimensions }, limits },
+      source: { content: source.raster.content, dimensions: source.raster.dimensions }, limits, output },
     { timeoutMs: limits.timeoutMs, signal });
     need(result.policyVersion === REVIEW_DISPLAY_POLICY && result.sourceSha256 === source.raster.content.sha256);
     const paths = { full: fullPath, preview: previewPath }, outputs = {};
     let outputBytes = 0;
-    for (const kind of ['full', 'preview']) {
+    for (const kind of output === 'both' ? ['preview', 'full'] : [output]) {
       const expected = result[kind], size = (await stat(paths[kind])).size;
       outputBytes += size;
       need(size > 0 && outputBytes <= limits.maxOutputBytes, 'PHOTO_DECODE_LIMIT');

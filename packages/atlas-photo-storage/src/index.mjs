@@ -208,9 +208,20 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
     }
   }
 
-  async function createRead(expected, expiresIn, signal) {
+  async function createRead(expected, expiresIn, signal, descriptorOnly = false) {
     check(Number.isSafeInteger(expiresIn) && expiresIn > 0 && expiresIn <= 900);
-    const found = await readExpected(expected, signal);
+    // Server-produced immutable derivatives already have an exact persisted
+    // descriptor. Check object identity/metadata without downloading the body
+    // again; recipients still verify encoded SHA before using evidence pixels.
+    // Original and processing reads never use this path.
+    const found = descriptorOnly ? await bounded(signal, timeoutMs, async activeSignal => {
+      let response;
+      try { response = await send(new HeadObjectCommand({ Bucket: bucket, Key: expected.object.key,
+        ...(expected.object.versionId !== null ? { VersionId: expected.object.versionId } : {}), ChecksumMode: 'ENABLED' }), activeSignal); }
+      catch (error) { if (isMissing(error)) fail('PHOTO_OBJECT_NOT_FOUND'); throw error; }
+      return { object: headers(response, expected), sha256: expected.content.sha256,
+        byteCount: expected.content.byteCount, contentType: expected.content.mime };
+    }) : await readExpected(expected, signal);
     try {
       const url = await bounded(signal, timeoutMs, activeSignal => cancellable(sign(client,
         new GetObjectCommand({ Bucket: bucket, Key: found.object.key,
@@ -297,6 +308,12 @@ export function createPhotoStorage({ client, bucket, keyPrefix, limits,
     async readDerivative({ descriptor, frame, original, decodePlan, signal } = {}) {
       descriptor = parseDerivative(descriptor, frame, original, decodePlan);
       return readExpected(derivedExpectation(descriptor), signal);
+    },
+    // Only call with an authenticated, persisted server-produced derivative.
+    // This issues transport metadata; it is not a byte-verification receipt.
+    async createImmutableDerivativeRead({descriptor,frame,original,decodePlan,expiresIn=300,signal}={}) {
+      descriptor=parseDerivative(descriptor,frame,original,decodePlan);
+      return createRead(derivedExpectation(descriptor),expiresIn,signal,true);
     },
     async createDerivativeRead({descriptor,frame,original,decodePlan,expiresIn=300,signal}={}) {
       descriptor=parseDerivative(descriptor,frame,original,decodePlan);

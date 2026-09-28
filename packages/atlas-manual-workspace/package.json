@@ -14,6 +14,7 @@
     "./defects": "./dist/DefectReviewWorkspace.js",
     "./defects.css": "./src/defects.css",
     "./report-review": "./dist/FinalReportReview.js",
+    "./image-cache": "./dist/VerifiedImageCacheBoundary.js",
     "./report-review.css": "./src/report-review.css",
     "./rapid-review": "./src/rapid-review.mjs"
   },

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { staffClientRequest } from './client-request.mjs';
+import { notifyManualAccessFailure } from '@atlas/manual-service/response';
 const messages = {
     SIGN_IN_NOT_AVAILABLE: 'Sign-in is not available for these details.',
     USE_INTERNATIONAL_PHONE: 'Enter a 10-digit U.S. mobile number, or include + and the country code for another country.',
@@ -42,6 +43,7 @@ export async function api(path, { body, csrf, signal } = {}) {
     const response = await staffClientRequest(path, { body, csrf, signal });
     const { data } = response;
     if (!response.ok) {
+        notifyManualAccessFailure(response.status, data.error);
         const error = new Error(messages[data.error] ?? 'The request could not be completed. Your unsaved notes are kept.');
         error.code = data.error;
         error.status = response.status;

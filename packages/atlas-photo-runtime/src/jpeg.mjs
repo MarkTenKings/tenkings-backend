@@ -174,7 +174,10 @@ function applePrimaryMetadata(primary) {
     }
     value('stArea:unit', /normalized/y); literal('</mwg-rs:Area>'); value('mwg-rs:Type', /Face/y);
     literal('<mwg-rs:Extensions rdf:parseType="Resource">');
-    for (const [tag, maximum] of [['AngleInfoYaw', 360], ['AngleInfoRoll', 360], ['ConfidenceLevel', 100], ['FaceID', 2_147_483_647]]) {
+    // Face confidence is opaque capture metadata, not a percentage or HDR
+    // authority. Real Apple files use values above 100. Bound its integer
+    // representation like FaceID without applying it to pixels or color.
+    for (const [tag, maximum] of [['AngleInfoYaw', 360], ['AngleInfoRoll', 360], ['ConfidenceLevel', 2_147_483_647], ['FaceID', 2_147_483_647]]) {
       const number = Number(value(`apple-fi:${tag}`, /[0-9]+/y)); hdr(number <= maximum);
     }
     literal('</mwg-rs:Extensions>'); literal('</rdf:li>'); space();

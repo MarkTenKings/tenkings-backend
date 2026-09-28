@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
+import { VerifiedImageContext, VERIFIED_IMAGE_ACCESS_ENDED } from './verified-image-context.mjs';
 
 export const MAX_VERIFIED_IMAGE_BYTES = 256 * 1024 * 1024;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
@@ -10,7 +11,8 @@ export function verifiedImageContentKey(descriptor) {
   return descriptor && /^[a-f0-9]{64}$/.test(descriptor.sha256)
     && (descriptor.byteCount === undefined || Number.isSafeInteger(descriptor.byteCount)
       && descriptor.byteCount > 0 && descriptor.byteCount <= MAX_VERIFIED_IMAGE_BYTES)
-    ? JSON.stringify([descriptor.sha256, descriptor.byteCount ?? null]) : null;
+    ? JSON.stringify([descriptor.sha256, descriptor.byteCount ?? null, descriptor.width ?? null,
+      descriptor.height ?? null, descriptor.sourceSha256 ?? null, descriptor.policyVersion ?? null]) : null;
 }
 function imageMime(bytes) {
   if (bytes.length >= 8 && [137,80,78,71,13,10,26,10].every((value,index) => bytes[index] === value)) return 'image/png';
@@ -67,6 +69,10 @@ export async function loadVerifiedImage(descriptor, { signal, fetchImpl = global
       if (controller.signal.aborted) { try { Promise.resolve(value?.body?.cancel()).catch(() => {}); } catch {} }
       return value;
     }));
+    // A private same-origin image can be the first request to notice an expired session.
+    // External grant failures are transport failures, not proof that staff access ended.
+    if (sameOrigin && response?.status === 401 && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function')
+      window.dispatchEvent(new Event(VERIFIED_IMAGE_ACCESS_ENDED));
     check(response?.ok && !response.redirected && response.body?.getReader, 'VERIFIED_IMAGE_UNAVAILABLE');
     reader = response.body.getReader();
     const lengthHeader = response.headers?.get('content-length');
@@ -117,7 +123,8 @@ export async function loadVerifiedImage(descriptor, { signal, fetchImpl = global
 }
 
 // Keep only the two recent views of this mounted image (original/straightened),
-// within a bounded memory budget. No shared or persistent image cache is used.
+// within a bounded memory budget. Authorized boundaries can share leased bytes;
+// this resource never persists them.
 export const MAX_RETAINED_VERIFIED_IMAGE_BYTES = 64 * 1024 * 1024;
 
 /** One component owns its verified Blobs. Renewing a transport URL must not
@@ -192,15 +199,18 @@ export function createVerifiedImageResource({ load = loadVerifiedImage, retained
 }
 
 export function useVerifiedImage(descriptor, { cacheScope = null } = {}) {
-  const resource = useRef(null), [value, setValue] = useState(empty), [retryVersion, setRetryVersion] = useState(0);
-  if (!resource.current) resource.current = createVerifiedImageResource({ retainedViews: cacheScope ? 2 : 1 });
+  const { pool, blocked } = useContext(VerifiedImageContext);
+  const [value, setValue] = useState(empty), [retryVersion, setRetryVersion] = useState(0);
+  const resource = useMemo(() => createVerifiedImageResource({ retainedViews: cacheScope ? 2 : 1,
+    ...(pool ? { load: (image, options) => pool.borrow(image, options) } : {}) }), [pool, cacheScope]);
+  descriptor = !blocked && descriptor?.url ? descriptor : null;
   const contentKey = verifiedImageContentKey(descriptor), url = descriptor?.url;
-  useEffect(() => () => resource.current.dispose(), [cacheScope]);
+  useEffect(() => () => resource.dispose(), [resource]);
   useEffect(() => {
-    void resource.current.update(descriptor, setValue);
+    void resource.update(descriptor, setValue);
     // The resource cancels on content replacement/unmount. Effect cleanup on
     // URL renewal would abort the very transfer update() is meant to retain.
-  }, [contentKey, url, cacheScope, retryVersion]);
+  }, [contentKey, url, resource, retryVersion]);
   const visible = value.contentKey === contentKey ? value : { ...empty, contentKey, loading: Boolean(descriptor) };
   return { ...visible, retry: () => setRetryVersion(version => version + 1) };
 }

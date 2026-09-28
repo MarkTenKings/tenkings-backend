@@ -9,6 +9,9 @@ const dimensions = { inspection: [1350, 1858], rectified: [1270, 1778] };
 /** Decode only verified prepared images. Every crop preserves source pixels;
  * the PNG hash and original preparation hash describe different encodings. */
 export function createDefectImageEffects({ readPrepared, artifacts, limited = work => work() }) {
+  // Each publication owns one immutable card snapshot. Weak ownership prevents
+  // cross-request reuse and releases the at-most-two decoded rasters afterwards.
+  const publicationSources = new WeakMap();
   async function decode(staff, card, side, kind, expectedHash) {
     const found = await readPrepared(staff, card, side, kind);
     const bytes = Buffer.from(found.bytes);
@@ -20,7 +23,7 @@ export function createDefectImageEffects({ readPrepared, artifacts, limited = wo
     return { bytes, width, height };
   }
   async function png(source, rectangle = null) {
-    let image = sharp(source.bytes, { limitInputPixels: 1350 * 1858, failOn: 'warning' });
+    let image = sharp(source.bytes, { limitInputPixels: 1350 * 1858, failOn: 'warning', ...(source.raw ? { raw: source.raw } : {}) });
     if (rectangle) image = image.extract({ left: rectangle.x, top: rectangle.y, width: rectangle.width, height: rectangle.height });
     const { data, info } = await image.png({ compressionLevel: 6 }).toBuffer({ resolveWithObject: true });
     return { mime: 'image/png', sha256: digest(data), width: info.width, height: info.height, bytes: data };
@@ -30,6 +33,23 @@ export function createDefectImageEffects({ readPrepared, artifacts, limited = wo
     return { ref: await artifacts.write(content, { cardId, kind, sourceHash }), sourceHash };
   }
   return Object.freeze({
+    createCleanExemplar: ({ staff, card, side, frame }) => limited(async () => {
+      const image = await png(await decode(staff, card, side, 'inspection', frame.inspectionImageSha256));
+      const value = { version: 'atlas-reviewed-clean-png-v1', pngBase64: image.bytes.toString('base64'),
+        sha256: image.sha256, width: image.width, height: image.height, sourceSha256: frame.inspectionImageSha256 };
+      return { ...await store(value, card.cardId, 'REVIEWED_CROP'), sha256: image.sha256, sourceSha256: frame.inspectionImageSha256 };
+    }),
+    async cleanImage(candidate) {
+      const image = candidate.example.image;
+      requireThat(image, 503, 'MEMORY_CLEAN_IMAGE_UNAVAILABLE');
+      const value = await artifacts.read(image.ref, { cardId: candidate.source.cardId, kind: 'REVIEWED_CROP', sourceHash: image.sourceHash });
+      const bytes = Buffer.from(value.pngBase64, 'base64');
+      requireThat(value.version === 'atlas-reviewed-clean-png-v1' && digest(JSON.stringify(value)) === image.sourceHash
+        && bytes.toString('base64') === value.pngBase64 && digest(bytes) === image.sha256 && value.sha256 === image.sha256
+        && value.sourceSha256 === candidate.example.frame.inspectionImageSha256 && image.sourceSha256 === value.sourceSha256
+        && value.width === 1350 && value.height === 1858, 503, 'MEMORY_CLEAN_IMAGE_INVALID');
+      return { bytes, mime: 'image/png', width: value.width, height: value.height, sha256: value.sha256, sourceSha256: value.sourceSha256 };
+    },
     currentImages: (staff, card, binding, cropLayoutVersion) => limited(async () => {
       const layouts = Object.fromEntries(SIDES.map(side => [side, planDefectCrops(side, cropLayoutVersion)]));
       const result = [];
@@ -44,7 +64,15 @@ export function createDefectImageEffects({ readPrepared, artifacts, limited = wo
     }),
     createExemplar: input => limited(async () => {
       const { staff, card, side, frame, cropTransform, trace } = input;
-      const source = await decode(staff, card, side, 'rectified', frame.rectifiedImageSha256);
+      let sources = publicationSources.get(card);
+      if (!sources) { sources = new Map(); publicationSources.set(card, sources); }
+      const key = `${side}:${frame.rectifiedImageSha256}`;
+      if (!sources.has(key)) sources.set(key, (async () => {
+        const original = await decode(staff, card, side, 'rectified', frame.rectifiedImageSha256);
+        const { data, info } = await sharp(original.bytes).raw().toBuffer({ resolveWithObject: true });
+        return { bytes: data, width: info.width, height: info.height, raw: { width: info.width, height: info.height, channels: info.channels } };
+      })());
+      const source = await sources.get(key);
       requireThat(cropTransform.imageSha256 === frame.rectifiedImageSha256
         && cropTransform.coordinateSpace === 'RECTIFIED_CARD_PIXELS'
         && cropTransform.sourceWidth === source.width && cropTransform.sourceHeight === source.height

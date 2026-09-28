@@ -34,7 +34,7 @@ export function geometryJobStatus(job, uploadId = null, key = null) {
     physical: job?.result?.physical ?? null, printed: job?.result?.printed ?? null, prepared: job?.result?.prepared === true,
     machineUsable: job?.result?.machineUsable === true,
     requiresHumanConfirmation: true, ambiguous: job?.result?.ambiguous === true,
-    unresolved: job?.result?.unresolved ?? [] };
+    unresolved: job?.result?.unresolved ?? [], ...(job?.result?.learningAdvice ? { learningAdvice: job.result.learningAdvice } : {}) };
 }
 
 /** Rebind verified immutable pixel work to the actual current workspace only
@@ -73,7 +73,7 @@ export function adoptEarlyGeometry(geometry, side, packet, input) {
 
 export function createEarlyGeometry({ store, intake, details, storage, artifacts, keyPrefix, limited, pythonExecutable, limits,
   runtimeIdentity = preparationRuntimeIdentity, physical = proposePhotoGeometry, prepare = preparePhotoGeometry,
-  geometryConcurrency = 2, geometryDiscoveryPageSize = 2, intervalMs = 2000, onEvent = () => {} }) {
+  geometryConcurrency = 2, geometryDiscoveryPageSize = 2, intervalMs = 2000, onEvent = () => {}, geometryLearning = null }) {
   geometryProcessingSettings({ geometryConcurrency, geometryDiscoveryPageSize });
   let enginePromise = null, stopped = true, closed = false, timer = null, cycling = null, discoveryCursor = null, wakePending = false;
   const controllers = new Set(), tasks = new Set();
@@ -153,11 +153,27 @@ export function createEarlyGeometry({ store, intake, details, storage, artifacts
         preparationError = safeCode(error);
       }
     }
+    if (geometryLearning) {
+      // Learning sees only already-supported native geometry in this exact
+      // working frame. The callback's advice never mutates proposal/preparation.
+      try {
+        const advice = await geometryLearning({ input: structuredClone(input), targetFrameSha256: photo.workingFrame.raster.content.sha256,
+          candidates: quad ? [{ id: proposed.id, authority: 'PROPOSER_ONLY', nativeSupported: true,
+            engineSha256: digest(canonical(input.engine)), frameSha256: photo.workingFrame.raster.content.sha256,
+            physical: structuredClone(quad), printed: printed ? structuredClone(printed) : null }] : [] });
+        if (advice) packet.learningAdvice = advice;
+      } catch (error) {
+        if ([401, 403, 409].includes(error?.status)) throw error;
+        packet.learningAdvice = { status: 'BASELINE', reason: 'LEARNING_REFERENCE_UNAVAILABLE', requiresHumanConfirmation: true };
+        emit({ event: 'GEOMETRY_LEARNING_UNAVAILABLE', code: safeCode(error) });
+      }
+    }
     const ref = await artifacts.write(packet, { cardId: input.cardId, kind: 'EARLY_GEOMETRY', sourceHash: job.key }, { signal });
     requireThat(!signal.aborted, 503, 'GEOMETRY_INTERRUPTED');
     const result = { ref, sourceHash: job.key, physical: quad, printed, prepared: Boolean(packet.preparation),
       machineUsable: Boolean(quad && packet.preparation && !preparationError),
       ambiguous: Boolean(machineGeometryCandidate(proposed.proposal)?.ambiguous || machineGeometryCandidate(packet.preparation?.proposal)?.ambiguous),
+      ...(packet.learningAdvice ? { learningAdvice: packet.learningAdvice } : {}),
       unresolved: [!quad && 'PHYSICAL_GEOMETRY_UNRESOLVED', !packet.preparation && 'PREPARED_FRAME_UNAVAILABLE',
         !printed && 'PRINTED_GEOMETRY_UNRESOLVED'].filter(Boolean) };
     return { state: result.machineUsable ? 'READY' : 'NEEDS_REVIEW', result, error: preparationError };

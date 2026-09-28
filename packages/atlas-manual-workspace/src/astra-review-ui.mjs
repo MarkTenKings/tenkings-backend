@@ -62,14 +62,28 @@ export function collectiveProposalReview(workspace, astra) {
 
 export function reviewedMemoryState(memory) {
   if (!memory?.enabled) return null;
+  if (memory.preparationStatus) {
+    const stage = memory.preparationStatus, held = stage === 'HELD';
+    const needsReviewer = ['MANUAL_MACHINE_ACCESS_REVOKED', 'MEMORY_HISTORICAL_AUTHORITY_REQUIRED', 'MANUAL_CARD_ACCESS_DENIED'].includes(memory.code);
+    return { status: held ? 'FAILED' : stage === 'PREPARED' ? 'SAVED' : 'PENDING',
+      mayRecover: ['QUEUED', 'RUNNING'].includes(stage), message:
+        memory.activationStatus === 'ACTIVE' ? `Feedback saved · ${memory.exampleCount ?? 0} active lessons available to relevant analysis.`
+        : stage === 'PREPARED' ? 'Feedback saved · Examples prepared for evaluation. They are not active in grading yet.'
+        : held ? needsReviewer
+          ? 'Feedback saved · Example preparation is held. An authorized reviewer must review and confirm findings again.'
+          : 'Feedback saved · Example preparation is held. An operator must inspect the stored evidence before preparation can resume.'
+        : stage === 'SUPERSEDED' ? 'This feedback remains in history. Newer reviewed evidence supersedes its examples.'
+        : memory.feedbackStatus === 'SAVED' ? 'Feedback saved · Preparing examples in the background.'
+        : 'Confirm findings saves your feedback. Final report approval remains separate.' };
+  }
   const status = ['UNSAVED', 'PENDING', 'SAVED', 'FAILED', 'UNKNOWN'].includes(memory.status) ? memory.status : 'UNKNOWN';
   const retained = status === 'SAVED' && Number.isSafeInteger(memory.retainedObservationCount) && memory.retainedObservationCount > 0
     ? ` ${memory.retainedObservationCount} original-frame observation${memory.retainedObservationCount === 1 ? ' remains' : 's remain'} retained and ${memory.retainedObservationCount === 1 ? 'was' : 'were'} not added as current-frame lessons.` : '';
   return { status, mayRecover: ['PENDING', 'FAILED', 'UNKNOWN'].includes(status), message: {
-    UNSAVED: 'Confirm findings also saves your reviewed outcomes as examples for future ATLAS analysis. Final report approval stays separate.',
-    PENDING: 'Reviewed examples are pending. They will be available to later analysis after saving is confirmed.',
+    UNSAVED: 'Confirm findings also saves your reviewed outcomes for example preparation and evaluation. Final report approval stays separate.',
+    PENDING: 'Reviewed examples are pending. Saving, evaluation and activation are separate steps.',
     SAVED: memory.exampleCount === 0 ? 'Reviewed outcome saved. There were no defect examples to add.'
-      : 'Reviewed examples saved and available to future relevant ATLAS analysis.',
+      : 'Reviewed examples saved. Evaluation and activation are separate steps.',
     FAILED: 'Reviewed examples are not yet saved. Retry saving the same reviewed outcomes.',
     UNKNOWN: 'The save status of your reviewed examples is not confirmed. Check the saved outcome.',
   }[status] + retained };

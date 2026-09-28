@@ -24,6 +24,7 @@ const runtime=createServingConnectedManual({env,auth,staffConfig:config,Client:P
     ...(['Error','TypeError','RangeError','SyntaxError','AbortError'].includes(error?.errorType)?{errorType:error.errorType}:{}),
     ...(/^packages\/atlas-[a-z-]+\/(?:src|scripts)\/[a-zA-Z0-9_./-]+\.mjs:\d+:\d+$/.test(error?.location??'')?{location:error.location}:{})}))});
 if(!runtime)throw new Error('Manual runtime is disabled');
+await runtime.validateConfiguration();
 const publicHandler=publicKey?createManualPublicHandler({key:publicKey,reader:runtime.approvedManualReader}):null;
 const customerRuntime=createServingCustomerService({env,Client:PrismaClient,onEvent:event=>console.log(JSON.stringify(event))});
 const server=createPrivateManualServer({connected:runtime.connected,boundary:runtime.boundary,origin:config.origin,key,publicHandler,customerHandler:customerRuntime?.handler??null});
@@ -31,7 +32,7 @@ const analysisWorker=runtime.analysisReconciler?createAnalysisWorker({reconciler
   onEvent:event=>console.log(JSON.stringify(event))}):null;
 server.listen(Number(env.PORT??4319),'0.0.0.0',()=>{
   console.log(JSON.stringify({event:'MANUAL_PRIVATE_LISTENING',webDeployment:config.deploymentId,webReleaseSha:config.releaseSha,port:Number(env.PORT??4319),node:process.version,platform:process.platform,arch:process.arch}));
-  if(!stopping){analysisWorker?.start();runtime.connected.ingestion?.start();runtime.connected.batch?.worker.start();runtime.connected.earlyGeometry.start();customerRuntime?.start();}
+  if(!stopping){analysisWorker?.start();runtime.connected.ingestion?.start();runtime.connected.reviewDisplay?.start();runtime.connected.learning?.start();runtime.connected.batch?.worker.start();runtime.connected.earlyGeometry.start();customerRuntime?.start();}
 });
 let stopping=false;
 async function stop(){
@@ -40,6 +41,8 @@ async function stop(){
  const geometryStopped=runtime.connected.earlyGeometry.stop();
  const batchStopped=runtime.connected.batch?.worker.stop();
  const ingestionStopped=runtime.connected.ingestion?.stop();
+ const displayStopped=runtime.connected.reviewDisplay?.stop();
+ const learningStopped=runtime.connected.learning?.stop();
  const customerStopped=customerRuntime?.stopWorkers();
  const deadline=setTimeout(()=>server.closeAllConnections(),215000);deadline.unref();
  await new Promise(resolve=>server.close(resolve));clearTimeout(deadline);
@@ -47,6 +50,8 @@ async function stop(){
  await geometryStopped;
  await batchStopped;
  await ingestionStopped;
+ await displayStopped;
+ await learningStopped;
  await customerStopped;
  await Promise.all([runtime.close(),client.$disconnect(),customerRuntime?.close()]);
 }

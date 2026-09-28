@@ -55,6 +55,7 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
       if (name === './report-presentation-ui.mjs') return optionalPresentation;
       if (name === './ReportPresentation.jsx') return modules.ReportPresentation;
       if (name === './verified-image.mjs') return { useVerifiedImage: image => ({ url: image?.url }) };
+      if (name === './VerifiedImageCacheBoundary.jsx') return { VerifiedImageCacheBoundary: ({ children }) => children };
       if (name === './ReportInspectionImage.jsx') return modules.ReportInspectionImage;
       return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
     } }); modules[name] = exports;
@@ -171,10 +172,11 @@ test('finding filters and next/previous retain side numbering and never change a
   f.control('Filter findings by side').props.onChange({ target: { value: 'BACK' } }); f.render();
   assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Front 1 ·')).length, 0);
   assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Back 1 ·')).length, 1);
-  f.click('Next finding'); assert.ok(parseFloat(text(f.control('Current zoom'))) > 1); f.click('Previous finding');
+  f.click('Browse next'); assert.ok(parseFloat(text(f.control('Current zoom'))) > 1);
+  assert.equal(f.button('Browse next').props.disabled,true); assert.equal(f.button('Previous finding').props.disabled,true);
   assert.equal(f.readyValues.at(-1), true); assert.deepEqual(f.props.preview, before);
   f.control('Filter findings by category').props.onChange({ target: { value: 'centering' } }); f.render();
-  assert.equal(f.button('Next finding').props.disabled, true); assert.equal(f.has('Centering uses the saved border geometry'), true);
+  assert.equal(f.button('Browse next').props.disabled, true); assert.equal(f.has('Centering uses the saved border geometry'), true);
 });
 
 test('deep links select only a finding in the exact report and honor reduced motion', () => {

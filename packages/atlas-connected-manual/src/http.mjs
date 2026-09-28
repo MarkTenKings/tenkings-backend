@@ -17,7 +17,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
   const marketRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/market/(search|select)$`);
   const researchRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/research/(search|contribute)$`);
   const dealerRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/presentation/dealer-offers$`);
-  const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|geometry|preview-image)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
+  const route=new RegExp(`^/api/staff/manual-connected/cards/(${id})(?:/(details|identify|initialize|geometry|preview-image|thumbnail|display-retry)(?:/(FRONT|BACK))?|/images/(FRONT|BACK)/(original|rectified|inspection|normalized|microDefect|directional)/([a-f0-9]{64}))?$`);
   return async(req,res)=>{
     const url=new URL(req.url,origin);
     if(!/^\/api\/staff\/(manual|manual-intake|manual-connected)(?:\/|$)/.test(url.pathname))return false;
@@ -133,7 +133,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
       }
       const found=route.exec(url.pathname);requireThat(found && !url.search,404,'NOT_FOUND');
       const [,cardId,action,previewSide,imageSide,kind,hash]=found;
-      const write=['details','identify','initialize','geometry'].includes(action);
+      const write=['details','identify','initialize','geometry','display-retry'].includes(action);
       requireThat(req.method===(write?'POST':'GET'),405,'METHOD_NOT_ALLOWED');
       if(write)requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
         && typeof req.headers['x-atlas-csrf']==='string',403,'CSRF_REQUIRED');
@@ -144,7 +144,9 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
         res.setHeader('Cache-Control','private, no-store');res.setHeader('Content-Type',image.contentType);
         res.setHeader('Content-Security-Policy',"default-src 'none'; sandbox");res.status(200).send(image.bytes);return true;
       }
-      if(action==='details')result=await connected.details.save(staff,cardId,req.body);
+      if(action==='thumbnail'){requireThat(!previewSide,404,'NOT_FOUND');result=await connected.thumbnails(staff,cardId);}
+      else if(action==='display-retry'){requireThat(!previewSide,404,'NOT_FOUND');requireThat(connected.reviewDisplay,503,'DISPLAY_RETRY_UNAVAILABLE');result=await connected.reviewDisplay.retry(staff,cardId,req.body);}
+      else if(action==='details')result=await connected.details.save(staff,cardId,req.body);
       else if(action==='identify'){
         if(req.body && Object.keys(req.body).length){object(req.body,['actionId','expectedAttemptId','sourceHash']);result=await connected.identification.retry(staff,cardId,req.body);}
         else{object(req.body,[]);result=await connected.identification.run(staff,cardId);}
