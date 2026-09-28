@@ -9,6 +9,7 @@ import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 import * as presentation from '../src/report-review-ui.mjs';
 import * as optionalPresentation from '../src/report-presentation-ui.mjs';
 import * as viewportMath from '../src/inspection-viewport.mjs';
+import * as inspectionPreview from '../src/inspection-preview.mjs';
 import { defectBase, markDefectSideInspected, confirmDefectFindings, previewDefectReport } from '../src/defect-actions.mjs';
 import { workspace } from './defect-fixtures.mjs';
 
@@ -49,6 +50,7 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
       if (name === 'react-dom') return { flushSync: callback => callback() };
       if (name === '@atlas/grading-core/trace-codec') return traceCodec;
       if (name === './inspection-viewport.mjs') return viewportMath;
+      if (name === './inspection-preview.mjs') return inspectionPreview;
       if (name === './report-review-ui.mjs') return presentation;
       if (name === './report-presentation-ui.mjs') return optionalPresentation;
       if (name === './ReportPresentation.jsx') return modules.ReportPresentation;
