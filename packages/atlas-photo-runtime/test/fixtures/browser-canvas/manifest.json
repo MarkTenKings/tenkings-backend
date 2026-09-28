@@ -1,0 +1,34 @@
+[
+  {
+    "file": "opaque-p3.png",
+    "byteCount": 4549,
+    "sha256": "4e9e36da975da7f3322dab4190d4525e5e8c5bada2f6d2ee5468c53296ea7d5e",
+    "IHDRColorType": 6,
+    "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+    "requestedContext": {
+      "colorSpace": "display-p3",
+      "alpha": false
+    },
+    "actualContext": {
+      "colorSpace": "display-p3",
+      "desynchronized": false,
+      "willReadFrequently": false
+    }
+  },
+  {
+    "file": "one-translucent-pixel.png",
+    "byteCount": 4557,
+    "sha256": "31bb1087640e82c6baeb12aa63dc7443b3e80cf8936ad97b910a8aad5ac7c7b2",
+    "IHDRColorType": 6,
+    "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+    "requestedContext": {
+      "colorSpace": "display-p3",
+      "alpha": true
+    },
+    "actualContext": {
+      "colorSpace": "display-p3",
+      "desynchronized": false,
+      "willReadFrequently": false
+    }
+  }
+]

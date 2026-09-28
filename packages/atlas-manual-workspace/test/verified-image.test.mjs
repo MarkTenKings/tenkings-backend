@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash,webcrypto} from 'node:crypto';
 import {loadVerifiedImage,createVerifiedImageResource,verifiedImageContentKey,MAX_VERIFIED_IMAGE_BYTES} from '../src/verified-image.mjs';
-import {geometryImageBinding} from '../dist/PairedGeometryWorkspace.js';
+import {geometryImage,geometryImageBinding,reviewImageDisplay,reviewImagePreview} from '../dist/PairedGeometryWorkspace.js';
 import {inspectionImageBinding} from '../dist/DefectReviewWorkspace.js';
 
 const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64');
@@ -119,4 +119,91 @@ test('actual component editor bindings ignore authorization URL but retain sourc
   const binding=inspectionImageBinding(defects,'FRONT',{inspection:image});
   assert.equal(inspectionImageBinding(defects,'FRONT',{inspection:{...image,url:'https://private.example.invalid/renewed'}}),binding);
   assert.notEqual(inspectionImageBinding({...defects,sides:{FRONT:{...defects.sides.FRONT,frame:{...defects.sides.FRONT.frame,frameId:'two'}}}},'FRONT',{inspection:image}),binding);
+});
+
+test('renewing a URL during a slow transfer keeps its request and publishes to the current subscriber',async()=>{
+  let finish,signal;const calls=[],states=[],oldStates=[];
+  const resource=createVerifiedImageResource({load:(descriptor,options)=>{calls.push(descriptor);signal=options.signal;return new Promise(resolve=>{finish=resolve;});}});
+  const first=resource.update(image,value=>oldStates.push(value));
+  const renewed=resource.update({...image,url:'/renewed-photo'},value=>states.push(value));
+  assert.equal(first,renewed);assert.equal(calls.length,1);assert.equal(signal.aborted,false);
+  finish({contentKey:verifiedImageContentKey(image),url:'blob:slow',byteCount:bytes.length,dispose(){}});await renewed;
+  assert.equal(oldStates.length,1);assert.equal(states.at(-1).url,'blob:slow');resource.dispose();
+});
+
+test('a failed old grant can use the latest grant once without accepting unverified content',async()=>{
+  let rejectOld;const calls=[],states=[];
+  const resource=createVerifiedImageResource({load:async descriptor=>{
+    calls.push(descriptor.url);if(calls.length===1)return new Promise((_resolve,reject)=>{rejectOld=reject;});
+    return {contentKey:verifiedImageContentKey(descriptor),url:'blob:fresh',byteCount:bytes.length,dispose(){}};
+  }});
+  const pending=resource.update(image,value=>states.push(value));
+  resource.update({...image,url:'/fresh-grant'},value=>states.push(value));
+  rejectOld({code:'VERIFIED_IMAGE_UNAVAILABLE'});await pending;
+  assert.deepEqual(calls,[image.url,'/fresh-grant']);assert.equal(states.at(-1).url,'blob:fresh');resource.dispose();
+  for(const code of ['VERIFIED_IMAGE_TIMEOUT','VERIFIED_IMAGE_HASH','VERIFIED_IMAGE_LENGTH']){
+    let reject;let attempts=0;const failed=[];
+    const denied=createVerifiedImageResource({load:()=>{attempts++;return new Promise((_resolve,no)=>{reject=no;});}});
+    const active=denied.update(image,value=>failed.push(value));denied.update({...image,url:'/renewed'},value=>failed.push(value));reject({code});await active;
+    assert.equal(attempts,1);assert.equal(failed.at(-1).error.code,code);assert.equal(failed.at(-1).loading,false);denied.dispose();
+  }
+});
+
+test('geometry view switches reuse bounded verified originals and straightened views until unmount',async()=>{
+  const calls=[],disposed=[],states=[];
+  const resource=createVerifiedImageResource({retainedViews:2,load:async descriptor=>{
+    calls.push(descriptor);return {contentKey:verifiedImageContentKey(descriptor),url:`blob:${descriptor.sha256}`,byteCount:descriptor.byteCount,dispose:()=>disposed.push(descriptor.sha256)};
+  }});
+  const original={...image,sha256:'a'.repeat(64),byteCount:24*1024*1024},rectified={...image,sha256:'b'.repeat(64),byteCount:6*1024*1024};
+  await resource.update(original,value=>states.push(value));await resource.update(rectified,value=>states.push(value));
+  await resource.update({...original,url:'/refreshed-original'},value=>states.push(value));
+  assert.equal(calls.length,2);assert.equal(disposed.length,0);assert.equal(states.at(-1).url,`blob:${original.sha256}`);
+  const replacement={...image,sha256:'c'.repeat(64),byteCount:60*1024*1024};
+  await resource.update(replacement,value=>states.push(value));
+  assert.deepEqual(new Set(disposed),new Set([original.sha256,rectified.sha256]));
+  resource.dispose();assert.equal(disposed.length,3);
+});
+
+test('cancel/unmount prevents a URL-renewed transfer from publishing and explicit retry can recover',async()=>{
+  let finish;const disposed=[],states=[];let calls=0;
+  const resource=createVerifiedImageResource({load:async descriptor=>{
+    calls++;if(calls===1)return new Promise(resolve=>{finish=()=>resolve({contentKey:verifiedImageContentKey(descriptor),url:'blob:old',dispose:()=>disposed.push('old')});});
+    if(calls===2)throw {code:'VERIFIED_IMAGE_TIMEOUT'};
+    return {contentKey:verifiedImageContentKey(descriptor),url:'blob:retry',byteCount:bytes.length,dispose:()=>disposed.push('retry')};
+  }});
+  const active=resource.update(image,value=>states.push(value));resource.update({...image,url:'/fresh'},value=>states.push(value));resource.dispose();finish();await active;
+  assert(!states.some(value=>value.url));assert.deepEqual(disposed,['old']);
+  await resource.update(image,value=>states.push(value));assert.equal(states.at(-1).error.code,'VERIFIED_IMAGE_TIMEOUT');
+  await resource.update(image,value=>states.push(value));assert.equal(states.at(-1).url,'blob:retry');resource.dispose();
+});
+
+test('download progress reports exact saved byte counts and verification precedes Blob publication',async()=>{
+  const events=[],f=fixture({chunks:[bytes.subarray(0,17),bytes.subarray(17)]});
+  const result=await loadVerifiedImage(image,{...f.options,onProgress:progress=>{events.push(progress);assert.equal(f.created.length,0);}});
+  assert.deepEqual(events[0],{loadedBytes:0,totalBytes:bytes.length,phase:'DOWNLOADING'});
+  assert.deepEqual(events.at(-1),{loadedBytes:bytes.length,totalBytes:bytes.length,phase:'VERIFYING'});
+  assert.deepEqual(Buffer.from(await f.created[0].arrayBuffer()),bytes);result.dispose();
+  const short=fixture({headers:{'content-length':String(bytes.length+1)}});
+  await assert.rejects(loadVerifiedImage({url:image.url,sha256:image.sha256},short.options),rejection('VERIFIED_IMAGE_LENGTH'));
+});
+
+
+test('lossless display changes transport only while geometry keeps canonical source lineage',()=>{
+  const state={cardId:'card',sides:{FRONT:{image:{frameSha256:image.sha256,width:3024,height:4032},imageRevision:1,preparationRevision:1}}};
+  const display={url:'/full.webp',sha256:'b'.repeat(64),byteCount:20,mime:'image/webp',policyVersion:'atlas-review-display-lossless-v1',sourceSha256:image.sha256,width:3024,height:4032,
+    preview:{url:'/preview.jpg',sha256:'c'.repeat(64),byteCount:10,mime:'image/jpeg',width:576,height:768}};
+  const original={...image,mime:'image/png',display},images={FRONT:{original}};
+  const selected=geometryImage(state,'FRONT','PHYSICAL',images);
+  assert.equal(selected.url,display.url);assert.equal(selected.sha256,display.sha256);assert.equal(selected.sourceSha256,image.sha256);
+  assert.equal(selected.preview.url,display.preview.url);
+  assert.equal(geometryImageBinding(state,'FRONT','PHYSICAL',images),geometryImageBinding(state,'FRONT','PHYSICAL',{FRONT:{original:image}}));
+  for(const change of [{sourceSha256:'d'.repeat(64)},{width:3023},{height:4031},{policyVersion:'other'},{mime:'image/jpeg'},{byteCount:undefined}]){
+    const invalid={...original,display:{...display,...change}};
+    assert.equal(geometryImage(state,'FRONT','PHYSICAL',{FRONT:{original:invalid}}).url,image.url);
+    assert.equal(reviewImageDisplay(invalid,state.sides.FRONT.image),null);
+  }
+  for(const change of [{mime:'image/webp'},{width:768},{height:769},{sha256:'invalid'},{byteCount:0}])
+    assert.equal(reviewImagePreview({...original,display:{...display,preview:{...display.preview,...change}}}),null);
+  const wrongCanonical={...state,sides:{FRONT:{...state.sides.FRONT,image:{...state.sides.FRONT.image,frameSha256:'d'.repeat(64)}}}};
+  assert.equal(geometryImage(wrongCanonical,'FRONT','PHYSICAL',images),null);
 });

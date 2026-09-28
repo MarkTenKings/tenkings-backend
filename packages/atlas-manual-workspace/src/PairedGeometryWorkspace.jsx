@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { sanitizeSpeedsterUnitQuad } from '@atlas/grading-core/geometry';
 import { canDetectMissingPhysical, geometryBase, geometryStatus, printedQuadOnOriginal } from './geometry-actions.mjs';
 import { gradientMapFromImage, snapSpeedsterPoint } from './gradient-snap';
-import { useVerifiedImage } from './verified-image.mjs';
+import { useVerifiedImage, verifiedImageContentKey } from './verified-image.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
 const CORNERS = ['Top left', 'Top right', 'Bottom right', 'Bottom left'];
@@ -15,6 +15,34 @@ const message = error => /STALE/.test(error?.code ?? error?.message ?? '')
   ? 'This side changed. Your adjustment is retained; discard it to review the latest outline.'
   : 'The change was not confirmed saved. Your adjustment is retained.';
 
+const positiveDimension = value => Number.isSafeInteger(value) && value > 0;
+const transportDescriptor = value => verifiedImageContentKey(value) && Number.isSafeInteger(value.byteCount)
+  && typeof value.url === 'string' && value.url.length > 0;
+
+/** This optional transport encodes the exact full-frame pixels losslessly.
+ * The server qualifies that equality; the client verifies each encoded hash. */
+export function reviewImageDisplay(canonical, frame = null) {
+  const display = canonical?.display;
+  return display && transportDescriptor(display) && display.mime === 'image/webp'
+    && display.policyVersion === 'atlas-review-display-lossless-v1'
+    && display.sourceSha256 === canonical.sha256 && /^[a-f0-9]{64}$/.test(canonical.sha256)
+    && positiveDimension(display.width) && positiveDimension(display.height)
+    && (!frame || display.width === frame.width && display.height === frame.height)
+    ? display : null;
+}
+
+/** Small context only. It never supplies full-detail readiness or editor pixels. */
+export function reviewImagePreview(canonical, frame = null) {
+  const display = reviewImageDisplay(canonical, frame), preview = display?.preview;
+  if (!preview || !transportDescriptor(preview) || preview.mime !== 'image/jpeg'
+    || !positiveDimension(preview.width) || !positiveDimension(preview.height)
+    || Math.max(preview.width, preview.height) > 768
+    || preview.width > display.width || preview.height > display.height) return null;
+  const scale = Math.min(preview.width / display.width, preview.height / display.height);
+  return Math.abs(preview.width - display.width * scale) <= 1
+    && Math.abs(preview.height - display.height * scale) <= 1 ? preview : null;
+}
+
 /** Frame lineage is checked here; the shared loader verifies actual bytes. */
 export function geometryImage(state, side, kind, images) {
   const source = state.sides[side];
@@ -22,20 +50,26 @@ export function geometryImage(state, side, kind, images) {
   const frame = prepared ? source.prepared?.frame.rectified : source.image;
   const image = images?.[side]?.[prepared ? 'rectified' : 'original'];
   const expected = prepared ? frame?.sha256 : frame?.frameSha256;
-  return image && frame && image.sha256 === expected && typeof image.url === 'string' && image.url.length
-    ? { ...image, width: frame.width, height: frame.height } : null;
+  if (!image || !frame || image.sha256 !== expected || typeof image.url !== 'string' || !image.url.length) return null;
+  const display = prepared ? null : reviewImageDisplay(image, frame);
+  return { ...(display ?? image), sourceSha256: expected, width: frame.width, height: frame.height,
+    preview: prepared ? null : reviewImagePreview(image, frame) };
 }
 
 export function geometryImageBinding(state, side, kind, images) {
   const image = geometryImage(state, side, kind, images);
-  return image ? key({ card: state.cardId, side, kind, image: { sha256: image.sha256, width: image.width, height: image.height },
+  return image ? key({ card: state.cardId, side, kind, image: { sha256: image.sourceSha256, width: image.width, height: image.height },
     revision: kind === 'PHYSICAL' ? state.sides[side].imageRevision : state.sides[side].preparationRevision }) : null;
 }
 
 function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, onReady, preparing, locked, compact, renderEditActions, attention }) {
   const slot = state.sides[side], status = geometryStatus(state).sides[side];
   const image = geometryImage(state, side, kind, images);
-  const verified = useVerifiedImage(image);
+  const verified = useVerifiedImage(image, { cacheScope: JSON.stringify([state.cardId, side]) });
+  const preview = useVerifiedImage(verified.url ? null : image?.preview);
+  const [previewLoaded, setPreviewLoaded] = useState(null);
+  const previewKey = verifiedImageContentKey(image?.preview);
+  const showingPreview = !verified.url && preview.url && previewLoaded === previewKey;
   const current = (kind === 'PHYSICAL' ? slot.physical : slot.printed)?.quad ?? null;
   const canDetect = canDetectMissingPhysical(state, side);
   const base = geometryBase(state, side, kind);
@@ -48,13 +82,14 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
   const fitWidth=image ? Math.min(viewportSize.width,viewportSize.height*image.width/image.height) : 0;
   const area = useRef(null), drag = useRef(null), gradient = useRef(null);
   const imageKey = geometryImageBinding(state, side, kind, images);
-  const ready = Boolean(verified.url && imageKey !== null && readyKey === imageKey);
+  const loadedImageKey = imageKey === null ? null : `${imageKey}:${verifiedImageContentKey(image)}`;
+  const ready = Boolean(verified.url && imageKey !== null && readyKey === loadedImageKey);
   const stale = Boolean(draft && key(draft.base) !== key(base));
   const quad = draft?.quad ?? current;
   const dirty = Boolean(draft);
   useEffect(() => { onActivity(side, dirty || busy); return () => onActivity(side, false); }, [side, dirty, busy, onActivity]);
   useEffect(() => { onReady(side, ready ? imageKey : null); }, [side, ready, imageKey, onReady]);
-  useLayoutEffect(() => { gradient.current = null; setSnapReady(false); setReadyKey(null); setPan({ x: 0, y: 0 }); setZoom(1); drag.current = null; }, [imageKey]);
+  useLayoutEffect(() => { gradient.current = null; setSnapReady(false); setReadyKey(null); setPan({ x: 0, y: 0 }); setZoom(1); drag.current = null; }, [loadedImageKey]);
   const setPoint = (index, point, useSnap = false) => {
     if (!ready || busy || locked || stale || !quad) return;
     let nextPoint = { x: clamp(point.x), y: clamp(point.y) };
@@ -100,13 +135,17 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
     <div className="am-view-label">{kind === 'PHYSICAL' ? 'Original view' : 'Straightened view'}</div>
     <div ref={viewport} className="am-viewport" onPointerMove={pointerMove} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
       {image ? <div className="am-image-plane" ref={area} style={{ transform: `translate(${pan.x}%,${pan.y}%) scale(${zoom})`, aspectRatio: `${image.width}/${image.height}`, ...(compact ? {width:fitWidth,height:fitWidth*image.height/image.width} : {}) }}>
-        {verified.url && <img key={imageKey} src={verified.url} alt={`${side === 'FRONT' ? 'Front' : 'Back'} card, ${kind === 'PHYSICAL' ? 'oriented original' : 'straightened'}`} draggable={false}
+        {!verified.url && preview.url && <img className="am-context-preview" src={preview.url}
+          alt={`${side === 'FRONT' ? 'Front' : 'Back'} card preview; full detail is loading`} draggable={false}
+          onLoad={event => { const img = event.currentTarget; setPreviewLoaded(img.naturalWidth === image.preview.width && img.naturalHeight === image.preview.height ? previewKey : null); }}
+          onError={() => setPreviewLoaded(null)} style={{ pointerEvents: 'none', visibility: showingPreview ? 'visible' : 'hidden' }}/>}
+        {verified.url && <img key={loadedImageKey} src={verified.url} alt={`${side === 'FRONT' ? 'Front' : 'Back'} card, ${kind === 'PHYSICAL' ? 'oriented original' : 'straightened'}`} draggable={false}
           onLoad={event => {
             const img = event.currentTarget;
             if (img.naturalWidth !== image.width || img.naturalHeight !== image.height) { setReadyKey(null); gradient.current = null; setSnapReady(false); onReady(side, null); setError('The displayed image does not match this outline. Reload the verified photo.'); return; }
             const map = gradientMapFromImage(img);
             gradient.current = map && map.width > 1 && map.height > 1 ? map : null;
-            setSnapReady(Boolean(gradient.current)); setReadyKey(imageKey); onReady(side, imageKey);
+            setSnapReady(Boolean(gradient.current)); setReadyKey(loadedImageKey); onReady(side, imageKey);
             setError(previous => /^(The displayed image|Photo unavailable)/.test(previous) ? '' : previous);
           }} onError={() => { setReadyKey(null); gradient.current = null; setSnapReady(false); onReady(side, null); setError('Photo unavailable. Your saved work is retained.'); }} />}
         {ready && <svg className="am-outlines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
@@ -123,7 +162,16 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
           : 'The photo is saved. Detect the physical edge first to create the straightened view for printed-border review.'
         : 'Waiting for a verified photo.'}</div>}
     </div>
-    {image && !verified.url && <p role={verified.error ? 'alert' : 'status'}>{verified.error ? 'Photo unavailable or its bytes did not match. Your saved work is retained.' : 'Loading the verified photo…'}</p>}
+    {image && !verified.url && <div>
+      {showingPreview && <p className="am-preview-caption">{verified.error ? 'Preview · Full detail is unavailable. Retry the full photo to edit.' : 'Preview · Full detail is loading. Editing becomes available when the full photo is verified.'}</p>}
+      <p role={verified.error ? 'alert' : 'status'}>{verified.error
+        ? verified.error.code === 'VERIFIED_IMAGE_TIMEOUT'
+          ? 'The saved photo is taking too long to download. Try loading it again; no new upload is needed.'
+          : 'The saved photo could not be loaded or verified. Retry, or choose Reload images to renew access. Your saved work is retained.'
+        : verified.progress?.phase === 'VERIFYING' ? 'Checking the saved photo…'
+          : `Loading the saved photo${verified.progress?.totalBytes ? `… ${Math.min(99, Math.floor(100 * verified.progress.loadedBytes / verified.progress.totalBytes))}%` : '…'} No new upload is needed.`}</p>
+      {verified.error && <button type="button" onClick={verified.retry}>Retry {side === 'FRONT' ? 'Front' : 'Back'} photo</button>}
+    </div>}
     <div className="am-local-tools">
       <label>Zoom <select aria-label={`${side} zoom`} value={zoom} onChange={event => { setZoom(Number(event.target.value)); setPan({ x: 0, y: 0 }); }}><option value="1">Fit</option><option value="2">2×</option><option value="4">4×</option></select></label>
       {zoom > 1 && <div className="am-pan" aria-label={`${side} pan`}><button type="button" aria-label={`${side} pan left`} onClick={() => setPan(p => ({ ...p, x: Math.min((zoom - 1) * 50, p.x + 20) }))}>←</button><button type="button" aria-label={`${side} pan up`} onClick={() => setPan(p => ({ ...p, y: Math.min((zoom - 1) * 50, p.y + 20) }))}>↑</button><button type="button" aria-label={`${side} pan down`} onClick={() => setPan(p => ({ ...p, y: Math.max(-(zoom - 1) * 50, p.y - 20) }))}>↓</button><button type="button" aria-label={`${side} pan right`} onClick={() => setPan(p => ({ ...p, x: Math.max(-(zoom - 1) * 50, p.x - 20) }))}>→</button></div>}

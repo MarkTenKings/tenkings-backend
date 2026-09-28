@@ -8,6 +8,7 @@ import { completeUpload, descriptorSha256, parseDecodedFrame, parseOriginal,
 import { isAborted, PhotoRuntimeError, runDecoderProcess } from './process.mjs';
 
 export { PhotoRuntimeError };
+export { createReviewDisplay, REVIEW_DISPLAY_POLICY } from './display.mjs';
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const worker = fileURLToPath(new URL('./worker.mjs', import.meta.url));
 const requireThat = (value, code = 'PHOTO_DECODE_INVALID') => { if (!value) throw new PhotoRuntimeError(code); };
@@ -140,7 +141,14 @@ export async function deriveSdrWorkingPhoto(decoded, { limits: limitValue = deco
   const sourceFrame = describeVerifiedFrame(source, { id: 'working-validation', object: { key, versionId: null } });
   const { width, height } = sourceFrame.raster.dimensions;
   requireThat(width * height <= limits.maxPixels && width * height * 8 <= limits.maxRasterBytes, 'PHOTO_DECODE_LIMIT');
-  requireThat(sourceFrame.treatment.channels === 3 && sourceFrame.treatment.colorTreatment !== 'unmanaged'
+  // Browser PNG encoders (including Safari's opaque canvas) may retain a
+  // redundant alpha channel. The child must inspect every alpha sample before
+  // deriving RGB; a channel count or a browser claim never proves opacity.
+  const opaqueCandidate = sourceFrame.treatment.channels === 4 && sourceFrame.treatment.bitDepth === 8
+    && sourceFrame.treatment.decoder === 'sharp/libvips'
+    && ['atlas-native-raster-srgb-v1', 'atlas-native-raster-srgb-v2'].includes(sourceFrame.treatment.policyVersion)
+    && sourceFrame.treatment.colorSpace === 'sRGB' && sourceFrame.treatment.colorTreatment === 'converted';
+  requireThat((sourceFrame.treatment.channels === 3 || opaqueCandidate) && sourceFrame.treatment.colorTreatment !== 'unmanaged'
     && ['sRGB', 'Display P3'].includes(sourceFrame.treatment.colorSpace), 'PHOTO_COLOR_UNSUPPORTED');
   requireThat(['not-present', 'sdr-base', 'unknown'].includes(sourceFrame.treatment.hdrTreatment)
     && (snapshot.decodePlan.metadata.dynamicRange !== 'HDR' || sourceFrame.treatment.hdrTreatment === 'sdr-base'), 'PHOTO_HDR_UNSUPPORTED');

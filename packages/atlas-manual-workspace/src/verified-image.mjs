@@ -24,7 +24,7 @@ function imageMime(bytes) {
  * No decode, canvas draw, resizing or image re-encoding happens here. */
 export async function loadVerifiedImage(descriptor, { signal, fetchImpl = globalThis.fetch,
   cryptoImpl = globalThis.crypto, urlImpl = globalThis.URL, origin = globalThis.location?.origin,
-  maxBytes = MAX_VERIFIED_IMAGE_BYTES, timeoutMs = 90000 } = {}) {
+  maxBytes = MAX_VERIFIED_IMAGE_BYTES, timeoutMs = 90000, onProgress = () => {} } = {}) {
   const contentKey = verifiedImageContentKey(descriptor);
   check(contentKey && typeof descriptor.url === 'string' && descriptor.url.length > 0);
   const expected = { sha256: descriptor.sha256, byteCount: descriptor.byteCount };
@@ -52,8 +52,15 @@ export async function loadVerifiedImage(descriptor, { signal, fetchImpl = global
     if (controller.signal.aborted) throw controller.signal.reason;
     return operation();
   }), aborted]);
-  let reader;
+  let reader, lastProgressAt = -Infinity;
+  const progress = (loadedBytes, totalBytes, phase = 'DOWNLOADING') => {
+    const now = Date.now();
+    if (loadedBytes === 0 || phase === 'VERIFYING' || now - lastProgressAt >= 100) {
+      lastProgressAt = now; onProgress({ loadedBytes, totalBytes: totalBytes ?? null, phase });
+    }
+  };
   try {
+    progress(0, expected.byteCount);
     const response = await wait(() => Promise.resolve(fetchImpl(target.href, { method: 'GET', mode: 'cors',
       credentials: sameOrigin ? 'same-origin' : 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
       cache: 'no-store', signal: controller.signal })).then(value => {
@@ -63,12 +70,18 @@ export async function loadVerifiedImage(descriptor, { signal, fetchImpl = global
     check(response?.ok && !response.redirected && response.body?.getReader, 'VERIFIED_IMAGE_UNAVAILABLE');
     reader = response.body.getReader();
     const lengthHeader = response.headers?.get('content-length');
+    let declaredLength;
     if (lengthHeader !== null && lengthHeader !== undefined) {
       check(/^[0-9]+$/.test(lengthHeader), 'VERIFIED_IMAGE_LENGTH');
       const length = Number(lengthHeader);
       check(Number.isSafeInteger(length) && length > 0 && length <= maxBytes, 'VERIFIED_IMAGE_TOO_LARGE');
       check(expected.byteCount === undefined || length === expected.byteCount, 'VERIFIED_IMAGE_LENGTH');
+      declaredLength = length;
     }
+    const expectedLength = expected.byteCount ?? declaredLength;
+    // Saved descriptors provide an exact bounded length. Write incoming bytes
+    // directly into one buffer instead of retaining a second full set of chunks.
+    const received = expectedLength === undefined ? null : new Uint8Array(expectedLength);
     const chunks = []; let length = 0;
     while (true) {
       const next = await wait(() => reader.read());
@@ -77,11 +90,16 @@ export async function loadVerifiedImage(descriptor, { signal, fetchImpl = global
       length += next.value.byteLength;
       check(length <= maxBytes, 'VERIFIED_IMAGE_TOO_LARGE');
       check(expected.byteCount === undefined || length <= expected.byteCount, 'VERIFIED_IMAGE_LENGTH');
-      chunks.push(Uint8Array.from(next.value));
+      check(expectedLength === undefined || length <= expectedLength, 'VERIFIED_IMAGE_LENGTH');
+      if (received) received.set(next.value, length - next.value.byteLength);
+      else chunks.push(Uint8Array.from(next.value));
+      progress(length, expectedLength);
     }
-    check(length > 0 && (expected.byteCount === undefined || length === expected.byteCount), 'VERIFIED_IMAGE_LENGTH');
-    const bytes = new Uint8Array(length); let offset = 0;
+    check(length > 0 && (expectedLength === undefined || length === expectedLength), 'VERIFIED_IMAGE_LENGTH');
+    const bytes = received ?? new Uint8Array(length); let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    chunks.length = 0;
+    progress(length, length, 'VERIFYING');
     const digest = await wait(() => cryptoImpl.subtle.digest('SHA-256', bytes));
     const sha256 = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
     check(sha256 === expected.sha256, 'VERIFIED_IMAGE_HASH');
@@ -98,45 +116,91 @@ export async function loadVerifiedImage(descriptor, { signal, fetchImpl = global
   }
 }
 
-/** One component owns one verified Blob. URL renewal reuses the same proved
- * pixels; changed bytes revoke it. Superseded asynchronous loads cannot publish. */
-export function createVerifiedImageResource({ load = loadVerifiedImage } = {}) {
-  let generation = 0, pending = null, asset = null;
-  const cancelPending = () => { generation++; pending?.abort(); pending = null; };
-  const dispose = () => { cancelPending(); asset?.dispose(); asset = null; };
+// Keep only the two recent views of this mounted image (original/straightened),
+// within a bounded memory budget. No shared or persistent image cache is used.
+export const MAX_RETAINED_VERIFIED_IMAGE_BYTES = 64 * 1024 * 1024;
+
+/** One component owns its verified Blobs. Renewing a transport URL must not
+ * restart a slow transfer of the same bytes. Superseded loads cannot publish. */
+export function createVerifiedImageResource({ load = loadVerifiedImage, retainedViews = 1 } = {}) {
+  check(retainedViews === 1 || retainedViews === 2);
+  let pending = null;
+  const assets = new Map();
+  const cancelPending = () => { const previous = pending; pending = null; previous?.controller.abort(); };
+  const dispose = () => { cancelPending(); for (const asset of assets.values()) asset.dispose(); assets.clear(); };
+  const retain = (asset, descriptor) => {
+    assets.set(asset.contentKey, asset);
+    const sizeOf = stored => stored.byteCount
+      ?? (stored.contentKey === asset.contentKey ? descriptor.byteCount : undefined)
+      ?? MAX_VERIFIED_IMAGE_BYTES;
+    // Legacy loader adapters may omit byteCount; don't retain unknown sizes.
+    let retainedBytes = [...assets.values()].reduce((sum, stored) => sum + sizeOf(stored), 0);
+    while (assets.size > 1 && (assets.size > retainedViews || retainedBytes > MAX_RETAINED_VERIFIED_IMAGE_BYTES)) {
+      const [key, oldest] = assets.entries().next().value;
+      oldest.dispose(); assets.delete(key); retainedBytes -= sizeOf(oldest);
+    }
+  };
   return { cancelPending, dispose,
-    async update(descriptor, publish) {
+    update(descriptor, publish) {
       const contentKey = verifiedImageContentKey(descriptor);
-      if (asset && asset.contentKey === contentKey) {
-        publish({ contentKey, url: asset.url, loading: false, error: null }); return;
+      const asset = assets.get(contentKey);
+      if (asset) {
+        cancelPending();
+        // Touch the verified view so the least recently used view is evicted.
+        assets.delete(contentKey); assets.set(contentKey, asset);
+        publish({ contentKey, url: asset.url, loading: false, error: null }); return Promise.resolve();
       }
-      dispose();
-      if (!descriptor) { publish(empty); return; }
-      const current = generation, controller = new AbortController(); pending = controller;
+      if (pending && contentKey && pending.contentKey === contentKey) {
+        // Renewed authorization describes the same pixels. Keep the transfer
+        // and its deadline, publishing only to the most recent subscriber.
+        pending.descriptor = { ...descriptor }; pending.publish = publish;
+        publish({ contentKey, url: null, loading: true, error: null, progress: pending.progress }); return pending.promise;
+      }
+      cancelPending();
+      if (!descriptor) { dispose(); publish(empty); return Promise.resolve(); }
+      const current = { contentKey, controller: new AbortController(), descriptor: { ...descriptor }, publish };
+      pending = current;
       publish({ contentKey, url: null, loading: true, error: null });
-      try {
-        const found = await load(descriptor, { signal: controller.signal });
-        if (current !== generation || controller.signal.aborted) { found.dispose(); return; }
-        pending = null; asset = found;
-        publish({ contentKey, url: found.url, loading: false, error: null });
-      } catch (error) {
-        if (current === generation && !controller.signal.aborted) {
-          pending = null; publish({ contentKey, url: null, loading: false, error });
+      const onProgress = progress => {
+        if (pending !== current || current.controller.signal.aborted) return;
+        current.progress = progress;
+        current.publish({ contentKey, url: null, loading: true, error: null, progress });
+      };
+      current.promise = (async () => {
+        try {
+          let requested = current.descriptor, found;
+          try { found = await load(requested, { signal: current.controller.signal, onProgress }); }
+          catch (error) {
+            // An expired grant can be retried once if a refreshed grant arrived
+            // during the transfer. Hash/length/format/timeouts are never bypassed.
+            if (pending !== current || current.controller.signal.aborted
+              || error?.code !== 'VERIFIED_IMAGE_UNAVAILABLE' || requested.url === current.descriptor.url) throw error;
+            found = await load(current.descriptor, { signal: current.controller.signal, onProgress });
+          }
+          if (pending !== current || current.controller.signal.aborted) { found.dispose(); return; }
+          pending = null; retain(found, current.descriptor);
+          current.publish({ contentKey, url: found.url, loading: false, error: null });
+        } catch (error) {
+          if (pending === current && !current.controller.signal.aborted) {
+            pending = null; current.publish({ contentKey, url: null, loading: false, error });
+          }
         }
-      }
+      })();
+      return current.promise;
     },
   };
 }
 
-export function useVerifiedImage(descriptor) {
-  const resource = useRef(null), [value, setValue] = useState(empty);
-  if (!resource.current) resource.current = createVerifiedImageResource();
+export function useVerifiedImage(descriptor, { cacheScope = null } = {}) {
+  const resource = useRef(null), [value, setValue] = useState(empty), [retryVersion, setRetryVersion] = useState(0);
+  if (!resource.current) resource.current = createVerifiedImageResource({ retainedViews: cacheScope ? 2 : 1 });
   const contentKey = verifiedImageContentKey(descriptor), url = descriptor?.url;
+  useEffect(() => () => resource.current.dispose(), [cacheScope]);
   useEffect(() => {
-    let live = true;
-    void resource.current.update(descriptor, state => { if (live) setValue(state); });
-    return () => { live = false; resource.current.cancelPending(); };
-  }, [contentKey, url]);
-  useEffect(() => () => resource.current.dispose(), []);
-  return value.contentKey === contentKey ? value : { ...empty, contentKey, loading: Boolean(descriptor) };
+    void resource.current.update(descriptor, setValue);
+    // The resource cancels on content replacement/unmount. Effect cleanup on
+    // URL renewal would abort the very transfer update() is meant to retain.
+  }, [contentKey, url, cacheScope, retryVersion]);
+  const visible = value.contentKey === contentKey ? value : { ...empty, contentKey, loading: Boolean(descriptor) };
+  return { ...visible, retry: () => setRetryVersion(version => version + 1) };
 }

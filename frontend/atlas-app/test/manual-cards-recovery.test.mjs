@@ -1,3 +1,4 @@
+import {reviewImagePreview} from '@atlas/manual-workspace';
 import * as reviewAttention from '../lib/manual-review-attention.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -56,6 +57,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name === './ManualFinishing') return {__esModule:true,default:'ManualFinishing',openManualLabelPrintWindow:()=>null};
       if (name === '@atlas/manual-intake/client') return { createBrowserIntakeJournal: () => ({ close() {} }), createIntakeClient: () => ({ pending: async () => [], ...intake }) };
       if (name === '@atlas/grading-core/identity') return identity;
+      if (name === '@atlas/manual-workspace') return {reviewImagePreview};
       if (name.startsWith('@atlas/')) return {};
       if (name === '../lib/routes.mjs') return { STAFF_BASE_PATH: '/admin' };
       if (name === '../lib/manual-defect-analysis-client.mjs') return defectAnalysisClient;
@@ -77,6 +79,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
   const submit = () => { const form=find(tree,node=>node.type==='form'); assert.ok(form,'details form');form.props.onSubmit({preventDefault(){}}); };
   const render = () => { cursor = 0; tree = exports.default({ staff: { id: 'reviewer', role: 'REVIEWER' }, cardId: activeCardId }); for (const effect of effects.splice(0)) effect(); };
   return { render, submit,navigations,event(name,value){listeners.get(name)?.(value);},async tick(){timers.get(2000)?.();await flush();render();},dispose(){cleanups.forEach(cleanup=>cleanup?.());}, navigate(cardId){activeCardId=cardId;render();}, upload(side,file={name:side}) { const target=field(`${side} original photo`);assert.ok(target);assert.notEqual(target.props.disabled,true);target.props.onChange({target:{files:[file],value:'picked'}}); }, workspace:()=>Boolean(find(tree,node=>node.type?.name==='ManualWorkspace')), click(label) { const target = button(label); assert.ok(target, label); assert.notEqual(target.props.disabled, true, label); target.props.onClick(); },
+    previewSrc:side=>find(tree,node=>node.props?.side===side&&typeof node.props?.src==='string')?.props.src,
     attention:key=>find(tree,node=>node.props?.['data-review-target']===key)?.props?.['data-review-attention'],reviewIssues:()=>find(tree,node=>node.type==='ReviewAttention')?.props?.issues??[],has(label) { return Boolean(button(label)); }, disabled(label) { return button(label)?.props.disabled === true; }, text: () => text(tree), sideText:side=>text(find(tree,node=>node.type==='article'&&text(node).startsWith(side))), field,
     change(label, value) { const target = field(label); assert.ok(target, label); target.props.onChange({ target: { value } }); } };
 }
@@ -484,4 +487,13 @@ test('batch correction marks only the retained unprepared Front, preserving the 
   const f=harness(storage(null),async()=>assert.fail('No automatic replacement'),{readCard:()=>card,fromBatch:true});
   f.render();await flush();f.render();assert.equal(f.attention('photo-FRONT'),true);assert.equal(f.attention('photo-BACK'),false);
   assert.deepEqual(Array.from(f.reviewIssues(),issue=>issue.key),['photo-FRONT']);f.dispose();
+});
+
+
+test('intake uses the source-bound small context preview without downloading full review images',async()=>{
+ const card=sportsCard(),sha='a'.repeat(64);card.card.sides.FRONT.upload={source:{ready:true}};
+ card.previews={FRONT:{url:'/canonical.png',sha256:sha,byteCount:100000,mime:'image/png',display:{url:'/lossless.webp',sha256:'b'.repeat(64),byteCount:50000,mime:'image/webp',policyVersion:'atlas-review-display-lossless-v1',sourceSha256:sha,width:3024,height:4032,preview:{url:'/context.jpg',sha256:'c'.repeat(64),byteCount:500,mime:'image/jpeg',width:576,height:768}}}};
+ const f=harness(storage(null),async()=>assert.fail('No image mutation'),{readCard:()=>card});f.render();await flush();f.render();assert.equal(f.previewSrc('Front'),'/context.jpg');f.dispose();
+ card.previews.FRONT.display.sourceSha256='d'.repeat(64);
+ const invalid=harness(storage(null),async()=>assert.fail('No image mutation'),{readCard:()=>card});invalid.render();await flush();invalid.render();assert.equal(invalid.previewSrc('Front'),'/canonical.png');invalid.dispose();
 });

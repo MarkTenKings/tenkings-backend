@@ -8,7 +8,7 @@ import {useRouter} from 'next/router';
 import Shell from './Shell';
 import {createIntakeClient,createBrowserIntakeJournal} from '@atlas/manual-intake/client';
 import {createManualClient} from '@atlas/manual-workflow/client';
-import {PairedGeometryWorkspace} from '@atlas/manual-workspace';
+import {PairedGeometryWorkspace,reviewImagePreview} from '@atlas/manual-workspace';
 import {DefectReviewWorkspace} from '@atlas/manual-workspace/defects';
 import {FinalReportReview,MachineReportReview,CompletedReviewCard} from '@atlas/manual-workspace/report-review';
 import {approveRapidStage,inspectBothDefectSides,rapidReviewStatus} from '@atlas/manual-workspace/rapid-review';
@@ -277,7 +277,7 @@ export default function ManualCards({staff,cardId=null}){
         const geometryStatus=saved.earlyGeometry?.[side]?.uploadId===slot.upload?.uploadId?saved.earlyGeometry?.[side]:undefined;
         const attention=photoAttention.find(issue=>issue.side===side);
         return <article key={side} data-review-target={`photo-${side}`} data-review-attention={Boolean(attention)} tabIndex={-1}>{attention&&<p className="mc-review-reason">{attention.message}</p>}<div className="mc-photo-title"><h2>{sideName}</h2><span>{slot.upload?.source?'Original retained':'Add photograph'}</span></div>
-        {slot.upload?.source?<EarlyGeometryPreview key={slot.version} side={sideName} status={geometryStatus} settingsChanged={settingsChanged} src={saved.previews?.[side]?.url??`${STAFF_BASE_PATH}${prefix}/${cardId}/preview-image/${side}`} />:<div className="mc-photo-empty"><span aria-hidden="true" className="mc-photo-outline">{side==='FRONT'?'F':'B'}</span><strong>{originalSaved?'Original saved. Resume image preparation.':recovery?'Photo retained on this device. Resume its upload.':'Original photo needed'}</strong><small>Full resolution. Every detail.</small></div>}
+        {slot.upload?.source?<EarlyGeometryPreview key={slot.version} side={sideName} status={geometryStatus} settingsChanged={settingsChanged} src={reviewImagePreview(saved.previews?.[side])?.url??saved.previews?.[side]?.url??`${STAFF_BASE_PATH}${prefix}/${cardId}/preview-image/${side}`} />:<div className="mc-photo-empty"><span aria-hidden="true" className="mc-photo-outline">{side==='FRONT'?'F':'B'}</span><strong>{originalSaved?'Original saved. Resume image preparation.':recovery?'Photo retained on this device. Resume its upload.':'Original photo needed'}</strong><small>Full resolution. Every detail.</small></div>}
         <EarlyGeometryStatus status={geometryStatus} settingsChanged={settingsChanged} retrying={Boolean(geometryRetry[side])} onRetry={()=>void retryGeometry(side)}/>
         <label className="mc-upload">{slot.upload?'Replace original photo':'Choose original photo'}<input aria-label={`${side} original photo`} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.HEIC,.heif,.HEIF" disabled={!localReady||Boolean(busy)||Boolean(uploadState[side]?.busy)||Boolean(commandPending)||staff.role!=='REVIEWER'||activePending.some(item=>item.value.kind==='upload'&&item.value.input.side===side)} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void uploadSide(side,owner=>owner.upload(cardId,side,slot.version,file),`Saving ${side==='FRONT'?'Front':'Back'} original…`);}}/></label>
         {uploadState[side]?.busy&&<p role="status">{uploadState[side].label}</p>}{uploadState[side]?.error&&<p className="mc-field-error" role="alert">{uploadState[side].error}</p>}

@@ -44,12 +44,17 @@ test('native camera capture keeps original still bytes and requests actual avail
 });
 
 test('video-only browsers preserve every delivered pixel as a lossless PNG', async () => {
-    const draws = [], encoded = [], canvas = { width: 0, height: 0, getContext: () => ({ getContextAttributes: () => ({ colorSpace: 'display-p3' }), drawImage: (...args) => draws.push(args) }),
+    let contextOptions;
+    const draws = [], encoded = [], canvas = { width: 0, height: 0, getContext: (type, options) => {
+        assert.equal(type, '2d'); contextOptions = options;
+        return { getContextAttributes: () => ({ colorSpace: 'display-p3' }), drawImage: (...args) => draws.push(args) };
+    },
         toBlob(callback, type) { encoded.push([this.width, this.height, type]); callback(new Blob(['lossless frame PNG'], { type })); } };
     const video = { paused: false, videoWidth: 4032, videoHeight: 3024 };
     const captured = await captureRapidCameraPhoto(video, { readyState: 'live' }, 'BACK', { ImageCaptureImpl: undefined, documentImpl: { createElement: () => canvas } });
     assert.deepEqual(encoded, [[4032, 3024, 'image/png']]); assert.deepEqual(draws[0], [video, 0, 0, 4032, 3024]);
     assert.equal(captured.capture.source, 'LOSSLESS_VIDEO_FRAME'); assert.equal(captured.capture.colorSpace, 'display-p3'); assert.equal(canvas.width, 1);
+    assert.deepEqual(contextOptions, { colorSpace: 'display-p3', alpha: false });
 });
 
 test('camera hardware failures never silently replace a failed native still with a preview', async () => {

@@ -267,6 +267,17 @@ export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes, 
           if (row[`${upload.side.toLowerCase()}_upload_id`] === uploadId) await tx.$executeRawUnsafe(
             'UPDATE atlas_manual_intake.card SET revision=revision+1,updated_at=clock_timestamp() WHERE id=$1::uuid', cardId);
         }
+        // A normal saved-photo retry can finish after the worker has already
+        // stopped with ATTENTION. Resolve only that current, unclaimed intent
+        // in the same transaction as source and admission hooks. Active workers
+        // retain their lease and historical/replaced uploads retain their state.
+        if (includeIngestionStatus && !lease && row[`${upload.side.toLowerCase()}_upload_id`] === uploadId) {
+          await tx.$executeRawUnsafe(`UPDATE atlas_manual_intake.ingestion
+            SET state='COMPLETE',stage='ADMIT',code=NULL,failures=0,updated_at=clock_timestamp()
+            WHERE upload_id=$1::uuid AND card_id=$2::uuid AND owner_id=$3::uuid AND access_version=$4
+              AND state='ATTENTION' AND claim_id IS NULL AND lease_until IS NULL`,
+          uploadId, cardId, principal.id, principal.accessVersion);
+        }
         const card = await view(tx, await cardRow(tx, cardId));
         if (sourceCommitted) await sourceCommitted({ tx, principal, cardId, uploadId, card });
         if (card.ready && pairCommitted) await pairCommitted({ tx, principal, card });

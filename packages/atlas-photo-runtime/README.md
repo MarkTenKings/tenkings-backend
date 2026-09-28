@@ -89,6 +89,36 @@ copying every PNG byte unchanged. The working descriptor binds identical source
 and output content. P3 and 16-bit sources still use the existing explicit color
 conversion; unqualified source policies cannot select this identity path.
 
+`atlas-sdr-working-srgb8-opaque-alpha-v4` handles an opaque browser PNG that
+retains an RGBA channel layout, including WebKit's `alpha:false` canvas output.
+Only verified RGB+A8 native-raster sRGB conversion output is eligible. The
+disposable child fully decodes every alpha sample into a bounded stream and
+requires all samples to be 255 before removing that redundant channel. Even one
+translucent pixel refuses; no background flattening occurs. The separate RGB8
+working PNG retains every source RGB sample, dimensions and transform. Original
+bytes and the source RGBA PNG remain unchanged, with source hash and four-channel
+treatment recorded in the working descriptor. Existing RGB identity behavior,
+HDR guards and unknown dynamic-range treatment are unchanged.
+
+`createReviewDisplay({ bytes, frame, original, decodePlan, limits, signal })`
+creates separate browser display assets from a verified, hash-bound RGB8 sRGB
+working PNG. It returns `{ full, preview, sourceSha256, policyVersion }`; each
+asset contains `bytes`, `content` (MIME/size/SHA256) and `dimensions`. It neither
+stores nor changes any original or working frame. Storage/cache ownership stays
+with the caller and must use the exact source hash and policy version.
+
+Policy `atlas-review-display-lossless-v1` uses full-resolution lossless WebP at
+effort 0 and a separate JPEG quality 85 / 4:4:4 contextual preview fitted inside
+768 pixels. Inside the same isolated child, every generation decodes and hashes
+all source and full-WebP RGB samples, requiring equality, unchanged dimensions
+and the same exact sRGB ICC. No crop, color conversion or orientation is applied
+to the full view. The preview is explicitly non-authoritative and must not
+enable fine geometry or final approval before verified full imagery is ready.
+Input/pixel/raster limits, combined output-byte budget, deadline and cancellation
+are enforced; unsupported alpha/color inputs refuse. Existing source descriptors
+and grading artifacts remain authoritative. A display derivative does not grant
+grading or approval authority.
+
 Format references: Apple's [HDR gain-map description](https://developer.apple.com/documentation/appkit/applying-apple-hdr-effect-to-your-photos)
 defines the auxiliary type and SDR-base/gain-map relationship; Google's reference
 [MPF implementation](https://github.com/google/libultrahdr/blob/main/lib/src/multipictureformat.cpp)
@@ -254,8 +284,8 @@ sRGB profile (`c56e1685…`). There is no resize, crop, second orientation, shar
 denoising or gain-map application. sRGB conversion can clip colors outside its
 gamut; HDR brightness/detail and full P3 color volume are not retained in the
 working PNG. Original and richer primary artifacts remain separately available.
-Qualified SDR P3/sRGB decoded frames can use the same converter; alpha, unmanaged
-color and other HDR treatments refuse. A 16-bit SDR source remains intact while
+Qualified SDR P3/sRGB decoded frames can use the same converter; non-opaque or
+unqualified alpha, unmanaged color and other HDR treatments refuse. A 16-bit SDR source remains intact while
 the explicit working copy quantizes to RGB8. Repeat working-image derivation from
 an already-derived result is refused; use the retained primary.
 

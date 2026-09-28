@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { inspectContainer } from './container.mjs';
 import { PhotoRuntimeError } from './process.mjs';
 import { qualifyHeifIcc } from './heif-metadata.mjs';
-import { LOSSLESS_PNG, IDENTITY_WORKING_POLICY, IDENTITY_SOURCE_POLICIES } from './png-policy.mjs';
+import { LOSSLESS_PNG, IDENTITY_WORKING_POLICY, IDENTITY_SOURCE_POLICIES, OPAQUE_ALPHA_WORKING_POLICY } from './png-policy.mjs';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const need = (ok, code = 'PHOTO_SOURCE_MISMATCH') => { if (!ok) throw new PhotoRuntimeError(code); };
@@ -21,18 +21,38 @@ export async function decodeSdrWorking(bytes, request, sharp) {
   need(container.mime === 'image/png' && container.bitDepth === treatment.bitDepth);
   const options = { limitInputPixels: limits.maxPixels, failOn: 'warning', sequentialRead: true };
   const meta = await sharp(bytes, options).metadata();
+  const opaqueAlpha = treatment.channels === 4 && treatment.bitDepth === 8
+    && treatment.decoder === 'sharp/libvips'
+    && ['atlas-native-raster-srgb-v1', 'atlas-native-raster-srgb-v2'].includes(treatment.policyVersion)
+    && treatment.colorSpace === 'sRGB' && treatment.colorTreatment === 'converted';
   need(meta.width === raster.dimensions.width && meta.height === raster.dimensions.height
-    && meta.channels === 3 && meta.orientation === undefined && (meta.pages ?? 1) === 1);
+    && meta.channels === treatment.channels && (meta.channels === 3 || opaqueAlpha)
+    && meta.orientation === undefined && (meta.pages ?? 1) === 1);
   if (treatment.colorTreatment === 'preserved') need(meta.icc && sha(meta.icc) === decodePlan.metadata.iccSha256
     && qualifyHeifIcc(meta.icc) === treatment.colorSpace);
   if (treatment.colorTreatment === 'converted') need(treatment.colorSpace === 'sRGB');
+  if (opaqueAlpha) {
+    need(meta.hasAlpha && meta.icc
+      && sha(meta.icc) === 'c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353');
+    // Fully decode the hash-bound source's alpha into a bounded discard sink.
+    // Reject even one translucent pixel; never flatten against a background.
+    const expected = meta.width * meta.height; let samples = 0;
+    await pipeline(sharp(bytes, { ...options, ignoreIcc: true }).extractChannel('alpha').raw(),
+      new Writable({ write(data, _encoding, done) {
+        samples += data.length;
+        done(samples > expected ? new PhotoRuntimeError('PHOTO_SOURCE_MISMATCH')
+          : data.some(value => value !== 255) ? new PhotoRuntimeError('PHOTO_COLOR_UNSUPPORTED') : null);
+      } }));
+    need(samples === expected);
+  }
   const version = `${sharp.versions.sharp}/${sharp.versions.vips}`;
   const identity = treatment.decoder === 'sharp/libvips' && treatment.version === version
     && IDENTITY_SOURCE_POLICIES.includes(treatment.policyVersion)
     && treatment.bitDepth === 8 && treatment.channels === 3
     && treatment.colorSpace === 'sRGB' && treatment.colorTreatment === 'converted'
     && meta.icc && sha(meta.icc) === 'c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353';
-  const policyVersion = identity ? IDENTITY_WORKING_POLICY : 'atlas-sdr-working-srgb8-v2';
+  const policyVersion = opaqueAlpha ? OPAQUE_ALPHA_WORKING_POLICY
+    : identity ? IDENTITY_WORKING_POLICY : 'atlas-sdr-working-srgb8-v2';
   let count = 0;
   const bound = new Transform({ transform(data, _encoding, done) {
     count += data.length; done(count > limits.maxOutputBytes ? new PhotoRuntimeError('PHOTO_DECODE_LIMIT') : null,
@@ -50,7 +70,9 @@ export async function decodeSdrWorking(bytes, request, sharp) {
     need(decoded === expected);
     await writeFile(outputPath, bytes, { flag: 'wx', mode: 0o600 }); count = bytes.length;
   } else {
-    await pipeline(sharp(bytes, options).pipelineColourspace('srgb').withIccProfile('srgb').toColourspace('srgb')
+    const image = sharp(bytes, options);
+    if (opaqueAlpha) image.removeAlpha();
+    await pipeline(image.pipelineColourspace('srgb').withIccProfile('srgb').toColourspace('srgb')
       .png(LOSSLESS_PNG), bound, createWriteStream(outputPath, { flags: 'wx', mode: 0o600 }));
   }
   const size = (await stat(outputPath)).size;

@@ -1,3 +1,4 @@
+import {reviewImagePreview} from '@atlas/manual-workspace';
 import * as reviewAttention from '../lib/manual-review-attention.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -59,7 +60,7 @@ function harness({ journal, finalReview = false, rapid = false } = {}) {
       if (name === './ManualFinishing') return {__esModule:true,default:'ManualFinishing',openManualLabelPrintWindow:()=>{const popup={close(){f.closedPopups++;}};f.popups.push(popup);return popup;}};
       if (name === '../lib/early-geometry-client.mjs') return earlyGeometryClient;
       if (name === '@atlas/manual-workflow/client') return { createManualClient: options => { viewCallback = options.onView; return client; } };
-      if (name === '@atlas/manual-workspace') return { PairedGeometryWorkspace: 'PairedGeometryWorkspace' };
+      if (name === '@atlas/manual-workspace') return { PairedGeometryWorkspace: 'PairedGeometryWorkspace', reviewImagePreview };
       if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace' };
       if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview', MachineReportReview: 'MachineReportReview',CompletedReviewCard:'CompletedReviewCard' };
       if (name === '@atlas/manual-workspace/rapid-review') return {rapidReviewStatus:()=>({geometry:true,findings:true,unresolved:0}),approveRapidStage:async(stage,view,execute)=>execute({type:'EXPLICIT_STAGE',stage})};

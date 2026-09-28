@@ -33,6 +33,7 @@ import { createFinishingStationRepository } from './finishing-station-repository
 import { createFinishingStationService } from './finishing-station-service.mjs';
 import { createConnectedCardReader } from './card-reader.mjs';
 import { createMachineBatchSnapshot } from './batch-snapshot.mjs';
+export { createReviewDisplayReader } from './review-display.mjs';
 
 export const DEFAULT_LIMITS = Object.freeze({
   decode:{maxInputBytes:256*1024*1024,maxPixels:52_000_000,maxRasterBytes:512*1024*1024,maxOutputBytes:256*1024*1024,timeoutMs:90000},

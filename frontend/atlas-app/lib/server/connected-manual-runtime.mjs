@@ -3,7 +3,7 @@ import { createPhotoStorage } from '@atlas/photo-storage';
 import { createManualArtifactStore,createS3ManualArtifactTransport } from '@atlas/manual-service/artifacts';
 import { createDurableStaffBoundary } from '@atlas/manual-service/staff-auth';
 import { createMachineStaffBoundary } from '@atlas/manual-service/machine-auth';
-import { createConnectedManual } from '@atlas/connected-manual';
+import { createConnectedManual, createReviewDisplayReader, createWorkLimiter } from '@atlas/connected-manual';
 import { geometryProcessingEnvironment } from '@atlas/connected-manual/geometry-processing';
 import { createConnectedHandler } from '@atlas/connected-manual/http';
 import { identificationEffects } from '@atlas/connected-manual/identification';
@@ -81,12 +81,19 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   const artifacts=createManualArtifactStore({transport:createS3ManualArtifactTransport({client:artifactClient,bucket:settings.bucket,PutObjectCommand,GetObjectCommand}),prefix:`${settings.keyPrefix}/artifacts`});
   const effects=env.ATLAS_MANUAL_IDENTIFICATION_ENABLED==='true'?identificationEffects({openaiKey:env.ATLAS_MANUAL_OPENAI_KEY,googleKey:env.ATLAS_MANUAL_GOOGLE_VISION_KEY}):null;
   const reads=new Map();
+  const reviewDisplay=createReviewDisplayReader({storage,keyPrefix:settings.keyPrefix,limited:createWorkLimiter(2,{maxQueue:16})});
   const imageReadUrl=async({kind,descriptor,photo})=>{
     const key=descriptorSha256(descriptor),cached=reads.get(key);if(cached&&cached.expires>Date.now())return cached.value;
     const value=kind==='original'?await storage.createDecodedFrameRead({frame:descriptor,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300})
       :await storage.createDerivativeRead({descriptor,frame:photo.workingFrame,original:photo.original,decodePlan:photo.decodePlan,expiresIn:300});
     requireThat(new URL(value.url).origin===settings.uploadOrigin,503,'MANUAL_UPLOAD_ORIGIN_MISMATCH');
-    if(reads.size>=1000)reads.delete(reads.keys().next().value);reads.set(key,{value,expires:Date.now()+240000});return value;
+    if(kind==='original'){
+      const display=await reviewDisplay(photo);
+      if(display){requireThat(new URL(display.url).origin===settings.uploadOrigin
+        &&new URL(display.preview.url).origin===settings.uploadOrigin,503,'MANUAL_UPLOAD_ORIGIN_MISMATCH');value.display=display;}
+    }
+    if(reads.size>=1000)reads.delete(reads.keys().next().value);
+    reads.set(key,{value,expires:Date.now()+(kind==='original'&&!value.display?30000:240000)});return value;
   };
   const memoryEnabled=env.ATLAS_MANUAL_DEFECT_MEMORY_ENABLED==='true';
   const defectProvider=env.ATLAS_MANUAL_DEFECT_ANALYSIS_ENABLED==='true'?createAstraDefectProvider({apiKey:env.ATLAS_MANUAL_OPENAI_KEY}):null;

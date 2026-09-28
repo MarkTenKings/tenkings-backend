@@ -44,7 +44,9 @@ export async function captureRapidCameraPhoto(video, track, side, { ImageCapture
         if (width * height > 64 * 1024 * 1024) throw new Error('This camera frame exceeds the 64 megapixel image limit. Choose an original still photo instead.');
         canvas.width = width; canvas.height = height;
         try {
-            const context = canvas.getContext('2d', { colorSpace: 'display-p3' });
+            // Camera frames are opaque. Safari may still encode RGBA PNG bytes;
+            // server preparation verifies every alpha sample before using RGB.
+            const context = canvas.getContext('2d', { colorSpace: 'display-p3', alpha: false });
             if (!context) throw new Error('This frame could not be captured. Try again or choose an original still photo.');
             colorSpace = context.getContextAttributes?.().colorSpace ?? 'srgb';
             context.drawImage(video, 0, 0, width, height);

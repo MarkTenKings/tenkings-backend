@@ -265,7 +265,8 @@ export function parseDecodedFrame(value, originalValue, decodePlan) {
   if (value.schemaVersion === 2) {
     const working = value.workingImage;
     object(working, ['policyVersion', 'sourceRaster', 'sourceTreatment', 'outputIccSha256', 'geometryTreatment']);
-    requireThat(['atlas-sdr-working-srgb8-v1', 'atlas-sdr-working-srgb8-v2', 'atlas-sdr-working-srgb8-identity-v3'].includes(working.policyVersion)
+    requireThat(['atlas-sdr-working-srgb8-v1', 'atlas-sdr-working-srgb8-v2', 'atlas-sdr-working-srgb8-identity-v3',
+      'atlas-sdr-working-srgb8-opaque-alpha-v4'].includes(working.policyVersion)
       && working.geometryTreatment === 'identity-no-resampling');
     object(working.sourceRaster, ['content', 'dimensions']);
     content(working.sourceRaster.content, ['image/png']); dimensions(working.sourceRaster.dimensions);
@@ -278,7 +279,8 @@ export function parseDecodedFrame(value, originalValue, decodePlan) {
       originalDescriptorSha256: value.originalDescriptorSha256, decodePlanSha256: value.decodePlanSha256,
       raster: { ...working.sourceRaster, object: value.raster.object }, sourceToFrame: value.sourceToFrame,
       treatment: working.sourceTreatment }, original, decodePlan);
-    requireThat(working.sourceTreatment.channels === 3
+    const opaqueAlpha = working.policyVersion === 'atlas-sdr-working-srgb8-opaque-alpha-v4';
+    requireThat(working.sourceTreatment.channels === (opaqueAlpha ? 4 : 3)
       && ['Display P3', 'sRGB'].includes(working.sourceTreatment.colorSpace)
       && working.sourceTreatment.colorTreatment !== 'unmanaged'
       && ['not-present', 'sdr-base', 'unknown'].includes(working.sourceTreatment.hdrTreatment)
@@ -287,6 +289,11 @@ export function parseDecodedFrame(value, originalValue, decodePlan) {
       && value.treatment.bitDepth === 8 && value.treatment.colorSpace === 'sRGB'
       && value.treatment.colorTreatment === 'converted' && value.treatment.policyVersion === working.policyVersion
       && value.treatment.hdrTreatment === working.sourceTreatment.hdrTreatment);
+    if (opaqueAlpha) requireThat(working.sourceTreatment.bitDepth === 8
+      && working.sourceTreatment.colorSpace === 'sRGB' && working.sourceTreatment.colorTreatment === 'converted'
+      && working.sourceTreatment.decoder === 'sharp/libvips' && value.treatment.decoder === 'sharp/libvips'
+      && working.sourceTreatment.version === value.treatment.version
+      && ['atlas-native-raster-srgb-v1', 'atlas-native-raster-srgb-v2'].includes(working.sourceTreatment.policyVersion));
     if (working.policyVersion === 'atlas-sdr-working-srgb8-identity-v3') requireThat(
       equal(value.raster.content, working.sourceRaster.content)
       && working.sourceTreatment.channels === 3 && working.sourceTreatment.bitDepth === 8

@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import * as coreGeometry from '@atlas/grading-core/geometry';
 import * as geometry from '../src/geometry-actions.mjs';
+import { verifiedImageContentKey } from '../src/verified-image.mjs';
 
 const require = createRequire(new URL('../../../frontend/atlas-app/package.json', import.meta.url));
 const babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
@@ -28,7 +29,7 @@ function fixture() {
   }])), onPrepare: async () => {} };
 }
 
-function harness(props = fixture()) {
+function harness(props = fixture(), verifiedImage = image => ({ url: image?.url })) {
   const instances = new Map(); let current, cursor, dirty, effects = [], tree;
   const memo = (make, deps) => { const i = cursor++, old = current[i]; if (!old || deps.some((v, j) => !Object.is(v, old.deps[j]))) current[i] = { deps, value: make() }; return current[i].value; };
   const effect = (callback, deps) => { const i = cursor++, slots = current, prior = slots[i]; if (!prior || deps.some((v, j) => !Object.is(v, prior.deps[j]))) { slots[i] = { deps, cleanup: prior?.cleanup }; effects.push(() => { slots[i].cleanup?.(); slots[i].cleanup = callback(); }); } };
@@ -40,7 +41,7 @@ function harness(props = fixture()) {
     if (name === 'react') return react;
     if (name === '@atlas/grading-core/geometry') return coreGeometry;
     if (name === './geometry-actions.mjs') return geometry;
-    if (name === './verified-image.mjs') return { useVerifiedImage: image => ({ url: image?.url }) };
+    if (name === './verified-image.mjs') return { useVerifiedImage: verifiedImage, verifiedImageContentKey };
     if (name === './gradient-snap') return { gradientMapFromImage: () => null };
     return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
   } });
@@ -96,4 +97,34 @@ test('a missing photo or prior human Back outline never gets the automatic recov
     else props.workspace = geometry.applyGeometryEdit(state, { side: 'BACK', kind: 'PHYSICAL', base: geometry.geometryBase(state, 'BACK', 'PHYSICAL'), quad, actor: 'HUMAN', proposal: null }).state;
     const f = harness(props); assert.equal(f.nodes(node => node.type === 'button' && text(node) === 'Detect edges automatically').length, 0);
   }
+});
+
+
+test('saved-image download timeout explains that no upload is needed and retries that side', () => {
+  let retries = 0;
+  const f = harness(fixture(), () => ({ url: null, loading: false, error: { code: 'VERIFIED_IMAGE_TIMEOUT' }, retry: () => { retries++; } }));
+  assert.equal(f.has('The saved photo is taking too long to download.'), true);
+  assert.equal(f.has('no new upload is needed.'), true);
+  assert.equal(f.nodes(node => node.type === 'img').length, 0);
+  f.click('Retry Front photo'); assert.equal(retries, 1);
+  f.click('Retry Back photo'); assert.equal(retries, 2);
+  assert.equal(f.nodes(node => node.type === 'button' && /nudge/.test(node.props['aria-label'] ?? '')).every(node => node.props.disabled), true);
+});
+
+test('saved-image download progress stays distinct from upload and does not enable editing', () => {
+  const f = harness(fixture(), () => ({ url: null, loading: true, progress: { loadedBytes: 20, totalBytes: 40, phase: 'DOWNLOADING' } }));
+  assert.equal(f.has('Loading the saved photo… 50%'), true);
+  assert.equal(f.has('No new upload is needed.'), true);
+  assert.equal(f.nodes(node => node.type === 'img').length, 0);
+  assert.equal(f.nodes(node => node.type === 'button' && /nudge/.test(node.props['aria-label'] ?? '')).every(node => node.props.disabled), true);
+});
+
+test('changing lossless transport requires its own image decode without changing canonical geometry lineage',()=>{
+ const props=fixture(),original=props.images.FRONT.original;
+ original.byteCount=100;original.mime='image/png';original.display={url:'/first.webp',sha256:hash('d'),byteCount:50,mime:'image/webp',policyVersion:'atlas-review-display-lossless-v1',sourceSha256:original.sha256,width:1600,height:2400};
+ const f=harness(props);f.ready();assert(f.nodes(node=>node.type==='button'&&node.props.className?.includes('am-handle')).length>0);
+ original.display={...original.display,url:'/replacement.webp',sha256:hash('e')};f.render();
+ assert.equal(f.nodes(node=>node.type==='button'&&node.props['aria-label']?.startsWith('FRONT physical edge')).length,0);
+ assert.equal(f.nodes(node=>node.type==='button'&&node.props['aria-label']==='FRONT nudge left')[0].props.disabled,true);
+ f.ready();assert(f.nodes(node=>node.type==='button'&&node.props['aria-label']?.startsWith('FRONT physical edge')).length>0);
 });
