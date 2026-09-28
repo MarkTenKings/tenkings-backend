@@ -22,4 +22,14 @@ The browser fixture uses actual BatchImport, shared camera, IndexedDB and Web Lo
 
 Private evidence: `/Users/markthomas/.codex/atlas-handoffs/atlas-capture-background-20260928` (build/test logs, `browser/browser-proof.json`, and camera screenshots). Local fixture: `frontend/atlas-app/scripts/capture-background-fixture.mjs`.
 
-Production release is pending at this code checkpoint.
+## Production release and observed result
+
+Web source `68c99d88e851082d995b92ad12b3fff7b4b85a3b` is live, verified 2026-09-28T08:54:58 UTC. Staff is `dpl_AX43y9FoUqskqyTVhk8THtPkZuZF` / `atlas-grading-staff-af3zmgiki-ten-kings.vercel.app`; public is `dpl_HoukkQFCBxuTwqKef6ccHcZu2P3o` / `atlas-grading-public-6stf4pv5c-ten-kings.vercel.app`. All four public aliases were read back on the candidate. Customer remains its existing d4a deployment. The public build only updates the staff routing target; homepage and report presentation are preserved.
+
+The exact private source 65b/image 21326f is retained. Container `c2dd462d5ed2a10db02b957fedc2d1e53bf9dd66051bf2036875ca64365cf4a6` started 08:51:27.868549054Z, with zero automatic restarts/no OOM. Protected config `/opt/atlas/capture-background-release-20260928/candidate.docker.env` has SHA256 `3a2e373f9eeb1cb53e33cfd0a31a3c667aa178bfd35036c5ea5572e62a15f25a`. Only the two staff web-binding values changed. Source manifest, native artifacts, geometry engine identity, capacities, resource/isolation/network settings and 125-second replay fence are unchanged. Predecessorbc5265 is retained stopped/exit 0/restart disabled/network detached.
+
+Fresh independent postflight verifies all 1,007 source files and 16 native artifacts, exact expected controls 46/44/26, and byte-equivalent counts/fingerprints for all 23 grading-history tables and all 62 existing jobs. Staff/public ledgers 59/112 and customer controls 15/13 remain unchanged. Zero active/unsettled work was present. Three signed read-only TLS requests passed; the serving processor confirms `atlas-prepared-lossless-webp-v1` with lossless=true. The 33 canonical route/assets checks pass, including the new background-control/persistence code, original homepage, nine exact approved voice files and existing approved Abomasnow report. No grade, finding, original photo or approval was rewritten; no paid model request was initiated.
+
+Additional public qualification: 38/38 tests and production build/boundary pass. Total 833 staff/customer/public tests pass, zero skips. Authenticated physical-iPhone capture acceptance remains with Mark; local synthetic-camera and durable-storage evidence is not represented as a live real-card test. The existing unsaved user geometry tab was never reloaded, navigated, saved or closed.
+
+Release receipts are in the private evidence directory’s `release/`: `preparation-summary.json`, `runtime-prepared.json`, `database-cutover-result.json`, `signed-probes.json`, `promotion.result.json`, `canonical.result.json`, and `final-result.json`. All mutation intents are consumed; do not replay them.

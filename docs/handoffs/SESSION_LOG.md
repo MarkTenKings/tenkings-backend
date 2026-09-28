@@ -38769,3 +38769,52 @@ Production cache comparison matches all93 current photographs to the same previo
 Owner requests BLACK/BLACK defaults with explicit camera control for each photo. Staff Rapid Photos now exposes Black/White in the camera footer; shutter captures the exact side/setting, durable success resets the next photo to Black, and a save failure retains the setting. Importer journals per-photo settings with original bytes, then saves an idempotent Front/Back settings command before any upload can trigger geometry. Legacy recovery, source checks, pending exact-byte resumes and later-card isolation are covered. No schema/native grading/image-policy changes.
 
 Root and the existing Astra Extra High coordinate_audit helper reviewed the split. 744 staff tests, 51 customer tests and the staff production build/boundary pass. Actual local Chrome/IndexedDB verifies mixed-side settings, partial reload and small portrait/landscape layouts with synthetic camera and stalled network. Details and limitations: docs/atlas/audits/2026-09-28/capture-background-control.md. Production remains source65b at this checkpoint; no live writes have occurred for this task.
+
+
+### 2026-09-28T08:47:16.488Z — ATLAS capture background planned staged staff deployment
+
+Preparing exactly committed source 68c99d88e851082d995b92ad12b3fff7b4b85a3b on the dedicated Vercel staff project with --prod --skip-domain. Verified clean frozen source roster, read-only CLI payload, successful staff production build, and unchanged provider project settings/environment values. Upload will create a staged candidate and may advance its generated team alias; canonical public routing remains pinned to the prior staff origin. No control rebind, private restart, homepage promotion, schema change or model call occurs in this staging action.
+
+
+### 2026-09-28T08:49:21.470Z — Staged staff READY; planned public candidate
+
+Provider confirms staff dpl_AX43y9FoUqskqyTVhk8THtPkZuZF READY from exact 68c99d88e851082d995b92ad12b3fff7b4b85a3b. Canonical routing remains unchanged. Plan one public-project environment update: staff origin to https://atlas-grading-staff-af3zmgiki-ten-kings.vercel.app; customer origin unchanged. Then upload the same qualified frozen source as a production candidate with --skip-domain, preserving the exact live homepage subtree. No runtime restart or database control change in this action.
+
+
+### 2026-09-28T08:49:39.652548+00:00 — Planned protected capture-background configuration preparation
+
+Staff candidate dpl_AX43y9FoUqskqyTVhk8THtPkZuZF is READY from68c99d88. Prepare a fresh protected private configuration, replacing only ATLAS_MANUAL_WEB_RELEASE_SHA and ATLAS_MANUAL_WEB_DEPLOYMENT for this staff candidate. Retain existing private 65b/image 21326f, all other settings/secrets/customer bindings, and boot/isolation/resource policy. Run network-none cold configuration constructors with no database/provider calls or worker starts. This preparation does not restart the serving container. Root reviewed fresh helper source and all read-only qualification receipts.
+
+
+### 2026-09-28T08:50:08.591371+00:00 — Capture-background configuration preparation observed
+
+PREPARED_CONFIG_ONLY: protected /opt/atlas/capture-background-release-20260928/candidate.docker.env SHA256 3a2e373f9eeb1cb53e33cfd0a31a3c667aa178bfd35036c5ea5572e62a15f25a. Exactly two staff web-binding values changed; private 65b/image 21326f, customer d4a binding, capacities and all other settings retained. Cold constructors PASS with zero database/provider calls and zero worker starts. Current serving container remains bc5265; no restart occurred. Public candidate dpl_HoukkQFCBxuTwqKef6ccHcZu2P3o is BUILDING from68c99d88; prior canonical routing remains active.
+
+
+### 2026-09-28T08:51:24.714817+00:00 — Planned ATLAS capture background production binding cutover
+
+Both Vercel candidates READY on exact 68c99d88e851082d995b92ad12b3fff7b4b85a3b; public candidate dpl_HoukkQFCBxuTwqKef6ccHcZu2P3o and staff dpl_AX43y9FoUqskqyTVhk8THtPkZuZF. Fresh SQL has zero active/queued batch, ingestion, geometry, identity and customer work; zero unsettled accepted model requests. Plan gracefully stop the current dedicated private container and recreate with the identical immutable image sha256:21326f23021fc1347b28bc7e97b2091a7d1fbb7d9c578d8e47060df89c06c4e8 from retained private source 65b13352536c7448fd6848e8060acd4c5bfd503c, preserving native artifacts and security/resource/network profile, and changing only two staff web-release environment fields. Cold network-none constructors agree on new staff binding; customer binding remains d4a. Retain old stopped container for rollback and existing125s replay boot fence. Then guarded compare-and-swap of precisely StaffControl, STAFF SmsPilotControl and PublicReaderControl, with all 23 grading history tables compared before/after. Staff 59/public112 ledgers remain unchanged. No migration execution, grant changes, job mutations or model requests. After readiness and three signed read-only probes, promote public candidate once and verify canonical routes. Brief private unavailability during restart is expected.
+
+
+### 2026-09-28T08:51:32.860877+00:00 — Runtime restarted with UI binding; three control rows updated
+
+New container c2dd462d5ed2a10db02b957fedc2d1e53bf9dd66051bf2036875ca64365cf4a6 uses qualified private image sha256:21326f23021fc1347b28bc7e97b2091a7d1fbb7d9c578d8e47060df89c06c4e8 and retained private source 65b13352536c7448fd6848e8060acd4c5bfd503c with the same staff web binding, same isolation and resource limits, restart0. Prior container stopped gracefully/exit 0 and retained; unrelated containers preserved. The existing125s replay fence is active before service load. Three-row guarded control transaction passed: staff revision46, public26, STAFF SMS44; customer controls unchanged. All23 grading-history table counts/hashes and 62 existing job records exactly preserved. Canonical promotion waits for source-bound readiness and signed transport checks.
+
+
+### 2026-09-28T08:54:26.772Z — Runtime transport qualified; planned canonical promotion
+
+Same private runtime generation is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_HoukkQFCBxuTwqKef6ccHcZu2P3o, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-28T08:54:31.277Z — ATLAS capture background canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_HoukkQFCBxuTwqKef6ccHcZu2P3o, source 68c99d88e851082d995b92ad12b3fff7b4b85a3b. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+
+### 2026-09-28T08:54:58 UTC — Capture background release completed and verified
+
+Web source 68c99d88 is live on staff dpl_AX43y9FoUqskqyTVhk8THtPkZuZF and public dpl_HoukkQFCBxuTwqKef6ccHcZu2P3o, all 4 public aliases verified. The camera defaults every Front/Back to Black and offers an explicit White choice before shutter; per-photo settings remain durable through reload/retry and reach the server before automatic geometry. Private source 65b/image 21326f, lossless policy, geometry identity and all processing settings are unchanged; only 2 staff web-binding environment fields changed. Containerc2dd462d started 08:51:27.868549054Z with restartCount 0/no OOM; previousbc5265 retained stopped/exit 0/restart disabled/network detached.
+
+Final independent readback verifies1,007 source hashes/16 native artifacts; all 23 history tables,62 jobs,59/112 migration ledgers and exact expected controls are preserved. Controls46/44/26, customer 15/13 unchanged. Three signed TLS probes pass;33canonical reads verify new capture/persistence bundle strings, identical homepage/audio and approved report.744 staff+51 customer+38 public tests and both production builds pass. Actual local Chrome proves mixed-side metadata, partialFront reload and mobile/landscape controls. No real-card mutation, grade approval or paid model request was performed. Physical authenticated capture acceptance remains with Mark; his unsaved original Chrome geometry tab is preserved.
+
+Audit and current runbooks updated: docs/atlas/audits/2026-09-28/capture-background-control.md. Fresh private evidence: /Users/markthomas/.codex/atlas-handoffs/atlas-capture-background-20260928/release. Every mutation intent is consumed and must not be replayed. Local synthetic camera fixture stopped and agent fixture tab closed; viewport override reset.
