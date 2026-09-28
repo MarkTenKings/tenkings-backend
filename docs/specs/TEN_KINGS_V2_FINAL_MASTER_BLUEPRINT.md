@@ -1,5 +1,10 @@
 # Ten Kings V2 — Final Master Product and Architecture Blueprint
 
+### Owner Rapid Photos background control — September 28, 2026
+
+Mark requests Black as the default for both sides, with a Black/White control directly in the staff camera view so an operator can identify the actual background for each captured Front or Back. The implementation resets to Black after each successfully stored photo, matching “default black always”; an unsuccessful local save retains the selection for retry. Each original and its selected background persist together, independently of the opposite side, later cards, network progress or page reload. Save the pair’s explicit background settings before either original is uploaded for automatic geometry processing. This is an operator-selected setting, not automatic background inference. The unchanged image acquisition and canonical lossless grading policy continue to apply. Release/qualification evidence: `docs/atlas/audits/2026-09-28/capture-background-control.md`.
+
+
 ### Owner website polish — deterministic fingerprint and connected cinematic sequence, September 25, 2026
 
 Mark requests a larger “SEE WHY IT’S A 9” hero title matching Beyond the Grade, replacing decorative fingerprint art with a repeatable algorithm using card identity and defect location/shape/size, and a fast 3–5 second animated reveal. This supersedes the presentation freeze for the hero title scale only; actual hero report content remains pending. Use coral defects, ATLAS gold mapped ridges, and a pulsing chip-first NFC sequence that pulls back to the slab, shows an iPhone-style tap at the ATLAS logo, dives into the chip, passes through a light tunnel and arrives at the card report/fingerprint together. Correct the submission journey’s overlap/structural handoff into the service options. Mark also proposes a creature-villain/hero short; local study 08 includes a disclosed fictional motion concept with generic slabs, not actual competitor attack findings.

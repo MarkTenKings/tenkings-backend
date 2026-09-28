@@ -1,9 +1,10 @@
 import { encodePhoto, decodePhoto, photoStorageError } from '../../../packages/atlas-manual-intake/src/photo-bytes.mjs';
 const BASE = '/api/staff/manual-intake/cards';
+const CONNECTED = '/api/staff/manual-connected/cards';
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
 const hex = bytes => [...new Uint8Array(bytes)].map(value => value.toString(16).padStart(2, '0')).join('');
-const phases = new Set(['SAVE_CARD_INTENT','CREATE_CARD','SAVE_CARD_ID','READ_FRONT_BYTES','READ_BACK_BYTES','HASH_FRONT_BYTES','HASH_BACK_BYTES','SAVE_HASHES','READ_FRONT_JOURNAL','READ_BACK_JOURNAL','READ_FRONT_CARD','READ_BACK_CARD','RESUME_FRONT_UPLOAD','RESUME_BACK_UPLOAD','PREPARE_FRONT_UPLOAD','PREPARE_BACK_UPLOAD','UPLOAD_FRONT','UPLOAD_BACK','VERIFY_PAIR','ENQUEUE_CARD','SAVE_QUEUE']);
+const phases = new Set(['SAVE_CARD_INTENT','CREATE_CARD','SAVE_CARD_ID','READ_CAPTURE_SETTINGS','SAVE_SETTINGS_INTENT','SAVE_CAPTURE_SETTINGS','SAVE_SETTINGS_RECEIPT','VERIFY_CAPTURE_SETTINGS','READ_FRONT_BYTES','READ_BACK_BYTES','HASH_FRONT_BYTES','HASH_BACK_BYTES','SAVE_HASHES','READ_FRONT_JOURNAL','READ_BACK_JOURNAL','READ_FRONT_CARD','READ_BACK_CARD','RESUME_FRONT_UPLOAD','RESUME_BACK_UPLOAD','PREPARE_FRONT_UPLOAD','PREPARE_BACK_UPLOAD','UPLOAD_FRONT','UPLOAD_BACK','VERIFY_PAIR','ENQUEUE_CARD','SAVE_QUEUE']);
 const exceptionNames = new Set(['Error','TypeError','RangeError','AbortError','DataCloneError','InvalidStateError','NotReadableError','NotSupportedError','OperationError','QuotaExceededError','SecurityError','TimeoutError','TransactionInactiveError','UnknownError']);
 const safeCode = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,100}$/.test(value) ? value : 'BATCH_IMPORT_INTERRUPTED';
 const safeId = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value) ? value : null;
@@ -262,6 +263,39 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
         const created = await step('CREATE_CARD', async () => { const result = await post(BASE, { requestId: item.createId, label: item.label }); check(result.card?.cardId, 'BATCH_IMPORT_CREATE_UNCERTAIN'); return result; });
         item.cardId = created.card.cardId; await step('SAVE_CARD_ID', () => saveItem(item));
       }
+      if (item.photoSettings) {
+        const changes = Object.fromEntries(['FRONT', 'BACK'].map(side => {
+          const matColor = item.photoSettings[side]?.matColor ?? 'BLACK';
+          check(['BLACK', 'WHITE'].includes(matColor), 'BATCH_IMPORT_SETTINGS_INVALID');
+          return [side === 'FRONT' ? 'frontMatColor' : 'backMatColor', matColor];
+        }));
+        const matches = details => details && ['frontMatColor', 'backMatColor'].every(key =>
+          (details[key] ?? details.matColor) === changes[key]);
+        if (!item.settingsCommand) {
+          const current = await step('READ_CAPTURE_SETTINGS', () => request(`${CONNECTED}/${item.cardId}`));
+          check(current.card?.cardId === item.cardId && !current.manual
+            && ['FRONT', 'BACK'].every(side => current.card.sides?.[side]?.upload === null)
+            && Number.isSafeInteger(current.revision) && current.revision > 0, 'BATCH_IMPORT_SETTINGS_CONFLICT');
+          item.settingsCommand = { actionId: cryptoImpl.randomUUID(), expectedRevision: current.revision, changes };
+          // The exact settings intent must survive a lost response, reload or
+          // local receipt-write failure before either original can be uploaded.
+          await step('SAVE_SETTINGS_INTENT', () => saveItem(item));
+        }
+        check(JSON.stringify(item.settingsCommand.changes) === JSON.stringify(changes), 'BATCH_IMPORT_SETTINGS_CONFLICT');
+        if (!item.settingsSaved) {
+          await step('SAVE_CAPTURE_SETTINGS', async () => {
+            const result = await post(`${CONNECTED}/${item.cardId}/details`, item.settingsCommand);
+            check(result.revision === item.settingsCommand.expectedRevision + 1 && matches(result.details), 'BATCH_IMPORT_SETTINGS_UNCERTAIN');
+          });
+          item.settingsSaved = true;
+          await step('SAVE_SETTINGS_RECEIPT', () => saveItem(item));
+        }
+        // A replayed receipt proves the original save, not the current settings.
+        // Refuse a later reviewer change instead of overwriting it or admitting
+        // a captured pair with a different background from its saved metadata.
+        const current = await step('VERIFY_CAPTURE_SETTINGS', () => request(`${CONNECTED}/${item.cardId}`));
+        check(current.card?.cardId === item.cardId && matches(current.details), 'BATCH_IMPORT_SETTINGS_CONFLICT');
+      }
       for (const side of ['FRONT', 'BACK']) {
         if (!item.hashes[side]) {
           const encoded = await step(`READ_${side}_BYTES`, () => encodePhoto(item.files[side]));
@@ -336,7 +370,7 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
           for (const item of items) {
             const task = (async () => {
             const code = await processItem(item);
-            const networkPhase = /^(CREATE_CARD|READ_(FRONT|BACK)_CARD|RESUME_(FRONT|BACK)_UPLOAD|UPLOAD_(FRONT|BACK)|VERIFY_PAIR|ENQUEUE_CARD)$/.test(item.failure?.phase ?? '');
+            const networkPhase = /^(CREATE_CARD|READ_CAPTURE_SETTINGS|SAVE_CAPTURE_SETTINGS|VERIFY_CAPTURE_SETTINGS|READ_(FRONT|BACK)_CARD|RESUME_(FRONT|BACK)_UPLOAD|UPLOAD_(FRONT|BACK)|VERIFY_PAIR|ENQUEUE_CARD)$/.test(item.failure?.phase ?? '');
             const transient = code === 'MANUAL_PROCESSING_BUSY' || serverProcessing && (['TEMPORARILY_UNAVAILABLE','INTAKE_TEMPORARILY_UNAVAILABLE',
               'MANUAL_SERVICE_UNAVAILABLE','MANUAL_SERVICE_TIMEOUT','INTAKE_UPLOAD_TIMEOUT','INTAKE_UPLOAD_ABSENT','PHOTO_STORAGE_UNAVAILABLE'].includes(code)
               || code === 'BATCH_IMPORT_INTERRUPTED' && networkPhase);
@@ -423,9 +457,10 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
         return { key: cryptoImpl.randomUUID(), label: `Card ${index + 1}`, files: { FRONT: pair.files.FRONT, BACK: pair.files.BACK } };
       }));
     },
-    async saveSide(side, file, acquisition = null) {
+    async saveSide(side, file, acquisition = null, matColor = 'BLACK') {
       check(['FRONT', 'BACK'].includes(side), 'BATCH_IMPORT_PAIR_FILES');
       check(file instanceof Blob && file.size > 0 && file.size <= 64 * 1024 * 1024, 'BATCH_IMPORT_PAIR_FILES');
+      check(['BLACK', 'WHITE'].includes(matColor), 'BATCH_IMPORT_SETTINGS_INVALID');
       const value = await serial(async () => {
         check(!disposed && !isPaused(), 'BATCH_IMPORT_BUSY');
         const old = await journal.get(); check(!old || old.version === 1, 'BATCH_IMPORT_STORAGE');
@@ -434,8 +469,12 @@ export function createBatchImporter({ request, intake, journal, cryptoImpl = glo
         // A second shutter event cannot replace an already assigned side.
         check(!draft.files[side], 'BATCH_IMPORT_SIDE_SAVED');
         draft.files[side] = file; draft.acquisition[side] = acquisition;
+        draft.photoSettings = { ...draft.photoSettings, [side]: { matColor } };
         if (draft.files.FRONT && draft.files.BACK) {
-          batch.items.push(makeItem({ key: draft.id, label: `Card ${batch.items.length + 1}`, files: draft.files, photoRefs: draft.photoRefs, acquisition: draft.acquisition }));
+          const photoSettings = Object.fromEntries(['FRONT', 'BACK'].map(name => [name, {
+            matColor: draft.photoSettings[name]?.matColor ?? 'BLACK',
+          }]));
+          batch.items.push(makeItem({ key: draft.id, label: `Card ${batch.items.length + 1}`, files: draft.files, photoRefs: draft.photoRefs, acquisition: draft.acquisition, photoSettings }));
           batch.draft = null;
         } else batch.draft = draft;
         // Complete pair insertion and removal of the partial pair are atomic.

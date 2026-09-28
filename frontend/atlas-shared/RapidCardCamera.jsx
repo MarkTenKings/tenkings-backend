@@ -5,10 +5,11 @@ import styles from './RapidCardCamera.module.css';
 /** Keep mounted across Front → Back → next Front. onCapture must acknowledge
  * local durable storage only; no upload or identification promise belongs here.
  * completedPairs comes from durable paired originals, independent of uploads. */
-export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card', completedPairs = 0, disabled = false, onCapture, onClose, autoStart = true, status = '' }) {
+export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card', completedPairs = 0, disabled = false, onCapture, onClose, autoStart = true, status = '', showBackgroundControl = false }) {
   const video = useRef(null), previewArea = useRef(null), stream = useRef(null), root = useRef(null), generation = useRef(0), alive = useRef(false), busyRef = useRef(false), starting = useRef(false);
-  const latest = useRef({ side, cardLabel, disabled, onCapture, onClose }); latest.current = { side, cardLabel, disabled, onCapture, onClose };
   const [state, setState] = useState('idle'), [error, setError] = useState(''), [busy, setBusy] = useState(false), [flash, setFlash] = useState(false);
+  const [matColor, setMatColor] = useState('BLACK');
+  const latest = useRef(null); latest.current = { side, cardLabel, disabled, onCapture, onClose, matColor: showBackgroundControl ? matColor : 'BLACK' };
   const [frame, setFrame] = useState(null);
   function measurePreview() {
     const bounds = previewArea.current?.getBoundingClientRect(), picture = video.current;
@@ -61,8 +62,8 @@ export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card
       // Once acquired, always hand these bytes to durable storage even if the
       // camera is suspended while native still acquisition finishes.
       const photo = await captureRapidCameraPhoto(video.current, stream.current?.getVideoTracks()[0], current.side, { matchPreview: true });
-      await current.onCapture(photo.file, { source: 'camera', capture: photo.capture });
-      if (alive.current) { setFlash(true); setTimeout(() => { if (alive.current) setFlash(false); }, 180); }
+      await current.onCapture(photo.file, { source: 'camera', capture: photo.capture }, current.matColor);
+      if (alive.current) { setMatColor('BLACK'); setFlash(true); setTimeout(() => { if (alive.current) setFlash(false); }, 180); }
     } catch (failure) { if (alive.current) setError(rapidCameraError(failure)); }
     finally { busyRef.current = false; if (alive.current) setBusy(false); }
   }
@@ -88,6 +89,10 @@ export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card
     </div>
     <footer className={styles.controls}>
       <div className={styles.sequence}><span data-current={side === 'FRONT'}>01 FRONT</span><i>→</i><span data-current={side === 'BACK'}>02 BACK</span><i>→</i><span>NEXT CARD</span></div>
+      {showBackgroundControl && <div className={styles.backgroundControl} role="group" aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} photo background`}>
+        <span>Photo background</span>
+        <div>{['BLACK', 'WHITE'].map(color => <button key={color} type="button" aria-pressed={matColor === color} disabled={busy || disabled} onClick={() => { if (!busyRef.current && !latest.current.disabled) setMatColor(color); }}><i data-color={color} aria-hidden="true"/>{color === 'BLACK' ? 'Black' : 'White'}</button>)}</div>
+      </div>}
       {state === 'ready' ? <button type="button" className={styles.shutter} aria-label={`Capture ${side === 'FRONT' ? 'Front' : 'Back'}`} disabled={busy || disabled} onClick={() => void capture()}><span/></button> : <button type="button" className={styles.resume} disabled={state === 'starting'} onClick={() => void start()}>{state === 'starting' ? 'One moment…' : 'Resume camera'}</button>}
       <p role="status">{busy ? 'Saving on this device…' : status || 'Capture keeps moving. Uploads happen in the background.'}</p>
       {error && <p className={styles.error} role="alert">{error}</p>}

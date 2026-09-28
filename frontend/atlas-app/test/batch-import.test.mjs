@@ -5,12 +5,19 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { batchImportDiagnostics, batchImportFailureDetails, pairBatchPhotos, createBatchImporter, capturePairIdentity } from '../lib/batch-import.mjs';
 const file = (name, content = name) => Object.assign(new Blob([content]), { name });
 function fixture(options = {}) {
-  let saved = null, active = 0, peak = 0, loseCreate = false, loseEnqueue = false, busyFront = false, pauses=0;
+  let saved = null, active = 0, peak = 0, loseCreate = false, loseEnqueue = false, loseSettings = false, busyFront = false, pauses=0;
   const cards = new Map(), creates = new Map(), queued = new Map(), uploads = [];
+  const settings = new Map(), settingsActions = new Map(), settingsRequests = [];
   const journal = { get: async () => structuredClone(saved), put: async value => { saved = structuredClone(value); }, remove: async () => { saved = null; } };
   const intake = {
     pending: async () => [], read: async id => ({ card: structuredClone(cards.get(id)) }),
     async upload(id, side, version, value) {
+      const item = saved.items.find(item => item.cardId === id);
+      if (item?.photoSettings) {
+        assert.equal(settings.get(id).details.frontMatColor, item.photoSettings.FRONT.matColor);
+        assert.equal(settings.get(id).details.backMatColor, item.photoSettings.BACK.matColor);
+        assert.equal(item.settingsSaved, true, 'Settings receipt is durable before the first upload');
+      }
       if(side==='FRONT'&&busyFront){busyFront=false;throw Object.assign(new Error('Busy'),{code:'MANUAL_PROCESSING_BUSY',status:503});}
       active++; peak = Math.max(peak, active); await delay(1);
       try {
@@ -22,7 +29,23 @@ function fixture(options = {}) {
       } finally { active--; }
     },
   };
-  async function request(path, { body }) {
+  async function request(path, { body } = {}) {
+    const connected = /^\/api\/staff\/manual-connected\/cards\/([a-f0-9-]{36})(\/details)?$/.exec(path);
+    if (connected) {
+      const [,id,write] = connected, current = settings.get(id);
+      if (!write) return { card: structuredClone(cards.get(id)), ...structuredClone(current), manual: null };
+      assert.deepEqual(saved.items.find(item => item.cardId === id).settingsCommand, body, 'Persist settings command before network');
+      settingsRequests.push(structuredClone(body));
+      let receipt = settingsActions.get(body.actionId);
+      if (receipt) assert.deepEqual(receipt.body, body);
+      else {
+        if (current.revision !== body.expectedRevision) throw Object.assign(Error('settings changed'), { code: 'MANUAL_DETAILS_STALE', status: 409 });
+        const result = { revision: current.revision + 1, details: { ...current.details, ...body.changes } };
+        settings.set(id, structuredClone(result)); receipt = { body: structuredClone(body), result }; settingsActions.set(body.actionId, receipt);
+      }
+      if (loseSettings) { loseSettings = false; throw Error('lost committed settings reply'); }
+      return structuredClone(receipt.result);
+    }
     if (path.endsWith('/batch')) {
       const prior = queued.get(body.actionId); if (prior) assert.deepEqual(prior, body); else queued.set(body.actionId, body);
       if (loseEnqueue) { loseEnqueue = false; throw Error('lost committed queue reply'); }
@@ -31,12 +54,13 @@ function fixture(options = {}) {
     if (!creates.has(body.requestId)) {
       const card = { cardId: randomUUID(), sourceHash: 'a'.repeat(64), label: body.label, ready: false, sides: { FRONT: { version: 0, upload: null }, BACK: { version: 0, upload: null } } };
       cards.set(card.cardId, card); creates.set(body.requestId, card);
+      settings.set(card.cardId, { revision: 1, details: { matColor: 'BLACK', cornerShape: 'ROUNDED_3_18_MM' } });
     }
     if (loseCreate) { loseCreate = false; throw Error('lost committed create reply'); }
     return { card: structuredClone(creates.get(body.requestId)) };
   }
   const importer = () => createBatchImporter({ request, intake, journal, cryptoImpl: webcrypto, ...options, pause:options.pause??(async ms=>{assert.equal(ms,3000);pauses++;}) });
-  return { importer, request, journal, intake, cards, creates, queued, uploads, get peak() { return peak; },get pauses(){return pauses;},busy:()=>{busyFront=true;}, loseCreate: () => { loseCreate = true; }, loseEnqueue: () => { loseEnqueue = true; } };
+  return { importer, request, journal, intake, cards, creates, queued, uploads, settings, settingsActions, settingsRequests, get peak() { return peak; },get pauses(){return pauses;},busy:()=>{busyFront=true;}, loseCreate: () => { loseCreate = true; }, loseEnqueue: () => { loseEnqueue = true; }, loseSettings: () => { loseSettings = true; } };
 }
 test('pairs exact filename stems regardless of file order and refuses ambiguous or incomplete physical pairings', () => {
   assert.equal(pairBatchPhotos([file('card-A_back.HEIC'), file('card-A_front.jpg')])[0].label, 'card-A');
@@ -113,11 +137,15 @@ test('lost create and enqueue replies survive importer replacement without dupli
   f.loseEnqueue(); await second.run(); assert.equal(f.queued.size, 1); assert.equal(f.uploads.length, 2); await second.dispose();
   const final = await f.importer().run(); assert.equal(final.items[0].done, true); assert.equal(f.creates.size, 1); assert.equal(f.queued.size, 1); assert.equal(f.uploads.length, 2);
 });
-test('source replacement during an interrupted import does not overwrite the replacement or queue the wrong card', async () => {
-  const f = fixture(), owner = f.importer(); await owner.stage([file('one_front.jpg'), file('one_back.jpg')]);
-  f.loseEnqueue(); await owner.run(); const [card] = f.cards.values(); card.sides.FRONT.upload.plan.expected.sha256 = 'e'.repeat(64);
+for (const rapid of [false, true]) test(`${rapid ? 'Rapid' : 'Legacy'} source replacement during an interrupted import does not overwrite the replacement or queue the wrong card`, async () => {
+  const f = fixture(), owner = f.importer(); f.loseEnqueue();
+  if (rapid) { await owner.saveSide('FRONT', file('one_front.jpg'), null, 'WHITE'); await owner.saveSide('BACK', file('one_back.jpg')); await owner.whenIdle(); }
+  else { await owner.stage([file('one_front.jpg'), file('one_back.jpg')]); await owner.run(); }
+  const [card] = f.cards.values(); card.sides.FRONT.upload.plan.expected.sha256 = 'e'.repeat(64);
   const result = await owner.run(); assert.equal(result.items[0].code, 'BATCH_IMPORT_UPLOAD_CONFLICT'); assert.equal(result.items[0].done, false);
   assert.equal(f.uploads.length, 2); assert.equal(f.queued.size, 1);
+  if (rapid) assert.equal(f.settingsRequests.length, 1);
+  await owner.dispose();
 });
 test('unstarted selection may be cleared but a pending import cannot be replaced', async () => {
   const f = fixture(), owner = f.importer(); await owner.stage([file('one_front.jpg'), file('one_back.jpg')]);
@@ -165,7 +193,7 @@ test('busy Front does not hide Back attention or authentication failures', async
   }
 });
 
-test('pending exact upload receives the preserved batch original as a recovery candidate', async () => {
+for (const rapid of [false, true]) test(`${rapid ? 'Rapid' : 'Legacy'} pending exact upload receives the preserved batch original as a recovery candidate`, async () => {
   const f = fixture(), upload = f.intake.upload, resumes = [];
   // Derive the exact expected original hash; the resume operation owns checking its byte count and hash again.
   const front = file('front.jpg', 'front original');
@@ -174,8 +202,13 @@ test('pending exact upload receives the preserved batch original as a recovery c
     kind: 'upload', cardId: card.cardId, input: { side: 'FRONT', sha256 },
   } }]);
   f.intake.resume = async (id, { fallbackFile }) => { resumes.push(await fallbackFile.text()); return upload(id, 'FRONT', 0, fallbackFile); };
-  const owner = f.importer(); await owner.appendPair(front, file('back.jpg')); const result = await owner.whenIdle();
+  const owner = f.importer();
+  if (rapid) { await owner.saveSide('FRONT', front, null, 'WHITE'); await owner.saveSide('BACK', file('back.jpg')); }
+  else await owner.appendPair(front, file('back.jpg'));
+  const result = await owner.whenIdle();
   assert.equal(result.items[0].done, true); assert.deepEqual(resumes, ['front original']); assert.equal(f.uploads.length, 2);
+  if (rapid) assert.deepEqual(f.settingsRequests[0].changes, { frontMatColor: 'WHITE', backMatColor: 'BLACK' });
+  await owner.dispose();
 });
 
 test('explicit side slots accept camera filenames and queue automatically after original persistence', async () => {
@@ -265,12 +298,187 @@ test('camera saves the Front before any network request and reload resumes the s
 });
 
 test('failed Back durability keeps the Front and does not advance, create or overwrite a side', async () => {
-  const f = fixture(), owner = f.importer(); await owner.saveSide('FRONT', file('front.jpg', 'front'));
+  const f = fixture(), owner = f.importer(); await owner.saveSide('FRONT', file('front.jpg', 'front'), null, 'WHITE');
   const originalPut = f.journal.put; f.journal.put = async () => { throw Object.assign(new Error('storage full'), { code: 'BATCH_IMPORT_STORAGE' }); };
   await assert.rejects(owner.saveSide('BACK', file('back.jpg')), /storage full/);
   assert.equal((await owner.read()).items.length, 0); assert.equal((await owner.read()).draft.files.BACK, undefined); assert.equal(f.creates.size, 0);
+  assert.deepEqual((await owner.read()).draft.photoSettings, { FRONT: { matColor: 'WHITE' } });
   f.journal.put = originalPut; await owner.saveSide('BACK', file('back.jpg')); await owner.whenIdle();
+  assert.deepEqual(f.settingsRequests[0].changes, { frontMatColor: 'WHITE', backMatColor: 'BLACK' });
   assert.equal(f.creates.size, 1); assert.equal(f.queued.size, 1);
+});
+
+test('concurrent duplicate Front callbacks cannot replace its exact bytes or background', async () => {
+  const f = fixture(), owner = f.importer();
+  const outcomes = await Promise.allSettled([
+    owner.saveSide('FRONT', file('accepted.png', 'white original'), null, 'WHITE'),
+    owner.saveSide('FRONT', file('duplicate.png', 'different original'), null, 'BLACK'),
+  ]);
+  assert.equal(outcomes[0].status, 'fulfilled'); assert.equal(outcomes[1].reason.code, 'BATCH_IMPORT_SIDE_SAVED');
+  const saved = await owner.read(); assert.equal(await saved.draft.files.FRONT.text(), 'white original');
+  assert.deepEqual(saved.draft.photoSettings, { FRONT: { matColor: 'WHITE' } });
+  assert.equal(f.creates.size, 0); await owner.dispose();
+});
+
+test('Rapid background metadata is saved with each exact original and both choices reach details before either upload', async () => {
+  const f = fixture({ serverProcessing: true }), first = f.importer(), acquisition = { source: 'camera' };
+  const staged = await first.saveSide('FRONT', file('front.png', 'exact white front'), acquisition, 'WHITE');
+  assert.deepEqual(staged.draft.photoSettings, { FRONT: { matColor: 'WHITE' } });
+  assert.deepEqual(staged.draft.acquisition.FRONT, acquisition); assert.equal(f.creates.size, 0);
+  await first.dispose(); const next = f.importer();
+  await next.saveSide('BACK', file('back.png', 'exact black back')); await next.whenIdle();
+  const item = (await next.read()).items[0];
+  assert.deepEqual(item.photoSettings, { FRONT: { matColor: 'WHITE' }, BACK: { matColor: 'BLACK' } });
+  assert.deepEqual(item.acquisition.FRONT, acquisition);
+  assert.deepEqual(f.settingsRequests[0].changes, { frontMatColor: 'WHITE', backMatColor: 'BLACK' });
+  assert.equal(item.done, true); assert.equal(item.files, null); assert.equal(f.queued.size, 0);
+  await next.saveSide('FRONT', file('next-front.png')); await next.saveSide('BACK', file('next-back.png'), null, 'WHITE');
+  await next.whenIdle();
+  assert.deepEqual(f.settingsRequests[1].changes, { frontMatColor: 'BLACK', backMatColor: 'WHITE' });
+  assert.equal(f.settingsActions.size, 2); assert.equal(f.uploads.length, 4); await next.dispose();
+});
+
+test('uncertain settings save blocks both uploads and reload replays one exact action while later cards still finish', async () => {
+  const f = fixture(), first = f.importer(); f.loseSettings();
+  await first.saveSide('FRONT', file('front.png'), null, 'WHITE'); await first.saveSide('BACK', file('back.png')); await first.whenIdle();
+  const pending = (await first.read()).items[0];
+  assert.equal(pending.failure.phase, 'SAVE_CAPTURE_SETTINGS'); assert.equal(pending.settingsSaved, undefined);
+  assert.equal(f.settingsRequests.length, 1); assert.equal(f.settingsActions.size, 1); assert.equal(f.uploads.length, 0);
+  assert(pending.files.FRONT instanceof Blob); assert(pending.files.BACK instanceof Blob);
+  await first.saveSide('FRONT', file('later-front.png')); await first.saveSide('BACK', file('later-back.png')); await first.whenIdle();
+  assert.equal((await first.read()).items[1].done, true); assert.equal(f.uploads.length, 2); await first.dispose();
+  const next = f.importer(); await next.run();
+  const completed = (await next.read()).items[0];
+  assert.equal(completed.done, true); assert.deepEqual(completed.settingsCommand, pending.settingsCommand);
+  const attempts = f.settingsRequests.filter(value => value.actionId === pending.settingsCommand.actionId);
+  assert.equal(attempts.length, 2); assert.deepEqual(attempts[0], attempts[1]);
+  assert.equal(f.settingsActions.size, 2); assert.equal(f.creates.size, 2); assert.equal(f.uploads.length, 4); await next.dispose();
+});
+
+test('server handoff retries a lost settings response with the durable exact command before admitting originals', async () => {
+  const pauses = [], f = fixture({ serverProcessing: true, pause: async ms => pauses.push(ms) }), owner = f.importer(); f.loseSettings();
+  await owner.saveSide('FRONT', file('front.png'), null, 'WHITE'); await owner.saveSide('BACK', file('back.png')); await owner.whenIdle();
+  assert.equal((await owner.read()).items[0].done, true); assert.deepEqual(pauses, [2000]);
+  assert.equal(f.settingsRequests.length, 2); assert.deepEqual(f.settingsRequests[0], f.settingsRequests[1]);
+  assert.equal(f.settingsActions.size, 1); assert.equal(f.creates.size, 1); assert.equal(f.uploads.length, 2); assert.equal(f.queued.size, 0);
+  await owner.dispose();
+});
+
+test('server handoff bounds settings transport retries and preserves its exact command and originals', async () => {
+  const pauses = [], f = fixture(), original = f.request;
+  const request = async (path, options) => { if (path.endsWith('/details')) f.loseSettings(); return original(path, options); };
+  const owner = createBatchImporter({ request, intake: f.intake, journal: f.journal, cryptoImpl: webcrypto, serverProcessing: true, pause: async ms => pauses.push(ms) });
+  await owner.saveSide('FRONT', file('front.png'), null, 'WHITE'); await owner.saveSide('BACK', file('back.png')); await owner.whenIdle();
+  const item = (await owner.read()).items[0]; assert.equal(item.code, 'BATCH_IMPORT_INTERRUPTED'); assert.equal(item.done, false);
+  assert.equal(item.failure.phase, 'SAVE_CAPTURE_SETTINGS'); assert(item.files.FRONT instanceof Blob); assert(item.files.BACK instanceof Blob);
+  assert.deepEqual(pauses, [2000, 4000, 8000, 16000, 30000, 30000, 30000]);
+  assert.equal(f.settingsRequests.length, 8); assert(f.settingsRequests.every(value => JSON.stringify(value) === JSON.stringify(item.settingsCommand)));
+  assert.equal(f.settingsActions.size, 1); assert.equal(f.uploads.length, 0); await owner.dispose();
+});
+
+test('a malformed settings receipt stops automatic retries without uploading or rotating the action', async () => {
+  const f = fixture(), original = f.request, pauses = [];
+  const request = async (path, options) => { const result = await original(path, options); return path.endsWith('/details') ? { ...result, revision: result.revision + 1 } : result; };
+  const owner = createBatchImporter({ request, intake: f.intake, journal: f.journal, cryptoImpl: webcrypto, serverProcessing: true, pause: async ms => pauses.push(ms) });
+  await owner.saveSide('FRONT', file('front.png'), null, 'WHITE'); await owner.saveSide('BACK', file('back.png')); await owner.whenIdle();
+  const item = (await owner.read()).items[0]; assert.equal(item.code, 'BATCH_IMPORT_SETTINGS_UNCERTAIN'); assert.equal(item.failure.phase, 'SAVE_CAPTURE_SETTINGS');
+  assert.equal(item.settingsSaved, undefined); assert.deepEqual(pauses, []); assert.equal(f.settingsRequests.length, 1); assert.equal(f.uploads.length, 0);
+  await owner.dispose();
+});
+
+test('settings intent durability failure issues no details POST or upload and keeps both originals', async () => {
+  const f = fixture(), owner = f.importer(), put = f.journal.put; let rejected = false;
+  f.journal.put = async value => {
+    if (!rejected && value.items.some(item => item.settingsCommand)) { rejected = true; throw Error('storage full'); }
+    return put(value);
+  };
+  await owner.saveSide('FRONT', file('front.png')); await owner.saveSide('BACK', file('back.png'), null, 'WHITE'); await owner.whenIdle();
+  const pending = (await owner.read()).items[0];
+  assert.equal(pending.failure.phase, 'SAVE_SETTINGS_INTENT'); assert.equal(f.settingsRequests.length, 0); assert.equal(f.uploads.length, 0);
+  assert(pending.files.FRONT instanceof Blob); assert(pending.files.BACK instanceof Blob);
+  await owner.run(); assert.equal(f.settingsActions.size, 1); assert.equal(f.uploads.length, 2); await owner.dispose();
+});
+
+test('lost local settings receipt retains its durable intent and does not upload until exact replay succeeds', async () => {
+  const f = fixture(), owner = f.importer(), put = f.journal.put; let rejectReceipt = true;
+  f.journal.put = async value => {
+    if (rejectReceipt && value.items.some(item => item.settingsSaved)) throw Error('local receipt failed');
+    return put(value);
+  };
+  await owner.saveSide('FRONT', file('front.png'), null, 'WHITE'); await owner.saveSide('BACK', file('back.png'));
+  await assert.rejects(owner.whenIdle(), /local receipt failed/);
+  const pending = (await owner.read()).items[0]; assert(pending.settingsCommand); assert.equal(pending.settingsSaved, undefined);
+  assert.equal(f.settingsActions.size, 1); assert.equal(f.uploads.length, 0); await owner.dispose(); rejectReceipt = false;
+  const next = f.importer(); await next.run();
+  assert.equal(f.settingsActions.size, 1); assert.equal(f.settingsRequests.length, 2);
+  assert.deepEqual(f.settingsRequests[0], f.settingsRequests[1]); assert.equal(f.uploads.length, 2); await next.dispose();
+});
+
+test('a later reviewer setting change refuses recovery without another settings write or upload', async () => {
+  const f = fixture(), owner = f.importer(); f.loseEnqueue();
+  await owner.saveSide('FRONT', file('front.png'), null, 'WHITE'); await owner.saveSide('BACK', file('back.png')); await owner.whenIdle();
+  const item = (await owner.read()).items[0], changed = f.settings.get(item.cardId);
+  changed.details.frontMatColor = 'BLACK'; changed.revision++;
+  await owner.run();
+  assert.equal((await owner.read()).items[0].code, 'BATCH_IMPORT_SETTINGS_CONFLICT');
+  assert.equal(f.settingsRequests.length, 1); assert.equal(f.uploads.length, 2);
+  assert.equal(f.settings.get(item.cardId).details.frontMatColor, 'BLACK'); await owner.dispose();
+});
+
+test('a settings revision conflict retains its exact command and never guesses a fresh revision', async () => {
+  const f = fixture(), original = f.request; let changed = false;
+  const request = async (path, options) => {
+    if (path.endsWith('/details') && !changed) { changed = true; f.settings.get(path.split('/').at(-2)).revision++; }
+    return original(path, options);
+  };
+  const owner = createBatchImporter({ request, intake: f.intake, journal: f.journal, cryptoImpl: webcrypto });
+  await owner.saveSide('FRONT', file('front.png')); await owner.saveSide('BACK', file('back.png'), null, 'WHITE'); await owner.whenIdle();
+  const first = (await owner.read()).items[0]; assert.equal(first.code, 'MANUAL_DETAILS_STALE');
+  await owner.run(); assert.deepEqual((await owner.read()).items[0].settingsCommand, first.settingsCommand);
+  assert.equal(f.settingsActions.size, 0); assert.equal(f.uploads.length, 0); assert.equal(f.settingsRequests.length, 2); await owner.dispose();
+});
+
+test('settings initialization refuses an existing source or workspace and a mismatched card', async () => {
+  for (const conflict of ['SOURCE', 'WORKSPACE', 'CARD']) {
+    const f = fixture(), original = f.request;
+    const request = async (path, options) => {
+      const result = await original(path, options);
+      if (path.includes('/manual-connected/') && !options) {
+        if (conflict === 'SOURCE') result.card.sides.FRONT.upload = { uploadId: randomUUID() };
+        if (conflict === 'WORKSPACE') result.manual = { revision: 1, current: true };
+        if (conflict === 'CARD') result.card.cardId = randomUUID();
+      }
+      return result;
+    };
+    const owner = createBatchImporter({ request, intake: f.intake, journal: f.journal, cryptoImpl: webcrypto });
+    await owner.saveSide('FRONT', file('front.png'), null, 'WHITE'); await owner.saveSide('BACK', file('back.png')); await owner.whenIdle();
+    assert.equal((await owner.read()).items[0].code, 'BATCH_IMPORT_SETTINGS_CONFLICT');
+    assert.equal(f.settingsRequests.length, 0); assert.equal(f.uploads.length, 0); await owner.dispose();
+  }
+});
+
+test('captured background cannot change the meaning of an already persisted uncertain settings action', async () => {
+  const f = fixture(), owner = f.importer(); f.loseSettings();
+  await owner.saveSide('FRONT', file('front.png'), null, 'WHITE'); await owner.saveSide('BACK', file('back.png')); await owner.whenIdle();
+  const pending = await owner.read(), command = structuredClone(pending.items[0].settingsCommand);
+  pending.items[0].photoSettings.FRONT.matColor = 'BLACK'; await f.journal.put(pending); await owner.run();
+  const item = (await owner.read()).items[0]; assert.equal(item.code, 'BATCH_IMPORT_SETTINGS_CONFLICT');
+  assert.deepEqual(item.settingsCommand, command); assert.equal(f.settingsRequests.length, 1); assert.equal(f.uploads.length, 0); await owner.dispose();
+});
+
+test('legacy partial drafts inherit Black independently and completed legacy journals keep the original path', async () => {
+  const f = fixture(), first = f.importer(); await first.saveSide('FRONT', file('front.png'));
+  const old = await f.journal.get(); delete old.draft.photoSettings; await f.journal.put(old); await first.dispose();
+  const next = f.importer(); await next.saveSide('BACK', file('back.png'), null, 'WHITE'); await next.whenIdle();
+  assert.deepEqual(f.settingsRequests[0].changes, { frontMatColor: 'BLACK', backMatColor: 'WHITE' }); await next.dispose();
+  const legacy = fixture(), original = legacy.importer(); await original.stage([file('old_front.jpg'), file('old_back.jpg')]);
+  await original.run(); assert.equal(legacy.settingsRequests.length, 0); assert.equal(legacy.uploads.length, 2); await original.dispose();
+});
+
+test('capture background validation cannot alter or admit a pending original', async () => {
+  const f = fixture(), owner = f.importer();
+  await assert.rejects(owner.saveSide('FRONT', file('front.png'), null, 'MAGENTA'), { code: 'BATCH_IMPORT_SETTINGS_INVALID' });
+  assert.equal(await owner.read(), null); assert.equal(f.creates.size, 0); await owner.dispose();
 });
 
 test('ten original Front/Back pairs admit durably while every network request is stalled', async () => {
