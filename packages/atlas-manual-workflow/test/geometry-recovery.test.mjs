@@ -15,7 +15,7 @@ function prepareFrame(state, side) {
   const sx = 1269 / 1200, sy = 1777 / 1920;
   return adoptGeometryPreparation(state, { id: `${side}:synthetic-preparation`, side,
     base: preparationBase(state, side), settingsRevision: state.sides[side].settingsRevision,
-    matColor: 'BLACK', cornerShape: 'ROUNDED_3_18_MM', proposal: { outcome: 'ACCEPTED', proposal: printed },
+    matColor: state.sides[side].matColor, cornerShape: state.sides[side].cornerShape, proposal: { outcome: 'ACCEPTED', proposal: printed },
     frame: { id: `${side}:prepared`, version: state.sides[side].preparationRevision + 1,
       rectified: { sha256: hash(side === 'FRONT' ? 'c' : 'd'), width: 1270, height: 1778 },
       inspection: { sha256: hash(side === 'FRONT' ? 'e' : 'f'), width: 1350, height: 1858, cardBounds: { x: 40, y: 40, width: 1270, height: 1778 } },
@@ -23,14 +23,14 @@ function prepareFrame(state, side) {
 }
 async function fixture({ previousBackWork = false } = {}) {
   const cardId = randomUUID(), staff = {}, objects = new Map(), commands = new Map(); let card;
-  const f = { prepares: 0, detections: 0, commits: 0, beforePrepare: null, failPrepare: false, loseNextReply: false, currentSource: hash('1') };
+  const f = { prepares: 0, detections: 0, commits: 0, beforePrepare: null, failPrepare: false, loseNextReply: false, currentSource: hash('1'), actorKind: 'HUMAN' };
   const artifacts = {
     async write(value) { const ref = { id: digest(canonical(value)) }; objects.set(ref.id, clone(value)); return ref; },
     async read(ref) { return clone(objects.get(ref.id)); },
   };
   const repository = {
     async provision(_staff, input) { const saved = stateDocument(input.draft); card = { cardId, revision: 1, contentHash: saved.hash, draft: saved.draft }; return clone(card); },
-    async load() { return { card: clone(card), principal: { id: 'synthetic-reviewer' } }; },
+    async load() { return { card: clone(card), principal: { id: 'synthetic-reviewer', actorKind: f.actorKind } }; },
     async findAction(_staff, _cardId, command) { const old = commands.get(command.actionId); if (!old) return null;
       requireThat(old.requestHash === inputCommand(command).requestHash, 409, 'MANUAL_ACTION_ID_CONFLICT'); return clone(old.result); },
     async commit(_staff, input) {
@@ -128,4 +128,77 @@ test('a replaced photo source during recovery rejects the candidate without alte
   const f = await fixture(), before = f.card(); f.beforePrepare = async () => { f.currentSource = hash('9'); };
   await assert.rejects(f.execute(f.command()), { code: 'MANUAL_PHOTOS_CHANGED' });
   assert.deepEqual(f.card(), before); assert.equal(f.commits, 0);
+});
+
+async function backgroundCommand(f, side = 'BACK', matColor = 'WHITE') {
+  return { ...f.command(), action: { type: 'SET_PHOTO_BACKGROUND', side,
+    base: geometryBase((await f.state()).geometry, side, 'SETTINGS'), matColor } };
+}
+
+test('background recovery preserves the other side, corner shape and source; subsequent detection uses the saved side mat', async () => {
+  const f = await fixture(), before = f.card(), old = await f.state(), command = await backgroundCommand(f);
+  const saved = await f.execute(command), changed = await f.state();
+  assert.deepEqual(changed.geometry.sides.FRONT, old.geometry.sides.FRONT);
+  assert.deepEqual(saved.card.draft.source, before.draft.source);
+  assert.equal(changed.geometry.sides.BACK.matColor, 'WHITE');
+  assert.equal(changed.geometry.sides.BACK.cornerShape, old.geometry.sides.BACK.cornerShape);
+  assert.equal(changed.geometry.sides.BACK.settingsRevision, old.geometry.sides.BACK.settingsRevision + 1);
+  assert.equal(changed.geometry.sides.BACK.physical, null); assert.equal(changed.defects, null);
+  assert.equal(f.detections, 0); assert.equal(f.prepares, 0);
+  assert.deepEqual(await f.execute(command), saved); assert.equal(f.commits, 1);
+  await f.execute(f.command());
+  const prepared = await f.state();
+  assert.equal(prepared.geometry.sides.BACK.matColor, 'WHITE');
+  assert(prepared.geometry.sides.BACK.physical); assert(prepared.geometry.sides.BACK.prepared);
+  assert.equal(f.detections, 1); assert.equal(prepared.geometry.sides.BACK.confirmation, null);
+  assert.deepEqual(prepared.geometry.sides.FRONT, old.geometry.sides.FRONT);
+});
+
+test('background recovery rejects stale and substituted-side bases without mutation', async () => {
+  const f = await fixture(), stale = await backgroundCommand(f);
+  await f.execute(stale);
+  const before = f.card();
+  await assert.rejects(f.execute({ ...stale, actionId: randomUUID(), expectedRevision: before.revision }), { code: 'ATLAS_GEOMETRY_STALE' });
+  const wrong = await backgroundCommand(f);
+  wrong.action.base = geometryBase((await f.state()).geometry, 'FRONT', 'SETTINGS');
+  await assert.rejects(f.execute(wrong), { code: 'ATLAS_GEOMETRY_STALE' });
+  assert.deepEqual(f.card(), before); assert.equal(f.commits, 1);
+});
+
+test('background recovery cannot change an adopted physical or historical side', async () => {
+  for (const previousBackWork of [false, true]) {
+    const f = await fixture({ previousBackWork });
+    if (!previousBackWork) {
+      await f.execute({ ...f.command(), action: { type: 'GEOMETRY_EDIT', edit: commandEdit((await f.state()).geometry, 'BACK', 'PHYSICAL') } });
+    }
+    const before = f.card(), commits = f.commits;
+    await assert.rejects(f.execute(await backgroundCommand(f)), { code: 'MANUAL_GEOMETRY_RECOVERY_UNAVAILABLE' });
+    assert.deepEqual(f.card(), before); assert.equal(f.commits, commits);
+    assert.equal(f.prepares, 0);
+  }
+  const f = await fixture(); await f.execute(f.command());
+  const before = f.card(); assert((await f.state()).defects);
+  await assert.rejects(f.execute(await backgroundCommand(f)), { code: 'MANUAL_GEOMETRY_RECOVERY_UNAVAILABLE' });
+  assert.deepEqual(f.card(), before);
+});
+
+test('background recovery rejects machines, malformed settings, source replacement and extra corner-shape fields', async () => {
+  const f = await fixture(), before = f.card(), command = await backgroundCommand(f);
+  f.actorKind = 'MACHINE';
+  await assert.rejects(f.execute(command), { code: 'MANUAL_HUMAN_REQUIRED' });
+  f.actorKind = 'HUMAN';
+  for (const action of [{ ...command.action, matColor: 'BLUE' }, { ...command.action, cornerShape: 'SQUARE' },
+    { ...command.action, side: 'LEFT' }]) await assert.rejects(f.execute({ ...command, actionId: randomUUID(), action }));
+  f.currentSource = hash('9');
+  await assert.rejects(f.execute(command), { code: 'MANUAL_PHOTOS_CHANGED' });
+  assert.deepEqual(f.card(), before); assert.equal(f.commits, 0); assert.equal(f.prepares, 0);
+});
+
+test('lost background-save reply recovers the exact receipt without advancing settings twice', async () => {
+  const f = await fixture(), command = await backgroundCommand(f); f.loseNextReply = true;
+  await assert.rejects(f.execute(command), { code: 'CONNECTION_LOST' });
+  const committed = f.card(), state = await f.state();
+  assert.deepEqual((await f.execute(command)).card, committed);
+  assert.equal((await f.state()).geometry.sides.BACK.settingsRevision, state.geometry.sides.BACK.settingsRevision);
+  assert.equal(f.commits, 1); assert.equal(f.prepares, 0);
 });

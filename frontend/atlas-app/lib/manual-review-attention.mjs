@@ -10,19 +10,23 @@ export function intakePhotoAttention(saved) {
     if (!upload?.source) return [{ key: `photo-${side}`, side,
       message: upload?.verification ? `${name(side)} photo needs preparation. Replace the photo, or resume its saved preparation below.`
         : `${name(side)} photo is needed. Choose or resume this side's original photo.` }];
+    // Once initialized, the saved workspace owns geometry and may contain human
+    // corrections newer than the automatic intake proposal.
+    if (saved.manual?.current) return [];
     const geometry = saved.earlyGeometry?.[side];
     if (geometry?.uploadId === upload.uploadId && (geometry.state === 'FAILED'
         || geometry.state === 'NEEDS_REVIEW' && geometry.machineUsable !== true)) return [{ key: `photo-${side}`, side,
-      message: `${name(side)} card outline needs review. Check this photo, then use Save & Review Geometry to correct the outline.` }];
+      message: `${name(side)} card outline needs review. Use Edit ${name(side)} geometry below to place or correct the outline.` }];
     return [];
   });
 }
 
-export function geometryCorrectionAttention(geometry) {
+export function geometryCorrectionAttention(geometry, preferredSide = null) {
   if (!geometry?.sides) return [];
-  return sides.flatMap(side => {
+  const orderedSides = sides.includes(preferredSide) ? [preferredSide, ...sides.filter(side => side !== preferredSide)] : sides;
+  return orderedSides.flatMap(side => {
     const slot = geometry.sides[side];
-    if (!slot || slot.confirmation) return [];
+    if (!slot || slot.confirmation && side !== preferredSide) return [];
     let kind, instruction;
     if (!slot.image) { kind = 'PHYSICAL'; instruction = 'The photo is unavailable. Return to photos to replace it.'; }
     else if (!slot.physical) { kind = 'PHYSICAL'; instruction = 'Place the four corners on the physical card edge.'; }

@@ -194,6 +194,8 @@ test('inspection context preview binds canonical lossless bytes and never enters
 test('retained quality92 core regenerates exact historical reveals without replacing its frame or admitting it as new work', async () => {
   const engine = await preparationRuntimeIdentity(python), historicalEngine = structuredClone(engine);
   delete historicalEngine.identity.sources['preparation_encoding.py'];
+  historicalEngine.identity.physicalProposalPolicy = 'atlas-native-photo-outer-ranking-v2';
+  historicalEngine.identity.sources['atlas_photo_geometry.py'] = '19f71cd33e2ce3a780f5a70638503d27a66ac648e1cf3d83d71f6438a24d36dc';
   delete historicalEngine.encodingAdapterSha256;
   historicalEngine.workerSha256 = 'a'.repeat(64); historicalEngine.adapterSha256 = 'b'.repeat(64);
   const outputDirectory = join(directory, 'legacy'); await mkdir(outputDirectory);
@@ -283,4 +285,36 @@ test('extracted pixel engines retain unchanged function bodies and no service/mo
   const service = fileURLToPath(new URL('../../../backend/ai-grader-speedster-service/', import.meta.url));
   const script = `import ast,sys,json,hashlib\nfrom pathlib import Path\nr=Path(sys.argv[1]);old=(r/'preparation_core.py').read_text();new=(r/'preparation_pixels.py').read_text();m=json.loads((r/'preparation-pixels-extraction.json').read_text())\nassert hashlib.sha256(old.encode()).hexdigest()==m['sourceSha256']\nf=lambda s:{n.name:ast.get_source_segment(s,n) for n in ast.parse(s).body if isinstance(n,ast.FunctionDef)}\nassert {k:f(old)[k] for k in m['functions']}==f(new)\nassert [n.names[0].name for n in ast.parse(new).body if isinstance(n,ast.Import)]==['cv2','numpy']\nprint('pass')`;
   assert.equal(execFileSync(python,['-I','-c',script,service],{encoding:'utf8'}).trim(),'pass');
+});
+
+test('qualified physical-only update regenerates lossless reveals without changing historical pixels or allowing other engine changes',async()=>{
+ const engine=await preparationRuntimeIdentity(python),historical=structuredClone(engine);
+ historical.identity.physicalProposalPolicy='atlas-native-photo-outer-ranking-v2';
+ historical.identity.sources['atlas_photo_geometry.py']='19f71cd33e2ce3a780f5a70638503d27a66ac648e1cf3d83d71f6438a24d36dc';
+ historical.adapterSha256='577707037436c234895d6d3c96e6af532d343be7f77a9f8a67810171b479056b';
+ const retain=old=>{
+  const {outputs,inspectionPreview,...value}=structuredClone(prepared);
+  value.identity=structuredClone(old.identity);value.outputContract=PREPARATION_CORE_V1;value.sourceQuad=structuredClone(workspace.sides.FRONT.physical.quad);
+  value.id=descriptorSha256({mode:'PREPARE',matColor:'BLACK',quad:value.sourceQuad,frameDescriptorSha256:value.frameDescriptorSha256,engine:old,proposal:value.proposal,outputContract:PREPARATION_CORE_V1});
+  value.frame.id=`prepared-${value.id}`;return value;
+ };
+ const retained=retain(historical),before=structuredClone(retained);
+ const options={source,matColor:'BLACK',limits,pythonExecutable:python,engine:historical,prepared:retained};
+ const result=await prepareDeferredPhotoReveals(options);
+ assert.deepEqual(retained,before);assert.deepEqual(result.frame,retained.frame);
+ for(const name of ['normalized','microDefect','directional'])assert.deepEqual(result.outputs[name].bytes,prepared.outputs[name].bytes);
+ for(const mutate of [
+  e=>{e.identity.sources['atlas_photo_geometry.py']='a'.repeat(64);},
+  e=>{e.identity.sources['preparation_pixels.py']='a'.repeat(64);},
+  e=>{e.identity.physicalProposalPolicy='unknown';},
+  e=>{e.adapterSha256='a'.repeat(64);},e=>{e.workerSha256='a'.repeat(64);},
+  e=>{e.encodingAdapterSha256='a'.repeat(64);},e=>{e.executableSha256='a'.repeat(64);},
+  e=>{e.native[Object.keys(e.native)[0]]='a'.repeat(64);},
+ ]){
+  const changed=structuredClone(historical);mutate(changed);
+  await assert.rejects(prepareDeferredPhotoReveals({...options,engine:changed,prepared:retain(changed)}),e=>e.code==='PREPARATION_ENGINE_CHANGED');
+ }
+ const badPixels=structuredClone(retained);badPixels.frame.inspection.sha256='a'.repeat(64);
+ await assert.rejects(prepareDeferredPhotoReveals({...options,prepared:badPixels}),e=>e.code==='PREPARATION_SOURCE_MISMATCH');
+ await assert.rejects(preparePhotoGeometry({...options,quad:retained.sourceQuad}),e=>e.code==='PREPARATION_ENGINE_CHANGED');
 });

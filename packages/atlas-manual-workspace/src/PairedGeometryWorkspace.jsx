@@ -62,7 +62,7 @@ export function geometryImageBinding(state, side, kind, images) {
     revision: kind === 'PHYSICAL' ? state.sides[side].imageRevision : state.sides[side].preparationRevision }) : null;
 }
 
-function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, onReady, preparing, locked, compact, renderEditActions, attention }) {
+function SideEditor({ state, side, kind, images, onEdit, onPrepare, onBackground, onActivity, onReady, preparing, locked, compact, renderEditActions, attention }) {
   const slot = state.sides[side], status = geometryStatus(state).sides[side];
   const image = geometryImage(state, side, kind, images);
   const verified = useVerifiedImage(image, { cacheScope: JSON.stringify([state.cardId, side]) });
@@ -119,6 +119,13 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
     try { await onPrepare(side); } catch { setError(canDetect
       ? 'Automatic edges could not be prepared. Your saved photo and the other side are retained. You can retry or place the physical edge manually.'
       : 'Preparation did not finish. The saved physical edge is retained.'); }
+    finally { setBusy(false); }
+  };
+  const changeBackground = async matColor => {
+    if (!onBackground || !canDetect || busy || dirty || locked || preparing || matColor === slot.matColor) return;
+    setBusy('DETECTING'); setError('');
+    try { await onBackground({ side, base: geometryBase(state, side, 'SETTINGS'), matColor }); }
+    catch { setError('Background detection could not finish. Your saved photo is retained. Retry detection or place the outline manually.'); }
     finally { setBusy(false); }
   };
   let physical = kind === 'PHYSICAL' ? quad : slot.prepared ? [{ x: 0, y: 0 }, { x: 1269 / 1270, y: 0 }, { x: 1269 / 1270, y: 1777 / 1778 }, { x: 0, y: 1777 / 1778 }] : null;
@@ -180,6 +187,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
     {quad && <div className="am-coordinate-tools"><label>Corner <select aria-label={`${side} corner`} value={corner} onChange={event => setCorner(Number(event.target.value))}>{CORNERS.map((label, i) => <option value={i} key={i}>{label}</option>)}</select></label><span className="am-coordinate">{Math.round(quad[corner].x * (image?.width ?? 0))}, {Math.round(quad[corner].y * (image?.height ?? 0))} px</span><button type="button" disabled={inactive} aria-label={`${side} nudge left`} onClick={() => setPoint(corner, { ...quad[corner], x: quad[corner].x - 1 / image.width })}>←</button><button type="button" disabled={inactive} aria-label={`${side} nudge up`} onClick={() => setPoint(corner, { ...quad[corner], y: quad[corner].y - 1 / image.height })}>↑</button><button type="button" disabled={inactive} aria-label={`${side} nudge down`} onClick={() => setPoint(corner, { ...quad[corner], y: quad[corner].y + 1 / image.height })}>↓</button><button type="button" disabled={inactive} aria-label={`${side} nudge right`} onClick={() => setPoint(corner, { ...quad[corner], x: quad[corner].x + 1 / image.width })}>→</button></div>}
     {stale && <p role="alert">This side changed while you were editing. Your unsaved adjustment has been retained.</p>}
     {error && <p role="alert">{error}</p>}
+    {canDetect && onBackground && <div className="am-local-tools"><label>Photo background <select aria-label={`${side} background mat`} value={slot.matColor} disabled={busy || dirty || locked || preparing} onChange={event => void changeBackground(event.target.value)}><option value="BLACK">Black</option><option value="WHITE">White</option><option value="MAGENTA">Magenta</option></select></label><small>Match the surface behind this photo. Changing it retries this side's edge detection.</small></div>}
     <div className="am-side-actions">
       {!dirty && canDetect && onPrepare && <button type="button" className="am-primary" onClick={prepare} disabled={busy || locked || preparing}>Detect edges automatically</button>}
       {!quad && <button type="button" onClick={start} disabled={!ready || busy || locked}>Start manual outline</button>}
@@ -194,7 +202,7 @@ function SideEditor({ state, side, kind, images, onEdit, onPrepare, onActivity, 
  * authoritative save/readback and update `workspace`; rejected saves retain the
  * local draft. The host owns source verification, current version CAS, session
  * auth, persistence, automatic preparation and stage progression. */
-export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, onPrepare, onEditingChange, preparingSides = {}, title = 'Edges & centering', saveStatus = '', renderReviewActions, renderEditActions, attention = [], attentionSelection }) {
+export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, onPrepare, onBackground, onEditingChange, preparingSides = {}, title = 'Edges & centering', saveStatus = '', renderReviewActions, renderEditActions, attention = [], attentionSelection }) {
   const status = geometryStatus(workspace);
   const [kind, setKind] = useState(attention[0]?.kind ?? 'PHYSICAL'), [activity, setActivity] = useState({ FRONT: false, BACK: false });
   const [loaded, setLoaded] = useState({ FRONT: null, BACK: null });
@@ -220,7 +228,7 @@ export function PairedGeometryWorkspace({ workspace, images, onEdit, onConfirm, 
   return <div className="atlas-manual">
     <header className="am-header"><span className="am-brand">ATLAS</span><h1>{title}</h1><span>{saveStatus}</span></header>
     <div className="am-toolbar"><div className="am-tool-choice" aria-label="Geometry tool"><button type="button" disabled={editing || confirming} data-review-attention={attention.some(issue=>issue.kind==='PHYSICAL')} aria-pressed={kind === 'PHYSICAL'} onClick={() => setKind('PHYSICAL')}>Physical edge</button><button type="button" disabled={editing || confirming} data-review-attention={attention.some(issue=>issue.kind==='PRINTED'||issue.reviewBoth)} aria-pressed={kind === 'PRINTED'} onClick={() => setKind('PRINTED')}>Printed border</button></div><div className="am-legend"><span><i className="am-edge-key" />Physical edge</span><span><i className="am-border-key" />Printed border</span></div></div>
-    <div className="am-pair">{SIDES.map(side => <SideEditor key={side} attention={attention.find(issue=>issue.side===side)} compact={Boolean(renderReviewActions)} renderEditActions={renderEditActions} state={workspace} side={side} kind={kind} images={images} onEdit={onEdit} onPrepare={onPrepare} onActivity={onActivity} onReady={onReady} preparing={Boolean(preparingSides[side])} locked={confirming} />)}</div>
+    <div className="am-pair">{SIDES.map(side => <SideEditor key={side} attention={attention.find(issue=>issue.side===side)} compact={Boolean(renderReviewActions)} renderEditActions={renderEditActions} state={workspace} side={side} kind={kind} images={images} onEdit={onEdit} onPrepare={onPrepare} onBackground={onBackground} onActivity={onActivity} onReady={onReady} preparing={Boolean(preparingSides[side])} locked={confirming} />)}</div>
     {renderReviewActions ? renderReviewActions({approve:confirm, disabled:!bothVisible || !status.canConfirmBoth || editing || confirming || !onConfirm, busy:confirming, message:editing ? 'Save or discard your outline.' : 'Approve both physical edges and printed borders.'}) : <footer className="am-footer"><span aria-live="polite">{editing ? 'Save or discard your adjustments before continuing.' : status.confirmed ? 'Both sides confirmed. Ready for defect inspection.' : 'Review the physical edge and printed border on both sides.'}</span><button type="button" className="am-primary" onClick={confirm} disabled={!bothVisible || !status.canConfirmBoth || status.confirmed || editing || confirming || !onConfirm}>{confirming ? 'Confirming…' : 'Confirm both sides'}</button></footer>}
     {error && <p className="am-error" role="alert">{error}</p>}
   </div>;

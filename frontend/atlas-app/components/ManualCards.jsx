@@ -1,4 +1,4 @@
-import ReviewAttention from './ReviewAttention';
+import ReviewAttention,{focusReviewTarget} from './ReviewAttention';
 import {intakePhotoAttention,geometryCorrectionAttention,analysisCorrectionAttention} from '../lib/manual-review-attention.mjs';
 import {RapidActionDock,RapidEditDock} from './RapidReviewControls';
 import {primeReviewAudio,recordReviewCompletion,playReviewCompletion,claimReviewVoice,playAtlasVoice,reviewSoundEnabled,ATLAS_LINES} from '../lib/review-feedback.mjs';
@@ -44,6 +44,7 @@ export default function ManualCards({staff,cardId=null}){
   const [cards,setCards]=useState([]),[saved,setSaved]=useState(null),[pending,setPending]=useState([]),[error,setError]=useState(''),[busy,setBusy]=useState(''),[screen,setScreen]=useState('intake');
   const [identifying,setIdentifying]=useState(false),[changes,setChanges]=useState({}),[localReady,setLocalReady]=useState(false);
   const [commandPending,setCommandPending]=useState(null);
+  const [geometryEntrySide,setGeometryEntrySide]=useState(null);
   const [nextCursor,setNextCursor]=useState(null);
   const [uploadState,setUploadState]=useState({}),[invalidDetails,setInvalidDetails]=useState({});
   const geometryClient=useRef(null),[geometryError,setGeometryError]=useState(''),[geometryRetry,setGeometryRetry]=useState({});
@@ -106,7 +107,7 @@ export default function ManualCards({staff,cardId=null}){
   useEffect(()=>{
     const started=++generation.current;let stopped=false,journal,batchJournal,ownedClient,cleanup;
     savedRef.current=null;changesRef.current={};uploadLocks.current={};activity.current=null;reads.current={next:0,applied:0};leavingDeleted.current=false;
-    setSaved(null);setChanges({});setUploadState({});setInvalidDetails({});setBusy('');setError('');setIdentifying(false);setCommandPending(null);setPending([]);setScreen('intake');setLocalReady(false);
+    setSaved(null);setChanges({});setUploadState({});setInvalidDetails({});setBusy('');setError('');setIdentifying(false);setCommandPending(null);setGeometryEntrySide(null);setPending([]);setScreen('intake');setLocalReady(false);
     (async()=>{
       const currentSession=await request('/api/staff/session');
       if(stopped)return;
@@ -211,7 +212,8 @@ export default function ManualCards({staff,cardId=null}){
     const started=generation.current,original=savedRef.current,edits={...changesRef.current};
     if(!original?.card.ready||Object.keys(uploadLocks.current).length||identifying)return;
     const invalid=detailErrors(original.details,edits);setInvalidDetails(invalid);
-    if(Object.keys(invalid).length){setError('Check the highlighted card details before reviewing geometry.');return;}
+    if(Object.keys(invalid).length){setError('Check the highlighted card details before reviewing geometry.');
+      if(typeof requestAnimationFrame==='function')requestAnimationFrame(()=>focusReviewTarget(`detail-${Object.keys(invalid)[0]}`));return;}
     const value=await saveDetails(original,edits);
     if(started!==generation.current||!value)return;
     if(value.card.sourceHash!==original.card.sourceHash||Object.keys(changesRef.current).length)throw {code:'MANUAL_DETAILS_STALE'};
@@ -230,6 +232,13 @@ export default function ManualCards({staff,cardId=null}){
     await durable(`/api/staff/manual/cards/${cardId}/actions`,{actionId:crypto.randomUUID(),expectedRevision:saved.manual.revision,action:{type:'REPLACE_SOURCES',sourceHash:saved.card.sourceHash}});
     if(started!==generation.current)return;const result=await refresh();if(started===generation.current&&result?.manual?.current)setScreen('workspace');
   }
+  async function openGeometry(side){
+    if(!savedRef.current?.card.ready||Object.keys(uploadLocks.current).length||pendingPhotos||commandPending||identifying||staff.role!=='REVIEWER')return;
+    setGeometryEntrySide(side);
+    if(savedRef.current.manual?.current)setScreen('workspace');
+    else if(savedRef.current.manual)await replace();
+    else await initialize();
+  }
   const profile=Object.hasOwn(changes,'profile')?changes.profile:saved?.details.profile;
   const layoutType=Object.hasOwn(changes,'layoutType')?changes.layoutType:saved?.details.layoutType;
   const activePending=pending.filter(item=>!cardId || item.value.cardId===cardId);
@@ -242,7 +251,10 @@ export default function ManualCards({staff,cardId=null}){
   const reviewIssues=[...photoAttention,...Object.entries(fieldProblems).filter(([,message])=>message).map(([key,message])=>({key:`detail-${key}`,message:`${labels[key]??({profile:'Card family',layoutType:'Pokémon card kind'})[key]??key}: ${message}`}))];
   const detailIssue=key=>fieldProblems[key]?<small className="mc-field-error" role="alert">{fieldProblems[key]}</small>:null;
   const detailTarget=key=>({'data-review-target':`detail-${key}`,'data-review-attention':Boolean(fieldProblems[key]),tabIndex:-1});
-  const settingsChanged=['matColor','cornerShape'].some(key=>Object.hasOwn(changes,key)&&changes[key]!==saved?.details[key]);
+  const photoMatKey=side=>side==='FRONT'?'frontMatColor':'backMatColor';
+  const photoMat=(details,side)=>details?.[photoMatKey(side)]??details?.matColor;
+  const settingsChanged=side=>photoMat({...saved?.details,...changes},side)!==photoMat(saved?.details,side)
+    ||Object.hasOwn(changes,'cornerShape')&&changes.cornerShape!==saved?.details.cornerShape;
   async function retryGeometry(side){
     const owner=geometryClient.current;if(!owner||geometryRetry[side])return;
     const started=generation.current;setGeometryRetry(old=>({...old,[side]:true}));setGeometryError('');
@@ -266,7 +278,7 @@ export default function ManualCards({staff,cardId=null}){
       <div className="mc-section-title"><h2>Your cards</h2><span>{cards.length}{nextCursor?'+':''} in this view</span></div>
       <div className="mc-card-list">{cards.map(card=><Link href={`/manual/${card.cardId}`} key={card.cardId}><span className="mc-card-monogram" aria-hidden="true">A<span>↗</span></span><strong>{card.label||'Untitled card'}</strong><span className="mc-card-photostatus"><i data-ready={Boolean(card.sides.FRONT.upload?.source)}>Front {card.sides.FRONT.upload?.source?'ready':'needed'}</i><i data-ready={Boolean(card.sides.BACK.upload?.source)}>Back {card.sides.BACK.upload?.source?'ready':'needed'}</i></span><small>{new Date(card.createdAt).toLocaleString()}</small></Link>)}{localReady&&!cards.length&&<div className="mc-empty-collection"><span aria-hidden="true">✧</span><h3>Your next discovery starts here.</h3><p>Add Front and Back photos to the queue. ATLAS starts preparing and grading each card automatically.</p></div>}</div>
       {nextCursor&&<div className="mc-actions"><button disabled={Boolean(busy)} onClick={()=>perform(async()=>{const result=await client.current.list({cursor:nextCursor});setCards(old=>[...old,...result.cards.filter(card=>!old.some(value=>value.cardId===card.cardId))]);setNextCursor(result.nextCursor);},'Loading older cards…')}>Load more cards</button></div>}
-    </>:deletePending?<p role="status">Finish the saved deletion to continue.</p>:!saved?<p role="status">Loading saved card…</p>:screen==='workspace'&&saved.manual?.current?<ManualWorkspace key={`${staff.id}:${cardId}`} staff={staff} cardId={cardId} csrf={session.current.csrf} onPhotos={()=>{setScreen('intake');perform(()=>refresh(),'Loading saved photos…');}}/>:<>
+    </>:deletePending?<p role="status">Finish the saved deletion to continue.</p>:!saved?<p role="status">Loading saved card…</p>:screen==='workspace'&&saved.manual?.current?<ManualWorkspace key={`${staff.id}:${cardId}`} staff={staff} cardId={cardId} csrf={session.current.csrf} initialGeometrySide={geometryEntrySide} onPhotos={()=>{setScreen('intake');setGeometryEntrySide(null);perform(()=>refresh(),'Loading saved photos…');}}/>:<>
       <header className="mc-heading"><div><Link className="mc-back" href="/manual">← All cards</Link>{staff.role==='REVIEWER'&&<button className="mc-delete-card" disabled={Boolean(busy)||uploading} onClick={()=>void removeCards(cardId)}>Delete this card</button>}<p className="mc-kicker">01 / PHOTOGRAPHS &amp; IDENTITY</p><h1>{saved.card.label||'New card'}</h1><p>Choose the original Front and Back photographs. Edge detection starts automatically as each photo becomes ready.</p></div>{saved.manual?.current&&<button className="primary" disabled={Boolean(busy)||uploading||pendingPhotos} onClick={()=>setScreen('workspace')}>Return to review</button>}</header>
       <ol className="mc-journey" aria-label="Grading journey"><li aria-current="step"><b>01</b><span>Capture<small>Original photographs</small></span></li><li><b>02</b><span>Measure<small>Edges &amp; centering</small></span></li><li><b>03</b><span>Inspect<small>Every finding</small></span></li><li><b>04</b><span>Explain<small>The final report</small></span></li></ol>
       {geometryError&&<div className="mc-notice" role="status">Geometry status could not be refreshed. {geometryError} <button onClick={()=>perform(()=>refresh(),'Checking geometry…')}>Refresh geometry status</button></div>}
@@ -274,16 +286,19 @@ export default function ManualCards({staff,cardId=null}){
         const sidePending=activePending.filter(item=>item.value.kind==='upload'&&item.value.input.side===side);
         const recovery=slot.upload?.uploadId?sidePending.find(item=>item.value.uploadId===slot.upload.uploadId):sidePending[0];
         const originalSaved=Boolean(slot.upload?.verification||recovery?.value.verified);
-        const geometryStatus=saved.earlyGeometry?.[side]?.uploadId===slot.upload?.uploadId?saved.earlyGeometry?.[side]:undefined;
+        const geometryStatus=!saved.manual?.current&&saved.earlyGeometry?.[side]?.uploadId===slot.upload?.uploadId?saved.earlyGeometry?.[side]:undefined;
         const attention=photoAttention.find(issue=>issue.side===side);
         return <article key={side} data-review-target={`photo-${side}`} data-review-attention={Boolean(attention)} tabIndex={-1}>{attention&&<p className="mc-review-reason">{attention.message}</p>}<div className="mc-photo-title"><h2>{sideName}</h2><span>{slot.upload?.source?'Original retained':'Add photograph'}</span></div>
-        {slot.upload?.source?<EarlyGeometryPreview key={slot.version} side={sideName} status={geometryStatus} settingsChanged={settingsChanged} src={reviewImagePreview(saved.previews?.[side])?.url??saved.previews?.[side]?.url??`${STAFF_BASE_PATH}${prefix}/${cardId}/preview-image/${side}`} />:<div className="mc-photo-empty"><span aria-hidden="true" className="mc-photo-outline">{side==='FRONT'?'F':'B'}</span><strong>{originalSaved?'Original saved. Resume image preparation.':recovery?'Photo retained on this device. Resume its upload.':'Original photo needed'}</strong><small>Full resolution. Every detail.</small></div>}
-        <EarlyGeometryStatus status={geometryStatus} settingsChanged={settingsChanged} retrying={Boolean(geometryRetry[side])} onRetry={()=>void retryGeometry(side)}/>
+        {slot.upload?.source?<EarlyGeometryPreview key={slot.version} side={sideName} status={geometryStatus} settingsChanged={settingsChanged(side)} src={reviewImagePreview(saved.previews?.[side])?.url??saved.previews?.[side]?.url??`${STAFF_BASE_PATH}${prefix}/${cardId}/preview-image/${side}`} />:<div className="mc-photo-empty"><span aria-hidden="true" className="mc-photo-outline">{side==='FRONT'?'F':'B'}</span><strong>{originalSaved?'Original saved. Resume image preparation.':recovery?'Photo retained on this device. Resume its upload.':'Original photo needed'}</strong><small>Full resolution. Every detail.</small></div>}
+        <EarlyGeometryStatus status={geometryStatus} settingsChanged={settingsChanged(side)} retrying={Boolean(geometryRetry[side])} onRetry={()=>void retryGeometry(side)}/>
+        {saved.manual?.current&&<p>Open Edit {sideName} geometry below to see your saved outline and printed border.</p>}
+        {!saved.manual&&<div className="mc-fields"><label>{sideName} photo background<select aria-label={`${sideName} photo background`} value={photoMat({...saved.details,...changes},side)} disabled={!localReady||Boolean(busy)||Boolean(commandPending)||staff.role!=='REVIEWER'} onChange={event=>changeDetail(photoMatKey(side),event.target.value)}><option value="BLACK">Black</option><option value="WHITE">White</option><option value="MAGENTA">Magenta</option></select><small>Match the surface behind this side of the card.</small></label></div>}
+        {slot.upload?.source&&<div className="mc-actions"><button type="button" className="primary" disabled={!localReady||!saved.card.ready||Boolean(busy)||uploading||pendingPhotos||Boolean(commandPending)||identifying||staff.role!=='REVIEWER'} onClick={()=>perform(()=>openGeometry(side),'Opening geometry…')}>Edit {sideName} geometry</button><small>{saved.card.ready?'Place or adjust the physical outline and printed border.':'Prepare both photos to open the geometry editor.'}</small></div>}
         <label className="mc-upload">{slot.upload?'Replace original photo':'Choose original photo'}<input aria-label={`${side} original photo`} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.HEIC,.heif,.HEIF" disabled={!localReady||Boolean(busy)||Boolean(uploadState[side]?.busy)||Boolean(commandPending)||staff.role!=='REVIEWER'||activePending.some(item=>item.value.kind==='upload'&&item.value.input.side===side)} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void uploadSide(side,owner=>owner.upload(cardId,side,slot.version,file),`Saving ${side==='FRONT'?'Front':'Back'} original…`);}}/></label>
         {uploadState[side]?.busy&&<p role="status">{uploadState[side].label}</p>}{uploadState[side]?.error&&<p className="mc-field-error" role="alert">{uploadState[side].error}</p>}
         {uploadState[side]?.refreshError&&<p className="mc-field-error" role="alert">The saved photo status could not be refreshed. {uploadState[side].refreshError} <button type="button" disabled={Boolean(busy)||Boolean(uploadState[side]?.busy)} onClick={()=>void uploadSide(side,async()=>{},'Checking saved photo status…')}>Reload {sideName} photo status</button></p>}
         {(recovery||slot.upload?.verification&&!slot.upload.source)&&<button type="button" disabled={!localReady||Boolean(busy)||Boolean(uploadState[side]?.busy)||Boolean(commandPending)||staff.role!=='REVIEWER'} onClick={()=>void uploadSide(side,owner=>recovery?owner.resume(recovery.id):owner.prepareSaved(cardId,slot.upload.uploadId),`Preparing saved ${sideName} photo…`)}>Resume {sideName} photo</button>}
-        <p>{slot.upload?.source?'Original retained · full-resolution SDR working view':originalSaved?'Original verified and retained':recovery?'Resume the saved upload before choosing a replacement.':'Choose one side of this card'}</p></article>;})}</section>
+        <p>{slot.upload?.source?'Original photo retained · outline preview':originalSaved?'Original verified and retained':recovery?'Resume the saved upload before choosing a replacement.':'Choose one side of this card'}</p></article>;})}</section>
       {saved.manual?<section className="mc-notice"><p>{saved.manual.current?'Your geometry and findings are saved.':'A photo changed. Review the new side before confirming the pair again; the other side’s work is retained.'}</p>
         {!saved.manual.current&&<button className="primary" disabled={!saved.card.ready||Boolean(busy)||uploading||pendingPhotos} onClick={()=>perform(replace,'Preparing the changed photo…')}>Use replaced photo pair</button>}</section>:
       <section className="mc-details" {...detailTarget('identity')}><div className="mc-heading"><div><h2>Card details</h2><p>{identifying?'Reading the Front and Back photos…':saved.identification.state==='COMPLETE'?'Suggestions are ready. Check the details printed on your card.':saved.identification.rejection?.code==='API_CREDIT_BALANCE_EXHAUSTED'?'This identification request was rejected because the ATLAS API credit balance was exhausted. If credits have been added, retry identification. Your original photos are saved.':saved.identification.rejection?.code==='API_REQUEST_REJECTED'?'The identification provider rejected the request. Your photos are saved; enter the printed details or contact the owner.':['UNKNOWN','FAILED','UNAVAILABLE'].includes(saved.identification.state)?'Automatic details are unavailable. Enter the printed details to continue.':'Add both photos for automatic identification.'}</p>{saved.identification.rejection?.code==='API_CREDIT_BALANCE_EXHAUSTED'&&<a href="https://platform.openai.com/settings/organization/billing" target="_blank" rel="noopener noreferrer">Open API billing</a>}</div>{['RUNNING','NOT_STARTED'].includes(saved.identification.state)&&saved.card.ready&&!identifying&&<button onClick={()=>perform(async()=>{await request(`${prefix}/${cardId}/identify`,{method:'POST',body:{}});await refresh();},'Checking identification…')}>Check saved identification</button>}{saved.identification.rejection?.code==='API_CREDIT_BALANCE_EXHAUSTED'&&saved.identification.rejection.canRetry===true&&staff.role==='REVIEWER'&&<button disabled={!saved.card.ready||Boolean(busy)||Boolean(commandPending)||dirty||identifying} onClick={()=>perform(retryIdentification,'Retrying identification…')}>Retry identification</button>}</div>
@@ -294,7 +309,6 @@ export default function ManualCards({staff,cardId=null}){
             <label {...detailTarget('parallel')}>Parallel for report<input aria-invalid={Boolean(fieldProblems.parallel)} value={changes.parallel??saved.details.parallel} maxLength={120} onChange={event=>changeDetail('parallel',event.target.value)}/>{detailIssue('parallel')}<small>Confirm the printed variant here if it is the card’s parallel.</small></label>
             <label {...detailTarget('insert')}>Insert for report<input aria-invalid={Boolean(fieldProblems.insert)} value={changes.insert??saved.details.insert} maxLength={120} onChange={event=>changeDetail('insert',event.target.value)}/>{detailIssue('insert')}</label>
             <label>Corner shape<select value={changes.cornerShape??saved.details.cornerShape} onChange={event=>changeDetail('cornerShape',event.target.value)}><option value="ROUNDED_3_18_MM">Rounded</option><option value="SQUARE">Square</option></select></label>
-            <label>Background mat<select value={changes.matColor??saved.details.matColor} onChange={event=>changeDetail('matColor',event.target.value)}><option value="BLACK">Black</option><option value="WHITE">White</option><option value="MAGENTA">Magenta</option></select></label>
           </div><div className="mc-actions"><button className="primary" disabled={!saved.card.ready||Boolean(busy)||Boolean(commandPending)||uploading||pendingPhotos||identifying||staff.role!=='REVIEWER'}>Save &amp; Review Geometry →</button></div>
         </fieldset></form>
       </section>}
@@ -313,14 +327,14 @@ function finalFindingsAvailable(view){
   }));
 }
 
-export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSession,onBusyChange,onQueued}){
+export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSession,onBusyChange,onQueued,initialGeometrySide=null}){
   const imageScope=useRef(rapid?'inspection':'all');
   const [view,setView]=useState(null),[screen,setScreen]=useState('geometry'),[error,setError]=useState(''),[status,setStatus]=useState(''),[report,setReport]=useState(null),[editing,setEditing]=useState(false),[preparing,setPreparing]=useState({}),[approving,setApproving]=useState(false),[identity,setIdentity]=useState(null),[refreshingImages,setRefreshingImages]=useState(false);
   const rapidInFlight=useRef(false),[rapidSaving,setRapidSaving]=useState(false);
   const [rapidSelection,setRapidSelection]=useState(null),rapidAccepted=useRef({key:null,ids:new Set()}),[completionFeedback,setCompletionFeedback]=useState(null);
   const [showFinishing,setShowFinishing]=useState(!rapid),[showReport,setShowReport]=useState(false),[showExtras,setShowExtras]=useState(false);
   const client=useRef(null),analysisClient=useRef(null),imageRefresh=useRef(null),viewRef=useRef(null),interaction=useRef({}),router=useRouter();
-  const reviewMode=!rapid&&router.query?.from==='batch';
+  const reviewMode=!rapid&&(router.query?.from==='batch'||Boolean(initialGeometrySide));
   const [attentionSelection,setAttentionSelection]=useState(null);
   const [reportImagesReady,setReportImagesReady]=useState(false),[loadingReport,setLoadingReport]=useState(false);
   const [publishing,setPublishing]=useState(false),[copyStatus,setCopyStatus]=useState('');
@@ -341,8 +355,8 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
         const updated={...viewRef.current,astra};viewRef.current=updated;setView(updated);
       }});
     analysisClient.current=ownedAnalysis;
-    void ownedClient.recover().then(async value=>{if(stopped)return;setScreen(rapid?'geometry-review':reviewMode&&geometryCorrectionAttention(value.geometry).length?'geometry':reviewMode&&analysisCorrectionAttention(value.astra).length?'defects':value.finalReview?'provisional':geometryStatus(value.geometry).confirmed?'defects':'geometry');
-      if(value.approval?.sourceHash===value.card.contentHash)await openReport();
+    void ownedClient.recover().then(async value=>{if(stopped)return;setScreen(rapid?'geometry-review':initialGeometrySide?'geometry':reviewMode&&geometryCorrectionAttention(value.geometry).length?'geometry':reviewMode&&analysisCorrectionAttention(value.astra).length?'defects':value.finalReview?'provisional':geometryStatus(value.geometry).confirmed?'defects':'geometry');
+      if(!initialGeometrySide&&value.approval?.sourceHash===value.card.contentHash)await openReport();
       else if(value.astra?.enabled)await ownedAnalysis.refresh();
     }).catch(error=>{if(!stopped)setError(manualMessage(error));});
     const timer=setInterval(()=>{const current=viewRef.current;if(!ownedClient.hasPending()&&current?.approval?.sourceHash!==current?.card.contentHash)void attempt(refreshImages);},240000);
@@ -558,7 +572,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
       <button className="mc-rapid-approve" aria-label={approveAria} disabled={disabled} onClick={approve}>{busy?'Saving…':approveLabel}</button>
     </div></RapidActionDock>;
   }
-  const geometryAttention=reviewMode?geometryCorrectionAttention(view?.geometry):[],analysisAttention=reviewMode?analysisCorrectionAttention(view?.astra):[];
+  const geometryAttention=reviewMode?geometryCorrectionAttention(view?.geometry,initialGeometrySide):[],analysisAttention=reviewMode?analysisCorrectionAttention(view?.astra):[];
   if(!view)return <div>{error&&<p role="alert">{error}</p>}<p role="status">Loading saved review…</p><button onClick={()=>attempt(()=>client.current.recover())}>Retry</button></div>;
   const approved=screen==='report'&&report&&view.approval?.sourceHash===view.card.contentHash&&view.approval.reportHash===report.reportHash;
   if(approved){
@@ -609,6 +623,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
       approve:()=>attempt(()=>rapidStage==='geometry'?approveStage('geometry'):approveRapidFinding())
     })}</>:
     screen==='geometry'?<PairedGeometryWorkspace attention={geometryAttention} attentionSelection={attentionSelection} renderEditActions={rapid?(children,side)=><RapidEditDock side={side}>{children}</RapidEditDock>:undefined} renderReviewActions={rapid?options=>rapidControls({...options,approveAria:'Approve corrected geometry'}):undefined} workspace={view.geometry} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} preparingSides={preparing} onPrepare={prepare}
+      onBackground={!view.defects&&!view.finalReview?async input=>{await execute({type:'SET_PHOTO_BACKGROUND',...input});await prepare(input.side);}:undefined}
       onEdit={async input=>{const {actor,proposal,...edit}=input;await execute({type:'GEOMETRY_EDIT',edit});if(input.kind==='PHYSICAL')void attempt(()=>prepare(input.side));}}
       onConfirm={async({base,reviewed})=>{await execute({type:'CONFIRM_GEOMETRY',base,reviewed});setScreen(rapid?'findings-review':'defects');setReportImagesReady(false);}}/>:
     screen==='defects'&&view.defects?<><DefectReviewWorkspace attentionMessage={analysisAttention[0]?.message} renderEditActions={rapid?(children,side)=><RapidEditDock side={side}>{children}</RapidEditDock>:undefined} renderReviewActions={rapid?options=>rapidControls({...options,approveAria:'Approve corrected defects'}):undefined} workspace={view.defects} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} grade={currentGrade}

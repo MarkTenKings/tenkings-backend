@@ -1,6 +1,6 @@
 import { canonical, digest, object, requireThat, ManualServiceError } from '@atlas/manual-service/contract';
 import { createManualService } from '@atlas/manual-service';
-import { applyGeometryEdit, canDetectMissingPhysical, confirmBothGeometry, geometryStatus, parseGeometryWorkspace, GeometryActionError } from '@atlas/manual-workspace/geometry-actions';
+import { applyGeometryEdit, canDetectMissingPhysical, confirmBothGeometry, geometryStatus, parseGeometryWorkspace, updateGeometrySettings, GeometryActionError } from '@atlas/manual-workspace/geometry-actions';
 import { beginDefectEdit, applyDefectMeasurement, confirmDefectFindings, createDefectWorkspace, defectBase,
   markDefectSideInspected, parseDefectWorkspace, previewDefectReport, replaceDefectFrame, discardPendingDefectEdit, DefectActionError } from '@atlas/manual-workspace/defect-actions';
 import { measureDefectWorkspaceEdit, MeasurementError } from '@atlas/measurement-runtime';
@@ -129,6 +129,17 @@ export function createManualWorkflow({ repository, artifacts, pythonExecutable, 
       else defects = initialDefects(geometry);
       draft = { ...draft, version: 'atlas-manual-workflow-v2', source: replaced.source };
       delete draft.finalReview; delete draft.geometryBeforeEdit;
+    } else if (action.type === 'SET_PHOTO_BACKGROUND') {
+      object(action, ['type', 'side', 'base', 'matColor']);
+      requireThat(principal.actorKind !== 'MACHINE', 403, 'MANUAL_HUMAN_REQUIRED');
+      requireThat(SIDES.includes(action.side) && canDetectMissingPhysical(geometry, action.side)
+        && !defects && !finalReview && !draft.geometryBeforeEdit?.[action.side],
+      409, 'MANUAL_GEOMETRY_RECOVERY_UNAVAILABLE');
+      // This recovery changes only the surface surrounding a never-adopted
+      // outline. Existing physical, prepared, measured and review work cannot
+      // enter this path; preparation remains a separate durable action.
+      geometry = updateGeometrySettings(geometry, { side: action.side, base: action.base,
+        matColor: action.matColor, cornerShape: geometry.sides[action.side].cornerShape }).state;
     } else if (action.type === 'GEOMETRY_EDIT') {
       object(action, ['type', 'edit']);
       object(action.edit, ['side', 'kind', 'base', 'quad']);

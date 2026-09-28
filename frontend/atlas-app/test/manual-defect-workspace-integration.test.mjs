@@ -19,7 +19,7 @@ const base = Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { cardId: '
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
 const all = (node, predicate, out = []) => { if (Array.isArray(node)) node.forEach(child => all(child, predicate, out));
   else if (node && typeof node === 'object') { if (predicate(node)) out.push(node); all(node.props?.children, predicate, out); } return out; };
-function harness({ journal, finalReview = false, rapid = false } = {}) {
+function harness({ journal, finalReview = false, rapid = false, initialGeometrySide = null } = {}) {
   const values = new Map(journal ? [['atlas-defect-analysis:v1:staff:card', JSON.stringify(journal)]] : []), slots = [], effects = [], timers = new Map(), cleanups = [];
   let cursor = 0, tree, viewCallback;
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
@@ -72,7 +72,7 @@ function harness({ journal, finalReview = false, rapid = false } = {}) {
         f.calls.push({ path, options: options && structuredClone(options) }); return f.respond(path, options); } };
       return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
     } });
-  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: 'card', csrf: 'csrf', rapid, onQueued:value=>{f.queued=value;}, onBusyChange:value=>{f.locked=value;}, onPhotos() {} }); effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
+  f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: 'card', csrf: 'csrf', rapid, initialGeometrySide, onQueued:value=>{f.queued=value;}, onBusyChange:value=>{f.locked=value;}, onPhotos() {} }); effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
   f.tick = async (ms = 5000) => { const tick = timers.get(ms); if (!tick) return; tick(); await flush(); f.render(); };
   f.dispose = () => cleanups.splice(0).forEach(cleanup => cleanup());
   f.defects = () => { const node = all(tree, node => node.type === 'DefectReviewWorkspace')[0]; assert.ok(node, 'defect workspace rendered'); return node.props; };
@@ -463,4 +463,26 @@ test('each explicit rapid defect approval advances, skipped findings stay pendin
  await f.button('Approve defect 2 of 3').props.onClick();f.render();assert.equal(f.machine().guidedFindingId,'c','old approval of c does not cross an evidence revision');
  await f.button('Approve defect 3 of 3').props.onClick();f.render();assert.ok(f.report());assert.equal(f.actions.at(-1).stage,'findings');
  assert.equal(f.actions.some(a=>a.type==='APPROVE_REPORT'),false);f.dispose();
+});
+
+test('explicit photo editor entry opens geometry even when a final report exists and prioritizes the chosen side',async()=>{
+ const f=harness({finalReview:true,initialGeometrySide:'BACK'});
+ f.current.geometry={confirmed:false,sides:{FRONT:{image:{}},BACK:{image:{}}}};
+ await flush();f.render();
+ assert.ok(f.geometry());assert.deepEqual(f.geometry().attention.map(i=>i.side),['BACK','FRONT']);
+ assert.equal(f.machine(),undefined);assert.deepEqual(f.actions,[]);f.dispose();
+});
+
+test('background recovery saves the exact selected side before preparing it and never requests analysis',async()=>{
+ const f=harness({initialGeometrySide:'BACK'});f.current.defects=null;
+ await flush();f.render();const input={side:'BACK',base:{marker:'exact-settings-base'},matColor:'WHITE'};
+ await f.geometry().onBackground(input);
+ assert.deepEqual(JSON.parse(JSON.stringify(f.actions)),[{type:'SET_PHOTO_BACKGROUND',...input},{type:'PREPARE_SIDE',side:'BACK'}]);
+ assert.ok(f.calls.every(c=>c.options?.method!=='POST'));f.dispose();
+});
+test('background recovery never prepares after an uncertain settings save and is absent for retained findings',async()=>{
+ const f=harness({initialGeometrySide:'FRONT'});await flush();f.render();assert.equal(f.geometry().onBackground,undefined);
+ f.publish({...f.current,defects:null});f.onExecute=async()=>{throw {code:'REPLY_UNCERTAIN'};};
+ await assert.rejects(f.geometry().onBackground({side:'FRONT',base:{},matColor:'WHITE'}));
+ assert.deepEqual(f.actions.map(a=>a.type),['SET_PHOTO_BACKGROUND']);f.dispose();
 });

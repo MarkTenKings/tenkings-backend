@@ -5,18 +5,28 @@ import {publicationGrantSQL} from './publication-repository.mjs';
 import { canonicalizeNewSpeedsterSessionIdentity } from '@atlas/grading-core/identity';
 
 export const FIELDS = ['name','category','manufacturer','card_number','year','set_name','variant','card_type'];
-const SETTINGS = ['profile','layoutType','cornerShape','matColor','parallel','insert'];
+const SIDE_MATS = ['frontMatColor','backMatColor'];
+const SETTINGS = ['profile','layoutType','cornerShape','matColor','parallel','insert',...SIDE_MATS];
 const EMPTY = { fields: Object.fromEntries(FIELDS.map(key => [key, ''])), profile: null, layoutType: null,
   cornerShape: 'ROUNDED_3_18_MM', matColor: 'BLACK', parallel: '', insert: '', touched: [], sourceHash: null };
 function checkDetails(value) {
-  object(value, ['fields', ...SETTINGS, 'touched', 'sourceHash']); object(value.fields, FIELDS);
+  object(value, ['fields', ...SETTINGS.filter(key => !SIDE_MATS.includes(key) || Object.hasOwn(value, key)), 'touched', 'sourceHash']); object(value.fields, FIELDS);
   for (const key of FIELDS) requireThat(typeof value.fields[key] === 'string' && value.fields[key].length <= (key === 'year' ? 24 : 160));
   requireThat([null,'SPORTS','POKEMON'].includes(value.profile) && [null,'POKEMON','TRAINER','ENERGY'].includes(value.layoutType)
     && ['SQUARE','ROUNDED_3_18_MM'].includes(value.cornerShape) && ['BLACK','WHITE','MAGENTA'].includes(value.matColor));
+  for (const key of SIDE_MATS) if (Object.hasOwn(value, key)) requireThat(value[key] === null || ['BLACK','WHITE','MAGENTA'].includes(value[key]));
   for (const key of ['parallel','insert']) requireThat(typeof value[key] === 'string' && value[key].length <= 120);
   requireThat(Array.isArray(value.touched) && value.touched.length <= FIELDS.length + SETTINGS.length
     && new Set(value.touched).size === value.touched.length && value.touched.every(key => [...FIELDS,...SETTINGS].includes(key)));
   requireThat(value.sourceHash === null || /^[a-f0-9]{64}$/.test(value.sourceHash)); return value;
+}
+/** An absent/null side override inherits the historical pair-wide setting.
+ * Explicit workspace side settings already have a matColor and stay intact. */
+export function geometrySideSettings(settings, side) {
+  requireThat(['FRONT','BACK'].includes(side));
+  const matColor = settings[side === 'FRONT' ? 'frontMatColor' : 'backMatColor'] ?? settings.matColor;
+  requireThat(['BLACK','WHITE','MAGENTA'].includes(matColor) && ['SQUARE','ROUNDED_3_18_MM'].includes(settings.cornerShape));
+  return { matColor, cornerShape: settings.cornerShape };
 }
 export function gradingIdentity(details) {
   checkDetails(details); requireThat(['SPORTS','POKEMON'].includes(details.profile), 400, 'MANUAL_CARD_PROFILE_REQUIRED');

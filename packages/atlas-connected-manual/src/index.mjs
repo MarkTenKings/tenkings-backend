@@ -7,7 +7,7 @@ import { createManualWorkflow } from '@atlas/manual-workflow';
 import { createGeometryWorkspace, replaceGeometryImage, geometryBase, canDetectMissingPhysical } from '@atlas/manual-workspace/geometry-actions';
 import { proposePhysicalGeometry, prepareGeometry, describePreparationDerivative, describePreparationPreview, adoptGeometryPreparation, adoptPhysicalGeometryProposal } from '@atlas/preparation-runtime';
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
-import { createDetailsStore, gradingIdentity } from './details.mjs';
+import { createDetailsStore, gradingIdentity, geometrySideSettings } from './details.mjs';
 import { createIdentification } from './identification.mjs';
 import { createDefectImageEffects } from './defect-images.mjs';
 import { createDefectAssistance } from './defect-assistance.mjs';
@@ -119,7 +119,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     let packet={source,geometry:createGeometryWorkspace({cardId,profile:settings.profile,sides:Object.fromEntries(SIDES.map(side=>{
       const photo=pair.sides[side].photo,raster=photo.workingFrame.raster;
       return [side,{image:{version:photo.original.binding.version,originalSha256:photo.original.content.sha256,frameId:photo.workingFrame.id,
-        frameSha256:raster.content.sha256,width:raster.dimensions.width,height:raster.dimensions.height,coordinateSpace:'ORIENTED_DECODED'},cornerShape:settings.cornerShape,matColor:settings.matColor}];
+        frameSha256:raster.content.sha256,width:raster.dimensions.width,height:raster.dimensions.height,coordinateSpace:'ORIENTED_DECODED'},...geometrySideSettings(settings,side)}];
     }))})};
     const changedSides=previous?SIDES.filter(side=>previous.source.uploads[side]!==source.uploads[side]):SIDES;
     if(previous){

@@ -130,17 +130,32 @@ export async function prepareDeferredPhotoReveals({ prepared, ...input }) {
   validatePreparedPhotoFrame(retained.frame, photoImage(input.source), retained.sourceQuad);
   const legacy = sameEncoder(retained.encoderSettings, PREPARATION_LEGACY_SETTINGS);
   requireThat(legacy || sameEncoder(retained.encoderSettings, PREPARATION_LOSSLESS_SETTINGS), 'PREPARATION_OUTPUT_INVALID');
-  // Historical callers supply the immutable engine retained in the early-work
-  // packet. Permit only this encoding migration, with all old pixel sources and
-  // actual native binaries unchanged; still prove every saved core byte below.
+  // Historical callers supply their immutable engine. This qualified physical
+  // proposal update does not run when a retained quad is prepared. Pin both
+  // versions rather than accepting arbitrary future detector/adapter changes;
+  // all pixel sources/native binaries and every saved core byte must match.
   const currentEngine = await preparationRuntimeIdentity(input.pythonExecutable);
   const equal = (a, b) => descriptorSha256({ value: a }) === descriptorSha256({ value: b });
+  const historicalIdentity = structuredClone(input.engine.identity);
+  const physicalOnly = historicalIdentity.physicalProposalPolicy === 'atlas-native-photo-outer-ranking-v2'
+    && historicalIdentity.sources['atlas_photo_geometry.py'] === '19f71cd33e2ce3a780f5a70638503d27a66ac648e1cf3d83d71f6438a24d36dc'
+    && currentEngine.identity.physicalProposalPolicy === 'atlas-native-photo-outer-ranking-v3'
+    && currentEngine.identity.sources['atlas_photo_geometry.py'] === 'bd2f34dbfad3067c96742e7722b67f918a0f36fe52368bdd05b6e6688cba137c';
+  if (physicalOnly) {
+    historicalIdentity.physicalProposalPolicy = currentEngine.identity.physicalProposalPolicy;
+    historicalIdentity.sources['atlas_photo_geometry.py'] = currentEngine.identity.sources['atlas_photo_geometry.py'];
+  }
   if (legacy) {
     const identity = structuredClone(currentEngine.identity);
     delete identity.sources['preparation_encoding.py'];
-    requireThat(equal(input.engine.identity, identity)
+    requireThat(equal(historicalIdentity, identity)
       && ['native', 'python', 'executableSha256'].every(key => equal(input.engine[key], currentEngine[key])), 'PREPARATION_ENGINE_CHANGED');
-  } else requireThat(equal(input.engine, currentEngine), 'PREPARATION_ENGINE_CHANGED');
+  } else {
+    const historicalEngine = { ...input.engine, identity: historicalIdentity };
+    if (physicalOnly && input.engine.adapterSha256 === '577707037436c234895d6d3c96e6af532d343be7f77a9f8a67810171b479056b')
+      historicalEngine.adapterSha256 = currentEngine.adapterSha256;
+    requireThat(equal(historicalEngine, currentEngine), 'PREPARATION_ENGINE_CHANGED');
+  }
   const result = await run('PREPARE', { ...input, engine: currentEngine, quad: retained.sourceQuad, outputContract: PREPARATION_FULL_V1 },
     legacy ? PREPARATION_LEGACY_SETTINGS : PREPARATION_LOSSLESS_SETTINGS);
   requireThat(equal(result.proposal, retained.proposal) && equal(result.encoderSettings, retained.encoderSettings)

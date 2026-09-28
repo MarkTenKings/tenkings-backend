@@ -3,6 +3,7 @@ import { canonical, digest, object, requireThat } from '@atlas/manual-service/co
 import { descriptorSha256, parseDerivative } from '@atlas/photo-core';
 import { processedPhoto } from '@atlas/manual-intake';
 import { geometryProcessingSettings } from './geometry-processing.mjs';
+import { geometrySideSettings } from './details.mjs';
 import { applyGeometryEdit, geometryBase, preparationBase } from '@atlas/manual-workspace/geometry-actions';
 import { machineGeometryCandidate, MACHINE_GEOMETRY_POLICY } from './machine-geometry.mjs';
 import { preparationRuntimeIdentity, proposePhotoGeometry, preparePhotoGeometry, describePreparationDerivative,
@@ -20,11 +21,11 @@ const usable = proposal => machineGeometryCandidate(proposal)?.quad ?? null;
 export function geometryCacheInput(upload, photo, settings, engine) {
   requireThat(upload?.source && photo.original.binding.side === upload.side && photo.original.binding.version === upload.version,
     409, 'GEOMETRY_PHOTO_CHANGED');
-  requireThat(['BLACK','WHITE','MAGENTA'].includes(settings.matColor) && ['SQUARE','ROUNDED_3_18_MM'].includes(settings.cornerShape));
+  const sideSettings = geometrySideSettings(settings, upload.side);
   return { policy: POLICY, cardId: photo.original.binding.cardId, side: upload.side, uploadId: upload.uploadId,
     photoSource: upload.source, plan: upload.plan, verification: upload.verification,
     frameDescriptorSha256: descriptorSha256(photo.workingFrame),
-    settings: { matColor: settings.matColor, cornerShape: settings.cornerShape }, engine, engineHash: digest(canonical(engine)) };
+    settings: sideSettings, engine, engineHash: digest(canonical(engine)) };
 }
 
 export function geometryJobStatus(job, uploadId = null, key = null) {

@@ -17,6 +17,14 @@ def weak_edge_photo(top=80, body=(140, 75, 30)):
     return image
 
 
+def divided_edge_photo(stripe=(100, 55, 35)):
+    image = np.full((1000, 750, 3), 45, np.uint8)
+    cv2.rectangle(image, (80, 80), (670, 900), (230, 230, 230), -1)
+    cv2.rectangle(image, (80, 80), (130, 550), stripe, -1)
+    cv2.rectangle(image, (620, 500), (670, 900), stripe, -1)
+    return image
+
+
 class AtlasPhotoGeometryTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -149,6 +157,27 @@ class AtlasPhotoGeometryTest(unittest.TestCase):
         inner = np.array([[180, 200], [520, 200], [520, 700], [180, 700]], np.float32)
         with patch.object(atlas, "_color_candidates", return_value=[(100, inner)]):
             self.assertIsNone(atlas.propose_physical_outer(image, "BLACK")["proposal"])
+
+    def test_print_touching_cut_edges_can_join_observed_contour_fragments(self):
+        image = divided_edge_photo()
+        lab = legacy._cie_lab(cv2.GaussianBlur(image, (5, 5), 0))
+        # No single connected contour supplies the physical candidate, although
+        # all four real cut edges are evidenced by different observed fragments.
+        for _, quad in atlas._color_candidates(image):
+            self.assertTrue(any(side["supportFraction"] < .7
+                                for side in atlas._perimeter_evidence(lab, quad).values()))
+        self.assert_outer(image, [[80, 80], [670, 80], [670, 900], [80, 900]])
+
+    def test_fragment_fitting_cannot_replace_missing_cut_edge_contrast(self):
+        result = atlas.propose_physical_outer(divided_edge_photo(stripe=(55, 50, 45)), "BLACK")
+        self.assertEqual(result["outcome"], "INSUFFICIENT_EVIDENCE")
+        self.assertIsNone(result["proposal"])
+
+    def test_supported_original_outline_does_not_enter_fragment_search(self):
+        with patch.object(atlas, "_color_candidates", wraps=atlas._color_candidates) as candidates:
+            self.assert_outer(weak_edge_photo(), [[80, 80], [620, 80], [620, 800], [80, 800]])
+        self.assertEqual(candidates.call_count, 1)
+        self.assertEqual(candidates.call_args.kwargs, {})
 
 
 if __name__ == "__main__":

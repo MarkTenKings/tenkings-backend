@@ -12,6 +12,7 @@ import { memoryPhotoStorage, sha } from '../../atlas-manual-intake/test/helpers.
 import { createWorkLimiter } from '../src/index.mjs';
 import { adoptEarlyGeometry, createEarlyGeometry, geometryCacheInput } from '../src/early-geometry.mjs';
 import { MACHINE_GEOMETRY_POLICY, PRINTED_CANDIDATE_POLICY } from '../src/machine-geometry.mjs';
+import { geometrySideSettings } from '../src/details.mjs';
 
 const settings = { matColor: 'BLACK', cornerShape: 'ROUNDED_3_18_MM', profile: null, fields: { name: '' } };
 const identity = { identity: { opencv: 'fixture', numpy: 'fixture', physicalProposalPolicy: 'fixture', sources: {} }, native: { fixture: 'a'.repeat(64) } };
@@ -47,9 +48,9 @@ async function fixture() {
     async intent(_staff, _card, id) { intents.add(id); },
     async pending(engineHash) {
       return Object.values(selected).filter(u => intents.has(u.uploadId) && ![...jobs.values()].some(j => j.input.uploadId === u.uploadId
-        && j.input.engineHash === engineHash && canonical(j.input.settings) === canonical({ matColor: currentSettings.matColor, cornerShape: currentSettings.cornerShape })))
+        && j.input.engineHash === engineHash && canonical(j.input.settings) === canonical(geometrySideSettings(currentSettings, u.side))))
         .map(u => ({ card_id: cardId, upload_id: u.uploadId, side: u.side, plan: JSON.stringify(u.plan), verification: JSON.stringify(u.verification),
-          source: JSON.stringify(u.source), settings: currentSettings, created_at: new Date(0) }));
+          source: JSON.stringify(u.source), settings: geometrySideSettings(currentSettings, u.side), created_at: new Date(0) }));
     },
     async stage(input) { return store.ensure(null, input); },
     async ensure(_staff, input, { retry = false } = {}) {
@@ -289,6 +290,24 @@ test('identity text/profile do not rerun unchanged pixels; changed mat has a new
     assert.equal((await service.ensure(f.staff, f.cardId)).earlyGeometry.FRONT.key, original.earlyGeometry.FRONT.key);
     f.setSettings({ matColor: 'WHITE' }); const changed = await service.ensure(f.staff, f.cardId);
     assert.notEqual(changed.earlyGeometry.FRONT.key, original.earlyGeometry.FRONT.key); await until(() => f.calls === 2);
+  } finally { await service.stop(); }
+});
+
+test('mixed mats select separate exact jobs; correcting Front reuses Back and refuses the old Front retry', async () => {
+  const f = await fixture(), service = f.build();
+  try {
+    await f.upload('FRONT'); await f.upload('BACK'); f.setSettings({ frontMatColor: 'WHITE', backMatColor: 'BLACK' });
+    const initial = await service.ensure(f.staff, f.cardId);
+    await until(() => [...f.jobs.values()].filter(j => j.state === 'NEEDS_REVIEW').length === 2);
+    assert.deepEqual([...f.jobs.values()].map(j => [j.input.side, j.input.settings.matColor]).sort(), [['BACK','BLACK'],['FRONT','WHITE']]);
+    f.setSettings({ frontMatColor: 'MAGENTA' }); const changed = await service.ensure(f.staff, f.cardId);
+    assert.notEqual(changed.earlyGeometry.FRONT.key, initial.earlyGeometry.FRONT.key);
+    assert.equal(changed.earlyGeometry.BACK.key, initial.earlyGeometry.BACK.key);
+    await assert.rejects(service.ensure(f.staff, f.cardId, { side: 'FRONT', expectedKey: initial.earlyGeometry.FRONT.key }), { code: 'GEOMETRY_RETRY_STALE' });
+    await until(() => f.calls === 3); assert.equal(f.jobs.size, 3);
+    const explicitWorkspace = { FRONT: { matColor: 'BLACK', cornerShape: 'SQUARE' }, BACK: { matColor: 'MAGENTA', cornerShape: 'SQUARE' } };
+    const workspace = await service.ensure(f.staff, f.cardId, {}, explicitWorkspace);
+    for (const side of ['FRONT','BACK']) assert.deepEqual(f.jobs.get(workspace.earlyGeometry[side].key).input.settings, explicitWorkspace[side]);
   } finally { await service.stop(); }
 });
 

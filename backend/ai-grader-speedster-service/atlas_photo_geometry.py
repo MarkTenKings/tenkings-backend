@@ -11,9 +11,9 @@ import card_geometry as geometry
 import color_geometry as color
 
 
-POLICY_VERSION = "atlas-native-photo-outer-ranking-v2"
-ENGINE_VERSION = "atlas-physical-outer-ranking-v2"
-POLICY_PROVENANCE = "ATLAS_NATIVE_PHOTO_OUTER_RANKING_V2"
+POLICY_VERSION = "atlas-native-photo-outer-ranking-v3"
+ENGINE_VERSION = "atlas-physical-outer-ranking-v3"
+POLICY_PROVENANCE = "ATLAS_NATIVE_PHOTO_OUTER_RANKING_V3"
 PHYSICAL_LOCAL_CONTRAST_FLOOR = 8.0
 MIN_SELECTED_PERIMETER_FRACTION = .20
 MAX_PHYSICAL_CANDIDATES = 64
@@ -40,13 +40,14 @@ def _adoptable(quad, width, height):
                 and area > 0.02 and all(value > 1e-10 for value in cross))
 
 
-def _color_candidates(image):
+def _color_candidates(image, fragment_fallback=False):
     working, scale = geometry._working_image(image)
     gray = cv2.GaussianBlur(cv2.cvtColor(working, cv2.COLOR_BGR2GRAY), (5, 5), 0)
     median = float(np.median(gray))
     low = max(12, int(0.66 * median))
     high = max(low + 20, min(255, int(1.33 * median)))
     candidates = []
+    fragment_seeds = []
     # The second scale suppresses textured-mat edges before looking for faint
     # card edges. Both paths still require four independently observed sides;
     # a minimum-area rectangle never supplies a missing side.
@@ -54,6 +55,7 @@ def _color_candidates(image):
         edges = cv2.Canny(cv2.GaussianBlur(working, (kernel, kernel), 0), *thresholds)
         contours, _ = cv2.findContours(cv2.dilate(edges, np.ones((3, 3), np.uint8)),
                                       cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        observed = np.concatenate(contours) if fragment_fallback and contours else None
         for contour in contours:
             x, y, width, height = cv2.boundingRect(contour)
             if x <= 0 or y <= 0 or x + width >= working.shape[1] or y + height >= working.shape[0]:
@@ -63,15 +65,35 @@ def _color_candidates(image):
             a, b = rectangle[1]
             if area <= 1 or min(a, b) <= 0:
                 continue
+            aspect_quality = max(0.01, 1 - abs(min(a, b) / max(a, b) - geometry.EXPECTED_ASPECT) / geometry.ASPECT_RANK_SCALE)
+            fill_quality = max(0.01, min(1, area / (a * b) / geometry.FILL_RANK_TARGET))
+            score = area * aspect_quality * fill_quality
+            if fragment_fallback:
+                fragment_seeds.append((score, contour, rectangle, observed))
+                continue
             fitted = _fitted_perimeter(contour, rectangle)
             if fitted is None:
                 continue
             quad = geometry._portraitize(fitted) / scale
             if not _adoptable(quad, image.shape[1], image.shape[0]):
                 continue
-            aspect_quality = max(0.01, 1 - abs(min(a, b) / max(a, b) - geometry.EXPECTED_ASPECT) / geometry.ASPECT_RANK_SCALE)
-            fill_quality = max(0.01, min(1, area / (a * b) / geometry.FILL_RANK_TARGET))
-            candidates.append((area * aspect_quality * fill_quality, quad))
+            candidates.append((score, quad))
+    # A printed stripe touching the cut edge can divide that edge between
+    # disconnected contours. Only after the ordinary candidates fail, gather
+    # observed fragments in the same side bands. Keep the original side-span
+    # requirements and four independent card-to-mat support checks; a box never
+    # supplies missing evidence. Bound this extra fitting work before fitting.
+    if fragment_fallback:
+        fragment_seeds.sort(key=lambda item: item[0], reverse=True)
+        for score, contour, rectangle, observed in fragment_seeds[:MAX_PHYSICAL_CANDIDATES]:
+            fitted = _fitted_perimeter(contour, rectangle)
+            if fitted is None:
+                fitted = _fitted_perimeter(observed, rectangle)
+            if fitted is None:
+                continue
+            quad = geometry._portraitize(fitted) / scale
+            if _adoptable(quad, image.shape[1], image.shape[0]):
+                candidates.append((score, quad))
     candidates.sort(key=lambda item: item[0], reverse=True)
     return candidates[:MAX_PHYSICAL_CANDIDATES]
 
@@ -229,16 +251,22 @@ def propose_physical_outer(image, mat_color):
             "PHYSICAL_MAT_NOT_VISIBLE", None, "The selected mat is not sufficiently visible around this photo."))
     lab = color._cie_lab(cv2.GaussianBlur(image, (5, 5), 0))
     supported = []
-    candidates = _color_candidates(image)
-    for score, quad in candidates:
-        sides = _perimeter_evidence(lab, quad)
-        if not all(side["supportFraction"] >= color.PHYSICAL_MINIMUM_SIDE_SUPPORT for side in sides.values()):
-            continue
-        diagonal = float(np.linalg.norm(quad[2] - quad[0]))
-        if any(float(np.mean(np.linalg.norm(quad - existing, axis=1))) / diagonal < .012
-               for _, existing, _ in supported):
-            continue
-        supported.append((score, quad, sides))
+    for fragment_fallback in (False, True):
+        candidates = (_color_candidates(image, fragment_fallback=True) if fragment_fallback
+                      else _color_candidates(image))
+        for score, quad in candidates:
+            sides = _perimeter_evidence(lab, quad)
+            if not all(side["supportFraction"] >= color.PHYSICAL_MINIMUM_SIDE_SUPPORT for side in sides.values()):
+                continue
+            diagonal = float(np.linalg.norm(quad[2] - quad[0]))
+            if any(float(np.mean(np.linalg.norm(quad - existing, axis=1))) / diagonal < .012
+                   for _, existing, _ in supported):
+                continue
+            supported.append((score, quad, sides))
+        # Preserve existing successful geometry and existing ambiguity. The
+        # fallback only expands a search that found no supported physical quad.
+        if supported:
+            break
     if not supported:
         return _result(mat_color, "INSUFFICIENT_EVIDENCE", candidate_count=len(candidates),
                        advisory=color._advisory("NO_SUPPORTED_PHYSICAL_OUTLINE", None,

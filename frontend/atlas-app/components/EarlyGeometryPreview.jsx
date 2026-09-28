@@ -5,15 +5,17 @@ const statusCopy={
   QUEUED:['Geometry queued','Your saved photo is waiting for processing.'],
   RUNNING:['Finding every edge','Detecting the physical edge and printed border.'],
   READY:['Geometry ready','Physical edge and printed border are ready for your review.'],
-  NEEDS_REVIEW:['Your eye is needed','Automatic detection needs review. You can retry or place the outline in Geometry.'],
-  FAILED:['Processing paused','Your photo is saved. Retry geometry to continue.'],
+  NEEDS_REVIEW:['Your eye is needed','Automatic detection needs review. Use Edit geometry below to place the outline yourself, or retry detection.'],
+  FAILED:['Processing paused','Your photo is saved. Use Edit geometry below to place the outline yourself, or retry detection.'],
 };
 export function EarlyGeometryStatus({status,settingsChanged=false,retrying=false,onRetry}){
   if(!status)return null;
-  const [title,detail]=statusCopy[status.state]??statusCopy.WAITING_PHOTO;
+  const [title,detail]=status.state==='READY'&&!status.printed
+    ?['Printed border needs review','The physical outline is ready. Use Edit geometry below to place or review the printed border.']
+    :statusCopy[status.state]??statusCopy.WAITING_PHOTO;
   return <div className={`mc-geometry-status mc-geometry-${status.state.toLowerCase()}`}>
     <div role="status"><span className="mc-status-dot" aria-hidden="true"/><strong>{settingsChanged?'Photo settings changed':title}</strong></div>
-    <p>{settingsChanged?'Save the new settings to update the automatic geometry.':detail}</p>
+    <p>{settingsChanged?'Use Edit geometry below to save these settings and review the updated geometry.':detail}</p>
     {!settingsChanged&&status.canRetry&&<button type="button" disabled={retrying} onClick={onRetry}>{retrying?'Retrying geometry…':'Retry geometry'}</button>}
   </div>;
 }

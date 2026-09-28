@@ -8,6 +8,9 @@ test('photo warnings follow the selected upload and disappear when that side bec
   assert.deepEqual(intakePhotoAttention(saved), []);
   saved.earlyGeometry.FRONT.uploadId = 'new-front';
   assert.deepEqual(intakePhotoAttention(saved).map(i => i.side), ['FRONT']);
+  saved.manual = {current:true}; assert.deepEqual(intakePhotoAttention(saved), []);
+  saved.manual.current = false; assert.deepEqual(intakePhotoAttention(saved).map(i => i.side), ['FRONT']);
+  delete saved.manual;
   saved.earlyGeometry.FRONT.state = 'READY'; assert.deepEqual(intakePhotoAttention(saved), []);
 });
 
@@ -28,4 +31,18 @@ test('analysis warnings do not label running or completed analysis as a failure'
   assert.equal(analysisCorrectionAttention({ enabled: true, status: 'REFUSED' })[0].key, 'analysis');
   assert.equal(analysisCorrectionAttention({ enabled: true, status: 'UNKNOWN', collectionStopped: true }).length, 1);
   assert.deepEqual(analysisCorrectionAttention({ enabled: true, status: 'UNKNOWN', backgroundAccepted: true }), []);
+});
+
+test('the explicitly selected side leads geometry guidance without dropping the other side',()=>{
+ const geometry={sides:{FRONT:{image:{}},BACK:{image:{},physical:{},prepared:{}}}};
+ assert.deepEqual(geometryCorrectionAttention(geometry,'BACK').map(i=>[i.side,i.kind]),[['BACK','PRINTED'],['FRONT','PHYSICAL']]);
+ assert.deepEqual(geometryCorrectionAttention(geometry,'invalid').map(i=>i.side),['FRONT','BACK']);
+});
+
+test('explicit editor entry still focuses a confirmed side without disturbing the opposite confirmation',()=>{
+ const slot={image:{},physical:{},prepared:{},printed:{},confirmation:{}};
+ const geometry={sides:{FRONT:structuredClone(slot),BACK:structuredClone(slot)}};
+ assert.deepEqual(geometryCorrectionAttention(geometry),[]);
+ assert.deepEqual(geometryCorrectionAttention(geometry,'BACK').map(i=>[i.side,i.kind]),[['BACK','PHYSICAL']]);
+ assert.deepEqual(geometry.sides.BACK.confirmation,{});
 });

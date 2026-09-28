@@ -99,3 +99,10 @@ test('a read started before an uncertain retry cannot satisfy its later reconcil
  assert.equal(reads,1);finish();await before;now=2000;await c.poll(snapshot('NEEDS_REVIEW'));
  assert.equal(reads,2);assert.equal(posts,1);c.dispose();
 });
+
+test('side-specific background changes reschedule only the effective current settings identity',async()=>{
+ const card=snapshot(),initial=earlyGeometryIdentity(card);card.details.frontMatColor='WHITE';
+ const frontWhite=earlyGeometryIdentity(card);assert.notEqual(frontWhite,initial);
+ card.details.backMatColor='BLACK';assert.equal(earlyGeometryIdentity(card),frontWhite);
+ card.details.frontMatColor=null;assert.equal(earlyGeometryIdentity(card),initial);
+});

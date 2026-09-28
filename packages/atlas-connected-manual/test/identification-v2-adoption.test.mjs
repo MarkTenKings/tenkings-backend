@@ -9,7 +9,7 @@ import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import {ATLAS_IDENTIFICATION_LAYOUT_VERSION} from '../src/identification-layout.mjs';
 import { createBatchPreparation } from '../src/batch-preparation.mjs';
 import { createIdentification, identificationEffects } from '../src/identification.mjs';
-import { createDetailsStore, FIELDS, gradingIdentity } from '../src/details.mjs';
+import { createDetailsStore, FIELDS, gradingIdentity, geometrySideSettings } from '../src/details.mjs';
 import { createConnectedHandler } from '../src/http.mjs';
 import { createWorkLimiter } from '../src/index.mjs';
 
@@ -911,4 +911,27 @@ test('production default reconstructs historical V2 credit recovery without addi
  const f=await fixture({httpStatus:429,modelError:{type:'insufficient_quota',code:'credit_balance_exhausted',param:null}});const first=await f.identification.run(f.staff,f.cardId);f.setModel(200);
  const result=await f.restartWithDefault().retry(f.staff,f.cardId,{actionId:randomUUID(),expectedAttemptId:first.attemptId,sourceHash:f.sourceHash});assert.equal(result.state,'COMPLETE');assert.equal(result.result.provenance.engine_version,V2);assert.equal(result.result.layout,undefined);
  const requests=f.calls.http.filter(c=>c.url.hostname==='api.openai.com');assert.equal(requests.length,2);assert.equal(requests[0].init.body,requests[1].init.body);assert(!requests[1].body.text.format.schema.required.includes('layout_type'));
+});
+
+test('optional per-side mat edits preserve legacy records, identification, action replay and workspace fences', async () => {
+  const f = await fixture(), initial = await f.details.read(f.staff, f.cardId);
+  assert.equal(Object.hasOwn(initial.details, 'frontMatColor'), false);
+  for (const side of ['FRONT','BACK']) assert.equal(geometrySideSettings(initial.details, side).matColor, 'BLACK');
+  const command = { actionId: randomUUID(), expectedRevision: initial.revision, changes: { frontMatColor: 'WHITE', backMatColor: 'MAGENTA' } };
+  const mixed = await f.details.save(f.staff, f.cardId, command);
+  assert.deepEqual(await f.details.save(f.staff, f.cardId, command), mixed);
+  assert.equal(geometrySideSettings(mixed.details, 'FRONT').matColor, 'WHITE');
+  assert.equal(geometrySideSettings(mixed.details, 'BACK').matColor, 'MAGENTA');
+  await assert.rejects(f.details.save(f.staff, f.cardId, { ...command, actionId: randomUUID(), changes: { frontMatColor: 'BLACK' } }), { code: 'MANUAL_DETAILS_STALE' });
+  for (const value of ['', 'AUTO', 1, false, {}, undefined]) await assert.rejects(f.save({ frontMatColor: value }));
+  assert.deepEqual(await f.details.read(f.staff, f.cardId), mixed);
+  await f.identification.run(f.staff, f.cardId);
+  const identified = await f.details.read(f.staff, f.cardId);
+  assert.equal(identified.details.frontMatColor, 'WHITE'); assert.equal(identified.details.backMatColor, 'MAGENTA');
+  assert(identified.details.touched.includes('frontMatColor')); assert(identified.details.touched.includes('backMatColor'));
+  const inherited = await f.save({ matColor: 'BLACK', frontMatColor: null });
+  assert.equal(geometrySideSettings(inherited.details, 'FRONT').matColor, 'BLACK');
+  assert.equal(geometrySideSettings(inherited.details, 'BACK').matColor, 'MAGENTA');
+  f.setWorkspace(); await assert.rejects(f.save({ backMatColor: 'WHITE' }), { code: 'MANUAL_USE_WORKSPACE_IDENTITY' });
+  assert.deepEqual(await f.details.read(f.staff, f.cardId), inherited);
 });

@@ -5,7 +5,7 @@ export function geometryIsProcessing(snapshot){
 export function earlyGeometryIdentity(snapshot){
   if(!snapshot?.earlyGeometry||!SIDES.some(side=>snapshot.card?.sides?.[side]?.upload?.source))return null;
   return JSON.stringify(SIDES.map(side=>[snapshot.card.sides[side]?.upload?.uploadId??null,
-    snapshot.earlyGeometry[side]?.key??null,snapshot.details?.matColor,snapshot.details?.cornerShape]));
+    snapshot.earlyGeometry[side]?.key??null,snapshot.details?.[side==='FRONT'?'frontMatColor':'backMatColor']??snapshot.details?.matColor,snapshot.details?.cornerShape]));
 }
 /** Photo work is durable on the server. This coordinator only reconciles an
  * authenticated reopening and reads progress; it never creates a manual draft. */
