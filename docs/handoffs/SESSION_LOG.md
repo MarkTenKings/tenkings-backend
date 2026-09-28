@@ -39014,3 +39014,131 @@ Owned PostgreSQL v3 passed all nine display and eight learning groups; root inde
 Final `atlas-review-performance-investigation-20260928/reliability-postgres-qualified-v3` passed nine display and eight learning groups after the actual 61-staff/99-public migration chain on a fresh nonce-owned pinned PG17 tmpfs fixture. It proves global display capacity two, selected/context/oldest fairness, source/access/duplicate-byte isolation, explicit retry idempotency, historical authority and expired attempt-7/attempt-8 recovery, narrow grants, immutable report evidence, learning legacy/role isolation and mixed-publication domain membership. All 25 source-fenced input hashes matched before/after and at handoff; source-map SHA-256 `12c824f110a109ebbb1947ee97ed481f34b991fbde1fe5ab641253369e7df94d`. Process exit 0; owned container stop/removal verified in both cleanup receipts. No production effects. Earlier setup-only transport/120-second timeout failures and verified cleanup remain retained separately.
 
 Local Release2 regression remains 346/346, plus five private recovery guard tests. Separate inert helpers under `atlas-review-reliability-20260928/release` support read-only exact-three retained iPhone recovery capture and explicit one-shot MACHINE continuation after postflight; they preserve originals, source/settings/BACK/owner fences and normal durable admission, do not start global workers or fabricate human approvals, and stop after unknown acknowledgements. Normal live workers may start the three pairs' first grading workflows after recovery. No recovery was invoked. The separate Linux complete-JPEG probe is prepared with a private exact-three archive SHA-256 `71b94c792e4308f17f93c5fda7d0772bf6ae46be9d37e66f72e47d1747089ac4`, stdin-only transfer into isolated nonroot/network-none/read-only candidate execution, no host mounts/credentials, source/native before/after checks and protected diagnostics. Candidate execution remains a root-owned post-build gate. Release2 source ownership is released; no further code edits are planned without coordination.
+
+
+### 2026-09-28T22:14:55.517654+00:00 — Source frozen and local web acceptance
+
+Committed reviewed implementation as 47559353af0803186c724ea37f032ce306397157 (tree cb5c17cd7ff574a301dff76d8dae59b93f911c97). Owned PostgreSQL cleanup verified, EXIT0. Same-source staff751/public38/customer51 tests all pass with no skips/cancellations; staff and public builds pass their boundary checks. Exact committed reviewer browser fixture passes five viewports, selected frame/zoom preserved, saved decision reload and separate final confirmation; no real-card save or human approval. Native local context contains1049 files and113 Node test paths plus8 Python selectors; plan SHA256957a3ef2db88cc6e45a07097f8469b77991ba728b8ef30e157737d3c0ea36337, manifest8afece7955f0d766a041a04896d58ef69c4e247ebe71932843bea9a4bc4709b5, archive2f547eabb71ce23cc144c8bafdd45e3febe7b5850f7cc2ccb5ae2e5fe6540ef2. Isolated native host build/regression and retained-JPEG probe are next; production untouched.
+
+2026-09-28 — Final release-helper evidence review (no release action): learning helper verified pure-local freeze/web qualification flow and113-test native closure with required binding-facts source. Added checked final candidate JPEG/source/image/plan/exact-original/pixel/isolation/same-run cleanup guards and combined PostgreSQL9-display/8-learning/source-map-to-native-manifest/owned-cleanup guards in private release/web-config.mjs.69/69 fake-transport helper tests pass; web-helper-review and release-helper-review hashes/references refreshed. App source/native helper bytes unchanged. No provider, production database, container or release action executed by this helper.
+
+
+### 2026-09-28T22:18:35.695280+00:00 — Planned isolated Linux qualification
+
+Execute independently reviewed native launcher once for source47559353af0803186c724ea37f032ce306397157, plan957a3ef2db88cc6e45a07097f8469b77991ba728b8ef30e157737d3c0ea36337, archive2f547eabb71ce23cc144c8bafdd45e3febe7b5850f7cc2ccb5ae2e5fe6540ef2. Native helper reviewa49b6e5753e68a7648a12b16d5a300e3ce347875beda2c805e6c23b8a8242397; launcher review8d8d9facf000938fe9175ab905eb8c0c8561999e8b0b891704c46e9995759df9; root independently read launcher/remote and9/9 local guard tests pass. Only fresh protected source transfer and isolated no-network build/regression containers on the pinned native host; serving baseline remains running/unchanged, no production DB/provider calls. Unknown acknowledgements remain held, readback only.
+
+
+### 2026-09-28 — final independent learning review and native transport helper (reviewer_ui)
+
+Independent final learning checks passed: 12 additional CLEAN cases covered exact aggregate byte boundaries, count and per-image limits, invalid signature/IHDR isolation, authorization propagation, unchanged current images and exact real context/background request restoration. Mixed CLEAN and GEOMETRY promotions separately retained baseline DEFECT membership and parent qualification while the actual role reader supplied explicit admitted domain revisions. Existing learning/role/promotion/evaluation/domain suites passed 34/34 on Node 20. The final binding-facts module closes runtime selection/settings drift and was added as the sixth explicit new native source requirement before root source/context freeze; native guard suite passed 11/11 with unchanged 113 Node files/eight Python selectors. Latest native helper receipt SHA-256 is `a49b6e5753e68a7648a12b16d5a300e3ce347875beda2c805e6c23b8a8242397`.
+
+Prepared separate outside-git `release-prep/native-launcher.py` and `native-launcher.remote.py` under the reviewer-reliability handoff. They default to local-only review, pin existing provider SSH identity/known-host proof, verify exact source/archive/helper digests, reserve fresh protected local and remote namespaces, invoke the unchanged reviewed isolated native build/qualification helpers, independently compare existing-container signatures, and retrieve bounded whitelisted receipt/log bytes with digest manifests. No overwrite/replay, deployment, runtime control/environment change or database operation is available. Read-only recovery retrieves fresh evidence only. The original local native context remains pure. Nine local helper tests passed; default review against frozen source `47559353af0803186c724ea37f032ce306397157`, plan `957a3ef2db88cc6e45a07097f8469b77991ba728b8ef30e157737d3c0ea36337`, archive `2f547eabb71ce23cc144c8bafdd45e3febe7b5850f7cc2ccb5ae2e5fe6540ef2` passed. Final launcher review receipt SHA-256 `8d8d9facf000938fe9175ab905eb8c0c8561999e8b0b891704c46e9995759df9`. This helper preparation made zero SSH requests, identity-file reads, transfers, builds, containers, database queries, provider/model calls or production changes. Root owns independent review and explicit execution.
+
+Read root freeze-config.py independently: no blocker found; its exclusive local config writer is followed by the full requirePrivateRuntimeProof validator before any staging. No application source was changed after the root freeze.
+
+
+### 2026-09-28T22:24:09.067097+00:00 — Native qualification passed; evidence readback held
+
+Pinned host remote result reports CANDIDATE_TRANSFER_BUILD_QUALIFICATION_PASS for candidate image sha256:224e41e9efce5c9b5a80558bcc1c83f906ca4d91120311e3757564de25b91c90 and frozen source47559353af0803186c724ea37f032ce306397157. Independent read-only helper inspection sees1337/1337 Node and43 Python pass, zero failures/skips, exit0/noOOM, pre-existing containers unchanged. Local launcher exited HELD_INSPECT_ONLY despite remoteExitCode0 because protected evidence readback rejected a file mode. Do not rerun build/qualification or overwrite the HELD receipt. Inspect exact whitelisted file mode, correct the narrow transport guard if warranted, then separately collect existing evidence into a fresh directory and record a linked reconciliation proof. Production unchanged; no staging/migration/restart.
+
+
+### 2026-09-28 — Final native qualification evidence reconciled
+
+- Read-only collection independently verified the exact committed `47559353af08` image `sha256:224e41e9efce5c9b5a80558bcc1c83f906ca4d91120311e3757564de25b91c90`: 1,337 Node tests and 43 Python tests passed, source/native artifacts preserved and existing serving containers unchanged.
+- Retained the original HELD transport receipt. New reconciliation binds that receipt, original launch intent and all remote build/qualification evidence; no build or qualification replay occurred. Receipt SHA256 `a33c04ab8f6574f25beaaddece0bf3bef87969fe98fcc5a0492e8516c2d27d47`. Narrow local transport guard independently passed 11 checks.
+- Started the separately reviewed, isolated exact-three-original JPEG qualification against this image. Transport guard passed 7 checks; no model/database/storage call or serving runtime action is reachable from the probe.
+
+
+### 2026-09-28 — Exact iPhone originals pass; web staging planned
+
+- All three retained original JPEGs passed on committed Linux candidate `47559353af08`: oriented 3024×4032, unchanged original hashes, zero oriented SDR or full display RGB sample mismatches. Processing took 3.399–3.530 seconds each in isolation. Native16 unchanged, no provider/DB/storage writes, probe stopped and temporary originals released. This proves these three decode paths, not all possible future iPhone formats.
+- Frozen release configuration SHA256 `735e05dc12ffab7d7304be719e53c15cf59191f4cf9b5ee017a687454f8a8570` passed full same-source native/web/PostgreSQL/JPEG evidence validation.
+- Planned authorized action: materialize exact-source standalone web checkout, run actual CLI dry and intercepted payload preflight, then stage staff/public candidates without custom-domain promotion. Preserve customer deployment, homepage and all unrelated settings; public staff-origin changes only to the verified same-source staff candidate. Runtime/migrations/canonical promotion follow separately after READY candidates and fresh checks.
+
+
+### 2026-09-28T22:36:05.054Z — Planned staged staff deployment for reviewer reliability
+
+Root invoked the reviewed one-shot staff staging helper for exact source 47559353af0803186c724ea37f032ce306397157, qualified private image sha256:224e41e9efce5c9b5a80558bcc1c83f906ca4d91120311e3757564de25b91c90. Fresh provider settings, environment metadata, aliases and customer/public deployment are unchanged. No environment update is required. Candidate upload uses --prod --skip-domain; homepage source and existing customer deployment remain fixed. This helper performs no DB/runtime/canonical cutover, card write or model request.
+
+
+### 2026-09-28T22:37:38.519Z — Planned staged public deployment for reviewer reliability
+
+Root invoked the reviewed one-shot public staging helper for exact source 47559353af0803186c724ea37f032ce306397157, qualified private image sha256:224e41e9efce5c9b5a80558bcc1c83f906ca4d91120311e3757564de25b91c90. Staff dpl_Eaz1xFeSSyPA49Zmv6CHwiJBWtmE is READY. One public-project environment row, ATLAS_STAFF_DEPLOYMENT_ORIGIN, will point to https://atlas-grading-staff-3620haib2-ten-kings.vercel.app; the customer origin and all other configuration remain unchanged. Candidate upload uses --prod --skip-domain; homepage source and existing customer deployment remain fixed. This helper performs no DB/runtime/canonical cutover, card write or model request.
+
+
+### 2026-09-28T22:39:04.406271+00:00 — Reviewer reliability release
+
+Planned fresh reviewer runtime configuration preparation only for source 47559353af0803186c724ea37f032ce306397157 and qualified image sha256:224e41e9efce5c9b5a80558bcc1c83f906ca4d91120311e3757564de25b91c90. Existing source/image/container/env are retained; exact isolation profile and native artifacts remain fixed. Two new worker flags will be true only in the new environment. No runtime is stopped or started by this preparation operation.
+
+
+### 2026-09-28T22:39:08.142415+00:00 — Reviewer reliability release
+
+Runtime configuration preparation observed PREPARED_CONFIG_ONLY; cold constructors made zero database/provider calls and started zero workers. Existing serving container unchanged.
+
+
+### 2026-09-28 — Same-source web candidates READY
+
+- Actual CLI dry rosters and intercepted deployment payloads passed for staff/public with no preflight provider writes.
+- Staff candidate `dpl_Eaz1xFeSSyPA49Zmv6CHwiJBWtmE` and public candidate `dpl_BgSZaPMFaC2AWVCBDLAHh4pnVtFf` are READY at frozen source `47559353af0803186c724ea37f032ce306397157`. Staging preserved custom domains, customer deployment and homepage objects. Public environment changed only its existing staff origin to the same-source candidate.
+- Root and independent learning auditor verified final configuration and all 20 evidence references; original HELD transport evidence remains retained. Public binding derived from actual candidate configuration. Runtime configuration preparation is underway; no canonical promotion has occurred yet.
+
+
+### 2026-09-28 — Cutover preflight held before mutation; historical ledger diagnosis
+
+- Runtime preparation passed exact image/environment/security checks with zero cold-constructor database/provider calls. Old runtime continues serving.
+- First cutover preflight stopped at `INCOMPLETE_MIGRATION_LEDGER` before creating a cutover intent, stopping any runtime or issuing DDL. Fresh independent census proves all baseline controls/ledgers unchanged and ordinary work quiescent.
+- Cause: three historical public Prisma rows are finished, not rolled back, with step count zero (manually applied/resolved migrations), while the release helper expected one for every historical row. They are `20251021193000_user_profile_avatar`, `20251022003000_create_locations`, `20260712042500_reconcile_user_auth_columns`; exact committed checksums and row identities are retained.
+- Fresh read-only catalog confirms the corresponding User columns, Location UUID/defaults/primary key/slug index and uuid-ossp extension exist. Historical session evidence explicitly records manual SQL followed by marking the auth reconciliation applied. Planned correction is only a narrowly hash-bound allowance for these unchanged historical public rows; no ledger rewrite or historical migration replay. All new staff migrations retain strict step-count-one checks.
+
+
+### 2026-09-28T22:44:40.409768+00:00 — Reviewer reliability historical migration guard diagnosis
+
+Release cutover preflight rejected the checked historical public ledger before any cutover intent or runtime stop. Exactly three completed historical public rows have applied_steps_count=0, finished_at=started_at, and empty logs; staff59 active rows all have one step. Root collected a fresh unchanged census and read-only catalog evidence. Private release helper correction now admits only those three exact full baseline rows through a hash-pinned source/baseline/catalog receipt; unfinished, altered and unknown zero-step rows remain refused. Original helper bytes/receipt preserved under release/ledger-preflight-guard-before. Fresh provider snapshots now use an explicit exclusive filename, pinned by SHA in the cutover intent and reused by promotion. No application/native/web source changed. Local guard tests then exposed a second pre-existing source-chain mismatch: four completed public migrations exist in the unchanged99-row active baseline but not the frozen candidate95-file public migration tree. Release remains held for authoritative historical-source proof; no helper production calls, runtime actions, migration writes or paid inference were performed.
+
+
+### 2026-09-28 — Complete historical migration evidence reconciled
+
+- Four additional already-applied public inventory migrations are absent from this ATLAS branch but present in original Git objects. Root independently matched all four source checksums to the unchanged completed live ledger rows: commits `bb10f235d5bddd2ca30ba19e5389e80d43cd2fec`, `945812ca3a9d0c9e48f3a08d533e34919866d029`, `bc92b1023640ab21499506fb2d4fb5e2bdb188df`, `6bfe43d81a2e16869a3f570d110959d40f8082dd`. None is rerun or changed.
+- Narrow release-helper proofs pin these four historical Git sources and the three catalog-confirmed zero-step rows. Entire source/ledger validation now passes for 59 active staff plus exactly two pending staff migrations, and 99 active plus 13 rolled-back public records. Full-row baseline/CAS checks remain unchanged; unknown, unfinished or changed rows still fail. Original helpers/proofs remain retained.
+- Added exclusive named fresh provider snapshots, source/config bound and referenced by hash from the one-shot cutover intent; canonical promotion consumes the same snapshot. This preserves the first expired snapshot instead of overwriting it. Application source remains frozen `47559353af08`; root and reviewer agent independently reviewed the narrow diff.
+
+
+### 2026-09-28T22:46:51.405251+00:00 — Historical ledger guards qualified and frozen
+
+Private release helper correction complete;21/21 local guard tests passed, both changed Node helper sources parse, and full checked actual baseline chains validate:59staff active plus exactly2pending staff migrations;99public active and13rolled-back historical rows. Three exact completed zero-step rows are admitted only by hash-pinned baseline/source/catalog proof. Four unrelated public migration source files absent from this branch were read from root-identified immutable historical Git commits and every SHA256 matches its unchanged completed baseline row; they supplement validation only. No migration bytes, application source, native image or web candidate changed. Root and reviewer_ui independently reviewed the correction. Provider snapshot refresh now uses exclusive provider-cutover-ready-v2.json, bound by filename/SHA in the still-unconsumed cutover intent and rechecked by promotion. Original helper receipt and all prior intents/evidence are preserved. Helper release receipt SHA256 a0ec5a31db4be7e0767bc7d5ecd82d727c4b6967fb19deda969b401e14b425be. No production calls or writes by this helper; actual release remains root-owned.
+
+
+### 2026-09-28T22:47:44.129929+00:00 — Reviewer reliability release
+
+Planned reviewer reliability cutover: fresh quiescence passed. Stop old private writers and retain old container/image/environment; atomically install exactly the durable display and learning outbox additive migrations plus narrow grants and staff ledger CAS. Freeze existing learning baseline only, with no candidate activation. Start exact newly qualified image sha256:224e41e9efce5c9b5a80558bcc1c83f906ca4d91120311e3757564de25b91c90 at source 47559353af0803186c724ea37f032ce306397157 with display delivery and learning lifecycle true. Apply exactly StaffControl, STAFF SmsPilotControl and PublicReaderControl CAS before the 125-second boot fence opens; customer binding is unchanged. No model requests, grading writes, deletes, candidate activation or canonical promotion are part of this helper.
+
+
+### 2026-09-28T22:48:02.292460+00:00 — Reviewer reliability release
+
+Observed atomic additive migration and three-control CAS pass for new container b131cb071f53838d6effb9d73ee333bf580dbc991195dbdaf22a871f6c42e0f4, image sha256:224e41e9efce5c9b5a80558bcc1c83f906ca4d91120311e3757564de25b91c90. Old stopped container retained; original history, jobs, customer controls and public ledger preserved; staff ledger added exactly two rows. Learning baseline only, zero candidate activation. Control CAS finished 5.002 seconds after start within the 125-second boot fence. Runtime readiness and signed read-only probes remain pending.
+
+
+### 2026-09-28T22:50:47.898Z — Runtime transport qualified; planned canonical promotion
+
+Newly qualified same-source private runtime is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_BgSZaPMFaC2AWVCBDLAHh4pnVtFf, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-28T22:50:52.029Z — ATLAS reviewer reliability canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_BgSZaPMFaC2AWVCBDLAHh4pnVtFf, source 47559353af0803186c724ea37f032ce306397157. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+
+### 2026-09-28T23:10:49Z — Deployed reviewer reliability: observed postflight and acceptance boundaries
+
+- Canonical and final read-only postflight passed for staff/public/private source `47559353af0803186c724ea37f032ce306397157`. Staff `dpl_Eaz1xFeSSyPA49Zmv6CHwiJBWtmE`, public `dpl_BgSZaPMFaC2AWVCBDLAHh4pnVtFf`, private image `sha256:224e41e9efce5c9b5a80558bcc1c83f906ca4d91120311e3757564de25b91c90`, container `b131cb071f53838d6effb9d73ee333bf580dbc991195dbdaf22a871f6c42e0f4`. All 1,049 source files and 16 native artifacts match; restart count zero. Release preservation proof covers 23 history tables, 65 prior jobs, 112 public ledger rows and unchanged customer deployment/control and homepage. Two additive staff ledger rows were the only migration additions. Learning remains `baseline-20260928`, no candidate activation.
+- Actual live Chrome public-report acceptance passed for existing Abomasnow report ATLAS-6807A41CE1FB version 1, grade 10: both photographs verified, Front/Back rendered, marked/clean comparison worked, last finding 13 disables Browse next, no staff edit/approval controls and no page errors. This browser check made no card or approval writes. Proof and screenshot: private `qualification/public-live-proof.json`, `public-live-finding.png`.
+- Fresh read-only delivery census at 23:10:48.859068 UTC proves all current 99 context, 99 full and 54 inspection derivatives READY plus six published inspection derivatives READY; zero failures, expired claims or active claims. All expected descriptor shapes valid. Private `release/delivery-postflight-complete.private.json`, SHA256 `a08787f955f89ffc5a4282880eb1751dfd0f37fb5cff72fcdc5c8da50dec8d4a`. This proves server preparation completed for these sources, not end-to-end client network latency.
+- Normal staff sign-in is requested and pending; the release control revision invalidated the old session by existing contract. Authenticated ordinary/rapid acceptance and exact-three retained-photo recovery remain open. No session or human review identity was fabricated.
+- The three retained JPEGs passed source-frozen Linux decode/pixel-integrity qualification. Maintenance capture v1 failed before plan/write on absolute-module URL resolution. v2 fixed only private helper imports, passed six regression checks, then held before discovery due Prisma P2037. Read-only connection census proves the manual role's four connections are all used by the live pool (four idle; role cap four, cluster 24/50). No helper execute intent, recovery write, new grading job or paid call occurred. Failure receipts are retained. Do not rerun consumed helpers, change the role quota, kill sessions or restart the live service to bypass this limit.
+- Safest remaining recovery is the existing real authenticated staff flow: open each of the three approved card workspaces and click Resume Front photo once, sequentially. It reuses verified saved bytes through the existing serving pool. Read back exact originals/BACK hashes, new FRONT source, COMPLETE/ADMIT and one pair job after each; inspect readback before retrying any uncertain reply. This is preparation/normal first admission only, never human certification or fabricated learning truth.
+- Fresh physical-iPhone capture and actual human approval remain external acceptance. New learning activation requires independently adjudicated truth and measured domain gates; passing implementation tests is not proof of better optical accuracy.
+
+
+### 2026-09-28 — Reviewer reliability documentation handoff
+
+Applied independently reviewed documentation-only patches to the implementation/acceptance audit and current-status blocks in MASTER_PRODUCT_CONTEXT, DEPLOY_RUNBOOK, HANDOFF_SET_OPS and WEBSITE_RELEASE. They report the actual deployed source and completed delivery backfill, preserve historical checkpoints, and explicitly retain normal staff sign-in, exact-three photo recovery, physical-iPhone acceptance and independent learning-accuracy gates as pending. Source application commit remains `47559353af0803186c724ea37f032ce306397157`; this documentation commit does not change the running release. Final independent audit rehashed runtime/database evidence and confirmed no contradictions within the stated scope. No production mutation, model request, credential change or card approval accompanies this documentation update.
