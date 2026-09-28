@@ -39142,3 +39142,17 @@ One promotion POST completed; all four public aliases and production target now 
 ### 2026-09-28 — Reviewer reliability documentation handoff
 
 Applied independently reviewed documentation-only patches to the implementation/acceptance audit and current-status blocks in MASTER_PRODUCT_CONTEXT, DEPLOY_RUNBOOK, HANDOFF_SET_OPS and WEBSITE_RELEASE. They report the actual deployed source and completed delivery backfill, preserve historical checkpoints, and explicitly retain normal staff sign-in, exact-three photo recovery, physical-iPhone acceptance and independent learning-accuracy gates as pending. Source application commit remains `47559353af0803186c724ea37f032ce306397157`; this documentation commit does not change the running release. Final independent audit rehashed runtime/database evidence and confirmed no contradictions within the stated scope. No production mutation, model request, credential change or card approval accompanies this documentation update.
+
+
+### 2026-09-28T23:52:26.097014+00:00 — Intake context-preview caller correction (local, not deployed)
+
+Live authenticated Card 11 intake showed failed Front/Back previews while queue inspection remained verified. Read-only diagnosis found that the new context-only descriptor has source dimensions and a small JPEG preview but no full display/top-level URL. ManualCards omitted those dimensions when calling reviewImagePreview, rejected the valid preview, then selected the legacy full-working-PNG proxy path; root confirmed both failed DOM sources used /preview-image with naturalWidth 0. The minimal caller fix supplies source dimensions when present, preserving the existing legacy display path and unchanged full-evidence editing/approval gate.
+
+A focused actual-component regression first failed on the incorrect proxy URL, then passed with the fix for Front/Back context-only descriptors; it also rejects wrong-source, wrong-aspect and oversized previews. The existing legacy preview test passes too. Node20 targeted run: 2 passed, 0 failed, 40 unrelated tests filtered out. No broad suite, browser action, deployment, production write or model call was performed for this patch. Changes are left uncommitted for root review.
+
+
+### 2026-09-28 — Authenticated recovery completed; preview correction qualified
+
+User completed normal staff sign-in. Root verified the live 19-card review queue loads with both photographs verified, Add finding and Continue final review visible. Root clicked Resume Front photo once for each of the three exact approved retained uploads. Fresh read-only readback after each confirms all three FRONT sources now prepared, selected originals/byte hashes/verification intact, BACK upload/source/verification unchanged, COMPLETE/ADMIT with no photo error, exactly one batch pair job per card, no analysis run and no publication. Each now needs ordinary identity review. Evidence: private release/retained-iphone-after-ui-{1,2,3}.private.json and qualification/retained-iphone-third-recovered.png. No repeat grading, real human finding acceptance, certification or learning activation occurred.
+
+Root independently ran the complete focused manual-cards-recovery.test.mjs: 42 passed, zero failed/skipped. The one-line context-preview caller correction is qualified locally, not yet live; it does not change private image preparation or the exact-evidence editing gate. The user requested token/credit economy and offered to test remaining real reviewer/iPhone flows; avoid broad reruns or paid accuracy experiments.

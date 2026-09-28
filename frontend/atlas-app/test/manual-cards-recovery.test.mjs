@@ -500,6 +500,23 @@ test('intake uses the source-bound small context preview without downloading ful
  const invalid=harness(storage(null),async()=>assert.fail('No image mutation'),{readCard:()=>card});invalid.render();await flush();invalid.render();assert.equal(invalid.previewSrc('Front'),'/canonical.png');invalid.dispose();
 });
 
+test('intake context-only descriptors use source dimensions for both previews and reject mismatched evidence',async()=>{
+ const card=sportsCard(),sha='a'.repeat(64);
+ card.previews=Object.fromEntries(['FRONT','BACK'].map(side=>{
+  card.card.sides[side].upload={source:{ready:true}};
+  return [side,{sha256:sha,byteCount:20000000,mime:'image/png',width:3024,height:4032,displayState:{state:'READY'},
+   preview:{url:`/context-${side}.jpg`,sha256:'c'.repeat(64),sourceSha256:sha,byteCount:90000,mime:'image/jpeg',width:576,height:768}}];
+ }));
+ const render=async()=>{const f=harness(storage(null),async()=>assert.fail('Preview inspection must not save'),{readCard:()=>card});f.render();await flush();f.render();return f;};
+ const ready=await render();
+ assert.equal(ready.previewSrc('Front'),'/context-FRONT.jpg');assert.equal(ready.previewSrc('Back'),'/context-BACK.jpg');ready.dispose();
+ for(const change of [{sourceSha256:'d'.repeat(64)},{width:700},{width:900,height:1200}]){
+  const original=card.previews.FRONT.preview;card.previews.FRONT.preview={...original,...change};
+  const invalid=await render();assert.notEqual(invalid.previewSrc('Front'),'/context-FRONT.jpg');assert.equal(invalid.previewSrc('Back'),'/context-BACK.jpg');invalid.dispose();
+  card.previews.FRONT.preview=original;
+ }
+});
+
 const failedPhotos = () => {
  const value=sportsCard();value.details.matColor='BLACK';
  value.card.sides=Object.fromEntries(['FRONT','BACK'].map(side=>[side,{version:1,upload:{uploadId:side,source:{saved:true}}}]));
