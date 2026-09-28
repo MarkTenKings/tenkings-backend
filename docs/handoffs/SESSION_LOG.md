@@ -38696,3 +38696,69 @@ Initial qualification: 39 native tests pass; 18-photo replay preserves all 12 pr
 Final local qualification: staff724/724, workspace153/153, preparation17/17, workflow/geometry39/39, native39 and backend82 pass; the expanded historical-v2 deferred-reveal regression also passes. Both production builds pass their staff/public boundaries. Independent review found no blocker. Direct Back entry also focuses a previously confirmed Back. Intake now suppresses obsolete automatic proposals once the current workspace owns geometry, avoiding a false failure after manual correction; its46 targeted recovery/attention tests pass.
 
 Planned release preparation: freeze the committed corrective source into fresh native and web release artifacts, qualify an isolated network-disabled Linux candidate with all16 existing native artifacts retained, and stage exact-source staff/public candidates with no canonical promotion. A separately logged guarded additive migration (staff58→59), runtime cutover, control rebinding and promotion will follow only if exact-source qualification, current production baseline and quiescence gates pass. Originals, grades, findings, approvals and historical rows remain preserved; no model call or synthetic review is part of release acceptance.
+
+
+### 2026-09-28T07:27:59.513Z — ATLAS geometry recovery planned staged staff deployment
+
+Preparing exactly committed source 65b13352536c7448fd6848e8060acd4c5bfd503c on the dedicated Vercel staff project with --prod --skip-domain. Verified clean frozen source roster, read-only CLI payload, successful staff production build, and unchanged provider project settings/environment values. Upload will create a staged candidate and may advance its generated team alias; canonical public routing remains pinned to the prior staff origin. No control rebind, private restart, homepage promotion, schema change or model call occurs in this staging action.
+
+
+### 2026-09-28T07:28:57.257204+00:00 — Qualified source and staged staff observed
+
+Exact source65b13352536c7448fd6848e8060acd4c5bfd503c / image21326f23021fc1347b28bc7e97b2091a7d1fbb7d9c578d8e47060df89c06c4e8 passes1,152/1,152 Linux JS tests and 43 Python executions with no skips/failures. All1,007 source files and 16 native artifacts match before/after; serving runtime remains unchanged. Native qualification receipt SHA43893b4d4418cabc7a8167a87e7e82703141b746cccbd945907c5f90f75a265e. Exact-source staff build and both guarded CLI dry/preflight rosters pass. Staff deploymentdpl_FiWHQM68NB2jZBmW5A2xA72kQDLz has been created once and provider reports BUILDING with exact source; canonical routing and runtime remain unchanged.
+
+Final local Chrome proof verifies direct Back selection, separate background recovery controls, manual four-corner handles, disabled background changes during an unsaved outline, and suppression of stale automatic intake warnings after returning from a current workspace. Screenshot manual-outline-fixture.png is synthetic evidence under the private investigation root. No production card changes or approvals.
+
+
+### 2026-09-28T07:29:24.170Z — Staged staff READY; planned public candidate
+
+Provider confirms staff dpl_FiWHQM68NB2jZBmW5A2xA72kQDLz READY from exact 65b13352536c7448fd6848e8060acd4c5bfd503c. Canonical routing remains unchanged. Plan one public-project environment update: staff origin to https://atlas-grading-staff-62swmpdr0-ten-kings.vercel.app; customer origin unchanged. Then upload the same qualified frozen source as a production candidate with --skip-domain, preserving the exact live homepage subtree. No runtime restart or database control change in this action.
+
+
+### 2026-09-28T07:29:50.884306+00:00 — Planned private configuration preparation
+
+Prepare a new protected configuration under /opt/atlas/geometry-review-release-20260928 for exact65b source and qualified21326f23 image. Copy the current environment in memory and change only the two staff web-release binding fields to READY staff62swmpdr0. Verify private/web constructors with network disabled and zero database/provider calls; retain customer binding and all processing capacities. This preparation creates fresh protected files and short-lived isolated constructor containers only; it does not stop/restart the running processor. Fresh database census must remain quiescent and on its recorded baseline.
+
+
+### 2026-09-28T07:30:34.494693+00:00 — Planned additive per-side photo-background migration
+
+Apply exact source 65b13352536c7448fd6848e8060acd4c5bfd503c migration 20260928010000_manual_side_mat_settings checksum 2c97176c0c0417f0689226ff7306d244ac64ff6b0d85d1e0e6824518ad2f96a7 in one transaction, with1s lock/15s statement bounds and compare-and-swap of the entire58-entry staff ledger. Replace only the three reviewed geometry discovery/queue functions, add one private pure settings helper and the59th migration receipt. Both candidates are READY and the qualified Linux image passes. Full owned PostgreSQL qualification passed; all work is quiescent. No existing source, details, geometry, grade, approval or history row is rewritten; existing function ACLs and controls must remain unchanged. Do not automatically retry an ambiguous outcome.
+
+
+### 2026-09-28T07:30:41.179783+00:00 — Per-side photo-background migration observed
+
+Migration committed once: staff59/public112. All58 prior migration rows,23 history fingerprints, jobs and controls preserved exactly. Three existing function ACLs/owners preserved; the new pure helper has no PUBLIC execution. Readback confirms Front WHITE / Back BLACK from mixed settings. No runtime restart or model call. Evidence side-mat-migration-result.json under the fresh geometry-review release root.
+
+
+### 2026-09-28T07:30:59.278671+00:00 — Planned ATLAS geometry recovery production binding cutover
+
+Both Vercel candidates READY on exact 65b13352536c7448fd6848e8060acd4c5bfd503c; public candidate dpl_86NQP4Xs6aMK1rAdyPTNxsxBGtLm and staff dpl_FiWHQM68NB2jZBmW5A2xA72kQDLz. Fresh SQL has zero active/queued batch, ingestion, geometry, identity and customer work; zero unsettled accepted model requests. Plan gracefully stop the current dedicated private container and recreate with the qualified new immutable image sha256:21326f23021fc1347b28bc7e97b2091a7d1fbb7d9c578d8e47060df89c06c4e8 from 65b13352536c7448fd6848e8060acd4c5bfd503c, preserving native artifacts and security/resource/network profile, and changing only two staff web-release environment fields. Cold network-none constructors agree on new staff binding; customer binding remains d4a. Retain old stopped container for rollback and existing125s replay boot fence. Then guarded compare-and-swap of precisely StaffControl, STAFF SmsPilotControl and PublicReaderControl, with all 23 grading history tables compared before/after. The separately verified additive function migration is already applied at staff59. No further migration execution, grant changes, job mutations or model requests. After readiness and three signed read-only probes, promote public candidate once and verify canonical routes. Brief private unavailability during restart is expected.
+
+
+### 2026-09-28T07:31:07.784264+00:00 — Runtime restarted with UI binding; three control rows updated
+
+New container bc5265a50c85022ab960a230cb655fa9c344715234eab5b36639748313829c18 uses qualified private image sha256:21326f23021fc1347b28bc7e97b2091a7d1fbb7d9c578d8e47060df89c06c4e8 and source 65b13352536c7448fd6848e8060acd4c5bfd503c with the same staff web binding, same isolation and resource limits, restart0. Prior container stopped gracefully/exit0 and retained; unrelated containers preserved. The existing125s replay fence is active before service load. Three-row guarded control transaction passed: staff revision45, public25, STAFF SMS43; customer controls unchanged. All 23 grading-history table counts/hashes and 62 existing job records exactly preserved. Canonical promotion waits for source-bound readiness and signed transport checks.
+
+
+Private configuration preparation observed: both exact-source cold constructors passed with zero database/provider calls and zero worker starts. Protected candidate env SHA2a473e5e79b19ec358fb57c4011f18e3bdd01c90ef9644c8aa15658af2609eb6, customer binding and capacities unchanged. Both staff/public65b candidates are READY. Migration readback and restart/control result artifacts are retained under the fresh release root; all one-shot mutations are consumed.
+
+
+### 2026-09-28T07:33:33.111Z — Runtime transport qualified; planned canonical promotion
+
+Same private runtime generation is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_86NQP4Xs6aMK1rAdyPTNxsxBGtLm, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-28T07:33:36.797Z — ATLAS geometry recovery canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_86NQP4Xs6aMK1rAdyPTNxsxBGtLm, source 65b13352536c7448fd6848e8060acd4c5bfd503c. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+
+### 2026-09-28T07:35:35 UTC — Geometry recovery live and final preservation verified
+
+All four canonical aliases now serve 65b13352; staff/public/runtime source agree. Signed TLS reads 3/3 and canonical reads 33/33 pass, including exact new manual recovery strings, approved report, homepage and audio preservation. Independent Astra Extra High readback verifies all 1,007 source files and 16 native artifacts inside serving bc5265a50c85, physicalworker v3 hash bd2f34dbfad3067c96742e7722b67f918a0f36fe52368bdd05b6e6688cba137c, restart 0/no OOM, exact resources and only the two allowed environment changes. Predecessor d3d is retained stopped/exit 0 and disconnected.
+
+Final SQL readback preserves all 23 history tables: 22 full fingerprints and all 215 pre-existing early-geometry rows byte-for-byte; 62 existing jobs, both ledgers and post-cutover controls unchanged. Ordinary discovery created 93 new-engine cache entries: 84 READY, 9 NEEDS_REVIEW, zero FAILED, zero queued/running work, zero accepted unsettled model requests. Screenshot Card43 Front/Back are now READY; Card48 Back remains READY and its white Front remains NEEDS_REVIEW under its unchanged saved BLACK setting. Reviewer should select Front White / Back Black. No photos, details, grades, findings, approvals or model records were rewritten by this release.
+
+Live Chrome on a fresh tab reaches staff sign-in; no SMS was sent and no session or approval was fabricated. Its tab is retained for the owner; the original Card48 tab and unsaved choices are untouched. Local browser tests verified the complete manual recovery controls, and both local fixture servers were stopped after their test tabs closed. Updated context, deploy/Set Ops runbooks, handoff, website checkpoint and detailed audit. Authenticated owner review and physical-iPhone acceptance remain unobserved. All one-shot release artifacts are consumed and retained under /Users/markthomas/.codex/atlas-handoffs/atlas-geometry-review-investigation-20260928/release-prep.
+
+Production cache comparison matches all93 current photographs to the same previous source/settings input while excluding engine identity:81 READY→READY,3 NEEDS_REVIEW→READY,9 NEEDS_REVIEW→NEEDS_REVIEW, with zero READY regressions. The initial comparison retained the nested engine and therefore matched no predecessors; it is retained as unmatched diagnostic evidence, not used as proof. The corrected complete comparison is geometry-cache-transition-matched.json.

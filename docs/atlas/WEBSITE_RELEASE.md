@@ -1,6 +1,10 @@
 # ATLAS website release status
 
-## Current public homepage release — September 26, 2026
+Current ATLAS geometry recovery release — verified 2026-09-28T07:35:35 UTC: source `65b13352536c7448fd6848e8060acd4c5bfd503c` is live on staff, public and the private processor. The lossless encoder was not the cause of the reported geometry failures. The release adds bounded physical-edge fragment recovery, separate Front/Back photo-background settings, and direct per-photo manual geometry entry. Existing workspaces remain authoritative; obsolete intake failures no longer obscure saved corrections. ASTRA remains on the existing 1350×1858 canonical lossless images and their PNG crops; the source-resolution experiment remains separate. All 20 inputs in the two most recent real requests were verified pixel-identical to their canonical lossless sources. No new model request, grade or approval was created for this investigation.
+
+Staff/public migrations are 59/112; Staff/STAFFSMS/Public controls 45/43/25, customer 15/13 unchanged. All 23 grading-history tables and 62 prior jobs were preserved; all 215 original geometry-cache rows remain byte-identical, with 93 new cache entries (84 READY, 9 NEEDS_REVIEW), zero processing errors and no active work at final readback. The older screenshot Dart now has both sides READY; the newer mixed-mat Dart still needs Front White / Back Black selected by its reviewer. Exact release identities, qualification and evidence are in `docs/atlas/audits/2026-09-28/rapid-photo-geometry-investigation.md` and DEPLOY_RUNBOOK. Authenticated owner acceptance remains pending a fresh staff sign-in; the original Chrome tab's unsaved edits were left untouched. No Ten Kings or Set Ops behavior changed. Earlier checkpoints below are historical.
+
+## Historical public homepage release — September 26, 2026
 
 The approved study08 homepage is live at https://atlasgrading.com/ from source `dcc58d885cfd172dadb395b2ae2e59ce1c60725e`, public deployment `dpl_GCWPW5QtN8zZV1rJoHBxWfsV43np` (`atlas-grading-public-baskaekj5-ten-kings.vercel.app`). All four public aliases were verified promoted. PublicReaderControl is enabled at revision14; only its deployment/source binding and revision changed from13. Configuration, mode and origin were preserved.
 
