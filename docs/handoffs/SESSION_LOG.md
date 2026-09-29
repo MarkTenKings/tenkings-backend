@@ -39507,3 +39507,60 @@ Root browser checked paired real Abomasnow centering pills (Back3.80/3.20/3.65/3
 Public explorer now displays both hash-verified sides on desktop with independent outboard findings, all13 individual Abomasnow traces, direct shape interaction, enlarged overview traces and exact measured detail. Outer labels keep44px separation; on-card number tags appear on focus/hover to avoid adjacent-tag collisions while actual red traces stay fixed. Mobile retains every individual finding and side navigation. Corners/Edges/Surface use saved membership; instrument pills emphasize calibrated border rulers. Fingerprint keeps the photograph beneath gold contours, and finite arrival/tour respects manual interaction and reduced motion. Grade science and category links use the real evidence navigator. Targeted72/72 public/geometry/grade tests pass; wider workspace243passed/6environment skips is preliminary, with zero-skip source-bound qualification required next.
 
 Root reviewed application changes, real-component browser interactions, independent agent audits and exact helper guards. Freeze approved UI source in a local commit, then run source-bound staff/workspace/server/public tests and two web builds. Only after those pass will dedicated staff/public candidates be staged. No branch push, homepage redesign, customer deployment, scoring change, real approval or model call.
+
+
+### 2026-09-29 — Candidate0989b13b fully qualified
+
+Frozen app0989b13bd6234118587f3909bfbcf1508a143fb2/tree6cd52dce87b93731544df9bae0f785f1378d3b6e passed exact source compatibility against retained private runtime. Full source-bound Node20 qualification: staff764/764, workspace249/249, manual-server522/522, public/customer/router95/95; total1630, zero failures/cancellations/skips. Both production web builds pass their staff/public boundary guards. Source receipt SHA083f2e7490e8240b0b9ff9f5d2c2a25a6de85e542cc0f0527e02355f4b50079a. Final helper hashes37files with34syntax checks and7offline guards verified. Root final browser render confirms clean paired layout and separated outer labels. Exact source staging dry-run/preflight is next.
+
+
+### 2026-09-29T21:05:08.702Z — ATLAS review design planned staged staff deployment
+
+Preparing exactly committed source 0989b13bd6234118587f3909bfbcf1508a143fb2 on the dedicated Vercel staff project with --prod --skip-domain. Verified clean frozen source roster, read-only CLI payload, successful staff production build, and unchanged provider project settings/environment values. Upload will create a staged candidate and may advance its generated team alias; canonical public routing remains pinned to the prior staff origin. No control rebind, private restart, homepage promotion, schema change or model call occurs in this staging action.
+
+
+### 2026-09-29T21:06:25.824Z — Staged staff READY; planned public candidate
+
+Provider confirms staff dpl_D4uFpiy13uFgqgD1NfSKhMsVqQEy READY from exact 0989b13bd6234118587f3909bfbcf1508a143fb2. Canonical routing remains unchanged. Plan one public-project environment update: staff origin to https://atlas-grading-staff-61jn7u9u6-ten-kings.vercel.app; customer origin unchanged. Then upload the same qualified frozen source as a production candidate with --skip-domain, preserving the exact live homepage subtree. No runtime restart or database control change in this action.
+
+
+### 2026-09-29 — Planned same-image runtime binding preparation
+
+Staff candidate dpl_D4uFpiy13uFgqgD1NfSKhMsVqQEy is READY for exact0989b13b. Public candidate staging is in progress with canonical aliases unchanged. Prepare a new isolated runtime generation in /opt/atlas/paired-design-release-20260929 using the retained immutable224e41e9 image and private source47559353. Only two staff web-binding environment fields change. Run network-none constructor verification and retain current6870serving; no stop, cutover, migration, grading write or model invocation in this preparation action.
+
+
+### 2026-09-29 — Same-image preparation observed
+
+Runtime helper returned PREPARED_CONFIG_ONLY. Protected candidate environment hashcfa27d2c246530b92a0be45fafeec6672e07adea5e162ada98557f427cd189ff; unchanged private475/image224. Network-none cold constructors passed with zero database/provider calls and zero worker starts, exact unchanged customer binding, and retained concurrency/pool flags. Prior6870stillserves. Public upload completed and provider readiness is being checked; no runtime cutover or canonical promotion yet.
+
+
+### 2026-09-29T21:07:48.212728+00:00 — Planned approved ATLAS design web binding cutover
+
+Exact staff/public source 0989b13bd6234118587f3909bfbcf1508a143fb2 is READY. Fresh SQL is quiescent with no unsettled accepted model requests. Plan a graceful stop of 6870ef0601360fc521e4e45542f7d66309064bc45fdd82d0fefb5a287274f788 and same-image recreation using sha256:224e41e9efce5c9b5a80558bcc1c83f906ca4d91120311e3757564de25b91c90, retaining private source 47559353af0803186c724ea37f032ce306397157, native files, isolation, customer binding and all existing flags. Only the two staff web environment fields change. Retain the stopped predecessor and its sealed environment for rollback. A fresh host-monotonic observation of the unchanged 125-second boot fence must leave more than 50 seconds immediately before the exact StaffControl/STAFF SMS/PublicReader three-row CAS. Preserve 32 history tables, jobs and both migration ledgers. No migration, grant change, real approval, learning activation or model request is part of this release. Canonical promotion waits for signed read-only transport checks.
+
+
+### 2026-09-29T21:07:59.290875+00:00 — Same-image runtime and three controls rebound
+
+Container 5ea7c654b9c0462a59313ebe1dba0287c60935a63e4164e49e172460e6b354d3 started with the reviewed web binding; predecessor retained stopped/disconnected. Three-row CAS completed within the conservative boot-fence deadline: Staff 50, STAFF SMS 48, Public 30. Existing grading histories, jobs, ledgers and customer controls compare unchanged. No canonical promotion or real approval has occurred in this action.
+
+
+### 2026-09-29T21:10:28.698Z — Runtime transport qualified; planned canonical promotion
+
+Same private runtime generation is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_6khPhWb4HDhsvuBeKzZbR5NjVbG9, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-29T21:10:32.588Z — ATLAS review design canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_6khPhWb4HDhsvuBeKzZbR5NjVbG9, source 0989b13bd6234118587f3909bfbcf1508a143fb2. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+
+### 2026-09-29 — Live paired design verified; local QA shutdown planned
+
+Canonical source0989b13b is live. Four public aliases selectdpl_6khPhWb4HDhsvuBeKzZbR5NjVbG9; staffdpl_D4uFpiy13uFgqgD1NfSKhMsVqQEy. New5ea7c654 runtime uses unchanged private475/image224 with two web-binding env changes, zero restarts. Exactly three controls now50/48/30; signed401/404/200 checks passed. Canonical and final postflight pass: homepage bytes,1049private source files,16native artifacts,32history fingerprints,68jobs,61/112ledgers and customer retained. No real approval or model request.
+
+Canonical read-only browser checks pass for paired desktop, all13independent Back findings, direct on-card selection with synchronized clean view and Next, category counts2corners/11edges, saved3.80/3.20/3.65/3.35mmreadouts, photo-backed gold fingerprint and actual9.85→10 grade with replay/pause/resume. At390px documentwidth390 and all13findings retained. Keyboard focus visible; zero console warnings/errors. Proof under private release/live-browser-proof.json; desktop/mobile PNGs saved. Viewport reset, live report retained as user deliverable, local QA tab closed. Staff physical/authenticated acceptance remains owner testing. Stop only task-owned loopback4176QA helper now; production service is unaffected.
+
+
+### 2026-09-29 — Release documentation handoff
+
+Temporary loopback4176QA helper stopped successfully (exit0). Updated four mandatory context/runbook/handoff entry points to observed paired release0989b13b and current50/48/30controls; older checkpoints are historical. This documentation-only closure does not alter deployed application source or require a rebuild. Live report retained as the user-facing deliverable. Existing original-observation limitation and real authenticated staff acceptance boundaries are explicit.
