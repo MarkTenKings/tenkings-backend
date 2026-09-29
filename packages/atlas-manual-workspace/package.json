@@ -6,6 +6,9 @@
   "exports": {
     ".": "./dist/PairedGeometryWorkspace.js",
     "./geometry-actions": "./src/geometry-actions.mjs",
+    "./geometry-focus": "./src/geometry-focus.mjs",
+    "./focused-geometry": "./dist/FocusedGeometryWorkspace.js",
+    "./focused-geometry.css": "./src/focused-geometry.css",
     "./styles.css": "./src/workspace.css",
     "./snapping": "./dist/gradient-snap.js",
     "./preparation-result": "./src/preparation-result.mjs",

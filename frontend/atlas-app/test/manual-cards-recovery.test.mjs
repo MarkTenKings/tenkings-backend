@@ -43,6 +43,7 @@ function harness(store, post, { readCard, intake = {}, message = error => error.
       if (name === 'react') return react;
       if (name === '../lib/manual-review-attention.mjs') return reviewAttention;
       if (name === './ReviewAttention') return {__esModule:true,default:'ReviewAttention'};
+      if (name === './CompletionNextSteps') return {__esModule:true,default:'CompletionNextSteps'};
       if (name === './RapidReviewControls') return {RapidActionDock:'RapidActionDock',RapidEditDock:'RapidEditDock'};
       if (name === '../lib/review-feedback.mjs') return {...reviewFeedback,primeReviewAudio(){},playReviewCompletion(){},playAtlasVoice(){}};
       if (name === '../lib/card-discard.mjs') return {...discard,createWorkspaceDiscarder:()=>({pending:()=>false,reconcile:async()=>null})};

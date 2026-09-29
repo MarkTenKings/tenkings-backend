@@ -1,0 +1,53 @@
+/* Public report finding navigation. The photograph and saved trace remain in the verified viewer. */
+.rr-spatial-overlay {
+  position:absolute; inset:0 0 auto; height:var(--rr-spatial-height); z-index:4;
+  pointer-events:none; color:#1d1d1f; font-family:var(--rr-sans,-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif);
+}
+.rr-spatial-overlay,.rr-spatial-overlay * { box-sizing:border-box; }
+.rr-spatial-lines { position:absolute; top:0; left:0; overflow:visible; pointer-events:none; }
+.rr-spatial-lines path { fill:none; vector-effect:non-scaling-stroke; stroke-linecap:butt; stroke-linejoin:miter; }
+.rr-spatial-leader { stroke:#c0c0c5; stroke-width:.8; }
+.rr-spatial-bracket { stroke:#73737a; stroke-width:1; }
+.rr-spatial-emphasis .rr-spatial-leader,.rr-spatial-emphasis .rr-spatial-bracket { stroke:#bf2933; stroke-width:1.1; }
+.rr-spatial-controls { position:absolute; inset:0; pointer-events:none; }
+.rr-spatial-overlay button { font:inherit; color:inherit; cursor:pointer; pointer-events:auto; touch-action:manipulation; }
+.rr-spatial-overlay .rr-spatial-target {
+  position:absolute; display:flex; align-items:center; gap:9px; min-height:44px; height:auto;
+  transform:translateY(-50%); border:0; border-bottom:1px solid #dedee3; border-radius:0;
+  padding:7px 3px; margin:0; background:#fff; box-shadow:none; text-align:left;
+  font-size:12px; line-height:1.25; transition:color 140ms ease,border-color 140ms ease;
+}
+.rr-spatial-overlay .rr-spatial-target:hover,.rr-spatial-overlay .rr-spatial-target:focus-visible,
+.rr-spatial-overlay .rr-spatial-selected { background:#fff; color:#aa202a; border-color:#bf2933; }
+.rr-spatial-overlay button:focus-visible { outline:2px solid #0066cc; outline-offset:3px; }
+.rr-spatial-number { flex:none; color:#6e6e73; font:11px ui-monospace,SFMono-Regular,Menlo,monospace; font-variant-numeric:tabular-nums; }
+.rr-spatial-name { flex:1; min-width:0; overflow-wrap:anywhere; }
+.rr-spatial-name small { display:block; margin-top:3px; color:#6e6e73; font-size:10px; font-weight:400; }
+.rr-spatial-silhouette { width:25px; height:25px; flex:none; fill:#d9303b; overflow:visible; }
+.rr-spatial-open { flex:none; color:#6e6e73; font-size:15px; }
+.rr-spatial-back { position:absolute; top:7px; left:10px; right:10px; display:flex; align-items:center; gap:16px; min-height:44px; font-size:11px; color:#6e6e73; }
+.rr-spatial-overlay .rr-spatial-back button { min-height:44px; padding:8px 4px; border:0; border-radius:0; background:#fff; box-shadow:none; color:#0066cc; font-size:12px; }
+.rr-spatial-caption { position:absolute; bottom:0; left:10px; right:10px; margin:0!important; text-align:center; font-size:10px; line-height:1.4; color:#6e6e73; }
+.rr-spatial-flow { position:static; height:auto; grid-column:1/-1; }
+.rr-spatial-flow .rr-spatial-controls { position:relative; inset:auto; padding:4px 0 8px; }
+.rr-spatial-flow .rr-spatial-targets { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 16px; }
+.rr-spatial-flow .rr-spatial-target { position:static; width:100%!important; min-height:48px; transform:none; }
+.rr-spatial-flow .rr-spatial-back { position:static; flex-wrap:wrap; gap:4px 14px; margin-bottom:8px; }
+.rr-spatial-flow .rr-spatial-caption { position:static; margin-top:10px!important; }
+.rr-spatial-flow .rr-spatial-leader { display:none; }
+@media(max-width:700px) {
+  .rr-spatial-overlay { position:static; height:auto; grid-column:1/-1; }
+  .rr-spatial-controls { position:relative; inset:auto; padding:4px 0 8px; }
+  .rr-spatial-targets { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 16px; }
+  .rr-spatial-overlay .rr-spatial-target { position:static; width:100%!important; min-height:48px; transform:none; }
+  .rr-spatial-back { position:static; flex-wrap:wrap; gap:4px 14px; margin-bottom:8px; }
+  .rr-spatial-caption { position:static; margin-top:10px!important; }
+  .rr-spatial-leader { display:none; }
+}
+@media(max-width:360px) {
+  .rr-spatial-flow .rr-spatial-targets,.rr-spatial-targets { grid-template-columns:1fr; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .rr-spatial-overlay * { transition:none!important; animation:none!important; scroll-behavior:auto!important; }
+}
+@media print { .rr-spatial-overlay { display:none!important; } }

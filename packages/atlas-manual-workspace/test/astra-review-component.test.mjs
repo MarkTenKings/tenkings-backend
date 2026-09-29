@@ -33,7 +33,7 @@ function astraFor(state, status = 'READY') {
       canonicalContour: [{ x: .2, y: .2 }, { x: .22, y: .2 }, { x: .22, y: .22 }, { x: .2, y: .22 }],
       observation: 'Possible short scratch.', uncertainty: 'May be a printed line.' }] };
 }
-function harness(initial = {}) {
+function harness(initial = {}, browser) {
   const instances = new Map(), elements = new Map(); let current, cursor, dirty, effects = [], tree;
   const memo = (make, deps) => { const i = cursor++, old = current[i]; if (!old || deps.some((value, n) => !Object.is(value, old.deps[n]))) current[i] = { deps, value: make() }; return current[i].value; };
   const react = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
@@ -45,7 +45,7 @@ function harness(initial = {}) {
       slots[i] = { deps, cleanup: old?.cleanup }; effects.push(() => { slots[i].cleanup?.(); slots[i].cleanup = action(); }); } },
   };
   const exports = {};
-  vm.runInNewContext(compiled, { exports, crypto: { randomUUID }, ResizeObserver: class {
+  vm.runInNewContext(compiled, { exports, window:browser, crypto: { randomUUID }, ResizeObserver: class {
     constructor(callback) { this.callback = callback; }
     observe(element) { this.element = element; element.notifyResize = this.callback; }
     disconnect() { delete this.element.notifyResize; }
@@ -462,6 +462,8 @@ test('retained old-frame removed observation cannot inspect or restore stale coo
   assert.equal(f.has('Add a new trace to restore this finding on the current photograph'),true);
   assert.equal(f.button('Restore finding','Front').props.disabled,true);await f.button('Restore finding','Front').props.onClick();
   assert.equal(f.calls.length,0);
+  f.props.focusedReview={side:'FRONT',findingId:finding.id,renderActions:()=>null,onApprove:async()=>{}};f.render();f.ready();
+  assert.equal(all(f.control('Selected finding measurements','Front'),n=>n.type==='dt'&&text(n)==='Region bounds').length,0,'old-frame observations do not claim current calibrated bounds');
 });
 test('saved examples distinguish retained old-frame observations without offering a publication retry',()=>{
   const memory=presentation.reviewedMemoryState({enabled:true,status:'SAVED',exampleCount:2,retainedObservationCount:1});
@@ -513,4 +515,134 @@ test('held learning gives the required human or operator action without offering
     assert.equal(f.has('Retry saving examples'),false);
     assert.equal(f.has('Feedback saved'),true);
   }
+});
+
+
+const focusedActions = options => ({type:'button',props:{children:'Approve',disabled:options.disabled,onClick:options.approve}});
+test('focused finding edit uses one Approve to save exact trace then review, with no extra Save or attestation',async()=>{
+ const state=workspace(),id=state.sides.FRONT.findings[0].id,calls=[];
+ const f=harness({workspace:state,focusedReview:{side:'FRONT',findingId:id,renderActions:focusedActions,onApprove:async value=>calls.push({type:'approve',value})},onEdit:async value=>calls.push({type:'save',value})});
+ assert.equal(f.button('Approve').props.disabled,true);f.ready();
+ assert.equal(f.nodes(n=>n.type==='input'&&n.props['aria-label']==='I inspected both Front and Back').length,0);
+ await f.click('Edit trace','Front');assert.equal(f.nodes(n=>n.type==='button'&&text(n)==='Save trace').length,0);
+ assert.equal(calls.length,0);await f.click('Approve');
+ assert.deepEqual(calls.map(value=>value.type),['save','approve']);assert.equal(calls[0].value.action.findingId,id);assert.equal(calls[1].value.findingId,id);
+ assert.deepEqual(JSON.parse(JSON.stringify(calls[1].value.inspectionHashes)),Object.fromEntries(['FRONT','BACK'].map(side=>[side,state.sides[side].frame.inspectionImageSha256])));
+ assert.equal(f.has('Unsaved trace'),false);
+});
+test('focused failed save retains the draft and cannot accept; retry runs one save and one approval',async()=>{
+ let fails=true,approvals=0,saves=0;
+ const f=harness({focusedReview:{side:'FRONT',findingId:null,renderActions:focusedActions,onApprove:async()=>{approvals++;}},onEdit:async()=>{saves++;if(fails)throw Error('offline');}});f.ready();
+ await f.click('Add finding','Front');assert.equal(f.button('Approve').props.disabled,true);f.draw();
+ await f.click('Approve');assert.equal(approvals,0);assert.equal(f.has('Unsaved trace'),true);assert.equal(f.has('Your current work is retained'),true);
+ fails=false;await f.click('Approve');assert.equal(saves,2);assert.equal(approvals,1);assert.equal(f.has('Unsaved trace'),false);
+});
+test('focused Add returns to the unchanged next finding selected by its parent after approving the new trace',async()=>{
+ const state=workspace(),original=state.sides.FRONT.findings[0],approvals=[];
+ const f=harness({workspace:state,focusedReview:{side:'FRONT',findingId:original.id,renderActions:focusedActions,
+   onApprove:async value=>{approvals.push(value.findingId);f.props.focusedReview={...f.props.focusedReview,findingId:original.id};}},
+   onEdit:async input=>{const saved=structuredClone(f.props.workspace);saved.sides.FRONT.findings.push({...structuredClone(original),id:input.action.trace.id});f.props.workspace=saved;}});
+ f.ready();await f.click('Add finding','Front');f.draw();await f.click('Approve');
+ assert.equal(approvals.length,1);assert.notEqual(approvals[0],original.id,'the new trace was explicitly approved');
+ await f.click('Approve');
+ assert.equal(approvals[1],original.id,'the next approval follows the parent selection, even when its ID did not change');
+});
+test('focused browsing to another finding changes focus without saving; missing Back evidence blocks approval',async()=>{
+ const state=workspace(),f=harness({workspace:state,focusedReview:{side:'FRONT',findingId:state.sides.FRONT.findings[0].id,renderActions:focusedActions,onApprove:async()=>{throw Error('must not approve');}}});f.ready();
+ f.props.focusedReview={...f.props.focusedReview,side:'BACK',findingId:state.sides.BACK.findings[0].id};f.render();
+ assert.equal(f.side('Front').props.hidden,true);assert.equal(f.side('Back').props.hidden,false);assert.equal(f.calls.length,0);
+ f.props.images={...f.props.images,BACK:{inspection:{url:'blob:wrong',sha256:'0'.repeat(64)}}};f.render();
+ assert.equal(f.button('Approve','Back').props.disabled,true);await f.button('Approve','Back').props.onClick();assert.equal(f.calls.length,0);
+});
+
+test('focused measurement failure retries the exact saved trace without resending the edit or approving early',async()=>{
+ let saves=0,retries=0,approvals=0;
+ const f=harness({focusedReview:{side:'FRONT',findingId:null,renderActions:focusedActions,onApprove:async()=>{approvals++;}},onRetry:async()=>{retries++;},onEdit:async input=>{saves++;f.props.workspace=actions.beginDefectEdit(f.props.workspace,JSON.parse(JSON.stringify(input))).state;throw Error('measurement held');}});f.ready();
+ await f.click('Add finding','Front');f.draw();await f.click('Approve');assert.equal(approvals,0);assert.equal(saves,1);
+ assert.ok(f.props.workspace.sides.FRONT.pending,'trace was saved before measurement failed');f.ready();await f.click('Approve');assert.equal(retries,1);assert.equal(saves,1);assert.equal(approvals,1);assert.equal(f.has('Unsaved trace'),false);
+});
+
+
+test('focused selected trace uses its true raster boundary and clean view shares the exact camera and image',async()=>{
+ const state=workspace(),id=state.sides.FRONT.findings[0].id;
+ const f=harness({workspace:state,focusedReview:{side:'FRONT',findingId:id,renderActions:focusedActions,onApprove:async()=>{}}});f.ready();
+ assert.equal(f.nodes(n=>n.props?.className==='ad-exact-outline','Front').length,1);
+ assert.equal(f.nodes(n=>n.props?.className==='ad-selected-callout','Front').length,1);
+ const marked=()=>f.nodes(n=>n.props?.className==='ad-plane','Front')[0];
+ const initial=JSON.stringify(marked().props.style);
+ await f.click('Clean photo','Front');assert.equal(f.nodes(n=>n.props?.className==='ad-exact-outline','Front').length,0);assert.equal(JSON.stringify(marked().props.style),initial);
+ await f.click('Marked photo','Front');await f.click('Compare','Front');
+ const clean=f.nodes(n=>n.props?.className==='ad-plane ad-clean-plane','Front')[0];assert.deepEqual(clean.props.style,marked().props.style);
+ assert.equal(f.nodes(n=>n.type==='img'&&n.props.alt==='Front clean inspection image','Front')[0].props.src,f.nodes(n=>n.type==='img'&&n.props.alt==='Front inspection image','Front')[0].props.src);
+ assert.equal(f.calls.length,0);
+});
+test('focused navigation is explicit and bounded and locks during a local trace',async()=>{
+ const state=workspace(),ids=['FRONT','BACK'].map(side=>state.sides[side].findings[0].id),calls=[];
+ const f=harness({workspace:state,focusedReview:{side:'FRONT',findingId:ids[0],renderActions:focusedActions,onApprove:async()=>{},navigation:{index:0,total:2,items:ids.map((id,i)=>({id,side:i?'BACK':'FRONT',label:'Finding '+(i+1)})),onPrevious:()=>calls.push('previous'),onNext:()=>calls.push('next'),onSelect:id=>calls.push(id)}}});f.ready();
+ assert.equal(f.button('Previous finding').props.disabled,true);await f.button('Previous finding').props.onClick();assert.deepEqual(calls,[]);
+ await f.click('Next finding');assert.deepEqual(calls,['next']);assert.equal(f.calls.length,0);
+ await f.click('Edit trace','Front');assert.equal(f.button('Next finding').props.disabled,true);await f.button('Next finding').props.onClick();assert.deepEqual(calls,['next']);
+ await f.click('Cancel trace','Front');f.props.focusedReview.navigation={...f.props.focusedReview.navigation,index:1};f.render();assert.equal(f.button('Next finding').props.disabled,true);
+});
+
+test('focused red outline equals the saved mask pixel boundary, including holes and disconnected islands',()=>{
+ const state=workspace(),finding=state.sides.FRONT.findings[0],before=JSON.stringify(state);
+ const f=harness({workspace:state,focusedReview:{side:'FRONT',findingId:finding.id,renderActions:focusedActions,onApprove:async()=>{}}});f.ready();
+ const outline=f.nodes(n=>n.props?.className==='ad-exact-outline','Front')[0];assert.equal(outline.props.viewBox,'0 0 1270 1778');
+ const path=all(outline,n=>n.type==='path')[0].props.d,actual=new Set(),expected=new Set();
+ for(const part of path.matchAll(/M(\d+) (\d+)([HV])(\d+)/g)){const x=Number(part[1]),y=Number(part[2]),axis=part[3],end=Number(part[4]);
+  for(let n=axis==='H'?x:y;n<end;n++)actual.add(axis==='H'?`H:${n}:${y}`:`V:${x}:${n}`);
+ }
+ const pixels=traceCodec.decodeSpeedsterTraceRleV1(finding.finalTrace??finding.detectorMask);
+ for(let y=0;y<1778;y++)for(let x=0;x<1270;x++)if(pixels[y*1270+x]){
+  if(x===0||!pixels[y*1270+x-1])expected.add(`V:${x}:${y}`);
+  if(x===1269||!pixels[y*1270+x+1])expected.add(`V:${x+1}:${y}`);
+  if(y===0||!pixels[(y-1)*1270+x])expected.add(`H:${x}:${y}`);
+  if(y===1777||!pixels[(y+1)*1270+x])expected.add(`H:${x}:${y+1}`);
+ }
+ assert.ok(actual.size>0);assert.deepEqual([...actual].sort(),[...expected].sort());assert.equal(JSON.stringify(state),before);assert.equal(f.calls.length,0);
+});
+
+test('desktop comparison shares camera through zoom and resize and disappears when the exact image binding fails',()=>{
+ const state=workspace(),id=state.sides.FRONT.findings[0].id;
+ const f=harness({workspace:state,focusedReview:{side:'FRONT',findingId:id,renderActions:focusedActions,onApprove:async()=>{}}},{matchMedia:query=>({matches:query.includes('min-width')})});f.ready();
+ assert.ok(f.button('Single view','Front'));f.select('Front defect zoom',4,'Front');f.resize('Front',300,420);
+ const marked=f.nodes(n=>n.props?.className==='ad-plane','Front')[0],clean=f.nodes(n=>n.props?.className==='ad-plane ad-clean-plane','Front')[0];assert.deepEqual(clean.props.style,marked.props.style);
+ f.props.images={...f.props.images,FRONT:{inspection:{url:'blob:wrong',sha256:'0'.repeat(64)}}};f.render();
+ assert.equal(f.nodes(n=>n.type==='img'&&n.props.alt==='Front clean inspection image','Front').length,0);assert.equal(f.nodes(n=>n.props?.className==='ad-exact-outline','Front').length,0);assert.equal(f.button('Approve','Front').props.disabled,true);assert.equal(f.calls.length,0);
+});
+
+test('focused selected readout keeps one direct Add/Edit/Reject row and moves type changes into Tools without saving on open',async()=>{
+ const state=workspace(),id=state.sides.FRONT.findings[0].id;
+ const f=harness({workspace:state,focusedReview:{side:'FRONT',findingId:id,renderActions:focusedActions,onApprove:async()=>{}}});f.ready();
+ const panel=f.nodes(n=>n.props?.className==='ad-review-panel','Front')[0];
+ const summary=all(panel,n=>n.props?.['aria-label']==='Selected finding measurements')[0];
+ const row=all(summary,n=>n.props?.className==='am-side-actions ad-focused-finding-actions')[0];
+ assert.deepEqual(all(row,n=>n.type==='button').map(text),['Add finding','Edit trace','Reject finding']);
+ for(const label of ['Add finding','Edit trace','Reject finding'])assert.equal(all(panel,n=>n.type==='button'&&text(n)===label).length,1);
+ assert.equal(all(panel,n=>n.type==='select'&&n.props['aria-label']==='Front finding type').length,0);
+ const tools=f.nodes(n=>n.type==='details'&&n.props.className==='ad-focused-tools','Front')[0];
+ assert.equal(all(tools,n=>n.type==='select'&&n.props['aria-label']==='Front finding type').length,1);
+ assert.equal(f.calls.length,0);await f.click('Edit trace','Front');await f.click('Cancel trace','Front');assert.equal(f.calls.length,0);
+ const type=f.control('Front finding type');await type.props.onChange({target:{value:'VISIBLE_WHITENING'}});f.render();
+ assert.equal(f.calls.length,1);assert.equal(f.calls[0].request.action.type,'CHANGE_TYPE');assert.equal(f.calls[0].request.action.defectId,id);
+ const ordinary=harness({workspace:state});ordinary.ready();await ordinary.clickControl('Inspect Front finding 1');
+ const ordinaryPanel=ordinary.nodes(n=>n.props?.className==='ad-review-panel','Front')[0];
+ assert.equal(all(ordinaryPanel,n=>n.type==='select'&&n.props['aria-label']==='Front finding type').length,1,'ordinary review retains its direct type control');
+});
+
+test('focused region bounds use saved calibrated mask extents while area remains measured and draft values are labelled Saved',async()=>{
+ const state=workspace(),finding=state.sides.FRONT.findings[0];
+ const f=harness({workspace:state,focusedReview:{side:'FRONT',findingId:finding.id,renderActions:focusedActions,onApprove:async()=>{}}});f.ready();
+ const pixels=traceCodec.decodeSpeedsterTraceRleV1(finding.finalTrace??finding.detectorMask);
+ let left=1270,top=1778,right=0,bottom=0;
+ for(let y=0;y<1778;y++)for(let x=0;x<1270;x++)if(pixels[y*1270+x]){left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x+1);bottom=Math.max(bottom,y+1);}
+ const expected=`${((right-left)/20).toLocaleString('en-US',{maximumFractionDigits:3})} × ${((bottom-top)/20).toLocaleString('en-US',{maximumFractionDigits:3})} mm`;
+ const value=label=>{const summary=f.control('Selected finding measurements','Front');const pair=all(summary,n=>n.type==='div'&&all(n,c=>c.type==='dt'&&text(c)===label).length)[0];assert.ok(pair,label);return text(all(pair,n=>n.type==='dd')[0]);};
+ const area=(finding.measurementRegions??[{measurement:finding.measurement}]).reduce((sum,r)=>sum+r.measurement.areaMm2,0).toLocaleString('en-US',{maximumFractionDigits:6})+' mm²';
+ assert.equal(value('Region bounds'),expected);assert.equal(value('Measured area'),area);
+ await f.click('Edit trace','Front');f.draw();assert.equal(value('Saved region bounds'),expected);assert.equal(value('Saved area'),area);
+ assert.ok(all(f.control('Selected finding measurements','Front'),n=>n.type==='dt').every(n=>text(n).startsWith('Saved')));
+ await f.click('Cancel trace','Front');f.props.workspace=actions.beginDefectEdit(state,{side:'FRONT',base:actions.defectBase(state,'FRONT'),actor:'HUMAN',action:{type:'CHANGE_TYPE',defectId:finding.id,defectType:'VISIBLE_WHITENING'}}).state;f.render();
+ assert.equal(value('Saved region bounds'),expected);assert.equal(value('Saved area'),area);assert.equal(f.button('Edit trace','Front').props.disabled,true);
 });

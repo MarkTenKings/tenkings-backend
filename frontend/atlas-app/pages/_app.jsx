@@ -6,6 +6,7 @@ import '../styles/global.css';
 import '../styles/grading.css';
 import '@atlas/report-view/styles.css';
 import '@atlas/manual-workspace/styles.css';
+import '@atlas/manual-workspace/focused-geometry.css';
 import '@atlas/manual-workspace/defects.css';
 import '../styles/manual.css';
 import '../styles/atlas-brand.css';

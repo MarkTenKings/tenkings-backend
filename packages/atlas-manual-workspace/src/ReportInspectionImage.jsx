@@ -6,18 +6,23 @@ import { INSPECTION_SIZE, fitInspectionScale, clampInspectionPan, zoomInspection
   resizeInspectionView, focusInspectionBounds, canonicalInspectionPoint } from './inspection-viewport.mjs';
 import { reportFindingAt, reportFindingBounds, reportFindingMask, reportFindingRegions,
   reportMarkedSpan, reportSpanRuler, reportMeasurementPlacement, reportPinchView, reportMinimap, reportCropBounds, reportTraceSpans } from './report-review-ui.mjs';
+import { reportCameraItinerary } from './report-spatial-navigation.mjs';
+import { ReportSpatialOverlay } from './ReportSpatialOverlay.jsx';
+import { ReportPrecisionOverlay } from './ReportPrecisionOverlay.jsx';
+import { ReportFingerprint } from './ReportFingerprint.jsx';
 
 const name = side => side === 'FRONT' ? 'Front' : 'Back';
 const words = value => value.toLowerCase().replaceAll('_', ' ');
 
-function ReportMasks({ findings, selected, visible }) {
+function ReportMasks({ findings, selected, visible, publicMode = false, emphasized }) {
   const canvas = useRef(null);
   useEffect(() => {
     const context = canvas.current?.getContext('2d'); if (!context) return;
     context.clearRect(0, 0, 1270, 1778); if (!visible) return;
     for (const finding of findings) {
       if (finding.reviewResult === 'REMOVED') continue;
-      context.fillStyle = finding.id === selected ? 'rgba(219,78,36,.64)' : 'rgba(238,170,45,.42)';
+      context.fillStyle = publicMode ? `rgba(224,48,54,${selected ? finding.id === selected ? .62 : .12 : emphasized?.length ? emphasized.includes(finding.id) ? .8 : .2 : .76})`
+        : finding.id === selected ? 'rgba(226,89,66,.5)' : 'rgba(242,236,217,.3)';
       const mask = reportFindingMask(finding);
       if (mask) for (const span of reportTraceSpans(mask)) context.fillRect(span.x, span.y, span.width, 1);
       else for (const region of reportFindingRegions(finding)) {
@@ -26,7 +31,7 @@ function ReportMasks({ findings, selected, visible }) {
         context.closePath(); context.fill();
       }
     }
-  }, [findings, selected, visible]);
+  }, [findings, selected, visible, publicMode, emphasized]);
   return <canvas className="rr-mask" ref={canvas} width={1270} height={1778} aria-hidden="true"/>;
 }
 
@@ -80,20 +85,55 @@ function Blueprint({ finding, explanation, centering, policy, side, printed, vie
 
 /** No edit/action callbacks: every control here changes only the displayed view. */
 export function ReportInspectionImage({ side, descriptor, expectedHash, findings, selected, onSelect, expanded, hidden, onExpand, onReady,
-  geometry, showFindingButtons = true, compact = false, fitViewport = false, layerOptions, findingsVisible, command, onViewChange, onActivate, initialInspection, cleanComparison = false, blueprint = true, explanation, centering, policy }) {
+  geometry, showFindingButtons = true, compact = false, fitViewport = false, layerOptions, findingsVisible, command, onViewChange, onActivate, initialInspection, cleanComparison = false, blueprint = true, explanation, centering, policy,
+  publicMode = false, printMode = false, inspectionSection = 'whole', spatialNavigation, activeArea, onAreaChange, density = 'all', lastFindingId, fingerprintCommand, onFingerprintReturn }) {
   const supplied = descriptor?.sha256 === expectedHash && descriptor?.url ? descriptor : null;
   const image = useVerifiedImage(supplied), [loaded, setLoaded] = useState(null);
   const ready = Boolean(supplied && image.url && loaded === image.url);
+  const fingerprint = publicMode && !printMode && inspectionSection === 'fingerprint';
   const previewDescriptor = reportInspectionPreview(descriptor, expectedHash);
   const preview = useVerifiedImage(previewDescriptor), [previewLoaded, setPreviewLoaded] = useState(null);
   const previewReady = Boolean(preview.url && previewLoaded === preview.url);
   const retryImage = () => { setLoaded(null); descriptor?.retryAccess?.(); image.retry(); };
   const [view, setView] = useState({ zoom: 1, pan: { x: 0, y: 0 } }), [size, setSize] = useState({ width: 400, height: 540 });
-  const sizeRef = useRef(size), viewport = useRef(null), plane = useRef(null), gesture = useRef(null);
-  const pointers = useRef(new Map()), viewRef = useRef(view); viewRef.current = view;
+  const sizeRef = useRef(size), viewport = useRef(null), plane = useRef(null), cleanViewport = useRef(null), cleanPlane = useRef(null), gesture = useRef(null);
+  const pointers = useRef(new Map()), gestureViewport = useRef(null), viewRef = useRef(view); viewRef.current = view;
   const [localOverlays, setOverlays] = useState(true), [magnifier, setMagnifier] = useState(false), [lens, setLens] = useState(null);
   const [localLayers, setLayers] = useState({ physical: true, printed: true, centering: true });
   const [transition, setTransition] = useState(false);
+  const [motionPhase, setMotionPhase] = useState('idle'), animation = useRef(null), wasHidden = useRef(true);
+  const displayMode = useRef({publicMode,inspectionSection}); displayMode.current = {publicMode,inspectionSection};
+  const emphasized = useMemo(() => spatialNavigation?.neighborhoods.find(area => area.id === activeArea)?.entries.map(entry => entry.finding.id), [spatialNavigation, activeArea]);
+  const stopMotion = () => {
+    if (animation.current !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(animation.current);
+    animation.current = null; setMotionPhase('idle');
+  };
+  const animate = steps => {
+    stopMotion(); setTransition(false);
+    const assign = value => { viewRef.current = value; setView(value); };
+    if (typeof requestAnimationFrame !== 'function' || typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      assign(steps.at(-1).view); return;
+    }
+    let index = 0;
+    const next = () => {
+      const step = steps[index++];
+      if (!step) { animation.current = null; setMotionPhase('idle'); return; }
+      setMotionPhase(step.phase);
+      if (!step.duration) { assign(step.view); next(); return; }
+      const from = viewRef.current; let started;
+      const frame = now => {
+        started ??= now;
+        const progress = Math.min(1, (now-started)/step.duration), t = progress*progress*(3-2*progress);
+        assign({zoom:from.zoom+(step.view.zoom-from.zoom)*t,pan:{x:from.pan.x+(step.view.pan.x-from.pan.x)*t,y:from.pan.y+(step.view.pan.y-from.pan.y)*t}});
+        if (progress < 1) animation.current = requestAnimationFrame(frame); else next();
+      };
+      animation.current = requestAnimationFrame(frame);
+    };
+    next();
+  };
+  useEffect(() => () => { if (animation.current !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(animation.current); }, []);
+  useEffect(() => { if (hidden || !ready) { stopMotion(); wasHidden.current = true; pointers.current.clear(); gesture.current = null; gestureViewport.current = null; } }, [hidden, ready, expectedHash]);
+  useEffect(() => { if (printMode) { stopMotion(); setTransition(false); setView({zoom:1,pan:{x:0,y:0}}); } }, [printMode]);
   const layers = layerOptions ?? localLayers, overlays = findingsVisible ?? localOverlays;
   const bounds = useMemo(() => { let number = 0; return findings.map(finding => ({ finding,
     number: finding.reviewResult === 'REMOVED' ? null : ++number, bounds: reportFindingBounds(finding) })); }, [findings]);
@@ -110,12 +150,12 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
   const locatorWidth=Math.min(docked ? 94 : 124,size.width*.4),locatorHeight=locatorWidth*1858/1350+4;
   const locatorBox = docked ? null : reportMeasurementPlacement(size,[...(projectedBox?[projectedBox]:[]),...(spanRuler?[spanRuler.bounds]:[])],locatorWidth,locatorHeight);
 
-  const fit = () => { setView({ zoom: 1, pan: { x: 0, y: 0 } }); setLens(null); };
-  const changeZoom = next => { setView(previous => zoomInspectionAt(previous, next, { x: size.width / 2, y: size.height / 2 }, size)); setLens(null); };
+  const fit = () => { const target = { zoom: 1, pan: { x: 0, y: 0 } }; if (publicMode && !fingerprint) animate([{phase:'retreat',view:target,duration:380}]); else { stopMotion(); setView(target); } setLens(null); };
+  const changeZoom = next => { stopMotion(); setView(previous => zoomInspectionAt(previous, next, { x: size.width / 2, y: size.height / 2 }, size)); setLens(null); };
   useEffect(() => { onViewChange?.(side, zoom, { view, size }); }, [side, view, size, onViewChange]);
   useEffect(() => {
     if (!command || command.side !== side) return;
-    setTransition(true);
+    setTransition(!publicMode);
     if (command.type === 'FIT') fit();
     if (command.type === 'ZOOM') changeZoom(command.zoom);
   }, [command]);
@@ -126,7 +166,9 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
       if (!element.clientWidth || !element.clientHeight) return;
       const next = { width: element.clientWidth, height: element.clientHeight }, previous = sizeRef.current;
       if (next.width === previous.width && next.height === previous.height) return;
-      sizeRef.current = next; setSize(next); setView(value => resizeInspectionView(value, previous, next)); gesture.current = null; setLens(null);
+      stopMotion(); sizeRef.current = next; setSize(next);
+      setView(value => displayMode.current.publicMode && displayMode.current.inspectionSection !== 'finding' ? {zoom:1,pan:{x:0,y:0}} : resizeInspectionView(value, previous, next));
+      pointers.current.clear(); gesture.current = null; gestureViewport.current = null; setLens(null);
     };
     resize(); const observer = new ResizeObserver(resize); observer.observe(element); return () => observer.disconnect();
   }, []);
@@ -142,30 +184,36 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
     if (!selected) return;
     const target = bounds.find(entry => entry.finding.id === selected.id);
     if (!target?.bounds) return;
-    setTransition(true); setView(focusInspectionBounds(target.bounds, sizeRef.current)); setLens(null);
-    viewport.current?.scrollIntoView?.({ block: typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches ? 'start' : 'nearest', behavior: typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-  }, [selected, bounds, ready, hidden]);
+    const next = focusInspectionBounds(target.bounds, sizeRef.current);
+    if (publicMode) {
+      animate(reportCameraItinerary(viewRef.current, next, {sideChanged:wasHidden.current})); wasHidden.current = false;
+    } else { setTransition(true); setView(next); }
+    setLens(null);
+    if (!publicMode) viewport.current?.scrollIntoView?.({ block: typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches ? 'start' : 'nearest', behavior: typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }, [selected, bounds, ready, hidden, publicMode ? size.width : null, publicMode ? size.height : null]);
   useEffect(() => {
-    const element = viewport.current; if (!element?.addEventListener) return;
+    const elements = [viewport.current, publicMode && cleanViewport.current].filter(element => element?.addEventListener); if (!elements.length) return;
     const wheel = event => {
-      if (!ready || gesture.current) return;
-      event.preventDefault(); setTransition(false); onActivate?.(side); const box = element.getBoundingClientRect(), factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size.height : 1;
+      if (!ready || fingerprint || gesture.current) return;
+      event.preventDefault(); stopMotion(); setTransition(false); onActivate?.(side); const box = event.currentTarget.getBoundingClientRect(), factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size.height : 1;
       setView(previous => zoomInspectionAt(previous, previous.zoom * Math.exp(-event.deltaY * factor * .002), { x: event.clientX - box.left, y: event.clientY - box.top }, size)); setLens(null);
     };
-    element.addEventListener('wheel', wheel, { passive: false }); return () => element.removeEventListener('wheel', wheel);
-  }, [ready, size, onActivate, side]);
+    elements.forEach(element => element.addEventListener('wheel', wheel, { passive: false })); return () => elements.forEach(element => element.removeEventListener('wheel', wheel));
+  }, [ready, size, onActivate, side, publicMode, cleanComparison, Boolean(selectedBounds), fingerprint]);
   const localPoint = event => { const box = event.currentTarget.getBoundingClientRect(); return { x: event.clientX - box.left, y: event.clientY - box.top }; };
   const beginGesture = () => {
     const points = [...pointers.current.values()];
     if (points.length >= 2) gesture.current = { kind: 'pinch', view: viewRef.current,
       midpoint: { x: (points[0].x + points[1].x) / 2, y: (points[0].y + points[1].y) / 2 }, distance: Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y), moved: true };
     else if (points.length) gesture.current = { kind: 'pan', point: points[0], pan: viewRef.current.pan, moved: true };
-    else gesture.current = null;
+    else { gesture.current = null; gestureViewport.current = null; }
   };
   const pointerDown = event => {
-    if (!ready || (event.pointerType !== 'touch' && event.button !== 0) || pointers.current.size >= 2) return;
-    event.preventDefault(); setTransition(false); onActivate?.(side); viewport.current?.focus?.({ preventScroll: true });
+    if (!ready || fingerprint || (event.pointerType !== 'touch' && event.button !== 0) || pointers.current.size >= 2
+      || pointers.current.size && gestureViewport.current !== event.currentTarget) return;
+    event.preventDefault(); stopMotion(); setTransition(false); onActivate?.(side); event.currentTarget?.focus?.({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
+    gestureViewport.current = event.currentTarget;
     pointers.current.set(event.pointerId, localPoint(event)); beginGesture();
     if (pointers.current.size === 1) gesture.current.moved = false;
     setLens(null);
@@ -191,7 +239,8 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
     pointers.current.delete(event.pointerId);
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     if (current.kind === 'pan' && !current.moved && overlays) {
-      const finding = reportFindingAt(findings, canonicalInspectionPoint({ x: event.clientX, y: event.clientY }, plane.current?.getBoundingClientRect()));
+      const source = event.currentTarget === cleanViewport.current ? cleanPlane.current : plane.current;
+      const finding = reportFindingAt(findings, canonicalInspectionPoint({ x: event.clientX, y: event.clientY }, source?.getBoundingClientRect()));
       if (finding) onSelect(finding);
     }
     beginGesture();
@@ -199,8 +248,9 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
   const cancelPointer = event => { pointers.current.delete(event.pointerId); beginGesture(); setLens(null); };
   const keyboard = event => {
     if (!ready || event.target !== event.currentTarget || gesture.current) return;
+    if (fingerprint) { if (event.key === 'Escape') { event.stopPropagation?.(); onFingerprintReturn?.(); } return; }
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '=', '-', '0', 'Home', 'Escape'].includes(event.key)) event.stopPropagation?.();
-    setTransition(false);
+    stopMotion(); setTransition(false);
     const moves = { ArrowLeft: [60, 0], ArrowRight: [-60, 0], ArrowUp: [0, 60], ArrowDown: [0, -60] };
     if (moves[event.key]) { event.preventDefault(); const [x, y] = moves[event.key]; setView(previous => ({ ...previous, pan: clampInspectionPan({ x: previous.pan.x + x, y: previous.pan.y + y }, previous.zoom, size) })); }
     else if (['+', '=', '-'].includes(event.key)) { event.preventDefault(); changeZoom(zoom * (event.key === '-' ? 1 / 1.25 : 1.25)); }
@@ -208,11 +258,11 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
     else if (event.key === 'Escape') { setLens(null); if (expanded) onExpand(null); }
   };
   const locator = ready && zoom > 1 ? <button className={`rr-minimap${locatorBox ? '' : ' rr-locator-outside'}`} style={locatorBox ? {left:locatorBox.x,top:locatorBox.y,right:'auto',bottom:'auto',width:locatorWidth,height:locatorHeight,maxWidth:'none'} : {width:locatorWidth,height:locatorHeight,maxWidth:'none'}} type="button" aria-label={`Recenter ${name(side)} photograph; keyboard activation fits image`} onPointerDown={event => event.stopPropagation()} onClick={event => {
-        if (!event.detail) { fit(); return; }
+        stopMotion(); if (!event.detail) { fit(); return; }
         const box = event.currentTarget.getBoundingClientRect(), x = (event.clientX - box.left) / box.width, y = (event.clientY - box.top) / box.height;
         setView(previous => ({ ...previous, pan: clampInspectionPan({ x: (.5 - x) * INSPECTION_SIZE.width * scale * previous.zoom, y: (.5 - y) * INSPECTION_SIZE.height * scale * previous.zoom }, previous.zoom, size) }));
       }}><img src={image.url} alt="" draggable={false}/><span style={{ left: `${map.x * 100}%`, top: `${map.y * 100}%`, width: `${map.width * 100}%`, height: `${map.height * 100}%` }}/></button> : null;
-  return <section className={`rr-image-side${expanded ? ' rr-image-expanded' : ''}${docked ? ' rr-image-docked' : ''}`} hidden={hidden} aria-label={`${name(side)} report image`}>
+  return <section className={`rr-image-side${expanded ? ' rr-image-expanded' : ''}${docked ? ' rr-image-docked' : ''}`} hidden={hidden} data-motion-phase={motionPhase} aria-label={`${name(side)} report image`}>
     {!compact && <><header><h3>{name(side)}</h3><button type="button" onClick={() => onExpand(expanded ? null : side)}>{expanded ? 'Return to pair' : 'Expand image'}</button></header>
     <div className="rr-image-tools"><label>Zoom <select aria-label={`${name(side)} report zoom`} value={zoom} disabled={!ready} onChange={event => changeZoom(Number(event.target.value))}>
       {[1, 2, 4, 8, 16, ...([1, 2, 4, 8, 16].includes(zoom) ? [] : [zoom])].sort((a, b) => a - b).map(value => <option key={value} value={value}>{value === 1 ? 'Fit' : `${Number(value.toFixed(1))}×`}</option>)}
@@ -226,40 +276,44 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
           onLoad={event => setPreviewLoaded(event.currentTarget.naturalWidth === previewDescriptor?.width && event.currentTarget.naturalHeight === previewDescriptor?.height ? preview.url : null)}
           onError={() => setPreviewLoaded(null)}/>}
         {image.url && <img src={image.url} alt={`${name(side)} saved inspection photograph`} draggable={false} style={{ visibility: ready ? 'visible' : 'hidden' }} onLoad={event => setLoaded(event.currentTarget.naturalWidth === INSPECTION_SIZE.width && event.currentTarget.naturalHeight === INSPECTION_SIZE.height ? image.url : 'INVALID_DIMENSIONS')} onError={() => setLoaded('IMAGE_ERROR')}/>}
-        {ready && <div className="rr-card-plane"><ReportMasks findings={findings} selected={selected?.id} visible={overlays}/>
+        {ready && <div className="rr-card-plane"><ReportMasks findings={findings} selected={selected?.id} visible={overlays} publicMode={publicMode} emphasized={emphasized}/>
           <svg viewBox="0 0 1270 1778" className="rr-geometry-layers" aria-hidden="true">
             {layers.physical && physical && <polygon className="rr-physical-line" points={physical.map(p => `${p.x * 1270},${p.y * 1778}`).join(' ')}/>}
             {layers.printed && printed && <polygon className="rr-printed-line" points={printed.map(p => `${p.x * 1270},${p.y * 1778}`).join(' ')}/>}
             {layers.centering && printed && <g className="rr-centering-line"><path d="M635 0V1778 M0 889H1270"/>{printed.map((p, index) => { const q = printed[(index + 1) % 4], x = (p.x + q.x) / 2 * 1270, y = (p.y + q.y) / 2 * 1778; return <line key={index} x1={x} y1={y} x2={index % 2 ? index === 1 ? 1270 : 0 : x} y2={index % 2 ? y : index === 0 ? 0 : 1778}/>; })}</g>}
           </svg>
-          {overlays && <svg viewBox="0 0 1270 1778" className="rr-finding-markers" aria-hidden="true">{bounds.filter(entry => entry.bounds && entry.finding.reviewResult !== 'REMOVED').map(({ finding, bounds: box }) => <g key={finding.id} className={selected?.id === finding.id ? 'rr-active-marker' : ''}>
+          {overlays && !publicMode && <svg viewBox="0 0 1270 1778" className="rr-finding-markers" aria-hidden="true">{bounds.filter(entry => entry.bounds && entry.finding.reviewResult !== 'REMOVED').map(({ finding, bounds: box }) => <g key={finding.id} className={selected?.id === finding.id ? 'rr-active-marker' : ''}>
             {selected?.id !== finding.id && <rect x={box.x * 1270} y={box.y * 1778} width={Math.max(1, box.width * 1270)} height={Math.max(1, box.height * 1778)}/>}
           </g>)}</svg>}
-          {overlays && bounds.filter(entry => entry.bounds && entry.finding.reviewResult !== 'REMOVED').map(({ finding, bounds: box, number }) => <button type="button" key={finding.id} className={`rr-marker-button${selected?.id === finding.id ? ' rr-selected-pin' : ''}`}
+          {overlays && !publicMode && bounds.filter(entry => entry.bounds && entry.finding.reviewResult !== 'REMOVED').map(({ finding, bounds: box, number }) => <button type="button" key={finding.id} className={`rr-marker-button${selected?.id === finding.id ? ' rr-selected-pin' : ''}`}
             aria-label={`Inspect ${name(side)} finding ${number}: ${words(finding.defectType)}`} aria-pressed={selected?.id === finding.id}
             style={{ left: `${Math.min(1 - 16 / (1270 * scale * zoom), Math.max(16 / (1270 * scale * zoom), box.x)) * 100}%`, top: `${Math.min(1 - 16 / (1778 * scale * zoom), Math.max(16 / (1778 * scale * zoom), box.y)) * 100}%` }}
             onPointerDown={event => event.stopPropagation()} onPointerUp={event => event.stopPropagation()} onKeyDown={event => { if (!['[', ']'].includes(event.key)) event.stopPropagation(); }}
             onClick={event => { event.stopPropagation(); onSelect(finding); }}><span>{number}</span></button>)}
         </div>}
+        {ready && publicMode && <ReportFingerprint findings={findings} side={side} active={fingerprint && !hidden}
+          command={fingerprintCommand} onReturn={onFingerprintReturn}/>}
       </div>}
       {!ready && <div className={`rr-image-status${previewReady ? ' rr-image-preview-status' : ''}`} role="status">
         <span>{descriptor?.accessLoading ? 'Opening saved photograph…' : !supplied ? 'This report’s saved photograph is unavailable.' : image.error || loaded === 'IMAGE_ERROR' ? 'Could not load and verify full detail.' : loaded === 'INVALID_DIMENSIONS' ? 'The saved photograph has unexpected dimensions.' : inspectionLoadingText(image.progress, previewReady)}</span>
         {(image.error || descriptor?.accessError || loaded === 'IMAGE_ERROR' || loaded === 'INVALID_DIMENSIONS') && <button type="button" onClick={retryImage}>Try again</button>}
       </div>}
       {ready && blueprint && <Blueprint finding={bounds.find(entry => entry.finding.id === selected?.id)?.finding} explanation={explanation} centering={layers.centering ? centering : null} policy={policy} side={side} printed={layers.centering ? printed : null} view={view} size={size} scale={scale} locatorBox={locatorBox} docked={docked}/>}
+      {ready && publicMode && (inspectionSection === 'centering' || overlays) && <ReportPrecisionOverlay finding={focusedFinding} printed={printed} project={project} size={size} mode={inspectionSection} moving={motionPhase !== 'idle'}/>}
       {cleanComparison && selectedBounds && <span className="rr-photo-label">Measured trace</span>}
       {ready && magnifier && lens && <div className="rr-magnifier" aria-hidden="true" style={{ [lens.right ? 'right' : 'left']: 12, backgroundImage: `url("${image.url}")`, backgroundSize: `${INSPECTION_SIZE.width * scale * zoom * 3}px ${INSPECTION_SIZE.height * scale * zoom * 3}px`, backgroundPosition: `${90 - lens.x * INSPECTION_SIZE.width * scale * zoom * 3}px ${90 - lens.y * INSPECTION_SIZE.height * scale * zoom * 3}px` }}><span>3× · image only</span></div>}
       {locatorBox && locator}
 
     </div>
-    {cleanComparison && selectedBounds && <div className="rr-viewport rr-clean-viewport" role="img" aria-label={`${name(side)} clean close-up; same photograph, zoom and position`}>
-      {ready && <div className="rr-plane" data-transition={transition} style={{ width: INSPECTION_SIZE.width * scale * zoom, height: INSPECTION_SIZE.height * scale * zoom, transform: `translate(calc(-50% + ${view.pan.x}px), calc(-50% + ${view.pan.y}px))` }}><img src={image.url} alt={`${name(side)} unmarked defect close-up`} draggable={false}/></div>}
+    {publicMode && inspectionSection === 'whole' && overlays && <ReportSpatialOverlay navigation={spatialNavigation} side={side} activeArea={activeArea} onAreaChange={onAreaChange} onSelect={onSelect} project={project} size={size} selectedId={lastFindingId} ready={ready} density={density}/>}
+    {cleanComparison && selectedBounds && <div className="rr-viewport rr-clean-viewport" ref={cleanViewport} role={publicMode ? 'group' : 'img'} tabIndex={publicMode ? 0 : undefined} onKeyDown={publicMode ? keyboard : undefined} onPointerDown={publicMode ? pointerDown : undefined} onPointerMove={publicMode ? pointerMove : undefined} onPointerUp={publicMode ? pointerUp : undefined} onPointerCancel={publicMode ? cancelPointer : undefined} onLostPointerCapture={publicMode ? cancelPointer : undefined} aria-label={`${name(side)} clean close-up; same photograph, zoom and position`}>
+      {ready && <div className="rr-plane" ref={cleanPlane} data-transition={transition} style={{ width: INSPECTION_SIZE.width * scale * zoom, height: INSPECTION_SIZE.height * scale * zoom, transform: `translate(calc(-50% + ${view.pan.x}px), calc(-50% + ${view.pan.y}px))` }}><img src={image.url} alt={`${name(side)} unmarked defect close-up`} draggable={false}/></div>}
       <span className="rr-photo-label">Unmarked photograph · synchronized</span>
     </div>}
     </div>
     <div className="rr-inspection-readouts">
     {!locatorBox && locator}
-    {ready && blueprint && selectedBounds && <Blueprint outside finding={bounds.find(entry=>entry.finding.id===selected?.id)?.finding} explanation={explanation} policy={policy} side={side} view={view} size={size} scale={scale} locatorBox={locatorBox} docked={docked}/>}
+    {ready && (blueprint || publicMode && inspectionSection === 'finding' && motionPhase === 'idle') && selectedBounds && <Blueprint outside finding={bounds.find(entry=>entry.finding.id===selected?.id)?.finding} explanation={explanation} policy={policy} side={side} view={view} size={size} scale={scale} locatorBox={locatorBox} docked={docked}/>}
     </div>
     {!compact && <p className="rr-help">Drag to pan · pinch or scroll to zoom · arrow keys pan · + / − zoom · 0 fits. Magnification enlarges saved pixels.</p>}
     {!printed && <p className="rr-help">Border geometry is not available in this report view.</p>}

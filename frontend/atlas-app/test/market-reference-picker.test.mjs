@@ -34,12 +34,25 @@ function fixture() {
 }
 test('optional picker performs no lookup on mount and never preselects even a priced graded sale', async () => {
   const f = fixture(); assert.equal(f.searches, 0); assert.equal(f.saves.length, 0);
+  assert.match(f.text(), /Manual search · no lookup starts automatically/);
   f.button('Find sold cards').props.onClick(); f.render(); await flush(); f.render();
   assert.equal(f.searches, 1); assert.equal(f.find(node => node.type === 'input')[0].props.checked, false);
+  assert.match(f.text(), /1 sold comp ready for your review/);
   assert.match(f.text(), /Variant needs review/); assert.match(f.text(), /ATLAS 9.5/); assert.match(f.text(), /PSA 9/); assert.match(f.text(), /\$40.00/);
   const listing = f.find(node => node.type === 'a')[0]; assert.equal(listing.props.href, ready().preview.candidates[0].sale.listingUrl);
   assert.equal(listing.props.target, '_blank'); assert.equal(listing.props.rel, 'noopener noreferrer');
   f.props.available = false; assert.equal(f.render(), null); assert.equal(f.searches, 1);
+});
+
+test('explicit search shows running then empty results without claiming ready sales', async () => {
+  const f = fixture(); let finish;
+  f.search = () => new Promise(resolve => { finish = resolve; });
+  f.button('Find sold cards').props.onClick(); f.render();
+  assert.match(f.text(), /Finding sold cards…/); assert.doesNotMatch(f.text(), /Manual search|ready for your review/);
+  assert.equal(f.button('Find sold cards').props.disabled, true);
+  const result = ready(); result.preview.candidates = []; finish(result); await flush(); f.render();
+  assert.match(f.text(), /No disclosed graded sales were found/); assert.doesNotMatch(f.text(), /comps ready/);
+  assert.equal(f.searches, 1); assert.equal(f.saves.length, 0);
 });
 
 test('uncertain search offers exact saved recovery, while definite pre-dispatch refusal permits a new search', async () => {

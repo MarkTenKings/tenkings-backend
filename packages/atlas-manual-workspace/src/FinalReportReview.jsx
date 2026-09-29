@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import { useVerifiedImage } from './verified-image.mjs';
 import { VerifiedImageCacheBoundary } from './VerifiedImageCacheBoundary.jsx';
 import { ReportInspectionImage } from './ReportInspectionImage.jsx';
+import { PublicEvidenceExplorer } from './PublicEvidenceExplorer.jsx';
 import { CardIdentityDetails, SlabPhotoHero, ReportMarketAndDealers } from './ReportPresentation.jsx';
 import { boundReportPresentation } from './report-presentation-ui.mjs';
 import { reportAwardedGrade, reportImagesMatch, reportFindingEntries, filterReportFindings,
@@ -67,10 +68,11 @@ function FindingSummary({ finding, explanation, partial }) {
 }
 
 function InspectionDock({ activeSide, chooseSide, expanded, setExpanded, panelOpen, setPanelOpen, layers, setLayers,
-  overlays, setOverlays, zoom, sendView, ready, geometry, findingCount, cleanComparison, setCleanComparison, blueprint, setBlueprint, onDetails }) {
+  overlays, setOverlays, zoom, sendView, ready, geometry, findingCount, cleanComparison, setCleanComparison, blueprint, setBlueprint, cleanPhoto, setCleanPhoto, onDetails }) {
   return <div className="rr-inspect-dock" aria-label="Inspection controls">
     <div className="rr-side-switch" aria-label="Card side">{SIDES.map(side => <button type="button" key={side} aria-pressed={activeSide === side} onClick={() => chooseSide(side)}>{title(side)}</button>)}</div>
     <button type="button" aria-expanded={panelOpen} aria-controls="atlas-inspect-findings" onClick={() => setPanelOpen(value => !value)}>Findings <span>{findingCount}</span></button>
+    <button type="button" aria-pressed={cleanPhoto} disabled={!ready} onClick={() => setCleanPhoto(value => !value)}>Clean photo</button>
     <button type="button" onClick={onDetails}>Card details</button>
     <details className="rr-dock-menu"><summary>Layers</summary><div>
       <label><input type="checkbox" checked={blueprint} onChange={event => setBlueprint(event.target.checked)}/>Measurement callouts</label>
@@ -172,11 +174,11 @@ function ReportExperience({ report, explanation, available, images, approved = f
   rejectedSuggestions = 0, onReadyChange, onCorrectFinding, children, geometry, brandSrc, publication, presentation, machine = false, corrected = false, inspectionMode, guidedFindingId, onFindingSelect, initialInspection, onInspectionChange, onAddFinding, onRejectFinding, reviewBusy = false }) {
   const partial = machine && reportGeometryUnresolved(report);
   const finalGrade = reportAwardedGrade(report), halfPointGrade = machine || report?.version === 'atlas-manual-draft-report-v2';
-  const CalculationContainer = machine || inspectionMode ? 'details' : 'section';
-  const [selected, setSelected] = useState(initialInspection?.findingId ? { id: initialInspection.findingId, sequence: 0 } : null), [expanded, setExpanded] = useState(initialInspection?.findingId ? initialInspection.side : inspectionMode ? null : 'FRONT'), [ready, setReady] = useState({});
+  const [selected, setSelected] = useState(initialInspection?.findingId ? { id: initialInspection.findingId, sequence: 0 } : null), [expanded, setExpanded] = useState(initialInspection?.side ?? 'FRONT'), [ready, setReady] = useState({});
   const [activeSide, setActiveSide] = useState(initialInspection?.side ?? 'FRONT'), [panelOpen, setPanelOpen] = useState(inspectionMode !== 'geometry');
-  const [layers, setLayers] = useState({ physical: true, printed: true, centering: true }), [overlays, setOverlays] = useState(true);
-  const [cleanComparison, setCleanComparison] = useState(true), [blueprint, setBlueprint] = useState(true), [detailsOpen, setDetailsOpen] = useState(false);
+  const [layers, setLayers] = useState({ physical: true, printed: true, centering: Boolean(inspectionMode) }), [overlays, setOverlays] = useState(true);
+  const [cleanComparison, setCleanComparison] = useState(false), [blueprint, setBlueprint] = useState(Boolean(inspectionMode)), [detailsOpen, setDetailsOpen] = useState(false);
+  const [cleanPhoto, setCleanPhoto] = useState(false);
   const [command, setCommand] = useState(null), [zooms, setZooms] = useState({ FRONT: 1, BACK: 1 });
   const views = useRef({}), inspectionChange = useRef(null);
   const viewChanged = useCallback((side, zoom, snapshot) => {
@@ -231,9 +233,10 @@ function ReportExperience({ report, explanation, available, images, approved = f
   }, []);
   const selectedFinding = report?.findings?.find(finding => finding.id === selected?.id);
   const selectedExplanation = explanation?.findings?.find(finding => finding.id === selected?.id);
-  const position = filtered.findIndex(entry => entry.finding.id === selected?.id);
-  const step = direction => { const next = position < 0 ? direction > 0 ? 0 : filtered.length - 1 : position + direction; if (next >= 0 && next < filtered.length) select(filtered[next].finding); };
-  const chooseCategory = category => { setCategoryFilter(category); setSelected(null); };
+  const navigationEntries = publicView ? entries : filtered;
+  const position = navigationEntries.findIndex(entry => entry.finding.id === selected?.id);
+  const step = direction => { const next = position < 0 ? direction > 0 ? 0 : navigationEntries.length - 1 : position + direction; if (next >= 0 && next < navigationEntries.length) select(navigationEntries[next].finding); };
+  const chooseCategory = category => { setCategoryFilter(category); if (!publicView) setSelected(null); };
   const chooseSide = side => { setActiveSide(side); if (selectedFinding?.side !== side) setSelected(null); if (expanded) setExpanded(side); };
   const sendView = (type, zoom) => setCommand(old => ({ type, zoom, side: activeSide, sequence: (old?.sequence ?? 0) + 1 }));
   const fragment = selectedFinding && reportFindingFragment(reportKey, selectedFinding.id);
@@ -241,21 +244,28 @@ function ReportExperience({ report, explanation, available, images, approved = f
   if (!available) return <section className="rr-report" aria-label="Final draft review unavailable"><div className="rr-unavailable"><h1>{publicView ? 'Report temporarily unavailable' : 'Review draft report'}</h1><p role="alert">{publicView ? 'The approved evidence could not be verified. Please try again later.' : 'The full report does not match the current saved review. Return to Findings and open the draft report again.'}</p></div></section>;
   const identity = report.identity, name = identity.playerName ?? identity.cardName;
   const identityLine = [identity.year, identity.manufacturer, identity.productSet, identity.parallel, identity.insert, identity.cardNumber && `#${identity.cardNumber}`].filter(Boolean).join(' · ');
-  return <section className={`rr-report rr-inspect${precise ? ' rr-precision' : ''}${printing ? ' rr-printing' : ''}${publicView ? ' rr-public' : ''}${machine ? ' rr-machine' : ''}${inspectionMode ? ' rr-guided rr-guided-' + inspectionMode : ''}`} data-finding-selected={Boolean(selectedFinding)} aria-label={publicView ? 'Approved ATLAS grading report' : 'Final draft report review'} onKeyDown={event => {
+  return <section className={`rr-report rr-inspect rr-platinum${precise ? ' rr-precision' : ''}${printing ? ' rr-printing' : ''}${publicView ? ' rr-public' : ''}${machine ? ' rr-machine' : ''}${inspectionMode ? ' rr-guided rr-guided-' + inspectionMode : ''}`} data-finding-selected={Boolean(selectedFinding)} aria-label={publicView ? 'Approved ATLAS grading report' : 'Final draft report review'} onKeyDown={event => {
     if (event.altKey || event.ctrlKey || event.metaKey || /INPUT|TEXTAREA|SELECT/.test(event.target?.tagName ?? '') || event.target?.isContentEditable) return;
     if (!inspectionMode && (event.key === '[' || event.key === ']')) { event.preventDefault(); event.stopPropagation(); step(event.key === ']' ? 1 : -1); }
   }}>
     <header className="rr-heading"><div className="rr-hero-copy"><img className="rr-brand" src={brandSrc} alt="ATLAS Grading · Know what you have"/>
-      <p className="rr-eyebrow">{corrected ? 'CURRENT CORRECTIONS · PROVISIONAL' : machine ? 'ATLAS PROPOSAL · HUMAN REVIEW' : approved ? 'HUMAN-APPROVED REPORT' : 'FINAL HUMAN REVIEW · DRAFT'}</p><h1>{name}</h1><p className="rr-identity">{identityLine}</p>
-      <div className="rr-trust-row"><span>{machine ? 'Awaiting your review' : approved ? 'Approved snapshot' : 'Awaiting separate approval'}</span><span>{entries.length} included {entries.length === 1 ? 'finding' : 'findings'}</span>{publication?.version && <span>Version {publication.version}</span>}</div>
+      <p className="rr-eyebrow">{corrected ? 'CURRENT CORRECTIONS · PROVISIONAL' : machine ? 'ATLAS PROPOSAL · HUMAN REVIEW' : approved ? 'ATLAS · GRADE REPORT' : 'FINAL HUMAN REVIEW · DRAFT'}</p><h1>{name}</h1><p className="rr-identity">{identityLine}</p>
+      <div className="rr-trust-row"><span>{machine ? 'Awaiting your review' : approved ? 'Approved snapshot' : 'Awaiting final approval'}</span><span>{entries.length} included {entries.length === 1 ? 'finding' : 'findings'}</span>{publication?.version && <span>Version {publication.version}</span>}</div>
       {!publicView && <p className="rr-review-history">{report.findingCounts.removed ?? 0} removed findings · {rejectedSuggestions} rejected suggestions</p>}
     </div><div className={`rr-overall${partial ? ' rr-overall-unavailable' : ''}`}><span>{machine ? 'PROPOSED GRADE' : approved ? 'APPROVED GRADE' : 'DRAFT GRADE'}</span><strong>{partial ? 'Unavailable' : finalGrade}</strong>{!partial && <span>ATLAS / 10</span>}<p>{partial ? 'Centering geometry needs review' : halfPointGrade ? 'Whole & half-point award' : 'Original historical grade'}</p></div></header>
-    <section className="rr-photo-review" aria-label="Report photographs and findings">
+    {publicView ? <PublicEvidenceExplorer key={reportKey} report={report} explanation={explanation} images={images} geometry={geometry} printing={printing}
+      selected={selected} activeSide={activeSide} onSelect={select} onClear={() => setSelected(null)} onChooseSide={chooseSide} onReady={imageReady} sideReady={sideReady}
+      findingDetails={selectedFinding && selectedExplanation ? <details className="rr-public-finding-details"><summary>Measurements & grade effect</summary>
+        <FindingCalculation finding={selectedFinding} explanation={selectedExplanation} policy={explanation.policy}/>
+        <button type="button" aria-pressed={precise} onClick={() => setPrecise(value => !value)}>{precise ? 'Use readable precision' : 'Show full precision'}</button>
+        {findingLink && <a href={findingLink}>Link to this finding</a>}
+      </details> : null}/>
+    : <section className="rr-photo-review" aria-label="Report photographs and findings">
       <div className="rr-inspect-title"><h2>ATLAS <span>INSPECT</span></h2><p role="status">{bothReady ? 'Both photographs verified' : 'Verifying photographs…'}{machine ? ' · Human review required' : approved ? ' · Approved evidence' : ' · Draft review'}</p>
         {publicView && entries.length > 0 && <button type="button" disabled={!bothReady} onClick={() => { setSideFilter('ALL'); setCategoryFilter('ALL'); select(entries[0].finding); }}>See why it’s {finalGrade} ↗</button>}
       </div>
       <InspectionDock activeSide={activeSide} chooseSide={chooseSide} expanded={expanded} setExpanded={setExpanded} panelOpen={panelOpen} setPanelOpen={setPanelOpen}
-        layers={layers} setLayers={setLayers} overlays={overlays} setOverlays={setOverlays} zoom={zooms[activeSide]} sendView={sendView} ready={sideReady(activeSide)} geometry={geometry?.[activeSide]} findingCount={entries.length} cleanComparison={cleanComparison} setCleanComparison={setCleanComparison} blueprint={blueprint} setBlueprint={setBlueprint} onDetails={() => setDetailsOpen(value => !value)}/>
+        layers={layers} setLayers={setLayers} overlays={overlays} setOverlays={setOverlays} zoom={zooms[activeSide]} sendView={sendView} ready={sideReady(activeSide)} geometry={geometry?.[activeSide]} findingCount={entries.length} cleanComparison={cleanComparison} setCleanComparison={setCleanComparison} blueprint={blueprint} setBlueprint={setBlueprint} cleanPhoto={cleanPhoto} setCleanPhoto={setCleanPhoto} onDetails={() => setDetailsOpen(value => !value)}/>
       {detailsOpen && <div className="rr-inline-details"><CardIdentityDetails report={report} details={presentation?.details}/></div>}
       <div className={`rr-evidence-layout${panelOpen ? '' : ' rr-panel-closed'}`}>
         <div className="rr-evidence-main"><div className={`rr-image-pair${expanded && !printing ? ' rr-pair-expanded' : ''}`}>
@@ -263,7 +273,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
             descriptor={images?.[side]?.inspection} expectedHash={report.inspection[side.toLowerCase()].imageSha256} findings={sideFindings[side]} selected={selected}
             onSelect={finding => { setSideFilter('ALL'); setCategoryFilter('ALL'); select(finding); }} expanded={expanded === side && !printing} hidden={!printing && Boolean(expanded && expanded !== side)}
             onExpand={setExpanded} onReady={imageReady} geometry={geometry?.[side]} showFindingButtons={false} compact fitViewport={Boolean(inspectionMode)} initialInspection={initialInspection}
-            layerOptions={layers} findingsVisible={overlays} command={command} onViewChange={viewChanged} onActivate={setActiveSide} cleanComparison={cleanComparison && Boolean(expanded) && !printing} blueprint={blueprint && !printing} explanation={selectedFinding?.side === side ? selectedExplanation : null} centering={explanation?.sides?.[side]?.centering} policy={explanation?.policy}/>)}</div>
+            layerOptions={cleanPhoto ? { physical: false, printed: false, centering: false } : layers} findingsVisible={overlays && !cleanPhoto} command={command} onViewChange={viewChanged} onActivate={setActiveSide} cleanComparison={cleanComparison && !cleanPhoto && Boolean(expanded) && !printing} blueprint={blueprint && !cleanPhoto && !printing} explanation={selectedFinding?.side === side ? selectedExplanation : null} centering={explanation?.sides?.[side]?.centering} policy={explanation?.policy}/>)}</div>
           <div className="rr-stage-caption"><span>{expanded ? title(activeSide) : 'Front & Back'} · Saved photograph</span><span>Drag to pan · Scroll or pinch to zoom</span></div>
         </div>
         <aside id="atlas-inspect-findings" className="rr-findings-panel" hidden={!panelOpen && !printing} aria-label="Finding navigator">
@@ -288,7 +298,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
         </aside>
       </div>
       {!publicView && report.findingCounts.removed > 0 && <details className="rr-removed"><summary>Removed findings · {report.findingCounts.removed}</summary><p>Retained in review history; excluded from the grade.</p>{report.findings.filter(finding => finding.reviewResult === 'REMOVED').map(finding => <button key={finding.id} type="button" onClick={() => select(finding)}>{title(finding.side)} · {words(finding.defectType)}</button>)}</details>}
-    </section>
+    </section>}
     {machine && !inspectionMode && <section className="rr-review-summary" aria-label="Review actions"><h2>Continue review</h2>
       <p>{partial ? 'Review the geometry and findings. Approval is unavailable until the missing centering geometry is resolved.' : 'Approve confirms both photos, card details, outlines, findings and grade.'} {bothReady ? 'Both photos verified.' : 'Verifying both photos…'}</p>{children}
     </section>}
@@ -298,10 +308,10 @@ function ReportExperience({ report, explanation, available, images, approved = f
     </>}
     {machine && report.limitations?.length > 0 && <section className="rr-why rr-evidence-limitations" aria-label="Current evidence limitations"><h2>Evidence limitations</h2><ul>{report.limitations.map((value,index)=><li key={index}>{value}</li>)}</ul></section>}
     {corrected && report.originalMachineEvidence?.limitations?.length > 0 && <details className="rr-machine-details"><summary>Original machine warnings · historical evidence</summary><p>These warnings describe the original machine report. Current geometry and measurement status is shown above.</p><ul>{report.originalMachineEvidence.limitations.map((value,index)=><li key={index}>{value}</li>)}</ul></details>}
-    {machine || inspectionMode ? <details className="rr-machine-details"><summary>Card details</summary><CardIdentityDetails report={report}/></details> : <CardIdentityDetails report={report} details={presentation?.identityDetails}/>}
+    <details className="rr-machine-details rr-identity-disclosure" open={printing ? true : undefined}><summary>Card identity</summary><CardIdentityDetails report={report} details={presentation?.identityDetails}/></details>
     {printing && partial && entries.length > 0 && <section aria-label="All included finding measurements">{entries.map(({ finding, label }) => <FindingMeasurements key={finding.id} finding={finding} printLabel={label}/>)}</section>}
     {printing && !partial && entries.length > 0 && <section className="rr-print-findings" aria-label="All included finding calculations"><div className="rr-print-findings-intro"><p className="rr-eyebrow">EVERY CONFIRMED FINDING</p><h2>Measurements and grade effects</h2><p>Measured area excludes pixels outside the card and overlap assigned to another finding. Marginal effects compare the grade with and without one region; overlap ownership is not remeasured. Effects are not additive. The category calculation uses all included weighted damage together.</p></div>{entries.map(({ finding, label }) => <FindingCalculation key={finding.id} finding={finding} printLabel={label} explanation={explanation.findings.find(value => value.id === finding.id)} policy={explanation.policy}/>)}</section>}
-    {!partial && <CalculationContainer className="rr-calculation" aria-label="Grade calculation">{(machine || inspectionMode) && <summary>Measurements & grade calculation</summary>}<div className="rr-section-heading"><div><p className="rr-eyebrow">FOLLOW THE NUMBERS</p><h2>How this grade is calculated</h2></div><button type="button" className="rr-precision-control" aria-pressed={precise} onClick={() => setPrecise(value => !value)}>{precise ? 'Use readable precision' : 'Show full precision'}</button></div>
+    {!partial && <details className="rr-calculation" aria-label="Grade calculation" open={printing || publicView && categoryFilter !== 'ALL' ? true : undefined}><summary>Measurements & grade calculation</summary><div className="rr-section-heading"><div><p className="rr-eyebrow">FOLLOW THE NUMBERS</p><h2>How this grade is calculated</h2></div><button type="button" className="rr-precision-control" aria-pressed={precise} onClick={() => setPrecise(value => !value)}>{precise ? 'Use readable precision' : 'Show full precision'}</button></div>
       {finalGrade === 10 && entries.length > 0 && <p className="rr-tolerance-note">A final 10 can include measured damage. Category tolerances and final rounding explain this result; a 10 does not mean zero imperfections.</p>}
       <div className="rr-weighting"><div><span>FRONT</span><strong>{explanation.policy.frontWeight * 100}%</strong></div><div className="rr-weighting-bar" aria-hidden="true"><span style={{ width: `${explanation.policy.frontWeight * 100}%` }}/></div><div><span>BACK</span><strong>{explanation.policy.backWeight * 100}%</strong></div></div>
       <p className="rr-help">Each category combines both sides, then contributes {n(explanation.policy.categoryWeight * 100, '%')} of the overall result. Readable numbers are rounded for display; full precision exposes every stored digit.</p>
@@ -311,14 +321,14 @@ function ReportExperience({ report, explanation, available, images, approved = f
         {halfPointGrade ? <><p className="rr-awarded">Final ATLAS grade, rounded to the nearest half point: <strong>{n(finalGrade)}</strong></p><p>The final grade is rounded directly from <strong>{String(explanation.overall.rawGrade)}</strong>, with exact halfway values rounded up. The tenth-point detail is not used as a second rounding input.</p></> : <p>Original historical final grade: <strong>{n(finalGrade)}</strong>. This report retains its original tenth-point policy.</p>}
         <p>Total unrounded deduction from 10: {n(explanation.overall.rawDeductionFromTen, ' points')}</p>{explanation.policy.additionalCaps === null && <p>No additional grade cap applies in this rule.</p>}</details></div>
       <details className="rr-policy" open={printing ? true : undefined}><summary>Grading thresholds and rules</summary><p>{explanation.policy.conditionFormula}</p><p>{explanation.policy.centeringFormula}</p><p>{explanation.policy.overallFormula}</p><p>{explanation.policy.finalGradeFormula}</p><table><thead><tr><th>Weighted damage in a category</th><th>Side score</th></tr></thead><tbody>{explanation.policy.conditionBands.map((band, index) => <tr key={index}><td>{band.label}</td><td>{band.score}</td></tr>)}</tbody></table><p>Rule version: {report.ruleVersion}</p></details>
-    </CalculationContainer>}
+    </details>}
     {presentation?.slabPhoto && <details className="rr-slab-disclosure"><summary>Slab photograph</summary><SlabPhotoHero key={presentation.slabPhoto.url} photo={presentation.slabPhoto} brandSrc={brandSrc}/></details>}
     {publicView && <ReportMarketAndDealers presentation={presentation} printing={printing}/>}
-    {!machine && <section className="rr-provenance" aria-label="Report provenance"><div><p className="rr-eyebrow">A RECORD YOU CAN REVISIT</p><h2>{approved ? 'Approved evidence, preserved' : 'Your review, before approval'}</h2><p>{approved ? 'This view belongs to the saved approved report. Later work requires its own approval.' : 'Approval saves this exact report. Return to Findings or Geometry to make corrections first.'}</p></div><dl><div><dt>Status</dt><dd>{approved ? 'Human approved' : 'Draft · not approved'}</dd></div>{publication?.reportNumber && <div><dt>Report</dt><dd>{publication.reportNumber}</dd></div>}{publication?.version && <div><dt>Version</dt><dd>{publication.version}</dd></div>}{publication?.approvedAt && <div><dt>Approved</dt><dd>{publication.approvedAt.slice(0, 10)}</dd></div>}<div><dt>Rule</dt><dd>{report.ruleVersion}</dd></div><div><dt>Photographs</dt><dd>{bothReady ? 'Both saved photographs verified' : 'Awaiting image verification'}</dd></div></dl>
+    {!machine && <details className="rr-provenance" aria-label="Report provenance" open={printing ? true : undefined}><summary>Report record</summary><div><p className="rr-eyebrow">A RECORD YOU CAN REVISIT</p><h2>{approved ? 'Approved evidence, preserved' : 'Your review, before approval'}</h2><p>{approved ? 'This view belongs to the saved approved report. Later work requires its own approval.' : 'Approval saves this exact report. Return to Findings or Geometry to make corrections first.'}</p></div><dl><div><dt>Status</dt><dd>{approved ? 'Human approved' : 'Draft · not approved'}</dd></div>{publication?.reportNumber && <div><dt>Report</dt><dd>{publication.reportNumber}</dd></div>}{publication?.version && <div><dt>Version</dt><dd>{publication.version}</dd></div>}{publication?.approvedAt && <div><dt>Approved</dt><dd>{publication.approvedAt.slice(0, 10)}</dd></div>}<div><dt>Rule</dt><dd>{report.ruleVersion}</dd></div><div><dt>Photographs</dt><dd>{bothReady ? 'Both saved photographs verified' : 'Awaiting image verification'}</dd></div></dl>
       <p className="rr-help">Photographs and derived inspection views are evidence of the recorded review. This report does not assert physical slab finishing or NFC completion.</p>
       {approved && <button type="button" className="rr-print-button" disabled={!bothReady} onClick={() => { if (typeof window !== 'undefined') window.print(); }}>Print approved report</button>}
       {reportKey && <details className="rr-report-reference" open={printing ? true : undefined}><summary>Exact report reference</summary><code>{reportKey}</code></details>}
-    </section>}
+    </details>}
     {!publicView && !machine && !approved && !inspectionMode && <footer className="rr-approval"><h2>{approved ? 'Report approved and saved' : 'Final approval'}</h2><p>{machine ? 'Review & approve confirms that you inspected both photos and accept the displayed card details, outlines, findings and grade. Corrections open the card workspace.' : 'Approval saves this exact report. Return to Findings or Geometry to make corrections before approving.'}</p>{!bothReady && <p role="status">Both saved photographs must load and verify before approval is available.</p>}{children}</footer>}
     {inspectionMode === 'summary' && children}
     {publicView && children}

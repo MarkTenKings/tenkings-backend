@@ -10,12 +10,14 @@ import * as presentation from '../src/report-review-ui.mjs';
 import * as optionalPresentation from '../src/report-presentation-ui.mjs';
 import * as viewportMath from '../src/inspection-viewport.mjs';
 import * as inspectionPreview from '../src/inspection-preview.mjs';
+import * as spatialNavigation from '../src/report-spatial-navigation.mjs';
+import * as fingerprint from '../src/report-fingerprint.mjs';
 import { defectBase, markDefectSideInspected, confirmDefectFindings, previewDefectReport } from '../src/defect-actions.mjs';
 import { workspace } from './defect-fixtures.mjs';
 
 const require = createRequire(new URL('../../../frontend/atlas-app/package.json', import.meta.url));
 const babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
-const sources = Object.fromEntries(['ReportInspectionImage', 'ReportPresentation', 'FinalReportReview'].map(name => [name, babel.transformSync(readFileSync(new URL(`../src/${name}.jsx`, import.meta.url), 'utf8'), {
+const sources = Object.fromEntries(['ReportSpatialOverlay', 'ReportPrecisionOverlay', 'ReportFingerprint', 'ReportInspectionImage', 'PublicEvidenceExplorer', 'ReportPresentation', 'FinalReportReview'].map(name => [name, babel.transformSync(readFileSync(new URL(`../src/${name}.jsx`, import.meta.url), 'utf8'), {
   filename: `${name}.jsx`, presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false,
 }).code]));
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
@@ -31,8 +33,13 @@ function fixture() {
     images: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { inspection: { sha256: state.sides[side].frame.inspectionImageSha256, url: `blob:${side}` } }])), children: 'SEPARATE_APPROVAL_SLOT' };
 }
 
-function harness(props = fixture(), { publicView = false, machine = false, fragment = '', reducedMotion = false } = {}) {
-  const instances = new Map(), elements = new Map(); let current, cursor, dirty, effects = [], tree;
+function harness(props = fixture(), { publicView = false, machine = false, fragment = '', reducedMotion = false, controlledFrames = false } = {}) {
+  const instances = new Map(), elements = new Map(); let current, cursor, dirty, effects = [], tree, used = new Set();
+  const frames = new Map(); let frameId = 0, frameTime = 0;
+  const frameGlobals = controlledFrames ? {
+    requestAnimationFrame: callback => { const id = ++frameId; frames.set(id, callback); return id; },
+    cancelAnimationFrame: id => frames.delete(id),
+  } : {};
   const listeners = new Map(), listenerSets = new Map(), browser = { location: { hash: fragment }, matchMedia: query => ({ matches: query.includes('reduced-motion') ? reducedMotion : true }),
     addEventListener(name, fn) { if (!listenerSets.has(name)) listenerSets.set(name, new Set()); listenerSets.get(name).add(fn); listeners.set(name, () => listenerSets.get(name)?.forEach(callback => callback())); },
     removeEventListener(name, fn) { listenerSets.get(name)?.delete(fn); }, print() {} };
@@ -44,7 +51,7 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
   };
   const modules = {};
   for (const [name, code] of Object.entries(sources)) {
-    const exports = {}; vm.runInNewContext(code, { exports, window: browser, setTimeout: (...args) => setTimeout(...args).unref(), clearTimeout, ResizeObserver: class { constructor(callback) { this.callback = callback; } observe(element) { element.resize = this.callback; } disconnect() {} }, require(name) {
+    const exports = {}; vm.runInNewContext(code, { exports, window: browser, AbortController, ...frameGlobals, setTimeout: (...args) => setTimeout(...args).unref(), clearTimeout, ResizeObserver: class { constructor(callback) { this.callback = callback; } observe(element) { element.resize = this.callback; } disconnect() {} }, require(name) {
       if (name === 'react') return react;
       if (name === '@atlas/grading-core/scoring') return scoring;
       if (name === 'react-dom') return { flushSync: callback => callback() };
@@ -52,6 +59,12 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
       if (name === './inspection-viewport.mjs') return viewportMath;
       if (name === './inspection-preview.mjs') return inspectionPreview;
       if (name === './report-review-ui.mjs') return presentation;
+      if (name === './report-spatial-navigation.mjs') return spatialNavigation;
+      if (name === './report-fingerprint.mjs') return { ...fingerprint, animateFingerprint: options => fingerprint.animateFingerprint({ ...options, request: frameGlobals.requestAnimationFrame, cancel: frameGlobals.cancelAnimationFrame }) };
+      if (name === './ReportFingerprint.jsx') return modules.ReportFingerprint;
+      if (name === './ReportSpatialOverlay.jsx') return modules.ReportSpatialOverlay;
+      if (name === './ReportPrecisionOverlay.jsx') return modules.ReportPrecisionOverlay;
+      if (name === './PublicEvidenceExplorer.jsx') return modules.PublicEvidenceExplorer;
       if (name === './report-presentation-ui.mjs') return optionalPresentation;
       if (name === './ReportPresentation.jsx') return modules.ReportPresentation;
       if (name === './verified-image.mjs') return { useVerifiedImage: image => ({ url: image?.url }) };
@@ -63,8 +76,15 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
   function expand(node, path = 'root') {
     if (Array.isArray(node)) return node.map((child, i) => expand(child, `${path}.${i}`));
     if (!node || typeof node !== 'object') return node;
-    if (typeof node.type === 'function') { const key = `${path}:${node.type.name}`; if (!instances.has(key)) instances.set(key, []); current = instances.get(key); cursor = 0; return expand(node.type(node.props), `${key}.out`); }
-    if (node.props.ref && ['rr-viewport', 'rr-plane', 'rr-slab-plane'].includes(node.props.className)) {
+    if (typeof node.type === 'function') { const key = `${path}:${node.type.name}`; used.add(key); if (!instances.has(key)) instances.set(key, []); current = instances.get(key); cursor = 0; return expand(node.type(node.props), `${key}.out`); }
+    if (node.props.ref && (node.type === 'canvas' || node.props.className === 'rr-fingerprint-layer')) {
+      if (!elements.has(path)) {
+        const context = { clearRect() {}, fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {}, createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }), putImageData() {} };
+        elements.set(path, { getContext: () => context, style: { setProperty(key, value) { this[key] = value; } } });
+      }
+      node.props.ref.current = elements.get(path);
+    }
+    if (node.props.ref && ['rr-viewport', 'rr-viewport rr-clean-viewport', 'rr-plane', 'rr-slab-plane'].includes(node.props.className)) {
       if (!elements.has(path)) elements.set(path, { clientWidth: 400, clientHeight: 540, listeners: new Map(), focus() {}, scrollIntoView(options) { this.scrollOptions = options; },
         style: { setProperty(name, value) { this[name] = value; } }, addEventListener(name, fn) { this.listeners.set(name, fn); }, removeEventListener(name) { this.listeners.delete(name); }, setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture() { return true; } });
       const element = elements.get(path); element.getBoundingClientRect = () => node.props.className === 'rr-plane' ? f.imageRect : f.viewportRect; node.props.ref.current = element;
@@ -73,12 +93,16 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
   }
   const f = { props, browser, listeners, readyValues: [], imageRect: { left: -40, top: -40, width: 1350, height: 1858 }, viewportRect: { left: 0, top: 0, width: 400, height: 540 } };
   f.props.onReadyChange = value => f.readyValues.push(value);
-  f.render = () => { let rounds = 0; do { dirty = false; tree = expand({ type: modules.FinalReportReview[machine ? 'MachineReportReview' : publicView ? 'ApprovedReportView' : 'FinalReportReview'], props: f.props }); const pending = effects; effects = []; pending.forEach(callback => callback()); assert.ok(++rounds < 20); } while (dirty); return tree; };
+  f.render = () => { let rounds = 0; do { dirty = false; used = new Set(); tree = expand({ type: modules.FinalReportReview[machine ? 'MachineReportReview' : publicView ? 'ApprovedReportView' : 'FinalReportReview'], props: f.props }); for (const [key, slots] of instances) if (!used.has(key)) { slots.forEach(slot => slot?.cleanup?.()); instances.delete(key); } const pending = effects; effects = []; pending.forEach(callback => callback()); assert.ok(++rounds < 20); } while (dirty); return tree; };
+  f.unmount = () => { instances.forEach(slots => slots.forEach(slot => slot?.cleanup?.())); instances.clear(); };
   f.nodes = predicate => all(tree, predicate); f.has = value => text(tree).includes(value);
   f.control = label => { const node = f.nodes(node => node.props?.['aria-label'] === label)[0]; assert.ok(node, label); return node; };
   f.button = label => { const node = f.nodes(node => node.type === 'button' && text(node) === label)[0]; assert.ok(node, label); return node; };
   f.click = label => { const node = f.button(label); assert.equal(Boolean(node.props.disabled), false); node.props.onClick(); f.render(); };
   f.ready = side => { f.nodes(node => node.type === 'img' && typeof node.props.onLoad === 'function' && (side ? node.props.alt.startsWith(side) : /^(Front|Back)/.test(node.props.alt))).forEach(node => node.props.onLoad({ currentTarget: { naturalWidth: 1350, naturalHeight: 1858 } })); f.render(); };
+  f.pendingFrames = () => frames.size;
+  f.frame = (elapsed = 1000) => { frameTime += elapsed; const scheduled = [...frames]; frames.clear(); scheduled.forEach(([, callback]) => callback(frameTime)); f.render(); };
+  f.finishMotion = () => { let count = 0; while (frames.size) { assert.ok(++count < 30, 'animation terminates'); f.frame(); } };
   f.render(); return f;
 }
 
@@ -420,6 +444,8 @@ test('an excluded old-frame removed trace supplies neither current report bounds
 
 test('clean comparison uses identical verified photograph and camera; blueprint includes disconnected trace pixels',()=>{
  const f=harness();f.ready();f.control('Inspect Front finding 1: visible whitening').props.onClick({stopPropagation(){}});f.render();
+ const toggle=label=>f.nodes(node=>node.type==='label'&&text(node).includes(label))[0].props.children.flat(Infinity).find(node=>node?.type==='input');
+ toggle('Unmarked defect comparison').props.onChange({target:{checked:true}});toggle('Measurement callouts').props.onChange({target:{checked:true}});f.render();
  const planes=f.nodes(node=>node.props.className==='rr-plane'),active=planes[0],clean=planes[1];
  assert.deepEqual(clean.props.style,active.props.style);
  const images=all(clean,node=>node.type==='img');assert.equal(images.length,1);assert.equal(images[0].props.src,'blob:FRONT');
@@ -433,12 +459,302 @@ test('card identity is available directly from the inspection dock',()=>{
 });
 
 
-test('rapid finding selection replaces the front/back pair with the selected side and its clean twin',()=>{
+test('rapid finding selection follows its actual side with comparison explicitly optional',()=>{
  const props=fixture();props.inspectionMode='findings';const f=harness(props);f.ready();
- assert.equal(f.control('Front report image').props.hidden,false);assert.equal(f.control('Back report image').props.hidden,false);
+ assert.equal(f.control('Front report image').props.hidden,false);assert.equal(f.control('Back report image').props.hidden,true);
  f.control('Inspect Back finding 1: visible whitening').props.onClick({stopPropagation(){}});f.render();
  assert.equal(f.control('Front report image').props.hidden,true);assert.equal(f.control('Back report image').props.hidden,false);
+ assert.equal(f.nodes(node=>node.props['aria-label']==='Back clean close-up; same photograph, zoom and position').length,0);
+ const toggle=f.nodes(node=>node.type==='label'&&text(node).includes('Unmarked defect comparison'))[0].props.children.flat(Infinity).find(node=>node?.type==='input');
+ toggle.props.onChange({target:{checked:true}});f.render();
  const clean=f.control('Back clean close-up; same photograph, zoom and position');
  assert.equal(all(clean,n=>n.type==='img')[0].props.src,'blob:BACK');
  const active=f.control('Back report inspection');assert.deepEqual(all(active,n=>n.props.className==='rr-plane')[0].props.style,all(clean,n=>n.props.className==='rr-plane')[0].props.style);
+});
+
+
+test('clean photo removes saved markings and guides, retains camera, and restores the exact evidence view', () => {
+  const f = harness(); f.ready(); f.click('Browse next');
+  const before = structuredClone(f.props.preview), camera = f.nodes(node => node.props.className === 'rr-plane')[0].props.style;
+  f.click('Clean photo');
+  assert.equal(f.button('Clean photo').props['aria-pressed'], true);
+  assert.equal(f.nodes(node => node.props.className === 'rr-finding-markers').length, 0);
+  assert.equal(f.nodes(node => node.type === 'polygon' || node.props.className === 'rr-blueprint').length, 0);
+  assert.deepEqual(f.nodes(node => node.props.className === 'rr-plane')[0].props.style, camera);
+  assert.equal(f.readyValues.at(-1), true);
+  f.click('Clean photo');
+  assert.ok(f.nodes(node => node.props.className === 'rr-finding-markers').length > 0);
+  assert.deepEqual(f.props.preview, before);
+});
+
+test('report details stay disclosed on screen and fully open for print without changing evidence', () => {
+  const f = harness(); f.ready(); const before = structuredClone(f.props.preview);
+  const disclosures = () => f.nodes(node => ['rr-calculation', 'rr-provenance', 'rr-machine-details rr-identity-disclosure'].includes(node.props.className));
+  assert.equal(disclosures().length, 3);
+  assert.ok(disclosures().every(node => node.type === 'details' && !node.props.open));
+  f.listeners.get('beforeprint')(); f.render();
+  assert.ok(disclosures().every(node => node.props.open));
+  f.listeners.get('afterprint')(); f.render();
+  assert.ok(disclosures().every(node => !node.props.open));
+  assert.deepEqual(f.props.preview, before);
+});
+
+
+test('returning to a Back inspection without a selected finding restores the Back photograph and camera', () => {
+  const source=fixture(), original=source.preview.review.report, {inspection,...rest}=original;
+  const report={...rest,version:'atlas-machine-provisional-report-v1',authority:'MACHINE_PROPOSAL',certification:null,proposedGrade:original.finalGrade,
+    geometry:Object.fromEntries(['FRONT','BACK'].map(side=>[side,{frame:{inspectionImageSha256:inspection[side.toLowerCase()].imageSha256},centeringQuad:[]}]))};
+  const context={side:'BACK',findingId:null,imageSha256:inspection.back.imageSha256,view:{zoom:4,pan:{x:0,y:0}},size:{width:400,height:540}};
+  const props={packet:{report,reportHash:source.preview.reportHash,explanation:source.preview.review.explanation,images:source.images},initialInspection:context};
+  const f=harness(props,{machine:true}); f.ready();
+  assert.equal(f.control('Front report image').props.hidden,true);
+  assert.equal(f.control('Back report image').props.hidden,false);
+  assert.equal(f.button('Back').props['aria-pressed'],true);
+  assert.equal(parseFloat(text(f.control('Current zoom'))),4);
+});
+
+function historicalPublicReport(key = 'abomasnow') {
+  const source = JSON.parse(readFileSync(new URL('../../../docs/atlas/design/first-look/reports/approved.json', import.meta.url), 'utf8')).reports.find(entry => entry.key === key);
+  const { packet } = source;
+  return { report: packet.report, explanation: source.explanation, geometry: packet.geometry,
+    images: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { inspection: {
+      sha256: packet.report.inspection[side.toLowerCase()].imageSha256, url: `blob:${key}-${side}`,
+    } }])), publication: { version: packet.approvalVersion, approvedAt: packet.approvedAt,
+      reportNumber: packet.reportNumber, reportHash: source.publicHash, url: source.source } };
+}
+const publicSection = f => f.control('Explore approved report evidence').props['data-section'];
+const planeIn = node => all(node, value => value.props?.className === 'rr-plane')[0];
+const activePhoto = (f, side = 'Back') => f.control(`${side} report inspection`);
+const selectedPublicId = f => f.control('All findings').props.value;
+const selectPublicId = (f, id) => { f.control('All findings').props.onChange({ target: { value: id } }); f.render(); };
+const publicFindingButton = (f, number) => f.nodes(node => node.type === 'button'
+  && node.props['aria-label']?.startsWith(`Inspect Back ${number}:`))[0];
+const nearPublic = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≈ ${expected}`);
+
+test('public overview exposes every finding directly; comparison and return preserve all labels and identity', () => {
+  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true }); f.ready();
+  f.click('Back 13');
+  assert.equal(publicSection(f), 'whole'); assert.equal(selectedPublicId(f), '');
+  const allLabels = () => f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Inspect Back '));
+  assert.equal(allLabels().length, 13, 'all individual labels are visible without expanding a group');
+  assert.equal(f.nodes(node => node.props.className?.includes('rr-spatial-area')).length, 0);
+  assert.equal(f.has('Show areas'), false);
+  const button = publicFindingButton(f, 1), first = props.report.findings[0]; assert.ok(button);
+  const silhouette = all(button, node => node.type === 'path')[0].props.d;
+  const expected = presentation.reportTraceSpans(presentation.reportFindingMask(first))
+    .map(span => `M${span.x} ${span.y}h${span.width}v1h${-span.width}Z`).join('');
+  assert.equal(silhouette, expected, 'silhouette retains every saved row span');
+  button.props.onClick(); f.render();
+  assert.equal(publicSection(f), 'finding'); assert.equal(selectedPublicId(f), first.id);
+  const sections = () => f.nodes(node => ['rr-public-finding-navigation', 'rr-public-viewers'].includes(node.props.className)).map(node => node.props.className);
+  assert.deepEqual(sections(), ['rr-public-finding-navigation', 'rr-public-viewers'], 'one navigator stays above the close-up');
+  const marked = planeIn(activePhoto(f)), clean = planeIn(f.control('Back clean close-up; same photograph, zoom and position'));
+  assert.equal(JSON.stringify(marked.props.style), JSON.stringify(clean.props.style));
+  assert.equal(all(marked, node => node.type === 'img')[0].props.src, all(clean, node => node.type === 'img')[0].props.src);
+  assert.ok(parseFloat(text(f.control('Current zoom'))) > 1);
+  f.click('Whole card'); assert.equal(publicSection(f), 'whole'); assert.equal(selectedPublicId(f), '');
+  assert.deepEqual(sections(), ['rr-public-viewers', 'rr-public-finding-navigation']);
+  assert.equal(parseFloat(text(f.control('Current zoom'))), 1);
+  assert.equal(allLabels().length, 13); assert.equal(publicFindingButton(f, 1).props['aria-pressed'], true);
+  f.click('Findings 13'); assert.equal(selectedPublicId(f), first.id);
+  const element = activePhoto(f).props.ref.current;
+  activePhoto(f).props.onKeyDown({ key: 'Escape', target: element, currentTarget: element, preventDefault() {}, stopPropagation() {} }); f.render();
+  assert.equal(publicSection(f), 'whole'); assert.equal(selectedPublicId(f), '');
+  assert.equal(allLabels().length, 13);
+  assert.equal(publicFindingButton(f, 1).props['aria-pressed'], true); assert.deepEqual(props.report, before);
+});
+
+test('public Findings opens the populated opposite side and an empty report keeps truthful photograph and centering views', () => {
+  const f = harness(historicalPublicReport(), { publicView: true }); f.ready();
+  assert.equal(f.control('Front report image').props.hidden, false);
+  f.click('Findings 13'); assert.equal(f.control('Back report image').props.hidden, false);
+  assert.equal(selectedPublicId(f), f.props.report.findings[0].id);
+  const empty = harness(historicalPublicReport('dart'), { publicView: true }); empty.ready();
+  const before = structuredClone(empty.props.report);
+  assert.equal(empty.nodes(node => node.props['aria-label'] === 'All findings').length, 0);
+  assert.equal(empty.has('No included damage findings on Front.'), true);
+  empty.click('Findings 0'); empty.click('Explore centering →');
+  assert.equal(publicSection(empty), 'centering'); assert.ok(empty.control('Front saved centering ratios'));
+  empty.click('Whole card'); assert.equal(publicSection(empty), 'whole');
+  assert.equal(empty.nodes(node => node.props.className?.includes('rr-spatial-target')).length, 0);
+  assert.deepEqual(empty.props.report, before);
+});
+
+test('public deep links select the exact saved finding only for the matching public report hash', () => {
+  const props = historicalPublicReport(), finding = props.report.findings[8];
+  const fragment = presentation.reportFindingFragment(props.publication.reportHash, finding.id);
+  const f = harness(props, { publicView: true, fragment }); f.ready();
+  assert.equal(publicSection(f), 'finding'); assert.equal(selectedPublicId(f), finding.id);
+  assert.equal(f.control('Back report image').props.hidden, false);
+  assert.equal(f.nodes(node => node.type === 'a' && node.props.href.endsWith(fragment)).length, 1);
+  const wrong = harness(historicalPublicReport(), { publicView: true,
+    fragment: presentation.reportFindingFragment('1'.repeat(64), finding.id) }); wrong.ready();
+  assert.equal(publicSection(wrong), 'whole'); assert.equal(selectedPublicId(wrong), '');
+  const wrongImage = historicalPublicReport(); wrongImage.images.BACK.inspection.sha256 = '2'.repeat(64);
+  const denied = harness(wrongImage, { publicView: true, fragment }); denied.ready();
+  assert.equal(denied.button('Print approved report').props.disabled, true);
+  assert.equal(all(denied.control('Back report image'), node => node.type === 'canvas').length, 0);
+  assert.equal(denied.has('saved photograph is unavailable'), true);
+});
+
+test('public printing retains decoded viewers, fits both sides, prints every finding and restores overview/selection', () => {
+  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true }); f.ready();
+  f.click('Back 13');
+  const refs = ['Front', 'Back'].map(side => activePhoto(f, side).props.ref.current);
+  const entries = presentation.reportFindingEntries(props.report.findings);
+  const checkPrint = () => {
+    f.listeners.get('beforeprint')(); f.render();
+    for (const [index, side] of ['Front', 'Back'].entries()) {
+      assert.equal(activePhoto(f, side).props.ref.current, refs[index], 'viewer survives beforeprint');
+      assert.equal(f.control(`${side} report image`).props.hidden, false);
+      const photo = all(activePhoto(f, side), node => node.type === 'img' && node.props.alt.includes('saved inspection'))[0];
+      assert.equal(photo.props.style.visibility, 'visible');
+      assert.ok(planeIn(activePhoto(f, side)).props.style.width < 400, 'paper uses whole-card framing');
+    }
+    assert.equal(f.button('Print approved report').props.disabled, false);
+    assert.equal(f.nodes(node => node.props.className === 'rr-viewport rr-clean-viewport').length, 0);
+    for (const entry of entries) assert.equal(f.nodes(node => node.props['aria-label'] === `${entry.label} calculation`).length, 1);
+    assert.equal(f.has(props.publication.reportHash), true);
+    f.listeners.get('afterprint')(); f.render();
+    assert.equal(f.button('Print approved report').props.disabled, false);
+  };
+  checkPrint(); assert.equal(publicSection(f), 'whole'); assert.ok(publicFindingButton(f, 1));
+  selectPublicId(f, props.report.findings[12].id); checkPrint();
+  assert.equal(publicSection(f), 'finding'); assert.equal(selectedPublicId(f), props.report.findings[12].id);
+  assert.ok(f.control('Back clean close-up; same photograph, zoom and position'));
+  assert.deepEqual(props.report, before);
+});
+
+test('public centering instruments preserve saved outlines and calibrated extent without half-pixel correction', () => {
+  const props = historicalPublicReport(), before = structuredClone(props.geometry), f = harness(props, { publicView: true }); f.ready();
+  const expected = { Front: { Top: 3, Right: 2.75, Bottom: 2.75, Left: 2.7 }, Back: { Top: 3.8, Right: 3.2, Bottom: 3.65, Left: 3.35 } };
+  for (const side of ['Front', 'Back']) {
+    if (side === 'Back') { f.click('Back 13'); assert.equal(publicSection(f), 'centering', 'side switching retains centering mode'); }
+    else f.click('Centering');
+    const photo = activePhoto(f, side), overlay = all(photo, node => node.props['aria-label'] === 'Saved border measurements in millimeters')[0]; assert.ok(overlay);
+    const labels = all(overlay, node => node.props.className === 'rr-instrument-label');
+    assert.equal(labels.length, 4);
+    for (const label of labels) {
+      const name = text(all(label, node => node.type === 'small')[0]);
+      nearPublic(parseFloat(text(all(label, node => node.type === 'b')[0])), expected[side][name]);
+    }
+    const saved = props.geometry[side.toUpperCase()];
+    assert.equal(all(photo, node => node.props.className === 'rr-physical-line')[0].props.points,
+      saved.physicalQuad.map(point => `${point.x * 1270},${point.y * 1778}`).join(' '));
+    assert.equal(all(photo, node => node.props.className === 'rr-printed-line')[0].props.points,
+      saved.printedQuad.map(point => `${point.x * 1270},${point.y * 1778}`).join(' '));
+    const scale = viewportMath.fitInspectionScale({ width: 400, height: 540 });
+    const right = all(overlay, node => node.props.className === 'rr-instrument-underlay')[1].props.d.match(/^M([^ ]+) ([^L]+)L([^ ]+) ([^ ]+)/);
+    nearPublic(Number(right[1]), 200 + (1310 - 675) * scale);
+    nearPublic(Number(right[3]), 200 + (40 + saved.printedQuad[1].x * 1270 - 675) * scale);
+    const readout = f.control(`${side} saved centering ratios`);
+    const recorded = props.explanation.sides[side.toUpperCase()].centering;
+    assert.ok(text(readout).includes(recorded.leftRightBalance[0].toLocaleString('en-US', { maximumFractionDigits: 4 })));
+  }
+  assert.deepEqual(props.geometry, before);
+});
+
+test('public clean-pane wheel, pan and pinch update the same camera and reject cross-pane pointer mixing', () => {
+  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true }); f.ready(); f.click('Findings 13');
+  const clean = () => f.control('Back clean close-up; same photograph, zoom and position');
+  const equalCameras = () => assert.equal(JSON.stringify(planeIn(activePhoto(f)).props.style), JSON.stringify(planeIn(clean()).props.style));
+  equalCameras();
+  const cleanElement = clean().props.ref.current;
+  const event = (id, x, y, element = cleanElement) => ({ pointerId: id, pointerType: 'touch', button: 0,
+    clientX: x, clientY: y, preventDefault() {}, currentTarget: element });
+  const beforeWheel = planeIn(clean()).props.style.width;
+  cleanElement.listeners.get('wheel')({ deltaY: 120, deltaMode: 0, clientX: 180, clientY: 260, preventDefault() {}, currentTarget: cleanElement }); f.render();
+  assert.notEqual(planeIn(clean()).props.style.width, beforeWheel); equalCameras();
+  const panStart = planeIn(clean()).props.style.transform;
+  clean().props.onPointerDown(event(1, 100, 200));
+  activePhoto(f).props.onPointerDown(event(2, 200, 200, activePhoto(f).props.ref.current));
+  const width = planeIn(clean()).props.style.width;
+  clean().props.onPointerMove(event(1, 130, 180)); f.render();
+  assert.equal(planeIn(clean()).props.style.width, width, 'a finger on the other pane cannot create a pinch');
+  assert.notEqual(planeIn(clean()).props.style.transform, panStart); equalCameras();
+  clean().props.onPointerUp(event(1, 130, 180)); f.render();
+  clean().props.onPointerDown(event(3, 100, 200)); clean().props.onPointerDown(event(4, 200, 200));
+  clean().props.onPointerMove(event(4, 250, 200)); f.render();
+  assert.ok(planeIn(clean()).props.style.width > width); equalCameras();
+  clean().props.onPointerUp(event(4, 250, 200)); clean().props.onPointerUp(event(3, 100, 200)); f.render();
+  assert.equal(selectedPublicId(f), props.report.findings[0].id); assert.deepEqual(props.report, before);
+});
+
+test('public motion retreats, locates and approaches; gestures, reselection and reduced motion cancel stale animation', () => {
+  const props = historicalPublicReport(), f = harness(props, { publicView: true, controlledFrames: true }); f.ready(); f.click('Findings 13');
+  assert.equal(f.control('Back report image').props['data-motion-phase'], 'approach'); f.finishMotion();
+  selectPublicId(f, props.report.findings[1].id);
+  assert.equal(f.control('Back report image').props['data-motion-phase'], 'retreat');
+  f.frame(); f.frame(); assert.equal(f.control('Back report image').props['data-motion-phase'], 'locate');
+  nearPublic(parseFloat(text(f.control('Current zoom'))), 1);
+  f.frame(); f.frame(); assert.equal(f.control('Back report image').props['data-motion-phase'], 'approach');
+  f.finishMotion(); assert.equal(f.control('Back report image').props['data-motion-phase'], 'idle');
+  selectPublicId(f, props.report.findings[2].id); assert.ok(f.pendingFrames() > 0);
+  const viewport = activePhoto(f), element = viewport.props.ref.current;
+  const event = { pointerId: 7, pointerType: 'touch', button: 0, clientX: 120, clientY: 200, currentTarget: element, preventDefault() {} };
+  viewport.props.onPointerDown(event); f.render(); assert.equal(f.pendingFrames(), 0);
+  assert.equal(f.control('Back report image').props['data-motion-phase'], 'idle');
+  activePhoto(f).props.onPointerCancel(event); f.render();
+  selectPublicId(f, props.report.findings[3].id); selectPublicId(f, props.report.findings[4].id);
+  assert.equal(f.pendingFrames(), 1, 'only the most recent itinerary is scheduled'); f.finishMotion();
+  assert.equal(selectedPublicId(f), props.report.findings[4].id);
+  const target = viewportMath.focusInspectionBounds(presentation.reportFindingBounds(props.report.findings[4]), { width: 400, height: 540 });
+  const scale = viewportMath.fitInspectionScale({ width: 400, height: 540 });
+  nearPublic(planeIn(activePhoto(f)).props.style.width, 1350 * scale * target.zoom);
+  const reduced = harness(historicalPublicReport(), { publicView: true, controlledFrames: true, reducedMotion: true }); reduced.ready(); reduced.click('Findings 13');
+  assert.equal(reduced.pendingFrames(), 0); assert.equal(reduced.control('Back report image').props['data-motion-phase'], 'idle');
+  assert.ok(parseFloat(text(reduced.control('Current zoom'))) > 1);
+});
+
+const activeFingerprint = f => f.nodes(node => node.props.className === 'rr-fingerprint-layer' && !node.props.hidden)[0];
+const openFingerprint = f => { f.control('ATLAS Card fingerprint').props.onClick(); f.render(); };
+const awaitFingerprint = async f => {
+  for (let i = 0; i < 300; i++) { f.render(); if (activeFingerprint(f)?.props['data-status'] === 'ready') return; await new Promise(resolve => setTimeout(resolve, 10)); }
+  assert.fail('fingerprint did not prepare');
+};
+
+test('public fingerprint waits for the exact photo, shows honest empty sides and leaves all evidence unchanged', () => {
+  const props = historicalPublicReport(), before = structuredClone(props), f = harness(props, { publicView: true });
+  assert.equal(f.control('ATLAS Card fingerprint').props.disabled, true); f.ready();
+  assert.equal(publicSection(f), 'whole', 'report arrival never hides findings for an intro');
+  openFingerprint(f); assert.equal(publicSection(f), 'fingerprint');
+  assert.equal(activeFingerprint(f).props['data-status'], 'empty'); assert.equal(f.has('No recorded defects on this side'), true);
+  assert.equal(f.button('Play tide').props.disabled, true); assert.equal(f.button('Print approved report').props.disabled, false);
+  f.click('Back 13'); assert.equal(publicSection(f), 'fingerprint'); assert.equal(activeFingerprint(f).props['data-status'], 'preparing');
+  f.click('Centering'); assert.equal(publicSection(f), 'centering'); assert.equal(activeFingerprint(f), undefined);
+  f.click('Whole card'); assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Inspect Back ')).length, 13);
+  assert.deepEqual(props.report, before.report); assert.deepEqual(props.images, before.images); assert.deepEqual(props.explanation, before.explanation);
+  f.unmount();
+  const bad = historicalPublicReport(); bad.images.FRONT.inspection.sha256 = 'a'.repeat(64);
+  const denied = harness(bad, { publicView: true }); denied.ready(); assert.equal(denied.control('ATLAS Card fingerprint').props.disabled, true);
+  assert.equal(denied.nodes(node => node.props.className === 'rr-fingerprint-layer' && !node.props.hidden).length, 0); denied.unmount();
+});
+
+test('real public tide returns to the same photograph, cancels on navigation/print/unmount and never changes paper findings', async () => {
+  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true, controlledFrames: true }); f.ready(); f.click('Back 13'); f.finishMotion();
+  const url = all(activePhoto(f), node => node.type === 'img')[0].props.src;
+  openFingerprint(f); await awaitFingerprint(f); assert.equal(f.pendingFrames(), 1);
+  f.finishMotion(); assert.equal(activeFingerprint(f).props.ref.current.style['--rr-fingerprint-amount'], '1');
+  f.click('← Return to photograph'); f.finishMotion(); assert.equal(publicSection(f), 'whole');
+  assert.equal(all(activePhoto(f), node => node.type === 'img')[0].props.src, url);
+  assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Inspect Back ')).length, 13);
+  openFingerprint(f); assert.equal(f.pendingFrames(), 1); f.click('Findings 13'); f.finishMotion(); assert.equal(publicSection(f), 'finding');
+  openFingerprint(f); f.frame(500); f.listeners.get('beforeprint')(); f.render();
+  assert.equal(f.pendingFrames(), 0); assert.equal(f.nodes(node => node.props.className === 'rr-fingerprint-layer').length, 0);
+  for (const { label } of presentation.reportFindingEntries(props.report.findings)) assert.equal(f.nodes(node => node.props['aria-label'] === `${label} calculation`).length, 1);
+  f.listeners.get('afterprint')(); f.render(); assert.equal(f.button('Print approved report').props.disabled, false);
+  f.click('Whole card'); openFingerprint(f); await awaitFingerprint(f); f.unmount(); assert.equal(f.pendingFrames(), 0);
+  assert.deepEqual(props.report, before);
+});
+
+test('reduced-motion public fingerprint renders a direct state and source replacement cannot reuse old artwork', async () => {
+  const f = harness(historicalPublicReport(), { publicView: true, controlledFrames: true, reducedMotion: true }); f.ready(); f.click('Back 13');
+  openFingerprint(f); await awaitFingerprint(f); assert.equal(f.pendingFrames(), 0);
+  assert.equal(activeFingerprint(f).props.ref.current.style['--rr-fingerprint-amount'], '1');
+  f.click('Play tide'); assert.equal(f.pendingFrames(), 0); assert.equal(publicSection(f), 'fingerprint');
+  f.props.report = { ...f.props.report, findings: f.props.report.findings.slice(1) };
+  f.props.explanation = { ...f.props.explanation, findings: f.props.explanation.findings.slice(1) }; f.render();
+  assert.equal(activeFingerprint(f).props['data-status'], 'preparing');
+  assert.equal(all(activeFingerprint(f), node => node.type === 'canvas')[0].props.style.visibility, 'hidden');
+  f.click('← Return to photograph'); assert.equal(publicSection(f), 'whole'); assert.equal(f.pendingFrames(), 0); f.unmount();
 });

@@ -18,8 +18,8 @@ function message(error) {
  * scopeKey must identify the exact card/approval; no paid lookup runs on mount.
  */
 export default function MarketReferencePicker({ scopeKey, available = false, disabled = false, onPreview, onSave,
-  title = 'Show the sales behind the conversation.', searchLabel = 'Find sold cards', refreshLabel = 'Refresh sales',
-  note = 'Choose matching cards. Each search checks one page of up to 40 provider results; fewer may qualify for review. Each keeps its original grader and grade; these sales do not set the value of this ATLAS card.' }) {
+  title = 'eBay sold comps', searchLabel = 'Find sold cards', refreshLabel = 'Refresh sales',
+  note = 'Search runs only when you choose Find sold cards or Refresh sales. Each search checks one page of up to 40 provider results; fewer may qualify for review. Choose matching sales before publishing references. Each keeps its original grader and grade; these sales do not set the value of this ATLAS card.' }) {
   const [source, setSource] = useState(null), [selected, setSelected] = useState([]), [busy, setBusy] = useState(''),
     [error, setError] = useState(''), [status, setStatus] = useState(''), [pending, setPending] = useState(false), [searchPending, setSearchPending] = useState(false);
   const generation = useRef(0), lock = useRef(false), savedRequest = useRef(null), callbacks = useRef({ onPreview, onSave });
@@ -68,6 +68,7 @@ export default function MarketReferencePicker({ scopeKey, available = false, dis
     <div className={styles.heading}><div><p className={styles.eyebrow}>REPORT · MARKET REFERENCES</p><h3>{title}</h3></div>
       <button type="button" disabled={blocked} onClick={() => void search()}>{searchPending ? 'Check saved search' : source ? refreshLabel : searchLabel}</button></div>
     <p className={styles.note}>{note}</p>
+    {!busy && !status && !error && <p className={styles.searchStatus} role="status">{source ? `${source.preview.candidates.length} sold ${source.preview.candidates.length === 1 ? 'comp' : 'comps'} ready for your review` : 'Manual search · no lookup starts automatically'}</p>}
     {source && <><div className={styles.query}><span>Search: {source.preview.query}</span><span>ATLAS {source.preview.atlasGrade} · {date(source.preview.retrievedAt)}</span></div>
       {source.preview.candidates.length > 0 && <div className={styles.tableWrap}><table><thead><tr><th scope="col">Use</th><th scope="col">Sold card</th><th scope="col">Grader / grade</th><th scope="col">Sold</th><th scope="col">Price</th></tr></thead><tbody>
         {source.preview.candidates.map(({ sale, match }) => <tr key={sale.id}><td><input type="checkbox" aria-label={`Use sale ${sale.title}`} checked={selected.includes(sale.id)} disabled={blocked}

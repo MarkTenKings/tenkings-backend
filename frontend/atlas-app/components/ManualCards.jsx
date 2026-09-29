@@ -9,17 +9,19 @@ import Shell from './Shell';
 import {createIntakeClient,createBrowserIntakeJournal} from '@atlas/manual-intake/client';
 import {createManualClient} from '@atlas/manual-workflow/client';
 import {PairedGeometryWorkspace,reviewImagePreview} from '@atlas/manual-workspace';
+import {FocusedGeometryWorkspace,sourceQuadToPrepared} from '@atlas/manual-workspace/focused-geometry';
 import {DefectReviewWorkspace,reviewedMemoryState} from '@atlas/manual-workspace/defects';
 import {FinalReportReview,MachineReportReview,CompletedReviewCard} from '@atlas/manual-workspace/report-review';
-import {approveRapidStage,inspectBothDefectSides,rapidReviewStatus} from '@atlas/manual-workspace/rapid-review';
+import {approveRapidStage,approveRapidGeometrySide,confirmRapidGeometryPair,approveRapidFinding as approveFindingSequence,inspectBothDefectSides,rapidReviewStatus} from '@atlas/manual-workspace/rapid-review';
 import {defectBase,reviewedDefectFindingIds} from '@atlas/manual-workspace/defect-actions';
-import {geometryStatus} from '@atlas/manual-workspace/geometry-actions';
+import {geometryBase,geometryStatus} from '@atlas/manual-workspace/geometry-actions';
 import {canonicalizeNewSpeedsterSessionIdentity} from '@atlas/grading-core/identity';
 import {manualRequest,manualMessage} from '../lib/manual-client.mjs';
 import {STAFF_BASE_PATH} from '../lib/routes.mjs';
 import {createDefectAnalysisClient} from '../lib/manual-defect-analysis-client.mjs';
 import {createEarlyGeometryClient,earlyGeometryIdentity} from '../lib/early-geometry-client.mjs';
 import EarlyGeometryPreview,{EarlyGeometryStatus} from './EarlyGeometryPreview';
+import CompletionNextSteps from './CompletionNextSteps';
 import ManualFinishing,{openManualLabelPrintWindow} from './ManualFinishing';
 import ReportPhotoUploader from './ReportPhotoUploader';
 import ReportMarketPicker from './ReportMarketPicker';
@@ -331,11 +333,12 @@ function finalFindingsAvailable(view){
 function ReviewActionFooter({children}){return <footer className="mc-rapid-actions mc-review-actions" aria-label="Review controls">{children}</footer>;}
 
 export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSession,onBusyChange,onQueued,initialGeometrySide=null,initialInspection=null,initialReviewStage=null}){
-  const imageScope=useRef(rapid?'inspection':'all');
+  const imageScope=useRef('all');
   const [view,setView]=useState(null),[screen,setScreen]=useState('geometry'),[error,setError]=useState(''),[status,setStatus]=useState(''),[report,setReport]=useState(null),[editing,setEditing]=useState(false),[preparing,setPreparing]=useState({}),[approving,setApproving]=useState(false),[identity,setIdentity]=useState(null),[refreshingImages,setRefreshingImages]=useState(false);
   const rapidInFlight=useRef(false),[rapidSaving,setRapidSaving]=useState(false);
-  const [rapidSelection,setRapidSelection]=useState(null),[completionFeedback,setCompletionFeedback]=useState(null);
-  const [showFinishing,setShowFinishing]=useState(!rapid),[showReport,setShowReport]=useState(false),[showExtras,setShowExtras]=useState(false);
+  const rapidGeometry=useRef({}),rapidCheckpoints=useRef({}),[rapidSide,setRapidSide]=useState(initialGeometrySide??'FRONT');
+  const [rapidSelection,setRapidSelection]=useState(initialInspection?{key:cardId,id:initialInspection.findingId,side:initialInspection.side}:null),[completionFeedback,setCompletionFeedback]=useState(null);
+  const [showFinishing,setShowFinishing]=useState(!rapid),[showReport,setShowReport]=useState(false),[showExtras,setShowExtras]=useState(false),[showComps,setShowComps]=useState(false);
   const client=useRef(null),analysisClient=useRef(null),imageRefresh=useRef(null),viewRef=useRef(null),interaction=useRef({}),router=useRouter();
   const reviewMode=!rapid&&(router.query?.from==='batch'||Boolean(initialGeometrySide));
   const [attentionSelection,setAttentionSelection]=useState(null);
@@ -346,11 +349,12 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
   const [finishing,setFinishing]=useState(null),[finishingError,setFinishingError]=useState(''),[loadingFinishing,setLoadingFinishing]=useState(false),[autoPrintWindow,setAutoPrintWindow]=useState(null);
   const finishingRead=useRef(0),approvalPrintWindow=useRef(null),approvalInFlight=useRef(false);
   interaction.current={...interaction.current,identity:Boolean(identity),approving,saving:status==='Saving…'};
-  const changeEditing=useCallback(value=>{interaction.current.editing=value;setEditing(value);},[]);
+  const changeEditing=useCallback(value=>{if(value&&!interaction.current.editing)interaction.current.editingRevision=(interaction.current.editingRevision??0)+1;interaction.current.editing=value;setEditing(value);},[]);
   const attempt=async work=>{const owner=client.current;setError('');try{return await work();}catch(error){if(client.current===owner)setError(manualMessage(error));}};
   useEffect(()=>{
     let stopped=false;
-    imageScope.current=rapid?'inspection':'all';
+    imageScope.current='all';
+    rapidGeometry.current={};rapidCheckpoints.current={};setRapidSide(initialGeometrySide??'FRONT');setShowComps(false);
     const ownedClient=createManualClient({cardId,staffId:staff.id,csrf,storage:localStorage,basePath:STAFF_BASE_PATH,timeoutMs:210000,imageScope:()=>imageScope.current,
       onView:value=>{if(!stopped){const updated=withLocalAnalysis(value);viewRef.current=updated;setView(updated);}},onStatus:value=>{if(!stopped)setStatus(value);}});
     client.current=ownedClient;
@@ -520,7 +524,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
     let ownedWindow;
     try{ownedWindow=rapid?null:openManualLabelPrintWindow();}catch{ownedWindow=null;}
     approvalPrintWindow.current=ownedWindow;
-    setAutoPrintWindow(null);setFinishing(null);setApproving(true);
+    setAutoPrintWindow(null);setFinishing(null);setShowComps(false);setApproving(true);
     try{
       const result=await execute({type:'APPROVE_REPORT',reportHash:report.reportHash,reviewed:true});
       if(client.current!==owner){ownedWindow?.close();return;}
@@ -536,11 +540,13 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
   useEffect(()=>{if(!editing&&!identity)return;const warn=event=>{event.preventDefault();event.returnValue='';};const block=()=>{router.events.emit('routeChangeError');throw 'Save or discard the current edit before leaving';};window.addEventListener('beforeunload',warn);router.events.on('routeChangeStart',block);return()=>{window.removeEventListener('beforeunload',warn);router.events.off('routeChangeStart',block);};},[editing,identity,router]);
   const execute=action=>client.current.execute(action);
   async function openReport(){
-    const owner=client.current;if(!owner||owner.hasPending())return;
+    const owner=client.current,editingRevision=interaction.current.editingRevision??0;if(!owner||owner.hasPending())return;
     setLoadingReport(true);
     try{
       const preview=await owner.previewReport();
       if(client.current!==owner)return;
+      // A report read must not replace an adjustment begun while it was in flight.
+      if((interaction.current.editingRevision??0)!==editingRevision||interaction.current.identity)return;
       const current=viewRef.current;
       if(preview.sourceRevision!==current?.card.revision||preview.sourceHash!==current?.card.contentHash)throw {code:'MANUAL_REPORT_STALE'};
       // An unchanged report keeps the same mounted, verified image viewer.
@@ -551,7 +557,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
   }
   async function prepare(side){setPreparing(old=>({...old,[side]:true}));try{await execute({type:'PREPARE_SIDE',side});}finally{setPreparing(old=>({...old,[side]:false}));}}
   useEffect(()=>{
-    if(screen!=='geometry'||!['FRONT','BACK'].some(side=>view?.images?.[side]?.original?.displayState?.state==='PENDING'))return;
+    if(!screen.startsWith('geometry')||!['FRONT','BACK'].some(side=>view?.images?.[side]?.original?.displayState?.state==='PENDING'))return;
     const timer=setTimeout(()=>void attempt(refreshImages),2000);
     return()=>clearTimeout(timer);
   },[screen,view?.images]);
@@ -576,12 +582,27 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
       else await openReport();
     }finally{rapidInFlight.current=false;setRapidSaving(false);}
   }
-  const rapidFindings=(view?.provisional?.report?.findings??[]).filter(finding=>finding.reviewResult!=='REMOVED');
+  const rapidFindings=(view?.defects?.sides?['FRONT','BACK'].flatMap(side=>(view.defects.sides[side]?.findings??[]).map(finding=>({...finding,side}))):view?.provisional?.report?.findings??[]).filter(finding=>finding.reviewResult!=='REMOVED');
   const rapidKey=cardId;
   const reviewedIds=new Set(view?.defects?['FRONT','BACK'].flatMap(side=>reviewedDefectFindingIds(view.defects,side)):[]);
-  const rapidFindingId=rapidSelection?.key===rapidKey&&rapidFindings.some(f=>f.id===rapidSelection.id)?rapidSelection.id:rapidFindings.find(f=>!reviewedIds.has(f.id))?.id??rapidFindings[0]?.id;
+  const rapidFindingId=rapidSelection?.key===rapidKey&&(rapidSelection.side||rapidFindings.some(f=>f.id===rapidSelection.id))?rapidSelection.id:rapidFindings.find(f=>!reviewedIds.has(f.id))?.id??rapidFindings[0]?.id;
   const rapidPosition=rapidFindings.findIndex(f=>f.id===rapidFindingId);
   const selectRapidFinding=id=>setRapidSelection({key:rapidKey,id});
+  const navigationBlocked=()=>locked||calculating||rapidInFlight.current||interaction.current.editing||interaction.current.identity||interaction.current.approving||interaction.current.saving||client.current?.hasPending();
+  const browseRapidFinding=id=>{if(!navigationBlocked()&&rapidFindings.some(f=>f.id===id))selectRapidFinding(id);};
+  function navigateRapid(target){
+    if(navigationBlocked())return;
+    if(target==='FRONT'||target==='BACK'){
+      setRapidSide(target);switchStage('geometry-review');return;
+    }
+    if(target==='findings'&&finalFindingsAvailable(viewRef.current))switchStage('findings-review');
+    if(target==='report')void attempt(openReport);
+  }
+  function rapidShortcut(event){
+    if(!rapid||!event.altKey||event.ctrlKey||event.metaKey||event.shiftKey)return;
+    const target={Digit1:'FRONT',Digit2:'BACK',Digit3:'findings',Digit4:'report'}[event.code];
+    if(!target)return;event.preventDefault();navigateRapid(target);
+  }
   function editFinding(finding,context){
     if(locked||calculating)return;
     const next=context??inspectionContext.current;
@@ -599,20 +620,40 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
     await client.current.editDefect({side:finding.side,base:defectBase(viewRef.current.defects,finding.side),actor:'HUMAN',action:{type:'REMOVE',defectIds:[finding.id]}});
     await execute({type:'MEASURE_SIDE',side:finding.side});
   }
-  async function approveRapidFinding(){
-    if(readOnly||locked||calculating||!reportImagesReady||rapidInFlight.current)return;
-    const finding=rapidFindings.find(f=>f.id===rapidFindingId);
-    if(!finding||rapidFindings.every(f=>reviewedIds.has(f.id))){await approveStage('findings');return;}
+  async function approveFocusedSide(input){
+    if(readOnly||approving||savePending||rapidInFlight.current)throw {code:'MANUAL_COMMAND_PENDING'};
+    const owner=client.current;
+    rapidInFlight.current=true;setRapidSaving(true);setError('');
+    try{
+      const checkpoint=rapidCheckpoints.current[input.side]??={};
+      const latest=await approveRapidGeometrySide(viewRef.current,input,execute,sourceQuadToPrepared,checkpoint);
+      if(client.current!==owner)throw {code:'MANUAL_REVISION_CONFLICT'};
+      rapidGeometry.current[input.side]=geometryBase(latest.geometry,input.side,'REVIEW');
+      const missing=['FRONT','BACK'].find(side=>JSON.stringify(rapidGeometry.current[side])!==JSON.stringify(geometryBase(latest.geometry,side,'REVIEW')));
+      if(missing){delete rapidCheckpoints.current[input.side];setRapidSide(missing);setReportImagesReady(false);return latest;}
+      const confirmed=await confirmRapidGeometryPair(latest,rapidGeometry.current,execute);
+      rapidCheckpoints.current={};
+      setReportImagesReady(false);setScreen('findings-review');return confirmed;
+    }catch(error){if(client.current===owner)setError(manualMessage(error));throw error;}
+    finally{rapidInFlight.current=false;setRapidSaving(false);}
+  }
+  async function approveRapidFinding(input){
+    if(readOnly||approving||savePending||rapidInFlight.current)throw {code:'MANUAL_COMMAND_PENDING'};
+    const current=viewRef.current;
+    if(input?.inspectionHashes){
+      if(!['FRONT','BACK'].every(side=>input.inspectionHashes[side]===current.defects.sides[side].frame.inspectionImageSha256))throw {code:'MANUAL_REPORT_STALE'};
+    }else if(!reportImagesReady)return;
     rapidInFlight.current=true;setRapidSaving(true);
     try{
-      const current=await reviewFinding(finding);
-      const saved=new Set(['FRONT','BACK'].flatMap(side=>reviewedDefectFindingIds(current.defects,side)));
-      const remaining=rapidFindings.find(f=>!saved.has(f.id));
-      if(remaining)selectRapidFinding(remaining.id);
+      const result=await approveFindingSequence(current,input&&Object.hasOwn(input,'findingId')?input.findingId:rapidFindingId,execute);
+      if(result.complete)await openReport();
+      else selectRapidFinding(result.nextFindingId);
+      return result.view;
     }finally{rapidInFlight.current=false;setRapidSaving(false);}
   }
   function rapidBack(){
     if(locked||calculating)return;
+    if(rapid&&screen.startsWith('geometry')&&rapidSide==='BACK'){setRapidSide('FRONT');setReportImagesReady(false);return;}
     if(screen==='findings-review'&&rapidPosition>0){selectRapidFinding(rapidFindings[rapidPosition-1].id);return;}
     switchStage(screen==='geometry'?'geometry-review':screen==='defects'||screen==='report'?'findings-review':'geometry-review');
   }
@@ -642,12 +683,14 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
       {rapid?rapidControls({message:published?'Card complete · label queued':'Approval saved · publication pending',back:()=>setShowReport(value=>!value),approveLabel:published?'Next card →':'Retry publication',disabled:locked||publishing||!published&&!publication?.retryable,approve:published?()=>onQueued?.({cardId,actionId:publication.actionId,publication}):()=>attempt(publishReport)}):<div className="mc-complete-next">{published?<Link className="primary" href="/batch?tab=REVIEW">Review next card →</Link>:publication?.retryable&&<button className="primary" disabled={publishing} onClick={()=>attempt(publishReport)}>{publishing?'Publishing…':'Retry report publication'}</button>}</div>}
       {error&&<div className="mc-notice error" role="alert"><strong>Your approval is saved.</strong><p>{error}</p><a href={`${STAFF_BASE_PATH}?reauthenticate=1`} target="_blank" rel="noreferrer">Sign in again ↗</a><button disabled={locked} onClick={()=>attempt(()=>client.current.recover())}>Refresh access</button></div>}
       {!rapid&&learning&&<p className="mc-learning-status" role="status">{learning.message}</p>}
-      <div className="mc-complete-tools">{published&&<><button aria-expanded={showFinishing} onClick={()=>setShowFinishing(value=>!value)}>{showFinishing?'Hide label':'Print label / station'}</button><a href={publication.href} target="_blank" rel="noreferrer">View customer report ↗</a></>}<button aria-expanded={showReport} onClick={()=>setShowReport(value=>!value)}>{showReport?'Hide evidence':'Review saved evidence'}</button><button aria-expanded={showExtras} onClick={()=>setShowExtras(value=>!value)}>More options {showExtras?'−':'+'}</button></div>
+      <CompletionNextSteps published={published} reportHref={publication?.href} labelState={loadingFinishing?'LOADING':finishingError?'FAILED':labelReady?'READY':'IDLE'} labelOpen={showFinishing} onToggleLabel={()=>setShowFinishing(value=>!value)} marketAvailable={view.marketEnabled===true} marketOpen={showComps} onToggleMarket={()=>setShowComps(value=>!value)} disabled={locked}/>
+      {showComps&&published&&<ReportMarketPicker key={`market:${publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={publication.actionId} csrf={csrf} available={view.marketEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/>}
+      <div className="mc-complete-tools"><button aria-expanded={showReport} onClick={()=>setShowReport(value=>!value)}>{showReport?'Hide evidence':'Review saved evidence'}</button><button aria-expanded={showExtras} onClick={()=>setShowExtras(value=>!value)}>More options {showExtras?'−':'+'}</button></div>
       {published&&showFinishing&&<div className="mc-complete-label">{loadingFinishing&&<p role="status">Preparing approved label…</p>}{finishingError&&<p role="alert">Your grade is saved. {finishingError} <button onClick={()=>void loadFinishing(publication)}>Reload label</button></p>}{labelReady&&<ManualFinishing compact plan={finishing} autoPrintWindow={autoPrintWindow} staffId={staff.id} csrf={csrf} printDisabled={approving||savePending}/>}</div>}
       {showReport&&<FinalReportReview key={report.reportHash} preview={report} workspace={view.defects} images={view.images} geometry={view.geometry} publication={publication} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`} onReadyChange={setReportImagesReady} approved current/>}
       {showExtras&&<section className="mc-complete-extras" aria-label="Optional report tools"><h2>Optional report tools</h2><p>These are separate from grading and can be completed later.</p>
         {published&&<><button onClick={()=>void copyReportLink()}>Copy report link</button>{copyStatus&&<div className="mc-copy-result"><p role="status">{copyStatus}</p><input aria-label="Approved report link" readOnly value={publication.href??''} onFocus={event=>event.target.select()}/></div>}
-          <details><summary>Slab photo, sales & dealer offers</summary><ReportPhotoUploader key={publication.actionId} cardId={cardId} staffId={staff.id} csrf={csrf} available={view.presentationEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/><ReportMarketPicker key={`market:${publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={publication.actionId} csrf={csrf} available={view.marketEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/><ReportResearchPicker key={`research:${publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={publication.actionId} csrf={csrf} available={view.researchEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/><DealerOfferPicker key={`dealers:${publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={publication.actionId} csrf={csrf} available={view.presentationEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/></details></>}
+          <details><summary>Slab photo, sales & dealer offers</summary><ReportPhotoUploader key={publication.actionId} cardId={cardId} staffId={staff.id} csrf={csrf} available={view.presentationEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/><ReportResearchPicker key={`research:${publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={publication.actionId} csrf={csrf} available={view.researchEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/><DealerOfferPicker key={`dealers:${publication.actionId}`} cardId={cardId} staffId={staff.id} approvalActionId={publication.actionId} csrf={csrf} available={view.presentationEnabled===true} disabled={locked||staff.role!=='REVIEWER'}/></details></>}
         <details><summary>Make a correction</summary><p>The saved report remains in history. Changes require a new review and approval.</p><button disabled={locked} onClick={()=>switchStage('geometry')}>Correct borders</button><button disabled={locked} onClick={()=>switchStage('defects')}>Correct findings</button><button disabled={locked} onClick={()=>{enterStage('geometry');setIdentity({...view.identity});}}>Correct card details</button></details>
       </section>}
     </section>;
@@ -658,8 +701,8 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
   const rapidStatus=rapidReviewStatus(view);
   const allFindingDecisions=rapidFindings.every(f=>reviewedIds.has(f.id));
   const rapidStage=screen.startsWith('geometry')?'geometry':screen==='report'?'report':'findings';
-  return <div className={rapid?`mc-rapid-stage mc-rapid-stage-${screen}`:undefined}>
-    {rapid&&<div className="mc-rapid-progress" aria-label="Rapid review progress">{['geometry','findings','report'].map((step,index)=><span key={step} aria-current={rapidStage===step?'step':undefined}>{index+1}<b>{step==='report'?'Final grade':step==='geometry'?'Borders & centering':'Corners, edges & surface'}</b></span>)}<small>{status||'Saved'}</small></div>}
+  return <div className={rapid?`mc-rapid-stage mc-rapid-stage-${screen}`:undefined} onKeyDown={rapidShortcut}>
+    {rapid&&<nav className="mc-rapid-progress" aria-label="Rapid review progress">{[{id:'FRONT',label:'Front'},{id:'BACK',label:'Back'},{id:'findings',label:'Findings'},{id:'report',label:'Grade'}].map((step,index)=><button type="button" key={step.id} aria-current={(rapidStage==='geometry'?rapidSide===step.id:rapidStage===step.id)?'step':undefined} aria-keyshortcuts={`Alt+${index+1}`} disabled={locked||calculating||(step.id==='findings'&&!findingsAvailable)} onClick={()=>navigateRapid(step.id)} title={`Open ${step.label.toLowerCase()} · Alt ${index+1}`}><span>{String(index+1).padStart(2,'0')}</span>{step.label}</button>)}<small role="status">{unsaved?'Unsaved changes':calculating||rapidSaving?'Saving…':status||'Saved'}</small></nav>}
     {error&&<div className="mc-notice error" role="alert">{error}</div>}
     {!rapid&&learning&&<p className="mc-learning-status" role="status">{learning.message}</p>}
     {readOnly&&<p className="mc-notice" role="status">Read-only access. A reviewer must save corrections and confirm this card.</p>}
@@ -671,7 +714,8 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
     {['FRONT','BACK'].filter(side=>view.card.draft?.geometryBeforeEdit?.[side]&&!view.geometry.sides?.[side]?.prepared).map(side=><section className="mc-notice" key={side} aria-label={`${side==='FRONT'?'Front':'Back'} geometry recovery`}><p>The {side==='FRONT'?'Front':'Back'} outline has changed. Preparation must preserve all saved findings. If a finding falls outside the new outline, restore the previous outline, correct the finding in Findings, then try the geometry change again.</p><button type="button" disabled={readOnly||locked||calculating} onClick={()=>attempt(async()=>{await execute({type:'RESTORE_GEOMETRY',side});enterStage('geometry');})}>Restore {side==='FRONT'?'Front':'Back'} previous outline</button></section>)}
     {!rapid&&view.finalReview&&<button type="button" disabled={locked||screen==='provisional'} onClick={()=>switchStage('provisional')}>View current provisional report</button>}
     {identity?<section className="mc-details"><h1>Correct card details</h1><form id="rapid-card-identity" onSubmit={event=>{event.preventDefault();if(readOnly||savePending)return;void attempt(async()=>{await execute({type:'IDENTITY_EDIT',identity});setIdentity(null);enterStage('geometry');});}}><fieldset disabled={readOnly||savePending} style={{border:0,padding:0,margin:0}}><div className="mc-fields">{Object.entries(identity).map(([key,value])=><label key={key}>{({playerName:'Player name',cardName:'Card name',productSet:'Product / set',cardNumber:'Card number',layoutType:'Pokémon card kind'})[key]??key}{key==='layoutType'?<select value={value} onChange={event=>setIdentity(old=>({...old,[key]:event.target.value}))}>{['POKEMON','TRAINER','ENERGY'].map(layout=><option key={layout}>{layout}</option>)}</select>:<input value={value??''} onChange={event=>setIdentity(old=>({...old,[key]:event.target.value}))}/>}</label>)}</div>{rapid?<RapidActionDock><div className="mc-rapid-action-context">Save card details or discard your changes.</div><div className="mc-rapid-action-buttons"><button type="button" className="mc-rapid-back" disabled={savePending} onClick={()=>setIdentity(null)}>← Back</button><button type="button" className="mc-rapid-adjust" disabled={savePending} onClick={()=>setIdentity(null)}>Discard changes</button><button type="submit" form="rapid-card-identity" className="mc-rapid-approve" disabled={savePending}>Save details</button></div></RapidActionDock>:<div className="mc-actions"><button className="primary">Save card details</button><button type="button" onClick={()=>setIdentity(null)}>Discard changes</button></div>}</fieldset></form></section>:
-    ['geometry-review','findings-review'].includes(screen)?<>{view.provisional?.state==='READY'&&!unsaved?<MachineReportReview key={`${cardId}:${screen}`} packet={{...view.provisional,images:view.images}} inspectionMode={rapidStage} guidedFindingId={rapidStage==='findings'?rapidFindingId:undefined} onFindingSelect={selectRapidFinding} onReadyChange={setReportImagesReady} initialInspection={inspectionContext.current} onInspectionChange={rememberInspection} reviewBusy={readOnly||locked||calculating} onCorrectFinding={editFinding} onAddFinding={context=>editFinding(null,{...context,intent:'ADD'})} onRejectFinding={finding=>attempt(()=>rejectFinding(finding))} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}/>:<p role="status">Preparation or measurements need attention. Choose Adjust to continue with the saved evidence.</p>}{rapidControls({
+    rapid&&screen.startsWith('geometry')?<FocusedGeometryWorkspace key={`${cardId}:${rapidSide}`} workspace={view.geometry} images={view.images} side={rapidSide} readOnly={readOnly} busy={rapidSaving||savePending||approving||loadingReport} onEditingChange={changeEditing} onReadyChange={setReportImagesReady} onRefreshImages={()=>attempt(refreshImages)} onRetryDisplay={retryDisplay} onApproveSide={approveFocusedSide} renderReviewActions={options=>rapidControls({...options,approveLabel:'Approve',approveAria:`Approve ${rapidSide==='FRONT'?'Front':'Back'} borders and centering`,backDisabled:locked||calculating||rapidSide==='FRONT'})}/>:
+    ['geometry-review','findings-review'].includes(screen)&&!rapid?<>{view.provisional?.state==='READY'&&!unsaved?<MachineReportReview key={`${cardId}:${screen}`} packet={{...view.provisional,images:view.images}} inspectionMode={rapidStage} guidedFindingId={rapidStage==='findings'?rapidFindingId:undefined} onFindingSelect={selectRapidFinding} onReadyChange={setReportImagesReady} initialInspection={inspectionContext.current} onInspectionChange={rememberInspection} reviewBusy={readOnly||locked||calculating} onCorrectFinding={editFinding} onAddFinding={context=>editFinding(null,{...context,intent:'ADD'})} onRejectFinding={finding=>attempt(()=>rejectFinding(finding))} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}/>:<p role="status">Preparation or measurements need attention. Choose Adjust to continue with the saved evidence.</p>}{rapidControls({
       message:rapidStage==='geometry'?'Check both sides · physical edges, printed borders & centering':rapidFindings.length?`${reviewedIds.size} of ${rapidFindings.length} decisions saved · ${rapidFindings.every(f=>reviewedIds.has(f.id))?rapidStatus.findings?'All findings reviewed. Confirm findings to continue.':'Findings saved. Resolve geometry or remaining observations before final confirmation.':'Accept saves this finding; browsing does not.'}`:'No defects · confirm you inspected both sides',
       adjust:rapidStage==='geometry'?'Geometry':'Defects',backDisabled:locked||calculating||rapidStage==='geometry',
       disabled:readOnly||locked||calculating||!reportImagesReady||(rapidStage==='geometry'?!rapidStatus.geometry:allFindingDecisions?!rapidStatus.findings:!view.defects||Boolean(view.defects.sides.FRONT.pending||view.defects.sides.BACK.pending)),busy:rapidSaving,
@@ -683,11 +727,11 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
       onBackground={!view.defects&&!view.finalReview?async input=>{await execute({type:'SET_PHOTO_BACKGROUND',...input});await prepare(input.side);}:undefined}
       onEdit={async input=>{const {actor,proposal,...edit}=input;await execute({type:'GEOMETRY_EDIT',edit});if(input.kind==='PHYSICAL')void attempt(()=>prepare(input.side));}}
       onConfirm={async({base,reviewed})=>{await execute({type:'CONFIRM_GEOMETRY',base,reviewed});setScreen(rapid||view.finalReview?'findings-review':'defects');setReportImagesReady(false);}}/>:
-    screen==='defects'&&view.defects?<><DefectReviewWorkspace readOnly={readOnly} initialInspection={editContext} onInspectionChange={rememberInspection} onReturn={rapid||view.finalReview?()=>switchStage('findings-review'):undefined} onReviewFinding={reviewFinding} attentionMessage={analysisAttention[0]?.message} renderEditActions={rapid?(children,side)=><RapidEditDock side={side}>{children}</RapidEditDock>:undefined} renderReviewActions={rapid?options=>rapidControls({...options,approveAria:'Approve corrected defects'}):undefined} workspace={view.defects} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} grade={currentGrade}
+    (screen==='defects'||rapid&&screen==='findings-review')&&view.defects?<><DefectReviewWorkspace readOnly={readOnly||loadingReport} onReadyChange={setReportImagesReady} focusedReview={rapid?{side:rapidFindings.find(value=>value.id===rapidFindingId)?.side??rapidSelection?.side??'FRONT',findingId:rapidFindingId,navigation:{index:rapidPosition,total:rapidFindings.length,items:rapidFindings.map((finding,index)=>({id:finding.id,side:finding.side,label:(finding.defectType??'Finding').toLowerCase().replaceAll('_',' ')})),onSelect:browseRapidFinding,onPrevious:()=>browseRapidFinding(rapidFindings[rapidPosition-1]?.id),onNext:()=>browseRapidFinding(rapidFindings[rapidPosition+1]?.id)},onSideSelect:side=>setRapidSelection({key:rapidKey,side,id:rapidFindings.find(value=>value.side===side&&!reviewedIds.has(value.id))?.id??rapidFindings.find(value=>value.side===side)?.id??null}),onApprove:approveRapidFinding,message:rapidFindings.length?`Finding ${rapidPosition+1} of ${rapidFindings.length} · Approve saves your review`:'No findings · Approve confirms your inspection of both sides',renderActions:options=>rapidControls({...options,approveLabel:'Approve',approveAria:rapidFindings.length?`Approve finding ${rapidPosition+1} of ${rapidFindings.length}`:'Approve findings'})}:undefined} initialInspection={editContext} onInspectionChange={rememberInspection} onReturn={rapid||view.finalReview?()=>switchStage('findings-review'):undefined} onReviewFinding={reviewFinding} attentionMessage={analysisAttention[0]?.message} renderEditActions={rapid?(children,side)=><RapidEditDock side={side}>{children}</RapidEditDock>:undefined} renderReviewActions={rapid?options=>rapidControls({...options,approveAria:'Approve corrected defects'}):undefined} workspace={view.defects} images={view.images} onEditingChange={changeEditing} saveStatus={status||'Saved'} grade={currentGrade}
       astra={view.astra} reviewedMemory={view.reviewedMemory} onAnalyzeDefects={input=>analyze('start',input)} onRefreshAnalysis={()=>analyze('refresh')}
       onResumeAnalysis={()=>analyze('resume')} onReplaceAnalysis={input=>analyze('replace',input)} onRetryReviewedMemory={retryMemory}
-      onReviewProposal={async input=>{const owner=client.current;await owner.reviewProposal(input);if(client.current===owner&&input.action!=='REJECT')void attempt(()=>owner.execute({type:'MEASURE_SIDE',side:input.side}));}}
-      onEdit={async input=>{await client.current.editDefect(input);void attempt(()=>execute({type:'MEASURE_SIDE',side:input.side}));}}
+      onReviewProposal={async input=>{const owner=client.current;const saved=await owner.reviewProposal(input);if(client.current!==owner)throw {code:'MANUAL_REVISION_CONFLICT'};return input.action==='REJECT'?saved:owner.execute({type:'MEASURE_SIDE',side:input.side});}}
+      onEdit={async input=>{const owner=client.current;await owner.editDefect(input);if(client.current!==owner)throw {code:'MANUAL_REVISION_CONFLICT'};return owner.execute({type:'MEASURE_SIDE',side:input.side});}}
       onRetry={side=>execute({type:'MEASURE_SIDE',side})} onDiscardPending={({side,base})=>execute({type:'DISCARD_PENDING',side,base})}
       onInspectBoth={()=>inspectBothDefectSides(viewRef.current,execute)} onConfirm={async({base,reviewed,proposalReview})=>{await execute({type:'CONFIRM_FINDINGS',base,reviewed,...(proposalReview?{proposalReview}:{})});if(rapid||view.finalReview)await attempt(openReport);}}
       onContinue={()=>attempt(openReport)}/></>:
