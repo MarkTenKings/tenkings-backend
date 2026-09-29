@@ -1,0 +1,296 @@
+[
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-paired-report.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-paired-report.html",
+    "bytes": 640632,
+    "sha256": "8458d6ded78f3b35ef6f8031d70b1b4e0adcf34a744b91781542c213b70df92e"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-guided-review.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-guided-review.html",
+    "bytes": 322817,
+    "sha256": "0715c0f4bdd809d162b990f761face4db74acecc678d0f318408e85b18d2b092"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-guided-review-b.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-guided-review-b.png",
+    "bytes": 118302,
+    "sha256": "707e6a5224aaa40dd51f0683c75f8c2ee9a63e7178aedad95c8de848e828cd51"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-paired-report-overview.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-paired-report-overview.png",
+    "bytes": 42650,
+    "sha256": "c9f2e12d7469bfb6f11f7e4c3dff874ba3f5a41b939607b1ce4083ae1a41d51d"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-grade-raw-stop.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-grade-raw-stop.png",
+    "bytes": 82075,
+    "sha256": "4e6846bb83b838f119018dc763487c89f7bcccc7a32c04a4703c560a2a19dc40"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-grade-final.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-grade-final.png",
+    "bytes": 83462,
+    "sha256": "7c0bda2d6f6bdc976e753bdc68e762ff86d046d8d0d8d3709794507566b4056e"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-card-first-review.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-card-first-review.html",
+    "bytes": 305876,
+    "sha256": "93d06122cfce888d1dafd0125d55b986e0d11fc95bc43c47b0a08d261c79c008"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-fingerprint-tide.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-fingerprint-tide.html",
+    "bytes": 32223,
+    "sha256": "001f8e5df5507a45f823383a1212eb3b57c9023d86be3e097a07d0ce2c7076b0"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-review-attention.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-review-attention.html",
+    "bytes": 9413,
+    "sha256": "2c2b19b47c722276236e3f11addfd50d4296c2120e6b53cc5da7335ad414b459"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/ae-front-asset.webp",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/ae-front-asset.webp",
+    "bytes": 145866,
+    "sha256": "b9b182b07657e82cfbb46a45c2931857a2cc26d46db098896b6dccf36350fa31"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/ae-back-asset.webp",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/ae-back-asset.webp",
+    "bytes": 379722,
+    "sha256": "59bda262cf772e967f40dcf6d2488c134bba79648eb46e32f3b64833f1c65179"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/report-back-preview.webp",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/report-back-preview.webp",
+    "bytes": 259398,
+    "sha256": "062459fb5def890e717707cb59eb31389ecaccb7970b9d25f9167d00a478454b"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/report-dual-assets.json",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/report-dual-assets.json",
+    "bytes": 576601,
+    "sha256": "1e5546433aa44be8f1e8c3289ff8e65df9caa859a138b243c413144d45df15ca"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/report-fingerprint-renderer.js",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/report-fingerprint-renderer.js",
+    "bytes": 3465,
+    "sha256": "7c6c74c9882efe68c7420a8de44b8fcc893be760ed0d1f988ed20395a0466fcf"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/danny-wolf-reference-crop.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/danny-wolf-reference-crop.png",
+    "bytes": 207243,
+    "sha256": "8762375b32671429a1a3f0ff454f6bfd9c8e1bc132e2095bab660534a1d0e64c"
+  },
+  {
+    "source": "/Users/markthomas/.codex/atlas-handoffs/atlas-paired-design-release-20260929/release/live-report-desktop.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/live-report-desktop.png",
+    "bytes": 177893,
+    "sha256": "8939e9448b3906ba563a2fd1e1a0791a9b6b692694d5974e003f1494d5b051e0"
+  },
+  {
+    "source": "/Users/markthomas/.codex/atlas-handoffs/atlas-paired-design-release-20260929/release/live-report-mobile.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/live-report-mobile.png",
+    "bytes": 39574,
+    "sha256": "876824989518d86924e6b34be9a2feca731115879278305975ac8216118af709"
+  },
+  {
+    "source": "/Users/markthomas/.codex/atlas-handoffs/atlas-paired-design-release-20260929/release/live-browser-proof.json",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/live-browser-proof.json",
+    "bytes": 1541,
+    "sha256": "3ae79d5c1904ebe2541be376488c7ba346802a91c701039f315ac1651500185f"
+  },
+  {
+    "source": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-preview-20260928/independent-design-critique-20260929.md",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/independent-design-critique-20260929.md",
+    "bytes": 3179,
+    "sha256": "86387564ae138b848af9ea4a2a24f2f4613dfcd41e51416bf92d8e8389e0fa0f"
+  },
+  {
+    "source": "/Users/markthomas/.codex/atlas-handoffs/atlas-design-preview-20260928/independent-design-all-findings-20260929.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/independent-design-all-findings-20260929.png",
+    "bytes": 81599,
+    "sha256": "277fb183f0321b6de3102dcd3955bb040e559decb878d5bbdff60d011897cecc"
+  },
+  {
+    "source": "/tmp/atlas-staff-card-first-20260929/rapid-workflow-proof.json",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/rapid-workflow-proof.json",
+    "bytes": 1854,
+    "sha256": "d155aec126e42b405bbfe556f996104f9ec7771e491d6b60d15b5e983d3210a0"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-card-first-magnifier.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-card-first-magnifier.png",
+    "bytes": 105006,
+    "sha256": "44876f360639f1f87affd84d7701d4ac04874d05ff7bab92b12d9bf57526d80c"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-card-first-proposal.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-card-first-proposal.png",
+    "bytes": 85026,
+    "sha256": "cef40d7bcfd8b42adf47568b9e0599624b07e188cdbee8aa04d00ea73165a6a5"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-card-first-review-qa.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-card-first-review-qa.html",
+    "bytes": 305879,
+    "sha256": "4e0e729b84fbfbc4c9379f5a78f41bd23fe319a7bdeaab6c4cda8bb65cb39dbf"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-evidence-in-motion.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-evidence-in-motion.html",
+    "bytes": 768796,
+    "sha256": "01f2770ff808ecbb7c4492a083f174c37348b068bda0d4ae260597381ade5841"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-guided-review-check.js",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-guided-review-check.js",
+    "bytes": 17727,
+    "sha256": "0a7e46d05fc859def4bdb175c9b217e2db5f0c2189c23c9cb03a99e1f16bc940"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-guided-review-correction.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-guided-review-correction.png",
+    "bytes": 46819,
+    "sha256": "18dc546798f0c20ed48b5a4efb7d6de446fb0b63ac76324511deed02b6791ee6"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-guided-review-qa.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-guided-review-qa.html",
+    "bytes": 322820,
+    "sha256": "6704d3e495dbb1854d1d9b315392f91a2455efd4bb47c7f8a92400f2e63bd1a8"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-guided-review-rendered.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-guided-review-rendered.html",
+    "bytes": 397468,
+    "sha256": "27c2b0512163cff2cdf8d2b2945cddabc0b1a6b9cfcaac4bca2792b83598c259"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-guided-review-routine.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-guided-review-routine.png",
+    "bytes": 48920,
+    "sha256": "4bd4a2a736d77ac7788cb449e26456f6b1fb203d156115bfce4bc0dd1784d7ea"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-in-motion.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-in-motion.html",
+    "bytes": 391926,
+    "sha256": "a3b19faabe5c3cffe1ae75a6c1ff4ecce41f5771cd3bf661b306421380eab3d5"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-paired-report-check.js",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-paired-report-check.js",
+    "bytes": 32519,
+    "sha256": "111f1393371f6b9c6146d5e72b599dc628503eb0dbb0e901f262e560151987f4"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-paired-report-qa.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-paired-report-qa.html",
+    "bytes": 640635,
+    "sha256": "ed16b9e8ed8d526c0aca614e93782290f9b30aadf4cdd9605560634b4cfac0f4"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-paired-report-rendered.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-paired-report-rendered.html",
+    "bytes": 732098,
+    "sha256": "687b3c4cee4081e6cadf6d6fcca98d180f4fa0b7290aac50f2310d9c4663cab6"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-review-attention-check.js",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-review-attention-check.js",
+    "bytes": 3149,
+    "sha256": "b6a572c6bbaaf7375c3bdb68fbd66e90d40412e4e505ec1b398c381fed923f3e"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-review-attention-correction.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-review-attention-correction.png",
+    "bytes": 15285,
+    "sha256": "b87819108642b594a23064c5a6eca6deac145d8f51754c60eaade080e688fe37"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-review-attention-qa.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-review-attention-qa.html",
+    "bytes": 9416,
+    "sha256": "2b2731d1b040ccf7dd1131e98f059052153cc111edbf67cf50bc28a1b08100c4"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/atlas-review-attention-rendered.html",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/atlas-review-attention-rendered.html",
+    "bytes": 78094,
+    "sha256": "fc7d24f1c6a7880c43819eb8b14970fca59c18f46ae295213be552ec2c79186a"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/report-category-enhancement.txt",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/report-category-enhancement.txt",
+    "bytes": 10106,
+    "sha256": "57bf6b1dbe4e32e3020acc90c10256d38585f3bd20638c5fb56171ca90906dce"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/report-centering-upgrade.js",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/report-centering-upgrade.js",
+    "bytes": 2713,
+    "sha256": "a24d8cd6f1a82c7398ecb7231bdf67a4a1a1e8cb5762798873870c7a0da5876f"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/report-grade-motion.js",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/report-grade-motion.js",
+    "bytes": 6432,
+    "sha256": "8297d1db045bea98e8f8670057352969fd21edeec877a4f72929ddc5a1aa6903"
+  },
+  {
+    "source": "/Users/markthomas/.codex/visualizations/2026/09/29/01a0eba4-cb58-7bf0-9065-92ec50274d2a/report-motion-upgrade.css",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/report-motion-upgrade.css",
+    "bytes": 6646,
+    "sha256": "ac26f5811fbed4ce0461f381a14b07bc9fdf873b1783450cb539bb309101ec4f"
+  },
+  {
+    "source": "/Users/markthomas/Library/Containers/com.wiheads.paste/Data/tmp/images/Safari 2026-09-29 12.27.42.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/user-references/Safari 2026-09-29 12.27.42.png",
+    "bytes": 830870,
+    "sha256": "69442b8292d1498254ab2b63cbe204af69578206bc65a2d3cd45751599dad335"
+  },
+  {
+    "source": "/Users/markthomas/Library/Containers/com.wiheads.paste/Data/tmp/images/Safari 2026-09-29 12.28.37.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/user-references/Safari 2026-09-29 12.28.37.png",
+    "bytes": 2023758,
+    "sha256": "2ef380e60a4b656761d4e9af3f706b4a92562fda5876cb7878a3002a665d3473"
+  },
+  {
+    "source": "/Users/markthomas/Library/Containers/com.wiheads.paste/Data/tmp/images/Safari 2026-09-29 12.28.47.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/user-references/Safari 2026-09-29 12.28.47.png",
+    "bytes": 2009088,
+    "sha256": "cd377ef916490502bfeedb2b9375e3d2080989d8e29ca8b900d20a56af39de40"
+  },
+  {
+    "source": "/Users/markthomas/Library/Containers/com.wiheads.paste/Data/tmp/images/Safari 2026-09-29 12.29.09.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/user-references/Safari 2026-09-29 12.29.09.png",
+    "bytes": 1293465,
+    "sha256": "2bd655676ca04c91161974669c38bed79a65a63dd7cbfc2dab6ff752eeda2a09"
+  },
+  {
+    "source": "/Users/markthomas/Library/Containers/com.wiheads.paste/Data/tmp/images/Safari 2026-09-29 13.09.03.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/user-references/Safari 2026-09-29 13.09.03.png",
+    "bytes": 1576838,
+    "sha256": "d6619a1163e96788c5ccbce7a3d87b124361b99aec20995e3aeda6943a26e154"
+  },
+  {
+    "source": "/Users/markthomas/Library/Containers/com.wiheads.paste/Data/tmp/images/Safari 2026-09-29 13.09.20.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/user-references/Safari 2026-09-29 13.09.20.png",
+    "bytes": 1702128,
+    "sha256": "a7c64b1855d86692da3bfba88e2e27a14a97cbf7307dcb5453ffafccea957cdd"
+  },
+  {
+    "source": "/var/folders/kj/0fq4__ts66710yfj_m1x8r4c0000gn/T/codex-clipboard-30fa62d3-0dad-49dc-9de0-8cc64cf3fa42.png",
+    "copy": "/Users/markthomas/.codex/atlas-handoffs/atlas-fresh-design-lead-20260929/artifacts/user-references/codex-clipboard-30fa62d3-0dad-49dc-9de0-8cc64cf3fa42.png",
+    "bytes": 915348,
+    "sha256": "08102f9caf7e68665b613408b6a4008c8450419b7ad7252ac00fcff1a891ef76"
+  }
+]

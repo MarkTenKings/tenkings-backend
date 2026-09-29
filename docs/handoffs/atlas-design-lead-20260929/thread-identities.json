@@ -1,0 +1,21 @@
+{
+  "new_lead": {
+    "threadId": "01a0ef5e-3243-7701-aa9b-ae256a837102",
+    "hostId": "local",
+    "title": "ATLAS \u2014 Fresh Astra Ultra Design Lead",
+    "model": "gpt-6-astra",
+    "thinking": "ultra",
+    "kind": "independent project chat"
+  },
+  "original_designer": {
+    "threadId": "01a0ec55-13d4-73c2-ae96-d623f233dca3",
+    "hostId": "local",
+    "historicalTreePath": "/root/independent_design_critic"
+  },
+  "previous_lead": {
+    "threadId": "01a0eba4-cb58-7bf0-9065-92ec50274d2a",
+    "title": "ATLAS Design Lead \u2014 ASTRA Ultra"
+  },
+  "projectId": "local-a099185bcc24467e8caeef5d5da895a7",
+  "workspace": "/Users/markthomas/.codex/worktrees/1ce0/ten-kings-mystery-packs-clean"
+}
