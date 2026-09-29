@@ -51,3 +51,13 @@
   .rr-spatial-overlay * { transition:none!important; animation:none!important; scroll-behavior:auto!important; }
 }
 @media print { .rr-spatial-overlay { display:none!important; } }
+/* The paired overview gives each side its own compact outside rail. A single
+   continuous active leader locates the finding without drawing a web of lines. */
+.rr-spatial-overlay.rr-spatial-rail{position:relative;inset:auto;width:136px;height:var(--rr-spatial-height);grid-row:1;z-index:4}
+.rr-spatial-rail[data-rail-side=left]{grid-column:1}.rr-spatial-rail[data-rail-side=right]{grid-column:2}
+.rr-spatial-rail .rr-spatial-controls{position:absolute;inset:0;padding:0}
+.rr-report .rr-public-explorer .rr-spatial-rail .rr-spatial-target{min-height:44px;gap:5px;padding:5px 0;font-size:11px;border-bottom:1px solid #e7e8eb}
+.rr-spatial-rail .rr-spatial-silhouette{width:19px;height:19px}.rr-spatial-rail .rr-spatial-number{font-size:10px}
+.rr-spatial-rail .rr-spatial-lines{overflow:visible;z-index:-1}
+.rr-spatial-active-leader{stroke:#d9303b;stroke-width:1}
+.rr-report .rr-public-explorer .rr-spatial-empty{font-size:12px;color:#6e6e73;position:absolute;top:40%;margin:0;line-height:1.6}

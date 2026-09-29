@@ -10,7 +10,7 @@ const shortName = finding => String(finding.defectType ?? finding.type ?? 'Findi
   .replaceAll('_', ' ').replace(/^visible whitening$/, 'Whitening').replace(/^light scratch scuff$/, 'Scratch / scuff')
   .replace(/^./, letter => letter.toUpperCase());
 
-/** These silhouettes enlarge the saved pixels; they never enlarge marks on the photograph. */
+/** These silhouettes enlarge the saved pixels; they do not change stored evidence or measured detail. */
 function traceThumbnail(finding) {
   if (!finding || finding.geometryExclusion) return null;
   const mask = reportFindingMask(finding), key = mask ?? finding;
@@ -103,7 +103,7 @@ function placeTargets(targets, card, size, hasBack) {
 
 /** Public display only. Expansion changes labels, never saved findings, measurements, or camera. */
 export function ReportSpatialOverlay({ navigation, side, activeArea, onAreaChange, onSelect,
-  project, size, selectedId, ready, density = 'all' }) {
+  project, size, selectedId, ready, density = 'all', railSide }) {
   const [hovered, setHovered] = useState(null);
   const entries = useMemo(() => (navigation?.entries ?? []).filter(entry => entry.finding?.side === side
     && entry.finding.reviewResult !== 'REMOVED' && validBounds(entry.bounds)), [navigation, side]);
@@ -130,6 +130,34 @@ export function ReportSpatialOverlay({ navigation, side, activeArea, onAreaChang
     // Unlocated findings remain available in the report's ordinary text navigator.
     return finite(anchor) ? [{ ...target, anchor }] : [];
   });
+  if (railSide) {
+    const railWidth = 136, gap = 14, leftRail = railSide === 'left';
+    const ordered = [...projected].sort((a, b) => a.anchor.y - b.anchor.y);
+    const height = Math.max(size.height, Math.max(0, ordered.length - 1) * 44 + 48), positions = new Map();
+    ordered.forEach((target, index) => {
+      const low = 24 + index * 44, high = height - 24 - (ordered.length - index - 1) * 44;
+      const previous = index ? positions.get(ordered[index - 1].key) + 44 : low;
+      positions.set(target.key, clamp(Math.max(target.anchor.y, previous), low, high));
+    });
+    const active = projected.find(target => hovered ? target.key === hovered : target.entry?.id === selectedId);
+    const y = active ? positions.get(active.key) : 0;
+    const point = active && { x: active.anchor.x + (leftRail ? railWidth + gap : 0), y: active.anchor.y };
+    const start = leftRail ? railWidth : size.width + gap;
+    return <div className="rr-spatial-overlay rr-spatial-rail" data-rail-side={railSide} style={{'--rr-spatial-height':`${height}px`}}>
+      {point && <svg className="rr-spatial-lines" width={size.width + railWidth + gap} height={height} style={{left:leftRail?0:-(size.width+gap)}} aria-hidden="true"><path className="rr-spatial-leader rr-spatial-active-leader" d={`M${start} ${y}L${point.x} ${point.y}`}/></svg>}
+      <div className="rr-spatial-controls" role="group" aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} finding locations`}>
+        {!projected.length && <p className="rr-spatial-empty">No recorded findings in this view.</p>}
+        {ordered.map(target => <button type="button" key={target.key} className={`rr-spatial-target rr-spatial-finding${selectedId === target.entry.id ? ' rr-spatial-selected' : ''}`}
+          data-finding-id={target.entry.id} style={{left:0,top:positions.get(target.key),width:railWidth}}
+          aria-label={`Inspect ${target.entry.label}: ${shortName(target.entry.finding)}`} aria-pressed={selectedId === target.entry.id}
+          onPointerEnter={() => setHovered(target.key)} onPointerLeave={() => setHovered(null)} onFocus={() => setHovered(target.key)} onBlur={() => setHovered(null)}
+          onClick={() => {setHovered(null);onSelect?.(target.entry.finding);}}>
+          {target.thumbnail && <svg className="rr-spatial-silhouette" viewBox={target.thumbnail.viewBox} aria-hidden="true"><path d={target.thumbnail.path}/></svg>}
+          <span className="rr-spatial-number">{target.entry.number}</span><span className="rr-spatial-name">{shortName(target.entry.finding)}</span>
+        </button>)}
+      </div>
+    </div>;
+  }
   if (!projected.length) return null;
   const layout = placeTargets(projected, card, size, Boolean(area));
   const isSelected = target => target.entry ? target.entry.finding.id === selectedId
@@ -153,6 +181,7 @@ export function ReportSpatialOverlay({ navigation, side, activeArea, onAreaChang
           return <button type="button" key={target.key}
             className={`rr-spatial-target${entry ? ' rr-spatial-finding' : ' rr-spatial-area'}${selected ? ' rr-spatial-selected' : ''}`}
             style={{ left: position.x, top: position.y, width: position.width }}
+            data-finding-id={entry?.id}
             aria-label={entry ? `Inspect ${entry.label}: ${shortName(entry.finding)}`
               : `${target.area.label}: ${target.area.entries.length} ${target.area.entries.length === 1 ? 'finding' : 'findings'}. Show individual findings`}
             aria-pressed={entry ? selected : undefined} aria-expanded={entry ? undefined : false}

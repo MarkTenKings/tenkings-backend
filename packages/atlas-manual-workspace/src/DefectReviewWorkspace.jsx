@@ -139,7 +139,6 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
   const [panMode, setPanMode] = useState(false), [spacePan, setSpacePan] = useState(false), [hideOverlays, setHideOverlays] = useState(false), [peek, setPeek] = useState(false);
   const [inspecting, setInspecting] = useState('');
   const [cleanView,setCleanView]=useState(false),[comparison,setComparison]=useState(false);
-  useEffect(()=>{if(focusedReview?.findingId&&typeof window!=='undefined'&&window.matchMedia?.('(min-width: 1000px)').matches)setComparison(true);},[]);
   const [tool, setTool] = useState('BRUSH'), [brush, setBrush] = useState(4), [newType, setNewType] = useState('LIGHT_SCRATCH_SCUFF');
   const [stroke, setStroke] = useState([]), strokeRef = useRef(null), plane = useRef(null);
   const viewport = useRef(null), pointerPan = useRef(null);
@@ -325,7 +324,8 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
   const resumeSavedTrace = Boolean(editor && pendingAction?.type==='TRACE_SAVE' && onRetry
     && (pendingAction.findingId??pendingAction.trace.id)===editor.id
     && pendingAction.trace.traceWire.rleSha256===encodeSpeedsterTraceRleV1(editor.trace).sha256);
-  const focusedDisabled=busy||locked||!ready||(!resumeSavedTrace&&(pending||stale))||stroke.length>0||!focusedReview?.imagesReady||Boolean(editor&&!isNonEmptySpeedsterTrace(editor.trace));
+  const observationBlock=Boolean(focusedReview?.unresolvedObservations&&!finding&&!editor);
+  const focusedDisabled=observationBlock||busy||locked||!ready||(!resumeSavedTrace&&(pending||stale))||stroke.length>0||!focusedReview?.imagesReady||Boolean(editor&&!isNonEmptySpeedsterTrace(editor.trace));
   const approveFocused = () => {
     if (focusedDisabled) return;
     const inspectionHashes=Object.fromEntries(SIDES.map(value=>[value,workspace.sides[value].frame.inspectionImageSha256]));
@@ -344,6 +344,9 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
     // Adding a trace can leave the next parent selection unchanged. Resume
     // that controlled selection when the local editor closes as well.
   },[focusedReview?.findingId,ready,Boolean(editor)]);
+  const reviewTaskStatus=busy?'Saving & checking':error||stale?'Needs attention':!ready||!focusedReview?.imagesReady?'Verifying photographs':pending?'Measurement required':editor?'Unsaved trace':observationBlock?'Observation review required':'Human review required';
+  const reviewTaskTitle=editor?(editor.findingId===null?'Trace visible damage':'Correct this finding'):observationBlock?'Resolve original observations':finding?'Review this finding':`Inspect ${name(side)} findings`;
+  const reviewTaskCopy=busy?'Your decision is being saved and the measurements checked.':error?error:stale?'This side changed while you were drawing. Your trace is retained; cancel it to use the current saved version.':!ready||!focusedReview?.imagesReady?'Both full photographs must be verified before approval.':pending?'Finish the pending measurement before reviewing another finding. Your saved change is retained.':editor?'Mark only visible damage. Approve saves and measures your trace before recording your review.':observationBlock?'Inspect each original observation below. Add a trace for visible damage. The original observation stays pending until a supported review decision is recorded; reject only a false observation.':finding?'Compare the red trace with the photograph. Adjust or reject it if needed, then approve your decision.':'Inspect this side for damage, then check the other side. Add a finding for anything you can see before approving.';
   const findingTypeControl=finding&&<label>Defect type <select aria-label={`${name(side)} finding type`} disabled={disabled || Boolean(editor) || finding.reviewResult === 'REMOVED' || !onEdit} value={finding.defectType}
     onChange={event => edit({ type: 'CHANGE_TYPE', defectId: finding.id, defectType: event.target.value })}>
     {Object.entries(TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -417,7 +420,7 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
         </div>
       </div> : <div className="am-empty">Inspection image unavailable.</div>}
       {focusedReview&&finding&&!editor&&!pending&&showMasks&&overlaysVisible&&ready&&<SelectedFindingCallout anchor={focusedShape.anchor} view={view} size={viewportSize} scale={scale} label={TYPES[finding.defectType]} number={(focusedReview.navigation?.index??slot.findings.findIndex(value=>value.id===finding.id))+1}/>}
-      {magnifier && lens && ready && <div className="ad-magnifier" aria-hidden="true" style={{
+      {!focusedReview && magnifier && lens && ready && <div className="ad-magnifier" aria-hidden="true" style={{
         [lens.x > viewportSize.width / 2 ? 'left' : 'right']: 12,
         backgroundImage: `url("${verified.url}")`, backgroundSize: `${lens.width * 3}px ${lens.height * 3}px`,
         backgroundPosition: `${100 - lens.imageX * 3}px ${100 - lens.imageY * 3}px`,
@@ -431,7 +434,11 @@ function DefectSide({ workspace, side, image, onEdit, onRetry, onDiscardPending,
     <p className="ad-focus-status" role="status">{inspecting ? `Inspecting ${inspecting} · ` : ''}Full image includes space around every card edge.</p>
     {!ready && supplied && <p role={verified.error ? 'alert' : 'status'}>{verified.error ? 'Inspection image unavailable or its bytes did not match. Your trace is retained.' : 'Waiting for the current verified inspection image.'}</p>}
     </div>
-    <div className="ad-review-panel">{focusedReview&&finding&&<section className="ad-focused-measurements" aria-label="Selected finding measurements">
+    <div className="ad-review-panel">
+    {focusedReview&&<section className="atlas-review-task" aria-label="Your review"><span className="atlas-review-eyebrow">Your review</span><h3>{reviewTaskTitle}</h3><span className="atlas-review-status" role="status">{reviewTaskStatus}</span><p>{reviewTaskCopy}</p></section>}
+    {focusedReview&&magnifier&&<div className="ad-inspector-precision" aria-label="Finding precision view"><strong>Precision view · 3×</strong>{lens&&ready?<div className="ad-magnifier" aria-hidden="true" style={{backgroundImage:`url("${verified.url}")`,backgroundSize:`${lens.width*3}px ${lens.height*3}px`,backgroundPosition:`${100-lens.imageX*3}px ${100-lens.imageY*3}px`}}><span>Photograph · no overlays</span></div>:<p>Move over the photograph to inspect its detail.</p>}</div>}
+    {focusedReview?.renderObservations?.({side,onTrace:()=>start(null),disabled:disabled||Boolean(editor)})}
+    {focusedReview&&finding&&<section className="ad-focused-measurements" aria-label="Selected finding measurements">
       <div className="ad-focused-finding-title"><span>Finding {(focusedReview.navigation?.index??slot.findings.findIndex(value=>value.id===finding.id))+1} · {name(side)}</span><h3>{TYPES[finding.defectType]}</h3></div>
       <dl><div><dt>{savedMeasurement?'Saved area':'Measured area'}</dt><dd>{areaOf(finding).toLocaleString('en-US',{maximumFractionDigits:6})} <small>mm²</small></dd></div>
         {savedBounds&&<div><dt>{savedMeasurement?'Saved region bounds':'Region bounds'}</dt><dd>{(savedBounds.width*63.5).toLocaleString('en-US',{maximumFractionDigits:3})} × {(savedBounds.height*88.9).toLocaleString('en-US',{maximumFractionDigits:3})} <small>mm</small></dd></div>}

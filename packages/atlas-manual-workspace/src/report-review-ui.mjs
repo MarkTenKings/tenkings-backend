@@ -124,17 +124,17 @@ export function reportFindingFromFragment(fragment, reportKey, findings) {
 }
 
 /** Pinch preserves the image point under the initial midpoint as both fingers move. */
-export function reportPinchView(start, points, size) {
+export function reportPinchView(start, points, size, gutter = 16) {
   const midpoint = { x: (points[0].x + points[1].x) / 2, y: (points[0].y + points[1].y) / 2 };
   const distance = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
-  const view = zoomInspectionAt(start.view, start.view.zoom * distance / Math.max(1, start.distance), start.midpoint, size);
+  const view = zoomInspectionAt(start.view, start.view.zoom * distance / Math.max(1, start.distance), start.midpoint, size, gutter);
   return { ...view, pan: clampInspectionPan({ x: view.pan.x + midpoint.x - start.midpoint.x,
-    y: view.pan.y + midpoint.y - start.midpoint.y }, view.zoom, size) };
+    y: view.pan.y + midpoint.y - start.midpoint.y }, view.zoom, size, gutter) };
 }
 
 /** Visible rectangle in full verified-image coordinates, independent of the card mask. */
-export function reportMinimap(view, size) {
-  const scale = fitInspectionScale(size) * view.zoom;
+export function reportMinimap(view, size, gutter = 16) {
+  const scale = fitInspectionScale(size, gutter) * view.zoom;
   const width = INSPECTION_SIZE.width * scale, height = INSPECTION_SIZE.height * scale;
   const left = size.width / 2 + view.pan.x - width / 2, top = size.height / 2 + view.pan.y - height / 2;
   const x = Math.max(0, -left / width), y = Math.max(0, -top / height);

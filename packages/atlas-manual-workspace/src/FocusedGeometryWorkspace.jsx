@@ -15,19 +15,19 @@ const ratio=value=>value.map(n=>Math.round(n)).join(' / ');
 /** One source photo, two source-coordinate drafts and one explicit save gesture.
  * The host serializes durable edits and advances only after its promise resolves. */
 export function FocusedGeometryWorkspace({workspace,images,side='FRONT',readOnly=false,busy:hostBusy=false,
-  onApproveSide,onEditingChange,onReadyChange,onRefreshImages,onRetryDisplay,renderReviewActions}) {
+  onApproveSide,onEditingChange,onReadyChange,onRefreshImages,onRetryDisplay,renderReviewActions,reviewObservations,reviewRecovery}) {
   const slot=workspace.sides[side], label=side==='FRONT'?'Front':'Back';
   const image=geometryImage(workspace,side,'PHYSICAL',images);
   const identity=JSON.stringify([workspace.cardId,side,slot.imageRevision,slot.image?.frameSha256]);
-  return <FocusedSide key={identity} {...{workspace,images,side,readOnly,onApproveSide,onEditingChange,onReadyChange,onRefreshImages,onRetryDisplay,renderReviewActions,slot,label,image,hostBusy}} />;
+  return <FocusedSide key={identity} {...{workspace,images,side,readOnly,onApproveSide,onEditingChange,onReadyChange,onRefreshImages,onRetryDisplay,renderReviewActions,reviewObservations,reviewRecovery,slot,label,image,hostBusy}} />;
 }
 
-function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onReadyChange,onRefreshImages,onRetryDisplay,renderReviewActions,slot,label,image,hostBusy}) {
+function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onReadyChange,onRefreshImages,onRetryDisplay,renderReviewActions,reviewObservations,reviewRecovery,slot,label,image,hostBusy}) {
   const verified=useVerifiedImage(typeof image?.url==='string'&&image.url.length?image:null,{cacheScope:JSON.stringify([workspace.cardId,side])});
   const preview=useVerifiedImage(verified.url?null:image?.preview);
   const contentKey=verifiedImageContentKey(image);
   const [readyKey,setReadyKey]=useState(null),[draft,setDraft]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
-  const [selected,setSelected]=useState({kind:'PHYSICAL',corner:0}),[snap,setSnap]=useState(false),[snapReady,setSnapReady]=useState(false),[dragging,setDragging]=useState(false);
+  const [selected,setSelected]=useState({kind:'PHYSICAL',corner:0}),[snap,setSnap]=useState(false),[snapReady,setSnapReady]=useState(false),[dragging,setDragging]=useState(false),[handleFocused,setHandleFocused]=useState(false);
   const initial=focusedGeometryOutlines(workspace,side), outlines=draft??initial;
   const [bounds,setBounds]=useState(()=>slot.image?geometryFocusBounds(initial.physical,slot.image):null);
   const [size,setSize]=useState({width:640,height:680});
@@ -35,7 +35,8 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
   const ready=Boolean(verified.url&&contentKey&&readyKey===contentKey);
   const inactive=readOnly||hostBusy||busy||!ready;
   const camera=image&&bounds?geometryCamera(bounds,size,image):null;
-  const centering=!outlines.printedAbsent?focusedCentering(outlines.physical,outlines.printedOriginal):null;
+  const needsPlacement=outlines.needsPhysicalPlacement||(!outlines.printedAbsent&&outlines.needsPrintedPlacement);
+  const centering=!needsPlacement&&!outlines.printedAbsent?focusedCentering(outlines.physical,outlines.printedOriginal):null;
   const editing=Boolean(draft)||busy;
   useEffect(()=>{onEditingChange?.(editing);return()=>onEditingChange?.(false);},[editing,onEditingChange]);
   useEffect(()=>{onReadyChange?.(ready);return()=>onReadyChange?.(false);},[ready,onReadyChange]);
@@ -58,7 +59,10 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
     const current=capture(),field=kind==='PHYSICAL'?'physical':'printedOriginal';
     const quad=current[field].map((p,i)=>i===index?next:{...p});
     if(!sanitizeSpeedsterUnitQuad(quad)){setError('Keep the corners in order. The last valid outline is retained.');return;}
-    setDraft({...current,[field]:quad});setError('');
+    const placedField=kind==='PHYSICAL'?'physicalPlaced':'printedPlaced';
+    const placed=[...new Set([...(current[placedField]??[]),index])];
+    const needsField=kind==='PHYSICAL'?'needsPhysicalPlacement':'needsPrintedPlacement';
+    setDraft({...current,[field]:quad,[placedField]:placed,[needsField]:current[needsField]&&placed.length<4});setError('');
   }
   const screenPoint=point=>({x:camera.left+point.x*camera.width,y:camera.top+point.y*camera.height});
   const borderLabels=centering&&camera?[
@@ -94,7 +98,7 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
   }
   function endDrag(){drag.current=null;setDragging(false);}
   async function approve(){
-    if(inactive||saving.current||!onApproveSide||(!outlines.printedAbsent&&!centering))return;
+    if(inactive||saving.current||!onApproveSide||needsPlacement||(!outlines.printedAbsent&&!centering))return;
     const pending=capture();saving.current=true;setDraft(pending);setBusy(true);setError('');
     try{
       await onApproveSide({side,base:pending.base,physical:pending.physical,
@@ -119,13 +123,18 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
   }
   const selectedQuad=selected.kind==='PHYSICAL'?outlines.physical:outlines.printedOriginal,selectedPoint=selectedQuad[selected.corner];
   const progress=verified.progress?.totalBytes?`${Math.min(99,Math.floor(100*verified.progress.loadedBytes/verified.progress.totalBytes))}%`:'';
-  const instruction=outlines.needsPhysicalPlacement||outlines.needsPrintedPlacement?'Place the outlines on the card.':'Adjust either outline, or approve as shown.';
-  const approvalMessage=!ready?'Loading the verified photo…':outlines.printedAbsent?'No printed border. Centering and final grade will need attention.':!centering?'Keep the printed border inside the physical edge.':`${label} · ${side==='FRONT'?'Back is next':'Findings are next'}`;
-  const action={approve,disabled:inactive||!onApproveSide||(!outlines.printedAbsent&&!centering),busy,message:approvalMessage};
+  const placementKind=outlines.needsPhysicalPlacement?'physical edge':'printed border';
+  const placedCount=(outlines.needsPhysicalPlacement?outlines.physicalPlaced:outlines.printedPlaced)?.length??0;
+  const invalidCentering=!needsPlacement&&!outlines.printedAbsent&&!centering;
+  const taskTitle=needsPlacement?`Place the ${placementKind}`:invalidCentering?'Correct the printed border':`Confirm ${label} geometry`;
+  const taskStatus=busy?'Saving & checking':error?'Needs attention':!ready?'Verifying photograph':needsPlacement||invalidCentering?'Correction required':outlines.printedAbsent?'Border marked absent':draft?'Unsaved adjustments':'Human review required';
+  const taskCopy=busy?'Your adjustments are being saved and measured. Keep this review open.':error?error:!ready?'The full photograph must be verified before you can adjust or approve it.':needsPlacement?`Position all four ${placementKind} corners on the photograph. ${placedCount} of 4 placed.`:invalidCentering?'Keep the printed border inside the physical edge so centering can be measured. Adjust the outline before approving.':outlines.printedAbsent?'Confirm that this card has no printed border. Centering and the final grade will remain unavailable.':'Check the physical edge and printed border against the photograph. Adjust a corner if needed, then approve.';
+  const approvalMessage=!ready?'Loading the verified photo…':needsPlacement?`Place all four ${placementKind} corners to continue.`:outlines.printedAbsent?'No printed border. Centering and final grade will need attention.':!centering?'Keep the printed border inside the physical edge.':`${label} · ${side==='FRONT'?'Back is next':'Findings are next'}`;
+  const action={approve,disabled:inactive||!onApproveSide||needsPlacement||(!outlines.printedAbsent&&!centering),busy,message:approvalMessage};
   return <section className="atlas-focused-geometry" aria-label={`${label} geometry`} data-review-target={`geometry-${side}`}>
-    <header className="fg-heading"><div><span className="fg-eyebrow">{side==='FRONT'?'01 / 02':'02 / 02'} · Geometry</span><h2>{label}</h2></div>
-      <p>{instruction}</p><div className="fg-legend"><span><i/>Physical edge</span><span><i/>Printed border</span></div></header>
+    <div className="fg-body">
     <div className="fg-stage" ref={viewport} onPointerMove={pointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}>
+      <div className="fg-stage-label">{label} <span>Geometry</span></div>
       {image&&camera&&(verified.url||preview.url)&&<img key={`${contentKey}:${verified.url?'full':'preview'}`} className="fg-photo" src={verified.url??preview.url} draggable={false}
         alt={`${label} card${verified.url?', original geometry view':' preview; full detail is loading'}`} onLoad={verified.url?loaded:undefined}
         onError={()=>{setReadyKey(null);setError('Photo unavailable. Reload the photo.');}}
@@ -137,18 +146,27 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
       </svg>{activePoints.flatMap(({kind,quad})=>quad.map((point,index)=>{const p=screenPoint(point);return <button type="button" key={`${kind}:${index}`}
         className={`fg-handle ${kind==='PRINTED'?'fg-inner':''} ${selected.kind===kind&&selected.corner===index?'fg-selected':''}`}
         aria-label={`${side} ${kind==='PHYSICAL'?'physical edge':'printed border'} ${corners[index]}`} disabled={inactive}
-        style={{left:p.x,top:p.y}} onFocus={()=>setSelected({kind,corner:index})} onPointerDown={event=>pointerDown(event,kind,index)}
+        style={{left:p.x,top:p.y}} onFocus={()=>{setSelected({kind,corner:index});setHandleFocused(true);}} onBlur={()=>setHandleFocused(false)} onPointerDown={event=>pointerDown(event,kind,index)}
         onKeyDown={event=>{const d={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[event.key];if(!d)return;event.preventDefault();const step=event.shiftKey?10:1;setPoint(kind,index,{x:point.x+d[0]*step/image.width,y:point.y+d[1]*step/image.height});}}><span/></button>;}))}</>}
       {ready&&borderLabels.map(item=><div key={item.key} className={`fg-border-value fg-border-${item.key}`} style={{left:item.x,top:item.y}}
         aria-label={`${item.name} average border ${item.value.toFixed(2)} millimeters, live`}><small>{item.name}</small><strong>{item.value.toFixed(2)} <span>mm</span></strong></div>)}
-      {dragging&&ready&&camera&&<div className={`fg-loupe ${selectedPoint.x>.5?'fg-loupe-left':''}`} aria-hidden="true">
-        <img src={verified.url} alt="" draggable={false} style={{width:camera.width*3,height:camera.height*3,left:70-selectedPoint.x*camera.width*3,top:70-selectedPoint.y*camera.height*3}}/><span/>
-      </div>}
       {!ready&&<div className="fg-loading" role="status"><strong>{verified.error?'Photo needs attention':image?.displayState?.state==='FAILED'?'Photo preparation needs attention':`Loading ${label.toLowerCase()} ${progress}`}</strong><span>{preview.url?'Preview shown · Full detail is loading':'Your saved original is retained.'}</span>
         {verified.error&&<button type="button" onClick={verified.retry}>Retry photo</button>}
         {image?.displayState?.state==='FAILED'&&image.displayState.retry&&onRetryDisplay&&<button type="button" disabled={busy} onClick={retryPreparation}>Retry preparation</button>}
         {onRefreshImages&&<button type="button" disabled={busy} onClick={onRefreshImages}>Reload photo</button>}</div>}
     </div>
+    <aside className="fg-inspector" aria-label={`${label} review inspector`}>
+      <section className="atlas-review-task" aria-label="Your review">
+        <span className="atlas-review-eyebrow">Your review</span><h3>{taskTitle}</h3>
+        <span className="atlas-review-status" role="status">{taskStatus}</span><p className={error?'fg-error':undefined} role={error?'alert':undefined}>{taskCopy}</p>
+        {needsPlacement&&ready&&<p className="atlas-review-hint">Drag each corner, or focus its handle and use the arrow keys. Unplaced outlines are placement guides.</p>}
+      </section>
+      <div className="fg-precision" aria-label="Corner precision view"><div className="fg-precision-title"><strong>Precision view</strong><span>3×</span></div>
+        {(dragging||handleFocused)&&ready&&camera?<div className="fg-loupe" aria-label={`${corners[selected.corner]} ${selected.kind==='PHYSICAL'?'physical edge':'printed border'} enlarged photograph`}>
+          <img src={verified.url} alt="" draggable={false} style={{width:camera.width*3,height:camera.height*3,left:70-selectedPoint.x*camera.width*3,top:70-selectedPoint.y*camera.height*3}}/><span/>
+        </div>:<p>Move or focus a corner to see its exact position.</p>}
+      </div>
+      <div className="fg-legend"><span><i/>Physical edge</span><span><i/>Printed border</span></div>
     <div className="fg-instruments"><div className="fg-measurements" aria-live="polite">{centering&&!outlines.printedAbsent?<><span>Left / right <strong>{ratio(centering.leftRight)}</strong></span><span>Top / bottom <strong>{ratio(centering.topBottom)}</strong></span><small>Live centering</small></>:<span>{outlines.printedAbsent?'No printed border':'Place both outlines to measure centering'}</span>}</div>
       <div className="fg-tools"><button type="button" disabled={!ready||busy} onClick={()=>setBounds(geometryFocusBounds(outlines.physical,image))}>Fit card</button>
         <button type="button" aria-pressed={snap} disabled={!ready||!snapReady||busy} onClick={()=>setSnap(value=>!value)}>Snap {snap?'on':'off'}</button>
@@ -156,7 +174,8 @@ function FocusedSide({workspace,side,readOnly,onApproveSide,onEditingChange,onRe
           {draft&&<button type="button" disabled={busy||hostBusy} onClick={()=>{setDraft(null);setError('');}}>Discard unsaved adjustments</button>}
           <p>Drag a corner. Arrow keys move one pixel; Shift moves ten.</p></div></details></div>
     </div>
-    {error&&<p className="fg-error" role="alert">{error}</p>}
+    {reviewRecovery}{reviewObservations}
+    </aside></div>
     {renderReviewActions?renderReviewActions(action):<footer className="fg-actions"><span>{approvalMessage}</span><button type="button" disabled={action.disabled} onClick={approve}>{busy?'Saving…':'Approve'}</button></footer>}
   </section>;
 }

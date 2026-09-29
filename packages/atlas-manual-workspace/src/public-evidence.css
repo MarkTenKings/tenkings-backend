@@ -73,3 +73,46 @@
 .rr-public-explorer .rr-public-return{display:flex;gap:6px;flex-wrap:wrap}
 .rr-report .rr-public-explorer .rr-public-return button{border-color:transparent;color:#0066cc;padding:9px 6px;white-space:nowrap}
 @media screen and (max-width:760px){.rr-public-explorer[data-section=finding] .rr-public-finding-navigation{position:sticky;top:0;z-index:6;background:#fff;padding:8px 0 12px;gap:9px;border-bottom:1px solid #e7e7eb}.rr-public-explorer .rr-public-return{justify-content:space-between}}
+/* Approved paired report: real photographs remain the centerpiece. */
+.rr-public-explorer [hidden]{display:none!important}
+.rr-public-explorer .rr-public-sections{flex-wrap:wrap;gap:2px}
+.rr-public-explorer .rr-public-motion{display:flex;flex-wrap:wrap;gap:7px}
+.rr-report .rr-public-explorer .rr-public-motion button{font-size:11px;padding:7px 10px}
+.rr-public-explorer[data-paired=true] .rr-public-viewers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:30px}
+.rr-report .rr-public-explorer[data-paired=true] .rr-public-sides{display:none}
+.rr-report .rr-public-explorer .rr-public-photo-heading{margin:0 0 8px;min-height:26px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.rr-report .rr-public-explorer .rr-public-photo-heading h3{font:500 13px var(--rr-sans);margin:0;color:#1d1d1f}
+.rr-public-photo-heading>span{font-size:11px;color:#6e6e73}
+.rr-public-explorer .rr-synchronized-pair[data-rail=left]{grid-template-columns:136px minmax(0,1fr);gap:14px}
+.rr-public-explorer .rr-synchronized-pair[data-rail=right]{grid-template-columns:minmax(0,1fr) 136px;gap:14px}
+.rr-public-explorer .rr-synchronized-pair[data-rail=left]>.rr-viewport{grid-column:2;grid-row:1}
+.rr-public-explorer .rr-synchronized-pair[data-rail=right]>.rr-viewport{grid-column:1;grid-row:1}
+.rr-report.rr-inspect .rr-public-explorer[data-paired=true] .rr-image-side .rr-viewport{height:clamp(580px,68svh,690px);min-height:580px;max-height:690px;border:0;border-radius:10px}
+.rr-public-explorer .rr-category-guides{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;filter:drop-shadow(0 0 1px #fff)}
+.rr-category-guides path{fill:none;stroke:#b59246;stroke-width:2;vector-effect:non-scaling-stroke}
+.rr-category-guides path.rr-surface-guide{stroke:#0879b6;stroke-dasharray:5 5;stroke-width:1.5}
+.rr-report .rr-public-explorer .rr-public-shape-target{position:absolute;pointer-events:auto;transform:translate(-50%,-50%);z-index:5;border:0;border-radius:3px;padding:0;min-width:28px;min-height:28px;background:transparent;box-shadow:none;cursor:pointer}
+.rr-report .rr-public-explorer .rr-public-shape-target:hover,.rr-report .rr-public-explorer .rr-public-shape-target[aria-pressed=true]{background:#e52b350d;outline:1px solid #ef6272}
+.rr-public-shape-target span{position:absolute;left:calc(100% + 2px);top:0;padding:2px 3px;background:#ffffffec;color:#b32231;font:9px var(--rr-mono);border:1px solid #efb3bb;border-radius:3px;pointer-events:none}
+.rr-public-explorer .rr-public-category-summary{padding:14px 16px;margin:0 0 12px;border:1px solid #e5e8eb;border-radius:10px;display:flex;justify-content:space-between;gap:20px;align-items:center;color:#66727b;font-size:12px}
+.rr-public-category-summary strong{font:500 25px var(--rr-mono);color:#273f4d;white-space:nowrap}.rr-public-category-summary small{font:11px var(--rr-sans);color:#677680}
+.rr-public-explorer[data-paired=true] .rr-public-centering-pair{display:grid;grid-template-columns:1fr 1fr;gap:30px}
+.rr-public-explorer .rr-public-overlay-controls small{font-size:11px;color:#6e6e73}
+.rr-public-explorer .rr-public-tour{padding:10px 0;color:#0071a8;font-size:12px}
+.rr-public-explorer .rr-public-grade-story{margin-top:22px}
+.rr-public-arrival .rr-plane{animation:rr-public-arrive 1s cubic-bezier(.2,.7,.2,1) both}
+.rr-public-arrival .rr-spatial-controls{animation:rr-public-labels 1.1s ease both}
+@keyframes rr-public-arrive{from{opacity:.45;translate:0 10px}to{opacity:1;translate:0 0}}
+@keyframes rr-public-labels{from{opacity:.25}to{opacity:1}}
+@media(max-width:980px){.rr-public-explorer .rr-public-category-summary{align-items:flex-start;flex-direction:column;gap:9px}.rr-report.rr-inspect .rr-public-explorer .rr-image-side .rr-viewport{min-height:440px;height:440px;max-height:520px}.rr-public-explorer .rr-public-sections{gap:0}.rr-report .rr-public-explorer .rr-public-sections button{font-size:12px;padding:9px 8px}}
+@media(prefers-reduced-motion:reduce){.rr-public-arrival .rr-plane,.rr-public-arrival .rr-spatial-controls{animation:none!important}}
+@media print{.rr-public-explorer .rr-public-photo-heading{display:none}.rr-public-explorer .rr-synchronized-pair[data-rail]{display:block}.rr-public-explorer .rr-category-guides,.rr-public-shape-target,.rr-public-grade-story{display:none!important}}
+.rr-report .rr-public-explorer .rr-precision-centering .rr-instrument-label{min-width:74px;min-height:44px;padding:5px 4px;pointer-events:auto;border-radius:7px;background:#fffffffa;font-size:11px}
+.rr-public-explorer .rr-precision-centering .rr-instrument-label b{font-size:11px;color:#0077bd}.rr-public-explorer .rr-precision-centering .rr-instrument-label small{font-size:9px}
+.rr-public-explorer .rr-precision-centering .rr-instrument-label[aria-pressed=true]{border-color:#0077bd;box-shadow:0 0 0 2px #0077bd20;background:#fff}
+.rr-public-explorer .rr-precision-centering .rr-instrument-active path:not(.rr-instrument-underlay){stroke:#004c8f;stroke-width:2.3}
+/* The measured red silhouettes stay fixed. Numbers appear at the pointer/focus;
+   every numbered label remains available in the adjacent rail. */
+.rr-public-shape-target span{opacity:0}
+.rr-public-shape-target:hover span,.rr-public-shape-target:focus-visible span{opacity:1}
+.rr-public-explorer .rr-public-zoom label{display:flex;align-items:center;gap:6px;font-size:11px;color:#6e6e73}

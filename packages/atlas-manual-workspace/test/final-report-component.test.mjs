@@ -12,12 +12,13 @@ import * as viewportMath from '../src/inspection-viewport.mjs';
 import * as inspectionPreview from '../src/inspection-preview.mjs';
 import * as spatialNavigation from '../src/report-spatial-navigation.mjs';
 import * as fingerprint from '../src/report-fingerprint.mjs';
+import * as gradeStory from '../src/grade-calculation-story.mjs';
 import { defectBase, markDefectSideInspected, confirmDefectFindings, previewDefectReport } from '../src/defect-actions.mjs';
 import { workspace } from './defect-fixtures.mjs';
 
 const require = createRequire(new URL('../../../frontend/atlas-app/package.json', import.meta.url));
 const babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
-const sources = Object.fromEntries(['ReportSpatialOverlay', 'ReportPrecisionOverlay', 'ReportFingerprint', 'ReportInspectionImage', 'PublicEvidenceExplorer', 'ReportPresentation', 'FinalReportReview'].map(name => [name, babel.transformSync(readFileSync(new URL(`../src/${name}.jsx`, import.meta.url), 'utf8'), {
+const sources = Object.fromEntries(['ReportSpatialOverlay', 'ReportPrecisionOverlay', 'ReportFingerprint', 'ReportInspectionImage', 'PublicEvidenceExplorer', 'ReportPresentation', 'GradeCalculationStory', 'FinalReportReview'].map(name => [name, babel.transformSync(readFileSync(new URL(`../src/${name}.jsx`, import.meta.url), 'utf8'), {
   filename: `${name}.jsx`, presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false,
 }).code]));
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
@@ -33,14 +34,14 @@ function fixture() {
     images: Object.fromEntries(['FRONT', 'BACK'].map(side => [side, { inspection: { sha256: state.sides[side].frame.inspectionImageSha256, url: `blob:${side}` } }])), children: 'SEPARATE_APPROVAL_SLOT' };
 }
 
-function harness(props = fixture(), { publicView = false, machine = false, fragment = '', reducedMotion = false, controlledFrames = false } = {}) {
+function harness(props = fixture(), { publicView = false, machine = false, fragment = '', reducedMotion = false, controlledFrames = false, desktop = false } = {}) {
   const instances = new Map(), elements = new Map(); let current, cursor, dirty, effects = [], tree, used = new Set();
   const frames = new Map(); let frameId = 0, frameTime = 0;
   const frameGlobals = controlledFrames ? {
     requestAnimationFrame: callback => { const id = ++frameId; frames.set(id, callback); return id; },
     cancelAnimationFrame: id => frames.delete(id),
   } : {};
-  const listeners = new Map(), listenerSets = new Map(), browser = { location: { hash: fragment }, matchMedia: query => ({ matches: query.includes('reduced-motion') ? reducedMotion : true }),
+  const listeners = new Map(), listenerSets = new Map(), browser = { location: { hash: fragment }, matchMedia: query => ({ matches: query.includes('reduced-motion') ? reducedMotion : !desktop }),
     addEventListener(name, fn) { if (!listenerSets.has(name)) listenerSets.set(name, new Set()); listenerSets.get(name).add(fn); listeners.set(name, () => listenerSets.get(name)?.forEach(callback => callback())); },
     removeEventListener(name, fn) { listenerSets.get(name)?.delete(fn); }, print() {} };
   const memo = (make, deps) => { const i = cursor++, old = current[i]; if (!old || deps.some((v, j) => !Object.is(v, old.deps[j]))) current[i] = { deps, value: make() }; return current[i].value; };
@@ -61,6 +62,8 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
       if (name === './report-review-ui.mjs') return presentation;
       if (name === './report-spatial-navigation.mjs') return spatialNavigation;
       if (name === './report-fingerprint.mjs') return { ...fingerprint, animateFingerprint: options => fingerprint.animateFingerprint({ ...options, request: frameGlobals.requestAnimationFrame, cancel: frameGlobals.cancelAnimationFrame }) };
+      if (name === './grade-calculation-story.mjs') return gradeStory;
+      if (name === './GradeCalculationStory.jsx') return modules.GradeCalculationStory;
       if (name === './ReportFingerprint.jsx') return modules.ReportFingerprint;
       if (name === './ReportSpatialOverlay.jsx') return modules.ReportSpatialOverlay;
       if (name === './ReportPrecisionOverlay.jsx') return modules.ReportPrecisionOverlay;
@@ -79,7 +82,7 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
     if (typeof node.type === 'function') { const key = `${path}:${node.type.name}`; used.add(key); if (!instances.has(key)) instances.set(key, []); current = instances.get(key); cursor = 0; return expand(node.type(node.props), `${key}.out`); }
     if (node.props.ref && (node.type === 'canvas' || node.props.className === 'rr-fingerprint-layer')) {
       if (!elements.has(path)) {
-        const context = { clearRect() {}, fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {}, createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }), putImageData() {} };
+        const context = { save() {}, restore() {}, translate() {}, scale() {}, clearRect() {}, fillRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {}, createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }), putImageData() {} };
         elements.set(path, { getContext: () => context, style: { setProperty(key, value) { this[key] = value; } } });
       }
       node.props.ref.current = elements.get(path);
@@ -643,7 +646,7 @@ test('public centering instruments preserve saved outlines and calibrated extent
       saved.physicalQuad.map(point => `${point.x * 1270},${point.y * 1778}`).join(' '));
     assert.equal(all(photo, node => node.props.className === 'rr-printed-line')[0].props.points,
       saved.printedQuad.map(point => `${point.x * 1270},${point.y * 1778}`).join(' '));
-    const scale = viewportMath.fitInspectionScale({ width: 400, height: 540 });
+    const scale = viewportMath.fitInspectionScale({ width: 400, height: 540 }, 64);
     const right = all(overlay, node => node.props.className === 'rr-instrument-underlay')[1].props.d.match(/^M([^ ]+) ([^L]+)L([^ ]+) ([^ ]+)/);
     nearPublic(Number(right[1]), 200 + (1310 - 675) * scale);
     nearPublic(Number(right[3]), 200 + (40 + saved.printedQuad[1].x * 1270 - 675) * scale);
@@ -757,4 +760,79 @@ test('reduced-motion public fingerprint renders a direct state and source replac
   assert.equal(activeFingerprint(f).props['data-status'], 'preparing');
   assert.equal(all(activeFingerprint(f), node => node.type === 'canvas')[0].props.style.visibility, 'hidden');
   f.click('← Return to photograph'); assert.equal(publicSection(f), 'whole'); assert.equal(f.pendingFrames(), 0); f.unmount();
+});
+
+test('desktop report keeps both verified sides, every direct shape and independent zoom controls', () => {
+  const props = historicalPublicReport(), before = structuredClone(props), f = harness(props, { publicView: true, desktop: true }); f.ready();
+  for (const side of ['Front', 'Back']) assert.equal(f.control(`${side} report image`).props.hidden, false);
+  assert.equal(f.control('Explore approved report evidence').props['data-paired'], true);
+  const shapes = () => f.nodes(node => node.props.className === 'rr-public-shape-target');
+  assert.equal(shapes().length, 13); assert.ok(shapes().every(node => node.props['aria-label'].startsWith('Open Back finding ')));
+  assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Inspect Back ')).length, 13);
+  assert.equal(f.nodes(node => node.props.className?.includes('rr-spatial-area')).length, 0);
+  const rails = f.nodes(node => node.props.className === 'rr-spatial-overlay rr-spatial-rail');
+  const labels = all(rails.find(node => node.props['data-rail-side'] === 'right'), node => node.type === 'button');
+  for (let i = 1; i < labels.length; i++) assert.ok(labels[i].props.style.top - labels[i - 1].props.style.top >= 44, 'labels cannot collide');
+  const frontWidth = planeIn(activePhoto(f, 'Front')).props.style.width;
+  f.control('Photograph to zoom').props.onChange({ target: { value: 'BACK' } }); f.render();
+  f.control('Zoom in').props.onClick(); f.render();
+  assert.equal(planeIn(activePhoto(f, 'Front')).props.style.width, frontWidth);
+  assert.ok(planeIn(activePhoto(f, 'Back')).props.style.width > frontWidth);
+  const shape = shapes().find(node => node.props['data-finding-id'] === props.report.findings[5].id);
+  assert.ok(shape); shape.props.onClick({ stopPropagation() {} }); f.render();
+  assert.equal(publicSection(f), 'finding'); assert.equal(selectedPublicId(f), props.report.findings[5].id);
+  assert.equal(shapes().length, 0, 'detail uses exact trace without enlarged overview targets');
+  assert.ok(f.control('Back clean close-up; same photograph, zoom and position'));
+  f.click('Whole card'); assert.equal(shapes().length, 13);
+  assert.deepEqual(props.report, before.report); assert.deepEqual(props.geometry, before.geometry);
+});
+
+test('category views use saved memberships, preserve original numbers and return to the chosen scope', () => {
+  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true, desktop: true }); f.ready();
+  const labels = () => f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Inspect Back '));
+  const entries = presentation.reportFindingEntries(props.report.findings);
+  for (const category of ['corners', 'edges', 'surface']) {
+    f.click(category[0].toUpperCase() + category.slice(1));
+    const expected = entries.filter(entry => entry.categories.includes(category));
+    assert.equal(labels().length, expected.length); assert.equal(f.nodes(node => node.props.className === 'rr-public-shape-target').length, expected.length);
+    assert.ok(expected.every(entry => labels().some(node => node.props['data-finding-id'] === entry.finding.id && node.props['aria-label'].startsWith(`Inspect ${entry.label}:`))));
+    assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Open Front finding ')).length, 0);
+    labels()[0].props.onClick(); f.render();
+    assert.equal(publicSection(f), 'finding'); assert.ok(expected.some(entry => entry.finding.id === selectedPublicId(f)));
+    const options = all(f.control('All findings'), node => node.type === 'option' && node.props.value);
+    assert.deepEqual(options.map(node => node.props.value), expected.map(entry => entry.finding.id));
+    f.click(`← ${category[0].toUpperCase() + category.slice(1)}`); assert.equal(publicSection(f), category);
+  }
+  f.click('Whole card'); assert.equal(labels().length, 13); assert.deepEqual(props.report, before);
+});
+
+test('public grade science uses actual saved weights, deductions, raw grade and rounding; category link opens evidence', () => {
+  const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true, desktop: true }); f.ready(); f.click('Grade science');
+  assert.equal(publicSection(f), 'science');
+  const story = f.control('A grade you can follow'), model = gradeStory.gradeStoryModel(props.explanation);
+  assert.ok(model); assert.equal(model.raw, 9.85); assert.equal(model.final, 10); assert.equal(text(story).includes('9.35'), false);
+  for (const value of [model.raw, model.final, model.deduction]) assert.ok(all(story, node => node.type === 'data' && node.props.value === value).length > 0);
+  for (const row of model.rows) {
+    const button = all(story, node => node.props.className === 'rr-grade-row' && node.props['aria-label'].startsWith(`${row.label}:`))[0];
+    assert.ok(text(button).includes(`${row.weight * 100}%`));
+    assert.ok(all(button, node => node.type === 'data' && node.props.value === row.score).length);
+    assert.ok(all(button, node => node.type === 'data' && node.props.value === row.deduction).length);
+  }
+  assert.ok(text(story).includes(props.explanation.policy.finalGradeFormula));
+  f.click('View centering measurements'); assert.equal(publicSection(f), 'centering');
+  assert.deepEqual(props.report, before);
+});
+
+test('actual public grade animation restarts while playing, pauses, resumes and completes at the saved final grade', () => {
+  const props = historicalPublicReport(), f = harness(props, { publicView: true, desktop: true, controlledFrames: true }); f.ready(); f.click('Grade science'); f.finishMotion();
+  const story = () => f.control('A grade you can follow');
+  f.click('Replay calculation'); assert.equal(story().props['data-motion'], 'playing');
+  f.frame(); f.frame(); f.click('Restart calculation');
+  assert.equal(story().props['data-motion'], 'playing'); assert.ok(f.pendingFrames() > 0, 'restart schedules a fresh animation');
+  f.frame(); f.frame(); f.click('Pause calculation'); assert.equal(story().props['data-motion'], 'paused'); assert.equal(f.pendingFrames(), 0);
+  f.click('Resume calculation'); assert.ok(f.pendingFrames() > 0); f.finishMotion();
+  assert.equal(story().props['data-motion'], 'complete'); assert.equal(story().props['data-final'], true);
+  assert.ok(text(story()).includes(`Final grade ${props.explanation.overall.finalGrade} · calculation complete`));
+  const reduced = harness(historicalPublicReport(), { publicView: true, controlledFrames: true, reducedMotion: true }); reduced.ready(); reduced.click('Grade science'); reduced.click('Replay calculation');
+  assert.equal(reduced.control('A grade you can follow').props['data-motion'], 'complete'); assert.equal(reduced.pendingFrames(), 0);
 });

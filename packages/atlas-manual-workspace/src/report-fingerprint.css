@@ -1,8 +1,8 @@
 .rr-fingerprint-layer{position:absolute;inset:0;pointer-events:none;--rr-fingerprint-amount:0}
 .rr-fingerprint-layer[hidden]{display:none}
-.rr-fingerprint-paper{position:absolute;inset:0;background:#fff;opacity:var(--rr-fingerprint-amount)}
+.rr-fingerprint-paper{position:absolute;inset:0;background:#fff;opacity:calc(var(--rr-fingerprint-amount) * .24)}
 .rr-fingerprint-layer[data-status=preparing] .rr-fingerprint-paper{opacity:0}
-.rr-fingerprint-layer[data-status=empty] .rr-fingerprint-paper,.rr-fingerprint-layer[data-status=unavailable] .rr-fingerprint-paper{opacity:1}
+.rr-fingerprint-layer[data-status=empty] .rr-fingerprint-paper,.rr-fingerprint-layer[data-status=unavailable] .rr-fingerprint-paper{opacity:0}
 .rr-fingerprint-card{position:absolute;left:2.962962963%;top:2.15285253%;width:94.074074074%;height:95.69429494%}
 .rr-fingerprint-card canvas{position:absolute;inset:0;width:100%;height:100%}
 .rr-report .rr-fingerprint-message,.rr-report .rr-fingerprint-loading{position:absolute;left:12%;right:12%;top:44%;text-align:center;font:500 14px/1.5 var(--rr-sans,system-ui);color:#6e6e73;margin:0;padding:14px;background:#ffffffef;border-radius:8px}
@@ -15,3 +15,5 @@
 .rr-public-explorer[data-section=fingerprint] .rr-viewport{touch-action:pan-y}
 @media(max-width:760px){.rr-public-explorer .rr-public-sections{flex-wrap:wrap}.rr-fingerprint-button strong{font-size:9px}}
 @media print{.rr-fingerprint-layer,.rr-fingerprint-actions,.rr-fingerprint-note{display:none!important}}
+
+.rr-fingerprint-card canvas{filter:drop-shadow(0 0 .65px #fff)}

@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { reportFindingMask, reportFindingBounds, reportTraceSpans } from './report-review-ui.mjs';
 import { FINGERPRINT_VERSION, FINGERPRINT_MAX_WIDTH, fingerprintSource, fingerprintFieldSteps,
   fingerprintSampleSteps, scheduleFingerprint, paintFingerprintPixels, animateFingerprint } from './report-fingerprint.mjs';
 
 /** The verified viewer owns photograph readiness. This layer owns presentation only. */
-export function ReportFingerprint({ findings, side, active, command, onReturn }) {
+export function ReportFingerprint({ findings, side, active, command, onReturn, showTraces = true, traceScale = 1 }) {
   const source = useMemo(() => fingerprintSource(findings, side), [findings, side]);
   const root = useRef(null), canvas = useRef(null), traces = useRef(null), amount = useRef(0);
   const cached = useRef(null), animation = useRef(null), raster = useRef(null);
@@ -33,8 +34,16 @@ export function ReportFingerprint({ findings, side, active, command, onReturn })
   useEffect(() => {
     const context = traces.current?.getContext('2d'); if (!context) return;
     context.clearRect(0, 0, 1270, 1778); context.fillStyle = '#df3442';
-    for (const span of source.spans) context.fillRect(span.x, span.y, span.width, 1);
-  }, [source.key, active]);
+    if (!showTraces) return;
+    for (const finding of findings) {
+      if (finding.reviewResult === 'REMOVED' || finding.side !== side) continue;
+      const mask = reportFindingMask(finding), box = reportFindingBounds(finding); if (!mask || !box) continue;
+      const x = (box.x + box.width / 2) * 1270, y = (box.y + box.height / 2) * 1778;
+      context.save(); context.translate(x, y); context.scale(traceScale, traceScale); context.translate(-x, -y);
+      for (const span of reportTraceSpans(mask)) context.fillRect(span.x, span.y, span.width, 1);
+      context.restore();
+    }
+  }, [source.key, active, findings, side, showTraces, traceScale]);
   useEffect(() => {
     animation.current?.(); animation.current = null;
     const context = canvas.current?.getContext('2d');

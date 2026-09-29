@@ -554,3 +554,17 @@ test('a deferred Grade preview cannot replace a geometry draft begun during the 
  await flush();f.render();assert.ok(f.focusedGeometry());assert.equal(f.report(),undefined);assert.match(f.text(),/Unsaved changes/);
  assert.equal(f.actions.length,0);f.dispose();
 });
+
+test('rapid original observations live in the inspector and retain exact reject identity while browsing records no decision',async()=>{
+  const f=harness({rapid:true,finalReview:true});await flush();f.render();
+  f.publish({...f.current,finalReview:{reportHash:'observed-report',report:{analysisId:'original-analysis',findings:[],unmeasurableProposals:[{id:'front-unmeasured',side:'FRONT',defectType:'VISIBLE_WHITENING'},{id:'back-unmeasured',side:'BACK',defectType:'VISIBLE_WHITENING'}]}}});
+  assert.doesNotMatch(f.text(),/These observations produced no measurable trace/,'the old full-width banner is absent');
+  const inspector=f.focusedGeometry().reviewObservations;
+  assert.match(text(inspector),/A new trace keeps the original observation pending/);assert.match(text(inspector),/2 to resolve/);assert.match(text(inspector),/Front · visible whitening/);assert.match(text(inspector),/Back · visible whitening/);
+  const reject=all(inspector,n=>n.type==='button'&&text(n)==='Reject original observation')[0];
+  await reject.props.onClick();await flush();f.render();
+  assert.deepEqual(JSON.parse(JSON.stringify(f.actions)),[{type:'REJECT_FINAL_OBSERVATION',reportHash:'observed-report',proposalId:'front-unmeasured',reviewed:true}]);
+  f.focusedGeometry().onEditingChange(true);f.render();
+  assert.ok(all(f.focusedGeometry().reviewObservations,n=>n.type==='button').every(n=>n.props.disabled),'draft geometry blocks observation navigation and decisions');
+  f.dispose();
+});

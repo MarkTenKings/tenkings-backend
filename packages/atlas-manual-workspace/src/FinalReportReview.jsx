@@ -4,6 +4,7 @@ import { useVerifiedImage } from './verified-image.mjs';
 import { VerifiedImageCacheBoundary } from './VerifiedImageCacheBoundary.jsx';
 import { ReportInspectionImage } from './ReportInspectionImage.jsx';
 import { PublicEvidenceExplorer } from './PublicEvidenceExplorer.jsx';
+import { GradeCalculationStory } from './GradeCalculationStory.jsx';
 import { CardIdentityDetails, SlabPhotoHero, ReportMarketAndDealers } from './ReportPresentation.jsx';
 import { boundReportPresentation } from './report-presentation-ui.mjs';
 import { reportAwardedGrade, reportImagesMatch, reportFindingEntries, filterReportFindings,
@@ -255,6 +256,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
     </div><div className={`rr-overall${partial ? ' rr-overall-unavailable' : ''}`}><span>{machine ? 'PROPOSED GRADE' : approved ? 'APPROVED GRADE' : 'DRAFT GRADE'}</span><strong>{partial ? 'Unavailable' : finalGrade}</strong>{!partial && <span>ATLAS / 10</span>}<p>{partial ? 'Centering geometry needs review' : halfPointGrade ? 'Whole & half-point award' : 'Original historical grade'}</p></div></header>
     {publicView ? <PublicEvidenceExplorer key={reportKey} report={report} explanation={explanation} images={images} geometry={geometry} printing={printing}
       selected={selected} activeSide={activeSide} onSelect={select} onClear={() => setSelected(null)} onChooseSide={chooseSide} onReady={imageReady} sideReady={sideReady}
+      gradeCalculation={({ onCategory }) => <GradeCalculationStory explanation={explanation} descriptor={images?.FRONT?.inspection} expectedHash={report.inspection.front.imageSha256} name={name} printing={printing} onCategory={onCategory}/>}
       findingDetails={selectedFinding && selectedExplanation ? <details className="rr-public-finding-details"><summary>Measurements & grade effect</summary>
         <FindingCalculation finding={selectedFinding} explanation={selectedExplanation} policy={explanation.policy}/>
         <button type="button" aria-pressed={precise} onClick={() => setPrecise(value => !value)}>{precise ? 'Use readable precision' : 'Show full precision'}</button>

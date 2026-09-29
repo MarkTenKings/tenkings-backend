@@ -55,3 +55,36 @@ test('preview pixels and dimension-mismatched originals cannot enable handles or
 test('Back renders its own source and controls, not a second paired editor',async()=>{
   const f=harness({side:'BACK'});await f.ready();assert.equal(f.nodes(n=>n.type==='img').length,1);assert.equal(f.nodes(n=>n.props?.['aria-label']?.startsWith('BACK ')).length,8);assert.equal(f.nodes(n=>n.props?.['aria-label']?.startsWith('FRONT ')).length,0);assert.equal(f.has('Findings are next'),true);
 });
+
+test('missing printed border is a correction task and cannot approve placement guides before every corner is positioned',async()=>{
+  const fixture=structuredClone(focusedFixture());fixture.workspace.sides.FRONT.printed=null;
+  const calls=[],f=harness({...fixture,onApproveSide:async value=>calls.push(value)});await f.ready();
+  assert.ok(f.has('Place the printed border'));assert.ok(f.has('Correction required'));assert.ok(f.has('0 of 4 placed'));
+  assert.equal(f.nodes(n=>n.props?.className?.startsWith('fg-border-value')).length,0,'placeholder geometry is not shown as a measurement');
+  assert.ok(f.button('Approve').props.disabled);await f.button('Approve').props.onClick();assert.equal(calls.length,0);
+  for(const corner of ['Top left','Top right','Bottom right'])f.nudge(`FRONT printed border ${corner}`);
+  assert.ok(f.has('3 of 4 placed'));assert.ok(f.button('Approve').props.disabled);
+  f.nudge('FRONT printed border Bottom left');assert.equal(f.button('Approve').props.disabled,false);
+  assert.equal(f.nodes(n=>n.props?.className?.startsWith('fg-border-value')).length,4);
+  await f.click('Approve');assert.equal(calls.length,1);
+});
+test('explicit absent printed border remains available but never substitutes for a missing physical edge',async()=>{
+  const fixture=structuredClone(focusedFixture());fixture.workspace.sides.FRONT.printed=null;
+  const f=harness(fixture);await f.ready();await f.click('No printed border');
+  assert.equal(f.button('Approve').props.disabled,false);assert.ok(f.has('final grade will remain unavailable'));
+  await f.click('No printed border');assert.ok(f.button('Approve').props.disabled);
+  const missing=structuredClone(focusedFixture());missing.workspace.sides.FRONT.physical=null;missing.workspace.sides.FRONT.printed=null;missing.workspace.sides.FRONT.prepared=null;
+  const g=harness(missing);await g.ready();await g.click('No printed border');assert.ok(g.button('Approve').props.disabled);assert.ok(g.has('Place the physical edge'));
+});
+test('the persistent review task and keyboard precision view remain in the inspector outside the card stage',async()=>{
+  const observation={type:'details',props:{'aria-label':'Original observations',children:'Retained observation'}};
+  const f=harness({reviewObservations:observation});await f.ready();
+  const inspector=f.nodes(n=>n.props?.className==='fg-inspector')[0],stage=f.nodes(n=>n.props?.className==='fg-stage')[0];
+  assert.equal(all(inspector,n=>n.props?.['aria-label']==='Your review').length,1);
+  assert.equal(all(stage,n=>n.props?.['aria-label']==='Your review').length,0);
+  assert.ok(text(inspector).includes('Retained observation'));
+  f.button('FRONT printed border Top left').props.onFocus();f.render();
+  assert.equal(f.nodes(n=>n.props?.className==='fg-loupe').length,1);
+  f.nudge('FRONT printed border Top left');assert.ok(f.has('Unsaved adjustments'));
+  await f.click('Discard unsaved adjustments');assert.ok(f.has('Human review required'));
+});

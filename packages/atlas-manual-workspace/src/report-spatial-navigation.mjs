@@ -83,3 +83,10 @@ export function reportCameraItinerary(fromView, toView, { sideChanged = false, r
     { phase: 'approach', view: copyView(toView), duration: 500 },
   ];
 }
+
+/** Membership is taken only from saved measured regions. Retain original side
+ * numbering and IDs, including findings which belong to multiple categories. */
+export function reportCategoryNavigation(navigation, category) {
+  if (!['corners', 'edges', 'surface'].includes(category)) return navigation;
+  return { entries: navigation.entries.filter(entry => entry.categories.includes(category)), neighborhoods: [] };
+}

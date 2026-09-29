@@ -96,3 +96,15 @@ test('finding focus centers a small interior region and retains complete edge/fu
     assert.ok(ys.every(y => y >= 0 && y <= 961), `vertical region retained: ${ys}`);
   }
 });
+
+test('public instrument gutter preserves zoom anchoring and clamps against the displayed image', () => {
+  const size = { width: 500, height: 680 }, gutter = 64, zoom = 5;
+  const scale = fitInspectionScale(size, gutter);
+  const far = clampInspectionPan({ x: 1e6, y: -1e6 }, zoom, size, gutter);
+  assert.equal(far.x, (1350 * scale * zoom - size.width) / 2 + gutter);
+  assert.equal(far.y, -((1858 * scale * zoom - size.height) / 2 + gutter));
+  const start = { zoom: 2, pan: { x: 10, y: 20 } }, anchor = { x: 260, y: 350 };
+  const next = zoomInspectionAt(start, 3, anchor, size, gutter);
+  const point = value => ({ x: (anchor.x - size.width / 2 - value.pan.x) / (scale * value.zoom), y: (anchor.y - size.height / 2 - value.pan.y) / (scale * value.zoom) });
+  assert.deepEqual(point(next), point(start));
+});

@@ -9,16 +9,16 @@ export function fitInspectionScale(viewport, gutter = 16) {
     (viewport.height - gutter * 2) / INSPECTION_SIZE.height));
 }
 
-export function clampInspectionPan(pan, zoom, viewport) {
-  const scale = fitInspectionScale(viewport) * zoom;
-  const limit = dimension => Math.max(0, (INSPECTION_SIZE[dimension] * scale - viewport[dimension]) / 2 + 16);
+export function clampInspectionPan(pan, zoom, viewport, gutter = 16) {
+  const scale = fitInspectionScale(viewport, gutter) * zoom;
+  const limit = dimension => Math.max(0, (INSPECTION_SIZE[dimension] * scale - viewport[dimension]) / 2 + gutter);
   return { x: clamp(pan.x, -limit('width'), limit('width')), y: clamp(pan.y, -limit('height'), limit('height')) };
 }
 
-export function zoomInspectionAt(view, requestedZoom, anchor, viewport) {
+export function zoomInspectionAt(view, requestedZoom, anchor, viewport, gutter = 16) {
   const zoom = clamp(requestedZoom, 1, MAX_INSPECTION_ZOOM), ratio = zoom / view.zoom;
   const x = anchor.x - viewport.width / 2, y = anchor.y - viewport.height / 2;
-  return { zoom, pan: clampInspectionPan({ x: x - (x - view.pan.x) * ratio, y: y - (y - view.pan.y) * ratio }, zoom, viewport) };
+  return { zoom, pan: clampInspectionPan({ x: x - (x - view.pan.x) * ratio, y: y - (y - view.pan.y) * ratio }, zoom, viewport, gutter) };
 }
 
 /** Keep the same image point at the viewport center when its fitted size changes. */
