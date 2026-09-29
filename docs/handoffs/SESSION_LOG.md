@@ -39358,3 +39358,61 @@ Planned work now: read current runbooks, capture fresh read-only provider/privat
 ### 2026-09-29 — Collective design source freeze accepted
 - Design Lead declared all application source frozen after fingerprint60/60 tests, staff Add selection83/83 tests, actual report preview checks (all13 individual AbomasnowBack callouts, gold reveal/reverse restoring original photo and13labels, Dart empty state with Play disabled, separate MayeFront/Back patterns, desktop/phone overflow checks). Lead's report/design/staff preview docs are updated. Screenshot: private atlas-design-preview-20260928/fingerprint-integrated-phone-20260929.png.
 - Root reviewed final integration changes and diff-check passes. Planned local commit includes the approved review UI, fingerprint presentation, tests, demo adapter and docs; no runtime/DB/model policies change. Final source-bound complete tests and sequential production builds follow on the exact commit before staging. No push, provider upload, restart or database mutation at this checkpoint.
+
+### 2026-09-29 — Exact source committed and final tests pass
+- Candidate committed as29e9192080d7d7a95644316a417dc6171eef3bbb, tree8d2c337a2d57ceef439d8955e9a010726b661a99. Source compatibility proof passes:55 changed paths versus retained private475 source are reviewed UI/browser entries/tests/docs; private dependencies, server reducers/exports, native code,schemas,lockfiles,customer and frozen229485b homepage are unchanged. This does not claim new web source equals the retained private image's broader source manifest.
+- Final source-bound qualification passes1,614/1,614 with zero failures/cancellations/skips: staff763,workspace234,manual-server522,public/customer/router95. Native cases execute in these complete suites; no separate duplicate supplement required. Receipt private atlas-review-interaction-20260928/release-qualification/source-29e9192080d7/result.json SHA2569de390b1a41b9e44f5407b2655eb13a8277dc9cd7f51842a991049320aa84dcf.
+- Design Lead's additional browser receipt verifies all14 preview source hashes equal this commit and records reveal/reverse,emptycase,both sides,cancel-on-navigation and clean console. Private fingerprint-integrated-browser-qualification-20260929.json. Final source-bound staff/public production builds are sequential, owned by qualification agent via root's wrapper. No production writes yet.
+
+
+### 2026-09-29T09:44:14.339Z — ATLAS review design planned staged staff deployment
+
+Preparing exactly committed source 29e9192080d7d7a95644316a417dc6171eef3bbb on the dedicated Vercel staff project with --prod --skip-domain. Verified clean frozen source roster, read-only CLI payload, successful staff production build, and unchanged provider project settings/environment values. Upload will create a staged candidate and may advance its generated team alias; canonical public routing remains pinned to the prior staff origin. No control rebind, private restart, homepage promotion, schema change or model call occurs in this staging action.
+
+
+### 2026-09-29T09:47:10.772Z — Staged staff READY; planned public candidate
+
+Provider confirms staff dpl_7AhSNcqfCqhozbgxhye8zLAtTcQK READY from exact 29e9192080d7d7a95644316a417dc6171eef3bbb. Canonical routing remains unchanged. Plan one public-project environment update: staff origin to https://atlas-grading-staff-j6hff2x8z-ten-kings.vercel.app; customer origin unchanged. Then upload the same qualified frozen source as a production candidate with --skip-domain, preserving the exact live homepage subtree. No runtime restart or database control change in this action.
+
+### 2026-09-29 — Production candidates staged; private configuration preparation planned
+- Exact candidate29e91920 staff/public production builds both passed including boundary checks; build result SHA256b587f15f9cbad800bd4757f2392a32c0ae880a769ccd494ece3a85e6c7c76727. Exact standalone source dry manifests and guarded CLI payload preflights pass with zero write attempts before staging. Four local substitution checks reject changed source/image/manifest/test receipt.
+- Staff candidate dpl_7AhSNcqfCqhozbgxhye8zLAtTcQK is READY. Public candidate upload completed once with skip-domain after exactly one public staff-origin metadata update; canonical routing is still baseline. No customer environment or deployment changed.
+- Planned next action after runtime helper qualification: create only /opt/atlas/design-review-release-20260929 with sealed candidate environment changing ATLAS_MANUAL_WEB_RELEASE_SHA and ATLAS_MANUAL_WEB_DEPLOYMENT, using the identical existing Linux image. Run network-none binding and cold constructor checks without DB/provider calls or worker starts; retain currently serving a550 container. This does not yet stop/restart it or change controls. Actual cutover requires both READY candidates, fresh provider/database quiescence and a separate exclusive intent.
+
+### 2026-09-29 — Candidates READY and isolated private configuration verified
+- Public candidate dpl_6gV79X9xHVQUznt24fkToTnZQhEE is READY alongside staff dpl_7AhSNcqfCqhozbgxhye8zLAtTcQK on exact29e91920. New helper qualification passes7 offline guard tests,11 Python syntax checks,2 Node checks and source-bound evidence validation; source-hashed receipt runtime-helper-offline-verification.json. Root reviewed guards and forward-revision rollback plan.
+- New sealed config prepared successfully under /opt/atlas/design-review-release-20260929. Hash1abd54cad5bebf2fd4c72457283784d1705fc48c61567cb9697cdfd247f62019; same224e41e9 image/private475 source, only two staff web-binding fields change. Cold constructors pass with networknone,zero database/provider calls andzero worker starts, unchanged customerd4a binding/pools/capacities/flags. Existing a550 runtime remains serving.
+- Exact public binding derivation and fresh cutover checks follow. Cutover helper records its own planned action before stopping the predecessor and before three-row CAS; no source or grading policy change is involved.
+
+
+### 2026-09-29T09:49:18.291566+00:00 — Planned approved ATLAS design web binding cutover
+
+Exact staff/public source 29e9192080d7d7a95644316a417dc6171eef3bbb is READY. Fresh SQL is quiescent with no unsettled accepted model requests. Plan a graceful stop of a55025d658da77e2760b5f15c8981054e79253a328af4c62e6e7cee3f4cd4fa6 and same-image recreation using sha256:224e41e9efce5c9b5a80558bcc1c83f906ca4d91120311e3757564de25b91c90, retaining private source 47559353af0803186c724ea37f032ce306397157, native files, isolation, customer binding and all existing flags. Only the two staff web environment fields change. Retain the stopped predecessor and its sealed environment for rollback. A fresh host-monotonic observation of the unchanged 125-second boot fence must leave more than 50 seconds immediately before the exact StaffControl/STAFF SMS/PublicReader three-row CAS. Preserve 32 history tables, jobs and both migration ledgers. No migration, grant change, real approval, learning activation or model request is part of this release. Canonical promotion waits for signed read-only transport checks.
+
+
+### 2026-09-29T09:49:28.897016+00:00 — Same-image runtime and three controls rebound
+
+Container 6870ef0601360fc521e4e45542f7d66309064bc45fdd82d0fefb5a287274f788 started with the reviewed web binding; predecessor retained stopped/disconnected. Three-row CAS completed within the conservative boot-fence deadline: Staff 49, STAFF SMS 47, Public 29. Existing grading histories, jobs, ledgers and customer controls compare unchanged. No canonical promotion or real approval has occurred in this action.
+
+
+### 2026-09-29T09:52:04.498Z — Runtime transport qualified; planned canonical promotion
+
+Same private runtime generation is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_6gV79X9xHVQUznt24fkToTnZQhEE, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-29T09:52:07.744Z — ATLAS review design canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_6gV79X9xHVQUznt24fkToTnZQhEE, source 29e9192080d7d7a95644316a417dc6171eef3bbb. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+### 2026-09-29 — Design release live; preservation and canonical proof pass
+- Runtime6870ef06 became ready after the existing125s startup fence. All three signed TLS read checks passed (401/404/200), verifying the current lossless preparation policy and unchanged customer binding.
+- Public candidate6gV79 promoted once; all four aliases select source29e91920. Canonical checks pass at09:52:35UTC: exact frozen homepage bytes, staff sign-in/new reviewer bundle,new public fingerprint/comparison bundle,unknown404,existing approved Abomasnowv1 report200. No authenticated human approval was exercised.
+- Final read-only runtime/database proof passes:1049private source/16native artifacts,zero restarts,only two environment changes,32 histories/68jobs/ledgers61+112 unchanged,customer unchanged. Controls49/47/29. Evidence private atlas-design-release-20260929/release/final-result.json and canonical.result.json.
+- Updated mandatory context/runbook/handoff/website release docs and audit with observed live identities and proof. Independent Design Lead is now explicitly authorized to perform only read-only canonical report browser QA after preservation proof. No paid model calls,learning activation or real card approval.
+
+
+### 2026-09-29 — Final live design acceptance and release handoff
+- Independent Design Lead completed canonical public browser checks at 09:56 UTC: 13 individual Back findings, image verification gates, exact gold fingerprint and reversal to the same photograph, matched marked/clean views and centering. Desktop 1280px and phone-sized 390px layouts showed no horizontal overflow or console warnings/errors. No real card edits, approvals, staff session bootstrap or paid inference; owner Chrome tabs untouched.
+- Proof: private `atlas-design-preview-20260928/fingerprint-production-browser-qualification-20260929.json`, SHA-256 `05c5610b1882e7502cd2bd93b50710d1fe5ad958ed5c6c598d65103532d6d8db`; screenshots are referenced in the receipt. This is browser-layout acceptance, not a physical iPhone performance test.
+- Aligned mandatory context/runbook/handoff/website release status and the release audit with completed live checks. Included Design Lead's four design-document updates and corrected spacing. Final handoff commit contains documentation only; deployed app source remains `29e9192080d7d7a95644316a417dc6171eef3bbb`. No new deployment or migration is planned.
+- Staff queue: https://atlasgrading.com/admin/batch?tab=REVIEW . Sample public report: https://atlasgrading.com/reports/ar_x01RP8d3VZS0Gk9rREW0DwkR?v=1 . Normal staff sign-in may be required after binding revision changes. Physical real-card operator acceptance remains the owner's ordinary test; no grading accuracy or physical fingerprint uniqueness claim is made.

@@ -4,6 +4,10 @@ Date: 2026-09-29. Engineering chat: 01a0e63d-8bfd-7dd2-948f-383e9d867dbd. Design
 
 Owner design acceptance: Mark approved the staff workflow and specifically praised the geometry magnifier. His subsequent local edited-save test exposed a missing synthetic preparation adapter; it is now corrected and verified through actual native preparation and browser save/reload/progression. This does not change the approved visual design.
 
+Production release status: the complete report/reviewer design and gold fingerprint were deployed on September 29, 2026 from `29e9192080d7d7a95644316a417dc6171eef3bbb`. All 1,614 exact-source tests passed with zero skips; staff/public production builds and boundaries passed. Canonical routes, signed private reads and database/runtime preservation checks passed. Final live browser checks verified all 13 individual Abomasnow Back findings, exact gold, reversible fingerprint, unchanged photograph, paired evidence views, centering and 390px phone layout with no console errors. See `docs/atlas/audits/2026-09-29/review-design-release.md` for serving identities and evidence. Live customer report: https://atlasgrading.com/reports/ar_x01RP8d3VZS0Gk9rREW0DwkR?v=1; staff: https://atlasgrading.com/admin. Deployment qualification does not claim a new real-card approval or physical-device operator acceptance.
+
+The sections below retain the historical local-preview qualification and its limits.
+
 ## Review the experience
 
 Local staff preview: http://127.0.0.1:4191
@@ -46,9 +50,9 @@ Final targeted test command (Node20):
 
 ## Boundaries and release work
 
-All changes remain local and uncommitted in the existing 1ce0 checkout. There was no deployment, production write, real approval, paid model/market lookup, NFC write, label print or learning activation. The fixture now implements actual local CPU geometry preparation, finding reprojection and remeasurement after physical geometry edits. Five adapter tests passed, and CUA verified edited Front and Back outlines, exact retained values after browser reload, both finding approvals and final draft Grade9.5. The demo does not implement adding/editing individual finding traces or production certification; the final Approve remains disabled. It stores demo state in memory until the server restarts. This is not authenticated production end-to-end evidence. Real iPhone ingestion and physical device acceptance remain separate from this design preview.
+At this earlier local-preview checkpoint, all changes remained local and uncommitted in the existing 1ce0 checkout. There was no deployment, production write, real approval, paid model/market lookup, NFC write, label print or learning activation. The fixture now implements actual local CPU geometry preparation, finding reprojection and remeasurement after physical geometry edits. Five adapter tests passed, and CUA verified edited Front and Back outlines, exact retained values after browser reload, both finding approvals and final draft Grade9.5. The demo does not implement adding/editing individual finding traces or production certification; the final Approve remains disabled. It stores demo state in memory until the server restarts. This is not authenticated production end-to-end evidence. Real iPhone ingestion and physical device acceptance remain separate from this design preview.
 
-Owner design acceptance is recorded above, and Mark subsequently authorized completing qualification and production deployment. Authenticated release qualification against the current production source/bindings and successful production build/deploy evidence are still required before these changes can be called live.
+Owner design acceptance is recorded above, and Mark subsequently authorized completing qualification and production deployment. Authenticated release qualification against the production source/bindings and successful production build/deploy evidence are now recorded in the September 29 release audit.
 
 ## Edited geometry demo repair — owner acceptance follow-up
 

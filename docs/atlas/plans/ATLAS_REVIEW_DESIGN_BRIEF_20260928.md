@@ -2,6 +2,8 @@
 
 September 29, 2026 · Owner-approved report and reviewer implementation direction
 
+Production release status: the complete report/reviewer design and gold fingerprint were deployed on September 29, 2026 from `29e9192080d7d7a95644316a417dc6171eef3bbb`. All 1,614 exact-source tests passed with zero skips; staff/public production builds and boundaries passed. Canonical routes, signed private reads and database/runtime preservation checks passed. Final live browser checks verified all 13 individual Abomasnow Back findings, exact gold, reversible fingerprint, unchanged photograph, paired evidence views, centering and 390px phone layout with no console errors. See `docs/atlas/audits/2026-09-29/review-design-release.md` for serving identities and evidence. Live customer report: https://atlasgrading.com/reports/ar_x01RP8d3VZS0Gk9rREW0DwkR?v=1; staff: https://atlasgrading.com/admin. Deployment qualification does not claim a new real-card approval or physical-device operator acceptance.
+
 ## Purpose
 
 A reviewer should look at a card, make the necessary correction, and press **Approve**. The application should arrange the image, geometry, saved state and next step around that act. A collector should understand the grade by looking at the card and its recorded evidence before reading the arithmetic.
@@ -90,4 +92,4 @@ Mark approved the working fingerprint tide study and requested the established A
 
 The consistent ATLAS styling belongs to the brand; the actual recorded geometry determines the varying pattern. Report IDs, timestamps, grades and decorative random seeds must not substitute for evidence. Empty masks produce an honest no-recorded-defects state. This feature visualizes saved condition and does not establish physical uniqueness or automatic recognition across photographs. Original photographs, image readiness, grading calculations and publication authority stay unchanged.
 
-The private approved study and gold update are recorded in SESSION_LOG. The production integration's algorithm version, performance bounds, tests and deployment identities must be recorded as implementation/release evidence before the feature is called live. Historical authored-polygon/hash-whorl experiments remain separate from this evidence-derived feature.
+The private approved study and gold update are recorded in SESSION_LOG. The production integration's algorithm version, performance bounds, tests and serving identities are now recorded in the release audit and report preview handoff. Historical authored-polygon/hash-whorl experiments remain separate from this evidence-derived feature.
