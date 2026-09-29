@@ -1,8 +1,16 @@
 # ATLAS reviewer reliability: implementation and acceptance
 
-Date: 2026-09-28. Status: deployed; canonical and final read-only postflight passed. The existing approved public report passed live Chrome acceptance. Authenticated staff acceptance, retained-photo recovery and fresh physical-iPhone capture remain pending at this checkpoint. No grading-accuracy improvement is claimed.
+Date: 2026-09-28; follow-up observed 2026-09-29 00:37 UTC. Status: deployed, including the intake preview follow-up. All three retained photos recovered; the normal authenticated queue rendered verified images and visible review entry controls. Full human review/approval and fresh physical-iPhone acceptance are handed to the owner at his request to conserve credits. No grading-accuracy improvement is claimed.
 
-Scope: [approved plan](../../plans/ATLAS_REVIEW_RELIABILITY_AND_LEARNING_20260928.md). The lead and three Astra Extra High helpers share implementation and independent review. The deployed source, qualified native image, owned PostgreSQL rehearsal, web builds and reviewed release helpers agree on commit `47559353af0803186c724ea37f032ce306397157`.
+Scope: [approved plan](../../plans/ATLAS_REVIEW_RELIABILITY_AND_LEARNING_20260928.md). The lead and three Astra Extra High helpers share implementation and independent review. The main reliability release and native qualification used commit `47559353af0803186c724ea37f032ce306397157`; the narrowly scoped web follow-up above preserves that private runtime.
+
+## Follow-up: recovered originals and intake preview (current)
+
+The three exact retained originals were resumed once each through normal staff authentication. Read-only checks after each confirmed all three FRONT sources prepared, original bytes/hash/verification and BACK hashes preserved, COMPLETE/ADMIT, one batch pair per card, no grading runs and no publications. Cards now need ordinary identity review. Evidence: `release/retained-iphone-after-ui-{1,2,3}.private.json` in the original private evidence root. Staff queue evidence is `qualification/staff-live-queue.png`.
+
+That live check caught a remaining intake-only preview bug: the caller omitted source dimensions for context-only descriptors, rejected their valid small preview, and selected the oversized PNG proxy. Web source `1e08f0ae3b29a4f935c41cd85b6d26e8cd809ce7` fixes this one call site; private code/image and full-evidence editing gates are unchanged. All42 focused tests and both web builds pass. Canonical promotion and signed/read-only postflight pass with32 history tables,68 jobs,61/112 ledger rows and the same1,049 private source files/16 native artifacts preserved. Staff/Public/STAFFSMS controls are48/28/46; the new container is `a55025d658da77e2760b5f15c8981054e79253a328af4c62e6e7cee3f4cd4fa6`. No migration or new learning activation.
+
+Follow-up evidence root: `/Users/markthomas/.codex/atlas-handoffs/atlas-intake-preview-20260928/release`. The outer cutover summary encountered a Python3.9 nine-digit timestamp parsing error **after** successful control CAS; before/after receipts and a fresh read-only census independently reconciled it without repeating any mutation. Saved database timestamp proves CAS within5.039seconds of startup. Canonical and final postflight passed afterward. Owner-led full reviewer/approval and physical-iPhone tests remain open; fresh sign-in may be needed after this web binding update. The release and pending-recovery discussion below describes the earlier475 checkpoint and is retained as history, superseded by this follow-up.
 
 ## Implemented boundaries and evidence
 

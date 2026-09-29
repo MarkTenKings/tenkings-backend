@@ -39156,3 +39156,50 @@ A focused actual-component regression first failed on the incorrect proxy URL, t
 User completed normal staff sign-in. Root verified the live 19-card review queue loads with both photographs verified, Add finding and Continue final review visible. Root clicked Resume Front photo once for each of the three exact approved retained uploads. Fresh read-only readback after each confirms all three FRONT sources now prepared, selected originals/byte hashes/verification intact, BACK upload/source/verification unchanged, COMPLETE/ADMIT with no photo error, exactly one batch pair job per card, no analysis run and no publication. Each now needs ordinary identity review. Evidence: private release/retained-iphone-after-ui-{1,2,3}.private.json and qualification/retained-iphone-third-recovered.png. No repeat grading, real human finding acceptance, certification or learning activation occurred.
 
 Root independently ran the complete focused manual-cards-recovery.test.mjs: 42 passed, zero failed/skipped. The one-line context-preview caller correction is qualified locally, not yet live; it does not change private image preparation or the exact-evidence editing gate. The user requested token/credit economy and offered to test remaining real reviewer/iPhone flows; avoid broad reruns or paid accuracy experiments.
+
+
+### 2026-09-29T00:30:19.812Z — ATLAS intake preview planned staged staff deployment
+
+Preparing exactly committed source 1e08f0ae3b29a4f935c41cd85b6d26e8cd809ce7 on the dedicated Vercel staff project with --prod --skip-domain. Verified clean frozen source roster, read-only CLI payload, successful staff production build, and unchanged provider project settings/environment values. Upload will create a staged candidate and may advance its generated team alias; canonical public routing remains pinned to the prior staff origin. No control rebind, private restart, homepage promotion, schema change or model call occurs in this staging action.
+
+
+### 2026-09-29T00:32:01.825Z — Staged staff READY; planned public candidate
+
+Provider confirms staff dpl_CsJjDZ3iMsi8JTbJf97BcFjs99C8 READY from exact 1e08f0ae3b29a4f935c41cd85b6d26e8cd809ce7. Canonical routing remains unchanged. Plan one public-project environment update: staff origin to https://atlas-grading-staff-i9loebwaa-ten-kings.vercel.app; customer origin unchanged. Then upload the same qualified frozen source as a production candidate with --skip-domain, preserving the exact live homepage subtree. No runtime restart or database control change in this action.
+
+
+### 2026-09-29T00:32:30.517997+00:00 — Planned same-image intake-preview runtime configuration preparation
+
+Root reviewed the fresh same-image release helpers, exact UI-only compatibility delta, two new web builds and42 focused passing tests; four local binding guards passed. Staff staged candidate is READY. Plan prepare exactly two new staff web-binding values for source1e08f0ae3b29a4f935c41cd85b6d26e8cd809ce7 while keeping private475/source1049/native16/image224 unchanged. Cold constructors run isolated with no network/provider calls; this preparation does not stop the current runtime. No migration, grant or learning activation. Local disk shortage was resolved by deleting only untracked regenerable staff/public .next/cache directories; all build outputs, source and qualification receipts retained.
+
+
+### 2026-09-29T00:32:51.414573+00:00 — Intake-preview configuration prepared
+
+PREPARED_CONFIG_ONLY observed. Private image/source and running container unchanged; cold constructors made zero database/provider calls and started zero workers. New protected environment changes exactly the two staff web-binding fields. Runtime preparation evidence: private atlas-intake-preview-20260928/release/runtime-prepared.json.
+
+
+### 2026-09-29T00:34:22.600280+00:00 — Planned ATLAS intake preview production binding cutover
+
+Both Vercel candidates READY on exact 1e08f0ae3b29a4f935c41cd85b6d26e8cd809ce7; public candidate dpl_HsWcEzqrwVEg7MBAfV2MnesiAMW5 and staff dpl_CsJjDZ3iMsi8JTbJf97BcFjs99C8. Fresh SQL has zero active/queued batch, ingestion, geometry, identity and customer work; zero unsettled accepted model requests. Plan gracefully stop the current dedicated private container and recreate with the identical immutable image sha256:224e41e9efce5c9b5a80558bcc1c83f906ca4d91120311e3757564de25b91c90 from retained private source 47559353af0803186c724ea37f032ce306397157, preserving native artifacts and security/resource/network profile, and changing only two staff web-release environment fields. Cold network-none constructors agree on new staff binding; customer binding remains d4a. Retain old stopped container for rollback and existing125s replay boot fence. Then guarded compare-and-swap of precisely StaffControl, STAFF SmsPilotControl and PublicReaderControl, with all32 grading history tables compared before/after. Staff61/public112 ledgers remain unchanged. No migration execution, grant changes, job mutations or model requests. After readiness and three signed read-only probes, promote public candidate once and verify canonical routes. Brief private unavailability during restart is expected.
+
+
+### 2026-09-29 — Intake-preview control cutover observed and read-only summary reconciliation
+
+Same-image runtime started as a55025d658da77e2760b5f15c8981054e79253a328af4c62e6e7cee3f4cd4fa6; exact three-control CAS succeeded. The outer Python3.9 summary step then rejected the nine-digit Docker timestamp, after database-cutover-after.private.json had already been saved. No runtime/control mutation was retried. Root independently reconstructed the three expected controls, compared all32 history/68 jobs/61+112 ledgers/legacy learning before and after, and matched a fresh read-only census. Saved database readback timestamp proves control CAS completed within 5.039 seconds of startup, inside125-second fence. Reconciliation and original summary failure receipts retained. New revisions: Staff48, Public28, STAFFSMS46. Readiness and canonical promotion still pending.
+
+
+### 2026-09-29T00:37:01.098Z — Runtime transport qualified; planned canonical promotion
+
+Same private runtime generation is listening with the new staff web binding. Three signed TLS reads passed: unauthenticated staff denied401, unknown public report404, unchanged customer directory200. No real sessions, card writes, approvals or paid requests. Plan one public-project promotion to dpl_HsWcEzqrwVEg7MBAfV2MnesiAMW5, preserving settings/environment and all alias identities. Fresh provider metadata equals the prepared cutover snapshot.
+
+
+### 2026-09-29T00:37:06.775Z — ATLAS intake preview canonical promotion observed
+
+One promotion POST completed; all four public aliases and production target now point to dpl_HsWcEzqrwVEg7MBAfV2MnesiAMW5, source 1e08f0ae3b29a4f935c41cd85b6d26e8cd809ce7. Staff/customer projects, public settings and all environment rows unchanged across promotion. Canonical HTTP verification follows.
+
+
+### 2026-09-29T00:37Z — Intake-preview canonical and final postflight PASS; owner testing handoff
+
+Web source1e08f0ae3b29a4f935c41cd85b6d26e8cd809ce7 is live on staff dpl_CsJjDZ3iMsi8JTbJf97BcFjs99C8 and public dpl_HsWcEzqrwVEg7MBAfV2MnesiAMW5, all four public aliases. Private source475/image224 is retained in container a55025d658da77e2760b5f15c8981054e79253a328af4c62e6e7cee3f4cd4fa6. Only two staff web-binding environment values changed; no schema/grants/native/model policy change. Signed TLS probes, canonical routes and final read-only postflight passed. All1049source/native16,32historyfingerprints,68jobs,61/112ledger rows preserved; customer/homepage unchanged. No new learning activation.
+
+Updated master/deploy/handoff/website/audit docs with actual follow-up and completed exact-three recovery. Root normal staff check showed19-card queue, verified photos, Add finding and Continue final review. Owner requested credit economy and offered remaining tests; full human geometry/finding decisions, approval and fresh physical-iPhone acceptance remain owner-led. No human decisions were fabricated to clear those gates. The normal control-revision binding may require sign-in again. All previous failures and successful qualification/recovery receipts retained.
