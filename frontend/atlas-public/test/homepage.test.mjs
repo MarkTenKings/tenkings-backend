@@ -16,7 +16,7 @@ test('homepage rewrite is exact and leaves service/report routes untouched',asyn
 
 test('ungraded homepage keeps the marketing and submission journey without a fake graded card',()=>{
  for(const id of ['hero-title','empty-title','approach','signature-title','tap-title','services'])assert(html.includes(`id="${id}"`),id);
- for(const copy of ['No graded cards are published','A visual record of saved findings','not a cryptographic authenticity test','href="/account/submit"'])assert(html.includes(copy),copy);
+ for(const copy of ['No graded cards are featured here yet','A visual record of saved findings','not a cryptographic authenticity test','href="/account/submit"'])assert(html.includes(copy),copy);
  for(const old of ['Alakazam','Abomasnow','Maye','Dart','ILLUSTRATIVE GRADE','SAMPLE / 001','approved.json','alakazam-demo','<video','<figure'])assert(!html.includes(old),old);
  assert.deepEqual([...html.matchAll(/<img\s[^>]*src="([^"]+)"/g)].map(match=>match[1]),['/brand/atlas-grading-logo.png','/brand/atlas-grading-logo.png']);
 });
