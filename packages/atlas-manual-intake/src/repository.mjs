@@ -102,15 +102,33 @@ export function createIntakeRepository({ boundary, keyPrefix, maxOriginalBytes, 
         }
         // Only these intake row locks are acquired. Other domains lock their
         // own card first, then intake; taking their locks here would invert it.
-        const rows = await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual_intake.card
-          WHERE owner_id=$1::uuid AND ($2::boolean OR id=ANY($3::uuid[]) OR create_request_id=ANY($4::uuid[]))
-          ORDER BY id FOR UPDATE NOWAIT`, principal.id, request.value.scope === 'ALL', request.value.cardIds, request.value.createRequestIds);
+        const rows = await tx.$queryRawUnsafe(`SELECT * FROM atlas_manual_intake.card c
+          WHERE c.owner_id=$1::uuid AND NOT EXISTS(SELECT 1 FROM atlas_manual_intake.discarded_card d WHERE d.card_id=c.id)
+          AND ($2::boolean OR c.id=ANY($3::uuid[]) OR c.create_request_id=ANY($4::uuid[]))
+          ORDER BY c.id FOR UPDATE OF c NOWAIT`, principal.id, request.value.scope === 'ALL', request.value.cardIds, request.value.createRequestIds);
         requireThat(request.value.cardIds.every(id => rows.some(row => row.id === id)), 404, 'INTAKE_CARD_NOT_FOUND');
         const cardIds = rows.map(row => row.id).sort();
-        // Published/customer custody is a different disposition, not a test
-        // workspace discard. Never release a live physical station implicitly.
+        // A reviewer may discard intake before grading, but saved grading
+        // evidence and customer custody require a separate owner disposition.
+        // Do not lock these domains in the opposite order from their writers.
+        // A late paid result receipt may still be retained for audit, but a
+        // retired intake card cannot be reopened for a grade or publication.
         if (cardIds.length) {
           const [blocked] = await tx.$queryRawUnsafe(`SELECT
+            EXISTS(SELECT 1 FROM atlas_manual.action a WHERE a.card_id=ANY($1::uuid[])
+              AND (a.request::jsonb #>> '{action,type}') IN
+                ('CONFIRM_GEOMETRY','INSPECT_SIDE','MEASURE_SIDE','DEFECT_EDIT','ASTRA_PROPOSAL_REVIEW',
+                 'TRACE_SAVE','REVIEW_FINDING','CONFIRM_FINDINGS','BEGIN_FINAL_REVIEW',
+                 'REJECT_FINAL_OBSERVATION','APPROVE_REPORT')) OR
+            EXISTS(SELECT 1 FROM atlas_manual.approval WHERE card_id=ANY($1::uuid[])) OR
+            EXISTS(SELECT 1 FROM atlas_manual.card m WHERE m.id=ANY($1::uuid[])
+              AND (m.content::jsonb ? 'finalReview' OR m.content::jsonb ? 'proposedGrade')) OR
+            EXISTS(SELECT 1 FROM atlas_manual_connected.batch_grading j WHERE j.card_id=ANY($1::uuid[])
+              AND (j.evidence::jsonb ? 'reportHash' OR j.state IN ('REVIEW','APPROVED'))) OR
+            EXISTS(SELECT 1 FROM atlas_manual_connected.batch_review r
+              JOIN atlas_manual_connected.batch_grading j ON j.key=r.job_key WHERE j.card_id=ANY($1::uuid[])) OR
+            EXISTS(SELECT 1 FROM atlas_defect_analysis.run r JOIN atlas_defect_analysis.receipt p ON p.analysis_id=r.id
+              WHERE r.card_id=ANY($1::uuid[]) AND p.kind='RESPONSE' AND p.evidence::jsonb->>'state'='READY') OR
             EXISTS(SELECT 1 FROM atlas_manual.publication WHERE card_id=ANY($1::uuid[])) OR
             EXISTS(SELECT 1 FROM atlas_dealer.manual_card_link WHERE manual_card_id=ANY($1::uuid[])) OR
             EXISTS(SELECT 1 FROM atlas_manual_connected.station_arm a JOIN atlas_manual_connected.station_active s ON s.intent_id=a.intent_id
