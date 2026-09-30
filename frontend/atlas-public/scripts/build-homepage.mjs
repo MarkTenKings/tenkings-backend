@@ -1,5 +1,5 @@
 // Package the approved standalone presentation without coupling it to report/account runtimes.
-import {readFile, writeFile, mkdir, copyFile, readdir} from 'node:fs/promises';
+import {readFile, writeFile, mkdir, copyFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
@@ -8,7 +8,9 @@ const repo=path.resolve(app,'../..');
 const study=path.join(repo,'docs/atlas/design/first-look');
 const names=['index.html','study.css','submission-source.css','study.js','slab.js','hero-reports.js','hero-report-model.mjs','report-guidance.js','report-guidance.css','report-embed.js','chapter-stops.js','inspect-source/report-review.css'];
 const inputs=await Promise.all(names.map(n=>readFile(path.join(study,n),'utf8')));
-const reportNames=(await readdir(path.join(study,'reports'))).sort();
+// Only the synthetic specimen is published. Historical approved card packets
+// remain in source/audit custody and must never enter a homepage build.
+const reportNames=['alakazam-demo.json'];
 const hash=createHash('sha256').update(inputs.join('\n'));
 for(const name of reportNames)hash.update(name).update(await readFile(path.join(study,'reports',name)));
 const version=hash.digest('hex').slice(0,16);
@@ -33,5 +35,5 @@ for(const name of names.slice(1))html=html.replaceAll('\"/'+name+'\"','\"'+prefi
 html=html .replace('DESIGN STUDY 10 / EVERY DETAIL LEAVES A SIGNATURE.','EVERY DETAIL LEAVES A SIGNATURE.')
  .replace('</title>','</title><meta name="description" content="Go beyond the grade. Explore the ATLAS fingerprint, tap-to-report technology and card submission options."><link rel="canonical" href="https://atlasgrading.com/">');
 await writeFile(path.join(app,'public/homepage/index.html'),html);
-await writeFile(path.join(app,'public/homepage/release.json'),JSON.stringify({version,presentation:'study10',illustrativeReport:true,approvedReportCount:3})+'\n');
+await writeFile(path.join(app,'public/homepage/release.json'),JSON.stringify({version,presentation:'study10',illustrativeReport:true,approvedReportCount:0})+'\n');
 console.log(JSON.stringify({status:'HOMEPAGE_PACKAGED',version,prefix}));

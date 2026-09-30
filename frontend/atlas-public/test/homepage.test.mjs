@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {readFileSync,existsSync} from 'node:fs';
+import {readFileSync,existsSync,readdirSync} from 'node:fs';
 import {resolve} from 'node:path';
 import config from '../next.config.mjs';
 const root=resolve(import.meta.dirname,'../public');
@@ -26,5 +26,18 @@ test('versioned scripts and styles do not retain loopback preview paths',()=>{
  for(const file of ['study.js','slab.js','study.css','submission-source.css','hero-reports.js','hero-report-model.mjs','report-guidance.js','report-embed.js','chapter-stops.js']){
   const s=readFileSync(resolve(root,'homepage',version,file),'utf8');
   assert(!s.includes('127.0.0.1'));assert(!s.includes('"/assets/'));assert(!s.includes("'/assets/"));
+ }
+});
+test('public homepage contains only the illustrative card report',()=>{
+ const homepage=resolve(root,'homepage');
+ const {version,approvedReportCount}=JSON.parse(readFileSync(resolve(homepage,'release.json')));
+ assert.equal(approvedReportCount,0);
+ const script=readFileSync(resolve(homepage,version,'hero-reports.js'),'utf8');
+ assert(!script.includes('approved.json'));
+ assert(script.includes('/reports/alakazam-demo.json'));
+ for(const directory of readdirSync(homepage,{withFileTypes:true}).filter(entry=>entry.isDirectory())){
+  const reports=resolve(homepage,directory.name,'reports');
+  if(!existsSync(reports))continue;
+  assert.deepEqual(readdirSync(reports),['alakazam-demo.json'],directory.name);
  }
 });
