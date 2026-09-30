@@ -1,6 +1,0 @@
-.atlas-heartbeat{position:relative;z-index:3;animation:atlas-heartbeat 1.5s ease-in-out!important;transform-origin:center;will-change:transform,box-shadow}
-@keyframes atlas-heartbeat{0%,65%,100%{transform:scale(1);box-shadow:0 0 0 0 #e9cb8f00}16%{transform:scale(1.025);box-shadow:0 0 0 1px #f3ddad77,0 0 22px #e9cb8f38,inset 0 0 12px #e9cb8f12}27%{transform:scale(1.006);box-shadow:0 0 8px #e9cb8f15}40%{transform:scale(1.018);box-shadow:0 0 0 1px #f3ddad44,0 0 16px #e9cb8f2a}}
-.motion-off .atlas-heartbeat{animation:none!important}
-@media(prefers-reduced-motion:reduce){.atlas-heartbeat{animation:none!important}}
-
-.report-guidance-toggle{background:transparent;border:1px solid #bea06c55;border-radius:22px;padding:10px 16px;color:#d5be87;font:inherit;cursor:pointer}.report-guidance-toggle:focus-visible{outline:2px solid #f3ddad;outline-offset:3px}
