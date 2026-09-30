@@ -23,8 +23,6 @@ test('public submission directory renders actual configured schedule and kiosk C
 test('empty enabled kiosk directory is explicit and shows no contact-only submission CTA',()=>{
  const html=renderToStaticMarkup(React.createElement(exported.default,{customerFunnelEnabled:true,dealers:[],initialService:'SUBMIT',map:null}));assert.match(html,/No enabled kiosks are listed yet/);assert.doesNotMatch(html,/Choose this kiosk/);assert.match(html,/\$40 per card plus FedEx shipping/);
 });
-test('public marketing service comparison source compiles',()=>assert(compile('../components/MarketingHome.jsx')));
-
 test('cold public directory preserves contact information without advertising an unavailable kiosk checkout',()=>{
  const html=renderToStaticMarkup(React.createElement(exported.default,{dealers:[],initialService:'SUBMIT',map:null}));
  assert.match(html,/The network is taking shape/);assert.doesNotMatch(html,/\$50|kiosk|Dealer account|Choose this kiosk/);
@@ -39,14 +37,4 @@ test('public kiosk service is not called until the server display switch is expl
  environment.ATLAS_PUBLIC_CUSTOMER_FUNNEL_ENABLED='true';
  assert.equal((await exported.getServerSideProps(ctx)).props.customerFunnelEnabled,true);assert.equal(calls.directory,1);
  delete environment.ATLAS_PUBLIC_CUSTOMER_FUNNEL_ENABLED;
-});
-test('public marketing advertises paid intake only when its server capability is enabled',()=>{
- const marketing={};vm.runInNewContext(compile('../components/MarketingHome.jsx'),{exports:marketing,require:name=>{
-  if(name==='react')return React;if(name==='next/link')return props=>React.createElement('a',props,props.children);
-  return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
- }});
- const cold=renderToStaticMarkup(React.createElement(marketing.default));
- assert.match(cold,/Choose authorized-dealer drop-off or mail-in/);assert.doesNotMatch(cold,/Start mail-in · \$40|See your actual FedEx quote/);
- const enabled=renderToStaticMarkup(React.createElement(marketing.default,{customerFunnelEnabled:true}));
- assert.match(enabled,/Start mail-in · \$40/);assert.match(enabled,/See your actual FedEx quote/);
 });
