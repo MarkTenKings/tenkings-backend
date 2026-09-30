@@ -1,9 +1,8 @@
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { defectBase, parseDefectWorkspace, applyDefectMeasurement } from '@atlas/manual-workspace/defect-actions';
 import { measureDefectWorkspaceEdit } from '@atlas/measurement-runtime';
-import { calculateSpeedsterReview } from '@atlas/grading-core/review';
+import { calculateAtlasReview, ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
-import { SPEEDSTER_RULE_VERSION } from '@atlas/grading-core/contracts';
 import { calculateAtlasFinalGrade, ATLAS_FINAL_GRADE_POLICY } from '@atlas/grading-core/manual-report';
 import { measurableProposalEdit } from '../../atlas-manual-workflow/src/proposal-review.mjs';
 import { gradingIdentity } from './details.mjs';
@@ -71,12 +70,12 @@ export async function buildMachineReport({ card, state, analysis, measure = meas
   const capture = unresolvedGeometry.length ? null : Object.fromEntries(SIDES.map(side => [side.toLowerCase(), {
     centeringBorders: measureSpeedsterCenteringBorders(state.geometry.sides[side].printed.quad),
   }]));
-  const calculated = capture ? calculateSpeedsterReview(capture, findings) : { grade: null, defects: findings };
+  const calculated = capture ? calculateAtlasReview(capture, findings) : { grade: null, defects: findings };
   const ambiguousSides = SIDES.filter(side => geometryReview.sides[side].ambiguous);
   return { version: 'atlas-machine-provisional-report-v1', authority: 'MACHINE_PROPOSAL', certification: null,
     cardId: card.cardId, sourceHash: card.draft.source.sourceHash, manualRevision: card.revision, manualContentHash: card.contentHash,
     analysisId: analysis.analysisId, analysisResultHash: digest(canonical(analysis.proposals)),
-    identity: state.identity, cardProfile: state.geometry.profile, ruleVersion: SPEEDSTER_RULE_VERSION,
+    identity: state.identity, cardProfile: state.geometry.profile, ruleVersion: ATLAS_RULE_VERSION,
     grade: calculated.grade, proposedGrade: calculated.grade ? calculateAtlasFinalGrade(calculated.grade.overall.rawGrade) : null,
     calculationState: calculated.grade ? 'COMPLETE' : 'GEOMETRY_UNRESOLVED', unresolvedGeometry,
     finalGradePolicy: ATLAS_FINAL_GRADE_POLICY, findings: calculated.defects,

@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { parsePublicReport } from '@atlas/report-view/public-contract';
+import { ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 import { previewAtlasReport, finalizeAtlasReportContent, presentAtlasFindings } from '@atlas/grading-core/report';
 import { deny, hash, identifier, strictObject } from '../policy.mjs';
 import { canonical } from '../review-contract.mjs';
@@ -33,6 +34,7 @@ function projectedReport(report, visibility) {
 }
 function approvalBlock(context, card, assignment, draft, analysis, pending, unresolvedProposals = 0) {
     if (!analysis) return 'GRADING_NOT_READY';
+    if (context.control.mode === 'PRODUCTION' && analysis.report?.ruleVersion !== ATLAS_RULE_VERSION) return 'GRADING_POLICY_CHANGED';
     if (pending) return 'GRADING_WORK_UNRESOLVED';
     if (unresolvedProposals) return 'MACHINE_PROPOSALS_UNRESOLVED';
     if (!context.control.gradingPolicyHash || analysis.admission.policyHash !== context.control.gradingPolicyHash) return 'GRADING_POLICY_CHANGED';

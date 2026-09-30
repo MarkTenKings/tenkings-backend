@@ -14,12 +14,13 @@ const code = babel.transformSync(readFileSync(new URL('../components/BatchGradin
 }).code;
 const all = (value, match, out = []) => { if (Array.isArray(value)) value.forEach(item => all(item, match, out)); else if (value && typeof value === 'object') { if (match(value)) out.push(value); all(value.props?.children, match, out); } return out; };
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
-async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null, correcting = false, partial = false } = {}) {
+async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null, correcting = false, partial = false, oldScoringPolicy = false } = {}) {
   const plan = samplePlan(), key = 'a'.repeat(64); let staff = { id: 'fixture-reviewer', role: 'REVIEWER' };
   const packet = { key, cardId: plan.binding.cardId, canCertify: true, reportHash: 'c'.repeat(64), report: {
     geometry: { FRONT: { frame: { inspectionImageSha256: 'd'.repeat(64) } }, BACK: { frame: { inspectionImageSha256: 'e'.repeat(64) } } },
   } };
   if (partial) Object.assign(packet,{canCertify:false,reviewRequiredReason:'BATCH_FINAL_GEOMETRY_REQUIRED',explanation:null,report:{...packet.report,calculationState:'GEOMETRY_UNRESOLVED',grade:null,proposedGrade:null}});
+  if (oldScoringPolicy) Object.assign(packet, { canCertify: false, reviewRequiredReason: 'BATCH_SCORING_POLICY_UPDATED' });
   if (correcting) { packet.correctionAvailable = true; packet.canCertify = false; }
   const result = { cardId: packet.cardId, actionId: plan.binding.approvalActionId, publication: {
     state: pending ? 'PENDING' : 'PUBLISHED', actionId: plan.binding.approvalActionId,
@@ -203,6 +204,23 @@ test('partial batch report keeps evidence visible and gives geometry action inst
   await approve.props.onClick();await f.flush();assert.equal(f.popups.length,0);assert.equal(f.calls.some(call=>call.options.method==='POST'),false);
   f.find(node=>node.type==='button'&&text(node)==='Review geometry / make corrections')[0].props.onClick();await f.flush();
   assert.equal(f.actions[0].type,'BEGIN_FINAL_REVIEW');assert.equal(f.routes.length,0);assert.equal(f.find(node=>node.type?.name==='RapidReviewDialog')[0].props.job.navigationMode,'ordinary');f.dispose();
+});
+
+test('old scoring policy explains the approval block and opens the bound final review only on an explicit gesture', async () => {
+  const f = await fixture({ oldScoringPolicy: true }); f.ready();
+  assert.match(f.text(), /This draft uses an earlier scoring policy/);
+  assert.match(f.text(), /recalculate its saved measurements with the current policy before approval/);
+  assert.doesNotMatch(f.text(), /trained reviewer is required/);
+  const approve = f.find(node => node.type === 'button' && text(node) === 'Approve & print next')[0];
+  assert.equal(approve.props.disabled, true);
+  await approve.props.onClick(); await f.flush();
+  assert.equal(f.actions.length, 0); assert.equal(f.popups.length, 0);
+  assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
+  f.find(node => node.type === 'button' && text(node) === 'Review updated scoring')[0].props.onClick(); await f.flush();
+  assert.deepEqual(f.actions.map(action => ({ ...action })), [{ type: 'BEGIN_FINAL_REVIEW', batchKey: f.packet.key, reportHash: f.packet.reportHash }]);
+  assert.equal(f.find(node => node.type?.name === 'RapidReviewDialog')[0].props.job.navigationMode, 'ordinary');
+  assert.equal(f.popups.length, 0); assert.equal(f.calls.some(call => call.options.method === 'POST'), false);
+  f.dispose();
 });
 
 

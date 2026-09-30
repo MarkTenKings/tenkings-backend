@@ -4,11 +4,12 @@ import { buildMachineReport, createBatchPreparation } from '../src/batch-prepara
 import { workspace } from '../../atlas-manual-workspace/test/defect-fixtures.mjs';
 import { runDefectMeasurement } from '../../atlas-manual-workspace/src/defect-actions.mjs';
 import { decodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
+import { ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 import { createBatchWorker } from '@atlas/batch-grading';
 
 const SIDES = ['FRONT', 'BACK'];
 const quad = [{ x: .04, y: .03 }, { x: .96, y: .03 }, { x: .96, y: .97 }, { x: .04, y: .97 }];
-function fixture() {
+function fixture({ zonePercent = .01 } = {}) {
   const card = { cardId: 'synthetic-card', revision: 1, contentHash: 'a'.repeat(64), draft: { source: { sourceHash: 'b'.repeat(64) } } };
   const state = { defects: workspace(false), geometry: { profile: 'SPORTS', sides: Object.fromEntries(SIDES.map(side => [side, { physical: { quad }, printed: { quad }, prepared: { id: side } }])) },
     identity: { playerName: 'Synthetic player', year: '2026', manufacturer: 'Fixture', productSet: 'Evidence test' } };
@@ -28,7 +29,7 @@ function fixture() {
         const pixels = decodeSpeedsterTraceRleV1(mark.finalTrace).reduce((sum, pixel) => sum + pixel, 0);
         return { ...mark, side, origin: 'SMART_MARK', confidence: 1, supportingViewIds: [], reviewResult: 'SMART_MARKED',
           measurementRegions: [{ zone: 'SURFACE', canonicalContour: quad, measurement: { pixelCount: pixels,
-            widthMm: 1, heightMm: 1, areaMm2: pixels * .0025, zonePercent: .01, multiplier: 1, weightedAreaMm2: pixels * .0025, subgradeEffect: 0 } }] };
+            widthMm: 1, heightMm: 1, areaMm2: pixels * .0025, zonePercent, multiplier: 1, weightedAreaMm2: pixels * .0025, subgradeEffect: 0 } }] };
       })] }));
   };
   return { card, state, analysis, measure, inputs };
@@ -36,11 +37,21 @@ function fixture() {
 test('machine draft uses measured contours and current deterministic score without manufacturing human review', async () => {
   const f = fixture(), before = structuredClone(f.state), report = await buildMachineReport(f);
   assert.equal(report.version, 'atlas-machine-provisional-report-v1'); assert.equal(report.authority, 'MACHINE_PROPOSAL');
+  assert.equal(report.ruleVersion, ATLAS_RULE_VERSION);
   assert.equal(report.certification, null); assert.equal(report.findings.length, 2);
   assert.equal(report.findings.every(finding => finding.origin === 'DETECTOR' && finding.reviewResult === 'UNREVIEWED'), true);
   assert.equal(report.proposedGrade, 10); assert.equal(report.measurementReceipts.length, 2);
   assert.deepEqual(f.state, before); assert.equal(JSON.stringify(report).includes('manualInspection'), false);
   assert.deepEqual(report.limitations, f.analysis.limitations);
+});
+test('machine report scores the measured weighted damage at 1.5× while retaining its base percentage', async () => {
+  const report = await buildMachineReport(fixture({ zonePercent: .04 }));
+  assert.equal(report.ruleVersion, ATLAS_RULE_VERSION);
+  assert.equal(report.grade.front.surface.weightedDamagePercent, .04);
+  assert.equal(report.grade.back.surface.weightedDamagePercent, .04);
+  assert.equal(report.grade.front.surface.score, 6);
+  assert.equal(report.grade.back.surface.score, 6);
+  assert.equal(report.proposedGrade, 9);
 });
 test('a clean machine proposal still remains uncertified and uninspected', async () => {
   const f = fixture(); f.analysis.proposals = []; const report = await buildMachineReport(f);

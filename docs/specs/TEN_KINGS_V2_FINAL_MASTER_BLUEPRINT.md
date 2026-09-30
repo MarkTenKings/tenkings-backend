@@ -1,5 +1,25 @@
 # Ten Kings V2 — Final Master Product and Architecture Blueprint
 
+### Owner-approved ATLAS damage scoring calibration — September 30, 2026
+
+Mark approved a new ATLAS scoring rule for new machine and human report drafts. Keep the measured defect areas, existing defect-type multipliers, centering rule, Front 70% / Back 30% weighting, equal four-category averaging and direct final half-point rounding. For each side's Corners, Edges and Surface category, calculate the existing type-weighted damage percentage, then multiply that percentage **once by 1.5** to obtain *scoring damage*. Assign the category score from this complete table; each upper bound is inclusive, and the next band starts strictly above it:
+
+| Scoring damage in category | Side category score |
+| --- | ---: |
+| 0–0.010% | 10 |
+| >0.010–0.020% | 9.5 |
+| >0.020–0.030% | 9 |
+| >0.030–0.040% | 8 |
+| >0.040–0.050% | 7 |
+| >0.050–0.060% | 6 |
+| >0.060–0.070% | 5 |
+| >0.070–0.080% | 4 |
+| >0.080–0.090% | 3 |
+| >0.090–0.100% | 2 |
+| >0.100% | 1 |
+
+Store the original type-weighted damage percentage as the measurement and expose both it and the 1.5× scoring percentage in the grade explanation. The rule version is `ATLAS_2026_09_30_DAMAGE_1_5_V1`. Exact saved measurements from the approved Drake Maye and Abomasnow reports replay to prospective ATLAS grades of **7.5** and **8.5**, respectively. These replays do not alter either approved report. Previously approved, hash-bound reports and their original rule/explanations remain immutable; any new version requires its own separate review and approval. Earlier statements that ATLAS condition thresholds and multipliers remain unchanged are historical and superseded for new ATLAS drafts by this owner decision. The shared Ten Kings Speedster grading engine retains its earlier policy.
+
 ### Owner-approved fingerprint integration and design release — September 29, 2026
 
 After reviewing the actual evidence-derived fingerprint tide study, Mark approved its visual direction and requested the ATLAS Grading brand gold `#cda955` (RGB 205,169,85). After being told that the report/reviewer changes were local and the fingerprint was still a separate study, he explicitly authorized completing integration, application release checks and production deployment: “ok let's do all of that now.” This authorizes the scoped report/reviewer design release. Deployment completed from source `29e9192080d7d7a95644316a417dc6171eef3bbb`; all 1,614 exact-source tests, both production builds, canonical routes, runtime/database preservation and live public browser checks passed. Serving evidence and identities are recorded in `docs/atlas/audits/2026-09-29/review-design-release.md`. Physical real-card operator acceptance remains separate.

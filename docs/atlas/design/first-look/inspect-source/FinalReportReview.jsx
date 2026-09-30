@@ -16,8 +16,12 @@ function NumberValue({ value, unit = '', maximumFractionDigits = 6 }) {
   return <><data value={value}><span className="rr-number-short">{value !== 0 && Math.abs(value) < .000001 ? value.toExponential(5) : value.toLocaleString('en-US', { maximumFractionDigits })}</span><span className="rr-number-exact">{String(value)}</span></data>{unit}</>;
 }
 const n = (value, unit) => <NumberValue value={value} unit={unit}/>;
+const damageMultiplier = policy => policy.globalDamageMultiplier ?? 1;
+const tenConditionBand = policy => policy.conditionBands.find(band => band.score === 10);
+const scoringDamage = (value, policy) => value.scoringDamagePercent ?? value.weightedDamagePercent * damageMultiplier(policy);
 
 function FindingCalculation({ finding, explanation, policy, printLabel }) {
+  const globalMultiplier = damageMultiplier(policy);
   return <section className="rr-finding-detail" aria-label={printLabel ? `${printLabel} calculation` : 'Selected finding calculation'}>
     <div className="rr-section-heading"><div><p className="rr-eyebrow">{printLabel ? `FINDING · ${printLabel}` : `SELECTED FINDING · ${title(finding.side)}`}</p><h3>{title(finding.defectType)}</h3></div><span className="rr-badge">{explanation.included ? 'Included in grade' : 'Removed · excluded'}</span></div>
     {!printLabel && <p>{explanation.included ? 'Saved trace for this finding. Measured area excludes pixels outside the card material and overlapping pixels assigned to another finding.' : 'This finding remains in the review history and contributes no damage or deduction.'}</p>}
@@ -26,7 +30,8 @@ function FindingCalculation({ finding, explanation, policy, printLabel }) {
       <h4>{title(region.zone)} region</h4>
       <dl className="rr-measurements"><div><dt>Measured area</dt><dd>{n(region.areaMm2, ' mm²')}</dd></div><div><dt>Measured pixels</dt><dd>{region.pixelCount === undefined ? 'Not recorded' : n(region.pixelCount)}</dd></div><div><dt>Region bounds (W × H)</dt><dd>{n(region.widthMm)} × {n(region.heightMm, ' mm')}</dd></div><div><dt>Region coverage</dt><dd>{n(region.zonePercent, '%')}</dd></div></dl>
       <div className="rr-equations"><p><span>Weighted damage area</span>{n(region.areaMm2)} mm² × {n(region.multiplier)} = <strong>{n(region.weightedAreaMm2, ' mm²')}</strong></p>
-        {region.eligibleAreaMm2 !== null && <p><span>Share of the {words(region.zone)} area</span>{n(region.weightedAreaMm2)} ÷ {n(region.eligibleAreaMm2)} mm² × 100 = <strong>{n(region.weightedDamagePercent, '%')}</strong></p>}
+        {region.eligibleAreaMm2 !== null && explanation.included && <><p><span>Share of the {words(region.zone)} area</span>{n(region.weightedAreaMm2)} ÷ {n(region.eligibleAreaMm2)} mm² × 100 = <strong>{n(region.weightedDamagePercent, '%')}</strong></p>
+          {globalMultiplier !== 1 && <p><span>Scoring damage after global multiplier</span>{n(region.weightedDamagePercent, '%')} × {n(globalMultiplier)} = <strong>{n(scoringDamage(region, policy), '%')}</strong></p>}</>}
         {explanation.included && <><p><span>Marginal {words(region.zone)} subgrade effect</span>{Number.isFinite(region.scoreWithoutFinding) && Number.isFinite(region.scoreWithFinding) ? <>{n(region.scoreWithoutFinding)} without this region − {n(region.scoreWithFinding)} with it, × {n(finding.side === 'FRONT' ? policy.frontWeight : policy.backWeight)} = </> : null}<strong>{n(region.marginalSubgradeEffect, ' points')}</strong></p>
           <p><span>Marginal unrounded overall effect</span>{n(region.marginalSubgradeEffect)} × {n(policy.categoryWeight)} = <strong>{n(region.marginalOverallEffect, ' points')}</strong></p></>}
       </div>
@@ -88,12 +93,16 @@ function InspectionDock({ activeSide, chooseSide, expanded, setExpanded, panelOp
 
 function CategoryCalculation({ category, explanation }) {
   const result = explanation.categories[category], policy = explanation.policy;
+  const globalMultiplier = damageMultiplier(policy), tenBand = tenConditionBand(policy);
   return <article className="rr-category"><header><h3>{title(category)}</h3><strong>{n(result.subgrade)}</strong></header>
     {SIDES.map(side => {
       const value = explanation.sides[side][category === 'centering' ? category : category.toUpperCase()];
-      return <section key={side}><h4>{title(side)} <span>{n(value.score)} / 10</span></h4><ThresholdVisual category={category} value={value}/>
+      const allowance = value.eligibleAreaMm2 !== null && Number.isFinite(value.eligibleAreaMm2)
+        && Number.isFinite(tenBand?.upperPercent) ? value.eligibleAreaMm2 * tenBand.upperPercent / 100 / globalMultiplier : null;
+      return <section key={side}><h4>{title(side)} <span>{n(value.score)} / 10</span></h4><ThresholdVisual category={category} value={value} policy={policy}/>
         {category === 'centering' ? <><p>Left / right: {n(value.leftRightBalance[0])} / {n(value.leftRightBalance[1])}</p><p>Top / bottom: {n(value.topBottomBalance[0])} / {n(value.topBottomBalance[1])}</p><p>Largest border share: {n(value.worstPercent, '%')}</p><p>Grade-10 limit: {n(policy.centering.toleranceWorstPercent, '%')} on either border. {value.withinTenTolerance ? 'Within tolerance.' : 'Outside tolerance; see the centering rule below.'}</p></> : <><p>Included damage: {n(value.rawAreaMm2, ' mm²')}</p><p>Weighted damage: {n(value.weightedAreaMm2, ' mm²')}{value.eligibleAreaMm2 !== null ? <> ÷ {n(value.eligibleAreaMm2, ' mm²')} × 100 = <strong>{n(value.weightedDamagePercent, '%')}</strong></> : <>. Category damage: <strong>{n(value.weightedDamagePercent, '%')}</strong>; no included measured area.</>}</p>
-          {value.tenBandMaxWeightedAreaMm2 !== null && <p>Grade-10 allowance: {n(value.tenBandMaxWeightedAreaMm2, ' weighted mm²')}</p>}
+          {globalMultiplier !== 1 && <p>Scoring damage: {n(value.weightedDamagePercent, '%')} × {n(globalMultiplier)} = <strong>{n(scoringDamage(value, policy), '%')}</strong></p>}
+          {allowance !== null && <p>Grade-10 allowance: {n(allowance, ' weighted mm²')}{globalMultiplier !== 1 && ' before the global multiplier'}</p>}
           <p>Deduction from 10: {n(value.deductionFromTen, ' points')}</p></>}
       </section>;
     })}
@@ -102,14 +111,17 @@ function CategoryCalculation({ category, explanation }) {
   </article>;
 }
 
-function ThresholdVisual({ category, value }) {
-  const centering = category === 'centering', amount = centering ? value.worstPercent : value.weightedDamagePercent;
+function ThresholdVisual({ category, value, policy }) {
+  const centering = category === 'centering', amount = centering ? value.worstPercent : scoringDamage(value, policy);
   if (!Number.isFinite(amount)) return null;
-  const minimum = centering ? 50 : 0, maximum = centering ? 100 : Math.max(10, amount);
+  const tenBand = tenConditionBand(policy), tenLimit = centering ? policy.centering.toleranceWorstPercent : tenBand?.upperPercent;
+  const limits = policy.conditionBands.flatMap(band => [band.lowerPercent, band.upperPercent]).filter(Number.isFinite);
+  const minimum = centering ? 50 : 0, maximum = centering ? 100 : Math.max(...limits, amount);
+  if (!Number.isFinite(tenLimit) || maximum <= minimum) return null;
   const percent = (number) => Math.max(0, Math.min(100, (number - minimum) / (maximum - minimum) * 100));
-  return <div className="rr-threshold"><div className="rr-threshold-caption"><span>{centering ? 'Largest border share' : 'Weighted category damage'}</span><strong>{n(amount, '%')}</strong></div>
-    <div className="rr-threshold-track" aria-hidden="true"><span className="rr-threshold-ten" style={{ width: `${percent(centering ? 55 : .2)}%` }}/><span className="rr-threshold-fill" style={{ width: `${percent(amount)}%` }}/><span className="rr-threshold-position" style={{ left: `${percent(amount)}%` }}/></div>
-    <div className="rr-threshold-scale"><span>{minimum}%</span><span>10 band: ≤{centering ? '55' : '0.2'}%</span><span>{maximum}%</span></div>
+  return <div className="rr-threshold"><div className="rr-threshold-caption"><span>{centering ? 'Largest border share' : damageMultiplier(policy) === 1 ? 'Weighted category damage' : 'Scoring category damage'}</span><strong>{n(amount, '%')}</strong></div>
+    <div className="rr-threshold-track" aria-hidden="true"><span className="rr-threshold-ten" style={{ width: `${percent(tenLimit)}%` }}/><span className="rr-threshold-fill" style={{ width: `${percent(amount)}%` }}/><span className="rr-threshold-position" style={{ left: `${percent(amount)}%` }}/></div>
+    <div className="rr-threshold-scale"><span>{minimum}%</span><span>10 band: {centering || tenBand.upperInclusive ? '≤' : '<'}{tenLimit}%</span><span>{maximum}%</span></div>
     {!centering && value.scoreBand && <p className="rr-band-label">{value.scoreBand.label} → side score {value.scoreBand.score}</p>}
   </div>;
 }
@@ -296,7 +308,7 @@ function ReportExperience({ report, explanation, available, images, approved = f
         <details open={printing ? true : undefined}><summary>Rounding and complete calculation</summary><p>Detailed grade, rounded to the nearest tenth: <strong>{n(explanation.overall.displayGrade)}</strong></p>
         {halfPointGrade ? <><p className="rr-awarded">Final ATLAS grade, rounded to the nearest half point: <strong>{n(finalGrade)}</strong></p><p>The final grade is rounded directly from <strong>{String(explanation.overall.rawGrade)}</strong>, with exact halfway values rounded up. The tenth-point detail is not used as a second rounding input.</p></> : <p>Original historical final grade: <strong>{n(finalGrade)}</strong>. This report retains its original tenth-point policy.</p>}
         <p>Total unrounded deduction from 10: {n(explanation.overall.rawDeductionFromTen, ' points')}</p>{explanation.policy.additionalCaps === null && <p>No additional grade cap applies in this rule.</p>}</details></div>
-      <details className="rr-policy" open={printing ? true : undefined}><summary>Grading thresholds and rules</summary><p>{explanation.policy.conditionFormula}</p><p>{explanation.policy.centeringFormula}</p><p>{explanation.policy.overallFormula}</p><p>{explanation.policy.finalGradeFormula}</p><table><thead><tr><th>Weighted damage in a category</th><th>Side score</th></tr></thead><tbody>{explanation.policy.conditionBands.map((band, index) => <tr key={index}><td>{band.label}</td><td>{band.score}</td></tr>)}</tbody></table><p>Rule version: {report.ruleVersion}</p></details>
+      <details className="rr-policy" open={printing ? true : undefined}><summary>Grading thresholds and rules</summary><p>{explanation.policy.conditionFormula}</p><p>{explanation.policy.centeringFormula}</p><p>{explanation.policy.overallFormula}</p><p>{explanation.policy.finalGradeFormula}</p><table><thead><tr><th>{damageMultiplier(explanation.policy) === 1 ? 'Weighted damage in a category' : 'Scoring damage in a category'}</th><th>Side score</th></tr></thead><tbody>{explanation.policy.conditionBands.map((band, index) => <tr key={index}><td>{band.label}</td><td>{band.score}</td></tr>)}</tbody></table><p>Rule version: {report.ruleVersion}</p></details>
     </CalculationContainer>}
     {presentation?.slabPhoto && <details className="rr-slab-disclosure"><summary>Slab photograph</summary><SlabPhotoHero key={presentation.slabPhoto.url} photo={presentation.slabPhoto} brandSrc={brandSrc}/></details>}
     {publicView && <ReportMarketAndDealers presentation={presentation} printing={printing}/>}

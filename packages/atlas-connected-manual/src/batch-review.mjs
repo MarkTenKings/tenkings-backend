@@ -3,6 +3,7 @@ import { batchActionId } from '@atlas/batch-grading';
 import { geometryBase } from '@atlas/manual-workspace/geometry-actions';
 import { defectBase } from '@atlas/manual-workspace/defect-actions';
 import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
+import { ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 
 const SIDES = ['FRONT', 'BACK'];
 const STEPS = ['GEOMETRY', 'INSPECT_FRONT', 'INSPECT_BACK', 'FINDINGS', 'APPROVAL'];
@@ -14,7 +15,7 @@ const findingEvidence = finding => {
   const { origin, reviewResult, ...evidence } = finding;
   return evidence;
 };
-export function assertMachineReportUnchanged(machine, final) {
+function assertReportEvidenceUnchanged(machine, final) {
   requireThat(final?.version === 'atlas-manual-draft-report-v2'
     && final.finalGrade === machine.proposedGrade
     && ['identity', 'cardProfile', 'ruleVersion', 'grade', 'finalGradePolicy'].every(key => same(machine[key], final[key]))
@@ -24,6 +25,10 @@ export function assertMachineReportUnchanged(machine, final) {
     && final.findings.length === machine.findings.length
     && final.findings.every((finding, index) => ['SMART_MARKED', 'ACCEPTED'].includes(finding.reviewResult)
       && same(findingEvidence(finding), findingEvidence(machine.findings[index]))), 409, 'BATCH_REVIEW_REPORT_CHANGED');
+}
+export function assertMachineReportUnchanged(machine, final) {
+  requireThat(machine.ruleVersion === ATLAS_RULE_VERSION, 409, 'BATCH_REVIEW_REPORT_CHANGED');
+  assertReportEvidenceUnchanged(machine, final);
 }
 
 /** This adapter is invoked only by the explicit authenticated review POST.
@@ -42,31 +47,61 @@ export function createBatchReview({ connected, repository, artifacts }) {
       && report.certification === null && report.cardId === job.cardId && report.sourceHash === job.sourceHash
       && report.manualRevision === job.evidence.manualRevision && report.manualContentHash === job.evidence.manualContentHash,
     409, 'BATCH_REVIEW_BINDING_CHANGED');
+    if (saved.review) requireThat(saved.review.reviewed === true && saved.review.reportHash === job.evidence.reportHash
+      && saved.review.manualRevision === report.manualRevision && saved.review.manualContentHash === report.manualContentHash
+      && SIDES.every(side => saved.review.images?.[side] === report.geometry[side].frame.inspectionImageSha256),
+    409, 'BATCH_REVIEW_BINDING_CHANGED');
     return { ...saved, report };
   }
   async function progress(staff, job, report) {
-    let expected = { revision: report.manualRevision, contentHash: report.manualContentHash }, complete = 0;
+    let expected = { revision: report.manualRevision, contentHash: report.manualContentHash }, complete = 0, result;
     for (const step of STEPS) {
       const receipt = await service.status(staff, job.cardId, actionId(job.key, step));
       if (receipt.state !== 'COMMITTED') break;
       requireThat(receipt.result.card.revision === expected.revision + 1, 409, 'BATCH_REVIEW_STALE');
-      expected = receipt.result.card; complete++;
+      result = receipt.result; expected = result.card; complete++;
     }
     const card = await service.read(staff, job.cardId);
     requireThat(card.revision === expected.revision && card.contentHash === expected.contentHash
       && card.draft.source.sourceHash === job.sourceHash, 409, 'BATCH_REVIEW_STALE');
-    return { card, complete };
+    return { card, complete, result };
+  }
+  async function recoverApproval(staff, job, report, result) {
+    const approvalActionId = actionId(job.key, 'APPROVAL');
+    const approved = await service.readApproval(staff, job.cardId, approvalActionId);
+    requireThat(approved?.sourceRevision === report.manualRevision + 4 && approved.report?.report,
+      409, 'BATCH_REVIEW_BINDING_CHANGED');
+    const final = await artifacts.read(approved.report.report.ref, { cardId: job.cardId, kind: 'REPORT',
+      sourceHash: approved.report.report.sourceHash }, { signal: AbortSignal.timeout(20000) });
+    requireThat(digest(JSON.stringify(final)) === approved.report.report.sourceHash, 409, 'BATCH_REVIEW_BINDING_CHANGED');
+    // Recovery reads the exact committed award, including a historical policy.
+    // It never creates a fresh approval or substitutes a newly calculated grade.
+    assertReportEvidenceUnchanged(report, final);
+    explainAtlasManualReport(final);
+    let publication = result.publication;
+    if (!publication || publication.state !== 'PUBLISHED') {
+      try { publication = await connected.publication.publish(staff, job.cardId, approvalActionId); }
+      catch { publication = { state: 'PENDING', actionId: approvalActionId, retryable: true }; }
+    }
+    return { cardId: job.cardId, actionId: approvalActionId, publication, receipt: result.receipt };
   }
   return Object.freeze({
     async resolveCorrections({ staff, card, batchKey, reportHash }) {
       const { job, report, review } = await load(staff, batchKey);
-      requireThat(!review && card.cardId === job.cardId && reportHash === job.evidence.reportHash
-        && card.revision === report.manualRevision && card.contentHash === report.manualContentHash, 409, 'BATCH_REVIEW_STALE');
+      requireThat(card.cardId === job.cardId && reportHash === job.evidence.reportHash, 409, 'BATCH_REVIEW_STALE');
+      let resumeBase;
+      if (review && report.ruleVersion !== ATLAS_RULE_VERSION) {
+        const recovered = await progress(staff, job, report);
+        requireThat(recovered.complete < STEPS.length && card.revision === recovered.card.revision
+          && card.contentHash === recovered.card.contentHash, 409, 'BATCH_REVIEW_STALE');
+        resumeBase = { revision: card.revision, contentHash: card.contentHash, completedSteps: recovered.complete };
+      } else requireThat(!review && card.revision === report.manualRevision && card.contentHash === report.manualContentHash,
+        409, 'BATCH_REVIEW_STALE');
       const { astra: analysis } = await connected.assistance.status(staff, job.cardId, job.analysisActionId);
       requireThat(analysis?.status === 'READY' && analysis.analysisId === report.analysisId
         && digest(canonical(analysis.proposals.map(proposal => ({ ...proposal, reviewStatus: 'UNREVIEWED' })))) === report.analysisResultHash,
       409, 'BATCH_REVIEW_ANALYSIS_CHANGED');
-      return { batchKey, reportHash, report, proposals: analysis.proposals };
+      return { batchKey, reportHash, report, proposals: analysis.proposals, ...(resumeBase ? { resumeBase } : {}) };
     },
     async detail(staff, key) {
       const { job, report, review, canCertify } = await load(staff, key);
@@ -86,7 +121,9 @@ export function createBatchReview({ connected, repository, artifacts }) {
       const geometryUnresolved = report.calculationState === 'GEOMETRY_UNRESOLVED' || !Number.isFinite(report.proposedGrade);
       const explanation = geometryUnresolved ? null : explainAtlasManualReport({ ...report, version: 'atlas-manual-draft-report-v2', finalGrade: report.proposedGrade });
       await repository.readReview(staff, key);
-      const reviewRequiredReason = geometryUnresolved ? 'BATCH_FINAL_GEOMETRY_REQUIRED' : report.unmeasurableProposals?.length ? 'BATCH_PROPOSAL_REVIEW_REQUIRED' : null;
+      const reviewRequiredReason = geometryUnresolved ? 'BATCH_FINAL_GEOMETRY_REQUIRED'
+        : report.unmeasurableProposals?.length ? 'BATCH_PROPOSAL_REVIEW_REQUIRED'
+        : report.ruleVersion !== ATLAS_RULE_VERSION && complete < STEPS.length ? 'BATCH_SCORING_POLICY_UPDATED' : null;
       return { key, cardId: job.cardId, reportHash: job.evidence.reportHash, report, explanation, images,
         canCertify: canCertify && !reviewRequiredReason, reviewRequiredReason,
         resumeAvailable: Boolean(review), approved: complete === STEPS.length };
@@ -100,7 +137,11 @@ export function createBatchReview({ connected, repository, artifacts }) {
       requireThat(!report.unmeasurableProposals?.length, 409, 'BATCH_PROPOSAL_REVIEW_REQUIRED');
       requireThat(input.reportHash === job.evidence.reportHash && SIDES.every(side =>
         input.images[side] === report.geometry[side].frame.inspectionImageSha256), 409, 'BATCH_REVIEW_BINDING_CHANGED');
-      await progress(staff, job, report);
+      const recovered = await progress(staff, job, report);
+      if (report.ruleVersion !== ATLAS_RULE_VERSION) {
+        requireThat(review && recovered.complete === STEPS.length, 409, 'BATCH_SCORING_POLICY_UPDATED');
+        return recoverApproval(staff, job, report, recovered.result);
+      }
       const response = await connected.assistance.status(staff, job.cardId, job.analysisActionId), analysis = response.astra;
       requireThat(analysis?.status === 'READY' && analysis.analysisId === report.analysisId
         && digest(canonical(analysis.proposals.map(proposal => ({ ...proposal, reviewStatus: 'UNREVIEWED' })))) === report.analysisResultHash,
@@ -142,22 +183,9 @@ export function createBatchReview({ connected, repository, artifacts }) {
         requireThat(result.card.revision === card.revision + 1, 409, 'BATCH_REVIEW_STALE'); expected = result.card;
       }
       await progress(staff, job, report);
-      const approvalActionId = actionId(key, 'APPROVAL');
       // An idempotent recovery verifies the actual saved approval too; a
       // coincidentally occupied action id can never substitute another report.
-      const approved = await service.readApproval(staff, job.cardId, approvalActionId);
-      requireThat(approved?.sourceRevision === report.manualRevision + 4 && approved.report?.report,
-        409, 'BATCH_REVIEW_BINDING_CHANGED');
-      const final = await artifacts.read(approved.report.report.ref, { cardId: job.cardId, kind: 'REPORT',
-        sourceHash: approved.report.report.sourceHash }, { signal: AbortSignal.timeout(20000) });
-      requireThat(digest(JSON.stringify(final)) === approved.report.report.sourceHash, 409, 'BATCH_REVIEW_BINDING_CHANGED');
-      assertMachineReportUnchanged(report, final);
-      let publication = result.publication;
-      if (!publication || publication.state !== 'PUBLISHED') {
-        try { publication = await connected.publication.publish(staff, job.cardId, approvalActionId); }
-        catch { publication = { state: 'PENDING', actionId: approvalActionId, retryable: true }; }
-      }
-      return { cardId: job.cardId, actionId: approvalActionId, publication, receipt: result.receipt };
+      return recoverApproval(staff, job, report, result);
     },
   });
 }

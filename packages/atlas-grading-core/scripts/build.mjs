@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(readFileSync(resolve(root, 'extraction-manifest.json'), 'utf8'));
 const modules = [...manifest.unchangedModules, ...(manifest.optimizedModules ?? [])];
-const entries = [...modules.map(m => resolve(root, 'src', m.canonical.split('/').at(-1))), resolve(root, 'src/report.ts'), resolve(root, 'src/review-action-contract.ts'), resolve(root, 'src/manual-report.ts')];
+const entries = [...modules.map(m => resolve(root, 'src', m.canonical.split('/').at(-1))), resolve(root, 'src/report.ts'), resolve(root, 'src/review-action-contract.ts'), resolve(root, 'src/atlas-policy.ts'), resolve(root, 'src/manual-report.ts')];
 const result = await build({ absWorkingDir: root, entryPoints: entries, outdir: resolve(root, 'dist'), bundle: true, splitting: true,
     format: 'esm', platform: 'neutral', target: ['es2022'], metafile: true, logLevel: 'silent',
     conditions: ['import', 'default'], sourcemap: false });

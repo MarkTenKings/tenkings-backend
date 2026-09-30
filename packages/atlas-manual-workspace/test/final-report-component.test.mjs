@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import * as scoring from '@atlas/grading-core/scoring';
+import { calculateSpeedsterReview } from '@atlas/grading-core/review';
 import * as traceCodec from '@atlas/grading-core/trace-codec';
 import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 import * as presentation from '../src/report-review-ui.mjs';
@@ -189,6 +190,12 @@ test('new final grade uses the authoritative half-point field and historical rep
   assert.equal(presentation.reportAwardedGrade({ version: 'atlas-manual-draft-report-v2', finalGradePolicy: 'unknown', finalGrade: 10 }), null);
   const props = fixture(), report = props.preview.review.report;
   report.version = 'atlas-manual-draft-report-v1'; delete report.finalGrade; delete report.finalGradePolicy;
+  // Reconstruct the retained historical rule explicitly; a newly calculated
+  // ATLAS report cannot become historical merely by changing its shape tag.
+  report.ruleVersion = 'TK_SPEEDSTER_2026_07_31';
+  const centeringBorders = scoring.measureSpeedsterCenteringBorders([{ x: .04, y: .03 }, { x: .96, y: .03 }, { x: .96, y: .97 }, { x: .04, y: .97 }]);
+  const historical = calculateSpeedsterReview({ front: { centeringBorders }, back: { centeringBorders } }, report.findings);
+  report.grade = historical.grade; report.findings = historical.defects;
   props.preview.review.explanation = explainAtlasManualReport(report);
   const f = harness(props); assert.equal(f.has('Original historical grade'), true); assert.equal(f.has('retains its original tenth-point policy'), true);
   assert.equal(f.has('Final ATLAS grade, rounded to the nearest half point'), false);
@@ -835,4 +842,82 @@ test('actual public grade animation restarts while playing, pauses, resumes and 
   assert.ok(text(story()).includes(`Final grade ${props.explanation.overall.finalGrade} · calculation complete`));
   const reduced = harness(historicalPublicReport(), { publicView: true, controlledFrames: true, reducedMotion: true }); reduced.ready(); reduced.click('Grade science'); reduced.click('Replay calculation');
   assert.equal(reduced.control('A grade you can follow').props['data-motion'], 'complete'); assert.equal(reduced.pendingFrames(), 0);
+});
+
+test('new report calculations show the global factor, policy bands and base weighted-area allowance on screen and paper', () => {
+  const props = fixture(), before = structuredClone(props.preview), explanation = props.preview.review.explanation;
+  assert.equal(explanation.policy.globalDamageMultiplier, 1.5);
+  assert.equal(explanation.policy.conditionBands.find(band => band.score === 10).upperPercent, .01);
+  const f = harness(props); f.ready();
+  const values = node => all(node, item => item.type === 'data').map(item => item.props.value);
+  const verifyCategories = () => {
+    const scales = f.nodes(node => node.props.className === 'rr-threshold-scale');
+    assert.equal(scales.filter(node => text(node).includes('10 band: ≤0.01%')).length, 6);
+    assert.equal(scales.filter(node => text(node).includes('10 band: ≤55%')).length, 2);
+    for (const [index, threshold] of f.nodes(node => node.props.className === 'rr-threshold'
+      && text(node).includes('Scoring category damage')).entries()) {
+      const scale = all(threshold, node => node.props.className === 'rr-threshold-scale')[0];
+      assert.equal(text(all(scale, node => node.type === 'span').at(-1)), '0.1%');
+      assert.ok(Math.abs(parseFloat(all(threshold, node => node.props.className === 'rr-threshold-ten')[0].props.style.width) - 10) < 1e-12);
+      assert.ok(Math.abs(values(threshold)[0] - (index < 4 ? 0 : .025420940874)) < 1e-12, 'the scale shows adjusted scoring damage');
+      assert.ok(Math.abs(parseFloat(all(threshold, node => node.props.className === 'rr-threshold-fill')[0].props.style.width)
+        - (index < 4 ? 0 : 25.420940874)) < 1e-9, 'the marker uses the adjusted percentage');
+    }
+    const baseEquations = f.nodes(node => node.type === 'p' && text(node).startsWith('Weighted damage:') && text(node).includes('× 100'));
+    assert.equal(baseEquations.length, 2);
+    for (const equation of baseEquations) assert.deepEqual(values(equation), [.85, 5015.55, explanation.sides.FRONT.SURFACE.weightedDamagePercent]);
+    const equations = f.nodes(node => node.type === 'p' && text(node).startsWith('Scoring damage:'));
+    assert.equal(equations.length, 6);
+    for (const [index, zone] of ['CORNERS', 'CORNERS', 'EDGES', 'EDGES', 'SURFACE', 'SURFACE'].entries()) {
+      const value = explanation.sides[index % 2 ? 'BACK' : 'FRONT'][zone];
+      assert.deepEqual(values(equations[index]), [value.weightedDamagePercent, 1.5, value.scoringDamagePercent]);
+    }
+    const allowances = f.nodes(node => node.type === 'p' && text(node).startsWith('Grade-10 allowance:'));
+    assert.equal(allowances.length, 2);
+    for (const allowance of allowances) {
+      assert.ok(text(allowance).includes('before the global multiplier'));
+      assert.ok(Math.abs(values(allowance)[0] - .33437) < 1e-12);
+    }
+    const policy = f.nodes(node => node.props.className === 'rr-policy')[0];
+    assert.ok(all(policy, node => node.type === 'td' && text(node) === '9.5').length === 1);
+  };
+  verifyCategories();
+  const finding = f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Back 1 ·'))[0];
+  finding.props.onClick(); f.render();
+  const region = explanation.findings[1].regions[0];
+  const equation = all(f.control('Selected finding calculation'), node => node.type === 'p' && text(node).includes('Scoring damage after global multiplier'))[0];
+  assert.deepEqual(values(equation), [region.weightedDamagePercent, 1.5, region.scoringDamagePercent]);
+  f.listeners.get('beforeprint')(); f.render(); verifyCategories();
+  const printed = f.nodes(node => node.props.className === 'rr-print-findings')[0];
+  assert.equal(all(printed, node => node.type === 'p' && text(node).includes('Scoring damage after global multiplier')).length, 2);
+  f.listeners.get('afterprint')(); f.render();
+  assert.deepEqual(props.preview, before); assert.equal(f.readyValues.at(-1), true);
+});
+
+test('saved historical reports keep original condition scale, arithmetic and allowance without a global policy field', () => {
+  const props = historicalPublicReport(), before = structuredClone(props);
+  assert.equal(props.explanation.policy.globalDamageMultiplier, undefined);
+  const f = harness(props, { publicView: true }); f.ready(); f.click('Grade science');
+  const thresholds = f.nodes(node => node.props.className === 'rr-threshold' && text(node).includes('Weighted category damage'));
+  assert.equal(thresholds.length, 6);
+  for (const threshold of thresholds) {
+    assert.ok(text(threshold).includes('10 band: ≤0.2%'));
+    const scale = all(threshold, node => node.props.className === 'rr-threshold-scale')[0];
+    assert.equal(text(all(scale, node => node.type === 'span').at(-1)), '10%');
+    assert.equal(all(threshold, node => node.props.className === 'rr-threshold-ten')[0].props.style.width, '2%');
+  }
+  assert.equal(f.has('before the global multiplier'), false);
+  const equations = f.nodes(node => node.type === 'p' && text(node).startsWith('Weighted damage:') && text(node).includes('× 100'));
+  assert.equal(equations.length, 3);
+  assert.ok(equations.every(node => !text(node).includes('× 100 × ')));
+  const allowances = f.nodes(node => node.type === 'p' && text(node).startsWith('Grade-10 allowance:'));
+  assert.equal(allowances.length, 3);
+  for (const [index, zone] of ['CORNERS', 'EDGES', 'SURFACE'].entries()) {
+    const actual = all(allowances[index], node => node.type === 'data')[0].props.value;
+    assert.ok(Math.abs(actual - props.explanation.sides.BACK[zone].tenBandMaxWeightedAreaMm2) < 1e-12);
+  }
+  f.click('Findings 13');
+  const equation = all(f.control('Selected finding calculation'), node => node.type === 'p' && text(node).includes('Share of the edges area'))[0];
+  assert.ok(equation); assert.equal(text(equation).includes('× 100 × '), false);
+  assert.deepEqual(props.report, before.report); assert.deepEqual(props.explanation, before.explanation);
 });

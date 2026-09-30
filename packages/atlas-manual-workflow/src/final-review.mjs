@@ -1,6 +1,6 @@
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
-import { adoptDefectProposals, defectBase } from '@atlas/manual-workspace/defect-actions';
-import { calculateSpeedsterReview } from '@atlas/grading-core/review';
+import { adoptDefectProposals, createDefectWorkspace, parseDefectWorkspace, defectBase } from '@atlas/manual-workspace/defect-actions';
+import { calculateAtlasReview, ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 import { measureSpeedsterCenteringBorders } from '@atlas/grading-core/scoring';
 import { calculateAtlasFinalGrade, explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 
@@ -10,13 +10,30 @@ export const proposalFindingId = id => `astra-${digest(id).slice(0, 32)}`;
 /** Opening corrections adopts evidence, never a human decision. The immutable
  * original report and model observations remain alongside the working draft. */
 export function beginFinalReview({ card, geometry, defects, packet }) {
-  const { report, reportHash, batchKey, proposals } = packet;
+  const { report, reportHash, batchKey, proposals, resumeBase } = packet;
+  // Only the trusted batch adapter can supply a base verified against the
+  // original review's complete receipt chain. The browser supplies no base.
+  const currentBase = resumeBase ?? { revision: report?.manualRevision, contentHash: report?.manualContentHash };
   requireThat(!card.draft.finalReview && report?.authority === 'MACHINE_PROPOSAL' && report.certification === null
     && report.cardId === card.cardId && report.sourceHash === card.draft.source.sourceHash
-    && report.manualRevision === card.revision && report.manualContentHash === card.contentHash
+    && currentBase.revision === card.revision && currentBase.contentHash === card.contentHash
+    && (!resumeBase || report.ruleVersion !== ATLAS_RULE_VERSION && Number.isSafeInteger(resumeBase.completedSteps)
+      && resumeBase.completedSteps >= 0 && resumeBase.completedSteps < 5
+      && report.manualRevision + resumeBase.completedSteps === card.revision)
     && digest(JSON.stringify(report)) === reportHash && Array.isArray(proposals), 409, 'BATCH_REVIEW_STALE');
+  for (const side of SIDES) requireThat(canonical(defects.sides[side].frame) === canonical(report.geometry[side].frame),
+    409, 'BATCH_REVIEW_BINDING_CHANGED');
+  if (resumeBase) {
+    // Reopen the same immutable proposals for a fresh, explicit review under
+    // the new policy. Old inspection receipts remain saved, but cannot confirm
+    // this review. Keep monotonically increasing local evidence revisions.
+    const empty = createDefectWorkspace({ cardId: defects.cardId, profile: defects.profile,
+      sides: Object.fromEntries(SIDES.map(side => [side, { frame: defects.sides[side].frame, cornerShape: defects.sides[side].cornerShape }])) });
+    defects = parseDefectWorkspace({ ...empty, draftRevision: defects.draftRevision + 1,
+      sides: Object.fromEntries(SIDES.map(side => [side, { ...empty.sides[side],
+        findingRevision: defects.sides[side].findingRevision + 1, reviewRevision: defects.sides[side].reviewRevision + 1 }])) });
+  }
   for (const side of SIDES) {
-    requireThat(canonical(defects.sides[side].frame) === canonical(report.geometry[side].frame), 409, 'BATCH_REVIEW_BINDING_CHANGED');
     defects = adoptDefectProposals(defects, { side, base: defectBase(defects, side),
       source: { method: 'DETECTOR', version: 'astra-machine-proposal-v1', id: report.analysisId },
       findings: report.findings.filter(finding => finding.side === side) });
@@ -74,7 +91,7 @@ export function finalReviewPreview(card, state) {
     centeringBorders: measureSpeedsterCenteringBorders(state.geometry.sides[side].printed.quad),
   }]));
   const findings = SIDES.flatMap(side => state.defects.sides[side].findings);
-  const calculated = capture ? calculateSpeedsterReview(capture, findings) : { grade: null, defects: findings };
+  const calculated = capture ? calculateAtlasReview(capture, findings) : { grade: null, defects: findings };
   const geometryReview = { policy: 'atlas-final-human-geometry-review-v1', requiresHumanConfirmation: true,
     sides: Object.fromEntries(SIDES.map(side => {
       const slot = state.geometry.sides[side];
@@ -88,7 +105,8 @@ export function finalReviewPreview(card, state) {
       && review.proposalId === proposal.id && review.action === 'REJECT'));
   const report = { ...state.finalReview.report, version: 'atlas-review-provisional-report-v1', authority: 'HUMAN_REVIEW_DRAFT',
     originalMachineReportHash: state.finalReview.reportHash, manualRevision: card.revision, manualContentHash: card.contentHash,
-    identity: state.identity, grade: calculated.grade, proposedGrade: calculated.grade ? calculateAtlasFinalGrade(calculated.grade.overall.rawGrade) : null,
+    identity: state.identity, ruleVersion: ATLAS_RULE_VERSION,
+    grade: calculated.grade, proposedGrade: calculated.grade ? calculateAtlasFinalGrade(calculated.grade.overall.rawGrade) : null,
     calculationState: calculated.grade ? 'COMPLETE' : 'GEOMETRY_UNRESOLVED', unresolvedGeometry, geometryReview,
     // Original receipts and warnings remain bound to the immutable machine
     // report; they must not impersonate measurements of a corrected frame.

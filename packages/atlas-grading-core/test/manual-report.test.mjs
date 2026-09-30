@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { previewAtlasManualReport } from '../dist/manual-report.js';
 import { previewAtlasReport } from '../dist/report.js';
 import { calculateSpeedsterReview } from '../dist/review.js';
+import { ATLAS_RULE_VERSION, calculateAtlasReview } from '../dist/atlas-policy.js';
 import { measureSpeedsterCenteringBorders } from '../dist/scoring.js';
 
 const quad = [{ x: .04, y: .03 }, { x: .96, y: .03 }, { x: .96, y: .97 }, { x: .04, y: .97 }];
@@ -26,12 +27,16 @@ function source() {
   };
 }
 
-test('manual content uses unchanged deterministic math without detector provenance or approval', () => {
+test('manual content uses versioned ATLAS math without detector provenance or approval', () => {
   const input = source(), before = structuredClone(input), report = previewAtlasManualReport(input);
   const centeringBorders = measureSpeedsterCenteringBorders(quad);
-  const { grade } = calculateSpeedsterReview({ front: { centeringBorders }, back: { centeringBorders } }, input.reviewedDefects);
+  const capture = { front: { centeringBorders }, back: { centeringBorders } };
+  const { grade } = calculateAtlasReview(capture, input.reviewedDefects);
   assert.deepEqual(report.grade, grade);
-  assert.deepEqual(report.grade, previewAtlasReport({ ...input, gradeReport: { ...grade, detectorVersion: 'legacy-parity-fixture' } }).grade);
+  assert.equal(report.ruleVersion, ATLAS_RULE_VERSION);
+  const legacyGrade = calculateSpeedsterReview(capture, input.reviewedDefects).grade;
+  assert.deepEqual(legacyGrade, previewAtlasReport({ ...input, gradeReport: { ...legacyGrade, detectorVersion: 'legacy-parity-fixture' } }).grade);
+  assert.notDeepEqual(report.grade, legacyGrade);
   assert.equal(report.inspection.method, 'HUMAN');
   assert.equal(report.findings[0].reviewResult, 'SMART_MARKED');
   for (const field of ['detectorVersion', 'approval', 'certificate', 'publishedLesson']) assert.equal(report[field], undefined);

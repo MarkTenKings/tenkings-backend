@@ -6,6 +6,7 @@ import { workspace } from '../../atlas-manual-workspace/test/defect-fixtures.mjs
 import { parseDefectWorkspace } from '../../atlas-manual-workspace/src/defect-actions.mjs';
 import { encodeSpeedsterTraceRleV1 } from '@atlas/grading-core/trace-codec';
 import { SPEEDSTER_RULE_VERSION } from '@atlas/grading-core/contracts';
+import { ATLAS_RULE_VERSION } from '@atlas/grading-core/atlas-policy';
 
 const sides=['FRONT','BACK'],quad=[{x:.04,y:.03},{x:.96,y:.03},{x:.96,y:.97},{x:.04,y:.97}];
 function fixture(){
@@ -36,6 +37,9 @@ test('saved printed correction refreshes numbers and current warnings while pres
   f.state.defects.sides.FRONT.measurement={base:{frameId:'prepared-FRONT'},receipt:{version:'current-cpu-receipt'}};
   const complete=finalReviewPreview({...f.card,revision:5,contentHash:'d'.repeat(64)},f.state);
   assert.equal(complete.report.calculationState,'COMPLETE');assert.ok(Number.isFinite(complete.report.proposedGrade));assert.ok(complete.explanation);
+  assert.equal(complete.report.ruleVersion,ATLAS_RULE_VERSION);
+  assert.equal(complete.explanation.ruleVersion,ATLAS_RULE_VERSION);
+  assert.equal(original.report.ruleVersion,SPEEDSTER_RULE_VERSION);
   assert.deepEqual(complete.report.unresolvedGeometry,[]);assert.deepEqual(complete.report.limitations,['Capture glare may obscure damage.']);
   assert.equal(complete.report.geometryReview.sides.BACK.printedActor,'HUMAN');assert.equal(complete.report.geometryReview.sides.BACK.confirmed,false);
   assert.deepEqual(complete.report.originalMachineEvidence.measurementReceipts,original.report.measurementReceipts);

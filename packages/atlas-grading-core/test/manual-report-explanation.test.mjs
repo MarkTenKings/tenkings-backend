@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { previewAtlasManualReport, explainAtlasManualReport, calculateAtlasFinalGrade, ATLAS_FINAL_GRADE_POLICY } from '../dist/manual-report.js';
 import { calculateConditionScore } from '../dist/scoring.js';
+import { calculateAtlasConditionScore, calculateAtlasScoringDamagePercent, ATLAS_RULE_VERSION } from '../dist/atlas-policy.js';
+import { calculateSpeedsterReview } from '../dist/review.js';
+import { measureSpeedsterCenteringBorders } from '../dist/scoring.js';
+import { SPEEDSTER_RULE_VERSION } from '../dist/contracts.js';
 import { encodeSpeedsterTraceRleV1 } from '../dist/trace-codec.js';
 
 const quad = [{ x: .04, y: .03 }, { x: .96, y: .03 }, { x: .96, y: .97 }, { x: .04, y: .97 }];
@@ -32,9 +36,10 @@ test('a nonzero 42-pixel Back surface mark correctly explains an exact 10 and pr
   const value = explainAtlasManualReport(report), region = value.findings[0].regions[0];
   assert.equal(region.pixelCount, 42); assert.equal(region.areaMm2, .105); assert.equal(region.weightedAreaMm2, .105);
   close(region.eligibleAreaMm2, 5015.55); assert.equal(region.weightedDamagePercent, .002093489248);
+  assert.equal(region.scoringDamagePercent, .003140233872);
   assert.equal(region.scoreWithFinding, 10); assert.equal(region.scoreWithoutFinding, 10);
   assert.equal(region.marginalSubgradeEffect, 0); assert.equal(region.marginalOverallEffect, 0);
-  close(value.sides.BACK.SURFACE.tenBandMaxWeightedAreaMm2, 10.0311);
+  close(value.sides.BACK.SURFACE.tenBandMaxWeightedAreaMm2, .33437);
   assert.deepEqual(value.overall, { rawGrade: 10, displayGrade: 10, roundingDelta: 0, rawDeductionFromTen: 0, displayDeductionFromTen: 0,
     finalGrade: 10, finalGradePolicy: ATLAS_FINAL_GRADE_POLICY, finalRoundingDelta: 0 });
   assert.equal(value.policy.additionalCaps, null); assert.equal(value.policy.marginalEffectsAdditive, false);
@@ -45,34 +50,41 @@ test('a nonzero 42-pixel Back surface mark correctly explains an exact 10 and pr
   assert.equal(sha(previewAtlasManualReport(input)), hash);
 });
 
-test('condition descriptions match every exact threshold and independently expected score', () => {
+test('condition descriptions match every new scoring-percent band and the 1.5 multiplier', () => {
   const bands = explain([]).policy.conditionBands;
-  for (const [damage, score] of [[0,10],[.2,10],[.200001,9],[1,9],[1.000001,8],[2,8],[2.000001,7],
-    [3.5,7],[3.500001,6],[4.999999,6],[5,5],[5.999999,5],[6,4],[6.999999,4],[7,3],[7.999999,3],
-    [8,2],[9.999999,2],[10,1],[20,1]]) {
+  assert.equal(explain([]).policy.globalDamageMultiplier, 1.5);
+  for (const [damage, score] of [[0,10],[.01,10],[.010001,9.5],[.02,9.5],[.020001,9],[.03,9],
+    [.030001,8],[.04,8],[.040001,7],[.05,7],[.050001,6],[.06,6],[.060001,5],[.07,5],
+    [.070001,4],[.08,4],[.080001,3],[.09,3],[.090001,2],[.1,2],[.100001,1],[20,1]]) {
     const matches = bands.filter(b => (b.lowerInclusive ? damage >= b.lowerPercent : damage > b.lowerPercent)
       && (b.upperPercent === null || (b.upperInclusive ? damage <= b.upperPercent : damage < b.upperPercent)));
-    assert.equal(matches.length, 1); assert.equal(matches[0].score, score); assert.equal(calculateConditionScore(damage), score);
+    assert.equal(matches.length, 1); assert.equal(matches[0].score, score);
   }
-  const justBelow = explain([finding({ area: 80 * .0025, denominator: 100 })]);
-  const onePixelAbove = explain([finding({ area: 81 * .0025, denominator: 100 })]);
-  assert.equal(justBelow.sides.BACK.SURFACE.score, 10); assert.equal(onePixelAbove.sides.BACK.SURFACE.score, 9);
-  assert.equal(onePixelAbove.categories.surface.subgrade, 9.7);
-  assert.equal(onePixelAbove.findings[0].regions[0].marginalSubgradeEffect, .3);
-  assert.equal(onePixelAbove.findings[0].regions[0].marginalOverallEffect, .075);
+  for (const [base, score] of [[0,10],[.006,10],[.01,9.5],[.016,9],[.023,8],[.03,7],
+    [.037,6],[.043,5],[.05,4],[.057,3],[.063,2],[.067,1]]) {
+    assert.equal(calculateAtlasConditionScore(base), score);
+    close(calculateAtlasScoringDamagePercent(base), base * 1.5);
+  }
+  const justBelow = explain([finding({ area: 2 * .0025, denominator: 100 })]);
+  const onePixelAbove = explain([finding({ area: 3 * .0025, denominator: 100 })]);
+  assert.equal(justBelow.sides.BACK.SURFACE.score, 10); assert.equal(onePixelAbove.sides.BACK.SURFACE.score, 9.5);
+  assert.equal(onePixelAbove.categories.surface.subgrade, 9.85);
+  assert.equal(onePixelAbove.findings[0].regions[0].marginalSubgradeEffect, .15);
+  assert.equal(onePixelAbove.findings[0].regions[0].marginalOverallEffect, .0375);
 });
 
 test('marginal effects are independently calculated and must not be summed as deductions', () => {
-  const value = explain([finding({ id: 'one', side: 'FRONT', area: .15, denominator: 100 }),
-    finding({ id: 'two', side: 'FRONT', area: .15, denominator: 100 })]);
-  assert.equal(value.sides.FRONT.SURFACE.weightedDamagePercent, .3);
-  assert.equal(value.categories.surface.subgrade, 9.3);
+  const value = explain([finding({ id: 'one', side: 'FRONT', area: .004, denominator: 100 }),
+    finding({ id: 'two', side: 'FRONT', area: .004, denominator: 100 })]);
+  assert.equal(value.sides.FRONT.SURFACE.weightedDamagePercent, .008);
+  assert.equal(value.sides.FRONT.SURFACE.scoringDamagePercent, .012);
+  assert.equal(value.categories.surface.subgrade, 9.65);
   for (const f of value.findings) {
-    assert.equal(f.regions[0].scoreWithFinding, 9); assert.equal(f.regions[0].scoreWithoutFinding, 10);
-    assert.equal(f.regions[0].marginalSubgradeEffect, .7);
+    assert.equal(f.regions[0].scoreWithFinding, 9.5); assert.equal(f.regions[0].scoreWithoutFinding, 10);
+    assert.equal(f.regions[0].marginalSubgradeEffect, .35);
   }
-  close(value.categories.surface.deductionFromTen, .7);
-  close(value.findings.reduce((sum, f) => sum + f.regions[0].marginalSubgradeEffect, 0), 1.4);
+  close(value.categories.surface.deductionFromTen, .35);
+  close(value.findings.reduce((sum, f) => sum + f.regions[0].marginalSubgradeEffect, 0), .7);
   assert.equal(value.policy.marginalEffectsAdditive, false);
 });
 
@@ -91,9 +103,9 @@ test('source traces retain multiple measured zones and multiplier-based damage w
   const value = explain([trace]);
   assert.deepEqual(value.findings[0].regions.map(r => r.zone), ['CORNERS','EDGES']);
   for (const r of value.findings[0].regions) { assert.equal(r.multiplier, 1.5); assert.equal(r.areaMm2, 1); assert.equal(r.weightedAreaMm2, 1.5); }
-  assert.equal(value.sides.BACK.CORNERS.score, 8); assert.equal(value.sides.BACK.EDGES.score, 9);
-  assert.equal(value.categories.corners.subgrade, 9.4); assert.equal(value.categories.edges.subgrade, 9.7);
-  close(value.overall.rawGrade, 9.775); assert.equal(value.overall.displayGrade, 9.8);
+  assert.equal(value.sides.BACK.CORNERS.score, 1); assert.equal(value.sides.BACK.EDGES.score, 1);
+  assert.equal(value.categories.corners.subgrade, 7.3); assert.equal(value.categories.edges.subgrade, 7.3);
+  close(value.overall.rawGrade, 8.65); assert.equal(value.overall.displayGrade, 8.7);
   // A retained, fully shadowed exact trace owns no measured region. Its full
   // bitmap must never be counted again by an explanation-only projection.
   const shadowed = explain([trace, { ...trace, id: 'shadowed', measurementRegions: [] }]);
@@ -156,9 +168,13 @@ test('new ATLAS reports award half-point grades directly from raw with upward qu
 });
 
 test('historical V1 report bytes and tenth-point final remain unchanged by the new policy', () => {
-  const current = previewAtlasManualReport(source([finding({ side: 'FRONT', area: .7, denominator: 100 })]));
+  const input = source([finding({ side: 'FRONT', area: .7, denominator: 100 })]);
+  const current = previewAtlasManualReport(input);
+  const centeringBorders = measureSpeedsterCenteringBorders(quad);
+  const oldReview = calculateSpeedsterReview({ front: { centeringBorders }, back: { centeringBorders } }, input.reviewedDefects);
   const { finalGrade, finalGradePolicy, ...legacyFields } = current;
-  const historical = { ...legacyFields, version: 'atlas-manual-draft-report-v1' };
+  const historical = { ...legacyFields, version: 'atlas-manual-draft-report-v1', ruleVersion: SPEEDSTER_RULE_VERSION,
+    grade: oldReview.grade, findings: oldReview.defects };
   // Captured from the V1 builder before this policy change, independently of
   // the new rounding path. The persisted old report keeps its original hash.
   const historicalHash = 'd0c72494ea26530f1ebccc5975627da31ddafe12306dea38bb8957edda751453';
@@ -167,8 +183,11 @@ test('historical V1 report bytes and tenth-point final remain unchanged by the n
   assert.equal(explanation.overall.rawGrade, 9.825); assert.equal(explanation.overall.displayGrade, 9.8);
   assert.equal(explanation.overall.finalGrade, 9.8);
   assert.equal(explanation.overall.finalGradePolicy, 'atlas-historical-tenth-v1');
-  assert.equal(current.finalGrade, 10); assert.equal(sha(historical), historicalHash);
-  assert.deepEqual(historical.grade, current.grade); assert.notEqual(sha(current), historicalHash);
+  assert.equal(current.ruleVersion, ATLAS_RULE_VERSION); assert.equal(current.finalGrade, 8.5); assert.equal(sha(historical), historicalHash);
+  assert.notDeepEqual(historical.grade, current.grade); assert.notEqual(sha(current), historicalHash);
+  assert.equal(explanation.policy.globalDamageMultiplier, undefined);
+  assert.equal(explanation.sides.FRONT.SURFACE.scoringDamagePercent, undefined);
+  assert.equal(calculateConditionScore(historical.grade.front.surface.weightedDamagePercent), historical.grade.front.surface.score);
   assert.throws(() => explainAtlasManualReport({ ...historical, finalGrade: 10 }), /EXPLANATION_INVALID/);
   assert.throws(() => explainAtlasManualReport({ ...current, finalGradePolicy: 'unreviewed-future-policy' }), /EXPLANATION_INVALID/);
   assert.throws(() => explainAtlasManualReport({ ...current, version: 'atlas-manual-draft-report-v3' }), /EXPLANATION_INVALID/);

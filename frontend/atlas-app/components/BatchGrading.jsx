@@ -29,6 +29,7 @@ const messages = {
   BATCH_RESUME_STALE: 'This card changed. Its current progress has been refreshed.',
   BATCH_ALREADY_APPROVED: 'This report is already approved.',
   BATCH_CONTINUE_MANUAL_REVIEW: 'Continue your saved corrections in the card workspace.',
+  BATCH_SCORING_POLICY_UPDATED: 'This draft uses an earlier scoring policy. Open final review to recalculate its saved measurements with the current policy before approval.',
   BATCH_FINAL_GEOMETRY_REQUIRED: 'Defect analysis and measurements are saved. Review the physical outlines and printed borders in final review; centering and the overall grade remain unavailable until supported geometry is saved.',
   BATCH_PROPOSAL_REVIEW_REQUIRED: 'The report is ready. Some observations could not be measured; check them in the card workspace before approval.',
 };
@@ -314,9 +315,11 @@ export default function BatchGrading({ staff }) {
         {focused?.state === 'APPROVED' ? <section className={styles.focus}><ManualWorkspace key={focused.cardId} staff={staff} cardId={focused.cardId} csrf={session.current?.csrf} onPhotos={()=>open(focused)}/></section> : focused?.state === 'REVIEW' ? <section className={styles.machineReview} aria-label="Review proposed grade">
           {reviewError && <p className={styles.error} role="alert">{reviewError}</p>}
           {packet?.key === focused.key && packet.state !== 'PENDING' ? <MachineReportReview key={packet.reportHash} packet={packet} onReadyChange={setImagesReady} onCorrectFinding={(finding,context) => { if (!busy) void correct(focused,false,context??{side:finding.side,findingId:finding.id,imageSha256:packet?.report?.geometry?.[finding.side]?.frame?.inspectionImageSha256}); }} onAddFinding={context=>{if(!busy)void correct(focused,false,{...context,intent:'ADD'});}} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}>
-            <div className={styles.reviewActions}><button disabled={busy} onClick={() => void correct(focused)}>{packet.correctionAvailable ? 'Continue final review' : 'Review geometry / make corrections'}</button>
+            <div className={styles.reviewActions}><button disabled={busy} onClick={() => void correct(focused)}>{packet.correctionAvailable ? 'Continue final review' : packet.reviewRequiredReason === 'BATCH_SCORING_POLICY_UPDATED' ? 'Review updated scoring' : 'Review geometry / make corrections'}</button>
               {!packet.correctionAvailable && <button className={styles.primary} onClick={approve} disabled={busy || !imagesReady || !packet.canCertify}>{busy ? 'Saving your review…' : packet.resumeAvailable ? 'Finish approval & print' : 'Approve & print next'}</button>}</div>
-            {packet.report?.calculationState === 'GEOMETRY_UNRESOLVED' || packet.reviewRequiredReason === 'BATCH_FINAL_GEOMETRY_REQUIRED'
+            {packet.reviewRequiredReason === 'BATCH_SCORING_POLICY_UPDATED'
+              ? <p role="status">{messages.BATCH_SCORING_POLICY_UPDATED}</p>
+              : packet.report?.calculationState === 'GEOMETRY_UNRESOLVED' || packet.reviewRequiredReason === 'BATCH_FINAL_GEOMETRY_REQUIRED'
               ? <p role="status">{messages.BATCH_FINAL_GEOMETRY_REQUIRED}</p>
               : packet.reviewRequiredReason === 'BATCH_PROPOSAL_REVIEW_REQUIRED'
               ? <p role="status">{messages.BATCH_PROPOSAL_REVIEW_REQUIRED}{' '}<button disabled={busy} onClick={() => void correct(focused)}>Review observations</button></p>

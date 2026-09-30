@@ -29,6 +29,10 @@
       "types": "./src/scoring.ts",
       "default": "./dist/scoring.js"
     },
+    "./atlas-policy": {
+      "types": "./src/atlas-policy.ts",
+      "default": "./dist/atlas-policy.js"
+    },
     "./review-findings": {
       "types": "./src/review-findings.ts",
       "default": "./dist/review-findings.js"
