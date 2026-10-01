@@ -42,7 +42,7 @@ function compile(type,source){const s=gl.createShader(type);gl.shaderSource(s,so
 async function renderer(){
  if(new URLSearchParams(location.search).get('render')==='still')throw Error('Requested still-preview qualification');
  gl=canvas.getContext('webgl2',{antialias:false,alpha:true,powerPreference:'low-power'});if(!gl)throw Error('WebGL2 unavailable');
- let source=await fetch('/homepage/a72e6533529d410f/hero-card.glsl').then(r=>{if(!r.ok)throw Error('Shader unavailable');return r.text();});
+ let source=await fetch('/homepage/d8ebedb13703d0fd/hero-card.glsl').then(r=>{if(!r.ok)throw Error('Shader unavailable');return r.text();});
  source=source.replace('FRONT_INVERSE',matrix(evidence.sides.FRONT.transforms.cleanUVToCanonical)).replace('BACK_INVERSE',matrix(evidence.sides.BACK.transforms.cleanUVToCanonical));
  source=source.replace('FRONT_CROP','vec4('+evidence.sides.FRONT.presentation.cropUV.map(n=>n.toFixed(13)).join(',')+')').replace('BACK_CROP','vec4('+evidence.sides.BACK.presentation.cropUV.map(n=>n.toFixed(13)).join(',')+')');
  const vertex='#version 300 es\nin vec2 pos;out vec2 v_uv;void main(){gl_Position=vec4(pos,0.,1.);v_uv=vec2(pos.x*.5+.5,.5-pos.y*.5);}';
@@ -100,7 +100,7 @@ function draw(now){
  const clusters=[];
  for(const item of shownPoints){const cluster=clusters.at(-1),prev=cluster?.at(-1);if(prev&&Math.abs(item.p[0]-prev.p[0])<50&&item.p[1]-prev.p[1]<60)cluster.push(item);else clusters.push([item]);}
  for(const cluster of clusters){if(cluster.length<2)continue;const avg=cluster.reduce((n,v)=>n+v.p[1],0)/cluster.length,start=clamp(avg-(cluster.length-1)*23,24,height-24-(cluster.length-1)*46);cluster.forEach((v,i)=>v.label=[clamp(v.p[0]+(v.p[0]>width*.5?33:-33),24,width-24),start+i*46]);}
- for(const {f,p,label} of points){const b=markerNodes.get(f.id),shown=f.side===side&&Math.abs(Math.cos(pose.yaw))>.25;b.disabled=!shown;b.style.transform=`translate(${label[0]-22}px,${label[1]-22}px)`;const leader=document.getElementById('leader-'+f.id);leader.setAttribute('d',shown?`M${p[0]} ${p[1]}L${label[0]} ${label[1]}`:'');const anchor=document.getElementById('anchor-'+f.id);anchor.setAttribute('cx',p[0]);anchor.setAttribute('cy',p[1]);anchor.style.opacity=shown&&Math.hypot(label[0]-p[0],label[1]-p[1])>1?'1':'0';} 
+ for(const {f,p,label} of points){const b=markerNodes.get(f.id),shown=f.side===side&&Math.abs(Math.cos(pose.yaw))>.25;b.disabled=!shown;b.style.transform=`translate(${label[0]-22}px,${label[1]-22}px)`;const leader=document.getElementById('leader-'+f.id);leader.setAttribute('d',shown?`M${p[0]} ${p[1]}L${label[0]} ${label[1]}`:'');const anchor=document.getElementById('anchor-'+f.id);anchor.setAttribute('cx',p[0]);anchor.setAttribute('cy',p[1]);anchor.style.opacity=shown&&Math.hypot(label[0]-p[0],label[1]-p[1])>1?'1':'0';}
  drawCentering();updateReadout();host.style.setProperty('--hc-progress',time/TOUR_DURATION);
  host.dataset.side=side;host.dataset.running=String(running);host.dataset.angle=pose.yaw.toFixed(5);host.dataset.frames=String(status.frames);
  if((motionAllowed()&&!dialog.open)||tween)requestDraw();

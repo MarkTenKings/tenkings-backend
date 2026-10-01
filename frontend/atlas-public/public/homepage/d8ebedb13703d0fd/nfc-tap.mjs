@@ -1,4 +1,4 @@
-import {loadHeroEvidence, fetchVerifiedAsset} from '/homepage/a72e6533529d410f/hero-evidence.mjs';
+import {loadHeroEvidence, fetchVerifiedAsset} from '/homepage/d8ebedb13703d0fd/hero-evidence.mjs';
 
 // Authored explanatory hardware; all card/report pixels and grades remain source-bound.
 const chapter = document.querySelector('.at-tap');
@@ -73,7 +73,7 @@ async function verifiedImage(asset) {
 async function createScene() {
   const manifest=await loadHeroEvidence();
   const [presentation, original, fingerprint, THREE]=await Promise.all([
-    verifiedImage(manifest.sides.FRONT.presentation),verifiedImage(manifest.sides.FRONT.original),verifiedImage(manifest.sides.FRONT.fingerprint),import('/homepage/a72e6533529d410f/assets/vendor/three.module.js')
+    verifiedImage(manifest.sides.FRONT.presentation),verifiedImage(manifest.sides.FRONT.original),verifiedImage(manifest.sides.FRONT.fingerprint),import('/homepage/d8ebedb13703d0fd/assets/vendor/three.module.js')
   ]);
   const host=chapter.querySelector('.at-tap-stage');
   const fallback=chapter.querySelector('.at-tap-fallback img');fallback.src=presentation.src;fallback.hidden=false;

@@ -118,5 +118,3 @@ vec4 pixel(vec2 uv){
   col=mix(col,bg,inspect*.77);
   return vec4(col,texel.a);
 }
-
-

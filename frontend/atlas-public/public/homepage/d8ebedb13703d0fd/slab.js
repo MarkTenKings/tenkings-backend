@@ -1,4 +1,4 @@
-import * as THREE from '/homepage/a72e6533529d410f/assets/vendor/three.module.js';
+import * as THREE from '/homepage/d8ebedb13703d0fd/assets/vendor/three.module.js';
 const host=document.getElementById('slab-stage');
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');
 try {
@@ -37,7 +37,7 @@ try {
   const warm=new THREE.PointLight(0xffd994,85,70);warm.position.set(-8,8,10);scene.add(warm);
   const cool=new THREE.PointLight(0xd4ecff,110,70);cool.position.set(9,3,8);scene.add(cool);
   const top=new THREE.DirectionalLight(0xffffff,3);top.position.set(1,10,3);scene.add(top);
-  await Promise.all([plane('/homepage/a72e6533529d410f/assets/alakazam-reference.jpg',6.35,8.89,-1.53),plane('/homepage/a72e6533529d410f/assets/alakazam-label-sample.svg',6.93,2.107,4.66)]);
+  await Promise.all([plane('/homepage/d8ebedb13703d0fd/assets/alakazam-reference.jpg',6.35,8.89,-1.53),plane('/homepage/d8ebedb13703d0fd/assets/alakazam-label-sample.svg',6.93,2.107,4.66)]);
   let x=-.17,y=.12,visible=true,frame=null,started=performance.now();
   const presentation=document.querySelector('.specimen-stage');
   slab.rotation.set(y,x,-.055);

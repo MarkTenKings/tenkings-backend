@@ -154,7 +154,7 @@ export async function sha256Hex(bytes) {
  const digest=await globalThis.crypto.subtle.digest('SHA-256',bytes);
  return [...new Uint8Array(digest)].map(n=>n.toString(16).padStart(2,'0')).join('');
 }
-export async function loadHeroEvidence(url='/homepage/a72e6533529d410f/hero-assets/manifest.json',{signal,fetcher=globalThis.fetch}={}) {
+export async function loadHeroEvidence(url='/homepage/d8ebedb13703d0fd/hero-assets/manifest.json',{signal,fetcher=globalThis.fetch}={}) {
  const response=await fetcher(url,{signal});requireThat(response.ok,'manifest fetch failed');
  const manifest=validateHeroEvidence(await response.json());
  await Promise.all(manifest.findings.map(async finding=>requireThat(await sha256Hex(new TextEncoder().encode(traceHashPreimage(finding.trace)))===finding.trace.sha256,'trace hash mismatch')));

@@ -443,15 +443,15 @@ queueChapters();
 // All locations and measurements below are authored design fixtures, not image analysis.
 // Ridge art is a visual metaphor. It does not extract or authenticate a card fingerprint.
 const fingerprintCards={
-  alakazam:{name:'Alakazam',image:'/homepage/a72e6533529d410f/assets/alakazam-reference.jpg',code:'A–001',findings:[
+  alakazam:{name:'Alakazam',image:'/homepage/d8ebedb13703d0fd/assets/alakazam-reference.jpg',code:'A–001',findings:[
     {point:[7,8],name:'Corner wear.',category:'CORNERS',value:'0.38',unit:'mm',measure:'EXAMPLE LENGTH',copy:'A small interruption at the corner. Its shape and position become part of the card’s recorded story.'},
     {point:[5,72],name:'Edge whitening.',category:'EDGES',value:'0.62',unit:'mm',measure:'EXAMPLE LENGTH',copy:'A break along the border. Look at where it begins, where it ends, and the shape in between.'},
     {point:[65,37],name:'Surface mark.',category:'SURFACE',value:'0.24',unit:'mm²',measure:'EXAMPLE AREA',copy:'A mark within the face of the card. Its location and outline add another detail to compare.'}]},
-  charizard:{name:'Charizard',image:'/homepage/a72e6533529d410f/marketing/atlas-charizard-first-edition.jpg',code:'C–002',findings:[
+  charizard:{name:'Charizard',image:'/homepage/d8ebedb13703d0fd/marketing/atlas-charizard-first-edition.jpg',code:'C–002',findings:[
     {point:[93,94],name:'Corner nick.',category:'CORNERS',value:'0.21',unit:'mm',measure:'EXAMPLE LENGTH',copy:'A tiny nick at a different corner. Same kind of finding; a different shape and location.'},
     {point:[95,52],name:'Border wear.',category:'EDGES',value:'0.47',unit:'mm',measure:'EXAMPLE LENGTH',copy:'A short worn section along the right edge. The precise pattern matters as much as its size.'},
     {point:[40,29],name:'Holo abrasion.',category:'SURFACE',value:'0.16',unit:'mm²',measure:'EXAMPLE AREA',copy:'A small surface region in the holo field. The report keeps its position and outline visible.'}]},
-  kobe:{name:'Kobe Bryant',image:'/homepage/a72e6533529d410f/marketing/atlas-kobe-rookie.jpg',code:'K–003',findings:[
+  kobe:{name:'Kobe Bryant',image:'/homepage/d8ebedb13703d0fd/marketing/atlas-kobe-rookie.jpg',code:'K–003',findings:[
     {point:[7,94],name:'Corner compression.',category:'CORNERS',value:'0.29',unit:'mm',measure:'EXAMPLE LENGTH',copy:'A change at the lower corner. Outline, size and position give you details beyond a printed grade.'},
     {point:[54,6],name:'Top-edge nick.',category:'EDGES',value:'0.53',unit:'mm',measure:'EXAMPLE LENGTH',copy:'A localized interruption across the top edge. Compare this exact area with the report photograph.'},
     {point:[76,65],name:'Surface impression.',category:'SURFACE',value:'0.19',unit:'mm²',measure:'EXAMPLE AREA',copy:'A small area on the card’s surface. Together, the findings form a record of this individual card.'}]}
@@ -614,8 +614,8 @@ window.addEventListener('resize',scrollFingerprint,{passive:true});
 const customerStories=[];
 const layoutPreview=new URLSearchParams(location.search).get('reactions')==='layout';
 const layoutFilms=[
-  {title:'Dealer film',credit:'Illustrative service film · Not a customer reaction',poster:'/homepage/a72e6533529d410f/service/submission-kiosk.jpg',video:'/homepage/a72e6533529d410f/service/submission-kiosk.mp4'},
-  {title:'Mail-in film',credit:'Illustrative service film · Not a customer reaction',poster:'/homepage/a72e6533529d410f/service/submission-fedex.jpg',video:'/homepage/a72e6533529d410f/service/submission-fedex.mp4'}
+  {title:'Dealer film',credit:'Illustrative service film · Not a customer reaction',poster:'/homepage/d8ebedb13703d0fd/service/submission-kiosk.jpg',video:'/homepage/d8ebedb13703d0fd/service/submission-kiosk.mp4'},
+  {title:'Mail-in film',credit:'Illustrative service film · Not a customer reaction',poster:'/homepage/d8ebedb13703d0fd/service/submission-fedex.jpg',video:'/homepage/d8ebedb13703d0fd/service/submission-fedex.mp4'}
 ];
 const stories=layoutPreview?layoutFilms:customerStories;
 const reactions=document.getElementById('reactions');
