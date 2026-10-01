@@ -1,0 +1,11 @@
+.progress-preferences{margin-top:40px;padding:26px 28px;border:1px solid var(--atlas-line,#cda95535);border-radius:14px;background:linear-gradient(140deg,#171b14,#0e120d)}
+.progress-preferences .section-heading.compact{margin:0 0 18px;display:block}
+.progress-preferences .section-heading.compact h2{font-family:'Atlas Display',var(--atlas-sans,system-ui);font-size:26px;line-height:1.2;margin:9px 0 12px;color:#f0f1e9}
+.progress-preferences .section-heading.compact p{max-width:660px;text-align:left;font-size:13px;color:#bfc5ba;line-height:1.65}
+.progress-preferences form{display:grid;gap:4px}
+.progress-preferences label{font-size:14px;line-height:1.6;color:#edeede;cursor:pointer}
+.progress-preferences input[type=checkbox]{accent-color:#cda955;width:20px;height:20px;flex:none}
+.progress-preferences .fine{margin:12px 0 0;color:#aab4a6}
+.progress-preferences .secondary{justify-self:start;margin-top:16px;min-height:44px}
+.progress-preferences [role=status]{font-size:13px;line-height:1.6;color:#e8d3a2;margin:16px 0 0}
+@media(max-width:600px){.progress-preferences{padding:22px 18px}.progress-preferences .section-heading.compact h2{font-size:23px}.progress-preferences .secondary{width:100%;justify-self:stretch}}

@@ -3,7 +3,8 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 // A transport admission signature is never customer authentication. Private
 // handlers revalidate the forwarded session and exact deployment in PostgreSQL.
 const PREFIX = '/internal/customer-service/v1/';
-const OPERATIONS = new Set(['intake-sign', 'intake-complete', 'commerce-checkout', 'commerce-quote', 'commerce-pay', 'commerce-reconcile', 'dealer-locations']);
+const OPERATIONS = new Set(['intake-sign', 'intake-complete', 'commerce-checkout', 'commerce-quote', 'commerce-pay', 'commerce-reconcile', 'dealer-locations', 'weekly-capacity']);
+const PUBLIC_READS = new Set(['dealer-locations', 'weekly-capacity']);
 const REQUEST_LIMIT = 131072, RESPONSE_LIMIT = 2 * 1024 * 1024;
 export class CustomerServiceError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code; }
@@ -15,9 +16,9 @@ function signature(key, path, timestamp, nonce, bytes) {
 }
 function validEnvelope(value, operation) {
   check(value && Object.getPrototypeOf(value) === Object.prototype && value.input && Object.getPrototypeOf(value.input) === Object.prototype, 400, 'INVALID_REQUEST');
-  const fields = operation === 'dealer-locations' ? ['input'] : ['input', 'authority'];
+  const fields = PUBLIC_READS.has(operation) ? ['input'] : ['input', 'authority'];
   check(Object.keys(value).length === fields.length && fields.every(key => Object.hasOwn(value, key)), 400, 'INVALID_REQUEST');
-  if (operation !== 'dealer-locations') {
+  if (!PUBLIC_READS.has(operation)) {
     const a = value.authority;
     check(a && Object.keys(a).length === 3 && ['binding', 'sessionHash', 'browserHash'].every(key => Object.hasOwn(a, key))
       && /^[a-f0-9]{64}$/.test(a.sessionHash) && /^[a-f0-9]{64}$/.test(a.browserHash) && a.binding && typeof a.binding === 'object' && !Array.isArray(a.binding), 401, 'SIGN_IN_REQUIRED');
@@ -83,7 +84,7 @@ export function createCustomerServiceHandler({ key, directoryKey = null, handler
       for await (const chunk of req) { length += chunk.length; check(length <= REQUEST_LIMIT, 413, 'REQUEST_TOO_LARGE'); chunks.push(chunk); }
       const bytes = Buffer.concat(chunks, length), provided = Buffer.from(supplied, 'hex');
       const signedByService = timingSafeEqual(provided, Buffer.from(signature(key, req.url, timestamp, nonce, bytes), 'hex'));
-      const signedByDirectory = directoryKey && operation === 'dealer-locations' && timingSafeEqual(provided, Buffer.from(signature(directoryKey, req.url, timestamp, nonce, bytes), 'hex'));
+      const signedByDirectory = directoryKey && PUBLIC_READS.has(operation) && timingSafeEqual(provided, Buffer.from(signature(directoryKey, req.url, timestamp, nonce, bytes), 'hex'));
       check(signedByService || signedByDirectory, 401, 'CUSTOMER_SERVICE_SIGNATURE_REQUIRED');
       check(await claimNonce(nonce, Number(timestamp) + 60000), 409, 'CUSTOMER_SERVICE_REPLAY');
       let envelope; try { envelope = JSON.parse(bytes.toString('utf8')); } catch { check(false, 400, 'INVALID_REQUEST'); }

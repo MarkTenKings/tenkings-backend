@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { request as defaultRequest } from '../../lib/client.mjs';
 import styles from './commerce.module.css';
+import CustomerHandoff from '../dealer/CustomerHandoff.jsx';
 
 const money = value => Number.isInteger(value) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value / 100) : 'Unavailable';
 const scheduleTime = (value, zone) => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: zone ?? 'UTC', timeZoneName: 'short' }).format(new Date(value)) : 'Not yet scheduled';
@@ -11,7 +12,7 @@ export function ServiceSummary({ snapshot, saved = false }) {
     const duration = terms.days === 7 ? 'One week' : terms.days === 14 ? 'Two weeks' : Number.isInteger(terms.days) && terms.days > 0 ? `${terms.days} days` : null;
     const start = { ATLAS_COLLECTION: 'actual ATLAS collection', ATLAS_RECEIPT: 'physical receipt at ATLAS', CARRIER_ACCEPTANCE: 'carrier acceptance' }[terms.clockStart];
     return <>
-        <div className={styles.service}><strong>{kiosk ? 'Kiosk drop-off' : 'Mail-in grading'}{Number.isInteger(unitCents) ? ` · ${money(unitCents)} per card` : ''}</strong>
+        <div className={styles.service}><strong>{kiosk ? 'Card-shop grading' : 'Mail-in grading'}{Number.isInteger(unitCents) ? ` · ${money(unitCents)} per card` : ''}</strong>
             <p>{duration && start ? `${duration} from ${start}.` : saved ? 'Saved turnaround terms are unavailable.' : kiosk ? 'One week from actual ATLAS collection.' : 'Two-week service. The start date is confirmed with your exact quote.'} {kiosk && 'Pickup and return included.'}</p>
             {!kiosk && terms.mailChargedLegs === 'BOTH_LEGS' && <p>Shipping paid for the trip to ATLAS and the return trip.</p>}
             {!kiosk && terms.mailChargedLegs === 'INBOUND_ONLY' && <p>Shipping paid for the trip to ATLAS only. Return shipping is not included in this payment.</p>}
@@ -70,11 +71,12 @@ export default function OrderReceipt({ initialOrder = null, orderId = initialOrd
     const kiosk = order?.receipt?.channel === 'KIOSK';
     return <section className={styles.panel} aria-label="Order receipt">
         {order ? <><p className={styles.eyebrow}>PAYMENT CONFIRMED</p><h2>Your cards have a place.</h2>
-            <p className={styles.reference}>{order.reference}</p><p>Your digital receipt is saved here. Email and text delivery are tracked separately.</p>
+            <p className={styles.reference}>{order.reference}</p><p>Your digital receipt is saved here. Receipt delivery updates appear below.</p>
             <ServiceSummary snapshot={order.receipt} saved/><OrderAmounts snapshot={order.receipt} paid/>
-            <h3>{kiosk ? 'Prepare your dropbox package' : 'Prepare your shipment'}</h3>
+            {kiosk && <CustomerHandoff orderId={order.id} request={request}/>}
+            <h3>{kiosk ? 'Ready for your shop handoff' : 'Prepare your shipment'}</h3>
             <p>Protect each card in a sleeve and card holder. Keep the cards together in a secure package and include your order number.</p>
-            <p>{kiosk ? 'Print and attach the package label, then place the package in the selected kiosk dropbox. ATLAS will record collection when your cards are picked up.' : 'Your FedEx label is prepared after payment. Use the package size selected at checkout. Print and attach the saved label when it is ready.'}</p>
+            <p>{kiosk ? 'Show your handoff code to staff at your selected card shop. They will check every card and confirm receipt. ATLAS collection is recorded separately.' : 'Your FedEx label is prepared after payment. Use the package size selected at checkout. Print and attach the saved label when it is ready.'}</p>
             <ul className={styles.deliveries}>{(order.effects ?? []).filter(effect => ['EMAIL_RECEIPT', 'SMS_RECEIPT', 'FEDEX_LABEL', 'PACKAGE_LABEL'].includes(effect.kind)).map(effect => <li key={effect.id}><span>{{ EMAIL_RECEIPT: 'Email receipt', SMS_RECEIPT: 'Text receipt', FEDEX_LABEL: 'FedEx label', PACKAGE_LABEL: 'Package label' }[effect.kind]}</span>
                 {effect.state === 'SUCCEEDED' && ['FEDEX_LABEL', 'PACKAGE_LABEL'].includes(effect.kind) ? <button className={styles.secondary} disabled={busy} onClick={() => downloadLabel(effect)}>Download label</button> : <span>{deliveryLabel(effect)}</span>}</li>)}</ul>
             <p className={styles.note}>Payment does not confirm physical drop-off, mailing or arrival at ATLAS. Downloading a label does not confirm it has been printed.</p></> : !error && <p role="status">Loading your saved receipt…</p>}

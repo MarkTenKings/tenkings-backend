@@ -2,6 +2,7 @@
 export class GatewayCommerceRepository {
     constructor(call) { if (typeof call !== 'function') throw new TypeError('Gateway call required'); this.call = call; }
     loadCheckout(draftId) { return this.call('commerce_checkout', { draftId }); }
+    weeklyCapacity() { return this.call('commerce_weekly_capacity', {}); }
     saveQuote(expectedRevision, quote) { return this.call('commerce_save_quote', { expectedRevision, quote }); }
     reservePayment(data) { return this.call('commerce_reserve_payment', data); }
     recordPayment(attemptId, observation) { return this.call('commerce_record_payment', { attemptId, observation }); }

@@ -59,9 +59,9 @@ export default function ServiceChoice({ value, onChange }) {
         <ServiceFilm kind="kiosk" label="ATLAS kiosk drop-off preview" motionPaused={motionPaused}/>
         <div className="service-card-body"><ServiceJourney kind="kiosk"/>
           <dl className="service-metrics"><div><dt>Per card</dt><dd><strong>$50</strong><small>Transport included</small></dd></div><div><dt>Turnaround</dt><dd><strong>1 week</strong><small>From ATLAS collection</small></dd></div></dl>
-          <p className="service-channel">ATLAS Submission Station<br/><strong>at an Authorized Dealer</strong></p><p>Drop your cards in the ATLAS kiosk at your local dealer. We handle pickup and return.</p>
+          <p className="service-channel">ATLAS Submission Station<br/><strong>at an Authorized Dealer</strong></p><p>Snap your cards, pay on your phone, and show staff your handoff code. We handle pickup and return.</p>
           <div className="service-details"><p><strong>Drop off. Pick up.</strong> Your cards return to the same dealer.</p><p>The clock starts when ATLAS collects your cards, not when you drop them off.</p></div>
-          <button type="button" className={value?.intakeMethod === 'DEALER_DROP_OFF' ? 'primary' : 'secondary'} aria-pressed={value?.intakeMethod === 'DEALER_DROP_OFF'} onClick={() => onChange({ intakeMethod: 'DEALER_DROP_OFF', kioskId: value?.intakeMethod === 'DEALER_DROP_OFF' ? value.kioskId : null })}>{value?.intakeMethod === 'DEALER_DROP_OFF' ? 'Kiosk selected ✓' : 'Find an Authorized Dealer →'}</button></div>
+          <button type="button" className={value?.intakeMethod === 'DEALER_DROP_OFF' ? 'primary' : 'secondary'} aria-pressed={value?.intakeMethod === 'DEALER_DROP_OFF'} onClick={() => onChange({ intakeMethod: 'DEALER_DROP_OFF', kioskId: value?.intakeMethod === 'DEALER_DROP_OFF' ? value.kioskId : null })}>{value?.intakeMethod === 'DEALER_DROP_OFF' ? 'Card shop selected ✓' : 'Find an Authorized Dealer →'}</button></div>
       </article>
       <article className={`service-card service-card-mail ${value?.intakeMethod === 'MAIL_IN' ? 'selected' : ''}`}>
         <div className="service-speed-label"><SpeedMark kind="mail"/><h2>Fast</h2><span>Mail-in</span></div>
@@ -69,7 +69,7 @@ export default function ServiceChoice({ value, onChange }) {
         <div className="service-card-body"><ServiceJourney kind="mail"/>
           <dl className="service-metrics"><div><dt>Per card</dt><dd><strong>$40</strong><small>Plus FedEx shipping</small></dd></div><div><dt>Service speed</dt><dd><strong>2 weeks</strong><small>Mail-in service</small></dd></div></dl>
           <p className="service-channel">Mail-in with FedEx<br/><strong>From your door to ATLAS</strong></p><p>Pack your cards and send them with FedEx. Your graded cards ship back to you.</p>
-          <div className="service-details"><p><strong>Shipping at cost.</strong> See your actual FedEx quote before payment.</p><p>Final shipping and turnaround terms appear with your confirmed quote.</p></div>
+          <div className="service-details"><p><strong>Shipping at cost.</strong> See your actual FedEx quote before payment.</p><p>Your grading turnaround starts when ATLAS physically receives your cards. Final terms appear with your confirmed quote.</p></div>
           <button type="button" className={value?.intakeMethod === 'MAIL_IN' ? 'primary' : 'secondary'} aria-pressed={value?.intakeMethod === 'MAIL_IN'} onClick={() => onChange({ intakeMethod: 'MAIL_IN', kioskId: null })}>{value?.intakeMethod === 'MAIL_IN' ? 'Mail-in selected ✓' : 'Choose mail-in →'}</button></div>
       </article>
     </div><p className="fine">Applicable taxes and the full total appear before payment. Grading begins after your cards physically reach ATLAS.</p>

@@ -1,4 +1,5 @@
 import {randomBytes,createHash,createHmac,timingSafeEqual} from 'node:crypto';
+import {handoffToken,readHandoffToken,handoffConfirmation} from './handoff.mjs';
 import {selectLocations} from './directory.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const token = value => typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value);
@@ -24,6 +25,19 @@ export class DealerOperations {
   }
   read(sessionToken,browserHash) {return this.call('dealer_read',this.authority(sessionToken,browserHash));}
   logout(sessionToken,browserHash,csrf) {return this.call('dealer_logout',this.authority(sessionToken,browserHash,csrf));}
+  async issueHandoff(customerAuthority,orderId) {
+    const result=await this.call('dealer_handoff_issue',{...customerAuthority,orderId});
+    if(!result.handoff?.id)fail(503,'HANDOFF_UNAVAILABLE');
+    return {...result,token:handoffToken(this.sessionKey,result.handoff.id)};
+  }
+  handoffRead(sessionToken,browserHash,csrf,value) {
+    const authority=this.authority(sessionToken,browserHash,csrf);
+    return this.call('dealer_handoff_read',{...authority,handoffId:readHandoffToken(this.sessionKey,value)});
+  }
+  handoffConfirm(sessionToken,browserHash,csrf,value,input) {
+    const authority=this.authority(sessionToken,browserHash,csrf);
+    return this.call('dealer_handoff_confirm',{...authority,handoffId:readHandoffToken(this.sessionKey,value),...handoffConfirmation(input)});
+  }
   async locations(options={}) {
     const result=await this.call('dealer_locations',{entry:options.entry??null});
     return {...result,locations:selectLocations(result.locations,options)};

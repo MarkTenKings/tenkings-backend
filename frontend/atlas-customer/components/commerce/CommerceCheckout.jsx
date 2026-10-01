@@ -4,6 +4,8 @@ import OrderReceipt, { ServiceSummary, OrderAmounts } from './OrderReceipt.jsx';
 
 const money = value => new Intl.NumberFormat('en-US', { style:'currency',currency:'USD' }).format(value/100);
 const friendly = code => ({
+    WEEKLY_CAPACITY_FULL:'This week’s card capacity for this route is filled. Your cards are saved; choose another route or return after the next Monday release.',
+    WEEKLY_CAPACITY_NOT_CONFIGURED:'Weekly availability is being prepared. Your cards are saved.', PAYMENT_FLOW_CHANGED:'Review a fresh total to pay securely on your phone.',
     COMMERCE_NOT_CONFIGURED:'Checkout is being prepared. Your cards are saved.', TAX_NOT_CONFIGURED:'Tax calculation is not available yet. Your cards are saved.',
     PAYMENT_NOT_CONFIGURED:'Payment is not available yet. Your cards are saved.', SHIPPING_NOT_CONFIGURED:'FedEx shipping is not available yet.',
     MAIL_TURNAROUND_NOT_CONFIGURED:'Mail-in turnaround details are being finalized.', MAIL_SHIPPING_TERMS_NOT_CONFIGURED:'Mail-in shipping details are being finalized.',
@@ -82,6 +84,8 @@ export default function CommerceCheckout({ draft, request, onPaid, onBack }) {
     }); }
     async function reconcile() { if(!payment)return; await run(async()=>accept(await request(`/api/customer/commerce/payments/${payment.attemptId}/reconcile`,{method:'POST',body:{}}))); }
     const kiosk=(quote?.channel??view?.channel??draft?.channel??(draft?.intakeMethod==='DEALER_DROP_OFF'?'KIOSK':'MAIL_IN'))==='KIOSK';
+    const phonePayment=(payment?.paymentFlow??quote?.terms?.paymentFlow)==='CUSTOMER_PHONE'||!kiosk;
+    const awaiting=payment?.state==='AWAITING_PAYMENT';
     const quoteExpired=quote&&Date.parse(quote.expiresAt)<=Date.now();
     if(checkoutUnavailable&&!payment&&!order) return <SavedDraftConfirmation draft={draft} onBack={onBack}/>;
     if(order) return <OrderReceipt initialOrder={order} request={request}/>;
@@ -91,9 +95,9 @@ export default function CommerceCheckout({ draft, request, onPaid, onBack }) {
         {view?.blockers?.length>0&&<p role="status">{[...new Set(view.blockers.map(friendly))].join(' ')}</p>}
         {!kiosk&&view?.shippingOptions?.length>0&&!quote&&<label className={styles.packaging}>Your package and FedEx service<select value={option} onChange={event=>setOption(event.target.value)}><option value="">Choose measured packaging</option>{view.shippingOptions.map((item,index)=><option key={`${item.packingPresetId}:${item.shippingServiceCode}`} value={index}>{item.label}</option>)}</select></label>}
         {quote&&<OrderAmounts snapshot={quote}/>}
-        {payment&&<div className={styles.payment}><h3>{kiosk?'Continue at this kiosk’s terminal':'Secure payment'}</h3>
-            <p>{payment.state==='UNKNOWN'?'We are checking your original payment. Please do not pay again.':kiosk?'Tap or insert your card at the linked terminal. Your order is confirmed only after the payment is verified.':'Complete the secure payment form below.'}</p>
-            {payment.clientSecret&&payment.publishableKey&&<PaymentFields payment={payment} onComplete={reconcile}/>}
+        {payment&&<div className={styles.payment}><h3>{!awaiting?'Your payment status':phonePayment?'Pay securely on your phone':'Continue at this kiosk’s terminal'}</h3>
+            <p>{payment.state==='CANCELED'?'This payment was canceled. Review a new total below.':!awaiting?'We are checking your original payment. Please do not pay again.':phonePayment?'Use an available wallet or enter your card below. Your order is confirmed only after payment is verified.':'Tap or insert your card at the linked terminal. Your order is confirmed only after the payment is verified.'}</p>
+            {phonePayment&&payment.clientSecret&&payment.publishableKey&&<PaymentFields payment={payment} onComplete={reconcile}/>}
             <button className={styles.secondary} disabled={busy} onClick={reconcile}>Check payment status</button></div>}
         {payment?.state==='CANCELED'&&<button className={styles.secondary} disabled={busy} onClick={()=>{setPayment(null);setQuote(null);}}>Payment canceled · Review a new total</button>}
         {error&&<p className={styles.error} role="alert">{error}</p>}

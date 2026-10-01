@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { clone, digest, requireValue, minor, UUID } from './contract.mjs';
+import { clone, digest, requireValue, minor, UUID, customerPhonePayment } from './contract.mjs';
 
 const form = (value, prefix, out = new URLSearchParams()) => {
     if (Array.isArray(value)) value.forEach((item, index) => form(item, `${prefix}[${index}]`, out));
@@ -51,7 +51,7 @@ export function stripePaymentAdapter({ transport, publishableKey }) {
         async create(attempt) {
             requireValue(UUID.test(attempt.id) && attempt.quote.merchant.accountId === binding.accountId
                 && attempt.quote.merchant.livemode === binding.livemode, 'PAYMENT_MERCHANT_MISMATCH');
-            const q = attempt.quote, kiosk = q.channel === 'KIOSK';
+            const q = attempt.quote, kiosk = q.channel === 'KIOSK' && !customerPhonePayment(q);
             if (kiosk) {
                 const reader = await transport.request('GET', `/v1/terminal/readers/${encodeURIComponent(q.location.terminalId)}`);
                 requireValue(reader.id === q.location.terminalId && reader.location === q.location.terminalLocationId

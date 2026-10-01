@@ -18,6 +18,9 @@ export const digest = value => createHash('sha256').update(canonical(value)).dig
 export const clone = value => JSON.parse(canonical(value));
 export const SERVICE = Object.freeze({ MAIL_IN: Object.freeze({ unitCents: 4000, days: 14, commissionCents: 0 }),
     KIOSK: Object.freeze({ unitCents: 5000, days: 7, commissionCents: 500 }) });
+// Saved pre-cutover KIOSK attempts retain their original terminal semantics.
+export const customerPhonePayment = quote => quote?.channel === 'MAIL_IN' || quote?.terms?.paymentFlow === 'CUSTOMER_PHONE';
+const receiptEmail = value => typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
 export function assertCheckout(source) {
     requireValue(source && UUID.test(source.draftId) && UUID.test(source.accountId), 'INVALID_CHECKOUT_SOURCE');
@@ -26,11 +29,21 @@ export function assertCheckout(source) {
     requireValue(new Set(source.cards.map(card => card.id)).size === source.cards.length, 'DUPLICATE_CARD');
     for (const card of source.cards) requireValue(UUID.test(card.id) && Number.isInteger(card.revision) && card.revision > 0
         && HASH.test(card.photoPairHash) && card.identity && typeof card.identity === 'object', 'CARD_REVIEW_REQUIRED');
-    requireValue(source.profile && ['name','email','address1','city','region','postalCode','country'].every(key => typeof source.profile[key] === 'string' && source.profile[key].trim()), 'PROFILE_INCOMPLETE');
-    requireValue(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(source.profile.email) && /^\+[1-9][0-9]{7,14}$/.test(source.phone), 'PROFILE_INCOMPLETE');
+    requireValue(source.profile && typeof source.profile === 'object' && !Array.isArray(source.profile)
+        && typeof source.profile.name === 'string' && source.profile.name.trim()
+        && /^\+[1-9][0-9]{7,14}$/.test(source.phone), 'PROFILE_INCOMPLETE');
+    if (source.channel === 'MAIL_IN') {
+        requireValue(['email','address1','city','region','postalCode','country'].every(key => typeof source.profile[key] === 'string' && source.profile[key].trim())
+            && receiptEmail(source.profile.email), 'PROFILE_INCOMPLETE');
+    } else {
+        // The shop returns cards through its configured route. The customer's
+        // verified account phone is authoritative; no home/shipping data is
+        // fabricated merely to satisfy the existing online payment adapter.
+        requireValue(!Object.hasOwn(source.profile, 'email') || source.profile.email === '' || receiptEmail(source.profile.email), 'PROFILE_INCOMPLETE');
+    }
     requireValue(Number.isInteger(source.profileRevision) && source.profileRevision > 0, 'PROFILE_REVISION_REQUIRED');
     if (source.channel === 'KIOSK') requireValue(source.location && source.location.id && source.location.dealerId
-        && source.location.revision && source.location.terminalId && source.location.terminalLocationId && source.location.schedule
+        && source.location.revision && source.location.schedule
         && source.location.schedule.timeZone && source.location.schedule.nextCollectionAt && source.location.schedule.projectedReturnAt,
     'KIOSK_NOT_AVAILABLE');
     return source;
@@ -46,8 +59,7 @@ export function assertPaymentBinding(attempt, evidence) {
     'PAYMENT_BINDING_MISMATCH');
     requireValue(typeof evidence.providerId === 'string' && evidence.providerId.length > 0
         && (!attempt.providerId || attempt.providerId === evidence.providerId), 'PAYMENT_ID_MISMATCH');
-    if (q.channel === 'KIOSK') requireValue(evidence.paymentMethodTypes?.includes('card_present'), 'PAYMENT_METHOD_MISMATCH');
-    else requireValue(evidence.paymentMethodTypes?.includes('card'), 'PAYMENT_METHOD_MISMATCH');
+    requireValue(evidence.paymentMethodTypes?.includes(customerPhonePayment(q) ? 'card' : 'card_present'), 'PAYMENT_METHOD_MISMATCH');
     return evidence;
 }
 export function assertPaidEvidence(attempt, evidence) {
@@ -59,11 +71,12 @@ export function assertPaidEvidence(attempt, evidence) {
 export function receiptEffects(orderId, quote) {
     const receipt = { orderId, quoteHash: quote.contentHash, currency: quote.currency, totalCents: quote.totalCents };
     return [
-        { id: `${orderId}:email:v1`, kind: 'EMAIL_RECEIPT', request: { ...receipt, to: quote.profile.email } },
+        ...(quote.channel === 'KIOSK' && customerPhonePayment(quote) && !receiptEmail(quote.profile.email) ? []
+            : [{ id: `${orderId}:email:v1`, kind: 'EMAIL_RECEIPT', request: { ...receipt, to: quote.profile.email } }]),
         { id: `${orderId}:sms:v1`, kind: 'SMS_RECEIPT', request: { ...receipt, to: quote.phone } },
         { id: `${orderId}:tax:v1`, kind: 'TAX_TRANSACTION', request: { ...receipt, calculationId: quote.tax.providerId } },
         ...quote.shipping.map(line => ({ id: `${orderId}:fedex:${line.leg}:v1`, kind: 'FEDEX_LABEL',
             request: { ...receipt, shipment: line.request, leg: line.leg, rateId: line.providerId } })),
-        ...(quote.channel === 'KIOSK' ? [{ id: `${orderId}:package:v1`, kind: 'PACKAGE_LABEL', request: { ...receipt, locationId: quote.location.id } }] : []),
+        ...(quote.channel === 'KIOSK' && !customerPhonePayment(quote) ? [{ id: `${orderId}:package:v1`, kind: 'PACKAGE_LABEL', request: { ...receipt, locationId: quote.location.id } }] : []),
     ];
 }

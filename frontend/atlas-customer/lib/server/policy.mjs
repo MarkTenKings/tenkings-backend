@@ -1,3 +1,4 @@
+import { contactProfileInput } from '@atlas/customer-intake/profile';
 import { createHash, timingSafeEqual } from 'node:crypto';
 export const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 export const SHA = /^[a-f0-9]{64}$/;
@@ -39,7 +40,10 @@ export function normalizePhone(value) {
     if (!/^\+[1-9]\d{7,14}$/.test(phone)) deny(400, 'USE_INTERNATIONAL_PHONE');
     return phone;
 }
-export function profile(input, { requireEmail = true } = {}) {
+export function profile(input, { requireEmail = true, allowContact = false } = {}) {
+    if(allowContact&&input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).every(key=>['name','email'].includes(key))){
+        try{return contactProfileInput(input);}catch{deny(400,'CONTACT_DETAILS_REQUIRED');}
+    }
     const fields = ['name', ...(requireEmail || Object.hasOwn(input ?? {}, 'email') ? ['email'] : []), 'address1', 'address2', 'city', 'region', 'postalCode', 'country'];
     keys(input, fields);
     const result = {};

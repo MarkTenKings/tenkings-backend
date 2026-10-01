@@ -35,5 +35,5 @@ export function payment(status='requires_payment_method') {return {binding:merch
     async create(attempt){this.creates++;return {providerId:'pi_fixture',state:'AWAITING_PAYMENT',clientSecret:'pi_fixture_secret'};},
     async retrieve(attempt){return {source:'PROVIDER_RETRIEVAL',provider:'STRIPE',merchantId:merchant.accountId,livemode:false,providerId:'pi_fixture',status,
         amountCents:attempt.quote.totalCents,receivedCents:status==='succeeded'?attempt.quote.totalCents:0,currency:'usd',quoteHash:attempt.quote.contentHash,attemptId:attempt.id,
-        paymentMethodTypes:[attempt.quote.channel==='KIOSK'?'card_present':'card'],clientSecret:'pi_fixture_secret'};}};}
+        paymentMethodTypes:[attempt.quote.channel==='KIOSK'&&attempt.quote.terms?.paymentFlow!=='CUSTOMER_PHONE'?'card_present':'card'],clientSecret:'pi_fixture_secret'};}};}
 export const carrier = { async quote(input){return {provider:'FEDEX',providerId:'rate_fixture',currency:'usd',amountCents:1250,requestHash:digest(input),expiresAt:'2026-09-24T10:15:00.000Z'};}};

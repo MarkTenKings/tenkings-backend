@@ -1,1 +1,18 @@
-{"name":"@atlas/dealer-operations","version":"0.1.0","private":true,"type":"module","exports":{".":"./src/service.mjs","./directory":"./src/directory.mjs"},"scripts":{"test":"node --test test/*.test.mjs"}}
+{
+  "name": "@atlas/dealer-operations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/service.mjs",
+    "./directory": "./src/directory.mjs",
+    "./handoff": "./src/handoff.mjs",
+    "./handoff-qr": "./src/handoff-qr.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "qrcode": "1.5.4"
+  }
+}

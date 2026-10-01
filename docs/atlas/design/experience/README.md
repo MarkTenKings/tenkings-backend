@@ -1,0 +1,11 @@
+# ATLAS approved experience source
+
+This directory is the portable source of the October 1 integrated marketing experience. It preserves the approved current ATLAS typography and hero wording, shows the retained archived Maye report, and adds the report, deterministic fingerprint, NFC tap, submission and weekly-capacity chapters. It is not a public report publication.
+
+`files.json` is the complete marketing asset allowlist. `site/` contains every listed dependency. Build from repository root with `node frontend/atlas-public/scripts/build-homepage.mjs`. The packager verifies original/presentation/mask/fingerprint asset hashes, rejects local file paths, rebases dependencies under a content digest, removes preview-only indexing restrictions, and writes `frontend/atlas-public/public/homepage/release.json`. Its own recipe bytes participate in the digest. Keep this source and generated package in the same commit. Rebuild/restart a local Next preview after packaging because Next snapshots its static file inventory at startup.
+
+The marketing sample's actual grade is 9.5; its archived status, seven findings, nine measurement regions, immutable source photographs and measurements must stay unchanged. The owner-approved headline “SEE WHY IT’S A 9.” remains a brand headline. Generative clean images are presentation assets; exact calipers and masks are qualified against original source geometry. Film/report modules derive each live card from its own pinned approved report and do not reuse the sample's registration or measurements.
+
+Capacity fetches only `/api/capacity`, displays verified aggregate card counts, and clears unavailable or stale values. No example quota is a launch setting. Server payment admission remains authoritative. The immutable content directories may be cached; the capacity read cannot be cached as a static count.
+
+The corresponding account implementation is in `frontend/atlas-customer`; tour/film modules are in `packages/atlas-manual-workspace`; scoped handoff, capacity and notifications are covered by their package documentation and the October 1 session log. Production activation is a separate release operation and has not occurred merely because a package exists.

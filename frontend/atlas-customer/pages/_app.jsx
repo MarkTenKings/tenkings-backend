@@ -2,6 +2,9 @@ import '../styles/customer.css';
 import '../styles/atlas-brand.css';
 import '../styles/atlas-theme.css';
 import '../styles/submission.css';
+import '../styles/my-atlas.css';
+import '../components/report-films/report-films.css';
+import '../components/notifications/progress-preferences.css';
 export default function App({ Component, pageProps, router }) {
     // All account pages share one component. A new route must create fresh
     // request/state ownership instead of carrying a previous card's detail.

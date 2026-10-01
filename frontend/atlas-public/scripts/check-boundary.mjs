@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..'), repo = resolve(app, '../..');
 const pages = JSON.parse(readFileSync(resolve(app, '.next/server/pages-manifest.json'), 'utf8'));
 assert.deepEqual(Object.keys(pages).sort(), ['/', '/404', '/_app', '/_document', '/_error', '/dealers', '/reports/[token]',
-    '/api/reports/[token]/images/[side]', '/api/reports/[token]/traces/[findingId]', '/api/reports/[token]/presentation/image', '/api/reports/[token]/presentation/[side]'].sort());
+    '/api/capacity', '/api/reports/[token]/film', '/api/reports/[token]/images/[side]', '/api/reports/[token]/traces/[findingId]', '/api/reports/[token]/presentation/image', '/api/reports/[token]/presentation/[side]'].sort());
 const files = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? files(resolve(dir, e.name)) : [resolve(dir, e.name)]);
 const chunks = files(resolve(app, '.next/static')).filter(p => p.endsWith('.js'));
 for (const file of chunks) assert(!/StaffSession|StaffIdentity|StaffAssignment|staffReportApproval|__Host-atlas|twilio|@tenkings\/|reviewedDefects|admissionCanonical|sessionHash|sourceCanonical/.test(readFileSync(file, 'utf8')),
@@ -14,7 +14,7 @@ const traces = files(resolve(app, '.next/server')).filter(p => p.endsWith('.nft.
 const database = resolve(app, '.generated/public-database');
 const engines = readdirSync(database).filter(file => /^(?:libquery_engine-|query_engine-).+\.node$/.test(file));
 assert(engines.length, 'Generated public database engine is missing');
-for (const route of ['/reports/[token]', '/api/reports/[token]/images/[side]', '/api/reports/[token]/traces/[findingId]', '/api/reports/[token]/presentation/image', '/api/reports/[token]/presentation/[side]']) {
+for (const route of ['/reports/[token]', '/api/reports/[token]/film', '/api/reports/[token]/images/[side]', '/api/reports/[token]/traces/[findingId]', '/api/reports/[token]/presentation/image', '/api/reports/[token]/presentation/[side]']) {
     const trace = resolve(app, '.next/server', pages[route]) + '.nft.json';
     const traced = new Set(JSON.parse(readFileSync(trace, 'utf8')).files.map(file => resolve(dirname(trace), file)));
     for (const file of ['schema.prisma', ...engines])

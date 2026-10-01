@@ -25,7 +25,7 @@ export function newLocation() {
   return { id: '', dealerId: '', enabled: false, name: '', address: { line1: '', city: '', region: '', postalCode: '', country: 'US' }, position: { lat: '', lng: '' }, schedule: { timeZone: '', pickups: [], returns: [], exceptions: [] }, terminalId: '', terminalLocationId: '', packagePrinterId: '', entryToken: '', authorizedUntil: '' };
 }
 export function locationForm(row) {
-  return { id: row.id, dealerId: row.dealer_id, expectedRevision: row.revision, enabled: row.enabled, name: row.name, address: { ...row.address }, position: { lat: String(row.latitude), lng: String(row.longitude) }, schedule: structuredClone(row.schedule), terminalId: row.terminal_id, terminalLocationId: row.terminal_location_id, packagePrinterId: row.package_printer_id, entryToken: row.entry_token, authorizedUntil: localDate(row.authorized_until) };
+  return { id: row.id, dealerId: row.dealer_id, expectedRevision: row.revision, enabled: row.enabled, name: row.name, address: { ...row.address }, position: { lat: String(row.latitude), lng: String(row.longitude) }, schedule: structuredClone(row.schedule), terminalId: row.terminal_id ?? '', terminalLocationId: row.terminal_location_id ?? '', packagePrinterId: row.package_printer_id ?? '', entryToken: row.entry_token, authorizedUntil: localDate(row.authorized_until) };
 }
 const text = (v, label, max = 300) => { if (typeof v !== 'string' || !v.trim() || v.length > max) throw new Error(`Enter ${label}.`); return v.trim(); };
 const id = (v, label) => { if (!uuid.test(v ?? '')) throw new Error(`Enter the exact ${label} UUID.`); return v; };
@@ -55,7 +55,13 @@ export function locationInput(form, randomUUID) {
   if (!/^[A-Za-z0-9_-]{32,96}$/.test(form.entryToken)) throw new Error('Generate or enter a valid kiosk entry token.');
   const address = Object.fromEntries(['line1', 'city', 'region', 'postalCode', 'country'].map(k => [k, text(form.address[k], `the ${k === 'line1' ? 'street address' : k}`, 180)]));
   if (!/^[A-Z]{2}$/.test(address.country)) throw new Error('Enter the two-letter country code.');
-  return { id: form.id ? id(form.id, 'location') : randomUUID(), dealerId: id(form.dealerId, 'dealer'), ...(form.expectedRevision ? { expectedRevision: form.expectedRevision } : {}), enabled: !!form.enabled, name: text(form.name, 'the kiosk name', 160), address, position: { lat, lng }, schedule: { timeZone: schedule.timeZone, pickups: slots(schedule.pickups, true), returns: slots(schedule.returns, false), exceptions }, terminalId: text(form.terminalId, 'the linked terminal ID', 160), terminalLocationId: text(form.terminalLocationId, 'the terminal location ID', 160), packagePrinterId: text(form.packagePrinterId, 'the package printer ID', 160), entryToken: form.entryToken, authorizedUntil: isoDate(form.authorizedUntil) };
+  const equipment = {};
+  for (const [key, label] of [['terminalId', 'the linked terminal ID'], ['terminalLocationId', 'the terminal location ID'], ['packagePrinterId', 'the package printer ID']]) {
+    const value = form[key];
+    if (value == null || typeof value === 'string' && !value.trim()) continue;
+    equipment[key] = text(value, label, 160);
+  }
+  return { id: form.id ? id(form.id, 'location') : randomUUID(), dealerId: id(form.dealerId, 'dealer'), ...(form.expectedRevision ? { expectedRevision: form.expectedRevision } : {}), enabled: !!form.enabled, name: text(form.name, 'the kiosk name', 160), address, position: { lat, lng }, schedule: { timeZone: schedule.timeZone, pickups: slots(schedule.pickups, true), returns: slots(schedule.returns, false), exceptions }, ...equipment, entryToken: form.entryToken, authorizedUntil: isoDate(form.authorizedUntil) };
 }
 export function custodyInput(card, form, randomUUID, now = Date.now()) {
   if (!form.confirmed || !availableCustody(card).includes(form.kind)) throw new Error('Confirm the actual event before recording it.');
@@ -75,7 +81,7 @@ export function operationRecorded(data, journal) {
   if (action === 'membership-configure') return !!data.memberships?.some(row => row.accountId === input.accountId && row.locationId === input.locationId && row.version === journal.priorVersion + 1 && (row.revokedAt === null) === input.enabled);
   if (action === 'location-configure') {
     const row = data.locations?.find(value => value.id === input.id);
-    return !!row && row.revision === (input.expectedRevision ?? 0) + 1 && row.dealer_id === input.dealerId && row.enabled === input.enabled && row.name === input.name && equal(row.address, input.address) && Number(row.latitude) === input.position.lat && Number(row.longitude) === input.position.lng && equal(row.schedule, input.schedule) && row.terminal_id === input.terminalId && row.terminal_location_id === input.terminalLocationId && row.package_printer_id === input.packagePrinterId && row.entry_token === input.entryToken && sameTime(row.authorized_until, input.authorizedUntil);
+    return !!row && row.revision === (input.expectedRevision ?? 0) + 1 && row.dealer_id === input.dealerId && row.enabled === input.enabled && row.name === input.name && equal(row.address, input.address) && Number(row.latitude) === input.position.lat && Number(row.longitude) === input.position.lng && equal(row.schedule, input.schedule) && (row.terminal_id ?? null) === (input.terminalId ?? null) && (row.terminal_location_id ?? null) === (input.terminalLocationId ?? null) && (row.package_printer_id ?? null) === (input.packagePrinterId ?? null) && row.entry_token === input.entryToken && sameTime(row.authorized_until, input.authorizedUntil);
   }
   return false;
 }

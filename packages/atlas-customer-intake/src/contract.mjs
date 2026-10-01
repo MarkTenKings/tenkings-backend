@@ -41,3 +41,5 @@ export function ownedUpload(value) {
   503, 'INTAKE_STORED_CONTENT_INVALID');
   return value;
 }
+
+export {contactProfileInput} from './profile.mjs';

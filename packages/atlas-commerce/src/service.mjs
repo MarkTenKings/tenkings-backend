@@ -3,11 +3,15 @@ import { assertCheckout, assertPaidEvidence, assertPaymentBinding, clone, digest
 import { customerCheckout, customerOrder, customerPayment, customerQuote } from './projections.mjs';
 import { assertShipmentDate, assertShippingPlan, availableShippingPlans } from './shipping-plan.mjs';
 import { validateShipment } from './providers.mjs';
+import { customerCapacity, capacityBlockers } from './capacity.mjs';
 export { CommerceError } from './contract.mjs';
 
 export class CommerceService {
     constructor({ repository, payment, tax, carrier, notifications, packageLabel, terms, clock = () => new Date(), uuid = randomUUID }) {
         Object.assign(this, { repository, payment, tax, carrier, notifications, packageLabel, terms, clock, uuid });
+    }
+    async capacity() {
+        return customerCapacity(this.repository.weeklyCapacity ? await this.repository.weeklyCapacity() : null, this.clock());
     }
     async checkout(draftId) {
         requireValue(UUID.test(draftId), 'INVALID_REQUEST', 400);
@@ -29,16 +33,18 @@ export class CommerceService {
         const source = publicSource ? loaded : assertCheckout(loaded);
         if (!publicSource && source.channel === 'MAIL_IN') source.shippingPlans = availableShippingPlans(source.shippingPlans, source.cards.length, this.terms?.mailChargedLegs, this.clock());
         const blockers = [];
+        const capacity = await this.capacity();
+        if (source.cards.length && !source.activePayment) blockers.push(...capacityBlockers(capacity, source.channel, source.cards.length));
         if (!this.payment) blockers.push('PAYMENT_NOT_CONFIGURED');
         if (!this.tax) blockers.push('TAX_NOT_CONFIGURED');
         if (source.channel === 'MAIL_IN') {
             if (!this.carrier) blockers.push('SHIPPING_NOT_CONFIGURED');
             if (!(source.shippingPlans ?? source.shippingOptions)?.length) blockers.push('MEASURED_PACKAGING_NOT_CONFIGURED');
-            if (!['ATLAS_RECEIPT','CARRIER_ACCEPTANCE'].includes(this.terms?.mailClockStart)) blockers.push('MAIL_TURNAROUND_NOT_CONFIGURED');
+            if (this.terms?.mailClockStart !== 'ATLAS_RECEIPT') blockers.push('MAIL_TURNAROUND_NOT_CONFIGURED');
             if (!['INBOUND_ONLY','BOTH_LEGS'].includes(this.terms?.mailChargedLegs)) blockers.push('MAIL_SHIPPING_TERMS_NOT_CONFIGURED');
         }
         const activePayment = source.activePayment ? publicSource ? customerPayment(source.activePayment) : await this.reconcile(source.activePayment.id) : null;
-        return customerCheckout(source, {activePayment,unitCents: SERVICE[source.channel].unitCents,
+        return customerCheckout(source, {activePayment,capacity,unitCents: SERVICE[source.channel].unitCents,
             turnaroundDays: SERVICE[source.channel].days,blockers});
     }
     async quote({ draftId, expectedRevision, packingPresetId, shippingServiceCode }) {
@@ -52,7 +58,7 @@ export class CommerceService {
         const subtotalCents = lines.length * service.unitCents;
         let shipping = [], shippingPlan = null, clockStart = 'ATLAS_COLLECTION';
         if (source.channel === 'MAIL_IN') {
-            requireValue(['ATLAS_RECEIPT','CARRIER_ACCEPTANCE'].includes(this.terms?.mailClockStart), 'MAIL_TURNAROUND_NOT_CONFIGURED', 503);
+            requireValue(this.terms?.mailClockStart === 'ATLAS_RECEIPT', 'MAIL_TURNAROUND_NOT_CONFIGURED', 503);
             requireValue(['INBOUND_ONLY','BOTH_LEGS'].includes(this.terms?.mailChargedLegs), 'MAIL_SHIPPING_TERMS_NOT_CONFIGURED', 503);
             requireValue(this.carrier, 'SHIPPING_NOT_CONFIGURED', 503);
             clockStart = this.terms.mailClockStart;
@@ -94,7 +100,7 @@ export class CommerceService {
             profile: clone(source.profile), profileRevision: source.profileRevision, phone: source.phone, channel: source.channel,
             location: source.location ? clone(source.location) : null, cards: lines, currency: 'usd', subtotalCents, shippingCents,
             taxCents: calculated.taxCents, totalCents: calculated.totalCents, tax: clone(calculated), shipping, shippingPlan,
-            merchant: clone(this.payment.binding), terms: { days: service.days, clockStart,
+            merchant: clone(this.payment.binding), terms: { days: service.days, clockStart, paymentFlow: 'CUSTOMER_PHONE',
                 mailChargedLegs: source.channel === 'MAIL_IN' ? this.terms.mailChargedLegs : null },
             createdAt: now.toISOString(), expiresAt: new Date(expires).toISOString() };
         quote.contentHash = digest(quote);
@@ -125,7 +131,7 @@ export class CommerceService {
         requireValue(this.payment, 'PAYMENT_NOT_CONFIGURED', 503);
         let evidence;
         try { evidence = await this.payment.retrieve(attempt); }
-        catch { return { attemptId, state: 'UNKNOWN', channel: attempt.quote.channel }; }
+        catch { return customerPayment({ id: attemptId, state: 'UNKNOWN', quote: attempt.quote }); }
         assertPaymentBinding(attempt,evidence);
         if (evidence.status === 'succeeded') {
             assertPaidEvidence(attempt, evidence);

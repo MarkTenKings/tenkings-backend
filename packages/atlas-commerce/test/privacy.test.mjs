@@ -68,6 +68,10 @@ test('disabled safe checkout remains readable; only the active online awaiting-p
   const attempt = { id: randomUUID(), state: 'AWAITING_PAYMENT', quote: { channel: 'MAIL_IN' }, observation: { clientSecret: 'pi_active_secret', merchantId: 'PRIVATE_MERCHANT' } };
   assert.equal(customerPayment(attempt, 'pk_test_fixture').clientSecret, 'pi_active_secret');
   assert.equal(customerPayment({ ...attempt, quote: { channel: 'KIOSK' } }, 'pk_test_fixture').clientSecret, undefined);
+  const phoneShop = { ...attempt, quote: { channel: 'KIOSK', terms: { paymentFlow: 'CUSTOMER_PHONE' } } };
+  const phoneResponse = customerPayment(phoneShop, 'pk_test_fixture');
+  assert.equal(phoneResponse.clientSecret, 'pi_active_secret'); assert.equal(phoneResponse.paymentFlow, 'CUSTOMER_PHONE');
+  assert.equal(customerPayment({ ...phoneShop, state: 'UNKNOWN' }, 'pk_test_fixture').clientSecret, undefined);
   assert.equal(customerPayment({ ...attempt, state: 'UNKNOWN' }, 'pk_test_fixture').clientSecret, undefined);
   assert.deepEqual(customerOrder({ id: randomUUID(), receipt: { location: null } }).effects, []);
 });

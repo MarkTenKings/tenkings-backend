@@ -7,6 +7,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@atlas/commerce": "workspace:*",
     "@atlas/site-router": "workspace:*",
     "next": "15.5.25",
     "react": "18.3.1",

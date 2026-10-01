@@ -1,6 +1,6 @@
 import {useState} from 'react';
 const money=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(value/100);
-const labels={DEPOSIT_DECLARED:'Customer reports dropbox deposit',COLLECTED:'Collected by ATLAS',ATLAS_RECEIVED:'At ATLAS',RETURN_DISPATCHED:'Returning to kiosk',RETURNED_TO_KIOSK:'At kiosk for customer pickup',CUSTOMER_COLLECTED:'Customer collected',DELAY_REPORTED:'Route delay reported',DELAY_RESOLVED:'Route delay resolved'};
+const labels={DEALER_RECEIVED:'Received by your shop',DEPOSIT_DECLARED:'Customer reports dropbox deposit',COLLECTED:'Collected by ATLAS',ATLAS_RECEIVED:'At ATLAS',RETURN_DISPATCHED:'Returning to kiosk',RETURNED_TO_KIOSK:'At kiosk for customer pickup',CUSTOMER_COLLECTED:'Customer collected',DELAY_REPORTED:'Route delay reported',DELAY_RESOLVED:'Route delay resolved'};
 /** request is supplied by the dealer route, using a separate HttpOnly dealer
  * cookie and CSRF. No customer account/profile data is accepted or displayed. */
 export default function DealerPortal({initial,request,onSignOut}) {

@@ -11,7 +11,10 @@ export function createHandler(resolveRuntime) {
             state.assertRequest(req);
             const path = (req.url ?? '').split('?')[0], method = req.method;
             const known = [
+                ['POST', /^\/api\/customer\/dealer\/handoffs\/(read|confirm)$/],
+                ['POST', /^\/api\/customer\/orders\/[a-f0-9-]{36}\/handoff$/],
                 ['GET', /^\/api\/customer\/session$/], ['GET', /^\/api\/customer\/dealer\/(session|memberships)$/], ['POST', /^\/api\/customer\/dealer\/(session|logout)$/], ['POST', /^\/api\/customer\/auth\/(request|verify|logout)$/],
+                ['GET', /^\/api\/customer\/notifications$/], ['POST', /^\/api\/customer\/notifications$/],
                 ['POST', /^\/api\/customer\/profile$/], ['GET', /^\/api\/customer\/submissions$/],
                 ['POST', /^\/api\/customer\/submissions$/],
                 ['GET', /^\/api\/customer\/(submissions|submission-requests|cards)\/([a-f0-9-]{36})$/],
@@ -47,8 +50,17 @@ export function createHandler(resolveRuntime) {
             } else if (path.endsWith('/auth/logout')) {
                 keys(req.body, []); body = await auth.logout(cookieHeader, csrf ?? '');
                 res.setHeader('Set-Cookie', state.cookie(state.config.cookies.session, '', 0));
+            } else if (path === '/api/customer/notifications') {
+                if (new URL(req.url,state.config.origin).searchParams.size) deny(400,'INVALID_REQUEST');
+                if (method === 'GET') body = await auth.call(cookieHeader,'progress_preferences',{});
+                else {
+                    keys(req.body,['requestId','expectedRevision','email','sms']);
+                    if (!UUID.test(req.body.requestId??'') || !Number.isSafeInteger(req.body.expectedRevision) || req.body.expectedRevision<0 || req.body.expectedRevision>99999999
+                        || typeof req.body.email!=='boolean' || typeof req.body.sms!=='boolean') deny(400,'INVALID_REQUEST');
+                    body = await auth.call(cookieHeader,'progress_preferences_save',req.body,csrf??'');
+                }
             } else if (path.endsWith('/profile')) {
-                keys(req.body, ['profile']); body = await auth.call(cookieHeader, 'profile', { profile: profile(req.body.profile) }, csrf ?? '');
+                keys(req.body, ['profile']); body = await auth.call(cookieHeader, 'profile', { profile: profile(req.body.profile, {allowContact:true}) }, csrf ?? '');
             } else if (path === '/api/customer/intake/locations') {
                 const params = new URL(req.url, state.config.origin).searchParams;
                 if ([...params.keys()].some(key => !['query', 'lat', 'lng', 'entry'].includes(key)) || [...params.keys()].some(key => params.getAll(key).length !== 1)) deny(400, 'INVALID_REQUEST');
@@ -123,7 +135,7 @@ export function createHandler(resolveRuntime) {
                 } else if (section === 'cards') body = await auth.call(cookieHeader, 'intake_card', { id, card: cardInput(req.body) }, csrf ?? '');
                 else if (section === 'review') {
                     keys(req.body, ['expectedRevision', 'profile']);
-                    body = await auth.call(cookieHeader, 'intake_review', { id, expectedRevision: revision(req.body.expectedRevision), profile: profile(req.body.profile) }, csrf ?? '');
+                    body = await auth.call(cookieHeader, 'intake_review', { id, expectedRevision: revision(req.body.expectedRevision), profile: profile(req.body.profile, {allowContact:true}) }, csrf ?? '');
                 } else deny(405, 'METHOD_NOT_ALLOWED');
             } else if (path === '/api/customer/submissions') {
                 if (method === 'POST') body = await auth.call(cookieHeader, 'submit', { submission: submission(req.body) }, csrf ?? '');

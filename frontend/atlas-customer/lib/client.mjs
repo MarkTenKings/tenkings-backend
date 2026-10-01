@@ -6,6 +6,7 @@ const ERROR_MESSAGES = {
     SIGN_IN_SESSION_EXPIRED: 'Your sign-in page expired. Refresh the page and start again.',
     SIGN_IN_REQUIRED: 'Your session has ended. Refresh the page to sign in again.',
     CSRF_REQUIRED: 'Your session changed. Refresh the page before continuing.',
+    CONTACT_DETAILS_REQUIRED: 'Enter your name and, if provided, a valid email address.',
     RETURN_DETAILS_REQUIRED: 'Complete your name, email and shipping/return address.',
     INTAKE_CONFIGURATION_REQUIRED: 'Photo uploads are not available yet. Your saved photos remain on this device.',
     KIOSK_NOT_AVAILABLE: 'This kiosk is not accepting submissions. Choose another enabled location.',

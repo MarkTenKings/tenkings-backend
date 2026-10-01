@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReportInspectionImage } from './ReportInspectionImage.jsx';
+import { ApprovedReportTour } from './ApprovedReportTour.jsx';
 import { ApprovedWholeCard } from './ApprovedWholeCard.jsx';
 import { EdgeTourControls, EvidenceEdgeScan } from './ReportEvidenceScan.jsx';
 import { createEvidenceMotion } from './evidence-scan-motion.mjs';
@@ -212,6 +213,7 @@ export function PublicEvidenceExplorer({ report, explanation, images, geometry, 
         <button type="button" className="rr-fingerprint-button" disabled={mobile ? !ready : !SIDES.some(sideReady)} aria-label="ATLAS Card fingerprint" aria-pressed={section === 'fingerprint'} onClick={() => chooseSection('fingerprint')}><strong aria-hidden="true">ATLAS</strong>Card fingerprint</button>
         {gradeCalculation && <button type="button" aria-pressed={section === 'science'} onClick={() => chooseSection('science')}>Grade science</button>}
       </div>
+      {publication?.url && !printing && <ApprovedReportTour reportUrl={publication.url} expectedPublicHash={publication.reportHash}/>}
       <div className="rr-public-motion" hidden={wholeReady || scanView}><button type="button" onClick={playTour} disabled={!bothReady}>Tour saved evidence</button><button type="button" onClick={replayArrival} disabled={!bothReady}>Replay arrival</button>{(tour || arrival) && <button type="button" onClick={stopMotion}>Stop motion</button>}</div>
       <div className="rr-public-sides" hidden={section === 'science' || wholeReady} role="group" aria-label="Card side">{SIDES.map(side =>
         <button type="button" key={side} aria-pressed={activeSide === side} onClick={() => chooseSide(side)}>{title(side)} <span>{navigation.entries.filter(entry => entry.finding.side === side).length}</span></button>)}</div>

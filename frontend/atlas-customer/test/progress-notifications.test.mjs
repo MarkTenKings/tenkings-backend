@@ -1,0 +1,13 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomBytes,randomUUID} from 'node:crypto';
+import {CustomerAuth} from '../lib/server/auth.mjs';
+import {localConfig} from '../lib/server/fixture.mjs';
+import {createHandler} from '../lib/server/http.mjs';
+const response=()=>({headers:{},statusCode:200,setHeader(k,v){this.headers[k]=v;},status(n){this.statusCode=n;return this;},json(v){this.body=v;return this;}});
+function fixture(){const config=localConfig({sessionKey:randomBytes(32),phoneKey:randomBytes(32)}),calls=[];const auth=new CustomerAuth({config,database:{call:async(action,input)=>{calls.push({action,input});return{revision:1,email:true,sms:false,deliveryEnabled:false};}}});const browser=randomBytes(32).toString('base64url'),session=randomBytes(32).toString('base64url');const headers={origin:config.origin,'content-type':'application/json',cookie:`${config.cookies.browser}=${browser}; ${config.cookies.session}=${session}`,'x-atlas-customer-csrf':auth.digest(`session:${session}`)};return{calls,headers,handler:createHandler({config,auth,assertRequest(){},clientAddress:()=> 'synthetic'})};}
+test('progress preferences use owner session and explicit channel booleans, no caller destination or account',async()=>{
+ const f=fixture(),body={requestId:randomUUID(),expectedRevision:0,email:true,sms:false},res=response();await f.handler({method:'POST',url:'/api/customer/notifications',headers:f.headers,body},res);assert.equal(res.statusCode,200);assert.equal(f.calls[0].action,'progress_preferences_save');assert.deepEqual(Object.keys(f.calls[0].input).sort(),['browserHash','email','expectedRevision','requestId','sessionHash','sms']);assert.match(res.headers['Cache-Control'],/no-store/);
+ for(const changed of [{body:{...body,to:'someone@example.test'}},{body:{...body,accountId:randomUUID()}},{body:{...body,sms:'true'}},{headers:{...f.headers,'x-atlas-customer-csrf':''}},{headers:{...f.headers,origin:'https://foreign.example'}},{url:'/api/customer/notifications?accountId=foreign'}]){const denied=response();await f.handler({method:'POST',url:'/api/customer/notifications',headers:f.headers,body,...changed},denied);assert.ok([400,403].includes(denied.statusCode));}assert.equal(f.calls.length,1);
+});
+test('preference read requires a signed-in customer and does not acquire write authority',async()=>{const f=fixture(),res=response();await f.handler({method:'GET',url:'/api/customer/notifications',headers:f.headers},res);assert.equal(res.statusCode,200);assert.equal(f.calls[0].action,'progress_preferences');const denied=response();await f.handler({method:'GET',url:'/api/customer/notifications',headers:{}},denied);assert.equal(denied.statusCode,401);assert.equal(f.calls.length,1);});

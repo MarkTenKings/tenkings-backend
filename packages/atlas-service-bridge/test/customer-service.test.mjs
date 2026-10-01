@@ -23,9 +23,11 @@ test('private customer transport preserves original session authority and server
 });
 test('directory key cannot admit customer mutations and unconfigured operations fail closed', async t => {
   let effects = 0;
-  const f = await fixture(t, { 'dealer-locations': () => ({ locations: [] }), 'commerce-pay': () => { effects++; return {}; } });
+  const f = await fixture(t, { 'dealer-locations': () => ({ locations: [] }), 'weekly-capacity': () => ({ unit: 'CARDS' }), 'commerce-pay': () => { effects++; return {}; } });
   const directory = f.client({ key: f.directoryKey });
   assert.deepEqual(await directory.call('dealer-locations', { input: {} }), { locations: [] });
+  assert.deepEqual(await directory.call('weekly-capacity', { input: {} }), { unit: 'CARDS' });
+  await assert.rejects(directory.call('weekly-capacity', { input: {}, authority }), { status: 400 });
   await assert.rejects(directory.call('commerce-pay', { authority, input: {} }), { status: 401 });
   await assert.rejects(f.client().call('intake-complete', { authority, input: {} }), { status: 503, code: 'CUSTOMER_SERVICE_NOT_ENABLED' });
   assert.equal(effects, 0);

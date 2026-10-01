@@ -47,12 +47,39 @@ test('quote persists exact private measured plan and cannot outlive its configur
 test('shipment dates use configured origin timezone and are never rewritten',async()=>{const time=new Date('2026-09-24T00:30:00.000Z');let actual;const b=build('MAIL_IN',{clock:()=>time,carrier:{async quote(input){actual=input;return carrier.quote(input);}}});
     b.checkout.shippingPlans[0].legs.INBOUND.requestedShipment.shipDatestamp='2026-09-23';await b.service.quote(b.input);assert.equal(actual.requestedShipment.shipDatestamp,'2026-09-23');
 });
-for(const terms of [{},{mailClockStart:'ATLAS_RECEIPT'},{mailChargedLegs:'INBOUND_ONLY'}])test(`mail unknown terms fail closed ${JSON.stringify(terms)}`,async()=>{const b=build('MAIL_IN',{terms});await assert.rejects(()=>b.service.quote(b.input),/NOT_CONFIGURED/);});
+for(const terms of [{},{mailClockStart:'ATLAS_RECEIPT'},{mailChargedLegs:'INBOUND_ONLY'},{mailClockStart:'CARRIER_ACCEPTANCE',mailChargedLegs:'INBOUND_ONLY'}])test(`mail unknown terms fail closed ${JSON.stringify(terms)}`,async()=>{const b=build('MAIL_IN',{terms});await assert.rejects(()=>b.service.quote(b.input),/NOT_CONFIGURED/);});
 test('missing tax is never zero tax',async()=>{const b=build('KIOSK',{tax:null});await assert.rejects(()=>b.service.quote(b.input),/NOT_CONFIGURED/);});
 test('real zero tax calculation is valid with source',async()=>{const b=build('KIOSK',{tax:{async calculate(input){const result=await tax.calculate(input);return {...result,taxCents:0,totalCents:input.subtotalCents};}}});assert.equal((await b.service.quote(b.input)).taxCents,0);});
 test('mismatched tax, amount, currency and source binding fail',async()=>{for(const change of [{totalCents:1},{currency:'eur'},{taxCents:-1},{providerId:null},{requestHash:'bad'}]){
     const b=build('KIOSK',{tax:{async calculate(input){return {...await tax.calculate(input),...change};}}});await assert.rejects(()=>b.service.quote(b.input),/TAX_QUOTE_INVALID/);}});
 test('caller amounts cannot override server pricing; stale revision denied',async()=>{const b=build();const q=await b.service.quote({...b.input,unitCents:1,taxCents:0,shippingCents:999});assert.equal(q.cards[0].unitCents,5000);await assert.rejects(()=>b.service.quote({...b.input,expectedRevision:1}),/CHECKOUT_CHANGED/);});
+test('new shop checkout needs schedule and dealer identity but no terminal or package printer',async()=>{
+    const b=build();delete b.checkout.location.terminalId;delete b.checkout.location.terminalLocationId;delete b.checkout.location.packagePrinterId;
+    const q=await b.service.quote(b.input);assert.equal(q.terms.paymentFlow,'CUSTOMER_PHONE');
+    assert.equal(b.repository.quotes.get(q.id).location.terminalId,undefined);
+    delete b.checkout.location.schedule.projectedReturnAt;await assert.rejects(()=>b.service.quote(b.input),/KIOSK_NOT_AVAILABLE/);
+});
+test('shop contact can be name plus verified phone; optional email controls only the new receipt effect',async()=>{
+    for (const contact of [{name:'Shop Customer'},{name:'Shop Customer',email:''},{name:'Shop Customer',email:'shop@example.test'}]) {
+        let taxInput,shippingCalls=0;const b=build('KIOSK',{payment:payment('succeeded'),tax:{async calculate(input){taxInput=input;return tax.calculate(input);}},carrier:{async quote(){shippingCalls++;throw Error('must not ship shop cards');}}});
+        b.checkout.profile=contact;
+        const quote=await b.service.quote(b.input),stored=b.repository.quotes.get(quote.id);
+        assert.deepEqual(stored.profile,contact);assert.equal(stored.phone,b.checkout.phone);assert.equal(quote.shippingCents,0);assert.equal(shippingCalls,0);
+        assert.deepEqual(taxInput.location.address,b.checkout.location.address);assert.deepEqual(taxInput.profile,contact);
+        const paid=await b.service.pay({quoteId:quote.id,requestId:randomUUID()});assert.equal(paid.state,'PAID');
+        const expected=contact.email?['EMAIL_RECEIPT','SMS_RECEIPT','TAX_TRANSACTION']:['SMS_RECEIPT','TAX_TRANSACTION'];
+        assert.deepEqual([...b.repository.effects.values()].map(effect=>effect.kind).sort(),expected);
+        const sms=[...b.repository.effects.values()].find(effect=>effect.kind==='SMS_RECEIPT');assert.equal(sms.request.to,b.checkout.phone);
+        assert.equal((await b.service.reconcile(paid.attemptId)).order.id,paid.order.id);assert.equal(b.repository.effects.size,expected.length);
+    }
+});
+test('shop name and valid optional email stay required; a compact shop contact cannot be used for mail',async()=>{
+    for(const contact of [{},{name:''},{name:'Shop Customer',email:'bad'},{name:'Shop Customer',email:null}]) {
+        let taxCalls=0;const b=build('KIOSK',{tax:{async calculate(){taxCalls++;throw Error('must not call');}}});b.checkout.profile=contact;
+        await assert.rejects(()=>b.service.quote(b.input),/PROFILE_INCOMPLETE/);assert.equal(taxCalls,0);
+    }
+    const mail=build('MAIL_IN');mail.checkout.profile={name:'Shop Customer'};await assert.rejects(()=>mail.service.quote(mail.input),/PROFILE_INCOMPLETE/);
+});
 test('unverified or duplicate photo roster cannot quote',async()=>{const b=build();b.checkout.cards[0].photoPairHash='';await assert.rejects(()=>b.service.quote(b.input),/CARD_REVIEW_REQUIRED/);
     b.checkout.cards[0].photoPairHash='a'.repeat(64);b.checkout.cards[1].id=b.checkout.cards[0].id;await assert.rejects(()=>b.service.quote(b.input),/DUPLICATE_CARD/);});
 test('concurrent payment requests produce one provider intent; ACK is not paid',async()=>{const b=build();const q=await b.service.quote(b.input);
@@ -60,8 +87,8 @@ test('concurrent payment requests produce one provider intent; ACK is not paid',
 test('lost create reply stays unknown, repeated Pay does not create another intent',async()=>{const p=payment();p.create=async()=>{p.creates++;throw Error('lost');};p.retrieve=async()=>{throw Error('not yet discoverable');};const b=build('KIOSK',{payment:p});const q=await b.service.quote(b.input);
     const first=await b.service.pay({quoteId:q.id,requestId:randomUUID()});assert.equal(first.state,'UNKNOWN');await b.service.pay({quoteId:q.id,requestId:randomUUID()});assert.equal(p.creates,1);assert.equal(b.repository.effects.size,0);});
 test('confirmed payment atomically creates one order and durable receipt effects on retries',async()=>{const b=build('KIOSK',{payment:payment('succeeded')});const q=await b.service.quote(b.input);
-    const first=await b.service.pay({quoteId:q.id,requestId:randomUUID()}),second=await b.service.reconcile(first.attemptId);assert.equal(first.state,'PAID');assert.equal(first.order.id,second.order.id);assert.equal(b.repository.effects.size,4);});
-test('provider amount/merchant/mode/hash mismatches cannot mark paid',async()=>{for(const patch of [{amountCents:1},{receivedCents:1},{merchantId:'acct_other'},{livemode:true},{quoteHash:'b'.repeat(64)},{paymentMethodTypes:['card']}]){
+    const first=await b.service.pay({quoteId:q.id,requestId:randomUUID()}),second=await b.service.reconcile(first.attemptId);assert.equal(first.state,'PAID');assert.equal(first.order.id,second.order.id);assert.equal(b.repository.effects.size,3);assert.ok([...b.repository.effects.values()].every(effect=>effect.kind!=='PACKAGE_LABEL'));});
+test('provider amount/merchant/mode/hash mismatches cannot mark paid',async()=>{for(const patch of [{amountCents:1},{receivedCents:1},{merchantId:'acct_other'},{livemode:true},{quoteHash:'b'.repeat(64)},{paymentMethodTypes:['card_present']}]){
     const p=payment('succeeded'),original=p.retrieve;p.retrieve=async a=>({...await original(a),...patch});const b=build('KIOSK',{payment:p}),q=await b.service.quote(b.input);
     await assert.rejects(()=>b.service.pay({quoteId:q.id,requestId:randomUUID()}),/PAYMENT_/);assert.equal(b.repository.effects.size,0);}});
 test('unknown notification effect is durable and never automatically redispatched',async()=>{let sends=0;const b=build('KIOSK',{payment:payment('succeeded'),notifications:{async send(){sends++;throw Error('lost');}}});const q=await b.service.quote(b.input);await b.service.pay({quoteId:q.id,requestId:randomUUID()});

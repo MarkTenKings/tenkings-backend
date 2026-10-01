@@ -15,7 +15,7 @@ export function customerLocation(value) {
             exceptions: array(schedule.exceptions).map(row => fields(row, ['date', 'kind', 'cancelled', 'time', 'cutoff', 'reason'])) } };
 }
 export const customerCards = value => array(value).map(card => ({ ...fields(card, ['id', 'cardId', 'revision', 'unitCents']), identity: fields(card.identity, identities) }));
-const customerTerms = value => fields(value, ['days', 'clockStart', 'mailChargedLegs']);
+const customerTerms = value => fields(value, ['days', 'clockStart', 'mailChargedLegs', 'paymentFlow']);
 export function customerQuote(value) {
     return { ...fields(value, ['id', 'draftId', 'draftRevision', 'channel', ...amounts, 'createdAt', 'expiresAt']),
         cards: customerCards(value?.cards), location: customerLocation(value?.location), terms: customerTerms(value?.terms),
@@ -31,16 +31,19 @@ export function customerPayment(value, publishableKey) {
     if (!value) return null;
     const channel = value.quote?.channel ?? value.channel ?? value.order?.receipt?.channel;
     const result = { attemptId: value.id ?? value.attemptId, state: value.state, ...(channel ? { channel } : {}) };
+    const paymentFlow = value.quote?.terms?.paymentFlow ?? value.paymentFlow;
+    if (paymentFlow === 'CUSTOMER_PHONE') result.paymentFlow = paymentFlow;
     const clientSecret = value.observation?.clientSecret;
-    if (value.state === 'AWAITING_PAYMENT' && channel === 'MAIL_IN' && typeof clientSecret === 'string' && typeof publishableKey === 'string') {
+    if (value.state === 'AWAITING_PAYMENT' && (channel === 'MAIL_IN' || paymentFlow === 'CUSTOMER_PHONE') && typeof clientSecret === 'string' && typeof publishableKey === 'string') {
         result.clientSecret = clientSecret; result.publishableKey = publishableKey;
     }
     if (value.state === 'PAID' && value.order) result.order = customerOrder(value.order);
     return result;
 }
-export function customerCheckout(value, { activePayment = customerPayment(value?.activePayment), blockers = [], unitCents, turnaroundDays } = {}) {
+export function customerCheckout(value, { activePayment = customerPayment(value?.activePayment), blockers = [], unitCents, turnaroundDays, capacity } = {}) {
     return { version: 'atlas-commerce-checkout-v1', ...fields(value, ['draftId', 'revision', 'channel']), cards: customerCards(value?.cards),
         location: customerLocation(value?.location), activePayment,
         unitCents: unitCents ?? value.unitCents, turnaroundDays: turnaroundDays ?? value.turnaroundDays,
-        shippingOptions: array(value?.shippingOptions ?? value?.shippingPlans).map(row => fields(row, ['packingPresetId', 'shippingServiceCode', 'label', 'packaging'])), blockers };
+        shippingOptions: array(value?.shippingOptions ?? value?.shippingPlans).map(row => fields(row, ['packingPresetId', 'shippingServiceCode', 'label', 'packaging'])), blockers,
+        ...(capacity ? { capacity } : {}) };
 }

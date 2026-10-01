@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 const require = createRequire(new URL('../package.json', import.meta.url)), babel = require('next/dist/compiled/babel/core'), React = require('react'), { renderToStaticMarkup } = require('react-dom/server');
 const compile = path => babel.transformSync(readFileSync(new URL(path, import.meta.url), 'utf8'), { filename: path, presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } }, 'transform-runtime': { helpers: false } }]], babelrc: false, configFile: false }).code;
 const receipt = {};
-vm.runInNewContext(compile('../components/commerce/OrderReceipt.jsx'), { exports: receipt, Intl, require: name => name === 'react' ? React : name.endsWith('.css') ? {} : name.endsWith('/client.mjs') ? {} : require(name) });
+vm.runInNewContext(compile('../components/commerce/OrderReceipt.jsx'), { exports: receipt, Intl, require: name => name === 'react' ? React : name.endsWith('.css') ? {} : name.endsWith('/client.mjs') ? {} : name.endsWith('CustomerHandoff.jsx') ? {__esModule:true,default:()=>null} : require(name) });
 const order = { id: 'saved-order', reference: 'ATLAS-SAVED', receipt: { channel: 'KIOSK', subtotalCents: 5000, shippingCents: 0, taxCents: 450, totalCents: 5450,
     cards: [{ cardId: 'one', unitCents: 5000 }], terms: { days: 7, clockStart: 'ATLAS_COLLECTION' }, location: { name: 'Original kiosk', address: { line1: '1 Saved Street', city: 'Testville' },
         schedule: { timeZone: 'America/Los_Angeles', nextCollectionAt: '2026-09-30T17:00:00Z', projectedReturnAt: '2026-10-07T17:00:00Z', cutoffAt: '2026-09-30T16:00:00Z' } } },

@@ -60,3 +60,11 @@ test('unsettled mail terms and malformed activation switches are explicit', () =
     assert.equal(result.adaptersValid, false);
     assert.deepEqual(result.invalid, ['ATLAS_COMMERCE_ENABLED', 'ATLAS_COMMERCE_MAIL_CLOCK_START', 'ATLAS_COMMERCE_MAIL_CHARGED_LEGS']);
 });
+test('shop readiness does not require carrier configuration, a return address or Terminal equipment',()=>{
+    const env=settings();for(const key of COMMERCE_KEYS.filter(key=>key.includes('_FEDEX_')||key.includes('_MAIL_')))delete env[key];
+    const shop=inspectCommerceConfiguration(env,{channel:'KIOSK'});assert.equal(shop.status,'READY_FOR_PROVIDER_QUALIFICATION');
+    assert.deepEqual(shop.missing,[]);assert.equal(shop.channel,'KIOSK');assert(shop.activationGates.includes('SHOP_LOCATION_AND_SCHEDULE'));
+    assert(!shop.activationGates.includes('FEDEX_ACCOUNT_AND_MEASURED_PACKAGES'));assert(!shop.activationGates.includes('KIOSK_LOCATION_AND_EQUIPMENT'));
+    const mail=inspectCommerceConfiguration(env,{channel:'MAIL_IN'});assert.equal(mail.status,'INCOMPLETE');assert(mail.missing.includes('ATLAS_COMMERCE_FEDEX_ACCOUNT_NUMBER'));
+    assert.doesNotMatch(JSON.stringify(shop),/PRIVATE_FIXTURE|fixture@example|123456789|acct_fixture/);
+});

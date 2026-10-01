@@ -88,6 +88,28 @@ test('reconciliation requires exact staff event identity and content; public tim
   delete data.orders[0].cards[0].custodyEvents; data.orders[0].cards[0].events = [{ ...entry.input }]; assert.equal(contract.operationRecorded(data, entry), false);
 });
 
+test('phone-only shop setup omits blank equipment and reconciles SQL nulls without accepting different equipment', () => {
+  const saved = { id: randomUUID(), dealer_id: randomUUID(), revision: 4, enabled: true, name: 'Synthetic phone shop',
+    address: { line1: '1 Fixture Way', city: 'Test', region: 'CA', postalCode: '90001', country: 'US' }, latitude: 34, longitude: -118,
+    schedule: { timeZone: 'America/Los_Angeles', pickups: [{ weekday: 2, time: '10:00', cutoff: '09:00' }], returns: [{ weekday: 2, time: '11:00' }], exceptions: [] },
+    terminal_id: null, terminal_location_id: null, package_printer_id: null, entry_token: 'a'.repeat(64), authorized_until: '2026-10-15T12:00:00Z' };
+  const form = contract.locationForm(saved);
+  assert.equal(form.terminalId, ''); assert.equal(form.terminalLocationId, ''); assert.equal(form.packagePrinterId, '');
+  form.packagePrinterId = '  ';
+  const input = contract.locationInput(form, randomUUID), journal = { action: 'location-configure', input, staffId: staff.id };
+  for (const key of ['terminalId', 'terminalLocationId', 'packagePrinterId']) assert.equal(Object.hasOwn(input, key), false);
+  const after = { ...saved, revision: 5 };
+  assert.equal(contract.operationRecorded({ locations: [after] }, journal), true);
+  assert.equal(contract.operationRecorded({ locations: [{ ...after, terminal_id: 'unexpected-reader' }] }, journal), false);
+  assert.equal(contract.operationRecorded({ locations: [saved] }, journal), false);
+  const legacy = { ...saved, terminal_id: 'retained-reader', terminal_location_id: 'retained-terminal-location', package_printer_id: 'retained-printer' };
+  const legacyInput = contract.locationInput(contract.locationForm(legacy), randomUUID);
+  assert.deepEqual([legacyInput.terminalId, legacyInput.terminalLocationId, legacyInput.packagePrinterId], ['retained-reader', 'retained-terminal-location', 'retained-printer']);
+  assert.equal(contract.operationRecorded({ locations: [{ ...legacy, revision: 5 }] }, { ...journal, input: legacyInput }), true);
+  assert.equal(contract.operationRecorded({ locations: [after] }, { ...journal, input: legacyInput }), false);
+  assert.throws(() => contract.locationInput({ ...form, terminalId: 'x'.repeat(161) }, randomUUID), /terminal ID/);
+});
+
 test('rendered empty roster is honest and received-card binding uses only accessible saved cards', () => {
   const React = require('react'), { renderToStaticMarkup } = require('react-dom/server'), exported = load(React);
   const emptyHtml = renderToStaticMarkup(React.createElement(exported.OrderRoster, { data: empty })); assert.match(emptyHtml, /No paid customer submissions yet/);
@@ -96,6 +118,11 @@ test('rendered empty roster is honest and received-card binding uses only access
   const html = renderToStaticMarkup(React.createElement(exported.CustodyCard, { card: received, manualCards: [], disabled: false })); assert.match(html, /No accessible, unlinked grading cards/); assert.match(html, /<fieldset disabled=""><legend>Match the physical card/); assert.match(html, /type="datetime-local"[^>]*value=""/);
   const member = renderToStaticMarkup(React.createElement(exported.MembershipEditor, { data: empty, disabled: false })); assert.match(member, /No dealer memberships/); assert.match(member, /<fieldset disabled="">/);
   const setup = renderToStaticMarkup(React.createElement(exported.LocationEditor, { locations: [], disabled: false })); assert.match(setup, /No kiosk locations are configured/); assert.match(setup, /No weekly pickups entered/); assert.doesNotMatch(setup, /type="checkbox"[^>]*checked/);
+  assert.match(setup, /Customers pay on their own phones/);
+  for (const label of ['Linked payment terminal ID', 'Payment terminal location ID', 'Package printer ID']) {
+    const attributes = setup.match(new RegExp(`<span>${label} \\(optional\\)</span><input([^>]*)>`))?.[1];
+    assert.notEqual(attributes, undefined); assert.doesNotMatch(attributes, /required/);
+  }
 });
 
 test('lost custody reply survives remount, prevents double click, and reconciles by read without resubmitting', async () => {

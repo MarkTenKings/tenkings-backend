@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PrismaClient } from '../../atlas-app/.generated/staff-database/index.js';
 import { disposablePostgres } from '../../atlas-app/scripts/disposable-postgres.mjs';
@@ -14,6 +14,7 @@ import { DurableStaffAuth } from '../../atlas-app/lib/server/access/auth.mjs';
 import { StaffDatabase } from '../../atlas-app/lib/server/access/database.mjs';
 import { createDurableStaffBoundary, manualGrantSQL } from '../../../packages/atlas-manual-service/src/staff-auth.mjs';
 import { createManualRepository } from '../../../packages/atlas-manual-service/src/repository.mjs';
+import { publicationGrantSQL } from '../../../packages/atlas-connected-manual/src/publication-repository.mjs';
 import { createDealerStaffService, dealerStaffGrantSQL } from '../../../packages/atlas-connected-manual/src/dealer-operations.mjs';
 import { customerPrivateGrantSQL, createCustomerPrivateDatabase } from '../../../packages/atlas-connected-manual/scripts/customer-database.mjs';
 import { DealerOperations } from '../../../packages/atlas-dealer-operations/src/service.mjs';
@@ -26,6 +27,23 @@ const fixture = await disposablePostgres(process.argv.slice(2));
 const clients = [], checks = [];
 try {
     const db = await fixture.database();
+    // Rehearse the real registered head chain; older fixture baselines apply exact proposal bytes.
+    for(const [name,proposal] of [
+      ['20261001001000_atlas_weekly_card_capacity','atlas-commerce/sql/weekly-capacity-proposal.sql'],
+      ['20261001002000_atlas_customer_phone_payments','atlas-commerce/sql/customer-phone-proposal.sql'],
+      ['20261001003000_atlas_dealer_phone_handoff','atlas-dealer-operations/sql/handoff-proposal.sql'],
+      ['20261001004000_customer_progress_notifications','atlas-commerce/sql/progress-notifications-proposal.sql'],
+      ['20261001005000_atlas_shop_contact_profile','atlas-customer-intake/sql/shop-profile-proposal.sql']])
+      assert.equal(readFileSync(new URL(`../../atlas-app/prisma/migrations/${name}/migration.sql`,import.meta.url),'utf8'),readFileSync(new URL(`../../../packages/${proposal}`,import.meta.url),'utf8'));
+    const installedCapacity=(await fixture.sql(`SELECT to_regclass('atlas_customer."WeeklyCapacityConfig"') IS NOT NULL installed`,[],db.name)).rows[0].installed;
+    if(!installedCapacity){
+      await fixture.sql(readFileSync(new URL('../../../packages/atlas-commerce/sql/weekly-capacity-proposal.sql', import.meta.url), 'utf8'), [], db.name);
+      await fixture.sql(readFileSync(new URL('../../../packages/atlas-commerce/sql/customer-phone-proposal.sql', import.meta.url), 'utf8'), [], db.name);
+    }
+    const installedHandoff=(await fixture.sql(`SELECT to_regclass('atlas_dealer.handoff') IS NOT NULL installed`,[],db.name)).rows[0].installed;
+    const installedProgress=(await fixture.sql(`SELECT to_regclass('atlas_customer."ProgressNotification"') IS NOT NULL installed`,[],db.name)).rows[0].installed;
+    await fixture.sql(`UPDATE atlas_customer."WeeklyCapacityConfig" SET "quotaCards"=100 WHERE channel IN ('MAIL_IN','DEALER_DROP_OFF')`, [], db.name);
+    checks.push('additive card capacity and customer-phone payment proposals with explicit fixture-only quotas');
     const client = url => { const value = new PrismaClient({ datasources: { db: { url } } }); clients.push(value); return value; };
     const admin = client(db.adminUrl), customerClient = client(db.customerUrl), staffClient = client(db.staffUrl);
     async function restricted(name, grants) {
@@ -138,16 +156,17 @@ try {
         }
         draft = (await call(who, 'intake_review', { id: draft.id, expectedRevision: draft.revision, profile })).draft;
         publicLocation(draft.locationSnapshot, location);
-        const repository = new GatewayCommerceRepository((name, input) => privateDatabase.call('commerce', { name, providerBinding, input: { ...input, authority: who.authority } }));
+        const repository = new GatewayCommerceRepository((name, input) => name === 'commerce_weekly_capacity' ? privateDatabase.call('capacity', { input: {} }) : privateDatabase.call('commerce', { name, providerBinding, input: { ...input, authority: who.authority } }));
         let creates = 0;
         const payment = { binding: merchant, async create(attempt) { creates++; return { state: 'AWAITING_PAYMENT', providerId: `pi_synthetic_${attempt.id}` }; },
             async retrieve(attempt) { return { source: 'PROVIDER_RETRIEVAL', provider: 'STRIPE', merchantId: merchant.accountId, livemode: false,
                 providerId: `pi_synthetic_${attempt.id}`, status: 'succeeded', amountCents: attempt.quote.totalCents, receivedCents: attempt.quote.totalCents,
-                currency: 'usd', quoteHash: attempt.quote.contentHash, attemptId: attempt.id, paymentMethodTypes: ['card_present'] }; } };
+                currency: 'usd', quoteHash: attempt.quote.contentHash, attemptId: attempt.id, paymentMethodTypes: ['card'] }; } };
         const tax = { async calculate(input) { return { provider: 'SYNTHETIC', providerId: 'tax_synthetic', currency: 'usd', taxCents: 888,
             totalCents: input.subtotalCents + 888, requestHash: digest(input), expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() }; } };
         const service = new CommerceService({ repository, payment, tax });
         const quote = await service.quote({ draftId: draft.id, expectedRevision: draft.revision });
+        assert.equal(quote.terms.paymentFlow, 'CUSTOMER_PHONE');
         assert.equal(quote.shippingCents, 0); assert.equal(quote.totalCents, count * 5000 + 888);
         publicLocation(quote.location, location);
         const input = { quoteId: quote.id, requestId: randomUUID() }, paid = await service.pay(input);
@@ -186,9 +205,14 @@ try {
         await assert.rejects(staffCall('custody_record', custody(kind)), { code: 'CUSTODY_TRANSITION_INVALID' });
     assert.equal((await fixture.sql('SELECT count(*) AS n FROM atlas_dealer.custody_event', [], db.name)).rows[0].n, '0');
     checks.push('NULL predecessor cannot bypass first-event rules; manual link refused before actual synthetic receipt');
-    await assert.rejects(call(b, 'dealer_deposit', { orderId: orderA.order.id, cardId, requestId: randomUUID() }), { code: 'NOT_FOUND' });
-    await assert.rejects(call(a, 'dealer_deposit', { orderId: orderB.order.id, cardId, requestId: randomUUID() }), { code: 'NOT_FOUND' });
+    await assert.rejects(call(b, 'dealer_deposit', { orderId: orderA.order.id, cardId, requestId: randomUUID() }), { code: installedHandoff?'STAFF_HANDOFF_REQUIRED':'NOT_FOUND' });
+    await assert.rejects(call(a, 'dealer_deposit', { orderId: orderB.order.id, cardId, requestId: randomUUID() }), { code: installedHandoff?'STAFF_HANDOFF_REQUIRED':'NOT_FOUND' });
     const declaration = { orderId: orderA.order.id, cardId, requestId: randomUUID() };
+    // Historical evidence seeding is restricted to this owned synthetic DB. It is never
+    // manufactured through current customer mutation, which correctly rejects fresh deposits.
+    if(installedHandoff)await fixture.sql(`INSERT INTO atlas_dealer.custody_event(card_id,sequence,request_id,input_hash,kind,customer_id,occurred_at,evidence)
+      VALUES($1::uuid,1,$2::uuid,atlas_customer.commerce_hash($3::jsonb),'DEPOSIT_DECLARED',$4::uuid,clock_timestamp(),'{"meaning":"CUSTOMER_DECLARATION_ONLY"}'::jsonb)`,
+      [cardId,declaration.requestId,JSON.stringify(declaration),a.customer.id],db.name);
     let deposited;
     try { deposited = await call(a, 'dealer_deposit', declaration); }
     catch (error) {
@@ -224,8 +248,172 @@ try {
         assert(!text.includes(foreignManualId));
     }
     checks.push('owner-only tracker exposes actual collection-based week and current manual status, excludes private notes/addresses/payment/session data');
+    // Owner-approved phone-paid shop handoff: additive schema in this disposable fixture only.
+    if(!installedHandoff)await fixture.sql(readFileSync(new URL('../../../packages/atlas-dealer-operations/sql/handoff-proposal.sql', import.meta.url), 'utf8'), [], db.name);
+    if(!installedProgress)await fixture.sql(readFileSync(new URL('../../../packages/atlas-commerce/sql/progress-notifications-proposal.sql', import.meta.url), 'utf8'), [], db.name);
+    assert.deepEqual(await call(a,'progress_preferences',{}),{revision:0,email:false,sms:false,deliveryEnabled:false});
+    await assert.rejects(call(a,'progress_preferences',{accountId:b.customer.id}),{code:'INVALID_REQUEST'});
+    const preferenceInput={requestId:randomUUID(),expectedRevision:0,email:true,sms:true};
+    const preference=await call(a,'progress_preferences_save',preferenceInput);
+    assert.equal(preference.revision,1);assert.equal(preference.email,true);assert.equal(preference.sms,true);
+    assert.deepEqual(await call(a,'progress_preferences_save',preferenceInput),preference);
+    await assert.rejects(call(a,'progress_preferences_save',{...preferenceInput,sms:false}),{code:'REQUEST_CONFLICT'});
+    assert.equal((await call(b,'progress_preferences',{})).revision,0);
+    assert.equal((await fixture.sql('SELECT count(*)::int n FROM atlas_customer."ProgressNotification"',[],db.name)).rows[0].n,0);
+    checks.push('progress preferences default off, are account-scoped and immutable-audited, and exact retries do not change revision; prior custody history is not replayed');
+
+    assert.deepEqual(await call(a, 'dealer_deposit', declaration), deposited);
+    await assert.rejects(call(a, 'dealer_deposit', { ...declaration, requestId: randomUUID() }), { code: 'STAFF_HANDOFF_REQUIRED' });
+    await assert.rejects(dealer.issueHandoff(a.authority, orderA.order.id), { code: 'HANDOFF_ALREADY_ADVANCED' });
+    await assert.rejects(dealer.issueHandoff(a.authority, orderB.order.id), { code: 'NOT_FOUND' });
+    const phoneOnlyShop = {...locationInput('PHONE'), terminalId:null, terminalLocationId:null, packagePrinterId:null};
+    await staffCall('location_configure', phoneOnlyShop);
+    const phoneLocation=(await fixture.sql('SELECT terminal_id,terminal_location_id,package_printer_id FROM atlas_dealer.location WHERE id=$1::uuid',[phoneOnlyShop.id],db.name)).rows[0];
+    assert.deepEqual(phoneLocation,{terminal_id:null,terminal_location_id:null,package_printer_id:null});
+    const nextOrder=await paidKiosk(a,locationA,2);
+    const issued=await dealer.issueHandoff(a.authority,nextOrder.order.id),issuedAgain=await dealer.issueHandoff(a.authority,nextOrder.order.id);
+    assert.equal(issued.token,issuedAgain.token);assert.equal(issued.handoff.status,'AWAITING_SHOP_RECEIPT');assert.equal(issued.handoff.receipt,null);
+    assert.equal(issued.handoff.cardCount,2);assert.equal(issued.handoff.location.id,locationA.id);
+    let nextTracking=await call(a,'dealer_tracking',{orderId:nextOrder.order.id});
+    assert(nextTracking.cards.every(c=>c.events.length===0&&!c.collectedAt));
+    await assert.rejects(dealer.handoffRead(enteredB.sessionToken,b.authority.browserHash,enteredB.csrf,issued.token),{code:'HANDOFF_NOT_FOUND'});
+    await assert.rejects(dealer.handoffRead(enteredA.sessionToken,b.authority.browserHash,enteredA.csrf,issued.token),{code:'DEALER_SIGN_IN_REQUIRED'});
+    const detail=(await dealer.handoffRead(enteredA.sessionToken,a.authority.browserHash,enteredA.csrf,issued.token)).handoff;
+    assert.deepEqual(detail.cards.map(c=>c.cardId),[...nextOrder.cardIds].sort());
+    assert(!JSON.stringify(detail).includes(profile.email));assert(!JSON.stringify(detail).includes(profile.address1));
+    const confirmInput={requestId:randomUUID(),cardIds:nextOrder.cardIds,confirmedCount:2};
+    await assert.rejects(dealer.handoffConfirm(enteredA.sessionToken,a.authority.browserHash,enteredA.csrf,issued.token,{...confirmInput,cardIds:[nextOrder.cardIds[0]],confirmedCount:1}),{code:'HANDOFF_CARD_COUNT_MISMATCH'});
+    await assert.rejects(dealer.handoffConfirm(enteredA.sessionToken,a.authority.browserHash,enteredA.csrf,issued.token,{...confirmInput,cardIds:[nextOrder.cardIds[0],orderA.cardIds[0]]}),{code:'HANDOFF_CARD_COUNT_MISMATCH'});
+    const confirmed=await Promise.all([confirmInput,{...confirmInput,requestId:randomUUID()}].map(input=>dealer.handoffConfirm(enteredA.sessionToken,a.authority.browserHash,enteredA.csrf,issued.token,input)));
+    assert.equal(confirmed[0].handoff.receipt.id,confirmed[1].handoff.receipt.id);
+    assert.equal(confirmed[0].handoff.status,'RECEIVED');assert.equal(confirmed[0].handoff.receipt.cardCount,2);
+    assert.deepEqual(await dealer.handoffConfirm(enteredA.sessionToken,a.authority.browserHash,enteredA.csrf,issued.token,confirmInput),confirmed[0]);
+    const receiptCount=(await fixture.sql('SELECT count(*)::int AS n FROM atlas_dealer.handoff_receipt WHERE handoff_id=$1::uuid',[issued.handoff.id],db.name)).rows[0].n;
+    assert.equal(receiptCount,1);
+    const receiptOrder=(await dealer.read(enteredA.sessionToken,a.authority.browserHash)).orders.find(o=>o.reference===nextOrder.order.reference);
+    assert(receiptOrder.cards.every(c=>c.custody==='DEALER_RECEIVED'));
+    const progressRows=(await fixture.sql('SELECT id,channel,"eventKind",request FROM atlas_customer."ProgressNotification" ORDER BY id',[],db.name)).rows;
+    assert.equal(progressRows.length,4);assert(progressRows.every(e=>e.eventKind==='DEALER_RECEIVED'));
+    assert.equal(progressRows.filter(e=>e.channel==='EMAIL').length,2);assert.equal(progressRows.filter(e=>e.channel==='SMS').length,2);
+    const progressCall=(name,input)=>privateDatabase.call('progress',{name,input});
+    await assert.rejects(progressCall('pending',{}),{code:'PROGRESS_NOT_ENABLED'});
+    for(const table of ['ProgressPreference','ProgressPreferenceEvent','ProgressNotification'])await assert.rejects(customerClient.$queryRawUnsafe(`SELECT * FROM atlas_customer."${table}"`));
+    await fixture.sql(`UPDATE atlas_customer."ProgressNotificationControl" SET enabled=true WHERE id='active'`,[],db.name);
+    assert.equal((await progressCall('pending',{})).ids.length,4);
+    const emailRows=progressRows.filter(e=>e.channel==='EMAIL'),claimId=randomUUID();
+    const claims=await Promise.all([claimId,randomUUID()].map(claimId=>progressCall('claim',{id:emailRows[0].id,claimId})));
+    assert.equal(claims.filter(c=>c.dispatch).length,1);
+    const savedClaim=(await fixture.sql('SELECT "claimId" FROM atlas_customer."ProgressNotification" WHERE id=$1',[emailRows[0].id],db.name)).rows[0].claimId;
+    await progressCall('finish',{id:emailRows[0].id,claimId:savedClaim,state:'UNKNOWN',result:{code:'PROGRESS_OUTCOME_UNKNOWN'}});
+    assert.equal((await progressCall('claim',{id:emailRows[0].id,claimId:randomUUID()})).dispatch,false);
+    const successClaim=randomUUID();assert.equal((await progressCall('claim',{id:emailRows[1].id,claimId:successClaim})).dispatch,true);
+    const finish={id:emailRows[1].id,claimId:successClaim,state:'ACCEPTED',result:{provider:'SENDGRID',providerId:'synthetic-progress-id',deliveryStatus:'ACCEPTED'}};
+    assert.deepEqual(await progressCall('finish',finish),{state:'ACCEPTED'});assert.deepEqual(await progressCall('finish',finish),{state:'ACCEPTED'});
+    await call(a,'progress_preferences_save',{requestId:randomUUID(),expectedRevision:1,email:true,sms:false});
+    for(const row of progressRows.filter(e=>e.channel==='SMS'))assert.equal((await progressCall('claim',{id:row.id,claimId:randomUUID()})).dispatch,false);
+    assert.equal((await progressCall('pending',{})).ids.length,0);
+    checks.push('actual handoff INSERT atomically enqueues exactly one row per card/channel; default-disabled worker cannot claim; concurrent claim wins once; UNKNOWN is quarantined; accepted finish replays; opt-out suppresses pending sends; restricted role cannot read tables');
+
+    nextTracking=await call(a,'dealer_tracking',{orderId:nextOrder.order.id});
+    assert(nextTracking.cards.every(c=>c.events.length===1&&c.events[0].kind==='DEALER_RECEIVED'&&!c.collectedAt&&!c.turnaroundTarget));
+    const persistedHandoffRequest=(await fixture.sql('SELECT request_id FROM atlas_dealer.handoff_receipt WHERE handoff_id=$1::uuid',[issued.handoff.id],db.name)).rows[0].request_id;
+    const later=await paidKiosk(a,locationA,1),laterHandoff=await dealer.issueHandoff(a.authority,later.order.id);
+    await assert.rejects(dealer.handoffConfirm(enteredA.sessionToken,a.authority.browserHash,enteredA.csrf,laterHandoff.token,{...confirmInput,requestId:persistedHandoffRequest,cardIds:later.cardIds,confirmedCount:1}),{code:'REQUEST_CONFLICT'});
+    for(const table of ['handoff','handoff_receipt']){
+      await assert.rejects(customerClient.$queryRawUnsafe(`SELECT * FROM atlas_dealer.${table}`));
+      await assert.rejects(fixture.sql(`UPDATE atlas_dealer.${table} SET id=id`,[],db.name),/Immutable/iu);
+    }
+    await assert.rejects(customerClient.$queryRaw`SELECT atlas_dealer.handoff_projection(${issued.handoff.id}::uuid,true)`);
+    // Existing collector still advances actual custody once; the seven-day clock starts here.
+    const handoffCollectedAt=new Date().toISOString();
+    await staffCall('custody_record',{cardId:nextOrder.cardIds[0],requestId:randomUUID(),kind:'COLLECTED',occurredAt:handoffCollectedAt,evidence:{reference:'SYNTHETIC_SHOP_COLLECTION'}});
+    nextTracking=await call(a,'dealer_tracking',{orderId:nextOrder.order.id});
+    const nowCollected=nextTracking.cards.find(c=>c.cardId===nextOrder.cardIds[0]);
+    assert.deepEqual(nowCollected.events.map(e=>e.kind),['DEALER_RECEIVED','COLLECTED']);
+    assert.equal(Date.parse(nowCollected.turnaroundTarget)-Date.parse(nowCollected.collectedAt),7*86400_000);
+    const collectedNotice=(await fixture.sql(`SELECT id,"eventKind",channel FROM atlas_customer."ProgressNotification" WHERE state='PENDING'`,[],db.name)).rows;
+    assert.equal(collectedNotice.length,1);assert.equal(collectedNotice[0].eventKind,'COLLECTED');assert.equal(collectedNotice[0].channel,'EMAIL');
+    const contactCleared=(await call(a,'profile',{profile:{name:profile.name,email:''}})).customer;
+    assert.equal(Object.hasOwn(contactCleared.profile,'email'),false);assert.equal(contactCleared.profile.address1,profile.address1);
+    assert.equal((await progressCall('claim',{id:collectedNotice[0].id,claimId:randomUUID()})).dispatch,false);
+    assert.equal((await progressCall('pending',{})).ids.length,0);
+    assert.equal((await fixture.sql('SELECT count(*)::int n FROM atlas_customer."ProgressNotification"',[],db.name)).rows[0].n,5);
+    checks.push('subsequent physical collection creates only the opted-in email event; clearing optional email suppresses pending delivery while preserving the mailing address');
+    await staffCall('custody_record',{cardId:nextOrder.cardIds[0],requestId:randomUUID(),kind:'ATLAS_RECEIVED',occurredAt:new Date().toISOString(),evidence:{reference:'SYNTHETIC_PROGRESS_ARRIVAL'}});
+    assert.equal((await fixture.sql('SELECT count(*)::int n FROM atlas_customer."ProgressNotification"',[],db.name)).rows[0].n,5);
+    await call(a,'profile',{profile:{name:profile.name,email:'changed-synthetic@example.test'}});
+    checks.push('recorded arrival after email removal does not enqueue an empty email destination despite retained preference; adding contact email preserves subsequent real event delivery');
+    const gradingCard=randomUUID();await manual.provision(reviewer.staff,{cardId:gradingCard,draft:{syntheticOnly:true}});
+    const gradingLink={cardId:nextOrder.cardIds[0],manualCardId:gradingCard,evidenceRef:'SYNTHETIC_PROGRESS_CARD_LINK'};
+    await staffCall('bind_manual',gradingLink);await staffCall('bind_manual',gradingLink);
+    const gradingNotices=(await fixture.sql(`SELECT id,request FROM atlas_customer."ProgressNotification" WHERE "eventKind"='GRADING_STARTED'`,[],db.name)).rows;
+    assert.equal(gradingNotices.length,1);assert.match(gradingNotices[0].request.title,/Synthetic/);
+    const gradingClaim=await progressCall('claim',{id:gradingNotices[0].id,claimId:randomUUID()});assert.equal(gradingClaim.dispatch,true);
+    assert.equal(gradingClaim.effect.request.cardId,nextOrder.cardIds[0]);assert.equal(gradingClaim.effect.request.eventKind,'GRADING_STARTED');
+    checks.push('actual received-card manual link atomically creates one grading-start notification with the saved paid-card title; exact bind replay creates no duplicate');
+
+    // Seed publication prerequisites explicitly in this disposable database, then
+    // perform the actual PRODUCTION-mode transition under the real publication grants.
+    // This tests trigger privileges, not a human certification or external publication.
+    const publicationClient=await restricted('atlas_fixture_progress_publisher',[
+      role=>`GRANT USAGE ON SCHEMA atlas_manual TO "${role}";`,publicationGrantSQL]);
+    const publishAction=randomUUID(),publicToken='ar_'+randomBytes(18).toString('base64url'),reportNumber='ATLAS-'+randomBytes(6).toString('hex').toUpperCase();
+    await fixture.sql(`INSERT INTO atlas_manual.action(card_id,action_id,actor_id,expected_revision,result_revision,request_hash,request,result)
+      VALUES($1::uuid,$2::uuid,$3::uuid,1,2,encode(sha256(convert_to($4,'UTF8')),'hex'),$4,'{"syntheticOnly":true}')`,
+      [gradingCard,publishAction,reviewer.staff.id,'{"action":{"type":"APPROVE_REPORT"},"syntheticOnly":true}'],db.name);
+    await fixture.sql(`INSERT INTO atlas_manual.approval(card_id,action_id,actor_id,source_revision,source_hash,report_hash,report)
+      SELECT id,$2::uuid,$3::uuid,revision,content_hash,encode(sha256(convert_to($4,'UTF8')),'hex'),$4 FROM atlas_manual.card WHERE id=$1::uuid`,
+      [gradingCard,publishAction,reviewer.staff.id,'{"syntheticOnly":true}'],db.name);
+    await fixture.sql('INSERT INTO atlas_manual.public_report_identity(card_id,public_token,report_number) VALUES($1::uuid,$2,$3)',[gradingCard,publicToken,reportNumber],db.name);
+    await fixture.sql("INSERT INTO atlas_manual.publication(card_id,action_id,version,mode) VALUES($1::uuid,$2::uuid,1,'PRODUCTION')",[gradingCard,publishAction],db.name);
+    await assert.rejects(publicationClient.$queryRaw`SELECT * FROM atlas_dealer.order_card`);
+    await assert.rejects(publicationClient.$queryRaw`SELECT * FROM atlas_customer."ProgressNotification"`);
+    await assert.rejects(publicationClient.$queryRaw`SELECT atlas_customer.enqueue_progress(${nextOrder.cardIds[0]}::uuid,'REPORT_PUBLISHED','forged',clock_timestamp(),'{}'::jsonb)`);
+    const manifest='{"syntheticOnly":true}';
+    assert.equal(await publicationClient.$executeRawUnsafe(`UPDATE atlas_manual.publication SET state='PUBLISHED',manifest=$1,manifest_hash=$2,public_hash=$3,published_at=clock_timestamp()
+      WHERE card_id=$4::uuid AND action_id=$5::uuid AND state='PENDING'`,manifest,createHash('sha256').update(manifest).digest('hex'),'f'.repeat(64),gradingCard,publishAction),1);
+    assert.equal(await publicationClient.$executeRawUnsafe(`UPDATE atlas_manual.publication SET state='PUBLISHED',manifest=$1,manifest_hash=$2,public_hash=$3,published_at=clock_timestamp()
+      WHERE card_id=$4::uuid AND action_id=$5::uuid AND state='PENDING'`,manifest,createHash('sha256').update(manifest).digest('hex'),'f'.repeat(64),gradingCard,publishAction),0);
+    const publicationNotices=(await fixture.sql(`SELECT id,"accountId","cardId",channel,source FROM atlas_customer."ProgressNotification" WHERE "eventKind"='REPORT_PUBLISHED'`,[],db.name)).rows;
+    assert.equal(publicationNotices.length,1);assert.equal(publicationNotices[0].accountId,a.customer.id);assert.equal(publicationNotices[0].cardId,nextOrder.cardIds[0]);assert.equal(publicationNotices[0].channel,'EMAIL');
+    assert.deepEqual(publicationNotices[0].source,{type:'PUBLICATION',cardId:gradingCard,actionId:publishAction,version:1});
+    const publicationClaim=await progressCall('claim',{id:publicationNotices[0].id,claimId:randomUUID()});assert.equal(publicationClaim.dispatch,true);assert.equal(publicationClaim.effect.request.eventKind,'REPORT_PUBLISHED');
+    assert.equal((await call(a,'dealer_tracking',{orderId:nextOrder.order.id})).cards.find(c=>c.cardId===nextOrder.cardIds[0]).reportUrl,`/reports/${publicToken}?v=1`);
+    // The writer still has no arbitrary cross-schema read/enqueue privilege afterward.
+    await assert.rejects(publicationClient.$queryRaw`SELECT * FROM atlas_customer."ProgressNotification"`);
+    checks.push('real publicationGrantSQL role completes synthetic PRODUCTION publication and enqueues one scoped opted-in notice; duplicate transition is inert; customer/dealer tables and enqueue helper remain inaccessible');
+
+    checks.push('shop QR issue proves no custody; exact paid order/account/location/card set, count and existing dealer session are rechecked; concurrent scans produce one immutable receipt; collection starts clock separately');
+    // The real head-chain profile gateway supports first-time contact without
+    // giving a caller authority to change verified phone, account or intake type.
+    const contactCustomer=await login(auth,config,'+12025550303');
+    const freshContact=(await call(contactCustomer,'profile',{profile:{name:'Synthetic First Shop Customer'}})).customer;
+    assert.deepEqual(freshContact.profile,{name:'Synthetic First Shop Customer'});assert.equal(freshContact.phone,'+12025550303');
+    for(const invalid of [{name:''},{name:'Synthetic',email:null},{name:'Synthetic',email:'bad'},
+      {name:'Synthetic',phone:'+12025550302'},{name:'Synthetic',accountId:b.customer.id}])
+      await assert.rejects(call(contactCustomer,'profile',{profile:invalid}),{code:'CONTACT_DETAILS_REQUIRED'});
+    await assert.rejects(call(contactCustomer,'profile',{profile:{name:'Synthetic'},accountId:b.customer.id}),{code:'INVALID_REQUEST'});
+    await assert.rejects(call(contactCustomer,'progress_preferences_save',{requestId:randomUUID(),expectedRevision:0,email:true,sms:false}),{code:'PROFILE_EMAIL_REQUIRED'});
+    const contactPreferences=await call(contactCustomer,'progress_preferences_save',{requestId:randomUUID(),expectedRevision:0,email:false,sms:true});
+    assert.equal(contactPreferences.email,false);assert.equal(contactPreferences.sms,true);
+    const {draft:mailDraft}=await call(contactCustomer,'intake_create',{requestId:randomUUID(),intakeMethod:'MAIL_IN',kioskId:null});
+    await assert.rejects(call(contactCustomer,'intake_review',{id:mailDraft.id,expectedRevision:mailDraft.revision,profile:{name:'Synthetic'},intakeMethod:'DEALER_DROP_OFF'}),{code:'RETURN_DETAILS_REQUIRED'});
+    await assert.rejects(call(contactCustomer,'intake_review',{id:mailDraft.id,expectedRevision:mailDraft.revision,profile}),{code:'INTAKE_REVIEW_NOT_READY'});
+    const {draft:shopDraft}=await call(contactCustomer,'intake_create',{requestId:randomUUID(),intakeMethod:'DEALER_DROP_OFF',kioskId:locationA.id});
+    await assert.rejects(call(contactCustomer,'intake_review',{id:shopDraft.id,expectedRevision:shopDraft.revision,profile:{name:'Synthetic'}}),{code:'INTAKE_REVIEW_NOT_READY'});
+    await assert.rejects(call(contactCustomer,'intake_review',{id:shopDraft.id,expectedRevision:shopDraft.revision,profile:{name:'Synthetic',email:'bad'}}),{code:'CONTACT_DETAILS_REQUIRED'});
+    const immutablePaid=(await call(a,'commerce_order',{orderId:orderA.order.id})).receipt;
+    await call(a,'profile',{profile:{name:'Updated synthetic contact'}});
+    const updatedAccount=(await auth.bootstrap(a.cookie,'dealer-postgres-fixture')).customer;
+    assert.equal(updatedAccount.profile.email,'changed-synthetic@example.test');assert.equal(updatedAccount.profile.address1,profile.address1);
+    assert.deepEqual((await call(a,'commerce_order',{orderId:orderA.order.id})).receipt,immutablePaid);
+    assert.deepEqual((await auth.bootstrap(b.cookie,'dealer-postgres-fixture')).customer.profile,profile);
+    for(const fn of ['valid_contact_profile','valid_shop_profile'])await assert.rejects(customerClient.$queryRawUnsafe(`SELECT atlas_customer.${fn}('{"name":"forged"}'::jsonb)`));
+    await assert.rejects(customerClient.$queryRaw`SELECT atlas_customer.customer_call_before_shop_profile('profile','{}'::jsonb,'{}'::jsonb)`);
+    checks.push('first-time name-only contact uses verified phone; optional email validates, omitted email and saved shipping persist, paid receipts and other accounts stay immutable; stored MAIL_IN requires address, shop does not; no-email email opt-in is denied while SMS opt-in succeeds; old gateway/helpers remain uncallable');
     await staffCall('membership_configure', { accountId: a.customer.id, locationId: locationA.id, enabled: false });
     await assert.rejects(dealer.read(enteredA.sessionToken, a.authority.browserHash), { code: 'DEALER_SIGN_IN_REQUIRED' });
+    await assert.rejects(dealer.handoffRead(enteredA.sessionToken,a.authority.browserHash,enteredA.csrf,issued.token),{code:'DEALER_SIGN_IN_REQUIRED'});
     assert.equal((await dealer.read(enteredB.sessionToken, b.authority.browserHash)).location.id, locationB.id);
     assert.throws(() => dealer.logout(enteredB.sessionToken, b.authority.browserHash, '0'.repeat(64)), { code: 'CSRF_REQUIRED' });
     await dealer.logout(enteredB.sessionToken, b.authority.browserHash, enteredB.csrf);

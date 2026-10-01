@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {createRequire} from 'node:module';
 import {readFileSync} from 'node:fs';
+import * as journeyModel from '../lib/card-journey.mjs';
 const require=createRequire(new URL('../package.json',import.meta.url)),babel=require('next/dist/compiled/babel/core'),React=require('react'),{renderToStaticMarkup}=require('react-dom/server');
-const transform=path=>babel.transformSync(readFileSync(new URL(path,import.meta.url),'utf8'),{filename:path,presets:[[require.resolve('next/babel'),{'preset-env':{targets:{node:'current'}}}]],babelrc:false,configFile:false}).code;
+const transform=path=>babel.transformSync(readFileSync(new URL(path,import.meta.url),'utf8'),{filename:path,presets:[[require.resolve('next/babel'),{'preset-env':{targets:{node:'current'}},'transform-runtime':{helpers:false}}]],babelrc:false,configFile:false}).code;
 const exports={};vm.runInNewContext(transform('../components/dealer/DealerPortal.jsx'),{exports,Intl,require:name=>name==='react'?React:require(name)});
 test('dealer portal renders scoped counts/custody/commission without private grade, profile or transfer claims',()=>{
  const html=renderToStaticMarkup(React.createElement(exports.default,{initial:{location:{name:'Fixture kiosk'},customerCount:2,orderCount:1,cardCount:2,
@@ -16,7 +17,8 @@ test('dealer portal renders scoped counts/custody/commission without private gra
 test('new dealer route and location session workspace compile',()=>{
  assert(transform('../components/dealer/DealerWorkspace.jsx'));assert(transform('../pages/dealer.jsx'));
 });
-const orderExports={};vm.runInNewContext(transform('../components/orders/CustomerOrderTracking.jsx'),{exports:orderExports,Intl,require:name=>name==='react'?React:name==='../../lib/client.mjs'?{}:require(name)});
+const journeyExports={};vm.runInNewContext(transform('../components/orders/CardJourney.jsx'),{exports:journeyExports,require:name=>name==='react'?React:name.endsWith('/card-journey.mjs')?journeyModel:require(name)});
+const orderExports={};vm.runInNewContext(transform('../components/orders/CustomerOrderTracking.jsx'),{exports:orderExports,Intl,require:name=>name==='react'?React:name==='../../lib/client.mjs'?{}:name.endsWith('/card-journey.mjs')?journeyModel:name==='./CardJourney.jsx'?{...journeyExports,__esModule:true}:name==='../dealer/CustomerHandoff.jsx'?{__esModule:true,default:()=>null}:require(name)});
 test('customer current-card tracker renders declared and actual custody as separate facts with no guessed approval',()=>{
  const card={cardId:'fixture',identity:{title:'Fixture card'},channel:'KIOSK',originalLocation:'Fixture kiosk',grading:'NOT_STARTED',originalSchedule:{timeZone:'America/Los_Angeles',nextCollectionAt:'2026-09-30T17:00:00Z',projectedReturnAt:'2026-10-07T17:00:00Z'},currentProjection:{nextCollection:'2026-10-07T17:00:00Z',projectedReturn:'2026-10-14T17:00:00Z'},scheduleChanged:true,
  events:[{id:'declaration',kind:'DEPOSIT_DECLARED',occurredAt:'2026-09-28T18:00:00Z'}]};

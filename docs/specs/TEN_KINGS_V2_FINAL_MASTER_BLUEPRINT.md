@@ -2030,3 +2030,14 @@ The goal is not maximum theoretical architecture. The goal is the smallest durab
 ---
 
 *End of final master blueprint.*
+
+
+## Owner direction — ATLAS experience and shop handoff, October 1, 2026
+
+The accepted website/report foundation remains. Keep current ATLAS typography, “SEE WHY IT’S A 9.” and “WE SHOW YOU EVERYTHING.” Immediate report entry continues to show animated centering and detected findings; a tour and per-approved-card share film are additive. Marketing may demonstrate the retained archived Maye report (actual grade 9.5, seven saved findings), but must not restore or link retired public records. Exact measurements/masks stay tied to immutable original photographs; generative cutouts are presentation assets and must not silently acquire exact registration authority.
+
+The latest owner-approved card-shop flow supersedes the earlier unattended dropbox/Terminal requirement: shop QR → name/phone and automatic account foundation → repeated front/back photographs with automatic card identification → payment on the customer's own phone → handoff QR → authorized staff scans and confirms every paid card. Staff-confirmed receipt at the shop is separate from actual ATLAS collection; the shop turnaround clock still begins on actual ATLAS collection. Historical paid terms, payment attempts, and custody declarations remain readable.
+
+Mail-in promised grading turnaround begins when ATLAS physically receives the cards. Weekly capacity is measured in cards: twenty cards consume twenty spots, with independent mail-in and card-shop pools. Both reset Monday at 12:01 a.m. America/Los_Angeles, including DST. The owner explicitly allows a single customer to consume the whole pool. Example quotas of 500/1,000 are not launch configuration; actual launch limits remain requested. Checkout reserves capacity atomically; payment uncertainty retains its hold, and paid old-week work is not erased at reset.
+
+My ATLAS prioritizes active card progress, followed by approved reports/share films and an easy next submission. Progress email/text updates use actual recorded events and explicit channel preferences. Optional public social/community features remain a later opt-in concept; no synthetic activity is presented as customers. This amendment records authorized implementation, not a production release. See the October 1 session log for source and qualification status.

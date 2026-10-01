@@ -7,6 +7,8 @@ import { createCustomerIdentifier } from '@atlas/customer-intake/identification'
 import { CommerceService } from '@atlas/commerce';
 import { createCommerceProviders } from '@atlas/commerce/config';
 import { GatewayCommerceRepository } from '@atlas/commerce/repository';
+import { createProgressNotificationWorker } from '@atlas/commerce/progress-notifications';
+import { customerCapacity } from '@atlas/commerce/capacity';
 import { consumeStripeWebhook } from '@atlas/commerce/webhook';
 import { createCustomerServiceHandler, CustomerServiceError } from '@atlas/service-bridge/customer-service';
 import { identificationEffects } from '../src/identification.mjs';
@@ -54,11 +56,16 @@ export function createServingCustomerService({ env, Client, onEvent = () => {} }
   const providers = createCommerceProviders(env);
   const commerce = authority => new CommerceService({ ...providers,
     repository: new GatewayCommerceRepository((name, input) => {
+      if (name === 'commerce_weekly_capacity') return database.call('capacity', { input: {} });
       if (name === 'commerce_checkout' && !providers.enabled) return customerCall(name, authority, input);
       return database.call('commerce', { name, providerBinding: providers.binding, input: { ...input, ...(authority ? { authority } : {}) } });
     }) });
   const workerCommerce = commerce(null);
   const handlers = {
+    'weekly-capacity': ({ input }) => {
+      if (Object.keys(input).length) throw new CustomerServiceError(400, 'INVALID_REQUEST');
+      return database.call('capacity', { input: {} }).then(value => customerCapacity(value));
+    },
     'dealer-locations': ({ input }) => database.call('directory', { input }),
     'commerce-checkout': ({ authority, input }) => commerce(authority).checkout(input.draftId),
     'commerce-quote': ({ authority, input }) => commerce(authority).quote(input),
@@ -118,6 +125,10 @@ export function createServingCustomerService({ env, Client, onEvent = () => {} }
     loops.push(value);
   }
   if (settings.identificationEnabled) loop(() => intake.runOnce());
+  if (env.ATLAS_CUSTOMER_PROGRESS_ENABLED === 'true') requireConfig(providers.enabled && providers.notifications);
+  const progressWorker = createProgressNotificationWorker({ enabled: env.ATLAS_CUSTOMER_PROGRESS_ENABLED === 'true',
+    notifications: providers.notifications, call: (name, input) => database.call('progress', { name, input }) });
+  if (env.ATLAS_CUSTOMER_PROGRESS_ENABLED === 'true') loop(() => progressWorker.runOnce());
   if (providers.enabled) loop(async () => {
     let firstError = null;
     const { effects = [] } = await workerCommerce.repository.call('commerce_pending_effects', {});
