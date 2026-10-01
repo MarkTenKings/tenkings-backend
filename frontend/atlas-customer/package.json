@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -H 127.0.0.1 -p 4320",
-    "build": "node scripts/generate-database.mjs && next build && node scripts/check-boundary.mjs",
+    "build": "node ../../packages/atlas-grading-core/scripts/build.mjs && node scripts/generate-database.mjs && next build && node scripts/check-boundary.mjs",
     "start": "next start -H 127.0.0.1 -p 4320",
     "test": "node --test test/*.test.mjs",
     "db:generate": "node scripts/generate-database.mjs"
