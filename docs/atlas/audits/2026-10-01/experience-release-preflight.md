@@ -1,5 +1,7 @@
 # Experience release preflight — October 1, 2026
 
+Update: the public-only scope below deployed at12:28UTC and passed canonical checks at12:30UTC. See `experience-public-release.md`. The remaining full operational/source rollout is separate. This document retains its original preflight observations.
+
 Source qualification and read-only observations only. No deployment, production migration, provider send, charge, custody action, or activation was performed by this reviewer. The source remains under integration until the release owner freezes its commit and final receipts.
 
 ## Observed baseline
