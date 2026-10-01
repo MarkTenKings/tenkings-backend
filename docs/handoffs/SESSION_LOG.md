@@ -39865,3 +39865,7 @@ Public build/boundary and42publictests pass. Final connected suite465pass/2exist
 ## 2026-09-30 — Native PostgreSQL report-image qualification passed (root)
 
 Used the already-cached local PostgreSQL17.10 binaries with the unchanged owned fixture harness, avoiding WAN timeouts. Actual migration chain, machine authorization, source/recipe deduplication, concurrency bounds, claim and retirement fences, late paid receipts, retry limits, immutability and narrow grants passed. Receipt: /Users/markthomas/.codex/atlas-handoffs/atlas-report-production-20260930/qualification-postgres-local/report-images-postgres.json. Provider calls0; production data effectsfalse; fixture stopped and owned data removed. Next explicit single canary revises only the OpenAI recipe (near-sourceaspect1104x1520, xhigh, shorter transparency prompt) after the opaque v1 result. No production cutover yet.
+
+### 2026-09-30 — Final report release pre-freeze verification
+
+Updated native allowlist to43 changed/26 added/1106 source files; verified1063 unchanged active-baseline files,28 package metadata files,130 selected Node test files and npm-pinned GSAP archive. Root local PostgreSQL17.10 harness passed with no provider/production effects; a second reviewer found no schema helper blocker. Root canary2 produced an HTTP200 opaque image, correctly rejected and retained with paid receipt; prepared explicitly authorized recipev2 canary3 in fresh paths for root execution. No auditor production action. Further operation logs must preserve the frozen release checkout once root freezes it.
