@@ -19,12 +19,13 @@ import * as scanMotion from '../src/evidence-scan-motion.mjs';
 import * as edgeTour from '../src/evidence-edge-tour.mjs';
 import * as cornerTour from '../src/evidence-corner-tour.mjs';
 import * as tourSound from '../src/evidence-tour-sound.mjs';
+import * as filmSelector from '../../atlas-report-view/src/film-selector.mjs';
 import { defectBase, markDefectSideInspected, confirmDefectFindings, previewDefectReport } from '../src/defect-actions.mjs';
 import { workspace } from './defect-fixtures.mjs';
 
 const require = createRequire(new URL('../../../frontend/atlas-app/package.json', import.meta.url));
 const babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
-const sources = Object.fromEntries(['ReportSpatialOverlay', 'ReportPrecisionOverlay', 'ReportFingerprint', 'ReportInspectionImage', 'FindingCallouts', 'ApprovedWholeCard', 'TourSoundButton', 'ReportEvidenceScan', 'PublicEvidenceExplorer', 'ReportPresentation', 'GradeCalculationStory', 'FinalReportReview'].map(name => [name, babel.transformSync(readFileSync(new URL(`../src/${name}.jsx`, import.meta.url), 'utf8'), {
+const sources = Object.fromEntries(['ReportSpatialOverlay', 'ReportPrecisionOverlay', 'ReportFingerprint', 'ReportInspectionImage', 'FindingCallouts', 'ApprovedWholeCard', 'TourSoundButton', 'ReportEvidenceScan', 'ApprovedReportTour', 'PublicEvidenceExplorer', 'ReportPresentation', 'GradeCalculationStory', 'FinalReportReview'].map(name => [name, babel.transformSync(readFileSync(new URL(`../src/${name}.jsx`, import.meta.url), 'utf8'), {
   filename: `${name}.jsx`, presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false,
 }).code]));
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
@@ -80,6 +81,8 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
       if (name === './evidence-tour-sound.mjs') return tourSound;
       if (name === './TourSoundButton.jsx') return modules.TourSoundButton;
       if (name === './ReportEvidenceScan.jsx') return modules.ReportEvidenceScan;
+      if (name === './ApprovedReportTour.jsx') return modules.ApprovedReportTour;
+      if (name === '../../atlas-report-view/src/film-selector.mjs') return filmSelector;
       if (name === './whole-card-layout.mjs') return wholeCardLayout;
       if (name === './report-presentation-image.mjs') return { usePresentationImage: () => null };
       if (name === './FindingCallouts.jsx') return modules.FindingCallouts;
