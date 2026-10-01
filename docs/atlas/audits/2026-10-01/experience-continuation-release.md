@@ -42,3 +42,5 @@ External root: `/Users/markthomas/.codex/atlas-handoffs/atlas-continuation-20261
 | `qualification/live-canonical-browser-smoke.json` | `d8b31ba33069b5c6878fb58eb827d0bae777110c34b35391b16995ebd18a69a9` |
 
 `release-r2` upload/CAS/promotion intents are consumed. The original `release` packet contains the dry-only HOLD and must not be used for a deployment. Any later recovery requires actual-state inspection and a fresh reviewed forward plan; do not replay writers or restore retired reports. Active media production is separate from this completed public deployment.
+
+Subsequent media checkpoint: [four complete workflow/NFC films are ready for owner review](workflow-films-review.md), with final source hashes, independent qualification and editable archive. They remain external review copies and do not change this deployed public source.
