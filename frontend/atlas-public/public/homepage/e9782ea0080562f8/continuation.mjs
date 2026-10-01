@@ -1,5 +1,5 @@
-import {loadHeroEvidence, fetchVerifiedAsset, findingsForSide, traceSvgPath} from '/hero-evidence.mjs';
-import {renderInspectionInstruments} from '/hero-metrology.mjs';
+import {loadHeroEvidence, fetchVerifiedAsset, findingsForSide, traceSvgPath} from '/homepage/e9782ea0080562f8/hero-evidence.mjs';
+import {renderInspectionInstruments} from '/homepage/e9782ea0080562f8/hero-metrology.mjs';
 
 // Read-only presentation of the retained, approved report. No grade is recomputed.
 const reportSection = document.querySelector('.ac-report-chapter');

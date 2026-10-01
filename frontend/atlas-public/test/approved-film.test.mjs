@@ -5,7 +5,15 @@ import {createApprovedFilmManifest,parseApprovedFilmManifest,filmSelector,approv
 import {approvedFilmHandler} from '../lib/server/film-http.mjs';
 import {createFilmScene,sampleFilm,projectFilmPoint,regionBounds} from '../../../packages/atlas-manual-workspace/src/approved-report-tour.mjs';
 import {filmRecordingFormat,boundedFilmResponse,loadApprovedFilmManifest} from '../../../packages/atlas-manual-workspace/src/approved-film-export.mjs';
+import {normalizeFilmDedication} from '../../../packages/atlas-manual-workspace/src/approved-film-renderer.mjs';
 async function fixture(){const f=await publicationFixture();await f.publication.publish({},f.cardId,f.actionId);const manifest=JSON.parse(f.row.manifest);const packet=await f.artifacts.read(manifest.packet.ref,{cardId:f.cardId,kind:'PUBLIC_REPORT',sourceHash:manifest.packet.sourceHash});return{packet,publicHash:f.row.public_hash};}
+test('optional film dedication preserves ordinary names, digits and Unicode without control characters',()=>{
+  for(const name of ['Samuel Duff 12','Francis Ford 007','Zoë François','李明 😀'])assert.equal(normalizeFilmDedication(name),name);
+  assert.equal(normalizeFilmDedication('  Ma\u0000r\nk\u007f\u0085  '),'Mark');
+  assert.equal(normalizeFilmDedication(null),'');
+  const long='😀'.repeat(33);assert.equal(normalizeFilmDedication(long),'😀'.repeat(32));
+  assert.equal(normalizeFilmDedication('a'.repeat(31)+'😀x'),'a'.repeat(31)+'😀');
+});
 function response(){return{statusCode:0,headers:{},body:null,setHeader(k,v){this.headers[k]=v;},status(n){this.statusCode=n;return this;},end(){return this;},json(v){this.body=v;return this;}};}
 test('film pins existing approved packet, awarded half grade and exact original media',async()=>{const f=await fixture(),before=JSON.stringify(f),m=createApprovedFilmManifest(f);assert.deepEqual(m.packet,f.packet);assert.equal(JSON.stringify(f),before);assert.equal(m.packet.report.finalGrade,Math.round(m.packet.report.grade.overall.rawGrade*2)/2);assert.equal(m.templateVersion,'atlas-evidence-cinematic-v1');assert.deepEqual(parseApprovedFilmManifest(m,m.reportUrl),m);assert.throws(()=>parseApprovedFilmManifest({...m,reportUrl:m.reportUrl+'0'}));assert.throws(()=>parseApprovedFilmManifest({...m,duration:20}));assert.equal(approvedFilmFilename(m,'mp4'),`${m.packet.reportNumber}-v1.mp4`);});
 test('unversioned, foreign, encoded and duplicated selectors cannot open export',()=>{for(const value of['/reports/ar_'+'a'.repeat(24),'https://atlasgrading.com/reports/ar_'+'a'.repeat(24)+'?v=1','/reports/ar_'+'a'.repeat(24)+'?v=1&v=2','/reports/ar_'+'a'.repeat(24)+'?v=2147483648',null])assert.equal(filmSelector(value),null);assert.equal(filmSelector('/reports/ar_'+'a'.repeat(24)+'?v=1').version,1);});

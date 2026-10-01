@@ -2,6 +2,9 @@ import { sampleFilm, projectFilmPoint, ease, clamp } from './approved-report-tou
 import { fingerprintSource, fingerprintFieldSteps, fingerprintSampleSteps, scheduleFingerprint, paintFingerprintPixels } from './report-fingerprint.mjs';
 
 const GOLD='#cda955',GREEN='#a0f46d',RED='#ff284d';
+export function normalizeFilmDedication(value){
+  return Array.from(String(value??'').replace(/\p{Cc}/gu,'').trim()).slice(0,32).join('');
+}
 let brandReady;
 function loadBrand(){return brandReady??=(async()=>{const logo=new Image();logo.src='/brand/atlas-grading-logo.png';
   await Promise.all([logo.decode().catch(()=>{}),typeof FontFace==='function'?new FontFace('Atlas Film','url(/brand/fonts/oxanium.ttf)',{weight:'200 800'}).load().then(font=>document.fonts.add(font)).catch(()=>{}):Promise.resolve()]);return logo.naturalWidth?logo:null;})();}
@@ -45,7 +48,9 @@ function fitted(ctx,value,x,y,size,width,color,align='left',weight=500){ctx.font
 function badge(ctx,value,x,y,size=24,color=GREEN){ctx.font=`600 ${size}px "Atlas Mono",monospace`;const w=ctx.measureText(value).width+20;ctx.fillStyle='#111914';ctx.fillRect(x-w/2,y-size,w,size+14);ctx.strokeStyle=color;ctx.lineWidth=1;ctx.strokeRect(x-w/2,y-size,w,size+14);ctx.fillStyle=color;ctx.textAlign='center';ctx.fillText(value,x,y+2);}
 function poly(ctx,points,color,width=2){ctx.beginPath();points.forEach((p,i)=>ctx[i?'lineTo':'moveTo'](p.x,p.y));ctx.closePath();ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke();}
 
-export async function createApprovedFilmRenderer(canvas,scene,photos,{signal}={}) {
+export async function createApprovedFilmRenderer(canvas,scene,photos,{signal,personalization=''}={}) {
+  // Local dedication text is separate from the immutable approved report and its identity.
+  let signature=normalizeFilmDedication(personalization);
   const logo=await loadBrand();signal?.throwIfAborted();
   const stage=cardStage(canvas.width,canvas.height),assets={},ctx=canvas.getContext('2d');
   if(!ctx){stage.dispose();throw Error('FILM_GRAPHICS_UNAVAILABLE');}
@@ -73,6 +78,7 @@ export async function createApprovedFilmRenderer(canvas,scene,photos,{signal}={}
     if(Math.abs(Math.cos(s.yaw))<.055){const a=projectFilmPoint([.5,0],s.side,s,1080,1920),b=projectFilmPoint([.5,1],s.side,s,1080,1920);line(ctx,a,b,'#c7c2ab',2.2);}
     if(logo)ctx.drawImage(logo,66,62,100,90);text(ctx,'ATLAS',logo?185:66,122,52,GOLD,'left',700);text(ctx,'GRADING',logo?187:68,155,17,'#bdc4bd');text(ctx,'APPROVED GRADE',1014,88,17,'#bdc4bd','right');text(ctx,String(scene.grade),1014,163,82,GOLD,'right',600);
     fitted(ctx,scene.name.toUpperCase(),66,247,52,948,'#fff','left',650);fitted(ctx,scene.subtitle,68,289,24,940,'#b8c1ba');
+    if(signature)fitted(ctx,`MADE FOR ${signature.toUpperCase()}`,68,334,21,940,GOLD);
     if(s.centerAmount>.001){ctx.globalAlpha=s.centerAmount;const side=scene.sides[s.side],p=uv=>projectFilmPoint(uv,s.side,s,1080,1920);
       poly(ctx,side.geometry.physicalQuad.map(q=>p([q.x,q.y])),GREEN,2);poly(ctx,side.geometry.printedQuad.map(q=>p([q.x,q.y])),GREEN,2);
       line(ctx,p([.5,0]),p([.5,1]),GREEN,1.5);line(ctx,p([0,.5]),p([1,.5]),GREEN,1.5);
@@ -101,5 +107,5 @@ export async function createApprovedFilmRenderer(canvas,scene,photos,{signal}={}
     if(s.fingerprint>.1)text(ctx,'Evidence artwork · not physical authentication',66,1710,20,'#b8c1ba');
     ctx.restore();
   }
-  return {paint,dispose:()=>stage.dispose()};
+  return {paint,setPersonalization:value=>{signature=normalizeFilmDedication(value);},dispose:()=>stage.dispose()};
 }
