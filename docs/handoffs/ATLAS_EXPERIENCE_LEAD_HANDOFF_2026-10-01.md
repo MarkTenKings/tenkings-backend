@@ -1,5 +1,7 @@
 # ATLAS experience — replacement lead handoff
 
+Continuation checkpoint: this is the original transfer snapshot. The later public continuation is now deployed from e22595f76ccb2a75f8cd5c45b42ee99e4563439a with homepage e9782ea0080562f8, PublicReader39 and110passing canonical checks; see [current audit](../atlas/audits/2026-10-01/experience-continuation-release.md). Mark subsequently explicitly approved the staff edit and additional Higgsfield asset creation, then activated paid Plus; balance read1,000usablecredits. The older unanswered-generation-choice and low-balance paragraphs below are historical and must not trigger another permission question. Current media refinement remains under atlas-workflow-films-20261001/refinement-r1; Mail r2 and Dropbox r1 playback pass, staff/NFC motion production continues.
+
 Prepared October 1, 2026 for Mark Thomas. This is the operating brief for the new **GPT-6 Astra / Ultra lead and three Astra / Ultra sub-agents** Mark explicitly requested. Continue the work; do not restart discovery, redesign the brand, or make Mark repeat decisions.
 
 ## Start here

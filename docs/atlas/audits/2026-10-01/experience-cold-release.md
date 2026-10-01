@@ -1,5 +1,7 @@
 # ATLAS experience: coordinated cold release
 
+Subsequent public-only continuation deployed at18:11UTC: public source e22595f7, PublicReader39 and homepage e9782ea0080562f8 supersede this audit’s public identity. Staff, customer, schema and private-runtime results here remain current. See [the continuation audit](experience-continuation-release.md); the detailed cold-release sequence below is historical.
+
 Verified October1,2026: the coordinated schema/runtime/web release is deployed. The final public promotion completed after14:09UTC; all107 canonical GET/HEAD checks passed at14:10:18UTC. This release installs the customer, shop handoff, capacity and progress foundation with commerce/progress disabled. It does **not** claim a completed live paid submission, notification send or physical shop handoff.
 
 ## Actual deployed identities
