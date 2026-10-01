@@ -43,7 +43,7 @@ function compile(type,source){const s=gl.createShader(type);gl.shaderSource(s,so
 async function renderer(){
  if(new URLSearchParams(location.search).get('render')==='still')throw Error('Requested still-preview qualification');
  gl=canvas.getContext('webgl2',{antialias:false,alpha:true,powerPreference:'low-power'});if(!gl)throw Error('WebGL2 unavailable');
- let source=await fetch('/hero-card.glsl').then(r=>{if(!r.ok)throw Error('Shader unavailable');return r.text();});
+ let source=await fetch('/homepage/b6aaa7d638bb4537/hero-card.glsl').then(r=>{if(!r.ok)throw Error('Shader unavailable');return r.text();});
  source=source.replace('FRONT_INVERSE',matrix(evidence.sides.FRONT.transforms.cleanUVToCanonical)).replace('BACK_INVERSE',matrix(evidence.sides.BACK.transforms.cleanUVToCanonical));
  source=source.replace('FRONT_CROP','vec4('+evidence.sides.FRONT.presentation.cropUV.map(n=>n.toFixed(13)).join(',')+')').replace('BACK_CROP','vec4('+evidence.sides.BACK.presentation.cropUV.map(n=>n.toFixed(13)).join(',')+')');
  const vertex='#version 300 es\nin vec2 pos;out vec2 v_uv;void main(){gl_Position=vec4(pos,0.,1.);v_uv=vec2(pos.x*.5+.5,.5-pos.y*.5);}';
