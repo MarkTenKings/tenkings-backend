@@ -3,6 +3,7 @@ import test from 'node:test';
 import {readFileSync,existsSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {resolve,extname} from 'node:path';
+import {createRequire} from 'node:module';
 import config from '../next.config.mjs';
 import {capacityView} from '../../../docs/atlas/design/experience/site/weekly-capacity.mjs';
 const root=resolve(import.meta.dirname,'../public');
@@ -10,6 +11,19 @@ const html=readFileSync(resolve(root,'homepage/index.html'),'utf8');
 const release=JSON.parse(readFileSync(resolve(root,'homepage/release.json')));
 const source=resolve(import.meta.dirname,'../../../docs/atlas/design/experience');
 const names=JSON.parse(readFileSync(resolve(source,'files.json')));
+const {parse}=createRequire(import.meta.url)('next/dist/compiled/acorn');
+function moduleSpecifiers(text){
+ const pending=[parse(text,{ecmaVersion:'latest',sourceType:'module'})],specifiers=[];
+ while(pending.length){
+  const node=pending.pop();
+  if(['ImportDeclaration','ExportNamedDeclaration','ExportAllDeclaration','ImportExpression'].includes(node.type)&&typeof node.source?.value==='string')specifiers.push(node.source.value);
+  for(const value of Object.values(node)){
+   if(Array.isArray(value))for(const child of value){if(child?.type)pending.push(child);}
+   else if(value?.type)pending.push(value);
+  }
+ }
+ return specifiers;
+}
 test('homepage rewrite leaves service and report routes untouched',async()=>{
  assert.deepEqual(await config.rewrites(),{beforeFiles:[{source:'/',destination:'/homepage/index.html'}]});
  assert.match(readFileSync(resolve(import.meta.dirname,'../middleware.js'),'utf8'),/matcher: \['\/admin\/:path\*', '\/account\/:path\*'\]/);
@@ -37,11 +51,13 @@ test('packaged static and dynamic module imports resolve from their actual modul
  let checked=0;
  for(const name of names.filter(name=>/\.(?:m?js)$/.test(name))){
   const url=new URL(`/homepage/${release.version}/${name}`,'https://atlasgrading.com');
+  // Parse actual imports: vendored documentation and prose strings may also
+  // contain "from" or example imports, but are not executable dependencies.
   const text=readFileSync(resolve(root,'.'+url.pathname),'utf8');
-  for(const match of text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*)['"]([^'"]+)['"]/g)){
-   const target=new URL(match[1],url);assert.equal(target.origin,url.origin,`${name}: external module`);
+  for(const specifier of moduleSpecifiers(text)){
+   const target=new URL(specifier,url);assert.equal(target.origin,url.origin,`${name}: external module`);
    assert(target.pathname.startsWith(`/homepage/${release.version}/`),`${name}: module outside packaged closure`);
-   assert(existsSync(resolve(root,'.'+target.pathname)),`${name}: unresolved module ${match[1]}`);checked++;
+   assert(existsSync(resolve(root,'.'+target.pathname)),`${name}: unresolved module ${specifier}`);checked++;
   }
  }
  assert(checked>=7,'module graph must actually be checked');

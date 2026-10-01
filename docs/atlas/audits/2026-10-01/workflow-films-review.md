@@ -1,4 +1,6 @@
-# ATLAS workflow films ready for review
+# ATLAS workflow films — historical R2 review
+
+**Superseded for marketing:** Mark rejected the R2 films as too long and slow. Preserve these receipts as history; current R3 ads are 18-second vertical cuts with nine exact two-second beats. Review at http://127.0.0.1:8176/review.html and see [R3 audit](experience-feedback-r3.md). The older creative-review-pending wording below is historical.
 
 October 1, 2026. Four complete, technically qualified review cuts are available at `http://127.0.0.1:4345/production-r2/review.html`. This is external media production, separate from the already deployed public website source e22595f76ccb2a75f8cd5c45b42ee99e4563439a / PublicReader39. The new long films are not packaged in the live website, and owner creative/audio acceptance is pending.
 

@@ -1,5 +1,7 @@
 # ATLAS public continuation release
 
+**Later R3 work is local only.** The feedback package `c6d8946d5ff927f5` is qualified for review and has not replaced the production release documented below. See [R3 audit](experience-feedback-r3.md).
+
 Verified October 1, 2026 at 18:11:19.646 UTC. Public source `e22595f76ccb2a75f8cd5c45b42ee99e4563439a`, tree `7265d3b24860c43ec4451e436709cf15a07de66f`, is live through deployment `dpl_G7Hzd23awymkYmFuGFrewq2EMzT2` / `atlas-grading-public-bxxu7eh97-ten-kings.vercel.app`. All four public aliases select it. PublicReader advanced 38→39 using the exact old-row MD5, preserving enablement, config hash and policy.
 
 ## Delivered scope

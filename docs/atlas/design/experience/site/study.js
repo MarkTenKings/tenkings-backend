@@ -656,16 +656,4 @@ if(stories.length){
   }
 }
 
-// A user-initiated fictional motion concept; no brand security test is implied.
-const heistDetails=document.querySelector('.copycat-film'),heistStage=document.querySelector('.heist-stage');
-let heistTimers=[];
-const heistActs=[['ready','A perfect-looking label?','The details deserve a second look.'],['copy','Four labels. One copycat.','Our fictional villain thinks the printed number is the whole story.'],['inspect','Then the evidence opens.','The ATLAS record reveals a different set of marks.'],['blocked','The details don’t match.','The collector spots the mismatch before trusting the label.'],['rescue','The evidence saves the day.','Our creature guardians arrive. The copycat makes a furious escape.']];
-function setHeistAct(index){const [act,title,copy]=heistActs[index];heistStage.dataset.act=act;heistStage.querySelector('h3').textContent=title;heistStage.querySelector('.heist-caption p').textContent=copy;}
-function stopHeist(){heistTimers.forEach(clearTimeout);heistTimers=[];heistStage.classList.remove('playing');}
-function playHeist(){stopHeist();if(manuallyPaused||preference.matches){setHeistAct(3);return;}setHeistAct(0);void heistStage.offsetWidth;heistStage.classList.add('playing');[2000,4800,7300,10200].forEach((t,i)=>heistTimers.push(setTimeout(()=>setHeistAct(i+1),t)));heistTimers.push(setTimeout(stopHeist,14000));}
-heistDetails.addEventListener('toggle',()=>{if(heistDetails.open){heistStage.scrollIntoView({behavior:preference.matches?'auto':'smooth',block:'center'});playHeist();}else stopHeist();});heistStage.querySelector('.heist-replay').addEventListener('click',playHeist);
-document.addEventListener('atlas-motion-change',()=>{if(manuallyPaused||preference.matches){stopHeist();setHeistAct(3);}});document.addEventListener('visibilitychange',()=>{if(document.hidden)stopHeist();});
-
-new IntersectionObserver(entries=>{if(!entries[0].isIntersecting)stopHeist();},{threshold:.05}).observe(heistStage);
-
 document.addEventListener('atlas-report-selected',()=>{if(root.dataset.heroReport==='embedded')cancelInspectionTimers();});

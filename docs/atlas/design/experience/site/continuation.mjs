@@ -57,6 +57,12 @@ function makeReportPhoto(manifest, sideName, photoUrl, selectFinding) {
   measure.append(svgEl('polygon', {points:side.geometry.printedQuadSource.map(point => point.join(',')).join(' '), 'stroke-width':5, 'stroke-dasharray':'18 12'}));
   const outer = side.geometry.physicalQuadSource;
   const inner = side.geometry.printedQuadSource;
+  // The same reference axes as the hero: bisect the saved physical card.
+  const midpoint = (a,b) => a.map((value,axis) => (value+b[axis])/2);
+  for (const [from,to] of [
+    [midpoint(outer[0],outer[1]),midpoint(outer[3],outer[2])],
+    [midpoint(outer[0],outer[3]),midpoint(outer[1],outer[2])]
+  ]) measure.append(svgEl('path', {class:'ac-card-centerline',d:`M${from.join(' ')}L${to.join(' ')}`,stroke:'#c3ff9c','stroke-width':1.15,'stroke-dasharray':'6 5','vector-effect':'non-scaling-stroke',opacity:.8}));
   // Brackets connect the saved physical and printed edges, not an estimated inset.
   for (let edge = 0; edge < 4; edge++) {
     const next = (edge + 1) % 4;
@@ -259,12 +265,12 @@ function initFingerprint(section) {
       // Both layers share the exact source-card crop; no photo alteration or fake wave field.
       svg.append(svgEl('image',{class:'ac-fingerprint-photo',href:photoUrl,x:0,y:0,width:side.original.width,height:side.original.height}));
       svg.append(svgEl('image',{class:'ac-fingerprint-field',href:fieldUrl,x:crop.x,y:crop.y,width:crop.width,height:crop.height}));
-      stage.replaceChildren(svg);stage.setAttribute('aria-label',`${titleCase(sideName)} photograph of ${manifest.report.displayName} with its actual mask-derived gold fingerprint`);
+      stage.replaceChildren(svg);stage.setAttribute('aria-label',`${titleCase(sideName)} photograph of ${manifest.report.displayName} with its saved ATLAS fingerprint`);
       q('.ac-fingerprint-caption').textContent=`${manifest.report.displayName.toUpperCase()} / ${sideName}`;
       q('.ac-fingerprint-count').textContent=String(side.fingerprint.includedFindings);
       const area=side.fingerprint.occupiedPixels*(manifest.card.widthMm/manifest.card.canonicalWidth)*(manifest.card.heightMm/manifest.card.canonicalHeight);
-      q('.ac-marked-area').textContent=`${decimal(area)} mm²`;q('.ac-marked-area').title=`${area} mm² from the union of recorded mask pixels`;
-      q('.ac-fingerprint-status').textContent=`${titleCase(sideName)} · The recorded marks define this pattern.`;
+      q('.ac-marked-area').textContent=`${decimal(area)} mm²`;q('.ac-marked-area').title=`${area} mm² recorded area`;
+      q('.ac-fingerprint-status').textContent=`${titleCase(sideName)} · This card’s saved ATLAS fingerprint.`;
       if(animate)replay();
     }catch(error){q('.ac-fingerprint-status').textContent='This fingerprint could not be loaded. Choose the side again to retry.';console.error('ATLAS fingerprint:',error);}
     finally{if(token===request)stage.setAttribute('aria-busy','false');}
@@ -380,7 +386,7 @@ function initConnectedContinuity() {
 }
 initConnectedContinuity();
 // These retained short previews are illustrative; the kiosk depicts the future dropbox.
-for(const [selector,copy]of [['.service-film-kiosk','DROPBOX CONCEPT · SHORT PREVIEW'],['.service-film-fedex','MAIL-IN · SHORT PREVIEW']]){
+for(const [selector,copy]of [['.service-film-kiosk','CARD SHOP · 18 SECONDS'],['.service-film-fedex','MAIL-IN · 18 SECONDS']]){
   const host=document.querySelector(selector);if(host){const label=el('p','service-film-context',copy);host.append(label);}
 }
 function releaseContinuation(event){if(event.persisted)return;window.removeEventListener('pagehide',releaseContinuation);for(const cleanup of cleanups)cleanup();for(const url of urls)URL.revokeObjectURL(url);}
