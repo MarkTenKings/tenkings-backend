@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { parseInspectionAccess } from '@atlas/service-bridge/inspection-access';
 
 // Grants are fetched on demand, outside the saved report and its approval hash.
-export function useInspectionImages(packet, publicHash) {
+export function useInspectionImages(packet, publicHash, reportImages = null) {
   const [access, setAccess] = useState({}), [retry, setRetry] = useState(0);
   const manual = packet?.version === 'atlas-public-manual-report-v2';
   const direct = manual && packet.mode === 'PRODUCTION';
@@ -34,7 +34,7 @@ export function useInspectionImages(packet, publicHash) {
   if (!manual) return null;
   return Object.fromEntries(['FRONT', 'BACK'].map(side => {
     const saved = packet.images[side], current = access[side]?.identity === identity ? access[side] : null;
-    return [side, { inspection: direct ? { ...saved, ...current?.image,
+    return [side, { ...(reportImages?.images?.[side] ? { presentation: reportImages.images[side] } : {}), inspection: direct ? { ...saved, ...current?.image,
       accessLoading: !current, accessError: Boolean(current?.error), retryAccess: () => setRetry(value => value + 1) }
       : { ...saved, url: `/api/reports/${packet.publicToken}/images/${side}?v=${packet.approvalVersion}` } }];
   }));

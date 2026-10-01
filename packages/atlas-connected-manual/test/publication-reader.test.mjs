@@ -91,3 +91,28 @@ test('optional service deadline cannot fall through to an unbounded legacy previ
  const reader=createApprovedManualReader({client,artifacts:f.artifacts,storage:f.storage,reviewDisplay:{inspection:async()=>null}});
  const value=JSON.parse((await reader.read(claims)).bytes);assert.equal(value.image.preview,undefined);assert.deepEqual(purposes,['inspection']);assert.equal(value.image.sha256,f.geometry.sides.FRONT.prepared.frame.inspection.sha256);
 });
+
+test('optional report images are separate from the packet and cannot take a valid report offline',async()=>{
+ const f=await setup();let enabled=true,calls=0;
+ const client={$transaction:async fn=>fn({$queryRawUnsafe:async()=>enabled?[f.row]:[]})};
+ const reportImages={async manifest(){calls++;throw Error('optional cache unavailable');},async image(){enabled=false;return{bytes:Buffer.from('png'),contentType:'image/png'};}};
+ const reader=createApprovedManualReader({client,artifacts:f.artifacts,storage:f.storage,reportImages});
+ const response=JSON.parse((await reader.read(f.claims('REPORT'))).bytes);
+ assert.equal(response.reportImages,undefined);assert.equal(response.packet.images.FRONT.sha256,f.geometry.sides.FRONT.prepared.frame.inspection.sha256);assert.equal(calls,1);
+ const claims=f.claims('IMAGE');claims.request.kind='REPORT_IMAGE';claims.request.outputSha256='d'.repeat(64);
+ await assert.rejects(reader.read(claims),{code:'MANUAL_PUBLICATION_CHANGED'});
+});
+
+test('hung optional report image lookup is omitted within a bounded wait and a late failure is observed',async()=>{
+ const f=await setup();let rejectLookup,reads=0;
+ const client={$transaction:async fn=>fn({$queryRawUnsafe:async()=>{reads++;return[f.row];}})};
+ const reportImages={manifest:()=>new Promise((_,reject)=>{rejectLookup=reject;})};
+ const reader=createApprovedManualReader({client,artifacts:f.artifacts,storage:f.storage,reportImages});
+ const started=performance.now();
+ const response=JSON.parse((await reader.read(f.claims('REPORT'))).bytes);
+ assert.ok(performance.now()-started<1500,'optional work must not add multiple seconds');
+ assert.equal(response.reportImages,undefined);assert.equal(reads,2);
+ assert.equal(response.packet.images.FRONT.sha256,f.geometry.sides.FRONT.prepared.frame.inspection.sha256);
+ rejectLookup(Error('late optional failure'));
+ await new Promise(resolve=>setImmediate(resolve));
+});

@@ -1,6 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings,validateLearningRuntimeConfiguration} from '../lib/server/connected-manual-runtime.mjs';
+import {manualRuntimeSettings,manualStationSettings,manualProcessingSettings,manualReportImageSettings,validateLearningRuntimeConfiguration} from '../lib/server/connected-manual-runtime.mjs';
+
+test('report images prefer their dedicated private key without changing shared provider configuration',()=>{
+ const shared='fixture-shared-not-a-real-key',dedicated='fixture-image-not-a-real-key';
+ const env={ATLAS_MANUAL_REPORT_IMAGES_ENABLED:'true',ATLAS_MANUAL_OPENAI_KEY:shared,ATLAS_MANUAL_REPORT_IMAGES_OPENAI_KEY:dedicated};
+ assert.deepEqual(manualReportImageSettings(env),{concurrency:2,apiKey:dedicated});
+ assert.equal(env.ATLAS_MANUAL_OPENAI_KEY,shared);
+ assert.equal(manualReportImageSettings({...env,ATLAS_MANUAL_REPORT_IMAGES_OPENAI_KEY:undefined}).apiKey,shared);
+ assert.equal(manualReportImageSettings({...env,ATLAS_MANUAL_OPENAI_KEY:undefined}).apiKey,dedicated);
+ assert.equal(manualReportImageSettings({ATLAS_MANUAL_REPORT_IMAGES_ENABLED:'false'}),null);
+ for(const value of ['', 'bad\nkey-long-enough'])
+   assert.throws(()=>manualReportImageSettings({...env,ATLAS_MANUAL_REPORT_IMAGES_OPENAI_KEY:value}),{code:'REPORT_IMAGE_CONFIG_INVALID'});
+});
 import {generateKeyPairSync} from 'node:crypto';
 import {staffContentSecurityPolicy} from '../lib/content-security.mjs';
 import {privateManualAccessConfig,productionAccessConfig} from '../lib/server/access/config.mjs';

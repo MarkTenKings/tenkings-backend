@@ -21,7 +21,10 @@
     "./research-journal": "./src/research-journal.mjs",
     "./finishing-station-protocol": "./src/finishing-station-protocol.mjs",
     "./finishing-station-service": "./src/finishing-station-service.mjs",
-    "./finishing-station-repository": "./src/finishing-station-repository.mjs"
+    "./finishing-station-repository": "./src/finishing-station-repository.mjs",
+    "./report-image-provider": "./src/report-image-provider.mjs",
+    "./report-image-store": "./src/report-image-store.mjs",
+    "./report-images": "./src/report-images.mjs"
   },
   "scripts": {
     "test": "pnpm --filter @tenkings/ebay-sold-comps-v2 build && node --test test/*.test.mjs"

@@ -114,6 +114,7 @@ try{
 
  const later=await create();assert.deepEqual(await service.discard(owner,all),removed);
  assert.deepEqual((await service.list(owner)).cards.map(c=>c.cardId),[later.card.cardId]);
+ await denied(service.discard(owner,{requestId:randomUUID(),scope:'SELECTED',cardIds:[ready.cardId]}),'INTAKE_CARD_NOT_FOUND');
  await denied(service.discard(owner,{...all,createRequestIds:[]}),'INTAKE_REQUEST_ID_CONFLICT');
  const status=await service.discardStatus(owner,{createRequestIds:[localOnly,first.input.requestId,later.input.requestId],cardIds:[foreign.card.cardId]});
  assert.deepEqual(status,{createRequestIds:[localOnly,first.input.requestId].sort(),cardIds:[]});
@@ -166,7 +167,7 @@ try{
  const values=Array.from({length:121},()=>({id:randomUUID(),pair:randomUUID(),request:randomUUID()}));
  for(const value of values){const request=document({requestId:value.request,label:'large owned fixture'});
   await fixture.admin.$executeRawUnsafe('INSERT INTO atlas_manual_intake.card(id,pair_id,owner_id,create_request_id,create_request_hash,label) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6)',value.id,value.pair,owner.id,value.request,request.hash,'large owned fixture');}
- const large=await service.discard(owner,{requestId:randomUUID(),scope:'ALL'});assert(large.receipt.cardIds.length>=123);
+ const large=await service.discard(owner,{requestId:randomUUID(),scope:'ALL'});assert.equal(large.receipt.cardIds.length,121);
  assert.equal((await service.list(owner)).cards.length,0);
  await assert.rejects(service.discardStatus(owner,{createRequestIds:Array.from({length:101},()=>randomUUID())}));
  await assert.rejects(connection.manualClient.$executeRawUnsafe('DELETE FROM atlas_manual_intake.discarded_card'));
@@ -174,7 +175,7 @@ try{
  await assert.rejects(fixture.admin.$executeRawUnsafe('UPDATE atlas_manual_intake.discard_request SET receipt=receipt'));
  // Direct old-serving INSERT cannot bypass a tombstone even without new JS.
  await assert.rejects(fixture.admin.$executeRawUnsafe('INSERT INTO atlas_manual_intake.card(id,pair_id,owner_id,create_request_id,create_request_hash,label) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6)',randomUUID(),randomUUID(),owner.id,localOnly,'a'.repeat(64),'stale create'));
- record('ALL retires more than 100 cards, selectors remain bounded, immutable SQL/role guards reject edits/deletes and stale SQL creates');
+ record('ALL retires more than 100 active cards while ignoring prior tombstones; selectors remain bounded and immutable SQL/role guards reject edits/deletes and stale SQL creates');
  const protectedCard=await create(),ordinaryCard=await create(),approvalId=randomUUID();
  await fixture.admin.$executeRawUnsafe('INSERT INTO atlas_manual.card(id,revision,content,content_hash,owner_id) VALUES($1::uuid,1,$2,$3,$4::uuid)',protectedCard.card.cardId,content.text,content.hash,owner.id);
  await fixture.admin.$executeRawUnsafe('INSERT INTO atlas_manual.action(card_id,action_id,actor_id,expected_revision,result_revision,request_hash,request,result) VALUES($1::uuid,$2::uuid,$3::uuid,1,2,$4,$5,$5)',protectedCard.card.cardId,approvalId,owner.id,content.hash,content.text);
@@ -189,6 +190,27 @@ try{
  const [{result:dealer}]=await fixture.admin.$queryRawUnsafe('SELECT atlas_dealer.staff_call($1,$2,$3,$4::jsonb,$5::text[],$6::jsonb) result','read',handle.sessionHash,handle.browserHash,JSON.stringify(binding),[...fixture.config.phoneByHash.keys()],'{}');
  assert.deepEqual(dealer.manualCards.map(c=>c.id),[protectedCard.card.cardId]);
  record('publication obligation refuses whole ALL atomically, and dealer candidates exclude previously discarded manual cards');
+
+ // A saved review or machine report must block staff discard even before
+ // approval/publication. An ungraded companion must not be swept by ALL.
+ const reviewedCard=await create(),machineCard=await create(),ungradedPeer=await create();
+ const reviewRequest=document({action:{type:'CONFIRM_FINDINGS'}});
+ await fixture.admin.$executeRawUnsafe('INSERT INTO atlas_manual.card(id,revision,content,content_hash,owner_id) VALUES($1::uuid,1,$2,$3,$4::uuid)',reviewedCard.card.cardId,content.text,content.hash,owner.id);
+ await fixture.admin.$executeRawUnsafe(`INSERT INTO atlas_manual.action(card_id,action_id,actor_id,expected_revision,result_revision,request_hash,request,result)
+   VALUES($1::uuid,$2::uuid,$3::uuid,1,2,$4,$5,$6)`,reviewedCard.card.cardId,randomUUID(),owner.id,reviewRequest.hash,reviewRequest.text,content.text);
+ const machineInput=document({fixture:'machine report'}),machineEvidence=document({reportHash:'5'.repeat(64)});
+ const [{access_version:machineAccessVersion}]=await fixture.admin.$queryRawUnsafe('SELECT "accessVersion" AS access_version FROM atlas_staff."StaffIdentity" WHERE id=$1::uuid',owner.id);
+ await fixture.admin.$executeRawUnsafe(`INSERT INTO atlas_manual_connected.batch_grading
+   (key,card_id,source_hash,actor_id,access_version,analysis_action_id,input,input_hash,state,stage,evidence)
+   VALUES($1,$2::uuid,$3,$4::uuid,$5,$6::uuid,$7,$8,'REVIEW','REPORT',$9)`,
+ '4'.repeat(64),machineCard.card.cardId,'3'.repeat(64),owner.id,machineAccessVersion,randomUUID(),machineInput.text,machineInput.hash,machineEvidence.text);
+ for(const card of [reviewedCard,machineCard]) {
+  const refused={requestId:randomUUID(),scope:'SELECTED',cardIds:[card.card.cardId,ungradedPeer.card.cardId]};
+  await denied(service.discard(owner,refused),'INTAKE_CARD_HAS_COMMITTED_OBLIGATIONS');
+  assert.equal((await fixture.admin.$queryRawUnsafe('SELECT count(*)::int n FROM atlas_manual_intake.discard_request WHERE request_id=$1::uuid',refused.requestId))[0].n,0);
+  assert.deepEqual(await service.discardStatus(owner,{cardIds:[card.card.cardId,ungradedPeer.card.cardId]}),{cardIds:[],createRequestIds:[]});
+ }
+ record('unapproved human review and saved machine report independently block staff discard; mixed selections remain atomic');
  await writeFile(join(output,'result.json'),JSON.stringify({status:'PASS',checks,modelCalls:0,productionWrites:0},null,2));
  console.log(JSON.stringify({status:'PASS',checks:checks.length,output}));
 }finally{await connection.close();await fixture.stop();await writeFile(join(output,'cleanup.json'),JSON.stringify({ownedFixtureStopped:true}));}

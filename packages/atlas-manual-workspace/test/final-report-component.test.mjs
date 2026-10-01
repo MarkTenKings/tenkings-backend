@@ -14,12 +14,17 @@ import * as inspectionPreview from '../src/inspection-preview.mjs';
 import * as spatialNavigation from '../src/report-spatial-navigation.mjs';
 import * as fingerprint from '../src/report-fingerprint.mjs';
 import * as gradeStory from '../src/grade-calculation-story.mjs';
+import * as wholeCardLayout from '../src/whole-card-layout.mjs';
+import * as scanMotion from '../src/evidence-scan-motion.mjs';
+import * as edgeTour from '../src/evidence-edge-tour.mjs';
+import * as cornerTour from '../src/evidence-corner-tour.mjs';
+import * as tourSound from '../src/evidence-tour-sound.mjs';
 import { defectBase, markDefectSideInspected, confirmDefectFindings, previewDefectReport } from '../src/defect-actions.mjs';
 import { workspace } from './defect-fixtures.mjs';
 
 const require = createRequire(new URL('../../../frontend/atlas-app/package.json', import.meta.url));
 const babel = require('next/dist/compiled/babel/core'), nextRequire = createRequire(require.resolve('next/package.json'));
-const sources = Object.fromEntries(['ReportSpatialOverlay', 'ReportPrecisionOverlay', 'ReportFingerprint', 'ReportInspectionImage', 'PublicEvidenceExplorer', 'ReportPresentation', 'GradeCalculationStory', 'FinalReportReview'].map(name => [name, babel.transformSync(readFileSync(new URL(`../src/${name}.jsx`, import.meta.url), 'utf8'), {
+const sources = Object.fromEntries(['ReportSpatialOverlay', 'ReportPrecisionOverlay', 'ReportFingerprint', 'ReportInspectionImage', 'FindingCallouts', 'ApprovedWholeCard', 'TourSoundButton', 'ReportEvidenceScan', 'PublicEvidenceExplorer', 'ReportPresentation', 'GradeCalculationStory', 'FinalReportReview'].map(name => [name, babel.transformSync(readFileSync(new URL(`../src/${name}.jsx`, import.meta.url), 'utf8'), {
   filename: `${name}.jsx`, presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } } }]], babelrc: false, configFile: false,
 }).code]));
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node ?? '';
@@ -46,7 +51,7 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
     addEventListener(name, fn) { if (!listenerSets.has(name)) listenerSets.set(name, new Set()); listenerSets.get(name).add(fn); listeners.set(name, () => listenerSets.get(name)?.forEach(callback => callback())); },
     removeEventListener(name, fn) { listenerSets.get(name)?.delete(fn); }, print() {} };
   const memo = (make, deps) => { const i = cursor++, old = current[i]; if (!old || deps.some((v, j) => !Object.is(v, old.deps[j]))) current[i] = { deps, value: make() }; return current[i].value; };
-  const react = { Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+  const react = { useId: () => 'fixture-whole-card', Fragment: 'fragment', createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
     useState(initial) { const i = cursor++, slots = current; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial; return [slots[i], change => { const next = typeof change === 'function' ? change(slots[i]) : change; if (!Object.is(next, slots[i])) { slots[i] = next; dirty = true; } }]; },
     useRef(initial) { const i = cursor++; if (!(i in current)) current[i] = { current: initial }; return current[i]; }, useMemo: memo, useCallback: (callback, deps) => memo(() => callback, deps),
     useEffect(callback, deps) { const i = cursor++, slots = current, prior = slots[i]; if (!prior || deps.some((v, j) => !Object.is(v, prior.deps[j]))) { slots[i] = { deps, cleanup: prior?.cleanup }; effects.push(() => { slots[i].cleanup?.(); slots[i].cleanup = callback(); }); } },
@@ -55,6 +60,7 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
   for (const [name, code] of Object.entries(sources)) {
     const exports = {}; vm.runInNewContext(code, { exports, window: browser, AbortController, ...frameGlobals, setTimeout: (...args) => setTimeout(...args).unref(), clearTimeout, ResizeObserver: class { constructor(callback) { this.callback = callback; } observe(element) { element.resize = this.callback; } disconnect() {} }, require(name) {
       if (name === 'react') return react;
+      if (name === 'gsap') return { gsap: {} };
       if (name === '@atlas/grading-core/scoring') return scoring;
       if (name === 'react-dom') return { flushSync: callback => callback() };
       if (name === '@atlas/grading-core/trace-codec') return traceCodec;
@@ -68,6 +74,16 @@ function harness(props = fixture(), { publicView = false, machine = false, fragm
       if (name === './ReportFingerprint.jsx') return modules.ReportFingerprint;
       if (name === './ReportSpatialOverlay.jsx') return modules.ReportSpatialOverlay;
       if (name === './ReportPrecisionOverlay.jsx') return modules.ReportPrecisionOverlay;
+      if (name === './evidence-scan-motion.mjs') return scanMotion;
+      if (name === './evidence-edge-tour.mjs') return edgeTour;
+      if (name === './evidence-corner-tour.mjs') return cornerTour;
+      if (name === './evidence-tour-sound.mjs') return tourSound;
+      if (name === './TourSoundButton.jsx') return modules.TourSoundButton;
+      if (name === './ReportEvidenceScan.jsx') return modules.ReportEvidenceScan;
+      if (name === './whole-card-layout.mjs') return wholeCardLayout;
+      if (name === './report-presentation-image.mjs') return { usePresentationImage: () => null };
+      if (name === './FindingCallouts.jsx') return modules.FindingCallouts;
+      if (name === './ApprovedWholeCard.jsx') return modules.ApprovedWholeCard;
       if (name === './PublicEvidenceExplorer.jsx') return modules.PublicEvidenceExplorer;
       if (name === './report-presentation-ui.mjs') return optionalPresentation;
       if (name === './ReportPresentation.jsx') return modules.ReportPresentation;
@@ -564,7 +580,7 @@ test('public overview exposes every finding directly; comparison and return pres
   assert.ok(parseFloat(text(f.control('Current zoom'))) > 1);
   f.click('Whole card'); assert.equal(publicSection(f), 'whole'); assert.equal(selectedPublicId(f), '');
   assert.deepEqual(sections(), ['rr-public-viewers', 'rr-public-finding-navigation']);
-  assert.equal(parseFloat(text(f.control('Current zoom'))), 1);
+  assert.equal(planeIn(activePhoto(f)).props.style.width, planeIn(activePhoto(f, 'Front')).props.style.width);
   assert.equal(allLabels().length, 13); assert.equal(publicFindingButton(f, 1).props['aria-pressed'], true);
   f.click('Findings 13'); assert.equal(selectedPublicId(f), first.id);
   const element = activePhoto(f).props.ref.current;
@@ -576,7 +592,8 @@ test('public overview exposes every finding directly; comparison and return pres
 
 test('public Findings opens the populated opposite side and an empty report keeps truthful photograph and centering views', () => {
   const f = harness(historicalPublicReport(), { publicView: true }); f.ready();
-  assert.equal(f.control('Front report image').props.hidden, false);
+  assert.equal(f.control('Front report image').props.hidden, true);
+  assert.equal(f.nodes(node => node.type === 'image' && node.props.href === 'blob:abomasnow-FRONT').length, 1);
   f.click('Findings 13'); assert.equal(f.control('Back report image').props.hidden, false);
   assert.equal(selectedPublicId(f), f.props.report.findings[0].id);
   const empty = harness(historicalPublicReport('dart'), { publicView: true }); empty.ready();
@@ -769,24 +786,23 @@ test('reduced-motion public fingerprint renders a direct state and source replac
   f.click('← Return to photograph'); assert.equal(publicSection(f), 'whole'); assert.equal(f.pendingFrames(), 0); f.unmount();
 });
 
-test('desktop report keeps both verified sides, every direct shape and independent zoom controls', () => {
+test('desktop whole card preserves both verified photographs, every direct shape, and original category zoom', () => {
   const props = historicalPublicReport(), before = structuredClone(props), f = harness(props, { publicView: true, desktop: true }); f.ready();
-  for (const side of ['Front', 'Back']) assert.equal(f.control(`${side} report image`).props.hidden, false);
-  assert.equal(f.control('Explore approved report evidence').props['data-paired'], true);
-  const shapes = () => f.nodes(node => node.props.className === 'rr-public-shape-target');
-  assert.equal(shapes().length, 13); assert.ok(shapes().every(node => node.props['aria-label'].startsWith('Open Back finding ')));
+  for (const side of ['Front', 'Back']) assert.equal(f.control(`${side} report image`).props.hidden, true, 'exact inspector stays mounted for drill-in');
+  assert.equal(f.nodes(node => node.type === 'image' && /blob:/.test(node.props.href)).length, 2);
+  const shapes = () => f.nodes(node => node.props.className === 'finding-hit');
+  assert.equal(shapes().length, 13);
   assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Inspect Back ')).length, 13);
   assert.equal(f.nodes(node => node.props.className?.includes('rr-spatial-area')).length, 0);
-  const rails = f.nodes(node => node.props.className === 'rr-spatial-overlay rr-spatial-rail');
-  const labels = all(rails.find(node => node.props['data-rail-side'] === 'right'), node => node.type === 'button');
-  for (let i = 1; i < labels.length; i++) assert.ok(labels[i].props.style.top - labels[i - 1].props.style.top >= 44, 'labels cannot collide');
+  f.click('Surface');
   const frontWidth = planeIn(activePhoto(f, 'Front')).props.style.width;
   f.control('Photograph to zoom').props.onChange({ target: { value: 'BACK' } }); f.render();
   f.control('Zoom in').props.onClick(); f.render();
   assert.equal(planeIn(activePhoto(f, 'Front')).props.style.width, frontWidth);
   assert.ok(planeIn(activePhoto(f, 'Back')).props.style.width > frontWidth);
+  f.click('Whole card');
   const shape = shapes().find(node => node.props['data-finding-id'] === props.report.findings[5].id);
-  assert.ok(shape); shape.props.onClick({ stopPropagation() {} }); f.render();
+  assert.ok(shape); shape.props.onClick(); f.render();
   assert.equal(publicSection(f), 'finding'); assert.equal(selectedPublicId(f), props.report.findings[5].id);
   assert.equal(shapes().length, 0, 'detail uses exact trace without enlarged overview targets');
   assert.ok(f.control('Back clean close-up; same photograph, zoom and position'));
@@ -794,23 +810,29 @@ test('desktop report keeps both verified sides, every direct shape and independe
   assert.deepEqual(props.report, before.report); assert.deepEqual(props.geometry, before.geometry);
 });
 
-test('category views use saved memberships, preserve original numbers and return to the chosen scope', () => {
+test('category inspection fields preserve saved memberships and original numbers on drill-in', () => {
   const props = historicalPublicReport(), before = structuredClone(props.report), f = harness(props, { publicView: true, desktop: true }); f.ready();
-  const labels = () => f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Inspect Back '));
   const entries = presentation.reportFindingEntries(props.report.findings);
   for (const category of ['corners', 'edges', 'surface']) {
     f.click(category[0].toUpperCase() + category.slice(1));
-    const expected = entries.filter(entry => entry.categories.includes(category));
-    assert.equal(labels().length, expected.length); assert.equal(f.nodes(node => node.props.className === 'rr-public-shape-target').length, expected.length);
-    assert.ok(expected.every(entry => labels().some(node => node.props['data-finding-id'] === entry.finding.id && node.props['aria-label'].startsWith(`Inspect ${entry.label}:`))));
-    assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Open Front finding ')).length, 0);
-    labels()[0].props.onClick(); f.render();
+    const plan = category === 'corners' ? cornerTour.createCornerTour(props.report.findings) : category === 'edges' ? edgeTour.createEdgeTour(props.report.findings) : null;
+    const ids = plan && new Set(plan.hits.map(hit => hit.finding.id));
+    const expected = entries.filter(entry => ids ? ids.has(entry.finding.id) : entry.categories.includes(category));
+    const options = () => all(f.control('All findings'), node => node.type === 'option' && node.props.value);
+    assert.deepEqual(options().map(node => node.props.value), expected.map(entry => entry.finding.id));
+    assert.ok(expected.every(entry => options().some(node => node.props.value === entry.finding.id && text(node).startsWith(entry.label))));
+    if (plan) {
+      assert.equal(f.nodes(node => node.props.className === 'rr-evidence-edge-scan').length, 2);
+      assert.equal(f.nodes(node => node.props.className === 'rr-public-shape-target').length, 0);
+      assert.equal(f.has('original grading categories retained'), true);
+    }
+    selectPublicId(f, expected[0].finding.id);
     assert.equal(publicSection(f), 'finding'); assert.ok(expected.some(entry => entry.finding.id === selectedPublicId(f)));
-    const options = all(f.control('All findings'), node => node.type === 'option' && node.props.value);
-    assert.deepEqual(options.map(node => node.props.value), expected.map(entry => entry.finding.id));
     f.click(`← ${category[0].toUpperCase() + category.slice(1)}`); assert.equal(publicSection(f), category);
   }
-  f.click('Whole card'); assert.equal(labels().length, 13); assert.deepEqual(props.report, before);
+  f.click('Whole card');
+  assert.equal(f.nodes(node => node.type === 'button' && node.props['aria-label']?.startsWith('Inspect Back ')).length, 13);
+  assert.deepEqual(props.report, before);
 });
 
 test('public grade science uses actual saved weights, deductions, raw grade and rounding; category link opens evidence', () => {
@@ -920,4 +942,29 @@ test('saved historical reports keep original condition scale, arithmetic and all
   const equation = all(f.control('Selected finding calculation'), node => node.type === 'p' && text(node).includes('Share of the edges area'))[0];
   assert.ok(equation); assert.equal(text(equation).includes('× 100 × '), false);
   assert.deepEqual(props.report, before.report); assert.deepEqual(props.explanation, before.explanation);
+});
+
+test('changing the bound inspection source suppresses the previous whole-card photograph immediately', () => {
+  const props = historicalPublicReport('maye'), f = harness(props, { publicView: true, desktop: true }); f.ready();
+  assert.equal(f.nodes(node => node.props.className === 'rr-approved-whole').length, 1);
+  const oldURL = props.images.FRONT.inspection.url;
+  f.props.report = { ...props.report, inspection: { ...props.report.inspection, front: { ...props.report.inspection.front, imageSha256: '9'.repeat(64) } } };
+  f.props.images = { ...props.images, FRONT: { inspection: { sha256: '9'.repeat(64), url: 'blob:replacement-front' } } };
+  f.render();
+  assert.equal(f.nodes(node => node.props.className === 'rr-approved-whole').length, 0);
+  assert.equal(f.nodes(node => node.type === 'image' && node.props.href === oldURL).length, 0);
+  f.ready('Front');
+  assert.equal(f.nodes(node => node.type === 'image' && node.props.href === 'blob:replacement-front').length, 1);
+  assert.equal(f.nodes(node => node.type === 'image' && node.props.href === oldURL).length, 0);
+  f.unmount();
+});
+
+test('whole-card pause and centering choices survive original-photo inspection and other report tabs', () => {
+  const f = harness(historicalPublicReport('maye'), { publicView: true, desktop: true }); f.ready();
+  f.click('Ⅱ Pause'); f.click('Centering on');
+  f.nodes(node => node.type === 'button' && node.props.className?.startsWith('fc-label'))[0].props.onClick(); f.render();
+  assert.equal(publicSection(f), 'finding');
+  f.click('← Whole card'); assert.ok(f.button('▶ Play')); assert.ok(f.button('Centering off'));
+  f.click('Surface'); f.click('Whole card'); assert.ok(f.button('▶ Play')); assert.ok(f.button('Centering off'));
+  f.unmount();
 });

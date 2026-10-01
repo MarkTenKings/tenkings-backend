@@ -9,12 +9,13 @@ export const MANUAL_PUBLIC_MAX_JSON = 16 * 1024 * 1024 + 4096;
 const purpose = 'atlas-approved-manual-public-read-v1';
 function key(value) { requireBridge(Buffer.isBuffer(value) && value.length === 32, 'MANUAL_PUBLIC_CONFIGURATION_INVALID'); return value; }
 function selector(value) {
-  keys(value, ['kind', 'token', 'version', 'side', 'findingId', ...(value.kind === 'PRESENTATION_IMAGE' ? ['presentationRevision'] : [])]);
-  requireBridge(['REPORT','IMAGE','IMAGE_ACCESS','TRACE','PRESENTATION_IMAGE'].includes(value.kind) && /^ar_[A-Za-z0-9_-]{24}$/.test(value.token)
+  keys(value, ['kind', 'token', 'version', 'side', 'findingId', ...(value.kind === 'PRESENTATION_IMAGE' ? ['presentationRevision'] : []), ...(value.kind === 'REPORT_IMAGE' ? ['outputSha256'] : [])]);
+  requireBridge(['REPORT','IMAGE','IMAGE_ACCESS','TRACE','PRESENTATION_IMAGE','REPORT_IMAGE'].includes(value.kind) && /^ar_[A-Za-z0-9_-]{24}$/.test(value.token)
     && (value.kind === 'REPORT' && value.version === null || Number.isSafeInteger(value.version) && value.version > 0 && value.version <= 2147483647)
-    && (['IMAGE','IMAGE_ACCESS'].includes(value.kind) ? ['FRONT','BACK'].includes(value.side) : value.side === null)
+    && (['IMAGE','IMAGE_ACCESS','REPORT_IMAGE'].includes(value.kind) ? ['FRONT','BACK'].includes(value.side) : value.side === null)
     && (value.kind === 'TRACE' ? typeof value.findingId === 'string' && value.findingId.length > 0 && value.findingId.length <= 180 : value.findingId === null),
   'MANUAL_PUBLIC_REQUEST_INVALID');
+  if(value.kind === 'REPORT_IMAGE') requireBridge(SHA.test(value.outputSha256), 'MANUAL_PUBLIC_REQUEST_INVALID');
   if(value.kind === 'PRESENTATION_IMAGE') requireBridge(Number.isSafeInteger(value.presentationRevision) && value.presentationRevision > 0 && value.presentationRevision <= 2147483647, 'MANUAL_PUBLIC_REQUEST_INVALID');
 }
 export function signManualPublicRequest(config, request, now = Date.now()) {
@@ -47,10 +48,10 @@ export function manualPublicClient(config, fetchImpl = fetch) {
       headers: { 'content-type':'application/json', 'x-atlas-manual-public-signature': signed.signature }, body: signed.body, signal: AbortSignal.timeout(25000) });
     if (response.status === 404) return null;
     requireBridge(response.status === 200, 'MANUAL_PUBLIC_UNAVAILABLE');
-    const isImage = request.kind === 'IMAGE' || request.kind === 'PRESENTATION_IMAGE';
-    const expected = isImage ? 'image/webp' : 'application/json';
+    const isImage = request.kind === 'IMAGE' || request.kind === 'PRESENTATION_IMAGE' || request.kind === 'REPORT_IMAGE';
+    const expected = request.kind === 'REPORT_IMAGE' ? 'image/png' : isImage ? 'image/webp' : 'application/json';
     requireBridge(response.headers.get('content-type')?.split(';')[0] === expected, 'MANUAL_PUBLIC_UNAVAILABLE');
-    const bytes = await boundedBytes(response, isImage ? 50 * 1024 * 1024 : MANUAL_PUBLIC_MAX_JSON);
+    const bytes = await boundedBytes(response, request.kind === 'REPORT_IMAGE' ? 4 * 1024 * 1024 : isImage ? 50 * 1024 * 1024 : MANUAL_PUBLIC_MAX_JSON);
     return isImage ? bytes : JSON.parse(bytes.toString('utf8'));
   } });
 }

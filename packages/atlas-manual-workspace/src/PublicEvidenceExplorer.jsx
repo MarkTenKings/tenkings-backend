@@ -1,5 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReportInspectionImage } from './ReportInspectionImage.jsx';
+import { ApprovedWholeCard } from './ApprovedWholeCard.jsx';
+import { EdgeTourControls, EvidenceEdgeScan } from './ReportEvidenceScan.jsx';
+import { createEvidenceMotion } from './evidence-scan-motion.mjs';
+import { createEdgeTour, sampleEdgeTour } from './evidence-edge-tour.mjs';
+import { createCornerTour } from './evidence-corner-tour.mjs';
 import { reportSpatialNavigation, reportCategoryNavigation } from './report-spatial-navigation.mjs';
 
 const SIDES = ['FRONT', 'BACK'];
@@ -19,16 +24,32 @@ const categoryCopy = { corners: 'Inspect all four corners on both sides.', edges
 /** Public presentation only. Both hash-bound image viewers remain mounted across
  * every mode, responsive change and print. Filtering never renumbers evidence. */
 export function PublicEvidenceExplorer({ report, explanation, images, geometry, selected, activeSide,
-  onSelect, onClear, onChooseSide, onReady, sideReady, findingDetails, gradeCalculation, printing = false }) {
+  onSelect, onClear, onChooseSide, onReady, sideReady, findingDetails, gradeCalculation, printing = false, publication }) {
   const navigation = useMemo(() => reportSpatialNavigation(report.findings), [report.findings]);
   const sideFindings = useMemo(() => Object.fromEntries(SIDES.map(side => [side,
     report.findings.filter(finding => finding.side === side)])), [report.findings]);
   const [section, setSection] = useState(selected?.id ? 'finding' : 'whole');
   const [returnSection, setReturnSection] = useState('whole');
+  const scanView = ['edges', 'corners'].includes(section);
+  const edgePlan = useMemo(() => createEdgeTour(report.findings), [report.findings]);
+  const cornerPlan = useMemo(() => createCornerTour(report.findings), [report.findings]);
+  const scanPlan = section === 'corners' ? cornerPlan : edgePlan;
+  const motionController = useMemo(() => createEvidenceMotion(), []);
+  const tourHold = useRef(null);
   const [mobile, setMobile] = useState(() => media('(max-width: 980px)'));
   const [reduced, setReduced] = useState(() => media('(prefers-reduced-motion: reduce)'));
   const [lastFinding, setLastFinding] = useState({ FRONT: null, BACK: null });
   const [overlays, setOverlays] = useState(true);
+  const [wholeControls, setWholeControls] = useState({ playing: true, original: false, center: true, sequence: 0 });
+  const returnControl = useRef(null);
+  const wholeMotionState = useRef({ centering: 0, defects: {} });
+  const [verifiedPhotos, setVerifiedPhotos] = useState({});
+  const verifiedPhoto = useCallback((side, url, sha256) => setVerifiedPhotos(old => {
+    if (!url && old[side]?.sha256 !== sha256) return old;
+    return old[side]?.url === url && old[side]?.sha256 === sha256 ? old : { ...old, [side]: { url, sha256 } };
+  }), []);
+  const currentPhotos = Object.fromEntries(SIDES.map(side => [side, verifiedPhotos[side]?.sha256 === report.inspection?.[side.toLowerCase()]?.imageSha256 ? verifiedPhotos[side].url : null]));
+  const wholeReady = section === 'whole' && !printing && SIDES.every(side => currentPhotos[side]);
   const [fingerprintCommand, setFingerprintCommand] = useState(null);
   const [command, setCommand] = useState(null), [zooms, setZooms] = useState({ FRONT: 1, BACK: 1 });
   const [tour, setTour] = useState(null), [arrival, setArrival] = useState(false);
@@ -36,7 +57,12 @@ export function PublicEvidenceExplorer({ report, explanation, images, geometry, 
   const findingNavigator = useRef(null), explorer = useRef(null);
   const current = navigation.entries.find(entry => entry.id === selected?.id);
   const category = CATEGORIES.includes(section) ? section : section === 'finding' && CATEGORIES.includes(returnSection) ? returnSection : null;
-  const scoped = useMemo(() => reportCategoryNavigation(navigation, category), [navigation, category]);
+  const scopePlan = category === 'corners' ? cornerPlan : category === 'edges' ? edgePlan : null;
+  const scoped = useMemo(() => {
+    if (!scopePlan) return reportCategoryNavigation(navigation, category);
+    const ids = new Set(scopePlan.hits.map(hit => hit.finding.id));
+    return { entries: navigation.entries.filter(entry => ids.has(entry.id)), neighborhoods: [] };
+  }, [navigation, category, scopePlan]);
   const entries = scoped.entries.filter(entry => entry.finding.side === activeSide);
   const otherSide = activeSide === 'FRONT' ? 'BACK' : 'FRONT';
   const otherEntries = scoped.entries.filter(entry => entry.finding.side === otherSide);
@@ -46,10 +72,11 @@ export function PublicEvidenceExplorer({ report, explanation, images, geometry, 
   const paired = !mobile && !['finding', 'science'].includes(section) && !printing;
   const visibleSides = paired || printing ? SIDES : [activeSide];
   const stopMotion = useCallback(() => {
+    motionController.pause();
     clearTimeout(tourTimer.current); clearTimeout(arrivalTimer.current);
     tourTimer.current = null; arrivalTimer.current = null;
     setTour(null); setArrival(false); interrupted.current = true;
-  }, []);
+  }, [motionController]);
   useEffect(() => {
     const small = window.matchMedia?.('(max-width: 980px)'), motion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
     const resize = () => { setMobile(Boolean(small?.matches)); stopMotion(); };
@@ -58,6 +85,28 @@ export function PublicEvidenceExplorer({ report, explanation, images, geometry, 
     return () => { small?.removeEventListener?.('change', resize); motion?.removeEventListener?.('change', reduce); clearTimeout(tourTimer.current); clearTimeout(arrivalTimer.current); };
   }, [stopMotion]);
   useEffect(() => { if (printing || selected?.id) stopMotion(); }, [printing, selected?.id, stopMotion]);
+  useEffect(() => () => motionController.dispose(), [motionController]);
+  useEffect(() => {
+    motionController.configure({ reduced, progress: 0, durationMs: scanPlan.duration * 1000, linear: true });
+    tourHold.current = null;
+    if (scanView && bothReady && !reduced && !printing && typeof document !== 'undefined') motionController.play();
+    return () => motionController.pause();
+  }, [section, reduced, scanPlan, scanView, bothReady, printing, motionController]);
+  useEffect(() => {
+    if (!scanView) return;
+    return motionController.subscribe(state => {
+      const sample = (scanPlan.sample ?? sampleEdgeTour)(scanPlan, state.progress);
+      if (['focus', 'inspect'].includes(sample.kind) && sample.finding && tourHold.current !== sample.finding.id) {
+        tourHold.current = sample.finding.id; if (mobile) onChooseSide(sample.finding.side);
+      } else if (!['focus', 'inspect'].includes(sample.kind)) tourHold.current = null;
+    });
+  }, [scanView, scanPlan, mobile, motionController, onChooseSide]);
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const pauseHidden = () => { if (document.hidden) motionController.pause(); };
+    document.addEventListener('visibilitychange', pauseHidden);
+    return () => document.removeEventListener('visibilitychange', pauseHidden);
+  }, [motionController]);
   useEffect(() => {
     if (!bothReady || printing || arrived.current || selected?.id || reduced || interrupted.current) return;
     arrived.current = true; setArrival(true);
@@ -85,6 +134,7 @@ export function PublicEvidenceExplorer({ report, explanation, images, geometry, 
   const selectFinding = finding => {
     const entry = scoped.entries.find(value => value.id === finding?.id);
     if (!entry || !sideReady(entry.finding.side)) return;
+    if (section === 'whole' && typeof document !== 'undefined') returnControl.current = { id: entry.id, callout: Boolean(document.activeElement?.closest?.('.fc-label')) };
     stopMotion(); if (section !== 'finding') setReturnSection(section);
     remember(entry); setSection('finding');
     if (entry.finding.side !== activeSide) onChooseSide(entry.finding.side);
@@ -109,7 +159,8 @@ export function PublicEvidenceExplorer({ report, explanation, images, geometry, 
   };
   const returnToOverview = () => {
     chooseSection(returnSection);
-    setTimeout(() => Array.from(explorer.current?.querySelectorAll?.('[data-finding-id]') ?? []).find(node => node.dataset.findingId === selected?.id)?.focus?.({ preventScroll: true }), 0);
+    const target = returnControl.current;
+    setTimeout(() => Array.from(explorer.current?.querySelectorAll?.(target?.callout ? '.fc-label[data-finding-id]' : '[data-finding-id]') ?? []).find(node => node.dataset.findingId === (target?.id ?? selected?.id))?.focus?.({ preventScroll: true }), 0);
   };
   const playTour = () => {
     stopMotion(); onClear(); fitBoth(); setOverlays(true);
@@ -144,7 +195,7 @@ export function PublicEvidenceExplorer({ report, explanation, images, geometry, 
       <button type="button" disabled={!next || !sideReady(next.finding.side)} onClick={() => selectFinding(next?.finding)}>Next →</button></div>
   </nav>;
 
-  return <section className={`rr-public-explorer${arrival ? ' rr-public-arrival' : ''}`} ref={explorer} data-section={section} data-paired={paired} data-printing={printing} aria-label="Explore approved report evidence" onKeyDown={event => {
+  return <section className={`rr-public-explorer${arrival ? ' rr-public-arrival' : ''}`} ref={explorer} data-section={section} data-paired={paired} data-compact={mobile} data-printing={printing} aria-label="Explore approved report evidence" onKeyDown={event => {
     if (event.altKey || event.ctrlKey || event.metaKey || /INPUT|TEXTAREA|SELECT/.test(event.target?.tagName ?? '') || event.target?.isContentEditable) return;
     if (event.key === '[' || event.key === ']') {
       event.preventDefault(); event.stopPropagation();
@@ -161,36 +212,39 @@ export function PublicEvidenceExplorer({ report, explanation, images, geometry, 
         <button type="button" className="rr-fingerprint-button" disabled={mobile ? !ready : !SIDES.some(sideReady)} aria-label="ATLAS Card fingerprint" aria-pressed={section === 'fingerprint'} onClick={() => chooseSection('fingerprint')}><strong aria-hidden="true">ATLAS</strong>Card fingerprint</button>
         {gradeCalculation && <button type="button" aria-pressed={section === 'science'} onClick={() => chooseSection('science')}>Grade science</button>}
       </div>
-      <div className="rr-public-motion"><button type="button" onClick={playTour} disabled={!bothReady}>Tour saved evidence</button><button type="button" onClick={replayArrival} disabled={!bothReady}>Replay arrival</button>{(tour || arrival) && <button type="button" onClick={stopMotion}>Stop motion</button>}</div>
-      <div className="rr-public-sides" hidden={section === 'science'} role="group" aria-label="Card side">{SIDES.map(side =>
+      <div className="rr-public-motion" hidden={wholeReady || scanView}><button type="button" onClick={playTour} disabled={!bothReady}>Tour saved evidence</button><button type="button" onClick={replayArrival} disabled={!bothReady}>Replay arrival</button>{(tour || arrival) && <button type="button" onClick={stopMotion}>Stop motion</button>}</div>
+      <div className="rr-public-sides" hidden={section === 'science' || wholeReady} role="group" aria-label="Card side">{SIDES.map(side =>
         <button type="button" key={side} aria-pressed={activeSide === side} onClick={() => chooseSide(side)}>{title(side)} <span>{navigation.entries.filter(entry => entry.finding.side === side).length}</span></button>)}</div>
     </header>
+    {scanView && !printing && <EdgeTourControls controller={motionController} plan={scanPlan}/>}
     {tour && <p className="rr-public-tour" role="status">{tour}</p>}
-    <div className="rr-public-context" hidden={section === 'science'}>
+    <div className="rr-public-context" hidden={section === 'science' || wholeReady || scanView}>
       <div><p className="rr-public-kicker">{shown ? `${shown.label} · Saved finding` : `${paired ? 'Front & Back' : title(activeSide)} · ${section === 'fingerprint' ? 'Card fingerprint' : section === 'centering' ? 'Saved centering' : category ? title(category) : 'Saved photograph'}`}</p>
         <h2>{shown ? title(shown.finding.defectType) : section === 'fingerprint' ? 'A pattern from the details.' : section === 'centering' ? 'The border balance.' : category ? `${title(category)}, in detail.` : 'Every detail, in context.'}</h2></div>
       <p className="rr-public-ready" role="status">{paired ? bothReady ? 'Both photographs verified' : 'Verifying photographs…' : ready ? 'Photograph verified' : 'Verifying photograph…'}</p>
     </div>
-    <p className="rr-public-hint" hidden={section === 'science'}>{hint}</p>
-    {category && section !== 'finding' && <div className="rr-public-category-summary"><span>{scoped.entries.length} recorded {scoped.entries.length === 1 ? 'finding' : 'findings'} · findings may belong to more than one category</span><strong>{number(explanation?.categories?.[category]?.subgrade ?? report.grade?.subgrades?.[category])}<small> / 10 · saved {category} score</small></strong></div>}
+    <p className="rr-public-hint" hidden={section === 'science' || wholeReady || scanView}>{hint}</p>
+    {category && section !== 'finding' && <div className="rr-public-category-summary"><span>{scoped.entries.length} {scopePlan ? 'findings in the inspection field · original grading categories retained' : 'recorded findings · findings may belong to more than one category'}</span><strong>{number(explanation?.categories?.[category]?.subgrade ?? report.grade?.subgrades?.[category])}<small> / 10 · saved {category} score</small></strong></div>}
     {section === 'finding' && findingNavigation}
-    <div className="rr-public-viewers" hidden={section === 'science' && !printing}>{SIDES.map(side => <ReportInspectionImage
+    {wholeReady && <ApprovedWholeCard report={report} explanation={explanation} images={images} geometry={geometry} photos={currentPhotos} publication={publication} activeSide={activeSide} onChooseSide={chooseSide} onSelect={selectFinding} reduced={reduced} lastFinding={lastFinding} controls={wholeControls} onControlsChange={setWholeControls} motionState={wholeMotionState}/>}
+    <div className="rr-public-viewers" hidden={wholeReady || section === 'science' && !printing}>{SIDES.map(side => <ReportInspectionImage
       key={`${side}:${report.inspection?.[side.toLowerCase()]?.imageSha256}`}
       side={side} descriptor={images?.[side]?.inspection} expectedHash={report.inspection?.[side.toLowerCase()]?.imageSha256}
       findings={sideFindings[side]} visibleFindingIds={category && !printing ? scoped.entries.map(entry => entry.id) : undefined}
       selected={!printing && section === 'finding' && current?.finding.side === side ? selected : null}
-      onSelect={selectFinding} expanded={!printing && section === 'finding' && side === activeSide} hidden={!printing && (section === 'science' || !visibleSides.includes(side))}
-      onExpand={() => chooseSection(returnSection)} onReady={onReady} geometry={geometry?.[side]}
+      onSelect={selectFinding} expanded={!printing && section === 'finding' && side === activeSide} hidden={!printing && (wholeReady || section === 'science' || !visibleSides.includes(side))}
+      onExpand={() => chooseSection(returnSection)} onReady={onReady} onVerifiedPhoto={verifiedPhoto} geometry={geometry?.[side]}
+      evidenceMotion={scanView && !printing ? { Component: EvidenceEdgeScan, controller: motionController, plan: scanPlan, explanation } : null}
       publicMode={!printing} printMode={printing} inspectionSection={section} spatialNavigation={scoped}
       pairedOverview={paired} overviewRail={paired && section !== 'centering' ? side === 'FRONT' ? 'left' : 'right' : undefined}
       density="all" lastFindingId={lastFinding[side]} onUserInteract={stopMotion} onActivate={onChooseSide}
       fingerprintCommand={fingerprintCommand} onFingerprintReturn={returnFromFingerprint}
       blueprint={false} cleanComparison={!printing && section === 'finding'} compact showFindingButtons={false} fitViewport
       layerOptions={printing ? PRINT_LAYERS : section === 'centering' ? CENTERING_LAYERS : NO_LAYERS}
-      findingsVisible={printing || overlays && section !== 'centering'} command={command} onViewChange={viewChanged}
+      findingsVisible={!wholeReady && (printing || overlays && section !== 'centering')} command={command} onViewChange={viewChanged}
       explanation={current?.finding.side === side ? explanation?.findings?.find(entry => entry.id === current.id) : null}
       centering={explanation?.sides?.[side]?.centering} policy={explanation?.policy}/>)}</div>
-    {section !== 'science' && <div className="rr-public-view-controls">
+    {section !== 'science' && !scanView && !wholeReady && <div className="rr-public-view-controls">
       {section === 'fingerprint' ? <div className="rr-fingerprint-actions"><button type="button" onClick={() => tide('RETURN')}>← Return to photograph</button>
         <button type="button" disabled={!(mobile ? ready && entries.length : SIDES.some(side => sideReady(side) && navigation.entries.some(entry => entry.finding.side === side)))} onClick={() => tide('PLAY')}>Play tide</button></div> : <>
       <div className="rr-public-overlay-controls">

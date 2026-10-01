@@ -1,0 +1,25 @@
+/* Original-photo edge and corner scans from the approved report. */
+.rr-report .rr-evidence-remote{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 0 16px;background:#fff;color:#1c2024}
+.rr-report .rr-evidence-remote label{display:flex;align-items:center;gap:9px;font-size:12px;white-space:nowrap;flex:1 1 210px;min-width:0}
+.rr-report .rr-evidence-remote input{width:100%;min-width:70px;accent-color:#24292d;min-height:44px;margin:0}
+.rr-report .rr-evidence-remote output{min-width:36px;font-variant-numeric:tabular-nums}
+.rr-report .rr-evidence-remote button{min-height:44px;background:#fff;border:1px solid #cbd0d5;border-radius:8px;padding:0 15px;color:#24292d;font-size:12px;white-space:nowrap}
+.rr-evidence-edge-scan{position:absolute;inset:0;z-index:12;background:#fff;overflow:hidden;touch-action:pan-y}
+.rr-edge-film{position:absolute;inset:0;width:100%;height:100%}
+.rr-edge-strip-caption{position:absolute;bottom:9px;left:10px;font-size:10px;background:#ffffffe0;padding:4px 7px;border-radius:4px;color:#4d616a;pointer-events:none}
+.rr-edge-readout{position:absolute;bottom:42px;left:12px;right:12px;max-width:290px;z-index:5}
+.rr-report .rr-edge-readout .rr-measure-callout{margin:0;padding:9px 12px;background:#ffffffed;border:1px solid #d1d8dc;border-radius:8px;box-shadow:0 4px 12px #0000000b}
+.rr-report .rr-edge-readout .rr-span-readout,.rr-report .rr-edge-readout .rr-measure-callout>p{font-size:11px}
+.rr-report .rr-edge-remote output{font-size:11px;color:#596873;font-variant-numeric:tabular-nums}
+.rr-edge-playback{display:flex;gap:6px;grid-column:1/-1;grid-row:1}
+.rr-report .rr-public-explorer[data-compact=true] .rr-public-navigation{gap:4px;padding-bottom:5px}
+.rr-report .rr-public-explorer[data-compact=true] .rr-public-sections{width:100%;max-width:100%;flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;mask-image:linear-gradient(to right,#000 94%,transparent)}
+.rr-report .rr-public-explorer[data-compact=true] .rr-public-sections button{flex-shrink:0}
+.rr-report .rr-public-explorer[data-compact=true] .rr-evidence-remote{display:grid;grid-template-columns:1fr 1fr;gap:0 8px;padding:4px 0 8px}
+.rr-report .rr-public-explorer[data-compact=true] .rr-evidence-remote>button:first-child{grid-column:1;grid-row:1}.rr-report .rr-public-explorer[data-compact=true] .rr-evidence-remote>button:last-child{grid-column:2;grid-row:1}
+.rr-report .rr-public-explorer[data-compact=true] .rr-evidence-remote label{grid-column:1/3;min-height:38px;font-size:11px}.rr-report .rr-public-explorer[data-compact=true] .rr-evidence-remote input{min-height:34px}
+.rr-report .rr-public-explorer[data-compact=true] .rr-evidence-remote output{grid-column:1/3}.rr-report .rr-public-explorer[data-compact=true] .rr-evidence-remote label output{grid-column:auto}
+.rr-report.rr-inspect .rr-public-explorer[data-compact=true] .rr-image-side .rr-viewport{height:440px;min-height:440px;max-height:440px}
+.rr-report .rr-public-explorer:is([data-section=edges],[data-section=corners]) .rr-synchronized-pair{display:block}
+@media(max-width:1100px){.rr-report .rr-public-explorer .rr-public-sections{width:100%;max-width:100%;flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin}.rr-report .rr-public-explorer .rr-public-sections button{flex-shrink:0}.rr-report .rr-public-explorer .rr-public-navigation{gap:4px;padding-bottom:5px}.rr-report .rr-evidence-remote label{flex-basis:100%}}
+@media print{.rr-evidence-remote,.rr-evidence-edge-scan{display:none!important}}

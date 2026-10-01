@@ -9,6 +9,7 @@ import { parsePublicManualReport } from '@atlas/report-view/manual-public-contra
 import { explainAtlasManualReport } from '@atlas/grading-core/manual-report';
 import { parseReportPresentation } from '@atlas/report-view/presentation-contract';
 import { parseInspectionAccess } from '@atlas/service-bridge/inspection-access';
+import { parseReportImages } from '@atlas/report-view/report-images-contract';
 
 export class PublicReportReader {
     constructor(client, config, media = null, manual = null) { if (!client && (!manual || media)) unavailable(); this.client = client; this.config = config; this.media = media; this.manual = manual; }
@@ -22,7 +23,26 @@ export class PublicReportReader {
         let presentation = null;
         try { if (result.presentation) presentation = parseReportPresentation(result.presentation,
             { publicToken: token, approvalVersion: packet.approvalVersion, publicHash: result.publicHash }); } catch { /* Optional presentation cannot replace or suppress the verified grading packet. */ }
-        return { packet, publicHash: result.publicHash, explanation: explainAtlasManualReport(packet.report), ...(presentation ? { presentation } : {}) };
+        let reportImages = null;
+        try { if (result.reportImages) reportImages = parseReportImages(result.reportImages, { packet, publicHash: result.publicHash }); }
+        catch { /* A failed optional derivative never suppresses the approved report. */ }
+        return { packet, publicHash: result.publicHash, explanation: explainAtlasManualReport(packet.report),
+            ...(presentation ? { presentation } : {}), ...(reportImages ? { reportImages } : {}) };
+    }
+    async reportImage({ token, version, side, outputSha256 }) {
+        if (!this.manual || !version || !['FRONT', 'BACK'].includes(side)
+            || !/^[a-f0-9]{64}$/.test(outputSha256 ?? '')) return null;
+        const selected = (await this.manualReport({ token, version }))?.reportImages?.images?.[side];
+        if (!selected || selected.sha256 !== outputSha256) return null;
+        const found = await this.manual.read({ kind: 'REPORT_IMAGE', token, version, side, findingId: null, outputSha256 });
+        if (!found) return null;
+        const bytes = Buffer.from(found);
+        if (bytes.length !== selected.byteCount || digest(bytes) !== selected.sha256) unavailable();
+        // A replacement or retirement during the object read cannot serve stale
+        // presentation content, just as with original approved photographs.
+        const current = (await this.manualReport({ token, version }))?.reportImages?.images?.[side];
+        if (!current || canonical(current) !== canonical(selected)) return null;
+        return { bytes, contentType: selected.contentType };
     }
     async presentationImage({ token, version, revision }) {
         const report = await this.manualReport({ token, version }), extra = report?.presentation;

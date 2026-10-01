@@ -1,3 +1,4 @@
+import { createReportImageProvider } from '@atlas/connected-manual/report-image-provider';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { createPhotoStorage } from '@atlas/photo-storage';
 import { createManualArtifactStore,createS3ManualArtifactTransport } from '@atlas/manual-service/artifacts';
@@ -112,12 +113,14 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
   // and narrow serving grants. Construction never resumes paid work by itself.
   const batchEnabled=env.ATLAS_MANUAL_BATCH_ENABLED==='true';
   const presentationEnabled=env.ATLAS_MANUAL_PRESENTATION_ENABLED==='true';
+  const reportImageSettings=manualReportImageSettings(env);
+  const reportImageProvider=reportImageSettings?createReportImageProvider({apiKey:reportImageSettings.apiKey}):null;
   const marketProvider=env.ATLAS_MANUAL_MARKET_ENABLED==='true'?createSoldReferenceProvider({apiKey:env.ATLAS_MANUAL_SOLD_COMPS_API_KEY}):null;
   requireThat(!marketProvider||presentationEnabled,503,'MARKET_PRESENTATION_REQUIRED');
   const stationConfig=manualStationSettings(env,staffConfig.origin);
   const researchConfig=manualResearchSettings(env),dealerConfiguration=manualDealerConfigurationLoader(env);
   const dealerOperations=env.ATLAS_MANUAL_DEALER_OPERATIONS_ENABLED==='true'?createDealerStaffService({auth,boundary}):null;
-  const connected=createConnectedManual({displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
+  const connected=createConnectedManual({displayEnabled:env.ATLAS_MANUAL_REVIEW_DELIVERY_ENABLED==='true',learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',dealerOperations,memoryEnabled,defectProvider,batchEnabled,presentationEnabled,reportImageProvider,reportImageConcurrency:reportImageSettings?.concurrency,marketProvider,dealerConfiguration,researchConfig,stationConfig,boundary,storage,artifacts,keyPrefix:settings.keyPrefix,pythonExecutable:settings.pythonExecutable,effects,receiptClient:manualClient,imageReadUrl,
     processing:manualProcessingSettings(env),onWorkerError});
   const handler=createConnectedHandler({connected,boundary,origin:staffConfig.origin,assertRequest});
   // Give the private host only GET reconciliation capabilities for its worker.
@@ -126,7 +129,16 @@ export function createServingConnectedManual({env,auth,staffConfig,Client,assert
     pending:input=>connected.assistance.executor.pending(input),
     reconcile:input=>connected.assistance.executor.reconcile(input),
   }):null;
-  const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,dealerOffers:connected.dealerOffers,reviewDisplay:connected.reviewDisplay});
+  const approvedManualReader=createApprovedManualReader({client:manualClient,artifacts,storage,presentationEnabled,reportImages:connected.reportImages,dealerOffers:connected.dealerOffers,reviewDisplay:connected.reviewDisplay});
   const validateConfiguration=()=>validateLearningRuntimeConfiguration({memoryEnabled,learningEnabled:env.ATLAS_MANUAL_LEARNING_LIFECYCLE_ENABLED==='true',client:manualClient});
-  return {connected,boundary,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reviewDisplay?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();}};
+  return {connected,boundary,handler,analysisReconciler,approvedManualReader,validateConfiguration,uploadOrigin:settings.uploadOrigin,async close(){await Promise.all([connected.ingestion?.stop(),connected.batch?.worker.stop(),connected.reviewDisplay?.stop(),connected.reportImages?.stop(),connected.learning?.stop()]);await manualClient.$disconnect();client.destroy();}};
+}
+
+export function manualReportImageSettings(env) {
+  if(env.ATLAS_MANUAL_REPORT_IMAGES_ENABLED!=='true')return null;
+  const concurrency=Number(env.ATLAS_MANUAL_REPORT_IMAGES_CONCURRENCY??2);
+  const apiKey=env.ATLAS_MANUAL_REPORT_IMAGES_OPENAI_KEY??env.ATLAS_MANUAL_OPENAI_KEY;
+  requireThat(Number.isInteger(concurrency)&&concurrency>=1&&concurrency<=8
+    &&typeof apiKey==='string'&&apiKey.length>=12&&!/[\r\n]/.test(apiKey),503,'REPORT_IMAGE_CONFIG_INVALID');
+  return {concurrency,apiKey};
 }

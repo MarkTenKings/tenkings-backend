@@ -11,7 +11,8 @@
     "./presentation-contract": "./src/presentation-contract.mjs",
     "./sold-reference-projection": "./src/sold-reference-projection.mjs",
     "./dealer-directory": "./src/dealer-directory.mjs",
-    "./fixture-artwork": "./src/fixture-artwork.mjs"
+    "./fixture-artwork": "./src/fixture-artwork.mjs",
+    "./report-images-contract": "./src/report-images-contract.mjs"
   },
   "dependencies": {
     "zod": "4.1.11",

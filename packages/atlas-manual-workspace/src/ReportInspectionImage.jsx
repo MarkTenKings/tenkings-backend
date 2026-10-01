@@ -41,7 +41,7 @@ function ReportMasks({ findings, selected, visible, publicMode = false, emphasiz
 const dimension = value => Number.isFinite(value) ? (value !== 0 && Math.abs(value) < .0001 ? value.toExponential(2) : value.toLocaleString('en-US', { maximumFractionDigits: 4 })) : 'Unavailable';
 const clampLabel = (value, limit, gutter = 28) => Math.max(gutter, Math.min(limit - gutter, value));
 /** Labels stay in screen pixels while their leaders follow the verified card frame. */
-function Blueprint({ finding, explanation, centering, policy, side, printed, view, size, scale, locatorBox, outside = false, docked = false }) {
+export function Blueprint({ finding, explanation, centering, policy, side, printed, view, size, scale, locatorBox, outside = false, docked = false }) {
   const [regionIndex, setRegionIndex] = useState(0);
   useEffect(() => setRegionIndex(0), [finding?.id]);
   const project = point => ({ x: size.width / 2 + view.pan.x + (40 + point.x * 1270 - 675) * scale * view.zoom,
@@ -89,10 +89,11 @@ function Blueprint({ finding, explanation, centering, policy, side, printed, vie
 /** No edit/action callbacks: every control here changes only the displayed view. */
 export function ReportInspectionImage({ side, descriptor, expectedHash, findings, selected, onSelect, expanded, hidden, onExpand, onReady,
   geometry, showFindingButtons = true, compact = false, fitViewport = false, layerOptions, findingsVisible, command, onViewChange, onActivate, initialInspection, cleanComparison = false, blueprint = true, explanation, centering, policy,
-  publicMode = false, printMode = false, inspectionSection = 'whole', spatialNavigation, activeArea, onAreaChange, density = 'all', lastFindingId, fingerprintCommand, onFingerprintReturn, visibleFindingIds, pairedOverview = false, overviewRail, onUserInteract }) {
+  publicMode = false, printMode = false, inspectionSection = 'whole', spatialNavigation, activeArea, onAreaChange, density = 'all', lastFindingId, fingerprintCommand, onFingerprintReturn, visibleFindingIds, pairedOverview = false, overviewRail, onUserInteract, onVerifiedPhoto, evidenceMotion }) {
   const supplied = descriptor?.sha256 === expectedHash && descriptor?.url ? descriptor : null;
   const image = useVerifiedImage(supplied), [loaded, setLoaded] = useState(null);
   const ready = Boolean(supplied && image.url && loaded === image.url);
+  useEffect(() => { onVerifiedPhoto?.(side, ready ? image.url : null, expectedHash); return () => onVerifiedPhoto?.(side, null, expectedHash); }, [onVerifiedPhoto, side, ready, image.url, expectedHash]);
   const fingerprint = publicMode && !printMode && inspectionSection === 'fingerprint';
   const overview = publicMode && !printMode && ['whole', 'fingerprint', 'corners', 'edges', 'surface'].includes(inspectionSection);
   const shownFindings = useMemo(() => visibleFindingIds ? findings.filter(finding => visibleFindingIds.includes(finding.id)) : findings, [findings, visibleFindingIds]);
@@ -290,8 +291,8 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
             {layers.printed && printed && <polygon className="rr-printed-line" points={printed.map(p => `${p.x * 1270},${p.y * 1778}`).join(' ')}/>}
             {layers.centering && printed && <g className="rr-centering-line"><path d="M635 0V1778 M0 889H1270"/>{printed.map((p, index) => { const q = printed[(index + 1) % 4], x = (p.x + q.x) / 2 * 1270, y = (p.y + q.y) / 2 * 1778; return <line key={index} x1={x} y1={y} x2={index % 2 ? index === 1 ? 1270 : 0 : x} y2={index % 2 ? y : index === 0 ? 0 : 1778}/>; })}</g>}
           </svg>
-          {overview && ['corners', 'edges', 'surface'].includes(inspectionSection) && <svg className="rr-category-guides" viewBox="0 0 1270 1778" aria-hidden="true"><path d={inspectionSection === 'corners' ? 'M132 8H8V132 M1138 8H1262V132 M1262 1646V1770H1138 M132 1770H8V1646' : 'M10 10H1260V1768H10Z'} className={inspectionSection === 'surface' ? 'rr-surface-guide' : ''}/></svg>}
-          {overview && overlays && bounds.filter(entry => entry.bounds && entry.finding.reviewResult !== 'REMOVED' && (!visibleFindingIds || visibleFindingIds.includes(entry.finding.id))).map(({finding, bounds: box, number}) => <button type="button" key={finding.id} className="rr-public-shape-target" data-finding-id={finding.id}
+          {overview && !evidenceMotion && ['corners', 'edges', 'surface'].includes(inspectionSection) && <svg className="rr-category-guides" viewBox="0 0 1270 1778" aria-hidden="true"><path d={inspectionSection === 'corners' ? 'M132 8H8V132 M1138 8H1262V132 M1262 1646V1770H1138 M132 1770H8V1646' : 'M10 10H1260V1768H10Z'} className={inspectionSection === 'surface' ? 'rr-surface-guide' : ''}/></svg>}
+          {overview && overlays && !evidenceMotion && bounds.filter(entry => entry.bounds && entry.finding.reviewResult !== 'REMOVED' && (!visibleFindingIds || visibleFindingIds.includes(entry.finding.id))).map(({finding, bounds: box, number}) => <button type="button" key={finding.id} className="rr-public-shape-target" data-finding-id={finding.id}
             aria-label={`Open ${name(side)} finding ${number}: ${words(finding.defectType)}`} aria-pressed={lastFindingId === finding.id}
             style={{left:`${(box.x + box.width / 2) * 100}%`,top:`${(box.y + box.height / 2) * 100}%`,width:Math.max(28,box.width*1270*scale*zoom*1.8+8),height:Math.max(28,box.height*1778*scale*zoom*1.8+8)}}
             onPointerDown={event => event.stopPropagation()} onPointerUp={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
@@ -314,12 +315,13 @@ export function ReportInspectionImage({ side, descriptor, expectedHash, findings
       </div>}
       {ready && blueprint && <Blueprint finding={bounds.find(entry => entry.finding.id === selected?.id)?.finding} explanation={explanation} centering={layers.centering ? centering : null} policy={policy} side={side} printed={layers.centering ? printed : null} view={view} size={size} scale={scale} locatorBox={locatorBox} docked={docked}/>}
       {ready && publicMode && (inspectionSection === 'centering' || overlays) && <ReportPrecisionOverlay finding={focusedFinding} printed={printed} project={project} size={size} mode={inspectionSection} moving={motionPhase !== 'idle'} onInteract={onUserInteract}/>}
+      {ready && evidenceMotion && <evidenceMotion.Component controller={evidenceMotion.controller} photo={image.url} findings={findings} side={side} plan={evidenceMotion.plan} explanation={evidenceMotion.explanation}/>}
       {cleanComparison && selectedBounds && <span className="rr-photo-label">Measured trace</span>}
       {ready && magnifier && lens && <div className="rr-magnifier" aria-hidden="true" style={{ [lens.right ? 'right' : 'left']: 12, backgroundImage: `url("${image.url}")`, backgroundSize: `${INSPECTION_SIZE.width * scale * zoom * 3}px ${INSPECTION_SIZE.height * scale * zoom * 3}px`, backgroundPosition: `${90 - lens.x * INSPECTION_SIZE.width * scale * zoom * 3}px ${90 - lens.y * INSPECTION_SIZE.height * scale * zoom * 3}px` }}><span>3× · image only</span></div>}
       {locatorBox && locator}
 
     </div>
-    {overview && overlays && <ReportSpatialOverlay navigation={spatialNavigation} side={side} activeArea={activeArea} onAreaChange={onAreaChange} onSelect={onSelect} project={project} size={size} selectedId={lastFindingId} ready={ready} density={density} railSide={overviewRail}/>}
+    {overview && overlays && !evidenceMotion && <ReportSpatialOverlay navigation={spatialNavigation} side={side} activeArea={activeArea} onAreaChange={onAreaChange} onSelect={onSelect} project={project} size={size} selectedId={lastFindingId} ready={ready} density={density} railSide={overviewRail}/>}
     {cleanComparison && selectedBounds && <div className="rr-viewport rr-clean-viewport" ref={cleanViewport} role={publicMode ? 'group' : 'img'} tabIndex={publicMode ? 0 : undefined} onKeyDown={publicMode ? keyboard : undefined} onPointerDown={publicMode ? pointerDown : undefined} onPointerMove={publicMode ? pointerMove : undefined} onPointerUp={publicMode ? pointerUp : undefined} onPointerCancel={publicMode ? cancelPointer : undefined} onLostPointerCapture={publicMode ? cancelPointer : undefined} aria-label={`${name(side)} clean close-up; same photograph, zoom and position`}>
       {ready && <div className="rr-plane" ref={cleanPlane} data-transition={transition} style={{ width: INSPECTION_SIZE.width * scale * zoom, height: INSPECTION_SIZE.height * scale * zoom, transform: `translate(calc(-50% + ${view.pan.x}px), calc(-50% + ${view.pan.y}px))` }}><img src={image.url} alt={`${name(side)} unmarked defect close-up`} draggable={false}/></div>}
       <span className="rr-photo-label">Unmarked photograph · synchronized</span>

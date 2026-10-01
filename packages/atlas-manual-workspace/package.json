@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@atlas/grading-core": "workspace:*",
+    "gsap": "3.13.0",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },

@@ -1,3 +1,5 @@
+import { createReportImageStore } from './report-image-store.mjs';
+import { createReportImages } from './report-images.mjs';
 import { createReviewDisplay } from './review-display.mjs';
 import { createReviewDisplayStore } from './review-display-store.mjs';
 import { createThumbnailReader } from './thumbnails.mjs';
@@ -55,7 +57,7 @@ export function createWorkLimiter(maximum=2,{maxQueue=0}={}){
     try{return await work();}finally{const next=waiting.shift();if(next)next();else active--;}
   };
 }
-export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,displayEnabled=false,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,
+export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pythonExecutable,effects=null,receiptClient=null,imageReadUrl=null,displayEnabled=false,limits=DEFAULT_LIMITS,basePath='/admin',memoryEnabled=false,learningEnabled=false,defectProvider=null,batchEnabled=false,presentationEnabled=false,marketProvider=null,dealerConfiguration=null,researchConfig=null,stationConfig=null,dealerOperations=null,reportImageProvider=null,reportImageConcurrency=2,
   processing={nativeConcurrency:2,verificationConcurrency:4,executionConcurrency:20,analysisConcurrency:64},onWorkerError=()=>{}}) {
   let earlyGeometry,batch=null;
   requireThat(!batchEnabled || memoryEnabled && defectProvider,503,'BATCH_ANALYSIS_REQUIRED');
@@ -71,6 +73,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
     }});
   const reviewDisplay=displayEnabled?createReviewDisplay({store:createReviewDisplayStore({boundary,client:receiptClient,intakeRepository}),storage,intake,artifacts,keyPrefix,limited,
     authorityFor:job=>boundary.machineOwner({ownerId:job.owner_id,accessVersion:job.access_version}),onError:onWorkerError}):null;
+  const reportImages=reportImageProvider?createReportImages({store:createReportImageStore({boundary,client:receiptClient}),storage,artifacts,provider:reportImageProvider,keyPrefix,concurrency:reportImageConcurrency,onError:onWorkerError}):null;
   const details=createDetailsStore({boundary,intakeRepository});
   earlyGeometry=createEarlyGeometry({store:createEarlyGeometryStore({boundary,intakeRepository,receiptClient}),intake,details,storage,artifacts,keyPrefix,
     limited,pythonExecutable,limits:limits.preparation,
@@ -184,7 +187,7 @@ export function createConnectedManual({boundary,storage,artifacts,keyPrefix,pyth
   }
   const imageEffects=createDefectImageEffects({readPrepared,artifacts,limited});
   assistance=createDefectAssistance({boundary,intakeRepository,workflow,artifacts,imageEffects,memoryEnabled,learningEnabled,provider:defectProvider,receiptClient,onWorkerError});
-  const connected={dealerOperations,reviewDisplay,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
+  const connected={dealerOperations,reportImages,reviewDisplay,boundary,intake,intakeRepository,details,identification,workflow,imageDescriptors,assistance,learning:assistance.learning,earlyGeometry,publication,finishing,presentation,market,dealerOffers,research,station,
     workspaceExtras: async input => {
       const [extras,status,geometryLearning]=await Promise.all([assistance.workspaceExtras(input),publication.status(input.staff,input.card.cardId),
         learningEnabled?readNativeGeometryAdvice({boundary,earlyGeometry,staff:input.staff,cardId:input.card.cardId}).catch(error=>{

@@ -9,7 +9,18 @@ import { readApprovedIdentityDetails } from './presentation-identity.mjs';
 import { inspectionPreviewMedia, inspectionPreviewGrant } from './inspection-preview.mjs';
 import { parseInspectionAccess } from '@atlas/service-bridge/inspection-access';
 
-export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false, dealerOffers = null, reviewDisplay = null }) {
+async function optionalReportImages(reportImages, row, packet) {
+  if (!reportImages) return null;
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => reportImages.manifest(row, packet)).catch(() => null),
+      new Promise(resolve => { timer = setTimeout(() => resolve(null), 750); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+export function createApprovedManualReader({ client, artifacts, storage, presentationEnabled = false, dealerOffers = null, reviewDisplay = null, reportImages = null }) {
   async function presentation(row, token) {
     if (!presentationEnabled) return null;
     const rows = await client.$transaction(tx => tx.$queryRawUnsafe('SELECT * FROM atlas_manual.presentation WHERE card_id=$1::uuid AND approval_action_id=$2::uuid ORDER BY revision DESC LIMIT 1', row.card_id, row.action_id), { maxWait: 1500, timeout: 3000 });
@@ -41,6 +52,9 @@ export function createApprovedManualReader({ client, artifacts, storage, present
       && digest(JSON.stringify(packet)) === row.public_hash, 503, 'MANUAL_PUBLICATION_CORRUPT');
     let result;
     if (claims.request.kind === 'REPORT') {
+      // Start alongside the existing presentation reads. A timed-out lookup
+      // advertises no derivative, and a late rejection is still observed.
+      const generatedImagesPending = optionalReportImages(reportImages, row, packet);
       // Auxiliary availability must not take an independently verified grade
       // offline. Corrupt/absent optional data is omitted; image reads still
       // require the exact persisted descriptor and fail closed independently.
@@ -57,7 +71,12 @@ export function createApprovedManualReader({ client, artifacts, storage, present
         try { additional = dealerOffers ? await dealerOffers.filterPublished(additional) : { ...additional, dealerOffers: [] }; }
         catch { additional = { ...additional, dealerOffers: [] }; }
       }
-      result = { contentType: 'application/json', bytes: Buffer.from(JSON.stringify({ packet, publicHash: row.public_hash, ...(additional ? { presentation: additional } : {}) })) };
+      const generatedImages = await generatedImagesPending;
+      result = { contentType: 'application/json', bytes: Buffer.from(JSON.stringify({ packet, publicHash: row.public_hash, ...(additional ? { presentation: additional } : {}), ...(generatedImages ? { reportImages: generatedImages } : {}) })) };
+    }
+    else if (claims.request.kind === 'REPORT_IMAGE') {
+      result = await reportImages?.image(row, packet, claims.request.side, claims.request.outputSha256, signal);
+      if (!result) return null;
     }
     else if (claims.request.kind === 'PRESENTATION_IMAGE') {
       const extra = await presentation(row, packet.publicToken);

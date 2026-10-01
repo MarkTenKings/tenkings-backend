@@ -38,3 +38,16 @@ test('presentation image binds an exact revision without broadening ordinary rep
  assert.deepEqual(await client.read(image),bytes);
  await assert.rejects(manualPublicClient(config,async()=>new Response('{}',{headers:{'content-type':'application/json'}})).read(image));
 });
+
+test('generated report image selector binds side, approval version and exact PNG hash',async()=>{
+ const now=Date.now();
+ const input={kind:'REPORT_IMAGE',token:'ar_'+'A'.repeat(24),version:1,side:'FRONT',findingId:null,outputSha256:'d'.repeat(64)};
+ const signed=signManualPublicRequest(config,input,now);
+ assert.equal(verifyManualPublicRequest({key:config.manualKey},signed.body,signed.signature,now).request.outputSha256,input.outputSha256);
+ for(const change of [{version:null},{side:null},{outputSha256:'not-a-hash'},{findingId:'finding'},{presentationRevision:1}])
+  assert.throws(()=>signManualPublicRequest(config,{...input,...change},now));
+ const bytes=Buffer.from('fixture png');
+ const client=manualPublicClient(config,async()=>new Response(bytes,{headers:{'content-type':'image/png'}}));
+ assert.deepEqual(await client.read(input),bytes);
+ await assert.rejects(manualPublicClient(config,async()=>new Response(bytes,{headers:{'content-type':'image/webp'}})).read(input));
+});
