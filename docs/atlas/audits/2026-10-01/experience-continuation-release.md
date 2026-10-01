@@ -16,6 +16,7 @@ Public approved-report tours now have a compact desktop/phone stage, direct acti
 - Fresh dry and actual payload preflight pass. One public candidate upload uses exact GitHub and generic metadata and effective Node22. No environment or project-setting update was needed.
 - The unique deployment URL returns Vercel SSO302 to anonymous requests. This is the existing `prod_deployment_urls_and_all_previews` policy. Rather than treating it as application success, 58 exact asset/hash and unbound-host checks ran through the existing public project alias, whose candidate binding and provider state were checked before/after. No cookies, credentials, apex headers or protection changes were used. Separate before/after project reads prove SSO/password/IP protection unchanged.
 - The actual public constructor matches the retained config hash. One full-row PublicReader CAS and one public promotion complete. No automatic mutation retry was used. All 110 canonical GET/HEAD checks pass: exact homepage assets, report-film brand assets, retired/unknown report/image/presentation/film404s, mounted anonymous shells, authentication/method boundaries and truthful capacity.
+- Independent post-release browser checks at 1440×1000 and 390×844 pass on `https://atlasgrading.com`: all seven Beyond finding controls select the exact recorded side and measurement, finding06 remains 2.75×10.05mm with 12.33mm² affected area, NFC reaches stage04 with the archived report, and connected Back photograph/fingerprint match. No horizontal overflow or console warnings/errors; no sign-in or submissions. Eight screenshots and their hashes are in `qualification/live-canonical-browser-smoke.json` (completed18:21:41UTC). This is desktop browser/viewport acceptance, not a physical phone test.
 
 ## Preserved operational state
 
@@ -38,5 +39,6 @@ External root: `/Users/markthomas/.codex/atlas-handoffs/atlas-continuation-20261
 | `qualification/live-final-provider-controls-runtime.json` | `b94e38e81b21b5b10af444868f3b390bf27a387193eceb40bb1278db81100523` |
 | `qualification/live-final-availability.json` | `956ce9c2183f0db422de0ffa097171d13ab503db013bbaf5f8831c8b5eda2ab9` |
 | `qualification/independent-upload-marker-review.json` | `626bf1629ad1a8d31a54fe8ab62848cbfce51ffda0bd411b3b198a38fbc04e3c` |
+| `qualification/live-canonical-browser-smoke.json` | `d8b31ba33069b5c6878fb58eb827d0bae777110c34b35391b16995ebd18a69a9` |
 
 `release-r2` upload/CAS/promotion intents are consumed. The original `release` packet contains the dry-only HOLD and must not be used for a deployment. Any later recovery requires actual-state inspection and a fresh reviewed forward plan; do not replay writers or restore retired reports. Active media production is separate from this completed public deployment.
