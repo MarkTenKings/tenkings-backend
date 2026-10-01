@@ -65,6 +65,25 @@ test('output qualification decodes real alpha and refuses fake transparency or f
   for (const bytes of [opaque, empty]) await assert.rejects(inspectReportImage(bytes), { code: 'REPORT_IMAGE_ALPHA_INVALID' });
   await assert.rejects(inspectReportImage(Buffer.alloc(4 * 1024 * 1024 + 1)), { code: 'REPORT_IMAGE_OUTPUT_INVALID' });
 });
+test('real transparent cutouts with a near-opaque foreground qualify without rewriting provider bytes', async () => {
+  const { data, info } = await sharp(output).raw().toBuffer({ resolveWithObject: true });
+  for (let i = 3; i < data.length; i += 4) if (data[i] === 255) data[i] = 253;
+  const bytes = await sharp(data, { raw: info }).png().toBuffer(), before = Buffer.from(bytes);
+  const result = await inspectReportImage(bytes);
+  assert.equal(result.alpha.opaquePixels, 0); assert.equal(result.alpha.nearOpaqueMin, 250);
+  assert.equal(result.alpha.nearOpaquePixels, 30 * 46); assert.ok(result.alpha.transparentPixels > 0);
+  assert.equal(result.sha256, digest(before)); assert.deepEqual(bytes, before);
+});
+test('faint foregrounds, opaque specks and negligible transparent pixels do not qualify', async () => {
+  for (const kind of ['faint','speck','transparent-speck']) {
+    const { data, info } = await sharp(output).raw().toBuffer({ resolveWithObject: true });
+    for (let i = 3; i < data.length; i += 4) data[i] = kind === 'transparent-speck' ? 253 : data[i] ? 100 : 0;
+    if (kind === 'speck') data[3] = 255;
+    if (kind === 'transparent-speck') data[3] = 0;
+    const bytes = await sharp(data, { raw: info }).png().toBuffer();
+    await assert.rejects(inspectReportImage(bytes), { code: 'REPORT_IMAGE_ALPHA_INVALID' });
+  }
+});
 
 function fixture({ count = 1, failure = null, dispatch = true } = {}) {
   const source = photo.workingFrame;

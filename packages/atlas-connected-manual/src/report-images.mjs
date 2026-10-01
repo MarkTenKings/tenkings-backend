@@ -7,6 +7,13 @@ import { reportImageJobKey, reportImageRecipeHash } from './report-image-provide
 
 const SIDES = ['FRONT','BACK'];
 const safeCode = error => /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'REPORT_IMAGE_INTERRUPTED';
+const NEAR_OPAQUE_MIN = 250;
+function qualifiedAlpha(alpha, pixels) {
+  return alpha?.pixels === pixels && alpha.nearOpaqueMin === NEAR_OPAQUE_MIN
+    && [alpha.transparentPixels,alpha.opaquePixels,alpha.nearOpaquePixels].every(value => Number.isSafeInteger(value) && value >= 0 && value <= pixels)
+    && alpha.opaquePixels <= alpha.nearOpaquePixels && alpha.transparentPixels + alpha.nearOpaquePixels <= pixels
+    && alpha.transparentPixels >= Math.ceil(pixels * 0.001) && alpha.nearOpaquePixels >= Math.ceil(pixels * 0.1);
+}
 /** Fully decode returned PNG; an alpha flag alone does not prove transparency.
  * This verifies a display asset, never preservation of printed card pixels. */
 export async function inspectReportImage(bytes) {
@@ -16,11 +23,17 @@ export async function inspectReportImage(bytes) {
   requireThat(metadata.format === 'png' && metadata.hasAlpha && !metadata.pages && metadata.width >= 2 && metadata.height >= 2
     && metadata.width <= 4096 && metadata.height <= 4096, 503, 'REPORT_IMAGE_OUTPUT_INVALID');
   const { data, info } = await instance.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  let transparent = 0, opaque = 0;
-  for (let i = info.channels - 1; i < data.length; i += info.channels) { if (data[i] === 0) transparent++; if (data[i] === 255) opaque++; }
-  requireThat(transparent > 0 && opaque > 0, 503, 'REPORT_IMAGE_ALPHA_INVALID');
+  let transparent = 0, opaque = 0, nearOpaque = 0;
+  for (let i = info.channels - 1; i < data.length; i += info.channels) {
+    if (data[i] === 0) transparent++; if (data[i] === 255) opaque++; if (data[i] >= NEAR_OPAQUE_MIN) nearOpaque++;
+  }
+  // Actual provider cutouts can peak at 254 with a 252–253 foreground.
+  // Measure that returned alpha without normalizing or changing any pixel.
+  const alpha = { transparentPixels: transparent, opaquePixels: opaque, nearOpaquePixels: nearOpaque,
+    nearOpaqueMin: NEAR_OPAQUE_MIN, pixels: info.width * info.height };
+  requireThat(qualifiedAlpha(alpha, alpha.pixels), 503, 'REPORT_IMAGE_ALPHA_INVALID');
   return { width: info.width, height: info.height, sha256: digest(bytes), byteCount: bytes.length,
-    contentType: 'image/png', alpha: { transparentPixels: transparent, opaquePixels: opaque, pixels: info.width * info.height } };
+    contentType: 'image/png', alpha };
 }
 function mediaOnly(saved) { return { descriptor: saved.descriptor, frame: saved.frame, original: saved.original, decodePlan: saved.decodePlan }; }
 function sourceMatches(saved, packet, side, cardId) {
@@ -136,7 +149,7 @@ export function createReportImages({ store, artifacts, storage, provider, keyPre
       && job.source_hash === result.sourceSha256 && result.recipeHash === job.recipe_hash && descriptor?.purpose === 'reveal'
       && descriptor.raster.content.sha256 === result.output.sha256 && descriptor.raster.content.byteCount === result.output.byteCount
       && descriptor.raster.dimensions.width === result.output.width && descriptor.raster.dimensions.height === result.output.height
-      && result.output.alpha.transparentPixels > 0 && result.output.alpha.opaquePixels > 0, 503, 'REPORT_IMAGE_BINDING_INVALID');
+      && qualifiedAlpha(result.output.alpha, result.output.width * result.output.height), 503, 'REPORT_IMAGE_BINDING_INVALID');
     const value = { publicToken: packet.publicToken, approvalVersion: packet.approvalVersion, publicHash, side,
       sourceSha256: result.sourceSha256, sha256: result.output.sha256, width: result.output.width, height: result.output.height,
       byteCount: result.output.byteCount, contentType: 'image/png', transparent: true, presentationOnly: true,
