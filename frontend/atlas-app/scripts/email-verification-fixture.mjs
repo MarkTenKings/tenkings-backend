@@ -66,8 +66,9 @@ export async function emailVerificationScenarios(scenario) {
       const confirm = (who, raw = token(), mode = 'AUTO') => auth.confirmEmail(who.cookie, who.csrf, { token: raw, mode }, 'email-fixture');
       assert.equal((await status()).state, 'UNSENT'); assert.equal(await proof(), false);
       await assert.rejects(service.request(other.authority, { draftId, requestId: randomUUID() }), { code: 'NOT_FOUND' });
-      await assert.rejects(customer.$executeRawUnsafe('INSERT INTO atlas_customer."CustomerVerifiedEmail"("accountId",email) VALUES($1,$2)', owner.customer.id, profile.email), /permission denied/);
-      await assert.rejects(privateClient.$queryRawUnsafe('SELECT * FROM atlas_customer."CustomerEmailVerification"'), /permission denied/);
+      const permissionDenied = error => error?.meta?.code === '42501' && /permission denied/.test(error.message);
+      await assert.rejects(customer.$executeRawUnsafe('INSERT INTO atlas_customer."CustomerVerifiedEmail"("accountId",email) VALUES($1::uuid,$2)', owner.customer.id, profile.email), permissionDenied);
+      await assert.rejects(privateClient.$queryRawUnsafe('SELECT * FROM atlas_customer."CustomerEmailVerification"'), permissionDenied);
       const requestId = randomUUID(); assert.equal((await request(requestId)).state, 'SENT');
       assert.equal((await request(requestId)).state, 'SENT'); assert.equal(sent.length, 1);
       await assert.rejects(request(), { code: 'EMAIL_VERIFICATION_WAIT' });

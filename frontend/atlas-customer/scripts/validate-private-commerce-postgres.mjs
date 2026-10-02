@@ -8,6 +8,7 @@ import { CustomerAuth } from '../lib/server/auth.mjs';
 import { CustomerDatabase } from '../lib/server/database.mjs';
 import { localConfig, fixtureProvider } from '../lib/server/fixture.mjs';
 import { customerPrivateGrantSQL, createCustomerPrivateDatabase } from '../../../packages/atlas-connected-manual/scripts/customer-database.mjs';
+import { createEmailVerificationService } from '../../../packages/atlas-customer-intake/src/email-verification.mjs';
 import { CommerceService } from '../../../packages/atlas-commerce/src/service.mjs';
 import { GatewayCommerceRepository } from '../../../packages/atlas-commerce/src/repository.mjs';
 import { digest } from '../../../packages/atlas-commerce/src/contract.mjs';
@@ -19,6 +20,13 @@ let admin, customerClient, privateClient;
 const checks = [];
 try {
     const db = await fixture.database();
+    assert.equal(new URL(db.adminUrl).hostname, '127.0.0.1');
+    assert.match(db.name, /^atlas_fixture_case_[1-9][0-9]*$/);
+    const ownership = JSON.parse(readFileSync(join(fixture.directory, 'ownership.json'), 'utf8'));
+    assert.equal(ownership.createdByHarness, true); assert.equal(ownership.uid, process.getuid());
+    assert.match(ownership.nonce, /^[a-f0-9]{32}$/);
+    for (const name of ['20261001006000_atlas_shared_weekly_card_capacity', '20261001008000_atlas_email_first_notifications', '20261001009000_atlas_customer_email_verification'])
+        assert(fixture.source.staffMigrations.some(row => row.name === name), `Registered schema required: ${name}`);
     for (const [name, proposal] of [
         ['20261001001000_atlas_weekly_card_capacity', '../../../packages/atlas-commerce/sql/weekly-capacity-proposal.sql'],
         ['20261001002000_atlas_customer_phone_payments', '../../../packages/atlas-commerce/sql/customer-phone-proposal.sql'],
@@ -28,8 +36,9 @@ try {
             assert(readFileSync(new URL(`../../atlas-app/prisma/migrations/${name}/migration.sql`, import.meta.url)).equals(readFileSync(new URL(proposal, import.meta.url))), `Registered migration differs from qualified proposal: ${name}`);
         } else await fixture.sql(readFileSync(new URL(proposal, import.meta.url), 'utf8'), [], db.name);
     }
-    await fixture.sql(`UPDATE atlas_customer."WeeklyCapacityConfig" SET "quotaCards"=100 WHERE channel IN ('MAIL_IN','DEALER_DROP_OFF')`, [], db.name);
-    checks.push('exact registered capacity, customer-phone, nullable shop hardware and compact contact proposals applied to disposable database with fixture-only quotas');
+    await fixture.sql(`INSERT INTO atlas_customer."WeeklyCapacitySharedWeek"("weekStartsAt","resetsAt","quotaCards")
+        SELECT "weekStartsAt","resetsAt",100 FROM atlas_customer.weekly_capacity_week(clock_timestamp())`, [], db.name);
+    checks.push('exact registered capacity, customer-phone, nullable shop hardware and compact contact proposals applied to disposable database with one fixture-only shared week quota');
     await fixture.sql(readFileSync(new URL('../../../packages/atlas-dealer-operations/test/schedule-acceptance.sql', import.meta.url), 'utf8'), [], db.name);
     checks.push('dealer schedule SQL: owner example, cutoff, closures, extra route, DST and malformed schedules');
     admin = new PrismaClient({ datasources: { db: { url: db.adminUrl } } });
@@ -97,16 +106,16 @@ try {
         VALUES(true,${JSON.stringify(providerBinding)}::jsonb,${JSON.stringify(merchant)}::jsonb,${JSON.stringify(terms)}::jsonb,${JSON.stringify(shippingPlans)}::jsonb)`;
     const repositoryFor = who => new GatewayCommerceRepository((name, input) => name === 'commerce_weekly_capacity' ? privateDatabase.call('capacity', { input: {} }) : privateDatabase.call('commerce', { name, providerBinding, input: { ...input, authority: who.authority } }));
     const repository = repositoryFor(a), otherRepository = repositoryFor(b);
-    let creates = 0, retrieves = 0, known = false;
+    let creates = 0, retrieves = 0, taxCalculations = 0, carrierQuotes = 0, known = false;
     const expires = () => new Date(Date.now() + 10 * 60_000).toISOString();
     const payment = { binding: merchant, publishableKey: 'pk_test_synthetic', async create() { creates++; throw Error('Synthetic lost response'); },
         async retrieve(attempt) { retrieves++; if (!known) throw Error('Synthetic unresolved provider state');
             return { source: 'PROVIDER_RETRIEVAL', provider: 'STRIPE', merchantId: merchant.accountId, livemode: false,
                 providerId: `pi_synthetic_${attempt.id}`, status: 'succeeded', amountCents: attempt.quote.totalCents,
                 receivedCents: attempt.quote.totalCents, currency: 'usd', quoteHash: attempt.quote.contentHash, attemptId: attempt.id, paymentMethodTypes: ['card'] }; } };
-    const tax = { async calculate(input) { return { provider: 'SYNTHETIC', providerId: 'tax_synthetic', currency: 'usd', taxCents: 400,
+    const tax = { async calculate(input) { taxCalculations++; return { provider: 'SYNTHETIC', providerId: 'tax_synthetic', currency: 'usd', taxCents: 400,
         totalCents: input.subtotalCents + input.shippingCents + 400, requestHash: digest(input), expiresAt: expires() }; } };
-    const carrier = { async quote(input) { return { provider: 'FEDEX', providerId: 'rate_synthetic', currency: 'usd', amountCents: 1250, requestHash: digest(input), expiresAt: expires() }; } };
+    const carrier = { async quote(input) { carrierQuotes++; return { provider: 'FEDEX', providerId: 'rate_synthetic', currency: 'usd', amountCents: 1250, requestHash: digest(input), expiresAt: expires() }; } };
     const service = new CommerceService({ repository, payment, tax, carrier, terms });
     await assert.rejects(otherRepository.loadCheckout(draft.id), { code: 'NOT_FOUND' });
     const internalSource = await repository.loadCheckout(draft.id);
@@ -126,7 +135,26 @@ try {
     const initialCustomerCheckout = await call('commerce_checkout', { draftId: draft.id });
     assert.equal(initialCustomerCheckout.version, 'atlas-commerce-checkout-v1'); customerSafe(initialCustomerCheckout);
     customerSafe(await service.checkout(draft.id));
-    const quote = await service.quote({ draftId: draft.id, expectedRevision: draft.revision, packingPresetId: 'measured-one', shippingServiceCode: 'FEDEX_GROUND' });
+    const quoteInput = { draftId: draft.id, expectedRevision: draft.revision, packingPresetId: 'measured-one', shippingServiceCode: 'FEDEX_GROUND' };
+    assert.equal(internalSource.emailVerified, false);
+    await assert.rejects(service.quote(quoteInput), { code: 'EMAIL_VERIFICATION_REQUIRED' });
+    assert.equal(taxCalculations, 0); assert.equal(carrierQuotes, 0); assert.equal(creates, 0);
+    let emailSends = 0, verificationUrl;
+    const emailVerification = createEmailVerificationService({ enabled: true,
+        call: (name, input) => privateDatabase.call('email', { name, input }),
+        sender: { async sendVerification(input) {
+            emailSends++; verificationUrl = input.verificationUrl;
+            return { provider: 'SENDGRID', providerId: 'synthetic-private-commerce-email', deliveryStatus: 'ACCEPTED' };
+        } } });
+    const emailRequest = { draftId: draft.id, requestId: randomUUID() };
+    assert.equal((await emailVerification.request(a.authority, emailRequest)).state, 'SENT');
+    assert.equal((await emailVerification.request(a.authority, emailRequest)).verified, false); assert.equal(emailSends, 1);
+    await assert.rejects(service.quote(quoteInput), { code: 'EMAIL_VERIFICATION_REQUIRED' });
+    assert.equal(taxCalculations, 0); assert.equal(carrierQuotes, 0);
+    assert.equal((await auth.confirmEmail(a.cookie, a.csrf, { token: new URL(verificationUrl).hash.slice('#token='.length), mode: 'AUTO' }, 'private-commerce-fixture')).verified, true);
+    assert.equal((await repository.loadCheckout(draft.id)).emailVerified, true);
+    const quote = await service.quote(quoteInput);
+    checks.push('unverified and SENT-only email refuse new quotes before tax/carrier/payment; one durable synthetic email request confirms only the original phone account/address');
     assert.equal(quote.totalCents, 5650); assert.equal(quote.cards[0].unitCents, 4000); customerSafe(quote);
     // The customer DTO deliberately omits private evidence. Independently inspect
     // the actual stored snapshot before forging otherwise valid internal quotes.
@@ -180,15 +208,15 @@ try {
     const census = await fixture.sql(`SELECT (SELECT count(*) FROM atlas_customer."CommercePayment") payments,
         (SELECT count(*) FROM atlas_customer."CommerceOrder") orders,(SELECT count(*) FROM atlas_customer."CommerceEffect") effects,
         (SELECT count(*) FROM atlas_dealer.order_card) cards,(SELECT count(*) FROM atlas_dealer.commission_event) commissions`, [], db.name);
-    assert.deepEqual(census.rows[0], { payments: '1', orders: '1', effects: '4', cards: '1', commissions: '0' });
+    assert.deepEqual(census.rows[0], { payments: '1', orders: '1', effects: '3', cards: '1', commissions: '0' });
     const customerOrder = await call('commerce_order', { orderId: paid.order.id }); customerSafe(customerOrder);
     assert.equal(customerOrder.receipt.totalCents, 5650); assert.equal(customerOrder.receipt.cards[0].identity.title, identity.title);
-    assert.deepEqual(customerOrder.effects.map(e => e.kind).sort(), ['EMAIL_RECEIPT','FEDEX_LABEL','SMS_RECEIPT']);
+    assert.deepEqual(customerOrder.effects.map(e => e.kind).sort(), ['EMAIL_RECEIPT','FEDEX_LABEL']);
     const savedReceipt = (await fixture.sql('SELECT receipt FROM atlas_customer."CommerceOrder" WHERE id=$1::uuid', [paid.order.id], db.name)).rows[0].receipt;
     assert.deepEqual(savedReceipt.cards, storedQuote.cards); assert.deepEqual(savedReceipt.profile, profile);
     assert.equal(savedReceipt.payment.amountCents, 5650); assert.equal(savedReceipt.shipping[0].providerId, 'rate_synthetic');
     assert.deepEqual((await fixture.sql('SELECT snapshot FROM atlas_customer."CommerceQuote" WHERE id=$1::uuid', [quote.id], db.name)).rows[0].snapshot, storedQuote);
-    checks.push('one immutable paid order, four durable receipt/tax/postage effects, one custody card and no mail-in commission');
+    checks.push('one immutable paid order, three durable email/tax/postage effects and no SMS effect, one custody card and no mail-in commission');
     checks.push('customer paid order exposes safe totals/identity/delivery effects; immutable stored receipt retains money/photo/provider proof');
     // Additive shop-phone qualification: no reader or package printer is
     // invented. The registry and every card/photo/session binding are real SQL
@@ -225,11 +253,13 @@ try {
             receivedCents: phoneStatus === 'succeeded' ? attempt.quote.totalCents : 0, currency: 'usd', quoteHash: attempt.quote.contentHash,
             attemptId: attempt.id, paymentMethodTypes: [phoneMethod], clientSecret: 'pi_own_phone_secret' }; } };
     const phoneService = new CommerceService({ repository, payment: phoneProvider, tax });
-    const compactContact = { name: 'Synthetic shop customer', email: '' };
+    const compactContact = { name: 'Synthetic shop customer', email: profile.email };
     const savedContact = await call('profile', { profile: compactContact });
-    assert.equal(savedContact.customer.profile.name, compactContact.name);assert.equal(savedContact.customer.profile.email, undefined);
+    assert.equal(savedContact.customer.profile.name, compactContact.name);assert.equal(savedContact.customer.profile.email, profile.email);
     assert.equal(savedContact.customer.profile.address1, profile.address1);assert.equal(savedContact.customer.profile.postalCode, profile.postalCode);
     await assert.rejects(reviewedShopCard(compactContact, 'MAIL_IN'), { code: 'RETURN_DETAILS_REQUIRED' });
+    await assert.rejects(reviewedShopCard({ name: compactContact.name }), { code: 'CONTACT_DETAILS_REQUIRED' });
+    await assert.rejects(reviewedShopCard({ name: compactContact.name, email: '' }), { code: 'CONTACT_DETAILS_REQUIRED' });
     await assert.rejects(reviewedShopCard({ name: '' }), { code: 'CONTACT_DETAILS_REQUIRED' });
     await assert.rejects(reviewedShopCard({ name: compactContact.name, email: 'invalid' }), { code: 'CONTACT_DETAILS_REQUIRED' });
     const phoneDraft = await reviewedShopCard(compactContact), phoneQuote = await phoneService.quote({ draftId: phoneDraft.id, expectedRevision: phoneDraft.revision });
@@ -256,10 +286,88 @@ try {
     assert.equal((await phoneService.pay(phoneRequest)).order.id, phonePaid.order.id); assert.equal(phoneCreates, 1);
     assert.equal((await fixture.sql('SELECT state FROM atlas_customer."WeeklyCapacityReservation" WHERE "paymentId"=$1::uuid', [awaiting.attemptId], db.name)).rows[0].state, 'CONSUMED');
     const phoneEffects = (await fixture.sql('SELECT kind FROM atlas_customer."CommerceEffect" WHERE "orderId"=$1::uuid ORDER BY kind', [phonePaid.order.id], db.name)).rows.map(row => row.kind);
-    assert.deepEqual(phoneEffects, ['SMS_RECEIPT','TAX_TRANSACTION']);
-    const smsReceipt=(await fixture.sql('SELECT request FROM atlas_customer."CommerceEffect" WHERE "orderId"=$1::uuid AND kind=\'SMS_RECEIPT\'', [phonePaid.order.id], db.name)).rows[0].request;assert.equal(smsReceipt.to,'+12025550201');
+    assert.deepEqual(phoneEffects, ['EMAIL_RECEIPT','TAX_TRANSACTION']);
+    const emailReceipt=(await fixture.sql('SELECT request FROM atlas_customer."CommerceEffect" WHERE "orderId"=$1::uuid AND kind=\'EMAIL_RECEIPT\'', [phonePaid.order.id], db.name)).rows[0].request;assert.equal(emailReceipt.to,compactContact.email);
+    assert.equal(emailSends, 1); // The same verified account/address needs no second verification.
     assert.equal((await fixture.sql('SELECT count(*) AS n FROM atlas_dealer.custody_event WHERE card_id=$1::uuid', [phoneDraft.cards[0].id], db.name)).rows[0].n, '0');
-    checks.push('name+verified-phone shop requires no email/address; compact contact retains saved return data and cannot bypass mail validation; optional email creates no empty email receipt; hardware-free shop quote pays on its own customer phone; exact safe recovery/owner-only form secret, no reader reservation or printer effect, duplicate pay is idempotent, card_present refused, payment consumes capacity once and never records custody');
+    checks.push('new shop review requires name+email but no return address; compact contact retains saved return data and cannot bypass mail validation; the previously verified account/address produces email-only receipt effects; hardware-free shop quote pays on its own customer phone; exact safe recovery/owner-only form secret, no reader reservation or printer effect, duplicate pay is idempotent, card_present refused, payment consumes capacity once and never records custody');
+
+    // Literal pre-email-required CUSTOMER_PHONE history. Only this nonce-owned
+    // loopback fixture owner may seed it, with the two new INSERT guards
+    // suspended in one transaction. All other guards remain enabled; both
+    // verification guards are restored and asserted before any gateway test.
+    const nameOnlyDraft = await reviewedShopCard(compactContact);
+    const nameOnlyCurrent = await phoneService.quote({ draftId: nameOnlyDraft.id, expectedRevision: nameOnlyDraft.revision });
+    const nameOnlyQuote = structuredClone((await fixture.sql('SELECT snapshot FROM atlas_customer."CommerceQuote" WHERE id=$1::uuid', [nameOnlyCurrent.id], db.name)).rows[0].snapshot);
+    nameOnlyQuote.id = randomUUID(); nameOnlyQuote.profile = { name: 'Historical name-only customer' }; delete nameOnlyQuote.contentHash;
+    nameOnlyQuote.tax.requestHash = digest({ quoteId: nameOnlyQuote.id, currency: 'usd', profile: nameOnlyQuote.profile,
+        channel: nameOnlyQuote.channel, location: nameOnlyQuote.location, lines: nameOnlyQuote.cards,
+        subtotalCents: nameOnlyQuote.subtotalCents, shippingCents: nameOnlyQuote.shippingCents });
+    nameOnlyQuote.contentHash = digest(nameOnlyQuote);
+    const nameOnlyAttempt = randomUUID(), nameOnlyRequest = randomUUID(), nameOnlyProviderId = `pi_historical_name_only_${nameOnlyAttempt}`;
+    const enabledEmailGuards = tx => tx.$queryRaw`SELECT c.relname AS name,t.tgenabled::text AS enabled FROM pg_trigger t
+        JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='atlas_customer' AND c.relname IN ('CommercePayment','CommerceQuote') AND t.tgname='verified_email' ORDER BY c.relname`;
+    const expectedEmailGuards = [{ name: 'CommercePayment', enabled: 'O' }, { name: 'CommerceQuote', enabled: 'O' }];
+    assert.deepEqual(JSON.parse(readFileSync(join(fixture.directory, 'ownership.json'), 'utf8')), ownership);
+    await admin.$transaction(async tx => {
+        const [target] = await tx.$queryRaw`SELECT current_database() AS database,current_user AS owner`;
+        assert.deepEqual(target, { database: db.name, owner: new URL(db.adminUrl).username });
+        assert.equal(target.owner, 'atlas_fixture_owner');
+        assert.deepEqual(await enabledEmailGuards(tx), expectedEmailGuards);
+        await tx.$executeRaw`ALTER TABLE atlas_customer."CommerceQuote" DISABLE TRIGGER verified_email`;
+        await tx.$executeRaw`ALTER TABLE atlas_customer."CommercePayment" DISABLE TRIGGER verified_email`;
+        await tx.$executeRaw`UPDATE atlas_customer."CustomerIntakeDraft" SET "profileSnapshot"=${JSON.stringify(nameOnlyQuote.profile)}::jsonb WHERE id=${nameOnlyDraft.id}::uuid`;
+        await tx.$executeRaw`INSERT INTO atlas_customer."CommerceQuote"(id,"accountId","draftId","draftRevision","contentHash",snapshot,"expiresAt")
+            VALUES(${nameOnlyQuote.id}::uuid,${a.customer.id}::uuid,${nameOnlyDraft.id}::uuid,${nameOnlyDraft.revision},${nameOnlyQuote.contentHash},${JSON.stringify(nameOnlyQuote)}::jsonb,${nameOnlyQuote.expiresAt}::timestamptz)`;
+        await tx.$executeRaw`INSERT INTO atlas_customer."CommercePayment"(id,"accountId","draftId","quoteId","requestId",merchant,"providerId",state,observation)
+            VALUES(${nameOnlyAttempt}::uuid,${a.customer.id}::uuid,${nameOnlyDraft.id}::uuid,${nameOnlyQuote.id}::uuid,${nameOnlyRequest}::uuid,
+                ${JSON.stringify(merchant)}::jsonb,${nameOnlyProviderId},'UNKNOWN',${JSON.stringify({ state: 'UNKNOWN', providerId: nameOnlyProviderId })}::jsonb)`;
+        await tx.$executeRaw`ALTER TABLE atlas_customer."CommerceQuote" ENABLE TRIGGER verified_email`;
+        await tx.$executeRaw`ALTER TABLE atlas_customer."CommercePayment" ENABLE TRIGGER verified_email`;
+        assert.deepEqual(await enabledEmailGuards(tx), expectedEmailGuards);
+        const [proof] = await tx.$queryRaw`SELECT atlas_customer.email_verified(${a.customer.id}::uuid,${nameOnlyQuote.profile.email ?? null}::text) AS verified`;
+        assert.equal(proof.verified, false);
+    }, { isolationLevel: 'ReadCommitted', timeout: 15000 });
+    assert.deepEqual(await enabledEmailGuards(admin), expectedEmailGuards);
+    // Prove the restored guards reject another fresh row, without relying on
+    // the service's earlier syntactic email check or the existing-attempt path.
+    await assert.rejects(admin.$executeRaw`INSERT INTO atlas_customer."CommerceQuote"(id,"accountId","draftId","draftRevision","contentHash",snapshot,"expiresAt")
+        VALUES(${randomUUID()}::uuid,${a.customer.id}::uuid,${nameOnlyDraft.id}::uuid,${nameOnlyDraft.revision},${nameOnlyQuote.contentHash},${JSON.stringify(nameOnlyQuote)}::jsonb,${nameOnlyQuote.expiresAt}::timestamptz)`, /verified receipt email required/);
+    await assert.rejects(admin.$executeRaw`INSERT INTO atlas_customer."CommercePayment"(id,"accountId","draftId","quoteId","requestId",merchant,state)
+        VALUES(${randomUUID()}::uuid,${a.customer.id}::uuid,${nameOnlyDraft.id}::uuid,${nameOnlyQuote.id}::uuid,${randomUUID()}::uuid,${JSON.stringify(merchant)}::jsonb,'DISPATCHED')`, /verified receipt email required/);
+    assert.equal((await repository.loadCheckout(nameOnlyDraft.id)).emailVerified, false);
+    const priorTax = taxCalculations;
+    await assert.rejects(phoneService.quote({ draftId: nameOnlyDraft.id, expectedRevision: nameOnlyDraft.revision }), { code: 'PROFILE_EMAIL_REQUIRED' });
+    assert.equal(taxCalculations, priorTax);
+    assert.equal((await call('email_status', { draftId: nameOnlyDraft.id })).required, false);
+    let nameOnlyCreates = 0, nameOnlyKnown = false;
+    const nameOnlyProvider = { binding: merchant, publishableKey: 'pk_test_synthetic',
+        async create() { nameOnlyCreates++; throw Error('must not create a historical name-only intent'); },
+        async retrieve(attempt) {
+            if (!nameOnlyKnown) throw Error('Synthetic unresolved historical name-only intent');
+            return { source: 'PROVIDER_RETRIEVAL', provider: 'STRIPE', merchantId: merchant.accountId, livemode: false,
+                providerId: nameOnlyProviderId, status: 'succeeded', amountCents: nameOnlyQuote.totalCents, receivedCents: nameOnlyQuote.totalCents,
+                currency: 'usd', quoteHash: nameOnlyQuote.contentHash, attemptId: attempt.id, paymentMethodTypes: ['card'] };
+        } };
+    const nameOnlyService = new CommerceService({ repository, payment: nameOnlyProvider, tax });
+    const nameOnlyPay = { quoteId: nameOnlyQuote.id, requestId: nameOnlyRequest };
+    const nameOnlyRetry = await nameOnlyService.pay(nameOnlyPay);
+    assert.equal(nameOnlyRetry.attemptId, nameOnlyAttempt); assert.equal(nameOnlyRetry.state, 'UNKNOWN');
+    assert.equal((await nameOnlyService.pay({ ...nameOnlyPay, requestId: randomUUID() })).attemptId, nameOnlyAttempt);
+    assert.equal((await nameOnlyService.checkout(nameOnlyDraft.id)).activePayment.attemptId, nameOnlyAttempt);
+    await assert.rejects(otherRepository.payment(nameOnlyAttempt), { code: 'NOT_FOUND' });
+    nameOnlyKnown = true;
+    const nameOnlyPaid = await nameOnlyService.reconcile(nameOnlyAttempt); assert.equal(nameOnlyPaid.state, 'PAID');
+    assert.equal((await nameOnlyService.pay(nameOnlyPay)).order.id, nameOnlyPaid.order.id); assert.equal(nameOnlyCreates, 0);
+    assert.deepEqual(nameOnlyPaid.order.receipt.profile, undefined); // Safe DTO never exposes receipt contact.
+    const nameOnlyStored = (await fixture.sql('SELECT receipt FROM atlas_customer."CommerceOrder" WHERE id=$1::uuid', [nameOnlyPaid.order.id], db.name)).rows[0].receipt;
+    assert.deepEqual(nameOnlyStored.profile, nameOnlyQuote.profile);
+    assert.deepEqual((await fixture.sql('SELECT snapshot FROM atlas_customer."CommerceQuote" WHERE id=$1::uuid', [nameOnlyQuote.id], db.name)).rows[0].snapshot, nameOnlyQuote);
+    assert.deepEqual((await fixture.sql('SELECT kind FROM atlas_customer."CommerceEffect" WHERE "orderId"=$1::uuid ORDER BY kind', [nameOnlyPaid.order.id], db.name)).rows.map(row => row.kind), ['TAX_TRANSACTION']);
+    assert.equal((await fixture.sql('SELECT state FROM atlas_customer."WeeklyCapacityReservation" WHERE "paymentId"=$1::uuid', [nameOnlyAttempt], db.name)).rows[0].state, 'CONSUMED');
+    assert.equal((await repository.loadCheckout(nameOnlyDraft.id)).emailVerified, false); assert.equal(emailSends, 1);
+    checks.push('literal historical name-only CUSTOMER_PHONE UNKNOWN payment recovers without new email proof or charge, settles once with original snapshot/provider, creates no invented email/SMS receipt, and leaves both fresh-insert email guards enabled');
 
     // Seed historical immutable terms deliberately through the disposable
     // owner fixture, never by weakening the new quote gateway. A fresh legacy
@@ -304,6 +412,8 @@ try {
     assert.equal((await fixture.sql('SELECT count(*) AS n FROM atlas_customer."CommerceEffect" WHERE "orderId"=$1::uuid AND kind=\'PACKAGE_LABEL\'', [legacyPaid.order.id], db.name)).rows[0].n, '1');
     checks.push('fresh legacy terminal quote refused before payment; existing UNKNOWN terminal replay keeps exact reader/provider/terms with no new charge, rejects card, accepts only original card_present evidence and preserves original package effect');
 
+    assert.equal((await fixture.sql('SELECT count(*) AS n FROM atlas_customer."CommerceEffect" WHERE kind=\'SMS_RECEIPT\'', [], db.name)).rows[0].n, '0');
+    assert.deepEqual(await enabledEmailGuards(admin), expectedEmailGuards);
     await admin.$executeRaw`UPDATE atlas_customer."CommerceControl" SET enabled=false WHERE id='active'`;
     const historicalService = new CommerceService({ repository: new GatewayCommerceRepository((name, input) => privateDatabase.call('customer', { name, input, authority: a.authority })) });
     const historical = await historicalService.checkout(draft.id);
