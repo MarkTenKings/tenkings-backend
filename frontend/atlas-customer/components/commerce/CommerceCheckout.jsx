@@ -4,7 +4,7 @@ import OrderReceipt, { ServiceSummary, OrderAmounts } from './OrderReceipt.jsx';
 
 const money = value => new Intl.NumberFormat('en-US', { style:'currency',currency:'USD' }).format(value/100);
 const friendly = code => ({
-    WEEKLY_CAPACITY_FULL:'This week’s card capacity for this route is filled. Your cards are saved; choose another route or return after the next Monday release.',
+    WEEKLY_CAPACITY_FULL:'This week’s shared card capacity is filled across both routes. Your cards are saved; check back for new availability.',
     WEEKLY_CAPACITY_NOT_CONFIGURED:'Weekly availability is being prepared. Your cards are saved.', PAYMENT_FLOW_CHANGED:'Review a fresh total to pay securely on your phone.',
     COMMERCE_NOT_CONFIGURED:'Checkout is being prepared. Your cards are saved.', TAX_NOT_CONFIGURED:'Tax calculation is not available yet. Your cards are saved.',
     PAYMENT_NOT_CONFIGURED:'Payment is not available yet. Your cards are saved.', SHIPPING_NOT_CONFIGURED:'FedEx shipping is not available yet.',

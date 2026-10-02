@@ -1,6 +1,7 @@
 import { requireValue } from './contract.mjs';
 
 export const CAPACITY_VERSION = 'atlas-weekly-capacity-v1';
+export const SHARED_CAPACITY_VERSION = 'atlas-weekly-capacity-v2';
 export const CAPACITY_TIME_ZONE = 'America/Los_Angeles';
 export const CAPACITY_CHANNELS = Object.freeze(['MAIL_IN', 'DEALER_DROP_OFF']);
 const localParts = new Intl.DateTimeFormat('en-US', { timeZone: CAPACITY_TIME_ZONE,
@@ -35,6 +36,7 @@ export function unconfiguredCapacity(now = new Date()) {
 /** Explicit public allowlist: no payment IDs, customer records, or guessed quota. */
 export function customerCapacity(value, now = new Date()) {
     if (!value) return unconfiguredCapacity(now);
+    if (value.version === SHARED_CAPACITY_VERSION) return sharedCustomerCapacity(value);
     requireValue(value.version === CAPACITY_VERSION && value.unit === 'CARDS' && value.timeZone === CAPACITY_TIME_ZONE
         && value.resetLocalTime === '00:01' && Array.isArray(value.pools) && value.pools.length === 2, 'INVALID_CAPACITY_SNAPSHOT', 503);
     requireValue(typeof value.asOf === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.asOf)
@@ -60,7 +62,40 @@ export function customerCapacity(value, now = new Date()) {
 }
 export function capacityBlockers(snapshot, channel, count) {
     requireValue(Number.isSafeInteger(count) && count > 0, 'CARDS_REQUIRED', 400);
-    const pool = customerCapacity(snapshot).pools.find(p => p.channel === capacityChannel(channel));
+    const value = customerCapacity(snapshot);
+    const selected = capacityChannel(channel); // Validate route even when both routes share one allowance.
+    const pool = value.version === SHARED_CAPACITY_VERSION ? value.total : value.pools.find(p => p.channel === selected);
     return pool.state === 'NOT_CONFIGURED' ? ['WEEKLY_CAPACITY_NOT_CONFIGURED']
         : pool.remainingCards < count ? ['WEEKLY_CAPACITY_FULL'] : [];
+}
+
+/** Shared quota is the sole admission limit; per-route counts are a breakdown, not extra allowances. */
+function sharedCustomerCapacity(value) {
+    const valid = ok => requireValue(ok, 'INVALID_CAPACITY_SNAPSHOT', 503);
+    valid(value.scope === 'SHARED' && value.unit === 'CARDS' && value.timeZone === CAPACITY_TIME_ZONE
+        && value.resetLocalTime === '00:01' && Array.isArray(value.pools) && value.pools.length === 2);
+    valid(typeof value.asOf === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.asOf)
+        && Number.isFinite(Date.parse(value.asOf)));
+    const week = capacityWeek(new Date(value.asOf));
+    valid(week.weekStartsAt === value.weekStartsAt && week.resetsAt === value.resetsAt);
+    const total = value.total, counts = ['quotaCards','heldCards','acceptedCards','remainingCards'];
+    valid(total && typeof total === 'object');
+    const cold = total.state === 'NOT_CONFIGURED';
+    if (cold) valid(counts.every(k => total[k] === null));
+    else valid(counts.every(k => Number.isSafeInteger(total[k]) && total[k] >= 0)
+        && total.heldCards + total.acceptedCards <= total.quotaCards
+        && total.remainingCards === total.quotaCards - total.heldCards - total.acceptedCards
+        && total.state === (total.remainingCards > 0 ? 'AVAILABLE' : 'FULL'));
+    const pools = CAPACITY_CHANNELS.map(channel => {
+        const matches = value.pools.filter(p => p?.channel === channel); valid(matches.length === 1);
+        const p = matches[0];
+        valid(cold ? p.heldCards === null && p.acceptedCards === null
+            : [p.heldCards,p.acceptedCards].every(n => Number.isSafeInteger(n) && n >= 0));
+        return {channel,heldCards:p.heldCards,acceptedCards:p.acceptedCards};
+    });
+    if (!cold) valid(pools.reduce((sum,p) => sum+p.heldCards,0) === total.heldCards
+        && pools.reduce((sum,p) => sum+p.acceptedCards,0) === total.acceptedCards);
+    return {version:SHARED_CAPACITY_VERSION,scope:'SHARED',unit:'CARDS',timeZone:CAPACITY_TIME_ZONE,
+        resetLocalTime:'00:01',...week,asOf:value.asOf,
+        total:{state:total.state,...Object.fromEntries(counts.map(k => [k,total[k]]))},pools};
 }

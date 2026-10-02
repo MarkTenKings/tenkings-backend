@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { disposablePostgres } from '../../../frontend/atlas-app/scripts/disposable-postgres.mjs';
 import { capacityWeek, customerCapacity } from '../src/capacity.mjs';
 
 // No external database URL accepted. Existing owned native harness applies the
 // COMPLETE migration chain twice and creates only its nonce-owned local cluster.
+const sharedRegistered=existsSync(new URL('../../../frontend/atlas-app/prisma/migrations/20261001006000_atlas_shared_weekly_card_capacity/migration.sql',import.meta.url));
+if(sharedRegistered){
+    // The normal command validates the current shared contract. The historical
+    // independent-pool rehearsal below executes only against pre-shared source.
+    await import('./validate-shared-capacity-postgres.mjs');
+}else{
 const args=process.argv.slice(2), fixture=await disposablePostgres(args);
 const { Client }=createRequire(import.meta.url)(args[args.indexOf('--pg-module')+1]);
 const checks=[];
@@ -119,3 +125,5 @@ try {
     writeFileSync(resultFile,JSON.stringify({checks,providerCalls:0,productionEffects:false,snapshot:await snapshot()},null,2));
     process.stdout.write(JSON.stringify({checks:checks.length,resultFile,providerCalls:0,productionEffects:false})+'\n');
 } finally {await fixture.stop();}
+
+}
