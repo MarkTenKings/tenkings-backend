@@ -16,7 +16,7 @@ export function inspectCommerceConfiguration(env = {}, { channel = 'ALL' } = {})
     check('ATLAS_COMMERCE_MODE', oneOf('TEST', 'LIVE'));
     check('ATLAS_COMMERCE_STRIPE_ACCOUNT_ID', value => /^acct_[A-Za-z0-9]+$/.test(value));
     const mode = env.ATLAS_COMMERCE_MODE;
-    check('ATLAS_COMMERCE_STRIPE_SECRET_KEY', value => value.startsWith(mode === 'LIVE' ? 'sk_live_' : 'sk_test_'));
+    check('ATLAS_COMMERCE_STRIPE_SECRET_KEY', value => typeof value === 'string' && (mode === 'LIVE' ? /^(?:sk|rk)_live_/ : /^(?:sk|rk)_test_/).test(value));
     check('ATLAS_COMMERCE_STRIPE_PUBLISHABLE_KEY', value => value.startsWith(mode === 'LIVE' ? 'pk_live_' : 'pk_test_'));
     check('ATLAS_COMMERCE_STRIPE_API_VERSION', value => /^\d{4}-\d{2}-\d{2}(?:\.[a-z]+)?$/.test(value));
     check('ATLAS_COMMERCE_STRIPE_WEBHOOK_SECRET', value => /^whsec_\S+$/.test(value));

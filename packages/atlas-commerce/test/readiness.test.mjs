@@ -68,3 +68,26 @@ test('shop readiness does not require carrier configuration, a return address or
     const mail=inspectCommerceConfiguration(env,{channel:'MAIL_IN'});assert.equal(mail.status,'INCOMPLETE');assert(mail.missing.includes('ATLAS_COMMERCE_FEDEX_ACCOUNT_NUMBER'));
     assert.doesNotMatch(JSON.stringify(shop),/PRIVATE_FIXTURE|fixture@example|123456789|acct_fixture/);
 });
+
+
+test('restricted Stripe key readiness accepts matching modes but remains cold until enabled and externally unverified', () => {
+    for (const mode of ['TEST', 'LIVE']) {
+        const env = { ...settings(), ATLAS_COMMERCE_MODE: mode,
+            ATLAS_COMMERCE_STRIPE_SECRET_KEY: `rk_${mode.toLowerCase()}_PRIVATE_FIXTURE`,
+            ATLAS_COMMERCE_STRIPE_PUBLISHABLE_KEY: `pk_${mode.toLowerCase()}_PRIVATE_FIXTURE`,
+            ATLAS_COMMERCE_FEDEX_ENVIRONMENT: mode === 'LIVE' ? 'PRODUCTION' : 'SANDBOX' };
+        for (const channel of ['ALL', 'MAIL_IN', 'KIOSK']) {
+            const result = inspectCommerceConfiguration(env, { channel });
+            assert.equal(result.status, 'READY_FOR_PROVIDER_QUALIFICATION');
+            assert.equal(result.adaptersValid, true); assert.deepEqual(result.invalid, []); assert.deepEqual(result.missing, []);
+            assert.equal(result.externalVerification, 'NOT_PERFORMED');
+            assert.doesNotMatch(JSON.stringify(result), /PRIVATE_FIXTURE|acct_fixture/);
+            assert.equal(inspectCommerceConfiguration({ ...env, ATLAS_COMMERCE_ENABLED: 'false' }, { channel }).status, 'COLD');
+        }
+        env.ATLAS_COMMERCE_STRIPE_SECRET_KEY = `rk_${mode === 'LIVE' ? 'test' : 'live'}_PRIVATE_FIXTURE`;
+        const mismatch = inspectCommerceConfiguration(env);
+        assert.equal(mismatch.status, 'INCOMPLETE'); assert.equal(mismatch.adaptersValid, false);
+        assert.deepEqual(mismatch.invalid, ['ATLAS_COMMERCE_STRIPE_SECRET_KEY']);
+        assert.doesNotMatch(JSON.stringify(mismatch), /PRIVATE_FIXTURE/);
+    }
+});

@@ -60,3 +60,69 @@ test('webhook requires unchanged raw bytes, matching signature and fresh timesta
 test('webhook ignores irrelevant events without payment effects',async()=>{const w=webhook(),event=JSON.parse(w.rawBody);event.type='customer.created';w.rawBody=Buffer.from(JSON.stringify(event));w.signature=`t=${Math.floor(w.now/1000)},v1=${createHmac('sha256',w.secret).update(`${Math.floor(w.now/1000)}.`).update(w.rawBody).digest('hex')}`;const result=await consumeStripeWebhook({...w,payment:payment(),repository:{callbackPayment(){throw Error('must not call');}}});assert.equal(result.ignored,true);});
 test('notification adapter records acceptance separately from delivery and uses ATLAS senders',async()=>{const calls=[];const send=notificationAdapter({emailApiKey:'email-fixture',emailFrom:'receipts@example.test',smsAccountSid:`AC${'1'.repeat(32)}`,smsApiKeySid:`SK${'2'.repeat(32)}`,smsApiKeySecret:'sms-fixture',smsServiceSid:`MG${'3'.repeat(32)}`,fetchImpl:async(url,options)=>{calls.push({url,options});return url.includes('sendgrid')?new Response(null,{status:202,headers:{'x-message-id':'message-123'}}):json({sid:`SM${'4'.repeat(32)}`,account_sid:`AC${'1'.repeat(32)}`,status:'queued'});}});
     const mail=await send.send('EMAIL_RECEIPT',{orderId:randomUUID(),reference:'ATLAS-TEST',to:'customer@example.test',totalCents:5000},'effect');assert.equal(mail.deliveryStatus,'ACCEPTED');const sms=await send.send('SMS_RECEIPT',{orderId:randomUUID(),reference:'ATLAS-TEST',to:'+15555550123',totalCents:5000},'effect-sms');assert.equal(sms.deliveryStatus,'QUEUED');assert.equal(calls.length,2);});
+
+
+test('restricted Stripe keys run phone payments and tax through the qualified transport in both modes', async () => {
+    for (const livemode of [false, true]) for (const channel of ['MAIL_IN', 'KIOSK']) {
+        const mode = livemode ? 'live' : 'test', secretKey = `rk_${mode}_PRIVATE_FIXTURE`;
+        const a = attempt(channel), calls = [];
+        a.merchant = { ...merchant, livemode }; a.quote.merchant = a.merchant;
+        a.quote.terms = { paymentFlow: 'CUSTOMER_PHONE' };
+        const intent = { ...pi(a), livemode, payment_method_types: ['card'] };
+        const transport = stripeTransport({ secretKey, apiVersion: '2024-06-20', accountId: merchant.accountId, livemode,
+            fetchImpl: async (url, options) => {
+                const path = new URL(url).pathname; calls.push({ path, options });
+                assert.equal(options.headers.Authorization, `Bearer ${secretKey}`);
+                assert.equal(options.headers['Stripe-Version'], '2024-06-20');
+                if (path === '/v1/account') return json({ id: merchant.accountId, charges_enabled: true });
+                if (path === '/v1/payment_intents' || path === '/v1/payment_intents/pi_original') return json(intent);
+                if (path === '/v1/payment_intents/search') return json({ data: [intent], has_more: false });
+                if (path === '/v1/tax/calculations') return json({ id: 'taxcalc_fixture', currency: 'usd', livemode,
+                    tax_amount_exclusive: 800, tax_amount_inclusive: 0, amount_total: 10800, expires_at: 1790000000 });
+                if (path === '/v1/tax/transactions/create_from_calculation') return json({ id: 'tax_fixture', reference: a.id, livemode });
+                throw new Error('UNEXPECTED_STRIPE_ENDPOINT');
+            } });
+        const payment = stripePaymentAdapter({ transport, publishableKey: `pk_${mode}_fixture` });
+        assert.equal((await payment.create(a)).clientSecret, 'pi_original_secret');
+        assert.equal((await payment.retrieve({ ...a, providerId: null })).providerId, 'pi_original');
+        const tax = stripeTaxAdapter({ transport, taxCode: 'txcd_123', shippingTaxCode: 'txcd_456', addressSource: 'shipping',
+            sourcingPolicy: 'MAIL_RETURN_ADDRESS_KIOSK_LOCATION' });
+        const calculation = await tax.calculate({ quoteId: a.quote.id, currency: 'usd', channel, profile: a.quote.profile,
+            location: a.quote.location, lines: a.quote.cards.map(card => ({ cardId: card.id, unitCents: 5000 })), shippingCents: 0 });
+        assert.equal(calculation.taxCents, 800);
+        assert.equal((await tax.recordTransaction({ orderId: a.id, calculationId: calculation.providerId }, 'effect')).providerId, 'tax_fixture');
+        assert.deepEqual(calls.map(call => call.path), ['/v1/account', '/v1/payment_intents', '/v1/payment_intents/search',
+            '/v1/payment_intents/pi_original', '/v1/tax/calculations', '/v1/tax/transactions/create_from_calculation']);
+        assert.equal(calls[1].options.headers['Idempotency-Key'], `atlas:${a.id}:payment:v1`);
+        assert.equal(calls[4].options.headers['Idempotency-Key'], `atlas:${a.quote.id}:tax:v1`);
+        assert.equal(calls[5].options.headers['Idempotency-Key'], 'atlas:effect');
+        assert.doesNotMatch(JSON.stringify(transport.binding), /PRIVATE_FIXTURE/);
+    }
+});
+
+test('restricted Stripe keys retain merchant qualification and permission-denial failure without dispatch or retry', async () => {
+    for (const response of [json({ id: 'acct_other', charges_enabled: true }), json({ id: 'acct_atlas', charges_enabled: false }),
+        new Response('permission denied', { status: 403 })]) {
+        const calls = [], transport = stripeTransport({ secretKey: 'rk_live_PRIVATE_FIXTURE', apiVersion: '2024-06-20',
+            accountId: 'acct_atlas', livemode: true, fetchImpl: async url => { calls.push(url); return response; } });
+        await assert.rejects(() => transport.request('POST', '/v1/payment_intents', {}), error =>
+            error.status === 503 && ['STRIPE_MERCHANT_NOT_QUALIFIED', 'PROVIDER_REQUEST_FAILED'].includes(error.code));
+        assert.deepEqual(calls, ['https://api.stripe.com/v1/account']);
+    }
+    const calls = [], transport = stripeTransport({ secretKey: 'rk_live_PRIVATE_FIXTURE', apiVersion: '2024-06-20',
+        accountId: 'acct_atlas', livemode: true, fetchImpl: async url => { calls.push(url); return url.endsWith('/account')
+            ? json({ id: 'acct_atlas', charges_enabled: true }) : new Response('permission denied', { status: 403 }); } });
+    await assert.rejects(() => transport.request('POST', '/v1/payment_intents', {}), { code: 'PROVIDER_REQUEST_FAILED', status: 503 });
+    assert.equal(calls.length, 2);
+});
+
+test('restricted Stripe mode mismatch and public or foreign credentials fail before network', () => {
+    let calls = 0;
+    for (const [secretKey, livemode] of [['rk_live_fixture', false], ['rk_test_fixture', true], ['pk_live_fixture', true],
+        ['pk_test_fixture', false], ['rk_unknown_fixture', false], ['prefix_rk_live_fixture', true], ['other_live_fixture', true],
+        [['rk_live_fixture'], true], [{ toString: () => 'rk_live_fixture' }, true]]) {
+        assert.throws(() => stripeTransport({ secretKey, livemode, apiVersion: '2024-06-20', accountId: 'acct_atlas',
+            fetchImpl: () => { calls++; throw Error('UNEXPECTED_NETWORK'); } }), { code: 'STRIPE_NOT_CONFIGURED', status: 503 });
+    }
+    assert.equal(calls, 0);
+});

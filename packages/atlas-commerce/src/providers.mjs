@@ -15,8 +15,8 @@ async function jsonResponse(response) {
 }
 
 export function stripeTransport({ secretKey, apiVersion, accountId, livemode, fetchImpl = fetch }) {
-    requireValue(/^sk_(live|test)_/.test(secretKey ?? '') && /^acct_[A-Za-z0-9]+$/.test(accountId ?? '')
-        && typeof livemode === 'boolean' && secretKey.startsWith(livemode ? 'sk_live_' : 'sk_test_')
+    requireValue(typeof secretKey === 'string' && /^acct_[A-Za-z0-9]+$/.test(accountId ?? '')
+        && typeof livemode === 'boolean' && (livemode ? /^(?:sk|rk)_live_/ : /^(?:sk|rk)_test_/).test(secretKey)
         && /^\d{4}-\d{2}-\d{2}(?:\.[a-z]+)?$/.test(apiVersion ?? ''), 'STRIPE_NOT_CONFIGURED', 503);
     let qualified = false;
     const request = async (method, path, values, key) => {
