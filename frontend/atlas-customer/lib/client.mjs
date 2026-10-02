@@ -1,4 +1,10 @@
 const ERROR_MESSAGES = {
+    PROFILE_EMAIL_REQUIRED: 'Add a valid email for your receipt and submission updates.',
+    EMAIL_VERIFICATION_REQUIRED: 'Verify your receipt email before continuing to payment.',
+    EMAIL_VERIFICATION_NOT_CONFIGURED: 'Email verification is not available yet. Your submission remains saved.',
+    EMAIL_VERIFICATION_WAIT: 'Please wait before requesting another email or confirming again.',
+    EMAIL_LINK_INVALID: 'This email link expired or was replaced. Request a fresh link from your saved submission.',
+    EMAIL_LINK_CHANGED: 'The email for this submission changed. Request a fresh link for the saved address.',
     PLEASE_WAIT: 'Please wait before trying again. Requests are limited to protect your number.',
     USE_INTERNATIONAL_PHONE: 'Enter a 10-digit U.S. mobile number, or include + and the country code for another country.',
     CODE_NOT_ACCEPTED: 'That code was not accepted. Check the six digits, or request a new code after the wait period.',
@@ -6,7 +12,7 @@ const ERROR_MESSAGES = {
     SIGN_IN_SESSION_EXPIRED: 'Your sign-in page expired. Refresh the page and start again.',
     SIGN_IN_REQUIRED: 'Your session has ended. Refresh the page to sign in again.',
     CSRF_REQUIRED: 'Your session changed. Refresh the page before continuing.',
-    CONTACT_DETAILS_REQUIRED: 'Enter your name and, if provided, a valid email address.',
+    CONTACT_DETAILS_REQUIRED: 'Enter your name and a valid email address.',
     RETURN_DETAILS_REQUIRED: 'Complete your name, email and shipping/return address.',
     INTAKE_CONFIGURATION_REQUIRED: 'Photo uploads are not available yet. Your saved photos remain on this device.',
     KIOSK_NOT_AVAILABLE: 'This kiosk is not accepting submissions. Choose another enabled location.',
@@ -25,7 +31,7 @@ export async function request(path, { body, csrf } = {}) {
     // The private service may spend 95s verifying an original or reconciling a
     // provider result; its 110s API deadline must expire before the browser's.
     // Ordinary account/auth reads keep their shorter responsiveness bound.
-    const longOperation = /^\/intake\/drafts\/[a-f0-9-]{36}\/cards\/[a-f0-9-]{36}\/uploads\/[a-f0-9-]{36}\/(?:sign|complete)$/.test(path)
+    const longOperation = path === '/email/request' || /^\/intake\/drafts\/[a-f0-9-]{36}\/cards\/[a-f0-9-]{36}\/uploads\/[a-f0-9-]{36}\/(?:sign|complete)$/.test(path)
         || /^\/commerce\/(?:checkout(?:\?draftId=[a-f0-9-]{36})?|quotes|payments(?:\/[a-f0-9-]{36}\/reconcile)?)$/.test(path);
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), longOperation ? 115000 : 25000);
     // A private saved PDF may be up to 4 MiB; base64 JSON needs a larger read

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { request } from '../../lib/client.mjs';
 import { createBrowserIntakeJournal, createCustomerUploader } from '../../lib/intake-journal.mjs';
+import EmailVerificationPanel, { requestEmailVerification } from './EmailVerificationPanel.jsx';
 import ProfileFields, { completeProfile, emptyProfile, intakeProfile } from './ProfileFields.jsx';
 import ServiceChoice from './ServiceChoice.jsx';
 import CommerceCheckout from '../commerce/CommerceCheckout.jsx';
@@ -29,7 +30,7 @@ function PhotoThumb({ file, label }) {
   useEffect(() => { if (!file) { setUrl(null); return; } const next = URL.createObjectURL(file); setUrl(next); return () => URL.revokeObjectURL(next); }, [file]);
   return url && file ? <img src={url} alt={label}/> : <span className="captured-photo-check" aria-label={label}>✓</span>;
 }
-export default function CustomerIntake({ customer, csrf, initialService = null, onCustomer }) {
+export default function CustomerIntake({ customer, csrf, initialService = null, resumeDraftId = null, onCustomer }) {
   const [service, setService] = useState(initialService), [draft, setDraft] = useState(null), [drafts, setDrafts] = useState([]);
   const [profile, setProfile] = useState({ ...emptyProfile, ...customer.profile }), [step, setStep] = useState('START'), [profileDestination,setProfileDestination]=useState('REVIEW');
   const [local, setLocal] = useState(null), [saved, setSaved] = useState(null), [camera, setCamera] = useState(false), [fileSide, setFileSide] = useState('FRONT');
@@ -40,7 +41,18 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
   async function work(operation) { if (gate.current) return false; gate.current = true; setBusy(true); setError(''); try { await operation(); return true; } catch (failure) { setError(failure.message); return false; } finally { gate.current = false; setBusy(false); } }
   useEffect(() => {
     active.current = true; let release, journal, alive = true; const abort = new AbortController();
-    if (!navigator.locks?.request) { setError('This browser cannot protect a saved capture session. Use an updated Safari or Chrome browser.'); return; }
+    if (!navigator.locks?.request) {
+      if (resumeDraftId) api(`/intake/drafts/${resumeDraftId}`).then(({ draft: value }) => {
+        if (!alive) return;
+        if (!['REVIEW', 'ORDERED'].includes(value.state)) throw Error('Use an updated Safari or Chrome browser to continue saving photos.');
+        // Already uploaded photos remain on the server. This read-only resume
+        // does not open or clear the device's unprotected capture journal.
+        setDraft(value); setService({ intakeMethod: value.intakeMethod, kioskId: value.kioskId });
+        setProfile({ ...emptyProfile, ...value.profileSnapshot }); setStep(value.state === 'ORDERED' ? 'CHECKOUT' : 'EMAIL');
+      }).catch(failure => { if (alive) setError(failure.message); });
+      else setError('This browser cannot protect a saved capture session. Use an updated Safari or Chrome browser.');
+      return () => { alive = false; active.current = false; };
+    }
     navigator.locks.request(`atlas-customer-capture:${customer.id}`, { signal: abort.signal }, async () => {
       if (!alive) return;
       try {
@@ -54,7 +66,7 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
       finally { await journal?.close(); }
     }).catch(failure => { if (alive && failure.name !== 'AbortError') setError('Your saved camera session could not be opened. Reload to try again.'); });
     return () => { alive = false; active.current = false; abort.abort(); release?.(); buffer.current = null; };
-  }, [customer.id, api, acceptDraft]);
+  }, [customer.id, api, acceptDraft, resumeDraftId]);
   useEffect(() => {
     let alive = true;
     api('/intake/drafts').then(result => { if (alive) { setDrafts(result.drafts); setIntakeAvailable(true); } }).catch(failure => {
@@ -90,7 +102,7 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
     return () => { alive = false; clearInterval(timer); };
   }, [draft?.id, api, acceptDraft]);
   useEffect(() => {
-    if (!initialService || !local || local.service || step !== 'START') return;
+    if (resumeDraftId || !initialService || !local || local.service || step !== 'START') return;
     if (initialService.intakeMethod === 'MAIL_IN' || initialService.kioskId) begin(initialService);
   }, [initialService, local]); // eslint-disable-line react-hooks/exhaustive-deps
   async function connectDraft() {
@@ -100,7 +112,7 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
     creating.current = connectCapturedDraft({ buffer: owner, request: api }).then(next => {
       if (!next || !active.current || buffer.current !== owner) return;
       acceptDraft(next);
-      if (['REVIEW', 'ORDERED'].includes(next.state)) setStep('CHECKOUT');
+      if (['REVIEW', 'ORDERED'].includes(next.state)) setStep(next.state === 'ORDERED' ? 'CHECKOUT' : 'EMAIL');
     }).finally(() => { creating.current = null; });
     return creating.current;
   }
@@ -111,6 +123,14 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
     }else{setStep('CAPTURE');setCamera(true);}
     connectDraft().catch(() => setIntakeAvailable(false));
   }
+  async function continueToEmail(value) {
+    setStep('EMAIL');
+    const status = await api(`/email/status?draftId=${value.id}`);
+    if (status.verified || status.required === false) { setStep('CHECKOUT'); return; }
+    // Only the explicit Review/Continue/Save action sends the first link.
+    // Effects, page mounts and polling never send or resend email.
+    if (status.state === 'UNSENT') await requestEmailVerification(api, customer.id, value.id, status.email);
+  }
   async function capturePhoto(file) {
     if (!buffer.current || !ownsCapture) throw Error('Your saved camera session is unavailable.');
     const next = await buffer.current.capture(local?.front ? 'BACK' : 'FRONT', file);
@@ -120,9 +140,16 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
     const current = await buffer.current.snapshot();
     if (current.pairIds.length && current.draftId !== value.id) throw Error('Finish your saved photos before switching to another submission.');
     const choice = { intakeMethod: value.intakeMethod, kioskId: value.kioskId };
-    await buffer.current.setService(choice); setLocal(await buffer.current.attachDraft(value.id)); setService(choice); setDraft(value); setStep(['REVIEW','ORDERED'].includes(value.state) ? 'CHECKOUT' : 'CAPTURE');
+    await buffer.current.setService(choice); setLocal(await buffer.current.attachDraft(value.id)); setService(choice); setDraft(value); if (value.profileSnapshot) setProfile({ ...emptyProfile, ...value.profileSnapshot }); setStep(value.state === 'ORDERED' ? 'CHECKOUT' : value.state === 'REVIEW' ? 'EMAIL' : 'CAPTURE');
   }
-  useEffect(() => { if (local?.service && intakeAvailable === true && !draft) connectDraft().catch(() => setIntakeAvailable(false)); }, [local?.service, intakeAvailable, draft?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!resumeDraftId && local?.service && intakeAvailable === true && !draft) connectDraft().catch(() => setIntakeAvailable(false)); }, [local?.service, intakeAvailable, draft?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!resumeDraftId || !ownsCapture || draft) return;
+    let alive = true;
+    api(`/intake/drafts/${resumeDraftId}`).then(result => { if (alive) return openDraft(result.draft); })
+      .catch(failure => { if (alive) setError(failure.message); });
+    return () => { alive = false; };
+  }, [resumeDraftId, ownsCapture, draft?.id, api]); // eslint-disable-line react-hooks/exhaustive-deps
   const pending = saved?.items.filter(item => !item.done) ?? [];
   const { count, waitingCount, ready } = captureCounts(draft, local);
   const reviewLocked = ['REVIEW', 'ORDERED'].includes(draft?.state);
@@ -133,12 +160,12 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
   const localOnly = !draft;
   return <div className="customer-intake">
     <SubmissionProgress current={stageNumber} intakeMethod={intakeMethod}/>
-    {!ownsCapture && <p className="fine" role="status">Opening your saved photos. If this submission is open in another tab, close that tab to continue here.</p>}
+    {!ownsCapture && <p className="fine" role="status">{['REVIEW','ORDERED'].includes(draft?.state) ? 'Your uploaded photos are saved with this submission.' : 'Opening your saved photos. If this submission is open in another tab, close that tab to continue here.'}</p>}
     {error && <div role="alert" className="error">{error}</div>}
-    {step === 'START' ? <><ServiceChoice value={service} onChange={setService}/><div className="wizard-footer"><p>{shop&&!completeProfile(profile,intakeMethod)?'Add your name, then photograph your cards.':'Next up: your camera. We’ll handle the card details.'}</p><button className="primary" disabled={busy || !selected || !ownsCapture} onClick={() => work(() => begin())}>{shop&&!completeProfile(profile,intakeMethod)?'Continue':'Continue to camera'} <span aria-hidden="true">→</span></button></div>
-      {drafts.length > 0 && <section className="saved-intakes"><h2>Pick up where you left off</h2>{drafts.map(value => <button className="secondary" key={value.id} onClick={() => work(() => openDraft(value))}>Resume {value.cards.length} cards · {value.intakeMethod === 'MAIL_IN' ? 'Mail-in' : 'Card shop'}</button>)}</section>}</> : step === 'PROFILE' ? <form className="panel profile-form" onSubmit={event => { event.preventDefault(); work(async () => { const result = await api('/profile', { body: { profile:intakeProfile(profile,intakeMethod) } }); onCustomer(result.customer); await connectDraft(); setStep(profileDestination); if(profileDestination==='CAPTURE')setCamera(true); }); }}>
-      <span className="eyebrow">{shop?'Your shop submission':'03 / Your details'}</span><h1>{shop?'Who are we grading for?':'Where should they return?'}</h1><p>{shop?'Your phone is verified. Add your name; email is optional. Your cards will return to your selected shop.':'Your cards are saved. Add your receipt and return details once, and we’ll remember them for next time.'}</p><ProfileFields value={profile} onChange={setProfile} disabled={busy} intakeMethod={intakeMethod}/><div className="intake-actions"><button type="button" className="secondary" onClick={() => setStep(profileDestination==='CAPTURE'?'START':'CAPTURE')}>{profileDestination==='CAPTURE'?'Back to service':'Back to cards'}</button><button className="primary" disabled={busy||!completeProfile(profile,intakeMethod)}>{busy ? 'Saving…' : profileDestination==='CAPTURE'?'Continue to camera →':'Review submission →'}</button></div>
-    </form> : step === 'CHECKOUT' ? <><CommerceCheckout draft={draft} request={api} onBack={() => setStep('REVIEW')} onPaid={order => { setPaidOrder(order); buffer.current?.clearPaid(); try { window.sessionStorage.removeItem('atlas-submission-service-v1'); } catch {} }}/>{paidOrder?.id && <CustomerOrderTracking orderId={paidOrder.id} csrf={csrf} request={api}/>}</> : <>
+    {step === 'START' ? <><ServiceChoice value={service} onChange={setService}/><div className="wizard-footer"><p>{shop&&!completeProfile(profile,intakeMethod)?'Add your name and email, then photograph your cards.':'Next up: your camera. We’ll handle the card details.'}</p><button className="primary" disabled={busy || !selected || !ownsCapture} onClick={() => work(() => begin())}>{shop&&!completeProfile(profile,intakeMethod)?'Continue':'Continue to camera'} <span aria-hidden="true">→</span></button></div>
+      {drafts.length > 0 && <section className="saved-intakes"><h2>Pick up where you left off</h2>{drafts.map(value => <button className="secondary" key={value.id} onClick={() => work(() => openDraft(value))}>Resume {value.cards.length} cards · {value.intakeMethod === 'MAIL_IN' ? 'Mail-in' : 'Card shop'}</button>)}</section>}</> : step === 'PROFILE' ? <form className="panel profile-form" onSubmit={event => { event.preventDefault(); work(async () => { const result = await api('/profile', { body: { profile:intakeProfile(profile,intakeMethod) } }); onCustomer(result.customer); await connectDraft(); if (profileDestination === 'EMAIL') { const reviewed = await api(`/intake/drafts/${draft.id}/review`, { body: { expectedRevision: draft.revision, profile: intakeProfile(profile,intakeMethod) } }); acceptDraft(reviewed.draft); await continueToEmail(reviewed.draft); } else setStep(profileDestination); if(profileDestination==='CAPTURE')setCamera(true); }); }}>
+      <span className="eyebrow">{shop?'Your shop submission':'03 / Your details'}</span><h1>{shop?'Who are we grading for?':'Where should they return?'}</h1><p>{shop?'Your phone is verified. Add your name and email for receipts and updates. Your cards will return to your selected shop.':'Your cards are saved. Add your receipt and return details once, and we’ll remember them for next time.'}</p><ProfileFields value={profile} onChange={setProfile} disabled={busy} intakeMethod={intakeMethod}/><div className="intake-actions"><button type="button" className="secondary" onClick={() => setStep(profileDestination==='CAPTURE'?'START':'CAPTURE')}>{profileDestination==='CAPTURE'?'Back to service':'Back to cards'}</button><button className="primary" disabled={busy||!completeProfile(profile,intakeMethod)}>{busy ? 'Saving…' : profileDestination==='CAPTURE'?'Continue to camera →':profileDestination==='EMAIL'?'Save email →':'Review submission →'}</button></div>
+    </form> : step === 'EMAIL' ? <EmailVerificationPanel accountId={customer.id} draftId={draft.id} request={api} onVerified={() => setStep('CHECKOUT')} onEdit={() => { setProfileDestination('EMAIL'); setStep('PROFILE'); }}/> : step === 'CHECKOUT' ? <><CommerceCheckout draft={draft} request={api} onBack={() => setStep('REVIEW')} onPaid={order => { setPaidOrder(order); buffer.current?.clearPaid(); try { window.sessionStorage.removeItem('atlas-submission-service-v1'); } catch {} }}/>{paidOrder?.id && <CustomerOrderTracking orderId={paidOrder.id} csrf={csrf} request={api}/>}</> : <>
       <div className="section-heading capture-heading"><div><span className="eyebrow">{step === 'REVIEW' ? (shop?'03 / Looking good':'04 / Looking good') : '02 / Photo sprint'}</span><h1>{step === 'REVIEW' ? 'Meet your lineup.' : 'Front. Back. Next.'}</h1><p>{step === 'REVIEW' ? 'ATLAS fills in the card details from your photos. Check them here before payment.' : 'Keep the cards coming. Uploading and identification happen in the background.'}</p></div><span className="capture-total">{count}<small>{count === 1 ? 'CARD' : 'CARDS'}</small></span></div>
       {step === 'CAPTURE' && <>
         <div className="capture-launch"><div className="capture-outline" aria-hidden="true"><span>ATLAS</span><span>＋</span><small>FRONT + BACK</small></div><div><span className="eyebrow">No typing. No naming files.</span><h2>Point. Flip. Keep going.</h2><p>Fill the guide with one card. Take the front, flip it over, then take the back. The camera stays ready for your next card.</p><button className="primary add-card" disabled={!ownsCapture || count >= 100} onClick={() => setCamera(true)}>{local?.front ? 'Continue with the back' : count ? 'Keep capturing' : 'Open camera'} <span aria-hidden="true">↗</span></button><button className="text-link" onClick={() => { setFileSide(local?.front ? 'BACK' : 'FRONT'); fileInput.current?.click(); }} disabled={!ownsCapture}>Choose {local?.front ? 'back' : 'front'} from photos</button></div></div>
@@ -155,7 +182,7 @@ export default function CustomerIntake({ customer, csrf, initialService = null, 
         <div className="intake-review-list">{draft?.cards.map(card => <ReviewCard key={card.id} card={card} busy={busy} editable={!reviewLocked} onCorrect={(card, identity) => work(async () => { const result = await api(`/intake/drafts/${draft.id}/cards/${card.id}/correct`, { body: { expectedRevision: card.revision, identity } }); acceptDraft(result.draft); })}/>)}</div>
         {localOnly && <section className="panel local-draft-notice"><h2>Your {count} {count === 1 ? 'card is' : 'cards are'} saved on this device.</h2><p>Online photo submission is not available yet. Automatic identification and checkout will become available when ATLAS opens this service. You have not placed an order or been charged.</p><button className="secondary" onClick={() => work(async () => { const result = await api('/intake/drafts'); setDrafts(result.drafts); setIntakeAvailable(true); })}>Check availability</button></section>}
         {pending.length > 0 && <p role="status">{pending.length} pairs are still uploading. You can keep adding cards while they finish.</p>}
-        <div className="intake-actions">{!reviewLocked && <><button className="secondary" onClick={() => setStep('CAPTURE')}>Add more cards</button><button className="text-link" onClick={() => {setProfileDestination('REVIEW');setStep('PROFILE');}}>{shop?'Edit contact details':'Edit return details'}</button></>}<button className="primary" disabled={busy || !readyForCheckout} onClick={() => work(async () => { if (reviewLocked) { setStep('CHECKOUT'); return; } const result = await api(`/intake/drafts/${draft.id}/review`, { body: { expectedRevision: draft.revision, profile:intakeProfile(profile,intakeMethod) } }); acceptDraft(result.draft); setStep('CHECKOUT'); })}>Continue to checkout →</button></div>
+        <div className="intake-actions">{!reviewLocked && <><button className="secondary" onClick={() => setStep('CAPTURE')}>Add more cards</button><button className="text-link" onClick={() => {setProfileDestination('REVIEW');setStep('PROFILE');}}>{shop?'Edit contact details':'Edit return details'}</button></>}<button className="primary" disabled={busy || !readyForCheckout} onClick={() => work(async () => { if (reviewLocked) { if (draft.state === 'ORDERED') setStep('CHECKOUT'); else await continueToEmail(draft); return; } const result = await api(`/intake/drafts/${draft.id}/review`, { body: { expectedRevision: draft.revision, profile:intakeProfile(profile,intakeMethod) } }); acceptDraft(result.draft); await continueToEmail(result.draft); })}>Continue to checkout →</button></div>
       </>}
     </>}
   </div>;

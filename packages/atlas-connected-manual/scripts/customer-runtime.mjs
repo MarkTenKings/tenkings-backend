@@ -1,6 +1,8 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { createPhotoStorage } from '@atlas/photo-storage';
 import { createPhotoProcessor } from '@atlas/manual-intake/photo-processing';
+import { createEmailVerificationService } from '@atlas/customer-intake/email-verification';
+import { sendGridEmailAdapter } from '@atlas/commerce/notifications';
 import { createCustomerIntakeService } from '@atlas/customer-intake';
 import { createCustomerIntakeRepository } from '@atlas/customer-intake/repository';
 import { createCustomerIdentifier } from '@atlas/customer-intake/identification';
@@ -60,8 +62,15 @@ export function createServingCustomerService({ env, Client, onEvent = () => {} }
       if (name === 'commerce_checkout' && !providers.enabled) return customerCall(name, authority, input);
       return database.call('commerce', { name, providerBinding: providers.binding, input: { ...input, ...(authority ? { authority } : {}) } });
     }) });
+  const emailVerificationEnabled = env.ATLAS_CUSTOMER_EMAIL_VERIFICATION_ENABLED === 'true';
+  if (emailVerificationEnabled) requireConfig(env.ATLAS_COMMERCE_EMAIL_PROVIDER === 'SENDGRID');
+  const emailSender = emailVerificationEnabled ? sendGridEmailAdapter({ emailApiKey: env.ATLAS_COMMERCE_EMAIL_API_KEY,
+    emailFrom: env.ATLAS_COMMERCE_EMAIL_FROM, publicOrigin: 'https://atlasgrading.com' }) : null;
+  const emailVerification = createEmailVerificationService({ enabled: emailVerificationEnabled, sender: emailSender,
+    call: (name, input) => database.call('email', { name, input }) });
   const workerCommerce = commerce(null);
   const handlers = {
+    'email-request': ({ authority, input }) => emailVerification.request(authority, input),
     'weekly-capacity': ({ input }) => {
       if (Object.keys(input).length) throw new CustomerServiceError(400, 'INVALID_REQUEST');
       return database.call('capacity', { input: {} }).then(value => customerCapacity(value));

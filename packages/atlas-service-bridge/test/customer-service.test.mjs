@@ -53,3 +53,18 @@ test('transport rejects arbitrary destinations, fields and redirects', async t =
   await assert.rejects(client.call('dealer-locations', { input: {} }), { code: 'CUSTOMER_SERVICE_UNAVAILABLE' });
   assert.equal(observed.redirect, 'error');
 });
+test('verification email operation requires full service signature and original customer authority', async t => {
+  let admitted = 0, captured;
+  const f = await fixture(t, { 'email-request': envelope => {
+    assert.deepEqual(envelope.authority, authority); admitted++; return { state: 'UNSENT', verified: false };
+  } });
+  await assert.rejects(f.client({ key: f.directoryKey }).call('email-request', { authority, input: {} }), { status: 401 });
+  await assert.rejects(f.client().call('email-request', { input: {} }), { status: 400 });
+  await assert.rejects(f.client().call('email-request', { authority: { ...authority, accountId: 'forged' }, input: {} }), { status: 401 });
+  assert.equal(admitted, 0);
+  const signed = f.client({ fetchImpl: (url, init) => { captured = { url, init }; return fetch(url, init); } });
+  assert.deepEqual(await signed.call('email-request', { authority, input: {} }), { state: 'UNSENT', verified: false });
+  assert.equal((await fetch(captured.url, captured.init)).status, 409); assert.equal(admitted, 1);
+  // The fixture handler records admission only. It constructs no sender and
+  // makes no provider request; authoritative account checks remain in SQL.
+});

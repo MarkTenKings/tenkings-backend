@@ -15,6 +15,7 @@ export function createHandler(resolveRuntime) {
                 ['POST', /^\/api\/customer\/orders\/[a-f0-9-]{36}\/handoff$/],
                 ['GET', /^\/api\/customer\/session$/], ['GET', /^\/api\/customer\/dealer\/(session|memberships)$/], ['POST', /^\/api\/customer\/dealer\/(session|logout)$/], ['POST', /^\/api\/customer\/auth\/(request|verify|logout)$/],
                 ['GET', /^\/api\/customer\/notifications$/], ['POST', /^\/api\/customer\/notifications$/],
+                ['POST', /^\/api\/customer\/email\/(?:request|confirm)$/], ['GET', /^\/api\/customer\/email\/status$/],
                 ['POST', /^\/api\/customer\/profile$/], ['GET', /^\/api\/customer\/submissions$/],
                 ['POST', /^\/api\/customer\/submissions$/],
                 ['GET', /^\/api\/customer\/(submissions|submission-requests|cards)\/([a-f0-9-]{36})$/],
@@ -58,6 +59,22 @@ export function createHandler(resolveRuntime) {
                     if (!UUID.test(req.body.requestId??'') || !Number.isSafeInteger(req.body.expectedRevision) || req.body.expectedRevision<0 || req.body.expectedRevision>99999999
                         || typeof req.body.email!=='boolean' || typeof req.body.sms!=='boolean') deny(400,'INVALID_REQUEST');
                     body = await auth.call(cookieHeader,'progress_preferences_save',req.body,csrf??'');
+                }
+            } else if (path.startsWith('/api/customer/email/')) {
+                const params = new URL(req.url, state.config.origin).searchParams;
+                if (path.endsWith('/status')) {
+                    if (params.size !== 1 || params.getAll('draftId').length !== 1 || !UUID.test(params.get('draftId') ?? '')) deny(400, 'INVALID_REQUEST');
+                    body = await auth.call(cookieHeader, 'email_status', { draftId: params.get('draftId') });
+                } else if (path.endsWith('/confirm')) {
+                    if (params.size) deny(400, 'INVALID_REQUEST');
+                    body = await auth.confirmEmail(cookieHeader, csrf ?? '', req.body, client);
+                } else {
+                    if (params.size) deny(400, 'INVALID_REQUEST');
+                    keys(req.body, ['draftId', 'requestId']);
+                    if (!UUID.test(req.body.draftId ?? '') || !UUID.test(req.body.requestId ?? '')) deny(400, 'INVALID_REQUEST');
+                    const authority = { ...auth.authority(cookieHeader, csrf ?? ''), binding: state.config.binding };
+                    if (!state.emailVerification) deny(503, 'EMAIL_VERIFICATION_NOT_CONFIGURED');
+                    body = await state.emailVerification.request(authority, req.body);
                 }
             } else if (path.endsWith('/profile')) {
                 keys(req.body, ['profile']); body = await auth.call(cookieHeader, 'profile', { profile: profile(req.body.profile, {allowContact:true}) }, csrf ?? '');

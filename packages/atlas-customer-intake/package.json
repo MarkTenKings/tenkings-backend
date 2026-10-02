@@ -8,7 +8,8 @@
     "./contract": "./src/contract.mjs",
     "./repository": "./src/repository.mjs",
     "./identification": "./src/identification.mjs",
-    "./profile": "./src/profile.mjs"
+    "./profile": "./src/profile.mjs",
+    "./email-verification": "./src/email-verification.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"

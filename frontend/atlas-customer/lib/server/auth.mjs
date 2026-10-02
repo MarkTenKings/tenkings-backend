@@ -49,6 +49,16 @@ export class CustomerAuth {
         }
         return { token, customer, csrf: this.digest(`session:${token}`) };
     }
+    confirmEmail(header, csrf, input, client) {
+        keys(input, ['token', 'mode']);
+        if (!tokenShape(input.token) || !['AUTO', 'CONFIRM'].includes(input.mode)) deny(400, 'EMAIL_LINK_INVALID');
+        const jar = cookies(header), browser = jar[this.config.cookies.browser], session = jar[this.config.cookies.session];
+        if (!tokenShape(browser)) deny(403, 'CSRF_REQUIRED');
+        const browserCsrf = this.digest(`browser:${browser}`), sessionCsrf = tokenShape(session) ? this.digest(`session:${session}`) : null;
+        if (!equal(csrf, browserCsrf) && !equal(csrf, sessionCsrf)) deny(403, 'CSRF_REQUIRED');
+        return this.database.call('email_confirm', { ...this.authority(header, undefined, 'browser'),
+            tokenHash: hash(input.token), mode: input.mode, clientHash: hash(client ?? 'unknown') });
+    }
     logout(header, csrf) { return this.database.call('logout', this.authority(header, csrf)); }
     call(header, action, data, csrf) { return this.database.call(action, { ...data, ...this.authority(header, csrf) }); }
 }

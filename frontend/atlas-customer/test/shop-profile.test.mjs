@@ -14,12 +14,13 @@ const text=node=>Array.isArray(node)?node.map(text).join(''):node&&typeof node==
 const runtime=name=>name.startsWith('next/dist/compiled/@babel/runtime/')?nextRequire(name):name.startsWith('@babel/runtime/')?nextRequire(`next/dist/compiled/${name}`):undefined;
 const fields={};vm.runInNewContext(compile('ProfileFields'),{exports:fields,require:name=>name==='react'?{createElement:element}:name==='@atlas/customer-intake/profile'?profileContract:runtime(name)});
 
-test('shop fields expose name and optional email, while mail retains full required return profile',()=>{
+test('shop fields expose name and required email, while mail retains full required return profile',()=>{
  const value={...fields.emptyProfile,name:'Alex'},shop=fields.default({value,onChange(){},intakeMethod:'DEALER_DROP_OFF'}),mail=fields.default({value,onChange(){}});
- const inputs=all(shop,n=>n.type==='input');assert.equal(inputs.length,2);assert.equal(inputs[0].props.required,true);assert.equal(inputs[1].props.required,false);assert.match(text(shop),/optional/);
- assert.equal(all(mail,n=>n.type==='input').length,8);assert.equal(fields.completeProfile(value,'DEALER_DROP_OFF'),true);assert.equal(fields.completeProfile(value,'MAIL_IN'),false);
- assert.deepEqual(fields.intakeProfile({...value,address1:'Saved return street'},'DEALER_DROP_OFF'),{name:'Alex',email:''});
- assert.deepEqual(serverProfile({name:' Alex ',email:''},{allowContact:true}),{name:'Alex',email:''});
+ const inputs=all(shop,n=>n.type==='input');assert.equal(inputs.length,2);assert.equal(inputs[0].props.required,true);assert.equal(inputs[1].props.required,true);assert.doesNotMatch(text(shop),/optional/);
+ assert.equal(all(mail,n=>n.type==='input').length,8);assert.equal(fields.completeProfile(value,'DEALER_DROP_OFF'),false);assert.equal(fields.completeProfile(value,'MAIL_IN'),false);
+ assert.deepEqual(fields.intakeProfile({...value,email:'alex@example.invalid',address1:'Saved return street'},'DEALER_DROP_OFF'),{name:'Alex',email:'alex@example.invalid'});
+ assert.throws(()=>serverProfile({name:' Alex ',email:''},{allowContact:true}),{code:'CONTACT_DETAILS_REQUIRED'});
+ assert.deepEqual(serverProfile({name:' Alex ',email:'alex@example.invalid'},{allowContact:true}),{name:'Alex',email:'alex@example.invalid'});
  assert.throws(()=>serverProfile({name:'Alex',email:''}));
  assert.throws(()=>serverProfile({name:'Alex',email:'bad'},{allowContact:true}),{code:'CONTACT_DETAILS_REQUIRED'});
  assert.throws(()=>serverProfile({name:'Alex',phone:'+12025550141'},{allowContact:true}));
@@ -48,12 +49,18 @@ async function intake(initialProfile){
  const settle=async()=>{for(let i=0;i<4;i++){render();await new Promise(resolve=>setImmediate(resolve));}render();};
  await settle();return{get tree(){return tree;},calls,settle,Camera};
 }
-test('first-time shop asks name before camera, saves only compact contact and proceeds without address',async()=>{
+test('first-time shop asks name and receipt email before camera, saves only compact contact and proceeds without address',async()=>{
  const view=await intake(null);assert.match(text(view.tree),/Who are we grading for/);assert.equal(all(view.tree,n=>n.type===view.Camera).length,0);
- const formFields=all(view.tree,n=>n.type===fields.default)[0];assert.equal(formFields.props.intakeMethod,'DEALER_DROP_OFF');formFields.props.onChange({...formFields.props.value,name:'Alex'});await view.settle();
+ const formFields=all(view.tree,n=>n.type===fields.default)[0];assert.equal(formFields.props.intakeMethod,'DEALER_DROP_OFF');formFields.props.onChange({...formFields.props.value,name:'Alex',email:'alex@example.invalid'});await view.settle();
  const form=all(view.tree,n=>n.type==='form')[0];form.props.onSubmit({preventDefault(){}});await view.settle();
- assert.deepEqual(view.calls.find(c=>c.path==='/profile').options.body.profile,{name:'Alex',email:''});assert.equal(all(view.tree,n=>n.type===view.Camera).length,1);assert.match(text(view.tree),/Front. Back. Next./);
+ assert.deepEqual(view.calls.find(c=>c.path==='/profile').options.body.profile,{name:'Alex',email:'alex@example.invalid'});assert.equal(all(view.tree,n=>n.type===view.Camera).length,1);assert.match(text(view.tree),/Front. Back. Next./);
 });
-test('returning shop customer with saved name reaches camera without a duplicate profile step',async()=>{
- const view=await intake({name:'Alex'});assert.doesNotMatch(text(view.tree),/Who are we grading for/);assert.equal(all(view.tree,n=>n.type===view.Camera).length,1);assert.equal(view.calls.some(c=>c.path==='/profile'),false);
+test('returning shop customer with saved name and email reaches camera without a duplicate profile step',async()=>{
+ const view=await intake({name:'Alex',email:'alex@example.invalid'});assert.doesNotMatch(text(view.tree),/Who are we grading for/);assert.equal(all(view.tree,n=>n.type===view.Camera).length,1);assert.equal(view.calls.some(c=>c.path==='/profile'),false);
+});
+
+test('legacy name-only shop profile asks for email before a new intake without asking for a return address',async()=>{
+ const view=await intake({name:'Alex'});assert.match(text(view.tree),/Who are we grading for/);
+ const profile=all(view.tree,n=>n.type===fields.default)[0];assert.equal(profile.props.intakeMethod,'DEALER_DROP_OFF');
+ assert.equal(all(view.tree,n=>n.type===view.Camera).length,0);assert.equal(view.calls.some(c=>c.path==='/profile'),false);
 });

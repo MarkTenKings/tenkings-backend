@@ -22,7 +22,7 @@ test('resuming a reviewed cart opens payment reconciliation without attempting a
     useEffect(fn, deps) { const id = cursor++; if (changed(slots[id]?.deps, deps)) { const old = slots[id]; slots[id] = { deps }; pending.push(() => { old?.cleanup?.(); slots[id].cleanup = fn(); }); } },
   };
   const draft = { id: 'saved-draft', revision: 5, state: 'REVIEW', intakeMethod: 'MAIL_IN', kioskId: null, cards: [{ id: 'saved-card' }] };
-  function CommerceCheckout() {} function Stub() {}
+  function CommerceCheckout() {} function EmailVerificationPanel() {} function Stub() {}
   const exports = {};
   vm.runInNewContext(code, { exports, AbortController, setInterval: () => 1, clearInterval() {}, document: { visibilityState: 'visible' }, window: { sessionStorage: {} }, navigator: { locks: { request: async (_name, _options, fn) => fn({}) } },
     require(name) {
@@ -34,6 +34,7 @@ test('resuming a reviewed cart opens payment reconciliation without attempting a
       if (name.endsWith('/capture-state.mjs')) return captureState;
       if (name.endsWith('/capture-buffer.mjs')) return { createCaptureBuffer: () => ({ snapshot: async () => ({ pairIds: [], pairs: [] }), setService: async () => {}, attachDraft: async () => ({ pairIds: [], pairs: [], draftId: draft.id }), close: async () => {} }) };
       if (name.endsWith('/ProfileFields.jsx')) return { default: Stub, completeProfile: () => true, emptyProfile: {}, __esModule: true };
+      if (name.endsWith('/EmailVerificationPanel.jsx')) return { default: EmailVerificationPanel, __esModule: true };
       if (name.endsWith('/CommerceCheckout.jsx')) return { default: CommerceCheckout, __esModule: true };
       return { default: Stub, __esModule: true };
     } });
@@ -41,6 +42,9 @@ test('resuming a reviewed cart opens payment reconciliation without attempting a
   render(); await new Promise(resolve => setImmediate(resolve)); render();
   const button = all(tree, node => node.type === 'button' && text(node).startsWith('Resume '))[0]; assert.ok(button);
   button.props.onClick(); await new Promise(resolve => setImmediate(resolve)); render();
+  const panel = all(tree, node => node.type === EmailVerificationPanel)[0]; assert.equal(panel.props.draftId, draft.id);
+  // Status may waive verification for a saved active attempt; no review mutation.
+  panel.props.onVerified(); render();
   const checkout = all(tree, node => node.type === CommerceCheckout)[0]; assert.equal(checkout.props.draft.id, draft.id);
   assert.equal(calls.length, 1); assert.equal(calls[0].options.body, undefined);
 });

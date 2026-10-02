@@ -28,6 +28,7 @@ export function privateCustomerServices(env) {
     const call = operation => (authority, input) => client.call(operation, { authority, input });
     return {
         intake: { sign: call('intake-sign'), complete: call('intake-complete') },
+        emailVerification: { request: call('email-request') },
         commerce: { checkout: call('commerce-checkout'), quote: call('commerce-quote'), pay: call('commerce-pay'), reconcile: call('commerce-reconcile') },
         async directory(input) {
             const result = await client.call('dealer-locations', { input });

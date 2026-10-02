@@ -42,7 +42,7 @@ export function normalizePhone(value) {
 }
 export function profile(input, { requireEmail = true, allowContact = false } = {}) {
     if(allowContact&&input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).every(key=>['name','email'].includes(key))){
-        try{return contactProfileInput(input);}catch{deny(400,'CONTACT_DETAILS_REQUIRED');}
+        try{return contactProfileInput(input,{requireEmail:true});}catch{deny(400,'CONTACT_DETAILS_REQUIRED');}
     }
     const fields = ['name', ...(requireEmail || Object.hasOwn(input ?? {}, 'email') ? ['email'] : []), 'address1', 'address2', 'city', 'region', 'postalCode', 'country'];
     keys(input, fields);
