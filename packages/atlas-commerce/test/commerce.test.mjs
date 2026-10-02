@@ -59,24 +59,24 @@ test('new shop checkout needs schedule and dealer identity but no terminal or pa
     assert.equal(b.repository.quotes.get(q.id).location.terminalId,undefined);
     delete b.checkout.location.schedule.projectedReturnAt;await assert.rejects(()=>b.service.quote(b.input),/KIOSK_NOT_AVAILABLE/);
 });
-test('shop contact can be name plus verified phone; optional email controls only the new receipt effect',async()=>{
-    for (const contact of [{name:'Shop Customer'},{name:'Shop Customer',email:''},{name:'Shop Customer',email:'shop@example.test'}]) {
+test('new shop checkout requires receipt email and produces no SMS effect',async()=>{
+    for (const contact of [{name:'Shop Customer',email:'shop@example.test'}]) {
         let taxInput,shippingCalls=0;const b=build('KIOSK',{payment:payment('succeeded'),tax:{async calculate(input){taxInput=input;return tax.calculate(input);}},carrier:{async quote(){shippingCalls++;throw Error('must not ship shop cards');}}});
         b.checkout.profile=contact;
         const quote=await b.service.quote(b.input),stored=b.repository.quotes.get(quote.id);
         assert.deepEqual(stored.profile,contact);assert.equal(stored.phone,b.checkout.phone);assert.equal(quote.shippingCents,0);assert.equal(shippingCalls,0);
         assert.deepEqual(taxInput.location.address,b.checkout.location.address);assert.deepEqual(taxInput.profile,contact);
         const paid=await b.service.pay({quoteId:quote.id,requestId:randomUUID()});assert.equal(paid.state,'PAID');
-        const expected=contact.email?['EMAIL_RECEIPT','SMS_RECEIPT','TAX_TRANSACTION']:['SMS_RECEIPT','TAX_TRANSACTION'];
+        const expected=['EMAIL_RECEIPT','TAX_TRANSACTION'];
         assert.deepEqual([...b.repository.effects.values()].map(effect=>effect.kind).sort(),expected);
-        const sms=[...b.repository.effects.values()].find(effect=>effect.kind==='SMS_RECEIPT');assert.equal(sms.request.to,b.checkout.phone);
+        assert.equal([...b.repository.effects.values()].some(effect=>effect.kind==='SMS_RECEIPT'),false);
         assert.equal((await b.service.reconcile(paid.attemptId)).order.id,paid.order.id);assert.equal(b.repository.effects.size,expected.length);
     }
 });
-test('shop name and valid optional email stay required; a compact shop contact cannot be used for mail',async()=>{
-    for(const contact of [{},{name:''},{name:'Shop Customer',email:'bad'},{name:'Shop Customer',email:null}]) {
+test('new shop name and receipt email are required; a compact shop contact cannot be used for mail',async()=>{
+    for(const contact of [{},{name:''},{name:'Shop Customer'},{name:'Shop Customer',email:''},{name:'Shop Customer',email:'bad'},{name:'Shop Customer',email:null}]) {
         let taxCalls=0;const b=build('KIOSK',{tax:{async calculate(){taxCalls++;throw Error('must not call');}}});b.checkout.profile=contact;
-        await assert.rejects(()=>b.service.quote(b.input),/PROFILE_INCOMPLETE/);assert.equal(taxCalls,0);
+        await assert.rejects(()=>b.service.quote(b.input),/PROFILE_(INCOMPLETE|EMAIL_REQUIRED)/);assert.equal(taxCalls,0);
     }
     const mail=build('MAIL_IN');mail.checkout.profile={name:'Shop Customer'};await assert.rejects(()=>mail.service.quote(mail.input),/PROFILE_INCOMPLETE/);
 });
@@ -87,7 +87,7 @@ test('concurrent payment requests produce one provider intent; ACK is not paid',
 test('lost create reply stays unknown, repeated Pay does not create another intent',async()=>{const p=payment();p.create=async()=>{p.creates++;throw Error('lost');};p.retrieve=async()=>{throw Error('not yet discoverable');};const b=build('KIOSK',{payment:p});const q=await b.service.quote(b.input);
     const first=await b.service.pay({quoteId:q.id,requestId:randomUUID()});assert.equal(first.state,'UNKNOWN');await b.service.pay({quoteId:q.id,requestId:randomUUID()});assert.equal(p.creates,1);assert.equal(b.repository.effects.size,0);});
 test('confirmed payment atomically creates one order and durable receipt effects on retries',async()=>{const b=build('KIOSK',{payment:payment('succeeded')});const q=await b.service.quote(b.input);
-    const first=await b.service.pay({quoteId:q.id,requestId:randomUUID()}),second=await b.service.reconcile(first.attemptId);assert.equal(first.state,'PAID');assert.equal(first.order.id,second.order.id);assert.equal(b.repository.effects.size,3);assert.ok([...b.repository.effects.values()].every(effect=>effect.kind!=='PACKAGE_LABEL'));});
+    const first=await b.service.pay({quoteId:q.id,requestId:randomUUID()}),second=await b.service.reconcile(first.attemptId);assert.equal(first.state,'PAID');assert.equal(first.order.id,second.order.id);assert.equal(b.repository.effects.size,2);assert.ok([...b.repository.effects.values()].every(effect=>effect.kind!=='PACKAGE_LABEL'));});
 test('provider amount/merchant/mode/hash mismatches cannot mark paid',async()=>{for(const patch of [{amountCents:1},{receivedCents:1},{merchantId:'acct_other'},{livemode:true},{quoteHash:'b'.repeat(64)},{paymentMethodTypes:['card_present']}]){
     const p=payment('succeeded'),original=p.retrieve;p.retrieve=async a=>({...await original(a),...patch});const b=build('KIOSK',{payment:p}),q=await b.service.quote(b.input);
     await assert.rejects(()=>b.service.pay({quoteId:q.id,requestId:randomUUID()}),/PAYMENT_/);assert.equal(b.repository.effects.size,0);}});

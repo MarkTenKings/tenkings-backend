@@ -6,7 +6,7 @@ export const profile = {name:'Test Customer',email:'customer@example.test',addre
 export const party = {contact:{personName:'ATLAS Test',phoneNumber:'+15555550101'},address:{streetLines:['20 Test Way'],city:'Example',stateOrProvinceCode:'CA',postalCode:'90001',countryCode:'US'}};
 export const shipment = () => ({shipDateTimeZone:'America/Los_Angeles',requestedShipment:{shipper:clone(party),recipients:[clone(party)],shipDatestamp:'2026-09-25',serviceType:'FEDEX_GROUND',pickupType:'DROPOFF_AT_FEDEX_LOCATION',packagingType:'YOUR_PACKAGING',totalPackageCount:1,shippingChargesPayment:{paymentType:'THIRD_PARTY'},
     requestedPackageLineItems:[{weight:{units:'LB',value:1.2},dimensions:{units:'IN',length:9,width:6,height:4}}]}});
-export function source(channel='KIOSK',count=2) { return {draftId:randomUUID(),accountId:randomUUID(),revision:2,profile:clone(profile),profileRevision:2,phone:'+15555550102',channel,
+export function source(channel='KIOSK',count=2) { return {draftId:randomUUID(),accountId:randomUUID(),revision:2,profile:clone(profile),emailVerified:true,profileRevision:2,phone:'+15555550102',channel,
     cards:Array.from({length:count},()=>({id:randomUUID(),revision:1,photoPairHash:'a'.repeat(64),identity:{title:'Reviewed test card'}})),
     location:channel==='KIOSK'?{id:randomUUID(),dealerId:randomUUID(),revision:1,name:'Configured Test Kiosk',terminalId:'tmr_atlas',terminalLocationId:'tml_atlas',address:{line1:'20 Kiosk Way',city:'Example',region:'CA',postalCode:'90002',country:'US'},
         schedule:{timeZone:'America/Los_Angeles',nextCollectionAt:'2026-09-25T10:00:00.000Z',projectedReturnAt:'2026-10-02T10:00:00.000Z'}}:null,

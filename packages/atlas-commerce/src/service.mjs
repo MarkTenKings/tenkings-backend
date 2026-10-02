@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { assertCheckout, assertPaidEvidence, assertPaymentBinding, clone, digest, requireValue, minor, receiptEffects, SERVICE, UUID } from './contract.mjs';
+import { assertCheckout, assertPaidEvidence, assertPaymentBinding, clone, digest, requireValue, minor, receiptEffects, receiptEmail, SERVICE, UUID } from './contract.mjs';
 import { customerCheckout, customerOrder, customerPayment, customerQuote } from './projections.mjs';
 import { assertShipmentDate, assertShippingPlan, availableShippingPlans } from './shipping-plan.mjs';
 import { validateShipment } from './providers.mjs';
@@ -50,6 +50,8 @@ export class CommerceService {
     async quote({ draftId, expectedRevision, packingPresetId, shippingServiceCode }) {
         requireValue(UUID.test(draftId), 'INVALID_REQUEST', 400);
         const source = assertCheckout(await this.repository.loadCheckout(draftId));
+        requireValue(receiptEmail(source.profile.email), 'PROFILE_EMAIL_REQUIRED', 409);
+        requireValue(source.emailVerified === true, 'EMAIL_VERIFICATION_REQUIRED', 409);
         requireValue(source.revision === expectedRevision, 'CHECKOUT_CHANGED');
         requireValue(this.payment && this.tax, 'COMMERCE_NOT_CONFIGURED', 503);
         const service = SERVICE[source.channel], now = this.clock(), id = this.uuid();
@@ -146,6 +148,8 @@ export class CommerceService {
     }
     async runEffect(effectId) {
         const pending = await this.repository.effect(effectId);
+        // Email-first launch retains historical SMS evidence without claiming a send.
+        requireValue(pending.kind !== 'SMS_RECEIPT' || pending.state !== 'PENDING', 'SMS_NOTIFICATIONS_DISABLED', 409);
         // A missing adapter is a proven pre-dispatch refusal. Leave the durable
         // job pending so configuration can be supplied without a false UNKNOWN.
         if (pending.kind === 'FEDEX_LABEL') {

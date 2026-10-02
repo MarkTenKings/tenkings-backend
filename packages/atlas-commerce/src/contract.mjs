@@ -20,7 +20,7 @@ export const SERVICE = Object.freeze({ MAIL_IN: Object.freeze({ unitCents: 4000,
     KIOSK: Object.freeze({ unitCents: 5000, days: 7, commissionCents: 500 }) });
 // Saved pre-cutover KIOSK attempts retain their original terminal semantics.
 export const customerPhonePayment = quote => quote?.channel === 'MAIL_IN' || quote?.terms?.paymentFlow === 'CUSTOMER_PHONE';
-const receiptEmail = value => typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+export const receiptEmail = value => typeof value === 'string' && value.length <= 254 && !/[\x00-\x1f\x7f]/.test(value) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
 export function assertCheckout(source) {
     requireValue(source && UUID.test(source.draftId) && UUID.test(source.accountId), 'INVALID_CHECKOUT_SOURCE');
@@ -73,7 +73,6 @@ export function receiptEffects(orderId, quote) {
     return [
         ...(quote.channel === 'KIOSK' && customerPhonePayment(quote) && !receiptEmail(quote.profile.email) ? []
             : [{ id: `${orderId}:email:v1`, kind: 'EMAIL_RECEIPT', request: { ...receipt, to: quote.profile.email } }]),
-        { id: `${orderId}:sms:v1`, kind: 'SMS_RECEIPT', request: { ...receipt, to: quote.phone } },
         { id: `${orderId}:tax:v1`, kind: 'TAX_TRANSACTION', request: { ...receipt, calculationId: quote.tax.providerId } },
         ...quote.shipping.map(line => ({ id: `${orderId}:fedex:${line.leg}:v1`, kind: 'FEDEX_LABEL',
             request: { ...receipt, shipment: line.request, leg: line.leg, rateId: line.providerId } })),

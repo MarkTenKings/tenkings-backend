@@ -6,9 +6,11 @@ export function inspectCommerceConfiguration(env = {}, { channel = 'ALL' } = {})
     if (!['ALL', 'MAIL_IN', 'KIOSK'].includes(channel)) throw new TypeError('Invalid commerce readiness channel');
     const mailKeys = new Set(COMMERCE_KEYS.filter(key => key.includes('_FEDEX_') || key.includes('_MAIL_')));
     const enabled = env.ATLAS_COMMERCE_ENABLED === 'true';
-    const missing = COMMERCE_KEYS.filter(key => key !== 'ATLAS_COMMERCE_ENABLED' && !env[key] && !(channel === 'KIOSK' && mailKeys.has(key)));
+    const smsDisabled = env.ATLAS_COMMERCE_SMS_PROVIDER === 'DISABLED';
+    const inactiveSmsKey = key => smsDisabled && key.startsWith('ATLAS_COMMERCE_SMS_') && key !== 'ATLAS_COMMERCE_SMS_PROVIDER';
+    const missing = COMMERCE_KEYS.filter(key => key !== 'ATLAS_COMMERCE_ENABLED' && !inactiveSmsKey(key) && !env[key] && !(channel === 'KIOSK' && mailKeys.has(key)));
     const invalid = [];
-    const check = (key, valid) => { if (env[key] && !(channel === 'KIOSK' && key.includes('_MAIL_')) && !valid(env[key])) invalid.push(key); };
+    const check = (key, valid) => { if (env[key] && !inactiveSmsKey(key) && !(channel === 'KIOSK' && key.includes('_MAIL_')) && !valid(env[key])) invalid.push(key); };
     const oneOf = (...values) => value => values.includes(value);
     check('ATLAS_COMMERCE_ENABLED', oneOf('true', 'false'));
     check('ATLAS_COMMERCE_CONFIG_HASH', value => /^[a-f0-9]{64}$/.test(value));
@@ -29,7 +31,7 @@ export function inspectCommerceConfiguration(env = {}, { channel = 'ALL' } = {})
     check('ATLAS_COMMERCE_MAIL_CHARGED_LEGS', oneOf('INBOUND_ONLY', 'BOTH_LEGS'));
     check('ATLAS_COMMERCE_EMAIL_PROVIDER', oneOf('SENDGRID'));
     check('ATLAS_COMMERCE_EMAIL_FROM', value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
-    check('ATLAS_COMMERCE_SMS_PROVIDER', oneOf('TWILIO'));
+    check('ATLAS_COMMERCE_SMS_PROVIDER', oneOf('TWILIO', 'DISABLED'));
     check('ATLAS_COMMERCE_SMS_ACCOUNT_SID', value => /^AC[a-fA-F0-9]{32}$/.test(value));
     check('ATLAS_COMMERCE_SMS_API_KEY_SID', value => /^SK[a-fA-F0-9]{32}$/.test(value));
     check('ATLAS_COMMERCE_SMS_SERVICE_SID', value => /^MG[a-fA-F0-9]{32}$/.test(value));
@@ -47,6 +49,7 @@ export function inspectCommerceConfiguration(env = {}, { channel = 'ALL' } = {})
     return {
         status: !enabled ? 'COLD' : adaptersValid ? 'READY_FOR_PROVIDER_QUALIFICATION' : 'INCOMPLETE',
         enabled, channel, missing, invalid, adaptersValid,
+        notificationChannels: smsDisabled ? ['EMAIL'] : env.ATLAS_COMMERCE_SMS_PROVIDER === 'TWILIO' ? ['EMAIL', 'SMS'] : [],
         externalVerification: 'NOT_PERFORMED',
         activationGates: ['MERCHANT_AND_TAX', ...(channel === 'KIOSK' ? [] : ['FEDEX_ACCOUNT_AND_MEASURED_PACKAGES']), 'RECEIPT_SENDERS',
             'PRIVATE_STORAGE_AND_TRANSPORT', 'DEPLOYMENT_BOUND_DATABASE_CONTROLS',

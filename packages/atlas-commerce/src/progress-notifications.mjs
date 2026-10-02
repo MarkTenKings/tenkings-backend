@@ -43,7 +43,7 @@ export function createProgressNotificationWorker({ call, notifications, enabled 
       if (!claim.dispatch) continue;
       let result;
       try {
-        requireValue(claim.effect?.id === id && ['EMAIL_PROGRESS', 'SMS_PROGRESS'].includes(claim.effect.kind), 'PROGRESS_RESPONSE_INVALID', 503);
+        requireValue(claim.effect?.id === id && claim.effect.kind === 'EMAIL_PROGRESS', 'PROGRESS_RESPONSE_INVALID', 503);
         progressMessage(claim.effect.request);
         result = await notifications.send(claim.effect.kind, claim.effect.request, id);
       } catch {

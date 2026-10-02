@@ -24,8 +24,8 @@ export function createCommerceProviders(env, dependencies = {}) {
     const payment=stripePaymentAdapter({transport,publishableKey:env.ATLAS_COMMERCE_STRIPE_PUBLISHABLE_KEY});
     const tax=stripeTaxAdapter({transport,taxCode:env.ATLAS_COMMERCE_TAX_CODE,shippingTaxCode:env.ATLAS_COMMERCE_SHIPPING_TAX_CODE,
         addressSource:env.ATLAS_COMMERCE_TAX_ADDRESS_SOURCE,sourcingPolicy:env.ATLAS_COMMERCE_TAX_SOURCING_POLICY});
-    requireValue(env.ATLAS_COMMERCE_EMAIL_PROVIDER==='SENDGRID'&&env.ATLAS_COMMERCE_SMS_PROVIDER==='TWILIO','RECEIPTS_NOT_CONFIGURED',503);
-    const notifications=notificationAdapter({emailApiKey:env.ATLAS_COMMERCE_EMAIL_API_KEY,emailFrom:env.ATLAS_COMMERCE_EMAIL_FROM,
+    requireValue(env.ATLAS_COMMERCE_EMAIL_PROVIDER==='SENDGRID'&&['TWILIO','DISABLED'].includes(env.ATLAS_COMMERCE_SMS_PROVIDER),'RECEIPTS_NOT_CONFIGURED',503);
+    const notifications=notificationAdapter({smsEnabled:env.ATLAS_COMMERCE_SMS_PROVIDER==='TWILIO',emailApiKey:env.ATLAS_COMMERCE_EMAIL_API_KEY,emailFrom:env.ATLAS_COMMERCE_EMAIL_FROM,
         smsAccountSid:env.ATLAS_COMMERCE_SMS_ACCOUNT_SID,smsApiKeySid:env.ATLAS_COMMERCE_SMS_API_KEY_SID,smsApiKeySecret:env.ATLAS_COMMERCE_SMS_API_KEY_SECRET,
         smsServiceSid:env.ATLAS_COMMERCE_SMS_SERVICE_SID,fetchImpl:dependencies.fetchImpl});
     const fedexConfigured=Boolean(env.ATLAS_COMMERCE_FEDEX_CLIENT_ID||env.ATLAS_COMMERCE_FEDEX_CLIENT_SECRET||env.ATLAS_COMMERCE_FEDEX_ACCOUNT_NUMBER);
