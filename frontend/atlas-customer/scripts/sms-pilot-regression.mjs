@@ -228,7 +228,11 @@ export async function smsPilotScenarios(scenario, check) {
         for (const app of c.apps) {
             await c.activate(app); const browser = await app.browser();
             const other = await app.httpSend(browser, OTHER_PHONE);
-            assert.equal(other.statusCode, 503); assert.deepEqual(other.body, { error: 'TEMPORARILY_UNAVAILABLE' });
+            assert.equal(other.statusCode, 503);
+            if (app.name === 'STAFF') {
+                assert.match(other.body.reference, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+                assert.deepEqual(other.body, { error: 'TEMPORARILY_UNAVAILABLE', reference: other.body.reference });
+            } else assert.deepEqual(other.body, { error: 'TEMPORARILY_UNAVAILABLE' });
             for (const fields of [{ accountSid: `AC${'4'.repeat(32)}` }, { serviceSid: `VA${'4'.repeat(32)}` }, { phoneHash: '4'.repeat(64) }])
                 await assert.rejects(() => c.rawClaim(app, browser, fields), unavailable);
             if (app.name === 'CUSTOMER') {
