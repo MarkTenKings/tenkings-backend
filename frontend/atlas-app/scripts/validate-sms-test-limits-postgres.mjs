@@ -8,6 +8,7 @@ import { DurableStaffAuth } from '../lib/server/access/auth.mjs';
 import { StaffDatabase } from '../lib/server/access/database.mjs';
 import { smsPilotScenarios } from '../../atlas-customer/scripts/sms-pilot-regression.mjs';
 import { smsTestLimitsScenarios } from './sms-test-limits-fixture.mjs';
+import { publicCustomerAdmissionScenarios } from './public-customer-admission-fixture.mjs';
 const fixture = await disposablePostgres(process.argv.slice(2));
 let passed = 0;
 try {
@@ -28,5 +29,6 @@ try {
     };
     await smsPilotScenarios(scenario, (code, action) => assert.rejects(action, error => error.code === code));
     await smsTestLimitsScenarios(scenario);
+    await publicCustomerAdmissionScenarios(scenario);
     console.log(JSON.stringify({ result: 'SMS_TEST_LIMITS_REMOVED_POSTGRES_PASS', passed, source: fixture.source, directory: fixture.directory }));
 } finally { await fixture.stop(); }
