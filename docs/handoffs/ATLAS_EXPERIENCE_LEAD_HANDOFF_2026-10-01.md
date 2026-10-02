@@ -1,5 +1,7 @@
 # ATLAS experience — replacement lead handoff
 
+**October1,17:07Pacific: R3 homepage is now LIVE from519298c6, PublicReader40, package4513c07b7f9010e4. Owner-rejected montage players were removed before deployment. All126canonical checks pass. See `docs/atlas/audits/2026-10-01/homepage-launch.md`. New personal creator ad remains a separate owner review. The local-only statements below describe the earlier checkpoint.**
+
 ## Current checkpoint — R3 owner feedback, October 1
 
 This checkpoint supersedes the historical transfer instructions below. The owner accepted the hero exactly as it is and rejected the long films for this marketing use. Latest requested agent configuration was Astra Extra High. Three fresh `gpt-6-astra` / `xhigh` agents were ultimately created: NFC product, vertical ads, then independent qualification once a slot freed. The retained film agent independently authored Spot the Switch while the third slot was unavailable. Do not claim three fresh agents ran concurrently.

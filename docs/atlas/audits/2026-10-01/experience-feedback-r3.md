@@ -1,5 +1,7 @@
 # ATLAS owner feedback R3 — local review build
 
+**October1,17:07Pacific: R3 homepage is now LIVE from519298c6, PublicReader40, package4513c07b7f9010e4. Owner-rejected montage players were removed before deployment. All126canonical checks pass. See `docs/atlas/audits/2026-10-01/homepage-launch.md`. New personal creator ad remains a separate owner review. The local-only statements below describe the earlier checkpoint.**
+
 October 1, 2026. Isolated branch `codex/atlas-experience-20261001`, based on `3d6bbbfb`. No deploy, restart of production, data migration, report publication, payment or customer communication occurred.
 
 ## Review
