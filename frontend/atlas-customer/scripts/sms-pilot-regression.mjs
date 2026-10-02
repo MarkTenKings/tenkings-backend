@@ -119,7 +119,11 @@ export async function smsPilotScenarios(scenario, check) {
         assert.equal(rows.length, 2); assert(rows.every(row => !row.enabled && row.activatedAt === null));
         for (const app of c.apps) {
             const res = await app.httpSend(await app.browser());
-            assert.equal(res.statusCode, 503); assert.deepEqual(res.body, { error: 'TEMPORARILY_UNAVAILABLE' });
+            assert.equal(res.statusCode, 503);
+            if (app.name === 'STAFF') {
+                assert.match(res.body.reference, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+                assert.deepEqual(res.body, { error: 'TEMPORARILY_UNAVAILABLE', reference: res.body.reference });
+            } else assert.deepEqual(res.body, { error: 'TEMPORARILY_UNAVAILABLE' });
             assert.equal(app.calls.sends, 0); assert.equal((await c.reservations(app)).length, 0);
             assert.equal((await c.sql(`SELECT count(*)::int AS n FROM ${app.schema}."${app.table}"`)).rows[0].n, 0);
         }
