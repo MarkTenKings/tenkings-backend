@@ -188,7 +188,7 @@ describe("customer touchscreen components", () => {
         paidDoorIds: [],
       };
       const view = renderReact(<PaidFlow snapshot={snapshot({ publicState, activeSale: terminalSale })} retryBusy={false} paymentBusy={false} doneBusy={false} onContinuePayment={() => undefined} onOpenDoors={() => undefined} onDone={onDone} />);
-      expect(view.container.textContent).toContain(publicState === "PAYMENT_DECLINED" ? "No charge was completed" : "Your order was not paid");
+      expect(view.container.textContent).toContain(publicState === "PAYMENT_DECLINED" ? "Payment was not completed" : "Your order was not paid");
       expect(view.container.textContent).not.toContain("Your exact paid doors");
       await click(view.container.querySelector(".return-shopping-action"));
       expect(onDone).toHaveBeenCalledTimes(1);

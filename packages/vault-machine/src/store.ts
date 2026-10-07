@@ -71,6 +71,7 @@ export class VaultStore {
   private closed = false;
 
   constructor(public readonly path: string, options: StoreOptions) {
+    if (path !== ":memory:" && existsSync(join(dirname(resolve(path)), "state-operation.pending.json"))) throw new VaultError("STATE_OPERATION_INCOMPLETE", "Coordinated restore or upgrade staging is incomplete; preserve it for supervised recovery", 503);
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(options.machineId)) throw new VaultError("MACHINE_ID_INVALID", "Machine identity must be a UUID", 400);
     if (!Number.isSafeInteger(options.busyTimeoutMs ?? 5000) || (options.busyTimeoutMs ?? 5000) < 0 || (options.busyTimeoutMs ?? 5000) > 60_000) throw new VaultError("BUSY_TIMEOUT_INVALID", "SQLite busy timeout must be a bounded integer", 400);
     mkdirSync(dirname(resolve(path)), { recursive: true });
@@ -232,6 +233,15 @@ export class VaultStore {
         if (!versions.length || versions.some((row, index) => row.version !== index + 1 || row.version > LOCAL_SCHEMA_VERSION)) throw new VaultError("RESTORE_SCHEMA_UNSUPPORTED", "Restored database schema is not supported by this application", 503);
       }
       finally { verification.close(); }
+      // A main-only backup cannot prove the matching external-payment journal.
+      // Preserve its facts for review but lock restored Spark history before boot.
+      const restored = new Database(temporary, { fileMustExist: true });
+      try {
+        const hasBindings = restored.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sale_payment_binding'").get();
+        if (hasBindings && restored.prepare("SELECT 1 FROM sale_payment_binding WHERE provider='NAYAX_SPARK' LIMIT 1").get()) {
+          restored.prepare("UPDATE machine_meta SET automation_halted=1,recovery_required=1,last_cloud_success_at=NULL WHERE singleton=1").run();
+        }
+      } finally { restored.close(); }
       // A same-volume hard link atomically claims a new target and cannot
       // overwrite a file created between the original preflight and this step.
       linkSync(temporary, databasePath);

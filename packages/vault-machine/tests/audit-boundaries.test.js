@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createRig, makeDoorAvailable, makeConfig, grant, tempDatabase, crypto, vault, FakeClock } = require('./helpers');
+const { createInjectedQualifiedCertificationRig } = require('./waveshare-test-fixture');
 
 async function reserve(rig) {
   makeDoorAvailable(rig); rig.machine.selectCartDoor('X-01', 'sports-25', true);
@@ -10,7 +11,7 @@ async function reserve(rig) {
 }
 
 test('a late start transport failure cannot replace a concurrently observed provider outcome or emit false uncertainty', async () => {
-  for (const outcome of ['DECLINED', 'CANCELLED', 'AUTHORIZED', 'SETTLED']) {
+  for (const outcome of ['DECLINED', 'CANCELLED', 'SETTLED']) {
     const rig = await createRig(); let rejectStart;
     try {
       const sale = await reserve(rig);
@@ -19,8 +20,8 @@ test('a late start transport failure cannot replace a concurrently observed prov
       await new Promise(resolve => setImmediate(resolve)); assert.ok(rejectStart);
       const providerSessionId = crypto.randomUUID();
       const callback = (state, sequence) => rig.machine.handleProviderCallback({ callbackId: crypto.randomUUID(), saleId: sale.saleId, providerSessionId, sequence, state, occurredAt: rig.clock.now().toISOString(), evidence: {} });
-      await callback(outcome === 'SETTLED' ? 'AUTHORIZED' : outcome, 1);
-      if (outcome === 'SETTLED') await callback('SETTLED', 2);
+      if (outcome === 'SETTLED') rig.payment.reconcile = async () => ({ providerSessionId, originalRequestDigest: rig.store.one('SELECT payment_request_digest FROM sale WHERE sale_id=?', sale.saleId).payment_request_digest, state: 'SETTLED' });
+      await callback(outcome, 1);
       const before = rig.machine.publicSale(sale.saleId).paymentState;
       rejectStart(new Error('late start response loss')); await starting;
       assert.equal(rig.machine.publicSale(sale.saleId).paymentState, before);
@@ -78,7 +79,7 @@ test('mock certification rejects every physical or provider evidence class befor
 
 test('mixed official-test and mock adapters cannot classify simulator evidence as physical even after capability changes', async () => {
   for (const mocked of ['controller', 'payment']) {
-    const rig = await createRig();
+    const rig = await createInjectedQualifiedCertificationRig();
     try {
       const payment = await rig.payment.capabilities(); const controller = await rig.controller.identity();
       rig.payment.capabilities = async () => ({ ...payment, mode: mocked === 'payment' ? 'MOCK' : 'OFFICIAL_TEST' });
@@ -99,29 +100,33 @@ test('mixed official-test and mock adapters cannot classify simulator evidence a
   }
 });
 
-test('a late reconciliation exception cannot overwrite a concurrently observed terminal settlement', async () => {
+test('a late reconciliation exception cannot overwrite a captured terminal settlement', async () => {
   const rig = await createRig(); let rejectReconciliation;
   try {
+    rig.payment.scriptStart({ outcome: 'UNKNOWN' }).scriptReconcile({ outcome: 'SETTLE' });
     const sale = await reserve(rig); await rig.machine.startPayment(sale.saleId, crypto.randomUUID());
-    const row = rig.store.one('SELECT provider_session_id,provider_sequence FROM sale WHERE sale_id=?', sale.saleId);
-    const callback = state => ({ callbackId: crypto.randomUUID(), saleId: sale.saleId, providerSessionId: row.provider_session_id, sequence: rig.store.one('SELECT provider_sequence FROM sale WHERE sale_id=?', sale.saleId).provider_sequence + 1, state, occurredAt: rig.clock.now().toISOString(), evidence: {} });
-    await rig.machine.handleProviderCallback(callback('SETTLEMENT_PENDING'));
+    const row = rig.store.one('SELECT provider_session_id FROM sale WHERE sale_id=?', sale.saleId);
+    const realReconcile = rig.payment.reconcile.bind(rig.payment);
     rig.payment.reconcile = async () => new Promise((_, reject) => { rejectReconciliation = reject; });
     const recovery = rig.machine.advancePayments(); await new Promise(resolve => setImmediate(resolve));
     assert.ok(rejectReconciliation);
-    await rig.machine.handleProviderCallback(callback('SETTLED'));
+    rig.payment.reconcile = realReconcile;
+    const callback = { callbackId: crypto.randomUUID(), saleId: sale.saleId, providerSessionId: row.provider_session_id,
+      sequence: rig.store.one('SELECT provider_sequence FROM sale WHERE sale_id=?', sale.saleId).provider_sequence + 1,
+      state: 'SETTLED', occurredAt: rig.clock.now().toISOString(), evidence: {} };
+    assert.equal((await rig.machine.handleProviderCallback(callback)).disposition, 'APPLIED');
     rejectReconciliation(new Error('late network failure')); await recovery;
     assert.equal(rig.machine.publicSale(sale.saleId).paymentState, 'SETTLED');
   } finally { rig.store.close(); }
 });
 
-test('dispatch rejects live adapters even when their mode changes after checkout', async () => {
+test('dispatch rejects unqualified live adapters even when their mode changes after checkout', async () => {
   const rig = await createRig();
   try {
     const sale = await reserve(rig); const capabilities = await rig.payment.capabilities(); let calls = 0;
     rig.payment.capabilities = async () => ({ ...capabilities, mode: 'LIVE' });
     rig.payment.startSession = async () => { calls += 1; throw new Error('must never be called'); };
-    await assert.rejects(() => rig.machine.startPayment(sale.saleId, crypto.randomUUID()), error => error.code === 'LIVE_PAYMENT_NOT_AUTHORIZED_IN_THIS_BUILD');
+    await assert.rejects(() => rig.machine.startPayment(sale.saleId, crypto.randomUUID()), error => error.code === 'PRODUCTION_AUTHORITY_REQUIRED');
     assert.equal(calls, 0); assert.equal(rig.machine.publicSale(sale.saleId).paymentState, 'NOT_REQUESTED');
   } finally { rig.store.close(); }
   const controllerRig = await createRig();
@@ -174,11 +179,11 @@ test('certification can reauthenticate for pending payment recovery without admi
 });
 
 test('malformed simulated-provider snapshots cannot erase or partially replace durable request authority', async () => {
-  const mock = new vault.DeterministicNayaxMock();
+  const mock = new vault.DeterministicPaymentMock();
   const request = { idempotencyKey: 'same-key', saleId: crypto.randomUUID(), mode: 'CERTIFICATION', currency: 'USD', totalCents: 2500, items: [{ lineId: crypto.randomUUID(), name: 'Test', priceCents: 2500 }] };
   const result = await mock.startSession(request); const snapshot = mock.snapshot();
   assert.throws(() => mock.restore({}), /snapshot/i);
-  assert.throws(() => mock.restore({ ...snapshot, startSteps: [{ outcome: 'SETTLE' }] }), /snapshot/i);
+  assert.throws(() => mock.restore({ ...snapshot, startSteps: [{ outcome: 'INVALID' }] }), /script step/i);
   assert.throws(() => mock.restore({ ...snapshot, sessions: [...snapshot.sessions, snapshot.sessions[0]] }), /snapshot/i);
   assert.deepEqual(mock.snapshot(), snapshot); assert.deepEqual(await mock.startSession(request), result);
 });

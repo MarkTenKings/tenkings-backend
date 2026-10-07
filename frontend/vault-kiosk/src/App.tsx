@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { VaultDoorId } from "@tenkings/vault-contracts/browser";
 import { VaultApiClient, VaultApiError, type StateSubscription } from "./api/VaultApiClient";
 import { BrandHeader } from "./components/BrandHeader";
@@ -31,6 +31,11 @@ import {
 } from "./workflow/durableIntents";
 import { currentDoorLabel } from "./workflow/profileLayout";
 import { observationEvidenceClass } from "./workflow/certificationEvidence";
+import { cinematicPreviewAllowed } from "./cinematic/experience";
+import { portraitExperienceAllowed } from "./portrait/profile";
+
+const CinematicVault = lazy(() => import("./cinematic/CinematicVault"));
+const PortraitVault = lazy(() => import("./portrait/PortraitVault"));
 
 const SHOPPING_STATES = new Set([
   "ATTRACT", "SHOPPING_EMPTY", "SHOPPING_WITH_CART", "PRODUCT_SOLD_OUT", "ALL_PRODUCTS_SOLD_OUT",
@@ -488,6 +493,23 @@ export function App({ api: providedApi }: AppProps) {
   const conflictIds = new Set(customerCart.filter((line) => line.conflict).map((line) => line.doorId));
   const selectedIds = new Set(customerCart.map((line) => line.doorId));
   const displayDoors = snapshot.doors.map((door) => ({ ...door, selected: selectedIds.has(door.doorId), conflict: conflictIds.has(door.doorId) }));
+
+  const usePortrait = portraitExperienceAllowed(snapshot, window.location.search);
+  if ((usePortrait || cinematicPreviewAllowed(snapshot, window.location.search)) && !showServiceEntry && !authorizedStaff
+    && !snapshot.serviceLocked && (showCustomerSale || SHOPPING_STATES.has(snapshot.publicState))) {
+    const Experience = usePortrait ? PortraitVault : CinematicVault;
+    return <Suspense fallback={<div className="kiosk-app boot-screen"><StatusBanner state="BOOTING" /></div>}>
+      <Experience snapshot={snapshot} doors={displayDoors} cart={customerCart} selectedProductId={selectedProductId}
+        disabled={interactionDisabled} busy={busyAction} connected={connected} notice={notice}
+        subtotal={totals.subtotalCents} tax={totals.taxCents} total={totals.totalCents} violation={violation}
+        onProduct={setSelectedProductId} onDoor={toggleDoor} onCheckout={checkout} onService={serviceGesture}
+        paidFlow={<PaidFlow presentation="cinematic" disabled={!connected || busyAction !== null} snapshot={snapshot}
+          retryBusy={busyAction === "retry"} paymentBusy={busyAction === "payment"} doneBusy={busyAction === "done"}
+          onContinuePayment={continuePayment} onOpenDoors={openDoors} onDone={done} onCancelPayment={cancelPayment} />}
+        idleDialog={snapshot.publicState === "IDLE_WARNING" ? <IdleWarningDialog secondsRemaining={snapshot.idleSecondsRemaining ?? 0} busy={busyAction === "activity"} onKeepShopping={keepShopping} /> : null}
+      />
+    </Suspense>;
+  }
 
   return (
     <div className="kiosk-app" data-mode={snapshot.mode}>

@@ -30,7 +30,7 @@ function makeSyntheticProfile(count = 72) {
     controller: { interfaceVersion: "vault-controller-v1", adapterId: "ten-kings-deterministic-controller-simulator", maxDoors: count, endpoints },
     hardware: {
       computerModel: "SYNTHETIC SER test identity", os: "SYNTHETIC Windows test identity",
-      lockModel: "SYNTHETIC lock", paymentTerminalModel: "SYNTHETIC Nayax contract mock",
+      lockModel: "SYNTHETIC lock", paymentTerminalModel: "SYNTHETIC payment contract mock",
       touchscreen: { model: "SYNTHETIC ViewSonic touch", orientation: "PORTRAIT", widthPx: 1080, heightPx: 1920, scalePercent: 100, touch: true },
       tv: { model: "SYNTHETIC ViewSonic TV", orientation: "LANDSCAPE", widthPx: 1920, heightPx: 1080, scalePercent: 100, touch: false },
     },

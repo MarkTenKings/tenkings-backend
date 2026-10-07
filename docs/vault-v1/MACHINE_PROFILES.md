@@ -1,5 +1,11 @@
 # Vault machine profiles and CAD integration
 
+**Current payment decision (2026-09-28):** Stripe UX700 is selected. The older payment hardware and bridge notes below are historical. See [implementation status](STRIPE_PAYMENT_IMPLEMENTATION_STATUS_2026-09-28.md).
+
+## September16 integration candidate supersession
+
+The owner accepted Portrait B and confirmed the 4×17 (68-door) visible arrangement, all ordered hardware present but disconnected, and Omarchy as the intended “AI OS.” A qualified physical label/address/geometry profile is still missing; fixture positions never provide that mapping. The preserved September11 bench transport now underpins the new Waveshare service candidate. Linux packaging and Marshall process/journal boundaries are implemented locally; official SDK/test setup, actual SER install, electrical/door qualification and full-machine evidence remain open. The earlier Windows/ViewSonic/simulator-only descriptions below are historical where they differ. See [current integration handoff](INTEGRATION_STATUS_2026-09-16.md), [controller candidate](WAVESHARE_INTEGRATION_2026-09-16.md), [Nayax boundary](MARSHALL_INTEGRATION_2026-09-16.md), and [Omarchy packaging](LINUX_APPLIANCE_2026-09-16.md). No production configuration or physical gate is closed by software tests.
+
 The current design direction is a family with a maximum design of 125 doors and an exploratory compact arrangement near 72, with central touch/payment/product-display regions. All new checked-in geometry and hardware fixtures are explicitly synthetic. No measured production profile or verified hardware map has been supplied.
 
 ## Implemented software envelope

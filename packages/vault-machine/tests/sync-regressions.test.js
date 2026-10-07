@@ -50,11 +50,11 @@ test('durable simulated provider restores the same authorized request across pro
   const temporary = tempDatabase(), machineId = crypto.randomUUID();
   let provider;
   try {
-    provider = new vault.DurableNayaxMock(temporary.path, machineId);
+    provider = new vault.DurablePaymentMock(temporary.path, machineId);
     const request = { idempotencyKey: crypto.randomUUID(), saleId: crypto.randomUUID(), mode: 'CERTIFICATION', currency: 'USD', totalCents: 2706, items: [{ lineId: crypto.randomUUID(), name: 'Sports', priceCents: 2500 }] };
     const original = await provider.startSession(request);
     provider.close();
-    provider = new vault.DurableNayaxMock(temporary.path, machineId);
+    provider = new vault.DurablePaymentMock(temporary.path, machineId);
     assert.deepEqual(await provider.reconcileRequest(request.idempotencyKey), original);
     assert.deepEqual(await provider.startSession(request), original);
     assert.equal(await provider.reconcileRequest(crypto.randomUUID()), null);

@@ -13,9 +13,11 @@ import {
   VaultDoorIdSchema,
   VaultProductConfigSchema,
   VaultSupportConfigSchema,
+  VaultFinancialRecoverySnapshotSchema, VaultFinancialRecoveryDecisionSchema,
   roleMay,
 } from "@tenkings/vault-contracts";
 import { z } from "zod";
+import { VaultFinancialRecoveryApprovalSchema, prepareFinancialRecoveryDecision, financialRecoveryAdminView } from "../../../../../lib/server/vaultV1/financialRecovery";
 import {
   createVaultConfigDraft,
   publishVaultConfig,
@@ -46,6 +48,7 @@ import {
 } from "../../../../../lib/server/vaultV1/certification";
 import { VaultFinancialResolutionSchema, vaultSaleAdminDto, vaultSupportCaseAdminDto } from "../../../../../lib/server/vaultV1/support";
 import { machineLocalDate, salesTotals, vaultMachineDto, VaultSalesQuerySchema } from "../../../../../lib/server/vaultV1/reporting";
+import { prepareVaultPaymentVoidAction, VaultPaymentVoidApprovalSchema, vaultPaymentActionAdminDto } from "../../../../../lib/server/vaultV1/paymentActions";
 
 const productInputSchema = VaultProductConfigSchema.omit({ id: true }).extend({ slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(80), reason: z.string().min(8).max(500).optional() });
 const machineInputSchema = z.object({
@@ -454,22 +457,22 @@ async function handleSales(req: NextApiRequest, res: NextApiResponse, requestId:
   if (req.method !== "GET") return methodNotAllowed(res, ["GET"], requestId);
   const input = VaultSalesQuerySchema.parse(req.query);
   const scope = await vaultListScope(req, "FINANCIAL_RESOLVE", input.machineId);
-  const where: Prisma.VaultSaleWhereInput = { machine: scope, ...(input.includeCertification === "true" ? {} : { mode: "PRODUCTION" }), ...(input.productId ? { items: { some: { productIdSnapshot: input.productId } } } : {}) };
+  const where: Prisma.VaultSaleWhereInput = { machine: scope, ...(input.includeCertification === "true" ? {} : { mode: "PRODUCTION" }), ...(input.provider ? { providerName: input.provider } : {}), ...(input.productId ? { items: { some: { productIdSnapshot: input.productId } } } : {}) };
   let cursor: string | undefined;
   let count = 0;
   let afterRequestedCursor = !input.cursor;
-  let totals = { authorizedCents: 0, settledCents: 0, taxCents: 0 };
+  let totals = salesTotals([]);
   const sales: Record<string, unknown>[] = [];
   // Totals cover the complete filtered result, independent of the visible page.
   // Day boundaries use each sale's pinned timezone, including DST transitions.
   for (;;) {
-    const chunk = await prisma.vaultSale.findMany({ where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 500, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { items: true, machine: { select: { displayName: true, slug: true } } } });
+    const chunk = await prisma.vaultSale.findMany({ where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 500, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), include: { items: true, paymentAction: true, paymentAnomalies: true, machine: { select: { displayName: true, slug: true } } } });
     for (const sale of chunk) {
       const day = machineLocalDate(sale.createdAt, sale.machineTimezone);
       if ((input.from && day < input.from) || (input.through && day > input.through)) continue;
       count += 1;
       const partial = salesTotals([sale]);
-      totals = { authorizedCents: totals.authorizedCents + partial.authorizedCents, settledCents: totals.settledCents + partial.settledCents, taxCents: totals.taxCents + partial.taxCents };
+      for (const key of Object.keys(totals) as Array<keyof typeof totals>) totals[key] += partial[key];
       if (afterRequestedCursor && sales.length < 251) sales.push(vaultSaleAdminDto(sale as unknown as Record<string, unknown> & { items: Array<Record<string, unknown>> }));
       if (sale.id === input.cursor) afterRequestedCursor = true;
     }
@@ -518,6 +521,14 @@ async function handleCertification(req: NextApiRequest, res: NextApiResponse, re
       const automatedTransactions = verifyVaultAutomatedProof(bytes, session);
       automated = { automatedTransactions, automatedEvidenceVerified: true, automatedArtifactKey: input.automatedProof.artifactStorageKey, automatedArtifactDigest: input.automatedProof.digest };
     }
+    let providerCertification: Record<string, unknown> | undefined;
+    if (input.providerCertification) {
+      const identity = jsonRecord(session.paymentFlowConfig);
+      const proof = input.providerCertification;
+      if (identity.provider !== proof.provider || identity.bindingDigest !== proof.paymentBindingDigest || !proof.artifactStorageKey.startsWith(`vault-certification/${session.id}/`)) throw new VaultApiError(400, "PROVIDER_CERTIFICATION_BINDING_INVALID", "The reviewed integration letter must bind the exact provider configuration and session.");
+      await verifyVaultArtifact(proof.artifactStorageKey, proof.digest);
+      providerCertification = { ...proof, artifactVerified: true, verifiedAt: new Date().toISOString(), reviewedByAdminId: authority.admin.user.id };
+    }
     // Network reads finish before opening a transaction; approval and attachment
     // acquire this same parent lock and cannot race the verified metadata write.
     await prisma.$transaction(async (tx) => {
@@ -530,10 +541,11 @@ async function handleCertification(req: NextApiRequest, res: NextApiResponse, re
         if (!evidence || evidence.artifactDigest !== artifact.digest) throw new VaultApiError(409, "CERTIFICATION_EVIDENCE_CHANGED", "Evidence changed during artifact verification");
         await tx.vaultCertificationEvidence.update({ where: { id: artifact.id }, data: { metadata: jsonValue({ ...jsonRecord(evidence.metadata), verifiedArtifactDigest: artifact.digest, verifiedArtifactStorageKey: artifact.key, artifactVerifiedAt: new Date().toISOString() }) } });
       }
-      if (automated) await tx.vaultCertificationSession.update({ where: { id: current.id }, data: { evidenceSummary: jsonValue({ ...jsonRecord(current.evidenceSummary), ...automated }) } });
-      await writeVaultAdminAudit({ req, authority, tx, machineId: session.machineId, action: "vault.certification.artifacts.verify", outcome: "SUCCESS", targetType: "VaultCertificationSession", targetId: session.id, metadata: { verifiedCount: verified.length, automated: Boolean(automated) } });
+      if (providerCertification && jsonRecord(current.paymentFlowConfig).bindingDigest !== providerCertification.paymentBindingDigest) throw new VaultApiError(409, "PROVIDER_CERTIFICATION_BINDING_CHANGED", "Payment identity changed during artifact verification.");
+      if (automated || providerCertification) await tx.vaultCertificationSession.update({ where: { id: current.id }, data: { evidenceSummary: jsonValue({ ...jsonRecord(current.evidenceSummary), ...automated, ...(providerCertification ? { providerCertification } : {}) }) } });
+      await writeVaultAdminAudit({ req, authority, tx, machineId: session.machineId, action: "vault.certification.artifacts.verify", outcome: "SUCCESS", targetType: "VaultCertificationSession", targetId: session.id, metadata: { verifiedCount: verified.length, automated: Boolean(automated), providerCertification: Boolean(providerCertification) } });
     });
-    return res.status(200).json({ requestId, verifiedCount: verified.length, automatedVerified: Boolean(automated) });
+    return res.status(200).json({ requestId, verifiedCount: verified.length, automatedVerified: Boolean(automated), providerCertificationVerified: Boolean(providerCertification) });
   }
   if (input.action === "attach-manifest") {
     const result = await prisma.$transaction(async (tx) => {
@@ -655,9 +667,9 @@ async function handleCertification(req: NextApiRequest, res: NextApiResponse, re
         configDigest: session.configVersion.digest,
       },
       qualifiedIdentity: {
-        nayaxAdapterVersion: session.nayaxAdapterVersion,
-        nayaxSdkVersion: session.nayaxSdkVersion,
-        nayaxFlowConfig: session.nayaxFlowConfig,
+        paymentAdapterVersion: session.paymentAdapterVersion,
+        paymentApiVersion: session.paymentApiVersion,
+        paymentFlowConfig: session.paymentFlowConfig,
         controllerIdentity: session.controllerIdentity,
         hardwareIdentity: session.hardwareIdentity,
       },
@@ -695,7 +707,7 @@ async function handleSupportCases(req: NextApiRequest, res: NextApiResponse, req
     const machineId = typeof req.query.machineId === "string" ? req.query.machineId : undefined;
     const scope = await vaultListScope(req, "FINANCIAL_RESOLVE", machineId);
     const status = typeof req.query.status === "string" ? z.enum(["OPEN", "INVESTIGATING", "RESOLVED", "CLOSED"]).parse(req.query.status) : undefined;
-    const cases = await prisma.vaultSupportCase.findMany({ where: { machine: scope, ...(status ? { status } : {}) }, orderBy: { openedAt: "desc" }, take: 250, include: { sale: { include: { items: true } }, machine: { select: { displayName: true, slug: true } } } });
+    const cases = await prisma.vaultSupportCase.findMany({ where: { machine: scope, ...(status ? { status } : {}) }, orderBy: { openedAt: "desc" }, take: 250, include: { sale: { include: { items: true, paymentAction: true, paymentAnomalies: true } }, machine: { select: { displayName: true, slug: true } } } });
     return res.status(200).json({ requestId, cases: cases.map((supportCase) => vaultSupportCaseAdminDto(supportCase as unknown as Record<string, unknown>)) });
   }
   if (req.method !== "POST") return methodNotAllowed(res, ["GET", "POST"], requestId);
@@ -705,11 +717,90 @@ async function handleSupportCases(req: NextApiRequest, res: NextApiResponse, req
   if (!supportCase) throw new VaultApiError(404, "SUPPORT_CASE_NOT_FOUND", "Support case was not found");
   const authority = await requireVaultAdmin(req, { permission: "FINANCIAL_RESOLVE", machineId: supportCase.machineId, fresh: true, reason: input.resolutionReason });
   const updated = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${supportCase.machineId} FOR UPDATE`;
+    if (input.financialResolution && ["REFUND_RECORDED", "VOID_RECORDED"].includes(input.financialResolution.resolutionType) && supportCase.saleId) {
+      const paymentAction = await tx.vaultPaymentAction.findUnique({ where: { saleId: supportCase.saleId } });
+      if (paymentAction && ["APPROVED", "EXECUTING", "UNKNOWN"].includes(paymentAction.state)) throw new VaultApiError(409, "PAYMENT_ACTION_UNRESOLVED", "Reconcile the existing payment action before recording another compensation.");
+    }
+    const noticeId = jsonRecord(supportCase.reconciliationSnapshot).noticeId;
+    if (typeof noticeId === "string" && ["RESOLVED", "CLOSED"].includes(input.status)) {
+      if (!input.financialResolution) throw new VaultApiError(400, "FINANCIAL_REVIEW_RECORD_REQUIRED", "Resolving financial evidence requires an explicit administrative decision record.");
+      await tx.vaultPaymentEvidenceAnomaly.updateMany({ where: { machineId: supportCase.machineId, noticeId, saleId: supportCase.saleId, resolvedAt: null }, data: { resolvedAt: new Date() } });
+    }
     const value = await tx.vaultSupportCase.update({ where: { id: supportCase.id }, data: { status: input.status, financialResolution: input.financialResolution ? jsonValue(input.financialResolution) : undefined, resolutionReason: input.resolutionReason, assignedAdminId: authority.admin.user.id, resolvedByAdminId: input.status === "RESOLVED" || input.status === "CLOSED" ? authority.admin.user.id : null, resolvedAt: input.status === "RESOLVED" || input.status === "CLOSED" ? new Date() : null, closedAt: input.status === "CLOSED" ? new Date() : null } });
     await writeVaultAdminAudit({ req, authority, tx, machineId: supportCase.machineId, action: "vault.support.resolve", outcome: "SUCCESS", targetType: "VaultSupportCase", targetId: supportCase.id, metadata: { status: input.status, recordsFinancialResolutionOnly: true } });
     return value;
   });
   return res.status(200).json({ requestId, supportCase: vaultSupportCaseAdminDto(updated as unknown as Record<string, unknown>), externalPaymentActionExecuted: false });
+}
+
+async function handlePaymentActions(req: NextApiRequest, res: NextApiResponse, requestId: string) {
+  if (req.method !== "POST") return methodNotAllowed(res, ["POST"], requestId);
+  requireVaultJson(req, 16 * 1024);
+  const input = VaultPaymentVoidApprovalSchema.parse(req.body);
+  const target = await prisma.vaultSale.findUnique({ where: { id: input.saleId }, select: { machineId: true } });
+  if (!target) throw new VaultApiError(404, "SALE_NOT_FOUND", "The selected sale was not found.");
+  const authority = await requireVaultAdmin(req, { permission: "FINANCIAL_RESOLVE", machineId: target.machineId, fresh: true, reason: input.reason });
+  const paymentAction = await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${target.machineId} FOR UPDATE`;
+    const existing = await tx.vaultPaymentAction.findUnique({ where: { id: input.actionId } });
+    if (existing) {
+      const prior = jsonRecord(existing.action);
+      if ((existing.originalSaleId ?? existing.saleId) !== input.saleId || existing.machineId !== target.machineId || prior.amountCents !== input.amountCents || prior.reason !== input.reason || prior.approvedByAdminId !== authority.admin.user.id) throw new VaultApiError(409, "PAYMENT_ACTION_ID_CONFLICT", "The approval identity is already bound to different content.");
+      await writeVaultAdminAudit({ req, authority, tx, machineId: target.machineId, action: "vault.payment.void-approval-replay", outcome: "SUCCESS", targetType: "VaultPaymentAction", targetId: existing.id });
+      return existing;
+    }
+    const sale = await tx.vaultSale.findUnique({ where: { id: input.saleId }, include: { items: true, supportCases: true, paymentAction: true, paymentAnomalies: true } });
+    if (!sale || sale.machineId !== target.machineId) throw new VaultApiError(409, "SALE_CHANGED", "The selected sale changed before approval.");
+    const machineOrphanPaymentAnomalies = await tx.vaultPaymentEvidenceAnomaly.findMany({ where: { machineId: target.machineId, saleId: null }, select: { noticeId: true, resolvedAt: true }, take: 101 });
+    const action = prepareVaultPaymentVoidAction({ ...sale, machineOrphanPaymentAnomalies }, input, authority.admin.user.id);
+    const row = await tx.vaultPaymentAction.create({ data: { id: action.actionId, machineId: action.machineId, saleId: sale.id, originalSaleId: sale.id, action: jsonValue(action), approvedAt: new Date(action.approvedAt), expiresAt: new Date(action.expiresAt) } });
+    await writeVaultAdminAudit({ req, authority, tx, machineId: target.machineId, action: "vault.payment.void-approved", outcome: "SUCCESS", targetType: "VaultPaymentAction", targetId: row.id, payloadDigest: vaultPayloadDigest(action), metadata: { saleId: sale.id, fullSaleAmountCents: action.amountCents, provider: action.provider, executesPaymentLocally: true } });
+    return row;
+  });
+  return res.status(201).json({ requestId, paymentAction: vaultPaymentActionAdminDto(paymentAction), externalPaymentActionExecuted: false });
+}
+
+async function handleFinancialRecovery(req: NextApiRequest, res: NextApiResponse, requestId: string) {
+  if (req.method === "GET") {
+    const machineId = z.string().uuid().parse(req.query.machineId);
+    await requireVaultAdmin(req, { permission: "FINANCIAL_RESOLVE", machineId });
+    const result = await prisma.$transaction(tx => financialRecoveryAdminView(tx, machineId));
+    if (req.query.download === "true") res.setHeader("Content-Disposition", 'attachment; filename="vault-financial-recovery.json"');
+    return res.status(200).json({ requestId, ...result });
+  }
+  if (req.method !== "POST") return methodNotAllowed(res, ["GET", "POST"], requestId);
+  requireVaultJson(req, 64 * 1024);
+  const input = VaultFinancialRecoveryApprovalSchema.parse(req.body);
+  const authority = await requireVaultAdmin(req, { permission: "FINANCIAL_RESOLVE", machineId: input.machineId, fresh: true, reason: input.reason });
+  const result = await prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT "id" FROM "VaultMachine" WHERE "id" = ${input.machineId} FOR UPDATE`;
+    const existing = await tx.vaultFinancialRecoveryDecision.findUnique({ where: { id: input.decisionId } });
+    if (existing) {
+      const { approvedAt: _approvedAt, expiresAt: _expiresAt, ...prior } = VaultFinancialRecoveryDecisionSchema.parse(existing.decision);
+      const { confirmReviewed: _confirmation, ...requested } = input;
+      if (vaultPayloadDigest(prior) !== vaultPayloadDigest({ ...requested, noticeIds: [...requested.noticeIds].sort(), unknownActionIds: [...requested.unknownActionIds].sort(), approvedByAdminId: authority.admin.user.id })) throw new VaultApiError(409, "FINANCIAL_RECOVERY_DECISION_CONFLICT", "This approval identity belongs to different evidence.");
+      return existing;
+    }
+    const machine = await tx.vaultMachine.findUnique({ where: { id: input.machineId }, select: { lastCloudObservedAt: true } });
+    const age = machine?.lastCloudObservedAt ? Date.now() - machine.lastCloudObservedAt.getTime() : Infinity;
+    if (age < 0 || age > 120000) throw new VaultApiError(409, "FINANCIAL_RECOVERY_MACHINE_OFFLINE", "Reconnect the exact machine before approving recovery.");
+    const row = await tx.vaultFinancialRecoverySnapshot.findFirst({ where: { machineId: input.machineId }, orderBy: { generation: "desc" } });
+    if (!row) throw new VaultApiError(409, "FINANCIAL_RECOVERY_SNAPSHOT_REQUIRED", "The machine must publish its current recovery evidence.");
+    const snapshot = VaultFinancialRecoverySnapshotSchema.parse(row.snapshot);
+    const decision = prepareFinancialRecoveryDecision(snapshot, input, authority.admin.user.id);
+    const duplicate = await tx.vaultFinancialRecoveryDecision.findFirst({ where: { snapshotId: row.id, state: "APPROVED", expiresAt: { gt: new Date() } } });
+    if (duplicate) throw new VaultApiError(409, "FINANCIAL_RECOVERY_APPROVAL_ACTIVE", "This snapshot already has an active approval.");
+    const notices = await tx.vaultPaymentEvidenceAnomaly.count({ where: { machineId: input.machineId, noticeId: { in: input.noticeIds } } });
+    const unknown = await tx.vaultPaymentAction.count({ where: { machineId: input.machineId, id: { in: input.unknownActionIds }, state: "UNKNOWN", externalReviewedAt: null } });
+    if (notices !== input.noticeIds.length || unknown !== input.unknownActionIds.length) throw new VaultApiError(409, "FINANCIAL_RECOVERY_EVIDENCE_CHANGED", "The financial evidence has changed.");
+    const approved = await tx.vaultFinancialRecoveryDecision.create({ data: { id: decision.decisionId, machineId: decision.machineId, snapshotId: decision.snapshotId,
+      decision: jsonValue(decision), approvedAt: new Date(decision.approvedAt), expiresAt: new Date(decision.expiresAt) } });
+    await writeVaultAdminAudit({ req, authority, tx, machineId: input.machineId, action: "vault.financial-recovery.approve", outcome: "SUCCESS", targetType: "VaultFinancialRecoveryDecision", targetId: approved.id,
+      payloadDigest: vaultPayloadDigest(decision), metadata: { snapshotId: decision.snapshotId, generation: decision.generation, source: "EXTERNAL_HUMAN_REVIEW", verifiedFinancialAdjustmentCents: 0 } });
+    return approved;
+  });
+  return res.status(201).json({ requestId, decision: VaultFinancialRecoveryDecisionSchema.parse(result.decision), state: result.state, externalPaymentActionExecuted: false });
 }
 
 async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -735,6 +826,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (parts[0] === "restocks" && parts.length === 1) return await handleRestocks(req, res, requestId);
     if (parts[0] === "certification" && parts.length === 1) return await handleCertification(req, res, requestId);
     if (parts[0] === "support-cases" && parts.length === 1) return await handleSupportCases(req, res, requestId);
+    if (parts[0] === "payment-actions" && parts.length === 1) return await handlePaymentActions(req, res, requestId);
+    if (parts[0] === "financial-recovery" && parts.length === 1) return await handleFinancialRecovery(req, res, requestId);
     throw new VaultApiError(404, "ADMIN_ROUTE_NOT_FOUND", "Vault admin route was not found");
   } catch (error) {
     if (req.method && req.method !== "GET") {

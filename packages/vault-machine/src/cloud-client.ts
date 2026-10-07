@@ -1,5 +1,6 @@
-import { SignedVaultConfigSchema, VaultEventBatchSchema, VaultHeartbeatSchema, VaultStaffGrantSchema, type SignedVaultConfig } from "../../vault-contracts/dist";
+import { SignedVaultConfigSchema, VaultEventBatchSchema, VaultHeartbeatSchema, VaultStaffGrantSchema, VaultPaymentVoidActionSchema, VaultFinancialRecoveryDecisionSchema, type SignedVaultConfig } from "../../vault-contracts/dist";
 import { digest } from "./util";
+import type { NayaxSparkObservation } from "./nayax-spark-test-adapter";
 import type { CloudEventSink } from "./events";
 import type { OutboxBatchResult, OutboxEnvelope } from "./types";
 
@@ -62,6 +63,45 @@ export class VaultCloudClient implements CloudEventSink {
     }
     if (body.latestGrantVersion !== previous || (body.hasMore && grants.length === 0)) throw new VaultCloudError("CLOUD_GRANT_CURSOR_INVALID");
     return { grants, latestGrantVersion: previous, hasMore: body.hasMore as boolean };
+  }
+
+  /** Machine-scoped authenticated callback evidence; never a door command. */
+  async sparkObservations(sparkTransactionId: string, stage: "SANDBOX" | "PRODUCTION" = "SANDBOX", paymentBindingDigest?: string): Promise<NayaxSparkObservation[]> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sparkTransactionId)) throw new VaultCloudError("SPARK_TRANSACTION_ID_INVALID");
+    if (stage === "PRODUCTION" && !/^[a-f0-9]{64}$/.test(paymentBindingDigest ?? "")) throw new VaultCloudError("SPARK_PRODUCTION_BINDING_REQUIRED");
+    const { body } = await this.request(`/api/vault/v1/spark/observations?machineId=${encodeURIComponent(this.machineId)}&sparkTransactionId=${encodeURIComponent(sparkTransactionId)}${stage === "PRODUCTION" ? `&stage=PRODUCTION&paymentBindingDigest=${paymentBindingDigest}` : ""}`, "GET");
+    if (body.instruction !== "RECONCILE_ONLY" || body.sparkTransactionId !== sparkTransactionId || !Array.isArray(body.observations) || body.observations.length > 100) throw new VaultCloudError("SPARK_OBSERVATIONS_INVALID");
+    // The Spark adapter independently validates every receipt and exact
+    // machine/terminal/amount/currency binding against its durable request.
+    return body.observations;
+  }
+
+  /** Commit-safe cursor is owned by the provider journal, never by this transport. */
+  async sparkReceipts(after: string, stage: "SANDBOX" | "PRODUCTION" = "SANDBOX", paymentBindingDigest?: string): Promise<{ observations: NayaxSparkObservation[]; nextCursor: string; hasMore: boolean }> {
+    const validCursor = (value: unknown): value is string => typeof value === "string" && /^(0|[1-9][0-9]{0,18})$/.test(value) && BigInt(value) <= 9223372036854775807n;
+    if (!validCursor(after)) throw new VaultCloudError("SPARK_RECEIPT_CURSOR_INVALID");
+    if (stage === "PRODUCTION" && !/^[a-f0-9]{64}$/.test(paymentBindingDigest ?? "")) throw new VaultCloudError("SPARK_PRODUCTION_BINDING_REQUIRED");
+    const { body } = await this.request(`/api/vault/v1/spark/receipts?machineId=${encodeURIComponent(this.machineId)}&after=${after}${stage === "PRODUCTION" ? `&stage=PRODUCTION&paymentBindingDigest=${paymentBindingDigest}` : ""}`, "GET");
+    if (body.instruction !== "RECONCILE_ONLY" || !Array.isArray(body.observations) || body.observations.length > 100 || !validCursor(body.nextCursor)
+      || typeof body.hasMore !== "boolean" || BigInt(body.nextCursor) < BigInt(after)
+      || (body.observations.length > 0 && body.nextCursor === after) || (body.observations.length === 0 && (body.nextCursor !== after || body.hasMore))) throw new VaultCloudError("SPARK_RECEIPT_FEED_INVALID");
+    return { observations: body.observations, nextCursor: body.nextCursor, hasMore: body.hasMore };
+  }
+
+  async paymentActions() {
+    const { body } = await this.request(`/api/vault/v1/payment-actions?machineId=${encodeURIComponent(this.machineId)}`, "GET");
+    if (body.instruction !== "APPROVED_PAYMENT_ACTIONS_ONLY" || !Array.isArray(body.actions) || body.actions.length > 100) throw new VaultCloudError("PAYMENT_ACTION_FEED_INVALID");
+    const actions = body.actions.map((action: unknown) => VaultPaymentVoidActionSchema.parse(action));
+    if (actions.some((action: { machineId: string }) => action.machineId !== this.machineId) || new Set(actions.map((action: { actionId: string }) => action.actionId)).size !== actions.length) throw new VaultCloudError("PAYMENT_ACTION_FEED_INVALID");
+    return actions;
+  }
+
+  async financialRecoveryDecisions() {
+    const { body } = await this.request(`/api/vault/v1/financial-recovery?machineId=${encodeURIComponent(this.machineId)}`, "GET");
+    if (body.instruction !== "FINANCIAL_RECOVERY_ONLY" || !Array.isArray(body.decisions) || body.decisions.length > 100) throw new VaultCloudError("FINANCIAL_RECOVERY_FEED_INVALID");
+    const decisions = body.decisions.map((value: unknown) => VaultFinancialRecoveryDecisionSchema.parse(value));
+    if (decisions.some((value: { machineId: string }) => value.machineId !== this.machineId)) throw new VaultCloudError("FINANCIAL_RECOVERY_MACHINE_MISMATCH");
+    return decisions;
   }
 
   async heartbeat(input: unknown): Promise<Date> {

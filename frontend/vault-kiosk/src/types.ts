@@ -25,7 +25,7 @@ export type VaultPublicState =
   | "CHECKOUT_REVALIDATING"
   | "PROVIDER_LIMIT_EXCEEDED"
   | "CONTROLLER_NOT_READY"
-  | "NAYAX_UNAVAILABLE"
+  | "PAYMENT_UNAVAILABLE"
   | "PAYMENT_STARTING"
   | "PAYMENT_PENDING"
   | "PAYMENT_DECLINED"
@@ -111,6 +111,7 @@ export interface KioskSaleSummary {
   retrievalSecondsRemaining: number | null;
   resetSecondsRemaining: number | null;
   cancelAvailable?: boolean;
+  authorizationDurable?: boolean;
 }
 
 export interface KioskPublicSnapshot {

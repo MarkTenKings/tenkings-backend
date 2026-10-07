@@ -45,11 +45,38 @@ test("service constructor rejects any non-loopback bind", async () => {
   const rig = await createRig(); assert.throws(() => new vault.VaultHttpService(rig.machine, rig.operations, { origin: "http://0.0.0.0:1", host: "0.0.0.0", adapterCallbackToken: "x", clock: rig.clock }), /loopback/i); rig.store.close();
 });
 
+test("two loopback kiosks retain independent sessions in one browser cookie jar", async () => {
+  const instances = [];
+  try {
+    for (let index = 0; index < 2; index++) {
+      const rig = await createRig(); await rig.machine.initialize();
+      const port = await availablePort(), origin = `http://127.0.0.1:${port}`;
+      const service = new vault.VaultHttpService(rig.machine, rig.operations, {origin, port, adapterCallbackToken:'test-callback-token', clock:rig.clock});
+      instances.push({rig, service, origin}); await service.listen();
+    }
+    const jar = new Map();
+    for (const {origin} of instances) {
+      const response = await fetch(`${origin}/api/v1/session/bootstrap`, {method:'POST', headers:{Origin:origin,'Content-Type':'application/json','X-Vault-Contract-Version':'1'},body:'{}'});
+      assert.equal(response.status,200);
+      const cookie = response.headers.get('set-cookie').split(';')[0];
+      jar.set(cookie.split('=')[0],cookie);
+    }
+    assert.equal(jar.size,2,'bootstrapping the second kiosk must not overwrite the first');
+    for (const [index,{origin}] of instances.entries()) {
+      const response=await fetch(`${origin}/api/v1/state`,{headers:{'X-Vault-Contract-Version':'1',Cookie:[...jar.values()].join('; ')}});
+      assert.equal(response.status,200);
+      const foreignCookie=[...jar.values()][1-index];
+      const rejected=await fetch(`${origin}/api/v1/state`,{headers:{'X-Vault-Contract-Version':'1',Cookie:foreignCookie}});
+      assert.equal(rejected.status,401,'the other kiosk cookie cannot authorize this kiosk');
+    }
+  } finally { for (const {service,rig} of instances) {if(service.server.listening)await service.close();rig.store.close();} }
+});
+
 test("support bundle is metadata-only, redacts logs, hashes every member and excludes the database", async () => {
   const rig = await createRig(); const root = fs.mkdtempSync(path.join(os.tmpdir(), "tk-support-test-")); const logPath = path.join(root, "vault.log");
   fs.writeFileSync(logPath, JSON.stringify({ event: "TEST", pin: "123456", bearerToken: "secret", ok: 1 }) + "\n");
   const output = path.join(root, "bundle"); const result = vault.createSupportBundleDirectory(rig.store, output, [logPath]); const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
-  assert.equal(manifest.files.length, 2); assert.equal(manifest.files.every((file) => /^[a-f0-9]{64}$/.test(file.sha256)), true); assert.equal(result.files.some((file) => file.endsWith(".sqlite")), false);
+  assert.deepEqual(manifest.files.map(file => file.file).sort(), ["health-metadata.json", "redacted-vault.log", "spark-operations.json"]); assert.equal(manifest.files.every((file) => /^[a-f0-9]{64}$/.test(file.sha256)), true); assert.equal(result.files.some((file) => file.endsWith(".sqlite")), false);
   const redacted = fs.readFileSync(path.join(output, "redacted-vault.log"), "utf8"); assert.equal(redacted.includes("123456"), false); assert.equal(redacted.includes("secret"), false);
   rig.store.close(); fs.rmSync(root, { recursive: true, force: true });
 });
@@ -61,7 +88,7 @@ test("Windows appliance artifacts verify staging and fail closed on unimplemente
   const rollback = fs.readFileSync(path.join(root, "rollback.ps1"), "utf8");
   assert.match(rollback, /throw 'Rollback activation is not implemented/);
   for (const file of ["install.ps1", "update.ps1", "rollback.ps1"]) assert.doesNotMatch(fs.readFileSync(path.join(root, file), "utf8"), /\b(?:Stop-Service|Restart-Service|Start-Service|Remove-Item|Move-Item)\b/i);
-  assert.match(fs.readFileSync(path.join(root, "collect-support-bundle.ps1"), "utf8"), /SQLite database/); assert.doesNotMatch(fs.readFileSync(path.join(root, "vault-machine-service.xml"), "utf8"), /Nayax|COM\d|serial/i);
+  assert.match(fs.readFileSync(path.join(root, "collect-support-bundle.ps1"), "utf8"), /SQLite database/); assert.doesNotMatch(fs.readFileSync(path.join(root, "vault-machine-service.xml"), "utf8"), /COM\d|serial/i);
 });
 
 test('static kiosk serving rejects symlink escapes and unexpected errors expose no adapter detail', async () => {

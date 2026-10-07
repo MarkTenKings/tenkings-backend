@@ -9,7 +9,7 @@ import type {
   VaultMachineProfile,
 } from "../../vault-contracts/dist";
 
-export type HealthState = "READY" | "DEGRADED_CLOUD" | "DEGRADED_SYNC" | "BLOCKED_CONFIG" | "BLOCKED_TAX" | "BLOCKED_NAYAX" | "BLOCKED_CONTROLLER" | "BLOCKED_STORAGE" | "BLOCKED_CLOCK" | "SERVICE_LOCKED" | "RECOVERY_REQUIRED";
+export type HealthState = "READY" | "DEGRADED_CLOUD" | "DEGRADED_SYNC" | "BLOCKED_CONFIG" | "BLOCKED_TAX" | "BLOCKED_PAYMENT" | "BLOCKED_CONTROLLER" | "BLOCKED_STORAGE" | "BLOCKED_CLOCK" | "SERVICE_LOCKED" | "RECOVERY_REQUIRED";
 
 export interface Clock {
   now(): Date;
@@ -124,6 +124,9 @@ export class VaultError extends Error {
     this.name = "VaultError";
   }
 }
+
+/** The payment adapter proved that this invocation made no provider mutation. */
+export class PaymentNoEffectError extends VaultError {}
 
 export interface CheckoutResult {
   sale: PublicSale | null;

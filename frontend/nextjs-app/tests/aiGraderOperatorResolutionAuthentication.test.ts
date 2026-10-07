@@ -11,7 +11,7 @@ import { issueAiGraderOperatorResolutionAuthenticationV1 } from
 
 const HMAC_KEY = "operator-resolution-server-auth-test-key-0001";
 const HMAC_KEY_ID = "operator-resolution-server-auth-test-v1";
-const ENV = {
+const ENV: NodeJS.ProcessEnv = {
   NODE_ENV: "test",
   AI_GRADER_PRODUCTION_PUBLISH_ENABLED: "true",
   AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY: HMAC_KEY,

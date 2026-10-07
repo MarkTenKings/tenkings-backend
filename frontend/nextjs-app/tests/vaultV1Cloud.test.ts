@@ -247,6 +247,22 @@ test("cloud payment and retry projections reject unauthorized releases, duplicat
   await assert.rejects(call("PAYMENT_CALLBACK_APPLIED", { callbackId: "callback", sequence: 4, state: "SETTLED", disposition: "APPLIED" }), (error: any) => error.code === "SETTLEMENT_WITHOUT_AUTHORIZATION");
 });
 
+test("proven no-effect payment start restores only an unbound requested sale", async () => {
+  const saleId = "00000000-0000-4000-8000-000000000020";
+  let sale: any = { id: saleId, mode: "CERTIFICATION", state: "PAYMENT_REQUESTED", paymentState: "REQUESTED", providerSessionId: null };
+  const tx: any = { vaultSale: {
+    findFirst: async () => sale,
+    updateMany: async ({ data }: any) => { sale = { ...sale, ...data }; return { count: 1 }; },
+  } };
+  const call = () => projectVaultMachineEvent(tx, normalizeTypedVaultEvent({ ...event("PAYMENT_START_NO_EFFECT", { saleId, code: "STRIPE_READER_OFFLINE" }), mode: "CERTIFICATION" }));
+  await call();
+  assert.equal(sale.state, "RESERVED");
+  assert.equal(sale.paymentState, "NOT_REQUESTED");
+  await assert.rejects(call(), (error: any) => error.code === "PAYMENT_NO_EFFECT_INVALID");
+  sale = { ...sale, state: "PAYMENT_REQUESTED", paymentState: "REQUESTED", providerSessionId: "pi_captured" };
+  await assert.rejects(call(), (error: any) => error.code === "PAYMENT_NO_EFFECT_INVALID");
+});
+
 test("complete 150-door manifest becomes eligible only after all 1,050 artifacts and cycles are bound", () => {
   const certificationId = "00000000-0000-4000-8000-000000000050";
   const cycles = VAULT_DOOR_MAP.flatMap(({ doorId }, doorIndex) => [
@@ -288,8 +304,8 @@ test("complete 150-door manifest becomes eligible only after all 1,050 artifacts
   assert.equal(manifest.evidenceBindings.length, 1050);
   const beforeManifest = evaluateVaultCertificationApproval({
     status: "REVIEW_REQUIRED", sourceCommit: "a".repeat(40), appBuild: "0.1.0+abcdef1", localSchemaVersion: 1, contractVersion: 1,
-    configVersion: { digest: "c".repeat(64), canonicalPayload: validPayload() }, nayaxAdapterVersion: "official-adapter-1", nayaxSdkVersion: "official-sdk-1",
-    nayaxFlowConfig: { mode: "OFFICIAL_TEST" }, controllerIdentity: { adapter: "qualified-controller" }, hardwareIdentity: null,
+    configVersion: { digest: "c".repeat(64), canonicalPayload: validPayload() }, paymentAdapterVersion: "official-adapter-1", paymentApiVersion: "official-sdk-1",
+    paymentFlowConfig: { mode: "OFFICIAL_TEST", provider: "STRIPE_TERMINAL", captureBeforeFulfillment: true }, controllerIdentity: { adapter: "qualified-controller" }, hardwareIdentity: null,
     evidenceSummary: null, unresolvedDeviations: null, evidence,
   });
   assert.equal(beforeManifest.eligible, false);
@@ -305,9 +321,9 @@ test("complete 150-door manifest becomes eligible only after all 1,050 artifacts
     localSchemaVersion: 1,
     contractVersion: 1,
     configVersion: { digest: "c".repeat(64), canonicalPayload: validPayload() },
-    nayaxAdapterVersion: "official-adapter-1",
-    nayaxSdkVersion: "official-sdk-1",
-    nayaxFlowConfig: { mode: "OFFICIAL_TEST" },
+    paymentAdapterVersion: "official-adapter-1",
+    paymentApiVersion: "official-sdk-1",
+    paymentFlowConfig: { mode: "OFFICIAL_TEST", provider: "STRIPE_TERMINAL", captureBeforeFulfillment: true },
     controllerIdentity: { adapter: "qualified-controller", mappingDigest: "d".repeat(64), mode: "OFFICIAL_TEST" },
     hardwareIdentity: manifest.hardwareIdentity,
     evidenceSummary: { automatedTransactions: manifest.automatedTransactions, observedSessions: manifest.observedSessions, automatedEvidenceVerified: true },
@@ -316,6 +332,7 @@ test("complete 150-door manifest becomes eligible only after all 1,050 artifacts
   };
   const accepted = evaluateVaultCertificationApproval(complete);
   assert.equal(accepted.eligible, true);
+  assert.equal(evaluateVaultCertificationApproval({ ...complete, paymentFlowConfig: { mode: "OFFICIAL_TEST", provider: "REMOVED_PROVIDER" } }).eligible, false);
   assert.deepEqual(accepted.counts, { automatedTransactions: 1000, observedSessions: 750, purchaseDoorsComplete: 150, restockDoorsComplete: 150 });
   assert.equal(evaluateVaultCertificationApproval({ ...complete, controllerIdentity: { mode: "MOCK" } }).eligible, false);
   assert.equal(evaluateVaultCertificationApproval({ ...complete, evidence: attachedEvidence.map((item) => ({ ...item, evidenceClass: "AUTOMATED" })) }).eligible, false);

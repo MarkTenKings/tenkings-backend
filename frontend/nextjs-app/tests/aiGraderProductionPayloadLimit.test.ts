@@ -96,6 +96,7 @@ test("Production handler projects private capture timing before scanning the cur
   assert.ok(bodyBytes < AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES);
 
   let createCardActionCalls = 0;
+  let returnedGradingSessionId: string | undefined;
   let projectedReportBundle: any;
   const handler = createAiGraderProductionApiHandler({
     env: { [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true" },
@@ -108,9 +109,11 @@ test("Production handler projects private capture timing before scanning the cur
     async createCardFromReport(input) {
       createCardActionCalls += 1;
       projectedReportBundle = input.reportBundle;
+      assert.equal(input.storagePlan.gradingSessionId, productionRelease.gradingSessionId);
+      assert.ok(input.productionRelease.reportId);
       return {
         queueItemId: input.queueItemId,
-        gradingSessionId: input.reportBundle.gradingSessionId,
+        gradingSessionId: returnedGradingSessionId ?? input.storagePlan.gradingSessionId,
         reportId: input.productionRelease.reportId,
         cardAssetId: "card-asset-payload-limit",
         itemId: "item-payload-limit",
@@ -134,6 +137,8 @@ test("Production handler projects private capture timing before scanning the cur
   assert.equal(state.statusCode, 200, JSON.stringify(state.body));
   assert.equal(state.body.result.queueItemId, body.queueItemId);
   assert.equal(state.body.result.reportId, productionRelease.reportId);
+  assert.equal(state.body.result.gradingSessionId, productionRelease.gradingSessionId);
+  assert.equal(Object.hasOwn(reportBundle, "gradingSessionId"), false);
   assert.doesNotMatch(String(state.body.message), /must be 1 MB or smaller/i);
   assert.equal(projectedReportBundle.captureTiming.schemaVersion, "ten-kings-ai-grader-capture-timing-v1");
   assert.equal(projectedReportBundle.captureTiming.captureProfile, "production_fast");
@@ -141,6 +146,13 @@ test("Production handler projects private capture timing before scanning the cur
   assert.equal("front" in projectedReportBundle.captureTiming, false);
   assert.doesNotMatch(JSON.stringify(projectedReportBundle), new RegExp(leimacHost.replaceAll(".", "\\.")));
   assert.equal((reportBundle.captureTiming as any).front.lightingProfileChanges.writes[0].host, leimacHost);
+
+  returnedGradingSessionId = "different-grading-session";
+  const mismatchedResponse = response();
+  await handler(request(body), mismatchedResponse.res);
+  assert.equal(mismatchedResponse.state.statusCode, 400);
+  assert.equal(mismatchedResponse.state.body.code, "AI_GRADER_PUBLISH_LINKAGE_MISMATCH");
+  assert.equal(createCardActionCalls, 2);
 
   const unsafeBody = structuredClone(body);
   (unsafeBody.reportBundle.geometry as any).stationToken = "must-still-be-rejected";
@@ -152,5 +164,5 @@ test("Production handler projects private capture timing before scanning the cur
     String(unsafeResponse.state.body?.message),
     /body\.reportBundle\.geometry\.stationToken/,
   );
-  assert.equal(createCardActionCalls, 1);
+  assert.equal(createCardActionCalls, 2);
 });

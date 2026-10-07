@@ -2,6 +2,8 @@
 
 This runbook covers simulator-backed development and future appliance procedures. Commands that apply a cloud migration, deploy/restart a serving environment, charge a payment, or actuate hardware are intentionally absent and require separate authorization plus pre/post session-log entries.
 
+Spark-specific provisioning, recovery, coordinated snapshot staging and certification preparation are documented in [Spark operations and acceptance](SPARK_OPERATIONS_AND_ACCEPTANCE.md). That supplement supersedes older statements about missing Spark restore/recovery tooling; installed qualification is still required.
+
 ## Development validation
 
 ```bash

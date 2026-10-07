@@ -9,18 +9,19 @@ interface PaidFlowProps {
   paymentBusy: boolean;
   doneBusy: boolean;
   disabled?: boolean;
+  presentation?: "standard" | "cinematic";
   onContinuePayment: () => void;
   onOpenDoors: () => void;
   onDone: () => void;
   onCancelPayment?: () => void;
 }
 
-export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, disabled = false, onContinuePayment, onOpenDoors, onDone, onCancelPayment }: PaidFlowProps) {
+export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, disabled = false, presentation = "standard", onContinuePayment, onOpenDoors, onDone, onCancelPayment }: PaidFlowProps) {
   const sale = snapshot.activeSale;
   if (!sale) return <StatusBanner state={snapshot.publicState} reasons={snapshot.readinessReasons} />;
   const paymentNotRequested = sale.state === "RESERVED" && sale.paymentState === "NOT_REQUESTED";
   const paymentEndedWithoutCharge = snapshot.publicState === "PAYMENT_DECLINED" || snapshot.publicState === "PAYMENT_CANCELLED";
-  const paymentUnresolved = sale.paymentState === "REQUESTED" || sale.paymentState === "UNKNOWN" || sale.paymentState === "RECONCILIATION_REQUIRED";
+  const paymentUnresolved = !sale.authorizationDurable && (sale.paymentState === "REQUESTED" || sale.paymentState === "UNKNOWN" || sale.paymentState === "RECONCILIATION_REQUIRED");
   const showRetry = mayShowOpenDoors(snapshot.publicState, sale);
   const showSupport = snapshot.publicState === "SUPPORT_REQUIRED" || snapshot.publicState === "GROUP_RETRY_USED" || sale.retryUsed;
 
@@ -81,9 +82,9 @@ export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, disabled 
           <strong>{formatMoney(sale.totalCents)}</strong>
         </div>
         <div>
-          <p className="eyebrow">Your exact paid doors</p>
+          <p className="eyebrow">{presentation === "cinematic" ? "Collect from these doors" : "Your exact paid doors"}</p>
           <h2 id="paid-doors-title">{sale.paidDoorIds.map((doorId) => saleDoorLabel(sale, doorId)).join(" · ")}</h2>
-          <p>Take only the packs from these labeled doors. An unlock command is not proof of physical retrieval.</p>
+          <p>{presentation === "cinematic" ? "Find these door numbers on the vault and collect your packs." : "Take only the packs from these labeled doors. An unlock command is not proof of physical retrieval."}</p>
         </div>
         {sale.retrievalSecondsRemaining !== null && snapshot.publicState !== "PAID_RESET_COUNTDOWN" && (
           <div className="countdown-orb" aria-live="polite">
@@ -94,11 +95,11 @@ export function PaidFlow({ snapshot, retryBusy, paymentBusy, doneBusy, disabled 
 
       {showRetry && (
         <section className="retry-card">
-          <p>If any paid door needs one more unlock command, use the single group retry below.</p>
+          <p>{presentation === "cinematic" ? "Door still locked? Try the unlock once more." : "If any paid door needs one more unlock command, use the single group retry below."}</p>
           <button type="button" className="primary-action retry-action" onClick={onOpenDoors} disabled={disabled || retryBusy}>
             {retryBusy ? "Recording retry…" : "OPEN DOORS"}
           </button>
-          <small>This sends exactly one second command to every original paid door. It never targets another door.</small>
+          <small>{presentation === "cinematic" ? "Only your paid doors will be retried. Available once per order." : "This sends exactly one second command to every original paid door. It never targets another door."}</small>
         </section>
       )}
 

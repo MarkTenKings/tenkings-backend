@@ -11,7 +11,7 @@ export function SupportPanel({ support, sale }: SupportPanelProps) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrFailed, setQrFailed] = useState(false);
   const [selectedContact, setSelectedContact] = useState<{ url: string; label: string } | null>(null);
-  const paymentUnknown = ["UNKNOWN", "RECONCILIATION_REQUIRED", "REQUESTED"].includes(sale.paymentState);
+  const paymentUnknown = !sale.authorizationDurable && ["UNKNOWN", "RECONCILIATION_REQUIRED", "REQUESTED"].includes(sale.paymentState);
   const contextDoorIds = useMemo(() => paymentUnknown ? sale.items.map((item) => item.doorId) : sale.paidDoorIds, [paymentUnknown, sale.items, sale.paidDoorIds]);
   const safeUrl = useMemo(
     () => createSupportUrl(support, sale.supportReference, contextDoorIds),

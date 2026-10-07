@@ -3675,7 +3675,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           actorAudit: authorizedActor.audit,
         });
         if (result.queueItemId !== input.queueItemId ||
-            result.gradingSessionId !== input.reportBundle.gradingSessionId ||
+            result.gradingSessionId !== plan.gradingSessionId ||
             result.reportId !== input.productionRelease.reportId) {
           throw aiGraderPublishBoundaryError(
             "AI_GRADER_PUBLISH_LINKAGE_MISMATCH",

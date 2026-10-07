@@ -42,6 +42,8 @@
     "vault:test-next-routes": "node scripts/test-vault-next-routes.mjs",
     "vault:build-next": "node scripts/build-vault-next.mjs",
     "vault:demo": "pnpm vault:build && node scripts/run-vault-simulator.mjs",
+    "vault:cinematic": "pnpm vault:build && node scripts/run-vault-simulator.mjs --doors 72 --stocked --cinematic",
+    "vault:preview": "pnpm vault:build && node scripts/run-vault-simulator.mjs --doors 72 --stocked",
     "vercel:build": "bash scripts/vercel-build.sh",
     "packs:mint": "node scripts/mint-pack-inventory.js"
   }

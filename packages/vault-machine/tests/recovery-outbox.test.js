@@ -9,14 +9,14 @@ async function reserveOne(rig) {
 
 test("restart reconciles unknown payment and preserves the original transaction", async () => {
   const temporary = tempDatabase(); const rig = await createRig({ databasePath: temporary.path, acquireProcessLock: true }); makeDoorAvailable(rig);
-  rig.payment.scriptStart({ outcome: "UNKNOWN" }).scriptReconcile({ outcome: "AUTHORIZE" });
+  rig.payment.scriptStart({ outcome: "UNKNOWN" }).scriptReconcile({ outcome: "SETTLE" });
   const sale = await reserveOne(rig); await rig.machine.startPayment(sale.saleId, crypto.randomUUID()); assert.equal(rig.machine.publicSale(sale.saleId).paymentState, "UNKNOWN");
   rig.store.close();
   const reopenedStore = new vault.VaultStore(temporary.path, { machineId: rig.machineId, appVersion: "0.1.0" });
   const controller = new vault.DeterministicControllerSimulator([...contracts.SIMULATOR_DOOR_MAPPING]);
   const publicPem = rig.keyPair.publicKey.export({ type: "spki", format: "pem" });
   const restarted = new vault.VaultMachine(reopenedStore, rig.payment, controller, { pinnedConfigKeys: { "test-config-key": publicPem }, appVersion: "0.1.0", clock: rig.clock });
-  const recovery = await restarted.initialize(); assert.equal(recovery.recoveredSales, 1); assert.equal(restarted.publicSale(sale.saleId).paymentState, "AUTHORIZED");
+  const recovery = await restarted.initialize(); assert.equal(recovery.recoveredSales, 1); assert.equal(restarted.publicSale(sale.saleId).paymentState, "SETTLED");
   assert.equal(reopenedStore.one(`SELECT state FROM door WHERE door_id='X-01'`).state, "COMMITTED_SOLD"); assert.equal(controller.receipts.length, 1);
   reopenedStore.close(); require("node:fs").rmSync(temporary.directory, { recursive: true, force: true });
 });
@@ -43,7 +43,7 @@ test("restart resumes a persisted pre-effect payment intent using the same provi
   rig.store.run(`UPDATE sale SET state='PAYMENT_REQUESTED',payment_state='REQUESTED',payment_intent_key=?,payment_request_digest=? WHERE sale_id=?`, paymentKey, requestDigest, sale.saleId); rig.store.close();
   const store = new vault.VaultStore(temporary.path, { machineId: rig.machineId, appVersion: "0.1.0" }); const controller = new vault.DeterministicControllerSimulator([...contracts.SIMULATOR_DOOR_MAPPING]);
   const restarted = new vault.VaultMachine(store, rig.payment, controller, { pinnedConfigKeys: { "test-config-key": rig.keyPair.publicKey.export({ type: "spki", format: "pem" }) }, appVersion: "0.1.0", clock: rig.clock });
-  await restarted.initialize(); assert.equal(restarted.publicSale(sale.saleId).paymentState, "AUTHORIZED"); assert.equal(rig.payment.session(`mock_session_${sale.saleId}`).request.idempotencyKey, paymentKey); assert.equal(controller.receipts.length, 1);
+  await restarted.initialize(); assert.equal(restarted.publicSale(sale.saleId).paymentState, "SETTLED"); assert.equal(rig.payment.session(`mock_session_${sale.saleId}`).request.idempotencyKey, paymentKey); assert.equal(controller.receipts.length, 1);
   store.close(); require("node:fs").rmSync(temporary.directory, { recursive: true, force: true });
 });
 

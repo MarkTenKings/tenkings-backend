@@ -46,7 +46,7 @@ export class VaultOperationsService {
     if (activeCertification && activeCertification.session_id !== certificationId) throw new VaultError("CERTIFICATION_OWNS_INVENTORY", "Use the active certification's restock cycle while its inventory snapshot is pinned", 409);
     const meta = this.machine.store.one(`SELECT active_config_version,automation_halted FROM machine_meta WHERE singleton=1`);
     if (!meta.active_config_version) throw new VaultError("RESTOCK_PREFLIGHT_CONFIG", "Restock requires an active configuration", 409);
-    if (Number(meta.automation_halted) === 1) throw new VaultError("RESTOCK_AUTOMATION_HALTED", "Physical automation is halted", 409);
+    if (Number(meta.automation_halted) === 1 || this.machine.paymentOperations.recovery.held()) throw new VaultError("RESTOCK_AUTOMATION_HALTED", "Physical automation is halted", 409);
     const allEligible = this.machine.store.all(`SELECT door_id FROM door WHERE active=1 AND planned_product_id IS NOT NULL AND state IN ('EMPTY','COMMITTED_SOLD','SERVICE_HOLD','EXCEPTION') ORDER BY planned_product_id,display_order`).map((row) => row.door_id as VaultDoorId);
     const requested = requestedDoorIds ?? allEligible;
     const eligible = new Set(allEligible);
@@ -255,6 +255,7 @@ export class VaultOperationsService {
         this.machine.store.transaction(() => {
           this.machine.store.run(`INSERT INTO command_intent(command_id,restock_session_id,door_id,door_label,controller_channel,controller_endpoint_id,profile_digest,mapping_version,attempt,authority,state,created_at) VALUES(?,?,?,?,?,?,?,?,1,'RESTOCK','COMMAND_INTENT_RECORDED',?)`, commandId, session.session_id, next.door_id, door.door_label, door.controller_channel, door.profile_digest ? door.controller_endpoint_id : null, door.profile_digest, door.mapping_version, iso(this.clock.now()));
           if (session.certification_session_id) this.machine.store.run(`UPDATE command_intent SET certification_session_id=? WHERE command_id=?`, session.certification_session_id, commandId);
+          this.machine.bindProductionControllerCommand(commandId);
           this.machine.events.append({ type: "RESTOCK_DOOR_COMMAND_COMMITTED", actor: actorUserId, payload: { restockSessionId: session.session_id, commandId, doorId: next.door_id } });
           this.machine.store.bumpStateVersion();
         });
@@ -284,6 +285,7 @@ export class VaultOperationsService {
     const commandId = deterministicId("cert", String(session.session_id), scheduledDoorId, String(sequence));
     this.machine.store.transaction(() => {
       this.machine.store.run(`INSERT INTO command_intent(command_id,certification_session_id,door_id,door_label,controller_channel,controller_endpoint_id,profile_digest,mapping_version,attempt,authority,state,created_at) VALUES(?,?,?,?,?,?,?,?,1,'CERTIFICATION','COMMAND_INTENT_RECORDED',?)`, commandId, session.session_id, scheduledDoorId, door.door_label, selected.controllerChannel, door.profile_digest ? door.controller_endpoint_id : null, door.profile_digest, String(session.config_version), iso(this.clock.now()));
+      this.machine.bindProductionControllerCommand(commandId);
       this.machine.events.append({ type: "CERTIFICATION_COMMAND_COMMITTED", mode: "CERTIFICATION", actor: actorUserId, payload: { certificationSessionId: session.session_id, commandId, scheduledDoorId, sequence } });
       this.machine.store.bumpStateVersion();
     });

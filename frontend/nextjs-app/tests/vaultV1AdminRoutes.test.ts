@@ -59,6 +59,55 @@ test("populated fleet uses JSON-safe sequences and server-observed readiness", a
   assert.equal(vaultMachineDto({ ...machine(), status: "DECOMMISSIONED" }).salesReady, false);
 }));
 
+function capturedSparkSale() {
+  return { id: uuid(900), machineId, localTransactionId: uuid(900), mode: "CERTIFICATION", providerName: "NAYAX_SPARK", paymentState: "SETTLED", settlementState: "SETTLED", currency: "USD", totalCents: 2700,
+    providerEvidence: { captureConfirmed: true, paymentBindingDigest: digest }, providerSessionId: `sha256:${digest}`, providerTransactionId: `sha256:${digest}`,
+    customerDoneAt: new Date(), items: [{ initialCommandTerminalAt: new Date() }], supportCases: [], paymentAnomalies: [], paymentAction: null };
+}
+
+test("paid void approval requires fresh admin authority and rejects technicians before creating an action", async (t) => withAuthority(t, false, async () => {
+  stub(t, prisma.vaultSale, "findUnique", async () => ({ machineId }));
+  let writes = 0; stub(t, prisma.vaultPaymentAction, "create", async () => { writes++; });
+  const denied = await request(["payment-actions"], { actionId: uuid(901), saleId: uuid(900), amountCents: 2700, reason: "Reviewed failed service", confirmFullSaleVoid: true });
+  assert.equal(denied.status, 403); assert.equal(writes, 0);
+}));
+
+test("fresh paid void approval creates one exact action, replay is stable, and amount edits conflict", async (t) => withAuthority(t, true, async () => {
+  const sale = capturedSparkSale(); let saved: any; let writes = 0;
+  stub(t, prisma.vaultSale, "findUnique", async (query: any) => query.select ? { machineId } : sale);
+  stub(t, prisma.vaultPaymentAction, "findUnique", async () => saved ?? null);
+  stub(t, prisma.vaultPaymentEvidenceAnomaly, "findMany", async () => []);
+  stub(t, prisma.vaultPaymentAction, "create", async ({ data }: any) => { writes++; saved = { ...data, state: "APPROVED" }; return saved; });
+  const body = { actionId: uuid(901), saleId: sale.id, amountCents: 2700, reason: "Reviewed failed service", confirmFullSaleVoid: true };
+  const approved = await request(["payment-actions"], body);
+  assert.equal(approved.status, 201); assert.equal(approved.body.externalPaymentActionExecuted, false);
+  assert.equal(approved.body.paymentAction.amountCents, 2700);
+  assert.equal(Date.parse(saved.action.expiresAt) - Date.parse(saved.action.approvedAt), 300_000);
+  assert.equal((await request(["payment-actions"], body)).status, 201); assert.equal(writes, 1);
+  assert.equal((await request(["payment-actions"], { ...body, amountCents: 2600 })).status, 409); assert.equal(writes, 1);
+}));
+
+test("paid void refuses stale human authentication even for an owner", async (t) => withAuthority(t, true, async () => {
+  stub(t, prisma.vaultSale, "findUnique", async () => ({ machineId }));
+  stub(t, prisma.session, "findUnique", async () => ({ id: "old", tokenHash: createHash("sha256").update(token).digest("hex"), createdAt: new Date(Date.now() - 3600000), expiresAt: new Date(Date.now() + 60000), user: { id: userId } }));
+  const denied = await request(["payment-actions"], { actionId: uuid(901), saleId: uuid(900), amountCents: 2700, reason: "Reviewed failed service", confirmFullSaleVoid: true });
+  assert.equal(denied.status, 403);
+}));
+
+test("explicit financial review resolves only its linked anomaly without treating annotation as a provider operation", async (t) => withAuthority(t, true, async () => {
+  const noticeId = `sha256:${digest}`;
+  const supportCase = { id: uuid(902), machineId, saleId: uuid(900), reconciliationSnapshot: { noticeId, provider: "NAYAX_SPARK", amountCents: 2700, currency: "USD", captureConfirmed: true, code: "LATE_CAPTURE" } };
+  stub(t, prisma.vaultSupportCase, "findUnique", async () => supportCase);
+  stub(t, prisma.vaultSupportCase, "update", async ({ data }: any) => ({ ...supportCase, ...data }));
+  const reviews: any[] = [];
+  stub(t, prisma.vaultPaymentEvidenceAnomaly, "updateMany", async (query: any) => { reviews.push(query); return { count: 1 }; });
+  const body = { caseId: supportCase.id, status: "RESOLVED", resolutionReason: "Reviewed original provider evidence" };
+  assert.equal((await request(["support-cases"], body)).status, 400); assert.equal(reviews.length, 0);
+  const resolved = await request(["support-cases"], { ...body, financialResolution: { resolutionType: "NO_EXTERNAL_ACTION", amountCents: null, currency: "USD", note: "Reviewed the exact transaction", recordedAt: new Date().toISOString() } });
+  assert.equal(resolved.status, 200); assert.equal(resolved.body.externalPaymentActionExecuted, false);
+  assert.deepEqual(reviews[0].where, { machineId, noticeId, saleId: supportCase.saleId, resolvedAt: null });
+}));
+
 test("Vault-only technician identity gets machine scope without global platform-admin role", async (t) => withAuthority(t, false, async () => {
   let filter: any;
   stub(t, prisma.vaultCertificationSession, "findMany", async (input: any) => { filter = input.where; return []; });
@@ -165,4 +214,56 @@ test("human authorization rejects static credentials, old step-up and revocation
   await assert.rejects(writeVaultAdminAudit({ req, authority, machineId, action: "test", outcome: "SUCCESS", tx: prisma as any }), (error: any) => error.statusCode === 401);
   stub(t, prisma.session, "findUnique", async () => ({ id: "human-session", tokenHash: createHash("sha256").update(token).digest("hex"), createdAt: new Date(Date.now() - 16 * 60000), expiresAt: new Date(Date.now() + 60000), user: { id: userId } }));
   await assert.rejects(requireVaultAdmin(req, { permission: "RESTOCK_RUN", machineId, fresh: true, reason: "Review exact restock" }), (error: any) => error.statusCode === 403);
+}));
+
+function financialReviewFixture() {
+  const snapshot = { snapshotId: uuid(960), machineId, generation: 1, paymentBindingDigest: digest, stateDigest: digest, providerEvidenceDigest: digest,
+    noticeIds: [`sha256:${digest}`], unknownActionIds: [], blockers: [], observedAt: new Date().toISOString() };
+  const input = { decisionId: uuid(961), machineId, snapshotId: snapshot.snapshotId, generation: 1, stateDigest: digest, noticeIds: snapshot.noticeIds, unknownActionIds: [],
+    evidenceReference: 'external-human-review-123', evidenceDigest: digest, reason: 'Verified the complete financial evidence', confirmReviewed: true };
+  return { snapshot, input };
+}
+
+test('financial recovery authority requires a fresh authorized human before creating any decision', async t => withAuthority(t, false, async () => {
+  let writes = 0; stub(t, prisma.vaultFinancialRecoveryDecision, 'create', async () => { writes++; });
+  assert.equal((await request(['financial-recovery'], financialReviewFixture().input)).status, 403); assert.equal(writes, 0);
+}));
+
+test('fresh financial review authorizes exactly one current snapshot and exports only bounded evidence', async t => withAuthority(t, true, async () => {
+  const { snapshot, input } = financialReviewFixture(); let saved: any, writes = 0;
+  stub(t, prisma.vaultMachine, 'findUnique', async () => machine());
+  stub(t, prisma.vaultFinancialRecoverySnapshot, 'findFirst', async () => ({ id: snapshot.snapshotId, snapshot, receivedAt: new Date() }));
+  stub(t, prisma.vaultFinancialRecoveryDecision, 'findUnique', async () => saved ?? null);
+  stub(t, prisma.vaultFinancialRecoveryDecision, 'findFirst', async () => null);
+  stub(t, prisma.vaultFinancialRecoveryDecision, 'create', async ({ data }: any) => { writes++; saved = { ...data, state: 'APPROVED' }; return saved; });
+  stub(t, prisma.vaultPaymentEvidenceAnomaly, 'count', async () => 1);
+  stub(t, prisma.vaultPaymentAction, 'count', async () => 0);
+  const result = await request(['financial-recovery'], input);
+  assert.equal(result.status, 201); assert.equal(result.body.externalPaymentActionExecuted, false); assert.equal(result.body.decision.approvedByAdminId, userId);
+  assert.equal(Date.parse(result.body.decision.expiresAt) - Date.parse(result.body.decision.approvedAt), 300000);
+  assert.equal((await request(['financial-recovery'], input)).status, 201); assert.equal(writes, 1);
+  assert.equal((await request(['financial-recovery'], { ...input, evidenceDigest: 'b'.repeat(64) })).status, 409);
+  stub(t, prisma.vaultPaymentAction, 'findMany', async () => []);
+  stub(t, prisma.vaultPaymentEvidenceAnomaly, 'findMany', async () => []);
+  stub(t, prisma.vaultFinancialRecoveryDecision, 'findMany', async () => [saved]);
+  stub(t, prisma.vaultSparkObservation, 'aggregate', async () => ({ _count: { _all: 0 }, _max: { receivedAt: null, receiptSequence: null } }));
+  stub(t, prisma.vaultPaymentAction, 'aggregate', async () => ({ _count: { _all: 0 }, _min: { approvedAt: null } }));
+  const exported = await request(['financial-recovery'], undefined, { machineId, download: 'true' });
+  assert.equal(exported.status, 200); assert.match(exported.headers['Content-Disposition'], /vault-financial-recovery.json/);
+  assert.equal(exported.body.snapshot.stateDigest, digest); assert.equal(exported.body.decisions[0].state, 'APPROVED');
+}));
+
+test('financial recovery refuses stale sessions, offline machines, blockers and stale generation', async t => withAuthority(t, true, async () => {
+  const { snapshot, input } = financialReviewFixture(); let writes = 0;
+  stub(t, prisma.vaultFinancialRecoveryDecision, 'create', async () => { writes++; });
+  stub(t, prisma.vaultFinancialRecoveryDecision, 'findUnique', async () => null);
+  stub(t, prisma.vaultMachine, 'findUnique', async () => ({ ...machine(), lastCloudObservedAt: new Date(Date.now() - 600000) }));
+  assert.equal((await request(['financial-recovery'], input)).body.error.code, 'FINANCIAL_RECOVERY_MACHINE_OFFLINE');
+  stub(t, prisma.vaultMachine, 'findUnique', async () => machine());
+  stub(t, prisma.vaultFinancialRecoverySnapshot, 'findFirst', async () => ({ id: snapshot.snapshotId, snapshot: { ...snapshot, blockers: ['TECHNICAL_RECOVERY_REQUIRED'] } }));
+  assert.equal((await request(['financial-recovery'], input)).status, 409);
+  stub(t, prisma.vaultFinancialRecoverySnapshot, 'findFirst', async () => ({ id: snapshot.snapshotId, snapshot }));
+  assert.equal((await request(['financial-recovery'], { ...input, generation: 2 })).status, 409);
+  stub(t, prisma.session, 'findUnique', async () => ({ id: 'old', tokenHash: createHash('sha256').update(token).digest('hex'), createdAt: new Date(Date.now() - 3600000), expiresAt: new Date(Date.now() + 60000), user: { id: userId } }));
+  assert.equal((await request(['financial-recovery'], input)).status, 403); assert.equal(writes, 0);
 }));

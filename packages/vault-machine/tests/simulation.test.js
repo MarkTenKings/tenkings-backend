@@ -41,7 +41,7 @@ test("seeded state model explores over 16000 operations across 1000 varied payme
       // This is a generated state-machine model, not physical restocking or
       // human certification: fixture inventory is reset between scenarios.
       makeDoorAvailable(rig, ['X-01']); rig.machine.markCloudContact();
-      const outcome = ['AUTHORIZE', 'DECLINE', 'CANCEL', 'UNKNOWN'][(next() >>> 16) % 4];
+      const outcome = ['SETTLE', 'DECLINE', 'CANCEL', 'UNKNOWN'][(next() >>> 16) % 4];
       rig.payment.scriptStart({ outcome });
       const controller = rig.controller; controller.script({ fault: faults[(next() >>> 16) % 4] }, { fault: faults[(next() >>> 16) % 4] });
       rig.machine.selectCartDoor('X-01', 'sports-25', true); operations++;
@@ -53,7 +53,7 @@ test("seeded state model explores over 16000 operations across 1000 varied payme
       assert.throws(() => rig.machine.selectCartDoor('X-01', 'sports-25', false), /existing transaction/); operations++;
       const key = crypto.randomUUID(); await rig.machine.startPayment(sale.saleId, key); operations++;
       await rig.machine.startPayment(sale.saleId, key); operations++;
-      if (outcome === 'UNKNOWN') { rig.payment.scriptReconcile({ outcome: 'AUTHORIZE' }); await rig.machine.advancePayments(); operations++; }
+      if (outcome === 'UNKNOWN') { rig.payment.scriptReconcile({ outcome: 'SETTLE' }); await rig.machine.advancePayments(); operations++; }
       const row = rig.store.one('SELECT * FROM sale WHERE sale_id=?', sale.saleId);
       const stale = { callbackId: crypto.randomUUID(), saleId: sale.saleId, providerSessionId: row.provider_session_id, sequence: 0, state: 'UNKNOWN', occurredAt: rig.clock.now().toISOString(), evidence: { generated: true } };
       assert.notEqual((await rig.machine.handleProviderCallback(stale)).disposition, 'APPLIED'); operations++;

@@ -51,7 +51,7 @@ test('fresh runtime obtains configuration and staff, restocks and purchases thro
   const cloud = await mockCloud(machineId, signed, [staff], clock);
   const store = new vault.VaultStore(':memory:', { machineId, appVersion: '0.1.0', sourceCommit: 'a'.repeat(40), acquireProcessLock: false });
   let runtime;
-  const machine = new vault.VaultMachine(store, new vault.DeterministicNayaxMock(), new vault.DeterministicControllerSimulator([...contracts.SIMULATOR_DOOR_MAPPING]), { clock, appVersion: '0.1.0', pinnedConfigKeys: { 'test-config-key': keys.publicKey.export({ type: 'spki', format: 'pem' }) }, beforeCheckout: () => runtime.proveCheckoutReachability() });
+  const machine = new vault.VaultMachine(store, new vault.DeterministicPaymentMock(), new vault.DeterministicControllerSimulator([...contracts.SIMULATOR_DOOR_MAPPING]), { clock, appVersion: '0.1.0', pinnedConfigKeys: { 'test-config-key': keys.publicKey.export({ type: 'spki', format: 'pem' }) }, beforeCheckout: () => runtime.proveCheckoutReachability() });
   const service = new vault.VaultHttpService(machine, new vault.VaultOperationsService(machine, clock), { origin: 'http://127.0.0.1:47831', port: 0, host: '127.0.0.1', adapterCallbackToken: 'local-test-adapter-secret', clock });
   await machine.initialize();
   const address = await service.listen();
@@ -132,7 +132,9 @@ test('CLI failed listener startup releases both SQLite writer locks without prin
         PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         VAULT_MACHINE_ID: crypto.randomUUID(), VAULT_DATABASE_PATH: database,
         VAULT_KIOSK_ORIGIN: `http://127.0.0.1:${server.address().port}`, VAULT_PORT: String(server.address().port),
-        VAULT_ADAPTER_CALLBACK_TOKEN: 'fixture-callback-secret', VAULT_CONFIG_PUBLIC_KEY_PATH: publicKey,
+        VAULT_ADAPTER_CALLBACK_TOKEN: 'fixture-callback-secret-32-characters',
+        VAULT_MAINTENANCE_TOKEN: 'fixture-maintenance-secret-32-characters',
+        VAULT_PAYMENT_ADAPTER: 'MOCK', VAULT_CONTROLLER_ADAPTER: 'SIMULATOR', VAULT_CONFIG_PUBLIC_KEY_PATH: publicKey,
         VAULT_CONFIG_KEY_ID: 'fixture', VAULT_APP_VERSION: '0.1.0', VAULT_SOURCE_COMMIT: 'a'.repeat(40),
         VAULT_KIOSK_STATIC_ROOT: directory, VAULT_CLOUD_ORIGIN: 'https://127.0.0.1:1',
         VAULT_MACHINE_CREDENTIAL: 'fixture-machine-secret',
@@ -141,6 +143,8 @@ test('CLI failed listener startup releases both SQLite writer locks without prin
     assert.equal(result.error, undefined);
     assert.equal(result.status, 1);
     assert.doesNotMatch(result.stderr, /fixture-(callback|machine)-secret/);
+    assert.equal(fs.existsSync(database), true, "test reached persistent machine initialization before listener failure");
+    assert.equal(fs.existsSync(`${database}.mock-provider.sqlite`), true, "test reached provider initialization before listener failure");
     assert.equal(fs.existsSync(`${database}.writer.lock`), false);
     assert.equal(fs.existsSync(`${database}.mock-provider.sqlite.writer.lock`), false);
   } finally {

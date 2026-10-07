@@ -39,12 +39,12 @@ test("secure pick persists one unbiased eligible selection before returning", as
   assert.equal(rig.store.one(`SELECT product_id FROM cart_item WHERE door_id=?`, picked.doorId).product_id, "sports-25"); assert.equal(rig.store.one(`SELECT COUNT(*) AS count FROM machine_event WHERE type='CART_SECURE_PICK_PERSISTED'`).count, 1); rig.store.close();
 });
 
-test("authorization commits sold doors and deterministic intents before serialized commands; retry is exactly all original doors once", async () => {
+test("captured payment commits sold doors and deterministic intents before serialized commands; retry is exactly all original doors once", async () => {
   const rig = await createRig(); makeDoorAvailable(rig, ["X-01", "K-01", "I-01"]);
   rig.controller.script({ fault: "ACK", delayMs: 5 }, { fault: "TIMEOUT" }, { fault: "NAK" }, { fault: "ACK" }, { fault: "ACK" }, { fault: "ACK" });
   const checkout = await reserve(rig, ["X-01", "K-01", "I-01"]); const paymentKey = crypto.randomUUID();
   const paid = await rig.machine.startPayment(checkout.sale.saleId, paymentKey);
-  assert.equal(paid.paymentState, "AUTHORIZED"); assert.equal(rig.controller.maxObservedConcurrency(), 1);
+  assert.equal(paid.paymentState, "SETTLED"); assert.equal(rig.controller.maxObservedConcurrency(), 1);
   assert.deepEqual(rig.store.all(`SELECT DISTINCT state FROM door WHERE owning_sale_id=?`, paid.saleId).map((row) => row.state), ["COMMITTED_SOLD"]);
   assert.equal(rig.store.one(`SELECT COUNT(*) AS count FROM command_intent WHERE sale_id=? AND attempt=1`, paid.saleId).count, 3);
   const retryKey = crypto.randomUUID(); await rig.machine.openPaidDoorsAgain(paid.saleId, retryKey);
@@ -60,15 +60,15 @@ test("authorization commits sold doors and deterministic intents before serializ
   assert.equal(rig.store.one(`SELECT COUNT(*) AS count FROM command_intent WHERE sale_id=?`, paid.saleId).count, 6); rig.store.close();
 });
 
-test("decline releases reservation; unknown retains it and reconcile authorization fulfills without second payment", async () => {
+test("decline releases reservation; unknown retains it and reconcile capture fulfills without second payment", async () => {
   const decline = await createRig(); makeDoorAvailable(decline, ["X-01"]); decline.payment.scriptStart({ outcome: "DECLINE" });
   const declinedSale = (await reserve(decline)).sale; await decline.machine.startPayment(declinedSale.saleId, crypto.randomUUID());
   assert.equal(decline.machine.publicSale(declinedSale.saleId).state, "PAYMENT_DECLINED"); assert.equal(decline.store.one(`SELECT state FROM door WHERE door_id='X-01'`).state, "AVAILABLE"); decline.store.close();
 
-  const unknown = await createRig(); makeDoorAvailable(unknown, ["X-01"]); unknown.payment.scriptStart({ outcome: "UNKNOWN" }).scriptReconcile({ outcome: "AUTHORIZE" });
+  const unknown = await createRig(); makeDoorAvailable(unknown, ["X-01"]); unknown.payment.scriptStart({ outcome: "UNKNOWN" }).scriptReconcile({ outcome: "SETTLE" });
   const unknownSale = (await reserve(unknown)).sale; await unknown.machine.startPayment(unknownSale.saleId, crypto.randomUUID());
   assert.equal(unknown.machine.publicSale(unknownSale.saleId).paymentState, "UNKNOWN"); assert.equal(unknown.store.one(`SELECT state FROM door WHERE door_id='X-01'`).state, "RESERVED");
-  await unknown.machine.reconcileSale(unknownSale.saleId); assert.equal(unknown.machine.publicSale(unknownSale.saleId).paymentState, "AUTHORIZED"); assert.equal(unknown.store.one(`SELECT state FROM door WHERE door_id='X-01'`).state, "COMMITTED_SOLD"); unknown.store.close();
+  await unknown.machine.reconcileSale(unknownSale.saleId); assert.equal(unknown.machine.publicSale(unknownSale.saleId).paymentState, "SETTLED"); assert.equal(unknown.store.one(`SELECT state FROM door WHERE door_id='X-01'`).state, "COMMITTED_SOLD"); unknown.store.close();
 });
 
 test("mock provider deterministically covers cancel and timeout without inventing settlement", async () => {
@@ -86,11 +86,12 @@ test("controller mapping validation rejects duplicate channels and protects comm
 test("callbacks are idempotent, conflicting IDs are quarantined, and lower sequences cannot regress", async () => {
   const rig = await createRig(); makeDoorAvailable(rig, ["X-01"]); rig.payment.scriptStart({ outcome: "UNKNOWN" });
   const sale = (await reserve(rig)).sale; await rig.machine.startPayment(sale.saleId, crypto.randomUUID()); const provider = rig.store.one(`SELECT provider_session_id FROM sale WHERE sale_id=?`, sale.saleId).provider_session_id;
-  const callback = { callbackId: "cb-authorize", saleId: sale.saleId, providerSessionId: provider, sequence: 5, state: "AUTHORIZED", occurredAt: rig.clock.now().toISOString(), evidence: { pan: "4111111111111111", normalizedCode: "OK" } };
+  rig.payment.scriptReconcile({ outcome: "SETTLE" });
+  const callback = { callbackId: "cb-authorize", saleId: sale.saleId, providerSessionId: provider, sequence: 5, state: "SETTLED", occurredAt: rig.clock.now().toISOString(), evidence: { pan: "4111111111111111", normalizedCode: "OK" } };
   assert.equal((await rig.machine.handleProviderCallback(callback)).disposition, "APPLIED"); assert.equal((await rig.machine.handleProviderCallback(callback)).disposition, "DUPLICATE");
   await assert.rejects(() => rig.machine.handleProviderCallback({ ...callback, state: "DECLINED" }), /conflicts/i);
   const late = await rig.machine.handleProviderCallback({ ...callback, callbackId: "cb-late", sequence: 4, state: "DECLINED" });
-  assert.equal(late.disposition, "OUT_OF_ORDER"); assert.equal(late.sale.paymentState, "AUTHORIZED");
+  assert.equal(late.disposition, "OUT_OF_ORDER"); assert.equal(late.sale.paymentState, "SETTLED");
   assert.equal(JSON.parse(rig.store.one(`SELECT evidence_json FROM payment_callback WHERE callback_id='cb-authorize'`).evidence_json).pan, "[REDACTED]");
   assert.equal(rig.store.one(`SELECT COUNT(*) AS count FROM command_intent WHERE sale_id=?`, sale.saleId).count, 1); rig.store.close();
 });

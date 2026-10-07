@@ -52,10 +52,14 @@ export default function VaultAdminPage() {
   const [staff, setStaff] = useState({ userId: "", role: "RESTOCKER", pin: "", expiresAt: "" });
   const [records, setRecords] = useState<Row[]>([]);
   const [report, setReport] = useState<Row | null>(null);
-  const [filters, setFilters] = useState({ from: "", through: "", productId: "", includeCertification: false });
+  const [filters, setFilters] = useState({ from: "", through: "", productId: "", provider: "", includeCertification: false });
   const [manifest, setManifest] = useState("{}");
+  const [providerArtifacts, setProviderArtifacts] = useState<Record<string, { artifactStorageKey: string; digest: string }>>({});
   const [artifactRequest, setArtifactRequest] = useState('{"bindings":[]}');
+  const [voidConfirmation, setVoidConfirmation] = useState("");
   const [financial, setFinancial] = useState({ resolutionType: "NO_EXTERNAL_ACTION", amount: "", note: "" });
+  const [recovery, setRecovery] = useState<Row | null>(null);
+  const [recoveryProof, setRecoveryProof] = useState({ reference: "", digest: "", confirmation: "" });
   const machine = machines.find((item) => item.id === machineId);
   const role = access?.machines.find((item) => item.machineId === machineId)?.role;
   const may = useCallback((permission: VaultPermission) => Boolean(access?.owner || role && roleMay(role, permission)), [access, role]);
@@ -84,13 +88,14 @@ export default function VaultAdminPage() {
     if (!machine) return;
     setSettings({ ...initialMachine, city: machine.city, state: machine.state, taxPercentage: (machine.taxRateBasisPoints / 100).toFixed(2), pageUrl: machine.supportPageUrl ?? "", email: machine.supportEmail ?? "", textNumber: machine.supportTextNumber ?? "", phoneNumber: machine.supportPhoneNumber ?? "", hours: machine.supportHours ?? "" });
     setProfileDraft(machine.draftMachineProfile ? pretty(machine.draftMachineProfile) : ""); setMappingDraft(machine.draftDoorMapping ? pretty(machine.draftDoorMapping) : "");
-    setSelectedDoors([]); setPlanPreview(null); setPhrase(""); setRecords([]); setReport(null); setSecret(null);
+    setSelectedDoors([]); setPlanPreview(null); setPhrase(""); setRecords([]); setReport(null); setSecret(null); setRecovery(null);
   }, [machineId]); // eslint-disable-line react-hooks/exhaustive-deps
   const configId = draftByMachine[machineId] ?? machine?.configs?.[0]?.id ?? "";
   const configVersions = machine?.configs ?? [];
   const assignments = selectedDoors.map((doorId) => ({ doorId, productId: planProduct || null }));
   const taxPreview = useMemo(() => { try { const bps = parseTaxPercentageToBasisPoints(settings.taxPercentage); return [2500, 5000, 10000, 25000].map((subtotal) => ({ subtotal: money(subtotal), tax: money(calculateTaxCents(subtotal, bps)), total: money(subtotal + calculateTaxCents(subtotal, bps)) })); } catch { return "Enter a valid percentage with at most two decimals."; } }, [settings.taxPercentage]);
   const loadStaff = async () => { const [a, b] = await Promise.all([api(`machines/${machineId}/staff-access`), api(`machines/${machineId}/enrollment`)]); setGrants(a.grants); setTokens(b.tokens); setCredentials(b.credentials); };
+  const loadRecovery = async () => setRecovery(await api(`financial-recovery?machineId=${encodeURIComponent(machineId)}`));
   const loadRecords = async (kind: string, cursor?: string) => {
     const query = new URLSearchParams({ machineId });
     if (kind === "sales") { for (const [key, value] of Object.entries(filters)) if (value) query.set(key, String(value)); if (cursor) query.set("cursor", cursor); }
@@ -101,7 +106,7 @@ export default function VaultAdminPage() {
   const recordTab = tab === "restocks" || tab === "certification" || tab === "support-cases" || tab === "sales";
   const sensitiveDisabled = busy || reason.trim().length < 8;
   const chooseDoors = (ids: string[]) => { setSelectedDoors(ids); setPlanPreview(null); setPhrase(""); };
-  const visibleTabs = ["fleet", ...(may("CONFIG_PUBLISH") ? ["config"] : []), ...(access?.owner ? ["products"] : []), ...(may("STAFF_MANAGE") ? ["staff"] : []), ...(may("FINANCIAL_RESOLVE") ? ["sales", "support-cases"] : []), "restocks", ...(may("CERTIFICATION_COLLECT") ? ["certification"] : [])];
+  const visibleTabs = ["fleet", ...(may("CONFIG_PUBLISH") ? ["config"] : []), ...(access?.owner ? ["products"] : []), ...(may("STAFF_MANAGE") ? ["staff"] : []), ...(may("FINANCIAL_RESOLVE") ? ["sales", "support-cases", "financial-recovery"] : []), "restocks", ...(may("CERTIFICATION_COLLECT") ? ["certification"] : [])];
 
   if (loading) return <AppShell background="black"><main className={ADMIN_PAGE_FRAME_CLASS}>Loading…</main></AppShell>;
   if (!session || access?.allowed === false) return <AppShell background="black"><main className={ADMIN_PAGE_FRAME_CLASS}><h1>Vault staff access required</h1><p>{message}</p><Button onClick={() => void ensureSession({ force: true })}>Sign in</Button></main></AppShell>;
@@ -142,16 +147,73 @@ export default function VaultAdminPage() {
       {credentials.map((credential) => <div key={credential.id}>Credential v{credential.version} · {credential.status}{credential.status === "ACTIVE" && <Button disabled={sensitiveDisabled} onClick={() => void run("Revoke credential", async () => { await api(`machines/${machineId}/enrollment`, { action: "revoke-credential", credentialId: credential.id, reason }); await loadStaff(); })}>Revoke credential</Button>}</div>)}
       <Field label={`Type DECOMMISSION ${machine.slug}`} value={phrase} onChange={setPhrase}/><Button disabled={sensitiveDisabled || phrase !== `DECOMMISSION ${machine.slug}`} onClick={() => void run("Decommission", () => api(`machines/${machineId}/enrollment`, { action: "decommission", confirmPhrase: phrase, reason }))}>Decommission machine</Button>
     </section>}
+    {tab === "financial-recovery" && machine && <section className={adminPanelClass("p-5 space-y-4")} aria-label="Financial recovery">
+      <h2>Financial recovery</h2>
+      <p>Review the current machine evidence and the original payment action. This approval records a human review; it does not prove a refund or release stock.</p>
+      <Button disabled={busy} onClick={() => void run("Load recovery evidence", loadRecovery, false)}>Load current evidence</Button>
+      {recovery && <>
+        <p>Unresolved receipts without a matching sale: {recovery.unresolvedOrphanCount}. Machine snapshot generation: {recovery.snapshot?.generation ?? "Awaiting machine"}.</p>
+        {recovery.operationalSummary && <section aria-label="Callback and payment action timing" className="space-y-2">
+          <h3>Callback and action timing</h3>
+          <p>{recovery.operationalSummary.callbacks.latestReceivedAt
+            ? `Latest callback received: ${new Date(recovery.operationalSummary.callbacks.latestReceivedAt).toLocaleString()} (${recovery.operationalSummary.callbacks.secondsSinceLatestReceipt === null ? "age unavailable" : `${recovery.operationalSummary.callbacks.secondsSinceLatestReceipt} seconds ago`}).`
+            : "No callbacks recorded for this machine."} Receipts: {recovery.operationalSummary.callbacks.receiptCount}. Latest receipt cursor: {recovery.operationalSummary.callbacks.latestReceiptSequence ?? "None"}.</p>
+          <p>Actions awaiting completion or review: {recovery.operationalSummary.pendingActions.count}. {recovery.operationalSummary.pendingActions.oldestApprovedAt
+            ? `Oldest approval: ${new Date(recovery.operationalSummary.pendingActions.oldestApprovedAt).toLocaleString()} (${recovery.operationalSummary.pendingActions.oldestApprovalAgeSeconds === null ? "age unavailable" : `${recovery.operationalSummary.pendingActions.oldestApprovalAgeSeconds} seconds ago`}).`
+            : "No pending approval."}</p>
+          <p className="text-sm text-white/70">{recovery.operationalSummary.timingMeaning}</p>
+        </section>}
+        <Button onClick={() => { const url = URL.createObjectURL(new Blob([pretty(recovery)], { type: "application/json" })); const link = document.createElement("a"); link.href = url; link.download = "vault-financial-recovery.json"; link.click(); URL.revokeObjectURL(url); }}>Export review evidence</Button>
+        <h3>Current holds and original payment actions</h3><Evidence value={{ snapshot: recovery.snapshot, notices: recovery.notices, actions: recovery.actions }}/>
+        {recovery.actions.some((action: Row) => action.state === "RETIRED_UNSTARTED") && <p>Retired approvals have durable machine proof that no void began. A replacement requires a new approval in Sales.</p>}
+        {recovery.actions.some((action: Row) => action.externalReviewedAt) && <p>Externally reviewed uncertain actions retain their original IDs and UNKNOWN financial outcomes. Their automated retries are permanently stopped.</p>}
+        {recovery.snapshot?.blockers.length > 0 && <p role="status">Technical or unfinished-operation holds require their separate recovery procedure: {recovery.snapshot.blockers.join(", ")}.</p>}
+        {recovery.snapshot && <>
+          <Field label="External review evidence reference (no card details or credentials)" value={recoveryProof.reference} onChange={reference => setRecoveryProof(value => ({ ...value, reference }))}/>
+          <Field label="Reviewed evidence SHA-256" value={recoveryProof.digest} onChange={digest => setRecoveryProof(value => ({ ...value, digest }))}/>
+          <Field label={`Type REVIEW ${recovery.snapshot.generation} after reviewing every listed notice and uncertain action`} value={recoveryProof.confirmation} onChange={confirmation => setRecoveryProof(value => ({ ...value, confirmation }))}/>
+          <Button disabled={sensitiveDisabled || recovery.snapshot.blockers.length > 0 || !recovery.snapshot.noticeIds.length && !recovery.snapshot.unknownActionIds.length
+            || recoveryProof.confirmation !== `REVIEW ${recovery.snapshot.generation}` || recoveryProof.reference.trim().length < 8 || !/^[a-f0-9]{64}$/.test(recoveryProof.digest)} onClick={() => void run("Approve exact financial review", async () => {
+              const snapshot = recovery.snapshot;
+              const result = await api("financial-recovery", { decisionId: crypto.randomUUID(), machineId, snapshotId: snapshot.snapshotId, generation: snapshot.generation, stateDigest: snapshot.stateDigest,
+                noticeIds: snapshot.noticeIds, unknownActionIds: snapshot.unknownActionIds, evidenceReference: recoveryProof.reference, evidenceDigest: recoveryProof.digest, reason, confirmReviewed: true });
+              setDetail(result); setRecoveryProof(value => ({ ...value, confirmation: "" })); await loadRecovery();
+            }, false)}>Approve this evidence for machine verification</Button>
+        </>}
+        <h3>Review history</h3><Evidence value={recovery.decisions}/>
+      </>}
+    </section>}
     {recordTab && <section className={adminPanelClass("p-5 space-y-4")}><h2>{tab}</h2>
       {tab === "sales" && <><div className="grid gap-3 md:grid-cols-3"><Field label="From (machine-local day)" type="date" value={filters.from} onChange={(from) => setFilters((value) => ({ ...value, from }))}/><Field label="Through (machine-local day)" type="date" value={filters.through} onChange={(through) => setFilters((value) => ({ ...value, through }))}/><label>Transactions containing product <select className={adminInputClass()} value={filters.productId} onChange={(event) => setFilters((value) => ({ ...value, productId: event.target.value }))}><option value="">All products</option>{products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div><label><input type="checkbox" checked={filters.includeCertification} onChange={(event) => setFilters((value) => ({ ...value, includeCertification: event.target.checked }))}/> Include certification</label></>}
+      {tab === "sales" && <label>Payment provider <select className={adminInputClass()} value={filters.provider} onChange={(event) => setFilters((value) => ({ ...value, provider: event.target.value }))}><option value="">All providers</option><option value="NAYAX_SPARK">Nayax Spark</option><option value="STRIPE_TERMINAL">Stripe Terminal</option><option value="SIMULATED">Simulated</option></select></label>}
       <Button disabled={busy || !machineId} onClick={() => void run("Load records", () => loadRecords(tab), false)}>Load records</Button>
-      {report && tab === "sales" && <><p>{report.totalCount} matching transactions · Authorized {money(report.totals.authorizedCents)} · Settled {money(report.totals.settledCents)} · Settled tax {money(report.totals.taxCents)}</p>{report.nextCursor && <Button onClick={() => void run("Next page", () => loadRecords("sales", report.nextCursor), false)}>Next page</Button>}</>}
+      {report && tab === "sales" && <><p>{report.totalCount} matching transactions · Authorized {money(report.totals.authorizedCents)} · Settled {money(report.totals.settledCents)} · Settled tax {money(report.totals.taxCents)} · Confirmed voids {money(report.totals.confirmedVoidCents)} · Net settled {money(report.totals.netSettledCents)} · Financial discrepancies {report.totals.unresolvedFinancialCount}</p>{report.nextCursor && <Button onClick={() => void run("Next page", () => loadRecords("sales", report.nextCursor), false)}>Next page</Button>}</>}
       {tab === "certification" && <label className="grid gap-2">Reviewed evidence manifest JSON<textarea className={adminInputClass("min-h-40 font-mono")} value={manifest} onChange={(event) => setManifest(event.target.value)}/></label>}
       {tab === "certification" && <label className="grid gap-2">Stored-artifact verification JSON (up to 25 exact session-scoped keys, plus optional automated proof)<textarea className={adminInputClass("min-h-32 font-mono")} value={artifactRequest} onChange={(event) => setArtifactRequest(event.target.value)}/></label>}
       {tab === "support-cases" && <div className="grid gap-3"><label>Financial record <select value={financial.resolutionType} className={adminInputClass()} onChange={(event) => setFinancial((value) => ({ ...value, resolutionType: event.target.value }))}>{["NO_EXTERNAL_ACTION", "REFUND_RECORDED", "VOID_RECORDED", "MANUAL_REVIEW_RECORDED"].map((value) => <option key={value}>{value}</option>)}</select></label><Field label="Amount cents, if applicable" value={financial.amount} onChange={(amount) => setFinancial((value) => ({ ...value, amount }))}/><Field label="Evidence note (no provider secrets)" value={financial.note} onChange={(note) => setFinancial((value) => ({ ...value, note }))}/><p>Records an already-completed external decision; no payment operation is executed.</p></div>}
       {records.map((record) => <article key={record.id} className="space-y-3 border-t border-white/20 pt-4"><h3>{record.supportReference ?? record.shortReference ?? record.localSessionId ?? record.id}</h3><Evidence value={record}/>
-        {tab === "certification" && may("CERTIFICATION_APPROVE") && record.status === "REVIEW_REQUIRED" && !record.certificate && <Button disabled={sensitiveDisabled} onClick={() => void run("Verify stored artifacts", async () => { await api("certification", { ...JSON.parse(artifactRequest), action: "verify-artifacts", certificationId: record.id, reason }); await loadRecords(tab); }, false)}>Verify stored artifacts before manifest attachment</Button>}
+        {tab === "sales" && record.paymentAction?.approvalExpired && <p>The approval expired before a local start was recorded. Review the original action and provider evidence before any further compensation.</p>}
+        {tab === "certification" && may("CERTIFICATION_APPROVE") && record.paymentFlowConfig?.provider === "NAYAX_SPARK" && record.status === "REVIEW_REQUIRED" && !record.certificate && <div className="space-y-3">
+          <p>Attach the reviewed Nayax integration letter for this exact payment configuration. Vault cabinet evidence is evaluated separately.</p>
+          <Field label="Nayax integration letter storage key" value={providerArtifacts[record.id]?.artifactStorageKey ?? ""} onChange={(artifactStorageKey) => setProviderArtifacts((current) => ({ ...current, [record.id]: { digest: current[record.id]?.digest ?? "", artifactStorageKey } }))}/>
+          <Field label="Nayax integration letter SHA-256" value={providerArtifacts[record.id]?.digest ?? ""} onChange={(digest) => setProviderArtifacts((current) => ({ ...current, [record.id]: { artifactStorageKey: current[record.id]?.artifactStorageKey ?? "", digest } }))}/>
+          <p>Exact payment binding: <code>{record.paymentFlowConfig.bindingDigest}</code></p>
+        </div>}
+        {tab === "certification" && may("CERTIFICATION_APPROVE") && record.status === "REVIEW_REQUIRED" && !record.certificate && <Button disabled={sensitiveDisabled} onClick={() => void run("Verify stored artifacts", async () => { await api("certification", { ...JSON.parse(artifactRequest), ...(providerArtifacts[record.id]?.artifactStorageKey || providerArtifacts[record.id]?.digest ? { providerCertification: { provider: "NAYAX_SPARK", ...providerArtifacts[record.id], paymentBindingDigest: record.paymentFlowConfig?.bindingDigest } } : {}), action: "verify-artifacts", certificationId: record.id, reason }); await loadRecords(tab); }, false)}>Verify stored artifacts before manifest attachment</Button>}
         {tab === "certification" && may("CERTIFICATION_APPROVE") && <div className="flex gap-2">{!record.certificate && record.status === "REVIEW_REQUIRED" && <><Button disabled={sensitiveDisabled} onClick={() => void run("Attach manifest", async () => { await api("certification", { ...JSON.parse(manifest), action: "attach-manifest", certificationId: record.id, reason }); await loadRecords(tab); }, false)}>Attach verified manifest</Button><Button disabled={sensitiveDisabled} onClick={() => void run("Approve certification", async () => { await api("certification", { action: "approve", certificationId: record.id, reason }); await loadRecords(tab); }, false)}>Approve certificate</Button></>}<Button disabled={sensitiveDisabled || record.status === "INVALIDATED"} onClick={() => void run("Invalidate certificate", async () => { await api("certification", { action: "invalidate", certificationId: record.id, reason }); await loadRecords(tab); }, false)}>Invalidate</Button></div>}
+        {tab === "sales" && may("FINANCIAL_RESOLVE") && record.paymentProvider === "NAYAX_SPARK" && record.paymentState === "SETTLED" && !record.paymentAction && <div className="space-y-3">
+          <p>Approve one full-sale void of {money(record.totalCents)} for sale {record.supportReference}. The machine must finish customer presentation and door recovery before executing this payment action. Approval expires in five minutes.</p>
+          <Field label={`Type VOID ${record.supportReference} ${record.totalCents} to confirm the exact sale and amount in cents`} value={voidConfirmation} onChange={setVoidConfirmation}/>
+          <Button disabled={sensitiveDisabled || voidConfirmation !== `VOID ${record.supportReference} ${record.totalCents}`} onClick={() => void run("Approve full-sale void", async () => {
+            const key = `vault-full-void:${record.id}`;
+            const saved = sessionStorage.getItem(key);
+            const request = saved ? JSON.parse(saved) : { actionId: crypto.randomUUID(), saleId: record.id, amountCents: record.totalCents, reason, confirmFullSaleVoid: true };
+            if (!saved) sessionStorage.setItem(key, JSON.stringify(request));
+            const result = await api("payment-actions", request);
+            if (result.paymentAction?.state === "RETIRED_UNSTARTED") { sessionStorage.removeItem(key); throw new Error("The original approval was safely retired. Review the sale and submit a new approval."); }
+            setDetail(result); setVoidConfirmation(""); await loadRecords("sales");
+          }, false)}>Approve full-sale void</Button>
+        </div>}
         {tab === "support-cases" && <Button disabled={sensitiveDisabled || !financial.note} onClick={() => void run("Record support resolution", async () => { await api("support-cases", { caseId: record.id, status: "RESOLVED", resolutionReason: reason, financialResolution: { resolutionType: financial.resolutionType, amountCents: financial.amount ? Number(financial.amount) : null, currency: "USD", note: financial.note, recordedAt: new Date().toISOString() } }); await loadRecords(tab); }, false)}>Record resolution</Button>}
       </article>)}
     </section>}

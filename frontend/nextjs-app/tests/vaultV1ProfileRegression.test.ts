@@ -108,7 +108,7 @@ test("cloud certification rejects physical evidence classes from either mocked a
     const actor = grant(rig, "TECHNICIAN"); const cert = await rig.operations.startCertification(actor.sessionId);
     rig.operations.recordCertificationEvidence(actor.sessionId, { evidenceId: randomUUID(), sessionId: cert.sessionId, doorId: cert.scheduledDoorId, evidenceClass: "AUTOMATED", outcome: "PASS", expectedDoorIds: [cert.scheduledDoorId], observedDoorIds: [cert.scheduledDoorId], notes: "Simulator only", artifactDigest: "b".repeat(64), observedAt: rig.clock.now().toISOString() });
     const envelope = JSON.parse(rig.store.one("SELECT payload_json FROM outbox WHERE event_id=(SELECT event_id FROM machine_event WHERE type='CERTIFICATION_EVIDENCE_RECORDED')").payload_json);
-    for (const mockedIdentity of ["controllerIdentity", "nayaxFlowConfig"]) {
+    for (const mockedIdentity of ["controllerIdentity", "paymentFlowConfig"]) {
       const tx: any = { vaultCertificationSession: { findFirst: async () => ({ status: "ACTIVE", [mockedIdentity]: { mode: "MOCK" } }) } };
       for (const evidenceClass of ["OFFICIAL_SDK", "BENCH", "FULL_MACHINE", "FIELD"]) {
         await assert.rejects(projectVaultMachineEvent(tx, normalizeTypedVaultEvent({ ...envelope, payload: { ...envelope.payload, evidenceClass } })), errorCode("CERTIFICATION_EVIDENCE_CLASS_INVALID"));
@@ -164,7 +164,7 @@ test("physical profile publication binds four scoped artifact hashes and an exac
 
 test("synthetic certification evidence never becomes physical qualification and coverage follows profile cardinality", () => {
   const payload = config(72);
-  const result = evaluateVaultCertificationApproval({ status: "REVIEW_REQUIRED", sourceCommit: "a".repeat(40), appBuild: "0.1.0", localSchemaVersion: 1, contractVersion: 1, configVersion: { digest: "a".repeat(64), canonicalPayload: payload }, nayaxAdapterVersion: "test", nayaxSdkVersion: "test", nayaxFlowConfig: { mode: "MOCK" }, controllerIdentity: { mode: "MOCK" }, hardwareIdentity: {}, evidenceSummary: {}, unresolvedDeviations: [], evidence: [] });
+  const result = evaluateVaultCertificationApproval({ status: "REVIEW_REQUIRED", sourceCommit: "a".repeat(40), appBuild: "0.1.0", localSchemaVersion: 1, contractVersion: 1, configVersion: { digest: "a".repeat(64), canonicalPayload: payload }, paymentAdapterVersion: "test", paymentApiVersion: "test", paymentFlowConfig: { mode: "MOCK" }, controllerIdentity: { mode: "MOCK" }, hardwareIdentity: {}, evidenceSummary: {}, unresolvedDeviations: [], evidence: [] });
   assert.equal(result.eligible, false);
   assert.ok(result.reasons.includes("PHYSICAL_PROFILE_QUALIFICATION_REQUIRED"));
   assert.equal(result.counts.purchaseDoorsComplete, 0);
@@ -200,7 +200,7 @@ test("reporting rejects impossible local dates and serializes large event sequen
 test("all canonical machine restock, sale, payment and retry envelopes satisfy cloud typed parsing", async () => {
   for (const count of [null, 72, 125, 256]) {
     const fixture = count ? config(count) : null;
-    const rig = await createRig({ configure: false, payment: new vault.DeterministicNayaxMock({ maxItems: 256, maxTotalCents: 1_000_000, cancellationBeforeAuthorization: true }), ...(fixture ? { controller: new vault.DeterministicControllerSimulator(fixture.doorMapping) } : {}) });
+    const rig = await createRig({ configure: false, payment: new vault.DeterministicPaymentMock({ maxItems: 256, maxTotalCents: 1_000_000, cancellationBeforeAuthorization: true }), ...(fixture ? { controller: new vault.DeterministicControllerSimulator(fixture.doorMapping) } : {}) });
     try {
       const signed = count ? makeSyntheticConfig(rig.machineId, 1, rig.keyPair.privateKey, count) : makeConfig(rig.machineId, 1, rig.keyPair.privateKey);
       signed.keyId = "test-config-key";
@@ -224,4 +224,22 @@ test("all canonical machine restock, sale, payment and retry envelopes satisfy c
       assert.equal(envelopes.find((envelope: any) => envelope.type === "SALE_RESERVED").payload.items.length, doors.length);
     } finally { rig.store.close(); }
   }
+});
+
+test('actual deterministic captured-payment event projects with stable simulated transaction proof after journal restore', async t => {
+  const rig = await createRig(); t.after(() => rig.store.close());
+  rig.store.run("UPDATE door SET state='AVAILABLE',product_id='sports-25',planned_product_id='sports-25' WHERE door_id='X-01'");
+  rig.machine.selectCartDoor('X-01', 'sports-25', true);
+  const sale = (await rig.machine.checkout({ idempotencyKey: randomUUID(), mode: 'CERTIFICATION', configVersion: 1, doorIds: ['X-01'] })).sale;
+  await rig.machine.startPayment(sale.saleId, randomUUID());
+  const local = rig.store.one('SELECT provider_session_id,provider_transaction_id FROM sale WHERE sale_id=?', sale.saleId);
+  assert.match(local.provider_transaction_id, /^mock_transaction_/);
+  const restored = new vault.DeterministicPaymentMock(); restored.restore(rig.payment.snapshot());
+  assert.equal((await restored.reconcile(local.provider_session_id)).providerTransactionId, local.provider_transaction_id);
+  const raw = JSON.parse(rig.store.one("SELECT payload_json FROM outbox WHERE event_id=(SELECT event_id FROM machine_event WHERE type='PAYMENT_CALLBACK_APPLIED' LIMIT 1)").payload_json);
+  const projected: any = { id: sale.saleId, machineId: rig.machineId, mode: 'CERTIFICATION', paymentState: 'REQUESTED', fulfillmentState: 'NOT_COMMITTED', authorizationObservedAt: null, providerCallbackSequence: null };
+  let wrote: any;
+  const tx: any = { vaultSale: { findFirst: async () => projected, updateMany: async ({ data }: any) => { wrote = data; } } };
+  await projectVaultMachineEvent(tx, normalizeTypedVaultEvent(raw));
+  assert.equal(wrote.paymentState, 'SETTLED'); assert.match(wrote.providerTransactionId, /^sha256:[a-f0-9]{64}$/); assert.equal(wrote.providerName, 'SIMULATED');
 });

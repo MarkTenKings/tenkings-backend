@@ -126,6 +126,21 @@ test("redaction removes credentials, verifiers, cookies, sessions and bank-numbe
   assert.equal(input.nested.verifierHash, "derived-verifier");
 });
 
+test("Spark authentication and card identifiers cannot enter support logs", () => {
+  const input = {
+    SignKey: "fixture-sign-key", VAULT_NAYAX_SPARK_SIGN_KEY: "fixture-env-key",
+    TransactionSignature: "fixture-signature", Cipher: "fixture-cipher",
+    CardHash: "fixture-card-hash", CardUid: "fixture-uid", CardLast4Digits: "1234",
+    nested: { integratorId: 7, totalCents: 2706, flow: "PRE_SELECTION" },
+  };
+  assert.deepEqual(vault.redactVaultValue(input), {
+    SignKey: "[REDACTED]", VAULT_NAYAX_SPARK_SIGN_KEY: "[REDACTED]",
+    TransactionSignature: "[REDACTED]", Cipher: "[REDACTED]",
+    CardHash: "[REDACTED]", CardUid: "[REDACTED]", CardLast4Digits: "[REDACTED]",
+    nested: { integratorId: 7, totalCents: 2706, flow: "PRE_SELECTION" },
+  });
+});
+
 test("redaction terminates on cycles/depth and never serializes opaque object values", () => {
   const circular = { label: "safe" };
   circular.self = circular;

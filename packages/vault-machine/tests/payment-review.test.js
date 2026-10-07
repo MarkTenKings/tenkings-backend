@@ -20,18 +20,20 @@ function hasCode(code) {
   return (error) => error && error.code === code;
 }
 
-test("normalized Nayax mock is deterministically MOCK-only and covers normalized outcomes", async () => {
-  const mock = new vault.DeterministicNayaxMock();
+test("normalized payment mock is deterministically MOCK-only and covers normalized outcomes", async () => {
+  const mock = new vault.DeterministicPaymentMock();
   assert.deepEqual(await mock.capabilities(), {
-    adapterName: "ten-kings-deterministic-nayax-mock",
+    adapterName: "ten-kings-deterministic-payment-mock",
     adapterVersion: "1.0.0",
-    sdkVersion: null,
+    apiVersion: null,
     mode: "MOCK",
+    provider: "SIMULATED",
+    captureBeforeFulfillment: true,
     maxItems: 25,
     maxTotalCents: 500000,
     cancellationBeforeAuthorization: true,
   });
-  assert.throws(() => mock.scriptStart({ outcome: "SETTLE" }), hasCode("MOCK_SCRIPT_INVALID"));
+  mock.scriptStart({ outcome: "SETTLE" });
 
   mock.scriptStart(
     { outcome: "AUTHORIZE" },
@@ -41,10 +43,10 @@ test("normalized Nayax mock is deterministically MOCK-only and covers normalized
     { outcome: "UNKNOWN" },
   );
   const observed = [];
-  for (let index = 0; index < 5; index += 1) observed.push((await mock.startSession(request())).state);
-  assert.deepEqual(observed, ["AUTHORIZED", "DECLINED", "CANCELLED", "UNKNOWN", "UNKNOWN"]);
+  for (let index = 0; index < 6; index += 1) observed.push((await mock.startSession(request())).state);
+  assert.deepEqual(observed, ["SETTLED", "AUTHORIZED", "DECLINED", "CANCELLED", "UNKNOWN", "UNKNOWN"]);
 
-  const reconciliation = new vault.DeterministicNayaxMock()
+  const reconciliation = new vault.DeterministicPaymentMock()
     .scriptStart({ outcome: "UNKNOWN" })
     .scriptReconcile({ outcome: "AUTHORIZE" }, { outcome: "SETTLE" });
   const started = await reconciliation.startSession(request());
@@ -53,7 +55,7 @@ test("normalized Nayax mock is deterministically MOCK-only and covers normalized
 });
 
 test("start and cancellation operations replay identical keys and hard-fail conflicting reuse", async () => {
-  const mock = new vault.DeterministicNayaxMock().scriptStart({ outcome: "UNKNOWN" }, { outcome: "DECLINE" });
+  const mock = new vault.DeterministicPaymentMock().scriptStart({ outcome: "UNKNOWN" }, { outcome: "DECLINE" });
   const firstRequest = request();
   const first = await mock.startSession(firstRequest);
   assert.deepEqual(await mock.startSession(structuredClone(firstRequest)), first);
@@ -78,13 +80,13 @@ test("start and cancellation operations replay identical keys and hard-fail conf
     hasCode("PAYMENT_IDEMPOTENCY_CONFLICT"),
   );
 
-  const authorizedMock = new vault.DeterministicNayaxMock();
+  const authorizedMock = new vault.DeterministicPaymentMock().scriptStart({ outcome: "AUTHORIZE" });
   const authorized = await authorizedMock.startSession(request());
   assert.equal((await authorizedMock.cancelSession(authorized.providerSessionId, "late-cancel")).state, "AUTHORIZED");
 });
 
 test("mock rejects non-normalized/cardholder extensions without retaining or logging them", async () => {
-  const mock = new vault.DeterministicNayaxMock();
+  const mock = new vault.DeterministicPaymentMock();
   const cardholderData = "4111111111111111";
   await assert.rejects(
     () => mock.startSession({ ...request(), pan: cardholderData }),
@@ -99,15 +101,15 @@ test("mock rejects non-normalized/cardholder extensions without retaining or log
   assert.doesNotMatch(JSON.stringify(snapshot), new RegExp(cardholderData));
   const tamperedSnapshot = structuredClone(snapshot);
   tamperedSnapshot.sessions[0][1].request.pan = cardholderData;
-  assert.throws(() => new vault.DeterministicNayaxMock().restore(tamperedSnapshot), hasCode("MOCK_SNAPSHOT_INVALID"));
+  assert.throws(() => new vault.DeterministicPaymentMock().restore(tamperedSnapshot), hasCode("MOCK_SNAPSHOT_INVALID"));
 
-  const source = fs.readFileSync(path.join(__dirname, "../src/mock-nayax.ts"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "../src/mock-payment.ts"), "utf8");
   assert.doesNotMatch(source, /\b(?:console|fetch|XMLHttpRequest|node:https|node:http|node:net|child_process)\b/);
   assert.doesNotMatch(source, /mode:\s*["'](?:LIVE|OFFICIAL_TEST)["']/);
 });
 
 test("provider limits reject the whole cart and never split it into payment sessions", async () => {
-  const payment = new vault.DeterministicNayaxMock({ maxItems: 1, maxTotalCents: 500000, cancellationBeforeAuthorization: true });
+  const payment = new vault.DeterministicPaymentMock({ maxItems: 1, maxTotalCents: 500000, cancellationBeforeAuthorization: true });
   const rig = await createRig({ payment });
   makeDoorAvailable(rig, ["X-01", "K-01"]);
   rig.machine.selectCartDoor("X-01", "sports-25", true);
@@ -123,7 +125,7 @@ test("provider limits reject the whole cart and never split it into payment sess
 });
 
 test("payment intent is durable before the mock effect is invoked", async () => {
-  class InspectingMock extends vault.DeterministicNayaxMock {
+  class InspectingMock extends vault.DeterministicPaymentMock {
     attach(store) { this.store = store; }
     async startSession(input) {
       const sale = this.store.one("SELECT payment_intent_key,payment_request_digest,payment_state,state FROM sale WHERE sale_id=?", input.saleId);
@@ -160,10 +162,11 @@ test("duplicate, conflicting, equal-sequence, and out-of-order callbacks cannot 
     saleId: sale.saleId,
     providerSessionId,
     sequence: 5,
-    state: "AUTHORIZED",
+    state: "SETTLED",
     occurredAt: rig.clock.now().toISOString(),
     evidence: { normalizedCode: "OK", pan: "4111111111111111" },
   };
+  rig.payment.scriptReconcile({ outcome: "SETTLE" });
   assert.equal((await rig.machine.handleProviderCallback(callback)).disposition, "APPLIED");
   assert.equal((await rig.machine.handleProviderCallback(structuredClone(callback))).disposition, "DUPLICATE");
   await assert.rejects(
@@ -172,7 +175,7 @@ test("duplicate, conflicting, equal-sequence, and out-of-order callbacks cannot 
   );
   assert.equal((await rig.machine.handleProviderCallback({ ...callback, callbackId: "review-equal", state: "DECLINED" })).disposition, "SEQUENCE_CONFLICT");
   assert.equal((await rig.machine.handleProviderCallback({ ...callback, callbackId: "review-late", sequence: 4, state: "DECLINED" })).disposition, "OUT_OF_ORDER");
-  assert.equal(rig.machine.publicSale(sale.saleId).paymentState, "AUTHORIZED");
+  assert.equal(rig.machine.publicSale(sale.saleId).paymentState, "SETTLED");
   assert.equal(JSON.parse(rig.store.one("SELECT evidence_json FROM payment_callback WHERE callback_id='review-authorize'").evidence_json).pan, "[REDACTED]");
   assert.equal(rig.store.one("SELECT COUNT(*) AS count FROM command_intent WHERE sale_id=?", sale.saleId).count, 1);
   rig.store.close();

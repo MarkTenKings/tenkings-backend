@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { redactVaultValue } from "../../vault-contracts/dist";
 import { VaultStore } from "./store";
 import { iso } from "./util";
+import { sparkOperationalSummary } from "./spark-diagnostics";
 
 /** Creates metadata-only support evidence. The SQLite database, cookies, PIN verifiers and credentials are never included. */
 export function createSupportBundleDirectory(store: VaultStore, outputDirectory: string, logFiles: string[] = []): { manifestPath: string; files: string[] } {
@@ -16,11 +17,17 @@ export function createSupportBundleDirectory(store: VaultStore, outputDirectory:
     retiredDoors: store.one(`SELECT COUNT(*) AS count FROM door WHERE active=0`).count,
     pendingOutbox: store.one(`SELECT COUNT(*) AS count FROM outbox WHERE acknowledged_at IS NULL`).count,
     nonterminalSales: store.one(`SELECT COUNT(*) AS count FROM sale WHERE state NOT IN ('COMPLETED','PAYMENT_DECLINED','PAYMENT_CANCELLED')`).count,
+    unresolvedFinancialNotices: store.one(`SELECT COUNT(*) AS count FROM payment_evidence_notice n LEFT JOIN financial_notice_resolution r ON r.notice_id=n.notice_id WHERE r.notice_id IS NULL`).count,
+    externallyReviewedVoidActions: store.one(`SELECT COUNT(*) AS count FROM payment_void_external_review`).count,
+    retiredUnstartedVoidActions: store.one(`SELECT COUNT(*) AS count FROM payment_void_retirement`).count,
   };
   const generated: string[] = [];
   const healthPath = join(outputDirectory, "health-metadata.json");
   writeFileSync(healthPath, JSON.stringify(redactVaultValue({ generatedAt: iso(), meta, counts, integrity: store.integrityCheck(), pragmas: store.pragmaSnapshot() }), null, 2), { encoding: "utf8", mode: 0o600 });
   generated.push(healthPath);
+  const sparkPath = join(outputDirectory, "spark-operations.json");
+  writeFileSync(sparkPath, JSON.stringify(sparkOperationalSummary(store), null, 2), { encoding: "utf8", mode: 0o600, flag: "wx" });
+  generated.push(sparkPath);
   for (const logPath of logFiles) {
     try {
       if (!statSync(logPath).isFile()) continue;

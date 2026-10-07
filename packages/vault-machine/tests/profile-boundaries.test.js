@@ -79,7 +79,7 @@ test('varying irregular synthetic profiles preserve explicit endpoint addresses 
 });
 
 test('a complete 256-door synthetic sale fits the bounded event contract when independent provider limits permit it', async () => {
-  const rig = await profileRig(256, { payment: new vault.DeterministicNayaxMock({ maxItems: 256, maxTotalCents: 1_000_000, cancellationBeforeAuthorization: true }) });
+  const rig = await profileRig(256, { payment: new vault.DeterministicPaymentMock({ maxItems: 256, maxTotalCents: 1_000_000, cancellationBeforeAuthorization: true }) });
   try {
     const ids = rig.signed.payload.machineProfile.doors.map(door => door.doorId);
     makeDoorAvailable(rig, ids);
@@ -194,16 +194,19 @@ test('profile activation during an in-flight heartbeat defers new-profile events
   } finally { await runtime?.stop(); rig.store.close(); }
 });
 
-test('finished customer presentation still pins configuration and staff while payment is unresolved', async () => {
+test('authorized but uncaptured payment pins configuration and staff until provider confirms settlement', async () => {
   const rig = await createRig();
   try {
+    rig.payment.scriptStart({ outcome: 'AUTHORIZE' }).scriptReconcile({ outcome: 'SETTLE' });
     makeDoorAvailable(rig); rig.machine.selectCartDoor('X-01', 'sports-25', true);
     const sale = (await rig.machine.checkout({ idempotencyKey: crypto.randomUUID(), mode: 'CERTIFICATION', configVersion: 1, doorIds: ['X-01'] })).sale;
-    await rig.machine.startPayment(sale.saleId, crypto.randomUUID()); rig.machine.markPresentationDone(sale.saleId);
+    await assert.rejects(rig.machine.startPayment(sale.saleId, crypto.randomUUID()), { code: 'PAYMENT_CAPTURE_REQUIRED' });
+    assert.equal(rig.store.one('SELECT COUNT(*) AS n FROM command_intent').n, 0);
     rig.machine.stageConfig(makeConfig(rig.machineId, 2, rig.keyPair.privateKey));
     assert.ok(rig.machine.activatePendingConfig().reasons.includes('ACTIVE_PAYMENT'));
     assert.throws(() => grant(rig, 'ADMIN'), /active transaction/i);
-    await rig.machine.advancePayments();
+    await rig.machine.reconcileSale(sale.saleId);
+    rig.machine.markPresentationDone(sale.saleId);
     assert.equal(rig.machine.activatePendingConfig().activated, true);
     assert.equal(grant(rig, 'TECHNICIAN').role, 'TECHNICIAN');
   } finally { rig.store.close(); }
@@ -263,7 +266,7 @@ test('local schema upgrade retains historical v1 paid-command recovery and rerun
     assert.equal(store.one('SELECT signed_json FROM config_snapshot').signed_json, JSON.stringify(signed));
     assert.equal(store.one('SELECT payment_intent_key FROM sale').payment_intent_key, 'historic-payment');
     const controller = new vault.DeterministicControllerSimulator([...contracts.SIMULATOR_DOOR_MAPPING]);
-    const machine = new vault.VaultMachine(store, new vault.DeterministicNayaxMock(), controller, { clock: new FakeClock(), appVersion: '0.1.0', pinnedConfigKeys: { 'test-config-key': keys.publicKey.export({ type: 'spki', format: 'pem' }) } });
+    const machine = new vault.VaultMachine(store, new vault.DeterministicPaymentMock(), controller, { clock: new FakeClock(), appVersion: '0.1.0', pinnedConfigKeys: { 'test-config-key': keys.publicKey.export({ type: 'spki', format: 'pem' }) } });
     await machine.initialize(); assert.equal(controller.receipts.length, 0, 'Migration/recovery cannot replay the original uncertain effect');
     assert.equal(machine.publicSale(saleId).items[0].doorLabel, 'X-01');
     await machine.openPaidDoorsAgain(saleId, 'reviewed-historical-retry');
@@ -275,7 +278,7 @@ test('local schema upgrade retains historical v1 paid-command recovery and rerun
     store.run("UPDATE sale SET payment_state='SETTLEMENT_PENDING' WHERE sale_id=?", saleId);
     await machine.advancePayments();
     const lifecycle = store.all('SELECT type,mode FROM machine_event WHERE correlation_id=?', saleId);
-    for (const eventType of ['CONTROLLER_EFFECT_REMAINS_UNKNOWN', 'SALE_RECOVERY_EVALUATED', 'PAID_DOOR_GROUP_RETRY_COMMITTED', 'CONTROLLER_DISPATCH_BOUNDARY_ENTERED', 'CONTROLLER_COMMAND_TERMINAL', 'PUBLIC_PRESENTATION_DONE', 'PAYMENT_RECOVERY_RECONCILIATION_REQUIRED']) assert.ok(lifecycle.some(event => event.type === eventType), eventType);
+    for (const eventType of ['CONTROLLER_EFFECT_REMAINS_UNKNOWN', 'SALE_RECOVERY_EVALUATED', 'PAID_DOOR_GROUP_RETRY_COMMITTED', 'CONTROLLER_DISPATCH_BOUNDARY_ENTERED', 'CONTROLLER_COMMAND_TERMINAL', 'PUBLIC_PRESENTATION_DONE', 'PAYMENT_RECOVERY_BINDING_REQUIRED']) assert.ok(lifecycle.some(event => event.type === eventType), eventType);
     assert.ok(lifecycle.every(event => event.mode === 'PRODUCTION'), 'Historical event classification must remain pinned while every adapter in this test is simulated');
     const ledger = store.all('SELECT * FROM schema_migration'); store.close();
     store = new vault.VaultStore(temporary.path, { machineId, appVersion: '0.1.0' }); assert.deepEqual(store.all('SELECT * FROM schema_migration'), ledger);

@@ -7,7 +7,8 @@ import { VaultApiClient } from "../src/api/VaultApiClient";
 import { click, renderReact } from "./render";
 
 const require = createRequire(import.meta.url);
-const { createRig, grant, vault } = require("../../../packages/vault-machine/tests/helpers.js");
+const { grant, vault } = require("../../../packages/vault-machine/tests/helpers.js");
+const { createInjectedQualifiedCertificationRig } = require("../../../packages/vault-machine/tests/waveshare-test-fixture.js");
 const nodeFetch = globalThis.fetch;
 
 async function until(assertion: () => void) {
@@ -32,7 +33,7 @@ describe("certification kiosk through the real loopback service", () => {
   for (const mocked of ["controller", "payment", "neither"] as const) {
     for (const outcome of ["PASS", "FAIL", "CRITICAL"] as const) {
       it(`records ${outcome} with ${mocked} mocked and preserves submission/critical-stop authority`, async () => {
-        const rig = await createRig();
+        const rig = await createInjectedQualifiedCertificationRig();
         const origin = "http://127.0.0.1:47831";
         const service = new vault.VaultHttpService(rig.machine, rig.operations, { origin, port: 0, clock: rig.clock, adapterCallbackToken: "local-fixture-only" });
         let view: ReturnType<typeof renderReact> | undefined;
@@ -69,7 +70,8 @@ describe("certification kiosk through the real loopback service", () => {
           await until(() => expect(container.querySelector(".evidence-actions")).not.toBeNull());
           expect(container.textContent).toContain(mocked === "neither" ? "supervised physical observation" : "simulator evidence only; no physical coverage");
           await click(container.querySelector(".observation-check input"));
-          enter(container.querySelector('input[aria-label="Actually observed door IDs"]')!, outcome === "PASS" ? session.scheduledDoorId : outcome === "CRITICAL" ? "K-01" : "");
+          const differentDoorId = rig.store.one("SELECT door_id FROM door WHERE active=1 AND door_id<>? LIMIT 1", session.scheduledDoorId).door_id;
+          enter(container.querySelector('input[aria-label="Actually observed door IDs"]')!, outcome === "PASS" ? session.scheduledDoorId : outcome === "CRITICAL" ? differentDoorId : "");
           enter(container.querySelector(".evidence-observation textarea")!, "Software fixture observation; no physical proof");
           const label = outcome === "CRITICAL" ? "Wrong/unpaid door" : `Record ${outcome}`;
           const button = [...container.querySelectorAll<HTMLButtonElement>(".evidence-actions button")].find(item => item.textContent === label)!;

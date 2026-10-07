@@ -4098,7 +4098,7 @@ enum VaultHealthState {
   DEGRADED_SYNC
   BLOCKED_CONFIG
   BLOCKED_TAX
-  BLOCKED_NAYAX
+  BLOCKED_PAYMENT @map("BLOCKED_NAYAX")
   BLOCKED_CONTROLLER
   BLOCKED_STORAGE
   BLOCKED_CLOCK
@@ -4341,6 +4341,8 @@ model VaultSale {
   items                    VaultSaleItem[]
   supportCases             VaultSupportCase[]
   ownedDoors               VaultDoor[]           @relation("VaultDoorOwningSale")
+  paymentAction            VaultPaymentAction?
+  paymentAnomalies         VaultPaymentEvidenceAnomaly[]
 
   @@unique([machineId, localTransactionId])
   @@unique([machineId, supportReference])
@@ -4413,6 +4415,135 @@ model VaultMachineEvent {
   @@unique([machineId, sequence])
   @@index([machineId, receivedAt])
   @@index([type, occurredAt])
+}
+
+/// A verified Stripe test observation is independent of the machine's ordered
+/// event stream. It may arrive before the corresponding machine sale projects.
+model VaultStripeObservation {
+  id              String   @id
+  stripeEventId   String   @unique
+  payloadDigest   String
+  machineId       String
+  saleId          String
+  readerId        String
+  locationId      String
+  paymentIntentId String
+  requestDigest   String
+  totalCents      Int
+  currency        String
+  observedStatus  String
+  eventType       String
+  eventCreatedAt  DateTime
+  verifiedAt      DateTime
+  receivedAt      DateTime @default(now())
+
+  @@index([machineId, saleId, receivedAt])
+  @@index([paymentIntentId])
+}
+
+/// Authenticated Spark sandbox callbacks, independent of machine event order.
+/// Safe normalized protocol evidence only; no card data and no door authority.
+model VaultSparkObservation {
+  stage              String   @default("SANDBOX")
+  paymentBindingDigest String?
+  id                 String   @id
+  receiptSequence    BigInt   @unique @default(autoincrement())
+  payloadDigest      String
+  machineId          String
+  kind               String
+  sparkTransactionId String
+  nayaxTransactionId String?
+  nayaxMachineId     String
+  terminalId         String?
+  hwSerial           String
+  siteId             Int?
+  amountCents        Int?
+  currency           String?
+  currencySource     String?
+  verdict            String?
+  errorCode          Int?
+  machineAuTime      String?
+  methodClassification String @default("AMBIGUOUS")
+  methodProfileDigest String @default("0000000000000000000000000000000000000000000000000000000000000000")
+  methodEvidence     Json     @default("{}") @db.JsonB
+  receivedAt         DateTime @default(now())
+
+  @@index([machineId, sparkTransactionId, receivedAt])
+  @@index([machineId, stage, sparkTransactionId, receivedAt], map: "VaultSparkObservation_machineId_stage_session_received_idx")
+  @@index([machineId, stage, receiptSequence])
+  @@index([nayaxTransactionId])
+  @@index([machineId, receiptSequence])
+}
+
+/// One fresh human-approved full-sale compensation action, never inventory authority.
+model VaultPaymentAction {
+  id                String @id
+  machineId         String
+  saleId            String? @unique
+  sale              VaultSale? @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  originalSaleId    String
+  action            Json @db.JsonB
+  state             String @default("APPROVED")
+  approvedAt        DateTime
+  expiresAt         DateTime
+  intentObservedAt  DateTime?
+  outcomeObservedAt DateTime?
+  evidenceReference String?
+  errorCode         Int?
+  retiredAt         DateTime?
+  retirementProof   Json? @db.JsonB
+  externalReviewedAt DateTime?
+  externalReview    Json? @db.JsonB
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([machineId, state, expiresAt])
+}
+
+model VaultFinancialRecoverySnapshot {
+  id         String @id
+  machineId  String
+  generation Int
+  stateDigest String
+  snapshot   Json @db.JsonB
+  receivedAt DateTime @default(now())
+  decisions  VaultFinancialRecoveryDecision[]
+  @@unique([machineId, generation])
+}
+
+model VaultFinancialRecoveryDecision {
+  id         String @id
+  machineId  String
+  snapshotId String
+  snapshot   VaultFinancialRecoverySnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  decision   Json @db.JsonB
+  state      String @default("APPROVED")
+  approvedAt DateTime
+  expiresAt  DateTime
+  appliedAt  DateTime?
+  @@index([machineId, state, expiresAt])
+}
+
+/// Financial truth that cannot safely alter historical fulfillment or inventory.
+model VaultPaymentEvidenceAnomaly {
+  id                           String @id @default(uuid())
+  machineId                    String
+  noticeId                     String
+  saleId                       String?
+  sale                         VaultSale? @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  paymentProvider              String
+  paymentBindingDigest         String
+  providerSessionReference     String?
+  providerTransactionReference String?
+  amountCents                  Int?
+  currency                     String
+  captureConfirmed             Boolean
+  code                         String
+  occurredAt                   DateTime
+  resolvedAt                   DateTime?
+
+  @@unique([machineId, noticeId])
+  @@index([machineId, resolvedAt, occurredAt])
 }
 
 model VaultRestockSession {
@@ -4544,9 +4675,9 @@ model VaultCertificationSession {
   sourceCommit         String
   localSchemaVersion   Int?
   contractVersion      Int
-  nayaxAdapterVersion  String?
-  nayaxSdkVersion      String?
-  nayaxFlowConfig      Json?                        @db.JsonB
+  paymentAdapterVersion String? @map("nayaxAdapterVersion")
+  paymentApiVersion     String? @map("nayaxSdkVersion")
+  paymentFlowConfig     Json? @map("nayaxFlowConfig") @db.JsonB
   controllerIdentity   Json?                        @db.JsonB
   hardwareIdentity     Json?                        @db.JsonB
   evidenceSummary      Json?                        @db.JsonB

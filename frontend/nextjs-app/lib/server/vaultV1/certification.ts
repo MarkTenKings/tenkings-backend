@@ -15,7 +15,8 @@ export const VaultVerifyArtifactsSchema = z.object({
   action: z.literal("verify-artifacts"), certificationId: z.string().uuid(), reason: z.string().min(8).max(500),
   bindings: z.array(z.object({ evidenceId: z.string().uuid(), artifactStorageKey: vaultArtifactKey }).strict()).max(25),
   automatedProof: z.object({ artifactStorageKey: vaultArtifactKey, digest: z.string().regex(/^[a-f0-9]{64}$/) }).optional(),
-}).strict().refine((value) => value.bindings.length > 0 || value.automatedProof, "At least one artifact required");
+  providerCertification: z.object({ provider: z.literal("NAYAX_SPARK"), artifactStorageKey: vaultArtifactKey, digest: z.string().regex(/^[a-f0-9]{64}$/), paymentBindingDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
+}).strict().refine((value) => value.bindings.length > 0 || value.automatedProof || value.providerCertification, "At least one artifact required");
 
 async function readVaultArtifact(key: string, maximum: number): Promise<Buffer> {
   let stream: StorageObjectRead | undefined;
@@ -99,9 +100,9 @@ export type VaultCertificationApprovalInput = {
   localSchemaVersion: number | null;
   contractVersion: number;
   configVersion: { digest: string; canonicalPayload?: unknown };
-  nayaxAdapterVersion: string | null;
-  nayaxSdkVersion: string | null;
-  nayaxFlowConfig: unknown;
+  paymentAdapterVersion: string | null;
+  paymentApiVersion: string | null;
+  paymentFlowConfig: unknown;
   controllerIdentity: unknown;
   hardwareIdentity: unknown;
   evidenceSummary: unknown;
@@ -122,6 +123,15 @@ export type VaultCertificationApprovalResult = {
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+/** Collection identity is not a vendor certification or physical qualification. */
+export function vaultOfficialPaymentEvidenceProfile(value: unknown): boolean {
+  const identity = record(value);
+  if (!identity || identity.mode !== "OFFICIAL_TEST" || identity.captureBeforeFulfillment !== true) return false;
+  if (identity.provider === "STRIPE_TERMINAL") return true;
+  return identity.provider === "NAYAX_SPARK" && typeof identity.bindingDigest === "string" && /^[a-f0-9]{64}$/.test(identity.bindingDigest)
+    && identity.flow === "REMOTE_START_PRE_SELECTION" && identity.acquiringOnlyConfirmed === true && identity.preSelectionConfirmed === true && identity.sandboxConfirmed === true;
 }
 
 function nonemptyRecord(value: unknown): boolean {
@@ -169,10 +179,15 @@ export function evaluateVaultCertificationApproval(input: VaultCertificationAppr
   if (!input.appBuild?.trim() || !/^[a-f0-9]{40}$/.test(input.sourceCommit) || !Number.isSafeInteger(input.localSchemaVersion) || Number(input.localSchemaVersion) < 1 || input.contractVersion !== 1 || !/^[a-f0-9]{64}$/.test(input.configVersion.digest)) {
     reasons.push("SOURCE_BUILD_CONFIG_TUPLE_INCOMPLETE");
   }
-  if (!input.nayaxAdapterVersion || !input.nayaxSdkVersion || !nonemptyRecord(input.nayaxFlowConfig) || !nonemptyRecord(input.controllerIdentity) || !nonemptyRecord(input.hardwareIdentity)) {
+  if (!input.paymentAdapterVersion || !nonemptyRecord(input.paymentFlowConfig) || !nonemptyRecord(input.controllerIdentity) || !nonemptyRecord(input.hardwareIdentity)) {
     reasons.push("ADAPTER_OR_HARDWARE_IDENTITY_INCOMPLETE");
   }
-  if (record(input.nayaxFlowConfig)?.mode !== "OFFICIAL_TEST" || record(input.controllerIdentity)?.mode !== "OFFICIAL_TEST") reasons.push("PHYSICAL_ADAPTER_EVIDENCE_REQUIRED");
+  if (!vaultOfficialPaymentEvidenceProfile(input.paymentFlowConfig) || record(input.controllerIdentity)?.mode !== "OFFICIAL_TEST") reasons.push("PHYSICAL_ADAPTER_EVIDENCE_REQUIRED");
+  if (record(input.paymentFlowConfig)?.provider === "NAYAX_SPARK") {
+    const vendor = record(summary?.providerCertification);
+    if (!vendor || vendor.provider !== "NAYAX_SPARK" || vendor.paymentBindingDigest !== record(input.paymentFlowConfig)?.bindingDigest || vendor.artifactVerified !== true
+      || typeof vendor.digest !== "string" || !/^[a-f0-9]{64}$/.test(vendor.digest) || !vaultArtifactKey.safeParse(vendor.artifactStorageKey).success) reasons.push("NAYAX_INTEGRATION_CERTIFICATION_REQUIRED");
+  }
   if (summary?.automatedEvidenceVerified !== true) reasons.push("AUTOMATED_EVIDENCE_UNVERIFIED");
   if (!noDeviations(input.unresolvedDeviations)) reasons.push("UNRESOLVED_DEVIATIONS_PRESENT");
   if (!input.evidence.length || input.evidence.some((evidence) => !evidence.evidenceClass || !evidence.artifactStorageKey || !evidence.artifactDigest || !/^[a-f0-9]{64}$/.test(evidence.artifactDigest) || record(evidence.metadata)?.verifiedArtifactDigest !== evidence.artifactDigest || record(evidence.metadata)?.verifiedArtifactStorageKey !== evidence.artifactStorageKey)) {

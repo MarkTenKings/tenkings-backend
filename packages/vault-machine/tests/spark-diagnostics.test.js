@@ -1,0 +1,20 @@
+const test = require("node:test"), assert = require("node:assert/strict");
+const { mkdtempSync, rmSync, readFileSync } = require("node:fs"), { tmpdir } = require("node:os"), { join } = require("node:path");
+const { VaultStore } = require("../dist/store"), { NayaxSparkJournal } = require("../dist/nayax-spark-journal");
+const { sparkOperationalSummary } = require("../dist/spark-diagnostics"), { createSupportBundleDirectory } = require("../dist/support");
+test("Spark support evidence reports safe counts, lag and replay blocks without provider data", t => {
+  const root = mkdtempSync(join(tmpdir(), "vault-spark-diagnostics-")); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = join(root, "vault.sqlite"), store = new VaultStore(file, { machineId: "00000000-0000-4000-8000-000000000001", appVersion: "0.1.0" });
+  const provider = new NayaxSparkJournal(`${file}.spark-provider.sqlite`, "a".repeat(64));
+  t.after(() => { provider.close(); store.close(); });
+  const now = Date.parse("2026-10-07T20:00:00Z"); store.run(`UPDATE machine_meta SET last_cloud_success_at=?,recovery_required=1 WHERE singleton=1`, new Date(now - 120000).toISOString());
+  provider.blockVoidRecovery("private-provider-action", "PRIVATE_JOURNAL_DIAGNOSTIC");
+  const report = sparkOperationalSummary(store, now);
+  assert.equal(report.cloudAgeSeconds, 120); assert.equal(report.provider.blockedVoidCount, 1);
+  assert.ok(report.alerts.includes("TECHNICAL_RECOVERY_REQUIRED")); assert.ok(report.alerts.includes("CLOUD_SYNC_STALE"));
+  assert.doesNotMatch(JSON.stringify(report), /private-provider-action|PRIVATE_JOURNAL_DIAGNOSTIC/);
+  assert.equal(report.financialAdjustmentAuthority, false);
+  const output = join(root, "bundle"), bundle = createSupportBundleDirectory(store, output);
+  assert.ok(bundle.files.includes("spark-operations.json"));
+  assert.doesNotMatch(readFileSync(join(output, "spark-operations.json"), "utf8"), /private-provider-action|PRIVATE_JOURNAL_DIAGNOSTIC/);
+});

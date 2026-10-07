@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { vaultPaymentActionAdminDto } from "./paymentActions";
 
 export const VaultFinancialResolutionSchema = z.object({
   resolutionType: z.enum(["NO_EXTERNAL_ACTION", "REFUND_RECORDED", "VOID_RECORDED", "MANUAL_REVIEW_RECORDED"]),
@@ -21,6 +22,9 @@ export function vaultSaleAdminDto(sale: SaleWithItems) {
     mode: sale.mode,
     state: sale.state,
     paymentState: sale.paymentState,
+    paymentProvider: ["NAYAX_SPARK", "STRIPE_TERMINAL", "SIMULATED"].includes(String(sale.providerName)) ? sale.providerName : null,
+    paymentAction: sale.paymentAction ? vaultPaymentActionAdminDto(sale.paymentAction as Record<string, unknown>) : null,
+    financialAnomalies: Array.isArray(sale.paymentAnomalies) ? sale.paymentAnomalies.map((notice: Record<string, unknown>) => ({ noticeId: notice.noticeId, code: notice.code, amountCents: notice.amountCents, currency: notice.currency, captureConfirmed: notice.captureConfirmed, occurredAt: notice.occurredAt, resolvedAt: notice.resolvedAt })) : [],
     settlementState: sale.settlementState,
     fulfillmentState: sale.fulfillmentState,
     configVersionNumber: sale.configVersionNumber,
@@ -74,6 +78,7 @@ export function vaultSupportCaseAdminDto(supportCase: Record<string, unknown>) {
   const financial = supportCase.financialResolution === null || supportCase.financialResolution === undefined
     ? null
     : VaultFinancialResolutionSchema.safeParse(supportCase.financialResolution);
+  const evidence = z.object({ noticeId: z.string().min(1).max(256), provider: z.enum(["NAYAX_SPARK", "STRIPE_TERMINAL"]), amountCents: z.number().int().positive().nullable(), currency: z.literal("USD"), captureConfirmed: z.boolean(), code: z.string().regex(/^[A-Z0-9_]{1,120}$/) }).strict().safeParse(supportCase.reconciliationSnapshot);
   return {
     id: supportCase.id,
     machineId: supportCase.machineId,
@@ -84,6 +89,7 @@ export function vaultSupportCaseAdminDto(supportCase: Record<string, unknown>) {
     affectedDoorIds: supportCase.affectedDoorIds,
     customerSafeSummary: supportCase.customerSafeSummary,
     financialResolution: financial && financial.success ? financial.data : null,
+    financialEvidence: evidence.success ? evidence.data : null,
     financialResolutionEvidenceValid: financial === null ? null : financial.success,
     openedAt: supportCase.openedAt,
     assignedAdminId: supportCase.assignedAdminId,

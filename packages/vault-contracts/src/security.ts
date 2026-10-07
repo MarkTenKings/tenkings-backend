@@ -24,7 +24,8 @@ function isSensitiveKey(key: string): boolean {
     || /(?:bank)?account(?:number|num|no)(?:last\d+)?$/.test(normalized)
     || /routing(?:number|num|no)(?:last\d+)?$/.test(normalized)
     || /(?:abanumber|swiftcode)$/.test(normalized)
-    || /(?:primaryaccountnumber|cardnumber|cardexpiry|cardexpiration)$/.test(normalized);
+    || /(?:primaryaccountnumber|cardnumber|cardexpiry|cardexpiration)$/.test(normalized)
+    || /(?:signkey|transactionsignature|cipher|cardhash|carduid|cardlast4digits)$/.test(normalized);
 }
 
 function isPlainRecord(value: object): value is Record<string, unknown> {

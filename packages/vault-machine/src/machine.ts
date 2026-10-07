@@ -12,9 +12,10 @@ import {
   redactVaultValue,
   type ControllerAdapter,
   type ControllerCommand,
-  type NayaxAdapter,
-  type NayaxSessionResult,
-  type NayaxVendResultRequest,
+  type PaymentAdapter,
+  type PaymentCapabilities,
+  type PaymentSessionRequest,
+  type PaymentSessionResult,
   type SignedVaultConfig,
   type VaultConfigPayload,
   type VaultDoorId,
@@ -22,6 +23,8 @@ import {
   type VaultPaymentState,
   type VaultRole,
 } from "../../vault-contracts/dist";
+import type { ProductionAuthority, ProductionEffectContext } from "./spark-activation";
+import { PaymentOperations } from "./payment-operations";
 import { StaffAuthService } from "./auth";
 import { certificationObservationEvidenceClass } from "./certification-provenance";
 import { ConfigManager, type PublicKey } from "./config-manager";
@@ -30,6 +33,7 @@ import { VaultStore } from "./store";
 import { asBoolean, deterministicId, digest, iso, json, parseJson, supportReference, isVaultClockUnsafe } from "./util";
 import {
   VaultError,
+  PaymentNoEffectError,
   systemClock,
   type CheckoutResult,
   type Clock,
@@ -43,12 +47,13 @@ const TERMINAL_SALE_STATES = new Set(["COMPLETED", "PAYMENT_DECLINED", "PAYMENT_
 
 export interface MachineOptions {
   store: VaultStore;
-  payment: NayaxAdapter;
+  payment: PaymentAdapter;
   controller: ControllerAdapter;
   pinnedConfigKeys: Readonly<Record<string, PublicKey>>;
   appVersion: string;
   clock?: Clock;
   beforeCheckout?: () => Promise<void>;
+  productionAuthority?: ProductionAuthority;
 }
 
 export interface CertificationAuthority { sessionId: string; staffSessionId: string }
@@ -59,18 +64,20 @@ export class VaultMachine {
   readonly events: EventRepository;
   readonly config: ConfigManager;
   readonly staff: StaffAuthService;
+  readonly paymentOperations: PaymentOperations;
   private readonly clock: Clock;
   private drainPromise: Promise<void> | null = null;
   private readonly bootWall: number;
   private readonly bootMonotonic: number;
   private readonly beforeCheckout?: () => Promise<void>;
+  private readonly productionAuthority?: ProductionAuthority;
   private paymentAdvance: Promise<void> | null = null;
   private readonly paymentStarts = new Map<string, { key: string; operation: Promise<PublicSale> }>();
   private readonly paymentCancellations = new Map<string, { key: string; operation: Promise<PublicSale> }>();
 
   constructor(
     readonly store: VaultStore,
-    readonly payment: NayaxAdapter,
+    readonly payment: PaymentAdapter,
     readonly controller: ControllerAdapter,
     options: Omit<MachineOptions, "store" | "payment" | "controller">,
   ) {
@@ -78,9 +85,11 @@ export class VaultMachine {
     this.bootWall = this.clock.now().getTime();
     this.bootMonotonic = this.clock.monotonicMs();
     this.beforeCheckout = options.beforeCheckout;
+    this.productionAuthority = options.productionAuthority;
     this.events = new EventRepository(store, this.clock);
     this.config = new ConfigManager(store, this.events, this.clock, options.pinnedConfigKeys, options.appVersion);
     this.staff = new StaffAuthService(store, this.events, this.clock);
+    this.paymentOperations = new PaymentOperations(store, payment, this.events, this.clock, () => isVaultClockUnsafe(store, this.clock, this.bootWall, this.bootMonotonic), () => { this.requireProductionEffectAuthority(); });
   }
 
   async initialize(): Promise<{ recoveredSales: number; integrity: string[] }> {
@@ -88,9 +97,14 @@ export class VaultMachine {
     if (!integrity.ok) throw new VaultError("LOCAL_INTEGRITY_FAILED", "Local database integrity check failed", 503, integrity.rows);
     this.config.validateCached();
     this.staff.refreshLocks(true);
+    await this.paymentOperations.auditRecovery();
+    const physicalController = (await this.controller.identity()).mode !== "MOCK";
     // A process restart is the only point at which an unfinished dispatch may be
     // classified as terminal unknown. It is never sent again automatically.
     this.store.transaction(() => {
+      if (physicalController && this.store.maybeOne(`SELECT 1 FROM command_intent WHERE state='SENT_UNKNOWN' AND completed_at IS NULL LIMIT 1`)) {
+        this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`);
+      }
       for (const command of this.store.all(`SELECT command_id,sale_id FROM command_intent WHERE state='SENT_UNKNOWN' AND completed_at IS NULL`)) this.events.append({ type: "CONTROLLER_EFFECT_REMAINS_UNKNOWN", mode: this.saleEventMode(command.sale_id), correlationId: command.sale_id ? String(command.sale_id) : undefined, payload: { commandId: command.command_id, errorClass: "SERVICE_RESTART" } });
       this.store.run(`UPDATE command_intent SET completed_at=?,evidence_code=COALESCE(evidence_code,'RESTART_EFFECT_UNKNOWN') WHERE state='SENT_UNKNOWN' AND completed_at IS NULL`, iso(this.clock.now()));
       for (const row of this.store.all(`SELECT DISTINCT sale_id FROM command_intent WHERE sale_id IS NOT NULL AND state='SENT_UNKNOWN'`)) this.updateSaleCommandTerminal(String(row.sale_id));
@@ -105,7 +119,9 @@ export class VaultMachine {
       }
     }
     const rows = this.store.all(`SELECT sale_id FROM sale WHERE state NOT IN ('COMPLETED','PAYMENT_DECLINED','PAYMENT_CANCELLED') ORDER BY created_at`);
-    for (const row of rows) await this.recoverSale(String(row.sale_id));
+    if (!this.store.one(`SELECT recovery_required FROM machine_meta WHERE singleton=1`).recovery_required && !this.paymentOperations.recovery.held()) {
+      for (const row of rows) await this.recoverSale(String(row.sale_id));
+    }
     this.store.transaction(() => {
       for (const row of rows) {
         this.store.run(`UPDATE sale SET recovered_at=?,updated_at=? WHERE sale_id=?`, iso(this.clock.now()), iso(this.clock.now()), row.sale_id);
@@ -169,6 +185,7 @@ export class VaultMachine {
     if (asBoolean(meta.service_locked)) reasons.push("SERVICE_LOCKED");
     if (asBoolean(meta.automation_halted)) reasons.push("PHYSICAL_AUTOMATION_HALTED");
     if (asBoolean(meta.recovery_required)) reasons.push("RECOVERY_REQUIRED");
+    if (this.paymentOperations.recovery.held()) reasons.push("FINANCIAL_RECOVERY_REQUIRED");
     if (!this.store.storageStatus().ready) reasons.push("STORAGE_PRESSURE");
     if (isVaultClockUnsafe(this.store, this.clock, this.bootWall, this.bootMonotonic)) reasons.push("CLOCK_UNSAFE");
     const unknown = this.store.maybeOne(`SELECT 1 FROM sale WHERE payment_state IN ('UNKNOWN','RECONCILIATION_REQUIRED') LIMIT 1`);
@@ -182,12 +199,18 @@ export class VaultMachine {
     const active = this.config.active();
     const controller = await this.controller.identity();
     if (!controller.ready) reasons.push("CONTROLLER_NOT_READY");
-    if (controller.mode === "LIVE") reasons.push("LIVE_CONTROLLER_NOT_AUTHORIZED_IN_THIS_BUILD");
+
+    if (controller.mode !== "MOCK" && !/^[a-f0-9]{40}$/.test(String(this.store.one(`SELECT source_commit FROM machine_meta WHERE singleton=1`).source_commit))) reasons.push("CONTROLLER_BUILD_IDENTITY_UNVERIFIED");
+    if (controller.mode !== "MOCK" && (active?.payload.schemaVersion !== 2 || active.payload.machineProfile.provenance !== "QUALIFIED")) reasons.push("CONTROLLER_QUALIFIED_PROFILE_REQUIRED");
     if (active?.payload.schemaVersion === 2 && active.payload.machineProfile.controller.adapterId !== controller.adapter) reasons.push("CONTROLLER_ADAPTER_IDENTITY_MISMATCH");
     if (active && !(await this.controller.validateMapping(active.payload.doorMapping)).valid) reasons.push("CONTROLLER_MAPPING_INVALID");
     const payment = await this.payment.capabilities();
-    if (payment.ready === false) reasons.push("NAYAX_NOT_READY");
-    if (payment.mode === "LIVE") reasons.push("LIVE_PAYMENT_NOT_AUTHORIZED_IN_THIS_BUILD");
+    if (controller.mode !== "MOCK" && payment.mode === "MOCK") reasons.push("PHYSICAL_CONTROLLER_REQUIRES_OFFICIAL_PAYMENT");
+    if (payment.ready === false) reasons.push("PAYMENT_NOT_READY");
+    if (payment.mode === "LIVE" || controller.mode === "LIVE") {
+      if (payment.mode !== "LIVE" || controller.mode !== "LIVE" || payment.productionConfirmed !== true || controller.productionConfirmed !== true) reasons.push("PRODUCTION_ADAPTER_STAGE_MISMATCH");
+      try { this.requireProductionEffectAuthority(payment.bindingDigest, controller.bindingDigest); } catch { reasons.push("PRODUCTION_AUTHORITY_UNAVAILABLE"); }
+    }
     reasons.push(...this.localReadinessReasons());
     return { ready: reasons.length === 0, reasons };
   }
@@ -202,6 +225,9 @@ export class VaultMachine {
     const version = this.store.transaction(() => {
       if (selected) this.store.run(`INSERT INTO cart_item(door_id,product_id,selected_at) VALUES(?,?,?) ON CONFLICT(door_id) DO UPDATE SET product_id=excluded.product_id,selected_at=excluded.selected_at`, doorId, productId, iso(this.clock.now()));
       else this.store.run(`DELETE FROM cart_item WHERE door_id=?`, doorId);
+      // A committed cart interaction starts/extends its own idle window. The UI's
+      // debounced activity request may arrive after publicState applies expiry.
+      this.store.run(`UPDATE machine_meta SET last_public_activity_at=? WHERE singleton=1`, iso(this.clock.now()));
       this.events.append({ type: selected ? "CART_DOOR_SELECTED" : "CART_DOOR_REMOVED", payload: { doorId, productId } });
       return this.store.bumpStateVersion();
     });
@@ -219,6 +245,7 @@ export class VaultMachine {
       if (!candidates.length) throw new VaultError("PRODUCT_SOLD_OUT", "No available door remains for this product", 409);
       const doorId = String(candidates[randomInt(candidates.length)]!.door_id) as VaultDoorId;
       this.store.run(`INSERT INTO cart_item(door_id,product_id,selected_at) VALUES(?,?,?)`, doorId, productId, iso(this.clock.now()));
+      this.store.run(`UPDATE machine_meta SET last_public_activity_at=? WHERE singleton=1`, iso(this.clock.now()));
       this.events.append({ type: "CART_SECURE_PICK_PERSISTED", payload: { doorId, productId, candidateCount: candidates.length } });
       return { doorId, stateVersion: this.store.bumpStateVersion() };
     });
@@ -251,7 +278,8 @@ export class VaultMachine {
     if (completedDuringProbe) return completedDuringProbe;
     this.requirePublicCart(certification);
     const finalReasons = this.localReadinessReasons().filter(reason => !certification || reason !== "SERVICE_LOCKED");
-    if (finalReasons.length || capabilities.ready === false || capabilities.mode === "LIVE") throw new VaultError("MACHINE_NOT_SALES_READY", "Machine readiness changed before reservation", 409, finalReasons);
+    if (finalReasons.length || capabilities.ready === false) throw new VaultError("MACHINE_NOT_SALES_READY", "Machine readiness changed before reservation", 409, finalReasons);
+    if (capabilities.mode === "LIVE") this.requireProductionEffectAuthority(capabilities.bindingDigest);
     if (this.requireConfig().payload.version !== active.payload.version) throw new VaultError("CONFIG_VERSION_MISMATCH", "Configuration changed during checkout", 409);
     const selected = new Map(this.store.all(`SELECT door_id,product_id FROM cart_item`).map((row) => [String(row.door_id), String(row.product_id)]));
     const conflicts: VaultDoorId[] = []; const items: Array<{ doorId: VaultDoorId; doorLabel: string; product: VaultConfigPayload["products"][number]; channel: number; endpoint: string | null; profileDigest: string | null; mappingVersion: string }> = [];
@@ -298,6 +326,8 @@ export class VaultMachine {
         saleId, reference, request.idempotencyKey, requestDigest, request.mode, active.payload.version, active.digest, active.payload.timezone, active.payload.city, active.payload.state,
         active.payload.taxRateBasisPoints, active.payload.taxCalculationVersion, subtotalCents, taxCents, totalCents, now, now,
       );
+      this.persistPaymentBinding(saleId, capabilities);
+      if (capabilities.mode === "LIVE") this.store.run(`INSERT INTO sale_controller_binding(sale_id,binding_digest,created_at) VALUES(?,?,?)`, saleId, this.productionAuthority!.controllerBindingDigest, now);
       if (certification) this.store.run(`UPDATE sale SET certification_session_id=? WHERE sale_id=?`, certification.sessionId, saleId);
       for (const item of eventItems) {
         this.store.run(
@@ -357,8 +387,13 @@ export class VaultMachine {
   private async startPaymentInternal(saleId: string, idempotencyKey: string): Promise<PublicSale> {
     await this.requireNonLivePayment();
     const sale = this.store.one(`SELECT * FROM sale WHERE sale_id=?`, saleId);
-    const request = this.paymentRequest(saleId, idempotencyKey);
+    const paymentCapabilities = await this.payment.capabilities();
+    this.requirePaymentBinding(saleId, paymentCapabilities, true);
+    if (paymentCapabilities.mode === "LIVE") this.requireProductionEffectAuthority(paymentCapabilities.bindingDigest);
+    if (paymentCapabilities.ready === false) throw new VaultError("PAYMENT_NOT_READY", "Payment integration is not ready", 503);
+    const request = this.paymentRequest(saleId, idempotencyKey, paymentCapabilities.mode !== "MOCK");
     const requestDigest = digest(request);
+    let newIntentRecorded = false;
     if (sale.payment_intent_key) {
       if (sale.payment_intent_key !== idempotencyKey || sale.payment_request_digest !== requestDigest) throw new VaultError("PAYMENT_IDEMPOTENCY_CONFLICT", "Payment request conflicts with the existing intent", 409);
       if (sale.provider_session_id || sale.payment_state !== "NOT_REQUESTED") return this.publicSale(saleId);
@@ -369,10 +404,26 @@ export class VaultMachine {
         this.events.append({ type: "PAYMENT_INTENT_RECORDED", mode: sale.mode as VaultMode, correlationId: saleId, payload: { saleId, totalCents: sale.total_cents } });
         this.store.bumpStateVersion();
       });
+      newIntentRecorded = true;
     }
     let result;
     try { result = await this.payment.startSession(request); }
     catch (error) {
+      if (newIntentRecorded && error instanceof PaymentNoEffectError) {
+        let restored = false;
+        this.store.transaction(() => {
+          const changed = this.store.run(
+            `UPDATE sale SET state='RESERVED',payment_state='NOT_REQUESTED',payment_intent_key=NULL,payment_request_digest=NULL,state_version=state_version+1,updated_at=? WHERE sale_id=? AND payment_state='REQUESTED' AND provider_session_id IS NULL AND payment_intent_key=? AND payment_request_digest=?`,
+            iso(this.clock.now()), saleId, idempotencyKey, requestDigest,
+          );
+          if (changed.changes) {
+            this.events.append({ type: "PAYMENT_START_NO_EFFECT", mode: sale.mode as VaultMode, correlationId: saleId, payload: { saleId, code: error.code } });
+            this.store.bumpStateVersion();
+            restored = true;
+          }
+        });
+        if (restored) throw error;
+      }
       this.store.transaction(() => {
         const changed = this.store.run(`UPDATE sale SET state='PAYMENT_UNKNOWN',payment_state='UNKNOWN',state_version=state_version+1,updated_at=? WHERE sale_id=? AND payment_state='REQUESTED'`, iso(this.clock.now()), saleId);
         if (changed.changes) {
@@ -385,7 +436,7 @@ export class VaultMachine {
     this.validatePaymentResult(saleId, result);
     this.store.run(`UPDATE sale SET provider_session_id=? WHERE sale_id=? AND provider_session_id IS NULL`, result.providerSessionId, saleId);
     await this.handleProviderCallback({
-      callbackId: deterministicId("callback", saleId, result.providerSessionId, "start", result.state), saleId, providerSessionId: result.providerSessionId,
+      callbackId: deterministicId("callback", saleId, result.providerSessionId, "start", result.state), saleId, providerSessionId: result.providerSessionId, ...(result.providerTransactionId ? { providerTransactionId: result.providerTransactionId } : {}),
       sequence: 0, state: result.state, occurredAt: iso(this.clock.now()), evidence: { adapter: "normalized", source: "startSession" },
     });
     return this.publicSale(saleId);
@@ -393,6 +444,25 @@ export class VaultMachine {
 
   async handleProviderCallback(input: unknown): Promise<{ disposition: string; sale: PublicSale }> {
     const callback = VaultProviderCallbackSchema.parse(input); const callbackDigest = digest(callback);
+    const paymentCapabilities = await this.payment.capabilities();
+    this.requirePaymentBinding(callback.saleId, paymentCapabilities);
+    const callbackBinding = this.paymentBinding(paymentCapabilities);
+    if (paymentCapabilities.captureBeforeFulfillment === true && callback.state === "AUTHORIZED") {
+      throw new VaultError("PAYMENT_CAPTURE_REQUIRED", "Authorization alone cannot fulfill a capture-before-fulfillment sale", 503);
+    }
+    const capturedPayment = paymentCapabilities.captureBeforeFulfillment === true && callback.state === "SETTLED";
+    const releasePayment = paymentCapabilities.mode !== "MOCK" && ["DECLINED", "CANCELLED"].includes(callback.state);
+    if (capturedPayment || releasePayment) {
+      // A loopback callback token proves neither capture nor safe release of
+      // inventory. The original bound provider must independently confirm it.
+      const verified = await this.payment.reconcile(callback.providerSessionId, { allowReplay: false });
+      this.validatePaymentResult(callback.saleId, verified);
+      if ((capturedPayment ? verified.state !== "SETTLED" : !["DECLINED", "CANCELLED"].includes(verified.state)) || verified.providerSessionId !== callback.providerSessionId
+        || (capturedPayment && paymentCapabilities.mode !== "MOCK" && (!callback.providerTransactionId || !verified.providerTransactionId))
+        || (callback.providerTransactionId && verified.providerTransactionId !== callback.providerTransactionId)) {
+        throw new VaultError(capturedPayment ? "PAYMENT_CAPTURE_PROOF_MISSING" : "PAYMENT_RELEASE_PROOF_MISSING", "The payment adapter has not confirmed the callback outcome", 503);
+      }
+    }
     const existing = this.store.maybeOne(`SELECT payload_digest,disposition,sale_id FROM payment_callback WHERE callback_id=?`, callback.callbackId);
     if (existing) {
       if (existing.payload_digest !== callbackDigest) {
@@ -406,15 +476,18 @@ export class VaultMachine {
       const sale = this.store.one(`SELECT * FROM sale WHERE sale_id=?`, callback.saleId);
       const committed = Boolean(this.store.maybeOne(`SELECT 1 FROM sale_item WHERE sale_id=? AND allocation_state='COMMITTED_SOLD' LIMIT 1`, callback.saleId));
       if (sale.provider_session_id && sale.provider_session_id !== callback.providerSessionId) disposition = "SESSION_CONFLICT";
+      else if (this.store.maybeOne(`SELECT 1 FROM sale WHERE sale_id<>? AND provider_session_id=? LIMIT 1`, callback.saleId, callback.providerSessionId)) disposition = "SESSION_CONFLICT";
+      else if (callback.providerTransactionId && this.store.maybeOne(`SELECT 1 FROM sale WHERE sale_id<>? AND provider_transaction_id=? LIMIT 1`, callback.saleId, callback.providerTransactionId)) disposition = "TRANSACTION_CONFLICT";
       else if (callback.sequence < Number(sale.provider_sequence)) disposition = "OUT_OF_ORDER";
       else if (callback.sequence === Number(sale.provider_sequence) && Number(sale.provider_sequence) >= 0) disposition = "SEQUENCE_CONFLICT";
-      else if (!sale.payment_intent_key || !vaultPaymentTransitionAllowed(String(sale.payment_state), callback.state, committed)) disposition = "STATE_CONFLICT";
+      else if (!sale.payment_intent_key || (!vaultPaymentTransitionAllowed(String(sale.payment_state), callback.state, committed)
+        && !(capturedPayment && !committed && ["REQUESTED", "UNKNOWN", "RECONCILIATION_REQUIRED"].includes(String(sale.payment_state))))) disposition = "STATE_CONFLICT";
       else if (callback.providerTransactionId && sale.provider_transaction_id && sale.provider_transaction_id !== callback.providerTransactionId) disposition = "TRANSACTION_CONFLICT";
       this.store.run(
         `INSERT INTO payment_callback(callback_id,payload_digest,sale_id,provider_session_id,provider_transaction_id,sequence,state,occurred_at,evidence_json,disposition,received_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
         callback.callbackId, callbackDigest, callback.saleId, callback.providerSessionId, callback.providerTransactionId ?? null, callback.sequence, callback.state, callback.occurredAt, json(redactVaultValue(callback.evidence)), disposition, iso(this.clock.now()),
       );
-      this.events.append({ type: disposition === "APPLIED" ? "PAYMENT_CALLBACK_APPLIED" : "PAYMENT_CALLBACK_QUARANTINED", mode: sale.mode as VaultMode, correlationId: callback.saleId, causationId: callback.callbackId, payload: { callbackId: callback.callbackId, sequence: callback.sequence, state: callback.state, disposition, providerSessionReference: providerReference(callback.providerSessionId), ...(callback.providerTransactionId ? { providerTransactionReference: providerReference(callback.providerTransactionId) } : {}) } });
+      this.events.append({ type: disposition === "APPLIED" ? "PAYMENT_CALLBACK_APPLIED" : "PAYMENT_CALLBACK_QUARANTINED", mode: sale.mode as VaultMode, correlationId: callback.saleId, causationId: callback.callbackId, payload: { callbackId: callback.callbackId, sequence: callback.sequence, state: callback.state, disposition, ...(capturedPayment ? { captureConfirmed: true, paymentProvider: callbackBinding.provider, paymentBindingDigest: callbackBinding.bindingDigest } : {}), providerSessionReference: providerReference(callback.providerSessionId), ...(callback.providerTransactionId ? { providerTransactionReference: providerReference(callback.providerTransactionId) } : {}) } });
       if (disposition !== "APPLIED") return;
       this.store.run(`UPDATE sale SET provider_session_id=COALESCE(provider_session_id,?),provider_transaction_id=COALESCE(provider_transaction_id,?),provider_sequence=?,updated_at=? WHERE sale_id=?`, callback.providerSessionId, callback.providerTransactionId ?? null, callback.sequence, iso(this.clock.now()), callback.saleId);
       switch (callback.state) {
@@ -435,7 +508,12 @@ export class VaultMachine {
           this.store.run(`UPDATE sale SET state=CASE WHEN ?=0 AND presentation_done_at IS NULL THEN 'RECONCILIATION_REQUIRED' ELSE state END,payment_state='RECONCILIATION_REQUIRED',state_version=state_version+1 WHERE sale_id=?`, committed ? 1 : 0, callback.saleId);
           break;
         case "SETTLED":
-          this.store.run(`UPDATE sale SET payment_state='SETTLED',state=CASE WHEN state IN ('VEND_RESULT_PENDING','SETTLEMENT_PENDING','OPEN_COMMAND_TERMINAL') THEN 'SETTLED' ELSE state END,state_version=state_version+1 WHERE sale_id=?`, callback.saleId);
+          if (capturedPayment && !committed) {
+            this.fulfillmentCommit(callback.saleId, sale.mode as VaultMode, callback.callbackId, "SETTLED");
+            shouldDrain = true;
+            break;
+          }
+          this.store.run(`UPDATE sale SET payment_state='SETTLED',state=CASE WHEN state IN ('OPEN_COMMAND_TERMINAL') THEN 'SETTLED' ELSE state END,state_version=state_version+1 WHERE sale_id=?`, callback.saleId);
           break;
         default:
           this.store.run(`UPDATE sale SET payment_state=?,state_version=state_version+1 WHERE sale_id=?`, callback.state, callback.saleId);
@@ -447,12 +525,13 @@ export class VaultMachine {
   }
 
   async reconcileSale(saleId: string): Promise<PublicSale> {
-    await this.requireNonLivePayment();
     const sale = this.store.one(`SELECT * FROM sale WHERE sale_id=?`, saleId);
     if (!sale.provider_session_id) throw new VaultError("RECONCILIATION_SESSION_MISSING", "Sale has no provider session to reconcile", 409);
-    const result = await this.payment.reconcile(String(sale.provider_session_id));
+    const capabilities = await this.payment.capabilities();
+    this.requirePaymentBinding(saleId, capabilities);
+    const result = await this.payment.reconcile(String(sale.provider_session_id), { allowReplay: this.paymentReplayAllowed(capabilities) });
     this.validatePaymentResult(saleId, result);
-    await this.handleProviderCallback({ callbackId: deterministicId("callback", saleId, "reconcile", String(Number(sale.provider_sequence) + 1), result.state), saleId, providerSessionId: result.providerSessionId, sequence: Number(sale.provider_sequence) + 1, state: result.state, occurredAt: iso(this.clock.now()), evidence: { source: "reconcile" } });
+    await this.handleProviderCallback({ callbackId: deterministicId("callback", saleId, "reconcile", String(Number(sale.provider_sequence) + 1), result.state), saleId, providerSessionId: result.providerSessionId, ...(result.providerTransactionId ? { providerTransactionId: result.providerTransactionId } : {}), sequence: Number(sale.provider_sequence) + 1, state: result.state, occurredAt: iso(this.clock.now()), evidence: { source: "reconcile" } });
     return this.publicSale(saleId);
   }
 
@@ -488,10 +567,11 @@ export class VaultMachine {
     // has not returned yet. The next tick resolves it without a second payment.
     if (!sale.provider_session_id) return this.publicSale(saleId);
     await this.requireNonLivePayment();
+    this.requirePaymentBinding(saleId, await this.payment.capabilities());
     const result = await this.payment.cancelSession(String(sale.provider_session_id), idempotencyKey);
     this.validatePaymentResult(saleId, result);
     const sequence = Number(this.store.one(`SELECT provider_sequence FROM sale WHERE sale_id=?`, saleId).provider_sequence) + 1;
-    await this.handleProviderCallback({ callbackId: deterministicId("callback", saleId, "cancel", idempotencyKey, result.state), saleId, providerSessionId: result.providerSessionId, sequence, state: result.state, occurredAt: iso(this.clock.now()), evidence: { source: "cancel" } });
+    await this.handleProviderCallback({ callbackId: deterministicId("callback", saleId, "cancel", idempotencyKey, result.state), saleId, providerSessionId: result.providerSessionId, ...(result.providerTransactionId ? { providerTransactionId: result.providerTransactionId } : {}), sequence, state: result.state, occurredAt: iso(this.clock.now()), evidence: { source: "cancel" } });
     return this.publicSale(saleId);
   }
 
@@ -502,44 +582,91 @@ export class VaultMachine {
   }
 
   private async advancePaymentsInternal(): Promise<void> {
-    for (const row of this.store.all(`SELECT sale_id,payment_state FROM sale WHERE payment_state NOT IN ('NOT_REQUESTED','DECLINED','CANCELLED','SETTLED') ORDER BY created_at`)) {
-      const saleId = String(row.sale_id);
-      try {
-        if (["REQUESTED", "UNKNOWN", "RECONCILIATION_REQUIRED", "SETTLEMENT_PENDING"].includes(String(row.payment_state))) await this.recoverSale(saleId);
-        const current = this.store.one(`SELECT * FROM sale WHERE sale_id=?`, saleId);
-        if (!["AUTHORIZED", "VEND_RESULT_PENDING"].includes(String(current.payment_state)) || !this.initialCommandsTerminal(saleId)) continue;
-        const capabilities = await this.payment.capabilities();
-        if (capabilities.mode !== "MOCK" || !this.payment.reportVendResult) continue;
-        const request: NayaxVendResultRequest = {
-          idempotencyKey: deterministicId("vend", saleId), saleId, providerSessionId: String(current.provider_session_id), policy: "SIMULATOR_ONLY",
-          items: this.store.all(`SELECT si.line_id,ci.command_id,ci.state FROM sale_item si JOIN command_intent ci ON ci.sale_item_id=si.line_id AND ci.attempt=1 WHERE si.sale_id=? ORDER BY si.line_id`, saleId).map((item) => ({ lineId: String(item.line_id), commandId: String(item.command_id), outcome: item.state as NayaxVendResultRequest["items"][number]["outcome"] })),
-        };
-        const requestDigest = digest(request);
-        if (current.vend_result_request_digest && current.vend_result_request_digest !== requestDigest) throw new VaultError("VEND_RESULT_INTENT_CONFLICT", "Persisted vend evidence changed", 503);
-        if (!current.vend_result_intent_key) this.store.transaction(() => {
-          this.store.run(`UPDATE sale SET vend_result_intent_key=?,vend_result_request_digest=?,payment_state='VEND_RESULT_PENDING' WHERE sale_id=?`, request.idempotencyKey, requestDigest, saleId);
-          this.events.append({ type: "VEND_RESULT_INTENT_RECORDED", mode: current.mode as VaultMode, correlationId: saleId, payload: { saleId, policy: request.policy, items: request.items } });
-        });
-        const result = await this.payment.reportVendResult(request);
-        this.validatePaymentResult(saleId, result);
-        const sequence = Number(this.store.one(`SELECT provider_sequence FROM sale WHERE sale_id=?`, saleId).provider_sequence) + 1;
-        await this.handleProviderCallback({ callbackId: deterministicId("callback", saleId, "vend", result.state), saleId, providerSessionId: result.providerSessionId, sequence, state: result.state, occurredAt: iso(this.clock.now()), evidence: { source: "mock-vend-result" } });
-        this.store.run(`UPDATE sale SET vend_result_reported_at=COALESCE(vend_result_reported_at,?) WHERE sale_id=?`, iso(this.clock.now()), saleId);
-        await this.reconcileSale(saleId);
-      } catch {
-        // Preserve the persisted intent; the next supervised tick reconciles or
-        // replays that same idempotent mock vend request, never a new payment.
-      }
+    try { await this.paymentOperations.pollEvidence(); }
+    catch {
+      // Provider transport outages are already contained by the adapter. Never
+      // proceed after an invalid evidence batch or failed durable local write.
+      this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`);
+    }
+    for (const row of this.store.all(`SELECT sale_id FROM sale WHERE payment_state IN ('REQUESTED','UNKNOWN','RECONCILIATION_REQUIRED','SETTLEMENT_PENDING') ORDER BY created_at`)) {
+      if (this.store.one(`SELECT automation_halted OR recovery_required AS held FROM machine_meta WHERE singleton=1`).held || this.paymentOperations.recovery.held()) return;
+      try { await this.recoverSale(String(row.sale_id)); }
+      catch { /* Keep uncertain payments pinned for the next supervised reconciliation. */ }
     }
   }
 
-  private validatePaymentResult(saleId: string, result: NayaxSessionResult): void {
-    const sale = this.store.one(`SELECT payment_request_digest,provider_session_id FROM sale WHERE sale_id=?`, saleId);
+  private validatePaymentResult(saleId: string, result: PaymentSessionResult): void {
+    const sale = this.store.one(`SELECT payment_request_digest,provider_session_id,provider_transaction_id FROM sale WHERE sale_id=?`, saleId);
+    if (this.store.maybeOne(`SELECT 1 FROM sale WHERE sale_id<>? AND provider_session_id=? LIMIT 1`, saleId, result.providerSessionId)
+      || (result.providerTransactionId && ((sale.provider_transaction_id && sale.provider_transaction_id !== result.providerTransactionId) || this.store.maybeOne(`SELECT 1 FROM sale WHERE sale_id<>? AND provider_transaction_id=? LIMIT 1`, saleId, result.providerTransactionId)))) throw new VaultError("PAYMENT_ADAPTER_RESULT_CONFLICT", "Provider identity is already bound to a different transaction", 503);
     if (!result.providerSessionId || result.originalRequestDigest !== sale.payment_request_digest || (sale.provider_session_id && result.providerSessionId !== sale.provider_session_id)) throw new VaultError("PAYMENT_ADAPTER_RESULT_CONFLICT", "Payment adapter result does not bind the persisted request", 503);
   }
 
+  private paymentBinding(capabilities: PaymentCapabilities): { provider: string; adapterName: string; mode: string; bindingDigest: string; captureBeforeFulfillment: number } {
+    const provider = capabilities.provider ?? (capabilities.mode === "MOCK" ? "SIMULATED" : "");
+    if (!provider || !capabilities.adapterName || (capabilities.mode !== "MOCK" && !/^[a-f0-9]{64}$/.test(capabilities.bindingDigest ?? ""))) {
+      throw new VaultError("PAYMENT_BINDING_UNAVAILABLE", "Payment provider and exact machine/terminal binding must be configured", 503);
+    }
+    return { provider, adapterName: capabilities.adapterName, mode: capabilities.mode,
+      bindingDigest: capabilities.bindingDigest ?? digest({ provider, machineId: this.store.one(`SELECT machine_id FROM machine_meta WHERE singleton=1`).machine_id, adapterName: capabilities.adapterName }),
+      captureBeforeFulfillment: capabilities.captureBeforeFulfillment === true ? 1 : 0 };
+  }
+
+  private persistPaymentBinding(saleId: string, capabilities: PaymentCapabilities): void {
+    const binding = this.paymentBinding(capabilities);
+    this.store.run(`INSERT INTO sale_payment_binding(sale_id,provider,adapter_name,adapter_mode,binding_digest,capture_before_fulfillment,created_at) VALUES(?,?,?,?,?,?,?)`,
+      saleId, binding.provider, binding.adapterName, binding.mode, binding.bindingDigest, binding.captureBeforeFulfillment, iso(this.clock.now()));
+  }
+
+  private requirePaymentBinding(saleId: string, capabilities: PaymentCapabilities, allowUnstarted = false): void {
+    const expected = this.paymentBinding(capabilities);
+    let stored = this.store.maybeOne(`SELECT * FROM sale_payment_binding WHERE sale_id=?`, saleId);
+    if (!stored && allowUnstarted) {
+      const sale = this.store.one(`SELECT payment_intent_key,payment_state FROM sale WHERE sale_id=?`, saleId);
+      if (!sale.payment_intent_key && sale.payment_state === "NOT_REQUESTED") {
+        this.persistPaymentBinding(saleId, capabilities);
+        stored = this.store.one(`SELECT * FROM sale_payment_binding WHERE sale_id=?`, saleId);
+      }
+    }
+    // Historical pending payments have no reliable provider proof. Never infer
+    // it from an ID prefix or send their request to the currently selected adapter.
+    if (!stored || stored.provider !== expected.provider || stored.adapter_name !== expected.adapterName
+      || stored.adapter_mode !== expected.mode || stored.binding_digest !== expected.bindingDigest
+      || Number(stored.capture_before_fulfillment) !== expected.captureBeforeFulfillment) {
+      throw new VaultError("PAYMENT_BINDING_MISMATCH", "This sale requires its original payment provider and terminal binding", 503);
+    }
+  }
+
+  /** The installed runtime calls this again inside provider/controller queues.
+   * It creates no entitlement and never controls read-only receipt absorption. */
+  requireProductionEffectAuthority(paymentBindingDigest?: string, controllerBindingDigest?: string): ProductionEffectContext {
+    if (!this.productionAuthority) throw new VaultError("PRODUCTION_AUTHORITY_REQUIRED", "A qualified installed production authority is required", 503);
+    const meta = this.store.one(`SELECT machine_id,source_commit,automation_halted,recovery_required FROM machine_meta WHERE singleton=1`);
+    if (meta.automation_halted || meta.recovery_required || isVaultClockUnsafe(this.store, this.clock, this.bootWall, this.bootMonotonic)) throw new VaultError("PRODUCTION_TECHNICAL_RECOVERY_REQUIRED", "Production effects are held for recovery", 503);
+    const active = this.config.active();
+    if (!active || Date.parse(active.payload.expiresAt) <= this.clock.now().getTime()) throw new VaultError("PRODUCTION_CONFIG_EXPIRED", "A current exact signed machine configuration is required", 503);
+    const context: ProductionEffectContext = { machineId: String(meta.machine_id), machineConfigDigest: active.digest,
+      sourceCommit: String(meta.source_commit), paymentBindingDigest, controllerBindingDigest };
+    this.productionAuthority.assertAuthorized(context);
+    return context;
+  }
+
+  bindProductionControllerCommand(commandId: string): void {
+    if (!this.productionAuthority) return;
+    this.requireProductionEffectAuthority();
+    this.store.run(`INSERT INTO command_controller_binding(command_id,binding_digest,created_at) VALUES(?,?,?)`, commandId, this.productionAuthority.controllerBindingDigest, iso(this.clock.now()));
+  }
+
   private async requireNonLivePayment(): Promise<void> {
-    if ((await this.payment.capabilities()).mode === "LIVE") throw new VaultError("LIVE_PAYMENT_NOT_AUTHORIZED_IN_THIS_BUILD", "This software candidate cannot contact a live payment adapter", 503);
+    const capabilities = await this.payment.capabilities();
+    if (capabilities.mode === "LIVE") this.requireProductionEffectAuthority(capabilities.bindingDigest);
+  }
+
+  private paymentReplayAllowed(capabilities: PaymentCapabilities): boolean {
+    const flags = this.store.one(`SELECT automation_halted,recovery_required FROM machine_meta WHERE singleton=1`);
+    if (flags.automation_halted || flags.recovery_required || this.paymentOperations.recovery.held() || isVaultClockUnsafe(this.store, this.clock, this.bootWall, this.bootMonotonic)) return false;
+    if (capabilities.mode === "LIVE") { try { this.requireProductionEffectAuthority(capabilities.bindingDigest); } catch { return false; } }
+    return true;
   }
 
   async openPaidDoorsAgain(saleId: string, idempotencyKey: string): Promise<PublicSale> {
@@ -550,11 +677,15 @@ export class VaultMachine {
       if (prior.request_digest !== requestDigest) throw new VaultError("RETRY_IDEMPOTENCY_CONFLICT", "Retry key was reused with different content", 409);
       return this.publicSale(saleId);
     }
+    const retryCapabilities = await this.payment.capabilities();
+    if (retryCapabilities.mode === "LIVE") this.requireProductionEffectAuthority(retryCapabilities.bindingDigest);
     this.store.transaction(() => {
       const sale = this.store.one(`SELECT * FROM sale WHERE sale_id=?`, saleId);
+      if (this.store.one(`SELECT automation_halted OR recovery_required AS held FROM machine_meta WHERE singleton=1`).held || this.paymentOperations.recovery.held()) throw new VaultError("GROUP_RETRY_RECOVERY_REQUIRED", "Door retry is held for recovery review", 409);
+      if (sale.presentation_done_at || this.store.maybeOne(`SELECT 1 FROM payment_void WHERE sale_id=?`, saleId)) throw new VaultError("GROUP_RETRY_NOT_AVAILABLE", "The customer session or financial resolution has closed door access", 409);
       if (sale.retry_used_at) throw new VaultError("GROUP_RETRY_ALREADY_USED", "Paid-door group retry was already consumed", 409);
       if (!this.initialCommandsTerminal(saleId)) throw new VaultError("GROUP_RETRY_NOT_AVAILABLE", "Initial commands have not reached terminal outcomes", 409);
-      if (!["OPEN_COMMAND_TERMINAL", "VEND_RESULT_PENDING", "SETTLEMENT_PENDING", "SETTLED", "SUPPORT_REQUIRED"].includes(String(sale.state))) throw new VaultError("GROUP_RETRY_NOT_AVAILABLE", "Sale is not eligible for paid-door retry", 409);
+      if (!["OPEN_COMMAND_TERMINAL", "SETTLED", "SUPPORT_REQUIRED"].includes(String(sale.state))) throw new VaultError("GROUP_RETRY_NOT_AVAILABLE", "Sale is not eligible for paid-door retry", 409);
       const items = this.store.all(`SELECT * FROM sale_item WHERE sale_id=? ORDER BY door_id`, saleId);
       if (!items.length) throw new VaultError("SALE_ITEMS_MISSING", "Paid sale has no durable items", 503);
       const usedAt = iso(this.clock.now());
@@ -598,19 +729,53 @@ export class VaultMachine {
       const intent = this.store.maybeOne(`SELECT * FROM command_intent WHERE state='COMMAND_INTENT_RECORDED' ORDER BY created_at,command_id LIMIT 1`);
       if (!intent) return;
       const mode = this.saleEventMode(intent.sale_id);
-      const halted = asBoolean(this.store.one(`SELECT automation_halted FROM machine_meta WHERE singleton=1`).automation_halted);
-      if (halted) return;
+      const halted = asBoolean(this.store.one(`SELECT automation_halted FROM machine_meta WHERE singleton=1`).automation_halted) || this.paymentOperations.recovery.held();
+      if (halted || (intent.sale_id && this.store.maybeOne(`SELECT 1 FROM payment_void WHERE sale_id=?`, intent.sale_id))) return;
       const controllerIdentity = await this.controller.identity();
+      if (controllerIdentity.mode === "LIVE") {
+        const pinnedController = this.store.maybeOne(`SELECT binding_digest FROM command_controller_binding WHERE command_id=?`, intent.command_id);
+        if (!pinnedController || pinnedController.binding_digest !== controllerIdentity.bindingDigest) {
+          this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`);
+          return;
+        }
+      }
+      // Every physical effect, including ordinary restock and resumed work,
+      // requires a release source identity. Candidate hashes are simulator-only.
+      if (controllerIdentity.mode !== "MOCK" && !/^[a-f0-9]{40}$/.test(String(this.store.one(`SELECT source_commit FROM machine_meta WHERE singleton=1`).source_commit))) {
+        this.store.transaction(() => {
+          this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`);
+          this.events.append({ type: "CONTROLLER_BUILD_IDENTITY_UNVERIFIED", payload: { commandId: intent.command_id } });
+          this.store.bumpStateVersion();
+        });
+        return;
+      }
+      // Readiness is checked again for every effect, not only at checkout.
+      // Leave queued intents intact when the physical bus cannot prove idle.
+      if (!controllerIdentity.ready || (controllerIdentity.mode !== "MOCK" && controllerIdentity.outputState !== "OFF_VERIFIED")) {
+        if (controllerIdentity.mode !== "MOCK") this.store.transaction(() => {
+          this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`);
+          this.events.append({ type: "CONTROLLER_OUTPUT_RECOVERY_REQUIRED", payload: { commandId: intent.command_id } });
+        });
+        return;
+      }
       const pinnedConfig = this.store.maybeOne(`SELECT payload_json FROM config_snapshot WHERE version=?`, intent.mapping_version);
       const profileConfig = pinnedConfig ? parseJson<VaultConfigPayload>(pinnedConfig.payload_json) : null;
       const expectedMapping = profileConfig?.doorMapping.find(mapping => mapping.doorId === intent.door_id);
-      if (controllerIdentity.mode === "LIVE" || !expectedMapping || expectedMapping.controllerChannel !== intent.controller_channel
+      if ((controllerIdentity.mode !== "MOCK" && (profileConfig?.schemaVersion !== 2 || profileConfig.machineProfile.provenance !== "QUALIFIED")) || !expectedMapping || expectedMapping.controllerChannel !== intent.controller_channel
         || ("controllerEndpointId" in expectedMapping ? expectedMapping.controllerEndpointId : null) !== intent.controller_endpoint_id
         || (profileConfig?.schemaVersion === 2 && (profileConfig.machineProfile.controller.adapterId !== controllerIdentity.adapter || machineProfileDigest(profileConfig.machineProfile) !== intent.profile_digest))) {
         this.store.transaction(() => { this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`); this.events.append({ type: "CONTROLLER_AUTHORITY_INVALID", payload: { commandId: intent.command_id } }); });
         return;
       }
       if (intent.authority === "PAID_SALE") {
+        const paymentIdentity = await this.payment.capabilities();
+        if ((controllerIdentity.mode !== "MOCK" && paymentIdentity.mode === "MOCK") || (controllerIdentity.mode === "LIVE" && paymentIdentity.mode !== "LIVE") || (paymentIdentity.mode === "LIVE" && controllerIdentity.mode !== "LIVE")) {
+          this.store.transaction(() => {
+            this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`);
+            this.events.append({ type: "CONTROLLER_AUTHORITY_INVALID", payload: { commandId: intent.command_id } });
+          });
+          return;
+        }
         const authority = this.store.maybeOne(`SELECT 1 FROM sale_item si JOIN sale s ON s.sale_id=si.sale_id JOIN door d ON d.door_id=si.door_id WHERE si.line_id=? AND si.sale_id=? AND si.door_id=? AND si.controller_channel=? AND si.mapping_version=? AND si.controller_endpoint_id IS ? AND si.profile_digest IS ? AND si.allocation_state='COMMITTED_SOLD' AND d.active=1 AND d.state='COMMITTED_SOLD' AND d.owning_sale_id=s.sale_id AND d.controller_channel=si.controller_channel AND d.mapping_version=si.mapping_version AND d.profile_digest IS si.profile_digest AND d.controller_endpoint_id=COALESCE(si.controller_endpoint_id,'legacy')`, intent.sale_item_id, intent.sale_id, intent.door_id, intent.controller_channel, intent.mapping_version, intent.controller_endpoint_id, intent.profile_digest);
         if (!authority) {
           this.store.transaction(() => { this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`); this.events.append({ type: "CONTROLLER_AUTHORITY_INVALID", payload: { commandId: intent.command_id } }); });
@@ -622,6 +787,11 @@ export class VaultMachine {
           : this.store.maybeOne(`SELECT actor_session_id FROM certification_session WHERE session_id=? AND status='ACTIVE'`, intent.certification_session_id);
         try { if (!session) return; this.staff.requireSession(String(session.actor_session_id), intent.authority === "RESTOCK" ? "RESTOCK_RUN" : "CERTIFICATION_COLLECT"); }
         catch { return; }
+      }
+      // Recheck after all asynchronous readiness work and before crossing the effect boundary.
+      if (this.store.one(`SELECT automation_halted FROM machine_meta WHERE singleton=1`).automation_halted || this.paymentOperations.recovery.held() || (intent.sale_id && this.store.maybeOne(`SELECT 1 FROM payment_void WHERE sale_id=?`, intent.sale_id))) return;
+      if (controllerIdentity.mode === "LIVE") {
+        try { this.requireProductionEffectAuthority(undefined, controllerIdentity.bindingDigest); } catch { return; }
       }
       this.store.transaction(() => {
         this.store.run(`UPDATE command_intent SET state='SENT_UNKNOWN',dispatched_at=? WHERE command_id=? AND state='COMMAND_INTENT_RECORDED'`, iso(this.clock.now()), intent.command_id);
@@ -641,17 +811,21 @@ export class VaultMachine {
             throw new VaultError("CONTROLLER_RECEIPT_INVALID", "Controller receipt does not bind the dispatched command", 503);
           }
           const wrongDoor = Boolean(receipt.observedDoorId && receipt.observedDoorId !== command.doorId);
-          this.store.run(`UPDATE command_intent SET state=?,controller_sequence=?,observed_door_id=?,evidence_code=?,completed_at=? WHERE command_id=?`, receipt.outcome, receipt.controllerSequence, receipt.observedDoorId ?? null, receipt.evidenceCode ?? null, iso(this.clock.now()), command.commandId);
-          if (intent.sale_item_id) this.store.run(`UPDATE sale_item SET fulfillment_state=? WHERE line_id=?`, receipt.outcome, intent.sale_item_id);
-          if (wrongDoor) this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`);
-          this.events.append({ type: wrongDoor ? "CRITICAL_WRONG_DOOR_OBSERVED" : "CONTROLLER_COMMAND_TERMINAL", mode, correlationId: intent.sale_id ? String(intent.sale_id) : undefined, payload: { commandId: command.commandId, expectedDoorId: command.doorId, observedDoorId: receipt.observedDoorId ?? null, outcome: receipt.outcome, controllerSequence: receipt.controllerSequence, evidenceCode: receipt.evidenceCode ?? null } });
+          const outputUncertain = controllerIdentity.mode !== "MOCK" && receipt.outputState !== "OFF_VERIFIED";
+          const outcome = outputUncertain && receipt.outcome === "ACCEPTED" ? "SENT_UNKNOWN" : receipt.outcome;
+          const physicalEffectUncertain = controllerIdentity.mode !== "MOCK" && (outputUncertain || outcome === "SENT_UNKNOWN" || outcome === "TIMEOUT");
+          this.store.run(`UPDATE command_intent SET state=?,controller_sequence=?,observed_door_id=?,evidence_code=?,completed_at=? WHERE command_id=?`, outcome, receipt.controllerSequence, receipt.observedDoorId ?? null, receipt.evidenceCode ?? null, iso(this.clock.now()), command.commandId);
+          if (intent.sale_item_id) this.store.run(`UPDATE sale_item SET fulfillment_state=? WHERE line_id=?`, outcome, intent.sale_item_id);
+          if (wrongDoor || physicalEffectUncertain) this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`);
+          if (physicalEffectUncertain) this.events.append({ type: "CONTROLLER_OUTPUT_RECOVERY_REQUIRED", payload: { commandId: command.commandId } });
+          this.events.append({ type: wrongDoor ? "CRITICAL_WRONG_DOOR_OBSERVED" : "CONTROLLER_COMMAND_TERMINAL", mode, correlationId: intent.sale_id ? String(intent.sale_id) : undefined, payload: { commandId: command.commandId, expectedDoorId: command.doorId, observedDoorId: receipt.observedDoorId ?? null, outcome, controllerSequence: receipt.controllerSequence, evidenceCode: receipt.evidenceCode ?? null } });
           if (intent.sale_id) this.updateSaleCommandTerminal(String(intent.sale_id));
           this.store.bumpStateVersion();
         });
       } catch (error) {
         this.store.transaction(() => {
           this.store.run(`UPDATE command_intent SET completed_at=?,evidence_code=COALESCE(evidence_code,?) WHERE command_id=?`, iso(this.clock.now()), error instanceof VaultError ? error.code : "ADAPTER_EFFECT_UNKNOWN", command.commandId);
-          if (error instanceof VaultError && error.code === "CONTROLLER_RECEIPT_INVALID") this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`);
+          if (controllerIdentity.mode !== "MOCK" || (error instanceof VaultError && error.code === "CONTROLLER_RECEIPT_INVALID")) this.store.run(`UPDATE machine_meta SET automation_halted=1,recovery_required=1 WHERE singleton=1`);
           if (intent.sale_item_id) this.store.run(`UPDATE sale_item SET fulfillment_state='SENT_UNKNOWN' WHERE line_id=?`, intent.sale_item_id);
           this.events.append({ type: "CONTROLLER_EFFECT_REMAINS_UNKNOWN", mode, correlationId: intent.sale_id ? String(intent.sale_id) : undefined, payload: { commandId: command.commandId, errorClass: error instanceof Error ? error.name : "UNKNOWN" } });
           if (intent.sale_id) this.updateSaleCommandTerminal(String(intent.sale_id));
@@ -674,7 +848,7 @@ export class VaultMachine {
       authorizationDurable: this.hasCommittedAuthorization(saleId),
       mode: row.mode as VaultMode, subtotalCents: Number(row.subtotal_cents), taxCents: Number(row.tax_cents), totalCents: Number(row.total_cents),
       items: items.map((item) => ({ lineId: String(item.line_id), doorId: item.door_id as VaultDoorId, doorLabel: String(item.door_label ?? item.door_id), productId: String(item.product_id), productName: String(item.product_name), photoUrl: String(item.photo_url), description: String(item.description), category: String(item.category), priceCents: Number(item.price_cents), taxClass: String(item.tax_class) })),
-      paidDoorIds: items.map((item) => item.door_id as VaultDoorId), retryAvailable: !row.presentation_done_at && !row.retry_used_at && this.initialCommandsTerminal(saleId), retryUsed: Boolean(row.retry_used_at),
+      paidDoorIds: items.map((item) => item.door_id as VaultDoorId), retryAvailable: !this.store.one(`SELECT automation_halted OR recovery_required AS held FROM machine_meta WHERE singleton=1`).held && !this.paymentOperations.recovery.held() && !row.presentation_done_at && !this.store.maybeOne(`SELECT 1 FROM payment_void WHERE sale_id=?`, saleId) && !row.retry_used_at && this.initialCommandsTerminal(saleId), retryUsed: Boolean(row.retry_used_at),
       retrievalSeconds: config.retrievalSeconds, retryExtensionSeconds: config.retryExtensionSeconds,
       retrievalSecondsRemaining: remaining,
       resetSecondsRemaining: row.presentation_started_at && !commandPending ? remaining : null,
@@ -793,7 +967,7 @@ export class VaultMachine {
   private requirePublicCart(certification?: CertificationAuthority): void {
     const meta = this.store.one(`SELECT service_locked,automation_halted,recovery_required FROM machine_meta WHERE singleton=1`);
     if (certification) this.requireCertificationAuthority(certification);
-    if ((asBoolean(meta.service_locked) && !certification) || asBoolean(meta.automation_halted) || asBoolean(meta.recovery_required)) throw new VaultError("PUBLIC_SESSION_BLOCKED", "Customer changes are blocked while service or recovery owns the machine", 409);
+    if ((asBoolean(meta.service_locked) && !certification) || asBoolean(meta.automation_halted) || asBoolean(meta.recovery_required) || this.paymentOperations.recovery.held()) throw new VaultError("PUBLIC_SESSION_BLOCKED", "Customer changes are blocked while service or recovery owns the machine", 409);
     if (this.store.maybeOne(`SELECT 1 FROM sale WHERE state NOT IN ('COMPLETED','PAYMENT_DECLINED','PAYMENT_CANCELLED') LIMIT 1`)) throw new VaultError("ACTIVE_TRANSACTION_EXISTS", "An existing transaction must finish before changing the cart", 409);
   }
 
@@ -803,17 +977,26 @@ export class VaultMachine {
     if (!session || session.adapter_mode !== "MOCK" || (session.actor_session_id !== actor.sessionId && actor.role !== "ADMIN")) throw new VaultError("CERTIFICATION_AUTHORITY_INVALID", "Simulator cycle requires the active scoped certification actor", 403);
   }
 
-  private paymentRequest(saleId: string, idempotencyKey: string) {
+  private paymentRequest(saleId: string, idempotencyKey: string, bindFulfillment = false): PaymentSessionRequest {
     const sale = this.store.one(`SELECT * FROM sale WHERE sale_id=?`, saleId);
-    const items = this.store.all(`SELECT line_id,product_name,price_cents FROM sale_item WHERE sale_id=? ORDER BY line_id`, saleId);
-    return { idempotencyKey, saleId, mode: sale.mode as VaultMode, currency: "USD" as const, totalCents: Number(sale.total_cents), items: items.map((item) => ({ lineId: String(item.line_id), name: String(item.product_name), priceCents: Number(item.price_cents) })) };
+    const items = this.store.all(`SELECT * FROM sale_item WHERE sale_id=? ORDER BY line_id`, saleId);
+    const legacy: PaymentSessionRequest = { idempotencyKey, saleId, mode: sale.mode as VaultMode, currency: "USD", totalCents: Number(sale.total_cents), items: items.map((item) => ({ lineId: String(item.line_id), name: String(item.product_name), priceCents: Number(item.price_cents) })) };
+    // Historical request bytes remain reconstructible after an upgrade. No new
+    // mapping is consulted for either version; every field comes from sale_item.
+    if (sale.payment_request_digest === digest(legacy) || (!sale.payment_request_digest && !bindFulfillment)) return legacy;
+    const first = items[0];
+    if (!first?.profile_digest || !first.controller_endpoint_id || items.some(item => item.profile_digest !== first.profile_digest || item.mapping_version !== first.mapping_version || !item.controller_endpoint_id)) {
+      throw new VaultError("PAYMENT_FULFILLMENT_BINDING_MISSING", "Physical payment requires the original explicit profile and mapping", 503);
+    }
+    return { ...legacy, fulfillment: { profileDigest: String(first.profile_digest), mappingVersion: String(first.mapping_version),
+      items: items.map(item => ({ lineId: String(item.line_id), doorId: item.door_id as VaultDoorId, controllerEndpointId: String(item.controller_endpoint_id), controllerChannel: Number(item.controller_channel) })) } };
   }
 
   private saleEventMode(saleId: unknown): VaultMode {
     return saleId ? this.store.one(`SELECT mode FROM sale WHERE sale_id=?`, String(saleId)).mode as VaultMode : "CERTIFICATION";
   }
 
-  private fulfillmentCommit(saleId: string, mode: VaultMode, callbackId: string): void {
+  private fulfillmentCommit(saleId: string, mode: VaultMode, callbackId: string, paymentState: "AUTHORIZED" | "SETTLED" = "AUTHORIZED"): void {
     const sale = this.store.one(`SELECT certification_session_id FROM sale WHERE sale_id=?`, saleId);
     const items = this.store.all(`SELECT * FROM sale_item WHERE sale_id=? ORDER BY door_id`, saleId);
     for (const item of items) {
@@ -824,7 +1007,7 @@ export class VaultMachine {
       this.store.run(`INSERT INTO command_intent(command_id,sale_id,sale_item_id,door_id,door_label,controller_channel,controller_endpoint_id,profile_digest,mapping_version,attempt,authority,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,1,'PAID_SALE','COMMAND_INTENT_RECORDED',?)`, commandId, saleId, item.line_id, item.door_id, item.door_label, item.controller_channel, item.controller_endpoint_id, item.profile_digest, item.mapping_version, iso(this.clock.now()));
       if (sale.certification_session_id) this.store.run(`UPDATE command_intent SET certification_session_id=? WHERE command_id=?`, sale.certification_session_id, commandId);
     }
-    this.store.run(`UPDATE sale SET state='OPEN_COMMAND_PENDING',payment_state='AUTHORIZED',state_version=state_version+1,updated_at=? WHERE sale_id=?`, iso(this.clock.now()), saleId);
+    this.store.run(`UPDATE sale SET state='OPEN_COMMAND_PENDING',payment_state=?,state_version=state_version+1,updated_at=? WHERE sale_id=?`, paymentState, iso(this.clock.now()), saleId);
     this.events.append({ type: "FULFILLMENT_COMMITTED", mode, correlationId: saleId, causationId: callbackId, payload: { saleId, commands: items.map((item) => ({ commandId: deterministicId("cmd", saleId, String(item.line_id), "1"), doorId: item.door_id, attempt: 1 })) } });
   }
 
@@ -875,6 +1058,16 @@ export class VaultMachine {
   private async recoverSale(saleId: string): Promise<void> {
     if (this.paymentStarts.has(saleId) || this.paymentCancellations.has(saleId)) return;
     const sale = this.store.one(`SELECT * FROM sale WHERE sale_id=?`, saleId);
+    if (sale.payment_intent_key && !["SETTLED", "DECLINED", "CANCELLED"].includes(String(sale.payment_state))) {
+      try { this.requirePaymentBinding(saleId, await this.payment.capabilities()); }
+      catch {
+        this.store.transaction(() => {
+          const changed = this.store.run(`UPDATE sale SET state=CASE WHEN ?=1 THEN state ELSE 'RECONCILIATION_REQUIRED' END,payment_state='RECONCILIATION_REQUIRED' WHERE sale_id=? AND payment_state<>'RECONCILIATION_REQUIRED'`, this.hasCommittedAuthorization(saleId) ? 1 : 0, saleId);
+          if (changed.changes) this.events.append({ type: "PAYMENT_RECOVERY_BINDING_REQUIRED", mode: sale.mode as VaultMode, correlationId: saleId, payload: { saleId } });
+        });
+        return;
+      }
+    }
     if (sale.cancel_intent_key && sale.provider_session_id && !this.hasCommittedAuthorization(saleId)
       && ["REQUESTED", "UNKNOWN", "RECONCILIATION_REQUIRED"].includes(String(sale.payment_state))) {
       await this.cancelPayment(saleId, String(sale.cancel_intent_key));
@@ -890,17 +1083,19 @@ export class VaultMachine {
         return;
       }
       try {
-        await this.requireNonLivePayment();
+        const recoveryCapabilities = await this.payment.capabilities();
+        const allowReplay = this.paymentReplayAllowed(recoveryCapabilities);
         if (!this.payment.reconcileRequest) throw new VaultError("PAYMENT_RECOVERY_UNSUPPORTED", "Adapter cannot reconcile the original payment intent", 503);
-        const observed = await this.payment.reconcileRequest(request.idempotencyKey);
+        const observed = await this.payment.reconcileRequest(request.idempotencyKey, { allowReplay });
         if (!observed && sale.cancel_intent_key) {
           this.store.transaction(() => { this.releaseReservation(saleId, "CANCELLED"); this.store.bumpStateVersion(); });
           return;
         }
+        if (!observed && !allowReplay) return;
         const result = observed ?? await this.payment.startSession(request);
         this.validatePaymentResult(saleId, result);
         this.store.run(`UPDATE sale SET provider_session_id=? WHERE sale_id=? AND provider_session_id IS NULL`, result.providerSessionId, saleId);
-        await this.handleProviderCallback({ callbackId: deterministicId("callback", saleId, result.providerSessionId, "recovery-start", result.state), saleId, providerSessionId: result.providerSessionId, sequence: 0, state: result.state, occurredAt: iso(this.clock.now()), evidence: { source: "recovery-idempotent-start" } });
+        await this.handleProviderCallback({ callbackId: deterministicId("callback", saleId, result.providerSessionId, "recovery-start", result.state), saleId, providerSessionId: result.providerSessionId, ...(result.providerTransactionId ? { providerTransactionId: result.providerTransactionId } : {}), sequence: 0, state: result.state, occurredAt: iso(this.clock.now()), evidence: { source: "recovery-idempotent-start" } });
       } catch {
         this.store.transaction(() => {
           const changed = this.store.run(`UPDATE sale SET state=CASE WHEN ?=1 THEN state ELSE 'RECONCILIATION_REQUIRED' END,payment_state='RECONCILIATION_REQUIRED' WHERE sale_id=? AND payment_state NOT IN ('DECLINED','CANCELLED','SETTLED')`, this.hasCommittedAuthorization(saleId) ? 1 : 0, saleId);
@@ -949,6 +1144,6 @@ export class VaultMachine {
     if (reasons.some((reason) => reason.startsWith("CLOUD"))) return "DEGRADED_CLOUD";
     if (reasons.some((reason) => reason.includes("CONFIG"))) return "BLOCKED_CONFIG";
     if (reasons.some((reason) => reason.includes("CONTROLLER"))) return "BLOCKED_CONTROLLER";
-    return "BLOCKED_NAYAX";
+    return "BLOCKED_PAYMENT";
   }
 }

@@ -182,3 +182,22 @@ test("certification must be submitted after exact command evidence before public
   assert.equal((await rig.machine.publicState()).serviceLocked, false);
   rig.store.close();
 });
+
+for (const method of ["select", "pick"]) {
+  test(`first ${method} after an empty attract screen has idled starts a fresh durable shopping window`, async () => {
+    const rig = await createRig(); makeDoorAvailable(rig, ["X-01"]);
+    try {
+      await rig.machine.initialize();
+      rig.clock.advance(71_000);
+      assert.equal((await rig.machine.publicState()).cart.length, 0);
+      if (method === "select") rig.machine.selectCartDoor("X-01", "sports-25", true);
+      else rig.machine.pickForMe("sports-25");
+      const state = await rig.machine.publicState();
+      assert.deepEqual(state.cart.map((line) => line.doorId), ["X-01"]);
+      assert.equal(state.idleSecondsRemaining, 70);
+      assert.equal(rig.store.one(`SELECT COUNT(*) AS count FROM machine_event WHERE type='PUBLIC_IDLE_CART_RESET'`).count, 0);
+      rig.clock.advance(70_000);
+      assert.equal((await rig.machine.publicState()).cart.length, 0, "inactivity still expires an unpaid cart");
+    } finally { rig.store.close(); }
+  });
+}

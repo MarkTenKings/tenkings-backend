@@ -2,16 +2,18 @@
   "name": "@tenkings/vault-machine",
   "version": "0.1.0",
   "private": true,
-  "description": "One-writer Windows-local authority for Ten Kings Vault V1 (mock/simulator adapters only)",
+  "description": "One-writer local Vault authority with explicit simulator and Linux integration adapters",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "engines": {
-    "node": "20.x"
+    "node": "20.x || 22.x"
   },
   "scripts": {
     "build": "tsc -p .",
     "test": "npm run build && node ../../scripts/test-vault-node.mjs",
-    "start": "node dist/cli.js"
+    "start": "node dist/cli.js",
+    "bench:controller": "python3 scripts/waveshare_bench.py",
+    "test:controller-bench": "python3 -m unittest discover -s tests -p test_waveshare_bench.py"
   },
   "dependencies": {
     "@tenkings/vault-contracts": "workspace:*",

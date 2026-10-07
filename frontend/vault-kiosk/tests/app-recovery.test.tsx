@@ -113,7 +113,7 @@ describe("App durable recovery and conflict flows", () => {
     view.unmount();
   });
   it("allows individual staff entry while a controller/config dependency is blocked, but never over an active sale", async () => {
-    for (const state of ["NO_VALID_CACHED_CONFIG", "CONTROLLER_NOT_READY", "NAYAX_UNAVAILABLE"] as const) {
+    for (const state of ["NO_VALID_CACHED_CONFIG", "CONTROLLER_NOT_READY", "PAYMENT_UNAVAILABLE"] as const) {
       const api = fakeApi(snapshot({ publicState: state, activeSale: null }));
       const view = renderReact(<App api={api as unknown as VaultApiClient} />);
       await settle();
@@ -180,7 +180,7 @@ describe("App durable recovery and conflict flows", () => {
     api.finishPaidPresentation.mockImplementation(() => response(shopping));
     const view = renderReact(<App api={api as unknown as VaultApiClient} />);
     await settle();
-    expect(view.container.textContent).toContain("No charge was completed");
+    expect(view.container.textContent).toContain("Payment was not completed");
     await click(view.container.querySelector(".return-shopping-action"));
     await settle();
     expect(api.finishPaidPresentation).toHaveBeenCalledWith(sale.saleId, declined.stateVersion);

@@ -1,0 +1,27 @@
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),{spawnSync}=require('node:child_process');
+const {activationFixture}=require('./spark-activation-fixture');const {tempDatabase}=require('./helpers');
+const cli=path.resolve(__dirname,'../scripts/spark-activation.cjs');
+const run=args=>spawnSync(process.execPath,[cli,...args],{encoding:'utf8',env:{PATH:process.env.PATH},timeout:30000});
+test('offline production CLI creates only pending evidence templates and refuses overwrite',t=>{
+  const tmp=tempDatabase();t.after(()=>fs.rmSync(tmp.directory,{recursive:true,force:true}));const f=activationFixture(),input=path.join(tmp.directory,'input.json'),output=path.join(tmp.directory,'pending');fs.writeFileSync(input,JSON.stringify(f.input.provisioning));
+  assert.equal(run(['evidence-templates',input,output]).status,0);for(const file of fs.readdirSync(output)){const record=JSON.parse(fs.readFileSync(path.join(output,file)));assert.equal(record.outcome,'PENDING');assert.equal(record.evidenceClass,'UNREVIEWED');assert.equal(record.artifactSha256,null);}
+  assert.notEqual(run(['evidence-templates',input,output]).status,0);assert.equal(fs.readdirSync(output).length,5);
+});
+test('offline CLI signs and verifies synthetic promotion+lease and rejects changed reports or release bytes',t=>{
+  // All keys/reports/runtime members are synthetic. No fixture is deployed.
+  const tmp=tempDatabase();t.after(()=>fs.rmSync(tmp.directory,{recursive:true,force:true}));const f=activationFixture({now:Date.now()-1000}),root=path.join(fs.realpathSync(tmp.directory),'synthetic-release');fs.mkdirSync(root);
+  const write=(file,value,mode=0o644)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,value,{mode});};const json=(name,value)=>{const file=path.join(tmp.directory,name);write(file,JSON.stringify(value));return file;};
+  const members=['runtime/bin/node','packages/vault-machine/dist/cli.js','packages/vault-machine/package.json','packages/vault-contracts/dist/index.js','frontend/vault-kiosk/dist/index.html','deploy/vault-linux/launch.py','deploy/vault-linux/probe.cjs'];for(const member of members)write(path.join(root,member),'synthetic-not-executable');
+  write(path.join(root,'deploy/vault-linux/runtime.json'),fs.readFileSync(path.resolve(__dirname,'../../../deploy/vault-linux/runtime.json')));members.push('deploy/vault-linux/runtime.json');
+  write(path.join(root,'source-build.json'),JSON.stringify(f.input.sourceBuild));members.push('source-build.json');
+  const manifest={...JSON.parse(f.input.releaseManifest),files:members.sort().map(member=>({path:member,size:fs.statSync(path.join(root,member)).size,mode:fs.statSync(path.join(root,member)).mode&0o777,sha256:f.hash(fs.readFileSync(path.join(root,member)))}))};const manifestBytes=Buffer.from(JSON.stringify(manifest));write(path.join(root,'release.json'),manifestBytes);write(path.join(root,'release.sig'),crypto.sign(null,manifestBytes,f.releaseKey.privateKey));
+  const evidencePath=path.join(tmp.directory,'evidence');for(const [kind,pair]of Object.entries(f.input.evidence)){const record=JSON.parse(pair.record);record.releaseManifestSha256=f.hash(manifestBytes);write(path.join(evidencePath,kind+'.evidence'),JSON.stringify(record));write(path.join(evidencePath,kind+'.artifact'),pair.artifact);}
+  const activationPublicKeyPath=path.join(tmp.directory,'activation-public.pem'),releasePublicKeyPath=path.join(tmp.directory,'release-public.pem'),privateKey=path.join(tmp.directory,'activation-private.pem');write(activationPublicKeyPath,f.input.activationPublicKey);write(releasePublicKeyPath,f.input.releasePublicKey);write(privateKey,f.key.privateKey.export({type:'pkcs8',format:'pem'}),0o600);
+  const request={schemaVersion:1,provisioningPath:json('provisioning.json',f.input.provisioning),controllerConfigPath:json('controller.json',f.input.controller),activationPublicKeyPath,releasePublicKeyPath,releasePath:root,evidencePath,machineConfigDigest:f.input.context.machineConfigDigest,previousBindingDigest:'e'.repeat(64),approvedBy:'synthetic-test-reviewer',promotionExpiresAt:new Date(Date.now()+3600000).toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()};
+  const requestPath=json('request.json',request),promotion=path.join(tmp.directory,'promotion.json'),activation=path.join(tmp.directory,'activation.json');
+  let result=run(['sign-promotion',requestPath,privateKey,promotion]);assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(fs.readFileSync(promotion)).payload.purpose,'VAULT_SPARK_PRODUCTION_PROMOTION');
+  request.promotionPath=promotion;json('request.json',request);result=run(['sign',requestPath,privateKey,activation]);assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(result.stdout).installed,false);assert.equal(fs.statSync(activation).mode&0o777,0o600);
+  assert.equal(run(['verify',requestPath,activation]).status,0);assert.notEqual(run(['sign',requestPath,privateKey,activation]).status,0);
+  write(path.join(evidencePath,'CABINET_ACCEPTANCE.artifact'),'changed actual report');assert.notEqual(run(['verify',requestPath,activation]).status,0);
+  write(path.join(evidencePath,'CABINET_ACCEPTANCE.artifact'),f.input.evidence.CABINET_ACCEPTANCE.artifact);write(path.join(root,'runtime/bin/node'),'changed release bytes');assert.notEqual(run(['verify',requestPath,activation]).status,0);
+});

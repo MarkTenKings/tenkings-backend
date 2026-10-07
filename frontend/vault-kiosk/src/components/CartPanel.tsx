@@ -63,7 +63,7 @@ export function CartPanel({
       >
         {busy ? "Securing order…" : totalCents === null ? "Checking tax…" : `Checkout · ${formatMoney(totalCents)}`}
       </button>
-      <p className="checkout-note">One Nayax payment · exact doors rechecked before payment</p>
+      <p className="checkout-note">One secure payment · exact doors rechecked before payment</p>
     </aside>
   );
 }

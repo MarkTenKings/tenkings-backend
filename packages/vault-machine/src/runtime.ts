@@ -19,6 +19,7 @@ export class VaultRuntime {
   private localPromise: Promise<void> | null = null;
   private timers: Array<ReturnType<typeof setInterval>> = [];
   private stopped = false;
+  private paused = false;
 
   constructor(readonly machine: VaultMachine, readonly cloud: VaultCloudClient, private readonly options: VaultRuntimeOptions) {
     if (String(machine.store.one("SELECT machine_id FROM machine_meta WHERE singleton=1").machine_id) !== cloud.machineId) throw new VaultError("CLOUD_MACHINE_MISMATCH", "Cloud transport belongs to a different machine");
@@ -28,7 +29,7 @@ export class VaultRuntime {
   }
 
   start(): void {
-    if (this.timers.length || this.stopped) return;
+    if (this.timers.length || this.stopped || this.paused) return;
     const localMs = this.options.localTickMs ?? 1_000;
     const cloudMs = this.options.cloudTickMs ?? 15_000;
     if (!Number.isInteger(localMs) || localMs < 10 || localMs > 300_000 || !Number.isInteger(cloudMs) || cloudMs < 10 || cloudMs > 300_000) throw new VaultError("RUNTIME_INTERVAL_INVALID", "Runtime intervals must be between 10 and 300000 milliseconds");
@@ -40,13 +41,20 @@ export class VaultRuntime {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    await this.pause();
+  }
+
+  async pause(): Promise<void> {
+    this.paused = true;
     for (const timer of this.timers) clearInterval(timer);
     this.timers = [];
     await Promise.allSettled([this.localPromise, this.syncPromise]);
   }
 
+  resume(): void { if (!this.stopped) { this.paused = false; this.start(); } }
+
   tickLocal(): Promise<void> {
-    if (this.stopped) return Promise.resolve();
+    if (this.stopped || this.paused) return Promise.resolve();
     if (this.localPromise) return this.localPromise;
     this.localPromise = (async () => {
       await this.machine.advancePayments();
@@ -60,14 +68,14 @@ export class VaultRuntime {
 
   /** Called for every new checkout, in addition to the periodic synchronization. */
   async proveCheckoutReachability(): Promise<void> {
-    if (this.stopped) throw new VaultError("CLOUD_UNAVAILABLE", "Cloud synchronization is stopped", 503);
+    if (this.stopped || this.paused) throw new VaultError("CLOUD_UNAVAILABLE", "Cloud synchronization is paused", 503);
     // A caller joining an older cycle still performs a new server round trip.
     if (this.syncPromise) await this.syncPromise;
     await this.synchronize();
   }
 
   synchronize(): Promise<void> {
-    if (this.stopped) return Promise.reject(new VaultError("CLOUD_UNAVAILABLE", "Cloud synchronization is stopped", 503));
+    if (this.stopped || this.paused) return Promise.reject(new VaultError("CLOUD_UNAVAILABLE", "Cloud synchronization is paused", 503));
     if (this.syncPromise) return this.syncPromise;
     this.syncPromise = this.syncOnce().catch((error) => {
       const code = safeCode(error);
@@ -119,6 +127,27 @@ export class VaultRuntime {
     // A backed-off head cannot be skipped just because this cycle sent zero rows.
     if (store.maybeOne("SELECT 1 FROM outbox WHERE acknowledged_at IS NULL AND attempt_count>0 LIMIT 1")) throw new VaultCloudError("CLOUD_EVENT_BACKOFF");
     if (!result.config && !result.unchanged) throw new VaultCloudError("CLOUD_CONFIG_UNAVAILABLE");
+    if (this.machine.payment.voidPaidTransaction) {
+      if (this.machine.payment.financialRecoveryEvidence) await this.machine.paymentOperations.recovery.resumeIntents();
+      for (const action of await this.cloud.paymentActions()) {
+        try {
+          if (Date.parse(action.expiresAt) <= this.options.clock.now().getTime() && !store.maybeOne(`SELECT 1 FROM payment_void WHERE action_id=?`, action.actionId)) await this.machine.paymentOperations.recovery.retireExpired(action);
+          else await this.machine.paymentOperations.executeApprovedVoid(action);
+        }
+        catch (error) { this.options.reportError?.(safeCode(error)); }
+      }
+    }
+    if (this.machine.payment.financialRecoveryEvidence) {
+      await this.machine.paymentOperations.recovery.snapshot();
+      const evidenceDelivery = await this.outbox.flush();
+      if (evidenceDelivery.rejected) throw new VaultCloudError(evidenceDelivery.failureCode ?? "CLOUD_EVENT_REJECTED");
+      for (const decision of await this.cloud.financialRecoveryDecisions()) {
+        try { await this.machine.paymentOperations.recovery.apply(decision); }
+        catch (error) { this.options.reportError?.(safeCode(error)); }
+      }
+      const recoveryDelivery = await this.outbox.flush();
+      if (recoveryDelivery.rejected) throw new VaultCloudError(recoveryDelivery.failureCode ?? "CLOUD_EVENT_REJECTED");
+    }
     this.machine.markCloudContact(this.options.clock.now());
     store.run("UPDATE cloud_sync_state SET last_error_code=NULL,last_success_at=? WHERE singleton=1", iso(this.options.clock.now()));
     await this.options.broadcast();

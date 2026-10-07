@@ -1,6 +1,6 @@
 export interface Migration { version: number; name: string; sql: string; rebuildsReferencedTables?: boolean }
 
-export const LOCAL_SCHEMA_VERSION = 3;
+export const LOCAL_SCHEMA_VERSION = 7;
 
 export const MIGRATIONS: readonly Migration[] = [{
   version: 1,
@@ -367,5 +367,83 @@ CREATE TRIGGER restock_history_retained BEFORE DELETE ON restock_session BEGIN S
 CREATE TRIGGER restock_item_history_retained BEFORE DELETE ON restock_item BEGIN SELECT RAISE(ABORT,'restock item history is retained'); END;
 CREATE TRIGGER certification_profile_immutable BEFORE UPDATE OF session_id,config_version,adapter_mode,source_commit,app_version,schema_version,controller_identity_json,payment_identity_json,retention_policy,created_at ON certification_session BEGIN SELECT RAISE(ABORT,'certification profile snapshot is immutable'); END;
 CREATE TRIGGER certification_history_retained BEFORE DELETE ON certification_session BEGIN SELECT RAISE(ABORT,'certification history is retained'); END;
+`,
+}, {
+  version: 4,
+  name: "vault_sale_payment_provider_binding",
+  sql: `
+CREATE TABLE sale_payment_binding (
+  sale_id TEXT PRIMARY KEY REFERENCES sale(sale_id),
+  provider TEXT NOT NULL,
+  adapter_name TEXT NOT NULL,
+  adapter_mode TEXT NOT NULL CHECK(adapter_mode IN ('MOCK','OFFICIAL_TEST','LIVE')),
+  binding_digest TEXT NOT NULL CHECK(length(binding_digest)=64),
+  capture_before_fulfillment INTEGER NOT NULL CHECK(capture_before_fulfillment IN (0,1)),
+  created_at TEXT NOT NULL
+);
+CREATE TRIGGER sale_payment_binding_immutable_update BEFORE UPDATE ON sale_payment_binding BEGIN SELECT RAISE(ABORT,'sale payment binding is immutable'); END;
+CREATE TRIGGER sale_payment_binding_immutable_delete BEFORE DELETE ON sale_payment_binding BEGIN SELECT RAISE(ABORT,'sale payment binding is retained'); END;
+`,
+}, {
+  version: 5,
+  name: "vault_payment_evidence_and_approved_voids",
+  sql: `
+CREATE TABLE payment_evidence_notice (
+  notice_id TEXT PRIMARY KEY,
+  payload_digest TEXT NOT NULL CHECK(length(payload_digest)=64),
+  payload_json TEXT NOT NULL,
+  recorded_at TEXT NOT NULL
+);
+CREATE TRIGGER payment_evidence_immutable_update BEFORE UPDATE ON payment_evidence_notice BEGIN SELECT RAISE(ABORT,'payment evidence is immutable'); END;
+CREATE TRIGGER payment_evidence_immutable_delete BEFORE DELETE ON payment_evidence_notice BEGIN SELECT RAISE(ABORT,'payment evidence is retained'); END;
+CREATE TABLE payment_void (
+  action_id TEXT PRIMARY KEY,
+  sale_id TEXT NOT NULL UNIQUE REFERENCES sale(sale_id),
+  action_digest TEXT NOT NULL CHECK(length(action_digest)=64),
+  action_json TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('INTENT','UNKNOWN','DECLINED','VOIDED')),
+  outcome_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TRIGGER payment_void_identity_immutable BEFORE UPDATE OF action_id,sale_id,action_digest,action_json,request_json,created_at ON payment_void BEGIN SELECT RAISE(ABORT,'payment void authority is immutable'); END;
+CREATE TRIGGER payment_void_terminal_immutable BEFORE UPDATE ON payment_void WHEN OLD.state IN ('VOIDED','DECLINED') BEGIN SELECT RAISE(ABORT,'terminal payment void is immutable'); END;
+CREATE TRIGGER payment_void_retained BEFORE DELETE ON payment_void BEGIN SELECT RAISE(ABORT,'payment void is retained'); END;
+`,
+}, {
+  version: 6,
+  name: "vault_supervised_financial_recovery",
+  sql: `
+CREATE TABLE financial_recovery_snapshot(snapshot_id TEXT PRIMARY KEY,generation INTEGER NOT NULL UNIQUE,state_digest TEXT NOT NULL,payload_json TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE financial_recovery_decision(decision_id TEXT PRIMARY KEY,decision_digest TEXT NOT NULL,decision_json TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('INTENT','APPLIED','SUPERSEDED')),created_at TEXT NOT NULL,applied_at TEXT);
+CREATE TABLE financial_notice_resolution(notice_id TEXT PRIMARY KEY REFERENCES payment_evidence_notice(notice_id),decision_id TEXT NOT NULL REFERENCES financial_recovery_decision(decision_id));
+CREATE TABLE payment_void_retirement(action_id TEXT PRIMARY KEY,action_digest TEXT NOT NULL,payload_json TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE payment_void_external_review(action_id TEXT PRIMARY KEY REFERENCES payment_void(action_id),decision_id TEXT NOT NULL REFERENCES financial_recovery_decision(decision_id),evidence_digest TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TRIGGER financial_snapshot_immutable_update BEFORE UPDATE ON financial_recovery_snapshot BEGIN SELECT RAISE(ABORT,'financial snapshot is immutable'); END;
+CREATE TRIGGER financial_snapshot_retained BEFORE DELETE ON financial_recovery_snapshot BEGIN SELECT RAISE(ABORT,'financial snapshot is retained'); END;
+CREATE TRIGGER financial_notice_resolution_immutable BEFORE UPDATE ON financial_notice_resolution BEGIN SELECT RAISE(ABORT,'financial notice review is immutable'); END;
+CREATE TRIGGER financial_notice_resolution_retained BEFORE DELETE ON financial_notice_resolution BEGIN SELECT RAISE(ABORT,'financial notice review is retained'); END;
+CREATE TRIGGER payment_void_retirement_immutable BEFORE UPDATE ON payment_void_retirement BEGIN SELECT RAISE(ABORT,'void retirement is immutable'); END;
+CREATE TRIGGER payment_void_retirement_retained BEFORE DELETE ON payment_void_retirement BEGIN SELECT RAISE(ABORT,'void retirement is retained'); END;
+CREATE TRIGGER payment_void_external_review_immutable BEFORE UPDATE ON payment_void_external_review BEGIN SELECT RAISE(ABORT,'external review is immutable'); END;
+CREATE TRIGGER payment_void_external_review_retained BEFORE DELETE ON payment_void_external_review BEGIN SELECT RAISE(ABORT,'external review is retained'); END;
+CREATE TRIGGER financial_decision_identity_immutable BEFORE UPDATE OF decision_id,decision_digest,decision_json,created_at ON financial_recovery_decision BEGIN SELECT RAISE(ABORT,'financial approval is immutable'); END;
+CREATE TRIGGER financial_decision_applied_immutable BEFORE UPDATE ON financial_recovery_decision WHEN OLD.state IN ('APPLIED','SUPERSEDED') BEGIN SELECT RAISE(ABORT,'financial outcome is immutable'); END;
+CREATE TRIGGER financial_decision_retained BEFORE DELETE ON financial_recovery_decision BEGIN SELECT RAISE(ABORT,'financial approval is retained'); END;
+`,
+}, {
+  version: 7,
+  name: "vault_production_controller_binding",
+  sql: `
+CREATE TABLE sale_controller_binding(sale_id TEXT PRIMARY KEY REFERENCES sale(sale_id),binding_digest TEXT NOT NULL CHECK(length(binding_digest)=64),created_at TEXT NOT NULL);
+CREATE TABLE command_controller_binding(command_id TEXT PRIMARY KEY REFERENCES command_intent(command_id),binding_digest TEXT NOT NULL CHECK(length(binding_digest)=64),created_at TEXT NOT NULL);
+CREATE TRIGGER sale_controller_binding_immutable BEFORE UPDATE ON sale_controller_binding BEGIN SELECT RAISE(ABORT,'sale controller binding is immutable'); END;
+CREATE TRIGGER sale_controller_binding_retained BEFORE DELETE ON sale_controller_binding BEGIN SELECT RAISE(ABORT,'sale controller binding is retained'); END;
+CREATE TRIGGER command_controller_binding_immutable BEFORE UPDATE ON command_controller_binding BEGIN SELECT RAISE(ABORT,'command controller binding is immutable'); END;
+CREATE TRIGGER command_controller_binding_retained BEFORE DELETE ON command_controller_binding BEGIN SELECT RAISE(ABORT,'command controller binding is retained'); END;
+CREATE TRIGGER paid_command_controller_binding AFTER INSERT ON command_intent WHEN NEW.authority='PAID_SALE' BEGIN
+  INSERT INTO command_controller_binding(command_id,binding_digest,created_at) SELECT NEW.command_id,binding_digest,NEW.created_at FROM sale_controller_binding WHERE sale_id=NEW.sale_id;
+END;
 `,
 }];

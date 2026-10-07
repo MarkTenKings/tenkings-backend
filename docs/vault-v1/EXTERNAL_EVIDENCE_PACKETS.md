@@ -1,6 +1,12 @@
 # Vault V1 External Evidence Packets
 
+## September16 integration candidate supersession
+
+The owner accepted Portrait B and confirmed the 4×17 (68-door) visible arrangement, all ordered hardware present but disconnected, and Omarchy as the intended “AI OS.” A qualified physical label/address/geometry profile is still missing; fixture positions never provide that mapping. The preserved September11 bench transport now underpins the new Waveshare service candidate. Linux packaging and Marshall process/journal boundaries are implemented locally; official SDK/test setup, actual SER install, electrical/door qualification and full-machine evidence remain open. The earlier Windows/ViewSonic/simulator-only descriptions below are historical where they differ. See [current integration handoff](INTEGRATION_STATUS_2026-09-16.md), [controller candidate](WAVESHARE_INTEGRATION_2026-09-16.md), [Nayax boundary](MARSHALL_INTEGRATION_2026-09-16.md), and [Omarchy packaging](LINUX_APPLIANCE_2026-09-16.md). No production configuration or physical gate is closed by software tests.
+
 These packets preserve exact unknowns. They do not block mock/simulator-backed software.
+
+September 9 photo evidence identifies the owned SER5 (Ryzen 5 5500U, 16 GB RAM, 480 GB storage, HDMI/DP, four USB-A and one USB-C) and Nayax VPOS Touch PN `R144GUSY01S10`. See [the dated hardware update](HARDWARE_PURCHASING_PLAN_2026-09-08.md#september-9-update-owner-direction-and-photo-evidence). Physical identity does not establish an approved Marshall kit, firmware/account configuration, peripheral compatibility or installed acceptance; G-01 and G-04 remain open. Mark requested a Linux/Omarchy evaluation and a purchased touchscreen was reported following the Acer PM161QT discussion; actual monitor identity/contents still need confirmation. The Windows/ViewSonic evidence path below describes the existing implementation/baseline; any adopted Linux/screen change needs corresponding acceptance evidence.
 
 ## Nayax packet (G-01)
 

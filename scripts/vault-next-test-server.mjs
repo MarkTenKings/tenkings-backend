@@ -18,7 +18,7 @@ export function assertIsolatedNextEnvironment() {
   }
 }
 
-export function vaultNextTestEnvironment(databaseUrl = unavailableDatabaseUrl) {
+export function vaultNextTestEnvironment(databaseUrl = unavailableDatabaseUrl, syntheticSpark) {
   assertIsolatedNextEnvironment();
   if (databaseUrl !== unavailableDatabaseUrl) {
     assert.equal(process.env.AI_GRADER_NFC_DISPOSABLE_VALIDATION, "1", "Disposable database harness required");
@@ -30,16 +30,36 @@ export function vaultNextTestEnvironment(databaseUrl = unavailableDatabaseUrl) {
     assert.ok(Number(target.port) > 1 && Number(target.port) <= 65_535);
     assert.deepEqual([...target.searchParams.entries()], [["schema", "public"]]);
   }
+  let syntheticEnvironment = {};
+  if (syntheticSpark !== undefined) {
+    assert.equal(process.env.VAULT_SYNTHETIC_SPARK_VALIDATION, "1", "Synthetic Spark harness acknowledgment required");
+    assert.notEqual(databaseUrl, unavailableDatabaseUrl, "Synthetic Spark requires guarded disposable PostgreSQL");
+    assert.deepEqual(Object.keys(syntheticSpark).sort(), ["bindings", "callbackSecret", "ownerAdminUserId"]);
+    assert.ok(/^synthetic_[A-Za-z0-9_-]{32,80}$/.test(syntheticSpark.callbackSecret));
+    assert.ok(/^[a-f0-9-]{36}$/.test(syntheticSpark.ownerAdminUserId));
+    assert.ok(Array.isArray(syntheticSpark.bindings) && syntheticSpark.bindings.length > 0 && syntheticSpark.bindings.length <= 64);
+    for (const binding of syntheticSpark.bindings) {
+      assert.ok(binding.hwSerial.startsWith("SYNTHETIC-"));
+      assert.equal(binding.currency, "USD");
+    }
+    syntheticEnvironment = {
+      VAULT_SYNTHETIC_SPARK_VALIDATION: "1", VAULT_NAYAX_SPARK_CALLBACKS_ENABLED: "true",
+      VAULT_NAYAX_SPARK_ENVIRONMENT: "SANDBOX", VAULT_NAYAX_SPARK_CALLBACK_HEADER: "x-vault-spark-secret",
+      VAULT_NAYAX_SPARK_CALLBACK_SECRET: syntheticSpark.callbackSecret,
+      VAULT_NAYAX_SPARK_BINDINGS_JSON: JSON.stringify(syntheticSpark.bindings),
+      VAULT_OWNER_ADMIN_USER_IDS: syntheticSpark.ownerAdminUserId,
+    };
+  }
   // Do not inherit provider credentials, alternate database URLs or production configuration.
   return {
     PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
     NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1", RUN_DB_MIGRATIONS: "false", VERCEL_ENV: "preview",
-    DATABASE_URL: databaseUrl,
+    DATABASE_URL: databaseUrl, ...syntheticEnvironment,
   };
 }
 
-export async function startVaultNextTestServer(databaseUrl = unavailableDatabaseUrl) {
-  const env = vaultNextTestEnvironment(databaseUrl);
+export async function startVaultNextTestServer(databaseUrl = unavailableDatabaseUrl, syntheticSpark) {
+  const env = vaultNextTestEnvironment(databaseUrl, syntheticSpark);
   const manifest = JSON.parse(readFileSync(resolve(vaultTestApp, ".next/server/pages-manifest.json"), "utf8"));
   assert.ok(manifest["/api/vault/v1/machines/[machineId]/[...action]"]);
   assert.equal(manifest["/api/vault/v1/machines/[machineId]/events:batch"], undefined);

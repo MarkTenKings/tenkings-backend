@@ -12,6 +12,7 @@ export const VaultSalesQuerySchema = z.object({
   through: localDate.optional(),
   includeCertification: z.enum(["true", "false"]).default("false"),
   cursor: z.string().uuid().optional(),
+  provider: z.enum(["NAYAX_SPARK", "STRIPE_TERMINAL", "SIMULATED"]).optional(),
 }).refine((input) => !input.from || !input.through || input.from <= input.through, "Date range is reversed");
 
 export function machineLocalDate(date: Date, timezone: string): string {
@@ -27,10 +28,20 @@ export function vaultMachineDto<T extends { lastEventSequence: bigint; lastHeart
   return { ...machine, lastEventSequence: machine.lastEventSequence.toString(), online, salesReady };
 }
 
-export function salesTotals(sales: Array<{ authorizationObservedAt: Date | null; settlementState: string; totalCents: number; taxCents: number }>) {
-  return sales.reduce((sum, sale) => ({
+export function salesTotals(sales: Array<{ authorizationObservedAt: Date | null; settlementState: string; totalCents: number; taxCents: number;
+  paymentAction?: { state: string } | null; paymentAnomalies?: Array<{ resolvedAt: Date | null }> }>) {
+  return sales.reduce((sum, sale) => {
+    const settled = sale.settlementState === "SETTLED";
+    // Only the independently confirmed full-sale provider outcome adjusts money.
+    // Free-text manual support annotations never enter verified net totals.
+    const voided = settled && sale.paymentAction?.state === "VOIDED";
+    return {
     authorizedCents: sum.authorizedCents + (sale.authorizationObservedAt ? sale.totalCents : 0),
-    settledCents: sum.settledCents + (sale.settlementState === "SETTLED" ? sale.totalCents : 0),
-    taxCents: sum.taxCents + (sale.settlementState === "SETTLED" ? sale.taxCents : 0),
-  }), { authorizedCents: 0, settledCents: 0, taxCents: 0 });
+    settledCents: sum.settledCents + (settled ? sale.totalCents : 0),
+    taxCents: sum.taxCents + (settled ? sale.taxCents : 0),
+    confirmedVoidCents: sum.confirmedVoidCents + (voided ? sale.totalCents : 0),
+    netSettledCents: sum.netSettledCents + (settled && !voided ? sale.totalCents : 0),
+    netTaxCents: sum.netTaxCents + (settled && !voided ? sale.taxCents : 0),
+    unresolvedFinancialCount: sum.unresolvedFinancialCount + ((sale.paymentAnomalies ?? []).filter(notice => !notice.resolvedAt).length) + (sale.paymentAction?.state === "UNKNOWN" ? 1 : 0),
+  }; }, { authorizedCents: 0, settledCents: 0, taxCents: 0, confirmedVoidCents: 0, netSettledCents: 0, netTaxCents: 0, unresolvedFinancialCount: 0 });
 }

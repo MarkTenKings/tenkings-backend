@@ -9,11 +9,11 @@ import { VaultOperationsService } from "./operations";
 import { RedactedJsonLogger } from "./logger";
 import { constantTimeEqual, digest, iso, secureToken } from "./util";
 import { VaultError, type Clock } from "./types";
+import type { VaultMaintenance } from "./maintenance";
 
 const CONTRACT_HEADER = "1";
 const MUTATION_LIMIT = 32 * 1024;
 const CALLBACK_LIMIT = 64 * 1024;
-const COOKIE_NAME = "tk_vault_kiosk";
 
 export interface HttpServiceOptions {
   origin: string;
@@ -24,6 +24,8 @@ export interface HttpServiceOptions {
   kioskSessionTtlMs?: number;
   logger?: RedactedJsonLogger;
   clock: Clock;
+  maintenance?: VaultMaintenance;
+  maintenanceToken?: string;
 }
 
 export class VaultHttpService {
@@ -31,10 +33,15 @@ export class VaultHttpService {
   private readonly clients = new Set<Duplex>();
   private readonly clientSessionHashes = new Map<Duplex, string>();
   private readonly logger: RedactedJsonLogger;
+  private readonly cookieName: string;
+  private mutationsPaused = false;
+  private readonly activeMutations = new Set<Promise<void>>();
 
   constructor(private readonly machine: VaultMachine, private readonly operations: VaultOperationsService, private readonly options: HttpServiceOptions) {
     if (!(["127.0.0.1", "::1"] as const).includes(options.host ?? "127.0.0.1")) throw new VaultError("LOOPBACK_BIND_REQUIRED", "Vault HTTP service may bind only to loopback", 500);
     this.logger = options.logger ?? new RedactedJsonLogger();
+    // Cookies ignore TCP ports. Keep independently running loopback kiosks apart.
+    this.cookieName = `tk_vault_kiosk_${createHash("sha256").update(options.origin).digest("hex").slice(0, 16)}`;
     this.server = createServer((request, response) => void this.route(request, response));
     this.server.on("upgrade", (request, socket) => void this.upgrade(request, socket));
   }
@@ -64,7 +71,25 @@ export class VaultHttpService {
 
   async tickState(): Promise<void> { await this.machine.publicState(); await this.broadcastState(); }
 
+  async pauseMutations(): Promise<void> {
+    this.mutationsPaused = true;
+    await Promise.allSettled([...this.activeMutations]);
+  }
+
+  resumeMutations(): void { this.mutationsPaused = false; }
+
   private async route(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    let internalMaintenance = false;
+    try { internalMaintenance = new URL(request.url ?? "/", this.options.origin).pathname === "/api/v1/internal/maintenance"; } catch { /* the normal route reports malformed input */ }
+    let complete: (() => void) | undefined;
+    const mutation = request.method === "POST" && !internalMaintenance;
+    const pending = mutation ? new Promise<void>(resolveDone => { complete = resolveDone; }) : null;
+    if (pending) this.activeMutations.add(pending);
+    try { await this.routeInternal(request, response, internalMaintenance); }
+    finally { if (pending) { this.activeMutations.delete(pending); complete!(); } }
+  }
+
+  private async routeInternal(request: IncomingMessage, response: ServerResponse, internalMaintenance: boolean): Promise<void> {
     const requestId = randomUUID(); this.securityHeaders(response);
     try {
       if (!isLoopbackAddress(request.socket.remoteAddress)) throw new VaultError("LOOPBACK_CLIENT_REQUIRED", "Only loopback clients are accepted", 403);
@@ -74,6 +99,15 @@ export class VaultHttpService {
         if (request.method === "POST") this.requireOrigin(request);
       }
 
+      if (this.mutationsPaused && request.method === "POST" && !internalMaintenance) throw new VaultError("MAINTENANCE_ACTIVE", "Machine maintenance is in progress", 503);
+      if (request.method === "POST" && url.pathname === "/api/v1/internal/maintenance") {
+        const token = String(request.headers["x-vault-maintenance-token"] ?? "");
+        if (!this.options.maintenance || !this.options.maintenanceToken || !token || !constantTimeEqual(token, this.options.maintenanceToken)) throw new VaultError("MAINTENANCE_AUTH_FAILED", "Maintenance authentication failed", 401);
+        const body = await this.readJson(request, 1024) as { action?: string };
+        if (body.action !== "enter" && body.action !== "status") throw new VaultError("REQUEST_INVALID", "Maintenance action must be enter or status", 400);
+        return this.success(response, requestId, body.action === "enter" ? await this.options.maintenance.enter() : await this.options.maintenance.status());
+      }
+
       if (request.method === "POST" && url.pathname === "/api/v1/session/bootstrap") {
         this.requireOrigin(request); await this.readJson(request, 1024);
         const token = secureToken(); const now = this.options.clock.now(); const expiresAt = new Date(now.getTime() + (this.options.kioskSessionTtlMs ?? 15 * 60_000)); const hash = createHash("sha256").update(token).digest("hex");
@@ -81,7 +115,7 @@ export class VaultHttpService {
           this.machine.store.run(`DELETE FROM kiosk_session WHERE expires_at<=?`, iso(now));
           this.machine.store.run(`INSERT INTO kiosk_session(session_hash,created_at,expires_at,last_seen_at) VALUES(?,?,?,?)`, hash, iso(now), iso(expiresAt), iso(now));
         });
-        response.setHeader("Set-Cookie", `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor((expiresAt.getTime() - now.getTime()) / 1000)}`);
+        response.setHeader("Set-Cookie", `${this.cookieName}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor((expiresAt.getTime() - now.getTime()) / 1000)}`);
         return this.success(response, requestId, { expiresAt: iso(expiresAt) });
       }
 
@@ -89,9 +123,15 @@ export class VaultHttpService {
         this.requireKioskSession(request);
         const readiness = await this.machine.readiness(); const controller = await this.machine.controller.identity(); const payment = await this.machine.payment.capabilities(); const integrity = this.machine.store.integrityCheck();
         const buildIdentity = this.machine.store.one(`SELECT source_commit,app_version,schema_version,active_config_version FROM machine_meta WHERE singleton=1`);
-        return this.success(response, requestId, { readiness, controller, payment, integrity, pragmas: this.machine.store.pragmaSnapshot(), serviceLock: this.machine.store.one(`SELECT service_locked,automation_halted,recovery_required FROM machine_meta WHERE singleton=1`), buildIdentity: { sourceCommit: buildIdentity.source_commit, appVersion: buildIdentity.app_version }, appVersion: buildIdentity.app_version, localSchemaVersion: buildIdentity.schema_version, configVersion: buildIdentity.active_config_version, outboxPendingCount: Number(this.machine.store.one(`SELECT COUNT(*) AS count FROM outbox WHERE acknowledged_at IS NULL`).count) });
+        return this.success(response, requestId, { readiness, controller, payment, integrity, financialRecovery: { held: this.machine.paymentOperations.recovery.held() }, pragmas: this.machine.store.pragmaSnapshot(), serviceLock: this.machine.store.one(`SELECT service_locked,automation_halted,recovery_required FROM machine_meta WHERE singleton=1`), buildIdentity: { sourceCommit: buildIdentity.source_commit, appVersion: buildIdentity.app_version }, appVersion: buildIdentity.app_version, localSchemaVersion: buildIdentity.schema_version, configVersion: buildIdentity.active_config_version, outboxPendingCount: Number(this.machine.store.one(`SELECT COUNT(*) AS count FROM outbox WHERE acknowledged_at IS NULL`).count) });
       }
       if (request.method === "GET" && url.pathname === "/api/v1/state") { this.requireKioskSession(request); return this.success(response, requestId, await this.machine.publicState()); }
+      if (request.method === "POST" && url.pathname === "/api/v1/staff/financial-recovery") {
+        this.requireKioskSession(request);
+        const body = await this.readJson(request, MUTATION_LIMIT) as { staffSessionId?: string };
+        this.machine.staff.requireSession(String(body.staffSessionId ?? ""), "FINANCIAL_RESOLVE");
+        return this.success(response, requestId, this.machine.paymentOperations.recovery.readout());
+      }
 
       if (request.method === "POST" && url.pathname === "/api/v1/internal/provider-callback") {
         const token = String(request.headers["x-vault-adapter-token"] ?? "");
@@ -190,8 +230,8 @@ export class VaultHttpService {
       const protocols = String(request.headers["sec-websocket-protocol"] ?? "").split(",").map((value) => value.trim());
       if (url.pathname !== "/api/v1/events" || request.headers.origin !== this.options.origin || !protocols.includes("vault-contract-v1")) throw new Error("boundary");
       this.requireKioskSession(request);
-      const cookie = String(request.headers.cookie ?? "").split(";").map((part) => part.trim()).find((part) => part.startsWith(`${COOKIE_NAME}=`));
-      this.clientSessionHashes.set(socket, createHash("sha256").update(cookie!.slice(COOKIE_NAME.length + 1)).digest("hex"));
+      const cookie = String(request.headers.cookie ?? "").split(";").map((part) => part.trim()).find((part) => part.startsWith(`${this.cookieName}=`));
+      this.clientSessionHashes.set(socket, createHash("sha256").update(cookie!.slice(this.cookieName.length + 1)).digest("hex"));
       const key = String(request.headers["sec-websocket-key"] ?? "");
       if (!/^[A-Za-z0-9+/]{22}==$/.test(key)) throw new Error("key");
       const accept = createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
@@ -208,8 +248,8 @@ export class VaultHttpService {
   }
 
   private requireKioskSession(request: IncomingMessage): void {
-    const cookie = String(request.headers.cookie ?? "").split(";").map((part) => part.trim()).find((part) => part.startsWith(`${COOKIE_NAME}=`));
-    const token = cookie?.slice(COOKIE_NAME.length + 1); if (!token) throw new VaultError("KIOSK_SESSION_REQUIRED", "Kiosk session is required", 401);
+    const cookie = String(request.headers.cookie ?? "").split(";").map((part) => part.trim()).find((part) => part.startsWith(`${this.cookieName}=`));
+    const token = cookie?.slice(this.cookieName.length + 1); if (!token) throw new VaultError("KIOSK_SESSION_REQUIRED", "Kiosk session is required", 401);
     const hash = createHash("sha256").update(token).digest("hex"); const now = iso(this.options.clock.now());
     const row = this.machine.store.maybeOne(`SELECT expires_at FROM kiosk_session WHERE session_hash=? AND expires_at>?`, hash, now);
     if (!row) throw new VaultError("KIOSK_SESSION_INVALID", "Kiosk session is invalid or expired", 401);

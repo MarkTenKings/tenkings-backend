@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "platform": "linux",
+  "architecture": "x64",
+  "distribution": "arch",
+  "desktop": "Omarchy / Hyprland",
+  "nodeVersion": "22.23.2",
+  "nodeArchive": "node-v22.23.2-linux-x64.tar.xz",
+  "nodeArchiveSha256": "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307",
+  "nodeSource": "https://nodejs.org/download/release/v22.23.2/SHASUMS256.txt",
+  "betterSqlite3Version": "11.10.0",
+  "pnpmVersion": "9.12.0"
+}

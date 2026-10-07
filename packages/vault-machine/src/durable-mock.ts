@@ -1,14 +1,14 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
-import type { NayaxAdapter, NayaxSessionRequest, NayaxVendResultRequest } from "../../vault-contracts/dist";
-import { DeterministicNayaxMock } from "./mock-nayax";
+import type { PaymentAdapter, PaymentSessionRequest } from "../../vault-contracts/dist";
+import { DeterministicPaymentMock } from "./mock-payment";
 import { ProcessLock } from "./store";
 import { VaultError } from "./types";
 
-/** Durable simulated provider, separate from transaction authority; never connects to Nayax. */
-export class DurableNayaxMock implements NayaxAdapter {
-  private readonly mock = new DeterministicNayaxMock();
+/** Durable simulated provider, separate from transaction authority; never connects to a payment network. */
+export class DurablePaymentMock implements PaymentAdapter {
+  private readonly mock = new DeterministicPaymentMock();
   private readonly database: Database.Database;
   private readonly lock: ProcessLock;
   private closed = false;
@@ -31,11 +31,10 @@ export class DurableNayaxMock implements NayaxAdapter {
   }
 
   capabilities() { return this.mock.capabilities(); }
-  startSession(request: NayaxSessionRequest) { return this.persist(() => this.mock.startSession(request)); }
+  startSession(request: PaymentSessionRequest) { return this.persist(() => this.mock.startSession(request)); }
   cancelSession(providerSessionId: string, idempotencyKey: string) { return this.persist(() => this.mock.cancelSession(providerSessionId, idempotencyKey)); }
   reconcile(providerSessionId: string) { return this.persist(() => this.mock.reconcile(providerSessionId)); }
   reconcileRequest(idempotencyKey: string) { return this.persist(() => this.mock.reconcileRequest(idempotencyKey)); }
-  reportVendResult(request: NayaxVendResultRequest) { return this.persist(() => this.mock.reportVendResult(request)); }
   close(): void { if (this.closed) return; this.closed = true; try { this.database.close(); } finally { this.lock.release(); } }
 
   private async persist<T>(operation: () => Promise<T>): Promise<T> {

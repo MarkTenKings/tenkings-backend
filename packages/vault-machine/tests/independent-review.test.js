@@ -84,7 +84,7 @@ test('cart pins configuration and expired pending config cannot activate later',
   } finally { rig.store.close(); }
 });
 
-test('mock customer mode is server-derived and payment progresses vend intent to mock settlement', async () => {
+test('mock customer mode is server-derived and captured payment commits one door group', async () => {
   const rig = await createRig();
   try {
     makeDoorAvailable(rig); const sale = await reserve(rig);
@@ -92,7 +92,6 @@ test('mock customer mode is server-derived and payment progresses vend intent to
     await rig.machine.startPayment(sale.saleId, crypto.randomUUID());
     await Promise.all([rig.machine.advancePayments(), rig.machine.advancePayments()]);
     assert.equal(rig.machine.publicSale(sale.saleId).paymentState, 'SETTLED');
-    assert.equal(rig.store.one("SELECT COUNT(*) AS count FROM machine_event WHERE type='VEND_RESULT_INTENT_RECORDED'").count, 1);
     assert.equal(rig.store.one('SELECT COUNT(*) AS count FROM command_intent').count, 1);
   } finally { rig.store.close(); }
 });
@@ -251,18 +250,17 @@ test('concurrent certification starts create only one evidence session and requi
   } finally { rig.store.close(); }
 });
 
-test('presentation Done cannot start a second payment while the first provider session is finalizing', async () => {
+test('captured payment permits a new checkout after presentation Done', async () => {
   const rig = await createRig();
   try {
     makeDoorAvailable(rig, ['X-01', 'K-01']); const sale = await reserve(rig);
     await rig.machine.startPayment(sale.saleId, crypto.randomUUID());
+    assert.equal(rig.machine.publicSale(sale.saleId).paymentState, 'SETTLED');
     rig.machine.markPresentationDone(sale.saleId);
     rig.machine.selectCartDoor('K-01', 'sports-25', true);
-    assert.ok((await rig.machine.readiness()).reasons.includes('PAYMENT_FINALIZATION_PENDING'));
-    await assert.rejects(() => rig.machine.checkout({ idempotencyKey: crypto.randomUUID(), mode: 'CERTIFICATION', configVersion: 1, doorIds: ['K-01'] }), /not ready/i);
-    await rig.machine.advancePayments();
-    assert.equal(rig.machine.publicSale(sale.saleId).paymentState, 'SETTLED');
     assert.equal((await rig.machine.readiness()).ready, true);
+    const next = await rig.machine.checkout({ idempotencyKey: crypto.randomUUID(), mode: 'CERTIFICATION', configVersion: 1, doorIds: ['K-01'] });
+    assert.ok(next.sale.saleId !== sale.saleId);
   } finally { rig.store.close(); }
 });
 

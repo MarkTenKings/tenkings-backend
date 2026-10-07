@@ -1,23 +1,22 @@
 import type {
-  NayaxAdapter,
-  NayaxCapabilities,
-  NayaxSessionRequest,
-  NayaxSessionResult,
-  NayaxVendResultRequest,
+  PaymentAdapter,
+  PaymentCapabilities,
+  PaymentSessionRequest,
+  PaymentSessionResult,
   VaultPaymentState,
 } from "../../vault-contracts/dist";
 import { digest } from "./util";
 import { VaultError } from "./types";
 
-export type NayaxMockOutcome = "AUTHORIZE" | "DECLINE" | "CANCEL" | "TIMEOUT" | "UNKNOWN" | "SETTLE";
-export interface NayaxMockStep { outcome: NayaxMockOutcome; providerTransactionId?: string }
-interface MockSession { request: NayaxSessionRequest; digest: string; result: NayaxSessionResult; state: VaultPaymentState; transactionId?: string }
-interface MockCancellation { providerSessionId: string; digest: string; result: NayaxSessionResult }
+export type PaymentMockOutcome = "AUTHORIZE" | "DECLINE" | "CANCEL" | "TIMEOUT" | "UNKNOWN" | "SETTLE";
+export interface PaymentMockStep { outcome: PaymentMockOutcome; providerTransactionId?: string }
+interface MockSession { request: PaymentSessionRequest; digest: string; result: PaymentSessionResult; state: VaultPaymentState; transactionId?: string }
+interface MockCancellation { providerSessionId: string; digest: string; result: PaymentSessionResult }
 interface MockLimits { maxItems: number; maxTotalCents: number; cancellationBeforeAuthorization: boolean }
 
 const REQUEST_KEYS = new Set(["idempotencyKey", "saleId", "mode", "currency", "totalCents", "items"]);
 const ITEM_KEYS = new Set(["lineId", "name", "priceCents"]);
-const MOCK_OUTCOMES = new Set<NayaxMockOutcome>(["AUTHORIZE", "DECLINE", "CANCEL", "TIMEOUT", "UNKNOWN", "SETTLE"]);
+const MOCK_OUTCOMES = new Set<PaymentMockOutcome>(["AUTHORIZE", "DECLINE", "CANCEL", "TIMEOUT", "UNKNOWN", "SETTLE"]);
 const MOCK_STATES = new Set<VaultPaymentState>(["AUTHORIZED", "DECLINED", "CANCELLED", "UNKNOWN", "SETTLED"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -29,7 +28,7 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: ReadonlySet<string
 }
 
 /** Keep the mock on the normalized boundary and never retain provider/cardholder extensions. */
-function normalizeRequest(input: NayaxSessionRequest): NayaxSessionRequest {
+function normalizeRequest(input: PaymentSessionRequest): PaymentSessionRequest {
   const value = input as unknown;
   if (!isRecord(value) || !hasOnlyKeys(value, REQUEST_KEYS)
     || typeof value.idempotencyKey !== "string" || value.idempotencyKey.length < 1
@@ -62,18 +61,18 @@ function normalizeRequest(input: NayaxSessionRequest): NayaxSessionRequest {
   };
 }
 
-function cloneResult(result: NayaxSessionResult): NayaxSessionResult {
+function cloneResult(result: PaymentSessionResult): PaymentSessionResult {
   return { ...result };
 }
 
-function normalizeStep(input: unknown): NayaxMockStep {
+function normalizeStep(input: unknown): PaymentMockStep {
   if (!isRecord(input) || !hasOnlyKeys(input, new Set(["outcome", "providerTransactionId"]))
-    || typeof input.outcome !== "string" || !MOCK_OUTCOMES.has(input.outcome as NayaxMockOutcome)
+    || typeof input.outcome !== "string" || !MOCK_OUTCOMES.has(input.outcome as PaymentMockOutcome)
     || (input.providerTransactionId !== undefined && typeof input.providerTransactionId !== "string")) {
     throw new VaultError("MOCK_SCRIPT_INVALID", "Mock payment script step is invalid", 400);
   }
   return {
-    outcome: input.outcome as NayaxMockOutcome,
+    outcome: input.outcome as PaymentMockOutcome,
     ...(input.providerTransactionId ? { providerTransactionId: input.providerTransactionId } : {}),
   };
 }
@@ -82,14 +81,13 @@ function snapshotInvalid(): never {
   throw new VaultError("MOCK_SNAPSHOT_INVALID", "Mock payment snapshot is invalid", 400);
 }
 
-/** Deterministic, in-process implementation of the production NayaxAdapter boundary. It has no external effects. */
-export class DeterministicNayaxMock implements NayaxAdapter {
+/** Deterministic captured-payment simulator with no external effects. */
+export class DeterministicPaymentMock implements PaymentAdapter {
   private readonly sessions = new Map<string, MockSession>();
   private readonly byKey = new Map<string, string>();
   private readonly cancellationsByKey = new Map<string, MockCancellation>();
-  private readonly vendResultsByKey = new Map<string, { digest: string; result: NayaxSessionResult }>();
-  private startSteps: NayaxMockStep[] = [];
-  private reconcileSteps: NayaxMockStep[] = [];
+  private startSteps: PaymentMockStep[] = [];
+  private reconcileSteps: PaymentMockStep[] = [];
   private readonly limits: Readonly<MockLimits>;
 
   constructor(limits: MockLimits = { maxItems: 25, maxTotalCents: 500_000, cancellationBeforeAuthorization: true }) {
@@ -101,24 +99,22 @@ export class DeterministicNayaxMock implements NayaxAdapter {
     this.limits = Object.freeze({ ...limits });
   }
 
-  scriptStart(...steps: NayaxMockStep[]): this {
+  scriptStart(...steps: PaymentMockStep[]): this {
     const normalized = steps.map(normalizeStep);
-    if (normalized.some((step) => step.outcome === "SETTLE")) {
-      throw new VaultError("MOCK_SCRIPT_INVALID", "Settlement cannot be scripted as a session-start result", 400);
-    }
     this.startSteps.push(...normalized);
     return this;
   }
-  scriptReconcile(...steps: NayaxMockStep[]): this { this.reconcileSteps.push(...steps.map(normalizeStep)); return this; }
+  scriptReconcile(...steps: PaymentMockStep[]): this { this.reconcileSteps.push(...steps.map(normalizeStep)); return this; }
 
-  async capabilities(): Promise<NayaxCapabilities> {
+  async capabilities(): Promise<PaymentCapabilities> {
     return {
-      adapterName: "ten-kings-deterministic-nayax-mock", adapterVersion: "1.0.0", sdkVersion: null, mode: "MOCK",
+      adapterName: "ten-kings-deterministic-payment-mock", adapterVersion: "1.0.0", apiVersion: null, mode: "MOCK",
+      provider: "SIMULATED", captureBeforeFulfillment: true,
       maxItems: this.limits.maxItems, maxTotalCents: this.limits.maxTotalCents, cancellationBeforeAuthorization: this.limits.cancellationBeforeAuthorization,
     };
   }
 
-  async startSession(request: NayaxSessionRequest): Promise<NayaxSessionResult> {
+  async startSession(request: PaymentSessionRequest): Promise<PaymentSessionResult> {
     const normalized = normalizeRequest(request);
     if (normalized.items.length > this.limits.maxItems || normalized.totalCents > this.limits.maxTotalCents) throw new VaultError("PROVIDER_LIMIT_EXCEEDED", "Mock provider limits exceeded", 409);
     const requestDigest = digest(normalized);
@@ -132,15 +128,16 @@ export class DeterministicNayaxMock implements NayaxAdapter {
     if (this.sessions.has(providerSessionId)) {
       throw new VaultError("PAYMENT_SESSION_CONFLICT", "Mock sale already has a payment session under a different idempotency key", 409);
     }
-    const step = this.startSteps.shift() ?? { outcome: "AUTHORIZE" as const };
+    const step = this.startSteps.shift() ?? { outcome: "SETTLE" as const };
     const state = outcomeState(step.outcome);
-    const result = { providerSessionId, originalRequestDigest: requestDigest, state };
-    this.sessions.set(providerSessionId, { request: normalized, digest: requestDigest, result, state, ...(step.providerTransactionId ? { transactionId: step.providerTransactionId } : {}) });
+    const transactionId = step.providerTransactionId ?? (state === "SETTLED" ? simulatedTransactionId(providerSessionId) : undefined);
+    const result = { providerSessionId, originalRequestDigest: requestDigest, state, ...(transactionId ? { providerTransactionId: transactionId } : {}) };
+    this.sessions.set(providerSessionId, { request: normalized, digest: requestDigest, result, state, ...(transactionId ? { transactionId } : {}) });
     this.byKey.set(normalized.idempotencyKey, providerSessionId);
     return cloneResult(result);
   }
 
-  async cancelSession(providerSessionId: string, idempotencyKey: string): Promise<NayaxSessionResult> {
+  async cancelSession(providerSessionId: string, idempotencyKey: string): Promise<PaymentSessionResult> {
     if (!idempotencyKey) throw new VaultError("PAYMENT_REQUEST_INVALID", "Cancellation idempotency key is required", 400);
     const cancellationDigest = digest({ providerSessionId, idempotencyKey });
     const existingCancellation = this.cancellationsByKey.get(idempotencyKey);
@@ -161,47 +158,21 @@ export class DeterministicNayaxMock implements NayaxAdapter {
     return cloneResult(result);
   }
 
-  async reconcile(providerSessionId: string): Promise<NayaxSessionResult> {
+  async reconcile(providerSessionId: string): Promise<PaymentSessionResult> {
     const session = this.sessions.get(providerSessionId);
     if (!session) throw new VaultError("PAYMENT_SESSION_NOT_FOUND", "Mock payment session was not found", 404);
     const step = this.reconcileSteps.shift();
     if (step) {
-      if (step.outcome === "SETTLE" && session.state !== "AUTHORIZED" && session.state !== "SETTLED") {
-        throw new VaultError("MOCK_SCRIPT_INVALID", "Settlement requires a prior normalized authorization result", 409);
-      }
       session.state = outcomeState(step.outcome);
-      session.transactionId = step.providerTransactionId ?? session.transactionId;
-      session.result = { providerSessionId, originalRequestDigest: session.digest, state: session.state };
+      session.transactionId = step.providerTransactionId ?? session.transactionId ?? (session.state === "SETTLED" ? simulatedTransactionId(providerSessionId) : undefined);
+      session.result = { providerSessionId, originalRequestDigest: session.digest, state: session.state, ...(session.transactionId ? { providerTransactionId: session.transactionId } : {}) };
     }
     return cloneResult(session.result);
   }
 
-  async reconcileRequest(idempotencyKey: string): Promise<NayaxSessionResult | null> {
+  async reconcileRequest(idempotencyKey: string): Promise<PaymentSessionResult | null> {
     const sessionId = this.byKey.get(idempotencyKey);
     return sessionId ? this.reconcile(sessionId) : null;
-  }
-
-  async reportVendResult(request: NayaxVendResultRequest): Promise<NayaxSessionResult> {
-    const requestDigest = digest(request);
-    const previous = this.vendResultsByKey.get(request.idempotencyKey);
-    if (previous) {
-      if (previous.digest !== requestDigest) throw new VaultError("VEND_RESULT_IDEMPOTENCY_CONFLICT", "Vend result key was reused with different evidence", 409);
-      return cloneResult(previous.result);
-    }
-    const session = this.sessions.get(request.providerSessionId);
-    if (!session || session.request.saleId !== request.saleId || request.policy !== "SIMULATOR_ONLY"
-      || request.items.length !== session.request.items.length || new Set(request.items.map((item) => item.lineId)).size !== request.items.length
-      || request.items.some((item) => !session.request.items.some((line) => line.lineId === item.lineId) || !["ACCEPTED", "SENT_UNKNOWN", "REJECTED", "TIMEOUT"].includes(item.outcome))) {
-      throw new VaultError("VEND_RESULT_INVALID", "Vend evidence must bind exactly the mock session's original items", 409);
-    }
-    if (session.state !== "AUTHORIZED" && session.state !== "SETTLEMENT_PENDING" && session.state !== "SETTLED") throw new VaultError("VEND_RESULT_NOT_AUTHORIZED", "Mock vend evidence requires authorization", 409);
-    // A simulator records command evidence and settles the mock ledger only.
-    // This never claims physical retrieval or defines the future Nayax policy.
-    const result = { providerSessionId: request.providerSessionId, originalRequestDigest: session.digest, state: "SETTLEMENT_PENDING" as const };
-    session.state = "SETTLED";
-    session.result = { ...result, state: "SETTLED" };
-    this.vendResultsByKey.set(request.idempotencyKey, { digest: requestDigest, result });
-    return cloneResult(result);
   }
 
   session(providerSessionId: string): Readonly<MockSession> | undefined {
@@ -213,20 +184,18 @@ export class DeterministicNayaxMock implements NayaxAdapter {
       sessions: [...this.sessions.entries()],
       keys: [...this.byKey.entries()],
       cancellationKeys: [...this.cancellationsByKey.entries()],
-      vendResults: [...this.vendResultsByKey.entries()],
       startSteps: this.startSteps,
       reconcileSteps: this.reconcileSteps,
     });
   }
   restore(snapshot: unknown): void {
-    if (!isRecord(snapshot) || !hasOnlyKeys(snapshot, new Set(["sessions", "keys", "cancellationKeys", "vendResults", "startSteps", "reconcileSteps"]))) snapshotInvalid();
+    if (!isRecord(snapshot) || !hasOnlyKeys(snapshot, new Set(["sessions", "keys", "cancellationKeys", "startSteps", "reconcileSteps"]))) snapshotInvalid();
     const sessionEntries = snapshot.sessions;
     const keyEntries = snapshot.keys;
     const cancellationEntries = snapshot.cancellationKeys ?? [];
-    const vendEntries = snapshot.vendResults ?? [];
     const startSteps = snapshot.startSteps ?? [];
     const reconcileSteps = snapshot.reconcileSteps ?? [];
-    if (![sessionEntries, keyEntries, cancellationEntries, vendEntries, startSteps, reconcileSteps].every(Array.isArray)) snapshotInvalid();
+    if (![sessionEntries, keyEntries, cancellationEntries, startSteps, reconcileSteps].every(Array.isArray)) snapshotInvalid();
 
     const sessions = new Map<string, MockSession>();
     for (const entry of sessionEntries as unknown[]) {
@@ -234,8 +203,8 @@ export class DeterministicNayaxMock implements NayaxAdapter {
       const providerSessionId = entry[0];
       if (sessions.has(providerSessionId)) snapshotInvalid();
       const raw = entry[1];
-      let request: NayaxSessionRequest;
-      try { request = normalizeRequest(raw.request as NayaxSessionRequest); }
+      let request: PaymentSessionRequest;
+      try { request = normalizeRequest(raw.request as PaymentSessionRequest); }
       catch { snapshotInvalid(); }
       const requestDigest = digest(request);
       if (raw.digest !== requestDigest || !isRecord(raw.result)
@@ -244,12 +213,14 @@ export class DeterministicNayaxMock implements NayaxAdapter {
         || typeof raw.result.state !== "string" || !MOCK_STATES.has(raw.result.state as VaultPaymentState)
         || raw.state !== raw.result.state
         || (raw.transactionId !== undefined && typeof raw.transactionId !== "string")) snapshotInvalid();
+      const transactionId = raw.transactionId as string | undefined ?? (raw.result.state === "SETTLED" ? simulatedTransactionId(providerSessionId) : undefined);
+      if (raw.result.providerTransactionId !== undefined && raw.result.providerTransactionId !== transactionId) snapshotInvalid();
       sessions.set(providerSessionId, {
         request,
         digest: requestDigest,
-        result: { providerSessionId, originalRequestDigest: requestDigest, state: raw.result.state as VaultPaymentState },
+        result: { providerSessionId, originalRequestDigest: requestDigest, state: raw.result.state as VaultPaymentState, ...(transactionId ? { providerTransactionId: transactionId } : {}) },
         state: raw.result.state as VaultPaymentState,
-        ...(raw.transactionId ? { transactionId: raw.transactionId } : {}),
+        ...(transactionId ? { transactionId } : {}),
       });
     }
 
@@ -283,34 +254,23 @@ export class DeterministicNayaxMock implements NayaxAdapter {
           providerSessionId,
           originalRequestDigest: result.originalRequestDigest as string,
           state: result.state as VaultPaymentState,
+          ...(typeof result.providerTransactionId === "string" ? { providerTransactionId: result.providerTransactionId } : result.state === "SETTLED" ? { providerTransactionId: simulatedTransactionId(providerSessionId) } : {}),
         },
       });
     }
 
-    const vendResults = new Map<string, { digest: string; result: NayaxSessionResult }>();
-    for (const entry of vendEntries as unknown[]) {
-      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string" || !isRecord(entry[1])) snapshotInvalid();
-      const raw = entry[1];
-      if (typeof raw.digest !== "string" || !/^[a-f0-9]{64}$/.test(raw.digest) || !isRecord(raw.result)
-        || typeof raw.result.providerSessionId !== "string" || raw.result.state !== "SETTLEMENT_PENDING") snapshotInvalid();
-      const session = sessions.get(raw.result.providerSessionId);
-      if (!session || raw.result.originalRequestDigest !== session.digest) snapshotInvalid();
-      vendResults.set(entry[0], { digest: raw.digest, result: { providerSessionId: raw.result.providerSessionId, originalRequestDigest: session.digest, state: "SETTLEMENT_PENDING" } });
-    }
     const normalizedStartSteps = (startSteps as unknown[]).map(normalizeStep);
-    if (normalizedStartSteps.some(step => step.outcome === "SETTLE")) snapshotInvalid();
     const normalizedReconcileSteps = (reconcileSteps as unknown[]).map(normalizeStep);
-    this.sessions.clear(); this.byKey.clear(); this.cancellationsByKey.clear(); this.vendResultsByKey.clear();
+    this.sessions.clear(); this.byKey.clear(); this.cancellationsByKey.clear();
     for (const entry of sessions) this.sessions.set(...entry);
     for (const entry of byKey) this.byKey.set(...entry);
     for (const entry of cancellations) this.cancellationsByKey.set(...entry);
-    for (const entry of vendResults) this.vendResultsByKey.set(...entry);
     this.startSteps = normalizedStartSteps;
     this.reconcileSteps = normalizedReconcileSteps;
   }
 }
 
-function outcomeState(outcome: NayaxMockOutcome): VaultPaymentState {
+function outcomeState(outcome: PaymentMockOutcome): VaultPaymentState {
   switch (outcome) {
     case "AUTHORIZE": return "AUTHORIZED";
     case "DECLINE": return "DECLINED";
@@ -319,3 +279,5 @@ function outcomeState(outcome: NayaxMockOutcome): VaultPaymentState {
     case "SETTLE": return "SETTLED";
   }
 }
+
+function simulatedTransactionId(providerSessionId: string): string { return `mock_transaction_${digest({ providerSessionId })}`; }

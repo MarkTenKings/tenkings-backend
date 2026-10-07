@@ -9,10 +9,14 @@ import {
   VaultConfigPayloadSchema,
   VaultDoorIdSchema,
   VaultPaymentStateSchema,
+  VaultPaymentVoidActionSchema,
+  VaultFinancialRecoverySnapshotSchema, VaultFinancialRecoveryAppliedSchema, VaultFinancialRecoverySupersededSchema, VaultPaymentVoidRetiredSchema,
   type VaultMachineEvent,
 } from "@tenkings/vault-contracts";
 import { z } from "zod";
 import { VaultApiError } from "./http";
+import { vaultOfficialPaymentEvidenceProfile } from "./certification";
+import { projectFinancialRecoverySnapshot, projectFinancialRecoveryApplied, projectFinancialRecoverySuperseded, projectVoidRetiredUnstarted } from "./financialRecovery";
 
 type Transaction = Prisma.TransactionClient;
 type ProjectionEvent = VaultMachineEvent & { payload: Record<string, unknown> };
@@ -41,6 +45,10 @@ const saleItemSnapshot = z.object({
 }).strict();
 const projectedCommand = z.object({ commandId: boundedId, doorId: VaultDoorIdSchema, attempt: z.union([z.literal(1), z.literal(2)]) }).strict();
 const providerReferences = { providerSessionReference: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(), providerTransactionReference: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional() };
+const captureEvidence = { captureConfirmed: z.literal(true).optional(), paymentProvider: z.enum(["STRIPE_TERMINAL", "NAYAX_SPARK", "SIMULATED"]).optional(), paymentBindingDigest: z.string().regex(/^[a-f0-9]{64}$/).optional() };
+const paymentActionFields = { actionId: uuid, saleId: uuid, paymentProvider: z.literal("NAYAX_SPARK"), paymentBindingDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  providerSessionReference: z.string().regex(/^sha256:[a-f0-9]{64}$/), providerTransactionReference: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  amountCents: positiveInteger.max(99_999_999), currency: z.literal("USD"), approvedByAdminId: boundedId, reason: z.string().min(8).max(500) };
 const certificationLinkage = { commandId: boundedId, cycleType: z.enum(["DIAGNOSTIC", "PURCHASE", "RESTOCK"]), saleId: uuid.nullable(), restockSessionId: uuid.nullable(), observedAt: z.string().datetime() };
 
 const EVENT_PAYLOAD_SCHEMAS = {
@@ -78,10 +86,20 @@ const EVENT_PAYLOAD_SCHEMAS = {
     items: z.array(saleItemSnapshot).min(1).max(VAULT_MAX_PROFILE_DOORS).refine((items) => new Set(items.map((item) => item.doorId)).size === items.length && new Set(items.map((item) => item.lineId)).size === items.length),
   }).strict(),
   PAYMENT_INTENT_RECORDED: z.object({ saleId: uuid, totalCents: nonnegativeInteger }).strict(),
+  PAYMENT_START_NO_EFFECT: z.object({ saleId: uuid, code: z.string().regex(/^[A-Z0-9_]{1,120}$/) }).strict(),
   PAYMENT_START_EFFECT_UNKNOWN: z.object({ saleId: uuid, errorClass: z.string().min(1).max(160) }).strict(),
   PAYMENT_CALLBACK_CONFLICT_QUARANTINED: z.object({ callbackId: boundedId }).strict(),
-  PAYMENT_CALLBACK_APPLIED: z.object({ callbackId: boundedId, sequence: nonnegativeInteger, state: VaultPaymentStateSchema, disposition: z.literal("APPLIED"), ...providerReferences }).strict(),
-  PAYMENT_CALLBACK_QUARANTINED: z.object({ callbackId: boundedId, sequence: nonnegativeInteger, state: VaultPaymentStateSchema, disposition: z.enum(["SESSION_CONFLICT", "TRANSACTION_CONFLICT", "STATE_CONFLICT", "OUT_OF_ORDER", "SEQUENCE_CONFLICT"]), ...providerReferences }).strict(),
+  PAYMENT_CALLBACK_APPLIED: z.object({ callbackId: boundedId, sequence: nonnegativeInteger, state: VaultPaymentStateSchema, disposition: z.literal("APPLIED"), captureConfirmed: z.literal(true).optional(), paymentProvider: z.enum(["STRIPE_TERMINAL", "NAYAX_SPARK", "SIMULATED"]).optional(), paymentBindingDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(), ...providerReferences }).strict(),
+  PAYMENT_CALLBACK_QUARANTINED: z.object({ callbackId: boundedId, sequence: nonnegativeInteger, state: VaultPaymentStateSchema, disposition: z.enum(["SESSION_CONFLICT", "TRANSACTION_CONFLICT", "STATE_CONFLICT", "OUT_OF_ORDER", "SEQUENCE_CONFLICT"]), ...captureEvidence, ...providerReferences }).strict(),
+  PAYMENT_EVIDENCE_ANOMALY: z.object({ noticeId: boundedId, saleId: uuid.nullable(), paymentProvider: z.literal("NAYAX_SPARK"), paymentBindingDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    providerSessionReference: z.string().regex(/^sha256:[a-f0-9]{64}$/).nullable(), providerTransactionReference: z.string().regex(/^sha256:[a-f0-9]{64}$/).nullable(),
+    amountCents: positiveInteger.max(99_999_999).nullable(), currency: z.literal("USD"), captureConfirmed: z.boolean(), code: z.string().regex(/^[A-Z0-9_]{1,120}$/) }).strict(),
+  PAYMENT_VOID_INTENT_RECORDED: z.object(paymentActionFields).strict(),
+  PAYMENT_VOID_OUTCOME_RECORDED: z.object({ ...paymentActionFields, state: z.enum(["VOIDED", "DECLINED", "UNKNOWN"]), evidenceReference: z.string().regex(/^sha256:[a-f0-9]{64}$/), errorCode: z.number().int().optional() }).strict(),
+  FINANCIAL_RECOVERY_SNAPSHOT_RECORDED: VaultFinancialRecoverySnapshotSchema,
+  FINANCIAL_RECOVERY_APPLIED: VaultFinancialRecoveryAppliedSchema,
+  FINANCIAL_RECOVERY_SUPERSEDED: VaultFinancialRecoverySupersededSchema,
+  PAYMENT_VOID_RETIRED_UNSTARTED: VaultPaymentVoidRetiredSchema,
   PAYMENT_CANCEL_INTENT_RECORDED: z.object({ saleId: uuid }).strict(),
   VEND_RESULT_INTENT_RECORDED: z.object({ saleId: uuid, policy: z.literal("SIMULATOR_ONLY"), items: z.array(z.object({ lineId: uuid, commandId: boundedId, outcome: z.enum(["ACCEPTED", "SENT_UNKNOWN", "REJECTED", "TIMEOUT"]) }).strict()).min(1).max(VAULT_MAX_PROFILE_DOORS) }).strict(),
   CONTROLLER_AUTHORITY_INVALID: z.object({ commandId: boundedId }).strict(),
@@ -97,6 +115,7 @@ const EVENT_PAYLOAD_SCHEMAS = {
   PAYMENT_RECOVERY_INTENT_DIGEST_CONFLICT: z.object({ saleId: uuid }).strict(),
   PAYMENT_RECOVERY_EFFECT_UNRESOLVED: z.object({ saleId: uuid }).strict(),
   PAYMENT_RECOVERY_RECONCILIATION_REQUIRED: z.object({ saleId: uuid }).strict(),
+  PAYMENT_RECOVERY_BINDING_REQUIRED: z.object({ saleId: uuid }).strict(),
   RESTOCK_SESSION_STARTED: z.object({ restockSessionId: uuid, certificationSessionId: uuid.optional(), expectedDoorIds: doorIds, plannedItems: z.array(z.object({ doorId: VaultDoorIdSchema, plannedProductId: boundedId.nullable() }).strict()).min(1).max(VAULT_MAX_PROFILE_DOORS), configVersion: positiveInteger, actorRole: z.enum(["RESTOCKER", "TECHNICIAN", "ADMIN"]).optional(), actorGrantVersion: positiveInteger.optional(), profileDigest: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict(),
   RESTOCK_SESSION_RESUMED: z.object({ restockSessionId: uuid, previousActorUserId: boundedId, actorRole: z.enum(["RESTOCKER", "TECHNICIAN", "ADMIN"]) }).strict(),
   RESTOCK_DOOR_REVIEWED: z.object({ restockSessionId: uuid, doorId: VaultDoorIdSchema, outcome: z.enum(["FILLED", "LEFT_EMPTY", "EXCEPTION"]), notes: z.string().max(1000), productFitConfirmed: z.literal(true).optional() }).strict(),
@@ -164,6 +183,7 @@ async function openSafeSupportCase(tx: Transaction, input: {
   type: "PAYMENT_UNKNOWN" | "PAYMENT_RECONCILIATION" | "DOOR_COMMAND" | "CERTIFICATION";
   affectedDoorIds?: string[];
   summary: string;
+  financialEvidence?: { noticeId: string; provider: string; amountCents: number | null; currency: string; captureConfirmed: boolean; code: string };
 }) {
   const shortReference = supportCaseReference(input.machineId, input.type, input.sourceId);
   await tx.vaultSupportCase.upsert({
@@ -176,7 +196,7 @@ async function openSafeSupportCase(tx: Transaction, input: {
       affectedDoorIds: (input.affectedDoorIds ?? []) as Prisma.InputJsonValue,
       customerSafeSummary: input.summary,
       internalSummary: null,
-      reconciliationSnapshot: undefined,
+      reconciliationSnapshot: input.financialEvidence as Prisma.InputJsonValue | undefined,
     },
     update: {},
   });
@@ -288,15 +308,20 @@ async function projectPaymentCallback(tx: Transaction, event: ProjectionEvent) {
   const sale = await requireProjectedSale(tx, event.machineId, saleId, event.mode);
   if (sale.providerCallbackSequence !== null && payload.sequence <= sale.providerCallbackSequence) throw new VaultApiError(422, "PROVIDER_SEQUENCE_NOT_MONOTONIC", "Applied payment callback must advance the immutable event projection");
   const committed = sale.fulfillmentState !== "NOT_COMMITTED";
-  if (payload.state === "SETTLED" && !sale.authorizationObservedAt) throw new VaultApiError(422, "SETTLEMENT_WITHOUT_AUTHORIZATION", "Settlement cannot precede authorization");
-  if (sale.paymentState === "NOT_REQUESTED" || !vaultPaymentTransitionAllowed(sale.paymentState, payload.state, committed)) throw new VaultApiError(422, "PAYMENT_STATE_TRANSITION_INVALID", "Applied callback cannot regress or bypass payment authority");
+  const captured = payload.captureConfirmed === true;
+  if (captured && (payload.state !== "SETTLED" || !payload.paymentProvider || !payload.paymentBindingDigest || !payload.providerSessionReference || !payload.providerTransactionReference || payload.paymentProvider === "SIMULATED" && event.mode !== "CERTIFICATION")) throw new VaultApiError(422, "CAPTURE_EVIDENCE_INVALID", "Captured payment requires exact locally verified provider and session evidence");
+  const previousEvidence = sale.providerEvidence && typeof sale.providerEvidence === "object" && !Array.isArray(sale.providerEvidence) ? sale.providerEvidence as Record<string, unknown> : {};
+  if (payload.paymentProvider && sale.providerName && payload.paymentProvider !== sale.providerName || payload.paymentBindingDigest && previousEvidence.paymentBindingDigest && payload.paymentBindingDigest !== previousEvidence.paymentBindingDigest) throw new VaultApiError(422, "PROVIDER_BINDING_CONFLICT", "A sale cannot change its payment provider binding");
+  if (payload.state === "SETTLED" && !sale.authorizationObservedAt && !captured) throw new VaultApiError(422, "SETTLEMENT_WITHOUT_AUTHORIZATION", "Settlement requires previous authorization or independently verified capture");
+  const capturedFirst = captured && !committed && ["REQUESTED", "UNKNOWN", "RECONCILIATION_REQUIRED", "AUTHORIZED"].includes(sale.paymentState);
+  if (sale.paymentState === "NOT_REQUESTED" || !capturedFirst && !vaultPaymentTransitionAllowed(sale.paymentState, payload.state, committed)) throw new VaultApiError(422, "PAYMENT_STATE_TRANSITION_INVALID", "Applied callback cannot regress or bypass payment authority");
   if (sale.mode !== event.mode) throw new VaultApiError(422, "SALE_MODE_MISMATCH", "Payment event mode differs from its immutable sale");
   if (payload.providerSessionReference && sale.providerSessionId && sale.providerSessionId !== payload.providerSessionReference || payload.providerTransactionReference && sale.providerTransactionId && sale.providerTransactionId !== payload.providerTransactionReference) throw new VaultApiError(422, "PROVIDER_REFERENCE_CONFLICT", "Provider reference changed for the sale");
   const occurredAt = new Date(event.occurredAt);
   const data: Prisma.VaultSaleUpdateManyMutationInput = { paymentState: payload.state, providerCallbackSequence: payload.sequence, ...(payload.providerSessionReference ? { providerSessionId: payload.providerSessionReference } : {}), ...(payload.providerTransactionReference ? { providerTransactionId: payload.providerTransactionReference } : {}) };
   if (payload.state === "AUTHORIZED" && !sale.authorizationObservedAt) Object.assign(data, { state: "PAYMENT_AUTHORIZED", authorizationObservedAt: occurredAt });
   if (payload.state === "SETTLED") {
-    if (!sale.authorizationObservedAt) throw new VaultApiError(422, "SETTLEMENT_WITHOUT_AUTHORIZATION", "Settlement cannot precede authorization");
+    if (captured) Object.assign(data, { providerName: payload.paymentProvider, providerEvidence: { ...previousEvidence, captureConfirmed: true, paymentBindingDigest: payload.paymentBindingDigest }, authorizationObservedAt: sale.authorizationObservedAt ?? occurredAt });
     Object.assign(data, { settlementState: "SETTLED", settlementObservedAt: sale.settlementObservedAt ?? occurredAt });
     if (!sale.customerDoneAt && sale.fulfillmentState !== "SUPPORT_REQUIRED" && sale.fulfillmentState !== "COMMANDS_PENDING") data.state = "SETTLED";
   }
@@ -307,10 +332,67 @@ async function projectPaymentCallback(tx: Transaction, event: ProjectionEvent) {
   if (payload.state === "UNKNOWN" || payload.state === "RECONCILIATION_REQUIRED") await openSafeSupportCase(tx, { machineId: event.machineId, saleId, sourceId: saleId, type: payload.state === "UNKNOWN" ? "PAYMENT_UNKNOWN" : "PAYMENT_RECONCILIATION", summary: "Payment requires staff reconciliation; do not charge again." });
 }
 
+async function projectPaymentAnomaly(tx: Transaction, event: ProjectionEvent) {
+  const payload = EVENT_PAYLOAD_SCHEMAS.PAYMENT_EVIDENCE_ANOMALY.parse(event.payload);
+  if (payload.captureConfirmed && (!payload.providerSessionReference || !payload.providerTransactionReference || !payload.amountCents)) throw new VaultApiError(422, "FINANCIAL_ANOMALY_PROOF_INCOMPLETE", "Confirmed capture anomaly requires its original references and amount.");
+  const sale = payload.saleId ? await tx.vaultSale.findFirst({ where: { id: payload.saleId, machineId: event.machineId } }) : null;
+  const { noticeId, saleId: _localSaleId, ...evidence } = payload;
+  const prior = await tx.vaultPaymentEvidenceAnomaly.findUnique({ where: { machineId_noticeId: { machineId: event.machineId, noticeId } } });
+  if (prior && Object.entries(evidence).some(([key, value]) => (prior as unknown as Record<string, unknown>)[key] !== value)) throw new VaultApiError(422, "FINANCIAL_ANOMALY_CONFLICT", "A financial evidence notice cannot change its identity.");
+  if (!prior) await tx.vaultPaymentEvidenceAnomaly.create({ data: { machineId: event.machineId, noticeId, saleId: sale?.id ?? null, ...evidence, occurredAt: new Date(event.occurredAt) } });
+  await openSafeSupportCase(tx, { machineId: event.machineId, saleId: sale?.id ?? null, sourceId: noticeId, type: "PAYMENT_RECONCILIATION",
+    summary: "Payment evidence requires administrator review. Do not charge again or reopen previously released doors.",
+    financialEvidence: { noticeId, provider: payload.paymentProvider, amountCents: payload.amountCents, currency: payload.currency, captureConfirmed: payload.captureConfirmed, code: payload.code } });
+  // Financial evidence never rewrites fulfillment, door ownership or sale totals.
+}
+
+async function projectQuarantinedPayment(tx: Transaction, event: ProjectionEvent) {
+  const payload = EVENT_PAYLOAD_SCHEMAS.PAYMENT_CALLBACK_QUARANTINED.parse(event.payload);
+  const sale = await requireProjectedSale(tx, event.machineId, String(event.correlationId ?? ""), event.mode);
+  if (payload.captureConfirmed) {
+    if (payload.state !== "SETTLED" || !payload.paymentProvider || !payload.paymentBindingDigest || !payload.providerSessionReference || !payload.providerTransactionReference) throw new VaultApiError(422, "CAPTURE_EVIDENCE_INVALID", "Quarantined capture requires complete provider evidence.");
+    if (payload.paymentProvider === "NAYAX_SPARK") await projectPaymentAnomaly(tx, { ...event, payload: {
+      noticeId: payload.callbackId, saleId: sale.id, paymentProvider: payload.paymentProvider, paymentBindingDigest: payload.paymentBindingDigest,
+      providerSessionReference: payload.providerSessionReference, providerTransactionReference: payload.providerTransactionReference,
+      amountCents: sale.totalCents, currency: sale.currency, captureConfirmed: true, code: `LATE_CAPTURE_${payload.disposition}`,
+    } });
+  }
+  await openSafeSupportCase(tx, { machineId: event.machineId, saleId: sale.id, sourceId: payload.callbackId, type: "PAYMENT_RECONCILIATION", summary: "Conflicting payment evidence requires administrator review; fulfillment remains unchanged." });
+}
+
+async function projectPaymentVoid(tx: Transaction, event: ProjectionEvent) {
+  const isOutcome = event.type === "PAYMENT_VOID_OUTCOME_RECORDED";
+  const payload = isOutcome ? EVENT_PAYLOAD_SCHEMAS.PAYMENT_VOID_OUTCOME_RECORDED.parse(event.payload) : EVENT_PAYLOAD_SCHEMAS.PAYMENT_VOID_INTENT_RECORDED.parse(event.payload);
+  const row = await tx.vaultPaymentAction.findUnique({ where: { id: payload.actionId } });
+  if (!row || !row.saleId || row.machineId !== event.machineId || row.state === "RETIRED_UNSTARTED" || row.externalReviewedAt) throw new VaultApiError(422, "PAYMENT_ACTION_NOT_APPROVED", "A payment operation requires its exact fresh human approval.");
+  const approved = VaultPaymentVoidActionSchema.parse(row.action);
+  const same = approved.saleId === payload.saleId && approved.provider === payload.paymentProvider && approved.paymentBindingDigest === payload.paymentBindingDigest
+    && approved.providerSessionReference === payload.providerSessionReference && approved.providerTransactionReference === payload.providerTransactionReference
+    && approved.amountCents === payload.amountCents && approved.currency === payload.currency && approved.approvedByAdminId === payload.approvedByAdminId && approved.reason === payload.reason;
+  if (!same) throw new VaultApiError(422, "PAYMENT_ACTION_BINDING_CONFLICT", "Payment operation differs from the approved sale, amount or provider binding.");
+  const sale = await requireProjectedSale(tx, event.machineId, row.saleId, event.mode);
+  if (sale.localTransactionId !== approved.saleId) throw new VaultApiError(422, "PAYMENT_ACTION_SALE_CONFLICT", "Approved payment operation belongs to a different local sale.");
+  if (!isOutcome) {
+    const at = new Date(event.occurredAt);
+    if (at < row.approvedAt || at > row.expiresAt) throw new VaultApiError(422, "PAYMENT_APPROVAL_EXPIRED", "A new local operation must begin within its approval window.");
+    if (row.state === "APPROVED") await tx.vaultPaymentAction.update({ where: { id: row.id }, data: { state: "EXECUTING", intentObservedAt: at } });
+    return;
+  }
+  const outcome = EVENT_PAYLOAD_SCHEMAS.PAYMENT_VOID_OUTCOME_RECORDED.parse(payload);
+  if (!row.intentObservedAt) throw new VaultApiError(422, "PAYMENT_ACTION_INTENT_MISSING", "Payment outcome requires its prior durable intent.");
+  if (["VOIDED", "DECLINED"].includes(row.state)) {
+    if (row.state !== outcome.state) await openSafeSupportCase(tx, { machineId: event.machineId, saleId: sale.id, sourceId: row.id, type: "PAYMENT_RECONCILIATION", summary: "Conflicting void evidence requires administrator review." });
+    return;
+  }
+  await tx.vaultPaymentAction.update({ where: { id: row.id }, data: { state: outcome.state, outcomeObservedAt: new Date(event.occurredAt), evidenceReference: outcome.evidenceReference, errorCode: outcome.errorCode ?? null } });
+  if (outcome.state !== "VOIDED") await openSafeSupportCase(tx, { machineId: event.machineId, saleId: sale.id, sourceId: row.id, type: "PAYMENT_RECONCILIATION", summary: outcome.state === "UNKNOWN" ? "The approved void outcome is unknown. Do not submit another compensation." : "The approved void was declined. Administrator review is required." });
+}
+
 async function projectFulfillment(tx: Transaction, event: ProjectionEvent) {
   const payload = EVENT_PAYLOAD_SCHEMAS.FULFILLMENT_COMMITTED.parse(event.payload);
   const sale = await requireProjectedSale(tx, event.machineId, payload.saleId, event.mode);
-  if (sale.mode !== event.mode || !sale.authorizationObservedAt || sale.paymentState !== "AUTHORIZED" || sale.fulfillmentState !== "NOT_COMMITTED") throw new VaultApiError(422, "FULFILLMENT_NOT_AUTHORIZED", "Fulfillment requires the exact authorized, uncommitted sale and mode");
+  const captured = sale.paymentState === "SETTLED" && sale.providerEvidence && typeof sale.providerEvidence === "object" && !Array.isArray(sale.providerEvidence) && (sale.providerEvidence as Record<string, unknown>).captureConfirmed === true;
+  if (sale.mode !== event.mode || !sale.authorizationObservedAt || sale.paymentState !== "AUTHORIZED" && !captured || sale.fulfillmentState !== "NOT_COMMITTED") throw new VaultApiError(422, "FULFILLMENT_NOT_AUTHORIZED", "Fulfillment requires the exact paid, uncommitted sale and mode");
   const itemCount = await tx.vaultSaleItem.count({ where: { saleId: payload.saleId } });
   if (payload.commands.length !== itemCount || new Set(payload.commands.map((command) => command.doorId)).size !== itemCount) throw new VaultApiError(422, "COMMAND_CARDINALITY_INVALID", "Fulfillment commands must equal the exact paid-door set");
   for (const command of payload.commands) {
@@ -322,7 +404,7 @@ async function projectFulfillment(tx: Transaction, event: ProjectionEvent) {
     if (updated.count !== 1) throw new VaultApiError(422, "FULFILLMENT_ITEM_MISSING", `Fulfillment item ${doorId} was not reserved`);
   }
   if (event.mode === "PRODUCTION") await tx.vaultDoor.updateMany({ where: { machineId: event.machineId, doorId: { in: payload.commands.map((command) => command.doorId) }, owningSaleId: payload.saleId }, data: { state: "COMMITTED_SOLD", lastEventId: event.eventId } });
-  await tx.vaultSale.updateMany({ where: { id: payload.saleId, machineId: event.machineId }, data: { state: "OPEN_COMMAND_PENDING", paymentState: "AUTHORIZED", fulfillmentState: "COMMANDS_PENDING" } });
+  await tx.vaultSale.updateMany({ where: { id: payload.saleId, machineId: event.machineId }, data: { state: "OPEN_COMMAND_PENDING", paymentState: sale.paymentState, fulfillmentState: "COMMANDS_PENDING" } });
 }
 
 async function projectCommandTerminal(tx: Transaction, event: ProjectionEvent) {
@@ -439,9 +521,9 @@ async function projectCertificationStarted(tx: Transaction, event: ProjectionEve
       sourceCommit: payload.sourceCommit,
       localSchemaVersion: payload.localSchemaVersion,
       contractVersion: payload.contractVersion,
-      nayaxAdapterVersion: typeof paymentIdentity.adapterVersion === "string" ? paymentIdentity.adapterVersion : null,
-      nayaxSdkVersion: typeof paymentIdentity.sdkVersion === "string" ? paymentIdentity.sdkVersion : null,
-      nayaxFlowConfig: paymentIdentity as Prisma.InputJsonValue,
+      paymentAdapterVersion: typeof paymentIdentity.adapterVersion === "string" ? paymentIdentity.adapterVersion : null,
+      paymentApiVersion: typeof paymentIdentity.apiVersion === "string" ? paymentIdentity.apiVersion : null,
+      paymentFlowConfig: paymentIdentity as Prisma.InputJsonValue,
       controllerIdentity: payload.controllerIdentity as Prisma.InputJsonValue,
       startedAt: new Date(event.occurredAt),
       startedByUserId: event.actor ?? null,
@@ -456,7 +538,7 @@ async function projectCertificationEvidence(tx: Transaction, event: ProjectionEv
   const session = await tx.vaultCertificationSession.findFirst({ where: { id: payload.certificationSessionId, machineId: event.machineId } });
   if (!session) throw new VaultApiError(422, "CERTIFICATION_PROJECTION_MISSING", "Certification evidence arrived before session start");
   if (session.status !== "ACTIVE" || event.mode !== "CERTIFICATION") throw new VaultApiError(422, "CERTIFICATION_STATE_INVALID", "Evidence requires an active certification session in test mode");
-  if (payload.evidenceClass !== "AUTOMATED" && ((session.controllerIdentity as Record<string, unknown> | null)?.mode === "MOCK" || (session.nayaxFlowConfig as Record<string, unknown> | null)?.mode === "MOCK")) throw new VaultApiError(422, "CERTIFICATION_EVIDENCE_CLASS_INVALID", "Simulator commands cannot produce physical or official provider evidence");
+  if (payload.evidenceClass !== "AUTOMATED" && ((session.controllerIdentity as Record<string, unknown> | null)?.mode !== "OFFICIAL_TEST" || !vaultOfficialPaymentEvidenceProfile(session.paymentFlowConfig))) throw new VaultApiError(422, "CERTIFICATION_EVIDENCE_CLASS_INVALID", "Physical or official provider evidence requires the exact supported test-provider identity");
   const config = await tx.vaultConfigVersion.findUnique({ where: { id: session.configVersionId } });
   const profileDoorIds = configDoorIds(VaultConfigPayloadSchema.parse(config?.canonicalPayload));
   if (!payload.doorId || !profileDoorIds.includes(payload.doorId) || payload.expectedDoorIds.length !== 1 || payload.expectedDoorIds[0] !== payload.doorId) throw new VaultApiError(422, "CERTIFICATION_PROFILE_MEMBERSHIP_INVALID", "Certification evidence must identify exactly its commanded profile door");
@@ -507,6 +589,13 @@ export async function projectVaultMachineEvent(tx: Transaction, event: Projectio
       await tx.vaultSale.updateMany({ where: { id: payload.saleId, machineId: event.machineId }, data: { state: "PAYMENT_REQUESTED", paymentState: "REQUESTED" } });
       return;
     }
+    case "PAYMENT_START_NO_EFFECT": {
+      const payload = EVENT_PAYLOAD_SCHEMAS.PAYMENT_START_NO_EFFECT.parse(event.payload);
+      const sale = await requireProjectedSale(tx, event.machineId, payload.saleId, event.mode);
+      if (sale.paymentState !== "REQUESTED" || sale.state !== "PAYMENT_REQUESTED" || sale.providerSessionId) throw new VaultApiError(422, "PAYMENT_NO_EFFECT_INVALID", "Payment preflight cannot restore this sale");
+      await tx.vaultSale.updateMany({ where: { id: payload.saleId, machineId: event.machineId }, data: { state: "RESERVED", paymentState: "NOT_REQUESTED" } });
+      return;
+    }
     case "PAYMENT_START_EFFECT_UNKNOWN": {
       const payload = EVENT_PAYLOAD_SCHEMAS.PAYMENT_START_EFFECT_UNKNOWN.parse(event.payload);
       const sale = await requireProjectedSale(tx, event.machineId, payload.saleId, event.mode);
@@ -518,7 +607,16 @@ export async function projectVaultMachineEvent(tx: Transaction, event: Projectio
       return;
     }
     case "PAYMENT_CALLBACK_APPLIED": return projectPaymentCallback(tx, event);
+    case "PAYMENT_CALLBACK_QUARANTINED": return projectQuarantinedPayment(tx, event);
+    case "PAYMENT_EVIDENCE_ANOMALY": return projectPaymentAnomaly(tx, event);
+    case "FINANCIAL_RECOVERY_SNAPSHOT_RECORDED": return projectFinancialRecoverySnapshot(tx, event.machineId, event.payload);
+    case "FINANCIAL_RECOVERY_SUPERSEDED": return projectFinancialRecoverySuperseded(tx, event.machineId, event.payload);
+    case "FINANCIAL_RECOVERY_APPLIED": return projectFinancialRecoveryApplied(tx, event.machineId, event.payload, new Date(event.occurredAt));
+    case "PAYMENT_VOID_RETIRED_UNSTARTED": return projectVoidRetiredUnstarted(tx, event.machineId, event.payload, new Date(event.occurredAt));
+    case "PAYMENT_VOID_INTENT_RECORDED":
+    case "PAYMENT_VOID_OUTCOME_RECORDED": return projectPaymentVoid(tx, event);
     case "VEND_RESULT_INTENT_RECORDED": {
+      // Legacy event projection only; current Stripe sales never emit this event.
       const payload = EVENT_PAYLOAD_SCHEMAS.VEND_RESULT_INTENT_RECORDED.parse(event.payload);
       const sale = await requireProjectedSale(tx, event.machineId, payload.saleId, event.mode);
       const items = await tx.vaultSaleItem.findMany({ where: { saleId: sale.id } });
@@ -576,6 +674,13 @@ export async function projectVaultMachineEvent(tx: Transaction, event: Projectio
       const payload = EVENT_PAYLOAD_SCHEMAS.PUBLIC_PRESENTATION_DONE.parse(event.payload);
       await requireProjectedSale(tx, event.machineId, payload.saleId, event.mode);
       await tx.vaultSale.updateMany({ where: { id: payload.saleId, machineId: event.machineId }, data: { customerDoneAt: new Date(event.occurredAt), fulfillmentState: "CUSTOMER_DONE" } });
+      return;
+    }
+    case "PAYMENT_RECOVERY_BINDING_REQUIRED": {
+      const payload = EVENT_PAYLOAD_SCHEMAS.PAYMENT_RECOVERY_BINDING_REQUIRED.parse(event.payload);
+      const sale = await requireProjectedSale(tx, event.machineId, payload.saleId, event.mode);
+      await tx.vaultSale.updateMany({ where: { id: payload.saleId, machineId: event.machineId }, data: { ...(sale.fulfillmentState === "NOT_COMMITTED" ? { state: "RECONCILIATION_REQUIRED" } : {}), paymentState: "RECONCILIATION_REQUIRED", reconciliationRequiredAt: new Date(event.occurredAt) } });
+      await openSafeSupportCase(tx, { machineId: event.machineId, saleId: payload.saleId, sourceId: payload.saleId, type: "PAYMENT_RECONCILIATION", summary: "The original payment provider binding requires staff review." });
       return;
     }
     case "PAYMENT_RECOVERY_INTENT_DIGEST_CONFLICT":
