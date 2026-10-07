@@ -1,0 +1,9 @@
+.preview { border: 1px solid #d5dbdf; border-radius: 10px; background: #f6f8f8; padding: 18px; color: #213238; }
+.faces { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-start; }
+.faces figure { margin: 0; max-width: 100%; }
+.faces figcaption { font-size: .75rem; margin-bottom: 8px; color: #4b5d64; }
+.faces svg[data-label-face] { display: block; background: white; width: 327.6px; max-width: 100%; height: auto; box-shadow: 0 2px 8px #162d3714; }
+.caption { max-width: 720px; font-size: .78rem; line-height: 1.6; color: #4b5d64; }
+.reportLink { display: inline-block; font-size: .82rem; margin-right: 18px; margin-bottom: 12px; }
+.error { color: #932828; border-left: 3px solid #932828; padding-left: 12px; }
+@media print { .preview { display: none; } }

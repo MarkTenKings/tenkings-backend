@@ -39,6 +39,11 @@ export type SpeedsterLearningHarvestDiagnosticsV2 = {
   skippedSameCardDuplicate: number;
 };
 
+export type SpeedsterLearningCandidatesV2 = {
+  lessons: SpeedsterLearningLessonCandidateV2[];
+  diagnostics: SpeedsterLearningHarvestDiagnosticsV2;
+};
+
 export type SpeedsterLearningHarvestV2 = {
   history: SpeedsterLearningHistoryLessonsV2;
   diagnostics: SpeedsterLearningHarvestDiagnosticsV2;
@@ -124,11 +129,14 @@ const lesson = (input: {
   lessonOrder?: number;
 }): SpeedsterLearningLessonCandidateV2 => input;
 
-export function harvestSpeedsterLearningSessionV2(
-  session: SpeedsterLearningReviewHistoryV2,
-): SpeedsterLearningHarvestV2 {
+/** Pure candidates only. No approval, completion identity, bank write or learning
+ * authority is created here. Callers must separately authorize exact lessons.
+ * Diagnostics retain their legacy names and existing counting semantics. */
+export function harvestSpeedsterLearningCandidatesV2(
+  input: Pick<SpeedsterLearningReviewHistoryV2, "fingerprintVersion" | "reviewedDefects">,
+): SpeedsterLearningCandidatesV2 {
   const diagnostics: SpeedsterLearningHarvestDiagnosticsV2 = {
-    findings: session.reviewedDefects.length,
+    findings: input.reviewedDefects.length,
     explicitFindings: 0,
     untouchedFindings: 0,
     admittedLessons: 0,
@@ -145,21 +153,12 @@ export function harvestSpeedsterLearningSessionV2(
   const untouchedCounts = new Map<SpeedsterDefectType, number>();
   const untouchedFingerprints = new Map<SpeedsterDefectType, number[][]>();
 
-  if (session.fingerprintVersion !== SPEEDSTER_LEARNING_FINGERPRINT_VERSION) {
-    diagnostics.skippedVersionMismatch = session.reviewedDefects.length;
-    return {
-      history: {
-        sessionId: session.sessionId,
-        completedAt: session.completedAt,
-        completionOrder: session.completionOrder,
-        fingerprintVersion: session.fingerprintVersion,
-        lessons,
-      },
-      diagnostics,
-    };
+  if (input.fingerprintVersion !== SPEEDSTER_LEARNING_FINGERPRINT_VERSION) {
+    diagnostics.skippedVersionMismatch = input.reviewedDefects.length;
+    return { lessons, diagnostics };
   }
 
-  session.reviewedDefects.forEach((raw, proposalOrder) => {
+  input.reviewedDefects.forEach((raw, proposalOrder) => {
     if (!isRecord(raw)
       || !isSpeedsterLearningDefectTypeV2(raw.defectType)
       || typeof raw.reviewResult !== "string") {
@@ -303,6 +302,14 @@ export function harvestSpeedsterLearningSessionV2(
     }));
   });
   diagnostics.admittedLessons = lessons.length;
+  return { lessons, diagnostics };
+}
+
+/** Compatibility wrapper for the original certificate-ordered history path. */
+export function harvestSpeedsterLearningSessionV2(
+  session: SpeedsterLearningReviewHistoryV2,
+): SpeedsterLearningHarvestV2 {
+  const { lessons, diagnostics } = harvestSpeedsterLearningCandidatesV2(session);
   return {
     history: {
       sessionId: session.sessionId,

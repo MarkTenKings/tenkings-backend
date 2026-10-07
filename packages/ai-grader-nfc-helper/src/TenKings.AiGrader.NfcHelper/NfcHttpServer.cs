@@ -71,6 +71,8 @@ public sealed class NfcHttpServer : IAsyncDisposable
     private readonly NfcOperationsService _operations;
     private readonly F8215JobCoordinator? _f8215;
     private readonly TenKingsV2NfcCoordinator? _tenKingsV2;
+    private readonly AtlasNfcCoordinator? _atlas;
+    private readonly string? _atlasToken;
     private readonly ISafeLogger _logger;
     private readonly ConcurrentDictionary<long, Task> _requests = new();
     private long _requestSequence;
@@ -83,16 +85,27 @@ public sealed class NfcHttpServer : IAsyncDisposable
         NfcOperationsService operations,
         ISafeLogger? logger = null,
         F8215JobCoordinator? f8215 = null,
-        TenKingsV2NfcCoordinator? tenKingsV2 = null)
+        TenKingsV2NfcCoordinator? tenKingsV2 = null,
+        AtlasNfcCoordinator? atlas = null,
+        string? atlasToken = null)
     {
         options.Validate();
         _options = options;
         _operations = operations;
         _f8215 = f8215;
         _tenKingsV2 = tenKingsV2;
+        _atlas = atlas;
+        _atlasToken = atlasToken;
+        if (atlas?.Available == true) ValidateAtlasToken(atlasToken, options.WorkstationToken);
         _logger = logger ?? new ConsoleSafeLogger();
         _listener.Prefixes.Add($"http://127.0.0.1:{options.Port}/");
         _listener.IgnoreWriteExceptions = true;
+    }
+
+    internal static void ValidateAtlasToken(string? token, string legacyToken)
+    {
+        if (token is null || !System.Text.RegularExpressions.Regex.IsMatch(token, "^[A-Za-z0-9_-]{43,192}\\z") || SecureEquals(token, legacyToken))
+            throw new NfcHelperException("atlas_nfc_browser_token_invalid", "ATLAS requires a separate protected workstation token.", false, 503);
     }
 
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -148,6 +161,11 @@ public sealed class NfcHttpServer : IAsyncDisposable
         try
         {
             var path = context.Request.Url?.AbsolutePath ?? string.Empty;
+            if (path.StartsWith("/gototags/atlas/callback/", StringComparison.Ordinal))
+            {
+                await HandleGoToTagsAtlasCallbackAsync(context, path, requestId, timeout.Token);
+                return;
+            }
             if (path.StartsWith("/gototags/v2/callback/", StringComparison.Ordinal))
             {
                 await HandleGoToTagsV2CallbackAsync(context, path, requestId, timeout.Token);
@@ -159,7 +177,7 @@ public sealed class NfcHttpServer : IAsyncDisposable
                 return;
             }
             ValidateNetworkBoundary(context.Request);
-            ApplyCors(context.Response);
+            ApplyCors(context.Response, path.StartsWith("/atlas/", StringComparison.Ordinal) ? AtlasNfcProtocol.StaffOrigin : NfcProtocol.ProductionOrigin);
             if (string.Equals(context.Request.HttpMethod, "OPTIONS", StringComparison.Ordinal))
             {
                 ValidatePreflight(context.Request);
@@ -214,6 +232,41 @@ public sealed class NfcHttpServer : IAsyncDisposable
                     var acknowledge = await ReadJsonAsync(context.Request, NfcJsonContext.Default.F8215OperationAcknowledgeRequest, timeout.Token);
                     var acknowledgeResult = RequireF8215().Acknowledge(acknowledge, requestId);
                     await WriteSuccessAsync(context.Response, acknowledgeResult, NfcJsonContext.Default.ApiEnvelopeF8215OperationAcknowledgeResponse, timeout.Token);
+                    break;
+                case "/atlas/prepare":
+                    RequireMethod(context.Request, "POST");
+                    RequireAtlasToken(context.Request);
+                    var atlasPrepare = await ReadAtlasJsonAsync(context.Request, NfcJsonContext.Default.AtlasNfcPrepareRequest, timeout.Token);
+                    var atlasPrepareResult = RequireAtlas().Prepare(atlasPrepare, requestId);
+                    await WriteSuccessAsync(context.Response, atlasPrepareResult, NfcJsonContext.Default.ApiEnvelopeAtlasNfcOperationResponse, timeout.Token);
+                    break;
+                case "/atlas/status":
+                    RequireMethod(context.Request, "POST");
+                    RequireAtlasToken(context.Request);
+                    var atlasStatus = await ReadAtlasJsonAsync(context.Request, NfcJsonContext.Default.AtlasNfcStatusRequest, timeout.Token);
+                    var atlasStatusResult = RequireAtlas().Status(atlasStatus);
+                    await WriteSuccessAsync(context.Response, atlasStatusResult, NfcJsonContext.Default.ApiEnvelopeAtlasNfcOperationResponse, timeout.Token);
+                    break;
+                case "/atlas/success-ack":
+                    RequireMethod(context.Request, "POST");
+                    RequireAtlasToken(context.Request);
+                    var atlasSuccess = await ReadAtlasJsonAsync(context.Request, NfcJsonContext.Default.AtlasNfcSuccessAcknowledgeRequest, timeout.Token);
+                    var atlasSuccessResult = RequireAtlas().AcknowledgeSuccess(atlasSuccess, requestId);
+                    await WriteSuccessAsync(context.Response, atlasSuccessResult, NfcJsonContext.Default.ApiEnvelopeAtlasNfcAcknowledgeResponse, timeout.Token);
+                    break;
+                case "/atlas/discard-ack":
+                    RequireMethod(context.Request, "POST");
+                    RequireAtlasToken(context.Request);
+                    var atlasDiscard = await ReadAtlasJsonAsync(context.Request, NfcJsonContext.Default.AtlasNfcDiscardAcknowledgeRequest, timeout.Token);
+                    var atlasDiscardResult = RequireAtlas().AcknowledgeDiscard(atlasDiscard, requestId);
+                    await WriteSuccessAsync(context.Response, atlasDiscardResult, NfcJsonContext.Default.ApiEnvelopeAtlasNfcAcknowledgeResponse, timeout.Token);
+                    break;
+                case "/atlas/capabilities":
+                    RequireMethod(context.Request, "GET");
+                    RequireAtlasToken(context.Request);
+                    RequireEmptyBody(context.Request);
+                    var atlas = RequireAtlas();
+                    await WriteSuccessAsync(context.Response, new AtlasNfcCapabilities(AtlasNfcProtocol.HelperCapability, atlas.WorkstationKeyId, atlas.TrustedJobSigningKeyIds), NfcJsonContext.Default.ApiEnvelopeAtlasNfcCapabilities, timeout.Token);
                     break;
                 case "/v2/prepare":
                     RequireMethod(context.Request, "POST");
@@ -311,9 +364,43 @@ public sealed class NfcHttpServer : IAsyncDisposable
     private F8215JobCoordinator RequireF8215() => _f8215 ??
         throw new NfcHelperException("gototags_configuration_invalid", "The Feiju encoding adapter is not configured safely.", false, 503);
 
+    private AtlasNfcCoordinator RequireAtlas() => _atlas is { Available: true } coordinator
+        ? coordinator
+        : throw new NfcHelperException("atlas_nfc_unavailable", "ATLAS NFC is unavailable.", false, 503);
+
+    private void RequireAtlasToken(HttpListenerRequest request)
+    {
+        RequireAtlas();
+        var supplied = request.Headers[TokenHeader];
+        if (_atlasToken is null || supplied is null || supplied.Length > 192 || !SecureEquals(supplied, _atlasToken))
+            throw new NfcHelperException("workstation_token_invalid", "Connect this ATLAS NFC workstation before programming.", false, 401);
+    }
+
     private TenKingsV2NfcCoordinator RequireTenKingsV2() => _tenKingsV2 is { Available: true } coordinator
         ? coordinator
         : throw new NfcHelperException("v2_nfc_unavailable", "NFC V2 is unavailable on this helper configuration.", false, 503);
+
+    private async Task HandleGoToTagsAtlasCallbackAsync(
+        HttpListenerContext context,
+        string path,
+        string requestId,
+        CancellationToken cancellationToken)
+    {
+        ValidateGoToTagsBoundary(context.Request);
+        var identity = path["/gototags/atlas/callback/".Length..];
+        if (identity.Length == 0 || identity.Contains('/'))
+            throw new NfcHelperException("gototags_callback_not_found", "The GoToTags callback identity is invalid.", false, 404);
+        var body = await ReadGoToTagsBodyAsync(context.Request, cancellationToken);
+        try
+        {
+            RequireAtlas().AcceptCallback(identity, body, requestId);
+            context.Response.StatusCode = (int)HttpStatusCode.NoContent;
+            context.Response.Headers["Cache-Control"] = "no-store";
+            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            context.Response.Close();
+        }
+        finally { CryptographicOperations.ZeroMemory(body); }
+    }
 
     private async Task HandleGoToTagsV2CallbackAsync(
         HttpListenerContext context,
@@ -433,7 +520,9 @@ public sealed class NfcHttpServer : IAsyncDisposable
         var expectedHost = $"127.0.0.1:{_options.Port}";
         if (!string.Equals(request.Headers["Host"], expectedHost, StringComparison.Ordinal))
             throw new NfcHelperException("invalid_host", "The NFC helper Host header is not allowed.", false, 403);
-        if (!string.Equals(request.Headers["Origin"], _options.AllowedOrigin, StringComparison.Ordinal))
+        var expectedOrigin = request.Url?.AbsolutePath.StartsWith("/atlas/", StringComparison.Ordinal) == true
+            ? AtlasNfcProtocol.StaffOrigin : _options.AllowedOrigin;
+        if (!string.Equals(request.Headers["Origin"], expectedOrigin, StringComparison.Ordinal))
             throw new NfcHelperException("invalid_origin", "The NFC helper browser origin is not allowed.", false, 403);
         if (request.Url?.Query.Length > 0)
             throw new NfcHelperException("query_not_allowed", "The NFC helper does not accept query parameters.", false, 400);
@@ -453,9 +542,9 @@ public sealed class NfcHttpServer : IAsyncDisposable
         }
     }
 
-    private static void ApplyCors(HttpListenerResponse response)
+    private static void ApplyCors(HttpListenerResponse response, string origin)
     {
-        response.Headers["Access-Control-Allow-Origin"] = NfcProtocol.ProductionOrigin;
+        response.Headers["Access-Control-Allow-Origin"] = origin;
         response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
         response.Headers["Access-Control-Allow-Headers"] = $"content-type, {TokenHeader}";
         response.Headers["Access-Control-Allow-Private-Network"] = "true";
@@ -481,6 +570,56 @@ public sealed class NfcHttpServer : IAsyncDisposable
     {
         if (request.ContentLength64 > 0)
             throw new NfcHelperException("body_not_allowed", "This NFC helper request does not accept a body.", false, 400);
+    }
+
+    private static async Task<T> ReadAtlasJsonAsync<T>(
+        HttpListenerRequest request,
+        JsonTypeInfo<T> typeInfo,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(request.ContentType?.Split(';', 2)[0].Trim(), "application/json", StringComparison.OrdinalIgnoreCase))
+            throw new NfcHelperException("content_type_required", "The NFC helper accepts application/json only.", false, 415);
+        if (request.ContentLength64 > NfcProtocol.MaxJsonBytes)
+            throw new NfcHelperException("body_too_large", "The NFC helper request body is too large.", false, 413);
+        using var body = new MemoryStream();
+        var buffer = new byte[4096];
+        while (true)
+        {
+            var read = await request.InputStream.ReadAsync(buffer, cancellationToken);
+            if (read == 0) break;
+            if (body.Length + read > NfcProtocol.MaxJsonBytes)
+                throw new NfcHelperException("body_too_large", "The NFC helper request body is too large.", false, 413);
+            body.Write(buffer, 0, read);
+        }
+        if (body.Length == 0) throw new NfcHelperException("body_required", "The NFC helper request body is required.", false, 400);
+        var bytes = body.ToArray();
+        try
+        {
+            using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 6 });
+            void RejectDuplicates(JsonElement element)
+            {
+                if (element.ValueKind != JsonValueKind.Object) return;
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (!seen.Add(property.Name)) throw new JsonException();
+                    RejectDuplicates(property.Value);
+                }
+            }
+            RejectDuplicates(document.RootElement);
+            if (typeof(T) == typeof(AtlasNfcPrepareRequest))
+            {
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 2 ||
+                    !root.TryGetProperty("freshTagConfirmed", out var fresh) || fresh.ValueKind != JsonValueKind.True ||
+                    !root.TryGetProperty("job", out var job)) throw new JsonException();
+                var jobBytes = Encoding.UTF8.GetBytes(job.GetRawText());
+                try { return (T)(object)new AtlasNfcPrepareRequest(AtlasNfcProtocol.ParseSignedJobJson(jobBytes), true); }
+                finally { CryptographicOperations.ZeroMemory(jobBytes); }
+            }
+            return JsonSerializer.Deserialize(bytes, typeInfo) ?? throw new JsonException();
+        }
+        finally { CryptographicOperations.ZeroMemory(bytes); CryptographicOperations.ZeroMemory(buffer); }
     }
 
     private static async Task<T> ReadJsonAsync<T>(

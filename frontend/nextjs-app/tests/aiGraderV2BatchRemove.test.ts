@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { speedsterReviewPostSchema } from "../lib/ai-grader-v2/review-action-contract";
 
 import {
   speedsterSelectionBox,
@@ -44,7 +45,13 @@ test("review UI exposes one Select mode, one batch remove, and one batch Undo pa
   assert.match(page, /busy=\{working\}/);
   assert.match(page, /type: "REMOVE", defectIds/);
   assert.match(page, /type: "UNDO", defectIds: lastRemovedDefectIds/);
-  assert.match(route, /type: z\.literal\("REMOVE"\), defectIds: z\.array\(FINDING_ID\)\.min\(1\)/);
-  assert.match(route, /type: z\.literal\("UNDO"\), defectIds: z\.array\(FINDING_ID\)\.min\(1\)/);
+  assert.match(route, /speedsterReviewPostSchema as postSchema/);
+  assert.match(route, /postSchema\.safeParse\(req\.body \?\? \{\}\)/);
+  for (const type of ["REMOVE", "UNDO"]) {
+    assert.deepEqual(speedsterReviewPostSchema.parse({ action: { type, defectIds: ["finding-a", "finding-b"] } }),
+      { action: { type, defectIds: ["finding-a", "finding-b"] } });
+    assert.equal(speedsterReviewPostSchema.safeParse({ action: { type, defectIds: [] } }).success, false);
+    assert.equal(speedsterReviewPostSchema.safeParse({ action: { type, defectIds: [""] } }).success, false);
+  }
   assert.doesNotMatch(viewer, /confirm\(/i);
 });

@@ -16,6 +16,7 @@ import { useRouter } from "next/router";
 import AppShell from "../components/AppShell";
 import { CardImage } from "../components/CardImage";
 import LiveRipPreview from "../components/LiveRipPreview";
+import OnDemandMedia from "../components/OnDemandMedia";
 import { fetchCollector } from "../lib/api";
 import CardDetailModal from "../components/CardDetailModal";
 import { formatUsdMinor } from "../lib/formatters";
@@ -199,158 +200,45 @@ export default function Home({
   const [collectorNames, setCollectorNames] = useState<Record<string, string>>(initialCollectorNames ?? {});
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [liveRipTiles, setLiveRipTiles] = useState<LiveRipTile[]>(initialLiveRipTiles ?? []);
-  const heroVideoDesktopRef = useRef<HTMLVideoElement | null>(null);
-  const heroVideoMobileRef = useRef<HTMLVideoElement | null>(null);
-  const [heroVideoMuted, setHeroVideoMuted] = useState(true);
   const heroMedia = heroMediaConfig;
-  const heroMediaType = heroMedia.type;
-  const heroVideoSource = heroMediaType === "video" ? heroMedia.src : null;
 
-  useEffect(() => {
-    if (heroMediaType !== "video") {
-      return;
-    }
-    setHeroVideoMuted(true);
-    const candidates = [heroVideoDesktopRef.current, heroVideoMobileRef.current];
-    candidates.forEach((element) => {
-      if (element) {
-        element.load();
-      }
-    });
-  }, [heroMediaType, heroVideoSource]);
-
-  useEffect(() => {
-    if (heroMediaType !== "video") {
-      return;
-    }
-    const candidates = [heroVideoDesktopRef.current, heroVideoMobileRef.current];
-    const handleCanPlay = (event: Event) => {
-      const target = event.currentTarget as HTMLVideoElement;
-      if (!heroVideoMuted) {
-        target.play().catch(() => undefined);
-      }
-    };
-
-    candidates.forEach((element) => {
-      if (!element) {
-        return;
-      }
-      element.muted = heroVideoMuted;
-      element.defaultMuted = heroVideoMuted;
-      if (!heroVideoMuted) {
-        element.play().catch(() => undefined);
-      }
-      element.addEventListener("canplay", handleCanPlay);
-      element.addEventListener("loadeddata", handleCanPlay);
-    });
-
-    return () => {
-      candidates.forEach((element) => {
-        if (!element) {
-          return;
-        }
-        element.removeEventListener("canplay", handleCanPlay);
-        element.removeEventListener("loadeddata", handleCanPlay);
-      });
-    };
-  }, [heroMediaType, heroVideoSource, heroVideoMuted]);
-
-  const handleHeroMuteToggle = useCallback(() => {
-    setHeroVideoMuted((prev) => !prev);
-  }, []);
-
-  const handleHeroFullscreen = useCallback((viewport: "desktop" | "mobile") => {
-    const candidate =
-      viewport === "desktop"
-        ? heroVideoDesktopRef.current ?? heroVideoMobileRef.current
-        : heroVideoMobileRef.current ?? heroVideoDesktopRef.current;
-
-    if (!candidate) {
-      return;
-    }
-
-    const request =
-      candidate.requestFullscreen?.bind(candidate) ??
-      (candidate as any).webkitEnterFullscreen?.bind(candidate) ??
-      null;
-
-    if (request) {
-      try {
-        void request();
-      } catch (error) {
-        // ignore
-      }
-    }
-  }, []);
-
-  const renderHeroMedia = useCallback(
-    (viewport: "mobile" | "desktop") => {
-      if (heroMedia.type === "video") {
-        const ref = viewport === "desktop" ? heroVideoDesktopRef : heroVideoMobileRef;
-        return (
-          <ResponsiveMediaFrame viewport={viewport}>
-            <div className="absolute inset-0">
-              <video
-                ref={ref}
-                key={`${heroMedia.src}-${viewport}`}
-                src={heroMedia.src}
-                className="absolute inset-0 h-full w-full object-cover"
-                autoPlay
-                loop
-                muted={heroVideoMuted}
-                playsInline
-                preload="auto"
-              />
-              <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
-                <div className="flex flex-wrap gap-2 pointer-events-auto">
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleHeroMuteToggle();
-                    }}
-                    className="rounded-full border border-white/20 bg-black/55 px-3 py-1.5 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
-                    aria-pressed={!heroVideoMuted}
-                    aria-label={heroVideoMuted ? "Unmute hero video" : "Mute hero video"}
-                  >
-                    {heroVideoMuted ? "Unmute" : "Mute"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleHeroFullscreen(viewport);
-                    }}
-                    className="rounded-full border border-white/20 bg-black/55 px-3 py-1.5 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
-                    aria-label="Expand hero video"
-                  >
-                    Expand
-                  </button>
-                </div>
-              </div>
-            </div>
-          </ResponsiveMediaFrame>
-        );
-      }
-
-      if (heroMedia.type === "image") {
-        return (
-          <ResponsiveMediaFrame viewport={viewport}>
-            <Image
+  const renderHeroMedia = () => {
+    if (heroMedia.type === "video") {
+      return (
+        <ResponsiveMediaFrame>
+          <OnDemandMedia
+            title="Ten Kings introduction"
+            sourceKey={heroMedia.src}
+            posterUrl={heroImageOverride || "/images/tenkings-vendingmachine-sports.png"}
+          >
+            <video
               src={heroMedia.src}
-              alt="Ten Kings collectible machines"
-              fill
-              priority
-              className="object-cover"
+              className="absolute inset-0 h-full w-full object-contain"
+              controls
+              autoPlay
+              muted
+              playsInline
+              preload="none"
+              aria-label="Ten Kings introduction"
             />
-          </ResponsiveMediaFrame>
-        );
-      }
-
-      return viewport === "desktop" ? <StackedHeroMachinesDesktop /> : <StackedHeroMachinesMobile />;
-    },
-    [handleHeroFullscreen, handleHeroMuteToggle, heroMedia, heroVideoMuted]
-  );
+          </OnDemandMedia>
+        </ResponsiveMediaFrame>
+      );
+    }
+    if (heroMedia.type === "image") {
+      return (
+        <ResponsiveMediaFrame>
+          <Image src={heroMedia.src} alt="Ten Kings collectible machines" fill priority className="object-cover" />
+        </ResponsiveMediaFrame>
+      );
+    }
+    return (
+      <>
+        <div className="hidden lg:block"><StackedHeroMachinesDesktop /></div>
+        <div className="lg:hidden"><StackedHeroMachinesMobile /></div>
+      </>
+    );
+  };
 
   const handleScrollToMachines = useCallback(() => {
     if (typeof window === "undefined") {
@@ -689,9 +577,6 @@ export default function Home({
           name="description"
           content="Sports, Pokémon, and Comic mystery packs. Graded, authenticated, and ready to rip with Ten Kings."
         />
-        {heroMedia.type === "video" ? (
-          <link rel="preload" as="video" href={heroMedia.src} type="video/mp4" />
-        ) : null}
       </Head>
 
       <section className="relative overflow-hidden bg-night-900/70">
@@ -786,11 +671,10 @@ export default function Home({
             <p className="text-sm uppercase tracking-[0.22em] text-slate-400">
               Pick and rip packs online or visit a live location near you.
             </p>
-            <div className="mt-8 flex justify-center lg:hidden">{renderHeroMedia("mobile")}</div>
           </div>
 
-          <div className="relative order-2 mt-8 hidden w-full flex-1 justify-end lg:flex lg:order-2 lg:mt-0">
-            {renderHeroMedia("desktop")}
+          <div className="relative order-2 flex w-full flex-1 justify-center lg:justify-end">
+            {renderHeroMedia()}
           </div>
         </div>
 
@@ -1003,8 +887,8 @@ export default function Home({
   );
 }
 
-function ResponsiveMediaFrame({ viewport, children }: { viewport: "mobile" | "desktop"; children: React.ReactNode }) {
-  const frameClass = viewport === "desktop" ? "w-[410px] max-w-full" : "w-full max-w-[18rem]";
+function ResponsiveMediaFrame({ children }: { children: React.ReactNode }) {
+  const frameClass = "w-full max-w-[18rem] lg:w-[410px] lg:max-w-full";
   const paddingClass = "pb-[100%]";
   return (
     <div className={`relative overflow-hidden rounded-[2.5rem] border border-white/10 bg-night-900/70 shadow-card ${frameClass}`}>

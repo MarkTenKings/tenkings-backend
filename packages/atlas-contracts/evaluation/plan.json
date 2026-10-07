@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "atlas-evaluation-plan-v1",
+  "status": "PROPOSED_NOT_APPROVED_FOR_PAID_EXECUTION",
+  "offline": { "network": false, "credentials": "NONE", "syntheticSourceImages": 2, "reliabilityJobs": 1000, "physicalAccuracySpecimens": 0 },
+  "modelComparison": { "model": "gpt-6-astra", "efforts": ["low", "medium", "high"], "defaultCandidate": "medium", "imageConditions": ["OVERVIEWS", "OVERVIEWS_AND_SOURCE_CROPS", "ADDITIONAL_PHYSICAL_CAPTURE"], "actualTokenization": "UNMEASURED" },
+  "datasets": [
+    { "split": "DEVELOPMENT", "proposedUniqueSpecimens": 150, "mayTune": true },
+    { "split": "CALIBRATION", "proposedUniqueSpecimens": 100, "mayTune": true },
+    { "split": "LOCKED_QUALITY", "proposedUniqueSpecimens": 300, "mayTune": false },
+    { "split": "RELIABILITY", "proposedJobs": 1000, "countsAsUniqueAccuracySpecimens": false }
+  ],
+  "grouping": ["physicalSpecimenId", "captureGroupId", "cardFamilyForGeneralization"],
+  "strata": ["SPORTS_POKEMON", "MODERN_VINTAGE", "MATTE_GLOSS_FOIL_REVERSE_HOLO_TEXTURED", "BORDER_LIGHT_DARK", "DEFECT_CATEGORY_SEVERITY", "GLARE_BLUR_ANGLE", "GRADE_BAND", "EXACT_IMAGE_NEW_CAPTURE_NEW_SPECIMEN_UNSEEN_FAMILY"],
+  "truth": { "independentTrainedReviewers": 2, "doubleLabeledLockedMinimum": 100, "allSevereAndDisputedDoubleLabeled": true, "physicalMetrologyRequired": true, "insufficientEvidenceIsValid": true },
+  "promotion": { "automatic": false, "ownerTolerances": "PENDING", "mockSuccessCanPromote": false, "steps": ["10_SUPERVISED", "100_SHADOW", "300_LOCKED_QUALITY_AND_1000_RELIABILITY", "25_DRAFTS", "100_DRAFTS", "250_DRAFTS", "500_DRAFTS", "1000_DRAFTS"] },
+  "pilot": { "authorization": null, "cohortHash": null, "promptHash": null, "projectQuotaEvidence": null, "workerCanaryEvidence": null, "perCardCapMicroUsd": null, "batchCapMicroUsd": null, "approvedRuntimeWindow": null, "staffRoster": null },
+  "stopOn": ["UNAUTHORIZED_CERTIFICATION_OR_LEARNING", "CROSS_CARD_EVIDENCE", "UNAPPROVED_RELEASE", "SOURCE_HASH_CORRUPTION", "FABRICATED_MATERIAL_SALE_OR_REPORT", "SEVERE_UNFLAGGED_FALSE_REMOVAL", "COST_RESERVATION_BREACH"]
+}

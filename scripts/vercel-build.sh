@@ -8,6 +8,7 @@ elif [ "${VERCEL_ENV:-}" = "production" ]; then
   echo "VERCEL_ENV=production and RUN_DB_MIGRATIONS is not true; skipping Prisma migrations."
 fi
 pnpm --filter @tenkings/database run generate
+pnpm --filter @atlas/grading-core run build
 
 PRISMA_SRC=$(find node_modules -path "*/.pnpm/@prisma+client@*/node_modules/.prisma" -print -quit)
 if [ -z "$PRISMA_SRC" ]; then

@@ -1,0 +1,48 @@
+# The existing source pins this base by digest. Publish/admit the CPU artifact
+# separately after recording the actual target-platform identity and outputs.
+ARG PYTHON_BASE_IMAGE=python@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a
+FROM ${PYTHON_BASE_IMAGE} AS preparation
+
+ARG SPEEDSTER_SOURCE_REPOSITORY=UNSET
+ARG SPEEDSTER_SOURCE_COMMIT_SHA=UNSET
+ARG SPEEDSTER_SOURCE_TREE_SHA=UNSET
+ARG SPEEDSTER_BUILD_ID=UNSET
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8080 \
+    SPEEDSTER_SOURCE_REPOSITORY=${SPEEDSTER_SOURCE_REPOSITORY} \
+    SPEEDSTER_SOURCE_COMMIT_SHA=${SPEEDSTER_SOURCE_COMMIT_SHA} \
+    SPEEDSTER_SOURCE_TREE_SHA=${SPEEDSTER_SOURCE_TREE_SHA} \
+    SPEEDSTER_BUILD_ID=${SPEEDSTER_BUILD_ID}
+
+LABEL org.opencontainers.image.source=${SPEEDSTER_SOURCE_REPOSITORY} \
+      org.opencontainers.image.revision=${SPEEDSTER_SOURCE_COMMIT_SHA} \
+      org.opencontainers.image.version=${SPEEDSTER_BUILD_ID} \
+      io.tenkings.speedster.source-tree=${SPEEDSTER_SOURCE_TREE_SHA} \
+      io.tenkings.speedster.capabilities="PREPARE_SIDE"
+
+WORKDIR /app
+COPY requirements.preparation.txt .
+RUN pip install --no-cache-dir --only-binary=:all: -r requirements.preparation.txt
+# Copy the complete CPU dependency closure explicitly. Neither the detector app
+# nor its SAM source, checkpoints, compiler probe or model dependencies ship.
+COPY preparation_app.py preparation_core.py preparation_evidence.py preparation_runtime.py preparation_security.py \
+     card_geometry.py color_geometry.py defect_math.py ./
+COPY preparation-entrypoint.sh /usr/local/bin/preparation-entrypoint
+RUN chmod 0555 /usr/local/bin/preparation-entrypoint
+
+USER 65532:65532
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/preparation-entrypoint"]
+CMD ["sh", "-c", "exec uvicorn preparation_app:app --host 0.0.0.0 --port \"${PORT}\" --workers 1"]
+
+FROM preparation AS preparation-test
+USER 0:0
+COPY requirements.preparation-test.txt test_preparation_cpu.py ./
+RUN pip install --no-cache-dir --only-binary=:all: -r requirements.preparation-test.txt
+USER 65532:65532
+ENTRYPOINT []
+CMD ["python", "-m", "unittest", "-v", "test_preparation_cpu"]
+
+FROM preparation AS release

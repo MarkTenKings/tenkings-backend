@@ -10,6 +10,130 @@
 
 This owner-approved document replaces the earlier Fable 5 draft as the current V2 planning authority. It incorporates Mark’s decisions, the verified V1 NFC and comps workflows, and the actual Speedster V2 completion contract. It is a product and architecture blueprint, not authorization to deploy, migrate, disable V1, or begin the later platform phases.
 
+### Owner-approved ATLAS direction — 2026-09-07
+
+Mark subsequently approved ATLAS Grading as the independent grading application direction, with Astra as a bounded preparation operator and trained humans retaining certification and explicit trusted-learning approval. Deterministic code continues to own evidence preservation, pixel measurements, grading/financial arithmetic, rendering and state transitions. Machine proposals never borrow current human completion/rescue authority and do not allocate certificates, activate maps, approve trusted lessons or execute commercial actions.
+
+The near-term application boundary is a dedicated ATLAS app and separate Vercel project in this repository, staff/grading at `app.atlasgrading.com` and public ATLAS content at `atlasgrading.com`, with separate route/environment/auth/release/monitoring boundaries. This narrowly supersedes the single existing Next.js application assumption below for the ATLAS grading surface. Ten Kings card-platform behavior, historic report/label/certificate identities, and issued card/NFC/QR URLs remain governed by this blueprint. Shared authoritative evidence/data and pure grading modules may be reused temporarily through scoped adapters; repository extraction is deferred. ATLAS issuer/certificate and any external-card ownership policy must be decided explicitly before issuance, not inferred from the Ten Kings house-card writer.
+
+Local implementation preparation includes strict machine/human contracts, immutable analysis revisions and approval/audit records, durable processing/lease/outbox/retry/budget design, synthetic offline evaluation, app dependency extraction design, and practical capture/review staffing. These are required for the accepted ATLAS preparation scope, not authorization to build a general job framework or begin later commercial phases. Small measured supervised/shadow evaluations precede unattended drafts or scale. Mock tests and signed historical artifacts cannot establish current grading accuracy, worker readiness or operational success.
+
+Source-evidence correction at `7bde06f65959e376e12725186d605cc91c67852b`: the implemented V2 sold-comps package uses SoldComps; the SerpAPI text in the original launch plan below is not a description of that implementation. This note records the discrepancy without authorizing another provider change. The canonical ATLAS contract/evaluation/app preparation records are `docs/atlas/CONTRACTS.md`, `docs/atlas/EVALUATION.md` and `docs/atlas/APP_EXTRACTION.md`. The session handoff records this dated amendment.
+
+#### Owner clarification — ATLAS review, public report and slab finishing, 2026-09-07 Pacific
+
+Mark clarified that the final output is an ATLAS graded report using his existing ATLAS grading system, with Astra operating most of the grading workflow. Completed machine-assisted drafts enter a human review queue. The human can quickly inspect the report, correct findings or other reviewable content, save the corrected revision, and approve that exact final report. Human approval makes the report public and moves the card to the approved/graded state. This approval remains separate from any permission to approve trusted learning. Astra does not replace the grading formulas or the final human approver.
+
+ATLAS slab finishing includes printing the label, programming and verifying an NFC tag linking to the approved report, and human assembly of the label, tag, card and slab followed by sonic welding. Software must make these steps easy and preserve their association with the approved card/report. The existing Dell/ACR1552U/F8215/GoToTags workflow below is the reuse starting point; current source requires a human Start Encoding action and physical tag handling. Automated job preparation or helper attestation does not prove physical assembly or welding. No change to Ten Kings ownership, inventory, wallet, historical tokens or existing NFC/report URLs is implied by this ATLAS clarification.
+
+Mark fixed the first acceptance batch at ten cards to assess the updated ATLAS system with the Astra operator before expansion. Local build work continues through this workflow. Exact pilot specimens, account capacity and bounded spending, current worker/storage/workstation readiness, and concrete operational release actions still require their actual inputs and verification. The implementation/acceptance checklist is `docs/atlas/COMPLETION.md`.
+
+No paid API/RunPod experiment, funding, push-triggered operational side effect, merge/deploy/restart, Production write/migration, service removal, or domain/DNS/Vercel/email/auth-routing change is authorized by this amendment. Those actions retain their exact reviewed operational approval gates. The original phase gates and explicit do-not-build constraints remain in force outside this narrow ATLAS scope.
+
+#### Owner clarification — MacBook grading workstation, 2026-09-08
+
+Mark uses a MacBook for ATLAS grading. The intended human grading, review, correction and approval workstation is the MacBook browser. Windows, PowerShell and the Dell NFC helper are not requirements for those actions. The earlier Dell/ACR1552U/F8215/GoToTags reuse direction concerns the physical NFC integration; it does not make Windows the ATLAS grading platform.
+
+The implemented native NFC helper remains Windows-specific. This clarification does not select the physical NFC workstation or establish macOS tag-encoding support. If tag encoding will also take place on the MacBook, a macOS device/signing adapter and actual hardware acceptance are required. Label printing is a browser workflow whose actual Mac/printer scale and fit still need verification. The Astra runner host is a separate deployment choice from the human's grading browser.
+
+#### Owner direction — integrated MacBook NFC with unchanged hardware, 2026-09-08
+
+Mark subsequently selected the MacBook for ATLAS NFC writing, reading and permanent locking, using the same ACS ACR1552U reader and FEIJU F8215 tags as the Windows workflow. Research and rework must target a first-party integrated flow that removes per-card GoToTags/account/app switching and external Start Encoding. This supersedes the earlier unselected physical-workstation assumption and Dell reuse as the target ATLAS encoding implementation; historical Ten Kings behavior remains preserved.
+
+After exact human report approval and explicit association of the physical card with a bounded armed finishing session, ATLAS should automatically write, read back, permanently lock and record the tag when the human places it on the reader. Astra may coordinate eligible approved work and exceptions; deterministic code owns exact URLs, fixed device commands, lock verification and receipts. No model-supplied raw commands or invented physical success are permitted. Placement, removal, card/tag/slab assembly and welding remain physical human actions. Real F8215 command/lock qualification is required before production tag execution. The current research, implementation gaps and intended flow are recorded in `docs/atlas/MAC_NFC.md`; native automation is not yet operationally accepted.
+
+#### Owner clarification — customer website and private grading path, 2026-09-09
+
+Mark confirmed that `atlasgrading.com` is the customer-facing website for learning about ATLAS Grading and submitting cards. He requested an internal path such as `atlasgrading.com/admin` for the actual grading workflow. Use `/admin` as the private workspace release target. This supersedes the earlier `app.atlasgrading.com` staff URL target; it does not move private grading onto the customer home page or establish that customer submission functionality is already implemented.
+
+Preserve distinct public/staff application builds, server permissions and data projections. Staff routes and APIs under `/admin` require their own authenticated, authorized staff session; customer access does not grant grading authority. The shared hostname is one browser origin, so the earlier public/staff cross-origin isolation assumption no longer applies. The routing, assets, cookie scope, CSRF, deployment identity, native NFC origin bindings and additive database-policy changes must be implemented and verified together. Historical migration bytes, issued report URLs and prior receipts remain unchanged. Runtime still pins the old subdomain until that coordinated change is complete; a documentation correction is not live routing or login acceptance.
+
+The website release plan is `docs/atlas/WEBSITE_RELEASE.md`. Prioritize a supervised web grading/review release, then complete physical finishing within the same owner-selected ten-card acceptance cohort once the Mac NFC path is qualified. Human approval, trusted-learning separation, real worker/evidence acceptance and exact operational release/spend boundaries remain in force.
+
+#### Owner clarification — phone-code accounts and customer progress, 2026-09-09
+
+Customers have their own login and can track their submitted cards through grading, in the style of an order-progress tracker. Use one mobile-phone verification flow for customer signup and sign-in: enter the number, receive an SMS code, enter it, then enter the account. A first successfully verified number creates the customer account and session together; a returning verified number opens the existing account. Initial registration requires only phone verification. Collect the customer's name and shipping/return address later, as part of submitting cards for grading.
+
+The private `/admin` workspace has its own login using the same simple phone-code interaction. Customer registration never creates staff permissions; the verified number must independently belong to the approved staff roster for admin access. Preserve separate sessions, roles and access controls even when one person has both customer and staff access.
+
+The customer tracker exposes only that customer's submissions/cards and meaningful recorded progress. Grading, review, physical finishing and shipping statuses must come from the appropriate confirmed workflow events; neither elapsed time nor an Astra statement proves physical receipt, assembly or shipment. Public report approval remains a human decision. The approved customer experience and next implementation work are recorded in `docs/atlas/CUSTOMER_ACCESS.md`; customer account creation, tracking and later address collection are new implementation scope, not features already proven by the existing staff tests. Carrier, payment and later commercial integrations are not inferred from this login/profile clarification.
+
+#### Owner clarification — both submission channels, 2026-09-09
+
+During the website build Mark explicitly selected **both authorized-dealer drop-off and mail-in submissions**. This supersedes the dealer-only/no-mail policy in the earlier public ATLAS website draft. Let customers choose their intake method when creating a submission and preserve it with that submission's confirmed address. Actual dealer locations, mailing destinations, carrier/payment integrations and service commitments require their real configured information. The draft's 48-hour claim is not a customer-tracker timer or a newly confirmed guarantee. Continue to derive status from recorded work and explicit physical receipt/shipping actions.
+
+#### Owner direction — parallel website implementation and pilot, 2026-09-09
+
+Mark explicitly requested fresh Astra MAX agents to build the `/admin` routing update and customer account/tracking implementation in parallel, followed by the live website pilot. This authorizes that scoped implementation and website release work; another general permission request is not required. Actual account access, an approved staff phone, bounded SMS/worker/model spending, the same ten-card cohort and current worker/hardware evidence still require their real inputs. Do not trigger unrelated Ten Kings deployments or infer an expanded commercial/physical pilot from source publication. The concrete three-project release procedure and exact-source verification are recorded in `docs/atlas/WEBSITE_DEPLOYMENT.md`.
+
+#### Owner clarification — admin priority, homepage continuity and U.S. phone entry, 2026-09-09
+
+After completing live customer SMS sign-in, Mark prioritized entering the ATLAS admin screens to test card grading and the Astra operator before further customer-submission iteration. Keep the established ATLAS marketing homepage design when connecting the live account/admin applications; the simpler pilot entry page is not its intended replacement.
+
+Mark explicitly requested that users not have to type `+1` before a U.S. mobile number. Both sign-in forms should accept the ordinary10-digit number, display U.S. as the default and add `+1` automatically; common phone formatting should resolve to the same canonical number. Preserve explicit international country codes and all existing staff approval, customer identity, rate-limit and spending boundaries. This changes input convenience, not who may sign in or receive pilot SMS.
+
+#### Owner clarification — complete grading workspace and fresh-photo pilot, 2026-09-09 Pacific
+
+After successfully signing back into the live staff workspace, Mark selected **brand-new card photographs for all ten pilot cards**, superseding his earlier answer selecting saved Speedster captures. Do not substitute historical captures for this acceptance cohort. The pilot must exercise adding cards as well as grading and review.
+
+Mark requires the complete grading workflow inside ATLAS, starting with adding Front/Back photos. The human can operate every grading stage personally or let Astra operate while watching the recorded work. Show the inspected images/regions, observations and finding changes, deterministic measurements and report changes, and the current stage. Preserve Astra's original proposals and subsequent human corrections so missed findings and incorrect decisions can be compared during the pilot. Observability means recorded actions and evidence; it does not imply access to private model reasoning or invented progress. Human grading continues to use the existing deterministic scoring and evidence tools.
+
+The live review queue is only one stage of this requested workspace. Existing Speedster capture/geometry/centering screens and ATLAS correction/report tools are implementation sources, not proof that a complete ATLAS workflow is available. The initial Astra runtime has report/crop/proposal tools; capture-stage operation, workflow controls and watchable activity still need implementation and live acceptance. Exact human report approval and separate trusted-learning approval remain unchanged. The product requirements, current gaps and first-card acceptance sequence are recorded in [the grading workspace plan](../atlas/GRADING_WORKSPACE.md).
+
+Mark further clarified that humans supply the physical-card photographs and fill a **waiting-to-be-graded queue at the beginning**. Each queued item is one card with its associated Front/Back photographs. Astra or a human takes a card from that shared intake queue and operates the same grading workflow. The completed draft then enters a **separate final human review queue**. Human photo intake and final human approval are required; manual operation of the middle grading stages is an available choice. Support preparing multiple cards in advance, with visible readiness and current operator ownership. This queue requirement does not imply that Astra can photograph physical cards, certify its own results, or process beyond the admitted pilot/budget.
+
+
+#### Owner clarification — fast photo intake and Astra MAX activation, 2026-09-10 Pacific
+
+During live testing Mark explicitly requested minimal card intake, activation of Astra now, and fresh Astra MAX implementation agents. Front and Back photographs plus confirmation that they show the same physical card are sufficient to queue a card; a short label is optional. Astra may propose identity from the evidence during grading. Preserve verified uploads, recoverable drafts and original-photo retention, including HEIC imports.
+
+The first verified card may begin the supervised pilot immediately after its actual runtime and spending controls are ready. Queue capacity remains ten cards and the initial processing limit remains one distinct card; assembling all ten cards before starting the first is not required. Keep intake available while that first card is tested. Merely entering Waiting to grade does not dispatch paid work: the human starts Astra from the card, with step mode available for supervised testing. Final report approval remains an explicit human action.
+
+Use `gpt-6-astra` with `reasoning.effort=max` for the ATLAS operator and explicitly requested fresh build agents. Mark's Codex usage reset does not reset the existing ATLAS provider budget, reservations or pilot expiry. Preserve the original $100 total allocation, existing partitions, all known or uncertain liabilities and deterministic grading authority. This direction authorizes the scoped fixes and live activation; another general permission request is not required.
+
+#### Owner clarification — continuous Astra and live grading workspace, 2026-09-10 Pacific
+
+After the first live card stalled, Mark directed a recovery fix and a single primary **Start Astra** action that operates the card through Photos, Identity, Preparation, Centering, Inspection and Report, then hands the draft to Human review. Step mode remains an optional control. Known local tool errors should produce recoverable recorded outcomes; uncertain paid requests must not be blindly repeated. The current pilot and spending limits remain unchanged while the first card is validated.
+
+Mark also approved a premium, on-brand game-like staff workspace for both operators and observers: visibly completed stages, an illuminated current stage, a live action/evidence feed and controller, and durable per-stage and total active-work timing. The clock stops while a completed draft waits for human review and resumes only when a human explicitly picks it up; pause/stall time is excluded. Historical stages with no independent measurement must not receive invented durations. Observers can watch without taking control. This visual direction does not gamify scores or alter deterministic grading, human approval or physical finishing authority.
+
+#### Owner clarification — rapid mobile intake and automatic Astra pickup, 2026-09-10 Pacific
+
+Mark explicitly selected the **staff intake** experience demonstrated by Ten Kings Add Inventory: rapid sequential Front/Back photographs directly from an iPhone while signed into ATLAS, a camera that stays available for the next card, and the existing file-library/HEIC alternative. Reuse the proven concurrent photo preparation, Google Vision OCR and Astra structured-identification approach through ATLAS-owned evidence, authentication and accounting. Populate category and applicable identity fields from the current pair without overwriting staff corrections; propagate accepted identity to the grading report and label data. Retain full-resolution grading evidence and use separately derived smaller images for identification. Inventory's 1,400-pixel JPEG is not a replacement for grading originals, and its fast identification settings must remain separate from the MAX grading-operator policy.
+
+The normal successful flow should move a verified Front/Back pair automatically into the grading queue and let available Astra capacity automatically claim and process it. This supersedes the earlier mandatory separate draft confirmation and human **Start Astra** requirement for this default staff flow. Preserve physical-pair association through the capture interaction and retain recoverable incomplete work internally; users should not have to navigate a draft queue or technical request-recovery screen to complete ordinary intake. Manual controls remain available. Show real upload, identification, queue and grading progress, and recover session/network interruptions without lost photos or duplicate paid work. Do not claim instantaneous latency without measurement.
+
+Mark requested a fresh independent `gpt-6-astra` / `max` lead task with three to four fresh Astra MAX subagents to own the implementation, deployment and actual live acceptance. Existing spending, pilot and final human-approval boundaries remain in force; this clarification changes intake and dispatch interaction, not deterministic grading or certification authority. Validate the original retained card and the complete mobile/photo-to-human-review flow before reporting it ready. The outgoing handoff is `docs/handoffs/2026-09-10_ATLAS_FAST_INTAKE_FRESH_LEAD.md`.
+
+#### Owner clarification — remove SMS test limits, 2026-09-10 Pacific
+
+After the temporary staff SMS allowance prevented sign-in, Mark explicitly instructed: “we dont need to have sms test limits, so you can remove those.” Staff and customer sign-in must no longer stop because a temporary SMS request count, reserved dollar amount or seven-day SMS test window has been reached. This supersedes the SMS portion of the earlier pilot spending restrictions and the proposed redistribution of unused customer allowance. Preserve every historical SMS reservation and receipt; removing a limit does not refund or erase prior exposure.
+
+Keep ordinary phone verification, approved staff access, the current customer destination admission, provider/control bindings, idempotency, session and CSRF protections, and normal authentication rate limits. This direction does not widen the phone roster or change the $90 model/worker/infrastructure budget, grading cohort/expiry, deterministic grading, or human report-approval requirements. Source implementation and actual deployed sign-in acceptance must still be recorded separately.
+
+#### Owner clarification — remove processing dollar limits, 2026-09-11 Pacific
+
+During first-card recovery Mark explicitly instructed: “dont worry about the budget. remove the budget constraint as it might be getting in the way of progress.” ATLAS application dollar ceilings for model, image-identification, worker and infrastructure processing must no longer block this authorized workflow. This supersedes the dollar ceilings and partitions in the earlier ATLAS pilot instructions. Implement an explicit non-enforcing mode rather than inventing a very large allowance. This instruction does not itself alter external provider-account limits.
+
+Preserve all request reservations, provider usage, invoice evidence and known or uncertain liabilities as actual accounting history. Removing a ceiling does not prove an unknown request failed, authorize blind duplicate dispatch, release its historical charge or establish free usage. Keep the original card cohort, distinct-card acceptance scope, pilot expiry, queue/concurrency/attempt limits, deterministic grading and exact final human report approval, subject to the later owner-directed test clearance below. Source changes, deployed enforcement and complete live grading acceptance must be recorded separately. Deployment evidence — September 11, 10:10 UTC: G source `3f341e64531ea231ad262a3816aecefd9c5cbdc7` is serving, both additive migrations are verified, and the explicit `ACCOUNTING_ONLY` policy is active. The original unresolved request and all accounting remain intact; complete live grading and physical capture acceptance are still pending. See `docs/atlas/WEBSITE_RELEASE.md` and `docs/handoffs/SESSION_LOG.md` for actual receipts. At this instruction the observed conservative exposure was $33.9257, below the previous $90 ceiling; the current stalled request has no saved result, so budget removal alone is not its recovery.
+
+### Owner-directed clearance of the old ATLAS test — September 11, 2026
+
+Mark superseded original-card recovery: “i do not need to recover that Charmander card. Clear it and delete it whatever you need to do to clear it fastest and move forward.” The original Charmander and its duplicate draft no longer need recovery or inclusion in the active test workspace. The implemented reversible clearance selects fresh cohort `0315c8fa-ba4a-41ec-9c8d-d7aac58d5a4a` on the workspace, source and identification controls. It retains the same accounting pilot, expiry, queue capacity, one-card processing allowance, G runtime, dollar-limit removal and all historical request/receipt/cost rows. The next real photo pair receives its own exact card admission. This owner direction does not approve a report or authorize unrelated card, inventory or historical-accounting deletion. The active queue clearance is verified in `docs/atlas/WEBSITE_RELEASE.md` and `docs/handoffs/SESSION_LOG.md`; fresh phone capture and grading acceptance remain to be demonstrated.
+
+### Owner-requested removal of the blocking request-recovery panel — September 11, 2026
+
+After real iPhone capture of Ja Morant and Jalen Brunson, Mark explicitly requested repair of Start Astra and removal of the yellow saved-request/recovery panel and repeated alternate-browser sign-in loop. Ordinary staff actions must reconcile their exact retained request automatically; a proven pre-dispatch refusal must not trap the user in recovery. Offer Start only when the actual server admission is ready. Unknown paid work still retains its original request identity and accounting, and a real expired session may require ordinary sign-in.
+
+Implementation evidence for this incident: Ja Morant is now exactly admitted and has three saved/applied inspection responses. Its valid 10.2 MB retained image continuation exposed an inconsistent 4 MiB dispatcher limit, which must use the existing 12 MiB request bound. The compatible successor release also needs to carry this fully settled, expired-lease run into a paused state with its original photos, inputs, completed steps and costs intact. The planned narrow deployment-maintenance transaction is an administrator action with an immutable audit, not a human grading approval or fabricated recovery session. It may preserve the remaining execution-time allowance by excluding only the verified outage after lease expiry, bounded by the unchanged original pilot expiry and maximum run duration. A subsequent ordinary human Resume creates the real continuation command. This implementation note does not authorize adoption of unresolved requests or changes to grading, cohort, financial history, certification, or unrelated cards; deployment and complete live acceptance remain separately evidenced in the session log.
+
+
+### Owner direction — fresh workspace and ordinary card admission, September 11, 2026
+
+Mark canceled recovery or continuation of every current ATLAS test card, including Ja Morant, Jalen Brunson and the earlier Charmander. Clear the active workspace to zero through the existing reversible workspace/source/identification cohort selection, preserving all historical card, photo, run, request, receipt, audit and accounting evidence. The already deployed H release remains the starting point; do not repeat its deployment or require an old-card Resume.
+
+A newly saved, verified Front/Back pair in the active workspace must enter normal Astra processing without staff manually inserting its UUID into a test roster. This supersedes the earlier per-card manual admission requirement. Implement automatic admission through the existing bounded intake/dispatch controls, retaining exact verified-pair provenance, active-cohort isolation, the original pilot expiry and one-card acceptance scope, queue/concurrency/attempt limits, ACCOUNTING_ONLY accounting and final human report approval. Verify actual Astra processing of a fresh real card; deployment or synthetic checks alone do not complete this request.
+
 ---
 
 ## 1. Executive Decision
@@ -20,7 +144,7 @@ Ten Kings will build a clean V2 card platform beside V1.
 - **The full V2 picture is designed now.** This prevents Speedster from creating another temporary card structure that must be replaced later.
 - **Every real completed Speedster grade becomes the permanent V2 card.** Speedster will not create V1 `CardAsset` or `Item` records.
 - **V1 becomes a frozen supply system, not a deleted system.** It stops creating new cards and packs after cutover, but old customer collections, reports, NFC/QR URLs, Live Rips, shipping rights, and buyback rights continue working.
-- **The V2 card platform starts small:** six new tables for the complete currently approved scope, one write module for lifecycle records, no copied Speedster media, no NFC-tag inventory table, no comps table, and no mutable inventory counters.
+- **The V2 card platform starts small:** six core lifecycle/reference tables plus the narrowly approved physical-evidence journal in Section 3.5, one write module for lifecycle records, no copied Speedster media, no NFC-tag inventory table, no comps table, and no mutable inventory counters.
 
 The execution order is:
 
@@ -95,6 +219,8 @@ Exactly one module, `card-platform-v2`, owns writes to:
 - `PackTypeV2`
 - `PackV2`
 - `ShipmentV2`
+- `CardInventoryEventV2` — the 2026-09-07 physical-evidence amendment below
+- `InventoryWorkflowEventV2` — the September 8 purchased-lot/loading-batch evidence journal below
 
 Every admin page, API route, payment webhook, NFC completion, online machine, DIRECT sale, buyback, and shipping action calls this module. Nothing else writes these tables directly.
 
@@ -193,6 +319,52 @@ The following remain in place unless a later approved blueprint explicitly chang
 
 ---
 
+### 3.5 Owner-approved physical inventory evidence amendment — 2026-09-07
+
+Mark explicitly authorized the complete local build of a durable V2 physical inventory source and read-only Financial Story pull. This is a narrow exception to the prior physical-evidence/build-order deferral; it does not declare Speedster, P1/P2, kiosk automation, or customer commerce accepted. The September 7 pass performed no deployment, production migration, backfill, real inventory write, server restart, commit or push. The subsequent September 8 completion/activation request is recorded in Section 3.6; do not treat the historical local-only scope as a fresh build-permission requirement.
+
+Add one table, `CardInventoryEventV2`, owned exclusively by `packages/database/src/cardPlatformV2.ts`. Its immutable, content-hashed events document opening/acquisition, one-card packing/unpacking, custody movements, successful physical sales, and explicit corrections. A transaction-scoped PostgreSQL lock assigns committed sequence numbers using `MAX + 1`; rollback consumes no number. There is no mutable stock counter. Permanent-card ownership/lifecycle/location projections and any ownership transfer are committed with their physical evidence, with database append-only and projection guards. Existing graded-card, label, report, media, identity-correction, comps, NFC, V1, wallet, and payment code is preserved.
+
+The source accepts exact permanent V2 card IDs, one-card physical pack IDs, acquisition lots/cycles, separately sourced product IDs, and explicit custody evidence. `machine:<external-device-id>` is independent of the existing Location UUID. Multiple devices can occupy one Location and multiple products/batches can occupy one device. Neither identity is inferred from names, prices, grades, market values, recipes, or HAHA/Location resemblance. The launch custody-to-Location binding is immutable; moving the same machine to a new site requires a separately reconciled custody-identity cutover or a later relocation extension, never silent rebinding.
+
+Only house inventory and documented anonymous `EXTERNAL` transfers are included. An operator-recorded sale requires explicit successful-payment and completed-dispatch evidence; this is evidence entry, not payment collection, vend control, fulfilment discovery, or a claim that the source verifies external documents. Refunds document money only. Returns/reacquisitions require sourced house title, and do not initiate TKD/cash buyback. Account-owned vault/shipping cards, V1 stock, aggregate ungraded lots, multi-card packs, shrinkage/loss, customer shipping/buyback/claims, machine hardware identification, NFC check-in, and automatic sale synchronization remain excluded. Physical pack assignment is recorded in this journal; it does not implement or replace `PackV2`/`PackTypeV2` commerce.
+
+Acquisition components preserve permanent identity, lot, acquisition cycle, and exact integer cents or an explicit unknown reason. Price, valuation, expected margin, and recipe targets never become cost. The financial wire format is the strict schema-v1 contract in `tk-financial-story/ledger-core/inventory/contract.ts`; `stock_id` is the originating opening/receipt/pack event ID. Actor, recording time, and global source sequence are server-owned. Export `GET /api/integrations/financial/inventory-events` is authenticated by a separate read-only bearer capability, fixes its high-water snapshot across pages, caps results, and rejects gaps/hash/schema drift. It grants no admin/write access. The financial app pulls outbound; no webhook or financial credential is introduced here.
+
+The implementation/runbook is [V2 physical inventory evidence](V2_PHYSICAL_INVENTORY_EVIDENCE_20260907.md). The exact reviewed SQL is now prepared for publication in Prisma migration `20260907190000_card_inventory_events_v2`, with the original proposal bytes retained for comparison. The purchased-lot journal is prepared as `20260908190000_inventory_workflow_events_v2`. Publication preparation is not production schema activation; release still requires target-environment verification and real machine/product/batch evidence under Mark's September 8 activation authority. Empty history never proves zero stock or complete coverage.
+
+---
+
+### 3.6 Owner-required purchased-lot and machine-batch workflow — 2026-09-08
+
+Mark directs completion of inventory-to-Story costs, inventory controls, connection activation and end-to-end proof. The operational entry point must precede grading: employees receive unprocessed purchases at HQ, then process/pack and deliver stock to machines. Processing state, planned assignment and physical custody are distinct. Purchases are bulk lots of about 500–2,000 cards at one total cost or individual cards at documented individual costs. Intended selling price is separate from acquisition basis and from actual sale proceeds.
+
+Exact fulfilled pack/card identity is not available today; RFID is future. Machine/product sales quantities and stocking times, with explicit vault-door loading assignments, must support loading-batch assessment without fabricating individual card sales. A fully reconciled batch can establish aggregate sold cost; partial mixed-cost consumption and cross-month cost timing remain unknown or explicitly allocated. Prior stock, overlapping loads, returns and removals must be accounted for. No automatic FIFO, valuation-derived cost, target-margin substitution or invented machine mapping is permitted.
+
+This requirement extends the earlier ungraded-lot/build-order deferral, not the permission to rewrite legacy V1 identities, duplicate stock writers, execute machine hardware/payment actions or change grading policy. Reuse appropriate intake/processing UI and identity links while documenting the new acquisition/stock lineage before persistent integration. Full raw receiving, source batch storage/export and guided controls are now implemented and tested in the isolated source candidate; the financial release coordinator records its separate integration and Story coverage proof. Actual release still requires verified compatible artifacts/schema, scoped credentials and the normal applicable checks; isolated tests do not establish real stock completeness.
+
+The persistent implementation is specified in [purchased lots and loading-batch workflow](V2_PURCHASED_LOT_WORKFLOW_20260908.md). It adds one separate append-only `InventoryWorkflowEventV2` journal through the same sole writer. Its intake roster uses durable bookkeeping unit IDs, never fictitious graded cards; optional permanent-card links require the real eligible card, mutually exclusive exact-journal tracking, and exclusion from separate commercial lifecycle changes. Purchases, explicit complete-roster cost assignments and sourced cost corrections, processing, one-card packing, planned reservation, asking price, custody, loading, sales/count observations, returns/refunds and referenced completeness/attribution assertions are immutable evidence. Historical counted stock may establish its actual machine opening without invented prior HQ custody, a load or a zero count; later backdated evidence must preserve complete causal replay. The schema-v2 financial endpoint shares the platform source authority but has its own contiguous sequence and snapshot namespace. Aggregate sales never create identified unit-sale or ownership events. This records implementation scope authorized by the September 8 continuation; compatible release and real physical evidence remain required.
+
+The first acquisition foundation is [the pure cost-assignment preview](V2_ACQUISITION_COST_ASSIGNMENT_20260908.md): unassigned costs, individually documented amounts, or an explicitly chosen cent-conserving equal/per-card allocation. The helper itself neither records purchases nor reserves cost. Its persistent sole-writer integration now atomically binds the accepted lot, complete roster, method/version and evidence; later corrections cite and supersede the exact prior authority rather than duplicating or overwriting a purchase. The full Node 22 candidate production build and scoped disposable source tests pass as recorded in the implementation specification. No live source activation has occurred in this source assignment.
+
+The September 8 completion review also requires a bounded receipt-entry correction: an unused erroneous `purchase_received` may be cancelled by a new sourced `purchase_cancelled` event with original receipt identity and reason. Cancellation preserves the original lot/cycle/roster identities permanently, removes its available holdings and never creates a replacement purchase. Cost/price documentation may precede cancellation; reservation, processing, pack, custody or other physical use prevents it. Historical opening stock and used stock cannot be cancelled through this control. This narrow correction supersedes the local build freeze; source and financial tests and the compatible production build must be repeated before release.
+
+---
+
+### 3.7 Owner-approved held-stock corrections — 2026-09-09
+
+Mark's September 9 financial-completion authority requires usable corrections for known unsold stock already processed or moved. Extend the existing schema-2 `InventoryWorkflowEventV2` journal with additive `stock_corrected` evidence through the same sole `cardPlatformV2.ts` writer. Its payload contains selected `unit_ids`, a complete unique `expected_states` roster of `{unit_id,state_event_id}`, a sourced `reason`, and exactly one `correction`: processing stage/product, one-card pack membership or unpacking, or explicit current HQ/transit custody. The existing event envelope retains evidence, server actor, recording time and source sequence. No table or migration is added.
+
+Only explicitly identified, currently held units outside an active machine batch qualify. Exact latest physical-event anchors and complete causal replay reject stale or backdated corrections. Processing and custody remain separate facts. A packed product correction preserves the current pack; changing pack membership uses the packing variant, and retired pack IDs remain reserved. Receipt/lot/cycle identities, roster quantity, acquisition cents, permanent-card links and all prior evidence remain unchanged. A permanent-card link cannot be demoted below processed. The earlier unused-receipt cancellation remains available under its original restrictions.
+
+Aggregate machine sales cannot establish which card remains held. Loaded or otherwise ambiguous stock must first have actual identified physical removal/return evidence; neither that movement nor an exact sold identity may be invented to enable correction. Custody correction may identify only a sourced `hq:` with an existing Location or named `transit:` destination, preserving immutable custody-to-Location meaning. No HQ, machine, Location, product mapping, acquisition basis or ownership inference is authorized. No new HQ address is created or published by this control.
+
+The existing `/admin/physical-inventory` workspace provides **Correct held stock**, current-state/prior-event review and the ordinary preview/record/exact-retry path. Source and Financial Story independently validate the variant and preserve correction provenance through subsequent loading-batch and Story cost evidence. Both consumers must support the variant before operational use; it neither posts financial transactions nor invents a real pilot. The [holding-correction specification](V2_INVENTORY_HOLDING_CORRECTIONS_20260909.md) records isolated proof and release limits.
+
+The September 8 inventory release is now live: fresh September 9 metadata identifies main `e291263fda444f6147a995132f9aacfac9f8b69d` and READY Vercel deployment `dpl_FJxzTH4CEteY2xuQjADCrzii5zjn` serving `collect.tenkings.co`. This supersedes the earlier sections' historical candidate-only activation status, not their business-evidence boundaries. The September 9 correction candidate is prepared separately for normal exact-head checks and coordinator acceptance; this amendment does not claim it is deployed or that real stock coverage is complete.
+
+---
+
 ## 4. Target System Shape
 
 ```mermaid
@@ -204,7 +376,7 @@ flowchart LR
     D -->|"candidate results only"| E["Completed-card workspace"]
     E -->|"save selection/value"| B
     F["Dell or future NFC workstation"] -->|"signed verified result"| B
-    B --> G["Six V2 tables"]
+    B --> G["Six core V2 tables + physical evidence journal"]
     G --> H["/c/tk2c_... public card page"]
     G --> I["Inventory / packs / DIRECT"]
     J["Stripe and TKD"] -->|"idempotent payment reference"| B
@@ -216,9 +388,9 @@ There is one shared PostgreSQL database and the existing Next.js application. V2
 
 ---
 
-## 5. The Six New V2 Tables
+## 5. The Six Core V2 Tables
 
-The approved system uses six new tables for the complete currently approved V2 scope:
+The approved core system uses six new tables:
 
 1. `CollectibleCardV2`
 2. `CardOwnershipEventV2`
@@ -226,6 +398,8 @@ The approved system uses six new tables for the complete currently approved V2 s
 4. `PackV2`
 5. `CardIdentityCatalogV2`
 6. `ShipmentV2`
+
+Section 3.5 additionally authorizes the append-only `CardInventoryEventV2` physical-evidence journal. It is not an inventory counter, pack-sales engine, or second ownership ledger.
 
 There is intentionally:
 

@@ -4,8 +4,11 @@ import type { SpeedsterCardSide } from "../../../../../../lib/ai-grader-v2/contr
 import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
 import { headStorageObject, presignReadUrl } from "../../../../../../lib/server/storage";
 import { isAuthorizedSpeedsterOriginalStorageKey } from "../../../../../../lib/server/aiGraderV2IphoneCapture";
+import { resolveSpeedsterPreparationOriginalRead } from "../../../../../../lib/server/speedsterPreparationReads";
+import { SpeedsterPreparationConflict } from "../../../../../../lib/server/speedsterPreparationIntegrity";
 
 type Dependencies = {
+  resolveOriginalRead?: typeof resolveSpeedsterPreparationOriginalRead;
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
   findOwnedDraft: (sessionId: string, createdByUserId: string) => Promise<{ id: string } | null>;
   headOriginalObject: (storageKey: string) => Promise<{ byteSize?: number; contentType?: string }>;
@@ -13,6 +16,7 @@ type Dependencies = {
 };
 
 const dependencies: Dependencies = {
+  resolveOriginalRead: resolveSpeedsterPreparationOriginalRead,
   requireAdminSession,
   findOwnedDraft: (sessionId, createdByUserId) => prisma.aiGraderV2Session.findFirst({
     where: { id: sessionId, createdByUserId, workflowState: "DRAFT" },
@@ -65,10 +69,11 @@ export function createSpeedsterOriginalImageHandler(deps: Dependencies = depende
       })) return res.status(400).json({ message: "Original image storage key is invalid" });
       const session = await deps.findOwnedDraft(sessionId, admin.user.id);
       if (!session) return res.status(404).json({ message: "Speedster DRAFT session not found" });
+      const readKey = deps.resolveOriginalRead ? await deps.resolveOriginalRead({ sessionId, createdByUserId: admin.user.id, side }, requestedStorageKey) : requestedStorageKey;
 
       let object: Awaited<ReturnType<Dependencies["headOriginalObject"]>>;
       try {
-        object = await deps.headOriginalObject(requestedStorageKey);
+        object = await deps.headOriginalObject(readKey);
       } catch (error) {
         if (storageObjectNotFound(error)) {
           return res.status(409).json({ message: `The exact ${side.toLowerCase()} original image is not ready.` });
@@ -84,9 +89,10 @@ export function createSpeedsterOriginalImageHandler(deps: Dependencies = depende
       return res.status(200).json({
         side,
         storageKey: requestedStorageKey,
-        imageUrl: await deps.presignRead(requestedStorageKey),
+        imageUrl: await deps.presignRead(readKey),
       });
     } catch (error) {
+      if (error instanceof SpeedsterPreparationConflict) return res.status(409).json({ message: error.message });
       const response = toErrorResponse(error);
       return res.status(response.status).json({ message: response.message });
     }

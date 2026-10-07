@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param()
 
+. (Join-Path $PSScriptRoot "atlas-nfc-configuration.ps1")
+
 $script:NfcTaskName = "TenKingsAiGraderNfcHelper"
 $script:NfcConfigRoot = "C:\TenKings\config\ai-grader-nfc"
 $script:NfcConfigPath = "C:\TenKings\config\ai-grader-nfc\helper.json"
@@ -167,6 +169,7 @@ function Copy-NfcStableMaintenancePayload {
   New-Item -ItemType Directory -Path $maintenance -ErrorAction Stop | Out-Null
   foreach ($name in @(
       "ai-grader-nfc-helper-common.ps1",
+      "atlas-nfc-configuration.ps1",
       "configure-ai-grader-nfc-feiju-f8215.ps1",
       "export-ai-grader-nfc-workstation-public-key.ps1",
       "open-ai-grader-nfc-workstation.ps1",
@@ -519,6 +522,7 @@ function Read-NfcConfig {
   if ($config.schemaVersion -eq "tenkings-ai-grader-nfc-helper-config-v4") {
     Assert-NfcV2ServerTrustJson -Value ([string]$config.tenKingsV2ServerJobPublicKeysJson) | Out-Null
   }
+  Assert-AtlasNfcConfig -Config $config | Out-Null
   return $config
 }
 

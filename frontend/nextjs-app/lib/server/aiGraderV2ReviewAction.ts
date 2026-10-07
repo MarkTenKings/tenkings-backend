@@ -22,6 +22,7 @@ import {
   type SpeedsterSessionIdentity,
 } from "../ai-grader-v2/identity";
 import { SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION } from "../ai-grader-v2/learning-calibration-v2";
+import { parseSpeedsterLearningBankV2 } from "../ai-grader-v2/learning-v2";
 import {
   splitSpeedsterMapFilteredCandidates,
   type SpeedsterPinnedMapFilterInput,
@@ -57,6 +58,7 @@ import {
   speedsterFilterRemovedEvents,
   speedsterDetectorEvidenceEvents,
   speedsterMemoryLessonScanVerdictsEvent,
+  assertSpeedsterMemoryLessonSideEvidence,
   speedsterFindingActionEvents,
   speedsterFindingProposalEvents,
   speedsterServerTimingEvent,
@@ -73,7 +75,6 @@ import {
 } from "./aiGraderV2DetectTransport";
 import {
   SPEEDSTER_DETECTION_SIDE_CHECKPOINT_VERSION,
-  parseSpeedsterDetectorIdentityV1,
   speedsterDetectionOperationId,
   speedsterDetectionSha256,
   type SpeedsterDetectionAssetBinding,
@@ -83,7 +84,10 @@ import {
   type UnsignedSpeedsterDetectionSideCheckpoint,
 } from "./speedsterDetectionSideCheckpoint";
 import { HttpError } from "./adminSessionAuthority";
+import { speedsterCenteringFromConfirmedQuad } from "./speedsterCenteringAuthority";
+import { admitCurrentSpeedsterDetectorIdentity } from "./speedsterCurrentRelease";
 import { assertSpeedsterMapRevisionAppliesToIdentity } from "./speedsterCardTypeMaps";
+import { resolvePersistedSpeedsterPreparationCapture, speedsterPreparationSideAuthority, preparationOriginalReadKey } from "./speedsterPreparationCaptureEvidence";
 import {
   isAuthorizedSpeedsterOriginalStorageKey,
   isAuthorizedSpeedsterPreparedStorageKeys,
@@ -232,7 +236,6 @@ export type SpeedsterReviewActionDependencies = {
     checkpoint: UnsignedSpeedsterDetectionSideCheckpoint,
   ) => Promise<SpeedsterDetectionSideCheckpoint>;
   detectionDeadlineMs?: number;
-  requireDetectorIdentityV1?: boolean;
   now?: () => number;
 };
 
@@ -301,6 +304,7 @@ async function recordInstrumentationFailOpen(
 }
 
 function captureAuthority(value: unknown, sessionId: string, createdByUserId: string): PersistedCapture {
+  value = resolvePersistedSpeedsterPreparationCapture({ id: sessionId, createdByUserId, capture: value }).capture;
   if (!isRecord(value) || (value.cornerShape !== "SQUARE" && value.cornerShape !== "ROUNDED_3_18_MM")) {
     throw new Error("Speedster persisted capture is incomplete.");
   }
@@ -324,7 +328,7 @@ function captureAuthority(value: unknown, sessionId: string, createdByUserId: st
         sessionId,
         side: name,
       })
-      || !isAuthorizedSpeedsterPreparedStorageKeys({
+      || (!speedsterPreparationSideAuthority(candidate) && (!isAuthorizedSpeedsterPreparedStorageKeys({
         userId: createdByUserId,
         sessionId,
         side: name,
@@ -346,10 +350,14 @@ function captureAuthority(value: unknown, sessionId: string, createdByUserId: st
         userId: createdByUserId,
         sessionId,
         side: name,
-      })) {
+      })))) {
       throw new Error("Speedster persisted inspection evidence is not owned by this session.");
     }
-    return candidate as unknown as PersistedCaptureSide;
+    return {
+      ...candidate,
+      originalStorageKey: preparationOriginalReadKey(candidate)!,
+      centeringBorders: speedsterCenteringFromConfirmedQuad(candidate.centeringQuad, name),
+    } as PersistedCaptureSide;
   };
   return { cornerShape: value.cornerShape, front: side("FRONT"), back: side("BACK") };
 }
@@ -553,7 +561,7 @@ function reconcileMeasurementResponse(input: {
 function validatedDetectorSideResult(
   side: SpeedsterCardSide,
   rawResult: unknown,
-  requireDetectorIdentityV1: boolean,
+  memoryBank: unknown,
 ) {
   if (
     !isRecord(rawResult) || typeof rawResult.detectorVersion !== "string" ||
@@ -563,7 +571,6 @@ function validatedDetectorSideResult(
   }
   let defects: SpeedsterReviewFinding[];
   let detectorEvidence: SpeedsterDetectorEvidenceV1;
-  let detectorIdentity: SpeedsterDetectorIdentityV1 | null = null;
   try {
     defects = parseSpeedsterReviewFindings(rawResult.defects);
     detectorEvidence = parseSpeedsterDetectorEvidence(rawResult.detectorEvidence);
@@ -571,20 +578,28 @@ function validatedDetectorSideResult(
       throw new Error("Lesson verdict evidence belongs to the wrong card side.");
     }
     assertSpeedsterDetectorEvidenceBindsFindings(detectorEvidence, defects);
-    if (detectorEvidence.memoryDecisions.some(({ policy }) => policy === "LEGACY_MEMORY_V1")) {
-      throw new Error("Legacy Memory evidence cannot enter a current grade.");
-    }
-    if (rawResult.detectorIdentity !== undefined && rawResult.detectorIdentity !== null) {
-      detectorIdentity = parseSpeedsterDetectorIdentityV1(rawResult.detectorIdentity);
+    if (detectorEvidence.memoryDecisions.some(({ policy }) => policy !== "SAM_MEMORY_V2")) {
+      throw new Error("Current detector evidence must apply the admitted Memory V2 policy.");
     }
   } catch {
     throw new HttpError(502, `Speedster ${side} detector response or evidence is malformed.`);
   }
-  if (requireDetectorIdentityV1 && detectorIdentity === null) {
+  if (rawResult.detectorIdentity === undefined || rawResult.detectorIdentity === null) {
     throw new HttpError(502, `Speedster ${side} detector response lacks required release/model identity.`);
   }
-  if (detectorIdentity && detectorIdentity.detectorVersion !== rawResult.detectorVersion) {
+  let detectorIdentity: SpeedsterDetectorIdentityV1;
+  try {
+    detectorIdentity = admitCurrentSpeedsterDetectorIdentity(rawResult.detectorIdentity);
+  } catch {
+    throw new HttpError(502, `Speedster ${side} detector identity is not admitted by the current server release.`);
+  }
+  if (detectorIdentity.detectorVersion !== rawResult.detectorVersion) {
     throw new HttpError(502, `Speedster ${side} detector response has mismatched release/model identity.`);
+  }
+  try {
+    assertSpeedsterMemoryLessonSideEvidence({ side, memoryBank, evidence: detectorEvidence });
+  } catch {
+    throw new HttpError(502, `Speedster ${side} per-lesson Memory verdict coverage is malformed or incomplete.`);
   }
   if (defects.some((finding) => finding.side !== side)) {
     throw new HttpError(502, "Speedster detector response contains a finding on the wrong side.");
@@ -708,6 +723,9 @@ async function serverOwnedInitialization(
   }
   const learningStartedAt = now();
   const learningBank = recoveredSnapshots[0] ?? await deps.learningBankForDetect();
+  if (parseSpeedsterLearningBankV2(learningBank)?.calibration.status !== "CALIBRATED") {
+    throw new HttpError(409, "Speedster detection requires a valid calibrated frozen Memory V2 bank.");
+  }
   const learning = {
     bank: learningBank,
     durationMs: recoveredSnapshots.length > 0 ? 0 : boundedDuration(now() - learningStartedAt),
@@ -716,8 +734,47 @@ async function serverOwnedInitialization(
   if (recoveredMemoryHashes.size === 1 && !recoveredMemoryHashes.has(memorySnapshotSha256)) {
     throw new HttpError(409, "Speedster saved detector work does not match its Memory snapshot.");
   }
+  const restoredSides: Partial<Record<SpeedsterCardSide, ReturnType<typeof validatedDetectorSideResult>>> = {};
+  // Validate the entire recovered set before a missing side can invoke a worker.
+  // Otherwise an old BACK checkpoint would be discovered only after fresh FRONT work.
+  for (const side of ["FRONT", "BACK"] as const) {
+    const recovered = recoveredSides[side];
+    if (!recovered) continue;
+    const prepared = side === "FRONT" ? front : back;
+    if (
+      recovered.sessionId !== input.sessionId
+      || recovered.createdByUserId !== input.createdByUserId
+      || recovered.sessionRevision !== sessionRevisionIso
+      || recovered.operationId !== operationId
+      || recovered.captureBindingSha256 !== captureBindingSha256
+      || recovered.side !== side
+      || !prepared.binding
+      || !isDeepStrictEqual(recovered.sideBinding, prepared.binding)
+      || recovered.memorySnapshotSha256 !== memorySnapshotSha256
+      || !isDeepStrictEqual(recovered.memorySnapshot, learningBank)
+      || recovered.resultSha256 !== speedsterDetectionSha256(recovered.result)
+    ) {
+      throw new HttpError(409, `Speedster saved ${side} detector work does not match current authority.`);
+    }
+    const restored = validatedDetectorSideResult(
+      side,
+      recovered.result,
+      learningBank,
+    );
+    if (
+      recovered.detectorVersion !== restored.detectorVersion
+      || !isDeepStrictEqual(recovered.detectorIdentity, restored.detectorIdentity)
+    ) {
+      throw new HttpError(409, `Speedster saved ${side} detector release identity changed.`);
+    }
+    restoredSides[side] = restored;
+  }
+  if (restoredSides.FRONT && restoredSides.BACK
+    && !isDeepStrictEqual(restoredSides.FRONT.detectorIdentity, restoredSides.BACK.detectorIdentity)) {
+    throw new HttpError(409, "Front and Back Speedster detector release/model identities do not match.");
+  }
   const detectorTimings: Partial<Record<SpeedsterCardSide, Prisma.InputJsonObject>> = {};
-  const detectorIdentities: Partial<Record<SpeedsterCardSide, SpeedsterDetectorIdentityV1 | null>> = {};
+  const detectorIdentities: Partial<Record<SpeedsterCardSide, SpeedsterDetectorIdentityV1>> = {};
   const detectorEvidenceBySide: Partial<Record<SpeedsterCardSide, SpeedsterDetectorEvidenceV1>> = {};
   const requestTraceIdBySide: Partial<Record<SpeedsterCardSide, string>> = {};
   const attemptEvidence: SpeedsterDetectorAttemptEvidence[] = [];
@@ -798,35 +855,9 @@ async function serverOwnedInitialization(
           sessionId: input.sessionId,
           learningBank,
         };
-        const prepared = request.side === "FRONT" ? front : back;
         const recovered = recoveredSides[request.side];
         if (recovered) {
-          if (
-            recovered.sessionId !== input.sessionId
-            || recovered.createdByUserId !== input.createdByUserId
-            || recovered.sessionRevision !== sessionRevisionIso
-            || recovered.operationId !== operationId
-            || recovered.captureBindingSha256 !== captureBindingSha256
-            || recovered.side !== request.side
-            || !prepared.binding
-            || !isDeepStrictEqual(recovered.sideBinding, prepared.binding)
-            || recovered.memorySnapshotSha256 !== memorySnapshotSha256
-            || !isDeepStrictEqual(recovered.memorySnapshot, learningBank)
-            || recovered.resultSha256 !== speedsterDetectionSha256(recovered.result)
-          ) {
-            throw new HttpError(409, `Speedster saved ${request.side} detector work does not match current authority.`);
-          }
-          const restored = validatedDetectorSideResult(
-            request.side,
-            recovered.result,
-            deps.requireDetectorIdentityV1 === true,
-          );
-          if (
-            recovered.detectorVersion !== restored.detectorVersion
-            || !isDeepStrictEqual(recovered.detectorIdentity, restored.detectorIdentity)
-          ) {
-            throw new HttpError(409, `Speedster saved ${request.side} detector release identity changed.`);
-          }
+          const restored = restoredSides[request.side]!;
           if (restored.instrumentation) detectorTimings[request.side] = restored.instrumentation;
           detectorIdentities[request.side] = restored.detectorIdentity;
           detectorEvidenceBySide[request.side] = restored.detectorEvidence;
@@ -841,6 +872,7 @@ async function serverOwnedInitialization(
           }));
           return { detectorVersion: restored.detectorVersion, defects: restored.defects };
         }
+        const prepared = request.side === "FRONT" ? front : back;
         const requestNonce = randomUUID().replaceAll("-", "").slice(0, 12);
         for (const attemptNumber of [1, 2] as const) {
           const requestOperation = recoveryEnabled ? `${operationId}:${requestNonce}` : operationId;
@@ -856,8 +888,13 @@ async function serverOwnedInitialization(
             const accepted = validatedDetectorSideResult(
               request.side,
               rawResult,
-              deps.requireDetectorIdentityV1 === true,
+              learningBank,
             );
+            const otherSide = request.side === "FRONT" ? "BACK" : "FRONT";
+            const otherIdentity = detectorIdentities[otherSide] ?? restoredSides[otherSide]?.detectorIdentity;
+            if (otherIdentity && !isDeepStrictEqual(otherIdentity, accepted.detectorIdentity)) {
+              throw new HttpError(409, "Front and Back Speedster detector release/model identities do not match.");
+            }
             const timing = accepted.instrumentation;
             const transport = speedsterDetectTransportEvidence(rawResult);
             const serverDurationMs = boundedDuration(now() - attemptStartedAt);
@@ -887,7 +924,7 @@ async function serverOwnedInitialization(
               detectorVersion: accepted.detectorVersion,
               defects: accepted.defects,
               detectorEvidence: accepted.detectorEvidence,
-              ...(accepted.detectorIdentity ? { detectorIdentity: accepted.detectorIdentity } : {}),
+              detectorIdentity: accepted.detectorIdentity,
               ...(timing ? { instrumentation: timing } : {}),
             };
             if (recoveryEnabled) {
@@ -905,9 +942,7 @@ async function serverOwnedInitialization(
                 memorySnapshotSha256,
                 detectorVersion: accepted.detectorVersion,
                 detectorIdentity: accepted.detectorIdentity,
-                detectorIdentitySha256: accepted.detectorIdentity
-                  ? speedsterDetectionSha256(accepted.detectorIdentity)
-                  : null,
+                detectorIdentitySha256: speedsterDetectionSha256(accepted.detectorIdentity),
                 requestTraceId,
                 result: durableResult,
                 resultSha256: speedsterDetectionSha256(durableResult),
@@ -984,37 +1019,33 @@ async function serverOwnedInitialization(
       throw new HttpError(502, "Speedster detector version could not be established.");
     }
     if (
-      (detectorIdentities.FRONT === null) !== (detectorIdentities.BACK === null)
-      || (detectorIdentities.FRONT && detectorIdentities.BACK
-        && !isDeepStrictEqual(detectorIdentities.FRONT, detectorIdentities.BACK))
+      !detectorIdentities.FRONT || !detectorIdentities.BACK
+      || !isDeepStrictEqual(detectorIdentities.FRONT, detectorIdentities.BACK)
     ) {
       throw new HttpError(409, "Front and Back Speedster detector release/model identities do not match.");
     }
-    const detectorMemoryVersion = detectorIdentities.FRONT?.policy.memoryVersion;
-    if (detectorMemoryVersion === SPEEDSTER_MEMORY_LESSON_VERDICT_MEMORY_VERSION) {
-      const frontEvidence = detectorEvidenceBySide.FRONT;
-      const backEvidence = detectorEvidenceBySide.BACK;
-      const frontRequestTraceId = requestTraceIdBySide.FRONT;
-      const backRequestTraceId = requestTraceIdBySide.BACK;
-      if (!frontEvidence || !backEvidence || !frontRequestTraceId || !backRequestTraceId) {
-        throw new HttpError(502, "Speedster lesson verdict evidence is incomplete.");
-      }
-      try {
-        durableDetectorEvidenceEvents.push(speedsterMemoryLessonScanVerdictsEvent({
-          sessionId: input.sessionId,
-          createdByUserId: input.createdByUserId,
-          operationId,
-          memorySnapshotSha256,
-          detectorMemoryVersion,
-          memoryBank: learningBank,
-          sides: {
-            FRONT: { requestTraceId: frontRequestTraceId, evidence: frontEvidence },
-            BACK: { requestTraceId: backRequestTraceId, evidence: backEvidence },
-          },
-        }));
-      } catch {
-        throw new HttpError(502, "Speedster per-lesson Memory verdict coverage is malformed or incomplete.");
-      }
+    const frontEvidence = detectorEvidenceBySide.FRONT;
+    const backEvidence = detectorEvidenceBySide.BACK;
+    const frontRequestTraceId = requestTraceIdBySide.FRONT;
+    const backRequestTraceId = requestTraceIdBySide.BACK;
+    if (!frontEvidence || !backEvidence || !frontRequestTraceId || !backRequestTraceId) {
+      throw new HttpError(502, "Speedster lesson verdict evidence is incomplete.");
+    }
+    try {
+      durableDetectorEvidenceEvents.push(speedsterMemoryLessonScanVerdictsEvent({
+        sessionId: input.sessionId,
+        createdByUserId: input.createdByUserId,
+        operationId,
+        memorySnapshotSha256,
+        detectorMemoryVersion: SPEEDSTER_MEMORY_LESSON_VERDICT_MEMORY_VERSION,
+        memoryBank: learningBank,
+        sides: {
+          FRONT: { requestTraceId: frontRequestTraceId, evidence: frontEvidence },
+          BACK: { requestTraceId: backRequestTraceId, evidence: backEvidence },
+        },
+      }));
+    } catch {
+      throw new HttpError(502, "Speedster per-lesson Memory verdict coverage is malformed or incomplete.");
     }
     try {
       initialized = parseSpeedsterReviewFindings(scanned.defects);

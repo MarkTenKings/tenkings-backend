@@ -9,6 +9,7 @@ COPY frontend ./frontend
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @tenkings/database generate
+RUN pnpm --filter @atlas/grading-core build
 RUN pnpm --filter @tenkings/shared build \
   && pnpm --filter @tenkings/ai-grader-capture-helper build \
   && pnpm --filter @tenkings/browser-rip-client build \

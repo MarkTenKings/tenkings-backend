@@ -64,6 +64,9 @@ public sealed partial class TenKingsV2NfcCoordinator
         _timeProvider = timeProvider ?? TimeProvider.System;
         if (!serverTrust.Enabled || !options.IsConfigured) return;
         options.ValidateConfiguration();
+        if (File.Exists(ProtectedJobDirectory.ContainedFile(options.JobRoot, AtlasNfcCoordinator.StateFileName)) &&
+            File.Exists(ProtectedJobDirectory.ContainedFile(options.JobRoot, StateFileName)))
+            throw new NfcHelperException("atlas_nfc_recovery_required", "A protected ATLAS operation requires recovery; no legacy state was changed.", false, 503);
         _statePath = ProtectedJobDirectory.ContainedFile(options.JobRoot, StateFileName);
         AssertNoOrphanedV2TemporaryState();
         RecoverPersistedState();

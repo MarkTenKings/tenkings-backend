@@ -195,6 +195,9 @@ type Harness = {
   getOriginalUploadPlanCount: (side: "FRONT" | "BACK") => number;
   getPreparedUploadPlanCount: (side: "FRONT" | "BACK") => number;
   getPrepareCount: (side: "FRONT" | "BACK") => number;
+  getPreparationDraftSerialized: () => string | null;
+  getPreparationStatus: () => import("../lib/ai-grader-v2/image-service").SpeedsterPreparationStatus;
+  getPreparationRequests: () => Record<string, any>[];
   getColorRecoveryRequests: () => readonly Readonly<{
     side: "FRONT" | "BACK";
     mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
@@ -248,6 +251,12 @@ async function mountWorkspace(input: {
     signal: AbortSignal | null | undefined;
   }>) => Promise<Response>;
   captureDraftSerialized?: string;
+  preparationDraftSerialized?: string;
+  preparationFailureAfterAdoptionOnSide?: "FRONT" | "BACK";
+  preparationUnresolvedOnSide?: "FRONT" | "BACK";
+  preparationStatusFetch?: () => Response | Promise<Response>;
+  mapAuthorityFetch?: () => Response | Promise<Response>;
+  savedPreparationStatus?: import("../lib/ai-grader-v2/image-service").SpeedsterPreparationStatus;
   localStorageGetFails?: boolean;
   localStorageSetFails?: boolean;
   localStorageRemoveFails?: boolean;
@@ -334,6 +343,7 @@ async function mountWorkspace(input: {
       input.captureDraftSerialized,
     );
   }
+  if (input.preparationDraftSerialized) dom.window.localStorage.setItem("tenkings:speedster:preparation-draft:v1:speedster-session-lifecycle-test", input.preparationDraftSerialized);
   const storage = dom.window.localStorage;
   const storageGetItem = storage.getItem.bind(storage);
   const storageSetItem = storage.setItem.bind(storage);
@@ -380,6 +390,22 @@ async function mountWorkspace(input: {
   const originalUploadPlanCount = { FRONT: 0, BACK: 0 };
   const preparedUploadPlanCount = { FRONT: 0, BACK: 0 };
   const prepareCount = { FRONT: 0, BACK: 0 };
+  const preparationRequests: Record<string, any>[] = [];
+  const preparationStatus: import("../lib/ai-grader-v2/image-service").SpeedsterPreparationStatus = { workflowState: "DRAFT", sides: {
+    FRONT: { expectedHead: { sideRevision: 0, attemptId: null }, request: null, state: null, adopted: null },
+    BACK: { expectedHead: { sideRevision: 0, attemptId: null }, request: null, state: null, adopted: null },
+  } };
+  if (input.captureDraftSerialized) {
+    const draft = JSON.parse(input.captureDraftSerialized);
+    for (const side of ["FRONT", "BACK"] as const) {
+      const local = draft[side.toLowerCase()];
+      if (local?.preparation) preparationStatus.sides[side] = {
+        expectedHead: { sideRevision: local.preparation.sideRevision, attemptId: local.preparation.attemptId }, state: "ADOPTED", request: null,
+        adopted: { preparation: local.preparation } as import("../lib/ai-grader-v2/image-service").SpeedsterPrepareResponse,
+      };
+    }
+  }
+  if (input.savedPreparationStatus) Object.assign(preparationStatus, structuredClone(input.savedPreparationStatus));
   const colorRecoveryRequests: Array<Readonly<{
     side: "FRONT" | "BACK";
     mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
@@ -530,17 +556,31 @@ async function mountWorkspace(input: {
         colorGeometryReceipt: `recovered-${body.side.toLowerCase()}-${body.mode.toLowerCase()}-${colorRecoveryRequests.length}`,
       });
     }
+    if (url.endsWith("/preparation")) return input.preparationStatusFetch?.() ?? jsonResponse(preparationStatus);
     if (url === "/api/admin/ai-grader-v2/image/prepare") {
-      const body = JSON.parse(String(init?.body)) as {
-        side: "FRONT" | "BACK";
-        matColor: "BLACK" | "WHITE" | "MAGENTA";
-      };
-      prepareCount[body.side] += 1;
-      return input.prepareFetch?.({
-        side: body.side,
-        matColor: body.matColor,
-        signal: init?.signal,
-      }) ?? preparedResponse(body.matColor);
+      const body = JSON.parse(String(init?.body));
+      preparationRequests.push(body);
+      const side = body.side as "FRONT" | "BACK";
+      prepareCount[side] += 1;
+      if (input.prepareFetch) return input.prepareFetch({ side, matColor: body.matColor, signal: init?.signal });
+      const attemptId = crypto.randomUUID();
+      const sideRevision = preparationStatus.sides[side].expectedHead.sideRevision + 1;
+      const reference = { version: "speedster-prepared-evidence-v1" as const, sessionId: body.sessionId, createdByUserId: "admin-1", side,
+        attemptId, sideRevision, manifestId: crypto.randomUUID(), manifestSha256: "a".repeat(64) };
+      const outputs = Object.fromEntries(["RECTIFIED", "INSPECTION", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL"].map((role) => {
+        const key = `ai-grader-v2/admin-1/${body.sessionId}/prepared-evidence/${side.toLowerCase()}/${attemptId}/${role.toLowerCase()}-${"a".repeat(64)}.webp`;
+        return [role, { storageKey: key, readUrl: `https://read.example.test/${encodeURIComponent(key)}` }];
+      }));
+      const result = { ...await preparedResponse(body.matColor).json(), preparation: reference, preparationState: "ADOPTED",
+        outputs, frozenSourceReadUrl: `https://read.example.test/frozen-${side.toLowerCase()}`,
+        input: { sourceImageStorageKey: body.sourceImageStorageKey, corners: body.corners, matColor: body.matColor } };
+      preparationStatus.sides[side] = { expectedHead: { sideRevision, attemptId }, state: "ADOPTED", request: { ...body.preparationRequest, ...result.input }, adopted: result };
+      if (input.preparationUnresolvedOnSide === side) {
+        preparationStatus.sides[side] = { ...preparationStatus.sides[side], state: "RUNNING_OR_UNRESOLVED", adopted: null };
+        throw new TypeError("Synthetic uncertain preparation transport");
+      }
+      if (input.preparationFailureAfterAdoptionOnSide === side) throw new TypeError("Synthetic response loss after adoption");
+      return jsonResponse(result);
     }
     if (url === "/api/admin/ai-grader-v2/image/map-registration") {
       registrationCount += 1;
@@ -700,6 +740,7 @@ async function mountWorkspace(input: {
       return jsonResponse(registrationResult);
     }
     if (url.endsWith("/map-authority")) {
+      if (input.mapAuthorityFetch) return input.mapAuthorityFetch();
       return jsonResponse({ authority: { status: "HUMAN_REVIEW_WITHOUT_MAP" } });
     }
     throw new Error(`Unexpected fetch in lifecycle test: ${url}`);
@@ -775,6 +816,10 @@ async function mountWorkspace(input: {
     root.render(renderSession("speedster-session-lifecycle-test"));
   });
   const awaitPhotoReadiness = async () => {
+    if (input.preparationDraftSerialized && !input.captureDraftSerialized) {
+      await waitFor(() => Boolean(buttonByText(container, "Load saved preparation") || buttonByText(container, "Discard invalid saved preparation draft")), "Saved preparation must become visible");
+      return;
+    }
     if (input.captureDraftSerialized || input.localStorageGetFails) {
       await waitFor(
         () => Boolean(container.querySelector('[aria-label="Preserved capture draft"]')
@@ -806,6 +851,9 @@ async function mountWorkspace(input: {
     getOriginalUploadPlanCount: (side) => originalUploadPlanCount[side],
     getPreparedUploadPlanCount: (side) => preparedUploadPlanCount[side],
     getPrepareCount: (side) => prepareCount[side],
+    getPreparationDraftSerialized: () => storageGetItem("tenkings:speedster:preparation-draft:v1:speedster-session-lifecycle-test"),
+    getPreparationStatus: () => structuredClone(preparationStatus),
+    getPreparationRequests: () => preparationRequests,
     getColorRecoveryRequests: () => colorRecoveryRequests,
     getRegistrationCount: () => registrationCount,
     getRegistrationCountForSide: (side) => registrationCountBySide[side],
@@ -1490,13 +1538,15 @@ test("a stalled exact-source refresh releases geometry controls with visible ret
   try {
     await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
-    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await act(async () => harness.container.querySelector('img[alt="front trading card"]')!.dispatchEvent(new window.Event("error", { bubbles: true })));
+    await act(async () => fire(buttonByText(harness.container, "Refresh exact source image")!, "click"));
     await waitFor(
-      () => /exact source refresh timed out.*geometry are preserved/i.test(harness.container.textContent ?? ""),
+      () => /exact source refresh timed out/i.test(harness.container.textContent ?? ""),
       "Stalled exact-source refresh did not release to explicit recovery",
     );
     assert.equal(suppliedSignals[0]?.aborted, true);
-    assert.equal(buttonByText(harness.container, "Continue")?.disabled, false);
+    assert.equal(buttonByText(harness.container, "Refresh exact source image")?.disabled, false);
+    assert.equal(buttonByText(harness.container, "Source image unavailable")?.disabled, true);
     assert.equal(harness.container.querySelectorAll("[aria-label='Top left'], [aria-label='Top right'], [aria-label='Bottom right'], [aria-label='Bottom left']").length, 4);
     assert.equal(harness.getPrepareCount("FRONT"), 0);
   } finally {
@@ -1640,7 +1690,7 @@ test("Front targeted mat recapture preserves the complete Back side through the 
       },
     }, {
       originalUploadPlans: { FRONT: 1, BACK: 0 },
-      preparedUploadPlans: { FRONT: 2, BACK: 1 },
+      preparedUploadPlans: { FRONT: 0, BACK: 0 },
       prepares: { FRONT: 2, BACK: 1 },
       registrations: { FRONT: 2, BACK: 1 },
     });
@@ -1676,7 +1726,7 @@ test("Front targeted recapture exposes repeated registration interruption and ma
       return {
         ...accepted,
         colorGeometry: { ...accepted.colorGeometry, matColor: input.matColor },
-        colorGeometryReceipt: `${input.side.toLowerCase()}-${input.matColor.toLowerCase()}-${frontGeometryCalls}`,
+        colorGeometryReceipt: `fixture-${input.side.toLowerCase()}-${input.matColor.toLowerCase()}-${frontGeometryCalls}-receipt`,
       };
     },
     onRegistrationRequest: (side, sideAttempt) => {
@@ -1827,7 +1877,7 @@ test("late prepared-image success or failure for an old key cannot replace or po
       await waitFor(() => pending.length === 2, "Replacement Front prepared-key refresh did not start");
       const newKey = pending[1].storageKey;
       assert.notEqual(newKey, oldKey);
-      assert.match(newKey, /\/recapture-00000000-0000-4000-8000-000000000007\/rectified\.webp$/);
+      assert.match(newKey, /\/prepared-evidence\/front\/[a-f0-9-]+\/rectified-[a-f0-9]{64}\.webp$/);
 
       await act(async () => pending[1].resolve(jsonResponse({
         side: "FRONT",
@@ -2050,6 +2100,7 @@ test("Front and Back replacement registration interruptions reload with exact ta
         proposeGeometry: async () => geometryResponse(),
       });
       try {
+        assert.ok(buttonByText(resumed.container, "Resume preserved draft"), resumed.container.textContent ?? "");
         await act(async () => fire(buttonByText(resumed.container, "Resume preserved draft")!, "click"));
         await waitFor(() => Boolean(buttonByText(resumed.container, `${target}: Retry failed side`)),
           `${target} targeted interruption did not survive reload`);
@@ -2241,7 +2292,7 @@ test("Back targeted mat recapture preserves the complete Front side through the 
       },
     }, {
       originalUploadPlans: { FRONT: 0, BACK: 1 },
-      preparedUploadPlans: { FRONT: 1, BACK: 2 },
+      preparedUploadPlans: { FRONT: 0, BACK: 0 },
       prepares: { FRONT: 1, BACK: 2 },
       registrations: { FRONT: 1, BACK: 2 },
     });
@@ -3027,11 +3078,10 @@ test("localStorage get, set, and post-save remove failures stay explicit without
     await act(async () => fire(buttonByText(setFailure.container, "Set geometry")!, "click"));
     await waitFor(() => Boolean(setFailure.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
     await act(async () => fire(buttonByText(setFailure.container, "Continue")!, "click"));
-    await waitFor(() => Boolean(setFailure.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
-    await act(async () => fire(buttonByText(setFailure.container, "Continue")!, "click"));
     await waitFor(() => /localStorage set failed|could not be preserved/i.test(setFailure.container.textContent ?? ""),
       "Draft set failure was not visible");
-    assert.ok(setFailure.container.querySelector('[aria-label="front centering geometry"]'), "Set failure must retain active centering work");
+    assert.ok(setFailure.container.querySelector('[aria-label="front card geometry"]'), "Set failure must retain physical geometry");
+    assert.equal(setFailure.getPrepareCount("FRONT") + setFailure.getPrepareCount("BACK"), 0, "No dispatch before durable request preservation");
   } finally {
     await setFailure.cleanup();
   }
@@ -4014,6 +4064,7 @@ test("failed final capture save exposes Retry and resubmits one byte-identical b
     assert.ok(preSaveDraft);
     const compactSide = (side: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle["front"]) => ({
       originalStorageKey: side.originalStorageKey,
+      preparation: side.preparation,
       rectifiedStorageKey: side.rectifiedStorageKey,
       inspectionStorageKey: side.inspectionStorageKey,
       inspectionFrame: side.inspectionFrame,
@@ -4024,6 +4075,19 @@ test("failed final capture save exposes Retry and resubmits one byte-identical b
       centeringBorders: side.centeringBorders,
     });
     const submittedBundle = harness.bundles[0];
+    const exactRegistration = {
+      front: Object.fromEntries(Object.entries(submittedBundle.front.mapRegistration!).filter(([key]) => key !== "serverReceipt")),
+      back: Object.fromEntries(Object.entries(submittedBundle.back.mapRegistration!).filter(([key]) => key !== "serverReceipt")),
+    };
+    const projectedRegistration = structuredClone(exactRegistration);
+    projectedRegistration.front.homography = [1 + Number.EPSILON, 0, 0, 0, 1, 0, 0, 0, 1];
+    assert.equal(speedsterCaptureDraftMatchesCommittedSession(preSaveDraft, {
+      workflowState: "CAPTURED", mapRevisionId: activeMap.revisionId, mapRegistration: projectedRegistration,
+      capture: { cornerShape: submittedBundle.cornerShape, front: compactSide(submittedBundle.front), back: compactSide(submittedBundle.back),
+        preparationEvidenceCanonical: JSON.stringify({ version: submittedBundle.front.preparation!.version, sessionId: preSaveDraft.sessionId,
+          createdByUserId: submittedBundle.front.preparation!.createdByUserId, front: { reference: submittedBundle.front.preparation },
+          back: { reference: submittedBundle.back.preparation }, mapRegistration: exactRegistration }) },
+    }), true, "Exact capture history reconciles through ordinary JSON projection drift without rewriting current map columns");
     assert.equal(speedsterCaptureDraftMatchesCommittedSession(preSaveDraft, {
       workflowState: "CAPTURED",
       capture: {
@@ -4237,4 +4301,155 @@ test("CARD MAP boundary tool resets and requires exactly four human points befor
   } finally {
     await harness.cleanup();
   }
+});
+
+test("prepared evidence: a lost adopted response recovers by GET without dispatch or registration", async () => {
+  const h = await mountWorkspace({ proposeGeometry: async () => geometryResponse(), preparationFailureAfterAdoptionOnSide: "FRONT" });
+  try {
+    await act(async () => fire(buttonByText(h.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(h.container.querySelector('[aria-label="front card geometry"]')), "Front geometry missing");
+    await act(async () => fire(buttonByText(h.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(buttonByText(h.container, "Reload preparation status")), "Lost response recovery missing");
+    const journal = h.getPreparationDraftSerialized();
+    assert.ok(journal);
+    await act(async () => fire(buttonByText(h.container, "Reload preparation status")!, "click"));
+    await waitFor(() => /saved preparation was loaded/i.test(h.container.textContent ?? ""), "Saved adoption not reconciled");
+    assert.equal(h.getPrepareCount("FRONT"), 1);
+    assert.equal(h.getRegistrationCount(), 0);
+    assert.equal(h.getPreparationDraftSerialized(), journal);
+    await act(async () => fire(buttonByText(h.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(h.container.querySelector('[aria-label="back card geometry"]')), "Explicit Continue missing");
+    assert.equal(h.getPrepareCount("FRONT"), 1);
+  } finally { await h.cleanup(); }
+});
+
+test("prepared evidence: unresolved status never redispatches; explicit new attempt uses current CAS", async () => {
+  const h = await mountWorkspace({ proposeGeometry: async () => geometryResponse(), preparationUnresolvedOnSide: "FRONT" });
+  try {
+    await act(async () => fire(buttonByText(h.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(h.container.querySelector('[aria-label="front card geometry"]')), "Front missing");
+    await act(async () => fire(buttonByText(h.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(buttonByText(h.container, "Reload preparation status")), "Recovery missing");
+    const expected = h.getPreparationStatus().sides.FRONT.expectedHead;
+    await act(async () => fire(buttonByText(h.container, "Reload preparation status")!, "click"));
+    assert.equal(h.getPrepareCount("FRONT"), 1);
+    assert.equal(h.getRegistrationCount(), 0);
+    await act(async () => fire(buttonByText(h.container, "Start another preparation attempt")!, "click"));
+    await waitFor(() => h.getPrepareCount("FRONT") === 2, "Explicit attempt did not dispatch");
+    const [first, second] = h.getPreparationRequests();
+    assert.notEqual(first.preparationRequest.idempotencyKey, second.preparationRequest.idempotencyKey);
+    assert.deepEqual(second.preparationRequest.expectedHead, expected);
+  } finally { await h.cleanup(); }
+});
+
+async function seedPreparationJournal(unresolved = false) {
+  const h = await mountWorkspace({ proposeGeometry: async () => geometryResponse(),
+    ...(unresolved ? { preparationUnresolvedOnSide: "FRONT" as const } : { preparationFailureAfterAdoptionOnSide: "FRONT" as const }) });
+  try {
+    await act(async () => fire(buttonByText(h.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(h.container.querySelector('[aria-label="front card geometry"]')), "Front missing");
+    await act(async () => fire(buttonByText(h.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(buttonByText(h.container, "Reload preparation status")), "Recovery missing");
+    return { preparationDraftSerialized: h.getPreparationDraftSerialized()!, savedPreparationStatus: h.getPreparationStatus() };
+  } finally { await h.cleanup(); }
+}
+
+for (const unresolved of [false, true]) test(`prepared evidence: journal reload is read-only (${unresolved ? "unresolved" : "adopted"})`, async () => {
+  const seed = await seedPreparationJournal(unresolved);
+  const h = await mountWorkspace({ ...seed, proposeGeometry: async () => { throw new Error("Reload must not invoke geometry"); } });
+  try {
+    assert.equal(h.getPrepareCount("FRONT") + h.getPrepareCount("BACK"), 0);
+    await act(async () => fire(buttonByText(h.container, "Load saved preparation")!, "click"));
+    await waitFor(() => /saved source photos and preparation state loaded/i.test(h.container.textContent ?? ""), "Journal not resumed");
+    assert.equal(h.getPrepareCount("FRONT") + h.getPrepareCount("BACK"), 0);
+    assert.equal(h.getRegistrationCount(), 0);
+    assert.equal(h.getPreparationDraftSerialized(), seed.preparationDraftSerialized);
+  } finally { await h.cleanup(); }
+});
+
+test("prepared evidence: malformed and superseded journals have an explicit local discard", async () => {
+  const seed = await seedPreparationJournal();
+  seed.savedPreparationStatus.sides.FRONT.request!.idempotencyKey = crypto.randomUUID();
+  for (const malformed of [false, true]) {
+    const h = await mountWorkspace({ ...seed, preparationDraftSerialized: malformed ? "{broken" : seed.preparationDraftSerialized, proposeGeometry: async () => geometryResponse() });
+    try {
+      if (!malformed) {
+        await act(async () => fire(buttonByText(h.container, "Load saved preparation")!, "click"));
+        await waitFor(() => /changed in another tab/i.test(h.container.textContent ?? ""), "Supersession not visible");
+      }
+      assert.equal(buttonByText(h.container, "Set geometry"), undefined);
+      const authority = h.getPreparationStatus();
+      await act(async () => fire(buttonByText(h.container, malformed ? "Discard invalid saved preparation draft" : "Discard saved preparation draft")!, "click"));
+      await waitFor(() => Boolean(buttonByText(h.container, "Set geometry")), "Discard did not release photo controls");
+      assert.equal(h.getPreparationDraftSerialized(), null);
+      assert.deepEqual(h.getPreparationStatus(), authority);
+      assert.equal(h.getPrepareCount("FRONT"), 0);
+    } finally { await h.cleanup(); }
+  }
+});
+
+test("prepared evidence: full draft and journal resume allows one-sided recapture with strict sibling request preserved", async () => {
+  const seed = await mountWorkspace({ proposeGeometry: async (_token, input) => input.side === "FRONT" ? advisoryGeometryResponse("BLACK", "WHITE") : geometryResponse() });
+  let saved: { captureDraftSerialized: string; preparationDraftSerialized: string; savedPreparationStatus: ReturnType<Harness["getPreparationStatus"]> };
+  try {
+    await prepareBothSidesAndReachFrontCentering(seed);
+    saved = { captureDraftSerialized: seed.getCaptureDraftSerialized()!, preparationDraftSerialized: seed.getPreparationDraftSerialized()!, savedPreparationStatus: seed.getPreparationStatus() };
+  } finally { await seed.cleanup(); }
+  const descriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:https://fixture.test/replacement" });
+  const h = await mountWorkspace({ ...saved!, proposeGeometry: async () => geometryResponse() });
+  try {
+    await act(async () => fire(buttonByText(h.container, "Resume preserved draft")!, "click"));
+    await waitFor(() => Boolean(h.container.querySelector('[aria-label="front centering geometry"]')), "Full draft not restored");
+    await act(async () => fire(buttonByText(h.container, "Change Front mat / recapture Front — WHITE")!, "click"));
+    const file = h.container.querySelector<HTMLInputElement>('input[type="file"]:not([disabled])');
+    assert.ok(file, h.container.textContent ?? "");
+    Object.defineProperty(file, "files", { configurable: true, value: [jpegTestFile("recovered-front.jpg")] });
+    await act(async () => file.dispatchEvent(new window.Event("change", { bubbles: true })));
+    await act(async () => fire(buttonByText(h.container, "Set Front geometry")!, "click"));
+    await waitFor(() => Boolean(h.container.querySelector('[aria-label="front card geometry"]')), "Replacement geometry missing");
+    await act(async () => fire(buttonByText(h.container, "Continue")!, "click"));
+    await waitFor(() => h.getPrepareCount("FRONT") === 1, "Strict journal prevented replacement dispatch");
+    assert.equal(h.getPrepareCount("BACK"), 0);
+    const request = saved!.savedPreparationStatus.sides.BACK.request!;
+    assert.deepEqual(JSON.parse(h.getPreparationDraftSerialized()!).sides.BACK.request, { idempotencyKey: request.idempotencyKey, expectedHead: request.expectedHead });
+    assert.deepEqual(h.getPreparationRequests()[0].preparationRequest.expectedHead, saved!.savedPreparationStatus.sides.FRONT.expectedHead);
+  } finally {
+    await h.cleanup();
+    if (descriptor) Object.defineProperty(URL, "createObjectURL", descriptor); else Reflect.deleteProperty(URL, "createObjectURL");
+  }
+});
+
+for (const boundary of ["status", "expired-registration"] as const) test(`prepared evidence: delayed ${boundary} resume cannot cross a Card Map binding change`, async () => {
+  const map = { revisionId: "map-preparation-resume-fence", revisionHash: "a".repeat(64), scope: "FAMILY" as const, name: "Old fixture map" };
+  const seed = await mountWorkspace({ activeMap: map, proposeGeometry: async () => geometryResponse() });
+  let serialized: string;
+  let status: ReturnType<Harness["getPreparationStatus"]>;
+  try {
+    await prepareBothSidesAndReachFrontCentering(seed);
+    const draft = JSON.parse(seed.getCaptureDraftSerialized()!);
+    if (boundary === "expired-registration") draft.registrationRecordedAtMs.FRONT = Date.now() - 25 * 60 * 60 * 1000;
+    serialized = JSON.stringify(draft);
+    status = seed.getPreparationStatus();
+  } finally { await seed.cleanup(); }
+  let started = false;
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const h = await mountWorkspace({ activeMap: map, captureDraftSerialized: serialized!, savedPreparationStatus: status!,
+    proposeGeometry: async () => geometryResponse(),
+    ...(boundary === "status" ? { preparationStatusFetch: async () => { started = true; await pending; return jsonResponse(status!); } }
+      : { mapAuthorityFetch: async () => { started = true; await pending; return jsonResponse({}); } }),
+  });
+  try {
+    await act(async () => fire(buttonByText(h.container, "Resume preserved draft")!, "click"));
+    await waitFor(() => started, "Deferred boundary did not start");
+    await h.rerenderActiveMap({ revisionId: "map-preparation-resume-replaced", scope: "FAMILY", name: "New fixture map" });
+    await act(async () => { release(); await new Promise((resolve) => setTimeout(resolve, 10)); });
+    assert.ok(h.container.querySelector('[aria-label="Preserved capture draft Card Map mismatch"]'));
+    assert.equal(h.container.querySelector('[aria-label="front centering geometry"]'), null);
+    assert.equal(h.container.querySelector('[aria-label="Card Map registration interruption"]'), null);
+    assert.doesNotMatch(h.container.textContent ?? "", /draft was resumed, but/);
+    assert.equal(h.getPrepareCount("FRONT") + h.getPrepareCount("BACK"), 0);
+    assert.equal(h.getCaptureDraftSerialized(), serialized!);
+  } finally { release(); await h.cleanup(); }
 });

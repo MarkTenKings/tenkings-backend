@@ -1,0 +1,8 @@
+{
+  "name": "@atlas/site-router",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { "./routes": "./routes.mjs", "./proof": "./proof.mjs", "./server": "./server.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}

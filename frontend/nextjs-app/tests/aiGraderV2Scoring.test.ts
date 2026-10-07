@@ -10,6 +10,7 @@ import {
   calculateSpeedsterGrade,
   calculateWeightedDamagePercent,
   combineFrontBackScore,
+  measureSpeedsterCenteringBorders,
 } from "../lib/ai-grader-v2/scoring";
 
 test("centering converts opposite border measurements into exact percentages", () => {
@@ -17,7 +18,31 @@ test("centering converts opposite border measurements into exact percentages", (
   const [left, right] = calculateCenteringBalance(2.4, 2);
   assert.ok(Math.abs(left - 54.54545454545454) < 1e-12);
   assert.ok(Math.abs(right - 45.45454545454545) < 1e-12);
-  assert.deepEqual(calculateCenteringBalance(0, 0), [50, 50]);
+  assert.deepEqual(calculateCenteringBalance(0, 2), [0, 100]);
+});
+
+test("missing, negative, nonfinite and zero-total centering cannot award perfection", () => {
+  for (const pair of [[0, 0], [-1, 1], [-1, -1], [NaN, 1], [Infinity, 1], [1, -Infinity],
+    [Number.MAX_VALUE, Number.MAX_VALUE], [Number.MIN_VALUE, Number.MIN_VALUE]]) {
+    assert.throws(() => calculateCenteringBalance(pair[0], pair[1]), /centering requires/);
+    assert.throws(() => calculateCenteringScore({
+      leftMm: pair[0], rightMm: pair[1], topMm: 2, bottomMm: 2,
+    }), /centering requires/);
+    assert.throws(() => calculateCenteringScore({
+      leftMm: 2, rightMm: 2, topMm: pair[0], bottomMm: pair[1],
+    }), /centering requires/);
+  }
+});
+
+test("confirmed printed geometry derives the unchanged physical borders and centering score", () => {
+  const borders = measureSpeedsterCenteringBorders([
+    { x: 0.2, y: 0.1 }, { x: 0.95, y: 0.1 }, { x: 0.95, y: 0.9 }, { x: 0.2, y: 0.9 },
+  ]);
+  for (const [name, expected] of Object.entries({ leftMm: 12.7, rightMm: 3.175, topMm: 8.89, bottomMm: 8.89 })) {
+    assert.ok(Math.abs(borders[name as keyof typeof borders] - expected) < 1e-12);
+  }
+  assert.deepEqual(calculateCenteringBalance(borders.leftMm, borders.rightMm), [80, 20]);
+  assert.equal(calculateCenteringScore(borders), 5);
 });
 
 test("centering uses the worse axis and linearly interpolates published boundaries", () => {

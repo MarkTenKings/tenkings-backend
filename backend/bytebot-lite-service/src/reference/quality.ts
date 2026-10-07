@@ -9,12 +9,9 @@ type QualityResult = {
 
 const MIN_DIMENSION = 320;
 
-export async function computeQualityScore(imageUrl: string): Promise<QualityResult | null> {
+export async function computeQualityScore(buffer: Buffer): Promise<QualityResult | null> {
   try {
-    const response = await fetch(imageUrl);
-    if (!response.ok) return null;
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const image = sharp(buffer).rotate();
+    const image = sharp(buffer, { limitInputPixels: 32_000_000 }).timeout({ seconds: 10 }).rotate();
     const metadata = await image.metadata();
     const width = metadata.width ?? 0;
     const height = metadata.height ?? 0;

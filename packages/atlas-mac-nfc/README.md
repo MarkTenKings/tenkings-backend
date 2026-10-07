@@ -1,0 +1,65 @@
+# Native macOS NFC tools
+
+The `atlas-mac-nfc-probe` Swift/C CLI discovers one ACS ACR1552U PICC interface through Apple's installed PCSC.framework and inspects a tightly restricted Type 2 header. That executable remains read-only. The separate `atlas-mac-nfc-diagnostic` executable provides one fixed, manually supervised test-URI write; see [diagnostic scope](#controlled-diagnostic-writer). Neither tool establishes FEIJU F8215 identity, certifies full compatibility, determines a complete lock state or authorizes production finishing. No lock/authentication/reset APDU, generic APDU input, service, daemon, enrollment, key, network, database, or installer exists in this package.
+
+**Known limitation:** prior same-lot legacy observations included ISO-DEP classification. This probe deliberately does not inspect ISO14443-4/ISO-DEP tags. `unsupported_tag_atr` means the present tag is outside this narrow read gate; it is not evidence that macOS, the ACS reader or native software cannot support F8215. There is no alternate APDU fallback.
+
+Requires macOS 15+, installed Apple Command Line Tools with Swift 6. No package dependencies or downloads. Build output stays ignored under `.build`.
+
+```sh
+swift build --package-path packages/atlas-mac-nfc
+packages/atlas-mac-nfc/.build/debug/atlas-mac-nfc-tests
+python3 packages/atlas-mac-nfc/scripts/test-native.py
+python3 packages/atlas-mac-nfc/scripts/test-deadline.py
+packages/atlas-mac-nfc/.build/debug/atlas-mac-nfc-probe list
+```
+
+`list` never connects to a card or sends an application APDU. It recognizes either exactly one named PICC interface (excluding named SAM interfaces) or the exact Mac alias pair described below. Multiple matching PICC interfaces, unknown ACR1552 names, malformed names or excessive enumeration fail closed. It emits a normalized interface label/count, not reader serial-bearing names. Descriptive interface names require ACS, exact ACR1552 or ACR1552U, and PICC tokens; other device families are ignored. The separately recognized exact ACS Mac-driver pair `ACS ACR1552 1S CL Reader(1)` / `ACS ACR1552 1S CL Reader(2)` returns `reader_interfaces_found` with `candidateInterfaceCount: 2`. That result does not identify a PICC interface or assert a physical-reader count. Partial/duplicate/extra aliases remain ambiguous.
+
+After operator review, the explicit read-only command is:
+
+```sh
+packages/atlas-mac-nfc/.build/debug/atlas-mac-nfc-probe inspect
+```
+
+For that exact Mac alias pair, inspection first takes one zero-timeout PC/SC presence snapshot without connecting or sending a command. Exactly one candidate must be present with the documented Ultralight ATR, while the other is empty; busy/unavailable/ambiguous states, two present cards or an unsupported ATR stop before connection. Neither the enumeration order nor the alias number selects the interface. `interface_resolution` failures report the two candidates and `fixedReadAttempted: false`, without inventing a supported-reader count. This is narrow read-only selection, not station enrollment or authorization to write.
+
+Inspection then opens an exclusive PC/SC connection, checks the exact documented standard ACS ISO14443A-part3/MIFARE-Ultralight ATR (card code 0003 and valid checksum), and sends **only `FF B0 00 00 10`**: READ BINARY, page zero, sixteen bytes. Unsupported/alternate ATRs stop before that command. Reader-driver names and ATRs are never emitted. Disconnect uses LEAVE_CARD; there is no reset/reconnect or retry. PC/SC activation and reader polling still occur as part of connecting; this is not an RF-silent tool.
+
+Only an exact 18-byte successful response with valid seven-byte-UID BCC structure and conventional E1/10 Type 2 capability container is summarized. Bytes 1–9 (unique serial data, both checks and internal byte) are omitted completely; byte 0 is exposed only as the nonidentifying manufacturer code. No raw UID or UID hash is computed, returned, logged or persisted. The transient response exists in memory; owned buffers are cleared where possible, and the CLI disables core dumps. This is not a guarantee against privileged process-memory inspection or OS/driver logging.
+
+Output includes the four CC bytes, CC mapping version (not chip version), advertised data-area size/access and two **candidate** static-lock bytes. These are observations under a familiar Type 2 layout, not authoritative F8215 lock decoding. It reads no dynamic lock/configuration pages or NDEF payload. CC advertised read-only access does not prove permanent locking. A clone can imitate all observed fields. `qualification` always remains `not_established`. GET_VERSION is intentionally absent: no exact supported F8215 command/reader transport has been established. A tag rejected by the ATR/header gate remains unqualified; there is no fallback command.
+
+Inspection failures now include typed `failureStage` and boolean `fixedReadAttempted` when the execution path is known. Stages distinguish context establishment, connect, status, protocol/ATR validation, transmit, response/header validation, disconnect, and context release. The first failure is preserved even if cleanup also fails. `fixedReadAttempted: true` means the fixed SCardTransmit call was invoked; it does **not** prove RF delivery or read completion. For example, `no_tag` with `failureStage: connect` and `fixedReadAttempted: false` distinguishes initial detection failure from removal reported later by transmit or cleanup. The public output does not include raw PC/SC status values or exception details. Unknown failures and deadline termination do not invent a stage or claim no read occurred.
+
+The process has an independent native eight-second watchdog covering PC/SC connect/read/cleanup and blocked stdout. It exits **124** at deadline, without attempting diagnostic output that could itself block. Treat empty/truncated output or nonzero exit as an incomplete observation. Normal results are one bounded JSON object; reader discovery (including unresolved alias-pair discovery) or successful header inspection is exit 0, unavailable/ambiguous/unsupported/read failure is 2, invalid arguments 64, watchdog setup failure 70. No automatic retry, polling or background continuation occurs. Scheduling/suspension of the whole OS is outside a userspace deadline guarantee.
+
+The test executable uses injected reader responses only; the native C fixture replaces all PC/SC symbols with assertions and checks the sole APDU and cleanup. The deadline fixture blocks synthetic native work and stdout. XCTest is not required (the installed standalone CLT lacks it). Python is used only for standard-library test harnesses, never by the production executable.
+
+Primary references:
+
+- [ACS ACR1552U reference manual](https://www.acs.com.hk/download-manual/13475/REF-ACR1552U-Series-1.05.pdf): The official URL currently serves **Version 1.09** (retrieved 2026-09-08), despite its older filename. Section 5.3.1.1, page 32 defines the ATR: the accepted bytes `3B 8F 80 01 80 4F 0C A0 00 00 03 06 03 00 03 00 00 00 00 68` follow its standard 03/card-name 0003 table and TCK rule. Section 5.3.3.4, page 39 confirms READ BINARY with page address zero and length 10h. These commands are reader-specific; they do not identify the tag silicon.
+- [ACS driver v1.1.13 source](https://github.com/acshk/acsccid/blob/ac96e83057072ba1af30a6b40e62919f5095f9d4/src/ccid_usb.c): the M1 is a composite PICC/SAM device; USB interface 1 is SAM. Mac alias ordinals are not used as USB interface identities.
+- [ACS ACR1552U official support](https://www.acs.com.hk/en/driver/575/acr1552u-usb-nfc-reader-iv/): macOS/PC-SC support. Availability of a driver is not proof it is installed or needed on this Mac; this tool installs nothing.
+- Apple's actual SDK headers at `/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/PCSC.framework/Headers/{winscard,pcsclite}.h` are the ABI authority used by the build. [Apple-origin SmartCardServices source](https://github.com/smartcardservices/smartcardservices/tree/master/SmartCardServices/src/PCSC) provides public background.
+- [NXP NTAG213/215/216 datasheet](https://www.nxp.com/docs/en/data-sheet/NTAG213_215_216.pdf): seven-byte UID/BCC and conventional Type 2 header layout only. NXP data is **not** substituted for a FEIJU F8215 lock specification.
+
+Live observation on September 8, 2026: after driver installation and a separate documented restoration of disabled reader polling, this probe successfully read the owner-presented tag through the ACS Mac alias pair. It observed manufacturer code `1D`, CC `E1103E00`, 496 advertised data bytes and static-lock candidate bytes `0000`; it did not write/lock the tag or establish F8215 identity/lock semantics. The complete synthetic suite passes 45 scenarios (14 Swift, 29 C, 2 watchdog). See [reader setup evidence](../../docs/atlas/MAC_NFC_READER_SETUP.md). Reader-setting commands are absent from this package.
+
+Live qualification still needs trustworthy F8215 manufacturer/version/memory/lock evidence and the full production write path. No hosted or staff workflow is activated by this package.
+
+## Controlled diagnostic writer
+
+This separate executable is a hardware qualification tool for the owner's designated unused tag. It cannot take a report, custom URL, bytes, job, APDU or lock instruction. Its fixed URI is `https://atlasgrading.com/#nfc-mac-validation-20260909`; this is a test payload, not a created or validated public report. The website's response is outside this hardware test.
+
+`atlas-mac-nfc-diagnostic plan` is hardware-free. It prints the exact 56-byte padded NDEF TLV and write order: user pages 5–17, then page 4 last. `execute --journal /absolute/path/to/new-private-file.jsonl` is the mutating operation and must only run for an explicitly authorized, supervised test after reviewing that plan. It requires a new journal in an existing directory owned by the current user and not writable by group/others. The journal is created mode 0600 with exclusive/no-follow flags; creation and every record are synchronized, including `F_FULLFSYNC` before a native write can proceed. Existing files/symlinks are never overwritten. Keep all journals and results; an incomplete run is not automatically replayable.
+
+The exact observed Mac alias pair must resolve to one present supported tag and one empty interface. The writer obtains an exclusive connection, rechecks the strict ATR and observed sample profile (`1D`, valid BCCs, candidate static locks `0000`, CC `E1103E00`), and reads the first 64 user bytes. It requires an empty NDEF plus terminator (`03 00 FE`) and zeros throughout the remaining inspected region. Unexpected data stops before mutation. These checks limit the diagnostic scope; they are not silicon authentication or a complete memory/lock qualification.
+
+Only ACS READ BINARY and four-byte UPDATE BINARY are used. Every write is preceded by an in-memory full-header continuity check and flushed intent record, followed by a page readback. Later NDEF pages are written first so the old empty NDEF remains visible until page 4 commits the message. Final verification compares all 56 encoded bytes, eight unchanged trailing bytes and the original header. No page 0–3 write or lock/configuration command is available. The [ACS reference manual](https://www.acs.com.hk/download-manual/13475/REF-ACR1552U-Series-1.05.pdf), version 1.09 pages 39–40, documents these commands and the limited Ultralight/C page range; the diagnostic stays within that range.
+
+The eight-second native watchdog applies. A nonzero/124 exit, missing/truncated result, lost ACK, changed tag, journal error or readback failure leaves an incomplete outcome. Do not reuse the tag for a card or issue an automatic mutating retry. `readbackVerified` describes physical byte verification even if later cleanup/journaling failed; only exit 0, `diagnostic_write_readback_verified` and `journalFinalized: true` together finish the diagnostic successfully. Even success always reports `qualification: not_established`, `productionReady: false`, and `tagLockAttempted: false`. This is not a workstation-signed production completion receipt.
+
+Run `python3 packages/atlas-mac-nfc/scripts/test-diagnostic.py` after building. Its 54 scenarios cover synthetic PC/SC faults (40), isolated durable journal I/O (7), and hardware-free NDEF/CLI checks (7). It never executes the live mutating command. The original 45 probe/watchdog scenarios remain separate. No raw UID, UID hash or raw ATR is persisted by either executable.
+
+Live diagnostic at 2026-09-09T05:32:53Z succeeded on the owner-designated sample in 0.38 seconds: 14 writes, 38 reads, verified full NDEF/padding and unchanged header/tail, finalized journal, no lock attempt. Binary SHA-256 `88621d8ba3521d6123b19e055d872226d46c124fcf151646d83cfc5360ace369`. Mark confirmed the requested phone scan worked on September 9. A new Mac NDEF read after re-presentation has not been performed. This single diagnostic is not an encoding-throughput benchmark or production qualification.

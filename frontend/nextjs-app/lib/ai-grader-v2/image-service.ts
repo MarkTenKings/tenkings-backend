@@ -306,6 +306,11 @@ export type SpeedsterGeometryResponse = {
 };
 
 export type SpeedsterPrepareResponse = {
+  preparation: import("./preparation").SpeedsterPreparationReference;
+  preparationState: import("./preparation").SpeedsterPreparationState;
+  outputs: SpeedsterPreparedOutputPlan;
+  frozenSourceReadUrl: string;
+  input: { sourceImageStorageKey: string; corners: SpeedsterQuad; matColor: SpeedsterMatColor };
   width: number;
   height: number;
   transform: readonly number[];
@@ -326,6 +331,24 @@ export type SpeedsterColorGeometryResponse = {
 type PreparedArtifact = "RECTIFIED" | "INSPECTION" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL";
 type ArtifactPlan = { storageKey: string; readUrl: string };
 export type SpeedsterPreparedOutputPlan = Readonly<Record<PreparedArtifact, ArtifactPlan>>;
+
+export type SpeedsterPreparationStatus = {
+  workflowState: string;
+  sides: Record<SpeedsterCardSide, {
+    expectedHead: import("./preparation").SpeedsterPreparationExpectedHead;
+    state: import("./preparation").SpeedsterPreparationState | null;
+    request: ({ idempotencyKey: string; expectedHead: import("./preparation").SpeedsterPreparationExpectedHead } & SpeedsterPrepareResponse["input"]) | null;
+    adopted: SpeedsterPrepareResponse | null;
+  }>;
+};
+
+export async function fetchSpeedsterPreparationStatus(token: string, sessionId: string, options: SpeedsterImageRequestOptions = {}): Promise<SpeedsterPreparationStatus> {
+  const { response, payload } = await fetchSpeedsterImageJson<SpeedsterPreparationStatus & { message?: string }>(
+    `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(sessionId)}/preparation`,
+    { method: "GET", headers: buildAdminHeaders(token), cache: "no-store" }, "preparation status", options);
+  if (!response.ok || !payload.sides?.FRONT || !payload.sides?.BACK) throw new Error(payload.message ?? "Saved preparation could not be loaded.");
+  return payload;
+}
 
 export const SPEEDSTER_IMAGE_REQUEST_TIMEOUT_MS = 65_000;
 
@@ -555,6 +578,7 @@ export const speedsterImageService = {
       sessionId: string;
       side: SpeedsterCardSide;
       sourceImageStorageKey: string;
+      preparationRequest: { idempotencyKey: string; expectedHead: import("./preparation").SpeedsterPreparationExpectedHead };
     }>,
     corners: SpeedsterQuad,
     matColor: SpeedsterMatColor,
@@ -576,6 +600,7 @@ export const speedsterImageService = {
       mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
       matColor: SpeedsterMatColor;
       corners: SpeedsterQuad;
+      preparation?: import("./preparation").SpeedsterPreparationReference;
     }>,
     options: SpeedsterImageRequestOptions = {},
   ) {
@@ -607,6 +632,7 @@ export const speedsterImageService = {
       currentPhysicalQuad: SpeedsterQuad;
       currentOriginalStorageKey: string;
       currentInspectionStorageKey: string;
+      preparation?: import("./preparation").SpeedsterPreparationReference;
       orchestration: SpeedsterMapRegistrationOrchestration;
     },
     options: SpeedsterImageRequestOptions = {},
@@ -626,6 +652,7 @@ export const speedsterImageService = {
       currentPhysicalQuad: SpeedsterQuad;
       currentOriginalStorageKey: string;
       currentInspectionStorageKey: string;
+      preparation?: import("./preparation").SpeedsterPreparationReference;
       rescueAttemptId: string;
       automaticFailure: SpeedsterMapRegistrationFailure;
       correctedAnchors: readonly Readonly<{ anchorId: string; point: { x: number; y: number } }>[];

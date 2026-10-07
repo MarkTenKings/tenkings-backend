@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { resolvePersistedSpeedsterPreparationCapture } from "../../../../../lib/server/speedsterPreparationCaptureEvidence";
 import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import type { SpeedsterCardProfile } from "../../../../../lib/ai-grader-v2/contracts";
@@ -277,7 +278,7 @@ async function sourceFor(
 ) {
   const record = await deps.findSourceSession(sessionId, adminId);
   if (!record) return null;
-  const source = parseSpeedsterMapSourceSession(record);
+  const source = parseSpeedsterMapSourceSession(resolvePersistedSpeedsterPreparationCapture(record));
   if (source.workflowState !== "CAPTURED" && source.workflowState !== "COMPLETED") {
     throw new SpeedsterMapIntegrityError("TRAIN requires saved Front and Back physical geometry.");
   }
@@ -394,7 +395,7 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
         } catch {
           throw new SpeedsterMapIntegrityError("TRAIN source identity is malformed.");
         }
-        const source = action === "source" ? parseSpeedsterMapSourceSession(record) : null;
+        const source = action === "source" ? parseSpeedsterMapSourceSession(resolvePersistedSpeedsterPreparationCapture(record)) : null;
         if (source && source.workflowState !== "CAPTURED" && source.workflowState !== "COMPLETED") {
           return res.status(409).json({ message: "TRAIN requires saved Front and Back physical geometry." });
         }

@@ -16,6 +16,9 @@ import {
   SPEEDSTER_PREPARED_IMAGE_REFRESH_INTERVAL_MS,
 } from "../../lib/ai-grader-v2/prepared-image-urls";
 import { fetchSpeedsterOriginalImageUrl } from "../../lib/ai-grader-v2/original-image-urls";
+import { parseSpeedsterPreparationReference, type SpeedsterPreparationReference, type SpeedsterPreparationExpectedHead } from "../../lib/ai-grader-v2/preparation";
+import { parseSpeedsterPreparationDraft, speedsterPreparationDraftKey, writeSpeedsterPreparationDraft,
+  type SpeedsterPreparationDraft, type SpeedsterPreparationRequestDraft } from "../../lib/ai-grader-v2/preparation-draft";
 import {
   SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_CURRENT_VERSION,
   SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION,
@@ -50,7 +53,8 @@ import {
   type SpeedsterMapRegistrationAuditWarning,
   type SpeedsterMapRegistrationRequestFailure,
   type SpeedsterMapRegistrationOrchestration,
-  planSpeedsterPreparedOutputs,
+  fetchSpeedsterPreparationStatus,
+  type SpeedsterPrepareResponse,
   uploadSpeedsterOriginal,
 } from "../../lib/ai-grader-v2/image-service";
 import { CenteringAssist, type CenteringAssistResult } from "./CenteringAssist";
@@ -96,6 +100,7 @@ const captureDraftBindingLabel = (draft: SpeedsterCaptureRegistrationDraft) => {
 
 export type SpeedsterPreparedSide = {
   side: SpeedsterCardSide;
+  preparation?: SpeedsterPreparationReference;
   originalStorageKey: string;
   sourceUrl: string;
   sourceCorners: SpeedsterQuad;
@@ -222,6 +227,7 @@ export type SpeedsterCaptureInstrumentationEvent = Readonly<{
 }>;
 
 type SideState = {
+  preparation?: SpeedsterPreparationReference;
   originalStorageKey: string;
   sourceUrl: string;
   corners: SpeedsterQuad | null;
@@ -258,6 +264,28 @@ type RegistrationRescueState = Readonly<{
   attemptNumbers: Partial<Record<SpeedsterCardSide, number>>;
   continueDecisionId: string;
 }>;
+
+function adoptedSideState(current: SideState, prepared: SpeedsterPrepareResponse, sessionId: string, side: SpeedsterCardSide): SideState {
+  const reference = parseSpeedsterPreparationReference(prepared.preparation);
+  if (prepared.preparationState !== "ADOPTED" || !reference || reference.sessionId !== sessionId || reference.side !== side
+    || prepared.input?.sourceImageStorageKey !== current.originalStorageKey || prepared.input.matColor !== current.matColor
+    || JSON.stringify(prepared.input.corners) !== JSON.stringify(current.corners) || !prepared.frozenSourceReadUrl
+    || !["RECTIFIED", "INSPECTION", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL"].every((role) => {
+      const output = prepared.outputs?.[role as keyof typeof prepared.outputs];
+      return output?.storageKey && output.readUrl;
+    })) throw new Error("Saved preparation differs from this photo or was superseded. Reload its saved state.");
+  const outputs = prepared.outputs;
+  return { ...current, preparation: reference, sourceUrl: prepared.frozenSourceReadUrl,
+    rectifiedUrl: outputs.RECTIFIED.readUrl, rectifiedImageRevision: 0, rectifiedStorageKey: outputs.RECTIFIED.storageKey,
+    inspectionUrl: outputs.INSPECTION.readUrl, inspectionStorageKey: outputs.INSPECTION.storageKey,
+    inspectionFrame: prepared.inspectionFrame, transform: prepared.transform,
+    proposedCentering: current.centering?.innerQuad ?? speedsterColorCenteringDraft(prepared.colorGeometry, prepared.borders), detectedBorders: prepared.detectedBorders,
+    printedColorGeometry: prepared.colorGeometry, printedColorGeometryReceipt: prepared.colorGeometryReceipt,
+    mapRegistration: undefined, centering: undefined,
+    views: { NORMALIZED: outputs.NORMALIZED.readUrl, MICRO_DEFECT: outputs.MICRO_DEFECT.readUrl, DIRECTIONAL: outputs.DIRECTIONAL.readUrl },
+    viewStorageKeys: { NORMALIZED: outputs.NORMALIZED.storageKey, MICRO_DEFECT: outputs.MICRO_DEFECT.storageKey, DIRECTIONAL: outputs.DIRECTIONAL.storageKey },
+  };
+}
 
 type RegistrationInterruption = Readonly<{
   message: string;
@@ -395,6 +423,7 @@ function durableCaptureSide(value: SideState): SpeedsterCaptureDraftSideV2 | nul
     || !value.transform || !value.viewStorageKeys || value.proposedCentering === undefined || !value.detectedBorders
     || !value.printedColorGeometry || !value.printedColorGeometryReceipt) return null;
   return {
+    ...(value.preparation ? { preparation: value.preparation } : {}),
     originalStorageKey: value.originalStorageKey,
     corners: value.corners,
     automaticGeometry: value.automaticGeometry,
@@ -522,6 +551,11 @@ export function CaptureWorkspace({
     Record<SpeedsterCardSide, readonly SpeedsterCaptureDraftCorrectedAnchor[]>
   >>({});
   const [pendingCaptureDraft, setPendingCaptureDraft] = useState<SpeedsterCaptureRegistrationDraft | null>(null);
+  const [pendingPreparationDraft, setPendingPreparationDraft] = useState<SpeedsterPreparationDraft | null>(null);
+  const [invalidPreparationDraftPresent, setInvalidPreparationDraftPresent] = useState(false);
+  const preparationRequests = useRef<Partial<Record<SpeedsterCardSide, SpeedsterPreparationRequestDraft>>>({});
+  const preparationHeads = useRef<Partial<Record<SpeedsterCardSide, SpeedsterPreparationExpectedHead>>>({});
+  const [preparationNeedsNewAttempt, setPreparationNeedsNewAttempt] = useState<SpeedsterCardSide | null>(null);
   const [mapMismatchedCaptureDraft, setMapMismatchedCaptureDraft] = useState<SpeedsterCaptureRegistrationDraft | null>(null);
   const [captureDraftHydratedSessionId, setCaptureDraftHydratedSessionId] = useState<string | null>(null);
   const [invalidCaptureDraftPresent, setInvalidCaptureDraftPresent] = useState(false);
@@ -561,6 +595,10 @@ export function CaptureWorkspace({
     operationId: string,
     failures: readonly RegistrationFailureEvidence[],
   ) => {
+    const generation = captureDraftBindingGeneration.current;
+    const binding = currentCaptureDraftBinding.current;
+    const stillCurrent = () => captureWorkspaceMounted.current && currentSessionId.current === sessionId
+      && captureDraftBindingGeneration.current === generation && currentCaptureDraftBinding.current === binding;
     if (!activeMapRevisionId || !activeMapRevisionHash || !activeMapScope || failures.length === 0) {
       setCaptureDraftError("Card Map registration stopped, but its exact revision evidence is unavailable. No continuation is allowed; retain this page and retry after authority is restored.");
       return false;
@@ -592,10 +630,11 @@ export function CaptureWorkspace({
         },
       );
       if (!response.ok) throw new Error(payload.message ?? "Card Map registration blocker could not be recorded.");
+      if (!stillCurrent()) return false;
       setCaptureDraftError(null);
       return true;
     } catch (error) {
-      setCaptureDraftError(`${error instanceof Error ? error.message : "Card Map registration blocker could not be recorded."} The failure remains blocked in this browser; do not reload until Retry succeeds.`);
+      if (stillCurrent()) setCaptureDraftError(`${error instanceof Error ? error.message : "Card Map registration blocker could not be recorded."} The failure remains blocked in this browser; do not reload until Retry succeeds.`);
       return false;
     }
   }, [activeMapRevisionHash, activeMapRevisionId, activeMapScope, imageRequestTimeoutMs, sessionId, token]);
@@ -642,6 +681,20 @@ export function CaptureWorkspace({
     setRegistrationInterruption(null);
     setCorrectedAnchorDrafts({});
     setPendingCaptureDraft(null);
+    setPendingPreparationDraft(null);
+    preparationRequests.current = {};
+    preparationHeads.current = {};
+    setPreparationNeedsNewAttempt(null);
+    setInvalidPreparationDraftPresent(false);
+    if (typeof window !== "undefined") {
+      try {
+        const savedPreparation = window.localStorage.getItem(speedsterPreparationDraftKey(sessionId));
+        if (savedPreparation) setPendingPreparationDraft(parseSpeedsterPreparationDraft(savedPreparation, sessionId));
+      } catch {
+        setInvalidPreparationDraftPresent(true);
+        setWorkflowError("Saved preparation could not be read. Its original draft remains preserved; fresh capture is blocked.");
+      }
+    }
     setMapMismatchedCaptureDraft(null);
     setCaptureDraftHydratedSessionId(null);
     setInvalidCaptureDraftPresent(false);
@@ -921,6 +974,12 @@ export function CaptureWorkspace({
     if (typeof window === "undefined") return;
     try {
       removeSpeedsterCaptureRegistrationDraft(window.localStorage, sessionId);
+      window.localStorage.removeItem(speedsterPreparationDraftKey(sessionId));
+      setPendingPreparationDraft(null);
+      setInvalidPreparationDraftPresent(false);
+      preparationRequests.current = {};
+      preparationHeads.current = {};
+      setWorkflowError(null);
       setPendingCaptureDraft(null);
       setMapMismatchedCaptureDraft(null);
       setInvalidCaptureDraftPresent(false);
@@ -1021,6 +1080,7 @@ export function CaptureWorkspace({
         sessionId,
         side: target.side,
         sourceImageStorageKey: current.originalStorageKey,
+        preparation: current.preparation,
         mode: target.mode,
         matColor: current.matColor,
         corners: current.corners,
@@ -1081,6 +1141,21 @@ export function CaptureWorkspace({
     setCaptureDraftError(null);
     setMessage("Refreshing prepared Front + Back images before resuming the preserved draft.");
     try {
+      const restoredHeads: typeof preparationHeads.current = {};
+      const restoredRequests: typeof preparationRequests.current = {};
+      if (draft.front.preparation || draft.back.preparation) {
+        const saved = await fetchSpeedsterPreparationStatus(token, sessionId);
+        for (const side of ["FRONT", "BACK"] as const) {
+          const local = side === "FRONT" ? draft.front : draft.back;
+          const head = saved.sides[side];
+          if (!local.preparation || head.state !== "ADOPTED" || !head.adopted
+            || JSON.stringify(parseSpeedsterPreparationReference(head.adopted.preparation)) !== JSON.stringify(parseSpeedsterPreparationReference(local.preparation))) {
+            throw new Error(`${side} preparation was superseded. The saved draft is retained for review; it cannot reactivate old evidence.`);
+          }
+          restoredHeads[side] = head.expectedHead;
+          restoredRequests[side] = head.request ? { idempotencyKey: head.request.idempotencyKey, expectedHead: head.request.expectedHead } : undefined;
+        }
+      }
       const [frontUrl, backUrl] = await Promise.all([
         fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "FRONT", storageKey: draft.front.rectifiedStorageKey }),
         fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "BACK", storageKey: draft.back.rectifiedStorageKey }),
@@ -1143,6 +1218,8 @@ export function CaptureWorkspace({
           draft.operationId,
           registrationFailureEvidence(interruptions, draft.failures, draft.failureRequestIds),
         );
+        if (!captureWorkspaceMounted.current || captureDraftBindingGeneration.current !== originatingGeneration
+          || currentCaptureDraftBinding.current !== originatingBinding || currentSessionId.current !== originatingSessionId) return;
         setCaptureDraftError("The draft was resumed, but one or more registration receipts expired. No map was applied. Re-register every listed side, or explicitly continue through human review without the map.");
       } else if (draft.stage === "MAP_REGISTRATION_INTERRUPTED") {
         interruption = {
@@ -1165,8 +1242,13 @@ export function CaptureWorkspace({
           continueDecisionId: draft.decisionIds.continue,
         };
       }
+      if (!captureWorkspaceMounted.current || captureDraftBindingGeneration.current !== originatingGeneration
+        || currentCaptureDraftBinding.current !== originatingBinding || currentSessionId.current !== originatingSessionId) return;
+      preparationHeads.current = restoredHeads;
+      preparationRequests.current = restoredRequests;
       setFront(restoredCaptureSide(frontDraft, frontUrl));
       setBack(restoredCaptureSide(backDraft, backUrl));
+      setMatColors({ FRONT: frontDraft.matColor, BACK: backDraft.matColor });
       setCornerShape(draft.cornerShape);
       setRegistrationInterruption(interruption);
       setRegistrationRescue(rescue);
@@ -1184,6 +1266,7 @@ export function CaptureWorkspace({
       mapAuthorityAbandoned.current = draft.mapAuthorityAbandoned;
       setMapRegistrationNotice(draft.notice);
       setPendingCaptureDraft(null);
+      setPendingPreparationDraft(null);
       setMessage(stage === "MAP_REGISTRATION_INTERRUPTED"
         ? "Preserved draft resumed. Retry the listed side, or explicitly continue through human review without applying the map."
         : stage === "MAP_REGISTRATION_RESCUE"
@@ -1371,8 +1454,10 @@ export function CaptureWorkspace({
     };
   }, [captureDraftHydratedSessionId, invalidCaptureDraftPresent, mapMismatchedCaptureDraft, pendingCaptureDraft, recaptureSide, sessionId, stage, token, working]);
 
+  const capturePhotosReady = recaptureSide === "FRONT" ? Boolean(frontPhoto && back)
+    : recaptureSide === "BACK" ? Boolean(backPhoto && front) : Boolean(frontPhoto && backPhoto);
   const beginGeometry = async () => {
-    if (!frontPhoto || !backPhoto || working || captureActionInFlight.current
+    if (!capturePhotosReady || working || captureActionInFlight.current
       || captureDraftHydratedSessionId !== sessionId || pendingCaptureDraft
       || mapMismatchedCaptureDraft || invalidCaptureDraftPresent) return;
     captureActionInFlight.current = true;
@@ -1475,10 +1560,10 @@ export function CaptureWorkspace({
       };
       if (recaptureSide) {
         const retainedSibling = recaptureSide === "FRONT" ? back : front;
-        if (!retainedSibling) {
+        const replacementPhoto = recaptureSide === "FRONT" ? frontPhoto : backPhoto;
+        if (!retainedSibling || !replacementPhoto) {
           throw new Error("The retained sibling geometry is unavailable. No recapture authority was changed.");
         }
-        const replacementPhoto = recaptureSide === "FRONT" ? frontPhoto : backPhoto;
         const uploaded = await uploadPhoto(recaptureSide, replacementPhoto);
         const result = await requestGeometry(recaptureSide, uploaded.readUrl, uploaded.storageKey);
         if (activeImageRequest.current !== controller) return;
@@ -1495,6 +1580,7 @@ export function CaptureWorkspace({
         setMessage(`${recaptureSide === "FRONT" ? "Front" : "Back"} geometry was recomputed from the replacement image. The completed sibling side and its receipts/evidence remain retained.`);
         return;
       }
+      if (!frontPhoto || !backPhoto) throw new Error("Both source photos are required.");
       const runSidePipeline = async (side: SpeedsterCardSide, photo: SpeedsterOriginalPhoto) => {
         const uploadStartedAtMs = Date.now();
         const uploaded = await uploadPhoto(side, photo);
@@ -1736,7 +1822,52 @@ export function CaptureWorkspace({
     }));
   };
 
-  const confirmGeometry = async (side: SpeedsterCardSide) => {
+  const resumePreparedSources = async () => {
+    const journal = pendingPreparationDraft;
+    if (!journal || working) return;
+    const origin = sessionId;
+    const generation = captureDraftBindingGeneration.current;
+    const binding = currentCaptureDraftBinding.current;
+    const stillCurrent = () => captureWorkspaceMounted.current && currentSessionId.current === origin
+      && captureDraftBindingGeneration.current === generation && currentCaptureDraftBinding.current === binding;
+    setWorking(true);
+    setWorkflowError(null);
+    try {
+      const saved = await fetchSpeedsterPreparationStatus(token, sessionId);
+      if (saved.workflowState !== "DRAFT") throw new Error("This session has already left capture. Open its saved review.");
+      const recovered = {} as Record<SpeedsterCardSide, SideState>;
+      for (const side of ["FRONT", "BACK"] as const) {
+        const entry = journal.sides[side];
+        const head = saved.sides[side];
+        if (head.request && head.request.idempotencyKey !== entry.request?.idempotencyKey) {
+          throw new Error(`The saved ${side.toLowerCase()} preparation changed in another tab. The local draft remains preserved; reopen this session to inspect its current preparation.`);
+        }
+        const base: SideState = { ...entry.photo, sourceUrl: "", automaticGeometry: false, geometryPlacement: "HUMAN_EDITED",
+          geometryDiagnostic: { sessionId, attemptId: 1, side, durationMs: 0, corners: entry.photo.corners ? "present" : "null" } };
+        recovered[side] = head.state === "ADOPTED" && head.adopted
+          ? adoptedSideState(base, head.adopted, sessionId, side)
+          : { ...base, sourceUrl: await fetchSpeedsterOriginalImageUrl({ token, sessionId, side, storageKey: base.originalStorageKey }) };
+      }
+      if (!stillCurrent()) return;
+      for (const side of ["FRONT", "BACK"] as const) {
+        preparationRequests.current[side] = journal.sides[side].request;
+        preparationHeads.current[side] = saved.sides[side].expectedHead;
+      }
+      setFront(recovered.FRONT);
+      setBack(recovered.BACK);
+      setMatColors({ FRONT: recovered.FRONT.matColor, BACK: recovered.BACK.matColor });
+      setCornerShape(journal.cornerShape);
+      setPendingPreparationDraft(null);
+      const nextSide = recovered.FRONT.preparation ? "BACK" : "FRONT";
+      setStage(nextSide === "FRONT" ? "FRONT_GEOMETRY" : "BACK_GEOMETRY");
+      if (saved.sides[nextSide].request && saved.sides[nextSide].state !== "ADOPTED") setPreparationNeedsNewAttempt(nextSide);
+      setMessage("Saved source photos and preparation state loaded. No image work was restarted. Confirm the next side when ready.");
+    } catch (error) {
+      if (stillCurrent()) setWorkflowError(error instanceof Error ? error.message : "Saved preparation could not be loaded.");
+    } finally { if (stillCurrent()) setWorking(false); }
+  };
+
+  const confirmGeometry = async (side: SpeedsterCardSide, startNewAttempt = false, readOnly = false) => {
     const current = side === "FRONT" ? front : back;
     if (!current || working || captureActionInFlight.current) return;
     const currentCorners = sanitizeSpeedsterUnitQuad(current.corners);
@@ -1751,67 +1882,56 @@ export function CaptureWorkspace({
     setWorking(true);
     setWorkflowError(null);
     setMessage(`Preparing the ${side.toLowerCase()} card map.`);
+    let preparationAdopted = false;
     try {
-      const freshSourceUrl = await fetchSpeedsterOriginalImageUrl({
-        token,
-        sessionId,
-        side,
-        storageKey: current.originalStorageKey,
-        signal: controller.signal,
-        timeoutMs: imageRequestTimeoutMs,
-      });
+      let request = preparationRequests.current[side];
+      let prepared: SpeedsterPrepareResponse | null = null;
+      {
+        const saved = await fetchSpeedsterPreparationStatus(token, sessionId, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
+        if (activeImageRequest.current !== controller) return;
+        const head = saved.sides[side];
+        preparationHeads.current[side] = head.expectedHead;
+        if (saved.workflowState !== "DRAFT") throw new Error("This session has already left capture. Open its saved review.");
+        if (!startNewAttempt && head.request) {
+          if (head.request.idempotencyKey !== request?.idempotencyKey || head.state !== "ADOPTED" || !head.adopted) {
+            setPreparationNeedsNewAttempt(side);
+            throw new Error(`The saved ${side.toLowerCase()} preparation is ${head.state?.toLowerCase().replaceAll("_", " ") ?? "unavailable"}. Reload its status, or explicitly start another attempt. Your saved evidence remains preserved.`);
+          }
+          if (JSON.stringify(head.request.corners) === JSON.stringify(currentCorners)
+            && head.request.sourceImageStorageKey === current.originalStorageKey && head.request.matColor === current.matColor) prepared = head.adopted;
+          else request = undefined; // Explicitly confirmed changed geometry begins a new revision.
+        }
+        if (startNewAttempt) request = undefined;
+      }
+      if (!prepared) {
+        if (readOnly) {
+          setMessage("No adopted result is available for this request. The saved photos and request remain preserved.");
+          return;
+        }
+        request ??= { idempotencyKey: crypto.randomUUID(), expectedHead: preparationHeads.current[side] ?? { sideRevision: 0, attemptId: null } };
+        preparationRequests.current[side] = request;
+        if (!front || !back) throw new Error("Both source photos must remain available before preparation.");
+        const photo = (value: SideState) => ({ originalStorageKey: value.originalStorageKey, corners: value.corners, matColor: value.matColor,
+          physicalColorGeometry: value.physicalColorGeometry, physicalColorGeometryReceipt: value.physicalColorGeometryReceipt,
+          ...(value.physicalGeometryLearning ? { physicalGeometryLearning: value.physicalGeometryLearning } : {}) });
+        const journal: SpeedsterPreparationDraft = { version: "speedster-preparation-draft-v1", sessionId, cornerShape,
+          sides: { FRONT: { photo: photo(side === "FRONT" ? { ...current, corners: currentCorners } : front), request: preparationRequests.current.FRONT },
+            BACK: { photo: photo(side === "BACK" ? { ...current, corners: currentCorners } : back), request: preparationRequests.current.BACK } } };
+        writeSpeedsterPreparationDraft(window.localStorage, journal);
+        prepared = await speedsterImageService.prepare(token, current.sourceUrl, {
+          sessionId, side, sourceImageStorageKey: current.originalStorageKey, preparationRequest: request,
+        }, currentCorners, current.matColor, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
+      }
       if (activeImageRequest.current !== controller) return;
-      const installSourceUrl = (value: SideState | null) => value?.originalStorageKey === current.originalStorageKey
-        ? { ...value, sourceUrl: freshSourceUrl }
-        : value;
-      side === "FRONT" ? setFront(installSourceUrl) : setBack(installSourceUrl);
-      const outputPlan = await planSpeedsterPreparedOutputs({
-        token,
-        sessionId,
-        side,
-        sourceImageStorageKey: current.originalStorageKey,
-        signal: controller.signal,
-        timeoutMs: imageRequestTimeoutMs,
-      });
-      const prepared = await speedsterImageService.prepare(
-        token,
-        freshSourceUrl,
-        {
-          sessionId,
-          side,
-          sourceImageStorageKey: current.originalStorageKey,
-        },
-        currentCorners,
-        current.matColor,
-        { signal: controller.signal, timeoutMs: imageRequestTimeoutMs },
-      );
-      if (activeImageRequest.current !== controller) return;
-      const next: SideState = {
-        ...current,
-        sourceUrl: freshSourceUrl,
-        rectifiedUrl: outputPlan.RECTIFIED.readUrl,
-        rectifiedImageRevision: 0,
-        rectifiedStorageKey: outputPlan.RECTIFIED.storageKey,
-        inspectionUrl: outputPlan.INSPECTION.readUrl,
-        inspectionStorageKey: outputPlan.INSPECTION.storageKey,
-        inspectionFrame: prepared.inspectionFrame,
-        transform: prepared.transform,
-        proposedCentering: speedsterColorCenteringDraft(prepared.colorGeometry, prepared.borders),
-        detectedBorders: prepared.detectedBorders,
-        printedColorGeometry: prepared.colorGeometry,
-        printedColorGeometryReceipt: prepared.colorGeometryReceipt,
-        mapRegistration: undefined,
-        views: {
-          NORMALIZED: outputPlan.NORMALIZED.readUrl,
-          MICRO_DEFECT: outputPlan.MICRO_DEFECT.readUrl,
-          DIRECTIONAL: outputPlan.DIRECTIONAL.readUrl,
-        },
-        viewStorageKeys: {
-          NORMALIZED: outputPlan.NORMALIZED.storageKey,
-          MICRO_DEFECT: outputPlan.MICRO_DEFECT.storageKey,
-          DIRECTIONAL: outputPlan.DIRECTIONAL.storageKey,
-        },
-      };
+      const next = adoptedSideState({ ...current, corners: currentCorners }, prepared, sessionId, side);
+      preparationAdopted = true;
+      preparationHeads.current[side] = { sideRevision: prepared.preparation.sideRevision, attemptId: prepared.preparation.attemptId };
+      setPreparationNeedsNewAttempt(null);
+      if (readOnly) {
+        side === "FRONT" ? setFront(next) : setBack(next);
+        setMessage("The saved preparation was loaded. Confirm this side when ready to continue.");
+        return;
+      }
       const preparedAtMs = Date.now();
       if (recaptureSide === side) {
         const siblingSide: SpeedsterCardSide = side === "FRONT" ? "BACK" : "FRONT";
@@ -1833,6 +1953,7 @@ export function CaptureWorkspace({
               side,
               currentPhysicalQuad: currentCorners,
               currentOriginalStorageKey: next.originalStorageKey,
+              preparation: next.preparation,
               currentInspectionStorageKey: next.inspectionStorageKey!,
               orchestration: {
                 operationId,
@@ -1960,6 +2081,7 @@ export function CaptureWorkspace({
           side: candidate,
           currentPhysicalQuad,
           currentOriginalStorageKey: candidate === "FRONT" ? front.originalStorageKey : next.originalStorageKey,
+          preparation: candidate === "FRONT" ? front.preparation : next.preparation,
           currentInspectionStorageKey,
           orchestration,
         }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs }).then((registration) => {
@@ -2129,7 +2251,9 @@ export function CaptureWorkspace({
     } catch (error) {
       if (activeImageRequest.current === controller) {
         setWorkflowError(error instanceof Error ? error.message : "Speedster image preparation failed.");
-        setMessage(`${side === "FRONT" ? "Front" : "Back"} preparation did not finish. Your original photos and geometry are preserved; retry when ready.`);
+        if (!preparationAdopted) setPreparationNeedsNewAttempt(side);
+        setMessage(preparationAdopted ? "Preparation is saved. The next capture step could not finish; your prepared images remain available."
+          : `${side === "FRONT" ? "Front" : "Back"} preparation did not finish. Reload its saved status before choosing another attempt.`);
       }
     } finally {
       if (activeImageRequest.current === controller) {
@@ -2261,6 +2385,7 @@ export function CaptureWorkspace({
         side,
         currentPhysicalQuad: side === "FRONT" ? front.corners : back.corners,
         currentOriginalStorageKey: sideState.originalStorageKey,
+        preparation: sideState.preparation,
         currentInspectionStorageKey: sideState.inspectionStorageKey,
         orchestration: {
           operationId: registrationInterruption.operationId,
@@ -2405,6 +2530,7 @@ export function CaptureWorkspace({
         side,
         currentPhysicalQuad: side === "FRONT" ? front.corners : back.corners,
         currentOriginalStorageKey: sideState.originalStorageKey,
+        preparation: sideState.preparation,
         currentInspectionStorageKey: sideState.inspectionStorageKey,
         rescueAttemptId: registrationRescue.attemptIds[side]!,
         automaticFailure: failure,
@@ -2502,9 +2628,11 @@ export function CaptureWorkspace({
     if (!front?.centering || !front.corners || !finalBack?.corners) return;
     const toPreparedSide = (side: SpeedsterCardSide, value: SideState): SpeedsterPreparedSide => {
       if (!value.corners) throw new Error(`${side} physical geometry is incomplete.`);
+      if (!value.preparation) throw new Error(`${side} has a legacy preparation. Its photos and geometry are preserved; explicitly prepare this side with the current evidence workflow before saving.`);
       return ({
       side,
       originalStorageKey: value.originalStorageKey,
+      preparation: value.preparation,
       sourceUrl: value.sourceUrl,
       sourceCorners: value.corners,
       rectifiedUrl: value.rectifiedUrl!,
@@ -2621,6 +2749,7 @@ export function CaptureWorkspace({
       if (typeof window === "undefined") return true;
       try {
         removeSpeedsterCaptureRegistrationDraft(window.localStorage, sessionId);
+        window.localStorage.removeItem(speedsterPreparationDraftKey(sessionId));
         captureDraftCreatedAtMs.current = null;
         return true;
       } catch {
@@ -2771,8 +2900,31 @@ export function CaptureWorkspace({
           </button>
         ) : null}
 
+      {stage === "PHOTOS" && pendingPreparationDraft && !pendingCaptureDraft && !mapMismatchedCaptureDraft ? (
+        <section className={styles.registrationInterruption} aria-label="Saved preparation requests">
+          <h2>Source photos and preparation requests are preserved.</h2>
+          <p>Load their saved status to continue. This does not restart image preparation.</p>
+          <button type="button" disabled={working} onClick={() => void resumePreparedSources()}>Load saved preparation</button>
+          <button type="button" disabled={working} onClick={discardPreservedCaptureDraft}>Discard saved preparation draft</button>
+        </section>
+      ) : null}
+      {stage === "PHOTOS" && invalidPreparationDraftPresent && !invalidCaptureDraftPresent ? (
+        <button type="button" disabled={working} onClick={discardPreservedCaptureDraft}>Discard invalid saved preparation draft</button>
+      ) : null}
+      {preparationNeedsNewAttempt && (stage === "FRONT_GEOMETRY" || stage === "BACK_GEOMETRY") ? (
+        <div className={styles.interruptionActions}>
+          <button type="button" disabled={working} onClick={() => void confirmGeometry(preparationNeedsNewAttempt, false, true)}>Reload preparation status</button>
+          <button type="button" disabled={working} onClick={() => void confirmGeometry(preparationNeedsNewAttempt, true)}>Start another preparation attempt</button>
+        </div>
+      ) : null}
+      {(stage === "FRONT_CENTERING" || stage === "BACK_CENTERING") && ((!front?.preparation && front) || (!back?.preparation && back)) ? (
+        <section className={styles.registrationInterruption} aria-label="Legacy preparation retained">
+          <p>This older draft preserves your photos and confirmed geometry. Each side needs an explicit preparation with the current evidence workflow before capture can be saved.</p>
+          <button type="button" disabled={working} onClick={() => setStage(!front?.preparation ? "FRONT_GEOMETRY" : "BACK_GEOMETRY")}>Prepare preserved geometry</button>
+        </section>
+      ) : null}
       {stage === "PHOTOS" && captureDraftHydratedSessionId === sessionId
-        && !pendingCaptureDraft && !mapMismatchedCaptureDraft && !invalidCaptureDraftPresent ? (
+        && !invalidPreparationDraftPresent && !pendingPreparationDraft && !pendingCaptureDraft && !mapMismatchedCaptureDraft && !invalidCaptureDraftPresent ? (
         <div className={styles.photos}>
           <PhotoUploadPair
             front={frontPhoto}
@@ -2813,11 +2965,11 @@ export function CaptureWorkspace({
           <button
             type="button"
             onClick={() => void beginGeometry()}
-            disabled={!frontPhoto || !backPhoto || working}
+            disabled={!capturePhotosReady || working}
           >
             {working
               ? "Preparing…"
-              : frontPhoto && backPhoto
+              : capturePhotosReady
                 ? workflowError
                   ? `Retry ${recaptureSide ? `${recaptureSide === "FRONT" ? "Front" : "Back"} ` : ""}set geometry →`
                   : recaptureSide

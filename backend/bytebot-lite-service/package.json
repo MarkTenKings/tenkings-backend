@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc -p .",
+    "test:reference": "pnpm run build && node --test tests/reference*.test.cjs",
     "start": "node dist/index.js",
     "enqueue": "ts-node-dev --transpile-only src/cli/enqueue.ts"
   },

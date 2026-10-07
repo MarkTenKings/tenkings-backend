@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import MuxPlayer from "@mux/mux-player-react";
+import OnDemandMedia from "./OnDemandMedia";
+import { loadYouTubeIframeApi, type YouTubePlayer } from "../lib/youtubeIframeApi";
 
 type ParsedMedia =
   | { type: "youtube"; id: string; embedUrl: string }
@@ -53,13 +55,13 @@ const parseMedia = (videoUrl: string): ParsedMedia => {
         const params = new URLSearchParams({
           autoplay: "1",
           mute: "1",
-          loop: "1",
-          playlist: id,
-          controls: "0",
+          loop: "0",
+          controls: "1",
           modestbranding: "1",
           rel: "0",
           playsinline: "1",
           enablejsapi: "1",
+          ...(typeof window !== "undefined" ? { origin: window.location.origin } : {}),
         });
         return {
           type: "youtube",
@@ -100,54 +102,49 @@ export interface LiveRipPreviewProps {
   showMuteToggle?: boolean;
 }
 
-export default function LiveRipPreview({
-  id,
+export default function LiveRipPreview(props: LiveRipPreviewProps) {
+  const { title, videoUrl, muxPlaybackId, thumbnailUrl, viewCount, className = "", aspectClassName = "pb-[56.25%]" } = props;
+  return (
+    <div className={`relative overflow-hidden rounded-3xl border border-white/10 bg-night-900/70 shadow-card ${className}`}>
+      <div className={`relative h-0 w-full ${aspectClassName}`}>
+        <OnDemandMedia title={title} sourceKey={`${videoUrl}|${muxPlaybackId ?? ""}`} posterUrl={thumbnailUrl}>
+          <LiveRipPlayer {...props} />
+        </OnDemandMedia>
+      </div>
+      {typeof viewCount === "number" && viewCount >= 0 && (
+        <span className="pointer-events-none absolute left-3 top-3 rounded-full bg-black/60 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-slate-200">
+          {formatViews(viewCount)} views
+        </span>
+      )}
+    </div>
+  );
+}
+
+function LiveRipPlayer({
   title,
   videoUrl,
   muxPlaybackId,
   thumbnailUrl,
   muted,
   onToggleMute,
-  viewCount,
-  className = "",
-  aspectClassName = "pb-[56.25%]",
   showMuteToggle = true,
 }: LiveRipPreviewProps) {
   const isMuxPlayback = Boolean(muxPlaybackId);
   const media = useMemo(() => parseMedia(videoUrl), [videoUrl]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const youtubeRef = useRef<YouTubePlayer | null>(null);
+  const latestMuted = useRef(muted);
   const hlsInstanceRef = useRef<any | null>(null);
 
   useEffect(() => {
-    if ((media.type !== "video" && media.type !== "hls") || !videoRef.current) {
-      return;
+    latestMuted.current = muted;
+    if (videoRef.current) videoRef.current.muted = muted;
+    if (youtubeRef.current) {
+      if (muted) youtubeRef.current.mute();
+      else youtubeRef.current.unMute();
     }
-    const element = videoRef.current;
-    const handleCanPlay = () => {
-      if (!muted) {
-        element.play().catch(() => undefined);
-      }
-    };
-
-    element.muted = muted;
-    element.loop = true;
-    element.playsInline = true;
-    element.preload = "auto";
-    element.load();
-
-    if (!muted) {
-      element.play().catch(() => undefined);
-    }
-
-    element.addEventListener("canplay", handleCanPlay);
-    element.addEventListener("loadeddata", handleCanPlay);
-
-    return () => {
-      element.removeEventListener("canplay", handleCanPlay);
-      element.removeEventListener("loadeddata", handleCanPlay);
-    };
-  }, [muted, media]);
+  }, [muted]);
 
   useEffect(() => {
     if (media.type !== "hls" || !videoRef.current) {
@@ -187,11 +184,7 @@ export default function LiveRipPreview({
         });
       } catch (error) {
         console.warn("Failed to initialize hls.js", error);
-        if (videoRef.current) {
-          videoRef.current.src = media.src;
-        } else {
-          element.src = media.src;
-        }
+        if (!destroyed) element.src = media.src;
       }
     };
 
@@ -211,41 +204,36 @@ export default function LiveRipPreview({
   }, [media]);
 
   useEffect(() => {
-    if (media.type !== "youtube" || !iframeRef.current?.contentWindow) {
+    if (isMuxPlayback || media.type !== "youtube" || !iframeRef.current) {
       return;
     }
     const frame = iframeRef.current;
-    const send = (func: string, args: unknown[] = []) => {
-      frame.contentWindow?.postMessage(
-        JSON.stringify({ event: "command", func, args }),
-        "*"
-      );
+    let disposed = false;
+    let player: YouTubePlayer | undefined;
+    const stop = () => {
+      if (!disposed) frame.dispatchEvent(new Event("ended"));
     };
-    const timer = window.setTimeout(() => {
-      send("playVideo");
-      if (muted) {
-        send("mute");
-      } else {
-        send("unMute");
-      }
-    }, 200);
-    return () => window.clearTimeout(timer);
-  }, [muted, media]);
-
-  useEffect(() => {
-    if (media.type !== "youtube" || !iframeRef.current?.contentWindow) {
-      return;
-    }
-    const frame = iframeRef.current;
-    const timer = window.setTimeout(() => {
-      frame.contentWindow?.postMessage(
-        JSON.stringify({ event: "command", func: "mute" }),
-        "*"
-      );
-    }, 200);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [media.type, id]);
+    loadYouTubeIframeApi().then((api) => {
+      if (disposed) return;
+      if (!api) { stop(); return; }
+      player = new api.Player(frame, { events: {
+        onReady: ({ target }) => {
+          if (disposed) return;
+          youtubeRef.current = target;
+          if (target.getPlayerState() === 0) { stop(); return; }
+          if (latestMuted.current) target.mute();
+          else target.unMute();
+        },
+        onStateChange: ({ data }) => { if (data === 0) stop(); },
+      } });
+    }).catch(stop);
+    return () => {
+      disposed = true;
+      youtubeRef.current = null;
+      try { player?.destroy(); } catch { /* The iframe may already be disconnected. */ }
+      frame.removeAttribute("src");
+    };
+  }, [isMuxPlayback, media]);
 
   const renderMedia = () => {
     if (muxPlaybackId) {
@@ -258,7 +246,7 @@ export default function LiveRipPreview({
           poster={thumbnailUrl ?? undefined}
           autoPlay={muted ? "muted" : true}
           muted={muted}
-          loop
+          preload="none"
           playsInline
           className="absolute inset-0 h-full w-full"
           style={{ "--media-object-fit": "cover" }}
@@ -272,13 +260,13 @@ export default function LiveRipPreview({
         return (
           <video
             ref={videoRef}
-            src={media.src}
+            src={media.type === "video" ? media.src : undefined}
             className="absolute inset-0 h-full w-full object-cover"
             autoPlay
-            loop
+            controls
             muted={muted}
             playsInline
-            preload="auto"
+            preload="none"
             poster={thumbnailUrl ?? undefined}
             crossOrigin="anonymous"
             aria-label={title}
@@ -314,15 +302,8 @@ export default function LiveRipPreview({
     showMuteToggle && (isMuxPlayback || media.type === "video" || media.type === "hls" || media.type === "youtube");
 
   return (
-    <div className={`relative overflow-hidden rounded-3xl border border-white/10 bg-night-900/70 shadow-card ${className}`}>
-      <div className={`relative h-0 w-full ${aspectClassName}`}>
-        <div className="absolute inset-0">{renderMedia()}</div>
-      </div>
-      {typeof viewCount === "number" && viewCount >= 0 && (
-        <span className="absolute left-3 top-3 rounded-full bg-black/60 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-slate-200">
-          {formatViews(viewCount)} views
-        </span>
-      )}
+    <>
+      {renderMedia()}
       {showMuteControl && (
         <button
           type="button"
@@ -334,6 +315,6 @@ export default function LiveRipPreview({
           {muted ? "Unmute" : "Mute"}
         </button>
       )}
-    </div>
+    </>
   );
 }

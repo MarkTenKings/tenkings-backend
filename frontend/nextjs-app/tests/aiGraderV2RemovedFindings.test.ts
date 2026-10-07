@@ -273,6 +273,7 @@ test("removed-findings inventory remains admin-only and GET-only while the scree
   const api = readFileSync(`${root}/pages/api/admin/ai-grader-v2/removed-findings.ts`, "utf8");
   const page = readFileSync(`${root}/pages/admin/ai-grader-v2/removed-findings.tsx`, "utf8");
   const reviewApi = readFileSync(`${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action.ts`, "utf8");
+  const reviewDependencies = readFileSync(`${root}/lib/server/speedsterReviewDependencies.ts`, "utf8");
   const restoreApi = readFileSync(`${root}/pages/api/admin/ai-grader-v2/removed-findings/[decisionId]/restore.ts`, "utf8");
   const reviewWorkspace = readFileSync(`${root}/components/ai-grader-v2/ReviewWorkspace.tsx`, "utf8");
   const normalReviewPage = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");
@@ -300,10 +301,11 @@ test("removed-findings inventory remains admin-only and GET-only while the scree
   assert.match(page, /zoneOverlap/);
   assert.match(page, /filterPolicyVersion/);
   assert.match(normalReviewInvocation, /mapRegistrations=/);
-  assert.match(reviewApi, /prisma\.\$transaction/);
-  assert.match(reviewApi, /loadPinnedSpeedsterMapRevision/);
-  assert.match(reviewApi, /aiGraderV2Session\.updateMany/);
-  assert.match(reviewApi, /aiGraderV2MapFilterDecision\.createMany/);
+  assert.match(reviewApi, /createSpeedsterReviewDependencies\(prisma\)/);
+  assert.match(reviewDependencies, /prisma\.\$transaction/);
+  assert.match(reviewDependencies, /loadPinnedSpeedsterMapRevision/);
+  assert.match(reviewDependencies, /aiGraderV2Session\.updateMany/);
+  assert.match(reviewDependencies, /aiGraderV2MapFilterDecision\.createMany/);
   assert.match(restoreApi, /assertSpeedsterCompletedRestoreSnapshotUnchanged\(before, after\)/);
   assert.match(restoreApi, /aiGraderV2MapFilterRestoreEvent\.create/);
   assert.doesNotMatch(restoreApi, /aiGraderV2CardTypeMap(?:Revision)?\.(?:update|updateMany|create|upsert|delete)/);

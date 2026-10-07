@@ -53,6 +53,8 @@ import {
   openStorageObjectRead,
   presignReadUrl,
 } from "./storage";
+import { speedsterPreparationSideAuthority, resolvePersistedSpeedsterPreparationCapture } from "./speedsterPreparationCaptureEvidence";
+import { parseSpeedsterPreparationReference, type SpeedsterPreparationReference } from "../ai-grader-v2/preparation";
 import {
   isAuthorizedSpeedsterOriginalStorageKey,
   isAuthorizedSpeedsterPreparedStorageKeys,
@@ -95,6 +97,7 @@ export type SpeedsterMapTrainingSideInput = Readonly<{
 
 export type SpeedsterMapSourceSide = Readonly<{
   side: SpeedsterCardSide;
+  preparation?: SpeedsterPreparationReference;
   originalStorageKey: string;
   rectifiedStorageKey: string;
   inspectionStorageKey: string;
@@ -1530,6 +1533,25 @@ export async function loadEffectiveActiveSpeedsterMapRevision(
   };
 }
 
+/** Match the FAMILY then EXACT advisory-lock order used by map publishers. */
+export async function loadLockedEffectiveSpeedsterMapRevision(
+  tx: Prisma.TransactionClient,
+  input: Readonly<{ cardProfile: SpeedsterCardProfile; identity: SpeedsterSessionIdentity }>,
+): Promise<SpeedsterAppliedMapRevision | null> {
+  const exactHash = speedsterMapMatchKeyHash(speedsterCardTypeMapKey(input.cardProfile, input.identity));
+  const familyHash = input.cardProfile === "POKEMON" && !speedsterPokemonLayoutType(input.identity)
+    ? null : speedsterMapMatchKeyHash(speedsterFamilyCardTypeMapKey(input.cardProfile, input.identity));
+  for (const hash of familyHash ? [familyHash, exactHash] : [exactHash]) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${hash}`}, 0))`;
+  }
+  const select = { id: true, matchKeyHash: true, currentRevisionId: true, currentRevision: { select: mapRevisionSelect } } as const;
+  return loadEffectiveActiveSpeedsterMapRevision(input, {
+    findActiveMap: (matchKeyHash) => tx.aiGraderV2CardTypeMap.findUnique({ where: { matchKeyHash }, select }),
+    findActiveMaps: (hashes) => tx.aiGraderV2CardTypeMap.findMany({ where: { matchKeyHash: { in: [...hashes] } }, select }),
+    findPinnedRevision: (id) => tx.aiGraderV2CardTypeMapRevision.findUnique({ where: { id }, select: mapRevisionSelect }),
+  });
+}
+
 export function assertSpeedsterMapRevisionAppliesToIdentity(
   revision: SpeedsterLoadedMapRevision,
   input: Readonly<{ cardProfile: SpeedsterCardProfile; identity: SpeedsterSessionIdentity }>,
@@ -1578,6 +1600,10 @@ function parseSourceSide(
   sessionId: string,
 ): SpeedsterMapSourceSide {
   if (!isRecord(value)) throw new SpeedsterMapIntegrityError(`${side} capture evidence is missing.`);
+  const preparation = speedsterPreparationSideAuthority(value);
+  if (preparation && (preparation.sessionId !== sessionId || preparation.createdByUserId !== userId || preparation.side !== side)) {
+    throw new SpeedsterMapIntegrityError(`${side} preparation authority belongs to a different session.`);
+  }
   const originalStorageKey = nonEmptyText(value.originalStorageKey, `${side} original key`, 500);
   const rectifiedStorageKey = nonEmptyText(value.rectifiedStorageKey, `${side} rectified key`, 500);
   const inspectionStorageKey = nonEmptyText(value.inspectionStorageKey, `${side} inspection key`, 500);
@@ -1592,14 +1618,14 @@ function parseSourceSide(
       userId,
       sessionId,
       side,
-    }) || !viewStorageKeys || !isAuthorizedSpeedsterPreparedStorageKeys({
+    }) || !viewStorageKeys || (!preparation && !isAuthorizedSpeedsterPreparedStorageKeys({
       userId,
       sessionId,
       side,
       rectifiedStorageKey,
       inspectionStorageKey,
       viewStorageKeys,
-    })
+    }))
   ) {
     throw new SpeedsterMapIntegrityError(`${side} source images are not bound to this Speedster session.`);
   }
@@ -1615,8 +1641,8 @@ function parseSourceSide(
     sessionId,
     side,
   });
-  if (originalGeneration === undefined || preparedGeneration === undefined
-    || originalGeneration !== preparedGeneration) {
+  if (!preparation && (originalGeneration === undefined || preparedGeneration === undefined
+    || originalGeneration !== preparedGeneration)) {
     throw new SpeedsterMapIntegrityError(`${side} original and prepared image generations do not match.`);
   }
   const frame = isRecord(value.inspectionFrame) ? value.inspectionFrame : null;
@@ -1635,6 +1661,7 @@ function parseSourceSide(
   if (transform.length !== 9) throw new SpeedsterMapIntegrityError(`${side} physical transform is invalid.`);
   return {
     side,
+    ...(preparation ? { preparation: parseSpeedsterPreparationReference(value.preparation)! } : {}),
     originalStorageKey,
     rectifiedStorageKey,
     inspectionStorageKey,
@@ -2038,7 +2065,7 @@ async function assertTrainSourceSnapshotIsCurrent(
   if (!current) {
     throw new SpeedsterMapIntegrityError("Card Map source changed after it was loaded.", { stage: "TRANSACTION" });
   }
-  const persistedSource = parseSpeedsterMapSourceSession(current);
+  const persistedSource = parseSpeedsterMapSourceSession(resolvePersistedSpeedsterPreparationCapture(current));
   if (!isDeepStrictEqual(persistedSource, source)) {
     throw new SpeedsterMapIntegrityError("Card Map source identity or capture changed after it was loaded.", {
       stage: "TRANSACTION",
@@ -2282,8 +2309,8 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
   ));
   const created = await transaction(async (tx) => {
     const capturedState = await assertTrainSourceSnapshotIsCurrent(tx, input.source);
-    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, scope);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
+    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, scope);
     let map = await tx.aiGraderV2CardTypeMap.findUnique({
       where: { matchKeyHash },
       include: { currentRevision: { select: { id: true, version: true } } },
@@ -2564,8 +2591,8 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
       if (!layoutType) throw new SpeedsterMapIntegrityError("Family restore layout authority is missing.");
       await assertLegacySourceLayoutAuthority(tx, input.source, layoutType);
     }
-    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, scope);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
+    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, scope);
     const map = await tx.aiGraderV2CardTypeMap.findUnique({
       where: { matchKeyHash },
       include: { currentRevision: { select: { id: true, version: true } } },
@@ -2672,8 +2699,8 @@ export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
       if (!layoutType) throw new SpeedsterMapIntegrityError("Family promotion layout authority is missing.");
       await assertLegacySourceLayoutAuthority(tx, input.source, layoutType);
     }
-    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, "FAMILY");
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
+    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, "FAMILY");
     let map = await tx.aiGraderV2CardTypeMap.findUnique({
       where: { matchKeyHash },
       include: { currentRevision: { select: { id: true, version: true } } },

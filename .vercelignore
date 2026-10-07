@@ -1,0 +1,12 @@
+# Upload source only. Hosted configuration belongs in the target project's settings.
+**/.env*
+**/.git/**
+**/.vercel/**
+**/node_modules/**
+**/.next/**
+**/.generated/**
+**/dist/**
+**/coverage/**
+**/.DS_Store
+**/__pycache__/**
+**/.venv/**

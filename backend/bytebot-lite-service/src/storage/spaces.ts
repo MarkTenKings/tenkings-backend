@@ -64,7 +64,8 @@ export function createSpacesUploader() {
   return async function uploadBuffer(
     buffer: Buffer,
     key: string,
-    contentType: string
+    contentType: string,
+    signal?: AbortSignal
   ): Promise<UploadResult> {
     const objectKey = `${config.prefix}/${key}`;
     await client.send(
@@ -74,7 +75,8 @@ export function createSpacesUploader() {
         Body: buffer,
         ContentType: contentType,
         ACL: "public-read",
-      })
+      }),
+      signal ? { abortSignal: signal } : {}
     );
 
     return {

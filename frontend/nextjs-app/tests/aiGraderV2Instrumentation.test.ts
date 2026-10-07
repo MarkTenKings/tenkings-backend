@@ -1240,3 +1240,17 @@ test("instrumentation migration is additive, append-only, constrained, and sessi
   assert.match(migration, /CREATE UNIQUE INDEX/);
   assert.doesNotMatch(migration, /^\s*(UPDATE|DELETE\s+FROM)\b/im);
 });
+
+test("client instrumentation cannot insert preparation authority or reserved server event keys", async () => {
+  let writes = 0;
+  const handler = createSpeedsterInstrumentationHandler({ requireAdminSession: async () => ({ user: { id: "admin-1" } }),
+    findOwnedSession: async (id) => ({ id }), insertEvents: async () => { writes++; return 1; }, now: () => new Date() });
+  for (const fields of [{ category: "PREPARATION_AUTHORITY" }, { eventType: "PREPARATION_CAPTURE_FROZEN" }, { eventKey: "session:preparation:attempt:adopted" }]) {
+    const result = response();
+    await handler(request({ eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7ee", eventType: "NEXT_READY_RENDERED", ...fields,
+      clientStartedAt: "2026-08-09T12:00:00.000Z", clientEndedAt: "2026-08-09T12:00:45.000Z",
+      details: { startBasis: "FIRST_SPEEDSTER_INTERACTION", lowerBound: true, outcome: "SUCCEEDED" } }), result.res);
+    assert.equal(result.state.status, 400);
+  }
+  assert.equal(writes, 0);
+});

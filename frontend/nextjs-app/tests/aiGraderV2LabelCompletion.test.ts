@@ -8,6 +8,7 @@ import {
   buildSpeedsterLabelData,
   createAiGraderV2CompleteLabelHandler,
   speedsterReportSlug,
+  serverOwnedReview,
 } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/complete-label";
 import { createSpeedsterPresentationHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/presentation";
 
@@ -85,6 +86,45 @@ const speedsterSession = {
     cardNumber: "190/159",
   },
 };
+
+test("final completion recomputes centering from confirmed quads instead of stored borders or grades", () => {
+  const centeringQuad = [
+    { x: 0.2, y: 0.1 }, { x: 0.95, y: 0.1 }, { x: 0.95, y: 0.9 }, { x: 0.2, y: 0.9 },
+  ];
+  const side = { centeringQuad, centeringBorders: { leftMm: 0, rightMm: 0, topMm: 0, bottomMm: 0 } };
+  const session = {
+    ...speedsterSession,
+    workflowState: "CAPTURED",
+    capture: { front: side, back: side },
+    reviewedDefects: [],
+    gradeReport: { ...gradeReport, detectorVersion: "fixture-detector" },
+  };
+  const before = structuredClone(session);
+  const review = serverOwnedReview(session);
+  assert.equal(review.gradeReport.subgrades.centering, 5);
+  assert.equal(review.gradeReport.overall.displayGrade, 8.8);
+  assert.deepEqual(review.gradeReport.front.centering.leftRightBalance, [80, 20]);
+  assert.equal(buildSpeedsterLabelData(session, review.gradeReport as unknown as Parameters<typeof buildSpeedsterLabelData>[1]).centeringGrade, "5");
+  assert.deepEqual(session, before, "recomputation never rewrites stored capture or historical source");
+});
+
+test("final completion cannot grade missing, full-frame or degenerate centering geometry", () => {
+  const valid = [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }];
+  for (const centeringQuad of [null,
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }],
+    Array.from({ length: 4 }, () => ({ x: 0.5, y: 0.5 })),
+  ]) {
+    for (const name of ["front", "back"] as const) {
+      const capture = { front: { centeringQuad: valid }, back: { centeringQuad: valid }, [name]: { centeringQuad } };
+      assert.throws(() => serverOwnedReview({
+        ...speedsterSession,
+        capture,
+        reviewedDefects: [],
+        gradeReport: { ...gradeReport, detectorVersion: "fixture-detector" },
+      }), /printed-frame geometry cannot provide valid centering/);
+    }
+  }
+});
 
 function request(body: unknown = {}): NextApiRequest {
   return {

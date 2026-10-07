@@ -21,6 +21,7 @@ import {
 import { SPEEDSTER_REVIEW_VIEW_TYPES } from "../../../../lib/ai-grader-v2/review-image-urls";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { isAuthorizedSpeedsterPreparedStorageKeys } from "../../../../lib/server/aiGraderV2IphoneCapture";
+import { resolvePersistedSpeedsterPreparationCapture, speedsterPreparationSideAuthority } from "../../../../lib/server/speedsterPreparationCaptureEvidence";
 import { presignReadUrl } from "../../../../lib/server/storage";
 
 const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
@@ -362,6 +363,7 @@ function safeCaptureSide(
   session: AuditSession,
   side: SpeedsterCardSide,
 ): { frame: SpeedsterInspectionFrame; keys: Record<SpeedsterViewType, string> } | null {
+  session = resolvePersistedSpeedsterPreparationCapture(session);
   if (!isRecord(session.capture)) return null;
   const persisted = session.capture[side.toLowerCase()];
   if (!isRecord(persisted) || !isRecord(persisted.viewStorageKeys)
@@ -377,7 +379,7 @@ function safeCaptureSide(
     MICRO_DEFECT: persisted.viewStorageKeys.MICRO_DEFECT,
     DIRECTIONAL: persisted.viewStorageKeys.DIRECTIONAL,
   };
-  if (!isAuthorizedSpeedsterPreparedStorageKeys({
+  if (!speedsterPreparationSideAuthority(persisted) && !isAuthorizedSpeedsterPreparedStorageKeys({
     userId: session.createdByUserId,
     sessionId: session.id,
     side,

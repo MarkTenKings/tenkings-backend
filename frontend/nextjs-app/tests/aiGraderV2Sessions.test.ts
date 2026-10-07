@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { SPEEDSTER_RULE_VERSION } from "../lib/ai-grader-v2/contracts";
+import { calculateCenteringScore, measureSpeedsterCenteringBorders } from "../lib/ai-grader-v2/scoring";
 import { SPEEDSTER_TRACE_PIXEL_COUNT, encodeSpeedsterTraceRleV1 } from "../lib/ai-grader-v2/trace-codec";
 import { HttpError } from "../lib/server/adminSessionAuthority";
 import { createAiGraderV2SessionsHandler } from "../pages/api/admin/ai-grader-v2/sessions";
@@ -196,7 +197,7 @@ function mapBindingFixture() {
       inspectionStorageKey: `${prefix}/inspection.webp`,
       sourceCorners: mapBindingQuad,
       centeringQuad: mapBindingQuad,
-      centeringBorders: { leftMm: 6, rightMm: 6, topMm: 8, bottomMm: 8 },
+      centeringBorders: measureSpeedsterCenteringBorders(mapBindingQuad),
       inspectionFrame: { width: 1350, height: 1858, cardBounds: { x: 40, y: 40, width: 1270, height: 1778 } },
       transform: [1, 0, 0, 0, 1, 0, 0, 0, 1],
       viewStorageKeys: {
@@ -495,7 +496,8 @@ test("color geometry proxy replaces browser URLs and binds exact image bytes plu
   const fixture = mapBindingFixture();
   const sourceGeneration = `iphone-v4-sha256-${"1".repeat(64)}`;
   const sourceImageStorageKey = `ai-grader-v2/admin-1/${fixture.sessionId}/original/${sourceGeneration}/back.jpg`;
-  const body = await speedsterServiceBody("prepare", {
+  const body = await speedsterServiceBody("color-geometry", {
+    mode: "PRINTED_FRAME",
     sessionId: fixture.sessionId,
     side: "BACK",
     imageUrl: "https://browser-controlled.example/ignore.jpg",
@@ -512,13 +514,7 @@ test("color geometry proxy replaces browser URLs and binds exact image bytes plu
   assert.equal(body.imageUrl, `https://server-read.example/${sourceImageStorageKey}`);
   assert.equal(body.sessionId, undefined);
   assert.deepEqual(body.corners, mapBindingQuad);
-  assert.deepEqual(body.outputUploads, {
-    rectified: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/rectified.webp`,
-    inspection: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/inspection.webp`,
-    normalized: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/normalized.webp`,
-    microDefect: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/micro_defect.webp`,
-    directional: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/directional.webp`,
-  });
+  assert.equal(body.outputUploads, undefined);
   let hostilePresigns = 0;
   await assert.rejects(() => speedsterServiceBody("prepare", {
     sessionId: fixture.sessionId,
@@ -533,7 +529,7 @@ test("color geometry proxy replaces browser URLs and binds exact image bytes plu
     async presignRead() { hostilePresigns += 1; return "unexpected"; },
     async presignUpload() { hostilePresigns += 1; return "unexpected"; },
     async hashMapEvidence() { hostilePresigns += 1; return mapBindingSha(sourceImageStorageKey); },
-  }), /Browser-selected.*destinations are not accepted/);
+  }), /legacy output grants are disabled/);
   assert.equal(hostilePresigns, 0);
   assert.deepEqual(body.colorGeometryAuthorityBinding, {
     sessionId: fixture.sessionId,
@@ -1117,6 +1113,123 @@ test("generic PATCH permits only the DRAFT to CAPTURED transition with required 
     assert.equal(result.state.status, 400, JSON.stringify(body));
     assert.equal(updateCalls, 0, JSON.stringify(body));
   }
+});
+
+const offCenterPrintedQuad = [
+  { x: 0.2, y: 0.1 }, { x: 0.95, y: 0.1 }, { x: 0.95, y: 0.9 }, { x: 0.2, y: 0.9 },
+];
+
+// Synthetic auth, storage, map and DB adapters; genuine fixture HMAC receipts
+// are verified by the actual PATCH handler, including both modes on each side.
+async function saveCenteringFixture(quad: unknown, borders: unknown, corruptReceipt = false) {
+  const fixture = mapBindingFixture();
+  const captureSide = (name: "front" | "back") => ({
+    ...fixture.capture[name],
+    centeringQuad: quad,
+    centeringBorders: borders,
+    colorGeometryEvidence: fixture.capture[name].colorGeometryEvidence.map((evidence) => ({
+      ...evidence,
+      confirmedQuad: evidence.mode === "PRINTED_FRAME" ? quad : evidence.confirmedQuad,
+      serverReceipt: corruptReceipt ? `${evidence.serverReceipt}invalid` : evidence.serverReceipt,
+    })),
+  });
+  const capture = { ...fixture.capture, front: captureSide("front"), back: captureSide("back") };
+  let saved: Record<string, unknown> | null = null;
+  let receiptChecks = 0;
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    findSession: async () => fixture.session,
+    validateMapBinding: async () => ({}),
+    verifyColorGeometryReceipt: (receipt, binding) => {
+      receiptChecks += 1;
+      return verifySpeedsterColorGeometryReceipt(receipt, binding, { env: colorReceiptEnv });
+    },
+    updateSession: async (_id, _admin, data) => {
+      saved = data;
+      return { ...fixture.session, ...data };
+    },
+  });
+  const output = response();
+  await handler(request("PATCH", { workflowState: "CAPTURED", capture }, fixture.sessionId), output.res);
+  return { ...output.state, saved: saved as Record<string, unknown> | null, receiptChecks };
+}
+
+for (const [name, forged] of Object.entries({
+  zero: { leftMm: 0, rightMm: 0, topMm: 0, bottomMm: 0 },
+  equal: { leftMm: 3, rightMm: 3, topMm: 3, bottomMm: 3 },
+  negative: { leftMm: -10, rightMm: -10, topMm: -10, bottomMm: -10 },
+  mismatched: { leftMm: 1, rightMm: 9, topMm: 2, bottomMm: 8 },
+})) {
+  test(`capture PATCH derives centering from confirmed geometry despite forged ${name} borders`, async () => {
+    const result = await saveCenteringFixture(offCenterPrintedQuad, forged);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.receiptChecks, 4);
+    const capture = result.saved?.capture as ReturnType<typeof mapBindingFixture>["capture"];
+    for (const side of [capture.front, capture.back]) {
+      assert.deepEqual(side.centeringQuad, offCenterPrintedQuad);
+      assert.deepEqual(side.centeringBorders, measureSpeedsterCenteringBorders(offCenterPrintedQuad));
+      assert.equal(calculateCenteringScore(side.centeringBorders), 5);
+    }
+  });
+}
+
+test("capture PATCH preserves legitimate unchanged centering measurements", async () => {
+  const borders = measureSpeedsterCenteringBorders(offCenterPrintedQuad);
+  const result = await saveCenteringFixture(offCenterPrintedQuad, borders);
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.receiptChecks, 4);
+  const capture = result.saved?.capture as ReturnType<typeof mapBindingFixture>["capture"];
+  assert.deepEqual(capture.front.centeringBorders, borders);
+  assert.deepEqual(capture.back.centeringBorders, borders);
+});
+
+for (const [name, quad] of Object.entries({
+  absent: null,
+  negative: [{ x: -0.1, y: 0.1 }, ...offCenterPrintedQuad.slice(1)],
+  nonfinite: [{ x: NaN, y: 0.1 }, ...offCenterPrintedQuad.slice(1)],
+  crossed: [offCenterPrintedQuad[0], offCenterPrintedQuad[2], offCenterPrintedQuad[1], offCenterPrintedQuad[3]],
+  degenerate: Array.from({ length: 4 }, () => ({ x: 0.5, y: 0.5 })),
+  fullFrame: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }],
+  zeroHorizontalBorders: [{ x: 0, y: 0.1 }, { x: 1, y: 0.1 }, { x: 1, y: 0.9 }, { x: 0, y: 0.9 }],
+  zeroVerticalBorders: [{ x: 0.1, y: 0 }, { x: 0.9, y: 0 }, { x: 0.9, y: 1 }, { x: 0.1, y: 1 }],
+})) {
+  test(`capture PATCH rejects ${name} printed geometry before persistence`, async () => {
+    const result = await saveCenteringFixture(quad, { leftMm: 3, rightMm: 3, topMm: 3, bottomMm: 3 });
+    assert.equal(result.status, 409, JSON.stringify(result.body));
+    assert.equal(result.saved, null);
+  });
+}
+
+test("centering derivation does not bypass genuine Color receipt validation", async () => {
+  const result = await saveCenteringFixture(offCenterPrintedQuad, { leftMm: 0, rightMm: 0, topMm: 0, bottomMm: 0 }, true);
+  assert.equal(result.status, 409);
+  assert.equal(result.saved, null);
+  assert.equal(result.receiptChecks, 1);
+});
+
+test("historical completed capture reads retain their saved centering without recomputation", async () => {
+  const fixture = mapBindingFixture();
+  const historical = {
+    ...fixture.session,
+    workflowState: "COMPLETED",
+    capture: { ...fixture.capture, front: {
+      ...fixture.capture.front,
+      centeringQuad: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }],
+      centeringBorders: { leftMm: 0, rightMm: 0, topMm: 0, bottomMm: 0 },
+    } },
+  };
+  const before = structuredClone(historical);
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    findSession: async () => historical,
+    hashEvidence: async () => { throw new Error("historical read must not access storage"); },
+    updateSession: async () => { throw new Error("historical read must not write"); },
+  });
+  const output = response();
+  await handler(request("GET", undefined, fixture.sessionId), output.res);
+  assert.equal(output.state.status, 200);
+  assert.deepEqual(output.state.body, { session: before });
+  assert.deepEqual(historical, before);
 });
 
 test("capture PATCH accepts an exact active-map registration bound to submitted quads and server-hashed inspections", async () => {
@@ -2058,7 +2171,9 @@ test("review changes use the one owned review-action route and never call client
     `${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action.ts`,
     "utf8",
   );
-  assert.match(reviewRoute, /z\.object\(\{ type: z\.literal\("INITIALIZE"\) \}\)\.strict\(\)/);
+  const reviewContract = readFileSync(`${root}/../../packages/atlas-grading-core/src/review-action-contract.ts`, "utf8");
+  assert.match(reviewRoute, /speedsterReviewPostSchema as postSchema/);
+  assert.match(reviewContract, /z\.object\(\{ type: z\.literal\("INITIALIZE"\) \}\)\.strict\(\)/);
   assert.doesNotMatch(reviewRoute, /initialDefects/);
 });
 
@@ -2066,7 +2181,7 @@ test("review CAS is short, serializable, and compares the exact persisted update
   const root = fileURLToPath(new URL("..", import.meta.url));
   const core = readFileSync(`${root}/lib/server/aiGraderV2ReviewAction.ts`, "utf8");
   const route = readFileSync(
-    `${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action.ts`,
+    `${root}/lib/server/speedsterReviewDependencies.ts`,
     "utf8",
   );
   assert.ok(core.indexOf("await deps.measure") < core.lastIndexOf("await deps.persistReviewIfRevision"));
@@ -2094,7 +2209,7 @@ test("final capture persistence compares the exact draft revision before replaci
   const route = readFileSync(
     fileURLToPath(new URL("../pages/api/admin/ai-grader-v2/sessions/[sessionId].ts", import.meta.url)),
     "utf8",
-  );
+  ) + readFileSync(fileURLToPath(new URL("../lib/server/speedsterSessionCapture.ts", import.meta.url)), "utf8");
   assert.match(route, /updatedAt: expectedUpdatedAt/);
   assert.match(route, /colorGeometryEvidence, existing\.updatedAt/);
   assert.match(route, /if \(updated\.count !== 1\) return null/);

@@ -1,16 +1,13 @@
-import base64
 import json
 import logging
 import re
 import time
 import traceback
 from contextlib import asynccontextmanager
-from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
 import cv2
 import numpy as np
-import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -24,7 +21,6 @@ from card_geometry import (
     MapRegistrationFailure,
     MAP_REGISTRATION_ALGORITHM_VERSION,
     register_map_design,
-    warp_to_card_map,
     warp_to_inspection_map,
 )
 from color_geometry import (
@@ -44,6 +40,17 @@ from sam3_detector import (
     measure_marks,
 )
 from trace_rle import decode_trace_rle, encode_trace_rle
+from preparation_evidence import (
+    decode_preparation_source,
+    load_preparation_bytes,
+    preparation_identity,
+)
+
+from preparation_core import (
+    ImageInput, Point, RectifyRequest, PreparedUploads, PrepareRequest, PrepareResponse,
+    PreparationPorts, TARGET_WIDTH, TARGET_HEIGHT, load_image, normalized_points,
+    rectify, reveal_views, encode_webp, upload_webp, prepare_image as run_preparation,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -57,9 +64,6 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-TARGET_WIDTH = GRID_WIDTH
-TARGET_HEIGHT = GRID_HEIGHT
-
 # Repeated OpenCV evaluation on load-balanced workers can move a tracked point
 # by roughly a pixel without changing any categorical or correspondence
 # authority. These limits are intentionally much smaller than an operator drag,
@@ -70,18 +74,8 @@ MAP_REGISTRATION_RESCUE_UNIT_TOLERANCE = 1e-3
 MAP_REGISTRATION_RESCUE_PIXEL_TOLERANCE = 1e-2
 
 
-class ImageInput(BaseModel):
-    imageUrl: Optional[str] = None
-    imageBase64: Optional[str] = None
-
-
 class GeometryRequest(ImageInput):
     matColor: str
-
-
-class Point(BaseModel):
-    x: float
-    y: float
 
 
 class GeometryResponse(BaseModel):
@@ -101,33 +95,6 @@ class ColorGeometryResponse(BaseModel):
     width: int
     height: int
     colorGeometry: dict
-
-
-class RectifyRequest(ImageInput):
-    corners: List[Point]
-
-
-class PreparedUploads(BaseModel):
-    rectified: str
-    inspection: Optional[str] = None
-    normalized: str
-    microDefect: str
-    directional: str
-
-
-class PrepareRequest(RectifyRequest):
-    outputUploads: PreparedUploads
-    matColor: str
-
-
-class PrepareResponse(BaseModel):
-    width: int
-    height: int
-    transform: List[float]
-    borders: Optional[List[Point]]
-    detectedBorders: List[str]
-    inspectionFrame: dict
-    colorGeometry: Optional[dict] = None
 
 
 class MapRegistrationAnchor(BaseModel):
@@ -523,76 +490,6 @@ def _detect_failure_detail(
     }
 
 
-def load_image(image_url: Optional[str], image_base64: Optional[str]) -> np.ndarray:
-    if image_base64:
-        encoded = image_base64.split(",", 1)[-1]
-        data = base64.b64decode(encoded)
-    elif image_url:
-        response = requests.get(image_url, timeout=20)
-        response.raise_for_status()
-        data = response.content
-    else:
-        raise ValueError("imageUrl or imageBase64 is required")
-
-    image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-    if image is None:
-        raise ValueError("Image could not be decoded")
-    return image
-
-
-def normalized_points(points: np.ndarray, width: int, height: int) -> List[Point]:
-    return [Point(x=float(x / width), y=float(y / height)) for x, y in points]
-
-
-def rectify(image: np.ndarray, corners: List[Point]):
-    if len(corners) != 4:
-        raise ValueError("Physical card geometry requires exactly four perimeter points")
-    normalized = np.array([[point.x, point.y] for point in corners], dtype=np.float64)
-    if not np.all(np.isfinite(normalized)) or np.any(normalized < 0) or np.any(normalized > 1):
-        raise ValueError("Physical card geometry must remain inside the exact source image")
-    height, width = image.shape[:2]
-    source = np.array(
-        [[point.x * width, point.y * height] for point in corners],
-        dtype=np.float32,
-    )
-    return warp_to_card_map(image, source)
-
-
-def reveal_views(image: np.ndarray):
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    light, a_channel, b_channel = cv2.split(lab)
-    normalized_light = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(light)
-    normalized = cv2.cvtColor(cv2.merge((normalized_light, a_channel, b_channel)), cv2.COLOR_LAB2BGR)
-
-    gray = cv2.cvtColor(normalized, cv2.COLOR_BGR2GRAY)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
-    micro = cv2.max(
-        cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel),
-        cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel),
-    )
-    x_response = cv2.convertScaleAbs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
-    y_response = cv2.convertScaleAbs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
-    directional = cv2.max(x_response, y_response)
-    return normalized, micro, directional
-
-
-def encode_webp(image: np.ndarray) -> bytes:
-    success, encoded = cv2.imencode(".webp", image, [cv2.IMWRITE_WEBP_QUALITY, 92])
-    if not success:
-        raise ValueError("Image could not be encoded")
-    return encoded.tobytes()
-
-
-def upload_webp(upload_url: str, image: np.ndarray):
-    response = requests.put(
-        upload_url,
-        data=encode_webp(image),
-        headers={"Content-Type": "image/webp"},
-        timeout=30,
-    )
-    response.raise_for_status()
-
-
 @app.get("/health")
 def health():
     return {
@@ -678,85 +575,15 @@ def color_geometry(request: ColorGeometryRequest):
 
 @app.post("/prepare", response_model=PrepareResponse)
 def prepare_image(request: PrepareRequest):
-    if len(request.corners) != 4:
-        raise HTTPException(status_code=400, detail="Exactly four corners are required")
-    try:
-        image = load_image(request.imageUrl, request.imageBase64)
-        rectified, transform = rectify(image, request.corners)
-        try:
-            color_geometry = propose_printed_frame(rectified, request.matColor)
-        except Exception as error:
-            LOGGER.warning(
-                "color_geometry_failed mode=PRINTED_FRAME errorType=%s",
-                type(error).__name__,
-            )
-            color_geometry = engine_error_result("PRINTED_FRAME", request.matColor)
-        if color_geometry and color_geometry["outcome"] == "ACCEPTED":
-            borders = color_geometry["proposal"]
-            detected_borders = ["top", "right", "bottom", "left"]
-        else:
-            borders = None
-            detected_borders = []
-        if request.outputUploads.inspection:
-            height, width = image.shape[:2]
-            source = np.array(
-                [[point.x * width, point.y * height] for point in request.corners],
-                dtype=np.float32,
-            )
-            detector_image, _ = warp_to_inspection_map(image, source)
-            frame = {
-                "width": INSPECTION_WIDTH,
-                "height": INSPECTION_HEIGHT,
-                "cardBounds": {
-                    "x": INSPECTION_MARGIN_PX,
-                    "y": INSPECTION_MARGIN_PX,
-                    "width": TARGET_WIDTH,
-                    "height": TARGET_HEIGHT,
-                },
-            }
-            inspection_upload = (
-                (request.outputUploads.inspection, detector_image),
-            )
-        else:
-            detector_image = rectified
-            frame = {
-                "width": TARGET_WIDTH,
-                "height": TARGET_HEIGHT,
-                "cardBounds": {
-                    "x": 0,
-                    "y": 0,
-                    "width": TARGET_WIDTH,
-                    "height": TARGET_HEIGHT,
-                },
-            }
-            inspection_upload = ()
-        normalized, micro, directional = reveal_views(detector_image)
-        uploads = (
-            (request.outputUploads.rectified, rectified),
-            *inspection_upload,
-            (request.outputUploads.normalized, normalized),
-            (request.outputUploads.microDefect, micro),
-            (request.outputUploads.directional, directional),
-        )
-        with ThreadPoolExecutor(max_workers=len(uploads)) as executor:
-            list(executor.map(lambda item: upload_webp(*item), uploads))
-    except Exception as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-
-    return {
-        "width": TARGET_WIDTH,
-        "height": TARGET_HEIGHT,
-        "transform": transform.reshape(-1).tolist(),
-        "borders": (
-            normalized_points(borders, TARGET_WIDTH, TARGET_HEIGHT)
-            if borders is not None
-            else None
-        ),
-        "detectedBorders": detected_borders,
-        "inspectionFrame": frame,
-        "colorGeometry": serialize_proposal(color_geometry, TARGET_WIDTH, TARGET_HEIGHT) if color_geometry else None,
-    }
-
+    return run_preparation(request, PreparationPorts(
+        load_image=load_image,
+        rectify=rectify,
+        propose_printed_frame=propose_printed_frame,
+        upload_webp=upload_webp,
+        preparation_identity=preparation_identity,
+        load_preparation_bytes=load_preparation_bytes,
+        decode_preparation_source=decode_preparation_source,
+    ))
 
 @app.post("/map-registration")
 def map_registration(request: MapRegistrationRequest):

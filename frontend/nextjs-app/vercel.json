@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {
+    "deploymentEnabled": {
+      "codex/atlas-integration-20260907": false,
+      "codex/atlas-staff-app-20260908": false,
+      "codex/atlas-grading-workflow-lead-20260909": false,
+      "main": false,
+      "codex/atlas-live-workspace-recovery-20260910": false,
+      "codex/atlas-fast-intake-autopilot-20260910": false,
+      "codex/atlas-receipt-recovery-budget-removal-20260911": false,
+      "codex/atlas-fresh-card-start-20260911": false
+    }
+  }
+}

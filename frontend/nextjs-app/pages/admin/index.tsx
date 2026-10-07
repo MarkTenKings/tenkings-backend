@@ -61,6 +61,12 @@ const ADMIN_SECTIONS: AdminSection[] = [
         priority: true,
       },
       {
+        label: "Physical Inventory V2",
+        href: "/admin/physical-inventory",
+        posterSrc: "/admin/launch/inventory-ready-poster.jpg",
+        videoSrc: "/admin/launch/inventory-ready.mp4",
+      },
+      {
         label: "Assigned Locations",
         href: "/admin/assigned-locations",
         posterSrc: "/admin/launch/assigned-locations-poster.jpg",

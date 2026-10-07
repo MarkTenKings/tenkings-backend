@@ -1,0 +1,60 @@
+{
+  "sourceCommit": "da2a34da8a58622550ad5ebb48e587761aac05f0",
+  "unchangedModules": [
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/contracts.ts",
+      "canonical": "packages/atlas-grading-core/src/contracts.ts",
+      "sha256": "afe2dc8496a02c1a16ef3bda8e72df271035bf40c0e44c59861ab6b27ca18647"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/trace-codec.ts",
+      "canonical": "packages/atlas-grading-core/src/trace-codec.ts",
+      "sha256": "a47ab65be0c7c4a3243d406905efd845b4878612d18fabaa317b2ba491004821"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/identity.ts",
+      "canonical": "packages/atlas-grading-core/src/identity.ts",
+      "sha256": "a46dbfa5a594cf56467a60d52251b18c09e23c6a44f46d4dd3c54ad7e239092c"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/card-type-map-contracts.ts",
+      "canonical": "packages/atlas-grading-core/src/card-type-map-contracts.ts",
+      "sha256": "b9b0c1ccd4b426ec39f66dc94b8f9761092ce799cbfd3abe6ac84e9c38dbde4c"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/geometry.ts",
+      "canonical": "packages/atlas-grading-core/src/geometry.ts",
+      "sha256": "95e6d867ec7803f76d1bbbb7909eac983a6aaea218de1ffb21bd617e28e4e338"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/scoring.ts",
+      "canonical": "packages/atlas-grading-core/src/scoring.ts",
+      "sha256": "fe58ff9d0f24c28ee6bc110b76cd6666423fe8f848f1d5bfbbf610190a01e8fd"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/review-findings.ts",
+      "canonical": "packages/atlas-grading-core/src/review-findings.ts",
+      "sha256": "95c12567a1c2ffa0f6d0fd9bb915f48e106c1475252cce7e6434f555ebe924b6"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/review.ts",
+      "canonical": "packages/atlas-grading-core/src/review.ts",
+      "sha256": "a58e4e50c7dbbc60475f8303680c934fc4c6d0422b1c4cf23916b77d4dab3993"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/trace-bitmap-wire.ts",
+      "canonical": "packages/atlas-grading-core/src/trace-bitmap-wire.ts",
+      "sha256": "db1e4afdc0ff81c304289eca2ba70580123818141eb0943e84703eb71312faf7"
+    },
+    {
+      "source": "frontend/nextjs-app/lib/ai-grader-v2/trace-editor.ts",
+      "canonical": "packages/atlas-grading-core/src/trace-editor.ts",
+      "sha256": "04a184d9fe80dd4c697c7963226ec761a11060258331f51b56f411ec82921c44"
+    }
+  ],
+  "externalRuntimeDependencies": [
+    "zod@4.1.11"
+  ],
+  "ambientEffectDependencies": [],
+  "injectedCallbacks": "scan/re-measure functions invoke caller-supplied ports; the package creates no provider, storage, auth or database client"
+}

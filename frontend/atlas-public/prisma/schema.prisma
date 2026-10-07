@@ -1,0 +1,13 @@
+// Client shape only. All database migrations are owned by atlas-app.
+// The public serving role receives no direct table privileges, including here.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../.generated/public-database"
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("ATLAS_PUBLIC_DATABASE_URL")
+}
+model PublicReaderControl {
+  id String @id
+}
