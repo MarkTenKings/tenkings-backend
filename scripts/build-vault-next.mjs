@@ -13,4 +13,5 @@ function run(args) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 run(["--filter", "@tenkings/database", "generate"]);
+run(["--filter", "@atlas/grading-core", "build"]);
 for (const name of ["vault-contracts", "shared", "database", "browser-rip-client", "ai-grader-capture-helper", "ebay-sold-comps-v2", "nextjs-app"]) run(["--filter", `@tenkings/${name}`, "build"]);

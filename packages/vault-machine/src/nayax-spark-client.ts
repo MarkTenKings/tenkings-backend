@@ -230,4 +230,3 @@ function parseSparkResponse(source: string): unknown {
   if (position !== source.length) return fail();
   return result;
 }
-

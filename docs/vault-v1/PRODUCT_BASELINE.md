@@ -2,6 +2,12 @@
 
 **Current payment direction (2026-10-07):** Nayax Spark is the immediate integration target; Stripe Terminal remains available as a separate per-machine route. This supersedes the September 28 provider selection, without removing its test implementation or historical evidence. See [Spark implementation and remaining acceptance](NAYAX_SPARK_V3_REVIEW_2026-10-07.md).
 
+## October 7, 2026 — Spark production source and release integration
+
+The owner authorized completing the remaining integration, release and installed testing with two fresh Astra Ultra reviewers. Spark SANDBOX/OFFICIAL_TEST and PRODUCTION/LIVE paths are implemented separately, including exact credential generations, acquiring callbacks, financial recovery, immutable controller bindings and signed runtime activation. Stripe remains independently selectable. Linux x64 packaging, guarded updates, protected configuration and coordinated journal recovery are implemented; their source presence does not establish installed-machine or electrical acceptance.
+
+The September 17 [SER receipt](SER_NATIVE_ACCEPTANCE_2026-09-17.md) records actual Omarchy/native execution of that earlier candidate. Current source has been committed and combined with current main in an isolated release checkout; final signed-release/installed results must be recorded separately. The owner will power the computer tonight and has a Nayax expert meeting tomorrow. Current vendor credentials/configuration, actual terminal qualification, cabinet qualification and production account permission remain pending. See [activation operations](SPARK_PRODUCTION_ACTIVATION.md) and [meeting worksheet](NAYAX_MEETING_AND_GO_LIVE_2026-10-08.md). Historical “unimplemented,” SDK/Marshall, Windows-only and prior authorization statements below are superseded where this dated update differs.
+
 ## September 16, 2026 — owner acceptance and integration takeover
 
 Mark accepts Portrait B and its checkout as sufficient for now. Next priority is finishing real software/hardware integration and the Linux/SER appliance with a fresh Astra Ultra lead and three Astra xhigh workers. This supersedes the older no-subagents direction. Use [the current integration status](INTEGRATION_STATUS_2026-09-16.md) and [the intake handoff](INTEGRATION_LEAD_HANDOFF_2026-09-16.md); preserve the approved visuals while connecting them deliberately to an actual mapped machine profile. Mark confirmed that “AI OS” means Omarchy; it is the intended Linux setup, with actual SER installation and device support unverified.

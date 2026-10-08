@@ -35,6 +35,7 @@ JSON_FILES = frozenset((
     *(tree + '/tsconfig.json' for tree in TREES[:3]),
     'deploy/vault-linux/runtime.json', 'deploy/vault-linux/templates/machine.env.example.json',
     'deploy/vault-linux/templates/machine.spark.env.example.json',
+    'deploy/vault-linux/templates/machine.spark-production.env.example.json',
     'deploy/vault-linux/templates/nayax-spark.test.example.json',
 ))
 MAX_FILE = 16 * 1024 * 1024

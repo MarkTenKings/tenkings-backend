@@ -34,7 +34,8 @@ export function vaultNextTestEnvironment(databaseUrl = unavailableDatabaseUrl, s
   if (syntheticSpark !== undefined) {
     assert.equal(process.env.VAULT_SYNTHETIC_SPARK_VALIDATION, "1", "Synthetic Spark harness acknowledgment required");
     assert.notEqual(databaseUrl, unavailableDatabaseUrl, "Synthetic Spark requires guarded disposable PostgreSQL");
-    assert.deepEqual(Object.keys(syntheticSpark).sort(), ["bindings", "callbackSecret", "ownerAdminUserId"]);
+    const production = syntheticSpark.productionBindings !== undefined || syntheticSpark.productionCallbackSecret !== undefined;
+    assert.deepEqual(Object.keys(syntheticSpark).sort(), ["bindings", "callbackSecret", "ownerAdminUserId", ...(production ? ["productionBindings", "productionCallbackSecret"] : [])]);
     assert.ok(/^synthetic_[A-Za-z0-9_-]{32,80}$/.test(syntheticSpark.callbackSecret));
     assert.ok(/^[a-f0-9-]{36}$/.test(syntheticSpark.ownerAdminUserId));
     assert.ok(Array.isArray(syntheticSpark.bindings) && syntheticSpark.bindings.length > 0 && syntheticSpark.bindings.length <= 64);
@@ -49,6 +50,20 @@ export function vaultNextTestEnvironment(databaseUrl = unavailableDatabaseUrl, s
       VAULT_NAYAX_SPARK_BINDINGS_JSON: JSON.stringify(syntheticSpark.bindings),
       VAULT_OWNER_ADMIN_USER_IDS: syntheticSpark.ownerAdminUserId,
     };
+    if (production) {
+      assert.ok(/^synthetic_[A-Za-z0-9_-]{32,80}$/.test(syntheticSpark.productionCallbackSecret));
+      assert.notEqual(syntheticSpark.productionCallbackSecret, syntheticSpark.callbackSecret);
+      assert.ok(Array.isArray(syntheticSpark.productionBindings) && syntheticSpark.productionBindings.length > 0 && syntheticSpark.productionBindings.length <= 64);
+      for (const binding of syntheticSpark.productionBindings) {
+        assert.ok(binding.hwSerial.startsWith("SYNTHETIC-")); assert.equal(binding.currency, "USD");
+        assert.equal(binding.stage, "PRODUCTION"); assert.match(binding.paymentBindingDigest, /^[a-f0-9]{64}$/);
+      }
+      Object.assign(syntheticEnvironment, {
+        VAULT_NAYAX_SPARK_PRODUCTION_CALLBACKS_ENABLED: "true", VAULT_NAYAX_SPARK_PRODUCTION_ENVIRONMENT: "PRODUCTION",
+        VAULT_NAYAX_SPARK_PRODUCTION_CALLBACK_HEADER: "x-vault-spark-secret", VAULT_NAYAX_SPARK_PRODUCTION_CALLBACK_SECRET: syntheticSpark.productionCallbackSecret,
+        VAULT_NAYAX_SPARK_PRODUCTION_BINDINGS_JSON: JSON.stringify(syntheticSpark.productionBindings),
+      });
+    }
   }
   // Do not inherit provider credentials, alternate database URLs or production configuration.
   return {

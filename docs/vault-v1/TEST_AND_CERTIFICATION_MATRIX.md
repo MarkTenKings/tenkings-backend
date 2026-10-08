@@ -1,8 +1,8 @@
 # Vault V1 Test and Certification Matrix
 
-**Current payment decision (2026-09-28):** Stripe UX700 is selected. The older payment hardware and bridge notes below are historical. See [implementation status](STRIPE_PAYMENT_IMPLEMENTATION_STATUS_2026-09-28.md).
+**Current payment direction (2026-10-07):** Nayax Spark is immediate; Stripe is retained per machine. Spark stage-isolated production source is implemented with signed activation, while real vendor, terminal and cabinet acceptance remain pending. See [activation operations](SPARK_PRODUCTION_ACTIVATION.md) and the [meeting worksheet](NAYAX_MEETING_AND_GO_LIVE_2026-10-08.md).
 
-## September16 integration candidate supersession
+## Historical September 16 integration checkpoint
 
 The owner accepted Portrait B and confirmed the 4×17 (68-door) visible arrangement, all ordered hardware present but disconnected, and Omarchy as the intended “AI OS.” A qualified physical label/address/geometry profile is still missing; fixture positions never provide that mapping. The preserved September11 bench transport now underpins the new Waveshare service candidate. Linux packaging and Marshall process/journal boundaries are implemented locally; official SDK/test setup, actual SER install, electrical/door qualification and full-machine evidence remain open. The earlier Windows/ViewSonic/simulator-only descriptions below are historical where they differ. See [current integration handoff](INTEGRATION_STATUS_2026-09-16.md), [controller candidate](WAVESHARE_INTEGRATION_2026-09-16.md), [Nayax boundary](MARSHALL_INTEGRATION_2026-09-16.md), and [Omarchy packaging](LINUX_APPLIANCE_2026-09-16.md). No production configuration or physical gate is closed by software tests.
 
@@ -11,9 +11,9 @@ The current target is a configurable family: maximum design 125, compact concept
 | Layer | Automated now | External evidence later |
 |---|---|---|
 | Contracts | Schema-1 compatibility; opaque IDs, unique labels, mixed geometry/cutouts, independent endpoint/channel mappings; signed profiles at 1/7/32/72/125/150/256 doors; incomplete drafts rejected as configs; tax, roles, redaction and certification policy | Complete measured profile and hardware evidence |
-| Local repository | SQLite migration/PRAGMAs; uniqueness/FKs; atomic reservation/commit/outbox; callback idempotency/conflict; restart; build provenance; integrity; backup/restore | Windows protected-store verification |
+| Local repository | SQLite migration/PRAGMAs; uniqueness/FKs; atomic reservation/commit/outbox; callback idempotency/conflict; restart; build provenance; integrity; backup/restore | Installed Linux protected-store verification |
 | State model | allowed/forbidden transition exploration; decline/cancel/unknown/reconciliation; config pinning; cloud-loss readiness; durable paid countdown/restart/one retry extension/automatic presentation completion | Official Nayax mapping approval |
-| Payment adapter | deterministic approve/decline/cancel/timeout/unknown; duplicate/out-of-order callbacks; reconcile | Official SDK simulator and certification |
+| Payment adapter | Spark authentication/trigger/callback/reconcile/full-sale void; separate sandbox/production binding and receipt domains; immutable replay identity; every-effect signed authority, expiry/revocation; retained independent Stripe tests | Actual Nayax Spark configuration, terminal success/decline/timeout/late-callback/void tests and vendor certification |
 | Controller | serialized ACK/NAK/timeout/disconnect/wrong-door faults; exact paid-group retry; max two customer commands; profile adapter/address consistency | Eight-door electrical bench; independently verified map for every applicable profile door; firmware pulse/fault limits |
 | Kiosk | customer/staff/recovery workflows; explicit legacy/profile discriminator; stable mixed-size/cutout geometry and opaque IDs; 720×1280–1080×1920 scaling proxies; 44px hit targets, long labels, focus and language checks | Installed touchscreen/TV binding, scaling, glare and reach tests |
 | Staff/restock | role grant/deny; PIN lockout; locked-session reauthentication; resumable command/terminal/human-observation phases; only FILLED activates with schema-2 fit confirmation; stale-close reset; safe exit; exact-digest empty-machine profile activation; certification coverage isolated per session/profile | Human operator acceptance and actual packaged-product fit |
@@ -21,8 +21,8 @@ The current target is a configurable family: maximum design 125, compact concept
 | Reporting | immutable snapshots; authorization vs settlement; certification excluded by default | Accounting/reconciliation acceptance |
 | E2E | at least 1,000 deterministic simulated customer transactions plus crash/fault exploration; 72/125 local HTTP demo flows; actual production Next HTTP auth/events into disposable PostgreSQL for legacy150/72/125/256 with profile publication/reconciliation races and count boundaries | 500 observed real sessions; 5 purchase + 2 restock cycles for every door in the applicable approved profile |
 | Database | Full historical Prisma chain on guarded loopback/tmpfs PostgreSQL, existing non-Vault invariants, Vault snapshot/scope/immutability checks, concurrent event idempotency, second-deploy no-op and cleanup | Separately authorized deployment and production acceptance |
-| Appliance | Functional release-manifest/path/hash tests and staging-only Windows scripts; local backup integrity and schema compatibility | Final pinned Node20/native SQLite/protected-storage/service implementation; cold boot/power cut/USB/disk/clock/update rollback on final Windows hardware |
+| Appliance | Pinned Linux x64 Node22.23.2/native SQLite build, clean-commit provenance, Ed25519 release verification, protected credentials, guarded service/update tooling; coordinated multi-generation journal backup and held restore/schema upgrade | Current signed-release build and installed SER test; cold boot/power cut/USB/disk/clock/update/restore on the actual Omarchy machine |
 
-The software build may report mock/simulator completeness only. It may not claim production readiness until G-01/G-02/G-03/G-04/G-06/G-07 deployment and physical evidence is attached to a version-bound certificate.
+Automated results establish the stated software boundaries only. Production readiness requires G-01/G-02/G-03/G-04/G-06/G-07 deployment and physical evidence attached to a version-bound certificate.
 
 The old 124-test result belongs to a historical implementation and is not current acceptance. Current combined counts and exact commit references are maintained in [review traceability](REVIEW_TRACEABILITY.md) and the append-only session log; no physical certification follows from simulated test counts.

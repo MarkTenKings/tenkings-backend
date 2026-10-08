@@ -15,4 +15,5 @@ try {
   // Existing canonical projections still run on the exact migrated database.
   for(const count of [null,72,125,256])await run("scripts/validate-vault-postgres.mjs",count?[`--profile-doors=${count}`]:[]);
   await run("scripts/validate-vault-spark-integration.mjs");
+  await run("scripts/validate-vault-spark-production-http.mjs");
 } finally {await database.close();}
