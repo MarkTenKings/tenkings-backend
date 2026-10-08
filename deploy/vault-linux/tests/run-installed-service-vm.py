@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
+import re
 import shlex
 import shutil
 import signal
@@ -85,11 +86,23 @@ def extract(archive, destination, prefix):
                 with target.open('xb') as output, stream.extractfile(member) as source:
                     shutil.copyfileobj(source, output)
                 target.chmod(member.mode & 0o777)
+        # These verified archives contain public release inputs. Explicitly set
+        # traversal modes: the caller's private umask must not turn 0755 into
+        # runner-owned 0700 directories unreadable by a capability-free container.
+        for target in destination.rglob('*'):
+            if target.is_dir(): target.chmod(0o755)
 
 
 def save(evidence, name, value):
     with (evidence / (name + '.json')).open('x') as stream:
         json.dump({'classification': 'SYNTHETIC_ONLY', **value}, stream, indent=2); stream.write('\n')
+
+
+def public_envelope_modes(release):
+    # The verified public signature envelope is excluded from payload mode
+    # inventory. Match appliance.stage without changing any signed file mode.
+    for name in ('release.json', 'release.sig'):
+        (release / name).chmod(0o644)
 
 
 def download_image(path):
@@ -124,6 +137,8 @@ def prepare_inputs(inputs, work, source):
              {k: v for k, v in replacement.items() if k != 'releaseId'}, 'Rehearsal metadata changes payload')
     run(['openssl', 'pkeyutl', '-verify', '-pubin', '-inkey', key, '-rawin',
          '-in', metadata / 'release.json', '-sigfile', metadata / 'release.sig'])
+    public_envelope_modes(release)
+    public_envelope_modes(metadata)
     tooling = staged / 'tooling'; (tooling / 'tests').mkdir(parents=True)
     for name in ('appliance.py', 'runtime.json', 'tests/installed-service-rehearsal.py'):
         shutil.copyfile(source / name, tooling / name)
@@ -169,6 +184,9 @@ def production_authority(work, source, evidence):
              '--release-public-key', '/input/release-public.pem', '--output', '/tmp/production-authority.json',
              '--ack-synthetic-container'], timeout=30)
         result = run(['docker', 'start', '--attach', name], timeout=720, check=False)
+        refusal = re.search(r'SYNTHETIC_ONLY validation refused: ([A-Z][A-Z0-9_]{1,100})', result.stderr)
+        safe_code = refusal.group(1) if refusal else 'CONTAINER_PERMISSION_DENIED' if 'permission denied' in result.stderr.lower() else 'CONTAINER_PROCESS_FAILED' if result.returncode else None
+        save(evidence, 'host-authority-execution', {'exitCode': result.returncode, 'refusalCode': safe_code})
         copied = run(['docker', 'cp', name + ':/tmp/production-authority.json', output], timeout=30, check=False)
         need(copied.returncode == 0, 'Packaged authority report missing')
         need(output.stat().st_size <= 1024 * 1024, 'Packaged authority report exceeds bound')

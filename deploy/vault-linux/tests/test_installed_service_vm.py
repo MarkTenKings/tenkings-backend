@@ -2,6 +2,7 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import tarfile
@@ -35,6 +36,16 @@ class ServiceVMTests(unittest.TestCase):
             self.assertEqual((root / 'out/release/node').read_bytes(), b'hello')
             self.assertEqual((root / 'out/release/node').stat().st_mode & 0o777, 0o755)
 
+    def test_private_host_umask_does_not_make_public_release_unreadable_in_container(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); path = self.archive(root, [self.member('release/runtime/bin/node', mode=0o755)])
+            previous = os.umask(0o077)
+            try: v.extract(path, root / 'out', 'release')
+            finally: os.umask(previous)
+            for directory in ('release', 'release/runtime', 'release/runtime/bin'):
+                self.assertEqual((root / 'out' / directory).stat().st_mode & 0o777, 0o755)
+            self.assertEqual((root / 'out/release/runtime/bin/node').stat().st_mode & 0o777, 0o755)
+
     def test_archive_rejects_traversal_links_duplicates_and_privileged_modes(self):
         cases = [[self.member('../outside')], [self.member('/release/file')], [self.member('other/file')],
                  [self.member('release/file', tarfile.SYMTYPE)], [self.member('release/file', tarfile.LNKTYPE)],
@@ -46,6 +57,19 @@ class ServiceVMTests(unittest.TestCase):
                 with self.assertRaises(ValueError): v.extract(path, root / 'out', 'release')
                 self.assertFalse((root / 'outside').exists())
                 self.assertEqual(list((root / 'out').iterdir()), [])
+
+    def test_public_envelope_mode_normalization_preserves_signed_payload_modes_and_all_bytes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            names = ('release.json', 'release.sig', 'payload/private-mode-file')
+            path = self.archive(root, [self.member('release/' + name, mode=0o600) for name in names])
+            v.extract(path, root / 'out', 'release')
+            release = root / 'out/release'
+            v.public_envelope_modes(release)
+            for name in names:
+                self.assertEqual((release / name).read_bytes(), b'hello')
+                self.assertEqual((release / name).stat().st_mode & 0o777,
+                                 0o600 if name.startswith('payload/') else 0o644)
 
     def test_download_requires_exact_image_size_and_digest(self):
         for content, size, expected in [(b'hello', 4, 'unused'), (b'hello', 6, 'unused'), (b'hello', 5, '0' * 64)]:
