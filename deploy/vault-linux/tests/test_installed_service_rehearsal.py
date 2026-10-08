@@ -29,6 +29,17 @@ class InstalledRehearsalTests(unittest.TestCase):
                          {'localSchemaVersion': 8}, {'files': []}):
             with self.assertRaises(ValueError): r.equivalent_update(original, {**original, 'releaseId': 'new', **mutation})
 
+    def test_container_on_virtual_machine_is_refused_before_vm_probe(self):
+        host_id = 'a' * 32
+        args = SimpleNamespace(acknowledge=r.ACK, disposable_machine_id=host_id)
+        contents = {'/etc/machine-id': host_id, '/proc/1/comm': 'systemd\n'}
+        validator = Mock()
+        with patch.object(r.os, 'geteuid', return_value=0), patch.object(Path, 'read_text', lambda path: contents[str(path)]), \
+             patch.object(Path, 'is_dir', return_value=True), \
+             patch.object(r, 'command', return_value=SimpleNamespace(returncode=0, stdout='docker\n')) as command:
+            with self.assertRaisesRegex(ValueError, 'Containers are refused'): r.host_guard(args, validator)
+            command.assert_called_once_with(['systemd-detect-virt', '--container'], check=False)
+
     def test_configuration_cannot_select_external_or_physical_effects(self):
         base = {'VAULT_MACHINE_ID': 'fixture', 'VAULT_PAYMENT_ADAPTER': 'MOCK',
                 'VAULT_CONTROLLER_ADAPTER': 'SIMULATOR', 'VAULT_CLOUD_ORIGIN': 'https://127.0.0.1:47839'}

@@ -86,6 +86,9 @@ def host_guard(args, validator):
          'Acknowledge this exact disposable VM machine-id')
     need(Path('/proc/1/comm').read_text().strip() == 'systemd'
          and Path('/run/systemd/system').is_dir(), 'Real systemd must be PID1')
+    container = command(['systemd-detect-virt', '--container'], check=False)
+    need(container.returncode == 1 and container.stdout.strip() in ('', 'none'),
+         'Containers are refused even when an underlying virtual machine is detected')
     virtualization = command(['systemd-detect-virt', '--vm'], check=False)
     need(virtualization.returncode == 0 and virtualization.stdout.strip() not in ('', 'none'),
          'A disposable virtual machine is required; a container or physical cabinet is insufficient')
