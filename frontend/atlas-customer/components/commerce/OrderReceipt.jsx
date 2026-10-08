@@ -42,6 +42,16 @@ export function deliveryLabel(effect) {
     return ({ DELIVERED: 'Delivered', SENT: 'Sent', ACCEPTED: 'Accepted for delivery', QUEUED: 'Queued for delivery', FAILED: 'Delivery failed', UNDELIVERED: 'Not delivered' })[effect.deliveryStatus] ?? 'Delivery not confirmed';
 }
 
+export function shippingLabelLeg(effect, orderId) {
+    // The persisted effect identity binds the shipment leg to this paid order.
+    // Do not guess a direction for an unfamiliar legacy/provider identifier.
+    if (effect.kind !== 'FEDEX_LABEL' || !orderId) return null;
+    for (const leg of ['INBOUND', 'RETURN']) {
+        if (effect.id === `${orderId}:fedex:${leg}:v1`) return leg;
+    }
+    return null;
+}
+
 export default function OrderReceipt({ initialOrder = null, orderId = initialOrder?.id, request = defaultRequest }) {
     const [order, setOrder] = useState(initialOrder), [busy, setBusy] = useState(false), [error, setError] = useState('');
     useEffect(() => {
@@ -58,6 +68,7 @@ export default function OrderReceipt({ initialOrder = null, orderId = initialOrd
     }
     async function downloadLabel(effect) {
         await work(async () => {
+            if (effect.kind === 'FEDEX_LABEL' && shippingLabelLeg(effect, order.id) !== 'INBOUND') throw Error('LABEL_DIRECTION_UNAVAILABLE');
             const label = await request(`/commerce/orders/${order.id}/labels/${encodeURIComponent(effect.id)}`);
             if (label.mimeType !== 'application/pdf' || typeof label.labelBase64 !== 'string') throw Error('LABEL_NOT_READY');
             const bytes = Uint8Array.from(atob(label.labelBase64), c => c.charCodeAt(0));
@@ -65,7 +76,7 @@ export default function OrderReceipt({ initialOrder = null, orderId = initialOrd
             const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
             if (hash !== label.labelSha256) throw Error('LABEL_NOT_READY');
             const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })), anchor = document.createElement('a');
-            anchor.href = url; anchor.download = `${order.reference}-${effect.kind === 'FEDEX_LABEL' ? 'FedEx' : 'package'}.pdf`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+            anchor.href = url; anchor.download = `${order.reference}-${effect.kind === 'FEDEX_LABEL' ? 'ship-to-ATLAS' : 'package'}.pdf`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
         });
     }
     const kiosk = order?.receipt?.channel === 'KIOSK';
@@ -77,8 +88,15 @@ export default function OrderReceipt({ initialOrder = null, orderId = initialOrd
             <h3>{kiosk ? 'Ready for your shop handoff' : 'Prepare your shipment'}</h3>
             <p>Protect each card in a sleeve and card holder. Keep the cards together in a secure package and include your order number.</p>
             <p>{kiosk ? 'Show your handoff code to staff at your selected card shop. They will check every card and confirm receipt. ATLAS collection is recorded separately.' : 'Your FedEx label is prepared after payment. Use the package size selected at checkout. Print and attach the saved label when it is ready.'}</p>
-            <ul className={styles.deliveries}>{(order.effects ?? []).filter(effect => ['EMAIL_RECEIPT', 'SMS_RECEIPT', 'FEDEX_LABEL', 'PACKAGE_LABEL'].includes(effect.kind)).map(effect => <li key={effect.id}><span>{{ EMAIL_RECEIPT: 'Email receipt', SMS_RECEIPT: 'Text receipt', FEDEX_LABEL: 'FedEx label', PACKAGE_LABEL: 'Package label' }[effect.kind]}</span>
-                {effect.state === 'SUCCEEDED' && ['FEDEX_LABEL', 'PACKAGE_LABEL'].includes(effect.kind) ? <button className={styles.secondary} disabled={busy} onClick={() => downloadLabel(effect)}>Download label</button> : <span>{deliveryLabel(effect)}</span>}</li>)}</ul>
+            <ul className={styles.deliveries}>{(order.effects ?? []).filter(effect => ['EMAIL_RECEIPT', 'SMS_RECEIPT', 'FEDEX_LABEL', 'PACKAGE_LABEL'].includes(effect.kind)).map(effect => {
+                const leg = shippingLabelLeg(effect, order.id), carrier = effect.kind === 'FEDEX_LABEL';
+                const label = carrier ? leg === 'INBOUND' ? 'Ship your cards to ATLAS' : leg === 'RETURN' ? 'Return shipping from ATLAS' : 'FedEx label · direction unavailable'
+                    : { EMAIL_RECEIPT: 'Email receipt', SMS_RECEIPT: 'Text receipt', PACKAGE_LABEL: 'Package label' }[effect.kind];
+                return <li key={effect.id}><span>{label}</span>
+                    {effect.state === 'SUCCEEDED' && (effect.kind === 'PACKAGE_LABEL' || leg === 'INBOUND')
+                        ? <button className={styles.secondary} disabled={busy} onClick={() => downloadLabel(effect)}>{carrier ? 'Download label to ATLAS' : 'Download label'}</button>
+                        : <span>{carrier && effect.state === 'SUCCEEDED' ? leg === 'RETURN' ? 'ATLAS uses this label after grading' : 'Contact support for this label' : deliveryLabel(effect)}</span>}</li>;
+            })}</ul>
             <p className={styles.note}>Payment does not confirm physical drop-off, mailing or arrival at ATLAS. Downloading a label does not confirm it has been printed.</p></> : !error && <p role="status">Loading your saved receipt…</p>}
         <button className={styles.secondary} disabled={busy} onClick={() => work(async () => setOrder(await request(`/commerce/orders/${orderId}`)))}>Refresh receipt and labels</button>
         {error && <p className={styles.error} role="alert">{error}</p>}

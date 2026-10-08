@@ -28,6 +28,22 @@ test('provider acceptance and unknown delivery never assert sent or delivered', 
     assert.equal(receipt.deliveryLabel({ state: 'UNKNOWN', deliveryStatus: 'DELIVERED' }), 'Checking status');
     assert.equal(receipt.deliveryLabel({ state: 'FAILED' }), 'Needs attention');
 });
+test('mail receipt offers only the label to ATLAS, with the return label clearly reserved for staff', () => {
+    const mail = { ...order, receipt: { ...order.receipt, channel: 'MAIL_IN', location: null }, effects: [
+        { id: `${order.id}:fedex:INBOUND:v1`, kind: 'FEDEX_LABEL', state: 'SUCCEEDED' },
+        { id: `${order.id}:fedex:RETURN:v1`, kind: 'FEDEX_LABEL', state: 'SUCCEEDED' },
+        { id: `another-order:fedex:INBOUND:v1`, kind: 'FEDEX_LABEL', state: 'SUCCEEDED' },
+    ] };
+    const retained = JSON.stringify(mail), html = renderToStaticMarkup(React.createElement(receipt.default, { initialOrder: mail }));
+    assert.match(html, /Ship your cards to ATLAS/); assert.match(html, /Return shipping from ATLAS/);
+    assert.equal((html.match(/Download label to ATLAS/g) ?? []).length, 1);
+    assert.match(html, /ATLAS uses this label after grading/); assert.match(html, /Contact support for this label/);
+    assert.doesNotMatch(html, />Sent<|>Delivered<|Download return/); assert.equal(JSON.stringify(mail), retained);
+    assert.equal(receipt.shippingLabelLeg(mail.effects[0], order.id), 'INBOUND');
+    assert.equal(receipt.shippingLabelLeg(mail.effects[1], order.id), 'RETURN');
+    assert.equal(receipt.shippingLabelLeg(mail.effects[2], order.id), null);
+    assert.equal(receipt.shippingLabelLeg({ id: `${order.id}:fedex:INBOUND:v1:extra`, kind: 'FEDEX_LABEL' }, order.id), null);
+});
 test('resumed paid checkout renders receipt from the original paid order even when current view differs', async () => {
     let cursor = 0, tree; const slots = [], effects = [];
     const changed = (a, b) => !a || a.length !== b.length || a.some((value, i) => value !== b[i]);

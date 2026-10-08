@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { createManualServiceProxy, assertPrivateManualRequest, createPrivateManualNonceStore,
-  isManualServicePath, MANUAL_TRANSPORT_LIMITS } from '../src/transport.mjs';
+  isManualServicePath, manualResponsePolicy, MANUAL_TRANSPORT_LIMITS } from '../src/transport.mjs';
 import { createPrivateManualServer } from '../scripts/private-server.mjs';
 
 const key = Buffer.alloc(32, 83), origin = 'https://app.atlasgrading.test';
@@ -218,4 +219,44 @@ test('actual private HTTP host requires transport admission then independently a
   res = response(); await proxy(request({ method: 'GET', url: imagePath, body: undefined }), res);
   assert.equal(res.statusCode, 413); assert.equal(JSON.parse(res.bytes).error, 'MANUAL_IMAGE_DIRECT_REQUIRED');
   assert.equal(server.listening, true);
+});
+
+
+test('only exact staff return-label PDF receives the 4 MiB binary allowance', async () => {
+  const route = `/api/staff/manual-connected/dealer-operations/orders/${card}/return-label`;
+  assert.equal(isManualServicePath(route), true);
+  for (const bad of [route.replace('/return-label', '/inbound-label'), route.replace(card, 'arbitrary'), route.replace('/orders/', '/orders%2f')]) assert.equal(isManualServicePath(bad), false);
+  assert.equal(manualResponsePolicy(route, 'application/pdf').limit, 4 * 1024 * 1024);
+  assert.equal(manualResponsePolicy(route, 'application/json').limit, MANUAL_TRANSPORT_LIMITS.jsonResponseBytes);
+  assert.throws(() => manualResponsePolicy('/api/staff/manual-connected/dealer-operations', 'application/pdf'), { code: 'MANUAL_SERVICE_RESPONSE_INVALID' });
+  const signed = await capture(request({ url: route, method: 'GET', body: undefined }));
+  assert.equal(await verify(signed), true); assert.equal(signed.rawBody.length, 0);
+  for (const size of [4 * 1024 * 1024, 4 * 1024 * 1024 + 1]) {
+    const pdf = Buffer.alloc(size); pdf.write('%PDF-1.7'); const hash = createHash('sha256').update(pdf).digest('hex');
+    const proxy = createManualServiceProxy({ origin: 'https://private.test', key, fetchImpl: async () => new Response(pdf, { headers: { 'Content-Type': 'application/pdf', 'X-ATLAS-Label-SHA256': hash } }) });
+    const r = response(); await proxy(request({ url: route, method: 'GET', body: undefined }), r);
+    assert.equal(r.statusCode, size === 4 * 1024 * 1024 ? 200 : 502);
+    if (r.statusCode === 200) { assert.deepEqual(r.bytes, pdf); assert.equal(r.headers['x-atlas-label-sha256'], hash); }
+  }
+  for (const [bytes, hash] of [[Buffer.from('%PDF-fixture'), 'f'.repeat(64)], [Buffer.from('not PDF'), createHash('sha256').update('not PDF').digest('hex')]]) {
+    const proxy = createManualServiceProxy({ origin: 'https://private.test', key, fetchImpl: async () => new Response(bytes, { headers: { 'Content-Type': 'application/pdf', 'X-ATLAS-Label-SHA256': hash } }) });
+    const r = response(); await proxy(request({ url: route, method: 'GET', body: undefined }), r); assert.equal(r.statusCode, 502);
+  }
+});
+
+test('maximum saved PDF traverses actual private host and browser reader; unsigned and wrong-cookie reads fail', async t => {
+  const { staffClientRequest } = await import('../../../frontend/atlas-app/lib/client-request.mjs');
+  const { returnLabelBytes } = await import('../../../frontend/atlas-app/lib/customer-operations.mjs');
+  const { webcrypto } = await import('node:crypto');
+  const route = `/api/staff/manual-connected/dealer-operations/orders/${card}/return-label`, principal = {}, pdf = Buffer.alloc(4 * 1024 * 1024); pdf.write('%PDF-1.7');
+  const hash = createHash('sha256').update(pdf).digest('hex'), saved = { orderId: card, leg: 'RETURN', labelBase64: pdf.toString('base64'), labelSha256: hash }; let reads = 0;
+  const server = createPrivateManualServer({ origin, key, boundary: { async authenticate(cookie, csrf) { assert.equal(csrf, undefined); if (cookie !== request().headers.cookie) throw Object.assign(Error(), { status: 401, code: 'SIGN_IN_REQUIRED' }); return principal; } }, connected: { workflow: {}, intake: {}, dealerOperations: { async call(actor, action, input) { assert.equal(actor, principal); assert.equal(action, 'return_label'); assert.deepEqual(input, { orderId: card }); reads++; return saved; } } } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const host = `http://127.0.0.1:${server.address().port}`, proxy = createManualServiceProxy({ origin: 'https://private.test', key, fetchImpl: (url, init) => fetch(host + new URL(url).pathname, init) });
+  const accepted = response(); await proxy(request({ method: 'GET', url: route, body: undefined }), accepted);
+  assert.equal(accepted.statusCode, 200); assert.deepEqual(accepted.bytes, pdf); assert.equal(accepted.headers['content-type'], 'application/pdf'); assert.equal(accepted.bytes.length, 4 * 1024 * 1024); assert.equal(reads, 1);
+  const browser = await staffClientRequest(route.slice('/api/staff/'.length), {}, { fetchImpl: async () => new Response(accepted.bytes, { status: accepted.statusCode, headers: accepted.headers }) });
+  assert.deepEqual(Buffer.from(await returnLabelBytes(browser.data, card, webcrypto.subtle)), pdf);
+  const unsigned = await fetch(host + route); assert.equal(unsigned.status, 401); assert.equal(reads, 1);
+  const denied = response(); await proxy(request({ method: 'GET', url: route, body: undefined, headers: { ...request().headers, cookie: 'forged' } }), denied); assert.equal(denied.statusCode, 401); assert.equal(reads, 1);
 });

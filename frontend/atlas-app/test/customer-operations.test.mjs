@@ -165,3 +165,38 @@ test('unconfirmed dealer setup has no retry write and only exact saved membershi
   f.data.memberships = [{ ...membership, revokedAt: null, version: 4 }]; await f.click('Check saved status'); assert.ok(f.saved());
   f.data.memberships[0].version = 3; await f.click('Check saved status'); assert.equal(f.saved(), null); assert.equal(f.writes().length, 1);
 });
+
+test('return label verifies exact order, direction and PDF bytes before download', async () => {
+  const { createHash, webcrypto } = await import('node:crypto'), bytes = Buffer.from('%PDF-1.7\nSynthetic return\n%%EOF'), orderId = randomUUID();
+  const label = { orderId, leg: 'RETURN', mimeType: 'application/pdf', bytes: new Uint8Array(bytes), labelSha256: createHash('sha256').update(bytes).digest('hex') };
+  assert.deepEqual(Buffer.from(await contract.returnLabelBytes(label, orderId, webcrypto.subtle)), bytes);
+  for (const change of [{ orderId: randomUUID() }, { leg: 'INBOUND' }, { labelSha256: 'f'.repeat(64) }, { bytes: new Uint8Array(4 * 1024 * 1024 + 1) }, { bytes: new Uint8Array(Buffer.from('HTML')) }, { mimeType: 'text/html' }]) await assert.rejects(contract.returnLabelBytes({ ...label, ...change }, orderId, webcrypto.subtle), /could not be verified/);
+});
+
+test('staff paid roster separates the saved return label from actual custody and never offers a retry', () => {
+  const React = require('react'), { renderToStaticMarkup } = require('react-dom/server'), exported = load(React);
+  const order = { id: randomUUID(), reference: 'ATLAS-FIXTURE', cards: [], returnShipping: { state: 'SUCCEEDED' } };
+  const html = renderToStaticMarkup(React.createElement(exported.OrderRoster, { data: { ...empty, orders: [order] } }));
+  assert.match(html, /ATLAS to customer/); assert.match(html, /Download return-to-customer label/); assert.match(html, /actual mailing separately/); assert.doesNotMatch(html, /Create label|Retry.*label|labelBase64/);
+  for (const state of ['PENDING', 'DISPATCHED', 'UNKNOWN', 'FAILED']) {
+    const pending = renderToStaticMarkup(React.createElement(exported.ReturnShippingLabel, { order: { ...order, returnShipping: { state } } }));
+    assert.match(pending, /return label is not ready/); assert.doesNotMatch(pending, /<button/);
+  }
+  assert.equal(renderToStaticMarkup(React.createElement(exported.ReturnShippingLabel, { order: { ...order, returnShipping: null } })), '');
+});
+
+test('return-label read is independent of a retained mutation journal and downloads only verified saved bytes', async () => {
+  const { createHash, webcrypto } = await import('node:crypto');
+  const bytes = Buffer.from('%PDF-1.7\nSaved return\n%%EOF'), order = { id: randomUUID(), reference: 'ATLAS-FIXTURE', returnShipping: { state: 'SUCCEEDED' } };
+  const label = { orderId: order.id, leg: 'RETURN', mimeType: 'application/pdf', bytes: new Uint8Array(bytes), labelSha256: createHash('sha256').update(bytes).digest('hex') };
+  const React = require('react'), { renderToStaticMarkup } = require('react-dom/server');
+  const rendered = renderToStaticMarkup(React.createElement(load(React).OrderRoster, { data: { ...empty, orders: [{ ...order, cards: [] }] }, disabled: true, readDisabled: false }));
+  assert.match(rendered, /<button type="button">Download return-to-customer label/);
+  const calls = [], downloads = []; let released = false;
+  const react = { createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), useState: x => [x, () => {}], useRef: x => ({ current: x }) };
+  const link = { click() { downloads.push({ href: this.href, name: this.download }); }, remove() {} };
+  const exported = load(react, { crypto: webcrypto, Blob, document: { createElement: () => link, body: { appendChild() {} } }, URL: { createObjectURL(blob) { assert.equal(blob.type, 'application/pdf'); return 'blob:verified-return'; }, revokeObjectURL(value) { assert.equal(value, 'blob:verified-return'); released = true; } }, setTimeout: fn => fn(), client: { api: async (...args) => { calls.push(args); return label; } } });
+  const tree = exported.ReturnShippingLabel({ order, disabled: false }), button = tree.props.children.find(node => node?.type === 'button');
+  await button.props.onClick();
+  assert.deepEqual(calls, [[`manual-connected/dealer-operations/orders/${order.id}/return-label`]]); assert.deepEqual(downloads, [{ href: 'blob:verified-return', name: 'ATLAS-FIXTURE-return-to-customer.pdf' }]); assert.equal(released, true);
+});

@@ -143,3 +143,16 @@ test('existing api wrapper retains mapped message/code/status and successful res
     assert.equal(received[0], 'cards/one/draft'); assert.deepEqual(received[1].body, options.body);
     result = { ok: true, status: 200, data: { card: { id: 'one' } } }; assert.deepEqual(await exports.api('cards/one'), result.data);
 });
+
+test('binary return labels are allowed only for exact GET, bounded to 4 MiB and require the saved hash header', async () => {
+    const id = '0336918d-0204-47e0-acdf-6ef4b22b62c1', path = `manual-connected/dealer-operations/orders/${id}/return-label`;
+    const headers = { 'content-type': 'application/pdf', 'x-atlas-label-sha256': 'a'.repeat(64) };
+    const bytes = encode('%PDF-fixture');
+    const result = await staffClientRequest(path, {}, { fetchImpl: async () => new Response(bytes, { headers }) });
+    assert.deepEqual(result.data, { orderId: id, leg: 'RETURN', mimeType: 'application/pdf', bytes, labelSha256: 'a'.repeat(64) });
+    for (const [route, options, responseOptions, payload] of [
+        ['session', {}, { headers }, bytes], [path + '?x=1', {}, { headers }, bytes], [path, { body: {} }, { headers }, bytes],
+        [path, {}, { headers: { 'content-type': 'application/pdf' } }, bytes], [path, {}, { status: 403, headers }, bytes],
+        [path, {}, { headers }, new Uint8Array(4 * 1024 * 1024 + 1)]
+    ]) await assert.rejects(staffClientRequest(route, options, { fetchImpl: async () => new Response(payload, responseOptions) }), unknown);
+});

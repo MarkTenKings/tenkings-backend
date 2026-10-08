@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { assertCheckout, assertPaidEvidence, assertPaymentBinding, clone, digest, requireValue, minor, receiptEffects, receiptEmail, SERVICE, UUID } from './contract.mjs';
 import { customerCheckout, customerOrder, customerPayment, customerQuote } from './projections.mjs';
-import { assertShipmentDate, assertShippingPlan, availableShippingPlans } from './shipping-plan.mjs';
+import { assertShipmentDate, assertShippingPlan, availableShippingPlans, materializeShippingRequest } from './shipping-plan.mjs';
 import { validateShipment } from './providers.mjs';
 import { customerCapacity, capacityBlockers } from './capacity.mjs';
 export { CommerceError } from './contract.mjs';
@@ -72,7 +72,7 @@ export class CommerceService {
             for (const leg of legs) {
                 const template = plan.legs?.[leg];
                 requireValue(template, 'SHIPPING_LEG_NOT_CONFIGURED', 503);
-                const request = clone(template), p = source.profile;
+                const request = materializeShippingRequest(plan, leg, now), p = source.profile;
                 const customer = { contact: { personName: p.name, phoneNumber: source.phone }, address: {
                     streetLines: [p.address1, p.address2].filter(Boolean), city: p.city, stateOrProvinceCode: p.region,
                     postalCode: p.postalCode, countryCode: p.country } };
@@ -97,7 +97,7 @@ export class CommerceService {
         const routeDeadline = source.channel === 'KIOSK' ? Date.parse(source.location.schedule.cutoffAt ?? source.location.schedule.nextCollectionAt) : Infinity;
         requireValue(routeDeadline > now.getTime(), 'KIOSK_SCHEDULE_CHANGED');
         const expires = Math.min(now.getTime() + 15 * 60 * 1000, Date.parse(calculated.expiresAt), routeDeadline,
-            shippingPlan ? Date.parse(shippingPlan.validUntil) : Infinity, ...shipping.map(rate => Date.parse(rate.expiresAt)));
+            shippingPlan?.validUntil ? Date.parse(shippingPlan.validUntil) : Infinity, ...shipping.map(rate => Date.parse(rate.expiresAt)));
         const quote = { version: 'atlas-commerce-v1', id, draftId, draftRevision: source.revision, accountId: source.accountId,
             profile: clone(source.profile), profileRevision: source.profileRevision, phone: source.phone, channel: source.channel,
             location: source.location ? clone(source.location) : null, cards: lines, currency: 'usd', subtotalCents, shippingCents,

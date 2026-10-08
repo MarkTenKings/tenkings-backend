@@ -10,6 +10,7 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
   const stationRoute=/^\/api\/staff\/manual-connected\/stations(?:\/(challenge|enroll|arm|acknowledge|complete))?$/;
   const dealerOperationsRoute=/^\/api\/staff\/manual-connected\/dealer-operations(?:\/(location-configure|membership-configure|custody|bind-manual))?$/;
   const id='[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
+  const returnLabelRoute=new RegExp(`^/api/staff/manual-connected/dealer-operations/orders/(${id})/return-label$`);
   const assistanceRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/(defect-analysis|defect-memory)(?:/(${id}))?$`);
   const publicationRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/publication$`);
   const finishingRoute=new RegExp(`^/api/staff/manual-connected/cards/(${id})/finishing/(${id})$`);
@@ -27,6 +28,16 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
         requireThat(batch,503,'BATCH_DISABLED');return batch(req,res);
       }
       if(req.method==='POST')requireThat(Buffer.byteLength(JSON.stringify(req.body??{})) <= (/\/(?:proposal-)?trace$/.test(url.pathname)?1048576:url.pathname.startsWith('/api/staff/manual-intake/')?8192:65536),413,'REQUEST_TOO_LARGE');
+      const returnLabel=returnLabelRoute.exec(url.pathname);
+      if(returnLabel){
+        requireThat(!url.search && req.method==='GET',405,'METHOD_NOT_ALLOWED');
+        requireThat(connected.dealerOperations,503,'DEALER_OPERATIONS_DISABLED');
+        const staff=await boundary.authenticate(req.headers.cookie??'');
+        const label=await connected.dealerOperations.call(staff,'return_label',{orderId:returnLabel[1]});
+        res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');
+        res.setHeader('Content-Type','application/pdf');res.setHeader('X-ATLAS-Label-SHA256',label.labelSha256);
+        res.status(200).send(Buffer.from(label.labelBase64,'base64'));return true;
+      }
       const dealerOperation=dealerOperationsRoute.exec(url.pathname);
       if(dealerOperation){
         const write=Boolean(dealerOperation[1]);

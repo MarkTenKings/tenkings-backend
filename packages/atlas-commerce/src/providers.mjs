@@ -204,10 +204,14 @@ export function fedexAdapter({ clientId, clientSecret, accountNumber, environmen
         },
         async createLabel(input, effectId) {
             const s = validateShipment(input);
+            requireValue(typeof effectId === 'string' && effectId.length > 0 && effectId.length <= 200, 'FEDEX_EFFECT_ID_INVALID');
+            // FedEx CUSTOMER_REFERENCE permits 30 characters for Ground. This
+            // printed correlation value is separate from the durable effect ID.
+            const reference = effectId.length <= 30 ? effectId : `ATLAS-${createHash('sha256').update(effectId).digest('hex').slice(0, 24)}`;
             const value = await request('/ship/v1/shipments',{accountNumber:{value:accountNumber},labelResponseOptions:'LABEL',
                 requestedShipment:{...clone(s),shippingChargesPayment:{...clone(s.shippingChargesPayment),payor:{responsibleParty:{...s.shippingChargesPayment.payor?.responsibleParty,accountNumber:{value:accountNumber}}}},
                     labelSpecification:{imageType:'PDF',labelStockType:'PAPER_4X6'},
-                    requestedPackageLineItems:s.requestedPackageLineItems.map(p => ({...p,customerReferences:[{customerReferenceType:'CUSTOMER_REFERENCE',value:effectId}]}))}});
+                    requestedPackageLineItems:s.requestedPackageLineItems.map(p => ({...p,customerReferences:[{customerReferenceType:'CUSTOMER_REFERENCE',value:reference}]}))}});
             // A job acknowledgement is not a purchased printable label.
             if (value.output?.jobId) return {provider:'FEDEX',state:'PROCESSING',jobId:value.output.jobId,requestHash:digest(input)};
             return parseLabel(value,digest(input));

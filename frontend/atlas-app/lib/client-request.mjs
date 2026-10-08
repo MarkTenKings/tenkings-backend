@@ -1,6 +1,7 @@
 import { staffApiPath } from './routes.mjs';
 import { GRADING_STREAM_HEADER, GRADING_STREAM_PROTOCOL, gradingResponseResult, isGradingRequest } from './grading-response.mjs';
 export const STAFF_RESPONSE_LIMIT = 8 * 1024 * 1024;
+const returnLabelPath = /^manual-connected\/dealer-operations\/orders\/([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/return-label$/;
 export const staffRequestDeadline = (path, body) => isGradingRequest(path, body) ? 240_000
     : body !== undefined && /^workspace\/cards\/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\/identify$/.test(path) ? 60_000 : 15_000;
 const unknown = (code = 'REQUEST_OUTCOME_UNCONFIRMED', message = 'The reply could not be confirmed. Your notes and exact pending request are kept. Refresh access and retry the retained request.') => Object.assign(new Error(message), { code });
@@ -46,8 +47,11 @@ export async function staffClientRequest(path, { body, csrf, signal } = {}, {
             || typeof response.body?.getReader !== 'function') throw unknown();
         const stream = response.headers?.get(GRADING_STREAM_HEADER);
         if (stream != null && (stream !== GRADING_STREAM_PROTOCOL || response.status !== 200 || !isGradingRequest(path, body))) throw unknown();
+        const pdf = response.headers?.get('content-type') === 'application/pdf', returnLabel = returnLabelPath.exec(path);
+        if (pdf && (!returnLabel || body !== undefined || response.status !== 200 || stream != null)) throw unknown();
+        const limit = pdf ? 4 * 1024 * 1024 : STAFF_RESPONSE_LIMIT, chunks = [];
         const length = response.headers?.get('content-length');
-        if (length != null && (!/^\d+$/.test(length) || Number(length) > STAFF_RESPONSE_LIMIT)) throw unknown();
+        if (length != null && (!/^\d+$/.test(length) || Number(length) > limit)) throw unknown();
         reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8', { fatal: true });
         let bytes = 0, text = '';
@@ -57,8 +61,16 @@ export async function staffClientRequest(path, { body, csrf, signal } = {}, {
             if (part.done) break;
             if (!(part.value instanceof Uint8Array)) throw unknown();
             bytes += part.value.byteLength;
-            if (bytes > STAFF_RESPONSE_LIMIT) throw unknown();
-            text += decoder.decode(part.value, { stream: true });
+            if (bytes > limit) throw unknown();
+            if (pdf) chunks.push(part.value);
+            else text += decoder.decode(part.value, { stream: true });
+        }
+        if (pdf) {
+            const labelSha256 = response.headers?.get('x-atlas-label-sha256');
+            if (!/^[a-f0-9]{64}$/.test(labelSha256 ?? '')) throw unknown();
+            const payload = new Uint8Array(bytes); let offset = 0;
+            for (const chunk of chunks) { payload.set(chunk, offset); offset += chunk.length; }
+            check(); return { data: { orderId: returnLabel[1], leg: 'RETURN', mimeType: 'application/pdf', bytes: payload, labelSha256 }, ok: true, status: 200 };
         }
         text += decoder.decode(); check();
         const data = JSON.parse(text); check();

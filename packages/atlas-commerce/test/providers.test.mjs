@@ -53,6 +53,24 @@ test('FedEx list rate, other service, unsupported currency or missing total do n
 test('missing package measurements or explicit billing stops before network',()=>{const s=shipment();delete s.requestedShipment.requestedPackageLineItems[0].weight;assert.throws(()=>validateShipment(s),/MEASURED_PACKAGE_REQUIRED/);const b=shipment();delete b.requestedShipment.shippingChargesPayment;assert.throws(()=>validateShipment(b),/BILLING_NOT_CONFIGURED/);assert.throws(()=>dollarsToCents('1.234'),/CARRIER_AMOUNT_INVALID/);});
 test('FedEx creates and saves exact PDF label and tracking without refetching external URLs',async()=>{const pdf=Buffer.from('%PDF-1.4\nfixture\n'),calls=[];const adapter=fedex(async(url,options)=>{calls.push({url,options});return json(url.endsWith('/oauth/token')?{access_token:'temporary',expires_in:3600}:{transactionId:'ship-transaction',output:{transactionShipments:[{pieceResponses:[{trackingNumber:'123456789012',packageDocuments:[{contentType:'LABEL',encodedLabel:pdf.toString('base64')}]}]}]}});});
     const result=await adapter.createLabel(shipment(),'order-inbound-v1');assert.equal(result.trackingNumber,'123456789012');assert.equal(result.labelSha256,createHash('sha256').update(pdf).digest('hex'));assert.equal(result.mimeType,'application/pdf');assert.equal(calls.length,2);const body=JSON.parse(calls[1].options.body);assert.equal(body.requestedShipment.labelSpecification.imageType,'PDF');assert.equal(body.requestedShipment.requestedPackageLineItems[0].customerReferences[0].value,'order-inbound-v1');});
+test('real order effect IDs fit FedEx Ground references without conflating legs or changing paid shipment bytes', async () => {
+    const order = '11111111-1111-4111-8111-111111111111', other = '11111111-1111-4111-8111-111111111112';
+    const ids = [`${order}:fedex:INBOUND:v1`, `${order}:fedex:RETURN:v1`, `${order}:fedex:INBOUND:v1`, `${other}:fedex:INBOUND:v1`];
+    const input = shipment(), original = structuredClone(input), references = [], pdf = Buffer.from('%PDF-1.4\nfixture');
+    const adapter = fedex(async (url, options) => {
+        if (url.endsWith('/oauth/token')) return json({ access_token: 'temporary', expires_in: 3600 });
+        const body = JSON.parse(options.body), reference = body.requestedShipment.requestedPackageLineItems[0].customerReferences[0];
+        assert.equal(reference.customerReferenceType, 'CUSTOMER_REFERENCE');
+        assert.match(reference.value, /^ATLAS-[a-f0-9]{24}$/); assert.equal(reference.value.length, 30);
+        references.push(reference.value);
+        return json({ transactionId: 'fixture', output: { transactionShipments: [{ pieceResponses: [{ trackingNumber: '123456789012', packageDocuments: [{ contentType: 'LABEL', encodedLabel: pdf.toString('base64') }] }] }] } });
+    });
+    for (const id of ids) await adapter.createLabel(input, id);
+    assert.equal(references[0], references[2]); assert.equal(new Set(references).size, 3);
+    assert.deepEqual(input, original);
+    for (const invalid of [null, '', 'x'.repeat(201)]) await assert.rejects(() => adapter.createLabel(input, invalid), /FEDEX_EFFECT_ID_INVALID/);
+    assert.equal(references.length, 4);
+});
 test('FedEx lost shipment reply is not retried inside adapter',async()=>{let creates=0;const adapter=fedex(async url=>{if(url.endsWith('/oauth/token'))return json({access_token:'temporary',expires_in:3600});creates++;throw Error('lost');});await assert.rejects(()=>adapter.createLabel(shipment(),'order'),/lost/);assert.equal(creates,1);});
 test('package label is exact order/card count PDF without print completion',()=>{const label=createPackageLabel({orderId:randomUUID(),reference:'ATLAS-123456',cardCount:2});assert.equal(label.printed,false);assert.equal(label.state,'GENERATED');const bytes=Buffer.from(label.labelBase64,'base64');assert.match(bytes.toString(),/ATLAS-123456/);assert.match(bytes.toString(),/2 CARDS/);assert.equal(label.labelSha256,createHash('sha256').update(bytes).digest('hex'));});
 function webhook(){const rawBody=Buffer.from(JSON.stringify({id:'evt_fixture',type:'payment_intent.succeeded',livemode:false,data:{object:{id:'pi_original',metadata:{atlas_attempt:randomUUID()}}}}));const timestamp=Math.floor(now.getTime()/1000),secret='whsec_fixture',signature=`t=${timestamp},v1=${createHmac('sha256',secret).update(`${timestamp}.`).update(rawBody).digest('hex')}`;return {rawBody,signature,secret,now:now.getTime()};}

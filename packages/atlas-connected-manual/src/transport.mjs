@@ -3,6 +3,7 @@ import { MANUAL_STREAM_HEADER, MANUAL_STREAM_PROTOCOL } from '@atlas/manual-serv
 
 export const MANUAL_TRANSPORT_LIMITS = Object.freeze({ requestBytes: 2 * 1024 * 1024,
   jsonResponseBytes: 2 * 1024 * 1024, imageResponseBytes: 4 * 1024 * 1024, timeoutMs: 210000 });
+const RETURN_LABEL_PATH = /^\/api\/staff\/manual-connected\/dealer-operations\/orders\/[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\/return-label$/;
 const VERSION = 'atlas-manual-private-v1';
 const PREFIX = 'x-atlas-manual-';
 const BOUND_HEADERS = ['cookie', 'x-atlas-csrf', 'origin', 'content-type', `${PREFIX}version`,
@@ -47,6 +48,7 @@ export function isManualServicePath(value) {
   return url.origin === PUBLIC_BASE && url.pathname + url.search === value && !url.pathname.includes('%')
     && (/^\/api\/staff\/(?:manual|manual-intake|manual-connected)\/cards(?:\/[A-Za-z0-9-]+)*$/.test(url.pathname)
       || /^\/api\/staff\/manual-connected\/stations(?:\/(?:challenge|enroll|arm|acknowledge|complete))?$/.test(url.pathname)
+      || RETURN_LABEL_PATH.test(url.pathname)
       || /^\/api\/staff\/manual-connected\/dealer-operations(?:\/(?:location-configure|membership-configure|custody|bind-manual))?$/.test(url.pathname));
 }
 function requestParts(req, bytes, timestamp, nonce) {
@@ -141,6 +143,8 @@ function requestBytes(req) {
 export function manualResponsePolicy(path, contentType) {
   if (/^application\/json(?:\s*;|$)/i.test(contentType)) return {
     limit: MANUAL_TRANSPORT_LIMITS.jsonResponseBytes, overflow: 'MANUAL_SERVICE_RESPONSE_TOO_LARGE' };
+  if (RETURN_LABEL_PATH.test(path) && contentType === 'application/pdf') return {
+    limit: 4 * 1024 * 1024, overflow: 'MANUAL_SERVICE_RESPONSE_TOO_LARGE' };
   requireTransport(/\/(?:images|preview-image)\//.test(path)
     && /^image\/(?:png|jpeg|webp)$/.test(contentType), 502, 'MANUAL_SERVICE_RESPONSE_INVALID');
   return { limit: MANUAL_TRANSPORT_LIMITS.imageResponseBytes, overflow: 'MANUAL_IMAGE_DIRECT_REQUIRED' };
@@ -193,7 +197,7 @@ export function createManualServiceProxy({ origin, key, fetchImpl = globalThis.f
       closed = true; stopHeartbeat(); controller.abort();
       rejectDisconnected?.(new ManualTransportError(503, 'MANUAL_SERVICE_UNAVAILABLE'));
     };
-    const finish = (status, contentType, bytes) => {
+    const finish = (status, contentType, bytes, labelSha256) => {
       stopHeartbeat();
       if (closed || res.destroyed || res.writableEnded) return;
       if (streamed) {
@@ -204,6 +208,7 @@ export function createManualServiceProxy({ origin, key, fetchImpl = globalThis.f
         res.end(JSON.stringify({ protocol: MANUAL_STREAM_PROTOCOL, status, body }));
       } else {
         manualPrivateHeaders(res); res.setHeader('Content-Type', contentType);
+        if (labelSha256) res.setHeader('X-ATLAS-Label-SHA256', labelSha256);
         if (contentType.startsWith('image/')) res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
         res.status(status).send(bytes);
       }
@@ -251,10 +256,17 @@ export function createManualServiceProxy({ origin, key, fetchImpl = globalThis.f
           && !(response.status >= 300 && response.status < 400), 502, 'MANUAL_SERVICE_REDIRECT_REFUSED');
         const contentType = response.headers.get('content-type') ?? '';
         const responseBody = await responseBytes(response, manualResponsePolicy(req.url, contentType), controller.signal);
-        return { status: response.status, contentType, bytes: responseBody };
+        let labelSha256;
+        if (contentType === 'application/pdf') {
+          labelSha256 = response.headers.get('x-atlas-label-sha256');
+          requireTransport(req.method === 'GET' && response.status === 200 && /^[a-f0-9]{64}$/.test(labelSha256 ?? '')
+            && responseBody.subarray(0, 5).toString('ascii') === '%PDF-' && sha256(responseBody) === labelSha256,
+          502, 'MANUAL_SERVICE_RESPONSE_INVALID');
+        }
+        return { status: response.status, contentType, bytes: responseBody, labelSha256 };
       };
       const result = await Promise.race([work(), timeout, disconnectedResult]);
-      finish(result.status, result.contentType, result.bytes);
+      finish(result.status, result.contentType, result.bytes, result.labelSha256);
     } catch (error) {
       controller.abort();
       if (streamed) finish(error instanceof ManualTransportError ? error.status : 503,

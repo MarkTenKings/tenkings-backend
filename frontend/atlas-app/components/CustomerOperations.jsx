@@ -3,7 +3,7 @@ import Link from 'next/link';
 import Shell from './Shell';
 import { api, useStaffResource } from '../lib/client';
 import { STAFF_REAUTHENTICATE_PATH } from '../lib/routes.mjs';
-import { availableCustody, browserJournal, custodyInput, custodyNames, journalLock, locationForm, locationInput, newLocation, operationRecorded, operationsMessage, weekdays } from '../lib/customer-operations.mjs';
+import { availableCustody, browserJournal, custodyInput, custodyNames, journalLock, locationForm, locationInput, newLocation, operationRecorded, operationsMessage, returnLabelBytes, weekdays } from '../lib/customer-operations.mjs';
 import styles from './CustomerOperations.module.css';
 
 const base = 'manual-connected/dealer-operations';
@@ -83,16 +83,37 @@ export function Operations({ staff }) {
     </section>}
     <nav className={styles.tabs} aria-label="Customer operations sections">{[['orders', 'Paid submissions'], ['locations', 'Kiosk setup'], ['memberships', 'Dealer access']].map(([key, label]) => <button type="button" key={key} aria-current={tab === key ? 'page' : undefined} onClick={() => setTab(key)}>{label}</button>)}</nav>
     {resource.loading ? <p role="status">Loading current staff records…</p> : resource.error ? <div className={styles.panel}><p role="alert">{resource.error}</p><button type="button" onClick={resource.reload}>Try reading again</button>{resource.signedOut && <p><a href={STAFF_REAUTHENTICATE_PATH}>Sign in again</a></p>}</div> : !resource.data ? <p>No verified staff roster is available.</p> : <>
-      {tab === 'orders' && <OrderRoster data={resource.data} disabled={disabled} onAction={runAction}/>}
+      {tab === 'orders' && <OrderRoster data={resource.data} disabled={disabled} readDisabled={busy || resource.loading || !resource.session} onAction={runAction}/>}
       {tab === 'locations' && <LocationEditor locations={resource.data.locations ?? []} disabled={disabled} onAction={runAction}/>}
       {tab === 'memberships' && <MembershipEditor data={resource.data} disabled={disabled} onAction={runAction}/>}
     </>}
   </main></Shell>;
 }
 
-export function OrderRoster({ data, disabled, onAction }) {
+export function OrderRoster({ data, disabled, readDisabled, onAction }) {
   if (!data.orders?.length) return <section className={styles.empty}><h2>No paid customer submissions yet</h2><p>Confirmed paid orders will appear here with their individual cards.</p></section>;
-  return <div className={styles.orders}><p className={styles.small}>Showing up to 100 recent paid submissions.</p>{data.orders.map(order => <section className={styles.order} key={order.id}><header className={styles.orderHeading}><div><p className={styles.eyebrow}>Paid submission</p><h2>{order.reference}</h2></div><p>{order.cards?.length ?? 0} cards · Paid {date(order.paidAt)}</p></header>{!order.cards?.length ? <p>No card roster was returned for this order.</p> : order.cards.map(card => <CustodyCard key={card.cardId} card={card} manualCards={data.manualCards ?? []} disabled={disabled} onAction={onAction}/>)}</section>)}</div>;
+  return <div className={styles.orders}><p className={styles.small}>Showing up to 100 recent paid submissions.</p>{data.orders.map(order => <section className={styles.order} key={order.id}><header className={styles.orderHeading}><div><p className={styles.eyebrow}>Paid submission</p><h2>{order.reference}</h2></div><p>{order.cards?.length ?? 0} cards · Paid {date(order.paidAt)}</p></header><ReturnShippingLabel order={order} disabled={readDisabled}/>{!order.cards?.length ? <p>No card roster was returned for this order.</p> : order.cards.map(card => <CustodyCard key={card.cardId} card={card} manualCards={data.manualCards ?? []} disabled={disabled} onAction={onAction}/>)}</section>)}</div>;
+}
+
+export function ReturnShippingLabel({ order, disabled }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), running = useRef(false);
+  if (!order.returnShipping) return null;
+  async function download() {
+    if (disabled || running.current) return;
+    running.current = true; setBusy(true); setError('');
+    try {
+      const label = await api(`${base}/orders/${order.id}/return-label`);
+      const bytes = await returnLabelBytes(label, order.id);
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      const link = document.createElement('a'); link.href = url; link.download = `${order.reference}-return-to-customer.pdf`;
+      document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) { setError(e.code === 'LABEL_NOT_READY' ? 'The return label is not ready. Refresh records to check again.' : operationsMessage(e)); }
+    finally { running.current = false; setBusy(false); }
+  }
+  return <section className={styles.panel} aria-label="Return shipping from ATLAS"><h3>Return shipping · ATLAS to customer</h3><p>Use this label for the graded cards returning to the customer. Record the actual mailing separately in each card’s custody history.</p>
+    {order.returnShipping.state === 'SUCCEEDED' ? <button type="button" disabled={disabled || busy} onClick={download}>{busy ? 'Reading saved label…' : 'Download return-to-customer label'}</button> : <p role="status">The return label is not ready. Refresh records to check its saved status.</p>}
+    {error && <p className={styles.error} role="alert">{error}</p>}
+  </section>;
 }
 
 export function CustodyCard({ card, manualCards, disabled, onAction }) {

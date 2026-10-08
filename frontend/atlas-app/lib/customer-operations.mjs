@@ -1,6 +1,17 @@
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 export const custodyNames = Object.freeze({ COLLECTED: 'Collected from kiosk', ATLAS_RECEIVED: 'Received by ATLAS', RETURN_DISPATCHED: 'Dispatched to kiosk', RETURNED_TO_KIOSK: 'Received back at kiosk', CUSTOMER_COLLECTED: 'Collected by customer', MAIL_DISPATCHED: 'Mailed to customer', CUSTOMER_DELIVERED: 'Delivered to customer', DELAY_REPORTED: 'Delay reported', DELAY_RESOLVED: 'Delay resolved', DEPOSIT_DECLARED: 'Customer declared deposit' });
 export const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+export async function returnLabelBytes(label, orderId, subtle = globalThis.crypto.subtle) {
+  const invalid = () => { throw new Error('The saved return label could not be verified. Refresh the order or contact an administrator.'); };
+  if (label?.orderId !== orderId || label.leg !== 'RETURN' || label.mimeType !== 'application/pdf'
+    || !(label.bytes instanceof Uint8Array) || label.bytes.length > 4 * 1024 * 1024
+    || !/^[a-f0-9]{64}$/.test(label.labelSha256 ?? '')) invalid();
+  const bytes = label.bytes;
+  if (String.fromCharCode(...bytes.subarray(0, 5)) !== '%PDF-') invalid();
+  const hash = Array.from(new Uint8Array(await subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
+  if (hash !== label.labelSha256) invalid();
+  return bytes;
+}
 export function availableCustody(card) {
   const physical = (card.events ?? []).filter(event => !['DEPOSIT_DECLARED', 'DELAY_REPORTED', 'DELAY_RESOLVED'].includes(event.kind)).at(-1)?.kind;
   const next = !physical ? (card.channel === 'KIOSK' ? 'COLLECTED' : 'ATLAS_RECEIVED')
