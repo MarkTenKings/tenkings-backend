@@ -4,10 +4,12 @@ import { progressMessage } from './progress-notifications.mjs';
 const emailAddress = value => typeof value === 'string' && value.length <= 254
     && !/[\x00-\x1f\x7f]/.test(value) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 function message(kind, receipt, publicOrigin) {
+    if(kind==='EMAIL_SHIPPING_RECEIPT')return {subject:`Your ATLAS shipping payment receipt · ${receipt.reference ?? receipt.orderId}`,text:`Shipping payment of ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(receipt.totalCents/100)} confirmed for ATLAS order ${receipt.reference ?? receipt.orderId}. Your grading payment remains separate. View both saved receipts at ${publicOrigin}/account. Your inbound label will appear there after it is prepared; we will email you when it is ready to print. Physical arrival is tracked separately.`};
+    if(kind==='EMAIL_LABEL_READY')return {subject:`Your ATLAS shipping label is ready · ${receipt.reference ?? receipt.orderId}`,text:`Your inbound shipping label is ready to print. Sign in at ${publicOrigin}/account, open your saved order, and download the label. Use the packaging and service shown on your shipping receipt. Physical arrival is tracked separately.`};
     const progress = kind.endsWith('_PROGRESS') ? progressMessage(receipt) : null;
     const amount = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(receipt.totalCents / 100);
     return { subject: progress?.subject ?? `Your ATLAS Grading receipt · ${receipt.reference ?? receipt.orderId}`,
-        text: progress?.text ?? `ATLAS Grading receipt ${receipt.reference ?? receipt.orderId}: payment of ${amount} confirmed. View your saved order at ${publicOrigin}/account. Physical arrival is tracked separately.` };
+        text: progress?.text ?? `ATLAS Grading receipt ${receipt.reference ?? receipt.orderId}: payment of ${amount} confirmed. View your saved order at ${publicOrigin}/account. ${receipt.shippingPayment==='SEPARATE_PAYMENT' ? 'This payment covers grading and its applicable tax. Shipping is not quoted or paid. Return to your saved order to review and pay for shipping when available. ' : ''}Physical arrival is tracked separately.` };
 }
 
 /** Available before paid commerce opens. Acceptance is not confirmed delivery. */
@@ -26,7 +28,7 @@ export function sendGridEmailAdapter({ emailApiKey, emailFrom, fetchImpl = fetch
     }
     return {
         async send(kind, receipt, effectId) {
-            requireValue(['EMAIL_RECEIPT', 'EMAIL_PROGRESS'].includes(kind), 'NOTIFICATION_KIND_INVALID');
+            requireValue(['EMAIL_RECEIPT', 'EMAIL_SHIPPING_RECEIPT', 'EMAIL_LABEL_READY', 'EMAIL_PROGRESS'].includes(kind), 'NOTIFICATION_KIND_INVALID');
             const value = message(kind, receipt, publicOrigin);
             return sendEmail(receipt.to, value.subject, [{ type: 'text/plain', value: value.text }], effectId);
         },
@@ -50,9 +52,9 @@ export function notificationAdapter({ emailApiKey, emailFrom, smsAccountSid, sms
     requireValue(typeof smsEnabled === 'boolean' && (!smsEnabled || (/^AC[a-fA-F0-9]{32}$/.test(smsAccountSid ?? '')
         && /^SK[a-fA-F0-9]{32}$/.test(smsApiKeySid ?? '') && smsApiKeySecret && /^MG[a-fA-F0-9]{32}$/.test(smsServiceSid ?? ''))), 'RECEIPTS_NOT_CONFIGURED', 503);
     return {
-        canSend: kind => ['EMAIL_RECEIPT', 'EMAIL_PROGRESS'].includes(kind) || smsEnabled && ['SMS_RECEIPT', 'SMS_PROGRESS'].includes(kind),
+        canSend: kind => ['EMAIL_RECEIPT', 'EMAIL_SHIPPING_RECEIPT', 'EMAIL_LABEL_READY', 'EMAIL_PROGRESS'].includes(kind) || smsEnabled && ['SMS_RECEIPT', 'SMS_PROGRESS'].includes(kind),
         async send(kind, receipt, effectId) {
-            requireValue(['EMAIL_RECEIPT', 'SMS_RECEIPT', 'EMAIL_PROGRESS', 'SMS_PROGRESS'].includes(kind), 'NOTIFICATION_KIND_INVALID');
+            requireValue(['EMAIL_RECEIPT', 'EMAIL_SHIPPING_RECEIPT', 'EMAIL_LABEL_READY', 'SMS_RECEIPT', 'EMAIL_PROGRESS', 'SMS_PROGRESS'].includes(kind), 'NOTIFICATION_KIND_INVALID');
             if (kind.startsWith('EMAIL_')) return email.send(kind, receipt, effectId);
             requireValue(smsEnabled, 'SMS_NOTIFICATIONS_DISABLED', 503);
             requireValue(/^\+[1-9][0-9]{7,14}$/.test(receipt.to ?? ''), 'RECEIPT_DESTINATION_INVALID');

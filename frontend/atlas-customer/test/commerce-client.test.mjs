@@ -18,7 +18,7 @@ test('only long private operations outlive the API deadline; auth and ordinary r
     t.mock.method(globalThis, 'setTimeout', (callback, delay) => { timers.push(delay); return 1; });
     t.mock.method(globalThis, 'clearTimeout', () => {});
     t.mock.method(globalThis, 'fetch', async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } }));
-    for (const path of [`/intake/drafts/${id}/cards/${id}/uploads/${id}/sign`, `/intake/drafts/${id}/cards/${id}/uploads/${id}/complete`, `/commerce/checkout?draftId=${id}`, '/commerce/quotes', '/commerce/payments', `/commerce/payments/${id}/reconcile`]) {
+    for (const path of [`/intake/drafts/${id}/cards/${id}/uploads/${id}/sign`, `/intake/drafts/${id}/cards/${id}/uploads/${id}/complete`, `/commerce/checkout?draftId=${id}`, '/commerce/quotes', '/commerce/payments', `/commerce/payments/${id}/reconcile`, `/commerce/orders/${id}/shipping`, `/commerce/orders/${id}/shipping/quotes`, `/commerce/orders/${id}/shipping/payments`, `/commerce/orders/${id}/shipping/payments/${id}/reconcile`]) {
         await request(path); assert.equal(timers.at(-1), 115000, path);
     }
     for (const path of ['/session', '/auth/request', '/auth/verify', '/submissions', '/intake/drafts', `/commerce/orders/${id}`, `/commerce/orders/${id}/labels/label-id`, '/commerce/payments/invalid/reconcile']) {
@@ -33,4 +33,13 @@ test('a long payment timeout retains the exact caller request and never retries 
     const body = { quoteId: '11111111-1111-4111-8111-111111111111', requestId: '22222222-2222-4222-8222-222222222222' };
     await assert.rejects(() => request('/commerce/payments', { body, csrf: 'fixture' }), error => error.code === 'UNCONFIRMED_REPLY');
     assert.equal(calls, 1); assert.deepEqual(received, body); assert.equal(body.requestId, '22222222-2222-4222-8222-222222222222');
+});
+
+test('a separate shipping payment timeout makes no automatic retry and preserves the explicit payment identity', async t => {
+    let abort, calls=0, received;
+    t.mock.method(globalThis,'setTimeout',(callback,delay)=>{assert.equal(delay,115000);abort=callback;return 1;});t.mock.method(globalThis,'clearTimeout',()=>{});
+    t.mock.method(globalThis,'fetch',async(url,options)=>{calls++;received={url,body:JSON.parse(options.body)};return new Promise((_resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(Error('AbortError')));abort();});});
+    const id='11111111-1111-4111-8111-111111111111',body={quoteId:id,requestId:'22222222-2222-4222-8222-222222222222'};
+    await assert.rejects(()=>request(`/commerce/orders/${id}/shipping/payments`,{body,csrf:'fixture'}),error=>error.code==='UNCONFIRMED_REPLY');
+    assert.equal(calls,1);assert.deepEqual(received,{url:`/account/api/customer/commerce/orders/${id}/shipping/payments`,body});
 });

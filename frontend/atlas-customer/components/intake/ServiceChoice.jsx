@@ -67,12 +67,12 @@ export default function ServiceChoice({ value, onChange, showStations = true }) 
         <div className="service-speed-label"><SpeedMark kind="mail"/><h2>Fast</h2><span>Mail-in</span></div>
         <ServiceFilm kind="fedex" label="FedEx mail-in drop-off preview" motionPaused={motionPaused}/>
         <div className="service-card-body"><ServiceJourney kind="mail"/>
-          <dl className="service-metrics"><div><dt>Per card</dt><dd><strong>$40</strong><small>Plus shipping</small></dd></div><div><dt>Service speed</dt><dd><strong>2 weeks</strong><small>Mail-in service</small></dd></div></dl>
-          <p className="service-channel">Choose your mail carrier<br/><strong>From your door to ATLAS</strong></p><p>Choose an available carrier and service at checkout. Your graded cards ship back to you.</p>
-          <div className="service-details"><p><strong>Shipping at cost.</strong> See your actual carrier quote before payment.</p><p>Your grading turnaround starts when ATLAS physically receives your cards. Final terms appear with your confirmed quote.</p></div>
+          <dl className="service-metrics"><div><dt>Per card</dt><dd><strong>$40</strong><small>Shipping paid separately</small></dd></div><div><dt>Service speed</dt><dd><strong>2 weeks</strong><small>Mail-in service</small></dd></div></dl>
+          <p className="service-channel">Mail-in grading<br/><strong>From your door to ATLAS</strong></p><p>Pay for grading now. Choose an available carrier and approve a separate shipping payment later from your saved order.</p>
+          <div className="service-details"><p><strong>Shipping at cost.</strong> Review your actual carrier quote and tax before paying for shipping. Keep your cards until your label is ready.</p><p>Your grading turnaround starts when ATLAS physically receives your cards.</p></div>
           <button type="button" className={value?.intakeMethod === 'MAIL_IN' ? 'primary' : 'secondary'} aria-pressed={value?.intakeMethod === 'MAIL_IN'} onClick={() => onChange({ intakeMethod: 'MAIL_IN', kioskId: null })}>{value?.intakeMethod === 'MAIL_IN' ? 'Mail-in selected ✓' : 'Choose mail-in →'}</button></div>
       </article>
-    </div><p className="fine">Applicable taxes and the full total appear before payment. Grading begins after your cards physically reach ATLAS.</p>
+    </div><p className="fine">Applicable taxes and the amount due appear before each payment. Mail-in shipping is quoted and paid separately. Grading begins after your cards physically reach ATLAS.</p>
     {showStations && <SubmissionStationFinder value={value} onChange={onChange} visible={value?.intakeMethod === 'DEALER_DROP_OFF'}/>}
   </section>;
 }

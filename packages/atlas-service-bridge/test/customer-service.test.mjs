@@ -68,3 +68,14 @@ test('verification email operation requires full service signature and original 
   // The fixture handler records admission only. It constructs no sender and
   // makes no provider request; authoritative account checks remain in SQL.
 });
+test('all separate shipping operations require the full signed service key and original session proof',async t=>{
+  const operations=['commerce-shipping-checkout','commerce-shipping-quote','commerce-shipping-pay','commerce-shipping-reconcile'];let calls=0;
+  const f=await fixture(t,Object.fromEntries(operations.map(name=>[name,envelope=>{assert.deepEqual(envelope.authority,authority);calls++;return{accepted:name};}])));
+  for(const name of operations){
+    await assert.rejects(f.client({key:f.directoryKey}).call(name,{authority,input:{orderId:'owned-order'}}),{status:401});
+    await assert.rejects(f.client().call(name,{input:{orderId:'owned-order'}}),{status:400});
+    await assert.rejects(f.client().call(name,{authority:{...authority,accountId:'forged'},input:{orderId:'owned-order'}}),{status:401});
+    assert.deepEqual(await f.client().call(name,{authority,input:{orderId:'owned-order'}}),{accepted:name});
+  }
+  assert.equal(calls,4);
+});

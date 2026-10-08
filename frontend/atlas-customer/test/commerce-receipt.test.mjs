@@ -5,8 +5,10 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 const require = createRequire(new URL('../package.json', import.meta.url)), babel = require('next/dist/compiled/babel/core'), React = require('react'), { renderToStaticMarkup } = require('react-dom/server');
 const compile = path => babel.transformSync(readFileSync(new URL(path, import.meta.url), 'utf8'), { filename: path, presets: [[require.resolve('next/babel'), { 'preset-env': { targets: { node: 'current' } }, 'transform-runtime': { helpers: false } }]], babelrc: false, configFile: false }).code;
+const shipping = {};
+vm.runInNewContext(compile('../components/commerce/ShippingCheckout.jsx'), { exports: shipping, Intl, require: name => name === 'react' ? React : name.endsWith('.css') ? {} : name.endsWith('PaymentFields.jsx') ? {__esModule:true,default:()=>null} : require(name) });
 const receipt = {};
-vm.runInNewContext(compile('../components/commerce/OrderReceipt.jsx'), { exports: receipt, Intl, require: name => name === 'react' ? React : name.endsWith('.css') ? {} : name.endsWith('/client.mjs') ? {} : name.endsWith('CustomerHandoff.jsx') ? {__esModule:true,default:()=>null} : require(name) });
+vm.runInNewContext(compile('../components/commerce/OrderReceipt.jsx'), { exports: receipt, Intl, require: name => name === 'react' ? React : name.endsWith('.css') ? {} : name.endsWith('/client.mjs') ? {} : name.endsWith('ShippingCheckout.jsx') ? {...shipping,__esModule:true} : name.endsWith('CustomerHandoff.jsx') ? {__esModule:true,default:()=>null} : require(name) });
 const order = { id: 'saved-order', reference: 'ATLAS-SAVED', receipt: { channel: 'KIOSK', subtotalCents: 5000, shippingCents: 0, taxCents: 450, totalCents: 5450,
     cards: [{ cardId: 'one', unitCents: 5000 }], terms: { days: 7, clockStart: 'ATLAS_COLLECTION' }, location: { name: 'Original kiosk', address: { line1: '1 Saved Street', city: 'Testville' },
         schedule: { timeZone: 'America/Los_Angeles', nextCollectionAt: '2026-09-30T17:00:00Z', projectedReturnAt: '2026-10-07T17:00:00Z', cutoffAt: '2026-09-30T16:00:00Z' } } },
@@ -53,7 +55,7 @@ test('resumed paid checkout renders receipt from the original paid order even wh
         useCallback(value, deps) { const id = cursor++; if (changed(slots[id]?.deps, deps)) slots[id] = { value, deps }; return slots[id].value; },
         useEffect(fn, deps) { const id = cursor++; if (changed(slots[id]?.deps, deps)) { slots[id] = { deps }; effects.push(fn); } } };
     const exports = {}, notifications = [];
-    vm.runInNewContext(compile('../components/commerce/CommerceCheckout.jsx'), { exports, Intl, require: name => name === 'react' ? react : name.endsWith('OrderReceipt.jsx') ? { ...receipt, __esModule: true } : name.endsWith('.css') ? {} : require(name) });
+    vm.runInNewContext(compile('../components/commerce/CommerceCheckout.jsx'), { exports, Intl, require: name => name === 'react' ? react : name.endsWith('OrderReceipt.jsx') ? { ...receipt, __esModule: true } : name.endsWith('PaymentFields.jsx') ? { __esModule:true, default:()=>null } : name.endsWith('.css') ? {} : require(name) });
     const props = { draft: { id: 'draft', channel: 'MAIL_IN' }, request: async () => ({ channel: 'MAIL_IN', location: { name: 'Changed location' }, activePayment: { state: 'PAID', order } }), onPaid: value => notifications.push(value) };
     const render = () => { cursor = 0; tree = exports.default(props); while (effects.length) effects.shift()(); };
     render(); await new Promise(resolve => setImmediate(resolve)); render();
@@ -63,7 +65,7 @@ test('resumed paid checkout renders receipt from the original paid order even wh
 
 test('cold commerce offers a saved-draft destination without quoting, collecting payment or inventing order status', () => {
     const exports = {};
-    vm.runInNewContext(compile('../components/commerce/CommerceCheckout.jsx'), { exports, Intl, require: name => name === 'react' ? React : name.endsWith('OrderReceipt.jsx') ? { ...receipt, __esModule: true } : name.endsWith('.css') ? {} : require(name) });
+    vm.runInNewContext(compile('../components/commerce/CommerceCheckout.jsx'), { exports, Intl, require: name => name === 'react' ? React : name.endsWith('OrderReceipt.jsx') ? { ...receipt, __esModule: true } : name.endsWith('PaymentFields.jsx') ? { __esModule:true, default:()=>null } : name.endsWith('.css') ? {} : require(name) });
     const html = renderToStaticMarkup(React.createElement(exports.SavedDraftConfirmation, { draft: { cards: [{id:'saved-card',identity:{title:'Saved card identity'}}] } }));
     assert.match(html, /YOUR DRAFT IS SAVED/); assert.match(html, /Checkout is not open yet/); assert.match(html, /Saved card identity/); assert.match(html, /href="\/account"/);
     assert.match(html, /Check checkout availability/); assert.match(html, /don’t need to upload or review them again/);
@@ -84,7 +86,7 @@ function checkoutHarness(request) {
         useCallback(value,deps){const id=cursor++;if(changed(slots[id]?.deps,deps))slots[id]={value,deps};return slots[id].value;},
         useEffect(fn,deps){const id=cursor++;if(changed(slots[id]?.deps,deps)){const old=slots[id];slots[id]={deps};effects.push(()=>{old?.cleanup?.();slots[id].cleanup=fn();});}}};
     const exports={},storage=new Map();
-    vm.runInNewContext(compile('../components/commerce/CommerceCheckout.jsx'),{exports,Intl,crypto:{randomUUID:()=> '22222222-2222-4222-8222-222222222222'},sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)},require:name=>name==='react'?react:name.endsWith('OrderReceipt.jsx')?{...receipt,__esModule:true}:name.endsWith('.css')?{}:require(name)});
+    vm.runInNewContext(compile('../components/commerce/CommerceCheckout.jsx'),{exports,Intl,crypto:{randomUUID:()=> '22222222-2222-4222-8222-222222222222'},sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)},require:name=>name==='react'?react:name.endsWith('OrderReceipt.jsx')?{...receipt,__esModule:true}:name.endsWith('PaymentFields.jsx')?{__esModule:true,default:()=>null}:name.endsWith('.css')?{}:require(name)});
     const props={draft:{id:'saved-draft',intakeMethod:'MAIL_IN',cards:[{id:'card',identity:{title:'Saved Pikachu'}}]},request:async(path,options)=>{calls.push({path,options});return request(path,options);},onPaid:value=>notifications.push(value),onBack:()=>{throw Error('Checkout must not send this saved draft back through review.');}};
     const render=()=>{cursor=0;tree=exports.default(props);while(effects.length)effects.shift()();return tree;};
     return {exports,render,calls,notifications,get tree(){return tree;},unmount(){for(const slot of slots)slot?.cleanup?.();}};
@@ -179,6 +181,25 @@ test('multi-carrier receipt retains exact chosen legs and only exposes the match
     assert.equal(receipt.shippingLabelLeg({...mail.effects[0],leg:'RETURN'},order.id),null);assert.equal(receipt.shippingLabelLeg({...mail.effects[0],kind:'FEDEX_LABEL'},order.id),null);
 });
 
+test('mail label states stay distinct from confirmed payment and never promise unsupported email or timing',()=>{
+    for (const [state, expected] of [['PENDING','Your shipping label is pending.'],['DISPATCHED','Your shipping label is being prepared.'],['UNKNOWN','We’re checking your shipping label status.'],['FAILED','Your shipping label needs attention.'],['SUCCEEDED','Your shipping label is ready to print.']]) {
+        const mail={...order,receipt:{...quoted('saved-quote'),terms:{days:14,clockStart:'ATLAS_RECEIPT',mailChargedLegs:'BOTH_LEGS'}},effects:[{id:`${order.id}:shipstation:INBOUND:v1`,kind:'SHIPSTATION_LABEL',state}]};
+        const saved=JSON.stringify(mail),html=renderToStaticMarkup(React.createElement(receipt.default,{initialOrder:mail}));
+        assert.match(html,/PAYMENT CONFIRMED/);assert.ok(html.includes(expected),state);
+        assert.equal(html.includes('Download label to ATLAS'),state==='SUCCEEDED');
+        assert.doesNotMatch(html,/shortly|We’ll email|We will email|Shipping is free/);assert.equal(JSON.stringify(mail),saved);
+    }
+});
+
+test('only one exact inbound effect may assert label readiness or pending state',()=>{
+    const inbound={id:`${order.id}:shipstation:INBOUND:v1`,kind:'SHIPSTATION_LABEL',state:'SUCCEEDED'};
+    for (const effects of [[],[{...inbound,id:'foreign:shipstation:INBOUND:v1'}],[{...inbound,leg:'RETURN'}],[inbound,inbound]]) {
+        const html=renderToStaticMarkup(React.createElement(receipt.ShippingLabelStatus,{order:{...order,receipt:{channel:'MAIL_IN'},effects}}));
+        assert.equal(html,'');
+    }
+    assert.equal(renderToStaticMarkup(React.createElement(receipt.ShippingLabelStatus,{order:{...order,effects:[inbound]}})),'');
+});
+
 test('customer-measured inbound packages begin empty, require actual measurements and invalidate totals after edits',async()=>{
     const view=checkoutHarness(async(path)=>path.includes('/checkout?')?{revision:4,channel:'MAIL_IN',blockers:[],shippingOptions:[{...serviceOptions[0],inboundPackaging:'CUSTOMER_MEASURED'}]}:quoted('measured-quote'));
     view.render();await tick();view.render();choose(view,0);
@@ -190,4 +211,38 @@ test('customer-measured inbound packages begin empty, require actual measurement
     assert.deepEqual(JSON.parse(JSON.stringify(request.inboundPackage)),{weight:{unit:'ounce',value:7.25},dimensions:{unit:'inch',length:8,width:6,height:2}});
     nodes(view.tree,n=>n.type==='input')[0].props.onChange({target:{value:'8.5'}});view.render();assert.equal(nodes(view.tree,n=>n.type===receipt.OrderAmounts).length,0);
     assert.equal(nodes(view.tree,n=>n.type==='button'&&text(n).startsWith('Pay $')).length,0);view.unmount();
+});
+
+const deferredReceipt = { ...order.receipt, channel:'MAIL_IN', location:null, terms:{days:14,clockStart:'ATLAS_RECEIPT',shippingPayment:'SEPARATE_PAYMENT'}, cards:[{cardId:'one',unitCents:4000}], subtotalCents:4000, shipping:[], shippingCents:0, taxCents:320,totalCents:4320,shippingStatus:'UNQUOTED_UNPAID' };
+test('separate grading receipt makes unpaid shipping explicit and preserves original bill while label is pending',()=>{
+    const saved={...order,receipt:deferredReceipt,shippingPayment:{state:'UNQUOTED_UNPAID',labelReadyEmailEnabled:true,activePayment:null,receipt:null},effects:[{id:'ready-email',kind:'EMAIL_LABEL_READY',state:'PENDING'}]};
+    const before=JSON.stringify(saved), html=renderToStaticMarkup(React.createElement(receipt.default,{initialOrder:saved}));
+    for(const content of ['Quoted and paid separately','Tax on grading','Grading paid','$43.20','Your shipping label is pending. We’ll email you when it’s ready to print.','Shipping is paid separately','Shipping label email'])assert.ok(html.includes(content),content);
+    assert.doesNotMatch(html,/\$0\.00|Shipping paid for|Free shipping|shipping included|shortly/i);assert.equal(JSON.stringify(saved),before);
+});
+test('grading-only initial checkout quotes without a carrier or invented parcel, and shows separate shipping terms',async()=>{
+    const view=checkoutHarness(async(path,options)=>path.endsWith('/quotes')?deferredReceipt:{revision:4,channel:'MAIL_IN',terms:{shippingPayment:'SEPARATE_PAYMENT'},blockers:[],shippingOptions:[]});
+    view.render();await tick();view.render();assert.equal(nodes(view.tree,n=>n.type==='select').length,0);
+    const button=nodes(view.tree,n=>n.type==='button'&&text(n)==='Get grading total')[0];assert.equal(button.props.disabled,false);await button.props.onClick();view.render();
+    assert.deepEqual(JSON.parse(JSON.stringify(view.calls.at(-1))),{path:'/api/customer/commerce/quotes',options:{method:'POST',body:{draftId:'saved-draft',expectedRevision:4}}});
+    assert.equal(nodes(view.tree,n=>n.type==='button'&&text(n)==='Pay $43.20').length,1);view.unmount();
+});
+
+test('saved order page forwards authenticated CSRF to later shipping mutations after session bootstrap',async()=>{
+    let cursor=0,tree;const slots=[],effects=[],calls=[];const react={createElement:(type,props,...children)=>({type,props:{...props,children}}),useCallback:fn=>fn,
+      useState(initial){const id=cursor++;if(!(id in slots))slots[id]=initial;return[slots[id],value=>{slots[id]=value;}];},
+      useEffect(fn,deps){const id=cursor++;if(!slots[id]){slots[id]=deps;effects.push(fn);}}};
+    const exports={};const client={request:async(path,options)=>{calls.push({path,options});return{customer:{id:'owned-account'},csrf:'authenticated-session-csrf'};}};
+    vm.runInNewContext(compile('../pages/orders/[id].jsx'),{exports,require:name=>name==='react'?react:name.endsWith('/client.mjs')?client:name.endsWith('OrderReceipt.jsx')?{...receipt,__esModule:true}:name.endsWith('CustomerOrderTracking.jsx')?{__esModule:true,default:()=>null}:name.endsWith('/page.mjs')?{}:name.endsWith('/policy.mjs')?{}:require(name)});
+    const render=()=>{cursor=0;tree=exports.default({orderId:'saved-order'});while(effects.length)effects.shift()();};render();await tick();render();
+    const saved=nodes(tree,node=>node.type===receipt.default)[0];assert.ok(saved);assert.equal(saved.props.orderId,'saved-order');
+    const body={quoteId:'original-shipping-quote',requestId:'durable-request'};await saved.props.request('/commerce/orders/saved-order/shipping/payments',{body});
+    assert.equal(calls.at(-1).options.csrf,'authenticated-session-csrf');assert.equal(calls.at(-1).options.body,body);
+});
+
+test('customer service selection preserves dealer pricing and explains grading now with separate mail shipping payment',()=>{
+    const exports={};vm.runInNewContext(compile('../components/intake/ServiceChoice.jsx'),{exports,require:name=>name==='react'?React:name.endsWith('SubmissionStationFinder.jsx')?{__esModule:true,default:()=>null}:require(name)});
+    const html=renderToStaticMarkup(React.createElement(exports.default,{value:{intakeMethod:'MAIL_IN'},showStations:false}));
+    for(const content of ['$50','Transport included','$40','Shipping paid separately','Pay for grading now.','approve a separate shipping payment later','Review your actual carrier quote and tax','Keep your cards until your label is ready'])assert.ok(html.includes(content),content);
+    assert.doesNotMatch(html,/Free shipping|Shipping included|shipping paid at checkout/i);
 });

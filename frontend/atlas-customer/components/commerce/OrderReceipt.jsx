@@ -2,20 +2,23 @@ import { useEffect, useState } from 'react';
 import { request as defaultRequest } from '../../lib/client.mjs';
 import styles from './commerce.module.css';
 import CustomerHandoff from '../dealer/CustomerHandoff.jsx';
+import ShippingCheckout from './ShippingCheckout.jsx';
 
 const money = value => Number.isInteger(value) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value / 100) : 'Unavailable';
 const scheduleTime = (value, zone) => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: zone ?? 'UTC', timeZoneName: 'short' }).format(new Date(value)) : 'Not yet scheduled';
 
 export function ServiceSummary({ snapshot, saved = false }) {
     const kiosk = snapshot.channel === 'KIOSK', location = snapshot.location, terms = snapshot.terms ?? {};
+    const separateShipping = !kiosk && terms.shippingPayment === 'SEPARATE_PAYMENT';
     const unitCents = snapshot.cards?.[0]?.unitCents ?? snapshot.unitCents;
     const duration = terms.days === 7 ? 'One week' : terms.days === 14 ? 'Two weeks' : Number.isInteger(terms.days) && terms.days > 0 ? `${terms.days} days` : null;
     const start = { ATLAS_COLLECTION: 'actual ATLAS collection', ATLAS_RECEIPT: 'physical receipt at ATLAS', CARRIER_ACCEPTANCE: 'carrier acceptance' }[terms.clockStart];
     return <>
         <div className={styles.service}><strong>{kiosk ? 'Card-shop grading' : 'Mail-in grading'}{Number.isInteger(unitCents) ? ` · ${money(unitCents)} per card` : ''}</strong>
             <p>{duration && start ? `${duration} from ${start}.` : saved ? 'Saved turnaround terms are unavailable.' : kiosk ? 'One week from actual ATLAS collection.' : 'Two-week service. The start date is confirmed with your exact quote.'} {kiosk && 'Pickup and return included.'}</p>
-            {!kiosk && terms.mailChargedLegs === 'BOTH_LEGS' && <p>{saved?'Shipping paid for the trip to ATLAS and the return trip.':'Shipping includes the trip to ATLAS and the return trip.'} ATLAS handles return shipping after grading.</p>}
-            {!kiosk && terms.mailChargedLegs === 'INBOUND_ONLY' && <p>{saved?'Shipping paid for the trip to ATLAS only.':'Shipping includes the trip to ATLAS only.'} Return shipping is not included in this payment.</p>}
+            {separateShipping && <p>{saved ? 'Your grading payment is confirmed. Shipping is quoted and paid separately.' : 'Pay for grading now. Choose your shipping service and approve a separate shipping payment later.'} Keep your cards until your shipping label is ready.</p>}
+            {!kiosk && !separateShipping && terms.mailChargedLegs === 'BOTH_LEGS' && <p>{saved?'Shipping paid for the trip to ATLAS and the return trip.':'Shipping includes the trip to ATLAS and the return trip.'} ATLAS handles return shipping after grading.</p>}
+            {!kiosk && !separateShipping && terms.mailChargedLegs === 'INBOUND_ONLY' && <p>{saved?'Shipping paid for the trip to ATLAS only.':'Shipping includes the trip to ATLAS only.'} Return shipping is not included in this payment.</p>}
         </div>
         {location && <div className={styles.route}><strong>{location.name}</strong>
             <p>{Object.values(location.address ?? {}).filter(Boolean).join(', ')}</p>
@@ -30,9 +33,10 @@ export function ServiceSummary({ snapshot, saved = false }) {
 
 export function OrderAmounts({ snapshot, paid = false }) {
     const count = snapshot.cards?.length ?? 0;
+    const separateShipping = snapshot.channel === 'MAIL_IN' && snapshot.terms?.shippingPayment === 'SEPARATE_PAYMENT' && snapshot.purpose !== 'SHIPPING';
     return <><ShippingSummary snapshot={snapshot}/><dl className={styles.amounts}><div><dt>Grading · {count} {count === 1 ? 'card' : 'cards'}</dt><dd>{money(snapshot.subtotalCents)}</dd></div>
-        <div><dt>{snapshot.channel === 'KIOSK' ? 'Pickup and return' : 'Shipping'}</dt><dd>{snapshot.channel === 'KIOSK' && snapshot.shippingCents === 0 ? 'Included' : money(snapshot.shippingCents)}</dd></div>
-        <div><dt>Tax</dt><dd>{money(snapshot.taxCents)}</dd></div><div className={styles.total}><dt>{paid ? 'Paid' : 'Total'}</dt><dd>{money(snapshot.totalCents)}</dd></div></dl></>;
+        <div><dt>{snapshot.channel === 'KIOSK' ? 'Pickup and return' : 'Shipping'}</dt><dd>{separateShipping ? 'Quoted and paid separately' : snapshot.channel === 'KIOSK' && snapshot.shippingCents === 0 ? 'Included' : money(snapshot.shippingCents)}</dd></div>
+        <div><dt>{separateShipping ? 'Tax on grading' : 'Tax'}</dt><dd>{money(snapshot.taxCents)}</dd></div><div className={styles.total}><dt>{separateShipping ? paid ? 'Grading paid' : 'Due now' : paid ? 'Paid' : 'Total'}</dt><dd>{money(snapshot.totalCents)}</dd></div></dl></>;
 }
 
 export function ShippingSummary({ snapshot }) {
@@ -59,6 +63,23 @@ export function shippingLabelLeg(effect, orderId) {
         if (effect.id === `${orderId}:${provider}:${leg}:v1` && (!effect.leg||effect.leg===leg)) return leg;
     }
     return null;
+}
+
+export function ShippingLabelStatus({ order }) {
+    if (order.receipt?.channel !== 'MAIL_IN') return null;
+    const labels = (order.effects ?? []).filter(effect => shippingLabelLeg(effect, order.id) === 'INBOUND');
+    if (labels.length !== 1 && !(labels.length === 0 && order.shippingPayment)) return null;
+    const label = labels[0] ?? { state:'PENDING' };
+    const notify = order.shippingPayment?.labelReadyEmailEnabled === true;
+    const message = {
+        PENDING: notify ? 'Your shipping label is pending. We’ll email you when it’s ready to print.' : 'Your shipping label is pending. Refresh your receipt to check its status.',
+        DISPATCHED: 'Your shipping label is being prepared. Refresh your receipt to check its status.',
+        UNKNOWN: 'We’re checking your shipping label status. Refresh your receipt for the latest update.',
+        FAILED: 'Your shipping label needs attention. Contact ATLAS support before mailing your cards.',
+        SUCCEEDED: 'Your shipping label is ready to print. Download the label to ATLAS below.',
+    }[label.state] ?? 'Your shipping label status is unavailable. Refresh your receipt for the latest update.';
+    return <div className={styles.service} role="status" aria-label="Shipping label"><strong>Shipping label</strong><p>{message}</p>
+        {label.state !== 'SUCCEEDED' && <p>Keep your cards until your label and mailing instructions are ready.</p>}</div>;
 }
 
 export default function OrderReceipt({ initialOrder = null, orderId = initialOrder?.id, request = defaultRequest }) {
@@ -94,13 +115,15 @@ export default function OrderReceipt({ initialOrder = null, orderId = initialOrd
             <p className={styles.reference}>{order.reference}</p><p>Your digital receipt is saved here. Receipt delivery updates appear below.</p>
             <ServiceSummary snapshot={order.receipt} saved/><OrderAmounts snapshot={order.receipt} paid/>
             {kiosk && <CustomerHandoff orderId={order.id} request={request}/>}
+            {!kiosk && <ShippingLabelStatus order={order}/>}
+            {!kiosk && order.receipt.terms?.shippingPayment === 'SEPARATE_PAYMENT' && <ShippingCheckout order={order} request={request} onOrder={setOrder}/>}
             <h3>{kiosk ? 'Ready for your shop handoff' : 'Prepare your shipment'}</h3>
             <p>Protect each card in a sleeve and card holder. Keep the cards together in a secure package and include your order number.</p>
-            <p>{kiosk ? 'Show your handoff code to staff at your selected card shop. They will check every card and confirm receipt. ATLAS collection is recorded separately.' : 'Your shipping label is prepared after payment. Use the package size and carrier selected at checkout. Print and attach the saved label when it is ready.'}</p>
-            <ul className={styles.deliveries}>{(order.effects ?? []).filter(effect => ['EMAIL_RECEIPT', 'SMS_RECEIPT', 'FEDEX_LABEL', 'SHIPSTATION_LABEL', 'PACKAGE_LABEL'].includes(effect.kind)).map(effect => {
+            <p>{kiosk ? 'Show your handoff code to staff at your selected card shop. They will check every card and confirm receipt. ATLAS collection is recorded separately.' : (order.shippingPayment?.receipt?.shipping?.length || order.receipt.shipping?.length) ? 'Use the package size and carrier saved with your shipping payment. Print and attach the saved label when it is ready.' : 'Your mailing instructions will appear with your shipping label. Keep your cards until those details are ready.'}</p>
+            <ul className={styles.deliveries}>{(order.effects ?? []).filter(effect => ['EMAIL_RECEIPT', 'EMAIL_SHIPPING_RECEIPT', 'EMAIL_LABEL_READY', 'SMS_RECEIPT', 'FEDEX_LABEL', 'SHIPSTATION_LABEL', 'PACKAGE_LABEL'].includes(effect.kind)).map(effect => {
                 const leg = shippingLabelLeg(effect, order.id), carrier = Boolean(shippingProvider(effect));
                 const label = carrier ? leg === 'INBOUND' ? 'Ship your cards to ATLAS' : leg === 'RETURN' ? 'Return shipping from ATLAS' : 'Shipping label · direction unavailable'
-                    : { EMAIL_RECEIPT: 'Email receipt', SMS_RECEIPT: 'Text receipt', PACKAGE_LABEL: 'Package label' }[effect.kind];
+                    : { EMAIL_RECEIPT: 'Grading receipt email', EMAIL_SHIPPING_RECEIPT: 'Shipping receipt email', EMAIL_LABEL_READY: 'Shipping label email', SMS_RECEIPT: 'Text receipt', PACKAGE_LABEL: 'Package label' }[effect.kind];
                 return <li key={effect.id}><span>{label}{carrier&&effect.carrierName&&<small className={styles.carrierName}>{[effect.carrierName,effect.serviceName].filter(Boolean).join(' · ')}</small>}</span>
                     {effect.state === 'SUCCEEDED' && (effect.kind === 'PACKAGE_LABEL' || leg === 'INBOUND')
                         ? <button className={styles.secondary} disabled={busy} onClick={() => downloadLabel(effect)}>{carrier ? 'Download label to ATLAS' : 'Download label'}</button>

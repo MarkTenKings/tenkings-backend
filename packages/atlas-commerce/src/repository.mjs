@@ -2,6 +2,12 @@
 export class GatewayCommerceRepository {
     constructor(call) { if (typeof call !== 'function') throw new TypeError('Gateway call required'); this.call = call; }
     loadCheckout(draftId) { return this.call('commerce_checkout', { draftId }); }
+    shippingCheckout(orderId) { return this.call('commerce_shipping_checkout',{orderId}); }
+    saveShippingQuote(orderId,quote) { return this.call('commerce_shipping_save_quote',{orderId,quote}); }
+    reserveShippingPayment(data) { return this.call('commerce_shipping_reserve_payment',data); }
+    recordShippingPayment(orderId,attemptId,observation) { return this.call('commerce_shipping_record_payment',{orderId,attemptId,observation}); }
+    shippingPayment(orderId,attemptId) { return this.call('commerce_shipping_payment',{orderId,attemptId}); }
+    confirmShippingPaid(data) { return this.call('commerce_shipping_confirm_paid',data); }
     weeklyCapacity() { return this.call('commerce_weekly_capacity', {}); }
     saveQuote(expectedRevision, quote) { return this.call('commerce_save_quote', { expectedRevision, quote }); }
     reservePayment(data) { return this.call('commerce_reserve_payment', data); }

@@ -12,6 +12,7 @@ export class CommerceService {
         Object.assign(this, { repository, payment, tax, carrier, carriers, notifications, packageLabel, terms, clock, uuid });
     }
     carrierFor(provider) { return this.carriers?.[provider] ?? (this.carrier && (this.carrier.provider ?? 'FEDEX') === provider ? this.carrier : null); }
+    deferred(source) { return source.channel === 'MAIL_IN' && this.terms?.shippingPayment === 'SEPARATE_PAYMENT'; }
     async capacity() {
         return customerCapacity(this.repository.weeklyCapacity ? await this.repository.weeklyCapacity() : null, this.clock());
     }
@@ -40,13 +41,13 @@ export class CommerceService {
         if (!this.payment) blockers.push('PAYMENT_NOT_CONFIGURED');
         if (!this.tax) blockers.push('TAX_NOT_CONFIGURED');
         if (source.channel === 'MAIL_IN') {
-            if (!this.carrier) blockers.push('SHIPPING_NOT_CONFIGURED');
-            if (!(source.shippingPlans ?? source.shippingOptions)?.length) blockers.push('MEASURED_PACKAGING_NOT_CONFIGURED');
+            if (!this.deferred(source) && !this.carrier) blockers.push('SHIPPING_NOT_CONFIGURED');
+            if (!this.deferred(source) && !(source.shippingPlans ?? source.shippingOptions)?.length) blockers.push('MEASURED_PACKAGING_NOT_CONFIGURED');
             if (this.terms?.mailClockStart !== 'ATLAS_RECEIPT') blockers.push('MAIL_TURNAROUND_NOT_CONFIGURED');
-            if (!['INBOUND_ONLY','BOTH_LEGS'].includes(this.terms?.mailChargedLegs)) blockers.push('MAIL_SHIPPING_TERMS_NOT_CONFIGURED');
+            if (!this.deferred(source) && !['INBOUND_ONLY','BOTH_LEGS'].includes(this.terms?.mailChargedLegs)) blockers.push('MAIL_SHIPPING_TERMS_NOT_CONFIGURED');
         }
         const activePayment = source.activePayment ? publicSource ? customerPayment(source.activePayment) : await this.reconcile(source.activePayment.id) : null;
-        return customerCheckout(source, {activePayment,capacity,unitCents: SERVICE[source.channel].unitCents,
+        return customerCheckout({...source,terms:{shippingPayment:this.deferred(source)?'SEPARATE_PAYMENT':null}}, {activePayment,capacity,unitCents: SERVICE[source.channel].unitCents,
             turnaroundDays: SERVICE[source.channel].days,blockers});
     }
     async quote({ draftId, expectedRevision, packingPresetId, shippingServiceCode, inboundPackage }) {
@@ -56,12 +57,20 @@ export class CommerceService {
         requireValue(source.emailVerified === true, 'EMAIL_VERIFICATION_REQUIRED', 409);
         requireValue(source.revision === expectedRevision, 'CHECKOUT_CHANGED');
         requireValue(this.payment && this.tax, 'COMMERCE_NOT_CONFIGURED', 503);
+        return this.buildQuote(source, {draftId,packingPresetId,shippingServiceCode,inboundPackage,expectedRevision});
+    }
+    async buildQuote(source, {draftId,packingPresetId,shippingServiceCode,inboundPackage,expectedRevision,orderId}) {
+        const shippingOnly = Boolean(orderId), deferred = !shippingOnly && this.deferred(source);
         const service = SERVICE[source.channel], now = this.clock(), id = this.uuid();
         const lines = source.cards.map(card => ({ cardId: card.id, revision: card.revision, photoPairHash: card.photoPairHash,
             identity: clone(card.identity), unitCents: service.unitCents, commissionCents: service.commissionCents }));
-        const subtotalCents = lines.length * service.unitCents;
-        let shipping = [], shippingPlan = null, clockStart = 'ATLAS_COLLECTION', measuredInbound;
-        if (source.channel === 'MAIL_IN') {
+        const subtotalCents = shippingOnly ? 0 : lines.length * service.unitCents;
+        let shipping = [], shippingPlan = null, clockStart = source.channel === 'MAIL_IN' ? 'ATLAS_RECEIPT' : 'ATLAS_COLLECTION', measuredInbound;
+        if (deferred) {
+            requireValue(this.terms.mailClockStart === 'ATLAS_RECEIPT','MAIL_TURNAROUND_NOT_CONFIGURED',503);
+            requireValue(packingPresetId === undefined && shippingServiceCode === undefined && inboundPackage === undefined,'SHIPPING_SELECTION_DEFERRED',400);
+        }
+        if (source.channel === 'MAIL_IN' && !deferred) {
             requireValue(this.terms?.mailClockStart === 'ATLAS_RECEIPT', 'MAIL_TURNAROUND_NOT_CONFIGURED', 503);
             requireValue(['INBOUND_ONLY','BOTH_LEGS'].includes(this.terms?.mailChargedLegs), 'MAIL_SHIPPING_TERMS_NOT_CONFIGURED', 503);
             requireValue(this.carrier, 'SHIPPING_NOT_CONFIGURED', 503);
@@ -103,8 +112,8 @@ export class CommerceService {
         }
         const shippingCents = shipping.reduce((sum, rate) => sum + rate.amountCents, 0);
         const taxInput = { quoteId: id, currency: 'usd', profile: clone(source.profile), channel: source.channel,
-            location: source.location ?? null, lines, subtotalCents, shippingCents };
-        const calculated = await this.tax.calculate(taxInput);
+            location: source.location ?? null, lines: shippingOnly ? [] : lines, subtotalCents, shippingCents };
+        const calculated = shippingOnly ? await this.tax.calculateShipping(taxInput) : await this.tax.calculate(taxInput);
         requireValue(calculated?.providerId && calculated.currency === 'usd' && minor(calculated.taxCents)
             && calculated.totalCents === subtotalCents + shippingCents + calculated.taxCents
             && calculated.requestHash === digest(taxInput) && Date.parse(calculated.expiresAt) > now.getTime(), 'TAX_QUOTE_INVALID', 503);
@@ -112,16 +121,66 @@ export class CommerceService {
         requireValue(routeDeadline > now.getTime(), 'KIOSK_SCHEDULE_CHANGED');
         const expires = Math.min(now.getTime() + 15 * 60 * 1000, Date.parse(calculated.expiresAt), routeDeadline,
             shippingPlan?.validUntil ? Date.parse(shippingPlan.validUntil) : Infinity, ...shipping.map(rate => Date.parse(rate.expiresAt)));
-        const quote = { version: 'atlas-commerce-v1', id, draftId, draftRevision: source.revision, accountId: source.accountId,
+        const quote = { version: 'atlas-commerce-v1', ...(shippingOnly ? {orderId,purpose:'SHIPPING',shippingStatus:'QUOTED_UNPAID'} : deferred ? {shippingStatus:'UNQUOTED_UNPAID'} : {}), id, draftId, draftRevision: source.revision, accountId: source.accountId,
             profile: clone(source.profile), profileRevision: source.profileRevision, phone: source.phone, channel: source.channel,
             location: source.location ? clone(source.location) : null, cards: lines, currency: 'usd', subtotalCents, shippingCents,
             taxCents: calculated.taxCents, totalCents: calculated.totalCents, tax: clone(calculated), shipping, shippingPlan,
             ...(measuredInbound ? {inboundPackage:measuredInbound} : {}),
             merchant: clone(this.payment.binding), terms: { days: service.days, clockStart, paymentFlow: 'CUSTOMER_PHONE',
-                mailChargedLegs: source.channel === 'MAIL_IN' ? this.terms.mailChargedLegs : null },
+                mailChargedLegs: source.channel === 'MAIL_IN' && !deferred ? this.terms.mailChargedLegs : null,
+                ...(deferred || shippingOnly ? {shippingPayment:'SEPARATE_PAYMENT'} : {}) },
             createdAt: now.toISOString(), expiresAt: new Date(expires).toISOString() };
         quote.contentHash = digest(quote);
-        return customerQuote(await this.repository.saveQuote(expectedRevision, quote));
+        return customerQuote(shippingOnly ? await this.repository.saveShippingQuote(orderId,quote) : await this.repository.saveQuote(expectedRevision, quote));
+    }
+    async shippingCheckout({orderId}) {
+        requireValue(UUID.test(orderId),'INVALID_REQUEST',400);
+        const source=await this.repository.shippingCheckout(orderId);
+        const plans=availableShippingPlans(source.shippingPlans,source.cards.length,this.terms?.mailChargedLegs,this.clock());
+        const blockers=[];
+        if(!this.payment)blockers.push('PAYMENT_NOT_CONFIGURED');
+        if(!this.tax?.calculateShipping || this.tax.shippingConfigured===false)blockers.push('SHIPPING_TAX_NOT_CONFIGURED');
+        if(!this.carrier)blockers.push('SHIPPING_NOT_CONFIGURED');
+        if(!plans.length)blockers.push('MEASURED_PACKAGING_NOT_CONFIGURED');
+        if(!['INBOUND_ONLY','BOTH_LEGS'].includes(this.terms?.mailChargedLegs))blockers.push('MAIL_SHIPPING_TERMS_NOT_CONFIGURED');
+        const activePayment=source.activePayment ? await this.shippingReconcile({orderId,attemptId:source.activePayment.id??source.activePayment.attemptId}) : null;
+        const checkout=customerCheckout({...source,shippingPlans:plans},{activePayment,blockers});
+        return {orderId,cards:checkout.cards,shippingOptions:checkout.shippingOptions,blockers,activePayment,
+            shippingPayment:customerOrder(source.order)?.shippingPayment};
+    }
+    async shippingQuote({orderId,packingPresetId,shippingServiceCode,inboundPackage}) {
+        requireValue(UUID.test(orderId),'INVALID_REQUEST',400);
+        requireValue(this.payment && this.tax?.calculateShipping && this.tax.shippingConfigured!==false,'SHIPPING_TAX_NOT_CONFIGURED',503);
+        const source=await this.repository.shippingCheckout(orderId);
+        requireValue(!source.activePayment,'SHIPPING_PAYMENT_ALREADY_STARTED');
+        return this.buildQuote(source,{draftId:source.draftId,orderId,packingPresetId,shippingServiceCode,inboundPackage});
+    }
+    async shippingPay({orderId,quoteId,requestId}) {
+        requireValue([orderId,quoteId,requestId].every(id=>UUID.test(id)),'INVALID_REQUEST',400);
+        requireValue(this.payment,'PAYMENT_NOT_CONFIGURED',503);
+        const reserved=await this.repository.reserveShippingPayment({orderId,quoteId,requestId,attemptId:this.uuid(),merchant:this.payment.binding});
+        if(!reserved.dispatch)return this.publicAttempt(reserved.attempt);
+        const attempt=reserved.attempt;
+        try { await this.repository.recordShippingPayment(orderId,attempt.id,await this.payment.create(attempt)); }
+        catch { await this.repository.recordShippingPayment(orderId,attempt.id,{state:'UNKNOWN',code:'PAYMENT_RECONCILIATION_REQUIRED'}); }
+        return this.shippingReconcile({orderId,attemptId:attempt.id});
+    }
+    async shippingReconcile({orderId,attemptId}) {
+        requireValue(UUID.test(orderId)&&UUID.test(attemptId),'INVALID_REQUEST',400);
+        const attempt=await this.repository.shippingPayment(orderId,attemptId);
+        requireValue(attempt.orderId===orderId && attempt.quote?.purpose==='SHIPPING','PAYMENT_BINDING_MISMATCH');
+        if(attempt.state==='PAID'&&attempt.order)return this.publicAttempt(attempt);
+        requireValue(this.payment,'PAYMENT_NOT_CONFIGURED',503);
+        let evidence;
+        try { evidence=await this.payment.retrieve(attempt); } catch { return this.publicAttempt({...attempt,state:'UNKNOWN'}); }
+        assertPaymentBinding(attempt,evidence);
+        if(evidence.status==='succeeded') {
+            assertPaidEvidence(attempt,evidence);
+            const {order}=await this.repository.confirmShippingPaid({orderId,attemptId,evidence,receiptId:this.uuid()});
+            return this.publicAttempt({...attempt,state:'PAID',order});
+        }
+        const state=evidence.status==='canceled'?'CANCELED':['requires_payment_method','requires_confirmation','requires_action'].includes(evidence.status)?'AWAITING_PAYMENT':'PROCESSING';
+        return this.publicAttempt(await this.repository.recordShippingPayment(orderId,attemptId,{...evidence,state}));
     }
     async pay({ quoteId, requestId }) {
         requireValue(UUID.test(quoteId) && UUID.test(requestId), 'INVALID_REQUEST', 400);

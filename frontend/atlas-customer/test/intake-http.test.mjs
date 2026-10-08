@@ -11,7 +11,7 @@ function fixture() {
     call: async (_cookie, action, input, csrf) => { auth.authority('', csrf); calls.push({ action, input }); return { saved: true }; } };
   const effect = operation => async (actor, input) => { calls.push({ operation, actor, input }); return { saved: true }; };
   const handler = createHandler({ config: { origin: 'https://atlasgrading.com', binding }, assertRequest() {}, clientAddress: () => 'fixture', auth,
-    intake: { sign: effect('sign'), complete: effect('complete') }, commerce: { checkout: effect('checkout'), quote: effect('quote'), pay: effect('pay'), reconcile: effect('reconcile') },
+    intake: { sign: effect('sign'), complete: effect('complete') }, commerce: { checkout: effect('checkout'), quote: effect('quote'), pay: effect('pay'), reconcile: effect('reconcile'), shippingCheckout:effect('shippingCheckout'),shippingQuote:effect('shippingQuote'),shippingPay:effect('shippingPay'),shippingReconcile:effect('shippingReconcile') },
     directory: async input => { calls.push({ directory: input }); return { locations: [] }; } });
   const run = async (url, body, csrf = 'csrf') => {
     const res = { headers: {}, setHeader(key, value) { this.headers[key] = value; }, status(value) { this.statusCode = value; return this; }, json(value) { this.body = value; return this; } };
@@ -118,4 +118,27 @@ test('actual inbound package measurements pass without accepting private shippin
   assert.equal((await f.run('/api/customer/commerce/quotes',input)).statusCode,200);assert.deepEqual(f.calls[0].input,input);
   for(const parcel of [null,[],{...inboundPackage,carrierId:'forged'},{...inboundPackage,weight:{unit:'ounce',value:'7.25'}},{...inboundPackage,weight:{unit:'ounce',value:0}},{...inboundPackage,weight:{unit:'invalid',value:1}},{...inboundPackage,dimensions:{...inboundPackage.dimensions,height:-1}},{...inboundPackage,dimensions:{...inboundPackage.dimensions,insurance:1000}},{...inboundPackage,dimensions:{...inboundPackage.dimensions,unit:'meter'}}])assert.equal((await f.run('/api/customer/commerce/quotes',{...input,inboundPackage:parcel})).statusCode,400);
   assert.equal(f.calls.length,1);
+});
+
+test('separate shipping routes bind authenticated order and reject caller amounts, identities and malformed parcels',async()=>{
+  const f=fixture(),orderId=randomUUID(),attemptId=randomUUID(),quoteId=randomUUID(),requestId=randomUUID(),base=`/api/customer/commerce/orders/${orderId}/shipping`;
+  const parcel={weight:{unit:'ounce',value:8},dimensions:{unit:'inch',length:7,width:5,height:2}},selection={packingPresetId:'actual_one_card',shippingServiceCode:'usps_ground_advantage',inboundPackage:parcel};
+  for(const [path,body,operation,input]of [[base,undefined,'shippingCheckout',{orderId}],[`${base}/quotes`,selection,'shippingQuote',{orderId,...selection}],[`${base}/payments`,{quoteId,requestId},'shippingPay',{orderId,quoteId,requestId}],[`${base}/payments/${attemptId}/reconcile`,{},'shippingReconcile',{orderId,attemptId}]]){
+    const result=await f.run(path,body);assert.equal(result.statusCode,200);assert.deepEqual(f.calls.at(-1),{operation,actor:{...f.authority,binding:f.binding},input});assert.match(result.headers['Cache-Control'],/private, no-store/);
+  }
+  const good=f.calls.length;
+  for(const field of ['orderId','accountId','totalCents','shippingCents','taxCents','stripeCustomerId','expectedRevision'])assert.equal((await f.run(`${base}/quotes`,{...selection,[field]:orderId})).statusCode,400,field);
+  for(const inboundPackage of [null,{...parcel,insurance:1},{...parcel,weight:{unit:'ounce',value:'8'}},{...parcel,weight:{unit:'ounce',value:0}},{...parcel,dimensions:{unit:'feet',length:7,width:5,height:2}},{...parcel,dimensions:{unit:'inch',length:7,width:5}}])assert.equal((await f.run(`${base}/quotes`,{...selection,inboundPackage})).statusCode,400);
+  for(const body of [{quoteId,requestId,orderId},{quoteId,requestId,amount:1},{quoteId},{quoteId,requestId:'invalid'}])assert.equal((await f.run(`${base}/payments`,body)).statusCode,400);
+  assert.equal((await f.run(`${base}/payments/${attemptId}/reconcile`,{state:'PAID'})).statusCode,400);
+  assert.equal((await f.run(`${base}/quotes`,selection,'bad')).statusCode,403);assert.equal((await f.run(`${base}/payments`,{quoteId,requestId},'bad')).statusCode,403);
+  assert.equal((await f.run(`${base}?accountId=${orderId}`)).statusCode,400);assert.equal((await f.run(`${base}/quotes`)).statusCode,405);assert.equal((await f.run(base,{})).statusCode,405);assert.equal(f.calls.length,good);
+});
+test('all separate shipping operations reach exact signed private service endpoints',async t=>{
+  const calls=[];t.mock.method(globalThis,'fetch',async(url,options)=>{calls.push({url,options});return new Response('{}',{status:200});});
+  const services=privateCustomerServices({ATLAS_CUSTOMER_SERVICE_URL:'https://private.example',ATLAS_CUSTOMER_SERVICE_KEY:Buffer.alloc(32,7).toString('base64')});
+  const authority={sessionHash:'a'.repeat(64),browserHash:'b'.repeat(64),binding:{releaseSha:'c'.repeat(40)}},input={orderId:randomUUID()};
+  for(const [action,operation]of [['shippingCheckout','commerce-shipping-checkout'],['shippingQuote','commerce-shipping-quote'],['shippingPay','commerce-shipping-pay'],['shippingReconcile','commerce-shipping-reconcile']]){
+    await services.commerce[action](authority,input);const call=calls.at(-1);assert.equal(call.url,`https://private.example/internal/customer-service/v1/${operation}`);assert.equal(call.options.method,'POST');assert.deepEqual(JSON.parse(call.options.body),{authority,input});
+  }
 });

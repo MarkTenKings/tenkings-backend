@@ -5,7 +5,7 @@ import { inspectCommerceConfiguration } from '../src/readiness.mjs';
 
 function settings() {
     const env = Object.fromEntries(COMMERCE_KEYS.map(key => [key, 'PRIVATE_FIXTURE_VALUE_NEVER_PRINT']));
-    for(const key of ['ATLAS_COMMERCE_SHIPPING_PROVIDER','ATLAS_COMMERCE_SHIPSTATION_API_KEY','ATLAS_COMMERCE_SHIPSTATION_ENVIRONMENT'])delete env[key];
+    for(const key of ['ATLAS_COMMERCE_MAIL_SHIPPING_PAYMENT','ATLAS_COMMERCE_SHIPPING_PROVIDER','ATLAS_COMMERCE_SHIPSTATION_API_KEY','ATLAS_COMMERCE_SHIPSTATION_ENVIRONMENT'])delete env[key];
     return { ...env, ATLAS_COMMERCE_ENABLED: 'true', ATLAS_COMMERCE_CONFIG_HASH: 'a'.repeat(64),
         ATLAS_COMMERCE_PROVIDER: 'STRIPE', ATLAS_COMMERCE_MODE: 'TEST',
         ATLAS_COMMERCE_STRIPE_ACCOUNT_ID: 'acct_fixture', ATLAS_COMMERCE_STRIPE_SECRET_KEY: 'sk_test_PRIVATE_FIXTURE',
@@ -24,7 +24,7 @@ test('absent settings remain cold and report only key names', () => {
     const result = inspectCommerceConfiguration({ UNRELATED_SECRET: 'do-not-read' });
     assert.equal(result.status, 'COLD');
     assert.equal(result.adaptersValid, false);
-    assert.equal(result.missing.length, COMMERCE_KEYS.length - 4);
+    assert.equal(result.missing.length, COMMERCE_KEYS.length - 5);
     assert.doesNotMatch(JSON.stringify(result), /do-not-read|UNRELATED_SECRET/);
 });
 
@@ -103,4 +103,22 @@ test('ShipStation can qualify without FedEx credentials; legacy FedEx adapter re
     assert.equal(inspectCommerceConfiguration({...env,ATLAS_COMMERCE_SHIPSTATION_API_KEY:''}).status,'INCOMPLETE');
     assert.deepEqual(inspectCommerceConfiguration({...env,ATLAS_COMMERCE_SHIPSTATION_ENVIRONMENT:'PRODUCTION'}).invalid,['ATLAS_COMMERCE_SHIPSTATION_ENVIRONMENT']);
     assert.doesNotMatch(JSON.stringify(ready),/TEST_|abcdefghijklmnopqrstuvwxyz/);
+});
+
+
+test('separate shipping qualifies grading without carrier or shipping tax while retaining later gates', () => {
+    const env = {...settings(), ATLAS_COMMERCE_MAIL_SHIPPING_PAYMENT:'SEPARATE_PAYMENT', ATLAS_COMMERCE_SHIPPING_PROVIDER:'SHIPSTATION'};
+    for (const key of COMMERCE_KEYS.filter(k=>k.includes('_FEDEX_')||k.includes('_SHIPSTATION_')||k==='ATLAS_COMMERCE_SHIPPING_TAX_CODE')) delete env[key];
+    const result = inspectCommerceConfiguration(env,{channel:'MAIL_IN'});
+    assert.equal(result.status,'READY_FOR_PROVIDER_QUALIFICATION'); assert.deepEqual(result.missing,[]);
+    assert.equal(result.shippingPayment,'SEPARATE_PAYMENT');
+    assert(!result.activationGates.includes('SHIPSTATION_ACCOUNT_AND_MEASURED_PACKAGES'));
+    assert(result.deferredShippingGates.includes('CUSTOMER_SHIPPING_PAYMENT'));
+    let requests=0;
+    const providers=createCommerceProviders(env,{fetchImpl:()=>{requests++;throw Error('NETWORK_FORBIDDEN');}});
+    assert.equal(requests,0); assert.equal(providers.carrier,null); assert.equal(providers.tax.shippingConfigured,false);
+    assert.equal(providers.terms.shippingPayment,'SEPARATE_PAYMENT'); assert(providers.payment);
+    assert.equal(inspectCommerceConfiguration({...env,ATLAS_COMMERCE_MAIL_SHIPPING_PAYMENT:'UPFRONT'},{channel:'MAIL_IN'}).status,'INCOMPLETE');
+    assert.throws(()=>createCommerceProviders({...env,ATLAS_COMMERCE_MAIL_SHIPPING_PAYMENT:'UNEXPECTED'}),/MAIL_SHIPPING_TERMS_NOT_CONFIGURED/);
+    assert.equal(inspectCommerceConfiguration({...env,ATLAS_COMMERCE_SHIPPING_TAX_CODE:'invalid'}).status,'INCOMPLETE');
 });

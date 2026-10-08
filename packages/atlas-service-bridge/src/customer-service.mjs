@@ -3,7 +3,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 // A transport admission signature is never customer authentication. Private
 // handlers revalidate the forwarded session and exact deployment in PostgreSQL.
 const PREFIX = '/internal/customer-service/v1/';
-const OPERATIONS = new Set(['intake-sign', 'intake-complete', 'email-request', 'commerce-checkout', 'commerce-quote', 'commerce-pay', 'commerce-reconcile', 'dealer-locations', 'weekly-capacity']);
+const OPERATIONS = new Set(['intake-sign', 'intake-complete', 'email-request', 'commerce-checkout', 'commerce-quote', 'commerce-pay', 'commerce-reconcile', 'commerce-shipping-checkout', 'commerce-shipping-quote', 'commerce-shipping-pay', 'commerce-shipping-reconcile', 'dealer-locations', 'weekly-capacity']);
 const PUBLIC_READS = new Set(['dealer-locations', 'weekly-capacity']);
 const REQUEST_LIMIT = 131072, RESPONSE_LIMIT = 2 * 1024 * 1024;
 export class CustomerServiceError extends Error {

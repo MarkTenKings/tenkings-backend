@@ -144,3 +144,33 @@ test('restricted Stripe mode mismatch and public or foreign credentials fail bef
     }
     assert.equal(calls, 0);
 });
+
+
+test('deferred shipping tax never fabricates free shipping or bypasses classification for positive shipping',async()=>{
+    const calls=[];
+    const transport={binding:merchant,async request(method,path,input){calls.push({method,path,input});return {id:'taxcalc_grade',currency:'usd',livemode:false,tax_amount_exclusive:50,tax_amount_inclusive:0,amount_total:4050,expires_at:Math.floor(now.getTime()/1000)+900};}};
+    const configuration={transport,taxCode:'txcd_123',addressSource:'shipping',sourcingPolicy:'MAIL_RETURN_ADDRESS_KIOSK_LOCATION'};
+    assert.throws(()=>stripeTaxAdapter(configuration),/TAX_NOT_CONFIGURED/);
+    assert.throws(()=>stripeTaxAdapter({...configuration,allowDeferredShippingTax:true,shippingTaxCode:'invalid'}),/TAX_NOT_CONFIGURED/);
+    const tax=stripeTaxAdapter({...configuration,allowDeferredShippingTax:true});
+    const input={quoteId:randomUUID(),currency:'usd',channel:'MAIL_IN',profile:source('MAIL_IN').profile,lines:[{cardId:randomUUID(),unitCents:4000}],subtotalCents:4000,shippingCents:0};
+    const result=await tax.calculate(input);assert.equal(result.taxCents,50);assert.equal(result.totalCents,4050);
+    assert.equal(calls.length,1);assert.equal(Object.hasOwn(calls[0].input,'shipping_cost'),false);
+    assert.equal(calls[0].input.line_items[0].amount,4000);assert.equal(tax.shippingConfigured,false);
+    await assert.rejects(tax.calculate({...input,shippingCents:1500}),/SHIPPING_TAX_NOT_CONFIGURED/);
+    await assert.rejects(tax.calculateShipping({...input,lines:[],subtotalCents:0,shippingCents:1500}),/SHIPPING_TAX_NOT_CONFIGURED/);
+    assert.equal(calls.length,1);
+});
+
+test('separate shipping tax bills only the real shipping service and excludes previously paid grading',async()=>{
+    const calls=[];
+    const tax=stripeTaxAdapter({transport:{binding:merchant,async request(method,path,input,key){calls.push({method,path,input,key});return {id:'taxcalc_shipping',currency:'usd',livemode:false,tax_amount_exclusive:75,tax_amount_inclusive:0,amount_total:1575,expires_at:Math.floor(now.getTime()/1000)+900};}},taxCode:'txcd_123',shippingTaxCode:'txcd_92010001',addressSource:'shipping',sourcingPolicy:'MAIL_RETURN_ADDRESS_KIOSK_LOCATION'});
+    const input={quoteId:randomUUID(),currency:'usd',channel:'MAIL_IN',profile:source('MAIL_IN').profile,lines:[],subtotalCents:0,shippingCents:1500};
+    assert.equal(tax.shippingConfigured,true);const result=await tax.calculateShipping(input);
+    assert.equal(result.totalCents,1575);assert.equal(result.taxCents,75);
+    assert.deepEqual(calls[0].input.line_items,[{amount:1500,reference:`shipping:${input.quoteId}`,tax_code:'txcd_92010001',tax_behavior:'exclusive'}]);
+    assert.equal(Object.hasOwn(calls[0].input,'shipping_cost'),false);
+    assert.equal(calls[0].input.customer_details.address.line1,input.profile.address1);
+    for(const patch of [{channel:'KIOSK'},{subtotalCents:4000},{lines:[{unitCents:4000}]},{shippingCents:-1}])await assert.rejects(tax.calculateShipping({...input,...patch}),/INVALID_SHIPPING_TAX_INPUT|TAX_QUOTE_INVALID/);
+    assert.equal(calls.length,1);
+});

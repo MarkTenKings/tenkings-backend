@@ -1,59 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import styles from './commerce.module.css';
 import OrderReceipt, { ServiceSummary, OrderAmounts } from './OrderReceipt.jsx';
+import PaymentFields from './PaymentFields.jsx';
 
 const money = value => new Intl.NumberFormat('en-US', { style:'currency',currency:'USD' }).format(value/100);
 const friendly = code => ({
     WEEKLY_CAPACITY_FULL:'This week’s shared card capacity is filled across both routes. Your cards are saved; check back for new availability.',
     WEEKLY_CAPACITY_NOT_CONFIGURED:'Weekly availability is being prepared. Your cards are saved.', PAYMENT_FLOW_CHANGED:'Review a fresh total to pay securely on your phone.',
     COMMERCE_NOT_CONFIGURED:'Checkout is being prepared. Your cards are saved.', TAX_NOT_CONFIGURED:'Tax calculation is not available yet. Your cards are saved.',
-    PAYMENT_NOT_CONFIGURED:'Payment is not available yet. Your cards are saved.', SHIPPING_NOT_CONFIGURED:'Shipping quotes are not available yet.', PACKAGE_EXCEEDS_PARCEL_LIMITS:'That package exceeds the supported parcel size or weight. Check your measurements or use a smaller package.', MEASURED_PACKAGE_REQUIRED:'Enter the actual weight and outside dimensions of your packed shipment.', SHIPSTATION_RATE_UNAVAILABLE:'That shipping service could not be quoted. Choose another available service or try again.', SHIPSTATION_REQUEST_FAILED:'Shipping is unavailable right now. Your cards are saved; try again shortly.', INBOUND_PACKAGE_REQUIRED:'Enter the actual weight and outside dimensions of your packed shipment.', INBOUND_PACKAGE_INVALID:'Check the weight and outside dimensions of your packed shipment.',
+    PAYMENT_NOT_CONFIGURED:'Payment is not available yet. Your cards are saved.', SHIPPING_NOT_CONFIGURED:'Shipping quotes are not available yet.', PACKAGE_EXCEEDS_PARCEL_LIMITS:'That package exceeds the supported parcel size or weight. Check your measurements or use a smaller package.', MEASURED_PACKAGE_REQUIRED:'Enter the actual weight and outside dimensions of your packed shipment.', SHIPSTATION_RATE_UNAVAILABLE:'That shipping service could not be quoted. Choose another available service or try again.', SHIPSTATION_REQUEST_FAILED:'Shipping is unavailable right now. Your cards are saved; try again later.', INBOUND_PACKAGE_REQUIRED:'Enter the actual weight and outside dimensions of your packed shipment.', INBOUND_PACKAGE_INVALID:'Check the weight and outside dimensions of your packed shipment.',
     MAIL_TURNAROUND_NOT_CONFIGURED:'Mail-in turnaround details are being finalized.', MAIL_SHIPPING_TERMS_NOT_CONFIGURED:'Mail-in shipping details are being finalized.',
-    MEASURED_PACKAGING_NOT_CONFIGURED:'Mail-in package sizes and shipping services are being prepared.', LABEL_NOT_READY:'Your saved label is still being prepared. Refresh its status shortly.',
+    MEASURED_PACKAGING_NOT_CONFIGURED:'Mail-in package sizes and shipping services are being prepared.', LABEL_NOT_READY:'Your saved label is still being prepared. Refresh your receipt to check its status.',
     KIOSK_NOT_AVAILABLE:'This kiosk is not currently available. Choose another location.', TERMINAL_BUSY:'The payment terminal is helping another customer. Please try again shortly.',
     TERMINAL_UNAVAILABLE:'The payment terminal is unavailable. Your cards are saved.', CHECKOUT_CHANGED:'Your submission changed. Review a fresh total before paying.',
-    PACKAGING_REQUIRED:'Choose a package and shipping service before requesting your total.', SHIPPING_QUOTE_INVALID:'That shipping service could not be quoted. Choose another available service or try again.', SHIPPING_PROVIDER_UNAVAILABLE:'That shipping service is unavailable right now. Try again shortly.', CARD_REVIEW_REQUIRED:'Finish reviewing your cards before checkout.', PAYMENT_RECONCILIATION_REQUIRED:'We are checking your original payment. Do not pay again.',
+    PACKAGING_REQUIRED:'Choose a package and shipping service before requesting your total.', SHIPPING_QUOTE_INVALID:'That shipping service could not be quoted. Choose another available service or try again.', SHIPPING_PROVIDER_UNAVAILABLE:'That shipping service is unavailable right now. Try again later.', CARD_REVIEW_REQUIRED:'Finish reviewing your cards before checkout.', PAYMENT_RECONCILIATION_REQUIRED:'We are checking your original payment. Do not pay again.',
 }[code] ?? 'We could not finish that step. Your saved submission is safe.');
 
-function PaymentFields({ payment, onComplete }) {
-    const mount = useRef(null), paymentApi = useRef(null);
-    const [ready,setReady] = useState(false), [busy,setBusy] = useState(false), [error,setError] = useState('');
-    useEffect(() => {
-        let disposed = false, element;
-        async function start() {
-            try {
-                if (!window.Stripe) await new Promise((resolve,reject) => {
-                    const existing = document.querySelector('script[data-atlas-payment]');
-                    if (existing) { existing.addEventListener('load',resolve,{once:true}); existing.addEventListener('error',reject,{once:true}); return; }
-                    const script = document.createElement('script'); script.src='https://js.stripe.com/v3/'; script.dataset.atlasPayment='true';
-                    script.onload=resolve; script.onerror=()=>{script.remove();reject();}; document.head.appendChild(script);
-                });
-                if (disposed) return;
-                const stripe = window.Stripe(payment.publishableKey), elements = stripe.elements({ clientSecret:payment.clientSecret,
-                    appearance:{theme:'night',variables:{colorPrimary:'#d9b567',borderRadius:'10px'}} });
-                element = elements.create('payment'); element.mount(mount.current);
-                element.on('ready',() => { if (!disposed) setReady(true); });
-                paymentApi.current={stripe,elements};
-            } catch { if (!disposed) setError('The secure payment form could not load. Refresh to continue this payment.'); }
-        }
-        start(); return () => { disposed=true; element?.destroy(); paymentApi.current=null; };
-    },[payment.clientSecret,payment.publishableKey]);
-    async function submit(event) {
-        event.preventDefault(); if (!paymentApi.current || busy) return;
-        setBusy(true); setError('');
-        try {
-            const result = await paymentApi.current.stripe.confirmPayment({elements:paymentApi.current.elements,
-                confirmParams:{return_url:window.location.href.split('#')[0]},redirect:'if_required'});
-            if (result.error) setError(result.error.message ?? 'Payment was not completed.');
-            // This response never marks the order paid. The server retrieves and
-            // verifies the exact original provider attempt, even after errors.
-            await onComplete();
-        } catch { setError('We are checking the original payment. Use Check payment status before continuing.'); }
-        finally { setBusy(false); }
-    }
-    return <form onSubmit={submit}><div ref={mount} className={styles.fields}/>{error && <p role="alert">{error}</p>}
-        <button className={styles.primary} disabled={!ready||busy} type="submit">{busy?'Checking payment…':'Pay securely'}</button></form>;
-}
 
 export function SavedDraftConfirmation({ draft, onCheckAvailability, checking = false, error = '' }) {
     return <section className={`${styles.panel} ${styles.savedDraft}`} aria-label="Saved submission draft"><p className={styles.eyebrow}>YOUR DRAFT IS SAVED</p><h2>Checkout is not open yet.</h2><p>Your {draft.cards.length} {draft.cards.length === 1 ? 'card and its photos are' : 'cards and their photos are'} saved with ATLAS. You don’t need to upload or review them again. Check availability here to continue when checkout opens.</p><ol className={styles.cards}>{draft.cards.map((card,index)=><li key={card.id??card.cardId}><span>{String(index+1).padStart(2,'0')}</span><strong>{card.identity?.title??'Card details saved'}</strong></li>)}</ol><p className={styles.note}>This page does not take a payment or confirm an order. Keep your cards until your order and delivery instructions are confirmed.</p>{error && <p className={styles.error} role="alert">{error}</p>}<div className={styles.actions}><button type="button" className={styles.primary} disabled={checking} onClick={onCheckAvailability}>{checking ? 'Checking availability…' : 'Check checkout availability'}</button><a href="/account" className={styles.secondary}>Back to your account →</a></div></section>;
@@ -86,7 +48,9 @@ export default function CommerceCheckout({ draft, request, onPaid, onBack }) {
     },[draftId,accept]);
     useEffect(() => {checkAvailability();return () => {checkoutRead.current++;};},[checkAvailability]);
     async function run(fn) { if(operation.current)return; operation.current=true;setBusy(true);setError('');try{await fn();}catch(err){setError(friendly(err.code??err.message));}finally{operation.current=false;setBusy(false);} }
-    const selectedOption=option===''?null:view?.shippingOptions?.[Number(option)];
+    const kiosk=(quote?.channel??view?.channel??draft?.channel??(draft?.intakeMethod==='DEALER_DROP_OFF'?'KIOSK':'MAIL_IN'))==='KIOSK';
+    const separateShipping=!kiosk&&(quote?.terms?.shippingPayment??view?.terms?.shippingPayment)==='SEPARATE_PAYMENT';
+    const selectedOption=separateShipping||option===''?null:view?.shippingOptions?.[Number(option)];
     const needsMeasurements=selectedOption?.inboundPackaging==='CUSTOMER_MEASURED';
     const validMeasurements=[inboundPackage.weight.value,...['length','width','height'].map(key=>inboundPackage.dimensions[key])].every(value=>value!==''&&Number.isFinite(Number(value))&&Number(value)>0);
     function updatePackage(part,key,value){if(busy||payment||paymentUnconfirmed)return;setInboundPackage(previous=>({...previous,[part]:{...previous[part],[key]:value}}));setQuote(null);setError('');}
@@ -107,17 +71,16 @@ export default function CommerceCheckout({ draft, request, onPaid, onBack }) {
         }
     }); }
     async function reconcile() { if(!payment)return; await run(async()=>accept(await request(`/api/customer/commerce/payments/${payment.attemptId}/reconcile`,{method:'POST',body:{}}))); }
-    const kiosk=(quote?.channel??view?.channel??draft?.channel??(draft?.intakeMethod==='DEALER_DROP_OFF'?'KIOSK':'MAIL_IN'))==='KIOSK';
     const phonePayment=(payment?.paymentFlow??quote?.terms?.paymentFlow)==='CUSTOMER_PHONE'||!kiosk;
     const awaiting=payment?.state==='AWAITING_PAYMENT';
     const quoteExpired=quote&&Date.parse(quote.expiresAt)<=Date.now();
     if(checkoutUnavailable&&!payment&&!order) return <SavedDraftConfirmation draft={draft} onCheckAvailability={checkAvailability} checking={checking} error={error}/>;
     if(order) return <OrderReceipt initialOrder={order} request={request}/>;
     return <section className={styles.panel} aria-label="Review and checkout"><p className={styles.eyebrow}>REVIEW & CHECKOUT</p><h2>Ready for the next chapter.</h2>
-        <ServiceSummary snapshot={quote??{channel:kiosk?'KIOSK':'MAIL_IN',location:view?.location,unitCents:view?.unitCents??(kiosk?5000:4000)}}/>
+        <ServiceSummary snapshot={quote??{channel:kiosk?'KIOSK':'MAIL_IN',location:view?.location,terms:view?.terms,unitCents:view?.unitCents??(kiosk?5000:4000)}}/>
         <ol className={styles.cards}>{(view?.cards??draft?.cards??[]).map((card,index)=><li key={card.id??card.cardId}><span>{String(index+1).padStart(2,'0')}</span><strong>{card.identity?.title??card.identity?.playerName??'Card details saved'}</strong></li>)}</ol>
         {view?.blockers?.length>0&&<p role="status">{[...new Set(view.blockers.map(friendly))].join(' ')}</p>}
-        {!kiosk&&view?.shippingOptions?.length>0&&!payment&&<div className={styles.shippingChoice}><label className={styles.packaging}>Your package and shipping service<select value={option} disabled={busy||paymentUnconfirmed} onChange={event=>{setOption(event.target.value);setQuote(null);setError('');}}><option value="">Choose a package and carrier</option>{view.shippingOptions.map((item,index)=><option key={`${item.packingPresetId}:${item.shippingServiceCode}`} value={index}>{[item.carrierLabel,item.serviceLabel,item.label].filter(Boolean).filter((label,index,labels)=>labels.indexOf(label)===index).join(' · ')}</option>)}</select></label><p className={styles.note}>Choose the package you will use. Get the exact shipping cost and tax before paying. Changing the service requires a fresh total.</p></div>}
+        {!kiosk&&!separateShipping&&view?.shippingOptions?.length>0&&!payment&&<div className={styles.shippingChoice}><label className={styles.packaging}>Your package and shipping service<select value={option} disabled={busy||paymentUnconfirmed} onChange={event=>{setOption(event.target.value);setQuote(null);setError('');}}><option value="">Choose a package and carrier</option>{view.shippingOptions.map((item,index)=><option key={`${item.packingPresetId}:${item.shippingServiceCode}`} value={index}>{[item.carrierLabel,item.serviceLabel,item.label].filter(Boolean).filter((label,index,labels)=>labels.indexOf(label)===index).join(' · ')}</option>)}</select></label><p className={styles.note}>Choose the package you will use. Get the exact shipping cost and tax before paying. Changing the service requires a fresh total.</p></div>}
         {!kiosk&&needsMeasurements&&!payment&&<fieldset className={styles.packageFields} disabled={busy||paymentUnconfirmed}><legend>Your packed shipment to ATLAS</legend><p className={styles.note}>Pack your cards securely, then weigh the complete package and measure its outside length, width and height. Use these actual measurements for your label.</p><div className={styles.packageGrid}><label>Package weight<input type="number" inputMode="decimal" min="0.001" step="any" value={inboundPackage.weight.value} onChange={event=>updatePackage('weight','value',event.target.value)}/></label><label>Weight unit<select value={inboundPackage.weight.unit} onChange={event=>updatePackage('weight','unit',event.target.value)}>{[['ounce','oz'],['pound','lb'],['gram','g'],['kilogram','kg']].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>{['length','width','height'].map(key=><label key={key}>Package {key}<input type="number" inputMode="decimal" min="0.001" step="any" value={inboundPackage.dimensions[key]} onChange={event=>updatePackage('dimensions',key,event.target.value)}/></label>)}<label>Dimension unit<select value={inboundPackage.dimensions.unit} onChange={event=>updatePackage('dimensions','unit',event.target.value)}><option value="inch">inches</option><option value="centimeter">centimeters</option></select></label></div></fieldset>}
         {quote&&<OrderAmounts snapshot={quote}/>}
         {payment&&<div className={styles.payment}><h3>{!awaiting?'Your payment status':phonePayment?'Pay securely on your phone':'Continue at this kiosk’s terminal'}</h3>
@@ -128,7 +91,7 @@ export default function CommerceCheckout({ draft, request, onPaid, onBack }) {
         {paymentUnconfirmed&&!payment&&<div className={styles.payment} role="status"><h3>Check your original payment</h3><p>The payment reply could not be confirmed. Your selected shipping and total are retained while we check the same payment request.</p><button className={styles.primary} disabled={busy} onClick={pay}>{busy?'Checking payment…':'Check original payment'}</button></div>}
         {error&&<p className={styles.error} role="alert">{error}</p>}
         {!payment&&!paymentUnconfirmed&&<div className={styles.actions}><button className={styles.secondary} disabled={busy} onClick={onBack}>Back to cards</button>
-            {!quote||quoteExpired?<button className={styles.primary} disabled={busy||!view||view.blockers?.length>0||(!kiosk&&option==='')||(needsMeasurements&&!validMeasurements)} onClick={getQuote}>{busy?'Calculating…':quoteExpired?'Refresh exact total':'Get exact total'}</button>
+            {!quote||quoteExpired?<button className={styles.primary} disabled={busy||!view||view.blockers?.length>0||(!kiosk&&!separateShipping&&option==='')||(needsMeasurements&&!validMeasurements)} onClick={getQuote}>{busy?'Calculating…':quoteExpired?'Refresh exact total':separateShipping?'Get grading total':'Get exact total'}</button>
                 :<button className={styles.primary} disabled={busy} onClick={pay}>{busy?'Connecting…':`Pay ${money(quote.totalCents)}`}</button>}</div>}
     </section>;
 }

@@ -32,7 +32,8 @@ export async function request(path, { body, csrf } = {}) {
     // provider result; its 110s API deadline must expire before the browser's.
     // Ordinary account/auth reads keep their shorter responsiveness bound.
     const longOperation = path === '/email/request' || /^\/intake\/drafts\/[a-f0-9-]{36}\/cards\/[a-f0-9-]{36}\/uploads\/[a-f0-9-]{36}\/(?:sign|complete)$/.test(path)
-        || /^\/commerce\/(?:checkout(?:\?draftId=[a-f0-9-]{36})?|quotes|payments(?:\/[a-f0-9-]{36}\/reconcile)?)$/.test(path);
+        || /^\/commerce\/(?:checkout(?:\?draftId=[a-f0-9-]{36})?|quotes|payments(?:\/[a-f0-9-]{36}\/reconcile)?)$/.test(path)
+        || /^\/commerce\/orders\/[a-f0-9-]{36}\/shipping(?:\/(?:quotes|payments|payments\/[a-f0-9-]{36}\/reconcile))?$/.test(path);
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), longOperation ? 115000 : 25000);
     // A private saved PDF may be up to 4 MiB; base64 JSON needs a larger read
     // bound. Keep ordinary account/auth/intake responses at their existing cap.

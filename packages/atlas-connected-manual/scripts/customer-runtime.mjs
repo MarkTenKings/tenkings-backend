@@ -79,6 +79,10 @@ export function createServingCustomerService({ env, Client, onEvent = () => {} }
     'commerce-checkout': ({ authority, input }) => commerce(authority).checkout(input.draftId),
     'commerce-quote': ({ authority, input }) => commerce(authority).quote(input),
     'commerce-pay': ({ authority, input }) => commerce(authority).pay(input),
+    'commerce-shipping-checkout': ({ authority, input }) => commerce(authority).shippingCheckout(input),
+    'commerce-shipping-quote': ({ authority, input }) => commerce(authority).shippingQuote(input),
+    'commerce-shipping-pay': ({ authority, input }) => commerce(authority).shippingPay(input),
+    'commerce-shipping-reconcile': ({ authority, input }) => commerce(authority).shippingReconcile(input),
     'commerce-reconcile': ({ authority, input }) => commerce(authority).reconcile(input.attemptId),
   };
   let objectClient = null, intake = null;

@@ -29,7 +29,8 @@ export function privateCustomerServices(env) {
     return {
         intake: { sign: call('intake-sign'), complete: call('intake-complete') },
         emailVerification: { request: call('email-request') },
-        commerce: { checkout: call('commerce-checkout'), quote: call('commerce-quote'), pay: call('commerce-pay'), reconcile: call('commerce-reconcile') },
+        commerce: { checkout: call('commerce-checkout'), quote: call('commerce-quote'), pay: call('commerce-pay'), reconcile: call('commerce-reconcile'),
+            shippingCheckout:call('commerce-shipping-checkout'),shippingQuote:call('commerce-shipping-quote'),shippingPay:call('commerce-shipping-pay'),shippingReconcile:call('commerce-shipping-reconcile') },
         async directory(input) {
             const result = await client.call('dealer-locations', { input });
             return { ...result, locations: selectLocations(result.locations, input), dealerContacts: dealerContacts(input) };

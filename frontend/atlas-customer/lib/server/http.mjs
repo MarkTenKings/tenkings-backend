@@ -24,6 +24,8 @@ export function createHandler(resolveRuntime) {
                 ['GET', /^\/api\/customer\/intake\/locations$/],
                 ['GET', /^\/api\/customer\/orders(?:\/[a-f0-9-]{36})?$/], ['POST', /^\/api\/customer\/orders\/[a-f0-9-]{36}\/deposit$/],
                 ['GET', /^\/api\/customer\/commerce\/(?:checkout|orders\/[a-f0-9-]{36})$/],
+                ['GET', /^\/api\/customer\/commerce\/orders\/[a-f0-9-]{36}\/shipping$/],
+                ['POST', /^\/api\/customer\/commerce\/orders\/[a-f0-9-]{36}\/shipping\/(?:quotes|payments|payments\/[a-f0-9-]{36}\/reconcile)$/],
                 ['GET', /^\/api\/customer\/commerce\/orders\/[a-f0-9-]{36}\/labels\/[^/]{1,450}$/],
                 ['POST', /^\/api\/customer\/commerce\/(?:quotes|payments|payments\/[a-f0-9-]{36}\/reconcile)$/],
             ];
@@ -111,7 +113,31 @@ export function createHandler(resolveRuntime) {
                     body = await invoke('checkout', { draftId: params.get('draftId') });
                 } else {
                     if (params.size) deny(400, 'INVALID_REQUEST');
-                    if (path.includes('/labels/')) {
+                    if (/^\/api\/customer\/commerce\/orders\/[a-f0-9-]{36}\/shipping(?:\/|$)/.test(path)) {
+                        const match = /^\/api\/customer\/commerce\/orders\/([a-f0-9-]{36})\/shipping(?:\/(quotes|payments)(?:\/([a-f0-9-]{36})\/reconcile)?)?$/.exec(path);
+                        if (!match || !UUID.test(match[1]) || match[3] && (!UUID.test(match[3]) || match[2] !== 'payments')) deny(400,'INVALID_REQUEST');
+                        const orderId=match[1];
+                        if (!match[2]) body=await invoke('shippingCheckout',{orderId});
+                        else if (match[2]==='quotes') {
+                            const input=req.body;
+                            if (!input || typeof input!=='object' || Array.isArray(input) || !['packingPresetId','shippingServiceCode'].every(key=>Object.hasOwn(input,key))
+                                || Object.keys(input).some(key=>!['packingPresetId','shippingServiceCode','inboundPackage'].includes(key))) deny(400,'INVALID_REQUEST');
+                            for (const field of ['packingPresetId','shippingServiceCode']) if (typeof input[field]!=='string' || !/^[A-Za-z0-9_-]{1,100}$/.test(input[field])) deny(400,'INVALID_REQUEST');
+                            if (Object.hasOwn(input,'inboundPackage')) {
+                                const parcel=input.inboundPackage;
+                                keys(parcel,['weight','dimensions']);keys(parcel.weight,['unit','value']);keys(parcel.dimensions,['unit','length','width','height']);
+                                if (!['ounce','pound','gram','kilogram'].includes(parcel.weight.unit) || !['inch','centimeter'].includes(parcel.dimensions.unit)
+                                    || ![parcel.weight.value,parcel.dimensions.length,parcel.dimensions.width,parcel.dimensions.height].every(value=>typeof value==='number'&&Number.isFinite(value)&&value>0)) deny(400,'INVALID_REQUEST');
+                            }
+                            body=await invoke('shippingQuote',{orderId,...input});
+                        } else if (match[3]) {
+                            keys(req.body,[]);body=await invoke('shippingReconcile',{orderId,attemptId:match[3]});
+                        } else {
+                            keys(req.body,['quoteId','requestId']);
+                            if (![req.body.quoteId,req.body.requestId].every(value=>UUID.test(value??''))) deny(400,'INVALID_REQUEST');
+                            body=await invoke('shippingPay',{orderId,...req.body});
+                        }
+                    } else if (path.includes('/labels/')) {
                         const match = /^\/api\/customer\/commerce\/orders\/([a-f0-9-]{36})\/labels\/([^/]{1,450})$/.exec(path);
                         let effectId; try { effectId = decodeURIComponent(match?.[2] ?? ''); } catch { deny(400, 'INVALID_REQUEST'); }
                         if (!match || !UUID.test(match[1]) || !/^[A-Za-z0-9:_-]{1,150}$/.test(effectId)) deny(400, 'INVALID_REQUEST');

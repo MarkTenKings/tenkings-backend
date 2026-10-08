@@ -87,28 +87,39 @@ export function stripePaymentAdapter({ transport, publishableKey }) {
     };
 }
 
-export function stripeTaxAdapter({ transport, taxCode, shippingTaxCode, addressSource, sourcingPolicy }) {
-    requireValue(/^txcd_[0-9]+$/.test(taxCode ?? '') && /^txcd_[0-9]+$/.test(shippingTaxCode ?? '')
+export function stripeTaxAdapter({ transport, taxCode, shippingTaxCode, addressSource, sourcingPolicy, allowDeferredShippingTax = false }) {
+    const shippingConfigured = /^txcd_[0-9]+$/.test(shippingTaxCode ?? '');
+    requireValue(/^txcd_[0-9]+$/.test(taxCode ?? '')
+        && (shippingConfigured || (allowDeferredShippingTax === true && !shippingTaxCode))
         && ['billing','shipping'].includes(addressSource) && sourcingPolicy === 'MAIL_RETURN_ADDRESS_KIOSK_LOCATION', 'TAX_NOT_CONFIGURED', 503);
+    const calculate = async (input, shippingOnly) => {
+        requireValue(minor(input.shippingCents), 'TAX_QUOTE_INVALID', 503);
+        if (shippingOnly || input.shippingCents > 0) requireValue(shippingConfigured, 'SHIPPING_TAX_NOT_CONFIGURED', 503);
+        if (shippingOnly) requireValue(input.channel === 'MAIL_IN' && input.subtotalCents === 0
+            && Array.isArray(input.lines) && input.lines.length === 0, 'INVALID_SHIPPING_TAX_INPUT', 400);
+        // Retain the paid order's actual address. Dealer transactions keep their
+        // registry address; they never inherit a customer's home address.
+        const location = input.location?.address;
+        const p = input.channel === 'KIOSK' ? location && { ...location, address1: location.line1, address2: undefined } : input.profile;
+        requireValue(p && ['address1','city','region','postalCode','country'].every(key => p[key]), 'TAX_ADDRESS_REQUIRED', 503);
+        const values = { currency: input.currency,
+            customer_details: { address: { line1:p.address1,line2:p.address2,city:p.city,state:p.region,postal_code:p.postalCode,country:p.country }, address_source: addressSource },
+            line_items: shippingOnly
+                ? [{ amount: input.shippingCents, reference: `shipping:${input.quoteId}`, tax_code: shippingTaxCode, tax_behavior: 'exclusive' }]
+                : input.lines.map(line => ({ amount: line.unitCents, reference: line.cardId, tax_code: taxCode, tax_behavior: 'exclusive' })),
+            ...(!shippingOnly && shippingConfigured ? { shipping_cost: { amount: input.shippingCents, tax_code: shippingTaxCode, tax_behavior: 'exclusive' } } : {}) };
+        const value = await transport.request('POST', '/v1/tax/calculations', values, `atlas:${input.quoteId}:tax:v1`);
+        requireValue(value.id?.startsWith('taxcalc_') && value.livemode === transport.binding.livemode
+            && minor(value.tax_amount_exclusive) && value.tax_amount_inclusive === 0 && minor(value.amount_total)
+            && Number.isSafeInteger(value.expires_at), 'TAX_QUOTE_INVALID', 503);
+        return { provider: 'STRIPE_TAX', providerId: value.id, currency: value.currency, taxCents: value.tax_amount_exclusive,
+            totalCents: value.amount_total, requestHash: digest(input), expiresAt: new Date(value.expires_at * 1000).toISOString(),
+            breakdown: value.tax_breakdown ?? [] };
+    };
     return {
-        async calculate(input) {
-            // Kiosk addresses use the registry's line1 schema; customer return
-            // profiles use address1/address2. Never substitute the customer's
-            // home address when the sale belongs to a configured kiosk.
-            const location = input.location?.address;
-            const p = input.channel === 'KIOSK' ? location && { ...location, address1: location.line1, address2: undefined } : input.profile;
-            requireValue(p && ['address1','city','region','postalCode','country'].every(key => p[key]), 'TAX_ADDRESS_REQUIRED', 503);
-            const value = await transport.request('POST', '/v1/tax/calculations', { currency: input.currency,
-                customer_details: { address: { line1:p.address1,line2:p.address2,city:p.city,state:p.region,postal_code:p.postalCode,country:p.country }, address_source: addressSource },
-                line_items: input.lines.map(line => ({ amount: line.unitCents, reference: line.cardId, tax_code: taxCode, tax_behavior: 'exclusive' })),
-                shipping_cost: { amount: input.shippingCents, tax_code: shippingTaxCode, tax_behavior: 'exclusive' } }, `atlas:${input.quoteId}:tax:v1`);
-            requireValue(value.id?.startsWith('taxcalc_') && value.livemode === transport.binding.livemode
-                && minor(value.tax_amount_exclusive) && value.tax_amount_inclusive === 0 && minor(value.amount_total)
-                && Number.isSafeInteger(value.expires_at), 'TAX_QUOTE_INVALID', 503);
-            return { provider: 'STRIPE_TAX', providerId: value.id, currency: value.currency, taxCents: value.tax_amount_exclusive,
-                totalCents: value.amount_total, requestHash: digest(input), expiresAt: new Date(value.expires_at * 1000).toISOString(),
-                breakdown: value.tax_breakdown ?? [] };
-        },
+        shippingConfigured,
+        calculate: input => calculate(input, false),
+        calculateShipping: input => calculate(input, true),
         async recordTransaction(input, effectId) {
             const value = await transport.request('POST', '/v1/tax/transactions/create_from_calculation',
                 { calculation: input.calculationId, reference: input.orderId }, `atlas:${effectId}`);

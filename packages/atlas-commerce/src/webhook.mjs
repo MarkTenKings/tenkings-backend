@@ -18,6 +18,6 @@ export async function consumeStripeWebhook({rawBody,signature,secret,payment,rep
     const evidence=await payment.retrieve({...attempt,providerId:event.data.object.id});
     if(evidence.status!=='succeeded')return {received:true,state:evidence.status};
     assertPaidEvidence(attempt,evidence);const receiptId=randomUUID();
-    const {order}=await repository.callbackConfirm({attemptId,evidence,receiptId,effects:receiptEffects(receiptId,attempt.quote)});
+    const {order}=await repository.callbackConfirm({attemptId,evidence,receiptId,...(attempt.quote.purpose==='SHIPPING'?{orderId:attempt.orderId}:{effects:receiptEffects(receiptId,attempt.quote)})});
     return {received:true,orderId:order.id};
 }
