@@ -109,5 +109,33 @@ class InstalledRehearsalTests(unittest.TestCase):
             (root / r.DATABASES[1]).unlink()
             with self.assertRaisesRegex(ValueError, 'database missing'): r.database_facts(root, 'fixture')
 
+    def test_frozen_wal_snapshots_are_inspected_without_sidecars_or_byte_changes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder).resolve(); snapshot = root / 'snapshot'; snapshot.mkdir()
+            for name in r.DATABASES:
+                source = sqlite3.connect(root / name)
+                source.execute('PRAGMA journal_mode=WAL')
+                source.execute('CREATE TABLE rehearsal_fixture(token TEXT NOT NULL)')
+                source.execute("INSERT INTO rehearsal_fixture VALUES ('fixture')")
+                if name == 'vault.sqlite':
+                    source.execute('CREATE TABLE machine_meta(singleton INTEGER,machine_id TEXT,schema_version INTEGER,service_locked INTEGER,automation_halted INTEGER,recovery_required INTEGER)')
+                    source.execute("INSERT INTO machine_meta VALUES (1,'machine',7,1,0,0)")
+                    source.execute('CREATE TABLE machine_event(sequence INTEGER PRIMARY KEY,payload TEXT)')
+                source.commit()
+                target = sqlite3.connect(snapshot / name); source.backup(target)
+                target.close(); source.close()
+            before = {path.name: path.read_bytes() for path in snapshot.iterdir()}
+            self.assertEqual(set(before), set(r.DATABASES))
+            self.assertEqual(r.database_facts(snapshot, 'fixture', frozen=True)['machine'][:2], ['machine', 7])
+            self.assertEqual({path.name: path.read_bytes() for path in snapshot.iterdir()}, before)
+
+    def test_packaged_failure_exports_only_explicit_safe_constant(self):
+        for detail in ('Unmanifested snapshot member', 'secret arbitrary subprocess data'):
+            with patch.object(r, 'command', return_value=SimpleNamespace(returncode=1, stderr=detail)):
+                with self.assertRaises(ValueError) as raised: r.appliance(Path('/fixture'), 'stage-restore')
+                self.assertIn('Packaged stage-restore failed:', str(raised.exception))
+                if detail.startswith('secret'): self.assertNotIn(detail, str(raised.exception))
+                else: self.assertIn(detail, str(raised.exception))
+
 
 if __name__ == '__main__': unittest.main()

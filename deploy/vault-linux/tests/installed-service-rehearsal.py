@@ -126,7 +126,16 @@ def safe_config(config, machine_id):
 
 
 def appliance(release, operation, *args):
-    return json.loads(command(['/usr/bin/python3', '-B', release / 'deploy/vault-linux/appliance.py', operation, *args]).stdout)
+    result = command(['/usr/bin/python3', '-B', release / 'deploy/vault-linux/appliance.py', operation, *args], check=False)
+    if result.returncode:
+        # Explicit constant messages only; arbitrary subprocess text stays private.
+        safe_errors = {'Unmanifested snapshot member', 'Snapshot manifest digest mismatch',
+                       'Snapshot belongs to another machine', 'Snapshot database integrity failed',
+                       'Staged database integrity failed', 'Staged recovery hold missing',
+                       'Destination must be new; existing state is preserved'}
+        detail = result.stderr.strip()
+        raise ValueError('Packaged ' + operation + ' failed: ' + (detail if detail in safe_errors else 'inspect this disposable VM'))
+    return json.loads(result.stdout)
 
 
 def current_release(expected_id, validator):
@@ -158,12 +167,14 @@ def wait_ready(release, manifest):
     raise ValueError('Installed service did not become reachable with valid identity/integrity')
 
 
-def database_facts(folder, token, event_watermark=None):
+def database_facts(folder, token, event_watermark=None, *, frozen=False):
     facts = {}
     for name in DATABASES:
         path = folder / name
         need(path.is_file() and not path.is_symlink(), 'Coordinated database missing')
-        with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as db:
+        # Frozen snapshot inspection must not create WAL/SHM sidecars. Running
+        # installed state must still read its live WAL, so never mark it immutable.
+        with sqlite3.connect(path.as_uri() + '?mode=ro' + ('&immutable=1' if frozen else ''), uri=True) as db:
             need(db.execute('PRAGMA integrity_check').fetchall() == [('ok',)], 'Database integrity failed')
             need(db.execute('SELECT token FROM rehearsal_fixture').fetchall() == [(token,)], 'Synthetic preservation canary differs')
             if name == 'vault.sqlite':
@@ -184,7 +195,7 @@ def validate_snapshot(release, folder, checkpoint):
              'Snapshot ancestors must be protected without symlinks')
     verified = appliance(release, 'verify-snapshot', '--snapshot', folder)
     need(verified.get('verified') is True and verified.get('machineId') == checkpoint['machineId'], 'Snapshot verification/identity failed')
-    facts = database_facts(folder, checkpoint['canary'])
+    facts = database_facts(folder, checkpoint['canary'], frozen=True)
     need(facts['machine'][:2] == [checkpoint['machineId'], checkpoint['schemaVersion']], 'Snapshot machine/schema differs')
     return verified
 
@@ -261,7 +272,7 @@ def prepare(args, validator, host_id):
     evidence('held-restore', appliance(installed, 'stage-restore', '--snapshot', result['backup'],
              '--manifest-sha256', verified['manifestSha256'], '--machine-id', checkpoint['machineId'],
              '--destination', destination, '--apply'))
-    restored = database_facts(destination, checkpoint['canary'])
+    restored = database_facts(destination, checkpoint['canary'], frozen=True)
     need(restored['machine'][2:] == [1, 1, 1], 'Restored state lacks technical recovery hold')
     need(database_facts(STATE, checkpoint['canary'])['machine'] == before['machine'], 'Held restore changed installed authority')
     for name in DATABASES[1:]:
