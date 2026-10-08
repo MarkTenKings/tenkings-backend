@@ -28,7 +28,11 @@ Keep secrets out of chat, Git, screenshots and the acceptance reports. The prote
 | Test credentials/cards, terminal firmware and network requirements | Pending |
 | Certification evidence and production permission | Pending |
 
-Generate the exact callback origin/paths from the non-secret provisioning input after confirming the deployed cloud origin. Sandbox paths are `/api/vault/v1/spark/TransactionCallback`, `/DeclineCallback` and `/TimeoutCallback` under the same Spark prefix. Production paths add `/production/` after `/spark/`. Each stage has its own callback secret and enabled flag. Provisioning produces an exact cloud/local binding comparison; do not activate a guessed host or example terminal identity.
+The deployed, directly checked cloud origin is `https://collect.tenkings.co`. Use that exact origin in the non-secret provisioning input and generate the final registration sheet after confirming the device bindings. Sandbox paths are `/api/vault/v1/spark/TransactionCallback`, `/DeclineCallback` and `/TimeoutCallback` under the same Spark prefix. Production paths add `/production/` after `/spark/`. Each stage has its own callback secret and enabled flag. Provisioning produces an exact cloud/local binding comparison; do not activate a guessed host or example terminal identity.
+
+## Cloud ready for device provisioning
+
+The production cloud and Vault Admin are live at `https://collect.tenkings.co` and `/admin/vault` from source `f73249be2ea6e9295629b28c5f700dff43f51b0c`, preserving the existing site. All eight additive Vault migrations are applied; 47 deployed boundary checks and 12 public title/status comparisons passed. The configuration-signing key is installed in the protected Production environment. Callback enablement, vendor bindings and machine enrollment still need the confirmed real identities. The owner must identify the existing Ten Kings login before we grant Vault owner access.
 
 ## Tonight: computer and cabinet
 
@@ -36,9 +40,9 @@ The last recorded SSH address is `tkvault@192.168.2.36`; it was unreachable whil
 
 | Acceptance step | Required evidence | Status |
 |---|---|---|
-| Clean reviewed source and signed release | Commit, manifest hash, public-key fingerprint, build/tests and packaged native SQLite probe | Built and signed from `faedb613`; full Linux suites and 34 isolated authority checks pass; installed test remains separate |
+| Clean reviewed source and signed release | Commit, manifest hash, public-key fingerprint, build/tests and packaged native SQLite probe | Corrected `5f759355` is built and signed; 484 Linux build checks pass. All 34 exact-package authority checks and the complete disposable systemd/held-restore/reboot rehearsal passed in run `37737557091`; `faedb613` is withdrawn. |
 | Installed computer | Service account/permissions, display, kiosk startup, restart and update | Pending computer connection |
-| Recovery | Coordinated multi-journal backup, held restore, reboot/power/network recovery | Pending installed test |
+| Recovery | Coordinated multi-journal backup, held restore, reboot/power/network recovery | Disposable Arch backup/held restore/real reboot passed; actual SER power/network recovery remains pending |
 | Cabinet | Actual door/channel mapping, one controlled pulse, OFF/recovery, restock and correct occupied-door behavior | Pending supervised cabinet test |
 | Terminal | Correct device registration, network and firmware; engineer-confirmed Spark mode | Pending Nayax |
 
@@ -68,5 +72,7 @@ Release signing and activation signing use separate offline keys. Only public ke
 
 - Release: `762f2a08c84cff3b2e9c3d5291dda4df60b360d4b9523ddb2b4e4b7dfdec8f30`
 - Activation: `06af3b48d8ea8a2924d7298e9bcb700b02f8659a52e5a131f95da7f21394588d`
+
+Cloud configuration signing was configured October 8 UTC under key ID `vault-config-20261008`; its public DER SHA-256 is `a99bc6f0099d9195b38426df9cc0388ccdb132cc9b5dc3eef1c8859683ff4a26`. Install and verify the public trust during actual machine enrollment; the private signing key stays in protected cloud configuration and its protected local recovery copy.
 
 Final go-live depends on observed installed/terminal/cabinet results and Nayax's permission. A software test pass or a calendar deadline cannot fill a pending acceptance row.
