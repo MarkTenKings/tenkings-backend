@@ -1,0 +1,292 @@
+#!/usr/bin/python3
+"""Boot one owned Arch VM on a GitHub Linux x64 runner; export synthetic receipts.
+
+Only public, hash-pinned release inputs enter the guest. Repository tokens,
+signing keys, host mounts, provider configuration and serial devices do not.
+"""
+import sys
+sys.dont_write_bytecode = True
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import platform
+import shlex
+import shutil
+import signal
+import socket
+import stat
+import subprocess
+import tarfile
+import time
+import urllib.request
+import uuid
+
+ACK = 'SYNTHETIC_ONLY_DISPOSABLE_VM'
+RELEASE_ID = 'ten-kings-vault-20261007-faedb613'
+SOURCE = 'faedb613beb23c15accce2e54a985be6e31704c6'
+IMAGE = 'Arch-Linux-x86_64-cloudimg-20261001.604814.qcow2'
+IMAGE_URL = 'https://geo.mirror.pkgbuild.com/images/v20261001.604814/' + IMAGE
+IMAGE_SHA = '360f0fa49db6813bdc8e35bed230a2dc2ae3567b7b5ab74719c0a706e4e34e87'
+IMAGE_BYTES = 578080256
+INPUTS = {
+    RELEASE_ID + '.tar.gz': '13e22d6b404329f943fa04f61df8abe126f28e17b5d3c8c247474df65be3ec41',
+    'release-public.pem': '2026d905de987d8d5661d4f49ffcfd23fb07595a40c72391d02a42981eec66dd',
+    'lifecycle-update-metadata-faedb613.tar.gz': '7a8c880f6ecace18372518a707d8e6599e3b0da71fe97173ccd505d0df835478',
+}
+RECEIPTS = ('started', 'install-plan', 'install-result', 'preflight', 'initial-start', 'canary-staged',
+            'restart-plan', 'restart-result', 'restart-health', 'restart-snapshot', 'update-plan',
+            'update-result', 'update-health', 'update-snapshot', 'held-restore', 'awaiting-reboot', 'completed')
+ENV = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8', 'TZ': 'UTC'}
+
+
+def need(condition, message):
+    if not condition: raise ValueError(message)
+
+
+def run(argv, *, timeout=240, check=True, **kwargs):
+    result = subprocess.run([str(value) for value in argv], env=ENV, capture_output=True,
+                            text=True, timeout=timeout, **kwargs)
+    if check: need(result.returncode == 0, 'Command failed: ' + str(argv[0]))
+    return result
+
+
+def digest(path):
+    need(stat.S_ISREG(path.lstat().st_mode), 'Regular non-symlink input required')
+    value = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''): value.update(block)
+    return value.hexdigest()
+
+
+def extract(archive, destination, prefix):
+    """Never trust archive paths, special members or links, even with a pinned hash."""
+    destination.mkdir(mode=0o700)
+    with tarfile.open(archive, 'r:gz') as stream:
+        members = stream.getmembers(); total = 0; seen = set()
+        need(len(members) <= 10000, 'Archive membership limit exceeded')
+        for member in members:
+            path = PurePosixPath(member.name)
+            need(not path.is_absolute() and '..' not in path.parts and path.parts
+                 and path.parts[0] == prefix and member.name not in seen,
+                 'Unsafe or duplicate archive member')
+            seen.add(member.name)
+            need(member.isdir() or member.isfile(), 'Archive links/devices are forbidden')
+            need(not member.mode & 0o7022, 'Archive privileged/writable mode forbidden')
+            total += member.size
+            need(total <= 512 * 1024**2, 'Archive expanded size exceeds limit')
+        for member in members:
+            target = destination / member.name
+            if member.isdir(): target.mkdir(parents=True, exist_ok=True, mode=0o755)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+                with target.open('xb') as output, stream.extractfile(member) as source:
+                    shutil.copyfileobj(source, output)
+                target.chmod(member.mode & 0o777)
+
+
+def save(evidence, name, value):
+    with (evidence / (name + '.json')).open('x') as stream:
+        json.dump({'classification': 'SYNTHETIC_ONLY', **value}, stream, indent=2); stream.write('\n')
+
+
+def download_image(path):
+    request = urllib.request.Request(IMAGE_URL, headers={'User-Agent': 'Vault-disposable-VM-rehearsal'})
+    with urllib.request.urlopen(request, timeout=60) as response, path.open('xb') as output:
+        size = 0
+        while True:
+            block = response.read(1024 * 1024)
+            if not block: break
+            size += len(block); need(size <= IMAGE_BYTES, 'Arch image exceeds pinned size')
+            output.write(block)
+    need(size == IMAGE_BYTES and digest(path) == IMAGE_SHA, 'Arch image hash/size mismatch')
+
+
+def prepare_inputs(inputs, work, source):
+    for name, expected in INPUTS.items(): need(digest(inputs / name) == expected, 'Signed input hash mismatch: ' + name)
+    staged = work / 'staged'; staged.mkdir(mode=0o700)
+    extract(inputs / (RELEASE_ID + '.tar.gz'), work / 'release-unpacked', RELEASE_ID)
+    extract(inputs / 'lifecycle-update-metadata-faedb613.tar.gz', work / 'metadata-unpacked', 'lifecycle-update-metadata')
+    shutil.move(str(work / 'release-unpacked' / RELEASE_ID), staged / RELEASE_ID)
+    shutil.move(str(work / 'metadata-unpacked/lifecycle-update-metadata'), staged / 'lifecycle-update-metadata')
+    shutil.copyfile(inputs / 'release-public.pem', staged / 'release-public.pem')
+    release = staged / RELEASE_ID; key = staged / 'release-public.pem'
+    result = json.loads(run(['python3', '-B', source / 'appliance.py', 'verify', '--release', release, '--public-key', key]).stdout)
+    need(result['sourceCommit'] == SOURCE and result['releaseId'] == RELEASE_ID, 'Signed application identity differs')
+    original = json.loads((release / 'release.json').read_text())
+    metadata = staged / 'lifecycle-update-metadata'
+    replacement = json.loads((metadata / 'release.json').read_text())
+    need(replacement['releaseId'] == RELEASE_ID + '-rehearsal'
+         and {k: v for k, v in original.items() if k != 'releaseId'} ==
+             {k: v for k, v in replacement.items() if k != 'releaseId'}, 'Rehearsal metadata changes payload')
+    run(['openssl', 'pkeyutl', '-verify', '-pubin', '-inkey', key, '-rawin',
+         '-in', metadata / 'release.json', '-sigfile', metadata / 'release.sig'])
+    tooling = staged / 'tooling'; (tooling / 'tests').mkdir(parents=True)
+    for name in ('appliance.py', 'runtime.json', 'tests/installed-service-rehearsal.py'):
+        shutil.copyfile(source / name, tooling / name)
+    bundle = work / 'public-inputs.tar.gz'
+    with tarfile.open(bundle, 'w:gz') as stream:
+        for child in sorted(staged.iterdir()): stream.add(child, arcname=child.name, recursive=True)
+    return bundle
+
+
+def cloud_seed(work):
+    for name in ('user-key', 'host-key'): run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', work / name])
+    config = {
+        'users': [{'name': 'rehearsal', 'groups': ['wheel'], 'shell': '/bin/bash', 'lock_passwd': True,
+                   'sudo': ['ALL=(ALL) NOPASSWD:ALL'], 'ssh_authorized_keys': [(work / 'user-key.pub').read_text().strip()]}],
+        'disable_root': True, 'ssh_pwauth': False, 'ssh_deletekeys': True,
+        'ssh_keys': {'ed25519_private': (work / 'host-key').read_text(), 'ed25519_public': (work / 'host-key.pub').read_text()},
+        'package_update': False, 'package_upgrade': False,
+        'growpart': {'mode': 'auto', 'devices': ['/']}, 'resize_rootfs': True,
+        # The offline guest cannot reach NTP. Arch otherwise holds pacman-init,
+        # sshd and cloud-final behind time-sync.target. QEMU supplies host UTC;
+        # validate it explicitly below, without changing appliance clock guards.
+        'bootcmd': [['systemctl', 'mask', '--now', 'systemd-time-wait-sync.service']],
+    }
+    (work / 'user-data').write_text('#cloud-config\n' + json.dumps(config))
+    (work / 'meta-data').write_text(json.dumps({'instance-id': 'vault-' + str(uuid.uuid4()), 'local-hostname': 'vault-synthetic-rehearsal'}))
+    run(['cloud-localds', work / 'seed.img', work / 'user-data', work / 'meta-data'])
+
+
+def wait_guest(ssh, qemu, *, previous_boot=None, timeout=480):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        need(qemu.poll() is None, 'QEMU exited before guest readiness')
+        result = run([*ssh, 'cat /proc/sys/kernel/random/boot_id'], check=False, timeout=15)
+        value = result.stdout.strip()
+        if result.returncode == 0 and len(value) == 36 and value != previous_boot: return value
+        time.sleep(2)
+    raise ValueError('Guest SSH/boot readiness timed out')
+
+
+def collect(ssh, evidence):
+    for name in RECEIPTS:
+        target = evidence / (name + '.json')
+        if target.exists(): continue
+        result = run([*ssh, 'sudo cat /var/lib/vault-lifecycle-rehearsal/evidence/' + name + '.json'], check=False, timeout=15)
+        if result.returncode: continue
+        need(len(result.stdout) <= 1024 * 1024, 'Receipt exceeds bound')
+        value = json.loads(result.stdout)
+        need(value.get('classification') == 'SYNTHETIC_ONLY', 'Unexpected receipt classification')
+        save(evidence, name, value)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--acknowledge', required=True)
+    for name in ('inputs', 'work', 'evidence'): parser.add_argument('--' + name, required=True, type=Path)
+    args = parser.parse_args(); os.umask(0o077)
+    need(args.acknowledge == ACK and os.environ.get('GITHUB_ACTIONS') == 'true'
+         and platform.system() == 'Linux' and platform.machine() == 'x86_64', 'Explicit GitHub Linux x64 rehearsal required')
+    runner_temp = Path(os.environ['RUNNER_TEMP']).resolve()
+    workspace = Path(os.environ['GITHUB_WORKSPACE']).resolve()
+    need(args.work.parent.resolve() == runner_temp and args.inputs.resolve().parent == runner_temp,
+         'Task inputs/work must be direct children of this runner temporary directory')
+    need(args.evidence.absolute() == workspace / 'outputs/vault-installed-service-ci', 'Fixed evidence destination required')
+    need(not args.work.exists() and not args.work.is_symlink() and not args.evidence.exists() and not args.evidence.is_symlink(), 'Create-only task directories required')
+    need(shutil.disk_usage(runner_temp).free >= 5 * 1024**3, 'At least 5 GiB free runner disk required')
+    args.work.mkdir(mode=0o700); args.evidence.mkdir(parents=True, mode=0o700)
+    source = workspace / 'deploy/vault-linux'
+    qemu = None; ssh = None; error = None; phase = 'inputs'
+    def interrupted(*_): raise InterruptedError('Workflow interrupted')
+    signal.signal(signal.SIGTERM, interrupted)
+    try:
+        bundle = prepare_inputs(args.inputs, args.work, source)
+        save(args.evidence, 'host-inputs', {'sourceCommit': run(['git', '-C', workspace, 'rev-parse', 'HEAD']).stdout.strip(),
+             'applicationSourceCommit': SOURCE, 'inputSha256': INPUTS, 'archImageUrl': IMAGE_URL,
+             'archImageSha256': IMAGE_SHA, 'providerCalls': 0, 'serialDevicesAttached': False})
+        phase = 'image'; image = args.work / IMAGE; download_image(image)
+        info = json.loads(run(['qemu-img', 'info', '--output=json', image]).stdout)
+        need(info['format'] == 'qcow2' and info['virtual-size'] <= 8 * 1024**3 and not info.get('backing-filename'), 'Unexpected Arch image layout')
+        overlay = args.work / 'guest.qcow2'
+        run(['qemu-img', 'create', '-f', 'qcow2', '-F', 'qcow2', '-b', image, overlay, '8G'])
+        cloud_seed(args.work)
+        with socket.socket() as port_socket:
+            port_socket.bind(('127.0.0.1', 0)); port = port_socket.getsockname()[1]
+        (args.work / 'known_hosts').write_text('[127.0.0.1]:' + str(port) + ' ' + (args.work / 'host-key.pub').read_text())
+        ssh_options = ['-F', '/dev/null', '-i', str(args.work / 'user-key'), '-o', 'BatchMode=yes',
+                       '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes',
+                       '-o', 'UserKnownHostsFile=' + str(args.work / 'known_hosts'), '-o', 'GlobalKnownHostsFile=/dev/null',
+                       '-o', 'ConnectTimeout=5', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3']
+        ssh = ['ssh', *ssh_options, '-p', str(port), 'rehearsal@127.0.0.1']
+        acceleration = 'kvm' if os.access('/dev/kvm', os.R_OK | os.W_OK) else 'tcg'
+        phase = 'boot'
+        with (args.work / 'qemu.stderr').open('w') as stderr:
+            qemu = subprocess.Popen(['qemu-system-x86_64', '-machine', 'q35', '-accel', acceleration,
+                '-cpu', 'host' if acceleration == 'kvm' else 'max',
+                '-rtc', 'base=utc,clock=host',
+                '-smp', '2', '-m', '2048', '-display', 'none', '-monitor', 'none',
+                '-serial', 'file:' + str(args.work / 'console.log'),
+                '-drive', 'file=' + str(overlay) + ',format=qcow2,if=virtio',
+                '-drive', 'file=' + str(args.work / 'seed.img') + ',format=raw,if=virtio,readonly=on',
+                '-netdev', 'user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:' + str(port) + '-:22',
+                '-device', 'virtio-net-pci,netdev=net0'], env=ENV, stdout=subprocess.DEVNULL, stderr=stderr)
+        boot = wait_guest(ssh, qemu)
+        run([*ssh, 'sudo cloud-init status --wait'], timeout=300)
+        clock_start = time.time()
+        guest_utc = int(run([*ssh, 'date -u +%s']).stdout.strip())
+        clock_end = time.time()
+        need(clock_start - 30 <= guest_utc <= clock_end + 30, 'Guest UTC differs from hosted runner clock')
+        host_id = run([*ssh, 'cat /etc/machine-id']).stdout.strip()
+        need(len(host_id) == 32 and all(c in '0123456789abcdef' for c in host_id), 'Guest machine ID invalid')
+        save(args.evidence, 'host-guest', {'accelerator': acceleration, 'bootId': boot, 'guestMachineId': host_id,
+             'network': 'QEMU restrict=on; loopback SSH forward only', 'virtualDiskBytes': 8 * 1024**3,
+             'offlineFixtureTimeWaitMasked': True, 'rtc': 'host UTC', 'guestUtcEpoch': guest_utc,
+             'clockComparedToHostedRunner': True, 'providerClockQualification': False,
+             'qemuVersion': run(['qemu-system-x86_64', '--version']).stdout.splitlines()[0]})
+        phase = 'copy-inputs'
+        run(['scp', *ssh_options, '-P', str(port), bundle, 'rehearsal@127.0.0.1:/home/rehearsal/public-inputs.tar.gz'])
+        run([*ssh, 'sudo mkdir -m 0755 /opt/vault-rehearsal-input && sudo tar --no-same-owner -xzf /home/rehearsal/public-inputs.tar.gz -C /opt/vault-rehearsal-input'])
+        doctor = run([*ssh, 'sudo python3 -B /opt/vault-rehearsal-input/tooling/appliance.py doctor'])
+        save(args.evidence, 'host-doctor', json.loads(doctor.stdout))
+        runner = '/opt/vault-rehearsal-input/tooling/tests/installed-service-rehearsal.py'
+        common = ['sudo', 'python3', '-B', runner]
+        options = ['--acknowledge', ACK, '--disposable-machine-id', host_id]
+        phase = 'prepare'
+        prepare = run([*ssh, shlex.join([*common, 'prepare', *options,
+            '--release', '/opt/vault-rehearsal-input/' + RELEASE_ID,
+            '--public-key', '/opt/vault-rehearsal-input/release-public.pem',
+            '--update-metadata', '/opt/vault-rehearsal-input/lifecycle-update-metadata'])], timeout=900, check=False)
+        save(args.evidence, 'host-prepare', {'exitCode': prepare.returncode, 'stdout': prepare.stdout, 'stderr': prepare.stderr})
+        collect(ssh, args.evidence)
+        need(prepare.returncode == 0 and (args.evidence / 'awaiting-reboot.json').exists(), 'Prepare phase failed; no lifecycle acceptance')
+        phase = 'explicit-guest-reboot'
+        reboot = run([*ssh, 'sudo systemctl reboot'], check=False)
+        need(reboot.returncode in (0, 255), 'Disposable guest reboot refused')
+        next_boot = wait_guest(ssh, qemu, previous_boot=boot)
+        phase = 'after-reboot'
+        resumed = run([*ssh, shlex.join([*common, 'after-reboot', *options])], timeout=300, check=False)
+        save(args.evidence, 'host-after-reboot', {'exitCode': resumed.returncode, 'stdout': resumed.stdout,
+             'stderr': resumed.stderr, 'beforeBootId': boot, 'afterBootId': next_boot})
+        collect(ssh, args.evidence)
+        need(resumed.returncode == 0 and (args.evidence / 'completed.json').exists(), 'Post-reboot phase failed; no lifecycle acceptance')
+        phase = 'complete'
+    except Exception as failure:
+        error = failure
+        if ssh and qemu and qemu.poll() is None:
+            try: collect(ssh, args.evidence)
+            except Exception: pass
+    finally:
+        if qemu and qemu.poll() is None:
+            qemu.terminate()
+            try: qemu.wait(timeout=30)
+            except subprocess.TimeoutExpired: qemu.kill(); qemu.wait(timeout=10)
+        try:
+            save(args.evidence, 'host-result', {'phase': phase, 'success': error is None,
+                 'error': str(error) if isinstance(error, ValueError) else type(error).__name__ if error else None,
+                 'guestStopped': qemu is None or qemu.poll() is not None, 'cabinetAcceptance': False,
+                 'providerAcceptance': False, 'productionActivation': False})
+        finally:
+            # Exclusively created by this invocation; includes all ephemeral keys/seed/state.
+            shutil.rmtree(args.work)
+    if error: raise ValueError('Synthetic VM rehearsal failed in phase ' + phase)
+    print('SYNTHETIC_ONLY installed Arch lifecycle and reboot passed; receipts retained, guest removed.')
+
+
+if __name__ == '__main__':
+    try: main()
+    except Exception as error:
+        print(str(error) if isinstance(error, ValueError) else 'VM rehearsal failed; inspect synthetic receipts', file=sys.stderr)
+        sys.exit(1)

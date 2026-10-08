@@ -48,3 +48,15 @@ Unit validation, without a VM or host mutations:
 ```sh
 python3 -B -m unittest discover -s deploy/vault-linux/tests -p 'test_installed_service_rehearsal.py' -v
 ```
+
+## GitHub-hosted disposable VM
+
+The separate `Vault disposable Arch installed-service rehearsal` workflow runs the same two phases in a real QEMU x86_64 guest on `ubuntu-24.04`. Its pull-request trigger is limited to this repository's `codex/vault-spark-release-20261007` branch and appliance/workflow paths. Once the workflow is registered on main, manual dispatch requires `SYNTHETIC_ONLY_DISPOSABLE_VM`. A workflow run is not acceptance until its receipts report success.
+
+The host driver pins official Arch cloud image `v20261001.604814` to SHA256 `360f0fa49db6813bdc8e35bed230a2dc2ae3567b7b5ab74719c0a706e4e34e87` (578,080,256 bytes), the already signed application archive, the public release key and the public-only signed update metadata archive. It checks hashes, signatures and safe archive membership before copying inputs into the guest. Generated SSH client and server keys provide strict host-key verification without importing real keys. The repository token is used only by the host release-download step.
+
+QEMU uses two CPUs, 2 GiB RAM, an 8 GiB sparse overlay and KVM when accessible, otherwise full-system TCG. `restrict=on` blocks guest access to the host and external networks; only the explicit loopback SSH forwarding rule remains. No host directory or serial device is mounted. The official image's existing Python/systemd/tools must pass the unchanged appliance guards; the workflow performs no guest package installation or host-label substitution.
+
+The official Arch image includes both BIOS/UEFI boot support and `cloud-guest-utils` for root-disk growth. Its time-sync wait normally blocks SSH/cloud-final until NTP succeeds. For this network-isolated fixture only, early cloud-init masks `systemd-time-wait-sync`; QEMU supplies host-backed UTC and the driver checks guest UTC against the hosted runner within 30 seconds. The receipt records this fixture setting. Appliance clock/authority checks remain unchanged, and this is not provider clock qualification.
+
+After the first phase succeeds, the host explicitly reboots this disposable guest, observes a new boot ID and invokes the second phase. It exports only known synthetic receipt JSON files plus safe host/doctor metadata. The cleanup path stops the owned QEMU process and removes its generated keys, seed, overlay and temporary input copies. Raw console/cloud-init logs, credentials, databases and signing keys are excluded from the uploaded artifact. The job has a 45-minute bound and does not deploy a physical machine or activate production.
