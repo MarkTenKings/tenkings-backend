@@ -275,7 +275,7 @@ def switch_pointer(target):
     try: os.fsync(handle)
     finally: os.close(handle)
 
-def private_json(file):
+def private_json(file, *, initial_install_release_key=None):
     info = regular(protected_reference(file))
     need(not info.st_mode & 0o077, 'Secrets must be root-only mode 0600')
     value = json.loads(Path(file).read_text())
@@ -292,8 +292,11 @@ def private_json(file):
     if value['VAULT_PAYMENT_ADAPTER'] == 'NAYAX_SPARK_PRODUCTION':
         for field in ['VAULT_SPARK_PROVISIONING_PATH', 'VAULT_SPARK_ACTIVATION_PATH']:
             protected_reference(value.get(field, ''))
-        for name in ['release-public.pem', 'spark-activation-public.pem']:
-            protected_reference(ETC / name)
+        # First install has already verified the release with its protected
+        # --public-key input, but has not created the fixed trust file yet.
+        # Only install supplies this argument; config/environment cannot do so.
+        protected_reference(initial_install_release_key if initial_install_release_key is not None else ETC / 'release-public.pem')
+        protected_reference(ETC / 'spark-activation-public.pem')
         evidence = Path(value.get('VAULT_SPARK_EVIDENCE_PATH', ''))
         for kind in ['NAYAX_CERTIFICATION', 'TERMINAL_SANDBOX', 'CABINET_ACCEPTANCE', 'LINUX_RELEASE', 'PRODUCTION_ACCOUNT']:
             for suffix in ['evidence', 'artifact']:
@@ -419,14 +422,23 @@ def install(args):
     key = Path(args.public_key)
     manifest = verify(args.release, key)
     need(not (BASE / 'current').exists() and not (BASE / 'current').is_symlink() and not (STATE / 'vault.sqlite').exists(), 'Existing installation must use guarded update')
-    need(not Path('/etc/systemd/system/' + UNIT).exists(), 'Existing service unit requires operator review')
+    unit = Path('/etc/systemd/system') / UNIT
+    need(not unit.exists() and not unit.is_symlink(), 'Existing service unit requires operator review')
     if not args.apply:
         return {'plan': 'create dedicated service account, copy signed release, register disabled unit', 'releaseId': manifest['releaseId'], 'startsService': False, 'installsOS': False}
     need(os.geteuid() == 0, 'Root required for install')
     protected_reference(key)
+    copies = [(key, 'release-public.pem', 0o644), (Path(args.config), 'machine.env.json', 0o600)]
+    for _, name, _ in copies:
+        target = ETC / name
+        need(not target.exists() and not target.is_symlink(), 'Existing protected configuration is never overwritten')
+    staged = BASE / 'releases' / manifest['releaseId']
+    need(not staged.exists() and not staged.is_symlink(), 'Release ID already exists; staging is create-only')
+    pointer = BASE / ('.current-' + str(os.getpid()))
+    need(not pointer.exists() and not pointer.is_symlink(), 'Pointer staging collision')
     for folder in [STATE, Path('/var/log/tenkings-vault')]:
         need(not folder.exists() or not any(folder.iterdir()), 'First install cannot repurpose existing state/log contents')
-    config = private_json(Path(args.config))
+    config = private_json(Path(args.config), initial_install_release_key=key)
     for group in ['vault', 'vault-serial']:
         try: run(['getent', 'group', group])
         except subprocess.CalledProcessError: run(['groupadd', '--system', group])
@@ -444,15 +456,15 @@ def install(args):
     ETC.mkdir(mode=0o755, parents=True, exist_ok=True)
     BASE.mkdir(mode=0o755, parents=True, exist_ok=True)
     BASE.chmod(0o755)
-    for source, name, mode in [(key, 'release-public.pem', 0o644), (Path(args.config), 'machine.env.json', 0o600)]:
+    for source, name, mode in copies:
         target = ETC / name
-        need(not target.exists(), 'Existing protected configuration is never overwritten')
+        need(not target.exists() and not target.is_symlink(), 'Existing protected configuration is never overwritten')
         with target.open('xb') as stream: stream.write(source.read_bytes())
         target.chmod(mode)
     target, _ = stage(args.release, ETC / 'release-public.pem')
     switch_pointer(target)
-    unit = Path('/etc/systemd/system') / UNIT
-    unit.write_bytes((target / 'deploy/vault-linux/templates' / UNIT).read_bytes()); unit.chmod(0o644)
+    with unit.open('xb') as stream: stream.write((target / 'deploy/vault-linux/templates' / UNIT).read_bytes())
+    unit.chmod(0o644)
     run(['systemctl', 'daemon-reload'])
     return {'installed': True, 'releaseId': manifest['releaseId'], 'serviceEnabled': False, 'serviceStarted': False, 'next': 'qualify config/serial/display, then explicitly enable and start'}
 

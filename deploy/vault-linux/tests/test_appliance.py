@@ -1,4 +1,5 @@
 import importlib.util
+import contextlib
 import json
 import os
 import shutil
@@ -22,7 +23,7 @@ class ApplianceTests(unittest.TestCase):
         self.key = self.root / 'private.pem'; self.pub = self.root / 'public.pem'
         a.run(['openssl', 'genpkey', '-algorithm', 'Ed25519', '-out', self.key])
         a.run(['openssl', 'pkey', '-in', self.key, '-pubout', '-out', self.pub])
-        for member in ['runtime/bin/node', 'packages/vault-machine/dist/cli.js', 'packages/vault-machine/package.json', 'packages/vault-contracts/dist/index.js', 'frontend/vault-kiosk/dist/index.html', 'deploy/vault-linux/launch.py', 'deploy/vault-linux/probe.cjs']:
+        for member in ['runtime/bin/node', 'packages/vault-machine/dist/cli.js', 'packages/vault-machine/package.json', 'packages/vault-contracts/dist/index.js', 'frontend/vault-kiosk/dist/index.html', 'deploy/vault-linux/launch.py', 'deploy/vault-linux/probe.cjs', 'deploy/vault-linux/templates/' + a.UNIT]:
             file = self.release / member; file.parent.mkdir(parents=True, exist_ok=True); file.write_text('fixture')
         (self.release / 'runtime/bin/node').chmod(0o755)
         (self.release / 'deploy/vault-linux/runtime.json').write_text(json.dumps(a.PIN))
@@ -219,6 +220,116 @@ class ApplianceTests(unittest.TestCase):
     def test_service_writable_reference_is_not_a_trust_anchor(self):
         public = self.root / 'writable-key.pem'; public.write_text('public'); public.chmod(0o666)
         with self.assertRaisesRegex(ValueError, 'Root-owned'): a.protected_reference(public)
+
+    @contextlib.contextmanager
+    def production_install_fixture(self):
+        """Real signed payload/config files; host/account/probe effects are fake."""
+        import pwd
+        base, etc, state = (self.root / name for name in ['production-base', 'production-etc', 'production-state'])
+        etc.mkdir()
+        systemd = self.root / 'production-systemd'; systemd.mkdir()
+        references = {}
+        for field in ['VAULT_CONFIG_PUBLIC_KEY_PATH', 'VAULT_WAVESHARE_CONFIG_PATH', 'VAULT_SPARK_CONFIG_PATH', 'VAULT_SPARK_PROVISIONING_PATH', 'VAULT_SPARK_ACTIVATION_PATH']:
+            file = self.root / (field + '.fixture'); file.write_text('SYNTHETIC_ONLY'); file.chmod(0o644); references[field] = str(file)
+        (etc / 'spark-activation-public.pem').write_bytes(self.pub.read_bytes())
+        evidence = self.root / 'production-evidence'; evidence.mkdir()
+        for kind in ['NAYAX_CERTIFICATION', 'TERMINAL_SANDBOX', 'CABINET_ACCEPTANCE', 'LINUX_RELEASE', 'PRODUCTION_ACCOUNT']:
+            for suffix in ['evidence', 'artifact']: (evidence / (kind + '.' + suffix)).write_text('SYNTHETIC_ONLY')
+        config = self.root / 'initial-production.json'
+        value = {**references, 'VAULT_MACHINE_ID': '00000000-0000-4000-8000-000000000001', 'VAULT_CLOUD_ORIGIN': 'https://synthetic.invalid',
+                 'VAULT_MACHINE_CREDENTIAL': 'synthetic-machine-credential', 'VAULT_ADAPTER_CALLBACK_TOKEN': 'synthetic-callback-token',
+                 'VAULT_MAINTENANCE_TOKEN': 'synthetic-maintenance-token-' + '0' * 32, 'VAULT_CONFIG_KEY_ID': 'synthetic-key',
+                 'VAULT_PAYMENT_ADAPTER': 'NAYAX_SPARK_PRODUCTION', 'VAULT_CONTROLLER_ADAPTER': 'WAVESHARE',
+                 'VAULT_SPARK_EVIDENCE_PATH': str(evidence), 'VAULT_SPARK_PRODUCTION_TOKEN_SECRET': 'synthetic-token-secret',
+                 'VAULT_SPARK_PRODUCTION_SIGN_KEY': 'synthetic-sign-key'}
+        config.write_text(json.dumps(value)); config.chmod(0o600)
+        args = SimpleNamespace(release=self.release, public_key=self.pub, config=config, apply=True)
+        commands, protected_paths = [], []
+        original_run = a.run
+        def command(argv, **kwargs):
+            argv = [str(item) for item in argv]
+            if argv[0] == 'openssl': return original_run(argv, **kwargs)
+            commands.append(argv)
+            if argv[:2] == ['getent', 'group'] or argv == ['systemctl', 'daemon-reload'] or argv[0].endswith('/runtime/bin/node'): return ''
+            raise AssertionError('Unexpected host mutation in synthetic install test')
+        def protect(file):
+            # Model only root ownership: these macOS temporary files retain
+            # their actual uid. Real regular-file/mode/existence checks remain.
+            file = Path(file); self.assertTrue(file.is_relative_to(self.root))
+            info = a.regular(file)
+            a.need(not info.st_mode & 0o022, 'Root-owned non-writable trust/config required')
+            protected_paths.append(file)
+            return file
+        def local_path(value):
+            return {'/etc/systemd/system': systemd, '/var/log/tenkings-vault': self.root / 'production-log',
+                    '/var/lib/ten-kings-vault-bench': self.root / 'production-bench'}.get(str(value), Path(value))
+        with contextlib.ExitStack() as stack:
+            for name, replacement in [('BASE', base), ('ETC', etc), ('STATE', state), ('Path', local_path), ('run', command), ('protected_reference', protect)]:
+                stack.enter_context(patch.object(a, name, replacement))
+            stack.enter_context(patch.object(a, 'require_host'))
+            stack.enter_context(patch.object(a, 'safe_install_parents'))
+            stack.enter_context(patch.object(a.os, 'geteuid', return_value=0))
+            stack.enter_context(patch.object(pwd, 'getpwnam', return_value=SimpleNamespace(pw_dir=str(state), pw_shell='/usr/bin/nologin', pw_uid=4242)))
+            yield SimpleNamespace(args=args, base=base, etc=etc, config=config, value=value, commands=commands, protected_paths=protected_paths, systemd=systemd)
+
+    def test_first_production_install_uses_verified_input_key_then_pins_it_without_starting(self):
+        with self.production_install_fixture() as fixture:
+            self.assertFalse((fixture.etc / 'release-public.pem').exists())
+            fixture.args.apply = False
+            plan = a.install(fixture.args)
+            self.assertFalse(plan['startsService']); self.assertEqual(fixture.commands, [])
+            self.assertFalse((fixture.etc / 'release-public.pem').exists())
+            fixture.args.apply = True
+            result = a.install(fixture.args)
+            self.assertTrue(result['installed']); self.assertFalse(result['serviceEnabled']); self.assertFalse(result['serviceStarted'])
+            self.assertEqual((fixture.etc / 'release-public.pem').read_bytes(), self.pub.read_bytes())
+            self.assertEqual((fixture.etc / 'machine.env.json').read_bytes(), fixture.config.read_bytes())
+            self.assertEqual((fixture.etc / 'machine.env.json').stat().st_mode & 0o777, 0o600)
+            self.assertEqual((fixture.etc / 'release-public.pem').stat().st_mode & 0o777, 0o644)
+            self.assertEqual((fixture.base / 'current').resolve(), fixture.base / 'releases/test-1')
+            self.assertEqual([c for c in fixture.commands if c[0] == 'systemctl'], [['systemctl', 'daemon-reload']])
+            self.assertIn(fixture.etc / 'spark-activation-public.pem', fixture.protected_paths)
+            self.assertEqual(a.private_json(fixture.etc / 'machine.env.json')['VAULT_PAYMENT_ADAPTER'], 'NAYAX_SPARK_PRODUCTION')
+
+    def test_first_install_existing_destinations_refuse_before_account_changes(self):
+        for destination in ['release-public.pem', 'machine.env.json', 'release', 'pointer', 'unit']:
+            with self.subTest(destination=destination), self.production_install_fixture() as fixture:
+                target = (fixture.etc / destination if destination.endswith(('.pem', '.json')) else
+                          fixture.base / 'releases/test-1' if destination == 'release' else
+                          fixture.base / ('.current-' + str(os.getpid())) if destination == 'pointer' else fixture.systemd / a.UNIT)
+                original = self.pub.read_bytes() if destination == 'release-public.pem' else b'PRESERVE_EXISTING'
+                target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(original)
+                with self.assertRaises(ValueError): a.install(fixture.args)
+                self.assertEqual(fixture.commands, []); self.assertEqual(target.read_bytes(), original)
+            # Each subtest uses the same signed fixture but a fresh config tree.
+            for name in ['production-base', 'production-etc', 'production-evidence', 'production-systemd']:
+                if (self.root / name).exists(): shutil.rmtree(self.root / name)
+
+    def test_config_release_key_override_cannot_replace_fixed_trust_for_ordinary_reads(self):
+        with self.production_install_fixture() as fixture:
+            fixture.value['VAULT_RELEASE_PUBLIC_KEY_PATH'] = str(self.pub)
+            fixture.config.write_text(json.dumps(fixture.value))
+            with self.assertRaises(FileNotFoundError): a.private_json(fixture.config)
+            self.assertEqual(fixture.commands, [])
+            installed = fixture.etc / 'machine.env.json'; installed.write_bytes(fixture.config.read_bytes()); installed.chmod(0o600)
+            with patch.object(a, 'api') as api:
+                with self.assertRaises(FileNotFoundError): a.maintenance('status')
+                api.assert_not_called()
+
+    def test_first_install_still_requires_protected_activation_key_and_verified_release(self):
+        with self.production_install_fixture() as fixture:
+            self.pub.chmod(0o666)
+            with self.assertRaisesRegex(ValueError, 'Root-owned'): a.install(fixture.args)
+            self.assertEqual(fixture.commands, []); self.assertFalse((fixture.etc / 'release-public.pem').exists())
+            self.pub.chmod(0o644)
+            activation_key = fixture.etc / 'spark-activation-public.pem'
+            activation_key.chmod(0o666)
+            with self.assertRaisesRegex(ValueError, 'Root-owned'): a.install(fixture.args)
+            self.assertEqual(fixture.commands, []); self.assertFalse((fixture.etc / 'release-public.pem').exists())
+            activation_key.chmod(0o644)
+            (self.release / 'runtime/bin/node').write_text('TAMPERED_SYNTHETIC_PAYLOAD')
+            with self.assertRaisesRegex(ValueError, 'mismatch'): a.install(fixture.args)
+            self.assertEqual(fixture.commands, []); self.assertFalse((fixture.etc / 'release-public.pem').exists())
 
     def test_fifo_member_is_rejected_without_waiting_for_writer(self):
         fifo = self.root / 'pipe'; os.mkfifo(fifo)
