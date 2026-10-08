@@ -12,6 +12,8 @@ import re
 import sqlite3
 import stat
 import subprocess
+import sys
+sys.dont_write_bytecode = True
 import tempfile
 from pathlib import Path
 import appliance as a

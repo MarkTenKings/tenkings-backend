@@ -81,6 +81,10 @@ export class NayaxSparkClient {
     private readonly fetcher: typeof fetch;
     constructor(private readonly options: NayaxSparkClientOptions) {
         this.options = Object.freeze({ ...options });
+        // A configured version must never be silently ignored. The supported
+        // wire profile is unversioned until Nayax confirms an exact transport.
+        if (options.wireApiVersion !== null)
+            throw protocolError("WIRE_VERSION_UNSUPPORTED");
         let url: URL;
         try {
             url = new URL(options.apiBase);
@@ -91,7 +95,6 @@ export class NayaxSparkClient {
         if (!(options.environment === "SANDBOX" && options.sandboxConfirmed === true && options.productionConfirmed !== true && options.credentialGeneration == null
             || options.environment === "PRODUCTION" && options.sandboxConfirmed === false && options.productionConfirmed === true && SPARK_GUID.test(options.credentialGeneration ?? "") && typeof options.beforeEffect === "function") || options.preSelectionConfirmed !== true
             || !["MANUAL_BODY_SHA256", "CURRENT_GUID_SHA256"].includes(options.signingProfile)
-            || !(options.wireApiVersion === null || typeof options.wireApiVersion === "string" && /^[A-Za-z0-9._-]{1,40}$/.test(options.wireApiVersion))
             || typeof options.vendorApprovalReference !== "string" || !/^[\x20-\x7e]{8,200}$/.test(options.vendorApprovalReference)
             || url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/api"
             || (!options.fetchImpl && (!url.hostname.endsWith(".nayax.com") || url.port))

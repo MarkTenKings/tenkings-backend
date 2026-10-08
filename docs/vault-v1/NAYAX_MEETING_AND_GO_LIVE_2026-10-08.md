@@ -19,7 +19,7 @@ Keep secrets out of chat, Git, screenshots and the acceptance reports. The prote
 | Integrator/sign-key ID and token ID | Pending; secrets stored separately |
 | Device terminalId, terminalIdType, nayaxMachineId, hwSerial and siteId in each environment | Pending; preserve decimal IDs as strings where required |
 | Remote Start/PRE_SELECTION, USD and maximum total | Pending |
-| Signing profile, body hashing and wire API version/header convention | Pending; the manual's alternatives must be explicitly resolved |
+| Signing profile, body hashing and wire API version/header convention | Pending; current software supports only explicit `wireApiVersion:null` (unversioned `/api` requests). If Nayax requires a version selector, record exact name/placement/signing rules; that transport needs implementation and verification before use. |
 | Callback terminal representation and authenticated header convention | Pending |
 | Approved acquiring card brands/method fields and CardUid semantics | Pending; loyalty/prepaid/ambiguous evidence cannot release doors |
 | Callback retries, timeout, duplicate and late-callback behavior | Pending |

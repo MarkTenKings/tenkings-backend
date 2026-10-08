@@ -18,6 +18,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+sys.dont_write_bytecode = True
 import tempfile
 import time
 import urllib.request
@@ -275,6 +276,21 @@ def switch_pointer(target):
     try: os.fsync(handle)
     finally: os.close(handle)
 
+def runtime_references(value, *, initial_install_release_key=None):
+    """Nonsecret inputs opened directly by the vault service, not credentials."""
+    references = [value.get('VAULT_CONFIG_PUBLIC_KEY_PATH', '')]
+    if value.get('VAULT_CONTROLLER_ADAPTER') == 'WAVESHARE':
+        references.append(value.get('VAULT_WAVESHARE_CONFIG_PATH', ''))
+    if value.get('VAULT_PAYMENT_ADAPTER') in ['NAYAX_SPARK_TEST', 'NAYAX_SPARK_PRODUCTION']:
+        references.append(value.get('VAULT_SPARK_CONFIG_PATH', ''))
+    if value.get('VAULT_PAYMENT_ADAPTER') == 'NAYAX_SPARK_PRODUCTION':
+        references.extend(value.get(field, '') for field in ['VAULT_SPARK_PROVISIONING_PATH', 'VAULT_SPARK_ACTIVATION_PATH'])
+        references.extend([initial_install_release_key if initial_install_release_key is not None else ETC / 'release-public.pem', ETC / 'spark-activation-public.pem'])
+        evidence = Path(value.get('VAULT_SPARK_EVIDENCE_PATH', ''))
+        for kind in ['NAYAX_CERTIFICATION', 'TERMINAL_SANDBOX', 'CABINET_ACCEPTANCE', 'LINUX_RELEASE', 'PRODUCTION_ACCOUNT']:
+            references.extend(evidence / (kind + '.' + suffix) for suffix in ['evidence', 'artifact'])
+    return references
+
 def private_json(file, *, initial_install_release_key=None):
     info = regular(protected_reference(file))
     need(not info.st_mode & 0o077, 'Secrets must be root-only mode 0600')
@@ -284,26 +300,53 @@ def private_json(file, *, initial_install_release_key=None):
         need(bool(value.get(field)) and not value[field].startswith('REPLACE_'), 'Required machine configuration missing')
     need(len(value['VAULT_MAINTENANCE_TOKEN']) >= 32, 'Maintenance token must contain at least 32 characters')
     need(value['VAULT_MAINTENANCE_TOKEN'] != value['VAULT_ADAPTER_CALLBACK_TOKEN'], 'Maintenance and callback tokens must differ')
-    protected_reference(value['VAULT_CONFIG_PUBLIC_KEY_PATH'])
-    if value['VAULT_CONTROLLER_ADAPTER'] == 'WAVESHARE':
-        protected_reference(value.get('VAULT_WAVESHARE_CONFIG_PATH', ''))
-    if value['VAULT_PAYMENT_ADAPTER'] in ['NAYAX_SPARK_TEST', 'NAYAX_SPARK_PRODUCTION']:
-        protected_reference(value.get('VAULT_SPARK_CONFIG_PATH', ''))
+    # Only install supplies the already verified/protected input release key;
+    # config/environment cannot select it instead of fixed installed trust.
+    for reference in runtime_references(value, initial_install_release_key=initial_install_release_key):
+        protected_reference(reference)
     if value['VAULT_PAYMENT_ADAPTER'] == 'NAYAX_SPARK_PRODUCTION':
-        for field in ['VAULT_SPARK_PROVISIONING_PATH', 'VAULT_SPARK_ACTIVATION_PATH']:
-            protected_reference(value.get(field, ''))
-        # First install has already verified the release with its protected
-        # --public-key input, but has not created the fixed trust file yet.
-        # Only install supplies this argument; config/environment cannot do so.
-        protected_reference(initial_install_release_key if initial_install_release_key is not None else ETC / 'release-public.pem')
-        protected_reference(ETC / 'spark-activation-public.pem')
-        evidence = Path(value.get('VAULT_SPARK_EVIDENCE_PATH', ''))
-        for kind in ['NAYAX_CERTIFICATION', 'TERMINAL_SANDBOX', 'CABINET_ACCEPTANCE', 'LINUX_RELEASE', 'PRODUCTION_ACCOUNT']:
-            for suffix in ['evidence', 'artifact']:
-                protected_reference(evidence / (kind + '.' + suffix))
         for field in ['VAULT_SPARK_PRODUCTION_TOKEN_SECRET', 'VAULT_SPARK_PRODUCTION_SIGN_KEY']:
             need(bool(value.get(field)) and not value[field].startswith('REPLACE_'), 'Production Spark credentials missing')
     return value
+
+SERVICE_READ_PROBE = """
+import json, os, stat, sys
+try:
+    if os.geteuid() != int(sys.argv[1]) or os.geteuid() == 0: sys.exit(1)
+    for file in json.load(sys.stdin):
+        fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode): sys.exit(1)
+            os.read(fd, 1)
+        finally: os.close(fd)
+except Exception:
+    sys.exit(1)
+"""
+
+def service_read_preflight(config, *, installing_release_key=False):
+    """Check actual read/traverse/ACL access without exposing file contents."""
+    import grp
+    import pwd
+    need(os.geteuid() == 0, 'Root required for service configuration preflight')
+    account = pwd.getpwnam('vault')
+    group = grp.getgrnam('vault').gr_gid
+    groups = sorted(set(os.getgrouplist('vault', group) + [grp.getgrnam('vault-serial').gr_gid]))
+    need(account.pw_uid > 0, 'Dedicated non-root vault service account required')
+    references = [str(file) for file in runtime_references(config)
+                  if not (installing_release_key and Path(file) == ETC / 'release-public.pem')]
+    for file in references:
+        protected_reference(file)
+        # Match the installed unit's ProtectHome=yes mount restrictions, which
+        # a plain uid-switched child does not inherit from systemd.
+        resolved = Path(file).resolve()
+        need(not any(hidden == resolved or hidden in resolved.parents for hidden in [Path('/root'), Path('/home'), Path('/run/user')]),
+             'Service sandbox hides home directories; stage runtime references under protected /etc paths')
+    try:
+        run([sys.executable, '-I', '-B', '-c', SERVICE_READ_PROBE, str(account.pw_uid)], input=json.dumps(references),
+            user=account.pw_uid, group=group, extra_groups=groups, cwd='/', env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'})
+    except (subprocess.SubprocessError, OSError):
+        raise ValueError('Vault service cannot read/traverse protected runtime references; stage nonsecret files and ancestors with vault read access') from None
+    return {'serviceUser': 'vault', 'referencesReadable': True, 'referenceCount': len(references), 'secretContentsRead': False, 'serviceStarted': False}
 
 def api(route, body=None, token=None, cookie=None):
     headers = {'X-Vault-Contract-Version': '1', 'Origin': ORIGIN}
@@ -453,6 +496,9 @@ def install(args):
     if bench.exists() or bench.is_symlink():
         info = bench.lstat()
         need(stat.S_ISDIR(info.st_mode) and info.st_uid == pwd.getpwnam('vault').pw_uid and not info.st_mode & 0o077, 'Existing bench evidence has different ownership; preserve it and review migration explicitly')
+    # Offline outputs are deliberately private. Their installed nonsecret copies
+    # must be readable by the service before publishing any appliance pointer.
+    service_read_preflight(config, installing_release_key=True)
     ETC.mkdir(mode=0o755, parents=True, exist_ok=True)
     BASE.mkdir(mode=0o755, parents=True, exist_ok=True)
     BASE.chmod(0o755)
@@ -461,6 +507,7 @@ def install(args):
         need(not target.exists() and not target.is_symlink(), 'Existing protected configuration is never overwritten')
         with target.open('xb') as stream: stream.write(source.read_bytes())
         target.chmod(mode)
+    service_read_preflight(config)
     target, _ = stage(args.release, ETC / 'release-public.pem')
     switch_pointer(target)
     with unit.open('xb') as stream: stream.write((target / 'deploy/vault-linux/templates' / UNIT).read_bytes())
@@ -479,6 +526,7 @@ def operate(args):
     if not args.apply:
         return {'plan': args.command, 'maintenance': before, 'releaseId': candidate['releaseId'] if candidate else None}
     need(os.geteuid() == 0, 'Root required')
+    service_read_preflight(private_json(ETC / 'machine.env.json'))
     # Stage and probe before asking the running process to quiesce.
     if candidate: target, _ = stage(args.release, ETC / 'release-public.pem')
     allow_restart(maintenance('enter'))
@@ -530,7 +578,7 @@ def bind_serial(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['doctor', 'diagnostics', 'verify', 'manifest', 'install', 'restart', 'update', 'bind-serial', 'verify-snapshot', 'stage-restore', 'stage-upgrade'])
+    parser.add_argument('command', choices=['doctor', 'diagnostics', 'verify', 'manifest', 'install', 'preflight-config', 'restart', 'update', 'bind-serial', 'verify-snapshot', 'stage-restore', 'stage-upgrade'])
     parser.add_argument('--release'); parser.add_argument('--public-key'); parser.add_argument('--config')
     parser.add_argument('--signing-key'); parser.add_argument('--release-id'); parser.add_argument('--source-commit'); parser.add_argument('--app-version')
     parser.add_argument('--schema-version', type=int); parser.add_argument('--device'); parser.add_argument('--role', choices=['locks'])
@@ -543,6 +591,7 @@ def main():
     elif args.command == 'verify':
         manifest = verify(args.release, args.public_key); result = {k: manifest[k] for k in ['releaseId', 'sourceCommit', 'nodeVersion', 'localSchemaVersion']}
     elif args.command == 'manifest': result = make_manifest(args)
+    elif args.command == 'preflight-config': result = service_read_preflight(private_json(Path(args.config) if args.config else ETC / 'machine.env.json'))
     elif args.command in ['verify-snapshot', 'stage-restore', 'stage-upgrade']:
         import importlib.util
         spec = importlib.util.spec_from_file_location('vault_snapshot_tools', HERE / 'snapshot-tools.py')

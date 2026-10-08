@@ -2,7 +2,7 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const { createHash, randomUUID } = require('node:crypto');
 const { mkdtempSync, rmSync } = require('node:fs');
 const { join } = require('node:path'), { tmpdir } = require('node:os');
-const { NayaxSparkClient } = require('../dist/nayax-spark-client');
+const { NayaxSparkClient, sparkTriggerBody, sparkVoidBody, sparkBodySignature, sparkTransactionSignature } = require('../dist/nayax-spark-client');
 const { NayaxSparkAdapter } = require('../dist/nayax-spark-test-adapter');
 const { buildSparkProvisioning, checkSparkSecretPresence } = require('../dist/spark-provisioning');
 const { input } = require('./spark-provisioning-fixture');
@@ -165,4 +165,46 @@ test('an accidentally asynchronous effect guard cannot race a production HTTP re
   const client = new NayaxSparkClient(f.options);
   await assert.rejects(client.authenticate(randomUUID(), f.options.terminalId, 1), { code: 'SPARK_EFFECT_AUTHORITY_NOT_SYNCHRONOUS' });
   assert.equal(f.state.calls.length, 0);
+});
+
+
+test('direct sandbox and production clients reject unsupported wire versions before authority or HTTP', () => {
+  let effects = 0;
+  for (const value of [input(), production()]) for (const signingProfile of ['MANUAL_BODY_SHA256', 'CURRENT_GUID_SHA256']) {
+    const options = { ...value.profile, signingProfile, tokenSecret: 'fixture-token-0123456789abcdefghijklmnopqrstuvwxyz',
+      signKey: 'fixture-sign-key-0123456789', beforeEffect: () => { effects++; }, fetchImpl: async () => { effects++; throw Error('unexpected HTTP'); } };
+    for (const wireApiVersion of ['3.0.0', 'v3', '', undefined, false, 3, {}])
+      assert.throws(() => new NayaxSparkClient({ ...options, wireApiVersion }), { code: 'SPARK_WIRE_VERSION_UNSUPPORTED' });
+  }
+  assert.equal(effects, 0);
+});
+
+test('null wire version retains exact unversioned authentication trigger and void requests in both stages', async () => {
+  const id = '12c7cec2-c690-4425-9a1f-db0db60e2d8c';
+  for (const value of [input(), production()]) for (const signingProfile of ['MANUAL_BODY_SHA256', 'CURRENT_GUID_SHA256']) {
+    const calls = [];
+    const options = { ...value.profile, signingProfile, tokenSecret: 'fixture-token-0123456789abcdefghijklmnopqrstuvwxyz',
+      signKey: 'fixture-sign-key-0123456789', beforeEffect: () => {}, fetchImpl: async (url, init) => {
+        calls.push({ url, ...init });
+        return Response.json(url.endsWith('/StartAuthentication')
+          ? { HashedSparkTransactionId: createHash('sha256').update(id).digest('hex'), Status: { Verdict: 'Approved' } }
+          : { SparkTransactionId: id, Status: { Verdict: 'Approved' } });
+      } };
+    const client = new NayaxSparkClient(options);
+    const trigger = sparkTriggerBody(id, options.terminalId, options.terminalIdType, 2500, 'Total:USD 25.00');
+    const cancellation = sparkVoidBody({ sparkId: id, nayaxId: '9223372036854775807', siteId: options.siteId,
+      machineAuTime: '20261007120000123', terminalId: options.terminalId, terminalIdType: options.terminalIdType, cents: 2500, reason: 'Complete void' });
+    await client.authenticate(id, options.terminalId, options.terminalIdType, new Date('2026-10-07T12:00:00Z'));
+    await client.trigger(id, trigger); await client.void(id, cancellation);
+    assert.deepEqual(calls.map(call => call.url), ['StartAuthentication', 'TriggerTransaction', 'CancelTransaction'].map(method => `${options.apiBase}/${method}`));
+    assert.deepEqual(Object.keys(JSON.parse(calls[0].body)).sort(), ['TokenId', 'TerminalId', 'TerminalIdType', 'Random', 'Cipher',
+      ...(signingProfile === 'CURRENT_GUID_SHA256' ? ['SparkTransactionId'] : [])].sort());
+    assert.equal(calls[1].body, trigger); assert.equal(calls[2].body, cancellation);
+    for (const call of calls) {
+      const signature = signingProfile === 'MANUAL_BODY_SHA256'
+        ? { Signature: sparkBodySignature(call.body, options.signKey) } : { TransactionSignature: sparkTransactionSignature(id, options.signKey) };
+      assert.deepEqual(call.headers, { 'Content-Type': 'application/json', Accept: 'application/json', IntegratorId: options.integratorId, ...signature });
+      assert.equal(call.method, 'POST'); assert.equal(call.redirect, 'error');
+    }
+  }
 });

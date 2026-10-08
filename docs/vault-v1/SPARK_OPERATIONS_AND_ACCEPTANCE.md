@@ -27,6 +27,8 @@ The additive cloud stage migration defaults all historical observations to SANDB
 
 Callbacks remain disabled in generated output. Nayax must confirm the signing profile, body/version convention, terminal representation, authenticated header, acquiring methods, limits, and replay rules before explicit sandbox enablement. The receiver and local profile must match exactly. Unsupported or ambiguous acquiring evidence cannot release doors.
 
+The current client supports only explicit `wireApiVersion:null`: requests use the assigned `/api` base with no version selector. Provisioning and direct client construction reject every non-null or missing value before artifacts or provider effects. The PDF revision is not a wire version. If Nayax requires a versioned header, body field or route, obtain its exact name, placement and signing requirements; implementing and verifying that transport is required before onboarding that profile. Do not insert a version string into this release or guess a header.
+
 ## Financial incidents and recovery
 
 A successful TriggerTransaction response only acknowledges the request. The terminal's authenticated, durably stored, exactly matched successful acquiring callback establishes payment. Missing, delayed, or contradictory evidence must not cause another charge or an unpaid door command.

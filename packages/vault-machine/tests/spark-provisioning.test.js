@@ -1,6 +1,6 @@
 const test = require("node:test"), assert = require("node:assert/strict");
 const { generateKeyPairSync, sign, createHash } = require("node:crypto");
-const { mkdtempSync, writeFileSync, readFileSync, statSync, rmSync, symlinkSync } = require("node:fs");
+const { mkdtempSync, writeFileSync, readFileSync, statSync, rmSync, symlinkSync, existsSync } = require("node:fs");
 const { tmpdir } = require("node:os"), { join } = require("node:path");
 const { canonicalJson } = require("../../vault-contracts/dist");
 const p = require("../dist/spark-provisioning"), { NayaxSparkTestAdapter } = require("../dist/nayax-spark-test-adapter"), { input } = require("./spark-provisioning-fixture");
@@ -78,4 +78,22 @@ test("offline CLI writes private create-only paired files and rejects symlink in
   assert.throws(() => main(["generate", file, out]));
   const link = join(root, "link.json"); symlinkSync(file, link); assert.throws(() => main(["validate", link]));
   assert.equal(JSON.parse(readFileSync(join(out, "provisioning-plan.json"))).activationAllowed, false);
+});
+
+
+test("versioned profiles cannot produce provisioning artifacts in either stage", t => {
+  const root = mkdtempSync(join(tmpdir(), "spark-version-provisioning-")); t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const stage of ["SANDBOX", "PRODUCTION"]) for (const signingProfile of ["MANUAL_BODY_SHA256", "CURRENT_GUID_SHA256"]) {
+    const i = input(); i.stage = i.profile.environment = stage; i.profile.signingProfile = signingProfile;
+    if (stage === "PRODUCTION") { i.profile.sandboxConfirmed = false; i.profile.productionConfirmed = true; i.profile.credentialGeneration = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"; }
+    for (const version of ["3.0.0", "v3", "", undefined, false, 3, {}]) {
+      i.profile.wireApiVersion = version;
+      assert.throws(() => p.buildSparkProvisioning(i), /SPARK_PROVISIONING_WIRE_VERSION_UNSUPPORTED/);
+    }
+    i.profile.wireApiVersion = "3.0.0";
+    const file = join(root, `${stage}-${signingProfile}.json`), output = join(root, `${stage}-${signingProfile}-output`);
+    writeFileSync(file, JSON.stringify(i));
+    assert.throws(() => main(["generate", file, output]), /SPARK_PROVISIONING_WIRE_VERSION_UNSUPPORTED/);
+    assert.equal(existsSync(output), false);
+  }
 });

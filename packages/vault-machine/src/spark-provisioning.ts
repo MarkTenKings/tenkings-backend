@@ -44,6 +44,7 @@ export function validateSparkProvisioning(value: unknown): SparkProvisioningInpu
   need(Object.keys(p).every(k => profileKeys.includes(k)), "UNEXPECTED_PROFILE_FIELD");
   need(p.environment === input.stage && p.preSelectionConfirmed === true && p.currencyConfirmed === true && p.currency === "USD" && p.acquiringOnlyConfirmed === true, "VENDOR_CONFIRMATION_REQUIRED");
   need(input.stage === "SANDBOX" ? p.sandboxConfirmed === true && p.productionConfirmed !== true && p.credentialGeneration == null : p.productionConfirmed === true && p.sandboxConfirmed === false && typeof p.credentialGeneration === "string" && uuid.test(p.credentialGeneration), "ENVIRONMENT_CONFIRMATION_REQUIRED");
+  need(p.wireApiVersion === null, "WIRE_VERSION_UNSUPPORTED");
   // Constructor validation is read-only; fixed dummy secrets are never used to send requests.
   try { new NayaxSparkClient({ ...(p as unknown as SparkProvisioningInput["profile"]), beforeEffect: () => { throw new Error("OFFLINE_ONLY"); },
     tokenSecret: "OFFLINE_VALIDATION_0123456789abcdefghijklmnopqrstuvwxyz", signKey: "OFFLINE_VALIDATION_ONLY_SIGN_KEY" }); }
