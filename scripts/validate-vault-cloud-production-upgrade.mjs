@@ -14,6 +14,8 @@ const require = createRequire(import.meta.url);
 const base = '20643deae9b9b341fc7dfcd7fb703c53d0b73d0b';
 const prior = '20260908010000_speedster_prepared_evidence_authority';
 const priorHash = '2295497829bef571b4687f11ed493781e0a22e4151b7ae74a247a0f9793f891f';
+// Official Docker Hub OCI index verified through Registry API; matches live PostgreSQL 17.11.
+const postgresImage = 'postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24';
 const prefix = 'packages/database/prisma/migrations';
 const directory = mkdtempSync(resolve(tmpdir(), 'vault-cloud-upgrade-'));
 const name = `vault-cloud-upgrade-${process.pid}-${randomBytes(6).toString('hex')}`;
@@ -67,7 +69,7 @@ try {
   }
   run('docker', ['run', '--detach', '--name', name, '--label', 'com.tenkings.disposable=vault-cloud-upgrade',
     '--publish', '127.0.0.1::5432', '--tmpfs', '/var/lib/postgresql/data:rw,noexec,nosuid,size=536870912',
-    '--env', `POSTGRES_USER=${user}`, '--env', `POSTGRES_PASSWORD=${password}`, '--env', `POSTGRES_DB=${database}`, 'postgres:15-alpine']);
+    '--env', `POSTGRES_USER=${user}`, '--env', `POSTGRES_PASSWORD=${password}`, '--env', `POSTGRES_DB=${database}`, postgresImage]);
   started = true;
   const port = Number(run('docker', ['inspect', '--format', '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}', name]));
   assert.ok(port > 1024 && port <= 65535);
@@ -78,6 +80,10 @@ try {
     await new Promise(r => setTimeout(r, 250));
   }
   assert.ok(ready, 'Owned PostgreSQL must become ready');
+  const serverVersion = sql('SHOW server_version;');
+  const serverVersionNumber = sql('SHOW server_version_num;');
+  assert.equal(serverVersion, '17.11', 'Disposable PostgreSQL must match live server version');
+  assert.equal(serverVersionNumber, '170011');
   const databaseUrl = `postgresql://${user}:${password}@127.0.0.1:${port}/${database}?schema=public`;
   const prisma = require.resolve('../packages/database/node_modules/prisma/build/index.js');
   const migrate = () => run(process.execPath, [prisma, 'migrate', 'deploy', '--schema', schema], {
@@ -113,7 +119,7 @@ try {
   assert.deepEqual(snapshot(), before);
   assert.match(migrate(), /No pending migrations to apply/);
   assert.equal(sql('SELECT migration_name||\'|\'||checksum FROM "_prisma_migrations" ORDER BY migration_name;'), ledger);
-  report = { classification: 'DISPOSABLE_PRODUCTION_LINEAGE_UPGRADE', productionSource: base, baselineMigrations: 99, finalMigrations: 107,
+  report = { classification: 'DISPOSABLE_PRODUCTION_LINEAGE_UPGRADE', productionSource: base, postgresImage, serverVersion, serverVersionNumber, baselineMigrations: 99, finalMigrations: 107,
     addedMigrations: added.map(migration => ({ migration, sha256: hash(readFileSync(resolve(root, prefix, migration, 'migration.sql'))) })),
     inventoryAndCatalogEvidencePreserved: true, existingMigrationChecksumsPreserved: true, immutableGuardRejections: 3, secondDeploy: 'NO_OP',
     productionDatabaseTouched: false, loopbackOnly: true, disposableContainer: name };

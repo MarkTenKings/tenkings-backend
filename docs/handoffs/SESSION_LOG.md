@@ -34237,3 +34237,8 @@ Root independently reviewed the production-preserving overlay85b64d61 and the di
 
 - Remote run `37727800878` at `1126eecb` passed contracts (12), cloud (110), database helpers (9), the ordinary Linux production build and sharp package verifier. The disposable rehearsal stopped before creating Docker resources: its 14-digit migration-directory filter excluded deployed legacy `20260422_golden_ticket_and_browser_ingest`, yielding 106 instead of the actual 107 files.
 - Discovery now includes every actual migration directory. Exact 98 deployed SQL byte checks, the already-applied prior SQL hash, total 107, and eight new Vault-only migration assertions remain intact. Local discovery verification includes the legacy migration and confirms exactly eight additions; syntax/diff checks pass. Actual disposable PostgreSQL execution awaits the corrected CI run. No production database or provider effect occurred.
+
+## 2026-10-07 — Match disposable cloud rehearsal to production PostgreSQL
+
+- Root read-only production preflight reports PostgreSQL 17.11. Pinned the owned rehearsal image to official Docker Hub `postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24`, verified through authenticated public Registry API; the response content digest equals the downloaded OCI index SHA-256 and includes Linux amd64. No private credentials used.
+- The rehearsal now reads and requires `server_version=17.11` and `server_version_num=170011` before migrations, and records both plus the immutable image reference in its result. Syntax and source checks pass; exact-version upgrade execution remains subject to the forthcoming CI result. No production database change occurred.
