@@ -49,7 +49,9 @@ try {
   const priorBytes = readFileSync(resolve(root, prefix, prior, 'migration.sql'));
   assert.equal(hash(priorBytes), priorHash);
   baseline.set(prior, priorBytes);
-  const names = readdirSync(resolve(root, prefix)).filter(n => /^\d{14}_/.test(n)).sort();
+  // Prisma retains legacy directory names such as 20260422_golden_ticket_and_browser_ingest.
+  const names = readdirSync(resolve(root, prefix), { withFileTypes: true })
+    .filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
   const added = names.filter(n => !baseline.has(n));
   assert.equal(names.length, 107);
   assert.equal(added.length, 8);

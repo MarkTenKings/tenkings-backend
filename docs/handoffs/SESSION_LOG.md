@@ -34232,3 +34232,8 @@ Root created the separate visible lead task `01a0c746-65c6-7523-851b-a25a50f017a
 ## 2026-10-07 — Planned compatible Vault cloud publication
 
 Root independently reviewed the production-preserving overlay85b64d61 and the disposable PostgreSQL upgrade runner. Planned action: publish this isolated branch and PR against exact deployed codex/main-site-release-20260916/20643dea; allow the existing Vercel preview pipeline and dedicated secret-free GitHub validation. Preserve all production aliases/configuration and do not apply live SQL until the real99→107 rehearsal and exact candidate checks pass. No callback binding, activation or provider/cabinet authority is introduced by preview publication.
+
+## 2026-10-07 — Cloud CI migration discovery correction
+
+- Remote run `37727800878` at `1126eecb` passed contracts (12), cloud (110), database helpers (9), the ordinary Linux production build and sharp package verifier. The disposable rehearsal stopped before creating Docker resources: its 14-digit migration-directory filter excluded deployed legacy `20260422_golden_ticket_and_browser_ingest`, yielding 106 instead of the actual 107 files.
+- Discovery now includes every actual migration directory. Exact 98 deployed SQL byte checks, the already-applied prior SQL hash, total 107, and eight new Vault-only migration assertions remain intact. Local discovery verification includes the legacy migration and confirms exactly eight additions; syntax/diff checks pass. Actual disposable PostgreSQL execution awaits the corrected CI run. No production database or provider effect occurred.
