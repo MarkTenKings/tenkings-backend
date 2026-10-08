@@ -990,8 +990,6 @@ test("OCR runtime maps Google and OpenAI failures to stable production categorie
 test("OCR runtime converts a GPT timeout into a Google-derived human-review result", async () => {
   const phases: string[] = [];
   const result = await runAiGraderOcrPrefillRuntime({
-    queueItemId: "timeout-review-queue-item",
-    gradingSessionId: "timeout-review-session",
     reportId: "timeout-review-report",
     images: [
       {
@@ -1060,8 +1058,6 @@ test("OCR runtime converts a GPT timeout into a Google-derived human-review resu
 
 test("OCR runtime converts an invalid GPT strict-schema result into the same conservative human-review boundary", async () => {
   const result = await runAiGraderOcrPrefillRuntime({
-    queueItemId: "schema-review-queue-item",
-    gradingSessionId: "schema-review-session",
     reportId: "schema-review-report",
     images: [
       {

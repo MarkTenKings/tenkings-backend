@@ -74,12 +74,17 @@ try {
   const port = Number(run('docker', ['inspect', '--format', '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}', name]));
   assert.ok(port > 1024 && port <= 65535);
   let ready = false;
-  for (let i = 0; i < 120; i++) {
-    const result = spawnSync('docker', ['exec', name, 'pg_isready', '-U', user, '-d', database], { env: environment, stdio: 'ignore' });
-    if (result.status === 0) { ready = true; break; }
+  const readinessDeadline = Date.now() + 30_000;
+  while (Date.now() < readinessDeadline) {
+    // The image's temporary initialization server accepts Unix-socket probes
+    // before POSTGRES_DB exists. Require a real query on the final TCP server.
+    const result = spawnSync('docker', ['exec', '--env', `PGPASSWORD=${password}`, name,
+      'psql', '-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', '127.0.0.1', '-U', user, '-d', database, '-c', 'SELECT 1;'],
+    { env: environment, encoding: 'utf8', timeout: 2_000 });
+    if (!result.error && result.status === 0 && result.stdout.trim() === '1') { ready = true; break; }
     await new Promise(r => setTimeout(r, 250));
   }
-  assert.ok(ready, 'Owned PostgreSQL must become ready');
+  assert.ok(ready, 'Owned PostgreSQL must serve its initialized database over TCP');
   const serverVersion = sql('SHOW server_version;');
   const serverVersionNumber = sql('SHOW server_version_num;');
   assert.equal(serverVersion, '17.11', 'Disposable PostgreSQL must match live server version');
