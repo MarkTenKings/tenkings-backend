@@ -134,6 +134,40 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual({p.name: a.sha(p) for p in self.snapshot.iterdir()}, before)
         with self.assertRaisesRegex(ValueError, 'must be new'): s.stage_snapshot(self.snapshot, out, self.sha, MACHINE)
 
+    def test_wal_restore_holds_and_receipt_survive_copying_only_manifested_database_bytes(self):
+        source = self.snapshot / 'vault.sqlite'
+        db = sqlite3.connect(source)
+        try: self.assertEqual(db.execute('PRAGMA journal_mode=WAL').fetchone(), ('wal',))
+        finally: db.close()
+        manifest = json.loads((self.snapshot / 'manifest.json').read_text())
+        for member in manifest['files']: member['sha256'] = a.sha(self.snapshot / member['file'])
+        (self.snapshot / 'manifest.json').write_text(json.dumps(manifest))
+        original = {path.name: path.read_bytes() for path in self.snapshot.iterdir()}
+        out = self.root / 'wal-restored'
+        # Delayed garbage collection must not determine whether WAL commits
+        # reach the standalone database before success/hashes are emitted.
+        connect = sqlite3.connect; retained = []
+        def delayed_finalization(*args, **kwargs):
+            connection = connect(*args, **kwargs); retained.append(connection)
+            self.addCleanup(connection.close)
+            return connection
+        with patch.object(s.sqlite3, 'connect', side_effect=delayed_finalization):
+            result = s.stage_snapshot(self.snapshot, out, a.sha(self.snapshot / 'manifest.json'), MACHINE)
+        # The receipt names standalone database/anchor bytes, not connection state
+        # or unmanifested WAL files. Verify exactly those bytes in a new directory.
+        isolated = self.root / 'database-only-copy'; isolated.mkdir()
+        for member in result['files']:
+            self.assertEqual(a.sha(out / member['file']), member['sha256'])
+            shutil.copyfile(out / member['file'], isolated / member['file'])
+        db = sqlite3.connect((isolated / 'vault.sqlite').as_uri() + '?mode=ro&immutable=1', uri=True)
+        try:
+            self.assertEqual(db.execute('SELECT service_locked,automation_halted,recovery_required,last_cloud_success_at FROM machine_meta').fetchone(), (1,1,1,None))
+            self.assertEqual(db.execute('SELECT value FROM original_facts').fetchone(), ('captured-sale-and-stock-unchanged',))
+        finally: db.close()
+        self.assertEqual({path.name for path in out.iterdir()}, {member['file'] for member in result['files']} | {s.RECEIPT})
+        self.assertEqual({path.name: path.read_bytes() for path in self.snapshot.iterdir()}, original)
+        self.assertEqual((out / 'vault.sqlite.spark-provider.sqlite').read_bytes(), original['vault.sqlite.spark-provider.sqlite'])
+
     def test_interrupted_staging_keeps_pending_marker_and_original(self):
         out = self.root / 'interrupted'; original = s.write_new
         def stop_at_main(path, data):
@@ -143,6 +177,51 @@ class SnapshotTests(unittest.TestCase):
             with self.assertRaises(OSError): s.stage_snapshot(self.snapshot, out, self.sha, MACHINE)
         self.assertTrue((out / s.PENDING).exists()); self.assertFalse((out / s.RECEIPT).exists())
         self.assertEqual(a.sha(self.snapshot / 'manifest.json'), self.sha)
+
+    def test_busy_wal_checkpoint_cannot_emit_success_or_remove_pending_marker(self):
+        source = self.snapshot / 'vault.sqlite'; db = sqlite3.connect(source)
+        try: db.execute('PRAGMA journal_mode=WAL')
+        finally: db.close()
+        manifest = json.loads((self.snapshot / 'manifest.json').read_text())
+        for member in manifest['files']: member['sha256'] = a.sha(self.snapshot / member['file'])
+        (self.snapshot / 'manifest.json').write_text(json.dumps(manifest))
+        before = {path.name: path.read_bytes() for path in self.snapshot.iterdir()}
+        out = self.root / 'busy-checkpoint'
+        # Establish a real busy WAL checkpoint result, then prove that this
+        # failure leaves staging incomplete rather than issuing success.
+        writer = sqlite3.connect(self.root / 'busy.sqlite'); reader = None
+        try:
+            writer.execute('PRAGMA journal_mode=WAL'); writer.execute('CREATE TABLE fact(value TEXT)')
+            writer.execute("INSERT INTO fact VALUES('original')"); writer.commit()
+            reader = sqlite3.connect(self.root / 'busy.sqlite'); reader.execute('BEGIN')
+            reader.execute('SELECT * FROM fact').fetchall()
+            writer.execute("INSERT INTO fact VALUES('later')"); writer.commit()
+            writer.execute('PRAGMA busy_timeout=0')
+            with self.assertRaisesRegex(ValueError, 'checkpoint incomplete') as failure: a.checkpoint_sqlite(writer)
+        finally:
+            if reader: reader.rollback(); reader.close()
+            writer.close()
+        with patch.object(a, 'checkpoint_sqlite', side_effect=failure.exception):
+            with self.assertRaisesRegex(ValueError, 'checkpoint incomplete'):
+                s.stage_snapshot(self.snapshot, out, a.sha(self.snapshot / 'manifest.json'), MACHINE)
+        self.assertTrue((out / s.PENDING).exists()); self.assertFalse((out / s.RECEIPT).exists())
+        self.assertEqual({path.name: path.read_bytes() for path in self.snapshot.iterdir()}, before)
+
+    def test_backup_of_active_wal_is_self_contained_with_exact_members(self):
+        writer = sqlite3.connect(self.state / 'vault.sqlite')
+        try:
+            writer.execute('PRAGMA journal_mode=WAL')
+            writer.execute("UPDATE original_facts SET value='committed-wal-fact'"); writer.commit()
+            with patch.object(a, 'STATE', self.state), patch.object(a, 'ETC', self.root / 'no-config'):
+                snapshot = a.snapshot_databases()
+            report = s.verify_snapshot(snapshot)
+            self.assertEqual(report['machineId'], MACHINE)
+            db = sqlite3.connect((snapshot / 'vault.sqlite').as_uri() + '?mode=ro&immutable=1', uri=True)
+            try: self.assertEqual(db.execute('SELECT value FROM original_facts').fetchone(), ('committed-wal-fact',))
+            finally: db.close()
+            manifest = json.loads((snapshot / 'manifest.json').read_text())
+            self.assertEqual({path.name for path in snapshot.iterdir()}, {member['file'] for member in manifest['files']} | {'manifest.json'})
+        finally: writer.close()
 
     def test_failed_upgrade_keeps_staged_hold_and_pending_marker(self):
         out = self.root / 'upgrade-failed'

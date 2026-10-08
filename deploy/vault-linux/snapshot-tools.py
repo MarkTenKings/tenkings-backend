@@ -5,6 +5,7 @@ Restore and schema upgrade are create-only. Every restored machine retains a
 technical recovery hold. No service, payment provider, or controller is started.
 """
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -97,7 +98,7 @@ def database_facts(directory, manifest):
     for name in sorted(member['file'] for member in manifest['files'] if a.journal_database_name(member['file'])):
         file = directory / name
         if not file.exists(): continue
-        with sqlite3.connect(file.as_uri() + '?mode=ro&immutable=1', uri=True) as db:
+        with contextlib.closing(sqlite3.connect(file.as_uri() + '?mode=ro&immutable=1', uri=True)) as db:
             db.execute('PRAGMA trusted_schema=OFF')
             a.need(db.execute('PRAGMA integrity_check').fetchall() == [('ok',)] and not db.execute('PRAGMA foreign_key_check').fetchall(), 'Snapshot database integrity failed')
             if name == 'vault.sqlite':
@@ -165,10 +166,15 @@ def stage_snapshot(directory, destination, expected_digest, expected_machine, up
     for name, data in sorted(blobs.items(), key=lambda item: item[0] == 'vault.sqlite'):
         write_new(destination / name, data)
     facts = database_facts(destination, manifest)
-    with sqlite3.connect(destination / 'vault.sqlite') as db:
+    # Only this derived main database is changed. Exclusive access and DELETE
+    # mode make its recovery holds portable without WAL/SHM; journals stay exact.
+    with contextlib.closing(sqlite3.connect(destination / 'vault.sqlite')) as db:
+        db.execute('PRAGMA locking_mode=EXCLUSIVE')
         db.execute('PRAGMA trusted_schema=OFF')
-        db.execute('UPDATE machine_meta SET service_locked=1,automation_halted=1,recovery_required=1,last_cloud_success_at=NULL WHERE singleton=1')
-        db.commit()
+        with db:
+            db.execute('UPDATE machine_meta SET service_locked=1,automation_halted=1,recovery_required=1,last_cloud_success_at=NULL WHERE singleton=1')
+        a.checkpoint_sqlite(db)
+        a.need(db.execute('PRAGMA journal_mode=DELETE').fetchone() == ('delete',), 'Staged database could not leave WAL mode')
     if upgrade:
         release, public_key = upgrade
         candidate = a.verify(release, public_key)
@@ -181,13 +187,20 @@ def stage_snapshot(directory, destination, expected_digest, expected_machine, up
                                 check=True, capture_output=True, text=True, timeout=120, env=env)
         receipt = parse(result.stdout)
         a.need(receipt.get('upgraded') is True and receipt.get('toSchema') == candidate['localSchemaVersion'], 'Offline migration did not confirm target schema')
+        with contextlib.closing(sqlite3.connect(destination / 'vault.sqlite')) as db:
+            db.execute('PRAGMA locking_mode=EXCLUSIVE')
+            a.checkpoint_sqlite(db)
+            a.need(db.execute('PRAGMA journal_mode=DELETE').fetchone() == ('delete',), 'Staged database could not leave WAL mode')
         operation['releaseId'] = candidate['releaseId']; operation['sourceCommit'] = candidate['sourceCommit']
         operation['targetSchemaVersion'] = candidate['localSchemaVersion']
     else: operation['targetSchemaVersion'] = facts['localSchemaVersion']
-    with sqlite3.connect((destination / 'vault.sqlite').as_uri() + '?mode=ro', uri=True) as db:
+    # Ignore WAL entirely: recovery authority must exist in the exact main bytes
+    # that will be hashed and copied, after all writer handles are closed.
+    with contextlib.closing(sqlite3.connect((destination / 'vault.sqlite').as_uri() + '?mode=ro&immutable=1', uri=True)) as db:
         a.need(db.execute('PRAGMA integrity_check').fetchall() == [('ok',)] and not db.execute('PRAGMA foreign_key_check').fetchall(), 'Staged database integrity failed')
         row = db.execute('SELECT schema_version,service_locked,automation_halted,recovery_required,last_cloud_success_at FROM machine_meta WHERE singleton=1').fetchone()
         a.need(row == (operation['targetSchemaVersion'], 1, 1, 1, None), 'Staged recovery hold missing')
+    a.need({entry.name for entry in destination.iterdir()} == set(blobs) | {PENDING}, 'Unexpected staged member; preserve pending state')
     operation['files'] = [{'file': name, 'sha256': a.sha(destination / name)} for name in sorted(blobs)]
     for name in blobs:
         with (destination / name).open('rb') as file: os.fsync(file.fileno())

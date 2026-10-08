@@ -378,6 +378,11 @@ PRODUCTION_DATABASE = re.compile(r'vault\.sqlite\.(spark|controller)-production-
 def journal_database_name(name):
     return isinstance(name, str) and (name in LEGACY_DATABASES or PRODUCTION_DATABASE.fullmatch(name) is not None)
 
+def checkpoint_sqlite(db):
+    # A manifest describes standalone database bytes, never an unlisted WAL.
+    result = db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+    need(result is not None and result[0] == 0 and result[1] == result[2], 'Database checkpoint incomplete; preserve pending state')
+
 def history_journals(db, tables):
     required = set()
     if 'sale_payment_binding' in tables:
@@ -402,7 +407,7 @@ def snapshot_databases():
     need(main.exists(), 'Machine database missing'); regular(main)
     required = {'vault.sqlite'}
     identity = {}
-    with sqlite3.connect(main.as_uri() + '?mode=ro', uri=True) as db:
+    with contextlib.closing(sqlite3.connect(main.as_uri() + '?mode=ro', uri=True)) as db:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if 'machine_meta' in tables:
             row = db.execute('SELECT machine_id,schema_version FROM machine_meta WHERE singleton=1').fetchone()
@@ -434,10 +439,11 @@ def snapshot_databases():
     for source in sources:
         regular(source)
         target = folder / source.name
-        with sqlite3.connect(source.as_uri() + '?mode=ro', uri=True) as src, sqlite3.connect(target) as dst:
+        with contextlib.closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True)) as src, contextlib.closing(sqlite3.connect(target)) as dst:
             need(src.execute('PRAGMA integrity_check').fetchone() == ('ok',), 'Source database integrity failed')
             src.backup(dst)
-            need(dst.execute('PRAGMA integrity_check').fetchone() == ('ok',), 'Backup integrity failed')
+        with contextlib.closing(sqlite3.connect(target.as_uri() + '?mode=ro&immutable=1', uri=True)) as saved:
+            need(saved.execute('PRAGMA integrity_check').fetchone() == ('ok',), 'Backup integrity failed')
         target.chmod(0o600)
         members.append({'file': source.name, 'sha256': sha(target)})
         anchor = Path(str(source) + '.anchor')
