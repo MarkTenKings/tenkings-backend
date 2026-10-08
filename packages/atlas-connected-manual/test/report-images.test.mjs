@@ -6,6 +6,7 @@ import { descriptorSha256 } from '@atlas/photo-core';
 import { digest, canonical } from '@atlas/manual-service/contract';
 import { parseReportImages } from '@atlas/report-view/report-images-contract';
 import { createReportImages, inspectReportImage } from '../src/report-images.mjs';
+import { createReportImageStore } from '../src/report-image-store.mjs';
 import { createReportImageProvider, REPORT_IMAGE_RECIPE, reportImageRecipeHash, reportImageJobKey } from '../src/report-image-provider.mjs';
 import { photo, working } from './review-display-fixture.mjs';
 
@@ -136,6 +137,36 @@ test('worker capacity is bounded, each durable ready result is reused on the nex
   const f = fixture({ count: 3 }); await f.service.tick(); assert.equal(f.generations, 2); assert.ok(f.peak <= 2);
   await f.service.tick(); assert.equal(f.generations, 3); await f.service.tick(); assert.equal(f.generations, 3);
   assert.equal(f.writes, 3); assert.equal(f.jobs.filter(x => x.state === 'READY').length, 3);
+});
+test('qualified image metadata survives the actual store serialization without changing image bytes or binary guards', async () => {
+  const f = fixture(); await f.service.tick(); const job = f.jobs[0], result = job.result;
+  assert.equal(result.output.alpha.pixelCount, 40 * 56); assert.equal(Object.hasOwn(result.output.alpha, 'pixels'), false);
+  const transactions = [];
+  const store = createReportImageStore({ boundary: { async machineTransaction(_authority, work) {
+    return work({ tx: { async $executeRawUnsafe(sql, ...args) { transactions.push({ sql, args }); return 1; } } });
+  } } });
+  assert.equal(await store.finish(job, { result }), true); assert.equal(transactions.length, 1);
+  const [, , state, document, sha256] = transactions[0].args;
+  assert.equal(state, 'READY'); assert.equal(digest(document), sha256); assert.deepEqual(JSON.parse(document), result);
+  assert.deepEqual((await f.service.image(f.row, f.packet, 'FRONT', digest(output))).bytes, output);
+  const oldAlpha = { ...result.output.alpha, pixels: result.output.alpha.pixelCount }; delete oldAlpha.pixelCount;
+  assert.throws(() => canonical({ ...result, output: { ...result.output, alpha: oldAlpha } }), { code: 'MANUAL_OBJECT_REFERENCE_REQUIRED' });
+  assert.throws(() => canonical({ pixels: [1, 2, 3] }), { code: 'MANUAL_OBJECT_REFERENCE_REQUIRED' });
+  await f.service.tick(); assert.equal(f.generations, 1);
+});
+test('read-only legacy alpha metadata remains readable but conflicting or invalid pixel counts are refused', async () => {
+  const f = fixture(); await f.service.tick(); const result = f.jobs[0].result;
+  const original = structuredClone(result.output.alpha);
+  result.output.alpha = { ...original, pixels: original.pixelCount }; delete result.output.alpha.pixelCount;
+  const legacy = structuredClone(result.output.alpha);
+  assert.deepEqual((await f.service.image(f.row, f.packet, 'FRONT', digest(output))).bytes, output);
+  assert.deepEqual(result.output.alpha, legacy);
+  for (const alpha of [{ ...original, pixelCount: 1 }, { ...original, pixelCount: '2240' },
+    { ...original, pixels: 1 }, { ...legacy, pixels: 1 }, { ...legacy, pixelCount: null }]) {
+    result.output.alpha = alpha;
+    await assert.rejects(f.service.image(f.row, f.packet, 'FRONT', digest(output)), { code: 'REPORT_IMAGE_BINDING_INVALID' });
+  }
+  assert.equal(f.generations, 1);
 });
 test('generated image reads remain bound to source, side, exact publication and output hash', async () => {
   const f = fixture(); await f.service.tick();

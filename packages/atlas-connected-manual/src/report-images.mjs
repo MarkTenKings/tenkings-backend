@@ -9,7 +9,10 @@ const SIDES = ['FRONT','BACK'];
 const safeCode = error => /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'REPORT_IMAGE_INTERRUPTED';
 const NEAR_OPAQUE_MIN = 250;
 function qualifiedAlpha(alpha, pixels) {
-  return alpha?.pixels === pixels && alpha.nearOpaqueMin === NEAR_OPAQUE_MIN
+  // Historical readers may have retained the old numeric field. New records
+  // use pixelCount: `pixels` is reserved for binary payloads by the store.
+  return (alpha?.pixelCount === pixels || alpha?.pixelCount === undefined && alpha?.pixels === pixels)
+    && (alpha?.pixels === undefined || alpha.pixels === pixels) && alpha.nearOpaqueMin === NEAR_OPAQUE_MIN
     && [alpha.transparentPixels,alpha.opaquePixels,alpha.nearOpaquePixels].every(value => Number.isSafeInteger(value) && value >= 0 && value <= pixels)
     && alpha.opaquePixels <= alpha.nearOpaquePixels && alpha.transparentPixels + alpha.nearOpaquePixels <= pixels
     && alpha.transparentPixels >= Math.ceil(pixels * 0.001) && alpha.nearOpaquePixels >= Math.ceil(pixels * 0.1);
@@ -30,8 +33,8 @@ export async function inspectReportImage(bytes) {
   // Actual provider cutouts can peak at 254 with a 252–253 foreground.
   // Measure that returned alpha without normalizing or changing any pixel.
   const alpha = { transparentPixels: transparent, opaquePixels: opaque, nearOpaquePixels: nearOpaque,
-    nearOpaqueMin: NEAR_OPAQUE_MIN, pixels: info.width * info.height };
-  requireThat(qualifiedAlpha(alpha, alpha.pixels), 503, 'REPORT_IMAGE_ALPHA_INVALID');
+    nearOpaqueMin: NEAR_OPAQUE_MIN, pixelCount: info.width * info.height };
+  requireThat(qualifiedAlpha(alpha, alpha.pixelCount), 503, 'REPORT_IMAGE_ALPHA_INVALID');
   return { width: info.width, height: info.height, sha256: digest(bytes), byteCount: bytes.length,
     contentType: 'image/png', alpha };
 }
