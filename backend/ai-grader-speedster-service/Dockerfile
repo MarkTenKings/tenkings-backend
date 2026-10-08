@@ -41,9 +41,14 @@ LABEL org.opencontainers.image.source=${SPEEDSTER_SOURCE_REPOSITORY} \
       io.tenkings.speedster.compiler.target=${SPEEDSTER_COMPILER_TARGET}
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir pycocotools==2.0.11 psutil==7.2.2
+# The full service suite also validates the exact CPU preparation package lock.
+# Constrain every shared runtime dependency without changing either artifact contract.
+COPY requirements.txt requirements.preparation.txt ./
+RUN pip install --no-cache-dir -c requirements.preparation.txt -r requirements.txt
+RUN pip install --no-cache-dir -c requirements.preparation.txt pycocotools==2.0.11 psutil==7.2.2
+# Keep the reviewed compiler packages available after Debian's live mirrors advance.
+# Snapshot expiry is scoped in this source file; archive signatures remain required.
+COPY debian.sources /etc/apt/sources.list.d/debian.sources
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       "gcc-14=${SPEEDSTER_COMPILER_PACKAGE_VERSION}" \
