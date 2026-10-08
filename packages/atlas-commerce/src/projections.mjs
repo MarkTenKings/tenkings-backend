@@ -19,13 +19,14 @@ const customerTerms = value => fields(value, ['days', 'clockStart', 'mailCharged
 export function customerQuote(value) {
     return { ...fields(value, ['id', 'draftId', 'draftRevision', 'channel', ...amounts, 'createdAt', 'expiresAt']),
         cards: customerCards(value?.cards), location: customerLocation(value?.location), terms: customerTerms(value?.terms),
-        shipping: array(value?.shipping).map(row => fields(row, ['leg', 'amountCents', 'currency', 'expiresAt'])) };
+        ...(value?.inboundPackage ? {inboundPackage:{weight:fields(value.inboundPackage.weight,['unit','value']),dimensions:fields(value.inboundPackage.dimensions,['unit','length','width','height'])}} : {}),
+        shipping: array(value?.shipping).map(row => fields(row, ['leg', 'amountCents', 'currency', 'expiresAt','provider','carrierName','serviceName'])) };
 }
 export function customerOrder(value) {
     if (!value) return null;
     return { ...fields(value, ['id', 'reference', 'paidAt']), receipt: customerQuote(value.receipt),
-        effects: array(value.effects).filter(effect => ['EMAIL_RECEIPT', 'SMS_RECEIPT', 'FEDEX_LABEL', 'PACKAGE_LABEL'].includes(effect.kind))
-            .map(effect => fields(effect, ['id', 'kind', 'state', 'trackingNumber', 'deliveryStatus', 'artifactState'])) };
+        effects: array(value.effects).filter(effect => ['EMAIL_RECEIPT', 'SMS_RECEIPT', 'FEDEX_LABEL','SHIPSTATION_LABEL', 'PACKAGE_LABEL'].includes(effect.kind))
+            .map(effect => fields(effect, ['id', 'kind', 'state', 'trackingNumber', 'deliveryStatus', 'artifactState','carrierName','serviceName'])) };
 }
 export function customerPayment(value, publishableKey) {
     if (!value) return null;
@@ -44,6 +45,6 @@ export function customerCheckout(value, { activePayment = customerPayment(value?
     return { version: 'atlas-commerce-checkout-v1', ...fields(value, ['draftId', 'revision', 'channel']), cards: customerCards(value?.cards),
         location: customerLocation(value?.location), activePayment,
         unitCents: unitCents ?? value.unitCents, turnaroundDays: turnaroundDays ?? value.turnaroundDays,
-        shippingOptions: array(value?.shippingOptions ?? value?.shippingPlans).map(row => fields(row, ['packingPresetId', 'shippingServiceCode', 'label', 'packaging'])), blockers,
+        shippingOptions: array(value?.shippingOptions ?? value?.shippingPlans).map(row => fields(row, ['packingPresetId', 'shippingServiceCode', 'label', 'packaging','carrierLabel','serviceLabel','inboundPackaging'])), blockers,
         ...(capacity ? { capacity } : {}) };
 }

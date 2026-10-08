@@ -1,11 +1,12 @@
 import { clone, requireValue } from './contract.mjs';
 import { validateShipmentPackage, validateShipmentParty } from './providers.mjs';
+import { SHIPSTATION_PLAN, validateShipStationShipment } from './shipstation.mjs';
 
 const instant = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
     && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const calendarDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
     && Number.isFinite(Date.parse(`${value}T00:00:00.000Z`)) && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
-function localDate(now, timeZone) {
+export function localDate(now, timeZone) {
     requireValue(typeof timeZone === 'string' && /^[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+$/.test(timeZone), 'SHIPPING_DATE_NOT_CONFIGURED', 503);
     try {
         const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -37,7 +38,8 @@ export function assertShipmentDate(request, now = new Date()) {
 /** One measured package per exact card count and direction. A range cannot
  * prove the packed weight of every count, and no weight is extrapolated. */
 export function assertShippingPlan(plan, cardCount, chargedLegs, now = new Date()) {
-    const stable = plan?.version === STABLE_PLAN;
+    const shipstation = plan?.version === SHIPSTATION_PLAN;
+    const stable = plan?.version === STABLE_PLAN || shipstation;
     requireValue((stable || plan?.version === 'atlas-measured-shipping-plan-v1')
         && typeof plan.packingPresetId === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(plan.packingPresetId)
         && typeof plan.shippingServiceCode === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/.test(plan.shippingServiceCode)
@@ -50,6 +52,14 @@ export function assertShippingPlan(plan, cardCount, chargedLegs, now = new Date(
     requireValue(['INBOUND_ONLY', 'BOTH_LEGS'].includes(chargedLegs), 'MAIL_SHIPPING_TERMS_NOT_CONFIGURED', 503);
     for (const leg of chargedLegs === 'BOTH_LEGS' ? ['INBOUND', 'RETURN'] : ['INBOUND']) {
         const template = plan.legs?.[leg];
+        if (shipstation) {
+            const shipment = validateShipStationShipment(template, {templateLeg:leg,customerMeasured:plan.inboundPackaging==='CUSTOMER_MEASURED'});
+            requireValue(plan.provider === 'SHIPSTATION' && plan.fulfillmentPolicy === 'INBOUND_AFTER_PAYMENT_RETURN_WHEN_PREPARED'
+                && ['CONFIGURED','CUSTOMER_MEASURED'].includes(plan.inboundPackaging)
+                && shipment.carrier_id === plan.carrierId && shipment.service_code === plan.serviceCode, 'SHIPPING_SERVICE_MISMATCH',503);
+            localDate(now, template.shipDateTimeZone);
+            continue;
+        }
         requireValue(stable ? nativePrintReturn(template) && !Object.hasOwn(template.requestedShipment, 'shipDatestamp')
             : template && !Object.hasOwn(template, 'labelDatePolicy'), 'SHIPPING_DATE_POLICY_INVALID', 503);
         const request = materializeShippingRequest(plan, leg, now), shipment = validateShipmentPackage(request?.requestedShipment);
@@ -66,6 +76,10 @@ export function assertShippingPlan(plan, cardCount, chargedLegs, now = new Date(
 /** Stable measured templates are reusable; each quote freezes its own rate date. */
 export function materializeShippingRequest(plan, leg, now = new Date()) {
     const request = clone(plan.legs?.[leg]);
+    if (plan.version === SHIPSTATION_PLAN) {
+        validateShipStationShipment(request,{templateLeg:leg,customerMeasured:plan.inboundPackaging==='CUSTOMER_MEASURED'});
+        request.shipment.ship_date = localDate(now,request.shipDateTimeZone);
+    }
     if (plan.version === STABLE_PLAN) {
         requireValue(nativePrintReturn(request) && !Object.hasOwn(request.requestedShipment, 'shipDatestamp'), 'SHIPPING_DATE_POLICY_INVALID', 503);
         request.requestedShipment.shipDatestamp = localDate(now, request.shipDateTimeZone);

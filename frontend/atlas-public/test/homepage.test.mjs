@@ -36,6 +36,10 @@ test('homepage retains ATLAS identity, real evidence, and honest archived status
  assert.equal(manifest.report.status,'ARCHIVED_APPROVED_SAMPLE');assert.equal(manifest.report.liveUrl,null);assert.equal(manifest.provenance.liveRecordRestored,false);
  assert.equal(manifest.report.finalGrade,9.5);assert.equal(manifest.report.findingCount,7);
  assert.equal(release.approvedReportCount,0);assert.equal(release.archivedSampleCount,1);
+ const service=html.match(/<article class="service-card service-card-mail[\s\S]*?<\/article>/)?.[0];assert(service);
+ assert(service.includes('Plus shipping'));assert(service.includes('choose an available carrier at checkout'));assert(service.includes('See your actual shipping quote before payment'));
+ assert(service.includes('<strong>$40</strong>'));assert(service.includes('<strong>2 weeks</strong>'));assert(service.includes('href="/account/submit?route=mail-in"'));
+ assert.doesNotMatch(service,/>FedEx in<|Plus FedEx shipping|Mail-in with FedEx|actual FedEx quote/);
 });
 test('complete content digest includes every dependency and all local references resolve',()=>{
  const hash=createHash('sha256').update('atlas-experience-v1\n').update(readFileSync(resolve(import.meta.dirname,'../scripts/build-homepage.mjs')));

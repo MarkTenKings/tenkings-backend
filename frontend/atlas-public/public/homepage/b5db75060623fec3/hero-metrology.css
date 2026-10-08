@@ -1,0 +1,19 @@
+/* Measurement geometry is authored in source/canonical coordinates. Labels stay
+   upright and legible because hero-metrology places its group in CSS pixels. */
+.hm-instruments{pointer-events:none;isolation:isolate}
+.hm-calipers{stroke:#adff64;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 2px #06140980)}
+.hm-extensions{stroke:#b7f98c;stroke-width:1;stroke-opacity:.72;stroke-dasharray:2 3;stroke-linecap:round}
+.hm-selected-region{stroke:#c4ff94;stroke-width:1.35;stroke-linejoin:round;stroke-opacity:.92}
+.hm-value rect{fill:#0b1b11;fill-opacity:.96;stroke:#83bc65;stroke-width:.8}
+.hm-value text{fill:#d0ffad;font-family:var(--atlas-mono,monospace);font-size:13px;font-weight:500;letter-spacing:.015em;paint-order:stroke}
+.hm-region-chip{pointer-events:auto;cursor:pointer;outline:none}
+.hm-region-chip rect{fill:#f5f9f1;fill-opacity:.97;stroke:#6d8069;stroke-width:1}
+.hm-region-chip text{fill:#27432b;font-family:var(--atlas-mono,monospace);font-size:10px;font-weight:500;letter-spacing:.025em}
+.hm-region-chip[aria-pressed=true] rect{fill:#122619;stroke:#b7f986;stroke-width:1.5}
+.hm-region-chip[aria-pressed=true] text{fill:#d0ffad}
+.hm-region-chip:hover rect,.hm-region-chip:focus-visible rect{stroke:#f4d494;stroke-width:2.5}
+/* For root's projected centering SVG. Root keeps label text in screen space. */
+.hm-physical-outline{fill:none;stroke:#d0fcb8;stroke-width:1.3;stroke-opacity:.92;vector-effect:non-scaling-stroke}
+.hm-printed-outline{fill:none;stroke:#79ff3b;stroke-width:1.2;stroke-opacity:.82;vector-effect:non-scaling-stroke}
+.hm-border-gap{fill:none;stroke:#b1ff78;stroke-width:1.5;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.hm-border-value{fill:#d0ffad;font-family:var(--atlas-mono,monospace);font-size:12px;font-weight:500;paint-order:stroke;stroke:#0b1510;stroke-width:4px;stroke-linejoin:round}

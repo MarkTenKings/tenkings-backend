@@ -14,8 +14,8 @@ export function ServiceSummary({ snapshot, saved = false }) {
     return <>
         <div className={styles.service}><strong>{kiosk ? 'Card-shop grading' : 'Mail-in grading'}{Number.isInteger(unitCents) ? ` · ${money(unitCents)} per card` : ''}</strong>
             <p>{duration && start ? `${duration} from ${start}.` : saved ? 'Saved turnaround terms are unavailable.' : kiosk ? 'One week from actual ATLAS collection.' : 'Two-week service. The start date is confirmed with your exact quote.'} {kiosk && 'Pickup and return included.'}</p>
-            {!kiosk && terms.mailChargedLegs === 'BOTH_LEGS' && <p>Shipping paid for the trip to ATLAS and the return trip.</p>}
-            {!kiosk && terms.mailChargedLegs === 'INBOUND_ONLY' && <p>Shipping paid for the trip to ATLAS only. Return shipping is not included in this payment.</p>}
+            {!kiosk && terms.mailChargedLegs === 'BOTH_LEGS' && <p>{saved?'Shipping paid for the trip to ATLAS and the return trip.':'Shipping includes the trip to ATLAS and the return trip.'} ATLAS handles return shipping after grading.</p>}
+            {!kiosk && terms.mailChargedLegs === 'INBOUND_ONLY' && <p>{saved?'Shipping paid for the trip to ATLAS only.':'Shipping includes the trip to ATLAS only.'} Return shipping is not included in this payment.</p>}
         </div>
         {location && <div className={styles.route}><strong>{location.name}</strong>
             <p>{Object.values(location.address ?? {}).filter(Boolean).join(', ')}</p>
@@ -30,10 +30,18 @@ export function ServiceSummary({ snapshot, saved = false }) {
 
 export function OrderAmounts({ snapshot, paid = false }) {
     const count = snapshot.cards?.length ?? 0;
-    return <dl className={styles.amounts}><div><dt>Grading · {count} {count === 1 ? 'card' : 'cards'}</dt><dd>{money(snapshot.subtotalCents)}</dd></div>
-        <div><dt>{snapshot.channel === 'KIOSK' ? 'Pickup and return' : 'FedEx shipping'}</dt><dd>{snapshot.channel === 'KIOSK' && snapshot.shippingCents === 0 ? 'Included' : money(snapshot.shippingCents)}</dd></div>
-        <div><dt>Tax</dt><dd>{money(snapshot.taxCents)}</dd></div><div className={styles.total}><dt>{paid ? 'Paid' : 'Total'}</dt><dd>{money(snapshot.totalCents)}</dd></div></dl>;
+    return <><ShippingSummary snapshot={snapshot}/><dl className={styles.amounts}><div><dt>Grading · {count} {count === 1 ? 'card' : 'cards'}</dt><dd>{money(snapshot.subtotalCents)}</dd></div>
+        <div><dt>{snapshot.channel === 'KIOSK' ? 'Pickup and return' : 'Shipping'}</dt><dd>{snapshot.channel === 'KIOSK' && snapshot.shippingCents === 0 ? 'Included' : money(snapshot.shippingCents)}</dd></div>
+        <div><dt>Tax</dt><dd>{money(snapshot.taxCents)}</dd></div><div className={styles.total}><dt>{paid ? 'Paid' : 'Total'}</dt><dd>{money(snapshot.totalCents)}</dd></div></dl></>;
 }
+
+export function ShippingSummary({ snapshot }) {
+    if(snapshot.channel!=='MAIL_IN'||!snapshot.shipping?.length)return null;
+    const parcel=snapshot.inboundPackage;
+    return <div className={styles.shippingSummary} aria-label="Selected shipping"><h3>Selected shipping</h3>{parcel&&<p className={styles.note}>Your package to ATLAS: {parcel.weight.value} {({ounce:'oz',pound:'lb',gram:'g',kilogram:'kg'})[parcel.weight.unit]} · {parcel.dimensions.length} × {parcel.dimensions.width} × {parcel.dimensions.height} {parcel.dimensions.unit==='inch'?'in':'cm'}</p>}<dl>{snapshot.shipping.map((leg,index)=><div key={`${leg.leg}:${index}`}><dt>{({INBOUND:'Your cards → ATLAS',RETURN:'ATLAS → your address'})[leg.leg]??'Shipping'}<small>{[leg.carrierName,leg.serviceName].filter(Boolean).join(' · ') || 'Saved shipping service'}</small></dt><dd>{money(leg.amountCents)}</dd></div>)}</dl></div>;
+}
+
+const shippingProvider = effect => ({FEDEX_LABEL:'fedex',SHIPSTATION_LABEL:'shipstation'})[effect.kind];
 
 export function deliveryLabel(effect) {
     if (effect.state === 'UNKNOWN') return 'Checking status';
@@ -45,9 +53,10 @@ export function deliveryLabel(effect) {
 export function shippingLabelLeg(effect, orderId) {
     // The persisted effect identity binds the shipment leg to this paid order.
     // Do not guess a direction for an unfamiliar legacy/provider identifier.
-    if (effect.kind !== 'FEDEX_LABEL' || !orderId) return null;
+    const provider=shippingProvider(effect);
+    if (!provider || !orderId) return null;
     for (const leg of ['INBOUND', 'RETURN']) {
-        if (effect.id === `${orderId}:fedex:${leg}:v1`) return leg;
+        if (effect.id === `${orderId}:${provider}:${leg}:v1` && (!effect.leg||effect.leg===leg)) return leg;
     }
     return null;
 }
@@ -68,7 +77,7 @@ export default function OrderReceipt({ initialOrder = null, orderId = initialOrd
     }
     async function downloadLabel(effect) {
         await work(async () => {
-            if (effect.kind === 'FEDEX_LABEL' && shippingLabelLeg(effect, order.id) !== 'INBOUND') throw Error('LABEL_DIRECTION_UNAVAILABLE');
+            if (shippingProvider(effect) && shippingLabelLeg(effect, order.id) !== 'INBOUND') throw Error('LABEL_DIRECTION_UNAVAILABLE');
             const label = await request(`/commerce/orders/${order.id}/labels/${encodeURIComponent(effect.id)}`);
             if (label.mimeType !== 'application/pdf' || typeof label.labelBase64 !== 'string') throw Error('LABEL_NOT_READY');
             const bytes = Uint8Array.from(atob(label.labelBase64), c => c.charCodeAt(0));
@@ -76,7 +85,7 @@ export default function OrderReceipt({ initialOrder = null, orderId = initialOrd
             const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
             if (hash !== label.labelSha256) throw Error('LABEL_NOT_READY');
             const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })), anchor = document.createElement('a');
-            anchor.href = url; anchor.download = `${order.reference}-${effect.kind === 'FEDEX_LABEL' ? 'ship-to-ATLAS' : 'package'}.pdf`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+            anchor.href = url; anchor.download = `${order.reference}-${shippingProvider(effect) ? 'ship-to-ATLAS' : 'package'}.pdf`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
         });
     }
     const kiosk = order?.receipt?.channel === 'KIOSK';
@@ -87,15 +96,15 @@ export default function OrderReceipt({ initialOrder = null, orderId = initialOrd
             {kiosk && <CustomerHandoff orderId={order.id} request={request}/>}
             <h3>{kiosk ? 'Ready for your shop handoff' : 'Prepare your shipment'}</h3>
             <p>Protect each card in a sleeve and card holder. Keep the cards together in a secure package and include your order number.</p>
-            <p>{kiosk ? 'Show your handoff code to staff at your selected card shop. They will check every card and confirm receipt. ATLAS collection is recorded separately.' : 'Your FedEx label is prepared after payment. Use the package size selected at checkout. Print and attach the saved label when it is ready.'}</p>
-            <ul className={styles.deliveries}>{(order.effects ?? []).filter(effect => ['EMAIL_RECEIPT', 'SMS_RECEIPT', 'FEDEX_LABEL', 'PACKAGE_LABEL'].includes(effect.kind)).map(effect => {
-                const leg = shippingLabelLeg(effect, order.id), carrier = effect.kind === 'FEDEX_LABEL';
-                const label = carrier ? leg === 'INBOUND' ? 'Ship your cards to ATLAS' : leg === 'RETURN' ? 'Return shipping from ATLAS' : 'FedEx label · direction unavailable'
+            <p>{kiosk ? 'Show your handoff code to staff at your selected card shop. They will check every card and confirm receipt. ATLAS collection is recorded separately.' : 'Your shipping label is prepared after payment. Use the package size and carrier selected at checkout. Print and attach the saved label when it is ready.'}</p>
+            <ul className={styles.deliveries}>{(order.effects ?? []).filter(effect => ['EMAIL_RECEIPT', 'SMS_RECEIPT', 'FEDEX_LABEL', 'SHIPSTATION_LABEL', 'PACKAGE_LABEL'].includes(effect.kind)).map(effect => {
+                const leg = shippingLabelLeg(effect, order.id), carrier = Boolean(shippingProvider(effect));
+                const label = carrier ? leg === 'INBOUND' ? 'Ship your cards to ATLAS' : leg === 'RETURN' ? 'Return shipping from ATLAS' : 'Shipping label · direction unavailable'
                     : { EMAIL_RECEIPT: 'Email receipt', SMS_RECEIPT: 'Text receipt', PACKAGE_LABEL: 'Package label' }[effect.kind];
-                return <li key={effect.id}><span>{label}</span>
+                return <li key={effect.id}><span>{label}{carrier&&effect.carrierName&&<small className={styles.carrierName}>{[effect.carrierName,effect.serviceName].filter(Boolean).join(' · ')}</small>}</span>
                     {effect.state === 'SUCCEEDED' && (effect.kind === 'PACKAGE_LABEL' || leg === 'INBOUND')
                         ? <button className={styles.secondary} disabled={busy} onClick={() => downloadLabel(effect)}>{carrier ? 'Download label to ATLAS' : 'Download label'}</button>
-                        : <span>{carrier && effect.state === 'SUCCEEDED' ? leg === 'RETURN' ? 'ATLAS uses this label after grading' : 'Contact support for this label' : deliveryLabel(effect)}</span>}</li>;
+                        : <span>{carrier && effect.state === 'SUCCEEDED' ? leg === 'RETURN' ? 'ATLAS uses this label after grading' : 'Contact support for this label' : carrier && leg==='RETURN' && effect.state==='PENDING' ? 'ATLAS prepares this after grading' : deliveryLabel(effect)}</span>}</li>;
             })}</ul>
             <p className={styles.note}>Payment does not confirm physical drop-off, mailing or arrival at ATLAS. Downloading a label does not confirm it has been printed.</p></> : !error && <p role="status">Loading your saved receipt…</p>}
         <button className={styles.secondary} disabled={busy} onClick={() => work(async () => setOrder(await request(`/commerce/orders/${orderId}`)))}>Refresh receipt and labels</button>

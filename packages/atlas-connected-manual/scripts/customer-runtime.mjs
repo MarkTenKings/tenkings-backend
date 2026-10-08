@@ -148,6 +148,12 @@ export function createServingCustomerService({ env, Client, onEvent = () => {} }
     for (const effect of recoveries.effects ?? []) {
       try { await workerCommerce.reconcileEffect(effect); } catch (error) { firstError ??= error; }
     }
+    if (env.ATLAS_COMMERCE_SHIPSTATION_TRACKING_ENABLED === 'true') {
+      const tracking = await workerCommerce.repository.call('commerce_trackable_effects', {});
+      for (const effect of tracking.effects ?? []) {
+        try { await workerCommerce.trackEffect(effect); } catch (error) { firstError ??= error; }
+      }
+    }
     if (firstError) throw firstError;
   });
   return { handler, binding: settings.binding,

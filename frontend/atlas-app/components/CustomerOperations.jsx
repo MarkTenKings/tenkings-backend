@@ -47,12 +47,14 @@ export function Operations({ staff }) {
       await journalLock(navigator, store.key, async () => {
         let saved = store.read(), isNew = !saved, attempted = false, accepted = false;
         if (!retry && saved) { setPending(saved); throw new Error('Resolve the retained operation before recording another.'); }
-        if (retry && (!saved || saved.acknowledged || !['custody', 'bind-manual'].includes(saved.action))) throw new Error('Refresh saved status to reconcile this operation.');
+        if (retry && (!saved || saved.acknowledged || !['custody', 'bind-manual', 'prepare-return-label'].includes(saved.action))) throw new Error('Refresh saved status to reconcile this operation.');
         try {
           const session = await freshSession();
           if (isNew) { saved = { version: 1, staffId: staff.id, action, input, ...metadata, createdAt: new Date().toISOString(), acknowledged: false }; store.save(saved); setPending(saved); }
           attempted = true;
-          await api(`${base}/${saved.action}`, { body: saved.input, csrf: session.csrf });
+          const path=saved.action==='prepare-return-label'?`${base}/orders/${saved.input.orderId}/return-label`:`${base}/${saved.action}`;
+          const body=saved.action==='prepare-return-label'?{requestId:saved.input.requestId}:saved.input;
+          await api(path, { body, csrf: session.csrf });
           accepted = true; saved = { ...saved, acknowledged: true }; store.save(saved); setPending(saved);
           await reconcile(store, saved);
         } catch (e) {
@@ -76,10 +78,10 @@ export function Operations({ staff }) {
     <header className={styles.heading}><div><p className={styles.eyebrow}>Customer submissions</p><h1>Customer operations</h1><p>Record custody, connect received cards to grading, and manage kiosk access.</p></div><button type="button" disabled={busy} onClick={() => pending ? checkSaved() : resource.reload()}>Refresh records</button></header>
     {error && <p className={styles.error} role="alert">{error}</p>}{message && <p className={styles.notice} role="status">{message}</p>}
     {pending && <section className={styles.pending} aria-label="Retained operation"><h2>{pending.acknowledged ? 'Action accepted · checking saved record' : 'An operation needs reconciliation'}</h2><p>This browser retains the exact {pending.action.replaceAll('-', ' ')} request. New actions are locked until it is reconciled.</p>
-      {pending.input.cardId && <p>Customer card <code>{pending.input.cardId}</code></p>}{pending.input.requestId && <p>Request <code>{pending.input.requestId}</code></p>}
+      {pending.input.orderId && <p>Paid order <code>{pending.input.orderId}</code></p>}{pending.input.cardId && <p>Customer card <code>{pending.input.cardId}</code></p>}{pending.input.requestId && <p>Request <code>{pending.input.requestId}</code></p>}
       {pending.action === 'custody' && <p>{custodyNames[pending.input.kind]} · {date(pending.input.occurredAt)} · Evidence: {pending.input.evidence.reference}</p>}
-      <div className={styles.actions}><button type="button" disabled={busy} onClick={checkSaved}>Check saved status</button>{!pending.acknowledged && ['custody', 'bind-manual'].includes(pending.action) && <button type="button" disabled={busy || resource.loading || !resource.session} onClick={() => runAction(null, null, {}, true)}>Retry exact saved request</button>}<a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">Sign in again in another tab</a></div>
-      {!['custody', 'bind-manual'].includes(pending.action) && <p>Setup changes are not resubmitted automatically. If a fresh read cannot resolve this record, keep the journal and contact an administrator.</p>}
+      <div className={styles.actions}><button type="button" disabled={busy} onClick={checkSaved}>Check saved status</button>{!pending.acknowledged && ['custody', 'bind-manual', 'prepare-return-label'].includes(pending.action) && <button type="button" disabled={busy || resource.loading || !resource.session} onClick={() => runAction(null, null, {}, true)}>Retry exact saved request</button>}<a href={STAFF_REAUTHENTICATE_PATH} target="_blank" rel="noreferrer">Sign in again in another tab</a></div>
+      {!['custody', 'bind-manual', 'prepare-return-label'].includes(pending.action) && <p>Setup changes are not resubmitted automatically. If a fresh read cannot resolve this record, keep the journal and contact an administrator.</p>}
     </section>}
     <nav className={styles.tabs} aria-label="Customer operations sections">{[['orders', 'Paid submissions'], ['locations', 'Kiosk setup'], ['memberships', 'Dealer access']].map(([key, label]) => <button type="button" key={key} aria-current={tab === key ? 'page' : undefined} onClick={() => setTab(key)}>{label}</button>)}</nav>
     {resource.loading ? <p role="status">Loading current staff records…</p> : resource.error ? <div className={styles.panel}><p role="alert">{resource.error}</p><button type="button" onClick={resource.reload}>Try reading again</button>{resource.signedOut && <p><a href={STAFF_REAUTHENTICATE_PATH}>Sign in again</a></p>}</div> : !resource.data ? <p>No verified staff roster is available.</p> : <>
@@ -92,10 +94,10 @@ export function Operations({ staff }) {
 
 export function OrderRoster({ data, disabled, readDisabled, onAction }) {
   if (!data.orders?.length) return <section className={styles.empty}><h2>No paid customer submissions yet</h2><p>Confirmed paid orders will appear here with their individual cards.</p></section>;
-  return <div className={styles.orders}><p className={styles.small}>Showing up to 100 recent paid submissions.</p>{data.orders.map(order => <section className={styles.order} key={order.id}><header className={styles.orderHeading}><div><p className={styles.eyebrow}>Paid submission</p><h2>{order.reference}</h2></div><p>{order.cards?.length ?? 0} cards · Paid {date(order.paidAt)}</p></header><ReturnShippingLabel order={order} disabled={readDisabled}/>{!order.cards?.length ? <p>No card roster was returned for this order.</p> : order.cards.map(card => <CustodyCard key={card.cardId} card={card} manualCards={data.manualCards ?? []} disabled={disabled} onAction={onAction}/>)}</section>)}</div>;
+  return <div className={styles.orders}><p className={styles.small}>Showing up to 100 recent paid submissions.</p>{data.orders.map(order => <section className={styles.order} key={order.id}><header className={styles.orderHeading}><div><p className={styles.eyebrow}>Paid submission</p><h2>{order.reference}</h2></div><p>{order.cards?.length ?? 0} cards · Paid {date(order.paidAt)}</p></header><ReturnShippingLabel order={order} disabled={readDisabled} prepareDisabled={disabled} onPrepare={onAction}/>{!order.cards?.length ? <p>No card roster was returned for this order.</p> : order.cards.map(card => <CustodyCard key={card.cardId} card={card} manualCards={data.manualCards ?? []} disabled={disabled} onAction={onAction}/>)}</section>)}</div>;
 }
 
-export function ReturnShippingLabel({ order, disabled }) {
+export function ReturnShippingLabel({ order, disabled, prepareDisabled, onPrepare }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), running = useRef(false);
   if (!order.returnShipping) return null;
   async function download() {
@@ -111,7 +113,8 @@ export function ReturnShippingLabel({ order, disabled }) {
     finally { running.current = false; setBusy(false); }
   }
   return <section className={styles.panel} aria-label="Return shipping from ATLAS"><h3>Return shipping · ATLAS to customer</h3><p>Use this label for the graded cards returning to the customer. Record the actual mailing separately in each card’s custody history.</p>
-    {order.returnShipping.state === 'SUCCEEDED' ? <button type="button" disabled={disabled || busy} onClick={download}>{busy ? 'Reading saved label…' : 'Download return-to-customer label'}</button> : <p role="status">The return label is not ready. Refresh records to check its saved status.</p>}
+    {order.returnShipping.canPrepare===true && <><p>All cards are received and approved. Prepare the return label when the graded cards are packed and ready to send. This queues one label and does not record mailing.</p><button type="button" disabled={prepareDisabled || busy || !onPrepare} onClick={() => onPrepare('prepare-return-label',{orderId:order.id,requestId:crypto.randomUUID()})}>Prepare return label</button></>}
+    {order.returnShipping.state === 'SUCCEEDED' ? <button type="button" disabled={disabled || busy} onClick={download}>{busy ? 'Reading saved label…' : 'Download return-to-customer label'}</button> : !order.returnShipping.canPrepare && <p role="status">{order.returnShipping.state==='UNKNOWN'?'The return label is not ready. The original request needs reconciliation; do not create another label.':order.returnShipping.state==='FAILED'?'The return label is not ready. Preparation needs attention; contact an administrator.':order.returnShipping.prepared===true?'The return label is being prepared. Refresh records to check its saved status.':'The return label is not ready. ATLAS prepares it after all cards are received and grading is approved.'}</p>}
     {error && <p className={styles.error} role="alert">{error}</p>}
   </section>;
 }

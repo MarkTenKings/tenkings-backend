@@ -260,3 +260,13 @@ test('maximum saved PDF traverses actual private host and browser reader; unsign
   const unsigned = await fetch(host + route); assert.equal(unsigned.status, 401); assert.equal(reads, 1);
   const denied = response(); await proxy(request({ method: 'GET', url: route, body: undefined, headers: { ...request().headers, cookie: 'forged' } }), denied); assert.equal(denied.statusCode, 401); assert.equal(reads, 1);
 });
+
+test('return preparation JSON crosses signed private host once and remains separate from binary GET',async t=>{
+  const {randomUUID}=await import('node:crypto'),requestId=randomUUID(),route=`/api/staff/manual-connected/dealer-operations/orders/${card}/return-label`,principal={};let preparations=0;
+  const server=createPrivateManualServer({origin,key,boundary:{async authenticate(cookie,csrf){assert.equal(cookie,request().headers.cookie);assert.equal(csrf,request().headers['x-atlas-csrf']);return principal;}},connected:{workflow:{},intake:{},dealerOperations:{async call(actor,action,input){assert.equal(actor,principal);assert.equal(action,'prepare_return_label');assert.deepEqual(input,{orderId:card,requestId});preparations++;return{orderId:card,requestId,state:'PENDING',prepared:true};}}}});
+  server.listen(0,'127.0.0.1');await once(server,'listening');t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));});
+  const host=`http://127.0.0.1:${server.address().port}`,proxy=createManualServiceProxy({origin:'https://private.test',key,fetchImpl:(url,init)=>fetch(host+new URL(url).pathname,init)});
+  const accepted=response();await proxy(request({url:route,body:{requestId}}),accepted);assert.equal(accepted.statusCode,200);assert.deepEqual(JSON.parse(accepted.bytes),{orderId:card,requestId,state:'PENDING',prepared:true});assert.equal(preparations,1);
+  const noCsrf=response();await proxy(request({url:route,body:{requestId},headers:{...request().headers,'x-atlas-csrf':''}}),noCsrf);assert.equal(noCsrf.statusCode,403);assert.equal(preparations,1);
+  const tampered=response();await proxy(request({url:route,body:{requestId,shipDate:'2050-01-01'}}),tampered);assert.equal(tampered.statusCode,400);assert.equal(preparations,1);
+});

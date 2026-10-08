@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { COMMERCE_KEYS } from '../src/config.mjs';
+import { COMMERCE_KEYS, createCommerceProviders } from '../src/config.mjs';
 import { inspectCommerceConfiguration } from '../src/readiness.mjs';
 
 function settings() {
     const env = Object.fromEntries(COMMERCE_KEYS.map(key => [key, 'PRIVATE_FIXTURE_VALUE_NEVER_PRINT']));
+    for(const key of ['ATLAS_COMMERCE_SHIPPING_PROVIDER','ATLAS_COMMERCE_SHIPSTATION_API_KEY','ATLAS_COMMERCE_SHIPSTATION_ENVIRONMENT'])delete env[key];
     return { ...env, ATLAS_COMMERCE_ENABLED: 'true', ATLAS_COMMERCE_CONFIG_HASH: 'a'.repeat(64),
         ATLAS_COMMERCE_PROVIDER: 'STRIPE', ATLAS_COMMERCE_MODE: 'TEST',
         ATLAS_COMMERCE_STRIPE_ACCOUNT_ID: 'acct_fixture', ATLAS_COMMERCE_STRIPE_SECRET_KEY: 'sk_test_PRIVATE_FIXTURE',
@@ -23,7 +24,7 @@ test('absent settings remain cold and report only key names', () => {
     const result = inspectCommerceConfiguration({ UNRELATED_SECRET: 'do-not-read' });
     assert.equal(result.status, 'COLD');
     assert.equal(result.adaptersValid, false);
-    assert.equal(result.missing.length, COMMERCE_KEYS.length - 1);
+    assert.equal(result.missing.length, COMMERCE_KEYS.length - 4);
     assert.doesNotMatch(JSON.stringify(result), /do-not-read|UNRELATED_SECRET/);
 });
 
@@ -90,4 +91,16 @@ test('restricted Stripe key readiness accepts matching modes but remains cold un
         assert.deepEqual(mismatch.invalid, ['ATLAS_COMMERCE_STRIPE_SECRET_KEY']);
         assert.doesNotMatch(JSON.stringify(mismatch), /PRIVATE_FIXTURE/);
     }
+});
+
+
+test('ShipStation can qualify without FedEx credentials; legacy FedEx adapter remains routed independently when retained',()=>{
+    const env={...settings(),ATLAS_COMMERCE_SHIPPING_PROVIDER:'SHIPSTATION',ATLAS_COMMERCE_SHIPSTATION_API_KEY:'TEST_abcdefghijklmnopqrstuvwxyz',ATLAS_COMMERCE_SHIPSTATION_ENVIRONMENT:'SANDBOX'};
+    for(const key of COMMERCE_KEYS.filter(k=>k.includes('_FEDEX_')))delete env[key];
+    const ready=inspectCommerceConfiguration(env);assert.equal(ready.status,'READY_FOR_PROVIDER_QUALIFICATION');assert.deepEqual(ready.missing,[]);assert.deepEqual(ready.invalid,[]);
+    const providers=createCommerceProviders(env,{fetchImpl:()=>{throw Error('NETWORK_FORBIDDEN');}});assert.equal(providers.carrier.provider,'SHIPSTATION');assert.equal(providers.carriers.FEDEX,null);
+    const both=createCommerceProviders({...settings(),...env},{fetchImpl:()=>{throw Error('NETWORK_FORBIDDEN');}});assert(both.carriers.FEDEX);assert.equal(both.carriers.SHIPSTATION,both.carrier);
+    assert.equal(inspectCommerceConfiguration({...env,ATLAS_COMMERCE_SHIPSTATION_API_KEY:''}).status,'INCOMPLETE');
+    assert.deepEqual(inspectCommerceConfiguration({...env,ATLAS_COMMERCE_SHIPSTATION_ENVIRONMENT:'PRODUCTION'}).invalid,['ATLAS_COMMERCE_SHIPSTATION_ENVIRONMENT']);
+    assert.doesNotMatch(JSON.stringify(ready),/TEST_|abcdefghijklmnopqrstuvwxyz/);
 });

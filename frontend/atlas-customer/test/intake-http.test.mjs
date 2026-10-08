@@ -112,3 +112,10 @@ test('private directory filters ZIP and city, sorts by location, and preserves o
   assert.equal((await services.directory({ query: 'roseville' })).dealerContacts.length, 1);
   assert.deepEqual(locations.map(row => row.id), ['north-fixture', 'south-fixture']);
 });
+
+test('actual inbound package measurements pass without accepting private shipping or price authority',async()=>{
+  const f=fixture(),draftId=randomUUID(),inboundPackage={weight:{unit:'ounce',value:7.25},dimensions:{unit:'inch',length:8,width:6,height:2}},input={draftId,expectedRevision:4,packingPresetId:'measured',shippingServiceCode:'usps_ground_advantage',inboundPackage};
+  assert.equal((await f.run('/api/customer/commerce/quotes',input)).statusCode,200);assert.deepEqual(f.calls[0].input,input);
+  for(const parcel of [null,[],{...inboundPackage,carrierId:'forged'},{...inboundPackage,weight:{unit:'ounce',value:'7.25'}},{...inboundPackage,weight:{unit:'ounce',value:0}},{...inboundPackage,weight:{unit:'invalid',value:1}},{...inboundPackage,dimensions:{...inboundPackage.dimensions,height:-1}},{...inboundPackage,dimensions:{...inboundPackage.dimensions,insurance:1000}},{...inboundPackage,dimensions:{...inboundPackage.dimensions,unit:'meter'}}])assert.equal((await f.run('/api/customer/commerce/quotes',{...input,inboundPackage:parcel})).statusCode,400);
+  assert.equal(f.calls.length,1);
+});

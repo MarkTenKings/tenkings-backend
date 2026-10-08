@@ -118,9 +118,15 @@ export function createHandler(resolveRuntime) {
                         body = await auth.call(cookieHeader, 'commerce_label', { orderId: match[1], effectId });
                     } else if (path === '/api/customer/commerce/quotes') {
                         const input = req.body;
-                        if (!input || typeof input !== 'object' || Array.isArray(input) || !['draftId', 'expectedRevision'].every(key => Object.hasOwn(input, key)) || Object.keys(input).some(key => !['draftId', 'expectedRevision', 'packingPresetId', 'shippingServiceCode'].includes(key)) || !UUID.test(input.draftId ?? '')) deny(400, 'INVALID_REQUEST');
+                        if (!input || typeof input !== 'object' || Array.isArray(input) || !['draftId', 'expectedRevision'].every(key => Object.hasOwn(input, key)) || Object.keys(input).some(key => !['draftId', 'expectedRevision', 'packingPresetId', 'shippingServiceCode', 'inboundPackage'].includes(key)) || !UUID.test(input.draftId ?? '')) deny(400, 'INVALID_REQUEST');
                         revision(input.expectedRevision);
                         for (const field of ['packingPresetId', 'shippingServiceCode']) if (Object.hasOwn(input, field) && (typeof input[field] !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(input[field]))) deny(400, 'INVALID_REQUEST');
+                        if (Object.hasOwn(input,'inboundPackage')) {
+                            const parcel=input.inboundPackage;
+                            keys(parcel,['weight','dimensions']);keys(parcel.weight,['unit','value']);keys(parcel.dimensions,['unit','length','width','height']);
+                            if (!['ounce','pound','gram','kilogram'].includes(parcel.weight.unit) || !['inch','centimeter'].includes(parcel.dimensions.unit)
+                                || ![parcel.weight.value,parcel.dimensions.length,parcel.dimensions.width,parcel.dimensions.height].every(value=>typeof value==='number'&&Number.isFinite(value)&&value>0)) deny(400,'INVALID_REQUEST');
+                        }
                         body = await invoke('quote', input);
                     } else if (path === '/api/customer/commerce/payments') {
                         keys(req.body, ['quoteId', 'requestId']);

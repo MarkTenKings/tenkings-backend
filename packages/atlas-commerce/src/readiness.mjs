@@ -4,11 +4,15 @@ import { COMMERCE_KEYS, createCommerceProviders } from './config.mjs';
 // sender approval, measured packages and historical Terminal equipment remain unverified.
 export function inspectCommerceConfiguration(env = {}, { channel = 'ALL' } = {}) {
     if (!['ALL', 'MAIL_IN', 'KIOSK'].includes(channel)) throw new TypeError('Invalid commerce readiness channel');
-    const mailKeys = new Set(COMMERCE_KEYS.filter(key => key.includes('_FEDEX_') || key.includes('_MAIL_')));
+    const shippingProvider=env.ATLAS_COMMERCE_SHIPPING_PROVIDER??'FEDEX';
+    const inactiveCarrierKey=key => key==='ATLAS_COMMERCE_SHIPPING_PROVIDER' && !env[key]
+        || shippingProvider==='SHIPSTATION' && key.includes('_FEDEX_') && !env[key]
+        || shippingProvider==='FEDEX' && key.includes('_SHIPSTATION_') && !env[key];
+    const mailKeys = new Set(COMMERCE_KEYS.filter(key => key.includes('_FEDEX_') || key.includes('_MAIL_') || key.includes('_SHIPSTATION_') || key==='ATLAS_COMMERCE_SHIPPING_PROVIDER'));
     const enabled = env.ATLAS_COMMERCE_ENABLED === 'true';
     const smsDisabled = env.ATLAS_COMMERCE_SMS_PROVIDER === 'DISABLED';
     const inactiveSmsKey = key => smsDisabled && key.startsWith('ATLAS_COMMERCE_SMS_') && key !== 'ATLAS_COMMERCE_SMS_PROVIDER';
-    const missing = COMMERCE_KEYS.filter(key => key !== 'ATLAS_COMMERCE_ENABLED' && !inactiveSmsKey(key) && !env[key] && !(channel === 'KIOSK' && mailKeys.has(key)));
+    const missing = COMMERCE_KEYS.filter(key => key !== 'ATLAS_COMMERCE_ENABLED' && !inactiveSmsKey(key) && !inactiveCarrierKey(key) && !env[key] && !(channel === 'KIOSK' && mailKeys.has(key)));
     const invalid = [];
     const check = (key, valid) => { if (env[key] && !inactiveSmsKey(key) && !(channel === 'KIOSK' && key.includes('_MAIL_')) && !valid(env[key])) invalid.push(key); };
     const oneOf = (...values) => value => values.includes(value);
@@ -27,6 +31,9 @@ export function inspectCommerceConfiguration(env = {}, { channel = 'ALL' } = {})
     check('ATLAS_COMMERCE_TAX_SOURCING_POLICY', oneOf('MAIL_RETURN_ADDRESS_KIOSK_LOCATION'));
     check('ATLAS_COMMERCE_FEDEX_ACCOUNT_NUMBER', value => /^\d{6,12}$/.test(value));
     check('ATLAS_COMMERCE_FEDEX_ENVIRONMENT', oneOf(mode === 'LIVE' ? 'PRODUCTION' : 'SANDBOX'));
+    check('ATLAS_COMMERCE_SHIPPING_PROVIDER',oneOf('FEDEX','SHIPSTATION'));
+    check('ATLAS_COMMERCE_SHIPSTATION_ENVIRONMENT',oneOf(mode === 'LIVE' ? 'PRODUCTION' : 'SANDBOX'));
+    check('ATLAS_COMMERCE_SHIPSTATION_API_KEY',value=>typeof value==='string' && value.length>=20 && !/\s/.test(value) && (mode!=='LIVE')===value.startsWith('TEST_'));
     check('ATLAS_COMMERCE_MAIL_CLOCK_START', oneOf('ATLAS_RECEIPT'));
     check('ATLAS_COMMERCE_MAIL_CHARGED_LEGS', oneOf('INBOUND_ONLY', 'BOTH_LEGS'));
     check('ATLAS_COMMERCE_EMAIL_PROVIDER', oneOf('SENDGRID'));
@@ -51,7 +58,7 @@ export function inspectCommerceConfiguration(env = {}, { channel = 'ALL' } = {})
         enabled, channel, missing, invalid, adaptersValid,
         notificationChannels: smsDisabled ? ['EMAIL'] : env.ATLAS_COMMERCE_SMS_PROVIDER === 'TWILIO' ? ['EMAIL', 'SMS'] : [],
         externalVerification: 'NOT_PERFORMED',
-        activationGates: ['MERCHANT_AND_TAX', ...(channel === 'KIOSK' ? [] : ['FEDEX_ACCOUNT_AND_MEASURED_PACKAGES']), 'RECEIPT_SENDERS',
+        activationGates: ['MERCHANT_AND_TAX', ...(channel === 'KIOSK' ? [] : [shippingProvider==='SHIPSTATION'?'SHIPSTATION_ACCOUNT_AND_MEASURED_PACKAGES':'FEDEX_ACCOUNT_AND_MEASURED_PACKAGES']), 'RECEIPT_SENDERS',
             'PRIVATE_STORAGE_AND_TRANSPORT', 'DEPLOYMENT_BOUND_DATABASE_CONTROLS',
             ...(channel === 'MAIL_IN' ? [] : ['SHOP_LOCATION_AND_SCHEDULE']), 'END_TO_END_ACCEPTANCE'],
     };

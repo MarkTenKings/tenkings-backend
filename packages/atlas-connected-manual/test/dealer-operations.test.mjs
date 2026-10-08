@@ -47,14 +47,36 @@ test('return PDF requires original reviewer capability and exact bounded, hash-v
   result = { ...label, unrelatedProviderSecret: 'must not escape' }; assert.deepEqual(await service.call(staff, 'return_label', { orderId }), label);
 });
 
-test('return-label HTTP is exact GET, staff cookie authenticated, no-store and cannot create or retry labels', async () => {
+test('return-label GET remains staff cookie authenticated, no-store and cannot prepare labels', async () => {
   const orderId = '0336918d-0204-47e0-acdf-6ef4b22b62c1', staff = {}; let calls = 0, authentications = 0;
   const handler = createConnectedHandler({ origin: 'https://atlasgrading.com', assertRequest: req => { assert.equal(req.private, true); },
     boundary: { authenticate: async (cookie, csrf) => { authentications++; assert.equal(cookie, 'staff-cookie'); assert.equal(csrf, undefined); return staff; } },
     connected: { workflow: {}, intake: {}, dealerOperations: { call: async (actor, action, input) => { calls++; assert.equal(actor, staff); assert.equal(action, 'return_label'); assert.deepEqual(input, { orderId }); return { labelBase64: Buffer.from('%PDF-fixture').toString('base64'), labelSha256: 'a'.repeat(64) }; } } } });
   const response = () => ({ headers: {}, status(code) { this.code = code; return this; }, json(value) { this.body = value; }, send(value) { this.bytes = value; }, setHeader(key, value) { this.headers[key] = value; } });
   const request = { private: true, method: 'GET', url: `/api/staff/manual-connected/dealer-operations/orders/${orderId}/return-label`, headers: { cookie: 'staff-cookie' } };
-  for (const change of [{ method: 'POST' }, { method: 'DELETE' }, { url: request.url + '?effectId=INBOUND' }]) { const r = response(); await handler({ ...request, ...change }, r); assert.equal(r.code, 405); }
+  for (const change of [{ method: 'POST' }, { method: 'DELETE' }, { url: request.url + '?effectId=INBOUND' }]) { const r = response(); await handler({ ...request, ...change }, r); assert.equal(r.code, change.method==='POST'?403:405); }
   assert.equal(calls, 0); assert.equal(authentications, 0);
   const r = response(); await handler(request, r); assert.equal(r.code, 200); assert.equal(r.bytes.toString(), '%PDF-fixture'); assert.equal(r.headers['Content-Type'], 'application/pdf'); assert.equal(r.headers['X-ATLAS-Label-SHA256'], 'a'.repeat(64)); assert.equal(r.headers['Cache-Control'], 'private, no-store'); assert.equal(r.headers['X-Content-Type-Options'], 'nosniff'); assert.equal(calls, 1); assert.equal(authentications, 1);
+});
+
+test('return-label preparation requires reviewer, exact order/request and returns only the matched safe receipt',async()=>{
+  const {randomUUID}=await import('node:crypto'),orderId=randomUUID(),requestId=randomUUID(),staff={},actors=new WeakMap([[staff,{sessionHash:'original-session',browserHash:'original-browser'}]]);
+  let role='REVIEWER',calls=0,result={orderId,requestId,prepared:true,state:'PENDING',privateProviderRequest:'private'};
+  const service=createDealerStaffService({auth:{actors,config:{phoneByHash:new Map()}},boundary:{transaction:async(_staff,fn)=>fn({principal:{role},tx:{$queryRawUnsafe:async(_sql,...args)=>{calls++;assert.equal(args[0],'prepare_return_label');assert.deepEqual(JSON.parse(args[5]),{orderId,requestId});return[{result}];}}})}});
+  await assert.rejects(service.call({},'prepare_return_label',{orderId,requestId}),{code:'SIGN_IN_REQUIRED'});
+  role='OBSERVER';await assert.rejects(service.call(staff,'prepare_return_label',{orderId,requestId}),{code:'STAFF_REQUIRED'});role='REVIEWER';
+  for(const input of [{orderId},{orderId,requestId,shipDate:'2050-01-01'},{orderId,requestId:'wrong'}])await assert.rejects(service.call(staff,'prepare_return_label',input),{code:'INVALID_DEALER_OPERATION'});assert.equal(calls,0);
+  assert.deepEqual(await service.call(staff,'prepare_return_label',{orderId,requestId}),{orderId,requestId,state:'PENDING',prepared:true});
+  for(const change of [{orderId:randomUUID()},{requestId:randomUUID()},{prepared:false},{state:'invented'}]){result={orderId,requestId,prepared:true,state:'PENDING',...change};await assert.rejects(service.call(staff,'prepare_return_label',{orderId,requestId}),{code:'RETURN_LABEL_PREPARATION_UNCONFIRMED'});}
+});
+
+test('return-label POST requires exact body, private admission, cookie and fresh CSRF; GET does no preparation',async()=>{
+  const {randomUUID}=await import('node:crypto'),orderId=randomUUID(),requestId=randomUUID(),staff={};let calls=0,authentications=0;
+  const handler=createConnectedHandler({origin:'https://atlasgrading.com',assertRequest:req=>{assert.equal(req.private,true);},boundary:{authenticate:async(cookie,csrf)=>{authentications++;assert.equal(cookie,'staff-cookie');assert.equal(csrf,'fresh-csrf');return staff;}},connected:{workflow:{},intake:{},dealerOperations:{call:async(actor,action,input)=>{calls++;assert.equal(actor,staff);assert.equal(action,'prepare_return_label');assert.deepEqual(input,{orderId,requestId});return{orderId,requestId,state:'PENDING',prepared:true};}}}});
+  const response=()=>({headers:{},status(code){this.code=code;return this;},json(value){this.body=value;},setHeader(key,value){this.headers[key]=value;}});
+  const request={private:true,method:'POST',url:`/api/staff/manual-connected/dealer-operations/orders/${orderId}/return-label`,body:{requestId},headers:{origin:'https://atlasgrading.com',cookie:'staff-cookie','content-type':'application/json','x-atlas-csrf':'fresh-csrf'}};
+  for(const change of [{headers:{...request.headers,origin:'https://attacker.test'}},{headers:{...request.headers,'x-atlas-csrf':''}},{headers:{...request.headers,'content-type':'text/plain'}}]){const res=response();await handler({...request,...change},res);assert.equal(res.code,403);}
+  for(const body of [{},{requestId,orderId},{requestId,shipDate:'2050-01-01'},{requestId:'wrong'},[]]){const res=response();await handler({...request,body},res);assert.equal(res.code,400);}
+  assert.equal(calls,0);assert.equal(authentications,0);
+  const res=response();await handler(request,res);assert.equal(res.code,200);assert.equal(res.body.prepared,true);assert.equal(res.headers['Cache-Control'],'private, no-store');assert.equal(calls,1);assert.equal(authentications,1);
 });

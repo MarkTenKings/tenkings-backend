@@ -200,3 +200,22 @@ test('return-label read is independent of a retained mutation journal and downlo
   await button.props.onClick();
   assert.deepEqual(calls, [[`manual-connected/dealer-operations/orders/${order.id}/return-label`]]); assert.deepEqual(downloads, [{ href: 'blob:verified-return', name: 'ATLAS-FIXTURE-return-to-customer.pdf' }]); assert.equal(released, true);
 });
+
+test('return preparation appears only on server-qualified orders and uses the explicit action without custody evidence',async()=>{
+  const React=require('react'),{renderToStaticMarkup}=require('react-dom/server'),exported=load(React),order={id:randomUUID(),returnShipping:{state:'PENDING',prepared:false,canPrepare:true}};
+  const html=renderToStaticMarkup(React.createElement(exported.ReturnShippingLabel,{order,onPrepare:()=>{},prepareDisabled:false}));assert.match(html,/Prepare return label/);assert.match(html,/does not record mailing/);
+  for(const canPrepare of [false,undefined]){const blocked=renderToStaticMarkup(React.createElement(exported.ReturnShippingLabel,{order:{...order,returnShipping:{...order.returnShipping,canPrepare}},onPrepare:()=>{}}));assert.doesNotMatch(blocked,/>Prepare return label</);}
+  const locked=renderToStaticMarkup(React.createElement(exported.ReturnShippingLabel,{order,prepareDisabled:true,onPrepare:()=>{}}));assert.match(locked,/<button type="button" disabled="">Prepare return label/);
+  const calls=[],react={createElement:(type,props,...children)=>({type,props:{...props,children}}),useState:value=>[value,()=>{}],useRef:value=>({current:value})};
+  const tree=load(react).ReturnShippingLabel({order,onPrepare:(...args)=>calls.push(args)}),all=node=>Array.isArray(node)?node.flatMap(all):node&&typeof node==='object'?[node,...all(node.props?.children)]:[];
+  all(tree).find(node=>node.type==='button'&&node.props.children.includes('Prepare return label')).props.onClick();assert.equal(calls[0][0],'prepare-return-label');assert.equal(calls[0][1].orderId,order.id);assert.equal(Object.keys(calls[0][1]).join(','),'orderId,requestId');
+});
+
+test('lost return preparation survives reload and only exact saved request ID reconciles without a second label request',async()=>{
+  const f=harness(),input={orderId:randomUUID(),requestId:randomUUID()};f.response=async()=>{throw Error('Lost preparation reply');};
+  await f.action('prepare-return-label',input);f.render();assert.equal(f.writes().length,1);assert.equal(f.writes()[0].path,`manual-connected/dealer-operations/orders/${input.orderId}/return-label`);assert.deepEqual(f.writes()[0].body,{requestId:input.requestId});assert.equal(f.saved().action,'prepare-return-label');
+  const resumed=harness(f.storage);assert.equal(resumed.saved().input.requestId,input.requestId);
+  resumed.data.orders=[{id:input.orderId,returnShipping:{prepared:true,preparedRequestId:randomUUID()},cards:[]}];await resumed.click('Check saved status');assert.ok(resumed.saved());
+  resumed.response=async(_path,options)=>{assert.equal(options.body.requestId,input.requestId);resumed.data.orders[0].returnShipping.preparedRequestId=input.requestId;return{orderId:input.orderId,requestId:input.requestId,prepared:true,state:'PENDING'};};
+  await resumed.click('Retry exact saved request');assert.equal(resumed.saved(),null);assert.equal(resumed.writes().length,1);assert.equal(resumed.writes()[0].csrf,'fixture-csrf');
+});

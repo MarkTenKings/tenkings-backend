@@ -83,8 +83,8 @@ function checkoutHarness(request) {
         useRef(initial){const id=cursor++;if(!(id in slots))slots[id]={current:initial};return slots[id];},
         useCallback(value,deps){const id=cursor++;if(changed(slots[id]?.deps,deps))slots[id]={value,deps};return slots[id].value;},
         useEffect(fn,deps){const id=cursor++;if(changed(slots[id]?.deps,deps)){const old=slots[id];slots[id]={deps};effects.push(()=>{old?.cleanup?.();slots[id].cleanup=fn();});}}};
-    const exports={};
-    vm.runInNewContext(compile('../components/commerce/CommerceCheckout.jsx'),{exports,Intl,require:name=>name==='react'?react:name.endsWith('OrderReceipt.jsx')?{...receipt,__esModule:true}:name.endsWith('.css')?{}:require(name)});
+    const exports={},storage=new Map();
+    vm.runInNewContext(compile('../components/commerce/CommerceCheckout.jsx'),{exports,Intl,crypto:{randomUUID:()=> '22222222-2222-4222-8222-222222222222'},sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)},require:name=>name==='react'?react:name.endsWith('OrderReceipt.jsx')?{...receipt,__esModule:true}:name.endsWith('.css')?{}:require(name)});
     const props={draft:{id:'saved-draft',intakeMethod:'MAIL_IN',cards:[{id:'card',identity:{title:'Saved Pikachu'}}]},request:async(path,options)=>{calls.push({path,options});return request(path,options);},onPaid:value=>notifications.push(value),onBack:()=>{throw Error('Checkout must not send this saved draft back through review.');}};
     const render=()=>{cursor=0;tree=exports.default(props);while(effects.length)effects.shift()();return tree;};
     return {exports,render,calls,notifications,get tree(){return tree;},unmount(){for(const slot of slots)slot?.cleanup?.();}};
@@ -125,4 +125,69 @@ test('superseded availability replies cannot replace the most recent checkout re
     view.render();await tick();view.render();phase='slow';const previous=view.tree.props.onCheckAvailability();
     phase='ready';await view.tree.props.onCheckAvailability();view.render();assert.equal(view.tree.type,'section');
     resolveOld({blockers:['PAYMENT_NOT_CONFIGURED']});await previous;view.render();assert.equal(view.tree.type,'section');view.unmount();
+});
+
+const serviceOptions = ['USPS','UPS','FedEx'].map((carrier,index)=>({packingPresetId:`measured-${index}`,shippingServiceCode:`service_${index}`,carrierLabel:carrier,serviceLabel:`${carrier} ground service`,label:'One-card measured package'}));
+const quoted = (id,carrier='UPS') => ({id,channel:'MAIL_IN',expiresAt:'2050-01-01T00:00:00Z',cards:[{cardId:'card',unitCents:4000}],subtotalCents:4000,shippingCents:2350,taxCents:320,totalCents:6670,shipping:[{leg:'INBOUND',carrierName:carrier,serviceName:'Ground',amountCents:1100},{leg:'RETURN',carrierName:carrier,serviceName:'Ground',amountCents:1250}]});
+const click = async (view,label) => { const button=nodes(view.tree,n=>n.type==='button'&&text(n)===label)[0]; assert(button,label);assert.equal(!!button.props.disabled,false,label);await button.props.onClick();view.render(); };
+const choose = (view,index) => { const selector=nodes(view.tree,n=>n.type==='select')[0];assert(selector);assert.equal(!!selector.props.disabled,false);selector.props.onChange({target:{value:String(index)}});view.render(); };
+
+test('carrier changes discard the old quote and bind the next payment to the fresh exact selection',async()=>{
+    let serial=0;
+    const view=checkoutHarness(async(path,options)=>path.includes('/checkout?')?{revision:4,channel:'MAIL_IN',blockers:[],shippingOptions:serviceOptions}:path.endsWith('/quotes')?quoted(`quote-${++serial}`):{attemptId:'original',state:'UNKNOWN'});
+    view.render();await tick();view.render();
+    const selector=nodes(view.tree,n=>n.type==='select')[0];for(const carrier of ['USPS','UPS','FedEx'])assert.match(text(selector),new RegExp(carrier));
+    choose(view,0);await click(view,'Get exact total');
+    assert.equal(nodes(view.tree,n=>n.type===receipt.OrderAmounts)[0].props.snapshot.id,'quote-1');
+    choose(view,1);assert.equal(nodes(view.tree,n=>n.type===receipt.OrderAmounts).length,0);assert.equal(nodes(view.tree,n=>n.type==='button'&&text(n).startsWith('Pay $')).length,0);
+    await click(view,'Get exact total');await click(view,'Pay $66.70');
+    const quoteCalls=view.calls.filter(call=>call.path.endsWith('/quotes'));
+    assert.deepEqual(JSON.parse(JSON.stringify(quoteCalls.map(call=>call.options.body))),[{draftId:'saved-draft',expectedRevision:4,packingPresetId:'measured-0',shippingServiceCode:'service_0'},{draftId:'saved-draft',expectedRevision:4,packingPresetId:'measured-1',shippingServiceCode:'service_1'}]);
+    assert.equal(view.calls.find(call=>call.path.endsWith('/payments')).options.body.quoteId,'quote-2');
+    assert.equal(nodes(view.tree,n=>n.type==='select').length,0);assert.equal(nodes(view.tree,n=>n.type==='button'&&text(n)==='Check payment status').length,1);view.unmount();
+});
+
+test('lost payment reply locks shipping and retries only the exact retained quote/request',async()=>{
+    let attempts=0,resolveFirst;
+    const view=checkoutHarness(async(path)=>path.includes('/checkout?')?{revision:4,channel:'MAIL_IN',blockers:[],shippingOptions:serviceOptions}:path.endsWith('/quotes')?quoted('original-quote'):++attempts===1?new Promise((_resolve,reject)=>{resolveFirst=()=>reject(Object.assign(Error('timeout'),{code:'UNCONFIRMED_REPLY'}));}):{attemptId:'original-attempt',state:'UNKNOWN'});
+    view.render();await tick();view.render();choose(view,2);await click(view,'Get exact total');
+    const button=nodes(view.tree,n=>n.type==='button'&&text(n)==='Pay $66.70')[0],first=button.props.onClick(),second=button.props.onClick();await second;assert.equal(attempts,1);
+    resolveFirst();await first;view.render();
+    assert.equal(nodes(view.tree,n=>n.type==='select')[0].props.disabled,true);assert.equal(nodes(view.tree,n=>n.type==='button'&&text(n)==='Back to cards').length,0);
+    await click(view,'Check original payment');
+    const payments=view.calls.filter(call=>call.path.endsWith('/payments'));assert.equal(payments.length,2);assert.deepEqual(payments[0].options.body,payments[1].options.body);assert.equal(payments[0].options.body.quoteId,'original-quote');
+    assert.equal(nodes(view.tree,n=>n.type==='button'&&text(n)==='Check payment status').length,1);assert.equal(view.calls.filter(call=>call.path.endsWith('/quotes')).length,1);view.unmount();
+});
+
+test('proven expired quote refusal returns to fresh pricing without retaining a nonexistent payment',async()=>{
+    const view=checkoutHarness(async(path)=>path.includes('/checkout?')?{revision:4,channel:'MAIL_IN',blockers:[],shippingOptions:serviceOptions}:path.endsWith('/quotes')?quoted('expired-quote'):Promise.reject(Object.assign(Error('expired'),{code:'CHECKOUT_CHANGED',status:409})));
+    view.render();await tick();view.render();choose(view,0);await click(view,'Get exact total');await click(view,'Pay $66.70');
+    assert.equal(nodes(view.tree,n=>n.type==='button'&&text(n)==='Get exact total').length,1);assert.equal(nodes(view.tree,n=>n.type==='button'&&text(n)==='Check original payment').length,0);assert.equal(nodes(view.tree,n=>n.type===receipt.OrderAmounts).length,0);view.unmount();
+});
+
+test('multi-carrier receipt retains exact chosen legs and only exposes the matching inbound label',()=>{
+    const mail={...order,receipt:{...quoted('original','USPS'),terms:{days:14,clockStart:'ATLAS_RECEIPT',mailChargedLegs:'BOTH_LEGS'}},effects:[
+        {id:`${order.id}:shipstation:INBOUND:v1`,kind:'SHIPSTATION_LABEL',state:'SUCCEEDED',leg:'INBOUND',carrierName:'USPS',serviceName:'Ground Advantage'},
+        {id:`${order.id}:shipstation:RETURN:v1`,kind:'SHIPSTATION_LABEL',state:'PENDING',leg:'RETURN'},
+        {id:`another:shipstation:INBOUND:v1`,kind:'SHIPSTATION_LABEL',state:'SUCCEEDED',leg:'INBOUND'},
+        {id:`${order.id}:shipstation:INBOUND:v1:extra`,kind:'SHIPSTATION_LABEL',state:'SUCCEEDED'},
+    ]};
+    const html=renderToStaticMarkup(React.createElement(receipt.default,{initialOrder:mail}));
+    for(const content of ['Your cards → ATLAS','ATLAS → your address','USPS','Ground Advantage','$11.00','$12.50','$23.50','$66.70','ATLAS handles return shipping after grading'])assert.ok(html.includes(content),content);
+    assert.equal((html.match(/Download label to ATLAS/g)??[]).length,1);assert.doesNotMatch(html,/FedEx|Download return|insured|Insurance/);
+    assert.equal(receipt.shippingLabelLeg(mail.effects[0],order.id),'INBOUND');assert.equal(receipt.shippingLabelLeg(mail.effects[1],order.id),'RETURN');
+    assert.equal(receipt.shippingLabelLeg({...mail.effects[0],leg:'RETURN'},order.id),null);assert.equal(receipt.shippingLabelLeg({...mail.effects[0],kind:'FEDEX_LABEL'},order.id),null);
+});
+
+test('customer-measured inbound packages begin empty, require actual measurements and invalidate totals after edits',async()=>{
+    const view=checkoutHarness(async(path)=>path.includes('/checkout?')?{revision:4,channel:'MAIL_IN',blockers:[],shippingOptions:[{...serviceOptions[0],inboundPackaging:'CUSTOMER_MEASURED'}]}:quoted('measured-quote'));
+    view.render();await tick();view.render();choose(view,0);
+    let inputs=nodes(view.tree,n=>n.type==='input');assert.equal(inputs.length,4);assert(inputs.every(node=>node.props.value===''));
+    assert.equal(nodes(view.tree,n=>n.type==='button'&&text(n)==='Get exact total')[0].props.disabled,true);
+    for(let index=0;index<4;index++){inputs=nodes(view.tree,n=>n.type==='input');inputs[index].props.onChange({target:{value:['7.25','8','6','2'][index]}});view.render();}
+    await click(view,'Get exact total');
+    const request=view.calls.find(call=>call.path.endsWith('/quotes')).options.body;
+    assert.deepEqual(JSON.parse(JSON.stringify(request.inboundPackage)),{weight:{unit:'ounce',value:7.25},dimensions:{unit:'inch',length:8,width:6,height:2}});
+    nodes(view.tree,n=>n.type==='input')[0].props.onChange({target:{value:'8.5'}});view.render();assert.equal(nodes(view.tree,n=>n.type===receipt.OrderAmounts).length,0);
+    assert.equal(nodes(view.tree,n=>n.type==='button'&&text(n).startsWith('Pay $')).length,0);view.unmount();
 });

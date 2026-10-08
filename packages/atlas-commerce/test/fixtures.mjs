@@ -26,7 +26,8 @@ export function memoryRepository(checkout) {
         async confirmPaid({attemptId,evidence,receiptId,effects:jobs}){const a=attempts.get(attemptId);assertPaidEvidence(a,evidence);
             if(!order){order={id:receiptId,reference:'ATLAS-TEST',receipt:clone(a.quote)};a.state='PAID';a.order=order;for(const job of jobs)effects.set(job.id,{...job,state:'PENDING'});}return {order:clone(order)};},
         async effect(id){return clone(effects.get(id));},
-        async claimEffect(id,claimId){const e=effects.get(id);if(e.state!=='PENDING')return {effect:clone(e),dispatch:false};e.state='DISPATCHED';e.claimId=claimId;return {effect:clone(e),dispatch:true};},
+        async claimEffect(id,claimId,dispatchSnapshot){const e=effects.get(id);if(e.state!=='PENDING')return {effect:clone(e),dispatch:false};e.state='DISPATCHED';e.claimId=claimId;if(dispatchSnapshot)e.dispatchSnapshot=clone(dispatchSnapshot);return {effect:clone(e),dispatch:true};},
+        async recordTracking(id,tracking){const e=effects.get(id);e.tracking=clone(tracking);return clone(e);},
         async finishEffect({effectId,claimId,state,result}){const e=effects.get(effectId);if(e.claimId!==claimId)throw Error('claim mismatch');Object.assign(e,{state,result});return clone(e);}
     };
 }

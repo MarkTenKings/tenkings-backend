@@ -74,8 +74,9 @@ export function receiptEffects(orderId, quote) {
         ...(quote.channel === 'KIOSK' && customerPhonePayment(quote) && !receiptEmail(quote.profile.email) ? []
             : [{ id: `${orderId}:email:v1`, kind: 'EMAIL_RECEIPT', request: { ...receipt, to: quote.profile.email } }]),
         { id: `${orderId}:tax:v1`, kind: 'TAX_TRANSACTION', request: { ...receipt, calculationId: quote.tax.providerId } },
-        ...quote.shipping.map(line => ({ id: `${orderId}:fedex:${line.leg}:v1`, kind: 'FEDEX_LABEL',
-            request: { ...receipt, shipment: line.request, leg: line.leg, rateId: line.providerId } })),
+        ...quote.shipping.map(line => ({ id: `${orderId}:${line.provider === 'SHIPSTATION' ? 'shipstation' : 'fedex'}:${line.leg}:v1`, kind: line.provider === 'SHIPSTATION' ? 'SHIPSTATION_LABEL' : 'FEDEX_LABEL',
+            request: { ...receipt, shipment: line.request, leg: line.leg, rateId: line.providerId,
+                ...(line.provider === 'SHIPSTATION' ? {rate:clone(line.rate)} : {}) } })),
         ...(quote.channel === 'KIOSK' && !customerPhonePayment(quote) ? [{ id: `${orderId}:package:v1`, kind: 'PACKAGE_LABEL', request: { ...receipt, locationId: quote.location.id } }] : []),
     ];
 }

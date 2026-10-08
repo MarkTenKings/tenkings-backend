@@ -21,7 +21,7 @@ test('public submission directory renders actual configured schedule and kiosk C
  assert.match(html,/Wednesday 10:00 \(cutoff 09:00\)/);assert.match(html,/Sep 30/);assert.match(html,/Oct 7/);assert.match(html,/Choose this kiosk/);assert.match(html,/kiosk=fixture/);assert.match(html,/Show location map/);assert.doesNotMatch(html,/<iframe/);
 });
 test('empty enabled kiosk directory is explicit and shows no contact-only submission CTA',()=>{
- const html=renderToStaticMarkup(React.createElement(exported.default,{customerFunnelEnabled:true,dealers:[],initialService:'SUBMIT',map:null}));assert.match(html,/No enabled kiosks are listed yet/);assert.doesNotMatch(html,/Choose this kiosk/);assert.match(html,/\$40 per card plus FedEx shipping/);
+ const html=renderToStaticMarkup(React.createElement(exported.default,{customerFunnelEnabled:true,dealers:[],initialService:'SUBMIT',map:null}));assert.match(html,/No enabled kiosks are listed yet/);assert.doesNotMatch(html,/Choose this kiosk/);assert.match(html,/\$40 per card plus shipping/);
 });
 test('cold public directory preserves contact information without advertising an unavailable kiosk checkout',()=>{
  const html=renderToStaticMarkup(React.createElement(exported.default,{dealers:[],initialService:'SUBMIT',map:null}));

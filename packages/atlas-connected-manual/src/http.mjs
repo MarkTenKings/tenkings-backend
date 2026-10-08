@@ -30,9 +30,17 @@ export function createConnectedHandler({connected,boundary,origin,assertRequest}
       if(req.method==='POST')requireThat(Buffer.byteLength(JSON.stringify(req.body??{})) <= (/\/(?:proposal-)?trace$/.test(url.pathname)?1048576:url.pathname.startsWith('/api/staff/manual-intake/')?8192:65536),413,'REQUEST_TOO_LARGE');
       const returnLabel=returnLabelRoute.exec(url.pathname);
       if(returnLabel){
-        requireThat(!url.search && req.method==='GET',405,'METHOD_NOT_ALLOWED');
+        const write=req.method==='POST';
+        requireThat(!url.search && (write || req.method==='GET'),405,'METHOD_NOT_ALLOWED');
         requireThat(connected.dealerOperations,503,'DEALER_OPERATIONS_DISABLED');
-        const staff=await boundary.authenticate(req.headers.cookie??'');
+        if(write)requireThat(req.headers.origin===origin && /^application\/json(?:\s*;|$)/i.test(req.headers['content-type']??'')
+          && typeof req.headers['x-atlas-csrf']==='string' && req.headers['x-atlas-csrf'],403,'CSRF_REQUIRED');
+        if(write)requireThat(req.body && !Array.isArray(req.body) && Object.keys(req.body).length===1 && new RegExp(`^${id}$`).test(req.body.requestId??''),400,'INVALID_DEALER_OPERATION');
+        const staff=await boundary.authenticate(req.headers.cookie??'',write?req.headers['x-atlas-csrf']:undefined);
+        if(write){
+          const result=await connected.dealerOperations.call(staff,'prepare_return_label',{orderId:returnLabel[1],requestId:req.body.requestId});
+          res.setHeader('Cache-Control','private, no-store');res.status(200).json(result);return true;
+        }
         const label=await connected.dealerOperations.call(staff,'return_label',{orderId:returnLabel[1]});
         res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');
         res.setHeader('Content-Type','application/pdf');res.setHeader('X-ATLAS-Label-SHA256',label.labelSha256);

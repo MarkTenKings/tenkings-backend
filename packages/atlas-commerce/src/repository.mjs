@@ -9,9 +9,10 @@ export class GatewayCommerceRepository {
     payment(attemptId) { return this.call('commerce_payment', { attemptId }); }
     confirmPaid(data) { return this.call('commerce_confirm_paid', data); }
     order(orderId) { return this.call('commerce_order', { orderId }); }
-    claimEffect(effectId, claimId) { return this.call('commerce_claim_effect', { effectId, claimId }); }
+    claimEffect(effectId, claimId, dispatchSnapshot) { return this.call('commerce_claim_effect', { effectId, claimId, ...(dispatchSnapshot ? {dispatchSnapshot} : {}) }); }
     effect(effectId) { return this.call('commerce_effect', {effectId}); }
     finishEffect(data) { return this.call('commerce_finish_effect', data); }
+    recordTracking(effectId, tracking) { return this.call('commerce_record_tracking', {effectId,tracking}); }
     providerEvent(event) { return this.call('commerce_provider_event', {event}); }
     callbackPayment(attemptId) { return this.call('commerce_callback_payment', {attemptId}); }
     callbackConfirm(data) { return this.call('commerce_callback_confirm', data); }
