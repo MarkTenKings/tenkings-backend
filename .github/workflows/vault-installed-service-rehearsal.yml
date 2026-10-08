@@ -44,12 +44,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir "$RUNNER_TEMP/vault-signed-inputs"
-          gh release download vault-linux-20261007-faedb613 --repo "$GITHUB_REPOSITORY" \
+          gh release download vault-linux-20261008-5f759355 --repo "$GITHUB_REPOSITORY" \
             --dir "$RUNNER_TEMP/vault-signed-inputs" \
-            --pattern ten-kings-vault-20261007-faedb613.tar.gz \
+            --pattern ten-kings-vault-20261008-5f759355.tar.gz \
             --pattern release-public.pem \
-            --pattern lifecycle-update-metadata-faedb613.tar.gz
-      - name: Rehearse actual install, maintenance, update, held restore and VM reboot
+            --pattern lifecycle-update-metadata-5f759355.tar.gz
+      - name: Qualify packaged authority, installed lifecycle and VM reboot
         run: |
           python3 -B deploy/vault-linux/tests/run-installed-service-vm.py \
             --acknowledge SYNTHETIC_ONLY_DISPOSABLE_VM \

@@ -24,16 +24,17 @@ import urllib.request
 import uuid
 
 ACK = 'SYNTHETIC_ONLY_DISPOSABLE_VM'
-RELEASE_ID = 'ten-kings-vault-20261007-faedb613'
-SOURCE = 'faedb613beb23c15accce2e54a985be6e31704c6'
+RELEASE_ID = 'ten-kings-vault-20261008-5f759355'
+SOURCE = '5f75935590508cc0f7f3e75083dcb63847ccce04'
 IMAGE = 'Arch-Linux-x86_64-cloudimg-20261001.604814.qcow2'
 IMAGE_URL = 'https://geo.mirror.pkgbuild.com/images/v20261001.604814/' + IMAGE
 IMAGE_SHA = '360f0fa49db6813bdc8e35bed230a2dc2ae3567b7b5ab74719c0a706e4e34e87'
 IMAGE_BYTES = 578080256
+AUTHORITY_IMAGE = 'python@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a'
 INPUTS = {
-    RELEASE_ID + '.tar.gz': '13e22d6b404329f943fa04f61df8abe126f28e17b5d3c8c247474df65be3ec41',
+    RELEASE_ID + '.tar.gz': '54c150d31c49f6525a36ac2bcc75af8614edf4317daf05458eabdde4c404dc7e',
     'release-public.pem': '2026d905de987d8d5661d4f49ffcfd23fb07595a40c72391d02a42981eec66dd',
-    'lifecycle-update-metadata-faedb613.tar.gz': '7a8c880f6ecace18372518a707d8e6599e3b0da71fe97173ccd505d0df835478',
+    'lifecycle-update-metadata-5f759355.tar.gz': 'c6c1f0cf8d5993b3cae048029d93f1ef562b6278e8226e189b06c0d53256e843',
 }
 RECEIPTS = ('started', 'install-plan', 'install-result', 'preflight', 'initial-start', 'canary-staged',
             'restart-plan', 'restart-result', 'restart-health', 'restart-snapshot', 'update-plan',
@@ -107,10 +108,11 @@ def prepare_inputs(inputs, work, source):
     for name, expected in INPUTS.items(): need(digest(inputs / name) == expected, 'Signed input hash mismatch: ' + name)
     staged = work / 'staged'; staged.mkdir(mode=0o700)
     extract(inputs / (RELEASE_ID + '.tar.gz'), work / 'release-unpacked', RELEASE_ID)
-    extract(inputs / 'lifecycle-update-metadata-faedb613.tar.gz', work / 'metadata-unpacked', 'lifecycle-update-metadata')
+    extract(inputs / 'lifecycle-update-metadata-5f759355.tar.gz', work / 'metadata-unpacked', 'lifecycle-update-metadata')
     shutil.move(str(work / 'release-unpacked' / RELEASE_ID), staged / RELEASE_ID)
     shutil.move(str(work / 'metadata-unpacked/lifecycle-update-metadata'), staged / 'lifecycle-update-metadata')
     shutil.copyfile(inputs / 'release-public.pem', staged / 'release-public.pem')
+    (staged / 'release-public.pem').chmod(0o644)
     release = staged / RELEASE_ID; key = staged / 'release-public.pem'
     result = json.loads(run(['python3', '-B', source / 'appliance.py', 'verify', '--release', release, '--public-key', key]).stdout)
     need(result['sourceCommit'] == SOURCE and result['releaseId'] == RELEASE_ID, 'Signed application identity differs')
@@ -129,6 +131,70 @@ def prepare_inputs(inputs, work, source):
     with tarfile.open(bundle, 'w:gz') as stream:
         for child in sorted(staged.iterdir()): stream.add(child, arcname=child.name, recursive=True)
     return bundle
+
+
+def authority_report_valid(report, manifest_digest):
+    checks = report.get('checks', [])
+    return (report.get('classification') == 'SYNTHETIC_ONLY' and report.get('passed') is True
+            and report.get('sourceCommit') == SOURCE and report.get('releaseManifestSha256') == manifest_digest
+            and len(checks) == 34 and len({check.get('name') for check in checks}) == 34
+            and all(check.get('result') == 'PASS' for check in checks)
+            and report.get('nodeVersion') == '22.23.2' and report.get('platform') == 'linux'
+            and report.get('architecture') == 'x64' and report.get('providerNetworkAttempts') == 0
+            and all(report.get(key) is False for key in ('externalAcceptance', 'installedProductionActivation',
+                                                       'serialComposed', 'syntheticPrivateKeysWritten'))
+            and all(report.get(key) is True for key in ('sourceReleaseMountedReadOnly', 'sourceManifestUnchanged',
+                                                      'containerTrustCleaned', 'containerReleaseCopyCleaned')))
+
+
+def production_authority(work, source, evidence):
+    """Run actual packaged factory checks in an owned network-none container."""
+    release = work / 'staged' / RELEASE_ID
+    public_key = work / 'staged/release-public.pem'
+    script = source / 'tests/production-authority-linux.cjs'
+    token = uuid.uuid4().hex; name = 'vault-authority-' + token
+    label = 'tenkings.synthetic-authority-owner'; removed = False
+    output = work / 'production-authority.json'; error = None
+    run(['docker', 'pull', '--platform', 'linux/amd64', AUTHORITY_IMAGE], timeout=240)
+    try:
+        run(['docker', 'create', '--name', name, '--label', label + '=' + token,
+             '--platform', 'linux/amd64', '--network', 'none', '--cpus', '2', '--memory', '2g', '--pids-limit', '128',
+             '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+             '--mount', 'type=bind,src=' + str(release) + ',dst=/input/release,readonly',
+             '--mount', 'type=bind,src=' + str(public_key) + ',dst=/input/release-public.pem,readonly',
+             '--mount', 'type=bind,src=' + str(script) + ',dst=/source/production-authority-linux.cjs,readonly',
+             '--env', 'VAULT_DISPOSABLE_REHEARSAL=1', '--env', 'VAULT_PRODUCTION_AUTHORITY_SYNTHETIC=1',
+             '--entrypoint', '/input/release/runtime/bin/node', AUTHORITY_IMAGE,
+             '/source/production-authority-linux.cjs', '--release', '/input/release',
+             '--release-public-key', '/input/release-public.pem', '--output', '/tmp/production-authority.json',
+             '--ack-synthetic-container'], timeout=30)
+        result = run(['docker', 'start', '--attach', name], timeout=720, check=False)
+        copied = run(['docker', 'cp', name + ':/tmp/production-authority.json', output], timeout=30, check=False)
+        need(copied.returncode == 0, 'Packaged authority report missing')
+        need(output.stat().st_size <= 1024 * 1024, 'Packaged authority report exceeds bound')
+        report = json.loads(output.read_text())
+        need(report.get('classification') == 'SYNTHETIC_ONLY', 'Unexpected authority report classification')
+        save(evidence, 'production-authority', report)
+        need(result.returncode == 0 and authority_report_valid(report, digest(release / 'release.json')),
+             'Packaged production authority checks failed; no VM qualification')
+    except Exception as failure:
+        error = failure
+    finally:
+        # A create timeout can leave a container behind. Resolve only this random
+        # name, then require our unpredictable ownership label before removal.
+        found = run(['docker', 'inspect', name], timeout=30, check=False)
+        if found.returncode == 0:
+            info = json.loads(found.stdout)
+            need(len(info) == 1 and info[0].get('Config', {}).get('Labels', {}).get(label) == token,
+                 'Refuse cleanup of a container without this invocation ownership label')
+            run(['docker', 'rm', '--force', info[0]['Id']], timeout=30)
+        absent = run(['docker', 'ps', '--all', '--quiet', '--filter', 'name=^/' + name + '$'], timeout=30, check=False)
+        removed = absent.returncode == 0 and not absent.stdout.strip()
+        save(evidence, 'host-authority-container', {'image': AUTHORITY_IMAGE, 'network': 'none',
+             'readOnlyInputMounts': True, 'hostTrustOrInstallMounted': False,
+             'ownedContainerRemoved': removed, 'passed': error is None and removed})
+    need(removed, 'Owned authority container cleanup unconfirmed')
+    if error: raise error
 
 
 def cloud_seed(work):
@@ -197,6 +263,8 @@ def main():
         save(args.evidence, 'host-inputs', {'sourceCommit': run(['git', '-C', workspace, 'rev-parse', 'HEAD']).stdout.strip(),
              'applicationSourceCommit': SOURCE, 'inputSha256': INPUTS, 'archImageUrl': IMAGE_URL,
              'archImageSha256': IMAGE_SHA, 'providerCalls': 0, 'serialDevicesAttached': False})
+        phase = 'packaged-production-authority'
+        production_authority(args.work, source, args.evidence)
         phase = 'image'; image = args.work / IMAGE; download_image(image)
         info = json.loads(run(['qemu-img', 'info', '--output=json', image]).stdout)
         need(info['format'] == 'qcow2' and info['virtual-size'] <= 8 * 1024**3 and not info.get('backing-filename'), 'Unexpected Arch image layout')

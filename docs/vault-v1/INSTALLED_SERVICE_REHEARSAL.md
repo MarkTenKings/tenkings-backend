@@ -4,7 +4,7 @@ This exercises the signed appliance's real systemd unit and packaged Node on a *
 
 **Current evidence:** real GitHub Arch x86_64/QEMU TCG runs passed signed faedb613 installation, service-user preflight, non-root start, maintenance, restart, signed update and coordinated snapshots. After fixing the rehearsal's frozen-snapshot reads, run37731848385 exposed a packaged recovery defect: held restore returned success while the standalone restored main database lacked durable recovery holds because they remained in SQLite WAL. No reboot/full-lifecycle pass was recorded. **Do not install the faedb613 candidate.** Its original signed artifacts and failed qualification evidence remain preserved; the prerelease is labeled accordingly.
 
-The source fix explicitly closes and checkpoints staged writers, converts only the derived main database to standalone DELETE journal mode, then verifies recovery holds with immutable reads before hashes/receipt. Provider journals remain byte-identical to their snapshot. Backup handles also close before immutable verification. A new clean Linux build, offline signature and complete fresh VM rehearsal are required before replacement qualification. All85 local appliance tests pass, including a before/after WAL durability regression, actual busy-checkpoint failure and exact backup membership checks. Retained VM receipts are in `outputs/vault-service-lifecycle-rehearsal/github-{attempt2,frozen-retry}/`.
+The source fix explicitly closes and checkpoints staged writers, converts only the derived main database to standalone DELETE journal mode, then verifies recovery holds with immutable reads before hashes/receipt. Provider journals remain byte-identical to their snapshot. Backup handles also close before immutable verification. The corrected source `5f759355` has passed all484 Linux build checks and the native probe, and its new signed prerelease is published. The complete fresh qualification remains pending. All87 local appliance/tooling tests pass, including a before/after WAL durability regression, actual busy-checkpoint failure and exact backup membership checks. Retained VM receipts are in `outputs/vault-service-lifecycle-rehearsal/github-{attempt2,frozen-retry}/`.
 
 The earlier local ARM64 Colima/QEMU user-mode attempt could not start systemd262 and performed no installation. Its owned VM was removed, preserving the default Docker context and retained diagnostic evidence. This environment failure is separate from the subsequent real full-system VM results.
 
@@ -14,7 +14,7 @@ Use a newly created VM with real systemd as PID1, at least2GiB free, and Arch's 
 
 Copy reviewed `deploy/vault-linux/` tooling, the actual signed release directory, the independently trusted release public key, and separately signed update metadata into `/opt/vault-rehearsal-input/`. Use protected root-owned files/directories without symlinks or group/world write access; keep the tooling separate from the signed release. Do not copy any release signing private key, real configuration or existing database. Preserve each payload member's signed mode; do not recursively chmod the release. Verify the public key's fingerprint through the release handoff before starting.
 
-The second `release.json`/`release.sig` must come from the ordinary offline release signer. For this rehearsal, the only manifest difference is a new release ID; source, files, runtime and schema must be identical. This tests a real signed pointer transition without inventing a new application build. The retained metadata uses `ten-kings-vault-20261007-faedb613-rehearsal`, manifest SHA256 `fa964e359ef68c0ccf81e4693f3517c638fce115fb364a098b6fff648467333e`, under `outputs/vault-spark-release-validation/lifecycle-update-metadata/`. The original faedb613 artifact is unchanged.
+The second `release.json`/`release.sig` must come from the ordinary offline release signer. For this rehearsal, the only manifest difference is a new release ID; source, files, runtime and schema must be identical. This tests a real signed pointer transition without inventing a new application build. The retained metadata uses `ten-kings-vault-20261008-5f759355-rehearsal`, manifest SHA256 `254b01f365b8bc07aaf97466b176f32187a8356851eee4f1ca846f2e5cc72221`, under `outputs/vault-linux-signed-20261008/lifecycle-update-metadata/`. The new signed artifact remains unchanged throughout qualification.
 
 ## Before reboot
 
@@ -24,7 +24,7 @@ Inspect this VM's `/etc/machine-id`, then supply that exact value explicitly. Do
 sudo python3 -B /opt/vault-rehearsal-input/tooling/tests/installed-service-rehearsal.py prepare \
   --acknowledge SYNTHETIC_ONLY_DISPOSABLE_VM \
   --disposable-machine-id REVIEWED_DISPOSABLE_VM_MACHINE_ID \
-  --release /opt/vault-rehearsal-input/ten-kings-vault-20261007-faedb613 \
+  --release /opt/vault-rehearsal-input/ten-kings-vault-20261008-5f759355 \
   --public-key /opt/vault-rehearsal-input/release-public.pem \
   --update-metadata /opt/vault-rehearsal-input/lifecycle-update-metadata
 ```
@@ -56,6 +56,8 @@ python3 -B -m unittest discover -s deploy/vault-linux/tests -p 'test_installed_s
 ## GitHub-hosted disposable VM
 
 The separate `Vault disposable Arch installed-service rehearsal` workflow runs the same two phases in a real QEMU x86_64 guest on `ubuntu-24.04`. Its pull-request trigger is limited to this repository's `codex/vault-spark-release-20261007` branch and appliance/workflow paths. Once the workflow is registered on main, manual dispatch requires `SYNTHETIC_ONLY_DISPOSABLE_VM`. A workflow run is not acceptance until its receipts report success.
+
+Before creating a VM, the host verifies the replacement archive SHA256 `54c150d31c49f6525a36ac2bcc75af8614edf4317daf05458eabdde4c404dc7e`, its signature, source `5f759355` and signed update metadata. It runs the unchanged 34-check production-authority factory test using the actual packaged Node in a fresh labeled container from the already pinned official Python image. The container has no network, dropped capabilities, no-new-privileges and exactly three read-only mounts: release, public key and test source. Synthetic trust exists only inside its disposable overlay; no host trust, installation or writable state is mounted. The host requires all34 checks, exact source/manifest identity, zero provider/serial activity and confirmed synthetic cleanup, then removes only its ownership-labeled container. Timeout or cleanup uncertainty fails qualification before Arch boot.
 
 The host driver pins official Arch cloud image `v20261001.604814` to SHA256 `360f0fa49db6813bdc8e35bed230a2dc2ae3567b7b5ab74719c0a706e4e34e87` (578,080,256 bytes), the already signed application archive, the public release key and the public-only signed update metadata archive. It checks hashes, signatures and safe archive membership before copying inputs into the guest. Generated SSH client and server keys provide strict host-key verification without importing real keys. The repository token is used only by the host release-download step.
 
