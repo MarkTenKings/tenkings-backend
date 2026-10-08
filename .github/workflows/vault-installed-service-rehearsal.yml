@@ -1,0 +1,66 @@
+name: Vault disposable Arch installed-service rehearsal
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/vault-installed-service-rehearsal.yml'
+      - 'deploy/vault-linux/**'
+      - 'docs/vault-v1/INSTALLED_SERVICE_REHEARSAL.md'
+  workflow_dispatch:
+    inputs:
+      acknowledge:
+        description: 'Type SYNTHETIC_ONLY_DISPOSABLE_VM to run the isolated guest and reboot it'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vault-installed-service-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  arch-vm:
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.head_ref == 'codex/vault-spark-release-20261007') ||
+      (github.event_name == 'workflow_dispatch' && inputs.acknowledge == 'SYNTHETIC_ONLY_DISPOSABLE_VM')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install disposable VM tools on this ephemeral runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils openssh-client
+      - name: Download the existing signed appliance and public-only update metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir "$RUNNER_TEMP/vault-signed-inputs"
+          gh release download vault-linux-20261008-5f759355 --repo "$GITHUB_REPOSITORY" \
+            --dir "$RUNNER_TEMP/vault-signed-inputs" \
+            --pattern ten-kings-vault-20261008-5f759355.tar.gz \
+            --pattern release-public.pem \
+            --pattern lifecycle-update-metadata-5f759355.tar.gz
+      - name: Qualify packaged authority, installed lifecycle and VM reboot
+        run: |
+          python3 -B deploy/vault-linux/tests/run-installed-service-vm.py \
+            --acknowledge SYNTHETIC_ONLY_DISPOSABLE_VM \
+            --inputs "$RUNNER_TEMP/vault-signed-inputs" \
+            --work "$RUNNER_TEMP/vault-installed-service-vm" \
+            --evidence "$GITHUB_WORKSPACE/outputs/vault-installed-service-ci"
+      - name: Retain synthetic receipts only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vault-installed-service-synthetic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: outputs/vault-installed-service-ci/*.json
+          if-no-files-found: warn
+          retention-days: 14

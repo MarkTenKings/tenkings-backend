@@ -1,0 +1,27 @@
+{
+  "name": "@tenkings/vault-machine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One-writer local Vault authority with explicit simulator and Linux integration adapters",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": "20.x || 22.x"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "npm run build && node ../../scripts/test-vault-node.mjs",
+    "start": "node dist/cli.js",
+    "bench:controller": "python3 scripts/waveshare_bench.py",
+    "test:controller-bench": "python3 -m unittest discover -s tests -p test_waveshare_bench.py"
+  },
+  "dependencies": {
+    "@tenkings/vault-contracts": "workspace:*",
+    "better-sqlite3": "^11.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.12",
+    "@types/better-sqlite3": "^7.6.13",
+    "typescript": "5.5.4"
+  }
+}

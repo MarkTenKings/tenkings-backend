@@ -1,0 +1,1846 @@
+.cinematic-vault {
+  display: block;
+  --ivory: #eee9dd;
+  --champagne: #d5bc88;
+  --soft: #aaaead;
+  --line: rgba(225, 216, 190, 0.19);
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  max-width: none;
+  height: 100dvh;
+  min-height: 680px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #0b0d10;
+  color: var(--ivory);
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+}
+.cinematic-vault * {
+  box-sizing: border-box;
+}
+.cinematic-vault button {
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.cinematic-vault button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+.cinematic-vault button:focus-visible,
+.cinematic-vault select:focus-visible {
+  outline: 2px solid #ffe7ad;
+  outline-offset: 5px;
+}
+.cinematic-vault button {
+  transition:
+    background 0.18s,
+    color 0.18s,
+    border-color 0.18s,
+    transform 0.18s;
+}
+.cinematic-vault button:not(:disabled):active {
+  transform: scale(0.975);
+}
+.vault-atmosphere {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(ellipse at 68% 38%, #202630a1, transparent 64%),
+    linear-gradient(116deg, #0c1014, transparent 60%);
+}
+.vault-hud {
+  height: 104px;
+  position: relative;
+  z-index: 4;
+  margin: 0 3.3%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  gap: 24px;
+}
+.vault-wordmark {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--ivory);
+  font-size: 21px;
+  font-weight: 500;
+  letter-spacing: 4px;
+  white-space: nowrap;
+}
+.vault-wordmark small {
+  display: block;
+  letter-spacing: 5.2px;
+  font-size: 9px;
+  color: var(--champagne);
+  margin-top: 8px;
+}
+.vault-emblem {
+  border: 1px solid #8e7c536b;
+  width: 49px;
+  height: 55px;
+  display: grid;
+  place-items: center;
+  clip-path: polygon(0 0, 100% 0, 100% 78%, 50% 100%, 0 78%);
+  background: linear-gradient(130deg, #d7bd891c, transparent);
+  color: var(--champagne);
+}
+.vault-emblem svg {
+  width: 29px;
+}
+.vault-progress {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  list-style: none;
+  color: #797e80;
+  font-size: 11px;
+}
+.vault-progress > span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+}
+.vault-progress b {
+  font-size: 10px;
+  font-weight: 400;
+  color: #777e83;
+}
+.vault-progress .active {
+  color: var(--ivory);
+}
+.vault-progress .active b {
+  background: var(--champagne);
+  color: #161713;
+  padding: 5px;
+  border-radius: 50%;
+}
+.vault-tools {
+  display: flex;
+  align-items: center;
+  gap: 17px;
+}
+.preview-indicator {
+  font-size: 9px;
+  letter-spacing: 1.1px;
+  color: #b5aa91;
+  white-space: nowrap;
+}
+.preview-indicator i,
+.gallery-status i {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  background: var(--champagne);
+  border-radius: 50%;
+  margin-right: 8px;
+  box-shadow: 0 0 12px #edc36a44;
+}
+.vault-icon-button {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: #c7c1af;
+  width: 40px;
+  height: 40px;
+  font-size: 24px;
+}
+.cinematic-vault .service-hot-corner {
+  left: auto;
+  right: 0;
+  width: 32px;
+  height: 32px;
+  z-index: 15;
+}
+.vault-world {
+  position: absolute;
+  left: 28%;
+  right: -2%;
+  top: 12%;
+  height: 75%;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 1.1s;
+}
+.vault-world.world-ready,
+.vault-world.world-fallback {
+  opacity: 1;
+}
+.vault-world canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.world-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+      90deg,
+      #0c1014 0%,
+      transparent 17%,
+      transparent 94%,
+      #0b0d10
+    ),
+    linear-gradient(
+      0deg,
+      #0b0d10 0%,
+      transparent 19%,
+      transparent 89%,
+      #0b0d10e6
+    );
+  z-index: 2;
+}
+.world-door-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+.world-door {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: auto;
+  border: 0;
+  background: transparent;
+  color: var(--ivory);
+  padding: 0;
+  outline-offset: 2px !important;
+  border-radius: 3px;
+  transition: none !important;
+}
+.world-door:disabled {
+  opacity: 1 !important;
+}
+.world-door-tag {
+  position: absolute;
+  bottom: -44px;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 38px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  background: #10151ae6;
+  border: 1px solid #786b5077;
+  font-size: 8px;
+  letter-spacing: 1.3px;
+  box-shadow: 0 5px 20px #0005;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
+}
+.world-door-tag b {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 1px;
+}
+.world-door-tag i {
+  font-size: 16px;
+  font-style: normal;
+  margin-left: 5px;
+  color: var(--champagne);
+}
+.world-door:not(:disabled):hover .world-door-tag {
+  background: #3d3524;
+  border-color: #c7ab6e;
+}
+.world-door.is-selected .world-door-tag {
+  background: var(--champagne);
+  color: #181913;
+  border-color: #e3cc9c;
+}
+.world-door.is-selected .world-door-tag i {
+  color: #171913;
+}
+.world-door:disabled:not(.is-selected) .world-door-tag {
+  color: #888d90;
+  border-color: #42494c;
+}
+.world-door.has-conflict .world-door-tag {
+  border-color: #dc8771;
+  color: #ffc8b1;
+}
+.world-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--soft);
+  gap: 14px;
+}
+.world-loading span {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--champagne);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: vault-spin 1.4s linear infinite;
+}
+.vault-discover {
+  position: absolute;
+  z-index: 3;
+  left: 3.5%;
+  top: 16.5%;
+  width: 27%;
+  max-width: 390px;
+}
+.vault-kicker {
+  font-size: 9px;
+  letter-spacing: 2.2px;
+  font-weight: 500;
+  color: var(--champagne);
+  margin: 0;
+}
+.vault-discover > .vault-kicker {
+  font-size: 8px;
+  letter-spacing: 1.7px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.vault-discover > .vault-kicker > span {
+  width: 19px;
+  height: 1px;
+  background: var(--champagne);
+}
+.cinematic-vault h1 {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: clamp(49px, 4.7vw, 82px);
+  font-weight: 400;
+  line-height: 1.01;
+  letter-spacing: -3.8px;
+  margin: 24px 0 19px;
+}
+.cinematic-vault h1 em {
+  font-weight: 400;
+  font-family: Georgia, serif;
+  color: var(--champagne);
+  letter-spacing: -3px;
+}
+.vault-intro {
+  font-size: 14px;
+  color: #a1a6a8;
+  line-height: 1.65;
+  margin: 0 0 28px;
+}
+.collection-switch {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+  gap: 26px;
+}
+.collection-switch button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 1;
+  padding: 12px 0 14px;
+  background: transparent;
+  color: #8c9296;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  text-align: left;
+  font-size: 16px;
+}
+.collection-switch button[aria-pressed="true"] {
+  border-bottom-color: var(--champagne);
+  color: var(--ivory);
+}
+.collection-switch button span {
+  color: var(--champagne);
+  font-size: 17px;
+}
+.tier-heading {
+  margin: 24px 0 12px;
+  display: flex;
+  justify-content: space-between;
+  color: #898f92;
+  letter-spacing: 1.6px;
+  font-size: 8px;
+}
+.vault-tiers {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
+}
+.vault-tiers button {
+  background: #13191e;
+  color: #aab0b0;
+  border: 1px solid #3a4045;
+  min-height: 65px;
+  font-size: 20px;
+  letter-spacing: -0.6px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 0;
+}
+.vault-tiers button span {
+  font-size: 6px;
+  letter-spacing: 1px;
+  color: #80888b;
+}
+.vault-tiers button[aria-pressed="true"] {
+  background: linear-gradient(145deg, #ddc897, #b69b63);
+  border-color: #dbc394;
+  color: #181c1d;
+  box-shadow: 0 0 30px #c6a86612;
+}
+.vault-tiers button[aria-pressed="true"] span {
+  color: #574d32;
+}
+.product-detail-toggle {
+  margin-top: 16px;
+  padding: 10px 0 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  color: var(--ivory);
+}
+.product-detail-toggle b {
+  font-size: 11px;
+  font-weight: 400;
+}
+.product-detail-toggle small {
+  display: block;
+  margin-top: 8px;
+  font-size: 10px;
+  color: #8f969a;
+}
+.product-detail-toggle > span:last-child {
+  font-size: 19px;
+  color: var(--champagne);
+}
+.vault-product-details {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  display: flex;
+  gap: 18px;
+  padding: 16px;
+  background: #151c22;
+  box-shadow: 0 16px 70px #0008;
+  border: 1px solid var(--line);
+  z-index: 9;
+}
+.vault-product-details img {
+  width: 80px;
+  object-fit: contain;
+}
+.vault-product-details p {
+  font-size: 11px;
+  line-height: 1.6;
+  color: #aeb1b0;
+  margin: 0;
+}
+.vault-product-details b,
+.vault-product-details small {
+  display: block;
+  margin-bottom: 9px;
+}
+.vault-instruction {
+  margin-top: 22px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #afb2ad;
+}
+.touch-symbol {
+  color: var(--champagne);
+  font-size: 27px;
+}
+.vault-instruction p {
+  font-size: 10px;
+  line-height: 1.4;
+  margin: 0;
+}
+.vault-instruction small {
+  display: block;
+  font-size: 9px;
+  color: #7a848b;
+  margin-top: 5px;
+}
+.gallery-heading {
+  position: absolute;
+  left: 39%;
+  right: 6.2%;
+  top: 16%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: none;
+  z-index: 2;
+}
+.gallery-heading .vault-kicker {
+  font-size: 8px;
+  letter-spacing: 2.5px;
+  color: #8b949b;
+}
+.gallery-heading p {
+  font-size: 13px;
+  margin: 10px 0;
+  color: #e0d8c7;
+}
+.gallery-heading p > span {
+  margin: 0 11px;
+  color: #59656e;
+}
+.gallery-status {
+  font-size: 9px;
+  color: #b6b5ab;
+}
+.gallery-navigation {
+  position: absolute;
+  left: 42%;
+  right: 6.2%;
+  bottom: 20%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 4;
+}
+.gallery-navigation p {
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: #767d81;
+}
+.gallery-navigation p > span:first-child {
+  color: var(--ivory);
+}
+.gallery-view-note {
+  margin-left: 17px;
+  padding-left: 17px;
+  border-left: 1px solid #4f565d;
+  color: #8a949a;
+  font-size: 8px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+.gallery-navigation > div {
+  display: flex;
+  gap: 8px;
+}
+.gallery-navigation button {
+  width: 46px;
+  height: 42px;
+  background: #10151bbc;
+  border: 1px solid #535b625c;
+  color: #c9c5b5;
+  font-size: 17px;
+}
+.gallery-empty {
+  position: absolute;
+  top: 50%;
+  left: 45%;
+  right: 10%;
+  padding: 25px;
+  z-index: 5;
+  background: #10151a;
+  border: 1px solid var(--line);
+  color: #e0c990;
+  text-align: center;
+}
+.vault-checkout-hud {
+  position: absolute;
+  left: 3.3%;
+  right: 3.3%;
+  bottom: 5.5%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 27px;
+  padding: 22px 26px;
+  background: linear-gradient(110deg, #151c22ef, #11171de8);
+  border: 1px solid #62636158;
+  box-shadow: 0 15px 60px #0005;
+  backdrop-filter: blur(18px);
+  min-height: 105px;
+}
+.selection-summary {
+  flex: 1;
+  min-width: 0;
+}
+.selection-summary .vault-kicker {
+  font-size: 8px;
+  letter-spacing: 1.7px;
+  color: #979a95;
+}
+.selection-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 11px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.selection-chips p {
+  font-size: 12px;
+  color: #a1a6a8;
+  margin: 4px 0;
+}
+.selection-chips button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid #86735181;
+  color: var(--ivory);
+  background: #5a4b2b29;
+  flex-shrink: 0;
+  min-height: 37px;
+}
+.selection-chips span {
+  font-size: 12px;
+}
+.selection-chips small {
+  font-size: 10px;
+  color: #c0b49a;
+}
+.selection-chips i {
+  font-style: normal;
+  color: #bdae89;
+  font-size: 16px;
+}
+.selection-chips .conflict {
+  border-color: #ef9e7b;
+}
+.selection-total {
+  text-align: right;
+  flex-shrink: 0;
+}
+.selection-total small {
+  font-size: 9px;
+  color: #b2b5b3;
+}
+.selection-total strong {
+  display: block;
+  font-size: 27px;
+  font-weight: 400;
+  letter-spacing: -0.8px;
+  margin-top: 8px;
+}
+.vault-primary {
+  background: linear-gradient(105deg, #e4d2a7, #b9a06b);
+  color: #15191b;
+  border: 1px solid #d2bd8b;
+  padding: 17px 24px;
+  min-height: 55px;
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 35px;
+}
+.vault-primary > span {
+  font-size: 22px;
+  font-weight: 400;
+}
+.vault-primary:not(:disabled):hover {
+  background: linear-gradient(105deg, #f0e0b9, #d3ba85);
+  box-shadow: 0 0 30px #bea16a22;
+}
+.vault-primary:disabled {
+  background: #424745;
+  border-color: #565953;
+  color: #92968e;
+  opacity: 0.65 !important;
+}
+.review-action {
+  min-width: 215px;
+}
+.vault-bottom-line {
+  position: absolute;
+  z-index: 3;
+  bottom: 2.1%;
+  left: 3.3%;
+  right: 3.3%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  font-size: 7px;
+  letter-spacing: 1.4px;
+  color: #757f86;
+}
+.vault-bottom-line i {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  background: #b17b54;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+.vault-bottom-line i.is-online {
+  background: #8eab99;
+}
+.vault-bottom-line > span:nth-child(2) {
+  color: #bfa77e;
+}
+.vault-toast {
+  position: absolute;
+  z-index: 20;
+  bottom: 20%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 16px 24px;
+  background: #382a23;
+  border: 1px solid #c89170;
+  color: #ffe4c3;
+  max-width: 600px;
+  font-size: 13px;
+  box-shadow: 0 15px 40px #000a;
+}
+.experience-settings {
+  position: absolute;
+  z-index: 12;
+  right: 3.3%;
+  top: 94px;
+  width: 325px;
+  padding: 20px;
+  background: #171e24;
+  border: 1px solid #62605a;
+  box-shadow: 0 15px 50px #000b;
+}
+.settings-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+.settings-heading > button {
+  background: none;
+  border: 0;
+  color: #ddccaa;
+  font-size: 23px;
+  min-width: 40px;
+  min-height: 40px;
+}
+.settings-heading strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+.experience-settings > button,
+.experience-settings > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 15px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  background: transparent;
+  color: #c8c6ba;
+  min-height: 48px;
+}
+.experience-settings b {
+  font-size: 10px;
+  color: var(--champagne);
+}
+.experience-settings select {
+  background: #242e37;
+  border: 1px solid #5d645f;
+  color: var(--ivory);
+  padding: 8px;
+  font-size: 11px;
+}
+.experience-settings > p {
+  font-size: 10px;
+  line-height: 1.7;
+  color: #a2a9ad;
+  margin: 14px 0 0;
+}
+.experience-settings small {
+  display: block;
+  color: #c0b394;
+  font-size: 10px;
+}
+.vault-review-dialog {
+  width: min(820px, 92vw);
+  max-height: 88dvh;
+  overflow: auto;
+  background: #121a21;
+  color: var(--ivory);
+  padding: 0;
+  border: 1px solid #b79c655e;
+  box-shadow: 0 25px 120px #000b;
+}
+.vault-review-dialog[open] {
+  display: grid;
+  grid-template-columns: 30% 70%;
+  animation: review-in 0.32s ease-out;
+}
+.vault-review-dialog::backdrop {
+  background: #05090cc7;
+  backdrop-filter: blur(9px);
+}
+.review-art {
+  background: radial-gradient(ellipse at 50% 35%, #65543255, transparent 65%),
+    linear-gradient(155deg, #222b30, #0a0f14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 38px;
+  padding: 28px;
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+}
+.review-art img {
+  width: 100%;
+  transform: perspective(700px) rotateY(-15deg) rotateZ(-6deg);
+  box-shadow: 15px 25px 35px #000b;
+  border: 1px solid #95793e;
+}
+.review-art > span {
+  font-size: 7px;
+  color: #a89268;
+  letter-spacing: 2px;
+}
+.review-content {
+  padding: 36px;
+  position: relative;
+}
+.review-close {
+  position: absolute;
+  right: 15px;
+  top: 12px;
+  background: none;
+  border: 0;
+  font-size: 28px;
+  color: #aaa994;
+  width: 40px;
+  height: 40px;
+}
+.review-content h2 {
+  font-family: Georgia, serif;
+  font-size: 43px;
+  letter-spacing: -1.5px;
+  font-weight: 400;
+  margin: 17px 0 11px;
+}
+.review-subtitle {
+  font-size: 12px;
+  color: #9ca5aa;
+  line-height: 1.5;
+  margin-bottom: 26px;
+}
+.review-lines {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.review-lines li {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+.review-lines li > strong {
+  font-size: 15px;
+  font-weight: 400;
+  color: #dfc695;
+  min-width: 32px;
+}
+.review-lines li > span {
+  flex: 1;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.review-lines li small {
+  display: block;
+  color: #7d8991;
+  font-size: 9px;
+  margin-top: 4px;
+}
+.review-lines li > b {
+  font-size: 12px;
+  font-weight: 400;
+}
+.review-lines li > button {
+  background: none;
+  border: 0;
+  color: #b1a48b;
+  font-size: 20px;
+  min-width: 32px;
+  min-height: 44px;
+}
+.review-content dl {
+  margin: 12px 0 24px;
+}
+.review-content dl > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 0;
+  font-size: 12px;
+  color: #a6afb2;
+}
+.review-content dd {
+  margin: 0;
+  color: #d8d8cd;
+}
+.review-content .review-total {
+  font-size: 22px;
+  color: var(--ivory);
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  margin-top: 9px;
+}
+.review-content .review-total dd {
+  color: var(--champagne);
+}
+.review-content .vault-primary {
+  width: 100%;
+  font-size: 14px;
+}
+.review-test-note {
+  color: #b59d74;
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-align: center;
+  margin: 13px 0;
+}
+.review-back {
+  display: block;
+  margin: 20px auto 0;
+  border: 0;
+  background: none;
+  color: #afb3b0;
+  font-size: 11px;
+  min-height: 40px;
+}
+.review-error {
+  font-size: 12px;
+  color: #ffd1aa;
+  line-height: 1.5;
+  background: #58391e70;
+  padding: 10px;
+}
+.cinematic-paid .vault-world {
+  left: 35%;
+  right: -10%;
+  top: 18%;
+  height: 76%;
+}
+.vault-sale-panel {
+  position: absolute;
+  top: 18%;
+  left: 4%;
+  width: 36%;
+  max-height: 74%;
+  overflow-y: auto;
+  z-index: 4;
+  scrollbar-width: thin;
+}
+.collection-headline h1 {
+  font-size: 65px;
+  margin: 18px 0;
+}
+.vault-sale-panel .paid-flow {
+  padding: 0;
+  max-width: none;
+  margin: 0;
+}
+.vault-sale-panel .status-banner {
+  border: 0;
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0 0 20px;
+}
+.vault-sale-panel .status-banner h1 {
+  font-size: 24px;
+  letter-spacing: -0.5px;
+  line-height: 1.12;
+  font-family: Arial, sans-serif;
+  margin: 12px 0;
+}
+.vault-sale-panel .status-banner p {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #b1b4b1;
+}
+.vault-sale-panel .status-banner .eyebrow {
+  font-size: 8px;
+  color: var(--champagne);
+  letter-spacing: 1.7px;
+}
+.vault-sale-panel .paid-receipt {
+  display: flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--line);
+  background: #161e24e8;
+  border-radius: 0;
+  padding: 22px;
+  gap: 18px;
+  margin: 0 0 17px;
+  box-shadow: none;
+}
+.vault-sale-panel .paid-total {
+  order: 2;
+  width: 100%;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.vault-sale-panel .paid-total span {
+  font-size: 12px;
+  color: #aeb1a9;
+}
+.vault-sale-panel .paid-total strong {
+  font-size: 25px;
+}
+.vault-sale-panel .paid-receipt .eyebrow {
+  font-size: 8px;
+  letter-spacing: 2px;
+  color: var(--champagne);
+}
+.vault-sale-panel .paid-receipt h2 {
+  font-family: Arial, sans-serif;
+  font-weight: 400;
+  font-size: 36px;
+  letter-spacing: -0.5px;
+  margin: 8px 0;
+}
+.vault-sale-panel .paid-receipt p {
+  font-size: 11px;
+  line-height: 1.6;
+  color: #a6b0b4;
+}
+.vault-sale-panel .countdown-orb {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  box-shadow: none;
+  background: none;
+  padding: 0;
+  color: #b4a580;
+}
+.vault-sale-panel .countdown-orb strong {
+  font-size: 15px;
+}
+.vault-sale-panel .countdown-orb span {
+  font-size: 10px;
+}
+.vault-sale-panel .retry-card,
+.vault-sale-panel .done-card {
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 17px;
+  background: #111921e6;
+  margin: 13px 0;
+  box-shadow: none;
+}
+.vault-sale-panel .retry-card p,
+.vault-sale-panel .retry-card small,
+.vault-sale-panel .done-card {
+  font-size: 11px;
+  line-height: 1.6;
+  color: #acb2b3;
+}
+.vault-sale-panel .primary-action,
+.vault-sale-panel .secondary-action {
+  border-radius: 0;
+  font-size: 12px;
+  min-height: 48px;
+  box-shadow: none;
+}
+.vault-sale-panel .retry-action {
+  background: #30372f;
+  color: #e9d6b0;
+  border-color: #91805a;
+  margin: 8px 0;
+}
+.vault-sale-panel .support-panel {
+  background: #182129;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 17px;
+  font-size: 11px;
+}
+.vault-sale-panel .support-panel h2 {
+  font-size: 20px;
+}
+.preview-reveal-note {
+  font-size: 9px;
+  color: #b99e73;
+  line-height: 1.5;
+  margin-top: 20px;
+}
+.vault-sale-panel .support-methods {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.world-fallback {
+  background: linear-gradient(135deg, #202a32, #0c1115);
+  padding: 90px 30px;
+  z-index: 2;
+}
+.world-fallback .world-door-controls {
+  position: static;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+  margin-top: 25px;
+}
+.world-fallback .world-door {
+  position: relative;
+  visibility: visible !important;
+  transform: none !important;
+  width: 100% !important;
+  height: 230px !important;
+  background: linear-gradient(115deg, #696b63, #222b32);
+  border: 3px double #b2a27e;
+}
+.world-fallback .world-door-tag {
+  bottom: 15px;
+}
+.world-unavailable {
+  color: #c9bc9a;
+  font-size: 12px;
+  text-align: center;
+}
+.world-fallback .world-vignette {
+  display: none;
+}
+@keyframes review-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes vault-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.reduce-motion * {
+  animation: none !important;
+  transition: none !important;
+}
+@media (min-width: 1650px) {
+  .vault-hud {
+    height: 115px;
+  }
+  .vault-discover {
+    top: 19%;
+    width: 26%;
+  }
+  .vault-discover > .vault-kicker {
+    font-size: 10px;
+  }
+  .vault-intro {
+    font-size: 16px;
+    margin-bottom: 35px;
+  }
+  .collection-switch button {
+    font-size: 18px;
+  }
+  .vault-tiers button {
+    min-height: 79px;
+    font-size: 24px;
+  }
+  .vault-instruction p {
+    font-size: 12px;
+  }
+  .vault-instruction small {
+    font-size: 11px;
+  }
+  .product-detail-toggle b {
+    font-size: 13px;
+  }
+  .product-detail-toggle small {
+    font-size: 11px;
+  }
+  .gallery-heading {
+    top: 19%;
+  }
+  .vault-world {
+    top: 14%;
+    height: 70%;
+  }
+  .vault-checkout-hud {
+    min-height: 115px;
+    padding: 26px 30px;
+  }
+  .vault-progress {
+    font-size: 12px;
+    gap: 40px;
+  }
+  .vault-bottom-line {
+    font-size: 8px;
+  }
+  .world-door-tag {
+    height: 42px;
+    font-size: 9px;
+    bottom: -46px;
+  }
+  .world-door-tag b {
+    font-size: 12px;
+  }
+  .gallery-navigation {
+    bottom: 22%;
+  }
+}
+@media (max-height: 790px) and (min-width: 1000px) {
+  .vault-hud {
+    height: 80px;
+  }
+  .vault-discover {
+    top: 15%;
+  }
+  .cinematic-vault h1 {
+    font-size: 51px;
+    margin: 17px 0 13px;
+  }
+  .vault-intro {
+    font-size: 12px;
+    margin-bottom: 17px;
+  }
+  .tier-heading {
+    margin-top: 17px;
+  }
+  .vault-tiers button {
+    min-height: 57px;
+  }
+  .vault-instruction {
+    margin-top: 13px;
+  }
+  .gallery-heading {
+    top: 16%;
+  }
+  .vault-checkout-hud {
+    bottom: 5.5%;
+    min-height: 88px;
+    padding: 14px 23px;
+  }
+  .gallery-navigation {
+    bottom: 19%;
+  }
+  .vault-sale-panel {
+    top: 16%;
+    max-height: 76%;
+  }
+  .collection-headline h1 {
+    font-size: 52px;
+  }
+  .vault-sale-panel .status-banner {
+    margin-bottom: 12px;
+  }
+  .vault-sale-panel .paid-receipt {
+    padding: 15px;
+  }
+  .vault-sale-panel .retry-card {
+    padding: 12px;
+  }
+  .vault-sale-panel .retry-card p {
+    margin-top: 0;
+  }
+}
+@media (max-width: 1100px) {
+  .vault-progress {
+    gap: 15px;
+  }
+  .vault-progress > span {
+    font-size: 10px;
+    gap: 6px;
+  }
+  .vault-tools {
+    gap: 10px;
+  }
+  .preview-indicator {
+    font-size: 7px;
+  }
+  .vault-wordmark {
+    font-size: 17px;
+    letter-spacing: 3px;
+  }
+  .vault-discover {
+    width: 28%;
+  }
+  .vault-discover > .vault-kicker {
+    font-size: 6px;
+    letter-spacing: 1px;
+  }
+  .vault-instruction p {
+    font-size: 9px;
+  }
+  .gallery-heading {
+    left: 39%;
+    right: 4%;
+  }
+  .gallery-status {
+    font-size: 8px;
+  }
+  .vault-tiers button {
+    font-size: 18px;
+  }
+  .vault-bottom-line {
+    letter-spacing: 0.7px;
+  }
+  .review-action {
+    min-width: 190px;
+  }
+  .world-door-tag {
+    gap: 5px;
+    padding: 0 8px;
+    font-size: 6px;
+    letter-spacing: 0.6px;
+  }
+  .world-door-tag b {
+    font-size: 9px;
+  }
+  .world-door-tag i {
+    font-size: 13px;
+  }
+  .vault-checkout-hud {
+    gap: 18px;
+  }
+  .gallery-navigation {
+    right: 4%;
+  }
+  .vault-sale-panel {
+    width: 40%;
+  }
+}
+@media (max-width: 900px) {
+  .cinematic-vault {
+    height: auto;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    padding-bottom: 235px;
+  }
+  .vault-hud {
+    height: 85px;
+    margin: 0 5%;
+  }
+  .vault-progress {
+    display: none;
+  }
+  .vault-wordmark {
+    font-size: 18px;
+  }
+  .vault-tools {
+    gap: 15px;
+  }
+  .preview-indicator {
+    font-size: 8px;
+  }
+  .vault-discover {
+    position: relative;
+    left: auto;
+    top: auto;
+    width: auto;
+    max-width: none;
+    padding: 29px 5% 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 28px;
+  }
+  .vault-discover > .vault-kicker {
+    grid-column: 1/-1;
+    font-size: 8px;
+    margin-bottom: 4px;
+  }
+  .cinematic-vault h1 {
+    grid-column: 1;
+    grid-row: 2/5;
+    font-size: 53px;
+    margin: 18px 0 0;
+  }
+  .vault-intro {
+    grid-column: 1;
+    grid-row: 5/7;
+    font-size: 12px;
+    margin-top: 15px;
+  }
+  .collection-switch {
+    grid-column: 2;
+    grid-row: 2;
+    gap: 20px;
+  }
+  .collection-switch button {
+    font-size: 14px;
+    padding-top: 14px;
+  }
+  .tier-heading {
+    grid-column: 2;
+    grid-row: 3;
+    margin: 16px 0 10px;
+  }
+  .vault-tiers {
+    grid-column: 2;
+    grid-row: 4;
+    gap: 4px;
+  }
+  .vault-tiers button {
+    font-size: 17px;
+    min-height: 58px;
+  }
+  .vault-tiers button span {
+    font-size: 5px;
+  }
+  .product-detail-toggle {
+    grid-column: 2;
+    grid-row: 5/7;
+    margin-top: 8px;
+  }
+  .vault-instruction {
+    grid-column: 1/-1;
+    margin: 6px 0 0;
+  }
+  .vault-instruction p {
+    font-size: 10px;
+  }
+  .vault-instruction small {
+    display: inline;
+    margin-left: 7px;
+  }
+  .vault-product-details {
+    top: 97%;
+    left: auto;
+    right: 5%;
+    width: 50%;
+  }
+  .vault-world {
+    position: relative;
+    height: 500px;
+    left: -4%;
+    right: auto;
+    width: 108%;
+    top: auto;
+    margin-top: 40px;
+    margin-bottom: -60px;
+  }
+  .gallery-heading {
+    top: 390px;
+    left: 8%;
+    right: 8%;
+    font-size: 10px;
+  }
+  .gallery-navigation {
+    position: relative;
+    left: auto;
+    right: auto;
+    margin: 0 8%;
+    bottom: auto;
+  }
+  .gallery-navigation button {
+    width: 53px;
+    height: 44px;
+  }
+  .vault-checkout-hud {
+    position: absolute;
+    bottom: 57px;
+    min-height: 122px;
+    gap: 18px;
+    flex-wrap: wrap;
+    left: 5%;
+    right: 5%;
+    padding: 17px 20px;
+  }
+  .selection-summary {
+    min-width: 50%;
+  }
+  .selection-total {
+    margin-left: auto;
+  }
+  .review-action {
+    width: 100%;
+    min-height: 52px;
+  }
+  .vault-bottom-line {
+    bottom: 22px;
+    left: 5%;
+    right: 5%;
+    font-size: 6px;
+    letter-spacing: 0.8px;
+    gap: 10px;
+  }
+  .vault-bottom-line > span:last-child {
+    display: none;
+  }
+  .world-door-tag {
+    height: 40px;
+    font-size: 8px;
+    bottom: -42px;
+    gap: 8px;
+  }
+  .world-door-tag b {
+    font-size: 11px;
+  }
+  .world-door-tag i {
+    font-size: 17px;
+  }
+  .gallery-empty {
+    top: 550px;
+    left: 15%;
+    right: 15%;
+  }
+  .cinematic-paid {
+    padding-bottom: 100px;
+  }
+  .cinematic-paid .vault-world {
+    position: relative;
+    left: 0;
+    right: auto;
+    width: 100%;
+    height: 430px;
+    top: auto;
+    margin: 0;
+  }
+  .vault-sale-panel {
+    position: relative;
+    left: 5%;
+    top: auto;
+    width: 90%;
+    max-height: none;
+    margin-top: 20px;
+  }
+  .cinematic-paid .vault-sale-panel {
+    margin-top: -30px;
+  }
+  .vault-sale-panel .paid-receipt {
+    display: flex;
+  }
+  .vault-sale-panel .paid-total {
+    max-width: none;
+  }
+  .collection-headline h1 {
+    font-size: 50px;
+  }
+  .vault-toast {
+    position: fixed;
+    bottom: 30px;
+    width: 80%;
+  }
+  .experience-settings {
+    right: 5%;
+    top: 78px;
+  }
+  .world-vignette {
+    background: linear-gradient(
+      0deg,
+      #0b0d10 0%,
+      transparent 22%,
+      transparent 94%,
+      #0b0d10
+    );
+  }
+}
+@media (max-width: 550px) {
+  .vault-hud {
+    height: 75px;
+  }
+  .vault-wordmark {
+    font-size: 15px;
+    gap: 9px;
+    letter-spacing: 2px;
+  }
+  .vault-wordmark small {
+    font-size: 7px;
+  }
+  .vault-emblem {
+    width: 37px;
+    height: 42px;
+  }
+  .preview-indicator {
+    font-size: 6px;
+    letter-spacing: 0.7px;
+  }
+  .vault-icon-button {
+    width: 36px;
+    height: 36px;
+  }
+  .vault-tools {
+    gap: 8px;
+  }
+  .vault-discover {
+    column-gap: 19px;
+    padding-top: 21px;
+  }
+  .vault-discover > .vault-kicker {
+    font-size: 6px;
+  }
+  .cinematic-vault h1 {
+    font-size: 39px;
+    letter-spacing: -2.5px;
+  }
+  .cinematic-vault h1 em {
+    letter-spacing: -2px;
+  }
+  .vault-intro {
+    font-size: 10px;
+    line-height: 1.6;
+  }
+  .collection-switch {
+    gap: 12px;
+  }
+  .collection-switch button {
+    font-size: 12px;
+    min-height: 45px;
+  }
+  .vault-tiers {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .vault-tiers button {
+    min-height: 46px;
+    font-size: 16px;
+    gap: 4px;
+  }
+  .vault-tiers button span {
+    font-size: 5px;
+  }
+  .tier-heading {
+    font-size: 6px;
+    letter-spacing: 1px;
+  }
+  .product-detail-toggle b {
+    font-size: 9px;
+  }
+  .product-detail-toggle small {
+    font-size: 8px;
+    line-height: 1.5;
+  }
+  .vault-instruction small {
+    display: block;
+    margin-left: 0;
+  }
+  .vault-world {
+    height: 385px;
+    margin-top: 60px;
+    margin-bottom: -35px;
+    width: 118%;
+    left: -9%;
+  }
+  .gallery-heading {
+    top: 423px;
+    left: 6%;
+    right: 6%;
+  }
+  .gallery-heading p {
+    font-size: 11px;
+  }
+  .gallery-status {
+    font-size: 7px;
+  }
+  .gallery-navigation {
+    margin: 0 6%;
+  }
+  .gallery-view-note {
+    display: none;
+  }
+  .world-door-tag {
+    font-size: 6px;
+    gap: 4px;
+    padding: 0 7px;
+    bottom: -36px;
+    height: 34px;
+  }
+  .world-door-tag b {
+    font-size: 9px;
+  }
+  .world-door-tag i {
+    display: none;
+  }
+  .selection-total strong {
+    font-size: 24px;
+  }
+  .selection-chips p {
+    font-size: 10px;
+  }
+  .vault-checkout-hud {
+    padding: 15px;
+    gap: 12px;
+  }
+  .vault-bottom-line {
+    font-size: 5px;
+    letter-spacing: 0.5px;
+  }
+  .vault-review-dialog[open] {
+    display: block;
+  }
+  .review-art {
+    display: none;
+  }
+  .review-content {
+    padding: 28px 23px;
+  }
+  .review-content h2 {
+    font-size: 36px;
+  }
+  .review-lines li {
+    gap: 10px;
+  }
+  .review-lines li > span {
+    font-size: 10px;
+  }
+  .review-lines li > b {
+    font-size: 11px;
+  }
+  .vault-product-details {
+    width: 90%;
+    right: 5%;
+  }
+  .cinematic-paid .vault-world {
+    height: 330px;
+  }
+  .gallery-empty {
+    top: 550px;
+  }
+  .world-fallback .world-door {
+    height: 160px !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cinematic-vault * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+/* Compact collection HUD keeps the exact paid IDs and available actions together. */
+.vault-sale-panel .paid-flow {
+  gap: 10px;
+  width: 100%;
+}
+.vault-sale-panel .paid-receipt,
+.vault-sale-panel .retry-card,
+.vault-sale-panel .done-card {
+  margin: 0;
+}
+.vault-sale-panel .paid-receipt {
+  gap: 10px;
+}
+.vault-sale-panel .paid-receipt p {
+  margin: 6px 0;
+}
+.vault-sale-panel .paid-total {
+  padding-top: 9px;
+}
+.vault-sale-panel .collection-headline + .paid-flow > .status-banner {
+  margin: 0;
+}
+.vault-sale-panel .collection-headline + .paid-flow > .status-banner h1,
+.vault-sale-panel
+  .collection-headline
+  + .paid-flow
+  > .status-banner
+  p:not(.eyebrow) {
+  display: none;
+}
+.vault-sale-panel .retry-card {
+  padding: 12px 15px;
+}
+.vault-sale-panel .retry-card p {
+  margin: 0;
+}
+.vault-sale-panel .retry-card small {
+  margin: 5px 0 0;
+  font-size: 9px;
+}
+.vault-sale-panel .done-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 15px;
+}
+.vault-sale-panel .done-card .secondary-action {
+  flex: 1;
+  min-width: 175px;
+}
+.vault-sale-panel .retry-action {
+  margin: 7px 0 0;
+}
+.collection-headline h1 {
+  margin-bottom: 12px;
+}
+.preview-reveal-note {
+  margin-top: 12px;
+}
+@media (max-width: 900px) {
+  .cinematic-vault {
+    display: flex;
+    flex-direction: column;
+  }
+  .vault-hud {
+    order: 0;
+    flex: 0 0 85px;
+  }
+  .vault-discover {
+    order: 1;
+  }
+  .gallery-heading {
+    position: relative;
+    order: 2;
+    left: auto;
+    right: auto;
+    top: auto;
+    margin: 28px 7% 0;
+  }
+  .vault-world {
+    order: 3;
+    margin-top: -10px;
+  }
+  .gallery-navigation {
+    order: 4;
+  }
+  .vault-sale-panel {
+    order: 1;
+  }
+  .cinematic-paid .vault-world {
+    order: 2;
+  }
+  .cinematic-paid .vault-sale-panel {
+    margin-top: 28px;
+  }
+}
+@media (max-width: 550px) {
+  .vault-hud {
+    flex-basis: 75px;
+  }
+  .gallery-heading {
+    margin: 25px 6% 0;
+  }
+  .vault-world {
+    margin-top: -7px;
+  }
+}
+
+.cinematic-vault .vault-compare-link { display: grid; place-items: center; min-height: 44px; min-width: 44px; color: #d6c49b; text-decoration: none; font: 11px Arial, sans-serif; letter-spacing: .08em; }

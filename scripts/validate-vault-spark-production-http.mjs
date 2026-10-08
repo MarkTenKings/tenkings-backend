@@ -1,0 +1,54 @@
+import assert from "node:assert/strict";
+import { randomBytes, randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { createRequire } from "node:module";
+import { startVaultNextTestServer, vaultNextTestEnvironment } from "./vault-next-test-server.mjs";
+import { syntheticBinding, hash } from "./vault-spark-integration-fixture.mjs";
+
+assert.equal(process.env.VAULT_SYNTHETIC_SPARK_VALIDATION, "1");
+vaultNextTestEnvironment(process.env.DATABASE_URL); // rejects real/remote databases and inherited .env files
+const require = createRequire(import.meta.url), { prisma } = require("../packages/database");
+const { VaultCloudClient } = require("../packages/vault-machine/dist");
+const binding = syntheticBinding(901), productionBinding = { ...binding, stage: "PRODUCTION", paymentBindingDigest: "b".repeat(64) };
+const credential = `vault_${randomBytes(32).toString("base64url")}`, secret = () => `synthetic_${randomBytes(32).toString("base64url")}`;
+const callbackSecret = secret(), productionCallbackSecret = secret(), results = [];
+const check = (label, actual, expected) => { assert.deepEqual(actual, expected, label); results.push(label); };
+let next;
+try {
+  await prisma.vaultMachine.create({ data: { id: binding.machineId, slug: `synthetic-production-${binding.machineId}`, serialNumber: `synthetic-${binding.machineId}`, displayName: "Synthetic production route boundary", status: "ACTIVE", timezone: "America/Los_Angeles", city: "Test", state: "CA", taxRateBasisPoints: 0, currentCredentialVersion: 1 } });
+  await prisma.vaultMachineCredential.create({ data: { machineId: binding.machineId, version: 1, credentialHash: hash(credential), status: "ACTIVE", activatedAt: new Date() } });
+  next = await startVaultNextTestServer(process.env.DATABASE_URL, { bindings: [binding], callbackSecret, ownerAdminUserId: randomUUID(), productionBindings: [productionBinding], productionCallbackSecret });
+  const cloud = new VaultCloudClient({ origin: next.url, machineId: binding.machineId, credential: () => credential, allowInsecureLoopback: true });
+  const session = randomUUID(), body = { SparkTransactionId: session, NayaxTransactionId: 81234567, MachineId: Number(binding.nayaxMachineId), TerminalId: binding.hwSerial, HwSerial: binding.hwSerial, SiteId: binding.siteId, Amount: 25, CurrencyCode: "USD", MachineAuTime: "20261007235500123", AuthStatus: { Verdict: "Approved", ErrorCode: 0 }, CardBrand: "VISA" };
+  const post = (stage, kind, supplied, payload = body) => fetch(`${next.url}/api/vault/v1/spark/${stage === "PRODUCTION" ? "production/" : ""}${kind}`, { method: "POST", headers: { "Content-Type": "application/json", "x-vault-spark-secret": supplied }, body: JSON.stringify(payload), signal: AbortSignal.timeout(15000) });
+  check("production HTTP rejects sandbox secret", (await post("PRODUCTION", "TransactionCallback", callbackSecret)).status, 401);
+  check("sandbox HTTP rejects production secret", (await post("SANDBOX", "TransactionCallback", productionCallbackSecret)).status, 401);
+  check("production callback persisted through actual Next and PostgreSQL", (await post("PRODUCTION", "TransactionCallback", productionCallbackSecret)).status, 200);
+  check("production duplicate acknowledged", (await post("PRODUCTION", "TransactionCallback", productionCallbackSecret)).status, 200);
+  check("same wire body independently accepted by sandbox", (await post("SANDBOX", "TransactionCallback", callbackSecret)).status, 200);
+  check("two immutable stage rows, no duplicate insertion", await prisma.vaultSparkObservation.count({ where: { machineId: binding.machineId } }), 2);
+  const production = await cloud.sparkObservations(session, "PRODUCTION", productionBinding.paymentBindingDigest), sandbox = await cloud.sparkObservations(session);
+  check("production client sees one exact production binding", production.map(row => [row.stage, row.paymentBindingDigest, row.sparkTransactionId]), [["PRODUCTION", productionBinding.paymentBindingDigest, session]]);
+  check("sandbox client retains original wire shape", sandbox.map(row => [row.stage, row.paymentBindingDigest, row.sparkTransactionId]), [[undefined, undefined, session]]);
+  assert.match(production[0].receiptId, /^spark-production:/); assert.match(sandbox[0].receiptId, /^spark-sandbox:/); results.push("actual HTTP receipt domains remain distinct");
+  check("production feed excludes sandbox", (await cloud.sparkReceipts("0", "PRODUCTION", productionBinding.paymentBindingDigest)).observations.map(row => row.receiptId), [production[0].receiptId]);
+  check("sandbox feed excludes production", (await cloud.sparkReceipts("0")).observations.map(row => row.receiptId), [sandbox[0].receiptId]);
+  check("rotated generation cannot see earlier observations", await cloud.sparkObservations(session, "PRODUCTION", "c".repeat(64)), []);
+  check("rotated generation cannot advance from earlier feed", await cloud.sparkReceipts("0", "PRODUCTION", "c".repeat(64)), { observations: [], nextCursor: "0", hasMore: false });
+  const get = (query, token = credential) => fetch(`${next.url}/api/vault/v1/spark/receipts?machineId=${binding.machineId}&${query}`, { headers: { Authorization: `VaultMachine ${token}`, "X-Vault-Contract-Version": "1" }, signal: AbortSignal.timeout(15000) });
+  check("production HTTP feed requires full binding", (await get("stage=PRODUCTION")).status, 400);
+  check("HTTP feed rejects invented stage", (await get("stage=LIVE")).status, 400);
+  check("HTTP feed requires real machine credential", (await get(`stage=PRODUCTION&paymentBindingDigest=${productionBinding.paymentBindingDigest}`, "synthetic_invalid")).status, 401);
+  check("production callback rejects wrong device", (await post("PRODUCTION", "TransactionCallback", productionCallbackSecret, { ...body, HwSerial: "SYNTHETIC-WRONG" })).status, 422);
+  check("production callback rejects duplicate JSON keys", (await fetch(`${next.url}/api/vault/v1/spark/production/TransactionCallback`, { method: "POST", headers: { "Content-Type": "application/json", "x-vault-spark-secret": productionCallbackSecret }, body: JSON.stringify(body).replace('"Amount":25', '"Amount":25,"Amount":30'), signal: AbortSignal.timeout(15000) })).status, 400);
+  const declined = { SparkTransactionId: randomUUID(), MachineId: body.MachineId, HwSerial: body.HwSerial, Status: { Verdict: "Declined", ErrorCode: 44 } };
+  check("production DeclineCallback route persists", (await post("PRODUCTION", "DeclineCallback", productionCallbackSecret, declined)).status, 200);
+  check("production TimeoutCallback route persists", (await post("PRODUCTION", "TimeoutCallback", productionCallbackSecret, { SparkTransactionId: randomUUID(), MachineId: body.MachineId, HwSerial: body.HwSerial, TerminalId: body.TerminalId })).status, 200);
+  const finalFeed = await cloud.sparkReceipts("0", "PRODUCTION", productionBinding.paymentBindingDigest);
+  check("all three production callback kinds remain queryable", finalFeed.observations.map(row => row.kind).sort(), ["DECLINE", "TIMEOUT", "TRANSACTION"]);
+  check("malformed callbacks created no extra rows", await prisma.vaultSparkObservation.count({ where: { machineId: binding.machineId } }), 4);
+  const output = resolve(process.env.VAULT_SPARK_EVIDENCE_DIR ?? "outputs/vault-spark-integration"); mkdirSync(output, { recursive: true });
+  writeFileSync(resolve(output, "production-http-evidence.json"), JSON.stringify({ syntheticOnly: true, createdAt: new Date().toISOString(), checks: results.length, results, boundary: "actual Next production callbacks + PostgreSQL + VaultCloudClient", externalPaymentCalls: 0, hardwareCommands: 0 }, null, 2) + "\n");
+  console.log(JSON.stringify({ result: "PASS", productionHttpChecks: results.length, externalPaymentCalls: 0, hardwareCommands: 0 }));
+} finally { await next?.close(); await prisma.$disconnect(); }

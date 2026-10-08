@@ -1,0 +1,49 @@
+[Unit]
+Description=Ten Kings Vault local machine authority
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=vault
+Group=vault
+SupplementaryGroups=vault-serial
+WorkingDirectory=/opt/tenkings-vault/current
+LoadCredential=machine-env:/etc/tenkings-vault/machine.env.json
+ExecStartPre=/opt/tenkings-vault/current/runtime/bin/node /opt/tenkings-vault/current/deploy/vault-linux/probe.cjs /opt/tenkings-vault/current
+ExecStart=/usr/bin/python3 /opt/tenkings-vault/current/deploy/vault-linux/launch.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=90
+KillSignal=SIGTERM
+KillMode=control-group
+StateDirectory=tenkings-vault ten-kings-vault-bench
+StateDirectoryMode=0700
+LogsDirectory=tenkings-vault
+LogsDirectoryMode=0700
+RuntimeDirectory=tenkings-vault
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# Serial is explicitly owned through udev; PrivateDevices would hide it.
+PrivateDevices=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/tenkings-vault /var/lib/ten-kings-vault-bench /var/log/tenkings-vault /run/tenkings-vault
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -25,6 +25,37 @@ jobs:
       - name: Build the pure grading core before its Next.js consumers
         run: pnpm --filter @atlas/grading-core build
       - run: pnpm --filter @tenkings/* run --if-present build
+      - name: Verify original Vault machine URLs through production Next routing
+        run: pnpm vault:test-next-routes
+
+  vault-v1:
+    name: Vault V1 Contracts, Simulation & UI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm vault:validate-isolation
+      - run: pnpm vault:validate-isolation --self-test
+      - run: pnpm vault:build
+      - name: Verify offline restore and schema-upgrade failure boundaries
+        run: python3 -m unittest discover -s deploy/vault-linux/tests
+      - run: pnpm vault:test
+      - name: Exercise synthetic 72- and 125-door kiosks through local HTTP
+        run: |
+          node scripts/run-vault-simulator.mjs --doors 72 --smoke
+          node scripts/run-vault-simulator.mjs --doors 125 --smoke
+      - run: pnpm --filter @tenkings/vault-kiosk exec playwright install --with-deps chromium
+      - run: pnpm --filter @tenkings/vault-kiosk test:browser
 
   disposable-postgres-migration-chain:
     name: Disposable PostgreSQL Migration Chain
@@ -55,6 +86,8 @@ jobs:
           PRISMA_GENERATE_SKIP_AUTOINSTALL: "1"
         run: node backend/atlas-private/scripts/generate-database.mjs
       - run: pnpm --filter @tenkings/database generate
+      - name: Build isolated production Next routing for database integration
+        run: pnpm vault:build-next
       - name: Complete disposable migration chain and second-deploy no-op
         run: pnpm --filter @tenkings/database validate:nfc:migration:disposable -- --ack-disposable-local-postgres
       - name: Install fixture-only PostgreSQL 16 and the pinned JavaScript client
@@ -111,6 +144,36 @@ jobs:
           console.log(JSON.stringify({ status: 'ATLAS_COMPLETE_POSTGRES_PASS', passed: summary.passed,
               ownedByCurrentUser: true, stoppedVerified: true, evidenceDirectory: directory }));
           JS
+
+  vault-synthetic-spark-postgres-browser:
+    name: Vault Synthetic Spark, PostgreSQL & Browser
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm vault:build
+      - run: pnpm vault:build-next
+      - run: pnpm --filter @tenkings/vault-kiosk exec playwright install --with-deps chromium
+      - name: Exercise real HTTP, durable callbacks, concurrency, browser faults and paid void
+        run: node scripts/run-vault-spark-validation.mjs --ack-disposable-local-postgres
+      - name: Retain compact synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vault-synthetic-spark-evidence
+          path: outputs/vault-spark-integration
+          if-no-files-found: ignore
+          retention-days: 14
 
   speedster-frontend-tests:
     name: Protected Speedster Frontend & Adversarial Tests
