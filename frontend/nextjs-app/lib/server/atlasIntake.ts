@@ -8,7 +8,7 @@ import { resolvePersistedSpeedsterPreparationCapture, speedsterPreparationSideAu
 import { currentSpeedsterPreparationRelease } from './speedsterPreparationRelease';
 
 /** Dedicated intake activation; it never enables the grading or image bridges. */
-export function atlasIntakeConfig(env: NodeJS.ProcessEnv = process.env) {
+export function atlasIntakeConfig(env: Readonly<Record<string, string | undefined>> = process.env) {
     requireBridge(env.NODE_ENV === 'production' && env.VERCEL_ENV === 'production'
         && env.ATLAS_INTAKE_ENABLED === 'true' && !Object.keys(env).some(name => name.startsWith('ATLAS_LOCAL_'))
         && /^[a-z0-9-]+\.vercel\.app$/.test(env.VERCEL_URL ?? '')
