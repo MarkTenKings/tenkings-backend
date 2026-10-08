@@ -18,7 +18,7 @@ export function atlasGradingPolicyHash() {
         detector: currentSpeedsterDetectorReleasePolicy() }));
 }
 
-export function atlasGradingBridgeConfig(env: NodeJS.ProcessEnv = process.env) {
+export function atlasGradingBridgeConfig(env: Readonly<Record<string, string | undefined>> = process.env) {
     requireBridge(env.NODE_ENV === 'production' && env.VERCEL_ENV === 'production'
         && env.ATLAS_GRADING_BRIDGE_ENABLED === 'true' && !env.ATLAS_LOCAL_SYNTHETIC && !env.ATLAS_LOCAL_POSTGRES
         && /^[a-z0-9-]+\.vercel\.app$/.test(env.VERCEL_URL ?? '')

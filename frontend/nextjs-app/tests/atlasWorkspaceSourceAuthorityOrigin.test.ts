@@ -25,6 +25,6 @@ test('production execution rejects every local fixture and retains exact HTTPS p
         assert.throws(() => create({ staffOrigin: 'https://source.example.test' }), /WORKSPACE_SOURCE_CONFIGURATION_INVALID/);
         assert.ok(create({ mode: 'PRODUCTION', staffOrigin: 'https://source.example.test' }));
     } finally {
-        if (prior === undefined) delete process.env.NODE_ENV; else Object.assign(process.env, { NODE_ENV: prior });
+        if (prior === undefined) Reflect.deleteProperty(process.env, 'NODE_ENV'); else Object.assign(process.env, { NODE_ENV: prior });
     }
 });

@@ -8,9 +8,10 @@ import { workspaceServiceClient } from '@atlas/service-bridge/workspace';
 import { createAtlasWorkspaceSourceStorage } from '../lib/server/atlasWorkspaceSourceStorage';
 import { createAtlasWorkspaceSourceHost } from '../lib/server/atlasWorkspaceSourceHost';
 import { StaffWorkspaceIntake } from '../../atlas-app/lib/server/access/workspace-intake.mjs';
-import { describePhoto, replaceIntakePhoto, uploadIntakeEntry, uploadPhoto } from '../../atlas-app/lib/workspace-client.mjs';
+import { describePhoto, replaceIntakePhoto, uploadIntakeEntry, uploadPhoto, type PhotoUploadTransport, type UploadGrant } from '../../atlas-app/lib/workspace-client.mjs';
 
 type Row = Record<string, any>;
+type FixturePhoto = { name: string; type: string; size: number; bytes: Uint8Array };
 const copy = structuredClone;
 async function fixture() {
     const identity = { id: randomUUID(), name: 'Fixture grader', role: 'REVIEWER', accessVersion: 1 };
@@ -21,7 +22,7 @@ async function fixture() {
         requests: [], puts: [], gets: 0, corruptNext: false, loseReply: false, privateMode: 'SIGNED', streamMode: 'COMPLETE' };
     const operation = (id: string) => f.state.operations.get(id);
     const store = { async transaction(_staff: unknown, work: (context: Row) => unknown) {
-        const earlier = f.tail; let release!: () => void; f.tail = new Promise(resolve => { release = resolve; }); await earlier;
+        const earlier = f.tail; let release!: () => void; f.tail = new Promise<void>(resolve => { release = resolve; }); await earlier;
         try {
             const state = copy(f.state), tx = {
                 getCard: async (id: string) => copy(state.cards.get(id)), listCards: async () => copy([...state.cards.values()]),
@@ -69,16 +70,16 @@ async function fixture() {
     f.restart();
     f.file = async (name: string, color: string) => { const bytes = await sharp({ create: { width: 32, height: 48, channels: 3, background: color } }).png().toBuffer();
         return { name, type: 'image/png', size: bytes.length, bytes: new Uint8Array(bytes) }; };
-    f.describe = (file: Row) => describePhoto({ ...file, arrayBuffer: async () => new Uint8Array(file.bytes).buffer });
-    f.put = (grant: Row, file: Row) => uploadPhoto(grant, file, { xhrFactory: () => {
-        const xhr: Row = { upload: {}, open() {}, setRequestHeader() {}, send() {
+    f.describe = (file: FixturePhoto) => describePhoto({ ...file, arrayBuffer: async () => new Uint8Array(file.bytes).buffer });
+    f.put = (grant: UploadGrant, file: FixturePhoto) => uploadPhoto(grant, file, { xhrFactory: () => {
+        const xhr: PhotoUploadTransport<FixturePhoto> = { status: 0, withCredentials: false, timeout: 0, upload: {}, open() {}, setRequestHeader() {}, send() {
             const upload = operation(grant.id).result.upload; f.puts.push(grant.id);
             if (f.objects.has(upload.objectRef)) xhr.status = 412;
             else {
                 const bytes = Buffer.from(file.bytes); if (f.corruptNext) { bytes[bytes.length - 1] ^= 1; f.corruptNext = false; }
                 f.objects.set(upload.objectRef, { bytes, type: file.type, claimedChecksum: Buffer.from(upload.sha256, 'hex').toString('base64') }); xhr.status = 200;
             }
-            xhr.onload();
+            assert(xhr.onload); xhr.onload();
         } }; return xhr;
     } });
     f.run = () => uploadIntakeEntry(f.saved, { describe: f.describe, put: f.put, persist: async (entry: Row) => { f.saved = copy(entry); },

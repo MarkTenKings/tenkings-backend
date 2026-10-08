@@ -14,7 +14,7 @@ const otherKeyNames = ['ATLAS_GRADING_BRIDGE_KEY', 'ATLAS_INTAKE_KEY', 'ATLAS_OP
 
 /** Own disabled-by-default admission. Enabling this cannot enable grading,
  * machine execution or bank application. The compiled preparation gate remains. */
-export function atlasTrustedLearningConfig(env: NodeJS.ProcessEnv = process.env): AtlasTrustedLearningSettings {
+export function atlasTrustedLearningConfig(env: Readonly<Record<string, string | undefined>> = process.env): AtlasTrustedLearningSettings {
     requireBridge(env.NODE_ENV === 'production' && env.VERCEL_ENV === 'production'
         && env.ATLAS_TRUSTED_LEARNING_ENABLED === 'true' && !Object.keys(env).some(name => name.startsWith('ATLAS_LOCAL_'))
         && /^[a-z0-9-]+\.vercel\.app$/.test(env.VERCEL_URL ?? '')

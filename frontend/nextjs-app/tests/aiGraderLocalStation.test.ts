@@ -29,6 +29,7 @@ import {
   sanitizeAiGraderPreviewCardGeometry,
   selectAvailableAiGraderOcrItems,
   selectNextSerializedAiGraderOcrItem,
+  type AiGraderRapidCaptureQueueItem,
 } from "../lib/aiGraderLocalStation";
 import {
   AI_GRADER_QUEUED_OCR_ATTEMPT_OWNER_LOCK_PREFIX,
@@ -1015,9 +1016,11 @@ test("schema-valid Production-sized V0.3 report remains hydrated for exact Appro
     queue.activeReview?.manifest.productionRelease?.reportId,
     "math-v1-release-test",
   );
+  const hydratedRelease = queue.activeReview?.manifest.productionRelease;
+  assert.ok(hydratedRelease && "calibrationProfile" in hydratedRelease);
+  assert.ok("operationalAuthorization" in hydratedRelease.calibrationProfile);
   assert.equal(
-    (queue.activeReview?.manifest.productionRelease?.calibrationProfile as any)
-      ?.operationalAuthorization?.authorityId,
+    hydratedRelease.calibrationProfile.operationalAuthorization?.authorityId,
     "ten-kings-owner-operational-acceptance-math-cal-v1-test",
   );
   const readiness = buildAiGraderPublishReadiness({
@@ -1616,7 +1619,7 @@ test("background queue merge cannot collide colon-bearing exact card identities"
     sessionId: string,
     reportId: string,
     updatedAt: string,
-  ) => ({
+  ): AiGraderRapidCaptureQueueItem => ({
     queueItemId,
     sessionId,
     reportId,

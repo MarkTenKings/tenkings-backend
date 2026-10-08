@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { canonical,digest } from '@atlas/service-bridge/protocol';
 import { makeIdentityCorrectionConfig,ScopedIdentityCorrection,signIdentityCorrectionRequest,verifyIdentityCorrectionRequest,
     identityCorrectionClient,IDENTITY_CORRECTION_PATH } from '@atlas/service-bridge/identity-correction';
+import type { SpeedsterQuad } from '@atlas/grading-core/contracts';
 import { previewAtlasReport } from '@atlas/grading-core/report';
 import { canonicalizeSpeedsterSessionIdentity } from '../lib/ai-grader-v2/identity';
 import { fixtureAnalysis } from '../../atlas-app/lib/server/access/fixture-analysis.mjs';
+import { atlasGradingPolicyHash } from '../lib/server/atlasGradingBridge';
 import { classifyAtlasIdentityCorrection } from '../lib/server/atlasIdentityCorrection';
 import { atlasIdentityCorrectionConfig,atlasIdentityCorrectionBinding,createAtlasIdentityCorrectionPorts,assertAtlasIdentityCorrectionMap } from '../lib/server/atlasIdentityCorrectionBridge';
 import { speedsterCardTypeMapKey,SPEEDSTER_MAP_FILTER_POLICY_VERSION,SPEEDSTER_MAP_SCHEMA_VERSION } from '../lib/ai-grader-v2/card-type-map-contracts';
@@ -163,7 +165,10 @@ test('private production configuration is disabled and bound to actual deploymen
     assert.throws(()=>atlasIdentityCorrectionConfig({...env,VERCEL_DEPLOYMENT_ID:undefined,ATLAS_IDENTITY_CORRECTION_DEPLOYMENT_ID:'caller'}),/NOT_ENABLED/);
     for(const name of ['ATLAS_GRADING_BRIDGE_KEY','ATLAS_INTAKE_KEY','ATLAS_TRUSTED_LEARNING_KEY','ATLAS_OPERATOR_EVIDENCE_KEY','ATLAS_PUBLIC_MEDIA_KEY','ATLAS_MACHINE_ADMISSION_KEY','ATLAS_MACHINE_EXECUTION_KEY'])
         assert.throws(()=>atlasIdentityCorrectionConfig({...env,[name]:key.toString('base64')}),/CONFIGURATION_INVALID/);
-    assert.throws(()=>atlasIdentityCorrectionConfig(env),/compatible release/);
+    const admitted=atlasIdentityCorrectionConfig(env);
+    assert.equal(admitted.gradingPolicyHash,atlasGradingPolicyHash());
+    assert.equal(admitted.releaseSha,env.VERCEL_GIT_COMMIT_SHA);
+    assert.deepEqual(atlasIdentityCorrectionConfig({...env,ATLAS_IDENTITY_CORRECTION_GRADING_POLICY_HASH:'3'.repeat(64)}),admitted);
     const settings={...makeIdentityCorrectionConfig({...config,mode:'PRODUCTION',releaseSha:'a'.repeat(40),otherKeyHashes:[]}),allowedPhoneHashes:[phone]};
     assert(Object.isFrozen(atlasIdentityCorrectionBinding(settings)));assert.equal(Object.hasOwn(atlasIdentityCorrectionBinding(settings),'key'),false);
     assert.throws(()=>createAtlasIdentityCorrectionPorts({}as never,{...settings,allowedPhoneHashes:[]}),/ROSTER_INVALID/);
@@ -193,7 +198,7 @@ test('private HTTP strictly bounds canonical body and refuses browser credential
 });
 test('persisted map validator reuses original registration/geometry authority with exact pinned and current map, never a submission receipt',async()=>{
     const f=fixture(),source:any={...f.state.raw,id:'synthetic-map-source',createdByUserId:'synthetic-owner'};
-    const quad=[{x:0.1,y:0.1},{x:0.9,y:0.1},{x:0.9,y:0.9},{x:0.1,y:0.9}],hash='a'.repeat(64);
+    const quad:SpeedsterQuad=[{x:0.1,y:0.1},{x:0.9,y:0.1},{x:0.9,y:0.9},{x:0.1,y:0.9}],hash='a'.repeat(64);
     const side=(name:string)=>({originalStorageKey:`ai-grader-v2/synthetic-owner/synthetic-map-source/original/${name}.jpg`,
         rectifiedStorageKey:`ai-grader-v2/synthetic-owner/synthetic-map-source/prepared/${name}/rectified.webp`,
         inspectionStorageKey:`ai-grader-v2/synthetic-owner/synthetic-map-source/prepared/${name}/inspection.webp`,sourceCorners:quad,centeringQuad:quad,

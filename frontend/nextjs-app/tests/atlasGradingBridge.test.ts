@@ -9,8 +9,9 @@ test('ATLAS private bridge cannot activate through local, preview or copied fixt
         { NODE_ENV: 'production', VERCEL_ENV: 'production', ATLAS_GRADING_BRIDGE_ENABLED: 'true', ATLAS_LOCAL_POSTGRES: '1' }])
         assert.throws(() => atlasGradingBridgeConfig(env), /BRIDGE_NOT_ENABLED/);
 });
-test('unadmitted preparation is not converted into a live ATLAS grading policy', () => {
-    assert.throws(() => atlasGradingPolicyHash(), /preparation.*release|release.*preparation/i);
+test('ATLAS policy binds the reviewed CPU preparation and detector releases', () => {
+    // Main admits CPU source 6b75c939; policy changes require a reviewed expectation update.
+    assert.equal(atlasGradingPolicyHash(), '8aaeef94a527e0a2aabf10805e74f61d62abaed3065d06129a887bda37bf7d06');
 });
 test('legacy capture without preserved preparation cannot become ATLAS evidence', () => {
     assert.throws(() => atlasSpeedsterSourceEvidence({ id: 'captured-session', createdByUserId: 'source-owner', workflowState: 'CAPTURED',
