@@ -36,7 +36,7 @@ The last recorded SSH address is `tkvault@192.168.2.36`; it was unreachable whil
 
 | Acceptance step | Required evidence | Status |
 |---|---|---|
-| Clean reviewed source and signed release | Commit, manifest hash, public-key fingerprint, build/tests and packaged native SQLite probe | Pending final release build |
+| Clean reviewed source and signed release | Commit, manifest hash, public-key fingerprint, build/tests and packaged native SQLite probe | Built and signed from `faedb613`; full Linux suites and 34 isolated authority checks pass; installed test remains separate |
 | Installed computer | Service account/permissions, display, kiosk startup, restart and update | Pending computer connection |
 | Recovery | Coordinated multi-journal backup, held restore, reboot/power/network recovery | Pending installed test |
 | Cabinet | Actual door/channel mapping, one controlled pulse, OFF/recovery, restock and correct occupied-door behavior | Pending supervised cabinet test |
