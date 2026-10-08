@@ -370,6 +370,9 @@ importers:
       '@tenkings/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@tenkings/vault-contracts':
+        specifier: workspace:*
+        version: link:../../packages/vault-contracts
       '@types/pdfkit':
         specifier: ^0.17.3
         version: 0.17.3
@@ -591,6 +594,19 @@ importers:
       typescript:
         specifier: ^5.5.4
         version: 5.9.3
+
+  packages/vault-contracts:
+    dependencies:
+      zod:
+        specifier: ^4.1.11
+        version: 4.1.11
+    devDependencies:
+      '@types/node':
+        specifier: 20.14.12
+        version: 20.14.12
+      typescript:
+        specifier: 5.5.4
+        version: 5.5.4
 
 packages:
 
