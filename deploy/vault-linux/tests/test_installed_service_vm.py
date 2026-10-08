@@ -117,6 +117,36 @@ class ServiceVMTests(unittest.TestCase):
             self.assertFalse(v.authority_report_valid({**report, **mutation}, 'a' * 64))
         self.assertFalse(v.authority_report_valid(report, 'b' * 64))
 
+    def test_guest_readiness_retries_transient_ssh_timeout_and_requires_new_boot(self):
+        old, new = 'a' * 36, 'b' * 36
+        qemu = SimpleNamespace(poll=lambda: None)
+        responses = [subprocess.TimeoutExpired('ssh', 15),
+                     SimpleNamespace(returncode=0, stdout=old), SimpleNamespace(returncode=0, stdout=new)]
+        with patch.object(v, 'run', side_effect=responses) as run, patch.object(v.time, 'sleep'):
+            self.assertEqual(v.wait_guest(['ssh'], qemu, previous_boot=old), new)
+            self.assertEqual(run.call_count, 3)
+        for response in (subprocess.TimeoutExpired('ssh', 1), SimpleNamespace(returncode=0, stdout=old)):
+            with patch.object(v, 'run', side_effect=[response]) as run, patch.object(v.time, 'sleep'), \
+                 patch.object(v.time, 'monotonic', side_effect=[0, 479, 481]):
+                with self.assertRaisesRegex(ValueError, 'readiness timed out'):
+                    v.wait_guest(['ssh'], qemu, previous_boot=old)
+                self.assertEqual(run.call_args.kwargs['timeout'], 1)
+
+    def test_reboot_request_is_bounded_nonblocking_and_timeout_never_claims_acceptance(self):
+        for code in (0, 255, 1, None):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                response = subprocess.TimeoutExpired('ssh', 30) if code is None else SimpleNamespace(returncode=code)
+                with patch.object(v, 'run', side_effect=[response]) as run:
+                    if code == 1:
+                        with self.assertRaisesRegex(ValueError, 'reboot refused'): v.request_guest_reboot(['ssh'], root)
+                    else: v.request_guest_reboot(['ssh'], root)
+                run.assert_called_once_with(['ssh', 'sudo systemctl --no-block reboot'], check=False, timeout=30)
+                receipt = json.loads((root / 'host-reboot-request.json').read_text())
+                self.assertEqual(receipt['exitCode'], code)
+                self.assertEqual(receipt['connectionTimedOut'], code is None)
+                self.assertFalse(receipt['rebootAcceptance'])
+
     def test_authority_timeout_removes_only_owned_container_with_safe_mounts(self):
         for foreign in (False, True):
             with self.subTest(foreign=foreign), tempfile.TemporaryDirectory() as folder:

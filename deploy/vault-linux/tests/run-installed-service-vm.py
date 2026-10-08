@@ -236,13 +236,33 @@ def cloud_seed(work):
 
 def wait_guest(ssh, qemu, *, previous_boot=None, timeout=480):
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    while (remaining := deadline - time.monotonic()) > 0:
         need(qemu.poll() is None, 'QEMU exited before guest readiness')
-        result = run([*ssh, 'cat /proc/sys/kernel/random/boot_id'], check=False, timeout=15)
-        value = result.stdout.strip()
-        if result.returncode == 0 and len(value) == 36 and value != previous_boot: return value
-        time.sleep(2)
+        try:
+            result = run([*ssh, 'cat /proc/sys/kernel/random/boot_id'], check=False, timeout=min(15, remaining))
+        except subprocess.TimeoutExpired:
+            # A reboot can leave TCP accepted while sshd is not ready. A single
+            # bounded probe timeout is not the overall readiness deadline.
+            result = None
+        if time.monotonic() >= deadline: break
+        if result is not None:
+            value = result.stdout.strip()
+            if result.returncode == 0 and len(value) == 36 and value != previous_boot: return value
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
     raise ValueError('Guest SSH/boot readiness timed out')
+
+
+def request_guest_reboot(ssh, evidence):
+    try:
+        result = run([*ssh, 'sudo systemctl --no-block reboot'], check=False, timeout=30)
+        code, timed_out = result.returncode, False
+    except subprocess.TimeoutExpired:
+        # Losing the request connection does not prove success. The caller must
+        # still observe a different boot ID and pass all resumed service checks.
+        code, timed_out = None, True
+    save(evidence, 'host-reboot-request', {'exitCode': code, 'connectionTimedOut': timed_out,
+                                         'rebootAcceptance': False})
+    need(timed_out or code in (0, 255), 'Disposable guest reboot refused')
 
 
 def collect(ssh, evidence):
@@ -338,9 +358,9 @@ def main():
         save(args.evidence, 'host-prepare', {'exitCode': prepare.returncode, 'stdout': prepare.stdout, 'stderr': prepare.stderr})
         collect(ssh, args.evidence)
         need(prepare.returncode == 0 and (args.evidence / 'awaiting-reboot.json').exists(), 'Prepare phase failed; no lifecycle acceptance')
-        phase = 'explicit-guest-reboot'
-        reboot = run([*ssh, 'sudo systemctl reboot'], check=False)
-        need(reboot.returncode in (0, 255), 'Disposable guest reboot refused')
+        phase = 'request-guest-reboot'
+        request_guest_reboot(ssh, args.evidence)
+        phase = 'wait-after-reboot'
         next_boot = wait_guest(ssh, qemu, previous_boot=boot)
         phase = 'after-reboot'
         resumed = run([*ssh, shlex.join([*common, 'after-reboot', *options])], timeout=300, check=False)
