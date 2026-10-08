@@ -1,12 +1,29 @@
 # Vault Spark API v3 manual review — October 7, 2026
 
-Status: the eight approved precredential work packages are implemented and the complete unsigned Linux candidate rehearsal has passed. The later production follow-up below adds separately qualified PRODUCTION/LIVE source support; no installed live mode is enabled. Synthetic software verification is separate from actual Nayax, terminal, financial, installed-appliance and cabinet acceptance. The latest completion evidence below supersedes earlier checkpoints.
+Status at the final October 7 audit: the selected fixed-price Spark flow and signed Linux software package are implemented and locally verified. The entire integration is not complete, and useful work remains before vendor access. Current release source is `faedb613beb23c15accce2e54a985be6e31704c6` in the managed `vault-spark-release` checkout. Its clean Linux build passed 12 contract, 281 machine, 106 kiosk and 65 appliance tests; the actual signed package passed 34 isolated production-authority checks. These checks grant no installed-machine, provider or physical acceptance. Older df09 counts, unsigned/uncommitted statements and zero-typecheck claims below are historical and superseded by this status and the latest session log.
+
+## Current unfinished work
+
+| Item | Actual status and dependency |
+|---|---|
+| Source publication and remote release checks | Commits and artifact exist locally; no push, release PR, remote CI or durable remote artifact distribution has been completed. This can advance before Nayax access. |
+| Hosted cloud release | Cloud migration/application rollout, actual environment configuration, callback registration and deployed smoke tests remain. Deployment preflight and a disabled-callback rollout can be prepared before vendor credentials; real callback qualification needs the assigned Nayax profile. The isolated Next build does not establish the complete hosting release pipeline. |
+| Full installed-service lifecycle | Packaged authority/native-probe and installer component tests pass. A complete fresh systemd install/start/update/restore/reboot rehearsal has not run; the 34 factory checks are not that rehearsal. A disposable systemd environment can extend software validation; the actual SER still needs independent acceptance. |
+| Physical computer and cabinet | Install exact release; validate service account/credentials/sandbox, kiosk/display/autostart, existing-state migration, coordinated journals/anchors, backup/restore/update/power recovery, serial identities/firmware and every actual door mapping. Requires reachable SER and supervised cabinet qualification. |
+| Real Nayax integration | Assigned hosts, credentials, terminal configuration, signing/callback/method/retry/void rules and sandbox tests remain. Success/decline/timeout/duplicates/outages/full-sale void/accounting and the final paid-door sequence must be observed. Fixtures cannot establish provider behavior. |
+| Production activation and operations | Actual acceptance reports, final machine/config/provider/controller bindings, independently installed public trust, real signed promotion/activation, renewal ownership and a reconciled supervised pilot remain. Release signing alone does not activate production. |
+| Whole-application TypeScript cleanup | The current integrated main adds 27 unrelated Atlas test/type diagnostics. Proposed new Atlas cleanup was restored and excluded from this Vault release. Passing Vault builds do not make the whole-app typecheck clean; separate Atlas work remains. |
+| Conditional additional code | Only explicit `wireApiVersion:null` is implemented. If Nayax requires a selector in a header/body/route, its confirmed transport/signing must be implemented and tested. Other vendor findings may also require corrections. |
+
+The full 150-page API is not implemented. Variable-price preauthorization/Settlement, terminal-first Device Start/Stop, SMC loyalty/prepaid, partial/general-purpose refunds, digital-receipt extras and EV/incremental authorization remain outside the selected Vault flow; retired AvailabilityCheck is excluded. Retired-binding late financial evidence requires explicit support review rather than automatic adoption into a new payment binding. See the capability map below for the original scope rationale.
+
+See [the meeting worksheet](NAYAX_MEETING_AND_GO_LIVE_2026-10-08.md), [activation operations](SPARK_PRODUCTION_ACTIVATION.md), and [the current session log](../handoffs/SESSION_LOG.md). This list distinguishes implementation, release operations and external acceptance; it is not a claim that every possible remaining defect has been ruled out.
 
 ## Source and review
 
 The correct source is the 150-page `Spark API v3.0.0 06_2025.pdf`, supplied at `/Users/markthomas/Downloads/Nayax API/Spark API v3.0.0 06_2025.pdf`. Its revision history dates v3.0.0 to June 3, 2025. It replaces the earlier 11-page proposal/SOW as the detailed source for this review. Root reviewed all page text and substantive embedded diagrams/screenshots; two independently assigned Astra Ultra agents reviewed the manual and actual Vault source. Document instructions are technical source material, not authorization to sign, deploy, charge, migrate or actuate equipment.
 
-Actual implementation checkout: `/Users/markthomas/.codex/worktrees/df09/ten-kings-mystery-packs-clean`, branch `codex/vault-integration-20260917-9ddb13`, base HEAD `c4f04006d9302445e2a68b01dcc316def3b4eb73`. The October 2 Spark prototype has been extended into the October 7 source candidate. Existing Stripe, kiosk, controller, appliance and other working changes are preserved. Local automated verification is recorded below; it does not establish vendor sandbox or physical acceptance.
+Earlier implementation checkout: `/Users/markthomas/.codex/worktrees/df09/ten-kings-mystery-packs-clean`, branch `codex/vault-integration-20260917-9ddb13`, base HEAD `c4f04006d9302445e2a68b01dcc316def3b4eb73`. The October 2 Spark prototype has been extended into the October 7 source candidate. Existing Stripe, kiosk, controller, appliance and other working changes are preserved. Local automated verification is recorded below; it does not establish vendor sandbox or physical acceptance.
 
 ## Selected flow
 
@@ -97,7 +114,7 @@ The cloud receiver requires `VAULT_NAYAX_SPARK_CALLBACKS_ENABLED=true`, `VAULT_N
 
 External acceptance still requires provisioned access and a test terminal, installed callback receiver and reviewed migration rollout, real sandbox financial/recovery/void verification, touchscreen workflow, Nayax certification and physical cabinet/controller qualification. The software work below can proceed first. No provider call, production DB access, installed migration, service restart, deployment or physical command was made during the core source implementation.
 
-## Approved pre-Nayax build scope — completion follow-up, October 7
+## Earlier pre-Nayax build scope — df09 completion checkpoint
 
 The owner requested every useful preparation that can be completed before sandbox access, and resolution of the broader frontend typecheck errors. The follow-up audit found real cross-component and operational gaps beyond the completed protocol and component tests. This is a bounded delivery checklist for the selected fixed-price Vault flow, not a proposal to add every optional payment flow in the manual.
 
@@ -155,14 +172,14 @@ The original core runtime checkpoint totals 459 passing tests; focused subsets a
 Independent final review fixes included preventing Trigger replay while financial recovery is held, preventing consumption of the customer retry while effects are blocked, checking local notices arriving after cloud approval, and durably blocking a repeated paid void after restoration of an older provider journal. New and uncertain paid voids now check technical/restore flags, clock safety and current financial authority before any provider invocation; the Spark adapter repeats this check inside its serialized queue immediately before transport-attempt recording and HTTP. A hold arriving while queued blocks transport without inventing a provider outcome. Original captured sale and physical allocation remain immutable through compensation.
 
 
-## Latest precredential completion evidence
+## Earlier precredential completion evidence — df09
 
 This supersedes the earlier component counts and unexecuted-SQL statements. Complete synthetic CI wrapper: **98 migrations**, legacy preservation and no-op replay, **190 existing PostgreSQL assertions**, **80 Spark integration checks**, nine machines, 19 verified wire requests and five Chromium screenshots. Machine **245/245**, cloud **115/115**, contracts **12/12**, kiosk **106/106** and host appliance Python **44/44** pass. Whole frontend typecheck remains **zero diagnostics**, database declaration build passes and the full production Next build covers **79 pages**. The complete Linux candidate build exited 0, repeating machine 245, contracts 12, kiosk 106 and appliance 44 and passing the assembled artifact's native probe: Node 22.23.2, ABI 127, better-sqlite3 11.10.0, SQLite 3.49.2, WAL, transaction rollback, reopen and integrity. This was Linux x64 under QEMU 10.2.3 on ARM; the exact locked esbuild 0.21.5 ARM64 binary was used only for build-time bundling and is excluded from the runtime. These host and synthetic results do not establish installed-appliance or Nayax acceptance.
 
 See [synthetic validation](SYNTHETIC_SPARK_VALIDATION.md) for exact commands and [Spark operations and acceptance](SPARK_OPERATIONS_AND_ACCEPTANCE.md) for provisioning, recovery, snapshot staging, promotion and the external evidence checklist. Root inspected the paid kiosk, Admin void and external-review screenshots. Reviewed source changes remain in df09 and are not deployed or published.
 
 
-## Saved Linux candidate and evidence
+## Historical unsigned Linux candidate and evidence
 
 `outputs/vault-spark-linux/` contains the unsigned artifact archive, frozen 210-file source archive/manifest, final validation log, native runtime result, environment details, diagnostic failures and SHA256 index. Candidate manifest SHA256: `ee232c9f072a107ff35f666b356523990c433a0f47d54aeebc0f43a0719949cb`. The final artifact retains `UNCOMMITTED_CANDIDATE`, `buildCompleted:true` and `releaseAuthorized:false`. The ordinary release signer refuses this candidate. `outputs/vault-spark-validation/` preserves the cloud/machine/typecheck/Next/CI logs and a selected application source manifest; `outputs/vault-spark-integration/` preserves browser, migration and wire evidence.
 
