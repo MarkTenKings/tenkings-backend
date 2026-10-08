@@ -21,7 +21,7 @@ import type { SpeedsterReviewActionSession } from './aiGraderV2ReviewAction';
 export type AtlasIdentityCorrectionSettings = IdentityCorrectionConfig & Readonly<{allowedPhoneHashes:readonly string[]}>;
 const otherKeys=['ATLAS_GRADING_BRIDGE_KEY','ATLAS_INTAKE_KEY','ATLAS_TRUSTED_LEARNING_KEY','ATLAS_OPERATOR_EVIDENCE_KEY',
     'ATLAS_PUBLIC_MEDIA_KEY','ATLAS_MACHINE_ADMISSION_KEY','ATLAS_MACHINE_EXECUTION_KEY'] as const;
-export function atlasIdentityCorrectionConfig(env:NodeJS.ProcessEnv=process.env):AtlasIdentityCorrectionSettings{
+export function atlasIdentityCorrectionConfig(env: Readonly<Record<string, string | undefined>>=process.env):AtlasIdentityCorrectionSettings{
     requireBridge(env.NODE_ENV==='production'&&env.VERCEL_ENV==='production'&&env.ATLAS_IDENTITY_CORRECTION_ENABLED==='true'
         &&!Object.keys(env).some(name=>name.startsWith('ATLAS_LOCAL_'))&&/^[a-z0-9-]+\.vercel\.app$/.test(env.VERCEL_URL??'')
         &&/^[A-Za-z0-9_-]{1,120}$/.test(env.VERCEL_DEPLOYMENT_ID??'')&&/^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA??'')

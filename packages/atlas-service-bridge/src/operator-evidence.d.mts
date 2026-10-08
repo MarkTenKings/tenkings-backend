@@ -1,4 +1,5 @@
 import type { OperatorImageRequest } from './operator-images.mjs';
+export const MAX_OPERATOR_EVIDENCE_RESPONSE_BYTES: 4400000;
 export const OPERATOR_EVIDENCE_PATH: '/api/internal/atlas/operator-evidence';
 export function signOperatorEvidenceRequest(config: any, scope: any, request?: OperatorImageRequest | null, now?: number): { body: string; signature: string };
 export function verifyOperatorEvidenceRequest(config: any, body: string, signed: unknown, now?: number): any;

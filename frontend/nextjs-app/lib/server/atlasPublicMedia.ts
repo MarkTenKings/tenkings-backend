@@ -4,7 +4,7 @@ import { ApprovedPublicMedia } from '@atlas/service-bridge/public-media';
 import { bridgeOrigin, canonical, digest, keyBytes, requireBridge } from '@atlas/service-bridge/protocol';
 import { readStorageBufferBounded } from './storage';
 
-export function atlasPublicMediaConfig(env: NodeJS.ProcessEnv = process.env) {
+export function atlasPublicMediaConfig(env: Readonly<Record<string, string | undefined>> = process.env) {
     requireBridge(env.NODE_ENV === 'production' && env.VERCEL_ENV === 'production' && env.ATLAS_PUBLIC_MEDIA_RUNTIME === 's3'
         && !Object.keys(env).some(k => k.startsWith('ATLAS_LOCAL_')) && /^[a-z0-9-]+\.vercel\.app$/.test(env.VERCEL_URL ?? '')
         && /^[a-f0-9]{40}$/.test(env.VERCEL_GIT_COMMIT_SHA ?? ''), 'PUBLIC_MEDIA_NOT_ENABLED');

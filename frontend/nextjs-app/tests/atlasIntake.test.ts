@@ -5,6 +5,7 @@ import { atlasIntakeConfig, atlasIntakeSourceTitle, createAtlasIntake } from '..
 import { createAtlasIntakeHandler } from '../pages/api/internal/atlas/intake';
 import { makeIntakeConfig } from '@atlas/service-bridge/intake';
 import { canonical, digest } from '@atlas/service-bridge/protocol';
+import { atlasGradingPolicyHash } from '../lib/server/atlasGradingBridge';
 const phone = '1'.repeat(64);
 const config = { ...makeIntakeConfig({ mode:'PRODUCTION',origin:'https://intake.example.test',deploymentId:'private-release.vercel.app',
     releaseSha:'a'.repeat(40),key:Buffer.alloc(32,7),otherKeyHashes:[],gradingPolicyHash:'2'.repeat(64),
@@ -53,9 +54,10 @@ test('production gate and roster deny invalid env before preparing intake',()=>{
         {VERCEL_GIT_COMMIT_SHA:'tag'},{ATLAS_LOCAL_FIXTURE:'true'}]) assert.throws(()=>atlasIntakeConfig({...env,...patch}),/INTAKE_NOT_ENABLED/);
     for (const value of ['[]','{}','["bad"]',JSON.stringify([phone,phone]),'['+' '.repeat(8192)+']'])
         assert.throws(()=>atlasIntakeConfig({...env,ATLAS_INTAKE_ALLOWED_PHONE_HASHES_JSON:value}),/INTAKE_ROSTER_INVALID/);
-    // Current source preparation authority is intentionally unapproved. No env
-    // setting can turn that missing compiled release into intake permission.
-    assert.throws(()=>atlasIntakeConfig(env),/compatible release/);
+    const admitted=atlasIntakeConfig(env);
+    assert.equal(admitted.gradingPolicyHash,atlasGradingPolicyHash());
+    assert.equal(admitted.releaseSha,env.VERCEL_GIT_COMMIT_SHA);
+    assert.deepEqual(atlasIntakeConfig({...env,ATLAS_INTAKE_GRADING_POLICY_HASH:'3'.repeat(64)}),admitted);
 });
 test('server title uses canonical stored sports or pokemon identity fields only',()=>{
     const base={id:'source',createdByUserId:'owner',workflowState:'CAPTURED',capture:{},reviewedDefects:[],gradeReport:null,updatedAt:new Date()};

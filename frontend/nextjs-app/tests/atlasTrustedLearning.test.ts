@@ -9,7 +9,7 @@ import { createAtlasTrustedLearningHandler } from '../lib/server/atlasTrustedLea
 import { harvestSpeedsterLearningCandidatesV2 } from '../lib/ai-grader-v2/learning-harvest-v2';
 import { SPEEDSTER_INSPECTION_DETECTOR_VERSION } from '../lib/ai-grader-v2/learning-articuno-dry-run-v2';
 import { SPEEDSTER_LEARNING_FINGERPRINT_VERSION } from '../lib/ai-grader-v2/learning-v2';
-import { atlasSpeedsterSourceEvidence, assertAtlasSpeedsterSourceAdmission } from '../lib/server/atlasGradingBridge';
+import { atlasGradingPolicyHash, atlasSpeedsterSourceEvidence, assertAtlasSpeedsterSourceAdmission } from '../lib/server/atlasGradingBridge';
 const phone='1'.repeat(64),key=Buffer.alloc(32,13);
 const settings=Object.freeze({...makeTrustedLearningConfig({mode:'PRODUCTION',origin:'https://learning.example.test',deploymentId:'dpl_private_fixture',
     releaseSha:'a'.repeat(40),key,gradingPolicyHash:'2'.repeat(64),phoneAllowlistHash:digest(canonical([phone])),otherKeyHashes:[]}),allowedPhoneHashes:Object.freeze([phone])});
@@ -33,9 +33,11 @@ test('private learning is disabled by default and caller pins cannot substitute 
         {VERCEL_DEPLOYMENT_ID:''},{VERCEL_DEPLOYMENT_ID:'has spaces'},{VERCEL_GIT_COMMIT_SHA:'0'.repeat(40)},{ATLAS_LOCAL_SYNTHETIC:'false'}])
         assert.throws(()=>atlasTrustedLearningConfig({...environment,...patch}),/LEARNING_NOT_ENABLED/);
     assert.throws(()=>atlasTrustedLearningConfig({...environment,VERCEL_DEPLOYMENT_ID:undefined,ATLAS_TRUSTED_LEARNING_DEPLOYMENT_ID:'dpl_caller_supplied'}),/LEARNING_NOT_ENABLED/);
-    // No environment value supplies the missing owner-reviewed compiled release.
-    assert.throws(()=>atlasTrustedLearningConfig({...environment,ATLAS_TRUSTED_LEARNING_GRADING_POLICY_HASH:'3'.repeat(64),
-        ATLAS_TRUSTED_LEARNING_RELEASE_SHA:'b'.repeat(40)}),/compatible release/);
+    const admitted=atlasTrustedLearningConfig(environment);
+    assert.equal(admitted.gradingPolicyHash,atlasGradingPolicyHash());
+    assert.equal(admitted.releaseSha,environment.VERCEL_GIT_COMMIT_SHA);
+    assert.deepEqual(atlasTrustedLearningConfig({...environment,ATLAS_TRUSTED_LEARNING_GRADING_POLICY_HASH:'3'.repeat(64),
+        ATLAS_TRUSTED_LEARNING_RELEASE_SHA:'b'.repeat(40)}),admitted);
 });
 test('private learning roster and key are exact and independent of every existing HMAC purpose',()=>{
     for(const list of ['[]','{}','["bad"]',JSON.stringify([phone,phone]),'['+' '.repeat(8192)+']'])

@@ -32,6 +32,6 @@ if (!globalForPrisma.prisma) {
   });
 }
 
-export const prisma = globalForPrisma.prisma;
+export const prisma: PrismaClient = globalForPrisma.prisma;
 
 export default prisma;

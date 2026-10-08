@@ -190,9 +190,10 @@ test('a full-size noisy RGB crop fits the bounded signed HTTP response without s
     const packet=await renderAtlasOperatorImage({sourceBytes,asset,request});
     const scope={runId:request.runId,owner:randomUUID(),fence:1,revision:1,attemptId:randomUUID(),callId:'call_noisy_crop'};
     const key=randomBytes(32),runtimeHash='c'.repeat(64),sourceHash='d'.repeat(64);let size=0;
-    const client=operatorEvidenceClient({origin:'https://synthetic-images.example.test',key,runtimeHash},async(_url:string,init:RequestInit)=>{
-        const claims=JSON.parse(init.body as string),value={purpose:'atlas-operator-evidence-receipt-v1',runtimeHash,scope,request,
-            requestHash:digest(init.body as string),expiresAt:claims.expiresAt,evidenceHash:request.evidenceHash,manifestHash:request.manifestHash,sourceHash,image:packet};
+    const client=operatorEvidenceClient({origin:'https://synthetic-images.example.test',key,runtimeHash},async(_url,init)=>{
+        const bodyText=init?.body;assert(typeof bodyText==='string');
+        const claims=JSON.parse(bodyText),value={purpose:'atlas-operator-evidence-receipt-v1',runtimeHash,scope,request,
+            requestHash:digest(bodyText),expiresAt:claims.expiresAt,evidenceHash:request.evidenceHash,manifestHash:request.manifestHash,sourceHash,image:packet};
         const body=canonical(value);size=Buffer.byteLength(body);
         return new Response(body,{status:200,headers:{'content-type':'application/json','x-atlas-operator-evidence-signature':createHmac('sha256',key).update(body).digest('hex')}});
     });
