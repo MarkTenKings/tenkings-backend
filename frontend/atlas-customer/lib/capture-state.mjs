@@ -28,3 +28,13 @@ export async function connectCapturedDraft({ buffer, request }) {
   await buffer.attachDraft(result.draft.id);
   return result.draft;
 }
+
+/** Payment can finish in a different tab while this device owns another camera
+ * draft. Never clear originals that do not belong to the paid submission. */
+export async function clearPaidCapture(buffer, draftId) {
+  if (!buffer || !draftId) return false;
+  const current = await buffer.snapshot();
+  if (current.draftId !== draftId) return false;
+  await buffer.clearPaid();
+  return true;
+}

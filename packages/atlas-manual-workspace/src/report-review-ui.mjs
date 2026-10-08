@@ -22,8 +22,13 @@ export function reportAwardedGrade(report) {
   if ((report?.version === 'atlas-machine-provisional-report-v1' && report.authority === 'MACHINE_PROPOSAL'
     || report?.version === 'atlas-review-provisional-report-v1' && report.authority === 'HUMAN_REVIEW_DRAFT')
     && report.certification === null && report.finalGradePolicy === 'atlas-final-half-point-v1') return report.proposedGrade;
-  if (report?.version === 'atlas-manual-draft-report-v1') return report.grade?.overall?.displayGrade;
-  if (report?.version === 'atlas-manual-draft-report-v2' && report.finalGradePolicy === 'atlas-final-half-point-v1') return report.finalGrade;
+  // Service previews/approvals carry a snapshot envelope; the full stored
+  // report uses the draft tag. Both expose the same saved award. Never infer
+  // an award by rounding the tenth-point calculation detail in a display.
+  if (['atlas-manual-draft-report-v1', 'atlas-manual-report-snapshot-v1'].includes(report?.version)) return report.grade?.overall?.displayGrade;
+  if (['atlas-manual-draft-report-v2', 'atlas-manual-report-snapshot-v2'].includes(report?.version)
+    && report.finalGradePolicy === 'atlas-final-half-point-v1' && Number.isFinite(report.finalGrade)
+    && report.finalGrade >= 1 && report.finalGrade <= 10 && Number.isInteger(report.finalGrade * 2)) return report.finalGrade;
   return null;
 }
 

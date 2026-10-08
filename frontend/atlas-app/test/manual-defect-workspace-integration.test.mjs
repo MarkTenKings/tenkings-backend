@@ -1,4 +1,5 @@
 import {reviewImagePreview} from '@atlas/manual-workspace';
+import {reportAwardedGrade} from '../../../packages/atlas-manual-workspace/src/report-review-ui.mjs';
 import {reviewedMemoryState} from '../../../packages/atlas-manual-workspace/src/astra-review-ui.mjs';
 import * as reviewAttention from '../lib/manual-review-attention.mjs';
 import test from 'node:test';
@@ -65,7 +66,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       if (name === '@atlas/manual-workflow/client') return { createManualClient: options => { viewCallback = options.onView; return client; } };
       if (name === '@atlas/manual-workspace') return { PairedGeometryWorkspace: 'PairedGeometryWorkspace', reviewImagePreview };
       if (name === '@atlas/manual-workspace/defects') return { DefectReviewWorkspace: 'DefectReviewWorkspace',reviewedMemoryState };
-      if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview', MachineReportReview: 'MachineReportReview',CompletedReviewCard:'CompletedReviewCard' };
+      if (name === '@atlas/manual-workspace/report-review') return { FinalReportReview: 'FinalReportReview', MachineReportReview: 'MachineReportReview',CompletedReviewCard:'CompletedReviewCard',reportAwardedGrade };
       if (name === '@atlas/manual-workspace/rapid-review') return {rapidReviewStatus:()=>({geometry:true,findings:true,unresolved:0}),approveRapidStage:async(stage,view,execute)=>execute({type:'EXPLICIT_STAGE',stage}),approveRapidGeometrySide:async(view,input,execute)=>execute({type:'EXPLICIT_SIDE',side:input.side}),confirmRapidGeometryPair:async(view,approvals,execute)=>{assert.ok(approvals.FRONT);assert.ok(approvals.BACK);return execute({type:'EXPLICIT_STAGE',stage:'geometry'});},approveRapidFinding:async(view,id,execute)=>{if(id){const side=Object.keys(view.defects.sides).find(side=>view.defects.sides[side].findings.some(f=>f.id===id));view=await execute({type:'REVIEW_FINDING',side,findingId:id});}const next=Object.values(view.defects.sides??{}).flatMap(slot=>slot.findings??[]).find(f=>!Object.values(view.defects.sides).some(slot=>slot.findingReviews?.decisions.some(value=>value.findingId===f.id)));if(next)return {view,nextFindingId:next.id,complete:false};return {view:await execute({type:'EXPLICIT_STAGE',stage:'findings'}),complete:true};}};
       if (name === '@atlas/manual-workspace/defect-actions') return {defectBase:(_value,side)=>base[side],reviewedDefectFindingIds:(value,side)=>value.sides?.[side]?.findingReviews?.decisions?.map(item=>item.findingId)??[]};
       if (name === '@atlas/manual-workspace/geometry-actions') return { geometryStatus: value => value,geometryBase:(_geometry,side)=>({side}) };
@@ -77,6 +78,7 @@ function harness({ journal, finalReview = false, rapid = false, initialGeometryS
       return nextRequire(name.startsWith('@babel/runtime/') ? `next/dist/compiled/${name}` : name);
     } });
   f.render = () => { cursor = 0; tree = exports.ManualWorkspace({ staff: { id: 'staff', role: 'REVIEWER' }, cardId: 'card', csrf: 'csrf', rapid, initialGeometrySide, onQueued:value=>{f.queued=value;}, onBusyChange:value=>{f.locked=value;}, onPhotos() {} }); effects.splice(0).forEach(effect => { const cleanup = effect(); if (typeof cleanup === 'function') cleanups.push(cleanup); }); };
+  f.tree = () => tree;
   f.tick = async (ms = 5000) => { const tick = timers.get(ms); if (!tick) return; tick(); await flush(); f.render(); };
   f.dispose = () => cleanups.splice(0).forEach(cleanup => cleanup());
   f.defects = () => { const node = all(tree, node => node.type === 'DefectReviewWorkspace')[0]; assert.ok(node, 'defect workspace rendered'); return node.props; };
@@ -417,7 +419,7 @@ test('rapid failed side save stays on the exact side and does not confirm or adv
 
 test('approved review opens a calm completion screen with saved award, lazy extras and retained correction path',async()=>{
   const f=harness({finalReview:true});await flush();f.render();
-  f.preview=async()=>({reportHash:'exact-report-hash',sourceRevision:1,sourceHash:'one',report:{version:'atlas-manual-draft-report-v2',identity:{cardName:'Abomasnow'},finalGrade:10,grade:{overall:{displayGrade:9.9}}}});
+  f.preview=async()=>({reportHash:'exact-report-hash',sourceRevision:1,sourceHash:'one',report:{version:'atlas-manual-report-snapshot-v2',identity:{cardName:'Abomasnow'},finalGradePolicy:'atlas-final-half-point-v1',finalGrade:10,grade:{overall:{rawGrade:9.9,displayGrade:9.9}}}});
   f.publish({...f.current,approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:finishingPublication});
   f.respond=async path=>path.includes('/finishing/')?finishingPlan:f.current;
   f.button('Findings').props.onClick();await flush();f.render();await f.defects().onContinue();f.render();await flush();f.render();
@@ -428,6 +430,29 @@ test('approved review opens a calm completion screen with saved award, lazy extr
   f.button('More options +').props.onClick();f.render();assert.match(f.text(),/Optional report tools/);
   f.button('Correct findings').props.onClick();await flush();f.render();assert.ok(f.defects());assert.equal(f.actions.length,0);
   f.dispose();
+});
+
+test('recovered completed snapshot displays the saved whole or half-point award on both completion surfaces',async()=>{
+  for(const [raw,detail,award] of [[8.24,8.2,8],[8.25,8.3,8.5],[8.74,8.7,8.5],[8.75,8.8,9]]){
+    const f=harness();await flush();f.render();
+    const saved={version:'atlas-manual-report-snapshot-v2',identity:{cardName:'Magikarp'},finalGradePolicy:'atlas-final-half-point-v1',finalGrade:award,grade:{overall:{rawGrade:raw,displayGrade:detail}}};
+    const before=JSON.stringify(saved);
+    f.preview=async()=>({reportHash:'exact-report-hash',sourceRevision:1,sourceHash:'one',report:saved});
+    f.publish({...f.current,approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:finishingPublication});
+    await f.defects().onContinue();f.render();await flush();f.render();
+    assert.match(f.text(),new RegExp(`APPROVED GRADE${award}ATLAS`));
+    assert.equal(all(f.tree(),node=>node.type==='CompletedReviewCard')[0].props.grade,award);
+    assert.equal(JSON.stringify(saved),before,'reading an approval never rewrites its evidence');
+    assert.equal(f.actions.length,0,'recovery must not reapprove or regrade');f.dispose();
+  }
+});
+
+test('a changed card revision cannot reuse an older completion award',async()=>{
+  const f=harness();await flush();f.render();
+  f.preview=async()=>({reportHash:'exact-report-hash',sourceRevision:1,sourceHash:'one',report:{version:'atlas-manual-report-snapshot-v2',finalGradePolicy:'atlas-final-half-point-v1',finalGrade:8,grade:{overall:{displayGrade:8.2}}}});
+  f.publish({...f.current,card:{revision:2,contentHash:'two'},approval:{sourceHash:'one',reportHash:'exact-report-hash'},publication:finishingPublication});
+  await f.defects().onContinue();f.render();await flush();f.render();
+  assert.doesNotMatch(f.text(),/APPROVED GRADE|Completed/);assert.equal(f.actions.length,0);f.dispose();
 });
 
 test('rapid approval advances without fetching a label; optional label failure cannot undo saved review',async()=>{

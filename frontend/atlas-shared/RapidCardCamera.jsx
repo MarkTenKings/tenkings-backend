@@ -5,11 +5,11 @@ import styles from './RapidCardCamera.module.css';
 /** Keep mounted across Front → Back → next Front. onCapture must acknowledge
  * local durable storage only; no upload or identification promise belongs here.
  * completedPairs comes from durable paired originals, independent of uploads. */
-export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card', completedPairs = 0, disabled = false, onCapture, onClose, autoStart = true, status = '', showBackgroundControl = false }) {
+export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card', completedPairs = 0, disabled = false, onCapture, onClose, autoStart = true, status = '', showBackgroundControl = false, pairComplete = false, onAddAnother, onReviewCards }) {
   const video = useRef(null), previewArea = useRef(null), stream = useRef(null), root = useRef(null), generation = useRef(0), alive = useRef(false), busyRef = useRef(false), starting = useRef(false);
   const [state, setState] = useState('idle'), [error, setError] = useState(''), [busy, setBusy] = useState(false), [flash, setFlash] = useState(false);
   const [matColor, setMatColor] = useState('BLACK');
-  const latest = useRef(null); latest.current = { side, cardLabel, disabled, onCapture, onClose, matColor: showBackgroundControl ? matColor : 'BLACK' };
+  const latest = useRef(null); latest.current = { side, cardLabel, disabled, onCapture, onClose, pairComplete, matColor: showBackgroundControl ? matColor : 'BLACK' };
   const [frame, setFrame] = useState(null);
   function measurePreview() {
     const bounds = previewArea.current?.getBoundingClientRect(), picture = video.current;
@@ -54,9 +54,11 @@ export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card
     if (autoStart) void start();
     return () => { alive.current = false; observer.disconnect(); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('pagehide', pause); document.removeEventListener('keydown', keys); stop(); document.body.style.overflow = previousOverflow; previousFocus?.focus?.(); };
   }, []);
+  const decision = useRef(null), reviewAction = useRef(null), shutter = useRef(null);
+  useEffect(() => { if (pairComplete && !busy) (disabled ? reviewAction.current : decision.current)?.focus(); }, [pairComplete, busy, disabled]);
   async function capture() {
     const current = latest.current;
-    if (busyRef.current || current.disabled || state !== 'ready') return;
+    if (busyRef.current || current.disabled || current.pairComplete || state !== 'ready') return;
     busyRef.current = true; setBusy(true); setError('');
     try {
       // Once acquired, always hand these bytes to durable storage even if the
@@ -84,17 +86,19 @@ export default function RapidCardCamera({ side = 'FRONT', cardLabel = 'Your card
           {frame && <div className={styles.guide} style={fitRapidCameraPreview(63.5, 88.9, frame.width * .9, frame.height * .9)} aria-hidden="true"><i/><i/><i/><i/></div>}
         </div>
       </div>
-      <div className={styles.instruction} aria-live="polite"><strong>{side === 'FRONT' ? 'Front. Frame it. Capture.' : 'Flip it. Capture the back.'}</strong><span>Full photo shown. Move closer to fill the guide.</span></div>
+      <div className={styles.instruction} aria-live="polite"><strong>{pairComplete ? 'Front and back complete.' : side === 'FRONT' ? 'Front. Frame it. Capture.' : 'Flip it. Capture the back.'}</strong><span>{pairComplete ? 'Ready when you are.' : 'Full photo shown. Move closer to fill the guide.'}</span></div>
       {state !== 'ready' && <div className={styles.paused}>{state === 'starting' ? 'Opening your camera…' : 'Your next card is waiting.'}</div>}
     </div>
     <footer className={styles.controls}>
+      {pairComplete ? <div className={styles.pairDecision} role="group" aria-labelledby="pair-saved-title"><h2 id="pair-saved-title">Card added.</h2><p>Front and back are saved on this device.</p><div><button ref={decision} type="button" disabled={busy || disabled} onClick={() => { onAddAnother?.(); requestAnimationFrame(() => shutter.current?.focus()); }}>Add another card</button><button ref={reviewAction} type="button" disabled={busy} onClick={onReviewCards}>Review cards ({completedPairs})</button></div></div> : <>
       <div className={styles.sequence}><span data-current={side === 'FRONT'}>01 FRONT</span><i>→</i><span data-current={side === 'BACK'}>02 BACK</span><i>→</i><span>NEXT CARD</span></div>
       {showBackgroundControl && <div className={styles.backgroundControl} role="group" aria-label={`${side === 'FRONT' ? 'Front' : 'Back'} photo background`}>
         <span>Photo background</span>
         <div>{['BLACK', 'WHITE'].map(color => <button key={color} type="button" aria-pressed={matColor === color} disabled={busy || disabled} onClick={() => { if (!busyRef.current && !latest.current.disabled) setMatColor(color); }}><i data-color={color} aria-hidden="true"/>{color === 'BLACK' ? 'Black' : 'White'}</button>)}</div>
       </div>}
-      {state === 'ready' ? <button type="button" className={styles.shutter} aria-label={`Capture ${side === 'FRONT' ? 'Front' : 'Back'}`} disabled={busy || disabled} onClick={() => void capture()}><span/></button> : <button type="button" className={styles.resume} disabled={state === 'starting'} onClick={() => void start()}>{state === 'starting' ? 'One moment…' : 'Resume camera'}</button>}
+      {state === 'ready' ? <button ref={shutter} type="button" className={styles.shutter} aria-label={`Capture ${side === 'FRONT' ? 'Front' : 'Back'}`} disabled={busy || disabled} onClick={() => void capture()}><span/></button> : <button type="button" className={styles.resume} disabled={state === 'starting'} onClick={() => void start()}>{state === 'starting' ? 'One moment…' : 'Resume camera'}</button>}
       <p role="status">{busy ? 'Saving on this device…' : status || 'Capture keeps moving. Uploads happen in the background.'}</p>
+      </>}
       {error && <p className={styles.error} role="alert">{error}</p>}
     </footer>
   </section>;

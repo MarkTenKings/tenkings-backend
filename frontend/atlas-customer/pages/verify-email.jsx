@@ -16,13 +16,9 @@ export default function VerifyEmail({ unavailable = false }) {
       if (result.resumeDraftId) {
         const path = `/account/submit?draft=${encodeURIComponent(result.resumeDraftId)}`;
         setResume(path);
-        // An existing submission tab owns its camera journal and polls its
-        // saved proof. Navigate only when no such tab currently holds the lock.
-        if (boot.current.customer && navigator.locks?.request) {
-          await navigator.locks.request(`atlas-customer-capture:${boot.current.customer.id}`, { ifAvailable: true }, lock => {
-            if (lock) window.location.replace(path);
-          }).catch(() => window.location.replace(path));
-        } else window.location.replace(path);
+        // Reviewed server drafts do not need the camera journal. The original
+        // tab may keep its upload lock without blocking this exact saved cart.
+        window.location.replace(path);
       }
     } catch (failure) { setError(failure.message); setState('CONFIRM'); }
     finally { running.current = false; }
@@ -50,7 +46,7 @@ export default function VerifyEmail({ unavailable = false }) {
       {state === 'LOADING' ? <p role="status">Opening your verification link…</p> : state === 'CONFIRM' ? <>
         <p>Confirm this email for your saved ATLAS submission. This does not sign you in.</p>
         <button type="button" className="primary" onClick={() => confirm('CONFIRM')}>Verify email</button></>
-        : state === 'VERIFIED' ? <><p>Your original submission tab will continue automatically. You can return to it now.</p>
+        : state === 'VERIFIED' ? <><p>{resume ? 'Opening your saved submission…' : 'Your email is verified. Return to the ATLAS submission you started to continue.'}</p>
           {resume && <a className="primary" href={resume}>Return to my saved submission</a>}</>
           : <p>This link could not be opened. Return to your original ATLAS submission to request another link.</p>}
     </section></main></>;

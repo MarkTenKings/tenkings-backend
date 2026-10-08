@@ -33,3 +33,14 @@ test('a fresh capture destination uses the retained creation request and attache
   assert.equal(await connectCapturedDraft({ buffer, request: async (...args) => { events.push(['request', ...args]); return { draft }; } }), draft);
   assert.deepEqual(events, [['request', '/intake/drafts', { body: creation }], ['attach', draft.id]]);
 });
+
+test('paid server resume clears only its own attached local camera draft', async () => {
+  const { clearPaidCapture } = await import('../lib/capture-state.mjs');
+  let clears = 0;
+  const buffer = { snapshot: async () => ({draftId: 'capturing-draft'}), clearPaid: async () => { clears++; } };
+  assert.equal(await clearPaidCapture(null, 'paid-draft'), false);
+  assert.equal(await clearPaidCapture(buffer, 'paid-draft'), false);
+  assert.equal(clears, 0);
+  assert.equal(await clearPaidCapture(buffer, 'capturing-draft'), true);
+  assert.equal(clears, 1);
+});

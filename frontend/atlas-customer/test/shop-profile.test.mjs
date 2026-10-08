@@ -33,7 +33,7 @@ async function intake(initialProfile){
   useRef(initial){const id=cursor++;if(!(id in slots))slots[id]={current:initial};return slots[id];},
   useCallback(value,deps){const id=cursor++;if(changed(slots[id]?.deps,deps))slots[id]={value,deps};return slots[id].value;},
   useEffect(fn,deps){const id=cursor++;if(changed(slots[id]?.deps,deps)){const old=slots[id];slots[id]={deps};pending.push(()=>{old?.cleanup?.();slots[id].cleanup=fn();});}}};
- const draft={id:'fixture-draft',revision:1,state:'DRAFT',intakeMethod:'DEALER_DROP_OFF',kioskId:'fixture-shop',cards:[]};
+ const draft={id:'fixture-draft',revision:1,state:'DRAFT',intakeMethod:'DEALER_DROP_OFF',kioskId:'fixture-shop',cards:[{id:'fixture-card',identity:{title:'Synthetic card'},uploads:{FRONT:{state:'VERIFIED'},BACK:{state:'VERIFIED'}}}]};
  const buffer={snapshot:async()=>local,setService:async service=>(local={...local,service}),creation:async()=>({...local.service,requestId:'fixture-request'}),attachDraft:async draftId=>(local={...local,draftId}),close:async()=>{}};
  function Stub(){} function Camera(){} const exports={};
  vm.runInNewContext(compile('CustomerIntake'),{exports,AbortController,setInterval:()=>1,clearInterval(){},document:{visibilityState:'visible'},window:{sessionStorage:{}},navigator:{locks:{request:async(_n,_o,fn)=>fn({})}},require(name){
@@ -42,25 +42,31 @@ async function intake(initialProfile){
   if(name.endsWith('/capture-state.mjs'))return captureState;
   if(name.endsWith('/capture-buffer.mjs'))return{createCaptureBuffer:()=>buffer};
   if(name.endsWith('/intake-journal.mjs'))return{createBrowserIntakeJournal:()=>({close(){}}),createCustomerUploader:()=>({resume:async()=>{},dispose(){},whenIdle:async()=>{}})};
-  if(name.endsWith('/client.mjs'))return{request:async(path,options)=>{calls.push({path,options});if(path==='/profile')return{customer:{id:'fixture',profile:options.body.profile}};return options?.body?{draft}:{drafts:[]};}};
+  if(name.endsWith('/client.mjs'))return{request:async(path,options)=>{calls.push({path,options});if(path==='/profile')return{customer:{id:'fixture',profile:options.body.profile}};if(path.startsWith('/email/status'))return{verified:true};if(path.endsWith('/review'))return{draft:{...draft,state:'REVIEW',profileSnapshot:options.body.profile}};return options?.body?{draft}:{drafts:[]};}};
   if(name.endsWith('/RapidCardCamera.jsx'))return{default:Camera,__esModule:true};return{default:Stub,__esModule:true};
  }});
  const render=()=>{cursor=0;tree=exports.default({customer:{id:'fixture',phone:'+12025550141',profile:initialProfile},csrf:'fixture',initialService:{intakeMethod:'DEALER_DROP_OFF',kioskId:'fixture-shop'},onCustomer(){}});while(pending.length)pending.shift()();};
  const settle=async()=>{for(let i=0;i<4;i++){render();await new Promise(resolve=>setImmediate(resolve));}render();};
  await settle();return{get tree(){return tree;},calls,settle,Camera};
 }
-test('first-time shop asks name and receipt email before camera, saves only compact contact and proceeds without address',async()=>{
- const view=await intake(null);assert.match(text(view.tree),/Who are we grading for/);assert.equal(all(view.tree,n=>n.type===view.Camera).length,0);
+test('first-time shop opens camera immediately and asks compact contact only after reviewing cards',async()=>{
+ const view=await intake(null);assert.doesNotMatch(text(view.tree),/Who are we grading for/);assert.equal(all(view.tree,n=>n.type===view.Camera).length,1);
+ all(view.tree,n=>n.type==='button'&&text(n).startsWith('Review cards'))[0].props.onClick();await view.settle();
+ assert.match(text(view.tree),/Review your cards/);assert.equal(all(view.tree,n=>n.type===fields.default).length,0);
+ all(view.tree,n=>n.type==='button'&&text(n).startsWith('Continue to checkout'))[0].props.onClick();await view.settle();
  const formFields=all(view.tree,n=>n.type===fields.default)[0];assert.equal(formFields.props.intakeMethod,'DEALER_DROP_OFF');formFields.props.onChange({...formFields.props.value,name:'Alex',email:'alex@example.invalid'});await view.settle();
  const form=all(view.tree,n=>n.type==='form')[0];form.props.onSubmit({preventDefault(){}});await view.settle();
- assert.deepEqual(view.calls.find(c=>c.path==='/profile').options.body.profile,{name:'Alex',email:'alex@example.invalid'});assert.equal(all(view.tree,n=>n.type===view.Camera).length,1);assert.match(text(view.tree),/Front. Back. Next./);
+ assert.deepEqual(view.calls.find(c=>c.path==='/profile').options.body.profile,{name:'Alex',email:'alex@example.invalid'});
+ assert(view.calls.find(c=>c.path.endsWith('/review')));assert.equal(all(view.tree,n=>n.type===view.Camera).length,0);
 });
 test('returning shop customer with saved name and email reaches camera without a duplicate profile step',async()=>{
  const view=await intake({name:'Alex',email:'alex@example.invalid'});assert.doesNotMatch(text(view.tree),/Who are we grading for/);assert.equal(all(view.tree,n=>n.type===view.Camera).length,1);assert.equal(view.calls.some(c=>c.path==='/profile'),false);
 });
 
-test('legacy name-only shop profile asks for email before a new intake without asking for a return address',async()=>{
- const view=await intake({name:'Alex'});assert.match(text(view.tree),/Who are we grading for/);
- const profile=all(view.tree,n=>n.type===fields.default)[0];assert.equal(profile.props.intakeMethod,'DEALER_DROP_OFF');
- assert.equal(all(view.tree,n=>n.type===view.Camera).length,0);assert.equal(view.calls.some(c=>c.path==='/profile'),false);
+test('legacy name-only shop profile preserves capture-first entry and requires email before checkout',async()=>{
+ const view=await intake({name:'Alex'});assert.equal(all(view.tree,n=>n.type===view.Camera).length,1);assert.equal(view.calls.some(c=>c.path==='/profile'),false);
+ all(view.tree,n=>n.type==='button'&&text(n).startsWith('Review cards'))[0].props.onClick();await view.settle();
+ all(view.tree,n=>n.type==='button'&&text(n).startsWith('Continue to checkout'))[0].props.onClick();await view.settle();
+ const profile=all(view.tree,n=>n.type===fields.default)[0];assert.equal(profile.props.intakeMethod,'DEALER_DROP_OFF');assert.equal(profile.props.value.name,'Alex');
+ assert.equal(all(view.tree,n=>n.type===view.Camera).length,0);
 });

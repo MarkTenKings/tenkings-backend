@@ -220,6 +220,23 @@ test('new final grade uses the authoritative half-point field and historical rep
   assert.equal(f.has('Final ATLAS grade, rounded to the nearest half point'), false);
 });
 
+test('award reader accepts saved service snapshots and never substitutes tenth detail for an invalid current award', () => {
+  for (const version of ['atlas-manual-draft-report-v2', 'atlas-manual-report-snapshot-v2']) {
+    const saved = { version, finalGradePolicy: 'atlas-final-half-point-v1', finalGrade: 8,
+      grade: { overall: { rawGrade: 8.24, displayGrade: 8.2 } } };
+    const before = JSON.stringify(saved);
+    assert.equal(presentation.reportAwardedGrade(saved), 8);
+    for (const finalGrade of [undefined, null, 8.2, NaN, Infinity, 0, 10.5]) {
+      assert.equal(presentation.reportAwardedGrade({ ...saved, finalGrade }), null);
+    }
+    assert.equal(presentation.reportAwardedGrade({ ...saved, finalGradePolicy: 'unknown' }), null);
+    assert.equal(JSON.stringify(saved), before);
+  }
+  const historical = { version: 'atlas-manual-report-snapshot-v1', grade: { overall: { displayGrade: 8.2 } } };
+  assert.equal(presentation.reportAwardedGrade(historical), 8.2, 'historical approved awards retain their original policy');
+  assert.equal(presentation.reportAwardedGrade({ ...historical, version: 'unknown' }), null);
+});
+
 test('finding filters and next/previous retain side numbering and never change approval evidence', () => {
   const f = harness(), before = structuredClone(f.props.preview); f.ready();
   f.control('Filter findings by side').props.onChange({ target: { value: 'BACK' } }); f.render();

@@ -11,7 +11,7 @@ import {createManualClient} from '@atlas/manual-workflow/client';
 import {PairedGeometryWorkspace,reviewImagePreview} from '@atlas/manual-workspace';
 import {FocusedGeometryWorkspace,sourceQuadToPrepared} from '@atlas/manual-workspace/focused-geometry';
 import {DefectReviewWorkspace,reviewedMemoryState} from '@atlas/manual-workspace/defects';
-import {FinalReportReview,MachineReportReview,CompletedReviewCard} from '@atlas/manual-workspace/report-review';
+import {FinalReportReview,MachineReportReview,CompletedReviewCard,reportAwardedGrade} from '@atlas/manual-workspace/report-review';
 import {approveRapidStage,approveRapidGeometrySide,confirmRapidGeometryPair,approveRapidFinding as approveFindingSequence,inspectBothDefectSides,rapidReviewStatus} from '@atlas/manual-workspace/rapid-review';
 import {defectBase,reviewedDefectFindingIds} from '@atlas/manual-workspace/defect-actions';
 import {geometryBase,geometryStatus} from '@atlas/manual-workspace/geometry-actions';
@@ -673,7 +673,7 @@ export function ManualWorkspace({staff,cardId,csrf,onPhotos,rapid=false,reviewSe
     const published=publication?.state==='PUBLISHED';
     const labelReady=finishing?.binding.approvalActionId===publication?.actionId&&finishing?.binding.publicHash===publication?.publicHash;
     const name=report.report?.identity?.playerName||report.report?.identity?.cardName||view.identity?.playerName||view.identity?.cardName||'Card';
-    const grade=report.report?.version==='atlas-manual-draft-report-v2'?report.report.finalGrade:report.report?.grade?.overall?.displayGrade;
+    const grade=reportAwardedGrade(report.report);
     return <section className="mc-complete" aria-label="Review complete">
       <div className="mc-complete-hero">
         <CompletedReviewCard descriptor={view.images?.FRONT?.inspection} expectedHash={report.review?.report?.inspection?.front?.imageSha256} name={name} grade={grade} reportNumber={publication?.reportNumber} brandSrc={`${STAFF_BASE_PATH}/brand/atlas-grading-logo.png`}/>

@@ -10,7 +10,6 @@ import ReturnFields, { emptyProfile, intakeProfile } from './intake/ProfileField
 import CustomerIntake from './intake/CustomerIntake.jsx';
 import ServiceChoice from './intake/ServiceChoice.jsx';
 import SubmissionHero from './intake/SubmissionHero.jsx';
-import SubmissionProgress from './intake/SubmissionProgress.jsx';
 import CustomerOrderHistory from './orders/CustomerOrderHistory.jsx';
 import ReportFilmLibrary from './report-films/ReportFilmLibrary.jsx';
 import ProgressPreferences from './notifications/ProgressPreferences.jsx';
@@ -40,8 +39,8 @@ function SubmissionDetail({ submission }) {
         <section className="panel return-snapshot"><div><h2>Confirmed shipping / return details</h2><p>Saved for this submission. Future profile edits apply to future submissions.</p></div><Address profile={submission.profileSnapshot}/></section>
     </>;
 }
-export default function AccountWorkspace({ initialView = 'dashboard', submissionId = null, resumeDraftId = null, unavailable = false }) {
-    const [service, setService] = useState(null), [serviceConfirmed, setServiceConfirmed] = useState(false);
+export default function AccountWorkspace({ initialView = 'dashboard', submissionId = null, resumeDraftId = null, initialService = null, unavailable = false }) {
+    const [service, setService] = useState(initialService), [serviceConfirmed, setServiceConfirmed] = useState(Boolean(initialService || resumeDraftId));
     const [customer, setCustomer] = useState(null), [csrf, setCsrf] = useState(''), [ready, setReady] = useState(false), [mode, setMode] = useState('');
     const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
     const [phone, setPhone] = useState(''), [code, setCode] = useState(''), [challenge, setChallenge] = useState(null);
@@ -80,7 +79,7 @@ export default function AccountWorkspace({ initialView = 'dashboard', submission
     }, []);
     useEffect(() => {
         if (unavailable) { setReady(true); return; }
-        try { const saved = JSON.parse(window.sessionStorage.getItem('atlas-submission-service-v1')); if (saved && ['MAIL_IN','DEALER_DROP_OFF'].includes(saved.intakeMethod)) setService(saved); } catch {}
+        if (!initialService && !resumeDraftId) try { const saved = JSON.parse(window.sessionStorage.getItem('atlas-submission-service-v1')); if (saved && ['MAIL_IN','DEALER_DROP_OFF'].includes(saved.intakeMethod)) { setService(saved); setServiceConfirmed(true); } } catch {}
         if (started.current) return; started.current = true;
         run(async () => { try {
             const boot = await request('/session'); setCsrf(boot.csrf); setMode(boot.mode);
@@ -134,7 +133,12 @@ export default function AccountWorkspace({ initialView = 'dashboard', submission
             }
         });
     }
-    const signedIn = Boolean(customer);
+    function chooseService(value) {
+        setService(value); setServiceConfirmed(true);
+        try { window.sessionStorage.setItem('atlas-submission-service-v1', JSON.stringify(value)); } catch {}
+    }
+    const signedIn = Boolean(customer), submitting = initialView === 'submit';
+    const routeName = service?.intakeMethod === 'MAIL_IN' ? 'Mail-in submission' : service?.intakeMethod === 'DEALER_DROP_OFF' ? 'Authorized dealer drop-off' : 'Saved submission';
     if (unavailable) return <><Head><title>Account unavailable · ATLAS Grading</title><meta name="robots" content="noindex,nofollow"/></Head>
         <main className="workspace"><span className="eyebrow">ATLAS Grading</span><h1>Account access is unavailable.</h1><p>Please return to ATLAS and try again later.</p><a href="https://atlasgrading.com/" className="secondary">Return to ATLAS</a></main></>;
     return <><Head><title>{signedIn ? 'Your account' : 'Sign in'} · ATLAS Grading</title><meta name="robots" content="noindex,nofollow"/></Head>
@@ -143,9 +147,9 @@ export default function AccountWorkspace({ initialView = 'dashboard', submission
         <main className={signedIn ? `workspace${initialView === 'dashboard' && !submissionId ? ' my-atlas-home' : initialView === 'profile' ? ' my-atlas-profile' : ''}` : 'entry'}>
             {mode === 'LOCAL_FIXTURE' && <div className="fixture-banner">Local demonstration · Synthetic SMS code: 424242 · No real submission or SMS delivery</div>}
             {error && <div className="error" role="alert">{error}</div>}{notice && <div className="notice" role="status">{notice}</div>}
-            {!ready ? <p role="status" className="loading">Opening your account…</p> : !signedIn && initialView === 'submit' && !serviceConfirmed ? <><SubmissionProgress current={1}/><ServiceChoice value={service} onChange={setService}/><button className="primary" disabled={!service || (service.intakeMethod === 'DEALER_DROP_OFF' && !service.kioskId)} onClick={() => { try { window.sessionStorage.setItem('atlas-submission-service-v1', JSON.stringify(service)); } catch {} setServiceConfirmed(true); }}>Continue with your phone</button></> : !signedIn ? <div className="sign-in-layout">
-                <section className="entry-copy"><span className="eyebrow">Your collection deserves clarity</span><h1>Your next<br/>great reveal.</h1><p>Submit your cards, follow their progress, and keep every approved ATLAS report in reach.</p><div className="entry-note">One phone number.<br/>One place for your cards.</div></section>
-                <section className="panel sign-in"><span className="eyebrow">Your ATLAS account</span><h2>{challenge ? 'Check your phone' : 'Let’s get you in'}</h2>
+            {!ready ? <p role="status" className="loading">Opening your account…</p> : !signedIn && initialView === 'submit' && !serviceConfirmed ? <ServiceChoice value={service} onChange={chooseService} showStations={false}/> : !signedIn ? <div className={`sign-in-layout${submitting ? ' submission-sign-in' : ''}`} data-submission-route={submitting ? service?.intakeMethod : undefined}>
+                <section className="entry-copy">{submitting ? <><span className="eyebrow">{routeName}</span><h1>{resumeDraftId ? 'Continue your submission' : service?.intakeMethod === 'MAIL_IN' ? 'Let’s get your cards ready to mail.' : 'Let’s get your cards ready to drop off.'}</h1><p>{resumeDraftId ? 'Verify your phone to return to your saved cards.' : 'Verify your phone, then photograph the front and back of each card.'}</p>{!resumeDraftId && <p className="fine">{service?.intakeMethod === 'MAIL_IN' ? 'Mail-in · $40 per card · FedEx shipping quoted before payment.' : 'Authorized dealer · $50 per card · Choose your drop-off location after your photos.'}</p>}</> : <><span className="eyebrow">Your collection deserves clarity</span><h1>Your next<br/>great reveal.</h1><p>Submit your cards, follow their progress, and keep every approved ATLAS report in reach.</p><div className="entry-note">One phone number.<br/>One place for your cards.</div></>}</section>
+                <section className="panel sign-in"><span className="eyebrow">{submitting ? routeName : 'Your ATLAS account'}</span><h2>{challenge ? 'Check your phone' : submitting ? 'Start with your phone' : 'Let’s get you in'}</h2>
                     {challenge ? <><p>Enter the six-digit code sent to <strong>{phone}</strong>.</p><form onSubmit={verify}><label><span>Verification code</span><input autoFocus inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ''))} required disabled={busy}/></label>
                         <button className="primary" disabled={busy || code.length !== 6}>{busy ? 'Checking…' : 'Continue'}</button></form><div className="sign-in-actions"><button disabled={busy} onClick={() => run(resend)}>Send a new code</button><button disabled={busy} onClick={() => { setChallenge(null); sendRequest.current = null; setError(''); }}>Change number</button></div><p className="fine">Codes expire after five minutes. Resends are limited to one per minute.</p></> : <><p>New here or returning? Use the same simple phone sign-in.</p><form onSubmit={send}><label><span>Mobile number</span><input type="tel" autoComplete="tel" inputMode="tel" placeholder="(202) 555-0141" value={phone} onChange={event => setPhone(event.target.value)} maxLength={48} aria-describedby="phone-help" required disabled={busy}/></label><p className="fine" id="phone-help">U.S. number? Enter 10 digits—we add +1. For another country, include its country code.</p>
                         <button className="primary" disabled={busy || !phone || !csrf}>{busy ? 'Sending…' : 'Send verification code'}</button></form><p className="fine">We’ll text a verification code. A verified number creates your account automatically the first time. Message and data rates may apply.</p></>}

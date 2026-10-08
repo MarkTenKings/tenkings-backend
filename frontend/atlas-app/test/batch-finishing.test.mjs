@@ -14,7 +14,7 @@ const code = babel.transformSync(readFileSync(new URL('../components/BatchGradin
 }).code;
 const all = (value, match, out = []) => { if (Array.isArray(value)) value.forEach(item => all(item, match, out)); else if (value && typeof value === 'object') { if (match(value)) out.push(value); all(value.props?.children, match, out); } return out; };
 const text = value => Array.isArray(value) ? value.map(text).join('') : value && typeof value === 'object' ? text(value.props?.children) : value ?? '';
-async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null, correcting = false, partial = false, oldScoringPolicy = false } = {}) {
+async function fixture({ pending = false, mismatch = false, deferred = false, deferredJobs = false, intake = false, attention = false, resumeFailure = null, correcting = false, partial = false, oldScoringPolicy = false, correctionFailure = null } = {}) {
   const plan = samplePlan(), key = 'a'.repeat(64); let staff = { id: 'fixture-reviewer', role: 'REVIEWER' };
   const packet = { key, cardId: plan.binding.cardId, canCertify: true, reportHash: 'c'.repeat(64), report: {
     geometry: { FRONT: { frame: { inspectionImageSha256: 'd'.repeat(64) } }, BACK: { frame: { inspectionImageSha256: 'e'.repeat(64) } } },
@@ -79,7 +79,7 @@ async function fixture({ pending = false, mismatch = false, deferred = false, de
       if (name === '@atlas/manual-workspace/report-review') return { MachineReportReview };
       if (name === '@atlas/manual-workflow/client') return { createManualClient: () => ({
         recover: async () => correcting ? { finalReview: { reportHash: packet.reportHash } } : {},
-        execute: async action => { f.actions.push(action); },
+        execute: async action => { f.actions.push(action); if (correctionFailure) { const failure = correctionFailure; correctionFailure = null; throw failure; } },
       }) };
       if (name === './ManualFinishing') return { __esModule: true, default: ManualFinishing, openManualLabelPrintWindow() {
         f.events.push('POPUP'); const popup = { closed: false, close() { this.closed = true; } }; f.popups.push(popup); return popup;
@@ -231,4 +231,25 @@ test('label queue opens saved completion workspace directly instead of another n
   f.switchStaff('next-reviewer');await f.flush();
   const workspace=f.find(node=>node.type==='ManualWorkspace')[0];assert.ok(workspace);assert.equal(workspace.props.cardId,f.packet.cardId);
   assert.doesNotMatch(f.text(),/Open label & finishing/);assert.equal(f.popups.length,0);assert.equal(f.calls.some(call=>call.options.method==='POST'),false);f.dispose();
+});
+
+ test('failed rapid entry exposes retry for the same card and intent without losing the report', async () => {
+  const f = await fixture({ correctionFailure: { code: 'MANUAL_TEMPORARILY_UNAVAILABLE' } });
+  f.find(node => node.type === 'button' && text(node) === 'Start rapid review →')[0].props.onClick();
+  await f.flush();
+  assert.equal(f.find(node => node.type?.name === 'RapidReviewDialog').length, 0);
+  assert.equal(f.reviews().length, 1);
+  assert.match(f.text(), /Retry opening review/); assert.match(f.text(), /Open saved card workspace/);
+  f.find(node => node.type === 'button' && text(node) === 'Retry opening review')[0].props.onClick();
+  await f.flush();
+  assert.equal(f.find(node => node.type?.name === 'RapidReviewDialog')[0].props.job.navigationMode, 'rapid');
+  assert.deepEqual(f.actions[1], f.actions[0]);
+  assert.doesNotMatch(f.text(), /Retry opening review/); assert.equal(f.popups.length, 0); f.dispose();
+});
+test('a refused stale review points to saved work and offers the existing workspace', async () => {
+  const f = await fixture({ correctionFailure: { code: 'BATCH_REVIEW_STALE' } });
+  f.find(node => node.type === 'button' && text(node) === 'Start rapid review →')[0].props.onClick(); await f.flush();
+  assert.match(f.text(), /newer saved work/); assert.doesNotMatch(f.text(), /This step did not finish/);
+  f.find(node => node.type === 'button' && text(node) === 'Open saved card workspace')[0].props.onClick();
+  assert.deepEqual(f.routes, [`/manual/${f.packet.cardId}?from=batch`]); assert.equal(f.popups.length, 0); f.dispose();
 });

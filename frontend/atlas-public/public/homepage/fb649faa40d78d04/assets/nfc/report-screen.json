@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "status": "ARCHIVED_APPROVED_SAMPLE",
+  "liveRecordRestored": false,
+  "reportHash": "3248332ea72b1ac618af3dd8da32ba15f4e11bbc3a2e94f725530dc9596ba7e9",
+  "reportNumber": "ATLAS-A2CBC45E2470",
+  "approvalVersion": 1,
+  "findingCount": 7,
+  "capture": {
+    "src": "./report-screen.jpg",
+    "contentType": "image/jpeg",
+    "sha256": "beb4e593eab91a9578979623b7b1edee72fb1ef652a77dc6bb1524409a18b815",
+    "bytes": 60540,
+    "width": 390,
+    "height": 844,
+    "source": "Actual approved whole-card report component rendered locally at390\u00d7844; earlier approved report UI",
+    "operation": "Unmodified browser screenshot; uniformly scaled and viewport-clipped in the illustrative phone"
+  },
+  "hardware": {
+    "exteriorMm": {
+      "width": 80.264,
+      "height": 135.382,
+      "depth": 6.096
+    },
+    "notManufacturingCAD": true,
+    "illustrative": [
+      "Two-piece transparent polymer shell and weld seam",
+      "Internal label bay, retention rails and offsets",
+      "Etched seven-turn antenna diagram, chip and wire bonds",
+      "Tag location behind logo and compatible phone shape",
+      "Notification appearance and timing"
+    ]
+  }
+}

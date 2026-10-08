@@ -17,15 +17,15 @@ export function beginFinalReview({ card, geometry, defects, packet }) {
   requireThat(!card.draft.finalReview && report?.authority === 'MACHINE_PROPOSAL' && report.certification === null
     && report.cardId === card.cardId && report.sourceHash === card.draft.source.sourceHash
     && currentBase.revision === card.revision && currentBase.contentHash === card.contentHash
-    && (!resumeBase || report.ruleVersion !== ATLAS_RULE_VERSION && Number.isSafeInteger(resumeBase.completedSteps)
+    && (!resumeBase || Number.isSafeInteger(resumeBase.completedSteps)
       && resumeBase.completedSteps >= 0 && resumeBase.completedSteps < 5
       && report.manualRevision + resumeBase.completedSteps === card.revision)
     && digest(JSON.stringify(report)) === reportHash && Array.isArray(proposals), 409, 'BATCH_REVIEW_STALE');
   for (const side of SIDES) requireThat(canonical(defects.sides[side].frame) === canonical(report.geometry[side].frame),
     409, 'BATCH_REVIEW_BINDING_CHANGED');
   if (resumeBase) {
-    // Reopen the same immutable proposals for a fresh, explicit review under
-    // the new policy. Old inspection receipts remain saved, but cannot confirm
+    // Reopen the same immutable proposals for a fresh, explicit review.
+    // Prior inspection receipts remain saved, but cannot confirm
     // this review. Keep monotonically increasing local evidence revisions.
     const empty = createDefectWorkspace({ cardId: defects.cardId, profile: defects.profile,
       sides: Object.fromEntries(SIDES.map(side => [side, { frame: defects.sides[side].frame, cornerShape: defects.sides[side].cornerShape }])) });

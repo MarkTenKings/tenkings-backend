@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { createBatchReview } from '../src/batch-review.mjs';
+import { createBatchReview, assertMachineReportUnchanged } from '../src/batch-review.mjs';
 import { buildMachineReport } from '../src/batch-preparation.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 import { createManualWorkflow } from '../../atlas-manual-workflow/src/workflow.mjs';
@@ -74,7 +74,10 @@ async function fixture({ count = 2, native = false, unmeasurable = false, missin
     resolveConfirmation: async ({ selection, card }) => {
       if (card.draft.finalReview) { assert.equal(selection, null); return { entries: [] }; }
       assert.deepEqual(selection, count ? offer : null);
-      return { entries: proposals.map(proposal => ({ proposal, base: defectBase(initial.defects, proposal.side) })) };
+      // Match production reviewContext: confirmation visits IDs lexically,
+      // whereas the machine report retains detector proposal order.
+      return { entries: proposals.slice().sort((a, b) => a.id.localeCompare(b.id))
+        .map(proposal => ({ proposal, base: defectBase(initial.defects, proposal.side) })) };
     },
     assertReviewComplete: async ({ card }) => {
       const state = await workflow.hydrate(card);
@@ -113,8 +116,9 @@ async function fixture({ count = 2, native = false, unmeasurable = false, missin
   batchReview = createBatchReview({ connected, repository: batchRepository, artifacts: p.artifacts });
   return { review: batchReview, staff, job, report, workflow, commits, approvals, lessons,
     input: { reportHash, reviewed: true, images: Object.fromEntries(sides.map(side => [side, report.geometry[side].frame.inspectionImageSha256])) },
-    async seedHistoricalProgress(steps) {
-      assert(historicalMachine); assert(Number.isInteger(steps) && steps >= 0 && steps <= 5);
+    async seedReviewProgress(steps) {
+      assert(Number.isInteger(steps) && steps >= 0 && steps <= 5);
+      assert(historicalMachine || steps < 5);
       await batchRepository.beginReview(staff, job.key, { reportHash, reviewed: true,
         images: Object.fromEntries(sides.map(side => [side, report.geometry[side].frame.inspectionImageSha256])),
         manualRevision: report.manualRevision, manualContentHash: report.manualContentHash, proposalReview: offer });
@@ -305,7 +309,7 @@ test('lost committed findings response resumes identical receipts without duplic
 });
 test('each interrupted historical approval prefix can explicitly reopen unchanged evidence for fresh current-policy review', async () => {
   for (const steps of [0, 1, 2, 3, 4]) {
-    const f = await fixture({ historicalMachine: true }); await f.seedHistoricalProgress(steps);
+    const f = await fixture({ historicalMachine: true }); await f.seedReviewProgress(steps);
     const original = clone(f.report), before = await f.workflow.hydrate(f.card);
     const view = await f.review.detail(f.staff, f.job.key);
     assert.equal(view.reviewRequiredReason, 'BATCH_SCORING_POLICY_UPDATED'); assert.equal(view.canCertify, false);
@@ -342,10 +346,48 @@ test('each interrupted historical approval prefix can explicitly reopen unchange
     }
   }
 });
+test('every interrupted current-policy approval can enter rapid corrections with original receipts and fresh findings review', async () => {
+  for (const steps of [0, 1, 2, 3, 4]) {
+    const f = await fixture(); await f.seedReviewProgress(steps);
+    const original = clone(f.report), receipts = clone(f.commits), prior = await f.workflow.hydrate(f.card);
+    const detail = await f.review.detail(f.staff, f.job.key);
+    assert.equal(detail.resumeAvailable, true); assert.equal(detail.reportHash, f.input.reportHash);
+    const command = { actionId: randomUUID(), expectedRevision: f.card.revision,
+      action: { type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash } };
+    await f.workflow.service.execute(f.staff, f.card.cardId, command);
+    await f.workflow.service.execute(f.staff, f.card.cardId, command);
+    const state = await f.workflow.hydrate(f.card);
+    assert.equal(f.commits.length, steps + 1); assert.deepEqual(f.commits.slice(0, steps), receipts);
+    assert.deepEqual(state.finalReview.report, original); assert.equal(f.approvals.size, 0);
+    assert.equal(state.defects.confirmation, null);
+    for (const side of sides) {
+      assert.equal(state.defects.sides[side].inspection, null);
+      assert(state.defects.sides[side].findingRevision > prior.defects.sides[side].findingRevision);
+      assert.deepEqual(state.defects.sides[side].findings, original.findings.filter(finding => finding.side === side));
+    }
+    const updated = await f.review.detail(f.staff, f.job.key);
+    assert.equal(updated.correctionAvailable, true); assert.equal(updated.canCertify, false);
+    await assert.rejects(f.workflow.service.previewReport(f.staff, f.card.cardId));
+  }
+});
+test('current-policy correction handoff refuses changed evidence, missing receipts and already approved cards', async () => {
+  for (const change of [f => f.mutate(), f => f.changeContentHash(), f => f.loseHistoricalReceipt('INSPECT_FRONT'),
+    f => f.replace(), f => { f.input.reportHash = 'c'.repeat(64); }, f => { f.command.images.BACK = 'c'.repeat(64); }]) {
+    const f = await fixture(); await f.seedReviewProgress(4); change(f);
+    await assert.rejects(f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: f.card.revision,
+      action: { type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash } }));
+    assert.equal(f.commits.length, 4); assert.equal(f.approvals.size, 0);
+  }
+  const f = await fixture(); await f.review.approve(f.staff, f.job.key, f.input);
+  const approved = clone([...f.approvals]);
+  await assert.rejects(f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: f.card.revision,
+    action: { type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash } }), { code: 'BATCH_REVIEW_STALE' });
+  assert.deepEqual([...f.approvals], approved); assert.equal(f.commits.length, 5);
+});
 test('historical correction transition rejects changed revision/hash, missing receipts, changed images and wrong report', async () => {
   for (const change of [f => f.mutate(), f => f.changeContentHash(), f => f.loseHistoricalReceipt('GEOMETRY'), f => f.replace(),
     f => { f.input.reportHash = 'c'.repeat(64); }, f => { f.command.images.FRONT = 'c'.repeat(64); }]) {
-    const f = await fixture({ historicalMachine: true }); await f.seedHistoricalProgress(3); change(f);
+    const f = await fixture({ historicalMachine: true }); await f.seedReviewProgress(3); change(f);
     await assert.rejects(f.workflow.service.execute(f.staff, f.card.cardId, { actionId: randomUUID(), expectedRevision: f.card.revision,
       action: { type: 'BEGIN_FINAL_REVIEW', batchKey: f.job.key, reportHash: f.input.reportHash } }),
     error => ['BATCH_REVIEW_STALE', 'BATCH_PHOTOS_CHANGED', 'BATCH_REVIEW_BINDING_CHANGED'].includes(error.code));
@@ -353,7 +395,7 @@ test('historical correction transition rejects changed revision/hash, missing re
   }
 });
 test('fully committed historical approval recovers the exact saved award and publication without reapproval', async () => {
-  const f = await fixture({ historicalMachine: true }); await f.seedHistoricalProgress(5);
+  const f = await fixture({ historicalMachine: true }); await f.seedReviewProgress(5);
   const before = clone([...f.approvals]), card = clone(f.card), view = await f.review.detail(f.staff, f.job.key);
   assert.equal(view.approved, true); assert.equal(view.canCertify, true); assert.equal(view.reviewRequiredReason, null);
   const result = await f.review.approve(f.staff, f.job.key, f.input);
@@ -367,7 +409,7 @@ test('fully committed historical approval recovers the exact saved award and pub
 test('historical saved approval recovery rejects mismatched receipt chains and approval source revisions', async () => {
   for (const change of [f => f.loseHistoricalReceipt('FINDINGS'), f => f.changeContentHash(),
     f => { f.approvals.values().next().value.sourceRevision++; }]) {
-    const f = await fixture({ historicalMachine: true }); await f.seedHistoricalProgress(5); change(f);
+    const f = await fixture({ historicalMachine: true }); await f.seedReviewProgress(5); change(f);
     await assert.rejects(f.review.approve(f.staff, f.job.key, f.input), error => ['BATCH_REVIEW_STALE', 'BATCH_REVIEW_BINDING_CHANGED'].includes(error.code));
     assert.equal(f.commits.length, 5); assert.equal(f.approvals.size, 1);
   }
@@ -375,6 +417,38 @@ test('historical saved approval recovery rejects mismatched receipt chains and a
 test('zero findings still require the same actual human inspection and approval', async () => {
   const f = await fixture({ count: 0 }); await f.review.approve(f.staff, f.job.key, f.input);
   assert.equal(f.commits.length, 5); assert.equal(f.approvals.size, 1);
+});
+test('double-digit proposal IDs approve unchanged evidence when confirmation changes finding order', async () => {
+  const f = await fixture({ count: 12 });
+  const originalOrder = f.report.findings.map(finding => finding.id);
+  const result = await f.review.approve(f.staff, f.job.key, f.input);
+  const state = await f.workflow.hydrate(f.card);
+  const finalOrder = sides.flatMap(side => state.defects.sides[side].findings.map(finding => finding.id));
+  assert.notDeepEqual(finalOrder, originalOrder, 'The real confirmation adapter sorts proposal IDs lexically');
+  assert.equal(result.publication.state, 'PUBLISHED'); assert.equal(f.approvals.size, 1);
+  await f.review.approve(f.staff, f.job.key, f.input);
+  assert.equal(f.commits.length, 5); assert.equal(f.approvals.size, 1);
+});
+test('finding identity matching refuses duplicates, missing or extra findings and any changed evidence', async () => {
+  const f = await fixture({ count: 12 }); await f.review.approve(f.staff, f.job.key, f.input);
+  const final = (await f.workflow.service.previewReport(f.staff, f.card.cardId)).review.report;
+  const reordered = { ...final, findings: [...final.findings].reverse() };
+  assert.doesNotThrow(() => assertMachineReportUnchanged(f.report, reordered));
+  for (const change of [
+    value => { value.findings[1] = clone(value.findings[0]); },
+    value => { value.findings.pop(); },
+    value => { value.findings.push(clone(value.findings[0])); },
+    value => { value.findings[0].id = 'unknown-finding'; },
+    value => { value.findings[0].side = value.findings[0].side === 'FRONT' ? 'BACK' : 'FRONT'; },
+    value => { value.findings[0].defectType = 'DENT_MATERIAL_DAMAGE'; },
+    value => { value.findings[0].finalTrace.runs[0]++; },
+    value => { value.findings[0].measurementRegions[0].measurement.areaMm2 += .001; },
+  ]) {
+    const altered = clone(reordered); change(altered);
+    assert.throws(() => assertMachineReportUnchanged(f.report, altered), { code: 'BATCH_REVIEW_REPORT_CHANGED' });
+  }
+  const duplicateOriginal = clone(f.report); duplicateOriginal.findings[1] = clone(duplicateOriginal.findings[0]);
+  assert.throws(() => assertMachineReportUnchanged(duplicateOriginal, final), { code: 'BATCH_REVIEW_REPORT_CHANGED' });
 });
 test('different photo/report authority, missing deliberate decision and untrained staff never begin review', async () => {
   for (const change of [f => ({ ...f.input, reviewed: false }), f => ({ ...f.input, reportHash: 'c'.repeat(64) }),

@@ -63,13 +63,13 @@ test('different authenticated browser requires explicit confirmation when server
   all(view.tree,n=>n.type==='button')[0].props.onClick();await tick();view.render();
   assert.deepEqual(modes,['AUTO','CONFIRM']);assert.equal(view.navigations.length,0);
 });
-test('existing camera owner keeps original tab; closed tab and missing lock API restore exact draft', async () => {
+test('email confirmation restores exact server cart even while another tab owns the camera', async () => {
   const id=randomUUID();
   for(const held of [true,false]) {
     const view=harness('../pages/verify-email.jsx',{customer:{id:'phone-account'},
       ...(held?{locks:{request:async(_n,_o,fn)=>fn(null)}}:{}),request:async()=>({verified:true,resumeDraftId:id})});
     view.render();await tick();view.render();
-    assert.equal(view.navigations.length,held?0:1);
+    assert.deepEqual(view.navigations,[`/account/submit?draft=${id}`]);
     assert.equal(all(view.tree,n=>n.type==='a')[0].props.href,`/account/submit?draft=${id}`);
   }
 });
@@ -83,7 +83,7 @@ test('waiting panel never sends on mount; uncertain request retains idempotency 
   await assert.rejects(view.exports.requestEmailVerification(request,'a','d',status.email));
   assert.equal(calls[1].o.body.requestId,calls[2].o.body.requestId);assert.equal(view.memory.size,1);
 });
-test('closed original tab without lock API resumes server-owned reviewed draft and never opens or clears local photos', async () => {
+for (const cameraOwner of ['unavailable', 'other-tab']) test(`server-owned reviewed draft resumes with camera ${cameraOwner} and never touches local photos`, async () => {
   const id=randomUUID(),draft={id,revision:4,state:'REVIEW',intakeMethod:'MAIL_IN',kioskId:null,profileSnapshot:{name:'Saved',email:'a@example.invalid'},cards:[{id:'saved-card'}]};
   function EmailPanel() {} const imports={
     './EmailVerificationPanel.jsx':{default:EmailPanel,__esModule:true},
@@ -91,7 +91,7 @@ test('closed original tab without lock API resumes server-owned reviewed draft a
     '../../lib/capture-buffer.mjs':{createCaptureBuffer(){throw Error('must not open saved device photos without lock');}},
     '../../lib/capture-state.mjs':{captureCounts:()=>({count:1,waitingCount:0,ready:true})},
   };
-  const view=harness('../components/intake/CustomerIntake.jsx',{imports,request:async path=>path===`/intake/drafts/${id}`?{draft}:{drafts:[draft]}});
+  const view=harness('../components/intake/CustomerIntake.jsx',{imports,...(cameraOwner === 'other-tab' ? {locks:{request(){throw Error('must not wait for camera lock');}}} : {}),request:async path=>path===`/intake/drafts/${id}`?{draft}:{drafts:[draft]}});
   const props={customer:{id:'account',profile:{}},csrf:'csrf',resumeDraftId:id};
   view.render(props);await tick();view.render(props);
   const panel=all(view.tree,n=>n.type===EmailPanel)[0];assert.equal(panel.props.draftId,id);
@@ -120,7 +120,7 @@ test('explicit review saves the exact draft before sending its first email, with
   const props={customer:{id:'account',profile:{name:'Saved',email:'a@example.invalid'}},csrf:'csrf'};
   view.render(props);await tick();view.render(props);
   all(view.tree,n=>n.type==='button'&&text(n).startsWith('Resume '))[0].props.onClick();await tick();view.render(props);
-  all(view.tree,n=>n.type==='button'&&text(n).startsWith('Done adding cards'))[0].props.onClick();view.render(props);
+  all(view.tree,n=>n.type==='button'&&text(n).startsWith('Review cards'))[0].props.onClick();view.render(props);
   all(view.tree,n=>n.type==='button'&&text(n).startsWith('Continue to checkout'))[0].props.onClick();await tick();view.render(props);
   assert.deepEqual(events,['SAVE','STATUS','SEND']);
   view.render(props);await tick();view.render(props);assert.deepEqual(events,['SAVE','STATUS','SEND']);
@@ -135,4 +135,21 @@ test('lost send response keeps same-address identity but changed email and expli
  assert.equal(ids[0],ids[1]);assert.notEqual(ids[1],ids[2]);assert.equal(ids[2],ids[3]);
  await assert.rejects(view.exports.requestEmailVerification(request,'account','draft','b@example.invalid',{fresh:true}));
  assert.notEqual(ids[3],ids[4]);
+});
+
+test('unavailable exact resume never falls back to a new empty draft or opens device originals', async () => {
+  const id=randomUUID(), imports={
+    './ProfileFields.jsx':{default:()=>null,emptyProfile:{},completeProfile:()=>true,__esModule:true},
+    '../../lib/capture-buffer.mjs':{createCaptureBuffer(){throw Error('must not open device originals');}},
+    '../../lib/capture-state.mjs':{captureCounts:()=>({count:0,waitingCount:0,ready:false})},
+  };
+  const view=harness('../components/intake/CustomerIntake.jsx',{imports,locks:{request(){throw Error('must not request camera lock');}},request:async path=>{
+    if(path==='/intake/drafts')return{drafts:[]};
+    if(path===`/intake/drafts/${id}`)throw Object.assign(Error('This submission is not available in your account.'),{code:'NOT_FOUND'});
+    throw Error('Unexpected request '+path);
+  }});
+  const props={customer:{id:'account',profile:{}},csrf:'csrf',resumeDraftId:id,initialService:{intakeMethod:'MAIL_IN',kioskId:null}};
+  view.render(props);await tick();view.render(props);await tick();view.render(props);
+  assert.match(text(view.tree),/not available in your account/);assert.match(text(view.tree),/Opening your saved submission/);
+  assert(view.calls.every(c=>c.options?.body===undefined));assert.equal(view.calls.length,2);
 });

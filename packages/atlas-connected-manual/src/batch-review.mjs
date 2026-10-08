@@ -16,6 +16,10 @@ const findingEvidence = finding => {
   return evidence;
 };
 function assertReportEvidenceUnchanged(machine, final) {
+  // Confirmation visits proposal IDs in lexical order (…:10 before …:2).
+  // Ordering is presentation; identity and every evidence field are authority.
+  // Match each finding once without rewriting either immutable report.
+  const originalFindings = new Map(machine.findings.map(finding => [finding.id, finding]));
   requireThat(final?.version === 'atlas-manual-draft-report-v2'
     && final.finalGrade === machine.proposedGrade
     && ['identity', 'cardProfile', 'ruleVersion', 'grade', 'finalGradePolicy'].every(key => same(machine[key], final[key]))
@@ -23,8 +27,11 @@ function assertReportEvidenceUnchanged(machine, final) {
     && SIDES.every(side => final.inspection[side.toLowerCase()]?.inspected === true
       && final.inspection[side.toLowerCase()].imageSha256 === machine.geometry[side].frame.inspectionImageSha256)
     && final.findings.length === machine.findings.length
-    && final.findings.every((finding, index) => ['SMART_MARKED', 'ACCEPTED'].includes(finding.reviewResult)
-      && same(findingEvidence(finding), findingEvidence(machine.findings[index]))), 409, 'BATCH_REVIEW_REPORT_CHANGED');
+    && originalFindings.size === machine.findings.length
+    && new Set(final.findings.map(finding => finding.id)).size === final.findings.length
+    && final.findings.every(finding => ['SMART_MARKED', 'ACCEPTED'].includes(finding.reviewResult)
+      && originalFindings.has(finding.id)
+      && same(findingEvidence(finding), findingEvidence(originalFindings.get(finding.id)))), 409, 'BATCH_REVIEW_REPORT_CHANGED');
 }
 export function assertMachineReportUnchanged(machine, final) {
   requireThat(machine.ruleVersion === ATLAS_RULE_VERSION, 409, 'BATCH_REVIEW_REPORT_CHANGED');
@@ -90,7 +97,10 @@ export function createBatchReview({ connected, repository, artifacts }) {
       const { job, report, review } = await load(staff, batchKey);
       requireThat(card.cardId === job.cardId && reportHash === job.evidence.reportHash, 409, 'BATCH_REVIEW_STALE');
       let resumeBase;
-      if (review && report.ruleVersion !== ATLAS_RULE_VERSION) {
+      if (review) {
+        // A failed final approval may leave the ordinary inspection steps
+        // committed under the current policy too. Their exact receipt chain
+        // can enter corrections; policy age is not a recovery capability.
         const recovered = await progress(staff, job, report);
         requireThat(recovered.complete < STEPS.length && card.revision === recovered.card.revision
           && card.contentHash === recovered.card.contentHash, 409, 'BATCH_REVIEW_STALE');

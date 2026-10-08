@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { reportAwardedGrade } from '../../atlas-manual-workspace/src/report-review-ui.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { validateConfirmationCommit } from '../src/confirmation-fence.mjs';
@@ -525,6 +526,8 @@ test('new report approval binds the half-point final grade and refuses a previou
   assert.equal(preview.report.finalGradePolicy, 'atlas-final-half-point-v1');
   assert.equal(preview.report.finalGrade, Math.round((preview.report.grade.overall.rawGrade + Number.EPSILON) * 2) / 2);
   assert.equal(preview.report.finalGrade, preview.review.report.finalGrade);
+  assert.equal(reportAwardedGrade(preview.report), preview.report.finalGrade, 'completion reads the actual service snapshot');
+  assert.equal(reportAwardedGrade(preview.review.report), reportAwardedGrade(preview.report), 'full review and completion agree');
   const old = structuredClone(preview.report); old.version = 'atlas-manual-report-snapshot-v1'; delete old.finalGrade; delete old.finalGradePolicy;
   const before = f.card();
   await assert.rejects(f.execute({ type: 'APPROVE_REPORT', reviewed: true, reportHash: digest(canonical(old)) }), { code: 'MANUAL_REPORT_STALE' });

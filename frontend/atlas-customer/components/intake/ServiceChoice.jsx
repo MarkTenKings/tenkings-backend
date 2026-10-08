@@ -43,7 +43,7 @@ function ServiceJourney({ kind }) {
     </div>
   </div>;
 }
-export default function ServiceChoice({ value, onChange }) {
+export default function ServiceChoice({ value, onChange, showStations = true }) {
   const [paused, setPaused] = useState(false), [reducedMotion, setReducedMotion] = useState(true), [hidden, setHidden] = useState(false);
   useEffect(() => {
     const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -73,6 +73,6 @@ export default function ServiceChoice({ value, onChange }) {
           <button type="button" className={value?.intakeMethod === 'MAIL_IN' ? 'primary' : 'secondary'} aria-pressed={value?.intakeMethod === 'MAIL_IN'} onClick={() => onChange({ intakeMethod: 'MAIL_IN', kioskId: null })}>{value?.intakeMethod === 'MAIL_IN' ? 'Mail-in selected ✓' : 'Choose mail-in →'}</button></div>
       </article>
     </div><p className="fine">Applicable taxes and the full total appear before payment. Grading begins after your cards physically reach ATLAS.</p>
-    <SubmissionStationFinder value={value} onChange={onChange} visible={value?.intakeMethod === 'DEALER_DROP_OFF'}/>
+    {showStations && <SubmissionStationFinder value={value} onChange={onChange} visible={value?.intakeMethod === 'DEALER_DROP_OFF'}/>}
   </section>;
 }
