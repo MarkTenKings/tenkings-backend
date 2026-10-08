@@ -1,0 +1,53 @@
+name: Vault cloud production compatibility
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/vault-cloud-release.yml'
+      - 'scripts/*vault*'
+      - 'packages/vault-contracts/**'
+      - 'packages/database/**'
+      - 'frontend/nextjs-app/**'
+      - 'pnpm-lock.yaml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compatible-cloud:
+    name: Vault cloud production lineage and regression
+    if: startsWith(github.head_ref || github.ref_name, 'codex/vault-cloud-preserve-production-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RUN_DB_MIGRATIONS: 'false'
+      DATABASE_URL: 'postgresql://vault_validation:unused@127.0.0.1:1/no_database?connect_timeout=1'
+      NEXT_TELEMETRY_DISABLED: '1'
+      VAULT_NAYAX_SPARK_CALLBACKS_ENABLED: 'false'
+      VAULT_NAYAX_SPARK_PRODUCTION_CALLBACKS_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.20.1
+          cache: pnpm
+      - run: git fetch --no-tags --depth=1 origin 20643deae9b9b341fc7dfcd7fb703c53d0b73d0b
+      - name: Preserve deployed routing and cron
+        run: git diff --exit-code 20643deae9b9b341fc7dfcd7fb703c53d0b73d0b -- frontend/nextjs-app/middleware.ts frontend/nextjs-app/lib/siteRoutes.ts frontend/nextjs-app/vercel.json
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @tenkings/database generate
+      - run: pnpm --filter @tenkings/vault-contracts build && pnpm --filter @tenkings/shared build && pnpm --filter @tenkings/database build
+      - run: pnpm vault:test-contracts && pnpm vault:test-cloud
+      - run: node --test packages/database/tests/vaultV1.test.js
+      - name: Build ordinary Production application without database migrations
+        run: bash scripts/vercel-build.sh
+        env:
+          VERCEL_ENV: production
+      - name: Rehearse exact production SQL lineage in owned PostgreSQL
+        run: node scripts/validate-vault-cloud-production-upgrade.mjs --ack-disposable-local-postgres
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vault-cloud-production-upgrade
+          path: outputs/vault-cloud-production-upgrade.json
+          if-no-files-found: error

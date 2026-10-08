@@ -12,6 +12,8 @@
     "packages/*"
   ],
   "scripts": {
+    "vault:test-cloud": "node scripts/test-vault-cloud.mjs",
+    "vault:test-contracts": "pnpm --filter @tenkings/vault-contracts test",
     "install:all": "npm install --workspaces",
     "lint": "echo \"(placeholder) configure ESLint\"",
     "format": "echo \"(placeholder) configure Prettier\"",

@@ -1,0 +1,65 @@
+{
+  "synthetic": true,
+  "sourceCommit": "522845af797d3b1899cd24e311c64e73da392a1d",
+  "generator": "packages/vault-machine/src/spark-provisioning.ts",
+  "sandbox": {
+    "cloudBindings": [
+      {
+        "machineId": "00000000-0000-4000-8000-000000000001",
+        "nayaxMachineId": "71234996",
+        "terminalId": "0434334921100366",
+        "hwSerial": "0434334921100366",
+        "siteId": 2,
+        "currency": "USD",
+        "acquiringCardBrands": [
+          "Visa"
+        ],
+        "acquiringOnlyConfirmed": true,
+        "callbackTerminalIdRepresentation": "HW_SERIAL",
+        "cardUidPolicy": "REJECT_AMBIGUOUS",
+        "unsupportedCardBrands": [
+          "SMC"
+        ]
+      }
+    ],
+    "cloudEnvironment": {
+      "VAULT_NAYAX_SPARK_CALLBACKS_ENABLED": "false",
+      "VAULT_NAYAX_SPARK_ENVIRONMENT": "SANDBOX",
+      "VAULT_NAYAX_SPARK_CALLBACK_HEADER": "x-vault-spark-secret",
+      "VAULT_NAYAX_SPARK_BINDINGS_JSON": "[{\"machineId\":\"00000000-0000-4000-8000-000000000001\",\"nayaxMachineId\":\"71234996\",\"terminalId\":\"0434334921100366\",\"hwSerial\":\"0434334921100366\",\"siteId\":2,\"currency\":\"USD\",\"acquiringCardBrands\":[\"Visa\"],\"acquiringOnlyConfirmed\":true,\"callbackTerminalIdRepresentation\":\"HW_SERIAL\",\"cardUidPolicy\":\"REJECT_AMBIGUOUS\",\"unsupportedCardBrands\":[\"SMC\"]}]"
+    },
+    "bindingDigest": "22bbb274044519d369498902a159c30ee55fde68ce24e89f06cb6c81f9a75e17",
+    "methodProfileDigest": "de792afbaa9d0a6edb1b315a6fe41acade07c159e09518503ab9ebcbafef437e"
+  },
+  "production": {
+    "cloudBindings": [
+      {
+        "machineId": "00000000-0000-4000-8000-000000000001",
+        "nayaxMachineId": "71234996",
+        "terminalId": "0434334921100366",
+        "hwSerial": "0434334921100366",
+        "siteId": 2,
+        "currency": "USD",
+        "acquiringCardBrands": [
+          "Visa"
+        ],
+        "acquiringOnlyConfirmed": true,
+        "callbackTerminalIdRepresentation": "HW_SERIAL",
+        "cardUidPolicy": "REJECT_AMBIGUOUS",
+        "unsupportedCardBrands": [
+          "SMC"
+        ],
+        "stage": "PRODUCTION",
+        "paymentBindingDigest": "93af0086f3fc31ae035bc36c6c7e5b0d93664613850f919d3f56dd2e7cc9ae42"
+      }
+    ],
+    "cloudEnvironment": {
+      "VAULT_NAYAX_SPARK_PRODUCTION_CALLBACKS_ENABLED": "false",
+      "VAULT_NAYAX_SPARK_PRODUCTION_ENVIRONMENT": "PRODUCTION",
+      "VAULT_NAYAX_SPARK_PRODUCTION_CALLBACK_HEADER": "x-vault-spark-secret",
+      "VAULT_NAYAX_SPARK_PRODUCTION_BINDINGS_JSON": "[{\"machineId\":\"00000000-0000-4000-8000-000000000001\",\"nayaxMachineId\":\"71234996\",\"terminalId\":\"0434334921100366\",\"hwSerial\":\"0434334921100366\",\"siteId\":2,\"currency\":\"USD\",\"acquiringCardBrands\":[\"Visa\"],\"acquiringOnlyConfirmed\":true,\"callbackTerminalIdRepresentation\":\"HW_SERIAL\",\"cardUidPolicy\":\"REJECT_AMBIGUOUS\",\"unsupportedCardBrands\":[\"SMC\"],\"stage\":\"PRODUCTION\",\"paymentBindingDigest\":\"93af0086f3fc31ae035bc36c6c7e5b0d93664613850f919d3f56dd2e7cc9ae42\"}]"
+    },
+    "bindingDigest": "93af0086f3fc31ae035bc36c6c7e5b0d93664613850f919d3f56dd2e7cc9ae42",
+    "methodProfileDigest": "de792afbaa9d0a6edb1b315a6fe41acade07c159e09518503ab9ebcbafef437e"
+  }
+}
