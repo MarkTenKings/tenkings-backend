@@ -14,7 +14,7 @@ permissions:
 jobs:
   compatible-cloud:
     name: Vault cloud production lineage and regression
-    if: startsWith(github.head_ref || github.ref_name, 'codex/vault-cloud-preserve-production-')
+    if: startsWith(github.head_ref || github.ref_name, 'codex/vault-cloud-preserve-production-') || (github.head_ref || github.ref_name) == 'codex/production-frontend-typecheck-20261008'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -44,6 +44,21 @@ jobs:
         run: bash scripts/vercel-build.sh
         env:
           VERCEL_ENV: production
+      - name: Typecheck the complete production frontend after isolated fixture cleanup
+        if: (github.head_ref || github.ref_name) == 'codex/production-frontend-typecheck-20261008'
+        run: pnpm --filter @tenkings/nextjs-app exec tsc --noEmit
+      - name: Test the seven affected production frontend fixtures
+        if: (github.head_ref || github.ref_name) == 'codex/production-frontend-typecheck-20261008'
+        working-directory: frontend/nextjs-app
+        run: >-
+          pnpm exec tsx --test
+          tests/aiGraderEyesCenteringCandidateSelection.test.ts
+          tests/aiGraderLocalStation.test.ts
+          tests/aiGraderOcrPrefill.test.ts
+          tests/aiGraderOperatorResolutionAuthentication.test.ts
+          tests/aiGraderProductionPayloadLimit.test.ts
+          tests/aiGraderV2LearningActivation.test.ts
+          tests/speedsterPhysicalGeometryLessons.test.ts
       - name: Rehearse exact production SQL lineage in owned PostgreSQL
         run: node scripts/validate-vault-cloud-production-upgrade.mjs --ack-disposable-local-postgres
       - uses: actions/upload-artifact@v4

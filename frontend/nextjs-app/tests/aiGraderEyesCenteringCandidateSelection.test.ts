@@ -5,6 +5,7 @@ import {
   buildAiGraderEyesCenteringSelectionRequest,
   parseAiGraderEyesCenteringSelectionResponse,
   type AiGraderEyesCenteringCandidateOverlay,
+  type AiGraderEyesCenteringCandidateDecision,
 } from "../lib/server/aiGraderEyesCenteringCandidateSelection";
 import {
   AiGraderEyesError,
@@ -66,7 +67,7 @@ function response(decisions: unknown) {
   };
 }
 
-const validDecisions = (["front", "back"] as const).flatMap((side) =>
+const validDecisions: AiGraderEyesCenteringCandidateDecision[] = (["front", "back"] as const).flatMap((side) =>
   edges.map((edge) => ({
     side,
     edge,
