@@ -83,6 +83,16 @@ specific named pattern. Sports colors and patterns are checked after removing
 the saved player and product context; a Red Wave cannot match Blue Wave or Red
 Prizm solely because some words overlap.
 
+The observed seller phrases `Reverse Cosmos Holo` and `Cosmos Reverse Holo`
+retain both finish signals; they do not collapse to ordinary holo. `Cosmo` is a
+Cosmos alias, and `Game Stop Stamp`/`GameStop` retain retailer-stamp evidence.
+Explicit `FR` is recognized as French only in Pokémon title/approved-parallel
+scope, not sports initials. These listing claims never establish an unknown
+physical card's language or printing. Generic picker, lot and multi-card titles
+without either the target name or a collector-number anchor are excluded under
+the ATLAS policy; a named single-card title with seller promotion text remains
+reviewable.
+
 The existing `card-research-core/decisions` title inspector remains responsible
 for independent name/set/year/card-number/sport checks. The existing fast
 identifier supplies photo-bound suggestions; its Pokémon prompt forbids assuming
@@ -101,6 +111,28 @@ unsupported graders, contradictory or predicted grades, and slabs without a
 numeric grade are `UNRESOLVED`, with `raw: false`, `grader: null` and
 `numericGrade: null`. Only `RAW` authorizes raw-sale display; the legacy `group`
 field is a compatibility sort bucket and must not override this evidence.
+
+## Reclassifying captured ATLAS evidence
+
+`reclassifyEbaySoldCompsV2Result(input, savedResponse)` is a pure, offline helper
+for an explicitly authorized new preview from retained normalized evidence. It
+requires `ATLAS_IDENTITY_V1`, the existing engine/source and the exact query.
+It clones the saved response, recomputes only title-derived grade, variant and
+identity-match metadata, and preserves listing IDs/URLs, prices, sale caveats,
+dates, relative order, pagination facts and the original `retrievedAt`. It does
+not fetch, calculate a new capture time, convert a grade scale, or mutate an
+existing preview. Freshness and admission remain the caller's responsibility.
+
+Both fresh ATLAS searches and replay emit `classificationRevision` with
+`EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION` (`atlas-title-evidence-v2`), plus
+`classificationExcluded`, an array of `{ id, reason }` records whose sole reason
+is `UNANCHORED_MULTI_CARD_LISTING`. Candidate and excluded IDs are unique,
+disjoint, and together bounded to the original maximum 60 retained rows. These
+counts describe the retained comparison set, not every raw provider row.
+Reclassification is idempotent and cannot restore evidence absent from the saved
+response. The integration must preserve the prior response/preview and record a
+new request and response hash; a successful immutable preview is not a failed
+job to retry. Legacy Ten Kings searches do not emit these fields.
 
 Primary sources checked for category semantics:
 

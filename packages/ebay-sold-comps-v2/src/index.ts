@@ -5,6 +5,7 @@ export type { EbaySoldCompsV2VariantIdentity, EbaySoldCompsV2VariantEvidence, Eb
 
 export const EBAY_SOLD_COMPS_V2_ENGINE_VERSION = "ebay-sold-comps-v2.3.0";
 export const EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY = "ATLAS_IDENTITY_V1" as const;
+export const EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION = "atlas-title-evidence-v2" as const;
 export const EBAY_SOLD_COMPS_V2_SOURCE = "EBAY_SOLD" as const;
 export const EBAY_SOLD_COMPS_V2_REQUEST_COUNT = 240;
 export const EBAY_SOLD_COMPS_V2_RESULT_LIMIT = 60;
@@ -63,6 +64,8 @@ export type EbaySoldCompsV2SearchResult = {
   requestedResultCount: number;
   hasMore: boolean;
   candidates: EbaySoldCompV2Candidate[];
+  classificationRevision?: string;
+  classificationExcluded?: Array<{ id: string; reason: "UNANCHORED_MULTI_CARD_LISTING" }>;
 };
 
 export type EbaySoldCompsV2SelectionSummary = {
@@ -385,6 +388,20 @@ function scoreIdentity(input: EbaySoldCompsV2SearchInput, title: string, variant
   };
 }
 
+function unanchoredMultiCardListing(input: EbaySoldCompsV2SearchInput, title: string): boolean {
+  const text = normalizeEbaySoldCompsV2Text(title);
+  const name = input.category === "SPORTS" ? input.playerName : input.cardName;
+  if (includesTokenSequence(name, text)) return false;
+  // A collector-number anchor also keeps abbreviated single-card titles for
+  // review. Normalize leading zeros without inventing a missing denominator.
+  const collector = normalizeEbaySoldCompsV2Text(String(input.cardNumber ?? "").split("/")[0]);
+  const withoutZeros = (value: string) => value.replace(/\b([a-z]*)0+(?=\d)/g, "$1");
+  if (collector && includesTokenSequence(withoutZeros(collector), withoutZeros(text))) return false;
+  return /\b(?:choose|pick|your choice|you choose|lot|bundle|bulk|singles|cards)\b/.test(text)
+    || /\bbuy\s+\d+\s+get\s+\d+\b/.test(text)
+    || /\bset\s+\d+\s+\d+\b/.test(text) && /\bsave\s+up\s+to\s+\d+\b/.test(text);
+}
+
 export function rankEbaySoldCompsV2Candidates(
   candidates: readonly EbaySoldCompV2Candidate[],
 ): EbaySoldCompV2Candidate[] {
@@ -555,9 +572,10 @@ export function normalizeEbaySoldCompsV2Date(value: unknown): string | null {
   return date.toISOString().slice(0, 10);
 }
 
-export function parseEbaySoldCompsV2Candidate(
+function parseCandidate(
   value: unknown,
   input: EbaySoldCompsV2SearchInput,
+  retainUnanchored = false,
 ): EbaySoldCompV2Candidate | null {
   if (!isRecord(value)) return null;
   const titleValue = cleanText(value.title);
@@ -571,6 +589,7 @@ export function parseEbaySoldCompsV2Candidate(
   const listingUrl = productId ? `https://www.ebay.com/itm/${productId}` : null;
   if (!title || !listingUrl) return null;
   const scoped = input.matchingPolicy === EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY;
+  if (scoped && !retainUnanchored && unanchoredMultiCardListing(input, title)) return null;
   const gradeDetails = scoped ? readEbaySoldCompsV2GradeEvidence(title, cleanText(value.condition)) : null;
   const { grader, numericGrade } = gradeDetails ?? graderFromTitle(title);
   const targetGrade = input.targetGrade == null ? null : mapTenKingsGradeToPsaGrade(input.targetGrade);
@@ -598,6 +617,81 @@ export function parseEbaySoldCompsV2Candidate(
     matchReason: [identity.matchReason, price.selectionNote].filter(Boolean).join("; "),
     ...(variantEvidence && gradeDetails ? { variantEvidence, gradeEvidence: gradeDetails.evidence } : {}),
   };
+}
+
+export function parseEbaySoldCompsV2Candidate(value: unknown, input: EbaySoldCompsV2SearchInput): EbaySoldCompV2Candidate | null {
+  return parseCandidate(value, input);
+}
+
+/** Reassess already captured title evidence without a provider request. Price,
+ * listing, date, order and capture time are immutable; callers must retain the
+ * original response and create a new preview rather than overwrite saved facts.
+ * This function intentionally has no clock, credential or runtime dependency. */
+export function reclassifyEbaySoldCompsV2Result(
+  input: EbaySoldCompsV2SearchInput,
+  savedResponse: EbaySoldCompsV2SearchResult,
+): EbaySoldCompsV2SearchResult {
+  const query = buildEbaySoldCompsV2Query(input);
+  if (input.matchingPolicy !== EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY) invalidInput("Reclassification requires the ATLAS matching policy.");
+  const valid = (condition: unknown): void => {
+    if (!condition) throw new EbaySoldCompsV2Error("SOLDCOMPS_INVALID_RESPONSE", "Saved classification evidence is invalid.");
+  };
+  valid(isRecord(savedResponse) && savedResponse.source === EBAY_SOLD_COMPS_V2_SOURCE
+    && savedResponse.engineVersion === EBAY_SOLD_COMPS_V2_ENGINE_VERSION && savedResponse.query === query
+    && typeof savedResponse.retrievedAt === "string" && Number.isFinite(Date.parse(savedResponse.retrievedAt))
+    && Number.isSafeInteger(savedResponse.offset) && savedResponse.offset >= 0
+    && Number.isSafeInteger(savedResponse.nextOffset) && savedResponse.nextOffset >= 0
+    && Number.isSafeInteger(savedResponse.requestedResultCount) && savedResponse.requestedResultCount > 0
+    && savedResponse.requestedResultCount <= EBAY_SOLD_COMPS_V2_RESULT_LIMIT && typeof savedResponse.hasMore === "boolean"
+    && Array.isArray(savedResponse.candidates));
+  const priorExcluded = savedResponse.classificationExcluded === undefined ? [] : savedResponse.classificationExcluded;
+  valid(Array.isArray(priorExcluded) && savedResponse.candidates.length + priorExcluded.length <= EBAY_SOLD_COMPS_V2_RESULT_LIMIT
+    && (savedResponse.classificationRevision === undefined) === (savedResponse.classificationExcluded === undefined)
+    && (savedResponse.classificationRevision === undefined || typeof savedResponse.classificationRevision === "string"
+      && /^[a-z0-9-]{1,100}$/.test(savedResponse.classificationRevision))
+    && (savedResponse.classificationExcluded === undefined || typeof savedResponse.classificationRevision === "string"));
+  const ids = new Set<string>();
+  for (const excluded of priorExcluded) {
+    valid(isRecord(excluded) && Object.keys(excluded).sort().join(",") === "id,reason"
+      && /^ebay:\d{6,20}$/.test(excluded.id) && excluded.reason === "UNANCHORED_MULTI_CARD_LISTING" && !ids.has(excluded.id));
+    ids.add(excluded.id);
+  }
+  for (const candidate of savedResponse.candidates) {
+    valid(isRecord(candidate) && candidate.source === EBAY_SOLD_COMPS_V2_SOURCE
+      && typeof candidate.productId === "string" && /^\d{6,20}$/.test(candidate.productId)
+      && candidate.id === `ebay:${candidate.productId}` && !ids.has(candidate.id)
+      && candidate.listingUrl === `https://www.ebay.com/itm/${candidate.productId}`
+      && typeof candidate.title === "string" && candidate.title.trim() && candidate.title.length <= MAX_TITLE_LENGTH
+      && (candidate.condition === null || typeof candidate.condition === "string" && candidate.condition.length <= MAX_CONDITION_LENGTH)
+      && (candidate.soldPriceCents === null || Number.isSafeInteger(candidate.soldPriceCents) && candidate.soldPriceCents > 0 && candidate.soldPriceCents <= EBAY_SOLD_COMPS_V2_MAX_CENTS)
+      && (candidate.soldPriceDisplay === null || typeof candidate.soldPriceDisplay === "string")
+      && (candidate.soldDate === null || normalizeEbaySoldCompsV2Date(candidate.soldDate) === candidate.soldDate)
+      && (candidate.imageUrl === null || isApprovedEbaySoldCompsV2ImageUrl(candidate.imageUrl))
+      && typeof candidate.matchReason === "string" && candidate.matchReason.length <= 2000);
+    ids.add(candidate.id);
+  }
+  const result = structuredClone(savedResponse);
+  const classificationExcluded = structuredClone(priorExcluded);
+  const candidates: EbaySoldCompV2Candidate[] = [];
+  for (const candidate of result.candidates) {
+    if (unanchoredMultiCardListing(input, candidate.title)) {
+      classificationExcluded.push({ id: candidate.id, reason: "UNANCHORED_MULTI_CARD_LISTING" });
+      continue;
+    }
+    const details = readEbaySoldCompsV2GradeEvidence(candidate.title, candidate.condition);
+    const variantEvidence = matchEbaySoldCompsV2VariantEvidence(input, candidate.title, normalizeEbaySoldCompsV2Text);
+    const identity = scoreIdentity(input, candidate.title, variantEvidence.status);
+    // Only remove known generated identity clauses. Preserve every sale caveat,
+    // including accepted-offer upper bounds, currency and unsafe-price warnings.
+    const saleCaveats = candidate.matchReason.split("; ").filter(reason => !/^(?:(?:player|card|year|manufacturer|set|card number|insert) match|parallel\/variant (?:match|contradiction|unconfirmed)|No confirmed identity tokens matched)$/.test(reason));
+    candidates.push({ ...candidate, grader: details.grader, numericGrade: details.numericGrade,
+      // Reclassification does not reinterpret a physical grade as another
+      // company's scale. This is only the legacy company/grade sort bucket.
+      raw: details.evidence.status === "RAW", group: groupFor(details.grader, details.numericGrade, null),
+      parallelMatch: variantEvidence.status, matchScore: identity.matchScore,
+      matchReason: [identity.matchReason, ...saleCaveats].join("; "), variantEvidence, gradeEvidence: details.evidence });
+  }
+  return { ...result, candidates, classificationRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, classificationExcluded };
 }
 
 const defaultFetch: EbaySoldCompsV2Fetch = async (url, init) => {
@@ -743,12 +837,12 @@ export async function searchEbaySoldCompsV2(
   );
   const rawItems = (payload.items as unknown[]).slice(0, EBAY_SOLD_COMPS_V2_REQUEST_COUNT);
   for (const rawItem of rawItems) {
-    const candidate = parseEbaySoldCompsV2Candidate(rawItem, input);
+    const candidate = parseCandidate(rawItem, input, true);
     if (candidate && !candidates.has(candidate.id)) candidates.set(candidate.id, candidate);
   }
 
   const ranked = rankEbaySoldCompsV2Candidates([...candidates.values()]).slice(0, EBAY_SOLD_COMPS_V2_RESULT_LIMIT);
-  return {
+  const result: EbaySoldCompsV2SearchResult = {
     source: EBAY_SOLD_COMPS_V2_SOURCE,
     engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
     query,
@@ -759,4 +853,5 @@ export async function searchEbaySoldCompsV2(
     hasMore: false,
     candidates: ranked,
   };
+  return input.matchingPolicy === EBAY_SOLD_COMPS_V2_ATLAS_MATCHING_POLICY ? reclassifyEbaySoldCompsV2Result(input, result) : result;
 }

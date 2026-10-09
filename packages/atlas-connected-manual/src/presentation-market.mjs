@@ -2,7 +2,7 @@ import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
 import { parsePublicManualReport } from '@atlas/report-view/manual-public-contract';
 import { projectSelectedSoldReferences } from '@atlas/report-view/sold-reference-projection';
 import { inspectStaffInventoryResearchSale, inspectStaffInventoryResearchTitle } from '@tenkings/card-research-core/decisions';
-import { buildEbaySoldCompsV2Query, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_ENGINE_VERSION, EBAY_SOLD_COMPS_V2_SOURCE } from '@tenkings/ebay-sold-comps-v2';
+import { buildEbaySoldCompsV2Query, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_VERSION, EBAY_SOLD_COMPS_V2_SOURCE } from '@tenkings/ebay-sold-comps-v2';
 
 export const MARKET_UNAVAILABLE_REASONS = Object.freeze(['PROVIDER_NOT_CONFIGURED', 'PROVIDER_CONFIGURATION_ERROR', 'PROVIDER_QUOTA_REACHED', 'PROVIDER_REQUEST_LIMITED']);
 
@@ -50,7 +50,16 @@ function preparePreview(context, result) {
     && result.candidates.every(value => value && typeof value.id === 'string')
     && new Set(result.candidates.map(value => value.id)).size === result.candidates.length
     && typeof result.retrievedAt === 'string' && Number.isFinite(Date.parse(result.retrievedAt)), 502, 'MARKET_PROVIDER_RESULT_INVALID');
-  const candidates = [], excluded = { undisclosedOrUnsupported: 0, contradictory: 0 };
+  const hasClassification = Object.hasOwn(result, 'classificationRevision') || Object.hasOwn(result, 'classificationExcluded');
+  const classificationExcluded = hasClassification ? result.classificationExcluded : [];
+  requireThat(!hasClassification || result.classificationRevision === EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION
+    && Array.isArray(classificationExcluded) && classificationExcluded.length + result.candidates.length <= 60
+    && classificationExcluded.every(value => value && Object.keys(value).sort().join(',') === 'id,reason'
+      && typeof value.id === 'string' && /^ebay:\d{6,20}$/.test(value.id)
+      && value.reason === 'UNANCHORED_MULTI_CARD_LISTING')
+    && new Set([...result.candidates, ...classificationExcluded].map(value => value.id)).size === result.candidates.length + classificationExcluded.length,
+  502, 'MARKET_PROVIDER_RESULT_INVALID');
+  const candidates = [], excluded = { undisclosedOrUnsupported: classificationExcluded.length, contradictory: 0 };
   const description = { category: context.input.category === 'SPORTS' ? 'Sports cards' : 'Pokemon cards',
     name: context.input.playerName ?? context.input.cardName, year: context.input.year,
     manufacturer: context.input.manufacturer ?? null, set_name: [context.input.productSet, context.input.insert].filter(Boolean).join(' '),
@@ -75,7 +84,8 @@ function preparePreview(context, result) {
       matchReason: candidate.matchReason, identityEvidence, ...(candidate.variantEvidence ? { variantEvidence: candidate.variantEvidence } : {}), requiresReview: true });
   }
   return { version: 'atlas-market-preview-v1', ...context, source: result.source, engineVersion: result.engineVersion,
-    retrievedAt: result.retrievedAt, candidates, excluded };
+    retrievedAt: result.retrievedAt, candidates, excluded,
+    ...(hasClassification ? { classificationRevision: result.classificationRevision, classificationExcluded: structuredClone(classificationExcluded) } : {}) };
 }
 
 /** Server-side adapter only; constructing it never calls a provider. The caller

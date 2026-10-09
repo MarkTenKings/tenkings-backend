@@ -1,6 +1,7 @@
 import { canonical, digest, requireThat } from '@atlas/manual-service/contract';
-import { EbaySoldCompsV2Error } from '@tenkings/ebay-sold-comps-v2';
+import { EbaySoldCompsV2Error, reclassifyEbaySoldCompsV2Result, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION } from '@tenkings/ebay-sold-comps-v2';
 import { createPresentationMarket, publishedMarketQuery } from './presentation-market.mjs';
+import { marketReclassification } from './market-job-store.mjs';
 
 // Only typed provider refusals prove there was no successful paid result.
 export function marketProviderFailure(error) {
@@ -24,6 +25,7 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
   const tasks = new Set(); let stopped = true, cycling = null, timer = null;
   const emit = error => { try { onError({ code: /^[A-Z][A-Z0-9_]{0,100}$/.test(error?.code ?? '') ? error.code : 'MARKET_WORKER_INTERRUPTED' }); } catch { /* Logging cannot change receipts. */ } };
   async function execute(job) {
+    const local = (job.audit??[]).some(value=>value.event==='RECLASSIFY');
     let dispatched = false, responseSaved = Boolean(job.response), providerFailed = null, previewExpired = false, leaseLost = false, renewing = Promise.resolve();
     const heartbeat = timers.setInterval(() => { renewing = renewing.then(async () => {
       if (!await store.renew(job)) leaseLost = true;
@@ -37,7 +39,17 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
       requireThat(!leaseLost && await store.bind(job, source), 409, 'MARKET_LEASE_LOST');
       const context = publishedMarketQuery(source);
       let response = job.response;
+      if(local) {
+        const marker=marketReclassification(job);
+        requireThat(marker.classificationRevision===EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,409,'MARKET_RECLASSIFICATION_POLICY_CHANGED');
+        if(!response) {
+          const original=await store.reclassificationSource(job);
+          response=reclassifyEbaySoldCompsV2Result(structuredClone(context.input),original);
+          requireThat(await store.recordReclassification(job,response),503,'MARKET_RECLASSIFICATION_NOT_SAVED');responseSaved=true;
+        }
+      }
       if (!response) {
+        requireThat(!local,409,'MARKET_RECLASSIFICATION_NO_PROVIDER');
         // An uncertain dispatch-transaction reply is itself a no-repeat fence.
         dispatched = true;
         requireThat(!leaseLost && await store.dispatch(job), 409, 'MARKET_LEASE_LOST');
@@ -56,7 +68,7 @@ export function createMarketWorker({ store, approved, publication, artifacts, pr
       await store.finish(job, { result: { state: 'READY', ref, artifactHash, sourceHash: result.sourceHash } });
     } catch (error) {
       emit(error);
-      const failure = providerFailed ?? (previewExpired ? { code: 'MARKET_PREVIEW_EXPIRED', disposition: 'FAILED' } : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
+      const failure = providerFailed ?? (previewExpired ? { code: 'MARKET_PREVIEW_EXPIRED', disposition: 'FAILED' } : local ? {code:'MARKET_RECLASSIFICATION_INTERRUPTED',disposition:'RETRY'} : responseSaved ? { code: 'MARKET_PROCESSING_INTERRUPTED', disposition: 'RETRY' }
         : dispatched ? { code: 'PROVIDER_OUTCOME_UNKNOWN', disposition: 'UNKNOWN' }
         : { code: 'MARKET_PREPARATION_INTERRUPTED', disposition: 'RETRY' });
       try { await store.finish(job, failure); } catch (saveError) { emit(saveError); }

@@ -160,3 +160,99 @@ test('ATLAS query remains broad across grades and validates optional evidenced d
   }
   assert.throws(() => query({ ...magikarp, matchingPolicy: 'UNKNOWN' }), /matching policy/);
 });
+
+// Titles and item IDs observed in the saved 2026-10-08 automatic backfill.
+// These are local fixtures, never live provider requests or verified photos.
+const charmander = { ...magikarp, cardName: 'Charmander', year: '2023', productSet: 'Scarlet & Violet—151', cardNumber: '004/165' };
+const pikachu = { ...charmander, cardName: 'Pikachu', cardNumber: '025/165' };
+const observed = (input, itemId, title) => parse({ ...raw(title), itemId, url: `https://www.ebay.com/itm/${itemId}` }, input);
+
+test('actual Reverse Cosmos wording preserves both finish signals instead of collapsing to ordinary holo', () => {
+  const title = 'Magikarp 039/192 Reverse Cosmos Holo Promo Pokemon Pikachu English Rebel Clash';
+  const candidate = observed(magikarp, '227536166244', title);
+  assert.deepEqual(candidate.variantEvidence.observed.finish, ['reverse holo', 'cosmos holo']);
+  assert.equal(candidate.variantEvidence.observed.promo, true);
+  assert.equal(candidate.parallelMatch, 'UNKNOWN'); reason(candidate, 'VARIANT_TARGET_UNRESOLVED');
+  for (const parallel of ['English Holo Promo', 'English Reverse Holo Promo']) {
+    const wrong = observed({ ...magikarp, parallel }, '227536166244', title);
+    assert.equal(wrong.parallelMatch, 'CONTRADICTORY'); reason(wrong, 'FINISH_MISMATCH');
+  }
+  assert.equal(observed({ ...magikarp, parallel: 'English Reverse Cosmos Holo Promo' }, '227536166244', title).parallelMatch, 'MATCH');
+  for (const wording of ['Cosmos Reverse Holo', 'Reverse Cosmos Holo', 'Rev Cosmos Holo', 'Reverse Cosmo Holo']) {
+    assert.deepEqual(parsed(magikarp, pokemonTitle(wording)).variantEvidence.observed.finish, ['reverse holo', 'cosmos holo']);
+  }
+});
+
+test('actual singular Cosmo names the Cosmos finish without inferring the approved printing or language', () => {
+  const title = 'Pokemon Card Charmander 004/165 Scarlet & Violet 151 Cosmo Holo Near Mint';
+  const candidate = observed(charmander, '267703750498', title);
+  assert.deepEqual(candidate.variantEvidence.observed.finish, ['cosmos holo']);
+  assert.deepEqual(candidate.variantEvidence.observed.language, []);
+  assert.equal(candidate.parallelMatch, 'UNKNOWN'); reason(candidate, 'VARIANT_TARGET_UNRESOLVED');
+  const wrong = observed({ ...charmander, parallel: 'English Reverse Holo' }, '267703750498', title);
+  assert.equal(wrong.parallelMatch, 'CONTRADICTORY'); reason(wrong, 'FINISH_MISMATCH');
+  const sameWithoutLanguage = observed({ ...charmander, parallel: 'English Cosmos Holo' }, '267703750498', title);
+  assert.equal(sameWithoutLanguage.parallelMatch, 'UNKNOWN'); reason(sameWithoutLanguage, 'LANGUAGE_UNDISCLOSED');
+  assert.deepEqual(parsed(charmander, 'Charmander 004/165 Costco Holo').variantEvidence.observed.finish, ['holo']);
+});
+
+test('actual GameStop stamp remains observed evidence and contradicts an explicitly unstamped target', () => {
+  const title = 'Pokémon TCG Charmander 004/165 GameStop Stamp Scarlet & Violet: 151 SEALED';
+  const candidate = observed(charmander, '800725203478', title);
+  assert.deepEqual(candidate.variantEvidence.observed.stamp, ['gamestop']);
+  assert.equal(candidate.parallelMatch, 'UNKNOWN'); reason(candidate, 'STAMP_TARGET_UNRESOLVED');
+  assert.equal(candidate.variantEvidence.observed.promo, null); // Stamp wording is not a claim of a promo classification.
+  const wrong = observed({ ...charmander, parallel: 'English Non-Holo', variantIdentity: { stamp: 'none' } }, '800725203478', title);
+  assert.equal(wrong.parallelMatch, 'CONTRADICTORY'); reason(wrong, 'STAMP_MISMATCH');
+  const explicit = { ...charmander, parallel: 'English Non-Holo', variantIdentity: { stamp: 'GameStop' } };
+  assert.equal(parsed(explicit, '2023 Charmander 004/165 Scarlet Violet 151 English Non-Holo GameStop Stamp').parallelMatch, 'MATCH');
+  assert.equal(parsed(explicit, '2023 Charmander 004/165 Scarlet Violet 151 English Non-Holo Game Stop Stamp').parallelMatch, 'MATCH');
+  for (const parallel of ['English Non-Holo Game Stop Stamp', 'English Non-Holo GameStop', 'English Non-Holo GameStop Stamped']) {
+    assert.equal(parsed({ ...charmander, parallel }, '2023 Charmander 004/165 Scarlet Violet 151 English Non-Holo GameStop').parallelMatch, 'MATCH', parallel);
+    assert.equal(parsed({ ...charmander, parallel }, '2023 Charmander 004/165 Scarlet Violet 151 English Non-Holo Game Stop Stamp').parallelMatch, 'MATCH', parallel);
+  }
+});
+
+test('actual Pokémon FR evidence is French, stays distinct from English and does not reinterpret sports initials', () => {
+  const title = '2023 Pokemon SV: Scarlet & Violet 151 FR Charmander #004/165 Common Gamestop';
+  const candidate = observed(charmander, '158333471911', title);
+  assert.deepEqual(candidate.variantEvidence.observed.language, ['french']);
+  assert.deepEqual(candidate.variantEvidence.observed.stamp, ['gamestop']);
+  assert.equal(candidate.parallelMatch, 'UNKNOWN'); reason(candidate, 'VARIANT_TARGET_UNRESOLVED');
+  const wrong = observed({ ...charmander, parallel: 'English Non-Holo' }, '158333471911', title);
+  assert.equal(wrong.parallelMatch, 'CONTRADICTORY'); reason(wrong, 'LANGUAGE_MISMATCH');
+  assert.equal(parsed({ ...charmander, parallel: 'FR Non-Holo' }, '2023 Charmander 004/165 Scarlet Violet 151 French Non-Holo').parallelMatch, 'MATCH');
+  assert.deepEqual(parsed(sports, sportsTitle('FR Red Wave')).variantEvidence.observed.language, []);
+});
+
+test('actual unanchored picker and multi-card offers are excluded only from the ATLAS matching policy', () => {
+  const fixtures = [
+    [charmander, '256243811242', 'Pokemon Cards - Scarlet & Violet: 151 - Holos & Reverse Holos - Buy 5 Get 5 FREE'],
+    [charmander, '256312536052', 'Pokemon Cards - Scarlet & Violet: 151 - Non-Holo SIngles - BUY 5 GET 5 FREE -'],
+    [charmander, '276276967286', 'Pokemon TCG Scarlet & Violet 151 Holo & Reverse Holo Cards - Choose Your Own'],
+    [charmander, '186108582833', 'Pokémon Scarlet Violet 151 Set 01-165 SAVE UP TO 30% Reverse Holo English NM/M'],
+    [magikarp, '304285169906', 'Pokemon - SWSH Rebel Clash - Reverse & Standard Holo SIngles'],
+    [magikarp, '257134563708', 'Pokemon Cards - Sword & Shield: Rebel Clash - Holos & Reverse Holos - TCG'],
+  ];
+  for (const [input, itemId, title] of fixtures) {
+    assert.equal(observed(input, itemId, title), null, itemId);
+    const { matchingPolicy, ...legacy } = input;
+    assert.ok(observed(legacy, itemId, title), `legacy ${itemId}`);
+  }
+  for (const [input, itemId, title] of fixtures.slice(0, 3)) assert.equal(observed(pikachu, itemId, title), null, itemId);
+  assert.equal(parsed(charmander, 'Pokemon Scarlet Violet 151 lot of 10 assorted cards'), null);
+});
+
+test('named single cards and exact collector aliases remain reviewable despite seller promotion wording', () => {
+  for (const [input, title] of [
+    [snivy, 'Snivy RC1/RC25 Holo Common Legendary Treasures: Radiant Collection Pokemon Cards'],
+    [charmander, 'Charmander 004/165 Scarlet Violet 151 Reverse Holo BUY 5 GET 5 FREE'],
+    [charmander, 'Charmander Scarlet Violet 151 Reverse Holo Buy 5 Get 5 Free'],
+    [charmander, 'Pokemon Scarlet Violet 151 #4/165 Non-Holo Singles'],
+    [pikachu, 'Pokemon Scarlet Violet 151 #25/165 Reverse Holo Cards'],
+    [snivy, 'Pokemon Legendary Treasures #RC01/RC25 Holo Singles'],
+    [sports, '2024 Panini Prizm Draymond Green #24 Red Wave NBA Cards'],
+  ]) {
+    assert.ok(parsed(input, title), title);
+  }
+});

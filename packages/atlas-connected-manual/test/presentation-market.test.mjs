@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, digest } from '@atlas/manual-service/contract';
-import { parseEbaySoldCompsV2Candidate, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
+import { parseEbaySoldCompsV2Candidate, EbaySoldCompsV2Error, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, EBAY_SOLD_COMPS_V2_ENGINE_VERSION } from '@tenkings/ebay-sold-comps-v2';
 import { createPresentationMarket, publishedMarketQuery } from '../src/presentation-market.mjs';
 import { publicationFixture } from './publication-fixture.mjs';
 
@@ -128,4 +128,35 @@ test('retained legacy preview remains explicitly selectable; unrelated input cha
   assert.equal(market.select(input).sales.length, 1);
   ready.preview.input.parallel = 'unrelated variant'; ready.sourceHash = digest(canonical(ready.preview));
   assert.throws(() => market.select({ ...input, ...ready }), { code: 'MARKET_PUBLICATION_MISMATCH' });
+});
+
+test('local title reclassification retains exclusion evidence, original capture age and sale amounts', async () => {
+  const f = await fixture(), context = publishedMarketQuery(f), result = source(context);
+  const metadata = { classificationRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION,
+    classificationExcluded: [{ id: 'ebay:123456789099', reason: 'UNANCHORED_MULTI_CARD_LISTING' }] };
+  const market = createPresentationMarket({ now });
+  const ready = market.project(f, { ...result, ...metadata });
+  assert.equal(ready.preview.excluded.undisclosedOrUnsupported, 2);
+  assert.deepEqual(ready.preview.classificationExcluded, metadata.classificationExcluded);
+  assert.notEqual(ready.preview.classificationExcluded, metadata.classificationExcluded);
+  assert.equal(ready.preview.classificationRevision, EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION);
+  assert.equal(ready.preview.retrievedAt, result.retrievedAt);
+  const selected = market.select({ ...f, ...ready, selectedIds: [ready.preview.candidates[0].sale.id] });
+  assert.equal(selected.sales[0].priceMinor, 4000);
+  assert.throws(() => market.select({ ...f, ...ready, selectedIds: ['ebay:123456789099'] }));
+  assert.throws(() => createPresentationMarket({ now: () => new Date('2026-09-24T16:00:00Z') })
+    .project(f, { ...result, ...metadata }), { code: 'MARKET_PREVIEW_EXPIRED' });
+});
+
+test('malformed or double-counted reclassification exclusions cannot become trusted preview evidence', async () => {
+  const f = await fixture(), result = source(publishedMarketQuery(f)), market = createPresentationMarket({ now });
+  const row = { id: 'ebay:123456789099', reason: 'UNANCHORED_MULTI_CARD_LISTING' };
+  for (const metadata of [
+    { classificationRevision: 'unknown', classificationExcluded: [] },
+    { classificationExcluded: [row] },
+    { classificationRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION },
+    ...[null, [row, row], [{ ...row, id: result.candidates[0].id }], [{ ...row, reason: 'UNVERIFIED' }],
+      [{ ...row, inventedPrice: 100 }], Array.from({ length: 59 }, (_, i) => ({ ...row, id: `ebay:excluded-${i}` }))]
+      .map(classificationExcluded => ({ classificationRevision: EBAY_SOLD_COMPS_V2_CLASSIFICATION_REVISION, classificationExcluded })),
+  ]) assert.throws(() => market.project(f, { ...result, ...metadata }), { code: 'MARKET_PROVIDER_RESULT_INVALID' });
 });

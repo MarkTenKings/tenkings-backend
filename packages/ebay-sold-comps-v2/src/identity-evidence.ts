@@ -98,15 +98,22 @@ const languages: Array<[string, RegExp]> = [
   ["traditional chinese", /\btraditional chinese\b/], ["simplified chinese", /\bsimplified chinese\b/],
   ["chinese", /\bchinese\b/], ["thai", /\bthai\b/], ["indonesian", /\bindonesian\b/],
 ];
-const languageFacts = (text: string) => {
+const languageFacts = (text: string, pokemon = false) => {
   const found = languages.filter(([, re]) => re.test(text)).map(([name]) => name);
+  // FR is an explicit listing-language abbreviation in Pokémon. Do not apply
+  // the short token to sports inserts or player initials.
+  if (pokemon && /\bfr\b/.test(text) && !found.includes("french")) found.push("french");
   return found.length > 1 && found.some(name => name.endsWith(" chinese")) ? found.filter(name => name !== "chinese") : found;
 };
 const finishText = (text: string) => text
   .replace(/\bpokeball\b/g, "poke ball").replace(/\bmasterball\b/g, "master ball")
+  .replace(/\bgame\s*stop(?:\s+stamp(?:ed)?)?\b/g, "gamestop")
+  .replace(/\bcosmo\b/g, "cosmos")
   .replace(/\b(?:nonholo(?:graphic|foil)?|non holo(?:graphic|foil)?|nonfoil|non foil|no holo|not holo)\b/g, "non holo")
   .replace(/\b(?:holographic|holofoil|foil)\b/g, "holo")
-  .replace(/\b(?:reverse|rev)\s+(?:holo)?\b/g, "reverse holo")
+  // Keep a separator when "reverse" precedes a named pattern: otherwise
+  // "Reverse Cosmos Holo" becomes "reverse holocosmos holo" and loses Cosmos.
+  .replace(/\b(?:reverse|rev)\s+(?:holo\b)?/g, "reverse holo ")
   .replace(/\s+/g, " ").trim();
 const finishFacts = (text: string) => {
   const found: string[] = [];
@@ -133,6 +140,7 @@ const editionFacts = (text: string) => [
 const stampFacts = (text: string) => [
   /\b(?:unstamped|no stamp|non stamped)\b/.test(text) ? "none" : null,
   /\bpokemon center\b/.test(text) ? "pokemon center" : null,
+  /\bgame\s*stop\b/.test(text) ? "gamestop" : null,
   /\b(?:prerelease|pre release)\b/.test(text) ? "prerelease" : null,
   /\bstaff\b/.test(text) ? "staff" : null,
   /\b(?:league|play pokemon)\s+stamp(?:ed)?\b/.test(text) ? "league" : null,
@@ -172,7 +180,7 @@ export function matchEbaySoldCompsV2VariantEvidence(input: EbaySoldCompsV2Search
   const actualSignals = input.category === "SPORTS" ? unique((titleDetails.replace(/\bnon holo\b/g, "").match(sportsSignals) ?? [])) : finishFacts(titleDetails);
   const flagEvidence = finishText([evidence, has(normalize(title), normalize(input.insert)) ? normalize(input.insert) : ""].join(" "));
   const observed = {
-    language: languageFacts(evidence), edition: editionFacts(evidence), finish: finishFacts(evidence), stamp: stampFacts(evidence), serialDenominators,
+    language: languageFacts(evidence, input.category === "POKEMON"), edition: editionFacts(evidence), finish: finishFacts(evidence), stamp: stampFacts(evidence), serialDenominators,
     autograph: booleanFact(flagEvidence, /\b(?:auto|autographs?|autographed|signed|signatures?)\b/, /\b(?:non auto|non autograph|no auto|no autograph|unsigned|facsimile)\b/),
     memorabilia: booleanFact(flagEvidence, /\b(?:relics?|patch|memorabilia|jersey|swatch)\b/, /\b(?:non relic|no relic|non memorabilia|no memorabilia)\b/),
     promo: booleanFact(flagEvidence, /\bpromo(?:tional)?\b/, /\b(?:non promo|not promo)\b/), parallelSignals: actualSignals,
@@ -184,7 +192,8 @@ export function matchEbaySoldCompsV2VariantEvidence(input: EbaySoldCompsV2Search
     if (actualValues.some(value => !expectedValues.includes(value))) reasons.push(`${field}_MISMATCH`);
     else if (expectedValues.some(value => !actualValues.includes(value))) unknown.push(`${field}_INCOMPLETE`);
   };
-  const expectedLanguage = target.language ? languageFacts(normalize(target.language)).length ? languageFacts(normalize(target.language)) : [normalize(target.language)] : languageFacts(expected);
+  const namedLanguage = target.language ? languageFacts(normalize(target.language), input.category === "POKEMON") : [];
+  const expectedLanguage = target.language ? namedLanguage.length ? namedLanguage : [normalize(target.language)] : languageFacts(expected, input.category === "POKEMON");
   if (!expectedLanguage.length) unknown.push("LANGUAGE_TARGET_UNRESOLVED");
   compare("LANGUAGE", expectedLanguage, observed.language);
   compare("EDITION", target.edition ? editionFacts(normalize(target.edition)).length ? editionFacts(normalize(target.edition)) : [normalize(target.edition)] : editionFacts(expected), observed.edition);
@@ -226,6 +235,7 @@ export function matchEbaySoldCompsV2VariantEvidence(input: EbaySoldCompsV2Search
     // Supported orthogonal dimensions are compared above, including aliases.
     // What remains is the named parallel, which still needs its complete phrase.
     for (const [, re] of languages) comparableExpected = comparableExpected.replace(new RegExp(re.source, "g"), " ");
+    if (input.category === "POKEMON") comparableExpected = comparableExpected.replace(/\bfr\b/g, " ");
     comparableExpected = comparableExpected.replace(/\b(?:1st|first|1) edition\b|\bunlimited\b|\bshadowless\b/g, " ");
     for (const phrase of [...finishFacts(comparableExpected), ...stampFacts(comparableExpected)]) comparableExpected = remove(comparableExpected, phrase);
     comparableExpected = comparableExpected.replace(/\b(?:auto|autographs?|autographed|signed|signatures?|unsigned|non auto|non autograph|no auto|no autograph|relics?|patch|memorabilia|jersey|swatch|promo(?:tional)?)\b/g, " ").replace(/\s+/g, " ").trim();
